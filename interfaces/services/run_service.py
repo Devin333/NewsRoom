@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from core.framework import RunResult
+from storage.repository import persist_run_result, repository_from_env
 from workflows.daily_intelligence import DailyIntelligenceRunner
 from workflows.daily_intelligence.test_agent_loop import run_test_agent_loop
 from workflows.daily_intelligence.test_no_llm import run_test_no_llm
@@ -34,9 +35,15 @@ class RunApplicationService:
         source_limit: int,
         run_id: str | None = None,
     ) -> RunResult:
-        return DailyIntelligenceRunner(artifact_root=self.artifact_root).run(
+        result = DailyIntelligenceRunner(artifact_root=self.artifact_root).run(
             profile=profile,
             topic=topic,
             source_limit=source_limit,
             run_id=run_id,
         )
+        persist_run_result(
+            repository_from_env(artifact_root=self.artifact_root),
+            result,
+            profile=profile,
+        )
+        return result

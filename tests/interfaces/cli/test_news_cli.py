@@ -120,6 +120,30 @@ def test_news_cli_run_daily_live_offline_json_output(tmp_path, capsys) -> None:
     assert payload["output"]["final_report"]["title"] == "Daily Intelligence: AI policy"
 
 
+def test_run_service_persists_daily_result(tmp_path, monkeypatch) -> None:
+    from interfaces.services.run_service import RunApplicationService
+    import interfaces.services.run_service as run_service_module
+
+    fake_repository = _FakePersistenceRepository()
+    monkeypatch.setattr(
+        run_service_module,
+        "repository_from_env",
+        lambda artifact_root: fake_repository,
+    )
+
+    result = RunApplicationService(artifact_root=tmp_path).run_daily(
+        profile="live-offline",
+        topic="AI policy",
+        source_limit=1,
+        run_id="persisted-daily",
+    )
+
+    assert result.run_id == "persisted-daily"
+    assert fake_repository.migrated is True
+    assert fake_repository.workflow_runs[0].run_id == "persisted-daily"
+    assert fake_repository.reports[0].status == "final"
+
+
 def test_news_cli_run_daily_live_offline_human_output(tmp_path, capsys) -> None:
     exit_code = main(
         [
@@ -200,3 +224,19 @@ def test_news_cli_latest_missing_report(tmp_path, capsys) -> None:
 
     assert exit_code == 1
     assert "no local report" in captured.out
+
+
+class _FakePersistenceRepository:
+    def __init__(self) -> None:
+        self.migrated = False
+        self.workflow_runs = []
+        self.reports = []
+
+    def migrate(self) -> None:
+        self.migrated = True
+
+    def save_workflow_run(self, record) -> None:
+        self.workflow_runs.append(record)
+
+    def save_report(self, record) -> None:
+        self.reports.append(record)

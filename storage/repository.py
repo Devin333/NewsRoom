@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from storage.local_json import LocalJsonRepository
+from core.framework import RunResult
 
 
 @dataclass(frozen=True)
@@ -68,3 +69,70 @@ def repository_from_env(
 
         return PostgresRepository(dsn)
     return LocalJsonPersistenceAdapter(artifact_root)
+
+
+def workflow_run_record_from_result(result: RunResult, *, profile: str) -> WorkflowRunRecord:
+    return WorkflowRunRecord(
+        run_id=result.run_id,
+        workflow_id=result.workflow_id,
+        workflow_version=result.workflow_version,
+        status=result.status.value,
+        profile=profile,
+        artifact_dir=result.artifact_dir,
+        manifest_path=result.manifest_path,
+        events_path=result.events_path,
+        error=result.error,
+        metrics=_metrics_from_output(result.output),
+    )
+
+
+def report_record_from_result(result: RunResult) -> ReportRecord | None:
+    final_report = result.output.get("final_report")
+    blocked_report = result.output.get("blocked_report")
+    quality_summary = result.output.get("report_quality_summary")
+    if final_report is None and blocked_report is None:
+        return None
+
+    report_payload = _to_dict(final_report or blocked_report)
+    title = report_payload.get("title")
+    status = "final" if final_report is not None else "blocked"
+    quality_score = None
+    quality_payload = _to_dict(quality_summary)
+    if quality_payload:
+        quality_score = quality_payload.get("quality_score")
+    return ReportRecord(
+        report_id=f"{result.run_id}:{status}",
+        run_id=result.run_id,
+        status=status,
+        title=title,
+        report_json=report_payload,
+        report_markdown=result.output.get("report_markdown"),
+        quality_score=quality_score,
+        manifest_path=result.manifest_path,
+    )
+
+
+def persist_run_result(repository: PersistenceRepository, result: RunResult, *, profile: str) -> None:
+    repository.migrate()
+    repository.save_workflow_run(workflow_run_record_from_result(result, profile=profile))
+    report = report_record_from_result(result)
+    if report:
+        repository.save_report(report)
+
+
+def _metrics_from_output(output: dict[str, Any]) -> dict[str, Any]:
+    metrics: dict[str, Any] = {}
+    for key in ["source_pipeline_metrics", "agent_loop_metrics", "report_quality_summary"]:
+        if key in output:
+            metrics[key] = _to_dict(output[key])
+    return metrics
+
+
+def _to_dict(value: Any) -> dict[str, Any]:
+    if value is None:
+        return {}
+    if hasattr(value, "to_dict"):
+        return value.to_dict()
+    if isinstance(value, dict):
+        return value
+    return {}
