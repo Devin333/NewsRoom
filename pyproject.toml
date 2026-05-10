@@ -18,8 +18,10 @@ news = "interfaces.cli.news:main"
 packages = [
   "core",
   "core.framework",
+  "core.framework.agent_loop",
   "core.framework.artifacts",
   "core.framework.events",
+  "core.framework.llm",
   "core.framework.specs",
   "core.framework.tools",
   "core.framework.workflow",
