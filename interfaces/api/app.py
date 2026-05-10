@@ -14,6 +14,7 @@ from interfaces.api.models import (
     ReportDetail,
     RunResponse,
 )
+from interfaces.services.diagnose_service import DiagnosticApplicationService
 from interfaces.services.memory_service import MemoryApplicationService
 from interfaces.services.report_service import ReportApplicationService
 from interfaces.services.worker_service import WorkerApplicationService
@@ -22,6 +23,7 @@ from interfaces.services.worker_service import WorkerApplicationService
 WorkerServiceFactory = Callable[[], WorkerApplicationService]
 ReportServiceFactory = Callable[[], ReportApplicationService]
 MemoryServiceFactory = Callable[[], MemoryApplicationService]
+DiagnosticServiceFactory = Callable[[], DiagnosticApplicationService]
 
 
 def create_app(
@@ -29,6 +31,7 @@ def create_app(
     worker_service_factory: WorkerServiceFactory = WorkerApplicationService,
     report_service_factory: ReportServiceFactory = ReportApplicationService,
     memory_service_factory: MemoryServiceFactory = MemoryApplicationService,
+    diagnostic_service_factory: DiagnosticServiceFactory = DiagnosticApplicationService,
 ) -> FastAPI:
     api = FastAPI(title="NewsRoom API", version="0.1.0")
 
@@ -86,6 +89,10 @@ def create_app(
             filters=request.filters,
         )
         return _success(result.to_dict())
+
+    @api.get("/api/v1/admin/diagnose")
+    def diagnose():
+        return _success(diagnostic_service_factory().run().to_dict())
 
     return api
 

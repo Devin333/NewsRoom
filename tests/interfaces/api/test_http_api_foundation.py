@@ -89,6 +89,18 @@ def test_memory_search_returns_results() -> None:
     assert payload["data"]["results"][0]["document_id"] == "doc-1"
 
 
+def test_admin_diagnose_returns_result() -> None:
+    client = TestClient(create_app(diagnostic_service_factory=lambda: _FakeDiagnosticService()))
+
+    response = client.get("/api/v1/admin/diagnose")
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["success"] is True
+    assert payload["data"]["status"] == "warning"
+    assert payload["data"]["checks"][0]["check_id"] == "redis"
+
+
 class _FakeWorkerService:
     def __init__(self) -> None:
         self.enqueue_calls = []
@@ -161,3 +173,26 @@ class _FakeMemoryResult:
 
     def to_dict(self):
         return self.payload
+
+
+class _FakeDiagnosticService:
+    def run(self):
+        return _FakeDiagnosticResult()
+
+
+class _FakeDiagnosticResult:
+    def to_dict(self):
+        return {
+            "status": "warning",
+            "summary": "1 ok, 1 warning, 0 error, 0 skipped",
+            "checks": [
+                {
+                    "check_id": "redis",
+                    "name": "Redis",
+                    "status": "ok",
+                    "message": "ok",
+                    "details": {},
+                    "remediation": None,
+                }
+            ],
+        }

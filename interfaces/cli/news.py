@@ -5,6 +5,7 @@ import json
 from typing import Sequence
 
 from core.framework.specs import WorkflowStatus
+from interfaces.services.diagnose_service import DiagnosticApplicationService
 from interfaces.services.memory_service import DEFAULT_MEMORY_COLLECTION, MemoryApplicationService
 from interfaces.services.report_service import ReportApplicationService
 from interfaces.services.run_service import RunApplicationService
@@ -111,6 +112,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     memory_search_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     memory_search_parser.set_defaults(handler=_memory_search)
+
+    diagnose_parser = subparsers.add_parser("diagnose", help="Run local diagnostics")
+    diagnose_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    diagnose_parser.set_defaults(handler=_diagnose)
 
     dev_parser = subparsers.add_parser("dev", help="Development and regression commands")
     dev_subparsers = dev_parser.add_subparsers(dest="dev_command", required=True)
@@ -315,6 +320,22 @@ def _parse_filters(values: list[str]) -> dict[str, str]:
             raise SystemExit(f"invalid filter '{value}', expected key=value")
         filters[key] = filter_value
     return filters
+
+
+def _diagnose(args: argparse.Namespace) -> int:
+    result = DiagnosticApplicationService().run()
+    payload = result.to_dict()
+
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        print(f"status={payload['status']}")
+        print(f"summary={payload['summary']}")
+        for check in payload["checks"]:
+            print(f"[{check['status'].upper()}] {check['name']}: {check['message']}")
+            if check.get("remediation"):
+                print(f"  fix={check['remediation']}")
+    return 0 if result.status != "error" else 1
 
 
 if __name__ == "__main__":
