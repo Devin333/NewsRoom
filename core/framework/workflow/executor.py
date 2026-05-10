@@ -201,6 +201,25 @@ class WorkflowExecutor:
                     output["editor_review"],
                 )
                 manifest["artifacts"]["editor_review"] = "editor_review.json"
+            if "support_matrix" in output:
+                self._artifact_manager.write_json(
+                    actual_run_id,
+                    "support_matrix.json",
+                    output["support_matrix"],
+                )
+                manifest["artifacts"]["support_matrix"] = "support_matrix.json"
+            if "report_quality_summary" in output:
+                self._artifact_manager.write_json(
+                    actual_run_id,
+                    "report_quality_summary.json",
+                    output["report_quality_summary"],
+                )
+                manifest["artifacts"]["report_quality_summary"] = "report_quality_summary.json"
+                summary = output["report_quality_summary"]
+                if hasattr(summary, "quality_score"):
+                    manifest["quality_score"] = summary.quality_score
+                elif isinstance(summary, dict):
+                    manifest["quality_score"] = summary.get("quality_score")
             if "final_report" in output:
                 self._artifact_manager.write_json(actual_run_id, "report.json", output["final_report"])
                 manifest["artifacts"]["report_json"] = "report.json"

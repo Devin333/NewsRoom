@@ -43,6 +43,9 @@ def test_daily_intelligence_runner_live_offline_writes_report_artifacts(tmp_path
     assert manifest["artifacts"]["evidence_bundle"] == "evidence_bundle.json"
     assert manifest["artifacts"]["citation_check_result"] == "citation_check_result.json"
     assert manifest["artifacts"]["editor_review"] == "editor_review.json"
+    assert manifest["artifacts"]["support_matrix"] == "support_matrix.json"
+    assert manifest["artifacts"]["report_quality_summary"] == "report_quality_summary.json"
+    assert manifest["quality_score"] == 1.0
     assert manifest["artifacts"]["report_json"] == "report.json"
     assert manifest["artifacts"]["report_markdown"] == "report.md"
     assert (run_dir / "report.md").exists()

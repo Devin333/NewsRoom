@@ -11,7 +11,7 @@ from core.framework.workflow import FunctionStepRegistry, ScopedDataBuffer
 from domain.reports import BlockedReport, FinalReport, render_markdown
 from domain.sources import SourceDefinition, SourceError, SourcePipelineMetrics
 from evidence import EvidenceBuilder, EvidenceBundle
-from quality import CitationChecker, EditorDecision, EditorGate
+from quality import CitationChecker, EditorDecision, EditorGate, QualityScorer, SupportMatrixBuilder
 from sources import SourceRegistry
 from sources.connectors import FeedConnector
 from sources.health import BasicSourceHealthManager
@@ -226,11 +226,18 @@ def build_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
                 write_keys=[
                     "citation_check_result",
                     "editor_review",
+                    "support_matrix",
+                    "report_quality_summary",
                     "final_report",
                     "report_markdown",
                     "blocked_report",
                 ],
-                required_output_keys=["citation_check_result", "editor_review"],
+                required_output_keys=[
+                    "citation_check_result",
+                    "editor_review",
+                    "support_matrix",
+                    "report_quality_summary",
+                ],
             ),
         ],
         edges=[
@@ -305,17 +312,28 @@ def _quality_gate(buffer: ScopedDataBuffer) -> dict[str, Any]:
     report_draft = buffer.read("report_draft")
     evidence_bundle = buffer.read("evidence_bundle")
     citation_check = CitationChecker().check(report_draft, evidence_bundle)
-    review = EditorGate().review(citation_check)
+    support_matrix = SupportMatrixBuilder().build(report_draft, evidence_bundle)
+    quality_summary = QualityScorer().score(
+        report=report_draft,
+        citation_check=citation_check,
+        support_matrix=support_matrix,
+    )
+    review = EditorGate().review(citation_check, support_matrix, quality_summary)
     outputs: dict[str, Any] = {
         "citation_check_result": citation_check,
         "editor_review": review,
+        "support_matrix": support_matrix,
+        "report_quality_summary": quality_summary,
     }
     if review.decision == EditorDecision.PASS:
         final_report = FinalReport(
             title=report_draft["title"],
             sections=report_draft["sections"],
             source_urls=sorted(evidence_bundle.source_urls),
-            metadata={"evidence_bundle_id": evidence_bundle.bundle_id},
+            metadata={
+                "evidence_bundle_id": evidence_bundle.bundle_id,
+                "quality_score": quality_summary.quality_score,
+            },
         )
         outputs["final_report"] = final_report
         outputs["report_markdown"] = render_markdown(final_report)
@@ -324,7 +342,10 @@ def _quality_gate(buffer: ScopedDataBuffer) -> dict[str, Any]:
             title=report_draft.get("title", "Blocked Daily Intelligence Report"),
             reasons=review.reasons,
             draft=report_draft,
-            metadata={"citation_check_result": citation_check.to_dict()},
+            metadata={
+                "citation_check_result": citation_check.to_dict(),
+                "quality_score": quality_summary.quality_score,
+            },
         )
     return outputs
 

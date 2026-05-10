@@ -2,6 +2,8 @@
 
 from quality.citation_checker import CitationCheckResult, CitationChecker
 from quality.editor_gate import EditorDecision, EditorGate, EditorReview
+from quality.scoring import QualityScorer, ReportQualitySummary
+from quality.support_matrix import SectionSupport, SupportMatrix, SupportMatrixBuilder
 
 __all__ = [
     "CitationCheckResult",
@@ -9,4 +11,9 @@ __all__ = [
     "EditorDecision",
     "EditorGate",
     "EditorReview",
+    "QualityScorer",
+    "ReportQualitySummary",
+    "SectionSupport",
+    "SupportMatrix",
+    "SupportMatrixBuilder",
 ]
