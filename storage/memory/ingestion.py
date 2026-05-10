@@ -10,6 +10,7 @@ from storage.vector import VectorDocument
 
 REPORT_SECTIONS_COLLECTION = "report_sections"
 EVIDENCE_ITEMS_COLLECTION = "evidence_items"
+TRUE_VALUES = {"1", "true", "yes", "on"}
 
 
 class VectorDocumentStore(Protocol):
@@ -168,3 +169,21 @@ def _to_dict(value: Any) -> dict[str, Any]:
     if hasattr(value, "to_dict"):
         return value.to_dict()
     return dict(value)
+
+
+def memory_ingestion_service_from_env(
+    *,
+    env: dict[str, str] | None = None,
+    vector_store: VectorDocumentStore | None = None,
+) -> MemoryIngestionService | None:
+    import os
+
+    values = env if env is not None else os.environ
+    enabled = values.get("NEWS_VECTOR_MEMORY_ENABLED", "").lower() in TRUE_VALUES
+    if not enabled:
+        return None
+    if vector_store is None:
+        from storage.vector import qdrant_store_from_env
+
+        vector_store = qdrant_store_from_env(env=values)
+    return MemoryIngestionService(vector_store)

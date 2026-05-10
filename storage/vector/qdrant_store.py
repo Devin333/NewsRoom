@@ -74,9 +74,11 @@ class QdrantVectorStore:
 def qdrant_store_from_env(
     *,
     embedding_model: DeterministicEmbeddingModel | None = None,
+    env: dict[str, str] | None = None,
 ) -> QdrantVectorStore:
-    vector_size = int(os.environ.get("NEWS_VECTOR_SIZE", DEFAULT_VECTOR_SIZE))
-    url = os.environ.get("NEWS_QDRANT_URL", DEFAULT_QDRANT_URL)
+    values = env if env is not None else os.environ
+    vector_size = int(values.get("NEWS_VECTOR_SIZE", DEFAULT_VECTOR_SIZE))
+    url = values.get("NEWS_QDRANT_URL", DEFAULT_QDRANT_URL)
     client = QdrantClient(url=url)
     return QdrantVectorStore(client, embedding_model=embedding_model, vector_size=vector_size)
 
