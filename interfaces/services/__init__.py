@@ -5,6 +5,7 @@ from interfaces.services.diagnose_service import DiagnosticApplicationService
 from interfaces.services.memory_service import MemoryApplicationService
 from interfaces.services.mcp_service import MCPApplicationService
 from interfaces.services.report_service import ReportApplicationService
+from interfaces.services.run_inspection_service import RunInspectionService
 from interfaces.services.source_service import SourceApplicationService
 
 __all__ = [
@@ -12,6 +13,7 @@ __all__ = [
     "MemoryApplicationService",
     "MCPApplicationService",
     "ReportApplicationService",
+    "RunInspectionService",
     "RunApplicationService",
     "SourceApplicationService",
 ]

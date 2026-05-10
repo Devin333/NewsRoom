@@ -18,6 +18,7 @@ from interfaces.services.diagnose_service import DiagnosticApplicationService
 from interfaces.services.memory_service import MemoryApplicationService
 from interfaces.services.mcp_service import MCPApplicationService
 from interfaces.services.report_service import ReportApplicationService
+from interfaces.services.run_inspection_service import RunInspectionService
 from interfaces.services.source_service import SourceApplicationService
 from interfaces.services.worker_service import WorkerApplicationService
 
@@ -28,6 +29,7 @@ MemoryServiceFactory = Callable[[], MemoryApplicationService]
 DiagnosticServiceFactory = Callable[[], DiagnosticApplicationService]
 SourceServiceFactory = Callable[[], SourceApplicationService]
 MCPServiceFactory = Callable[[], MCPApplicationService]
+RunInspectionServiceFactory = Callable[[], RunInspectionService]
 
 
 def create_app(
@@ -38,6 +40,7 @@ def create_app(
     diagnostic_service_factory: DiagnosticServiceFactory = DiagnosticApplicationService,
     source_service_factory: SourceServiceFactory = SourceApplicationService,
     mcp_service_factory: MCPServiceFactory = MCPApplicationService,
+    run_inspection_service_factory: RunInspectionServiceFactory = RunInspectionService,
 ) -> FastAPI:
     api = FastAPI(title="NewsRoom API", version="0.1.0")
 
@@ -111,6 +114,25 @@ def create_app(
     @api.get("/api/v1/mcp/catalog")
     def mcp_catalog():
         return _success(mcp_service_factory().catalog().to_dict())
+
+    @api.get("/api/v1/runs")
+    def list_runs(limit: int = 20):
+        return _success(run_inspection_service_factory().list_runs(limit=limit).to_dict())
+
+    @api.get("/api/v1/runs/{run_id}")
+    def get_run(run_id: str):
+        try:
+            result = run_inspection_service_factory().get_run(run_id)
+        except FileNotFoundError as exc:
+            return _error(
+                status_code=404,
+                code="run_not_found",
+                message=str(exc),
+                user_action_required=True,
+            )
+        except ValueError as exc:
+            return _error(status_code=400, code="invalid_run_id", message=str(exc))
+        return _success(result.to_dict())
 
     return api
 

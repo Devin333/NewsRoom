@@ -135,6 +135,29 @@ def test_mcp_catalog_returns_catalog() -> None:
     assert payload["data"]["tools"][0]["name"] == "news.source.health"
 
 
+def test_runs_list_returns_runs() -> None:
+    client = TestClient(create_app(run_inspection_service_factory=lambda: _FakeRunInspectionService()))
+
+    response = client.get("/api/v1/runs")
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["success"] is True
+    assert payload["data"]["run_count"] == 1
+    assert payload["data"]["runs"][0]["run_id"] == "run-1"
+
+
+def test_run_detail_missing_uses_unified_error() -> None:
+    client = TestClient(create_app(run_inspection_service_factory=lambda: _MissingRunInspectionService()))
+
+    response = client.get("/api/v1/runs/missing")
+    payload = response.json()
+
+    assert response.status_code == 404
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "run_not_found"
+
+
 class _FakeWorkerService:
     def __init__(self) -> None:
         self.enqueue_calls = []
@@ -297,3 +320,44 @@ class _FakeMCPService:
                 "prompts": [],
             }
         )
+
+
+class _FakeRunInspectionService:
+    def list_runs(self, *, limit):
+        return _FakeResult(
+            {
+                "run_count": 1,
+                "runs": [
+                    {
+                        "run_id": "run-1",
+                        "status": "succeeded",
+                        "workflow_id": "daily",
+                        "workflow_version": "0.1.0",
+                        "profile": "live-offline",
+                        "started_at": "2026-05-11T01:00:00Z",
+                        "finished_at": None,
+                        "quality_score": 1.0,
+                        "step_count": 7,
+                        "event_count": 16,
+                        "manifest_path": ".newsroom/runs/run-1/manifest.json",
+                    }
+                ],
+            }
+        )
+
+    def get_run(self, run_id):
+        return _FakeResult(
+            {
+                "run_id": run_id,
+                "manifest": {"run_id": run_id, "status": "succeeded"},
+                "manifest_path": f".newsroom/runs/{run_id}/manifest.json",
+            }
+        )
+
+
+class _MissingRunInspectionService:
+    def get_run(self, run_id):
+        raise FileNotFoundError(f"run not found: {run_id}")
+
+    def list_runs(self, *, limit):
+        return _FakeResult({"run_count": 0, "runs": []})

@@ -9,6 +9,7 @@ from interfaces.services.diagnose_service import DiagnosticApplicationService
 from interfaces.services.memory_service import DEFAULT_MEMORY_COLLECTION, MemoryApplicationService
 from interfaces.services.mcp_service import MCPApplicationService
 from interfaces.services.report_service import ReportApplicationService
+from interfaces.services.run_inspection_service import RunInspectionService
 from interfaces.services.run_service import RunApplicationService
 from interfaces.services.source_service import SourceApplicationService
 from interfaces.services.worker_service import DEFAULT_DAILY_QUEUE, WorkerApplicationService
@@ -131,6 +132,29 @@ def build_parser() -> argparse.ArgumentParser:
     sources_health_parser.add_argument("--include-disabled", action="store_true", help="Include disabled sources")
     sources_health_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     sources_health_parser.set_defaults(handler=_sources_health)
+
+    runs_parser = subparsers.add_parser("runs", help="Inspect workflow run history")
+    runs_subparsers = runs_parser.add_subparsers(dest="runs_command", required=True)
+
+    runs_list_parser = runs_subparsers.add_parser("list", help="List local runs")
+    runs_list_parser.add_argument("--limit", type=int, default=20, help="Maximum runs")
+    runs_list_parser.add_argument(
+        "--artifact-root",
+        default=".newsroom/runs",
+        help="Directory where run artifacts are stored",
+    )
+    runs_list_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    runs_list_parser.set_defaults(handler=_runs_list)
+
+    runs_show_parser = runs_subparsers.add_parser("show", help="Show a local run manifest")
+    runs_show_parser.add_argument("run_id", help="Run id")
+    runs_show_parser.add_argument(
+        "--artifact-root",
+        default=".newsroom/runs",
+        help="Directory where run artifacts are stored",
+    )
+    runs_show_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    runs_show_parser.set_defaults(handler=_runs_show)
 
     mcp_parser = subparsers.add_parser("mcp", help="Inspect inbound MCP catalog and tools")
     mcp_subparsers = mcp_parser.add_subparsers(dest="mcp_command", required=True)
@@ -399,6 +423,38 @@ def _sources_health(args: argparse.Namespace) -> int:
                 f"- {item['source_id']} status={item['status']} "
                 f"failures={item['consecutive_failures']}"
             )
+    return 0
+
+
+def _runs_list(args: argparse.Namespace) -> int:
+    result = RunInspectionService(artifact_root=args.artifact_root).list_runs(limit=args.limit)
+    payload = result.to_dict()
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        print(f"run_count={payload['run_count']}")
+        for run in payload["runs"]:
+            print(f"- {run['run_id']} status={run['status']} profile={run['profile']}")
+            print(f"  started_at={run['started_at']} manifest={run['manifest_path']}")
+    return 0
+
+
+def _runs_show(args: argparse.Namespace) -> int:
+    try:
+        result = RunInspectionService(artifact_root=args.artifact_root).get_run(args.run_id)
+    except (FileNotFoundError, ValueError) as exc:
+        print(str(exc))
+        return 1
+    payload = result.to_dict()
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        manifest = payload["manifest"]
+        print(f"run_id={payload['run_id']}")
+        print(f"status={manifest.get('status')}")
+        print(f"workflow_id={manifest.get('workflow_id')}")
+        print(f"profile={manifest.get('profile')}")
+        print(f"manifest_path={payload['manifest_path']}")
     return 0
 
 
