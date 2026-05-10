@@ -1,0 +1,108 @@
+from fastapi.testclient import TestClient
+
+from core.framework.workers import Task, TaskStatus
+from interfaces.api import create_app
+from interfaces.services.worker_service import EnqueuedTaskResult
+from storage.repository import ReportRecord
+
+
+def test_health_uses_common_envelope() -> None:
+    client = TestClient(create_app())
+
+    response = client.get("/health")
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["success"] is True
+    assert payload["data"]["status"] == "ok"
+    assert payload["request_id"].startswith("req_")
+    assert payload["schema_version"] == "1.0"
+
+
+def test_submit_daily_run_enqueues_task() -> None:
+    fake_worker = _FakeWorkerService()
+    client = TestClient(create_app(worker_service_factory=lambda: fake_worker))
+
+    response = client.post(
+        "/api/v1/runs/daily",
+        json={
+            "profile": "live-offline",
+            "topic": "AI policy",
+            "source_limit": 2,
+            "run_id": "api-run",
+        },
+    )
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert fake_worker.enqueue_calls[0]["topic"] == "AI policy"
+    assert payload["success"] is True
+    assert payload["data"]["status"] == "queued"
+    assert payload["data"]["task_status"] == "queued"
+    assert payload["data"]["task_id"] == "task-1"
+    assert payload["data"]["run_id"] == "api-run"
+
+
+def test_latest_report_returns_report_detail() -> None:
+    client = TestClient(create_app(report_service_factory=lambda: _FakeReportService()))
+
+    response = client.get("/api/v1/reports/latest")
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["success"] is True
+    assert payload["data"]["report_id"] == "report-1"
+    assert payload["data"]["run_id"] == "run-1"
+    assert payload["data"]["title"] == "Daily Intelligence"
+
+
+def test_latest_report_missing_uses_unified_error() -> None:
+    client = TestClient(create_app(report_service_factory=lambda: _MissingReportService()))
+
+    response = client.get("/api/v1/reports/latest")
+    payload = response.json()
+
+    assert response.status_code == 404
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "report_not_found"
+    assert payload["error"]["user_action_required"] is True
+
+
+class _FakeWorkerService:
+    def __init__(self) -> None:
+        self.enqueue_calls = []
+
+    def enqueue_daily(self, **kwargs):
+        self.enqueue_calls.append(kwargs)
+        task = Task(
+            task_id="task-1",
+            task_type="daily_intelligence.run",
+            payload={
+                "profile": kwargs["profile"],
+                "topic": kwargs["topic"],
+                "source_limit": kwargs["source_limit"],
+                "run_id": kwargs["run_id"],
+            },
+            queue_name=kwargs["queue_name"],
+        )
+        task.status = TaskStatus.QUEUED
+        return EnqueuedTaskResult(task=task, message_id="1-0")
+
+
+class _FakeReportService:
+    def latest_report(self):
+        return ReportRecord(
+            report_id="report-1",
+            run_id="run-1",
+            status="final",
+            title="Daily Intelligence",
+            report_json={"title": "Daily Intelligence"},
+            report_markdown="# Daily Intelligence",
+            quality_score=0.9,
+            manifest_path=".newsroom/runs/run-1/manifest.json",
+        )
+
+
+class _MissingReportService:
+    def latest_report(self):
+        raise FileNotFoundError("no local report found")

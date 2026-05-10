@@ -34,6 +34,7 @@ packages = [
   "domain.sources",
   "evidence",
   "interfaces",
+  "interfaces.api",
   "interfaces.cli",
   "interfaces.services",
   "sources",
