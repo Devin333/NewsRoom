@@ -24,6 +24,7 @@ packages = [
   "core.framework.llm",
   "core.framework.specs",
   "core.framework.tools",
+  "core.framework.workers",
   "core.framework.workflow",
   "domain",
   "domain.intelligence",
