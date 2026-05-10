@@ -158,6 +158,29 @@ def test_run_detail_missing_uses_unified_error() -> None:
     assert payload["error"]["code"] == "run_not_found"
 
 
+def test_artifact_list_returns_artifacts() -> None:
+    client = TestClient(create_app(artifact_service_factory=lambda: _FakeArtifactService()))
+
+    response = client.get("/api/v1/runs/run-1/artifacts")
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["success"] is True
+    assert payload["data"]["artifact_count"] == 1
+    assert payload["data"]["artifacts"][0]["artifact_key"] == "output"
+
+
+def test_artifact_missing_uses_unified_error() -> None:
+    client = TestClient(create_app(artifact_service_factory=lambda: _MissingArtifactService()))
+
+    response = client.get("/api/v1/runs/run-1/artifacts/missing")
+    payload = response.json()
+
+    assert response.status_code == 404
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "artifact_not_found"
+
+
 class _FakeWorkerService:
     def __init__(self) -> None:
         self.enqueue_calls = []
@@ -361,3 +384,41 @@ class _MissingRunInspectionService:
 
     def list_runs(self, *, limit):
         return _FakeResult({"run_count": 0, "runs": []})
+
+
+class _FakeArtifactService:
+    def list_artifacts(self, run_id):
+        return _FakeResult(
+            {
+                "run_id": run_id,
+                "artifact_count": 1,
+                "artifacts": [
+                    {
+                        "artifact_key": "output",
+                        "relative_path": "output.json",
+                        "content_type": "application/json",
+                        "size_bytes": 14,
+                    }
+                ],
+            }
+        )
+
+    def get_artifact(self, run_id, artifact_key):
+        return _FakeResult(
+            {
+                "run_id": run_id,
+                "artifact_key": artifact_key,
+                "relative_path": "output.json",
+                "content_type": "application/json",
+                "size_bytes": 14,
+                "content": {"status": "ok"},
+            }
+        )
+
+
+class _MissingArtifactService:
+    def list_artifacts(self, run_id):
+        raise FileNotFoundError(f"run not found: {run_id}")
+
+    def get_artifact(self, run_id, artifact_key):
+        raise FileNotFoundError(f"artifact not found: {artifact_key}")

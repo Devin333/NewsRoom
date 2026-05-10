@@ -1,0 +1,126 @@
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+from interfaces.services.run_inspection_service import RunInspectionService
+
+
+@dataclass(frozen=True)
+class ArtifactSummary:
+    artifact_key: str
+    relative_path: str
+    content_type: str
+    size_bytes: int | None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "artifact_key": self.artifact_key,
+            "relative_path": self.relative_path,
+            "content_type": self.content_type,
+            "size_bytes": self.size_bytes,
+        }
+
+
+@dataclass(frozen=True)
+class ArtifactListResult:
+    run_id: str
+    artifacts: list[ArtifactSummary]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "run_id": self.run_id,
+            "artifact_count": len(self.artifacts),
+            "artifacts": [artifact.to_dict() for artifact in self.artifacts],
+        }
+
+
+@dataclass(frozen=True)
+class ArtifactDetail:
+    run_id: str
+    artifact_key: str
+    relative_path: str
+    content_type: str
+    size_bytes: int | None
+    content: Any
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "run_id": self.run_id,
+            "artifact_key": self.artifact_key,
+            "relative_path": self.relative_path,
+            "content_type": self.content_type,
+            "size_bytes": self.size_bytes,
+            "content": self.content,
+        }
+
+
+class ArtifactInspectionService:
+    def __init__(self, artifact_root: str | Path = ".newsroom/runs") -> None:
+        self.artifact_root = Path(artifact_root)
+        self.run_inspection = RunInspectionService(self.artifact_root)
+
+    def list_artifacts(self, run_id: str) -> ArtifactListResult:
+        manifest = self.run_inspection.get_run(run_id).manifest
+        artifacts = [
+            self._summary(run_id, key, relative_path)
+            for key, relative_path in sorted((manifest.get("artifacts") or {}).items())
+        ]
+        return ArtifactListResult(run_id=run_id, artifacts=artifacts)
+
+    def get_artifact(self, run_id: str, artifact_key: str) -> ArtifactDetail:
+        manifest = self.run_inspection.get_run(run_id).manifest
+        artifacts = manifest.get("artifacts") or {}
+        if artifact_key not in artifacts:
+            raise FileNotFoundError(f"artifact not found: {artifact_key}")
+        relative_path = str(artifacts[artifact_key])
+        path = self._artifact_path(run_id, relative_path)
+        content_type = _content_type(path)
+        if content_type == "application/json":
+            content = _read_json(path)
+        else:
+            content = path.read_text(encoding="utf-8")
+        return ArtifactDetail(
+            run_id=run_id,
+            artifact_key=artifact_key,
+            relative_path=relative_path,
+            content_type=content_type,
+            size_bytes=path.stat().st_size if path.exists() else None,
+            content=content,
+        )
+
+    def _summary(self, run_id: str, artifact_key: str, relative_path: str) -> ArtifactSummary:
+        path = self._artifact_path(run_id, relative_path)
+        return ArtifactSummary(
+            artifact_key=artifact_key,
+            relative_path=relative_path,
+            content_type=_content_type(path),
+            size_bytes=path.stat().st_size if path.exists() else None,
+        )
+
+    def _artifact_path(self, run_id: str, relative_path: str) -> Path:
+        relative = Path(relative_path)
+        if relative.is_absolute() or ".." in relative.parts:
+            raise ValueError(f"invalid artifact path: {relative_path}")
+        path = self.artifact_root / run_id / relative
+        if not path.exists():
+            raise FileNotFoundError(f"artifact file not found: {relative_path}")
+        return path
+
+
+def _content_type(path: Path) -> str:
+    suffix = path.suffix.lower()
+    if suffix == ".json":
+        return "application/json"
+    if suffix == ".jsonl":
+        return "application/x-ndjson"
+    if suffix == ".md":
+        return "text/markdown"
+    return "text/plain"
+
+
+def _read_json(path: Path) -> Any:
+    with path.open("r", encoding="utf-8") as handle:
+        return json.load(handle)

@@ -21,6 +21,7 @@ from interfaces.services.report_service import ReportApplicationService
 from interfaces.services.run_inspection_service import RunInspectionService
 from interfaces.services.source_service import SourceApplicationService
 from interfaces.services.worker_service import WorkerApplicationService
+from interfaces.services.artifact_service import ArtifactInspectionService
 
 
 WorkerServiceFactory = Callable[[], WorkerApplicationService]
@@ -30,6 +31,7 @@ DiagnosticServiceFactory = Callable[[], DiagnosticApplicationService]
 SourceServiceFactory = Callable[[], SourceApplicationService]
 MCPServiceFactory = Callable[[], MCPApplicationService]
 RunInspectionServiceFactory = Callable[[], RunInspectionService]
+ArtifactInspectionServiceFactory = Callable[[], ArtifactInspectionService]
 
 
 def create_app(
@@ -41,6 +43,7 @@ def create_app(
     source_service_factory: SourceServiceFactory = SourceApplicationService,
     mcp_service_factory: MCPServiceFactory = MCPApplicationService,
     run_inspection_service_factory: RunInspectionServiceFactory = RunInspectionService,
+    artifact_service_factory: ArtifactInspectionServiceFactory = ArtifactInspectionService,
 ) -> FastAPI:
     api = FastAPI(title="NewsRoom API", version="0.1.0")
 
@@ -132,6 +135,26 @@ def create_app(
             )
         except ValueError as exc:
             return _error(status_code=400, code="invalid_run_id", message=str(exc))
+        return _success(result.to_dict())
+
+    @api.get("/api/v1/runs/{run_id}/artifacts")
+    def list_artifacts(run_id: str):
+        try:
+            result = artifact_service_factory().list_artifacts(run_id)
+        except FileNotFoundError as exc:
+            return _error(status_code=404, code="run_not_found", message=str(exc))
+        except ValueError as exc:
+            return _error(status_code=400, code="invalid_artifact_path", message=str(exc))
+        return _success(result.to_dict())
+
+    @api.get("/api/v1/runs/{run_id}/artifacts/{artifact_key}")
+    def get_artifact(run_id: str, artifact_key: str):
+        try:
+            result = artifact_service_factory().get_artifact(run_id, artifact_key)
+        except FileNotFoundError as exc:
+            return _error(status_code=404, code="artifact_not_found", message=str(exc))
+        except ValueError as exc:
+            return _error(status_code=400, code="invalid_artifact_path", message=str(exc))
         return _success(result.to_dict())
 
     return api

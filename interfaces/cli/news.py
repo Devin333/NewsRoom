@@ -5,6 +5,7 @@ import json
 from typing import Sequence
 
 from core.framework.specs import WorkflowStatus
+from interfaces.services.artifact_service import ArtifactInspectionService
 from interfaces.services.diagnose_service import DiagnosticApplicationService
 from interfaces.services.memory_service import DEFAULT_MEMORY_COLLECTION, MemoryApplicationService
 from interfaces.services.mcp_service import MCPApplicationService
@@ -155,6 +156,30 @@ def build_parser() -> argparse.ArgumentParser:
     )
     runs_show_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     runs_show_parser.set_defaults(handler=_runs_show)
+
+    artifacts_parser = subparsers.add_parser("artifacts", help="Inspect run artifacts")
+    artifacts_subparsers = artifacts_parser.add_subparsers(dest="artifacts_command", required=True)
+
+    artifacts_list_parser = artifacts_subparsers.add_parser("list", help="List artifacts for a run")
+    artifacts_list_parser.add_argument("--run-id", required=True, help="Run id")
+    artifacts_list_parser.add_argument(
+        "--artifact-root",
+        default=".newsroom/runs",
+        help="Directory where run artifacts are stored",
+    )
+    artifacts_list_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    artifacts_list_parser.set_defaults(handler=_artifacts_list)
+
+    artifacts_show_parser = artifacts_subparsers.add_parser("show", help="Show a run artifact")
+    artifacts_show_parser.add_argument("--run-id", required=True, help="Run id")
+    artifacts_show_parser.add_argument("--artifact-key", required=True, help="Artifact key from manifest")
+    artifacts_show_parser.add_argument(
+        "--artifact-root",
+        default=".newsroom/runs",
+        help="Directory where run artifacts are stored",
+    )
+    artifacts_show_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    artifacts_show_parser.set_defaults(handler=_artifacts_show)
 
     mcp_parser = subparsers.add_parser("mcp", help="Inspect inbound MCP catalog and tools")
     mcp_subparsers = mcp_parser.add_subparsers(dest="mcp_command", required=True)
@@ -455,6 +480,45 @@ def _runs_show(args: argparse.Namespace) -> int:
         print(f"workflow_id={manifest.get('workflow_id')}")
         print(f"profile={manifest.get('profile')}")
         print(f"manifest_path={payload['manifest_path']}")
+    return 0
+
+
+def _artifacts_list(args: argparse.Namespace) -> int:
+    try:
+        result = ArtifactInspectionService(artifact_root=args.artifact_root).list_artifacts(args.run_id)
+    except (FileNotFoundError, ValueError) as exc:
+        print(str(exc))
+        return 1
+    payload = result.to_dict()
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        print(f"run_id={payload['run_id']}")
+        print(f"artifact_count={payload['artifact_count']}")
+        for artifact in payload["artifacts"]:
+            print(
+                f"- {artifact['artifact_key']} path={artifact['relative_path']} "
+                f"type={artifact['content_type']} size={artifact['size_bytes']}"
+            )
+    return 0
+
+
+def _artifacts_show(args: argparse.Namespace) -> int:
+    try:
+        result = ArtifactInspectionService(artifact_root=args.artifact_root).get_artifact(
+            args.run_id,
+            args.artifact_key,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        print(str(exc))
+        return 1
+    payload = result.to_dict()
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    elif isinstance(payload["content"], str):
+        print(payload["content"])
+    else:
+        print(json.dumps(payload["content"], ensure_ascii=False, indent=2, sort_keys=True))
     return 0
 
 
