@@ -209,6 +209,11 @@ tempCodeRunnerFile.py
 # PyPI configuration file
 .pypirc
 
+# NewsRoom local/generated files
+.newsroom/
+openspec/
+.codex/
+
 # Marimo
 marimo/_static/
 marimo/_lsp/
