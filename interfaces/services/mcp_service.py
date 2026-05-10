@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, is_dataclass
 from typing import Any, Callable
 
-from interfaces.mcp import MCPCatalog, MCPPrompt, MCPResource, MCPTool, MCPToolCallResult
+from interfaces.mcp.models import MCPCatalog, MCPPrompt, MCPResource, MCPTool, MCPToolCallResult
 
 
 DEFAULT_DAILY_QUEUE = "news:queue:daily"

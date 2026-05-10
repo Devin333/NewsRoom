@@ -145,6 +145,9 @@ def build_parser() -> argparse.ArgumentParser:
     mcp_call_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     mcp_call_parser.set_defaults(handler=_mcp_call)
 
+    mcp_serve_parser = mcp_subparsers.add_parser("serve-stdio", help="Run MCP stdio adapter")
+    mcp_serve_parser.set_defaults(handler=_mcp_serve_stdio)
+
     dev_parser = subparsers.add_parser("dev", help="Development and regression commands")
     dev_subparsers = dev_parser.add_subparsers(dest="dev_command", required=True)
 
@@ -437,6 +440,13 @@ def _parse_json_object(value: str) -> dict:
     if not isinstance(payload, dict):
         raise SystemExit("--args-json must be a JSON object")
     return payload
+
+
+def _mcp_serve_stdio(args: argparse.Namespace) -> int:
+    from interfaces.mcp.stdio_server import run_stdio
+
+    run_stdio()
+    return 0
 
 
 if __name__ == "__main__":
