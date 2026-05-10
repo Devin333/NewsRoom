@@ -27,6 +27,8 @@ class Task:
     attempts: int = 0
     max_attempts: int = 3
     leased_by: str | None = None
+    scheduled_for: datetime | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def to_dict(self) -> dict[str, Any]:
@@ -39,12 +41,17 @@ class Task:
             "attempts": self.attempts,
             "max_attempts": self.max_attempts,
             "leased_by": self.leased_by,
+            "scheduled_for": self.scheduled_for.isoformat().replace("+00:00", "Z")
+            if self.scheduled_for
+            else None,
+            "metadata": dict(self.metadata),
             "created_at": self.created_at.isoformat().replace("+00:00", "Z"),
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Task":
         created_at = _parse_datetime(data.get("created_at"))
+        scheduled_for = _parse_optional_datetime(data.get("scheduled_for"))
         return cls(
             task_id=str(data.get("task_id") or uuid4().hex),
             task_type=str(data["task_type"]),
@@ -54,6 +61,8 @@ class Task:
             attempts=int(data.get("attempts") or 0),
             max_attempts=int(data.get("max_attempts") or 3),
             leased_by=data.get("leased_by"),
+            scheduled_for=scheduled_for,
+            metadata=dict(data.get("metadata") or {}),
             created_at=created_at,
         )
 
@@ -89,3 +98,9 @@ def _parse_datetime(value: Any) -> datetime:
     if isinstance(value, str) and value:
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
     return datetime.now(UTC)
+
+
+def _parse_optional_datetime(value: Any) -> datetime | None:
+    if value is None or value == "":
+        return None
+    return _parse_datetime(value)
