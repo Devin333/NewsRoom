@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -59,3 +60,24 @@ class MemorySearchRequest(BaseModel):
     collection: str = "report_sections"
     limit: int = Field(default=5, ge=1)
     filters: dict[str, Any] = Field(default_factory=dict)
+
+
+class DailyScheduleRequest(BaseModel):
+    schedule_id: str = "daily-intelligence"
+    name: str = "Daily intelligence"
+    trigger_type: Literal["interval", "manual"] = "interval"
+    interval_seconds: int = Field(default=86400, ge=1)
+    run_at: datetime | None = None
+    profile: Literal["live", "live-offline"] = "live-offline"
+    topic: str = "AI"
+    source_limit: int = Field(default=3, ge=1)
+    queue_name: str = "news:queue:daily"
+
+
+class ScheduleTickRequest(BaseModel):
+    now: datetime | None = None
+    include_disabled: bool = False
+
+
+class ManualScheduleTriggerRequest(BaseModel):
+    now: datetime | None = None

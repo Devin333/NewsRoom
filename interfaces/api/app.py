@@ -6,19 +6,25 @@ from uuid import uuid4
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
+from core.framework.workers.schedule_store import ScheduleNotFoundError, ScheduleRecord
+from core.framework.workers.scheduler import ScheduleSpec
 from interfaces.api.models import (
     ApiError,
     ApiResponse,
     DailyRunRequest,
+    DailyScheduleRequest,
+    ManualScheduleTriggerRequest,
     MemorySearchRequest,
     ReportDetail,
     RunResponse,
+    ScheduleTickRequest,
 )
 from interfaces.services.diagnose_service import DiagnosticApplicationService
 from interfaces.services.memory_service import MemoryApplicationService
 from interfaces.services.mcp_service import MCPApplicationService
 from interfaces.services.report_service import ReportApplicationService
 from interfaces.services.run_inspection_service import RunInspectionService
+from interfaces.services.schedule_service import ScheduleApplicationService
 from interfaces.services.source_service import SourceApplicationService
 from interfaces.services.worker_service import WorkerApplicationService
 from interfaces.services.artifact_service import ArtifactInspectionService
@@ -32,6 +38,7 @@ SourceServiceFactory = Callable[[], SourceApplicationService]
 MCPServiceFactory = Callable[[], MCPApplicationService]
 RunInspectionServiceFactory = Callable[[], RunInspectionService]
 ArtifactInspectionServiceFactory = Callable[[], ArtifactInspectionService]
+ScheduleServiceFactory = Callable[[], ScheduleApplicationService]
 
 
 def create_app(
@@ -44,6 +51,7 @@ def create_app(
     mcp_service_factory: MCPServiceFactory = MCPApplicationService,
     run_inspection_service_factory: RunInspectionServiceFactory = RunInspectionService,
     artifact_service_factory: ArtifactInspectionServiceFactory = ArtifactInspectionService,
+    schedule_service_factory: ScheduleServiceFactory = ScheduleApplicationService,
 ) -> FastAPI:
     api = FastAPI(title="NewsRoom API", version="0.1.0")
 
@@ -155,6 +163,59 @@ def create_app(
             return _error(status_code=404, code="artifact_not_found", message=str(exc))
         except ValueError as exc:
             return _error(status_code=400, code="invalid_artifact_path", message=str(exc))
+        return _success(result.to_dict())
+
+    @api.get("/api/v1/schedules")
+    def list_schedules(include_disabled: bool = False):
+        result = schedule_service_factory().list_schedules(enabled_only=not include_disabled)
+        return _success(result.to_dict())
+
+    @api.post("/api/v1/schedules/daily")
+    def upsert_daily_schedule(request: DailyScheduleRequest):
+        try:
+            spec = ScheduleSpec(
+                schedule_id=request.schedule_id,
+                name=request.name,
+                trigger_type=request.trigger_type,
+                task_type="daily_intelligence.run",
+                payload_template={
+                    "profile": request.profile,
+                    "topic": request.topic,
+                    "source_limit": request.source_limit,
+                },
+                queue_name=request.queue_name,
+                interval_seconds=(
+                    request.interval_seconds if request.trigger_type == "interval" else None
+                ),
+                run_at=request.run_at if request.trigger_type == "interval" else None,
+            )
+        except ValueError as exc:
+            return _error(status_code=400, code="invalid_schedule", message=str(exc))
+        record = ScheduleRecord(spec=spec, next_run_at=spec.run_at)
+        result = schedule_service_factory().upsert_schedule(record)
+        return _success(result.to_dict())
+
+    @api.post("/api/v1/schedules/tick")
+    def tick_schedules(request: ScheduleTickRequest | None = None):
+        actual_request = request or ScheduleTickRequest()
+        result = schedule_service_factory().tick(
+            now=actual_request.now,
+            enabled_only=not actual_request.include_disabled,
+        )
+        return _success(result.to_dict())
+
+    @api.post("/api/v1/schedules/{schedule_id}/trigger")
+    def trigger_schedule(schedule_id: str, request: ManualScheduleTriggerRequest | None = None):
+        actual_request = request or ManualScheduleTriggerRequest()
+        try:
+            result = schedule_service_factory().trigger_manual(
+                schedule_id,
+                now=actual_request.now,
+            )
+        except ScheduleNotFoundError as exc:
+            return _error(status_code=404, code="schedule_not_found", message=str(exc))
+        except ValueError as exc:
+            return _error(status_code=400, code="invalid_schedule_trigger", message=str(exc))
         return _success(result.to_dict())
 
     return api
