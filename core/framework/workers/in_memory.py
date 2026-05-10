@@ -13,6 +13,7 @@ class InMemoryTaskQueue:
 
     def enqueue(self, task: Task) -> None:
         task.status = TaskStatus.QUEUED
+        task.leased_by = None
         self._queued.setdefault(task.queue_name, deque()).append(task)
 
     def lease(self, worker_id: str, queue_names: list[str]) -> Task | None:

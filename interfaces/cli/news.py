@@ -7,6 +7,7 @@ from typing import Sequence
 from core.framework.specs import WorkflowStatus
 from interfaces.services.report_service import ReportApplicationService
 from interfaces.services.run_service import RunApplicationService
+from interfaces.services.worker_service import DEFAULT_DAILY_QUEUE, WorkerApplicationService
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -46,6 +47,49 @@ def build_parser() -> argparse.ArgumentParser:
         help="Directory where run artifacts are stored",
     )
     latest_parser.set_defaults(handler=_latest_report)
+
+    worker_parser = subparsers.add_parser("worker", help="Submit and process background tasks")
+    worker_subparsers = worker_parser.add_subparsers(dest="worker_command", required=True)
+
+    enqueue_daily_parser = worker_subparsers.add_parser(
+        "enqueue-daily",
+        help="Enqueue a daily intelligence task",
+    )
+    enqueue_daily_parser.add_argument(
+        "--profile",
+        choices=["live", "live-offline"],
+        default="live-offline",
+        help="Execution profile",
+    )
+    enqueue_daily_parser.add_argument("--topic", default="AI", help="Topic for the daily report")
+    enqueue_daily_parser.add_argument("--source-limit", type=int, default=3, help="Maximum source items")
+    enqueue_daily_parser.add_argument("--run-id", default=None, help="Optional deterministic run id")
+    enqueue_daily_parser.add_argument("--queue-name", default=DEFAULT_DAILY_QUEUE, help="Redis stream queue name")
+    enqueue_daily_parser.add_argument("--redis-url", default=None, help="Redis URL; defaults to NEWS_REDIS_URL")
+    enqueue_daily_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    enqueue_daily_parser.set_defaults(handler=_worker_enqueue_daily)
+
+    run_once_parser = worker_subparsers.add_parser(
+        "run-once",
+        help="Lease and process at most one queued task",
+    )
+    run_once_parser.add_argument("--worker-id", default="news-worker-1", help="Worker consumer id")
+    run_once_parser.add_argument(
+        "--queue-name",
+        dest="queue_names",
+        action="append",
+        default=None,
+        help="Queue stream to read; can be passed multiple times",
+    )
+    run_once_parser.add_argument("--block-ms", type=int, default=1000, help="Redis read block time in milliseconds")
+    run_once_parser.add_argument(
+        "--artifact-root",
+        default=".newsroom/runs",
+        help="Directory where run artifacts are written",
+    )
+    run_once_parser.add_argument("--redis-url", default=None, help="Redis URL; defaults to NEWS_REDIS_URL")
+    run_once_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    run_once_parser.set_defaults(handler=_worker_run_once)
 
     dev_parser = subparsers.add_parser("dev", help="Development and regression commands")
     dev_subparsers = dev_parser.add_subparsers(dest="dev_command", required=True)
@@ -166,6 +210,55 @@ def _latest_report(args: argparse.Namespace) -> int:
     else:
         print(record.report_markdown or json.dumps(record.report_json, ensure_ascii=False, indent=2))
     return 0
+
+
+def _worker_enqueue_daily(args: argparse.Namespace) -> int:
+    service = WorkerApplicationService(redis_url=args.redis_url)
+    result = service.enqueue_daily(
+        profile=args.profile,
+        topic=args.topic,
+        source_limit=args.source_limit,
+        run_id=args.run_id,
+        queue_name=args.queue_name,
+    )
+    payload = result.to_dict()
+
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        print(f"task_id={payload['task_id']}")
+        print(f"task_type={payload['task_type']}")
+        print(f"queue_name={payload['queue_name']}")
+        print(f"message_id={payload['message_id']}")
+        print(f"profile={payload['profile']}")
+        print(f"topic={payload['topic']}")
+    return 0
+
+
+def _worker_run_once(args: argparse.Namespace) -> int:
+    service = WorkerApplicationService(artifact_root=args.artifact_root, redis_url=args.redis_url)
+    result = service.run_once(
+        worker_id=args.worker_id,
+        queue_names=args.queue_names or [DEFAULT_DAILY_QUEUE],
+        block_ms=args.block_ms,
+    )
+    payload = result.to_dict()
+
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        print(f"processed={str(payload['processed']).lower()}")
+        print(f"worker_id={payload['worker_id']}")
+        if payload["processed"]:
+            print(f"task_id={payload['task_id']}")
+            print(f"task_type={payload['task_type']}")
+            print(f"queue_name={payload['queue_name']}")
+            print(f"message_id={payload['message_id']}")
+            print(f"success={str(payload['success']).lower()}")
+            print(f"workflow_run_id={payload['workflow_run_id']}")
+            if payload["error_message"]:
+                print(f"error={payload['error_message']}")
+    return 0 if result.success is not False else 1
 
 
 if __name__ == "__main__":

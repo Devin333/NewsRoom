@@ -42,6 +42,21 @@ class Task:
             "created_at": self.created_at.isoformat().replace("+00:00", "Z"),
         }
 
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "Task":
+        created_at = _parse_datetime(data.get("created_at"))
+        return cls(
+            task_id=str(data.get("task_id") or uuid4().hex),
+            task_type=str(data["task_type"]),
+            queue_name=str(data.get("queue_name") or "news:queue:daily"),
+            payload=dict(data.get("payload") or {}),
+            status=TaskStatus(data.get("status") or TaskStatus.CREATED.value),
+            attempts=int(data.get("attempts") or 0),
+            max_attempts=int(data.get("max_attempts") or 3),
+            leased_by=data.get("leased_by"),
+            created_at=created_at,
+        )
+
 
 @dataclass(frozen=True)
 class TaskError:
@@ -59,3 +74,18 @@ class TaskResult:
     error_type: str | None = None
     error_message: str | None = None
     finished_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+
+
+@dataclass(frozen=True)
+class LeasedTask:
+    queue_name: str
+    message_id: str
+    task: Task
+
+
+def _parse_datetime(value: Any) -> datetime:
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str) and value:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return datetime.now(UTC)
