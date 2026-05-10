@@ -12,8 +12,12 @@ from core.framework.agent_loop.models import (
 )
 from core.framework.agent_loop.parser import AgentActionParser, AgentActionParserError
 from core.framework.agent_loop.prompt import PromptBuilder
+from core.framework.agent_loop.judge import OutputJudge
+from core.framework.agent_loop.loop import AgentLoop
+from core.framework.agent_loop.runner import AgentRunner
 
 __all__ = [
+    "AgentLoop",
     "AgentAction",
     "AgentActionParser",
     "AgentActionParserError",
@@ -21,8 +25,10 @@ __all__ = [
     "AgentLoopPolicy",
     "AgentLoopResult",
     "AgentLoopStatus",
+    "AgentRunner",
     "AgentSpec",
     "JudgeDecision",
     "JudgeVerdict",
+    "OutputJudge",
     "PromptBuilder",
 ]
