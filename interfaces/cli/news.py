@@ -9,6 +9,7 @@ from interfaces.services.diagnose_service import DiagnosticApplicationService
 from interfaces.services.memory_service import DEFAULT_MEMORY_COLLECTION, MemoryApplicationService
 from interfaces.services.report_service import ReportApplicationService
 from interfaces.services.run_service import RunApplicationService
+from interfaces.services.source_service import SourceApplicationService
 from interfaces.services.worker_service import DEFAULT_DAILY_QUEUE, WorkerApplicationService
 
 
@@ -116,6 +117,19 @@ def build_parser() -> argparse.ArgumentParser:
     diagnose_parser = subparsers.add_parser("diagnose", help="Run local diagnostics")
     diagnose_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     diagnose_parser.set_defaults(handler=_diagnose)
+
+    sources_parser = subparsers.add_parser("sources", help="Inspect source registry and health")
+    sources_subparsers = sources_parser.add_subparsers(dest="sources_command", required=True)
+
+    sources_list_parser = sources_subparsers.add_parser("list", help="List registered sources")
+    sources_list_parser.add_argument("--include-disabled", action="store_true", help="Include disabled sources")
+    sources_list_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    sources_list_parser.set_defaults(handler=_sources_list)
+
+    sources_health_parser = sources_subparsers.add_parser("health", help="Show source health")
+    sources_health_parser.add_argument("--include-disabled", action="store_true", help="Include disabled sources")
+    sources_health_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    sources_health_parser.set_defaults(handler=_sources_health)
 
     dev_parser = subparsers.add_parser("dev", help="Development and regression commands")
     dev_subparsers = dev_parser.add_subparsers(dest="dev_command", required=True)
@@ -336,6 +350,39 @@ def _diagnose(args: argparse.Namespace) -> int:
             if check.get("remediation"):
                 print(f"  fix={check['remediation']}")
     return 0 if result.status != "error" else 1
+
+
+def _sources_list(args: argparse.Namespace) -> int:
+    result = SourceApplicationService().list_sources(enabled_only=not args.include_disabled)
+    payload = result.to_dict()
+
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        print(f"source_count={payload['source_count']}")
+        for source in payload["sources"]:
+            print(
+                f"- {source['source_id']} type={source['source_type']} "
+                f"reliability={source['reliability']} enabled={str(source['enabled']).lower()}"
+            )
+            print(f"  {source['name']} <{source['url']}>")
+    return 0
+
+
+def _sources_health(args: argparse.Namespace) -> int:
+    result = SourceApplicationService().source_health(enabled_only=not args.include_disabled)
+    payload = result.to_dict()
+
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        print(f"source_count={payload['source_count']}")
+        for item in payload["health"]:
+            print(
+                f"- {item['source_id']} status={item['status']} "
+                f"failures={item['consecutive_failures']}"
+            )
+    return 0
 
 
 if __name__ == "__main__":

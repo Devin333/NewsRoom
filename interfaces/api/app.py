@@ -17,6 +17,7 @@ from interfaces.api.models import (
 from interfaces.services.diagnose_service import DiagnosticApplicationService
 from interfaces.services.memory_service import MemoryApplicationService
 from interfaces.services.report_service import ReportApplicationService
+from interfaces.services.source_service import SourceApplicationService
 from interfaces.services.worker_service import WorkerApplicationService
 
 
@@ -24,6 +25,7 @@ WorkerServiceFactory = Callable[[], WorkerApplicationService]
 ReportServiceFactory = Callable[[], ReportApplicationService]
 MemoryServiceFactory = Callable[[], MemoryApplicationService]
 DiagnosticServiceFactory = Callable[[], DiagnosticApplicationService]
+SourceServiceFactory = Callable[[], SourceApplicationService]
 
 
 def create_app(
@@ -32,6 +34,7 @@ def create_app(
     report_service_factory: ReportServiceFactory = ReportApplicationService,
     memory_service_factory: MemoryServiceFactory = MemoryApplicationService,
     diagnostic_service_factory: DiagnosticServiceFactory = DiagnosticApplicationService,
+    source_service_factory: SourceServiceFactory = SourceApplicationService,
 ) -> FastAPI:
     api = FastAPI(title="NewsRoom API", version="0.1.0")
 
@@ -93,6 +96,14 @@ def create_app(
     @api.get("/api/v1/admin/diagnose")
     def diagnose():
         return _success(diagnostic_service_factory().run().to_dict())
+
+    @api.get("/api/v1/sources")
+    def list_sources(include_disabled: bool = False):
+        return _success(source_service_factory().list_sources(enabled_only=not include_disabled).to_dict())
+
+    @api.get("/api/v1/sources/health")
+    def source_health(include_disabled: bool = False):
+        return _success(source_service_factory().source_health(enabled_only=not include_disabled).to_dict())
 
     return api
 

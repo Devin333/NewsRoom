@@ -101,6 +101,29 @@ def test_admin_diagnose_returns_result() -> None:
     assert payload["data"]["checks"][0]["check_id"] == "redis"
 
 
+def test_sources_list_returns_sources() -> None:
+    client = TestClient(create_app(source_service_factory=lambda: _FakeSourceService()))
+
+    response = client.get("/api/v1/sources")
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["success"] is True
+    assert payload["data"]["source_count"] == 1
+    assert payload["data"]["sources"][0]["source_id"] == "source-1"
+
+
+def test_sources_health_returns_health() -> None:
+    client = TestClient(create_app(source_service_factory=lambda: _FakeSourceService()))
+
+    response = client.get("/api/v1/sources/health")
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["success"] is True
+    assert payload["data"]["health"][0]["status"] == "healthy"
+
+
 class _FakeWorkerService:
     def __init__(self) -> None:
         self.enqueue_calls = []
@@ -196,3 +219,52 @@ class _FakeDiagnosticResult:
                 }
             ],
         }
+
+
+class _FakeSourceService:
+    def list_sources(self, *, enabled_only):
+        return _FakeResult(
+            {
+                "source_count": 1,
+                "sources": [
+                    {
+                        "source_id": "source-1",
+                        "name": "Source",
+                        "source_type": "rss",
+                        "url": "https://example.com/rss",
+                        "reliability": "high",
+                        "authority_score": 0.9,
+                        "enabled": True,
+                        "topics": ["AI"],
+                        "language": None,
+                        "region": None,
+                    }
+                ],
+            }
+        )
+
+    def source_health(self, *, enabled_only):
+        return _FakeResult(
+            {
+                "source_count": 1,
+                "health": [
+                    {
+                        "source_id": "source-1",
+                        "status": "healthy",
+                        "consecutive_failures": 0,
+                        "last_success_at": None,
+                        "last_failure_at": None,
+                        "cooldown_until": None,
+                        "last_error": None,
+                    }
+                ],
+            }
+        )
+
+
+class _FakeResult:
+    def __init__(self, payload) -> None:
+        self.payload = payload
+
+    def to_dict(self):
+        return self.payload
