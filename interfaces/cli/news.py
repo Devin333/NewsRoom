@@ -5,6 +5,7 @@ import json
 from typing import Sequence
 
 from core.framework.specs import WorkflowStatus
+from interfaces.services.memory_service import DEFAULT_MEMORY_COLLECTION, MemoryApplicationService
 from interfaces.services.report_service import ReportApplicationService
 from interfaces.services.run_service import RunApplicationService
 from interfaces.services.worker_service import DEFAULT_DAILY_QUEUE, WorkerApplicationService
@@ -90,6 +91,26 @@ def build_parser() -> argparse.ArgumentParser:
     run_once_parser.add_argument("--redis-url", default=None, help="Redis URL; defaults to NEWS_REDIS_URL")
     run_once_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     run_once_parser.set_defaults(handler=_worker_run_once)
+
+    memory_parser = subparsers.add_parser("memory", help="Search and manage memory")
+    memory_subparsers = memory_parser.add_subparsers(dest="memory_command", required=True)
+    memory_search_parser = memory_subparsers.add_parser("search", help="Search vector memory")
+    memory_search_parser.add_argument("query", help="Search query text")
+    memory_search_parser.add_argument(
+        "--collection",
+        default=DEFAULT_MEMORY_COLLECTION,
+        help="Vector memory collection",
+    )
+    memory_search_parser.add_argument("--limit", type=int, default=5, help="Maximum results")
+    memory_search_parser.add_argument(
+        "--filter",
+        dest="filters",
+        action="append",
+        default=[],
+        help="Exact-match payload filter as key=value; can be repeated",
+    )
+    memory_search_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    memory_search_parser.set_defaults(handler=_memory_search)
 
     dev_parser = subparsers.add_parser("dev", help="Development and regression commands")
     dev_subparsers = dev_parser.add_subparsers(dest="dev_command", required=True)
@@ -259,6 +280,41 @@ def _worker_run_once(args: argparse.Namespace) -> int:
             if payload["error_message"]:
                 print(f"error={payload['error_message']}")
     return 0 if result.success is not False else 1
+
+
+def _memory_search(args: argparse.Namespace) -> int:
+    filters = _parse_filters(args.filters)
+    result = MemoryApplicationService().search(
+        text=args.query,
+        collection=args.collection,
+        limit=args.limit,
+        filters=filters,
+    )
+    payload = result.to_dict()
+
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        print(f"collection={payload['collection']}")
+        print(f"query={payload['query']}")
+        print(f"result_count={payload['result_count']}")
+        for item in payload["results"]:
+            print(f"- {item['document_id']} score={item['score']:.4f} source_type={item['source_type']}")
+            if item.get("text"):
+                print(f"  {item['text'][:160]}")
+    return 0
+
+
+def _parse_filters(values: list[str]) -> dict[str, str]:
+    filters: dict[str, str] = {}
+    for value in values:
+        if "=" not in value:
+            raise SystemExit(f"invalid filter '{value}', expected key=value")
+        key, filter_value = value.split("=", 1)
+        if not key:
+            raise SystemExit(f"invalid filter '{value}', expected key=value")
+        filters[key] = filter_value
+    return filters
 
 
 if __name__ == "__main__":

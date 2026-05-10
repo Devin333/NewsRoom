@@ -6,19 +6,29 @@ from uuid import uuid4
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
-from interfaces.api.models import ApiError, ApiResponse, DailyRunRequest, ReportDetail, RunResponse
+from interfaces.api.models import (
+    ApiError,
+    ApiResponse,
+    DailyRunRequest,
+    MemorySearchRequest,
+    ReportDetail,
+    RunResponse,
+)
+from interfaces.services.memory_service import MemoryApplicationService
 from interfaces.services.report_service import ReportApplicationService
 from interfaces.services.worker_service import WorkerApplicationService
 
 
 WorkerServiceFactory = Callable[[], WorkerApplicationService]
 ReportServiceFactory = Callable[[], ReportApplicationService]
+MemoryServiceFactory = Callable[[], MemoryApplicationService]
 
 
 def create_app(
     *,
     worker_service_factory: WorkerServiceFactory = WorkerApplicationService,
     report_service_factory: ReportServiceFactory = ReportApplicationService,
+    memory_service_factory: MemoryServiceFactory = MemoryApplicationService,
 ) -> FastAPI:
     api = FastAPI(title="NewsRoom API", version="0.1.0")
 
@@ -66,6 +76,16 @@ def create_app(
             manifest_path=record.manifest_path,
         )
         return _success(_model_to_dict(data))
+
+    @api.post("/api/v1/memory/search")
+    def memory_search(request: MemorySearchRequest):
+        result = memory_service_factory().search(
+            text=request.query,
+            collection=request.collection,
+            limit=request.limit,
+            filters=request.filters,
+        )
+        return _success(result.to_dict())
 
     return api
 

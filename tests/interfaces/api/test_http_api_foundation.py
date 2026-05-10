@@ -68,6 +68,27 @@ def test_latest_report_missing_uses_unified_error() -> None:
     assert payload["error"]["user_action_required"] is True
 
 
+def test_memory_search_returns_results() -> None:
+    client = TestClient(create_app(memory_service_factory=lambda: _FakeMemoryService()))
+
+    response = client.post(
+        "/api/v1/memory/search",
+        json={
+            "query": "agent runtime",
+            "collection": "report_sections",
+            "limit": 2,
+            "filters": {"topic": "AI"},
+        },
+    )
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["success"] is True
+    assert payload["data"]["collection"] == "report_sections"
+    assert payload["data"]["filters"] == {"topic": "AI"}
+    assert payload["data"]["results"][0]["document_id"] == "doc-1"
+
+
 class _FakeWorkerService:
     def __init__(self) -> None:
         self.enqueue_calls = []
@@ -106,3 +127,37 @@ class _FakeReportService:
 class _MissingReportService:
     def latest_report(self):
         raise FileNotFoundError("no local report found")
+
+
+class _FakeMemoryService:
+    def search(self, **kwargs):
+        return _FakeMemoryResult(
+            {
+                "collection": kwargs["collection"],
+                "query": kwargs["text"],
+                "filters": kwargs["filters"],
+                "limit": kwargs["limit"],
+                "result_count": 1,
+                "results": [
+                    {
+                        "document_id": "doc-1",
+                        "score": 0.9,
+                        "text": "Agent runtime memory",
+                        "source_type": "report_section",
+                        "payload": {"topic": "AI"},
+                        "run_id": None,
+                        "report_id": None,
+                        "evidence_id": None,
+                        "source_item_id": None,
+                    }
+                ],
+            }
+        )
+
+
+class _FakeMemoryResult:
+    def __init__(self, payload) -> None:
+        self.payload = payload
+
+    def to_dict(self):
+        return self.payload

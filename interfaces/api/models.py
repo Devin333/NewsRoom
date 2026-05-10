@@ -52,3 +52,10 @@ class ReportDetail(BaseModel):
     report_markdown: str | None = None
     quality_score: float | None = None
     manifest_path: str | None = None
+
+
+class MemorySearchRequest(BaseModel):
+    query: str
+    collection: str = "report_sections"
+    limit: int = Field(default=5, ge=1)
+    filters: dict[str, Any] = Field(default_factory=dict)
