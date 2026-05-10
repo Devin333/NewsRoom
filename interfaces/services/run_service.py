@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from core.framework import RunResult
+from workflows.daily_intelligence.test_agent_loop import run_test_agent_loop
 from workflows.daily_intelligence.test_no_llm import run_test_no_llm
 
 
@@ -12,6 +13,13 @@ class RunApplicationService:
 
     def run_test_no_llm(self, *, topic: str, run_id: str | None = None) -> RunResult:
         return run_test_no_llm(
+            artifact_root=self.artifact_root,
+            request={"topic": topic},
+            run_id=run_id,
+        )
+
+    def run_test_agent_loop(self, *, topic: str, run_id: str | None = None) -> RunResult:
+        return run_test_agent_loop(
             artifact_root=self.artifact_root,
             request={"topic": topic},
             run_id=run_id,

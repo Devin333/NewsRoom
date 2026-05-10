@@ -129,6 +129,19 @@ class WorkflowExecutor:
             recorder.emit("workflow_succeeded", {"path": path})
             self._artifact_manager.write_json(actual_run_id, "output.json", output)
             manifest["artifacts"]["output"] = "output.json"
+            if "agent_loop_metrics" in output:
+                manifest["agent_loop_metrics"] = output["agent_loop_metrics"]
+                metrics = output["agent_loop_metrics"]
+                manifest["llm_calls"] = metrics.get("llm_calls", 0)
+                manifest["tool_calls"] = metrics.get("tool_calls", 0)
+                manifest["token_usage"] = metrics.get("token_usage", {})
+            if "agent_loop_events" in output:
+                self._artifact_manager.write_json(
+                    actual_run_id,
+                    "agent_loop_events.json",
+                    output["agent_loop_events"],
+                )
+                manifest["artifacts"]["agent_loop_events"] = "agent_loop_events.json"
             if "final_report" in output:
                 self._artifact_manager.write_json(actual_run_id, "report.json", output["final_report"])
                 manifest["artifacts"]["report_json"] = "report.json"

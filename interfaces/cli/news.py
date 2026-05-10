@@ -32,6 +32,24 @@ def build_parser() -> argparse.ArgumentParser:
     no_llm_parser.add_argument("--run-id", default=None, help="Optional deterministic run id")
     no_llm_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     no_llm_parser.set_defaults(handler=_run_test_no_llm)
+
+    agent_loop_parser = dev_subparsers.add_parser(
+        "run-test-agent-loop",
+        help="Run deterministic FakeLLM + fake tool AgentLoop smoke test",
+    )
+    agent_loop_parser.add_argument(
+        "--topic",
+        default="daily intelligence agent loop smoke",
+        help="Topic to include in the deterministic AgentLoop test",
+    )
+    agent_loop_parser.add_argument(
+        "--artifact-root",
+        default=".newsroom/runs",
+        help="Directory where run artifacts are written",
+    )
+    agent_loop_parser.add_argument("--run-id", default=None, help="Optional deterministic run id")
+    agent_loop_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    agent_loop_parser.set_defaults(handler=_run_test_agent_loop)
     return parser
 
 
@@ -53,6 +71,25 @@ def _run_test_no_llm(args: argparse.Namespace) -> int:
         print(f"artifact_dir={result.artifact_dir}")
         print(f"manifest={result.manifest_path}")
         print(f"events={result.events_path}")
+
+    return 0 if result.status == WorkflowStatus.SUCCEEDED else 1
+
+
+def _run_test_agent_loop(args: argparse.Namespace) -> int:
+    service = RunApplicationService(artifact_root=args.artifact_root)
+    result = service.run_test_agent_loop(topic=args.topic, run_id=args.run_id)
+    metrics = result.output.get("agent_loop_metrics", {})
+
+    if args.json:
+        print(json.dumps(result.to_dict(), ensure_ascii=False, sort_keys=True))
+    else:
+        print(f"status={result.status.value}")
+        print(f"run_id={result.run_id}")
+        print(f"artifact_dir={result.artifact_dir}")
+        print(f"manifest={result.manifest_path}")
+        print(f"events={result.events_path}")
+        print(f"llm_calls={metrics.get('llm_calls', 0)}")
+        print(f"tool_calls={metrics.get('tool_calls', 0)}")
 
     return 0 if result.status == WorkflowStatus.SUCCEEDED else 1
 
