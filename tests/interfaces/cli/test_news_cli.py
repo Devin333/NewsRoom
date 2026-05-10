@@ -140,3 +140,63 @@ def test_news_cli_run_daily_live_offline_human_output(tmp_path, capsys) -> None:
     assert "status=succeeded" in captured.out
     assert "profile=live-offline" in captured.out
     assert "run_id=cli-daily-human" in captured.out
+
+
+def test_news_cli_latest_markdown_output(tmp_path, capsys) -> None:
+    assert (
+        main(
+            [
+                "run",
+                "daily",
+                "--profile",
+                "live-offline",
+                "--artifact-root",
+                str(tmp_path),
+                "--run-id",
+                "latest-source",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    exit_code = main(["latest", "--artifact-root", str(tmp_path), "--format", "markdown"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "# Daily Intelligence:" in captured.out
+
+
+def test_news_cli_latest_json_output(tmp_path, capsys) -> None:
+    assert (
+        main(
+            [
+                "run",
+                "daily",
+                "--profile",
+                "live-offline",
+                "--artifact-root",
+                str(tmp_path),
+                "--run-id",
+                "latest-json-source",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    exit_code = main(["latest", "--artifact-root", str(tmp_path), "--format", "json"])
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert exit_code == 0
+    assert payload["run_id"] == "latest-json-source"
+    assert payload["report_json"]["title"].startswith("Daily Intelligence:")
+
+
+def test_news_cli_latest_missing_report(tmp_path, capsys) -> None:
+    exit_code = main(["latest", "--artifact-root", str(tmp_path)])
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "no local report" in captured.out

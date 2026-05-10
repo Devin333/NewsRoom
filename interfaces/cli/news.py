@@ -5,6 +5,7 @@ import json
 from typing import Sequence
 
 from core.framework.specs import WorkflowStatus
+from interfaces.services.report_service import ReportApplicationService
 from interfaces.services.run_service import RunApplicationService
 
 
@@ -31,6 +32,20 @@ def build_parser() -> argparse.ArgumentParser:
     daily_parser.add_argument("--run-id", default=None, help="Optional deterministic run id")
     daily_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     daily_parser.set_defaults(handler=_run_daily)
+
+    latest_parser = subparsers.add_parser("latest", help="Show latest local report")
+    latest_parser.add_argument(
+        "--format",
+        choices=["markdown", "json"],
+        default="markdown",
+        help="Output format",
+    )
+    latest_parser.add_argument(
+        "--artifact-root",
+        default=".newsroom/runs",
+        help="Directory where run artifacts are stored",
+    )
+    latest_parser.set_defaults(handler=_latest_report)
 
     dev_parser = subparsers.add_parser("dev", help="Development and regression commands")
     dev_subparsers = dev_parser.add_subparsers(dest="dev_command", required=True)
@@ -136,6 +151,21 @@ def _run_daily(args: argparse.Namespace) -> int:
             print(f"error={result.error.get('message')}")
 
     return 0 if result.status == WorkflowStatus.SUCCEEDED else 1
+
+
+def _latest_report(args: argparse.Namespace) -> int:
+    service = ReportApplicationService(artifact_root=args.artifact_root)
+    try:
+        record = service.latest_report()
+    except FileNotFoundError as exc:
+        print(str(exc))
+        return 1
+
+    if args.format == "json":
+        print(json.dumps(record.to_dict(), ensure_ascii=False, sort_keys=True))
+    else:
+        print(record.report_markdown or json.dumps(record.report_json, ensure_ascii=False, indent=2))
+    return 0
 
 
 if __name__ == "__main__":
