@@ -34,6 +34,17 @@ class ScheduleListResult:
 
 
 @dataclass(frozen=True)
+class ScheduleUpsertResult:
+    record: ScheduleRecord
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schedule_id": self.record.schedule_id,
+            "schedule": self.record.to_dict(),
+        }
+
+
+@dataclass(frozen=True)
 class ScheduleServiceTickResult:
     tick: SchedulerTickResult
     updated_records: tuple[ScheduleRecord, ...]
@@ -81,6 +92,9 @@ class ScheduleApplicationService:
 
     def list_schedules(self, *, enabled_only: bool = False) -> ScheduleListResult:
         return ScheduleListResult(tuple(self.store.list_schedules(enabled_only=enabled_only)))
+
+    def upsert_schedule(self, record: ScheduleRecord) -> ScheduleUpsertResult:
+        return ScheduleUpsertResult(self.store.upsert_schedule(record))
 
     def tick(
         self,

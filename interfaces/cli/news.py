@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import argparse
 import json
+from datetime import UTC, datetime
 from typing import Sequence
 
 from core.framework.specs import WorkflowStatus
+from core.framework.workers.schedule_store import ScheduleRecord
+from core.framework.workers.scheduler import ScheduleSpec
 from interfaces.services.artifact_service import ArtifactInspectionService
 from interfaces.services.diagnose_service import DiagnosticApplicationService
 from interfaces.services.memory_service import DEFAULT_MEMORY_COLLECTION, MemoryApplicationService
@@ -12,6 +15,10 @@ from interfaces.services.mcp_service import MCPApplicationService
 from interfaces.services.report_service import ReportApplicationService
 from interfaces.services.run_inspection_service import RunInspectionService
 from interfaces.services.run_service import RunApplicationService
+from interfaces.services.schedule_service import (
+    DEFAULT_SCHEDULE_STORE_PATH,
+    ScheduleApplicationService,
+)
 from interfaces.services.source_service import SourceApplicationService
 from interfaces.services.worker_service import DEFAULT_DAILY_QUEUE, WorkerApplicationService
 
@@ -96,6 +103,86 @@ def build_parser() -> argparse.ArgumentParser:
     run_once_parser.add_argument("--redis-url", default=None, help="Redis URL; defaults to NEWS_REDIS_URL")
     run_once_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     run_once_parser.set_defaults(handler=_worker_run_once)
+
+    schedules_parser = subparsers.add_parser("schedules", help="Manage background schedules")
+    schedules_subparsers = schedules_parser.add_subparsers(dest="schedules_command", required=True)
+
+    schedules_list_parser = schedules_subparsers.add_parser("list", help="List schedules")
+    schedules_list_parser.add_argument("--enabled-only", action="store_true", help="Only include enabled schedules")
+    schedules_list_parser.add_argument(
+        "--store-path",
+        default=DEFAULT_SCHEDULE_STORE_PATH,
+        help="Local JSON schedule store path",
+    )
+    schedules_list_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    schedules_list_parser.set_defaults(handler=_schedules_list)
+
+    schedules_add_daily_parser = schedules_subparsers.add_parser(
+        "add-daily",
+        help="Create or update a daily intelligence schedule",
+    )
+    schedules_add_daily_parser.add_argument("--schedule-id", default="daily-intelligence", help="Schedule id")
+    schedules_add_daily_parser.add_argument("--name", default="Daily intelligence", help="Schedule name")
+    schedules_add_daily_parser.add_argument(
+        "--trigger-type",
+        choices=["interval", "manual"],
+        default="interval",
+        help="Schedule trigger type",
+    )
+    schedules_add_daily_parser.add_argument(
+        "--interval-seconds",
+        type=int,
+        default=86400,
+        help="Interval in seconds for interval schedules",
+    )
+    schedules_add_daily_parser.add_argument("--run-at", default=None, help="Optional first due time as ISO datetime")
+    schedules_add_daily_parser.add_argument(
+        "--profile",
+        choices=["live", "live-offline"],
+        default="live-offline",
+        help="Execution profile",
+    )
+    schedules_add_daily_parser.add_argument("--topic", default="AI", help="Topic for the daily report")
+    schedules_add_daily_parser.add_argument("--source-limit", type=int, default=3, help="Maximum source items")
+    schedules_add_daily_parser.add_argument("--queue-name", default=DEFAULT_DAILY_QUEUE, help="Queue name")
+    schedules_add_daily_parser.add_argument(
+        "--store-path",
+        default=DEFAULT_SCHEDULE_STORE_PATH,
+        help="Local JSON schedule store path",
+    )
+    schedules_add_daily_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    schedules_add_daily_parser.set_defaults(handler=_schedules_add_daily)
+
+    schedules_tick_parser = schedules_subparsers.add_parser("tick", help="Evaluate schedules and enqueue due tasks")
+    schedules_tick_parser.add_argument(
+        "--store-path",
+        default=DEFAULT_SCHEDULE_STORE_PATH,
+        help="Local JSON schedule store path",
+    )
+    schedules_tick_parser.add_argument("--redis-url", default=None, help="Redis URL; defaults to NEWS_REDIS_URL")
+    schedules_tick_parser.add_argument("--now", default=None, help="Optional current time as ISO datetime")
+    schedules_tick_parser.add_argument(
+        "--include-disabled",
+        action="store_true",
+        help="Evaluate disabled schedules too",
+    )
+    schedules_tick_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    schedules_tick_parser.set_defaults(handler=_schedules_tick)
+
+    schedules_trigger_parser = schedules_subparsers.add_parser(
+        "trigger",
+        help="Manually trigger a schedule",
+    )
+    schedules_trigger_parser.add_argument("schedule_id", help="Schedule id")
+    schedules_trigger_parser.add_argument(
+        "--store-path",
+        default=DEFAULT_SCHEDULE_STORE_PATH,
+        help="Local JSON schedule store path",
+    )
+    schedules_trigger_parser.add_argument("--redis-url", default=None, help="Redis URL; defaults to NEWS_REDIS_URL")
+    schedules_trigger_parser.add_argument("--now", default=None, help="Optional current time as ISO datetime")
+    schedules_trigger_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    schedules_trigger_parser.set_defaults(handler=_schedules_trigger)
 
     memory_parser = subparsers.add_parser("memory", help="Search and manage memory")
     memory_subparsers = memory_parser.add_subparsers(dest="memory_command", required=True)
@@ -367,6 +454,96 @@ def _worker_run_once(args: argparse.Namespace) -> int:
     return 0 if result.success is not False else 1
 
 
+def _schedules_list(args: argparse.Namespace) -> int:
+    result = ScheduleApplicationService(store_path=args.store_path).list_schedules(
+        enabled_only=args.enabled_only
+    )
+    payload = result.to_dict()
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        print(f"schedule_count={payload['schedule_count']}")
+        for item in payload["schedules"]:
+            spec = item["spec"]
+            print(
+                f"- {spec['schedule_id']} trigger={spec['trigger_type']} "
+                f"enabled={str(spec['enabled']).lower()}"
+            )
+            print(f"  task_type={spec['task_type']} queue_name={spec['queue_name']}")
+    return 0
+
+
+def _schedules_add_daily(args: argparse.Namespace) -> int:
+    if args.trigger_type == "interval" and args.interval_seconds <= 0:
+        raise SystemExit("--interval-seconds must be greater than zero")
+    run_at = _parse_cli_datetime(args.run_at)
+    spec = ScheduleSpec(
+        schedule_id=args.schedule_id,
+        name=args.name,
+        trigger_type=args.trigger_type,
+        task_type="daily_intelligence.run",
+        payload_template={
+            "profile": args.profile,
+            "topic": args.topic,
+            "source_limit": args.source_limit,
+        },
+        queue_name=args.queue_name,
+        interval_seconds=args.interval_seconds if args.trigger_type == "interval" else None,
+        run_at=run_at if args.trigger_type == "interval" else None,
+    )
+    record = ScheduleRecord(spec=spec, next_run_at=spec.run_at)
+    result = ScheduleApplicationService(store_path=args.store_path).upsert_schedule(record)
+    payload = result.to_dict()
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        spec_payload = payload["schedule"]["spec"]
+        print(f"schedule_id={spec_payload['schedule_id']}")
+        print(f"trigger_type={spec_payload['trigger_type']}")
+        print(f"task_type={spec_payload['task_type']}")
+        print(f"queue_name={spec_payload['queue_name']}")
+    return 0
+
+
+def _schedules_tick(args: argparse.Namespace) -> int:
+    result = ScheduleApplicationService(
+        store_path=args.store_path,
+        redis_url=args.redis_url,
+    ).tick(
+        now=_parse_cli_datetime(args.now),
+        enabled_only=not args.include_disabled,
+    )
+    payload = result.to_dict()
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        print(f"evaluated_count={payload['evaluated_count']}")
+        print(f"enqueued_count={payload['enqueued_count']}")
+        for item in payload["enqueued"]:
+            task = item["task"]
+            print(f"- {item['schedule_id']} task_id={task['task_id']} message_id={item['message_id']}")
+    return 0
+
+
+def _schedules_trigger(args: argparse.Namespace) -> int:
+    result = ScheduleApplicationService(
+        store_path=args.store_path,
+        redis_url=args.redis_url,
+    ).trigger_manual(
+        args.schedule_id,
+        now=_parse_cli_datetime(args.now),
+    )
+    payload = result.to_dict()
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        task = payload["enqueued"]["task"]
+        print(f"schedule_id={payload['schedule_id']}")
+        print(f"task_id={task['task_id']}")
+        print(f"message_id={payload['enqueued']['message_id']}")
+    return 0
+
+
 def _memory_search(args: argparse.Namespace) -> int:
     filters = _parse_filters(args.filters)
     result = MemoryApplicationService().search(
@@ -560,6 +737,15 @@ def _parse_json_object(value: str) -> dict:
     if not isinstance(payload, dict):
         raise SystemExit("--args-json must be a JSON object")
     return payload
+
+
+def _parse_cli_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(UTC)
+    except ValueError as exc:
+        raise SystemExit(f"invalid ISO datetime: {value}") from exc
 
 
 def _mcp_serve_stdio(args: argparse.Namespace) -> int:

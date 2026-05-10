@@ -21,6 +21,17 @@ def test_schedule_service_lists_enabled_schedules() -> None:
     assert result.schedules[0].schedule_id == "daily"
 
 
+def test_schedule_service_upserts_schedule_record() -> None:
+    store = InMemoryScheduleStore()
+    service = ScheduleApplicationService(store=store, queue=_FakeQueue())
+    record = _record("daily")
+
+    result = service.upsert_schedule(record)
+
+    assert result.to_dict()["schedule_id"] == "daily"
+    assert store.get_schedule("daily").schedule_id == "daily"
+
+
 def test_schedule_service_tick_enqueues_due_schedule_and_updates_state() -> None:
     store = InMemoryScheduleStore(
         [
