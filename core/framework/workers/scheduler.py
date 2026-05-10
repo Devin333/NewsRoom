@@ -71,6 +71,46 @@ class ScheduleSpec:
             raise ValueError("cron is required for cron schedules")
         _reject_secret_payload_keys(self.payload_template)
 
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schedule_id": self.schedule_id,
+            "name": self.name,
+            "trigger_type": self.trigger_type.value,
+            "trigger_config": {
+                "cron": self.cron,
+                "interval_seconds": self.interval_seconds,
+                "run_at": _format_datetime(self.run_at),
+            },
+            "task_type": self.task_type,
+            "payload_template": dict(self.payload_template),
+            "queue_name": self.queue_name,
+            "enabled": self.enabled,
+            "timezone": self.timezone,
+            "misfire_policy": self.misfire_policy.value,
+            "max_catchup_runs": self.max_catchup_runs,
+            "metadata": dict(self.metadata),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> ScheduleSpec:
+        trigger_config = dict(data.get("trigger_config") or {})
+        return cls(
+            schedule_id=str(data["schedule_id"]),
+            name=str(data["name"]),
+            trigger_type=str(data["trigger_type"]),
+            task_type=str(data["task_type"]),
+            payload_template=dict(data.get("payload_template") or {}),
+            queue_name=str(data.get("queue_name") or "news:queue:daily"),
+            enabled=bool(data.get("enabled", True)),
+            timezone=str(data.get("timezone") or "Asia/Tokyo"),
+            interval_seconds=trigger_config.get("interval_seconds"),
+            run_at=_parse_optional_datetime(trigger_config.get("run_at")),
+            cron=trigger_config.get("cron"),
+            misfire_policy=str(data.get("misfire_policy") or MisfirePolicy.RUN_ONCE.value),
+            max_catchup_runs=int(data.get("max_catchup_runs") or 1),
+            metadata=dict(data.get("metadata") or {}),
+        )
+
 
 @dataclass(frozen=True)
 class ScheduleEvaluation:
@@ -320,6 +360,22 @@ def _normalize_datetime(value: datetime | None) -> datetime | None:
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC)
     return value.astimezone(UTC)
+
+
+def _format_datetime(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    return value.isoformat().replace("+00:00", "Z")
+
+
+def _parse_optional_datetime(value: Any) -> datetime | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        return _normalize_datetime(value)
+    if isinstance(value, str):
+        return _normalize_datetime(datetime.fromisoformat(value.replace("Z", "+00:00")))
+    raise TypeError(f"unsupported datetime value: {value!r}")
 
 
 def _reject_secret_payload_keys(payload: dict[str, Any]) -> None:
