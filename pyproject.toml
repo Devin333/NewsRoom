@@ -21,6 +21,7 @@ packages = [
   "core.framework.artifacts",
   "core.framework.events",
   "core.framework.specs",
+  "core.framework.tools",
   "core.framework.workflow",
   "domain",
   "domain.intelligence",
