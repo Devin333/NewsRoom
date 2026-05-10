@@ -129,6 +129,12 @@ class WorkflowExecutor:
             recorder.emit("workflow_succeeded", {"path": path})
             self._artifact_manager.write_json(actual_run_id, "output.json", output)
             manifest["artifacts"]["output"] = "output.json"
+            if "final_report" in output:
+                self._artifact_manager.write_json(actual_run_id, "report.json", output["final_report"])
+                manifest["artifacts"]["report_json"] = "report.json"
+            if isinstance(output.get("report_markdown"), str):
+                self._artifact_manager.write_text(actual_run_id, "report.md", output["report_markdown"])
+                manifest["artifacts"]["report_markdown"] = "report.md"
         else:
             recorder.emit("workflow_failed", {"path": path, "error": error})
             self._artifact_manager.write_json(actual_run_id, "error.json", error)
