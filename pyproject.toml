@@ -43,6 +43,7 @@ packages = [
   "storage",
   "quality",
   "storage.local_json",
+  "storage.memory",
   "storage.postgres",
   "storage.vector",
   "workflows",
