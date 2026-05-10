@@ -6,6 +6,9 @@ from domain.sources.models import (
     RawSourceItem,
     SourceDefinition,
     SourceError,
+    SourceHealth,
+    SourceHealthStatus,
+    SourcePipelineMetrics,
     SourceReliability,
     SourceType,
 )
@@ -16,6 +19,9 @@ __all__ = [
     "RawSourceItem",
     "SourceDefinition",
     "SourceError",
+    "SourceHealth",
+    "SourceHealthStatus",
+    "SourcePipelineMetrics",
     "SourceReliability",
     "SourceType",
 ]

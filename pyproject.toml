@@ -37,6 +37,7 @@ packages = [
   "interfaces.services",
   "sources",
   "sources.connectors",
+  "sources.health",
   "sources.processing",
   "storage",
   "quality",

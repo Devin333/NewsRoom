@@ -17,6 +17,12 @@ class SourceReliability(str, Enum):
     LOW = "low"
 
 
+class SourceHealthStatus(str, Enum):
+    HEALTHY = "healthy"
+    DEGRADED = "degraded"
+    COOLING_DOWN = "cooling_down"
+
+
 def utc_now() -> datetime:
     return datetime.now(UTC)
 
@@ -112,3 +118,75 @@ class SourceError:
     url: str | None = None
     occurred_at: datetime = field(default_factory=utc_now)
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "source_id": self.source_id,
+            "error_type": self.error_type,
+            "error_message": self.error_message,
+            "url": self.url,
+            "occurred_at": self.occurred_at.isoformat().replace("+00:00", "Z"),
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class SourceHealth:
+    source_id: str
+    status: SourceHealthStatus = SourceHealthStatus.HEALTHY
+    consecutive_failures: int = 0
+    last_success_at: datetime | None = None
+    last_failure_at: datetime | None = None
+    cooldown_until: datetime | None = None
+    last_error: SourceError | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "status", SourceHealthStatus(self.status))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "source_id": self.source_id,
+            "status": self.status.value,
+            "consecutive_failures": self.consecutive_failures,
+            "last_success_at": _dt(self.last_success_at),
+            "last_failure_at": _dt(self.last_failure_at),
+            "cooldown_until": _dt(self.cooldown_until),
+            "last_error": self.last_error.to_dict() if self.last_error else None,
+        }
+
+
+@dataclass
+class SourcePipelineMetrics:
+    sources_total: int = 0
+    sources_fetched: int = 0
+    sources_failed: int = 0
+    sources_skipped: int = 0
+    raw_items_count: int = 0
+    normalized_items_count: int = 0
+    deduplicated_items_count: int = 0
+    ranked_items_count: int = 0
+    duplicate_count: int = 0
+    errors_by_type: dict[str, int] = field(default_factory=dict)
+    items_by_source: dict[str, int] = field(default_factory=dict)
+
+    def record_error(self, error: SourceError) -> None:
+        self.errors_by_type[error.error_type] = self.errors_by_type.get(error.error_type, 0) + 1
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "sources_total": self.sources_total,
+            "sources_fetched": self.sources_fetched,
+            "sources_failed": self.sources_failed,
+            "sources_skipped": self.sources_skipped,
+            "raw_items_count": self.raw_items_count,
+            "normalized_items_count": self.normalized_items_count,
+            "deduplicated_items_count": self.deduplicated_items_count,
+            "ranked_items_count": self.ranked_items_count,
+            "duplicate_count": self.duplicate_count,
+            "errors_by_type": dict(self.errors_by_type),
+            "items_by_source": dict(self.items_by_source),
+        }
+
+
+def _dt(value: datetime | None) -> str | None:
+    return value.isoformat().replace("+00:00", "Z") if value else None

@@ -145,6 +145,41 @@ class WorkflowExecutor:
             if "raw_items" in output:
                 self._artifact_manager.write_json(actual_run_id, "raw_items.json", output["raw_items"])
                 manifest["artifacts"]["raw_items"] = "raw_items.json"
+            if "source_errors" in output:
+                self._artifact_manager.write_json(
+                    actual_run_id,
+                    "source_errors.json",
+                    output["source_errors"],
+                )
+                manifest["artifacts"]["source_errors"] = "source_errors.json"
+            if "skipped_sources" in output:
+                self._artifact_manager.write_json(
+                    actual_run_id,
+                    "skipped_sources.json",
+                    output["skipped_sources"],
+                )
+                manifest["artifacts"]["skipped_sources"] = "skipped_sources.json"
+            if "failed_sources" in output:
+                self._artifact_manager.write_json(
+                    actual_run_id,
+                    "failed_sources.json",
+                    output["failed_sources"],
+                )
+                manifest["artifacts"]["failed_sources"] = "failed_sources.json"
+            if "source_health_updates" in output:
+                self._artifact_manager.write_json(
+                    actual_run_id,
+                    "source_health_updates.json",
+                    output["source_health_updates"],
+                )
+                manifest["artifacts"]["source_health_updates"] = "source_health_updates.json"
+            if "source_pipeline_metrics" in output:
+                self._artifact_manager.write_json(
+                    actual_run_id,
+                    "source_pipeline_metrics.json",
+                    output["source_pipeline_metrics"],
+                )
+                manifest["artifacts"]["source_pipeline_metrics"] = "source_pipeline_metrics.json"
             if "evidence_bundle" in output:
                 self._artifact_manager.write_json(
                     actual_run_id,
