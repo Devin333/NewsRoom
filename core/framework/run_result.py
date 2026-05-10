@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, is_dataclass
+from datetime import datetime
 from enum import Enum
 from typing import Any
 
@@ -13,6 +14,10 @@ def _json_safe(value: Any) -> Any:
         return value.value
     if hasattr(value, "to_dict"):
         return value.to_dict()
+    if is_dataclass(value):
+        return _json_safe(asdict(value))
+    if isinstance(value, datetime):
+        return value.isoformat().replace("+00:00", "Z")
     if isinstance(value, dict):
         return {key: _json_safe(item) for key, item in value.items()}
     if isinstance(value, list):

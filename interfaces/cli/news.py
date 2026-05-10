@@ -12,6 +12,26 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="news", description="NewsRoom command line interface")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    run_parser = subparsers.add_parser("run", help="Run product workflows")
+    run_subparsers = run_parser.add_subparsers(dest="run_command", required=True)
+    daily_parser = run_subparsers.add_parser("daily", help="Run daily intelligence workflow")
+    daily_parser.add_argument(
+        "--profile",
+        choices=["live", "live-offline"],
+        default="live",
+        help="Execution profile",
+    )
+    daily_parser.add_argument("--topic", default="AI", help="Topic for the daily report")
+    daily_parser.add_argument("--source-limit", type=int, default=3, help="Maximum source items")
+    daily_parser.add_argument(
+        "--artifact-root",
+        default=".newsroom/runs",
+        help="Directory where run artifacts are written",
+    )
+    daily_parser.add_argument("--run-id", default=None, help="Optional deterministic run id")
+    daily_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    daily_parser.set_defaults(handler=_run_daily)
+
     dev_parser = subparsers.add_parser("dev", help="Development and regression commands")
     dev_subparsers = dev_parser.add_subparsers(dest="dev_command", required=True)
 
@@ -90,6 +110,30 @@ def _run_test_agent_loop(args: argparse.Namespace) -> int:
         print(f"events={result.events_path}")
         print(f"llm_calls={metrics.get('llm_calls', 0)}")
         print(f"tool_calls={metrics.get('tool_calls', 0)}")
+
+    return 0 if result.status == WorkflowStatus.SUCCEEDED else 1
+
+
+def _run_daily(args: argparse.Namespace) -> int:
+    service = RunApplicationService(artifact_root=args.artifact_root)
+    result = service.run_daily(
+        profile=args.profile,
+        topic=args.topic,
+        source_limit=args.source_limit,
+        run_id=args.run_id,
+    )
+
+    if args.json:
+        print(json.dumps(result.to_dict(), ensure_ascii=False, sort_keys=True))
+    else:
+        print(f"status={result.status.value}")
+        print(f"run_id={result.run_id}")
+        print(f"profile={args.profile}")
+        print(f"artifact_dir={result.artifact_dir}")
+        print(f"manifest={result.manifest_path}")
+        print(f"events={result.events_path}")
+        if result.error:
+            print(f"error={result.error.get('message')}")
 
     return 0 if result.status == WorkflowStatus.SUCCEEDED else 1
 

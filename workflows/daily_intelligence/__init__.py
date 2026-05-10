@@ -12,12 +12,18 @@ from workflows.daily_intelligence.test_agent_loop import (
     build_test_agent_loop_workflow,
     run_test_agent_loop,
 )
+from workflows.daily_intelligence.runner import (
+    DailyIntelligenceRunner,
+    build_daily_intelligence_workflow,
+)
 
 __all__ = [
+    "DailyIntelligenceRunner",
     "TEST_AGENT_LOOP_PROFILE",
     "TEST_NO_LLM_PROFILE",
     "build_test_agent_loop_registry",
     "build_test_agent_loop_workflow",
+    "build_daily_intelligence_workflow",
     "build_test_no_llm_registry",
     "build_test_no_llm_workflow",
     "run_test_agent_loop",

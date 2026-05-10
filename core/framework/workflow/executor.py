@@ -142,12 +142,43 @@ class WorkflowExecutor:
                     output["agent_loop_events"],
                 )
                 manifest["artifacts"]["agent_loop_events"] = "agent_loop_events.json"
+            if "raw_items" in output:
+                self._artifact_manager.write_json(actual_run_id, "raw_items.json", output["raw_items"])
+                manifest["artifacts"]["raw_items"] = "raw_items.json"
+            if "evidence_bundle" in output:
+                self._artifact_manager.write_json(
+                    actual_run_id,
+                    "evidence_bundle.json",
+                    output["evidence_bundle"],
+                )
+                manifest["artifacts"]["evidence_bundle"] = "evidence_bundle.json"
+            if "citation_check_result" in output:
+                self._artifact_manager.write_json(
+                    actual_run_id,
+                    "citation_check_result.json",
+                    output["citation_check_result"],
+                )
+                manifest["artifacts"]["citation_check_result"] = "citation_check_result.json"
+            if "editor_review" in output:
+                self._artifact_manager.write_json(
+                    actual_run_id,
+                    "editor_review.json",
+                    output["editor_review"],
+                )
+                manifest["artifacts"]["editor_review"] = "editor_review.json"
             if "final_report" in output:
                 self._artifact_manager.write_json(actual_run_id, "report.json", output["final_report"])
                 manifest["artifacts"]["report_json"] = "report.json"
             if isinstance(output.get("report_markdown"), str):
                 self._artifact_manager.write_text(actual_run_id, "report.md", output["report_markdown"])
                 manifest["artifacts"]["report_markdown"] = "report.md"
+            if "blocked_report" in output:
+                self._artifact_manager.write_json(
+                    actual_run_id,
+                    "blocked_report.json",
+                    output["blocked_report"],
+                )
+                manifest["artifacts"]["blocked_report"] = "blocked_report.json"
         else:
             recorder.emit("workflow_failed", {"path": path, "error": error})
             self._artifact_manager.write_json(actual_run_id, "error.json", error)

@@ -90,3 +90,53 @@ def test_news_cli_run_test_agent_loop_human_output(tmp_path, capsys) -> None:
     assert "run_id=cli-agent-loop-human" in captured.out
     assert "llm_calls=3" in captured.out
     assert "tool_calls=1" in captured.out
+
+
+def test_news_cli_run_daily_live_offline_json_output(tmp_path, capsys) -> None:
+    exit_code = main(
+        [
+            "run",
+            "daily",
+            "--profile",
+            "live-offline",
+            "--artifact-root",
+            str(tmp_path),
+            "--run-id",
+            "cli-daily-offline",
+            "--topic",
+            "AI policy",
+            "--source-limit",
+            "2",
+            "--json",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert exit_code == 0
+    assert payload["status"] == "succeeded"
+    assert payload["run_id"] == "cli-daily-offline"
+    assert payload["output"]["final_report"]["title"] == "Daily Intelligence: AI policy"
+
+
+def test_news_cli_run_daily_live_offline_human_output(tmp_path, capsys) -> None:
+    exit_code = main(
+        [
+            "run",
+            "daily",
+            "--profile",
+            "live-offline",
+            "--artifact-root",
+            str(tmp_path),
+            "--run-id",
+            "cli-daily-human",
+        ]
+    )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "status=succeeded" in captured.out
+    assert "profile=live-offline" in captured.out
+    assert "run_id=cli-daily-human" in captured.out
