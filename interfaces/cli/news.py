@@ -7,6 +7,7 @@ from typing import Sequence
 from core.framework.specs import WorkflowStatus
 from interfaces.services.diagnose_service import DiagnosticApplicationService
 from interfaces.services.memory_service import DEFAULT_MEMORY_COLLECTION, MemoryApplicationService
+from interfaces.services.mcp_service import MCPApplicationService
 from interfaces.services.report_service import ReportApplicationService
 from interfaces.services.run_service import RunApplicationService
 from interfaces.services.source_service import SourceApplicationService
@@ -130,6 +131,19 @@ def build_parser() -> argparse.ArgumentParser:
     sources_health_parser.add_argument("--include-disabled", action="store_true", help="Include disabled sources")
     sources_health_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     sources_health_parser.set_defaults(handler=_sources_health)
+
+    mcp_parser = subparsers.add_parser("mcp", help="Inspect inbound MCP catalog and tools")
+    mcp_subparsers = mcp_parser.add_subparsers(dest="mcp_command", required=True)
+
+    mcp_catalog_parser = mcp_subparsers.add_parser("catalog", help="Show MCP tools/resources/prompts")
+    mcp_catalog_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    mcp_catalog_parser.set_defaults(handler=_mcp_catalog)
+
+    mcp_call_parser = mcp_subparsers.add_parser("call", help="Call an MCP tool locally")
+    mcp_call_parser.add_argument("tool_name", help="MCP tool name")
+    mcp_call_parser.add_argument("--args-json", default="{}", help="Tool arguments as a JSON object")
+    mcp_call_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    mcp_call_parser.set_defaults(handler=_mcp_call)
 
     dev_parser = subparsers.add_parser("dev", help="Development and regression commands")
     dev_subparsers = dev_parser.add_subparsers(dest="dev_command", required=True)
@@ -383,6 +397,46 @@ def _sources_health(args: argparse.Namespace) -> int:
                 f"failures={item['consecutive_failures']}"
             )
     return 0
+
+
+def _mcp_catalog(args: argparse.Namespace) -> int:
+    catalog = MCPApplicationService().catalog().to_dict()
+    if args.json:
+        print(json.dumps(catalog, ensure_ascii=False, sort_keys=True))
+    else:
+        print(f"tools={len(catalog['tools'])}")
+        for tool in catalog["tools"]:
+            print(f"- {tool['name']}: {tool['description']}")
+        print(f"resources={len(catalog['resources'])}")
+        for resource in catalog["resources"]:
+            print(f"- {resource['uri']}: {resource['description']}")
+        print(f"prompts={len(catalog['prompts'])}")
+        for prompt in catalog["prompts"]:
+            print(f"- {prompt['name']}: {prompt['description']}")
+    return 0
+
+
+def _mcp_call(args: argparse.Namespace) -> int:
+    arguments = _parse_json_object(args.args_json)
+    result = MCPApplicationService().call_tool(args.tool_name, arguments)
+    payload = result.to_dict()
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        print(f"tool_name={payload['tool_name']}")
+        print(f"success={str(payload['success']).lower()}")
+        if payload["error_message"]:
+            print(f"error={payload['error_message']}")
+        elif payload["data"] is not None:
+            print(json.dumps(payload["data"], ensure_ascii=False, indent=2, sort_keys=True))
+    return 0 if result.success else 1
+
+
+def _parse_json_object(value: str) -> dict:
+    payload = json.loads(value)
+    if not isinstance(payload, dict):
+        raise SystemExit("--args-json must be a JSON object")
+    return payload
 
 
 if __name__ == "__main__":

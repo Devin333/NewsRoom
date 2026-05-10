@@ -124,6 +124,17 @@ def test_sources_health_returns_health() -> None:
     assert payload["data"]["health"][0]["status"] == "healthy"
 
 
+def test_mcp_catalog_returns_catalog() -> None:
+    client = TestClient(create_app(mcp_service_factory=lambda: _FakeMCPService()))
+
+    response = client.get("/api/v1/mcp/catalog")
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["success"] is True
+    assert payload["data"]["tools"][0]["name"] == "news.source.health"
+
+
 class _FakeWorkerService:
     def __init__(self) -> None:
         self.enqueue_calls = []
@@ -268,3 +279,21 @@ class _FakeResult:
 
     def to_dict(self):
         return self.payload
+
+
+class _FakeMCPService:
+    def catalog(self):
+        return _FakeResult(
+            {
+                "tools": [
+                    {
+                        "name": "news.source.health",
+                        "title": "Read source health",
+                        "description": "Read source health.",
+                        "input_schema": {},
+                    }
+                ],
+                "resources": [],
+                "prompts": [],
+            }
+        )

@@ -16,6 +16,7 @@ from interfaces.api.models import (
 )
 from interfaces.services.diagnose_service import DiagnosticApplicationService
 from interfaces.services.memory_service import MemoryApplicationService
+from interfaces.services.mcp_service import MCPApplicationService
 from interfaces.services.report_service import ReportApplicationService
 from interfaces.services.source_service import SourceApplicationService
 from interfaces.services.worker_service import WorkerApplicationService
@@ -26,6 +27,7 @@ ReportServiceFactory = Callable[[], ReportApplicationService]
 MemoryServiceFactory = Callable[[], MemoryApplicationService]
 DiagnosticServiceFactory = Callable[[], DiagnosticApplicationService]
 SourceServiceFactory = Callable[[], SourceApplicationService]
+MCPServiceFactory = Callable[[], MCPApplicationService]
 
 
 def create_app(
@@ -35,6 +37,7 @@ def create_app(
     memory_service_factory: MemoryServiceFactory = MemoryApplicationService,
     diagnostic_service_factory: DiagnosticServiceFactory = DiagnosticApplicationService,
     source_service_factory: SourceServiceFactory = SourceApplicationService,
+    mcp_service_factory: MCPServiceFactory = MCPApplicationService,
 ) -> FastAPI:
     api = FastAPI(title="NewsRoom API", version="0.1.0")
 
@@ -104,6 +107,10 @@ def create_app(
     @api.get("/api/v1/sources/health")
     def source_health(include_disabled: bool = False):
         return _success(source_service_factory().source_health(enabled_only=not include_disabled).to_dict())
+
+    @api.get("/api/v1/mcp/catalog")
+    def mcp_catalog():
+        return _success(mcp_service_factory().catalog().to_dict())
 
     return api
 
