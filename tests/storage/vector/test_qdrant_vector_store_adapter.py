@@ -69,18 +69,48 @@ def test_qdrant_store_search_translates_filter_and_results() -> None:
     assert results[0].score == 0.87
 
 
+def test_qdrant_store_bootstraps_missing_collections_and_reports_existing() -> None:
+    client = _FakeQdrantClient(existing_collections={"report_sections"})
+    store = QdrantVectorStore(
+        client,
+        embedding_model=DeterministicEmbeddingModel(dimension=8),
+        vector_size=8,
+    )
+
+    statuses = store.ensure_collections(["report_sections", "evidence_items"])
+
+    assert [status.to_dict() for status in statuses] == [
+        {
+            "collection": "report_sections",
+            "vector_size": 8,
+            "existed_before": True,
+            "created": False,
+        },
+        {
+            "collection": "evidence_items",
+            "vector_size": 8,
+            "existed_before": False,
+            "created": True,
+        },
+    ]
+    assert client.created_collections[0][0] == "evidence_items"
+    assert client.created_collections[0][1].size == 8
+
+
 class _FakeQdrantClient:
-    def __init__(self, *, points=None) -> None:
+    def __init__(self, *, points=None, existing_collections=None) -> None:
         self.points = points or []
+        self.existing_collections = set(existing_collections or [])
         self.created_collections = []
         self.upserts = []
         self.query_calls = []
 
     def collection_exists(self, collection):
-        return False
+        return collection in self.existing_collections
 
     def create_collection(self, *, collection_name, vectors_config):
         self.created_collections.append((collection_name, vectors_config))
+        self.existing_collections.add(collection_name)
         return True
 
     def upsert(self, *, collection_name, points, wait):

@@ -1,5 +1,5 @@
 from interfaces.services.memory_service import MemoryApplicationService
-from storage.vector import InMemoryVectorStore, VectorSearchResult
+from storage.vector import InMemoryVectorStore, VectorCollectionStatus, VectorSearchResult
 import json
 
 
@@ -93,6 +93,45 @@ def test_memory_application_service_reindex_topic_override(tmp_path) -> None:
     assert result.to_dict()["topic"] == "Override"
 
 
+def test_memory_application_service_bootstraps_default_collections() -> None:
+    store = _FakeBootstrapVectorStore()
+    service = MemoryApplicationService(vector_store=store)
+
+    result = service.bootstrap_collections()
+
+    assert store.bootstrap_calls == [["report_sections", "evidence_items"]]
+    assert result.to_dict() == {
+        "collection_count": 2,
+        "created_count": 1,
+        "existing_count": 1,
+        "created_collections": ["evidence_items"],
+        "existing_collections": ["report_sections"],
+        "collections": [
+            {
+                "collection": "report_sections",
+                "vector_size": 64,
+                "existed_before": True,
+                "created": False,
+            },
+            {
+                "collection": "evidence_items",
+                "vector_size": 64,
+                "existed_before": False,
+                "created": True,
+            },
+        ],
+    }
+
+
+def test_memory_application_service_bootstrap_deduplicates_custom_collections() -> None:
+    store = _FakeBootstrapVectorStore()
+    service = MemoryApplicationService(vector_store=store)
+
+    service.bootstrap_collections(["custom", "custom"])
+
+    assert store.bootstrap_calls == [["custom"]]
+
+
 class _FakeVectorStore:
     def __init__(self) -> None:
         self.queries = []
@@ -108,6 +147,29 @@ class _FakeVectorStore:
                 payload={"document_id": "doc-1"},
             )
         ]
+
+
+class _FakeBootstrapVectorStore(_FakeVectorStore):
+    def __init__(self) -> None:
+        super().__init__()
+        self.bootstrap_calls = []
+
+    def ensure_collections(self, collections):
+        self.bootstrap_calls.append(list(collections))
+        return [
+            VectorCollectionStatus(
+                collection="report_sections",
+                vector_size=64,
+                existed_before=True,
+                created=False,
+            ),
+            VectorCollectionStatus(
+                collection="evidence_items",
+                vector_size=64,
+                existed_before=False,
+                created=True,
+            ),
+        ][: len(collections)]
 
 
 def _write_run_artifacts(root, run_id, *, request, report, evidence_bundle) -> None:

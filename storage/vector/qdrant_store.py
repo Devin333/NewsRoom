@@ -8,7 +8,12 @@ from uuid import NAMESPACE_URL, uuid5
 from qdrant_client import QdrantClient, models
 
 from storage.vector.embeddings import DeterministicEmbeddingModel
-from storage.vector.models import VectorDocument, VectorSearchQuery, VectorSearchResult
+from storage.vector.models import (
+    VectorCollectionStatus,
+    VectorDocument,
+    VectorSearchQuery,
+    VectorSearchResult,
+)
 
 
 DEFAULT_QDRANT_URL = "http://127.0.0.1:6333"
@@ -62,9 +67,30 @@ class QdrantVectorStore:
             for point in points
         ]
 
+    def ensure_collections(self, collections: list[str]) -> list[VectorCollectionStatus]:
+        statuses = []
+        for collection in collections:
+            existed_before = self.client.collection_exists(collection)
+            created = False
+            if not existed_before:
+                self._create_collection(collection)
+                created = True
+            statuses.append(
+                VectorCollectionStatus(
+                    collection=collection,
+                    vector_size=self.vector_size,
+                    existed_before=existed_before,
+                    created=created,
+                )
+            )
+        return statuses
+
     def _ensure_collection(self, collection: str) -> None:
         if self.client.collection_exists(collection):
             return
+        self._create_collection(collection)
+
+    def _create_collection(self, collection: str) -> None:
         self.client.create_collection(
             collection_name=collection,
             vectors_config=models.VectorParams(size=self.vector_size, distance=models.Distance.COSINE),

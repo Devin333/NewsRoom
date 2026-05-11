@@ -92,3 +92,19 @@ class VectorSearchResult:
             "evidence_id": self.evidence_id,
             "source_item_id": self.source_item_id,
         }
+
+
+@dataclass(frozen=True)
+class VectorCollectionStatus:
+    collection: str
+    vector_size: int
+    existed_before: bool
+    created: bool
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "collection": self.collection,
+            "vector_size": self.vector_size,
+            "existed_before": self.existed_before,
+            "created": self.created,
+        }

@@ -69,6 +69,29 @@ def test_news_cli_memory_reindex_missing_run_returns_error(monkeypatch, capsys) 
     assert "run not found" in captured.out
 
 
+def test_news_cli_memory_bootstrap_json(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(news_cli, "MemoryApplicationService", _FakeMemoryService)
+
+    exit_code = news_cli.main(
+        [
+            "memory",
+            "bootstrap",
+            "--collection",
+            "report_sections",
+            "--collection",
+            "evidence_items",
+            "--json",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert exit_code == 0
+    assert payload["collection_count"] == 2
+    assert payload["created_collections"] == ["evidence_items"]
+
+
 class _FakeMemoryService:
     def __init__(self, artifact_root=".newsroom/runs") -> None:
         self.artifact_root = artifact_root
@@ -107,6 +130,27 @@ class _FakeMemoryService:
                 "documents_indexed": 3,
                 "collections": ["evidence_items", "report_sections"],
                 "document_ids": ["run-1:report_section:0", "run-1:report_section:1", "run-1:evidence:ev-1"],
+            }
+        )
+
+    def bootstrap_collections(self, collections=None):
+        requested = collections or ["report_sections", "evidence_items"]
+        return _FakeMemoryResult(
+            {
+                "collection_count": len(requested),
+                "created_count": 1,
+                "existing_count": len(requested) - 1,
+                "created_collections": ["evidence_items"],
+                "existing_collections": ["report_sections"] if "report_sections" in requested else [],
+                "collections": [
+                    {
+                        "collection": collection,
+                        "vector_size": 64,
+                        "existed_before": collection == "report_sections",
+                        "created": collection != "report_sections",
+                    }
+                    for collection in requested
+                ],
             }
         )
 

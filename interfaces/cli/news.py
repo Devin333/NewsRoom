@@ -348,6 +348,20 @@ def build_parser() -> argparse.ArgumentParser:
     memory_reindex_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     memory_reindex_parser.set_defaults(handler=_memory_reindex)
 
+    memory_bootstrap_parser = memory_subparsers.add_parser(
+        "bootstrap",
+        help="Create expected Qdrant vector memory collections",
+    )
+    memory_bootstrap_parser.add_argument(
+        "--collection",
+        dest="collections",
+        action="append",
+        default=[],
+        help="Collection to bootstrap; repeat to override defaults",
+    )
+    memory_bootstrap_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    memory_bootstrap_parser.set_defaults(handler=_memory_bootstrap)
+
     diagnose_parser = subparsers.add_parser("diagnose", help="Run local diagnostics")
     diagnose_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     diagnose_parser.set_defaults(handler=_diagnose)
@@ -1031,6 +1045,27 @@ def _memory_reindex(args: argparse.Namespace) -> int:
         print(f"topic={payload['topic']}")
         print(f"documents_indexed={payload['documents_indexed']}")
         print(f"collections={','.join(payload['collections'])}")
+    return 0
+
+
+def _memory_bootstrap(args: argparse.Namespace) -> int:
+    try:
+        result = MemoryApplicationService().bootstrap_collections(
+            collections=args.collections or None,
+        )
+    except ValueError as exc:
+        print(str(exc))
+        return 1
+    payload = result.to_dict()
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        print(f"collection_count={payload['collection_count']}")
+        print(f"created_count={payload['created_count']}")
+        print(f"existing_count={payload['existing_count']}")
+        for item in payload["collections"]:
+            state = "created" if item["created"] else "existing"
+            print(f"- {item['collection']} {state} vector_size={item['vector_size']}")
     return 0
 
 

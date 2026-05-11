@@ -6,10 +6,17 @@ from typing import Any, Protocol
 
 from interfaces.services.artifact_service import ArtifactInspectionService
 from storage.memory import MemoryIngestionResult, MemoryIngestionService
-from storage.vector import VectorDocument, VectorSearchQuery, VectorSearchResult, qdrant_store_from_env
+from storage.vector import (
+    VectorCollectionStatus,
+    VectorDocument,
+    VectorSearchQuery,
+    VectorSearchResult,
+    qdrant_store_from_env,
+)
 
 
 DEFAULT_MEMORY_COLLECTION = "report_sections"
+DEFAULT_BOOTSTRAP_COLLECTIONS = ("report_sections", "evidence_items")
 
 
 class VectorSearchStore(Protocol):
@@ -18,6 +25,8 @@ class VectorSearchStore(Protocol):
 
 class VectorMemoryStore(VectorSearchStore, Protocol):
     def upsert_documents(self, docs: list[VectorDocument]) -> None: ...
+
+    def ensure_collections(self, collections: list[str]) -> list[VectorCollectionStatus]: ...
 
 
 @dataclass(frozen=True)
@@ -52,6 +61,23 @@ class MemoryReindexResult:
             "documents_indexed": self.ingestion.documents_indexed,
             "collections": list(self.ingestion.collections),
             "document_ids": list(self.ingestion.document_ids),
+        }
+
+
+@dataclass(frozen=True)
+class MemoryBootstrapResult:
+    collections: list[VectorCollectionStatus]
+
+    def to_dict(self) -> dict[str, Any]:
+        created = [status.collection for status in self.collections if status.created]
+        existing = [status.collection for status in self.collections if status.existed_before]
+        return {
+            "collection_count": len(self.collections),
+            "created_count": len(created),
+            "existing_count": len(existing),
+            "created_collections": created,
+            "existing_collections": existing,
+            "collections": [status.to_dict() for status in self.collections],
         }
 
 
@@ -90,6 +116,13 @@ class MemoryApplicationService:
             results=self.vector_store.search(query),
         )
 
+    def bootstrap_collections(
+        self,
+        collections: list[str] | None = None,
+    ) -> MemoryBootstrapResult:
+        requested = _normalize_collections(collections or list(DEFAULT_BOOTSTRAP_COLLECTIONS))
+        return MemoryBootstrapResult(collections=self.vector_store.ensure_collections(requested))
+
     def reindex_run(self, run_id: str, *, topic: str | None = None) -> MemoryReindexResult:
         self.artifact_service.list_artifacts(run_id)
         output: dict[str, Any] = {}
@@ -121,3 +154,16 @@ def _request_topic(request: Any) -> str | None:
         return None
     topic = request.get("topic")
     return str(topic) if topic else None
+
+
+def _normalize_collections(collections: list[str]) -> list[str]:
+    normalized = []
+    seen = set()
+    for collection in collections:
+        value = str(collection).strip()
+        if not value:
+            raise ValueError("collection is required")
+        if value not in seen:
+            normalized.append(value)
+            seen.add(value)
+    return normalized
