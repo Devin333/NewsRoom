@@ -1,7 +1,10 @@
+import json
+
 from fastapi.testclient import TestClient
 
 from core.framework.workers import Task, TaskStatus
 from interfaces.api import create_app
+from interfaces.services.run_inspection_service import RunInspectionService
 from interfaces.services.worker_service import EnqueuedTaskResult
 from storage.repository import ReportRecord
 
@@ -278,6 +281,75 @@ def test_run_events_invalid_limit_uses_unified_error() -> None:
     assert response.status_code == 400
     assert payload["success"] is False
     assert payload["error"]["code"] == "invalid_run_events_request"
+
+
+def test_run_replay_returns_bundle() -> None:
+    client = TestClient(create_app(run_inspection_service_factory=lambda: _FakeRunInspectionService()))
+
+    response = client.get("/api/v1/runs/run-1/replay")
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["success"] is True
+    assert payload["data"]["run_id"] == "run-1"
+    assert payload["data"]["artifact_count"] == 1
+
+
+def test_run_replay_missing_uses_unified_error() -> None:
+    client = TestClient(create_app(run_inspection_service_factory=lambda: _MissingRunInspectionService()))
+
+    response = client.get("/api/v1/runs/missing/replay")
+    payload = response.json()
+
+    assert response.status_code == 404
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "run_not_found"
+
+
+def test_run_replay_invalid_uses_unified_error() -> None:
+    client = TestClient(create_app(run_inspection_service_factory=lambda: _InvalidReplayInspectionService()))
+
+    response = client.get("/api/v1/runs/bad/replay")
+    payload = response.json()
+
+    assert response.status_code == 400
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "invalid_run_replay_request"
+
+
+def test_run_replay_api_reads_real_files_and_redacts(tmp_path) -> None:
+    run_dir = tmp_path / "run-1"
+    run_dir.mkdir()
+    (run_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "run_id": "run-1",
+                "status": "succeeded",
+                "artifacts": {"events": "events.jsonl", "report_json": "report.json"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "events.jsonl").write_text(
+        json.dumps({"event_type": "workflow_started", "payload": {"token": "hidden"}}) + "\n",
+        encoding="utf-8",
+    )
+    (run_dir / "report.json").write_text(
+        json.dumps({"title": "Report", "api_key": "hidden"}),
+        encoding="utf-8",
+    )
+    client = TestClient(
+        create_app(run_inspection_service_factory=lambda: RunInspectionService(tmp_path))
+    )
+
+    response = client.get("/api/v1/runs/run-1/replay")
+    payload = response.json()
+    artifacts = {artifact["artifact_key"]: artifact for artifact in payload["data"]["artifacts"]}
+
+    assert response.status_code == 200
+    assert payload["data"]["event_count"] == 1
+    assert payload["data"]["events"][0]["payload"]["token"] == "[redacted]"
+    assert artifacts["report_json"]["content"]["api_key"] == "[redacted]"
 
 
 def test_artifact_list_returns_artifacts() -> None:
@@ -592,13 +664,45 @@ class _FakeRunInspectionService:
             }
         )
 
+    def replay_run(self, run_id):
+        return _FakeResult(
+            {
+                "run_id": run_id,
+                "manifest": {"run_id": run_id, "status": "succeeded"},
+                "manifest_path": f".newsroom/runs/{run_id}/manifest.json",
+                "event_count": 1,
+                "events": [{"event_type": "workflow_started", "payload": {}}],
+                "events_path": f".newsroom/runs/{run_id}/events.jsonl",
+                "events_error": None,
+                "artifact_count": 1,
+                "artifacts": [
+                    {
+                        "artifact_key": "report_json",
+                        "relative_path": "report.json",
+                        "content_type": "application/json",
+                        "size_bytes": 14,
+                        "content": {"title": "Report"},
+                        "read_error": None,
+                    }
+                ],
+            }
+        )
+
 
 class _MissingRunInspectionService:
     def get_run(self, run_id):
         raise FileNotFoundError(f"run not found: {run_id}")
 
+    def replay_run(self, run_id):
+        raise FileNotFoundError(f"run not found: {run_id}")
+
     def list_runs(self, *, limit):
         return _FakeResult({"run_count": 0, "runs": []})
+
+
+class _InvalidReplayInspectionService:
+    def replay_run(self, run_id):
+        raise ValueError(f"invalid run id: {run_id}")
 
 
 class _FakeArtifactService:

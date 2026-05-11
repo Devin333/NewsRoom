@@ -216,6 +216,21 @@ def create_app(
             return _error(status_code=400, code="invalid_run_events_request", message=str(exc))
         return _success(result.to_dict())
 
+    @api.get("/api/v1/runs/{run_id}/replay")
+    def replay_run(run_id: str):
+        try:
+            result = run_inspection_service_factory().replay_run(run_id)
+        except FileNotFoundError as exc:
+            return _error(
+                status_code=404,
+                code="run_not_found",
+                message=str(exc),
+                user_action_required=True,
+            )
+        except ValueError as exc:
+            return _error(status_code=400, code="invalid_run_replay_request", message=str(exc))
+        return _success(result.to_dict())
+
     @api.get("/api/v1/runs/{run_id}/artifacts")
     def list_artifacts(run_id: str):
         try:
