@@ -17,6 +17,7 @@ from core.framework.workflow.step_runner import FunctionStepRegistry, FunctionSt
 from storage.artifacts import ArtifactRef, LocalJsonArtifactIndexStore
 from storage.events import EventRecord as StorageEventRecord
 from storage.events import LocalJsonEventStore
+from storage.security import StorageRedactor
 
 
 class WorkflowRunner:
@@ -27,6 +28,7 @@ class WorkflowRunner:
         function_registry: FunctionStepRegistry,
         artifact_index_store: LocalJsonArtifactIndexStore | None = None,
         event_store: LocalJsonEventStore | None = None,
+        redactor: StorageRedactor | None = None,
     ) -> None:
         self._artifact_root = Path(artifact_root)
         self._artifact_manager = ArtifactManager(self._artifact_root)
@@ -35,6 +37,7 @@ class WorkflowRunner:
             self._artifact_root / "_records" / "artifact_index"
         )
         self._event_store = event_store or LocalJsonEventStore(self._artifact_root / "_records" / "events")
+        self._redactor = redactor or StorageRedactor()
 
     def run(
         self,
@@ -98,14 +101,24 @@ class WorkflowRunner:
                     continue
                 event = StorageEventRecord.from_dict(json.loads(stripped))
                 payload_step_id = event.payload.get("step_id")
+                redaction = self._redactor.redact(
+                    event.payload,
+                    run_id=result.run_id,
+                    artifact_id="events",
+                )
+                metadata = {
+                    **event.metadata,
+                    "workflow_version": result.workflow_version,
+                }
+                if redaction.redacted:
+                    metadata["redaction_report"] = redaction.report.to_dict()
                 event = replace(
                     event,
                     workflow_id=event.workflow_id or result.workflow_id,
                     step_id=event.step_id or (str(payload_step_id) if payload_step_id else None),
-                    metadata={
-                        **event.metadata,
-                        "workflow_version": result.workflow_version,
-                    },
+                    payload=redaction.value,
+                    redacted=True,
+                    metadata=metadata,
                 )
                 self._event_store.append_event(event)
 

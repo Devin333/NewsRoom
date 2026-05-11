@@ -50,6 +50,7 @@ packages = [
   "storage.local_json",
   "storage.memory",
   "storage.postgres",
+  "storage.security",
   "storage.vector",
   "workflows",
   "workflows.daily_intelligence",

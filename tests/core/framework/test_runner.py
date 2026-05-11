@@ -3,6 +3,7 @@ from core.framework.specs import StepSpec, WorkflowSpec, WorkflowStatus
 from core.framework.workflow import FunctionStepRegistry
 from storage.artifacts import LocalJsonArtifactIndexStore
 from storage.events import LocalJsonEventStore
+from storage.security import REDACTED_VALUE
 
 
 def test_workflow_runner_returns_stable_run_result(tmp_path) -> None:
@@ -67,3 +68,43 @@ def test_workflow_runner_returns_stable_run_result(tmp_path) -> None:
         "step_started",
         "step_succeeded",
     ]
+
+
+def test_workflow_runner_redacts_event_store_failure_payload(tmp_path) -> None:
+    fake_secret = "sk" + "-runnersecret123456"
+    registry = FunctionStepRegistry()
+    registry.register(
+        "sample.bad",
+        lambda buffer: (_ for _ in ()).throw(RuntimeError(f"failed with {fake_secret}")),
+    )
+    runner = WorkflowRunner(artifact_root=tmp_path, function_registry=registry)
+    spec = WorkflowSpec(
+        workflow_id="redaction",
+        name="Redaction",
+        version="1.0",
+        start_step_id="bad",
+        steps=[
+            StepSpec(
+                step_id="bad",
+                implementation="sample.bad",
+                read_keys=[],
+                write_keys=["output"],
+                required_output_keys=["output"],
+            )
+        ],
+    )
+
+    result = runner.run(spec, {"topic": "ai"}, profile="test", run_id="runner-redaction")
+
+    assert result.status == WorkflowStatus.FAILED
+    failed_event = next(
+        event
+        for event in LocalJsonEventStore(tmp_path / "_records" / "events").list_by_run("runner-redaction")
+        if event.event_type == "step_failed"
+    )
+    payload_text = str(failed_event.to_dict())
+    assert fake_secret not in payload_text
+    assert REDACTED_VALUE in payload_text
+    report = failed_event.metadata["redaction_report"]
+    assert "$.outcome.error_message" in report["redacted_fields"]
+    assert "secret_like_string" in report["redaction_rules_applied"]
