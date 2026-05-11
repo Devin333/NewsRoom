@@ -8,7 +8,7 @@ from uuid import uuid4
 from core.framework.artifacts.filesystem import ArtifactManager
 from core.framework.artifacts.source_artifacts import SourceArtifactWriter
 from core.framework.events.recorder import EventRecorder
-from core.framework.specs import StepSpec, StepStatus, WorkflowSpec, WorkflowStatus
+from core.framework.specs import EdgeCondition, StepSpec, StepStatus, WorkflowSpec, WorkflowStatus
 from core.framework.workflow.buffer import DataBuffer
 from core.framework.workflow.result import StepOutcome, WorkflowError, WorkflowResult
 from core.framework.workflow.routing import RoutingEngine
@@ -134,14 +134,25 @@ class WorkflowExecutor:
                         status = WorkflowStatus.SUCCEEDED
             else:
                 recorder.emit("step_failed", {"step_id": step.step_id, "outcome": outcome})
-                status = WorkflowStatus.FAILED
-                error = WorkflowError(
+                step_error = WorkflowError(
                     error_type=outcome.error_type or "StepFailed",
                     message=outcome.error_message or f"step failed: {step.step_id}",
                     step_id=step.step_id,
                     details=outcome.error_details,
                 )
-                current_step_id = None
+                if _blocks_on_failure(step):
+                    recorder.emit("step_blocked", {"step_id": step.step_id, "outcome": outcome})
+                    status = WorkflowStatus.BLOCKED
+                    error = step_error
+                    current_step_id = None
+                else:
+                    fallback_step_id = _failure_fallback_step_id(workflow, step)
+                    if fallback_step_id is not None:
+                        current_step_id = fallback_step_id
+                    else:
+                        status = WorkflowStatus.FAILED
+                        error = step_error
+                        current_step_id = None
 
         final_buffer_snapshot = buffer.snapshot()
         output = final_buffer_snapshot.to_dict()
@@ -253,7 +264,10 @@ class WorkflowExecutor:
                 )
                 manifest["artifacts"]["blocked_report"] = "blocked_report.json"
         else:
-            recorder.emit("workflow_failed", {"path": path, "error": error})
+            terminal_event = (
+                "workflow_blocked" if status == WorkflowStatus.BLOCKED else "workflow_failed"
+            )
+            recorder.emit(terminal_event, {"path": path, "error": error})
             self._artifact_manager.write_json(actual_run_id, "error.json", error)
             manifest["artifacts"]["error"] = "error.json"
             self._write_source_diagnostic_artifacts(actual_run_id, manifest, output)
@@ -420,3 +434,22 @@ def _evidence_source_map(evidence_bundle: Any) -> dict[str, list[str]] | None:
     if source_map is None:
         return None
     return {str(key): list(value) for key, value in source_map.items()}
+
+
+def _blocks_on_failure(step: StepSpec) -> bool:
+    policy = step.failure_policy
+    return policy.mark_as_blocked or policy.on_failure == "mark_as_blocked"
+
+
+def _failure_fallback_step_id(workflow: WorkflowSpec, step: StepSpec) -> str | None:
+    if step.failure_policy.fallback_step_id is not None:
+        return step.failure_policy.fallback_step_id
+    edges = [
+        edge
+        for edge in workflow.edges
+        if edge.source_step_id == step.step_id and edge.condition == EdgeCondition.ON_FAILURE
+    ]
+    edges.sort(key=lambda edge: (edge.priority, edge.edge_id))
+    if not edges:
+        return None
+    return edges[0].target_step_id

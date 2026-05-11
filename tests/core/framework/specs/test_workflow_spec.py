@@ -3,6 +3,7 @@ import pytest
 from core.framework.specs import (
     EdgeCondition,
     EdgeSpec,
+    FailurePolicySpec,
     RetryPolicySpec,
     StepSpec,
     StepType,
@@ -50,6 +51,27 @@ def test_step_spec_serializes_retry_policy() -> None:
         "backoff_strategy": "fixed",
         "retry_on_error_types": ["RuntimeError"],
         "no_retry_on_error_types": ["ValueError"],
+    }
+
+
+def test_step_spec_serializes_failure_policy() -> None:
+    step = StepSpec(
+        step_id="risky",
+        implementation="sample.risky",
+        failure_policy=FailurePolicySpec(
+            on_failure="fallback_step",
+            fallback_step_id="recover",
+            allow_partial_success=True,
+        ),
+    )
+
+    payload = step.to_dict()
+
+    assert payload["failure_policy"] == {
+        "on_failure": "fallback_step",
+        "fallback_step_id": "recover",
+        "mark_as_blocked": False,
+        "allow_partial_success": True,
     }
 
 
@@ -101,6 +123,25 @@ def test_workflow_spec_rejects_missing_edge_endpoint() -> None:
     )
 
     with pytest.raises(WorkflowSpecError, match="missing target step"):
+        spec.validate()
+
+
+def test_workflow_spec_rejects_missing_failure_fallback_step() -> None:
+    spec = WorkflowSpec(
+        workflow_id="sample",
+        name="Sample",
+        version="1.0",
+        start_step_id="start",
+        steps=[
+            StepSpec(
+                step_id="start",
+                implementation="sample.start",
+                failure_policy=FailurePolicySpec(fallback_step_id="missing"),
+            )
+        ],
+    )
+
+    with pytest.raises(WorkflowSpecError, match="fallback step does not exist"):
         spec.validate()
 
 

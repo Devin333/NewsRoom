@@ -4,6 +4,7 @@ from core.framework.artifacts import ArtifactManager
 from core.framework.specs import (
     EdgeCondition,
     EdgeSpec,
+    FailurePolicySpec,
     RetryPolicySpec,
     StepStatus,
     StepSpec,
@@ -285,6 +286,136 @@ def test_workflow_executor_fails_after_retry_exhaustion(tmp_path) -> None:
         for line in (tmp_path / "run-exhausted" / "events.jsonl").read_text(encoding="utf-8").splitlines()
     ]
     assert events.count("step_retry_scheduled") == 2
+
+
+def test_workflow_executor_routes_failed_step_to_policy_fallback(tmp_path) -> None:
+    registry = FunctionStepRegistry()
+    registry.register("sample.bad", lambda buffer: (_ for _ in ()).throw(RuntimeError("primary failed")))
+    registry.register("sample.recover", lambda buffer: {"report": "recovered"})
+    spec = WorkflowSpec(
+        workflow_id="fallback-policy",
+        name="Fallback Policy",
+        version="1.0",
+        start_step_id="bad",
+        steps=[
+            StepSpec(
+                step_id="bad",
+                implementation="sample.bad",
+                failure_policy=FailurePolicySpec(fallback_step_id="recover"),
+            ),
+            StepSpec(
+                step_id="recover",
+                implementation="sample.recover",
+                write_keys=["report"],
+                required_output_keys=["report"],
+            ),
+        ],
+    )
+    executor = WorkflowExecutor(
+        function_step_runner=FunctionStepRunner(registry),
+        artifact_manager=ArtifactManager(tmp_path),
+    )
+
+    result = executor.execute(spec, {"topic": "ai"}, profile="test", run_id="run-policy-fallback")
+
+    assert result.status == WorkflowStatus.SUCCEEDED
+    assert result.error is None
+    assert result.path == ["bad", "recover"]
+    assert result.output["report"] == "recovered"
+    assert result.step_results["bad"].status == StepStatus.FAILED
+    events = [
+        json.loads(line)["event_type"]
+        for line in (tmp_path / "run-policy-fallback" / "events.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert events == [
+        "workflow_started",
+        "step_started",
+        "step_failed",
+        "step_started",
+        "step_succeeded",
+        "workflow_succeeded",
+    ]
+
+
+def test_workflow_executor_routes_failed_step_to_on_failure_edge(tmp_path) -> None:
+    registry = FunctionStepRegistry()
+    registry.register("sample.bad", lambda buffer: (_ for _ in ()).throw(RuntimeError("primary failed")))
+    registry.register("sample.recover", lambda buffer: {"report": "edge recovered"})
+    spec = WorkflowSpec(
+        workflow_id="fallback-edge",
+        name="Fallback Edge",
+        version="1.0",
+        start_step_id="bad",
+        steps=[
+            StepSpec(step_id="bad", implementation="sample.bad"),
+            StepSpec(
+                step_id="recover",
+                implementation="sample.recover",
+                write_keys=["report"],
+                required_output_keys=["report"],
+            ),
+        ],
+        edges=[
+            EdgeSpec(
+                edge_id="bad-to-recover",
+                source_step_id="bad",
+                target_step_id="recover",
+                condition=EdgeCondition.ON_FAILURE,
+            )
+        ],
+    )
+    executor = WorkflowExecutor(
+        function_step_runner=FunctionStepRunner(registry),
+        artifact_manager=ArtifactManager(tmp_path),
+    )
+
+    result = executor.execute(spec, {"topic": "ai"}, profile="test", run_id="run-edge-fallback")
+
+    assert result.status == WorkflowStatus.SUCCEEDED
+    assert result.path == ["bad", "recover"]
+    assert result.output["report"] == "edge recovered"
+
+
+def test_workflow_executor_marks_failed_step_as_blocked(tmp_path) -> None:
+    registry = FunctionStepRegistry()
+    registry.register("sample.bad", lambda buffer: (_ for _ in ()).throw(RuntimeError("needs review")))
+    spec = WorkflowSpec(
+        workflow_id="blocked-policy",
+        name="Blocked Policy",
+        version="1.0",
+        start_step_id="bad",
+        steps=[
+            StepSpec(
+                step_id="bad",
+                implementation="sample.bad",
+                failure_policy=FailurePolicySpec(mark_as_blocked=True),
+            )
+        ],
+    )
+    executor = WorkflowExecutor(
+        function_step_runner=FunctionStepRunner(registry),
+        artifact_manager=ArtifactManager(tmp_path),
+    )
+
+    result = executor.execute(spec, {"topic": "ai"}, profile="test", run_id="run-blocked-policy")
+
+    assert result.status == WorkflowStatus.BLOCKED
+    assert result.error is not None
+    assert result.error.message == "needs review"
+    assert (tmp_path / "run-blocked-policy" / "error.json").exists()
+    manifest = json.loads((tmp_path / "run-blocked-policy" / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["status"] == "blocked"
+    events = [
+        json.loads(line)["event_type"]
+        for line in (tmp_path / "run-blocked-policy" / "events.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert events == [
+        "workflow_started",
+        "step_started",
+        "step_failed",
+        "step_blocked",
+        "workflow_blocked",
+    ]
 
 
 def test_workflow_executor_records_routing_failure_artifacts(tmp_path) -> None:

@@ -3,6 +3,7 @@
 from core.framework.specs.workflow_spec import (
     EdgeCondition,
     EdgeSpec,
+    FailurePolicySpec,
     RetryPolicySpec,
     StepSpec,
     StepStatus,
@@ -15,6 +16,7 @@ from core.framework.specs.workflow_spec import (
 __all__ = [
     "EdgeCondition",
     "EdgeSpec",
+    "FailurePolicySpec",
     "RetryPolicySpec",
     "StepSpec",
     "StepStatus",

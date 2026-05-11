@@ -80,6 +80,26 @@ class RetryPolicySpec:
 
 
 @dataclass(frozen=True)
+class FailurePolicySpec:
+    on_failure: str = "fail_workflow"
+    fallback_step_id: str | None = None
+    mark_as_blocked: bool = False
+    allow_partial_success: bool = False
+
+    def __post_init__(self) -> None:
+        if not self.on_failure:
+            raise WorkflowSpecError("on_failure is required")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "on_failure": self.on_failure,
+            "fallback_step_id": self.fallback_step_id,
+            "mark_as_blocked": self.mark_as_blocked,
+            "allow_partial_success": self.allow_partial_success,
+        }
+
+
+@dataclass(frozen=True)
 class StepSpec:
     step_id: str
     implementation: str
@@ -91,12 +111,15 @@ class StepSpec:
     required_output_keys: list[str] = field(default_factory=list)
     nullable_output_keys: list[str] = field(default_factory=list)
     retry_policy: RetryPolicySpec = field(default_factory=RetryPolicySpec)
+    failure_policy: FailurePolicySpec = field(default_factory=FailurePolicySpec)
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "step_type", StepType(self.step_type))
         if not isinstance(self.retry_policy, RetryPolicySpec):
             object.__setattr__(self, "retry_policy", RetryPolicySpec(**self.retry_policy))
+        if not isinstance(self.failure_policy, FailurePolicySpec):
+            object.__setattr__(self, "failure_policy", FailurePolicySpec(**self.failure_policy))
         if not self.step_id:
             raise WorkflowSpecError("step_id is required")
         if not self.implementation:
@@ -114,6 +137,7 @@ class StepSpec:
             "required_output_keys": list(self.required_output_keys),
             "nullable_output_keys": list(self.nullable_output_keys),
             "retry_policy": self.retry_policy.to_dict(),
+            "failure_policy": self.failure_policy.to_dict(),
             "metadata": dict(self.metadata),
         }
 
@@ -185,6 +209,13 @@ class WorkflowSpec:
         for terminal_step_id in self.terminal_step_ids:
             if terminal_step_id not in step_id_set:
                 raise WorkflowSpecError(f"terminal step does not exist: {terminal_step_id}")
+
+        for step in self.steps:
+            fallback_step_id = step.failure_policy.fallback_step_id
+            if fallback_step_id is not None and fallback_step_id not in step_id_set:
+                raise WorkflowSpecError(
+                    f"fallback step does not exist for {step.step_id}: {fallback_step_id}"
+                )
 
         edge_ids = [edge.edge_id for edge in self.edges]
         duplicate_edge_ids = sorted({edge_id for edge_id in edge_ids if edge_ids.count(edge_id) > 1})
