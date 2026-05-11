@@ -1,4 +1,11 @@
-from storage.vector import DeterministicEmbeddingModel, QdrantVectorStore, VectorDocument, VectorSearchQuery
+from storage.vector import (
+    DeterministicEmbeddingModel,
+    OpenAICompatibleEmbeddingModel,
+    QdrantVectorStore,
+    VectorDocument,
+    VectorSearchQuery,
+    qdrant_store_from_env,
+)
 
 
 def test_qdrant_store_creates_collection_and_upserts_points() -> None:
@@ -95,6 +102,26 @@ def test_qdrant_store_bootstraps_missing_collections_and_reports_existing() -> N
     ]
     assert client.created_collections[0][0] == "evidence_items"
     assert client.created_collections[0][1].size == 8
+
+
+def test_qdrant_store_from_env_uses_configured_dashscope_embeddings(monkeypatch) -> None:
+    client = _FakeQdrantClient()
+    monkeypatch.setattr("storage.vector.qdrant_store.QdrantClient", lambda url: client)
+
+    store = qdrant_store_from_env(
+        env={
+            "NEWS_QDRANT_URL": "http://qdrant.example:6333",
+            "NEWS_EMBEDDING_PROVIDER": "dashscope",
+            "NEWS_EMBEDDING_DIMENSIONS": "128",
+        }
+    )
+
+    assert store.client is client
+    assert store.vector_size == 128
+    assert isinstance(store.embedding_model, OpenAICompatibleEmbeddingModel)
+    assert store.embedding_model.config.model == "text-embedding-v4"
+    assert store.embedding_model.config.api_key_env == "DASHSCOPE_API_KEY"
+    assert store.embedding_model.config.request_dimensions == 128
 
 
 class _FakeQdrantClient:

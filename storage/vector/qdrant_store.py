@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import os
 from collections import defaultdict
-from typing import Any
+from typing import Any, Mapping
 from uuid import NAMESPACE_URL, uuid5
 
 from qdrant_client import QdrantClient, models
 
-from storage.vector.embeddings import DeterministicEmbeddingModel
+from storage.vector.embeddings import EmbeddingModel, embedding_model_from_env
 from storage.vector.models import (
     VectorCollectionStatus,
     VectorDocument,
@@ -25,11 +25,11 @@ class QdrantVectorStore:
         self,
         client: QdrantClient,
         *,
-        embedding_model: DeterministicEmbeddingModel | None = None,
+        embedding_model: EmbeddingModel | None = None,
         vector_size: int = DEFAULT_VECTOR_SIZE,
     ) -> None:
         self.client = client
-        self.embedding_model = embedding_model or DeterministicEmbeddingModel(dimension=vector_size)
+        self.embedding_model = embedding_model or embedding_model_from_env(vector_size=vector_size)
         self.vector_size = vector_size
 
     def upsert_documents(self, docs: list[VectorDocument]) -> None:
@@ -40,8 +40,11 @@ class QdrantVectorStore:
         for collection, collection_docs in grouped.items():
             self._ensure_collection(collection)
             points = []
+            embedded_vectors = iter(
+                self.embedding_model.embed_texts([doc.text for doc in collection_docs if doc.vector is None])
+            )
             for doc in collection_docs:
-                vector = doc.vector or self.embedding_model.embed_text(doc.text)
+                vector = doc.vector or next(embedded_vectors)
                 points.append(
                     models.PointStruct(
                         id=str(uuid5(NAMESPACE_URL, f"{collection}:{doc.document_id}")),
@@ -99,14 +102,15 @@ class QdrantVectorStore:
 
 def qdrant_store_from_env(
     *,
-    embedding_model: DeterministicEmbeddingModel | None = None,
+    embedding_model: EmbeddingModel | None = None,
     env: dict[str, str] | None = None,
 ) -> QdrantVectorStore:
     values = env if env is not None else os.environ
-    vector_size = int(values.get("NEWS_VECTOR_SIZE", DEFAULT_VECTOR_SIZE))
+    vector_size = _vector_size_from_env(values)
     url = values.get("NEWS_QDRANT_URL", DEFAULT_QDRANT_URL)
     client = QdrantClient(url=url)
-    return QdrantVectorStore(client, embedding_model=embedding_model, vector_size=vector_size)
+    resolved_embedding_model = embedding_model or embedding_model_from_env(env=values, vector_size=vector_size)
+    return QdrantVectorStore(client, embedding_model=resolved_embedding_model, vector_size=vector_size)
 
 
 def _qdrant_filter(filters: dict[str, Any]) -> models.Filter | None:
@@ -118,3 +122,11 @@ def _qdrant_filter(filters: dict[str, Any]) -> models.Filter | None:
             for key, value in filters.items()
         ]
     )
+
+
+def _vector_size_from_env(values: Mapping[str, str]) -> int:
+    if values.get("NEWS_VECTOR_SIZE"):
+        return int(values["NEWS_VECTOR_SIZE"])
+    if values.get("NEWS_EMBEDDING_DIMENSIONS"):
+        return int(values["NEWS_EMBEDDING_DIMENSIONS"])
+    return DEFAULT_VECTOR_SIZE
