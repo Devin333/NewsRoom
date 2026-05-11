@@ -97,6 +97,17 @@ def build_parser() -> argparse.ArgumentParser:
     reports_parser = subparsers.add_parser("reports", help="Inspect persisted reports")
     reports_subparsers = reports_parser.add_subparsers(dest="reports_command", required=True)
 
+    reports_list_parser = reports_subparsers.add_parser("list", help="List persisted reports")
+    reports_list_parser.add_argument("--limit", type=int, default=20, help="Maximum reports")
+    reports_list_parser.add_argument("--workflow-id", default=None, help="Optional workflow id filter")
+    reports_list_parser.add_argument(
+        "--artifact-root",
+        default=".newsroom/runs",
+        help="Directory where run artifacts are stored",
+    )
+    reports_list_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    reports_list_parser.set_defaults(handler=_reports_list)
+
     reports_show_parser = reports_subparsers.add_parser("show", help="Show one persisted report")
     reports_show_parser.add_argument("report_id", help="Report id")
     reports_show_parser.add_argument(
@@ -1017,6 +1028,28 @@ def _reports_search(args: argparse.Namespace) -> int:
         print(f"report_count={payload['report_count']}")
         for report in payload["reports"]:
             print(f"- {report['run_id']} title={report['title']} finished_at={report['finished_at']}")
+    return 0
+
+
+def _reports_list(args: argparse.Namespace) -> int:
+    try:
+        result = ReportApplicationService(artifact_root=args.artifact_root).list_reports(
+            limit=args.limit,
+            workflow_id=args.workflow_id,
+        )
+    except ValueError as exc:
+        print(str(exc))
+        return 1
+    payload = result.to_dict()
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        print(f"report_count={payload['report_count']}")
+        for report in payload["reports"]:
+            print(
+                f"- {report['run_id']} workflow={report.get('workflow_id')} "
+                f"title={report['title']} finished_at={report['finished_at']}"
+            )
     return 0
 
 

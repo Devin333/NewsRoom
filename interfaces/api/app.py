@@ -222,6 +222,17 @@ def create_app(
         )
         return _success(_model_to_dict(data))
 
+    @api.get("/api/v1/reports")
+    def list_reports(limit: int = 20, workflow_id: str | None = None):
+        try:
+            result = report_service_factory().list_reports(
+                limit=limit,
+                workflow_id=workflow_id,
+            )
+        except ValueError as exc:
+            return _error(status_code=400, code="invalid_report_catalog", message=str(exc))
+        return _success(result.to_dict())
+
     @api.get("/api/v1/reports/{report_id}")
     def get_report(report_id: str):
         try:

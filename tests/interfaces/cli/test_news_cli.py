@@ -310,6 +310,47 @@ def test_news_cli_reports_search_json_output(tmp_path, capsys) -> None:
     assert payload["reports"][0]["status"] == "final"
 
 
+def test_news_cli_reports_list_json_output(tmp_path, capsys) -> None:
+    assert (
+        main(
+            [
+                "run",
+                "daily",
+                "--profile",
+                "live-offline",
+                "--artifact-root",
+                str(tmp_path),
+                "--run-id",
+                "list-source",
+                "--topic",
+                "AI policy",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "reports",
+            "list",
+            "--workflow-id",
+            "daily-intelligence-live",
+            "--artifact-root",
+            str(tmp_path),
+            "--json",
+        ]
+    )
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert exit_code == 0
+    assert payload["workflow_id"] == "daily-intelligence-live"
+    assert payload["report_count"] == 1
+    assert payload["reports"][0]["report_id"] == "list-source:final"
+    assert payload["reports"][0]["workflow_id"] == "daily-intelligence-live"
+
+
 def test_news_cli_reports_show_json_output(tmp_path, capsys) -> None:
     assert (
         main(

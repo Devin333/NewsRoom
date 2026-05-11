@@ -208,6 +208,20 @@ def test_get_report_returns_report_detail() -> None:
     assert payload["data"]["title"] == "Daily Intelligence"
 
 
+def test_list_reports_returns_report_catalog() -> None:
+    client = TestClient(create_app(report_service_factory=lambda: _FakeReportService()))
+
+    response = client.get("/api/v1/reports?limit=1&workflow_id=daily-intelligence-live")
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["success"] is True
+    assert payload["data"]["workflow_id"] == "daily-intelligence-live"
+    assert payload["data"]["report_count"] == 1
+    assert payload["data"]["reports"][0]["report_id"] == "report-1"
+    assert payload["data"]["reports"][0]["workflow_id"] == "daily-intelligence-live"
+
+
 def test_latest_report_missing_uses_unified_error() -> None:
     client = TestClient(create_app(report_service_factory=lambda: _MissingReportService()))
 
@@ -266,6 +280,17 @@ def test_report_search_invalid_query_uses_unified_error() -> None:
     assert response.status_code == 400
     assert payload["success"] is False
     assert payload["error"]["code"] == "invalid_report_search"
+
+
+def test_report_catalog_invalid_limit_uses_unified_error() -> None:
+    client = TestClient(create_app(report_service_factory=lambda: _FakeReportService()))
+
+    response = client.get("/api/v1/reports?limit=0")
+    payload = response.json()
+
+    assert response.status_code == 400
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "invalid_report_catalog"
 
 
 def test_memory_search_returns_results() -> None:
@@ -539,6 +564,31 @@ class _FakeReportService:
         if report_id != "report-1":
             raise ValueError(f"invalid report id: {report_id}")
         return self.latest_report()
+
+    def list_reports(self, *, limit, workflow_id=None):
+        if limit <= 0:
+            raise ValueError("limit must be greater than zero")
+        return _FakeResult(
+            {
+                "limit": limit,
+                "workflow_id": workflow_id,
+                "report_count": 1,
+                "reports": [
+                    {
+                        "report_id": "report-1",
+                        "run_id": "run-1",
+                        "status": "final",
+                        "finished_at": "2026-05-11T01:00:00Z",
+                        "title": "Daily Intelligence",
+                        "quality_score": 0.9,
+                        "workflow_id": "daily-intelligence-live",
+                        "manifest_path": ".newsroom/runs/run-1/manifest.json",
+                        "report_json_path": ".newsroom/runs/run-1/report.json",
+                        "report_markdown_path": ".newsroom/runs/run-1/report.md",
+                    }
+                ],
+            }
+        )
 
     def search_reports(self, *, query, limit):
         if not query:
