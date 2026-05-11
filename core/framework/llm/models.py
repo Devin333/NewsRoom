@@ -50,11 +50,35 @@ class LLMRequest:
 
 
 @dataclass(frozen=True)
+class LLMToolCall:
+    tool_call_id: str
+    tool_name: str
+    arguments: dict[str, Any] = field(default_factory=dict)
+    raw_arguments: str | None = None
+    provider_tool_call_id: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self, *, redact: bool = True) -> dict[str, Any]:
+        payload = {
+            "tool_call_id": self.tool_call_id,
+            "tool_name": self.tool_name,
+            "arguments": deepcopy(self.arguments),
+            "raw_arguments": self.raw_arguments,
+            "provider_tool_call_id": self.provider_tool_call_id,
+            "metadata": dict(self.metadata),
+        }
+        if redact:
+            return redact_sensitive_values(payload)
+        return payload
+
+
+@dataclass(frozen=True)
 class LLMResponse:
     content: str
     usage: TokenUsage = field(default_factory=TokenUsage)
     metadata: dict[str, Any] = field(default_factory=dict)
     structured_output: dict[str, Any] | None = None
+    tool_calls: list[LLMToolCall] = field(default_factory=list)
 
     def to_dict(self, *, redact: bool = True) -> dict[str, Any]:
         payload = {
@@ -62,6 +86,7 @@ class LLMResponse:
             "usage": self.usage.to_dict(),
             "metadata": dict(self.metadata),
             "structured_output": deepcopy(self.structured_output),
+            "tool_calls": [tool_call.to_dict(redact=False) for tool_call in self.tool_calls],
         }
         if redact:
             return redact_sensitive_values(payload)

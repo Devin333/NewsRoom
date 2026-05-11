@@ -10,7 +10,7 @@ from core.framework.llm.cost import (
     LLMBudgetPolicy,
     ModelPricing,
 )
-from core.framework.llm.models import LLMClient, LLMRequest, LLMResponse, TokenUsage
+from core.framework.llm.models import LLMClient, LLMRequest, LLMResponse, LLMToolCall, TokenUsage
 from core.framework.llm.openai_compatible import (
     LLMConfigurationError,
     LLMProviderError,
@@ -20,6 +20,7 @@ from core.framework.llm.openai_compatible import (
 )
 from core.framework.llm.redaction import REDACTED_VALUE, redact_sensitive_values
 from core.framework.llm.router import LLMRouteError, LLMRouter, ModelDeployment, ModelRoute
+from core.framework.llm.tool_adapters import LLMToolCallParseError, LLMToolSchemaError
 
 __all__ = [
     "FakeLLMClient",
@@ -36,6 +37,9 @@ __all__ = [
     "LLMRetryPolicy",
     "LLMRouteError",
     "LLMRouter",
+    "LLMToolCall",
+    "LLMToolCallParseError",
+    "LLMToolSchemaError",
     "ModelCapabilities",
     "ModelDeployment",
     "ModelPricing",

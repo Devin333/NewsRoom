@@ -72,7 +72,16 @@ def test_openai_compatible_client_posts_chat_completion_and_normalizes_response(
     assert captured["payload"] == {
         "model": "test-model",
         "messages": [{"role": "user", "content": "hi"}],
-        "tools": [{"name": "memory.search"}],
+        "tools": [
+            {
+                "type": "function",
+                "function": {
+                    "name": "memory_search",
+                    "description": "",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }
+        ],
     }
     assert response.content == "{\"ok\": true}"
     assert response.usage.input_tokens == 7
@@ -383,6 +392,148 @@ def test_openai_compatible_client_does_not_retry_invalid_structured_output(monke
     assert calls == 1
     assert exc_info.value.retryable is False
     assert exc_info.value.error_type == "structured_output_parse_error"
+
+
+def test_openai_compatible_client_parses_provider_tool_calls(monkeypatch) -> None:
+    monkeypatch.setenv("TEST_LLM_KEY", "redacted-test-key")
+
+    def transport(request: Request, timeout: float) -> bytes:
+        return json.dumps(
+            {
+                "id": "tool-call-ok",
+                "choices": [
+                    {
+                        "message": {
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "call_1",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "memory_search",
+                                        "arguments": "{\"query\":\"chips\"}",
+                                    },
+                                }
+                            ],
+                        }
+                    }
+                ],
+                "usage": {"prompt_tokens": 7, "completion_tokens": 5},
+            }
+        ).encode("utf-8")
+
+    client = OpenAICompatibleClient(
+        OpenAICompatibleConfig(
+            provider="test",
+            base_url="https://llm.example/v1",
+            model="test-model",
+            api_key_env="TEST_LLM_KEY",
+        ),
+        transport=transport,
+    )
+
+    response = client.complete(
+        LLMRequest(
+            messages=[{"role": "user", "content": "hi"}],
+            tools=[
+                {
+                    "name": "memory.search",
+                    "description": "Search memory",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"query": {"type": "string"}},
+                    },
+                }
+            ],
+        )
+    )
+
+    assert response.content == ""
+    assert len(response.tool_calls) == 1
+    assert response.tool_calls[0].tool_name == "memory.search"
+    assert response.tool_calls[0].arguments == {"query": "chips"}
+    assert response.tool_calls[0].provider_tool_call_id == "call_1"
+
+
+def test_openai_compatible_client_rejects_invalid_provider_tool_call_arguments(monkeypatch) -> None:
+    monkeypatch.setenv("TEST_LLM_KEY", "redacted-test-key")
+
+    def transport(request: Request, timeout: float) -> bytes:
+        return json.dumps(
+            {
+                "id": "tool-call-bad",
+                "choices": [
+                    {
+                        "message": {
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "call_1",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "memory_search",
+                                        "arguments": "not json",
+                                    },
+                                }
+                            ],
+                        }
+                    }
+                ],
+                "usage": {},
+            }
+        ).encode("utf-8")
+
+    client = OpenAICompatibleClient(
+        OpenAICompatibleConfig(
+            provider="test",
+            base_url="https://llm.example/v1",
+            model="test-model",
+            api_key_env="TEST_LLM_KEY",
+        ),
+        transport=transport,
+    )
+
+    with pytest.raises(LLMProviderError) as exc_info:
+        client.complete(
+            LLMRequest(
+                messages=[{"role": "user", "content": "hi"}],
+                tools=[{"name": "memory.search"}],
+            )
+        )
+
+    assert exc_info.value.retryable is False
+    assert exc_info.value.error_type == "tool_call_parse_error"
+
+
+def test_openai_compatible_client_rejects_colliding_provider_tool_names(monkeypatch) -> None:
+    monkeypatch.setenv("TEST_LLM_KEY", "redacted-test-key")
+    calls = 0
+
+    def transport(request: Request, timeout: float) -> bytes:
+        nonlocal calls
+        calls += 1
+        return _success_body()
+
+    client = OpenAICompatibleClient(
+        OpenAICompatibleConfig(
+            provider="test",
+            base_url="https://llm.example/v1",
+            model="test-model",
+            api_key_env="TEST_LLM_KEY",
+        ),
+        transport=transport,
+    )
+
+    with pytest.raises(LLMProviderError) as exc_info:
+        client.complete(
+            LLMRequest(
+                messages=[{"role": "user", "content": "hi"}],
+                tools=[{"name": "memory.search"}, {"name": "memory_search"}],
+            )
+        )
+
+    assert calls == 0
+    assert exc_info.value.error_type == "invalid_request_schema"
 
 
 def _success_body(*, response_id: str = "chatcmpl-test", content: str = "{\"ok\": true}") -> bytes:

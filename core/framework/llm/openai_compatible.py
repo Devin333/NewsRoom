@@ -10,6 +10,12 @@ from urllib.request import Request, urlopen
 
 from core.framework.llm.models import LLMRequest, LLMResponse, TokenUsage
 from core.framework.llm.redaction import redact_sensitive_values
+from core.framework.llm.tool_adapters import (
+    LLMToolCallParseError,
+    LLMToolSchemaError,
+    parse_openai_tool_calls,
+    to_openai_tools,
+)
 
 
 class LLMConfigurationError(RuntimeError):
@@ -118,7 +124,15 @@ class OpenAICompatibleClient:
 
     def complete(self, request: LLMRequest) -> LLMResponse:
         api_key = self.config.resolve_api_key()
-        payload = self._build_payload(request)
+        try:
+            payload = self._build_payload(request)
+        except LLMToolSchemaError as exc:
+            raise LLMProviderError(
+                f"{self.config.provider} request tool schema is invalid: {exc}",
+                provider=self.config.provider,
+                error_type="invalid_request_schema",
+                retryable=False,
+            ) from exc
 
         for attempt in range(1, self._retry_policy.max_attempts + 1):
             http_request = self._build_http_request(api_key, payload)
@@ -149,7 +163,7 @@ class OpenAICompatibleClient:
             "messages": request.messages,
         }
         if request.tools:
-            payload["tools"] = request.tools
+            payload["tools"] = to_openai_tools(request.tools)
 
         response_format = _provider_response_format(request)
         if response_format is not None:
@@ -222,7 +236,20 @@ class OpenAICompatibleClient:
                 retryable=False,
                 attempts=attempts,
             )
+        try:
+            tool_calls = parse_openai_tool_calls(message.get("tool_calls"), request.tools)
+        except LLMToolCallParseError as exc:
+            raise LLMProviderError(
+                f"{self.config.provider} tool call parse failed: {exc}",
+                provider=self.config.provider,
+                error_type="tool_call_parse_error",
+                retryable=False,
+                attempts=attempts,
+            ) from exc
+
         content = message.get("content")
+        if content is None and tool_calls:
+            content = ""
         if not isinstance(content, str):
             raise LLMProviderError(
                 f"{self.config.provider} response missing message content",
@@ -262,6 +289,7 @@ class OpenAICompatibleClient:
                 "retry_count": attempts - 1,
             },
             structured_output=structured_output,
+            tool_calls=tool_calls,
         )
 
     def _parse_structured_output(self, content: str, *, attempts: int) -> dict[str, Any]:

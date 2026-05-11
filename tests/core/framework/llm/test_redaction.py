@@ -2,6 +2,7 @@ from core.framework.llm import (
     LLMProviderError,
     LLMRequest,
     LLMResponse,
+    LLMToolCall,
     REDACTED_VALUE,
     TokenUsage,
     redact_sensitive_values,
@@ -47,6 +48,14 @@ def test_llm_response_to_dict_redacts_content_and_metadata_by_default() -> None:
         usage=TokenUsage(input_tokens=3, output_tokens=5),
         metadata={"provider": "test", "session_token": secret},
         structured_output={"leaked": secret},
+        tool_calls=[
+            LLMToolCall(
+                tool_call_id="call_1",
+                tool_name="memory.search",
+                arguments={"token": secret},
+                raw_arguments="{\"token\":\"" + secret + "\"}",
+            )
+        ],
     )
 
     payload = response.to_dict()
@@ -55,6 +64,8 @@ def test_llm_response_to_dict_redacts_content_and_metadata_by_default() -> None:
     assert payload["content"] == f"model echoed {REDACTED_VALUE}"
     assert payload["metadata"]["session_token"] == REDACTED_VALUE
     assert payload["structured_output"]["leaked"] == REDACTED_VALUE
+    assert payload["tool_calls"][0]["arguments"]["token"] == REDACTED_VALUE
+    assert secret not in payload["tool_calls"][0]["raw_arguments"]
     assert payload["usage"] == {
         "input_tokens": 3,
         "output_tokens": 5,
