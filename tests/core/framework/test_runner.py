@@ -1,3 +1,4 @@
+import core.framework.runner as runner_module
 from core.framework import WorkflowRunner
 from core.framework.specs import StepSpec, WorkflowSpec, WorkflowStatus
 from core.framework.workflow import FunctionStepRegistry
@@ -108,3 +109,49 @@ def test_workflow_runner_redacts_event_store_failure_payload(tmp_path) -> None:
     report = failed_event.metadata["redaction_report"]
     assert "$.outcome.error_message" in report["redacted_fields"]
     assert "secret_like_string" in report["redaction_rules_applied"]
+
+
+def test_workflow_runner_uses_event_store_factory_by_default(tmp_path, monkeypatch) -> None:
+    fake_store = _CollectingEventStore()
+    monkeypatch.setattr(
+        runner_module,
+        "event_store_from_env",
+        lambda *, artifact_root: fake_store,
+    )
+    registry = FunctionStepRegistry()
+    registry.register("sample.echo", lambda buffer: {"echo": buffer.read("request")})
+    runner = WorkflowRunner(artifact_root=tmp_path, function_registry=registry)
+    spec = WorkflowSpec(
+        workflow_id="factory-echo",
+        name="Factory Echo",
+        version="1.0",
+        start_step_id="echo",
+        steps=[
+            StepSpec(
+                step_id="echo",
+                implementation="sample.echo",
+                read_keys=["request"],
+                write_keys=["echo"],
+                required_output_keys=["echo"],
+            )
+        ],
+    )
+
+    runner.run(spec, {"topic": "ai"}, profile="test", run_id="factory-run")
+
+    assert [event.event_type for event in fake_store.events] == [
+        "workflow_started",
+        "step_started",
+        "step_succeeded",
+        "workflow_succeeded",
+    ]
+    assert all(event.workflow_id == "factory-echo" for event in fake_store.events)
+
+
+class _CollectingEventStore:
+    def __init__(self) -> None:
+        self.events = []
+
+    def append_event(self, event):
+        self.events.append(event)
+        return len(self.events) - 1

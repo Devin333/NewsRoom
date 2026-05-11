@@ -30,6 +30,33 @@ CREATE TABLE IF NOT EXISTS reports (
 ALTER TABLE reports
     ADD COLUMN IF NOT EXISTS citation_coverage_score DOUBLE PRECISION;
 
+CREATE TABLE IF NOT EXISTS workflow_events (
+    event_id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    event_offset BIGINT NOT NULL,
+    event_type TEXT NOT NULL,
+    timestamp TIMESTAMPTZ NOT NULL,
+    workflow_id TEXT,
+    step_id TEXT,
+    task_id TEXT,
+    agent_id TEXT,
+    tool_call_id TEXT,
+    request_id TEXT,
+    severity TEXT NOT NULL DEFAULT 'info',
+    trace_id TEXT,
+    redacted BOOLEAN NOT NULL DEFAULT TRUE,
+    payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (run_id, event_offset)
+);
+
+CREATE INDEX IF NOT EXISTS idx_workflow_events_run_offset
+    ON workflow_events(run_id, event_offset);
+
+CREATE INDEX IF NOT EXISTS idx_workflow_events_step
+    ON workflow_events(run_id, step_id);
+
 CREATE TABLE IF NOT EXISTS source_items (
     source_item_id TEXT PRIMARY KEY,
     run_id TEXT REFERENCES workflow_runs(run_id) ON DELETE CASCADE,

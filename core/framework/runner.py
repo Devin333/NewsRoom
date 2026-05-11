@@ -16,7 +16,7 @@ from core.framework.workflow.result import WorkflowResult
 from core.framework.workflow.step_runner import FunctionStepRegistry, FunctionStepRunner
 from storage.artifacts import ArtifactRef, LocalJsonArtifactIndexStore
 from storage.events import EventRecord as StorageEventRecord
-from storage.events import LocalJsonEventStore
+from storage.events import event_store_from_env
 from storage.lineage import LocalJsonLineageStore, lineage_refs_from_evidence_bundle
 from storage.security import StorageRedactor
 
@@ -28,7 +28,7 @@ class WorkflowRunner:
         artifact_root: str | Path,
         function_registry: FunctionStepRegistry,
         artifact_index_store: LocalJsonArtifactIndexStore | None = None,
-        event_store: LocalJsonEventStore | None = None,
+        event_store: Any | None = None,
         lineage_store: LocalJsonLineageStore | None = None,
         redactor: StorageRedactor | None = None,
     ) -> None:
@@ -38,7 +38,7 @@ class WorkflowRunner:
         self._artifact_index_store = artifact_index_store or LocalJsonArtifactIndexStore(
             self._artifact_root / "_records" / "artifact_index"
         )
-        self._event_store = event_store or LocalJsonEventStore(self._artifact_root / "_records" / "events")
+        self._event_store = event_store or event_store_from_env(artifact_root=self._artifact_root)
         self._lineage_store = lineage_store or LocalJsonLineageStore(
             self._artifact_root / "_records" / "lineage"
         )

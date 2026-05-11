@@ -6,6 +6,7 @@ def test_postgres_migration_sql_contains_required_tables() -> None:
 
     for table in [
         "workflow_runs",
+        "workflow_events",
         "reports",
         "source_items",
         "evidence_items",
