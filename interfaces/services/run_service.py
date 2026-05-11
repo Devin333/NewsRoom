@@ -42,6 +42,8 @@ class RunApplicationService:
         source_limit: int,
         run_id: str | None = None,
     ) -> RunResult:
+        repository = repository_from_env(artifact_root=self.artifact_root)
+        repository.migrate()
         result = DailyIntelligenceRunner(artifact_root=self.artifact_root).run(
             profile=profile,
             topic=topic,
@@ -49,9 +51,10 @@ class RunApplicationService:
             run_id=run_id,
         )
         persist_run_result(
-            repository_from_env(artifact_root=self.artifact_root),
+            repository,
             result,
             profile=profile,
+            migrate=False,
         )
         self._index_memory_if_configured(result, topic=topic)
         return result

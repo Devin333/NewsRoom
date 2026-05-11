@@ -127,8 +127,15 @@ def report_record_from_result(result: RunResult) -> ReportRecord | None:
     )
 
 
-def persist_run_result(repository: PersistenceRepository, result: RunResult, *, profile: str) -> None:
-    repository.migrate()
+def persist_run_result(
+    repository: PersistenceRepository,
+    result: RunResult,
+    *,
+    profile: str,
+    migrate: bool = True,
+) -> None:
+    if migrate:
+        repository.migrate()
     repository.save_workflow_run(workflow_run_record_from_result(result, profile=profile))
     report = report_record_from_result(result)
     if report:
