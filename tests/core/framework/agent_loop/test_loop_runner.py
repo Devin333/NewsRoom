@@ -1,6 +1,7 @@
 from core.framework.agent_loop import AgentLoopStatus, AgentRunner, AgentSpec
 from core.framework.llm import FakeLLMClient
 from core.framework.tools import REDACTED_VALUE, ToolDefinition, ToolRegistry
+from storage.conversation import LocalJsonConversationStore
 
 
 def _registry() -> ToolRegistry:
@@ -122,3 +123,28 @@ def test_agent_runner_redacts_tool_observations_before_next_prompt() -> None:
     assert result.success is True
     assert fake_secret not in second_prompt
     assert REDACTED_VALUE in second_prompt
+
+
+def test_agent_runner_persists_conversation_when_store_is_provided(tmp_path) -> None:
+    llm = FakeLLMClient(
+        ['{"action_type":"final_output","output":{"analysis_result":{"summary":"ok"}}}']
+    )
+    store = LocalJsonConversationStore(tmp_path)
+    result = AgentRunner(
+        llm_client=llm,
+        tool_registry=_registry(),
+        conversation_store=store,
+    ).run(
+        _agent(),
+        {"request": {"topic": "chips"}},
+        conversation_id="conversation-1",
+    )
+
+    messages = store.read_messages("conversation-1")
+
+    assert result.success is True
+    assert [message.role for message in messages] == ["user", "assistant"]
+    assert messages[0].content == {"request": {"topic": "chips"}}
+    assert messages[1].content["output"] == {"analysis_result": {"summary": "ok"}}
+    assert messages[1].metadata["status"] == "accepted"
+    assert store.get_summary("conversation-1") == "agent_id=analyst status=accepted iterations=1"
