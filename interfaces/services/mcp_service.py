@@ -62,6 +62,8 @@ class MCPApplicationService:
         worker_service_factory: Callable[[], Any] | None = None,
         report_service_factory: Callable[[], Any] | None = None,
         source_service_factory: Callable[[], Any] | None = None,
+        entity_service_factory: Callable[[], Any] | None = None,
+        subscription_service_factory: Callable[[], Any] | None = None,
         memory_service_factory: Callable[[], Any] | None = None,
         diagnostic_service_factory: Callable[[], Any] | None = None,
         approval_service_factory: Callable[[], Any] | None = None,
@@ -72,6 +74,10 @@ class MCPApplicationService:
         self.worker_service_factory = worker_service_factory or _worker_service_factory
         self.report_service_factory = report_service_factory or _report_service_factory
         self.source_service_factory = source_service_factory or _source_service_factory
+        self.entity_service_factory = entity_service_factory or _entity_service_factory
+        self.subscription_service_factory = (
+            subscription_service_factory or _subscription_service_factory
+        )
         self.memory_service_factory = memory_service_factory or _memory_service_factory
         self.diagnostic_service_factory = diagnostic_service_factory or _diagnostic_service_factory
         self.approval_service_factory = approval_service_factory or _approval_service_factory
@@ -192,6 +198,28 @@ class MCPApplicationService:
                 return self._source_arxiv_fetch(args)
             if tool_name == "news.source.github.releases":
                 return self._source_github_releases(args)
+            if tool_name == "news.entity.list":
+                return self._entity_list(args)
+            if tool_name == "news.entity.create":
+                return self._entity_create(args)
+            if tool_name == "news.entity.enable":
+                return self._entity_enable(args)
+            if tool_name == "news.entity.disable":
+                return self._entity_disable(args)
+            if tool_name == "news.entity.delete":
+                return self._entity_delete(args)
+            if tool_name == "news.entity.match_reports":
+                return self._entity_match_reports(args)
+            if tool_name == "news.subscription.list":
+                return self._subscription_list(args)
+            if tool_name == "news.subscription.create":
+                return self._subscription_create(args)
+            if tool_name == "news.subscription.enable":
+                return self._subscription_enable(args)
+            if tool_name == "news.subscription.disable":
+                return self._subscription_disable(args)
+            if tool_name == "news.subscription.delete":
+                return self._subscription_delete(args)
             if tool_name == "news.memory.search":
                 return self._memory_search(args)
             if tool_name == "news.diagnose":
@@ -311,6 +339,134 @@ class MCPApplicationService:
             tool_name="news.source.github.releases",
             success=True,
             data=result.to_dict(),
+        )
+
+    def _entity_list(self, args: dict[str, Any]) -> MCPToolCallResult:
+        result = self.entity_service_factory().list_entities(
+            enabled_only=_optional_bool_arg(args, "enabled_only", default=False),
+            kind=_optional_arg(args, "kind"),
+        )
+        return MCPToolCallResult(
+            tool_name="news.entity.list",
+            success=True,
+            data=result.to_dict(),
+        )
+
+    def _entity_create(self, args: dict[str, Any]) -> MCPToolCallResult:
+        entity = self.entity_service_factory().create_entity(
+            name=_required_arg(args, "name"),
+            kind=str(args.get("kind") or "company"),
+            aliases=_string_list_arg(args, "aliases"),
+            entity_id=_optional_arg(args, "entity_id"),
+            enabled=_optional_bool_arg(args, "enabled", default=True),
+            metadata=dict(args.get("metadata") or {}),
+        )
+        return MCPToolCallResult(
+            tool_name="news.entity.create",
+            success=True,
+            data=entity.to_dict(),
+        )
+
+    def _entity_enable(self, args: dict[str, Any]) -> MCPToolCallResult:
+        entity = self.entity_service_factory().set_enabled(
+            _required_arg(args, "entity_id"),
+            enabled=True,
+        )
+        return MCPToolCallResult(
+            tool_name="news.entity.enable",
+            success=True,
+            data=entity.to_dict(),
+        )
+
+    def _entity_disable(self, args: dict[str, Any]) -> MCPToolCallResult:
+        entity = self.entity_service_factory().set_enabled(
+            _required_arg(args, "entity_id"),
+            enabled=False,
+        )
+        return MCPToolCallResult(
+            tool_name="news.entity.disable",
+            success=True,
+            data=entity.to_dict(),
+        )
+
+    def _entity_delete(self, args: dict[str, Any]) -> MCPToolCallResult:
+        entity_id = _required_arg(args, "entity_id")
+        deleted = self.entity_service_factory().delete_entity(entity_id)
+        return MCPToolCallResult(
+            tool_name="news.entity.delete",
+            success=True,
+            data={"entity_id": entity_id, "deleted": deleted},
+        )
+
+    def _entity_match_reports(self, args: dict[str, Any]) -> MCPToolCallResult:
+        result = self.entity_service_factory().match_reports(
+            _required_arg(args, "entity_id"),
+            artifact_root=str(args.get("artifact_root") or ".newsroom/runs"),
+            limit=_optional_int_arg(args, "limit", default=20),
+            workflow_id=_optional_arg(args, "workflow_id"),
+        )
+        return MCPToolCallResult(
+            tool_name="news.entity.match_reports",
+            success=True,
+            data=result.to_dict(),
+        )
+
+    def _subscription_list(self, args: dict[str, Any]) -> MCPToolCallResult:
+        result = self.subscription_service_factory().list_topic_subscriptions(
+            enabled_only=_optional_bool_arg(args, "enabled_only", default=False),
+            cadence=_optional_arg(args, "cadence"),
+        )
+        return MCPToolCallResult(
+            tool_name="news.subscription.list",
+            success=True,
+            data=result.to_dict(),
+        )
+
+    def _subscription_create(self, args: dict[str, Any]) -> MCPToolCallResult:
+        subscription = self.subscription_service_factory().create_topic_subscription(
+            topic=_required_arg(args, "topic"),
+            cadence=str(args.get("cadence") or "weekly"),
+            profile=str(args.get("profile") or "live-offline"),
+            source_limit=_optional_int_arg(args, "source_limit", default=5),
+            subscription_id=_optional_arg(args, "subscription_id"),
+            enabled=_optional_bool_arg(args, "enabled", default=True),
+            metadata=dict(args.get("metadata") or {}),
+        )
+        return MCPToolCallResult(
+            tool_name="news.subscription.create",
+            success=True,
+            data=subscription.to_dict(),
+        )
+
+    def _subscription_enable(self, args: dict[str, Any]) -> MCPToolCallResult:
+        subscription = self.subscription_service_factory().set_enabled(
+            _required_arg(args, "subscription_id"),
+            enabled=True,
+        )
+        return MCPToolCallResult(
+            tool_name="news.subscription.enable",
+            success=True,
+            data=subscription.to_dict(),
+        )
+
+    def _subscription_disable(self, args: dict[str, Any]) -> MCPToolCallResult:
+        subscription = self.subscription_service_factory().set_enabled(
+            _required_arg(args, "subscription_id"),
+            enabled=False,
+        )
+        return MCPToolCallResult(
+            tool_name="news.subscription.disable",
+            success=True,
+            data=subscription.to_dict(),
+        )
+
+    def _subscription_delete(self, args: dict[str, Any]) -> MCPToolCallResult:
+        subscription_id = _required_arg(args, "subscription_id")
+        deleted = self.subscription_service_factory().delete_topic_subscription(subscription_id)
+        return MCPToolCallResult(
+            tool_name="news.subscription.delete",
+            success=True,
+            data={"subscription_id": subscription_id, "deleted": deleted},
         )
 
     def _memory_search(self, args: dict[str, Any]) -> MCPToolCallResult:
@@ -747,6 +903,146 @@ def _tools() -> list[MCPTool]:
                     "repository": {"type": "string"},
                     "limit": {"type": "integer", "minimum": 1},
                 },
+            },
+        ),
+        MCPTool(
+            name="news.entity.list",
+            title="List tracked entities",
+            description="List tracked entities through EntityTrackingApplicationService.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "enabled_only": {"type": "boolean"},
+                    "kind": {
+                        "type": "string",
+                        "enum": ["company", "project", "person", "organization"],
+                    },
+                },
+            },
+        ),
+        MCPTool(
+            name="news.entity.create",
+            title="Create tracked entity",
+            description="Create or update a tracked entity through EntityTrackingApplicationService.",
+            input_schema={
+                "type": "object",
+                "required": ["name"],
+                "properties": {
+                    "name": {"type": "string"},
+                    "kind": {
+                        "type": "string",
+                        "enum": ["company", "project", "person", "organization"],
+                    },
+                    "aliases": {"type": "array", "items": {"type": "string"}},
+                    "entity_id": {"type": "string"},
+                    "enabled": {"type": "boolean"},
+                    "metadata": {"type": "object"},
+                },
+            },
+        ),
+        MCPTool(
+            name="news.entity.enable",
+            title="Enable tracked entity",
+            description="Enable a tracked entity.",
+            input_schema={
+                "type": "object",
+                "required": ["entity_id"],
+                "properties": {"entity_id": {"type": "string"}},
+            },
+        ),
+        MCPTool(
+            name="news.entity.disable",
+            title="Disable tracked entity",
+            description="Disable a tracked entity.",
+            input_schema={
+                "type": "object",
+                "required": ["entity_id"],
+                "properties": {"entity_id": {"type": "string"}},
+            },
+        ),
+        MCPTool(
+            name="news.entity.delete",
+            title="Delete tracked entity",
+            description="Delete a tracked entity.",
+            input_schema={
+                "type": "object",
+                "required": ["entity_id"],
+                "properties": {"entity_id": {"type": "string"}},
+            },
+        ),
+        MCPTool(
+            name="news.entity.match_reports",
+            title="Match entity reports",
+            description="Match a tracked entity against persisted reports.",
+            input_schema={
+                "type": "object",
+                "required": ["entity_id"],
+                "properties": {
+                    "entity_id": {"type": "string"},
+                    "artifact_root": {"type": "string"},
+                    "limit": {"type": "integer", "minimum": 1},
+                    "workflow_id": {"type": "string"},
+                },
+            },
+        ),
+        MCPTool(
+            name="news.subscription.list",
+            title="List topic subscriptions",
+            description="List topic subscriptions through SubscriptionApplicationService.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "enabled_only": {"type": "boolean"},
+                    "cadence": {"type": "string", "enum": ["daily", "weekly"]},
+                },
+            },
+        ),
+        MCPTool(
+            name="news.subscription.create",
+            title="Create topic subscription",
+            description="Create or update a topic subscription through SubscriptionApplicationService.",
+            input_schema={
+                "type": "object",
+                "required": ["topic"],
+                "properties": {
+                    "topic": {"type": "string"},
+                    "cadence": {"type": "string", "enum": ["daily", "weekly"]},
+                    "profile": {"type": "string", "enum": ["live", "live-offline"]},
+                    "source_limit": {"type": "integer", "minimum": 1},
+                    "subscription_id": {"type": "string"},
+                    "enabled": {"type": "boolean"},
+                    "metadata": {"type": "object"},
+                },
+            },
+        ),
+        MCPTool(
+            name="news.subscription.enable",
+            title="Enable topic subscription",
+            description="Enable a topic subscription.",
+            input_schema={
+                "type": "object",
+                "required": ["subscription_id"],
+                "properties": {"subscription_id": {"type": "string"}},
+            },
+        ),
+        MCPTool(
+            name="news.subscription.disable",
+            title="Disable topic subscription",
+            description="Disable a topic subscription.",
+            input_schema={
+                "type": "object",
+                "required": ["subscription_id"],
+                "properties": {"subscription_id": {"type": "string"}},
+            },
+        ),
+        MCPTool(
+            name="news.subscription.delete",
+            title="Delete topic subscription",
+            description="Delete a topic subscription.",
+            input_schema={
+                "type": "object",
+                "required": ["subscription_id"],
+                "properties": {"subscription_id": {"type": "string"}},
             },
         ),
         MCPTool(
@@ -1192,6 +1488,18 @@ def _source_service_factory():
     return SourceApplicationService()
 
 
+def _entity_service_factory():
+    from interfaces.services.entity_service import EntityTrackingApplicationService
+
+    return EntityTrackingApplicationService()
+
+
+def _subscription_service_factory():
+    from interfaces.services.subscription_service import SubscriptionApplicationService
+
+    return SubscriptionApplicationService()
+
+
 def _memory_service_factory():
     from interfaces.services.memory_service import MemoryApplicationService
 
@@ -1359,6 +1667,30 @@ def _optional_int_arg(args: dict[str, Any], name: str, *, default: int) -> int:
     if value is None or value == "":
         return default
     return int(value)
+
+
+def _optional_bool_arg(args: dict[str, Any], name: str, *, default: bool) -> bool:
+    value = args.get(name)
+    if value is None or value == "":
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    return bool(value)
+
+
+def _string_list_arg(args: dict[str, Any], name: str) -> list[str]:
+    value = args.get(name)
+    if value is None or value == "":
+        return []
+    if isinstance(value, list):
+        return [str(item) for item in value if item]
+    return [str(value)]
 
 
 def _queue_names_from_args(args: dict[str, Any]) -> list[str] | None:

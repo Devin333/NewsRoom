@@ -3,10 +3,12 @@ from datetime import UTC, datetime
 
 from interfaces.services.approval_service import ApprovalApplicationService
 from interfaces.services.artifact_service import ArtifactInspectionService
+from interfaces.services.entity_service import EntityTrackingApplicationService
 from interfaces.services.mcp_service import MCPApplicationService
 from interfaces.services.report_service import ReportApplicationService
 from interfaces.services.run_inspection_service import RunInspectionService
 from interfaces.services.storage_service import StorageApplicationService
+from interfaces.services.subscription_service import SubscriptionApplicationService
 from storage.artifacts import ArtifactWriteRequest, FilesystemArtifactStore, LocalJsonArtifactIndexStore
 from storage.lineage import LineageRef, LocalJsonLineageStore
 
@@ -16,6 +18,8 @@ def test_mcp_catalog_lists_tools_without_calling_factories() -> None:
         worker_service_factory=_raising_factory,
         report_service_factory=_raising_factory,
         source_service_factory=_raising_factory,
+        entity_service_factory=_raising_factory,
+        subscription_service_factory=_raising_factory,
         memory_service_factory=_raising_factory,
         diagnostic_service_factory=_raising_factory,
         approval_service_factory=_raising_factory,
@@ -40,6 +44,11 @@ def test_mcp_catalog_lists_tools_without_calling_factories() -> None:
     assert "news.storage.retention.plan" in tool_names
     assert "news.source.arxiv.fetch" in tool_names
     assert "news.source.github.releases" in tool_names
+    assert "news.entity.list" in tool_names
+    assert "news.entity.create" in tool_names
+    assert "news.entity.match_reports" in tool_names
+    assert "news.subscription.list" in tool_names
+    assert "news.subscription.create" in tool_names
     assert "news.worker.status" in tool_names
     assert "news.queue.status" in tool_names
     assert "news.approval.submit" in tool_names
@@ -105,6 +114,117 @@ def test_mcp_source_arxiv_fetch_requires_query() -> None:
     assert result.success is False
     assert result.error_type == "ValueError"
     assert "query is required" in result.error_message
+
+
+def test_mcp_entity_tools_use_real_local_json_service(tmp_path) -> None:
+    store_path = tmp_path / "entities.json"
+    service = MCPApplicationService(
+        entity_service_factory=lambda: EntityTrackingApplicationService(store_path=store_path)
+    )
+
+    created = service.call_tool(
+        "news.entity.create",
+        {
+            "name": "OpenAI",
+            "kind": "company",
+            "aliases": ["ChatGPT"],
+            "enabled": False,
+            "metadata": {"sector": "AI"},
+        },
+    )
+    entity_id = created.data["entity_id"]
+    listed = service.call_tool("news.entity.list", {"kind": "company"})
+    enabled = service.call_tool("news.entity.enable", {"entity_id": entity_id})
+    disabled = service.call_tool("news.entity.disable", {"entity_id": entity_id})
+    deleted = service.call_tool("news.entity.delete", {"entity_id": entity_id})
+
+    assert store_path.exists()
+    assert created.success is True
+    assert created.data["aliases"] == ["ChatGPT"]
+    assert listed.data["entity_count"] == 1
+    assert enabled.data["enabled"] is True
+    assert disabled.data["enabled"] is False
+    assert deleted.data == {"entity_id": entity_id, "deleted": True}
+
+
+def test_mcp_entity_match_reports_reads_real_local_report_artifacts(tmp_path) -> None:
+    store_path = tmp_path / "entities.json"
+    artifact_root = tmp_path / "runs"
+    _write_report_run(
+        artifact_root,
+        "run-entity",
+        "Daily Intelligence: OpenAI",
+        "OpenAI and ChatGPT were cited in this report.",
+    )
+    service = MCPApplicationService(
+        entity_service_factory=lambda: EntityTrackingApplicationService(store_path=store_path)
+    )
+    created = service.call_tool(
+        "news.entity.create",
+        {"name": "OpenAI", "kind": "company", "aliases": ["ChatGPT"]},
+    )
+
+    result = service.call_tool(
+        "news.entity.match_reports",
+        {
+            "entity_id": created.data["entity_id"],
+            "artifact_root": str(artifact_root),
+            "workflow_id": "daily-intelligence-live",
+        },
+    )
+
+    assert result.success is True
+    assert result.data["match_count"] == 1
+    assert result.data["matches"][0]["report_id"] == "run-entity:final"
+    assert result.data["matches"][0]["matched_aliases"] == ["OpenAI", "ChatGPT"]
+
+
+def test_mcp_entity_create_requires_name() -> None:
+    result = MCPApplicationService().call_tool("news.entity.create", {})
+
+    assert result.success is False
+    assert result.error_type == "ValueError"
+    assert "name is required" in result.error_message
+
+
+def test_mcp_subscription_tools_use_real_local_json_service(tmp_path) -> None:
+    store_path = tmp_path / "subscriptions.json"
+    service = MCPApplicationService(
+        subscription_service_factory=lambda: SubscriptionApplicationService(store_path=store_path)
+    )
+
+    created = service.call_tool(
+        "news.subscription.create",
+        {
+            "topic": "AI Policy",
+            "cadence": "weekly",
+            "profile": "live-offline",
+            "source_limit": 3,
+            "enabled": False,
+            "metadata": {"owner": "research"},
+        },
+    )
+    subscription_id = created.data["subscription_id"]
+    listed = service.call_tool("news.subscription.list", {"cadence": "weekly"})
+    enabled = service.call_tool("news.subscription.enable", {"subscription_id": subscription_id})
+    disabled = service.call_tool("news.subscription.disable", {"subscription_id": subscription_id})
+    deleted = service.call_tool("news.subscription.delete", {"subscription_id": subscription_id})
+
+    assert store_path.exists()
+    assert created.success is True
+    assert created.data["source_limit"] == 3
+    assert listed.data["subscription_count"] == 1
+    assert enabled.data["enabled"] is True
+    assert disabled.data["enabled"] is False
+    assert deleted.data == {"subscription_id": subscription_id, "deleted": True}
+
+
+def test_mcp_subscription_create_requires_topic() -> None:
+    result = MCPApplicationService().call_tool("news.subscription.create", {})
+
+    assert result.success is False
+    assert result.error_type == "ValueError"
+    assert "topic is required" in result.error_message
 
 
 def test_mcp_worker_status_tool_calls_worker_service() -> None:
@@ -845,6 +965,45 @@ class _FakeResult:
 
     def to_dict(self):
         return self.payload
+
+
+def _write_report_run(root, run_id: str, title: str, body: str) -> None:
+    run_dir = root / run_id
+    run_dir.mkdir(parents=True)
+    (run_dir / "report.json").write_text(
+        json.dumps(
+            {
+                "title": title,
+                "sections": [
+                    {
+                        "title": "Summary",
+                        "content": body,
+                        "sources": ["https://example.com/report"],
+                    }
+                ],
+                "source_urls": ["https://example.com/report"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "report.md").write_text(f"# {title}\n\n{body}\n", encoding="utf-8")
+    (run_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "run_id": run_id,
+                "workflow_id": "daily-intelligence-live",
+                "profile": "live-offline",
+                "status": "succeeded",
+                "finished_at": "2026-05-11T00:00:00Z",
+                "quality_score": 0.9,
+                "artifacts": {
+                    "report_json": "report.json",
+                    "report_markdown": "report.md",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 def _write_run_with_events(root, run_id, events) -> None:
