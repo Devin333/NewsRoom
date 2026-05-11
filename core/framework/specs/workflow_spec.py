@@ -29,6 +29,7 @@ class StepStatus(str, Enum):
     SUCCEEDED = "succeeded"
     FAILED = "failed"
     SKIPPED = "skipped"
+    RETRYING = "retrying"
 
 
 class WorkflowStatus(str, Enum):
@@ -36,6 +37,45 @@ class WorkflowStatus(str, Enum):
     SUCCEEDED = "succeeded"
     FAILED = "failed"
     BLOCKED = "blocked"
+
+
+@dataclass(frozen=True)
+class RetryPolicySpec:
+    max_retries: int = 0
+    retry_delay_seconds: list[int] = field(default_factory=list)
+    backoff_strategy: str = "fixed"
+    retry_on_error_types: list[str] = field(default_factory=list)
+    no_retry_on_error_types: list[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if self.max_retries < 0:
+            raise WorkflowSpecError("max_retries must be non-negative")
+        if any(delay < 0 for delay in self.retry_delay_seconds):
+            raise WorkflowSpecError("retry_delay_seconds values must be non-negative")
+        if not self.backoff_strategy:
+            raise WorkflowSpecError("backoff_strategy is required")
+
+    def should_retry(self, *, error_type: str | None) -> bool:
+        actual_error_type = error_type or "StepFailed"
+        if actual_error_type in set(self.no_retry_on_error_types):
+            return False
+        retryable_errors = set(self.retry_on_error_types)
+        return not retryable_errors or actual_error_type in retryable_errors
+
+    def delay_for_retry(self, retry_index: int) -> int:
+        if not self.retry_delay_seconds:
+            return 0
+        index = min(max(retry_index - 1, 0), len(self.retry_delay_seconds) - 1)
+        return self.retry_delay_seconds[index]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "max_retries": self.max_retries,
+            "retry_delay_seconds": list(self.retry_delay_seconds),
+            "backoff_strategy": self.backoff_strategy,
+            "retry_on_error_types": list(self.retry_on_error_types),
+            "no_retry_on_error_types": list(self.no_retry_on_error_types),
+        }
 
 
 @dataclass(frozen=True)
@@ -49,10 +89,13 @@ class StepSpec:
     write_keys: list[str] = field(default_factory=list)
     required_output_keys: list[str] = field(default_factory=list)
     nullable_output_keys: list[str] = field(default_factory=list)
+    retry_policy: RetryPolicySpec = field(default_factory=RetryPolicySpec)
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "step_type", StepType(self.step_type))
+        if not isinstance(self.retry_policy, RetryPolicySpec):
+            object.__setattr__(self, "retry_policy", RetryPolicySpec(**self.retry_policy))
         if not self.step_id:
             raise WorkflowSpecError("step_id is required")
         if not self.implementation:
@@ -69,6 +112,7 @@ class StepSpec:
             "write_keys": list(self.write_keys),
             "required_output_keys": list(self.required_output_keys),
             "nullable_output_keys": list(self.nullable_output_keys),
+            "retry_policy": self.retry_policy.to_dict(),
             "metadata": dict(self.metadata),
         }
 

@@ -1,13 +1,14 @@
 from __future__ import annotations
 
+import time
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Callable
 from uuid import uuid4
 
 from core.framework.artifacts.filesystem import ArtifactManager
 from core.framework.artifacts.source_artifacts import SourceArtifactWriter
 from core.framework.events.recorder import EventRecorder
-from core.framework.specs import StepStatus, WorkflowSpec, WorkflowStatus
+from core.framework.specs import StepSpec, StepStatus, WorkflowSpec, WorkflowStatus
 from core.framework.workflow.buffer import DataBuffer
 from core.framework.workflow.result import StepOutcome, WorkflowError, WorkflowResult
 from core.framework.workflow.routing import RoutingEngine
@@ -24,10 +25,12 @@ class WorkflowExecutor:
         function_step_runner: FunctionStepRunner,
         artifact_manager: ArtifactManager,
         routing_engine: RoutingEngine | None = None,
+        sleep_fn: Callable[[float], None] | None = None,
     ) -> None:
         self._function_step_runner = function_step_runner
         self._artifact_manager = artifact_manager
         self._routing_engine = routing_engine or RoutingEngine()
+        self._sleep_fn = sleep_fn or time.sleep
 
     def execute(
         self,
@@ -85,17 +88,7 @@ class WorkflowExecutor:
         while current_step_id:
             step = workflow.step_by_id(current_step_id)
             path.append(step.step_id)
-            recorder.emit("step_started", {"step_id": step.step_id, "step_type": step.step_type})
-
-            scoped_buffer = buffer.scope(step.read_keys, step.write_keys)
-            try:
-                outcome = self._function_step_runner.run(step, scoped_buffer)
-            except Exception as exc:  # pragma: no cover - concrete branches covered by tests
-                outcome = StepOutcome(
-                    status=StepStatus.FAILED,
-                    error_type=type(exc).__name__,
-                    error_message=str(exc),
-                )
+            outcome = self._run_step_with_retries(step, buffer, recorder)
 
             step_results[step.step_id] = outcome
             manifest["steps"][step.step_id] = outcome.to_dict()
@@ -255,6 +248,60 @@ class WorkflowExecutor:
             manifest_path=str(manifest_path),
             events_path=str(events_path),
         )
+
+    def _run_step_with_retries(
+        self,
+        step: StepSpec,
+        buffer: DataBuffer,
+        recorder: EventRecorder,
+    ) -> StepOutcome:
+        retry_policy = step.retry_policy
+        max_attempts = retry_policy.max_retries + 1
+        attempt = 1
+        while True:
+            recorder.emit(
+                "step_started",
+                {
+                    "step_id": step.step_id,
+                    "step_type": step.step_type,
+                    "attempt": attempt,
+                    "max_attempts": max_attempts,
+                },
+            )
+            scoped_buffer = buffer.scope(step.read_keys, step.write_keys)
+            try:
+                outcome = self._function_step_runner.run(step, scoped_buffer)
+            except Exception as exc:  # pragma: no cover - concrete branches covered by tests
+                outcome = StepOutcome(
+                    status=StepStatus.FAILED,
+                    error_type=type(exc).__name__,
+                    error_message=str(exc),
+                    error_details={"attempt": attempt, "max_attempts": max_attempts},
+                )
+            if outcome.status != StepStatus.FAILED:
+                return outcome
+            if attempt >= max_attempts or not retry_policy.should_retry(
+                error_type=outcome.error_type
+            ):
+                return outcome
+
+            retry_index = attempt
+            delay_seconds = retry_policy.delay_for_retry(retry_index)
+            recorder.emit(
+                "step_retry_scheduled",
+                {
+                    "step_id": step.step_id,
+                    "attempt": attempt,
+                    "next_attempt": attempt + 1,
+                    "max_attempts": max_attempts,
+                    "error_type": outcome.error_type,
+                    "error_message": outcome.error_message,
+                    "delay_seconds": delay_seconds,
+                },
+            )
+            if delay_seconds:
+                self._sleep_fn(delay_seconds)
+            attempt += 1
 
     def _write_source_diagnostic_artifacts(
         self,
