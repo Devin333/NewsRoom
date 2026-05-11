@@ -188,6 +188,10 @@ class MCPApplicationService:
                 return self._report_search(args)
             if tool_name == "news.source.health":
                 return self._source_health(args)
+            if tool_name == "news.source.arxiv.fetch":
+                return self._source_arxiv_fetch(args)
+            if tool_name == "news.source.github.releases":
+                return self._source_github_releases(args)
             if tool_name == "news.memory.search":
                 return self._memory_search(args)
             if tool_name == "news.diagnose":
@@ -277,6 +281,34 @@ class MCPApplicationService:
         result = self.source_service_factory().source_health(enabled_only=not include_disabled)
         return MCPToolCallResult(
             tool_name="news.source.health",
+            success=True,
+            data=result.to_dict(),
+        )
+
+    def _source_arxiv_fetch(self, args: dict[str, Any]) -> MCPToolCallResult:
+        query = str(args.get("query") or "")
+        if not query:
+            raise ValueError("query is required")
+        result = self.source_service_factory().fetch_arxiv(
+            query=query,
+            limit=int(args.get("limit") or 5),
+        )
+        return MCPToolCallResult(
+            tool_name="news.source.arxiv.fetch",
+            success=True,
+            data=result.to_dict(),
+        )
+
+    def _source_github_releases(self, args: dict[str, Any]) -> MCPToolCallResult:
+        repository = str(args.get("repository") or args.get("repo") or "")
+        if not repository:
+            raise ValueError("repository is required")
+        result = self.source_service_factory().fetch_github_releases(
+            repository=repository,
+            limit=int(args.get("limit") or 5),
+        )
+        return MCPToolCallResult(
+            tool_name="news.source.github.releases",
             success=True,
             data=result.to_dict(),
         )
@@ -689,6 +721,32 @@ def _tools() -> list[MCPTool]:
             input_schema={
                 "type": "object",
                 "properties": {"include_disabled": {"type": "boolean"}},
+            },
+        ),
+        MCPTool(
+            name="news.source.arxiv.fetch",
+            title="Fetch arXiv source preview",
+            description="Fetch arXiv source items through SourceApplicationService.",
+            input_schema={
+                "type": "object",
+                "required": ["query"],
+                "properties": {
+                    "query": {"type": "string"},
+                    "limit": {"type": "integer", "minimum": 1},
+                },
+            },
+        ),
+        MCPTool(
+            name="news.source.github.releases",
+            title="Fetch GitHub release source preview",
+            description="Fetch GitHub release source items through SourceApplicationService.",
+            input_schema={
+                "type": "object",
+                "required": ["repository"],
+                "properties": {
+                    "repository": {"type": "string"},
+                    "limit": {"type": "integer", "minimum": 1},
+                },
             },
         ),
         MCPTool(

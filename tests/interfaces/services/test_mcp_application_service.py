@@ -38,6 +38,8 @@ def test_mcp_catalog_lists_tools_without_calling_factories() -> None:
     assert "news.run.lineage.downstream" in tool_names
     assert "news.storage.metrics" in tool_names
     assert "news.storage.retention.plan" in tool_names
+    assert "news.source.arxiv.fetch" in tool_names
+    assert "news.source.github.releases" in tool_names
     assert "news.worker.status" in tool_names
     assert "news.queue.status" in tool_names
     assert "news.approval.submit" in tool_names
@@ -68,6 +70,41 @@ def test_mcp_source_health_tool_calls_source_service() -> None:
 
     assert result.success is True
     assert result.to_dict()["data"]["health"][0]["source_id"] == "source-1"
+
+
+def test_mcp_source_arxiv_fetch_tool_calls_source_service() -> None:
+    service = MCPApplicationService(source_service_factory=lambda: _FakeSourceService())
+
+    result = service.call_tool("news.source.arxiv.fetch", {"query": "cat:cs.AI", "limit": 1})
+
+    assert result.success is True
+    assert result.data["source_type"] == "arxiv"
+    assert result.data["item_count"] == 1
+    assert result.data["items"][0]["title"] == "Agent Runtime Evaluation"
+
+
+def test_mcp_source_github_releases_tool_calls_source_service() -> None:
+    service = MCPApplicationService(source_service_factory=lambda: _FakeSourceService())
+
+    result = service.call_tool(
+        "news.source.github.releases",
+        {"repository": "owner/repo", "limit": 1},
+    )
+
+    assert result.success is True
+    assert result.data["source_type"] == "github"
+    assert result.data["item_count"] == 1
+    assert result.data["items"][0]["title"] == "Version 1.0.0"
+
+
+def test_mcp_source_arxiv_fetch_requires_query() -> None:
+    service = MCPApplicationService(source_service_factory=lambda: _FakeSourceService())
+
+    result = service.call_tool("news.source.arxiv.fetch", {})
+
+    assert result.success is False
+    assert result.error_type == "ValueError"
+    assert "query is required" in result.error_message
 
 
 def test_mcp_worker_status_tool_calls_worker_service() -> None:
@@ -685,6 +722,66 @@ class _FakeSourceService:
                         "last_error": None,
                     }
                 ],
+            }
+        )
+
+    def fetch_arxiv(self, *, query, limit):
+        return _FakeResult(
+            {
+                "source_id": "arxiv",
+                "source_type": "arxiv",
+                "query": query,
+                "item_count": 1,
+                "error_count": 0,
+                "items": [
+                    {
+                        "source_item_id": "raw-arxiv",
+                        "source_id": "arxiv",
+                        "source_name": "arXiv",
+                        "source_type": "arxiv",
+                        "title": "Agent Runtime Evaluation",
+                        "url": "https://arxiv.org/abs/2605.00001",
+                        "fetched_at": "2026-05-11T00:00:00Z",
+                        "published_at": "2026-05-10T00:00:00Z",
+                        "summary": "Paper summary",
+                        "raw_content": None,
+                        "authors": ["Alice Example"],
+                        "tags": ["cs.AI"],
+                        "language": "en",
+                        "metadata": {"arxiv_id": "2605.00001v1"},
+                    }
+                ],
+                "errors": [],
+            }
+        )
+
+    def fetch_github_releases(self, *, repository, limit):
+        return _FakeResult(
+            {
+                "source_id": "github",
+                "source_type": "github",
+                "query": repository,
+                "item_count": 1,
+                "error_count": 0,
+                "items": [
+                    {
+                        "source_item_id": "raw-github",
+                        "source_id": "github",
+                        "source_name": "GitHub",
+                        "source_type": "github",
+                        "title": "Version 1.0.0",
+                        "url": "https://github.com/owner/repo/releases/tag/v1.0.0",
+                        "fetched_at": "2026-05-11T00:00:00Z",
+                        "published_at": "2026-05-10T00:00:00Z",
+                        "summary": "Release notes",
+                        "raw_content": None,
+                        "authors": ["maintainer"],
+                        "tags": ["v1.0.0"],
+                        "language": "en",
+                        "metadata": {"repository": "owner/repo"},
+                    }
+                ],
+                "errors": [],
             }
         )
 
