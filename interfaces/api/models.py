@@ -77,6 +77,15 @@ class GithubReleaseFetchRequest(BaseModel):
     limit: int = Field(default=5, ge=1)
 
 
+class EntityCreateRequest(BaseModel):
+    name: str = Field(min_length=1)
+    kind: Literal["company", "project", "person", "organization"] = "company"
+    aliases: list[str] = Field(default_factory=list)
+    entity_id: str | None = None
+    enabled: bool = True
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class DailyScheduleRequest(BaseModel):
     schedule_id: str = "daily-intelligence"
     name: str = "Daily intelligence"

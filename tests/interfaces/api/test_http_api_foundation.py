@@ -417,6 +417,70 @@ def test_source_preview_invalid_request_uses_unified_error() -> None:
     assert payload["error"]["code"] == "invalid_request"
 
 
+def test_entities_create_and_list_return_payloads() -> None:
+    client = TestClient(create_app(entity_service_factory=lambda: _FakeEntityService()))
+
+    create_response = client.post(
+        "/api/v1/entities",
+        json={"name": "OpenAI", "kind": "company", "aliases": ["ChatGPT"]},
+    )
+    list_response = client.get("/api/v1/entities?enabled_only=true&kind=company")
+
+    create_payload = create_response.json()
+    list_payload = list_response.json()
+
+    assert create_response.status_code == 200
+    assert create_payload["success"] is True
+    assert create_payload["data"]["entity_id"] == "company:openai"
+    assert list_response.status_code == 200
+    assert list_payload["data"]["entity_count"] == 1
+    assert list_payload["data"]["entities"][0]["aliases"] == ["ChatGPT"]
+
+
+def test_entities_lifecycle_routes_return_payloads() -> None:
+    client = TestClient(create_app(entity_service_factory=lambda: _FakeEntityService()))
+
+    disable_response = client.post("/api/v1/entities/company:openai/disable")
+    enable_response = client.post("/api/v1/entities/company:openai/enable")
+    delete_response = client.delete("/api/v1/entities/company:openai")
+
+    assert disable_response.status_code == 200
+    assert disable_response.json()["data"]["enabled"] is False
+    assert enable_response.status_code == 200
+    assert enable_response.json()["data"]["enabled"] is True
+    assert delete_response.status_code == 200
+    assert delete_response.json()["data"] == {"entity_id": "company:openai", "deleted": True}
+
+
+def test_entity_report_matches_return_matches() -> None:
+    client = TestClient(create_app(entity_service_factory=lambda: _FakeEntityService()))
+
+    response = client.get(
+        "/api/v1/entities/company:openai/report-matches?limit=1&workflow_id=daily-intelligence-live"
+    )
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["success"] is True
+    assert payload["data"]["match_count"] == 1
+    assert payload["data"]["matches"][0]["report_id"] == "run-1:final"
+    assert payload["data"]["matches"][0]["matched_aliases"] == ["OpenAI", "ChatGPT"]
+
+
+def test_entities_create_invalid_metadata_returns_domain_error() -> None:
+    client = TestClient(create_app(entity_service_factory=lambda: _FakeEntityService()))
+
+    response = client.post(
+        "/api/v1/entities",
+        json={"name": "OpenAI", "metadata": {"api_key": "hidden"}},
+    )
+    payload = response.json()
+
+    assert response.status_code == 400
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "invalid_entity_request"
+
+
 def test_mcp_catalog_returns_catalog() -> None:
     client = TestClient(create_app(mcp_service_factory=lambda: _FakeMCPService()))
 
@@ -858,6 +922,99 @@ class _FakeSourceService:
                 "errors": [],
             }
         )
+
+
+class _FakeEntityService:
+    def create_entity(self, *, name, kind, aliases, entity_id, enabled, metadata):
+        if "api_key" in metadata:
+            raise ValueError("entity metadata contains secret-like key: api_key")
+        return _FakeEntity(
+            {
+                "entity_id": entity_id or "company:openai",
+                "name": name,
+                "kind": kind,
+                "aliases": aliases,
+                "enabled": enabled,
+                "metadata": metadata,
+                "created_at": "2026-05-11T00:00:00Z",
+                "updated_at": "2026-05-11T00:00:00Z",
+            }
+        )
+
+    def list_entities(self, *, enabled_only, kind):
+        return _FakeResult(
+            {
+                "entity_count": 1,
+                "entities": [
+                    {
+                        "entity_id": "company:openai",
+                        "name": "OpenAI",
+                        "kind": "company",
+                        "aliases": ["ChatGPT"],
+                        "enabled": True,
+                        "metadata": {},
+                        "created_at": "2026-05-11T00:00:00Z",
+                        "updated_at": "2026-05-11T00:00:00Z",
+                    }
+                ],
+            }
+        )
+
+    def set_enabled(self, entity_id, *, enabled):
+        return _FakeEntity(
+            {
+                "entity_id": entity_id,
+                "name": "OpenAI",
+                "kind": "company",
+                "aliases": ["ChatGPT"],
+                "enabled": enabled,
+                "metadata": {},
+                "created_at": "2026-05-11T00:00:00Z",
+                "updated_at": "2026-05-11T00:00:00Z",
+            }
+        )
+
+    def delete_entity(self, entity_id):
+        return True
+
+    def match_reports(self, entity_id, *, limit, workflow_id):
+        return _FakeResult(
+            {
+                "entity": {
+                    "entity_id": entity_id,
+                    "name": "OpenAI",
+                    "kind": "company",
+                    "aliases": ["ChatGPT"],
+                    "enabled": True,
+                    "metadata": {},
+                    "created_at": "2026-05-11T00:00:00Z",
+                    "updated_at": "2026-05-11T00:00:00Z",
+                },
+                "limit": limit,
+                "workflow_id": workflow_id,
+                "match_count": 1,
+                "matches": [
+                    {
+                        "report_id": "run-1:final",
+                        "run_id": "run-1",
+                        "title": "Daily Intelligence: OpenAI",
+                        "finished_at": "2026-05-11T00:00:00Z",
+                        "workflow_id": "daily-intelligence-live",
+                        "matched_aliases": ["OpenAI", "ChatGPT"],
+                        "match_count": 2,
+                        "quality_score": 0.9,
+                    }
+                ],
+            }
+        )
+
+
+class _FakeEntity:
+    def __init__(self, payload) -> None:
+        self.payload = payload
+
+    def to_dict(self):
+        return self.payload
 
 
 class _FakeResult:

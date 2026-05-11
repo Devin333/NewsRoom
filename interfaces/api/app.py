@@ -24,6 +24,7 @@ from interfaces.api.models import (
     ArxivSourceFetchRequest,
     ApprovalSubmitRequest,
     DailyRunRequest,
+    EntityCreateRequest,
     GithubReleaseFetchRequest,
     DailyScheduleRequest,
     ManualScheduleTriggerRequest,
@@ -36,6 +37,7 @@ from interfaces.api.models import (
 from interfaces.api.rate_limit import Clock, InMemoryRateLimiter
 from interfaces.services.approval_service import ApprovalApplicationService
 from interfaces.services.diagnose_service import DiagnosticApplicationService
+from interfaces.services.entity_service import EntityTrackingApplicationService
 from interfaces.services.memory_service import MemoryApplicationService
 from interfaces.services.mcp_service import MCPApplicationService
 from interfaces.services.report_service import ReportApplicationService
@@ -53,6 +55,7 @@ ReportServiceFactory = Callable[[], ReportApplicationService]
 MemoryServiceFactory = Callable[[], MemoryApplicationService]
 DiagnosticServiceFactory = Callable[[], DiagnosticApplicationService]
 SourceServiceFactory = Callable[[], SourceApplicationService]
+EntityServiceFactory = Callable[[], EntityTrackingApplicationService]
 MCPServiceFactory = Callable[[], MCPApplicationService]
 RunInspectionServiceFactory = Callable[[], RunInspectionService]
 ArtifactInspectionServiceFactory = Callable[[], ArtifactInspectionService]
@@ -71,6 +74,7 @@ def create_app(
     memory_service_factory: MemoryServiceFactory = MemoryApplicationService,
     diagnostic_service_factory: DiagnosticServiceFactory = DiagnosticApplicationService,
     source_service_factory: SourceServiceFactory = SourceApplicationService,
+    entity_service_factory: EntityServiceFactory = EntityTrackingApplicationService,
     mcp_service_factory: MCPServiceFactory = MCPApplicationService,
     run_inspection_service_factory: RunInspectionServiceFactory = RunInspectionService,
     artifact_service_factory: ArtifactInspectionServiceFactory = ArtifactInspectionService,
@@ -362,6 +366,78 @@ def create_app(
         except ValueError as exc:
             return _error(status_code=400, code="invalid_github_source_request", message=str(exc))
         return _success(result.to_dict())
+
+    @api.get("/api/v1/entities")
+    def list_entities(enabled_only: bool = False, kind: str | None = None):
+        try:
+            result = entity_service_factory().list_entities(
+                enabled_only=enabled_only,
+                kind=kind,
+            )
+        except ValueError as exc:
+            return _error(status_code=400, code="invalid_entity_list_request", message=str(exc))
+        return _success(result.to_dict())
+
+    @api.post("/api/v1/entities")
+    def create_entity(request: EntityCreateRequest):
+        try:
+            entity = entity_service_factory().create_entity(
+                name=request.name,
+                kind=request.kind,
+                aliases=request.aliases,
+                entity_id=request.entity_id,
+                enabled=request.enabled,
+                metadata=request.metadata,
+            )
+        except ValueError as exc:
+            return _error(status_code=400, code="invalid_entity_request", message=str(exc))
+        return _success(entity.to_dict())
+
+    @api.post("/api/v1/entities/{entity_id}/enable")
+    def enable_entity(entity_id: str):
+        return _set_entity_enabled(entity_id, enabled=True)
+
+    @api.post("/api/v1/entities/{entity_id}/disable")
+    def disable_entity(entity_id: str):
+        return _set_entity_enabled(entity_id, enabled=False)
+
+    @api.delete("/api/v1/entities/{entity_id}")
+    def delete_entity(entity_id: str):
+        deleted = entity_service_factory().delete_entity(entity_id)
+        return _success({"entity_id": entity_id, "deleted": deleted})
+
+    @api.get("/api/v1/entities/{entity_id}/report-matches")
+    def entity_report_matches(entity_id: str, limit: int = 20, workflow_id: str | None = None):
+        try:
+            result = entity_service_factory().match_reports(
+                entity_id,
+                limit=limit,
+                workflow_id=workflow_id,
+            )
+        except KeyError as exc:
+            return _error(
+                status_code=404,
+                code="entity_not_found",
+                message=str(exc),
+                user_action_required=True,
+            )
+        except ValueError as exc:
+            return _error(status_code=400, code="invalid_entity_match_request", message=str(exc))
+        return _success(result.to_dict())
+
+    def _set_entity_enabled(entity_id: str, *, enabled: bool):
+        try:
+            entity = entity_service_factory().set_enabled(entity_id, enabled=enabled)
+        except KeyError as exc:
+            return _error(
+                status_code=404,
+                code="entity_not_found",
+                message=str(exc),
+                user_action_required=True,
+            )
+        except ValueError as exc:
+            return _error(status_code=400, code="invalid_entity_request", message=str(exc))
+        return _success(entity.to_dict())
 
     @api.get("/api/v1/mcp/catalog")
     def mcp_catalog():
