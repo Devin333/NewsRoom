@@ -9,6 +9,7 @@ from storage.artifacts import (
     LocalJsonArtifactIndexStore,
 )
 from storage.lineage import LineageRef, LocalJsonLineageStore
+from storage.metrics import StorageMetrics
 
 
 def test_storage_service_plans_and_applies_retention_from_real_index(tmp_path) -> None:
@@ -176,6 +177,21 @@ def test_storage_service_uses_artifact_index_factory_by_default(tmp_path, monkey
     assert fake_index.list_all_called is True
 
 
+def test_storage_service_uses_metrics_collector_factory_by_default(tmp_path, monkeypatch) -> None:
+    fake_collector = _FakeMetricsCollector()
+    monkeypatch.setattr(
+        storage_service_module,
+        "storage_metrics_collector_from_env",
+        lambda *, artifact_root: fake_collector,
+    )
+
+    result = StorageApplicationService(tmp_path).metrics()
+
+    assert result.artifacts_count == 7
+    assert result.metadata["source"] == "fake"
+    assert fake_collector.collect_called is True
+
+
 class _FakeArtifactIndex:
     def __init__(self, refs) -> None:
         self.refs = refs
@@ -187,3 +203,12 @@ class _FakeArtifactIndex:
 
     def list_by_run(self, run_id):
         return [ref for ref in self.refs if ref.run_id == run_id]
+
+
+class _FakeMetricsCollector:
+    def __init__(self) -> None:
+        self.collect_called = False
+
+    def collect(self):
+        self.collect_called = True
+        return StorageMetrics(artifacts_count=7, metadata={"source": "fake"})

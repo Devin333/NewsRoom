@@ -15,7 +15,7 @@ from storage.lifecycle import (
     RetentionPolicy,
 )
 from storage.lineage import LineageRef, LocalJsonLineageStore
-from storage.metrics import LocalStorageMetricsCollector, StorageMetrics
+from storage.metrics import StorageMetrics, storage_metrics_collector_from_env
 
 
 @dataclass(frozen=True)
@@ -108,15 +108,19 @@ class StorageApplicationService:
         artifact_root: str | Path = ".newsroom/runs",
         *,
         artifact_index_store: Any | None = None,
+        metrics_collector: Any | None = None,
     ) -> None:
         self.artifact_root = Path(artifact_root)
         self.artifact_index = artifact_index_store or artifact_index_store_from_env(
             artifact_root=self.artifact_root
         )
+        self.metrics_collector = metrics_collector or storage_metrics_collector_from_env(
+            artifact_root=self.artifact_root
+        )
         self.lineage_store = LocalJsonLineageStore(self.artifact_root / "_records" / "lineage")
 
     def metrics(self) -> StorageMetrics:
-        return LocalStorageMetricsCollector(self.artifact_root).collect()
+        return self.metrics_collector.collect()
 
     def create_backup(
         self,
