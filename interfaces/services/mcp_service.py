@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
 from typing import Any, Callable
+from urllib.parse import unquote
 
 from interfaces.mcp.models import (
     MCPCatalog,
@@ -26,6 +27,14 @@ RUN_EVENTS_RESOURCE_TEMPLATE = "news://runs/{run_id}/events"
 RUN_EVENTS_RESOURCE_SUFFIX = "/events"
 RUN_REPLAY_RESOURCE_TEMPLATE = "news://runs/{run_id}/replay"
 RUN_REPLAY_RESOURCE_SUFFIX = "/replay"
+RUN_LINEAGE_RESOURCE_TEMPLATE = "news://runs/{run_id}/lineage"
+RUN_LINEAGE_RESOURCE_SUFFIX = "/lineage"
+RUN_LINEAGE_UPSTREAM_RESOURCE_TEMPLATE = "news://runs/{run_id}/lineage/upstream/{target_type}/{target_id}"
+RUN_LINEAGE_UPSTREAM_RESOURCE_MARKER = "/lineage/upstream/"
+RUN_LINEAGE_DOWNSTREAM_RESOURCE_TEMPLATE = (
+    "news://runs/{run_id}/lineage/downstream/{source_type}/{source_id}"
+)
+RUN_LINEAGE_DOWNSTREAM_RESOURCE_MARKER = "/lineage/downstream/"
 RUN_ARTIFACT_RESOURCE_TEMPLATE = "news://runs/{run_id}/artifacts/{artifact_key}"
 RUN_ARTIFACT_RESOURCE_SEPARATOR = "/artifacts/"
 SOURCE_HEALTH_RESOURCE_URI = "news://sources/health"
@@ -43,6 +52,7 @@ class MCPApplicationService:
         approval_service_factory: Callable[[], Any] | None = None,
         run_inspection_service_factory: Callable[[], Any] | None = None,
         artifact_service_factory: Callable[[], Any] | None = None,
+        storage_service_factory: Callable[[], Any] | None = None,
     ) -> None:
         self.worker_service_factory = worker_service_factory or _worker_service_factory
         self.report_service_factory = report_service_factory or _report_service_factory
@@ -54,6 +64,7 @@ class MCPApplicationService:
             run_inspection_service_factory or _run_inspection_service_factory
         )
         self.artifact_service_factory = artifact_service_factory or _artifact_service_factory
+        self.storage_service_factory = storage_service_factory or _storage_service_factory
 
     def catalog(self) -> MCPCatalog:
         return MCPCatalog(tools=_tools(), resources=_resources(), prompts=_prompts())
@@ -108,6 +119,22 @@ class MCPApplicationService:
             run_id = _run_replay_resource_run_id(uri)
             if run_id is not None:
                 return self._read_run_replay_resource(uri, run_id)
+            lineage_upstream = _run_lineage_upstream_resource_ids(uri)
+            if lineage_upstream is not None:
+                run_id, target_type, target_id = lineage_upstream
+                return self._read_run_lineage_upstream_resource(uri, run_id, target_type, target_id)
+            lineage_downstream = _run_lineage_downstream_resource_ids(uri)
+            if lineage_downstream is not None:
+                run_id, source_type, source_id = lineage_downstream
+                return self._read_run_lineage_downstream_resource(
+                    uri,
+                    run_id,
+                    source_type,
+                    source_id,
+                )
+            run_id = _run_lineage_resource_run_id(uri)
+            if run_id is not None:
+                return self._read_run_lineage_resource(uri, run_id)
             if uri == SOURCE_HEALTH_RESOURCE_URI:
                 return self._read_source_health_resource()
             return MCPResourceReadResult(
@@ -145,6 +172,12 @@ class MCPApplicationService:
                 return self._run_events(args)
             if tool_name == "news.run.replay":
                 return self._run_replay(args)
+            if tool_name == "news.run.lineage":
+                return self._run_lineage(args)
+            if tool_name == "news.run.lineage.upstream":
+                return self._run_lineage_upstream(args)
+            if tool_name == "news.run.lineage.downstream":
+                return self._run_lineage_downstream(args)
             if tool_name == "news.approval.submit":
                 return self._approval_submit(args)
             if tool_name == "news.approval.list":
@@ -274,6 +307,39 @@ class MCPApplicationService:
             data=result.to_dict(),
         )
 
+    def _run_lineage(self, args: dict[str, Any]) -> MCPToolCallResult:
+        run_id = _required_arg(args, "run_id")
+        result = self.storage_service_factory().list_lineage(run_id)
+        return MCPToolCallResult(
+            tool_name="news.run.lineage",
+            success=True,
+            data=result.to_dict(),
+        )
+
+    def _run_lineage_upstream(self, args: dict[str, Any]) -> MCPToolCallResult:
+        result = self.storage_service_factory().lineage_upstream(
+            run_id=_required_arg(args, "run_id"),
+            target_type=_required_arg(args, "target_type"),
+            target_id=_required_arg(args, "target_id"),
+        )
+        return MCPToolCallResult(
+            tool_name="news.run.lineage.upstream",
+            success=True,
+            data=result.to_dict(),
+        )
+
+    def _run_lineage_downstream(self, args: dict[str, Any]) -> MCPToolCallResult:
+        result = self.storage_service_factory().lineage_downstream(
+            run_id=_required_arg(args, "run_id"),
+            source_type=_required_arg(args, "source_type"),
+            source_id=_required_arg(args, "source_id"),
+        )
+        return MCPToolCallResult(
+            tool_name="news.run.lineage.downstream",
+            success=True,
+            data=result.to_dict(),
+        )
+
     def _approval_submit(self, args: dict[str, Any]) -> MCPToolCallResult:
         requested_action = str(args.get("requested_action") or "")
         if not requested_action:
@@ -384,6 +450,50 @@ class MCPApplicationService:
 
     def _read_run_replay_resource(self, uri: str, run_id: str) -> MCPResourceReadResult:
         result = self.run_inspection_service_factory().replay_run(run_id)
+        return MCPResourceReadResult(
+            uri=uri,
+            success=True,
+            data=result.to_dict(),
+        )
+
+    def _read_run_lineage_resource(self, uri: str, run_id: str) -> MCPResourceReadResult:
+        result = self.storage_service_factory().list_lineage(run_id)
+        return MCPResourceReadResult(
+            uri=uri,
+            success=True,
+            data=result.to_dict(),
+        )
+
+    def _read_run_lineage_upstream_resource(
+        self,
+        uri: str,
+        run_id: str,
+        target_type: str,
+        target_id: str,
+    ) -> MCPResourceReadResult:
+        result = self.storage_service_factory().lineage_upstream(
+            run_id=run_id,
+            target_type=target_type,
+            target_id=target_id,
+        )
+        return MCPResourceReadResult(
+            uri=uri,
+            success=True,
+            data=result.to_dict(),
+        )
+
+    def _read_run_lineage_downstream_resource(
+        self,
+        uri: str,
+        run_id: str,
+        source_type: str,
+        source_id: str,
+    ) -> MCPResourceReadResult:
+        result = self.storage_service_factory().lineage_downstream(
+            run_id=run_id,
+            source_type=source_type,
+            source_id=source_id,
+        )
         return MCPResourceReadResult(
             uri=uri,
             success=True,
@@ -512,6 +622,44 @@ def _tools() -> list[MCPTool]:
             },
         ),
         MCPTool(
+            name="news.run.lineage",
+            title="List run lineage",
+            description="Read local lineage refs for a run through StorageApplicationService.",
+            input_schema={
+                "type": "object",
+                "required": ["run_id"],
+                "properties": {"run_id": {"type": "string"}},
+            },
+        ),
+        MCPTool(
+            name="news.run.lineage.upstream",
+            title="Read upstream run lineage",
+            description="Read upstream lineage refs for a target through StorageApplicationService.",
+            input_schema={
+                "type": "object",
+                "required": ["run_id", "target_type", "target_id"],
+                "properties": {
+                    "run_id": {"type": "string"},
+                    "target_type": {"type": "string"},
+                    "target_id": {"type": "string"},
+                },
+            },
+        ),
+        MCPTool(
+            name="news.run.lineage.downstream",
+            title="Read downstream run lineage",
+            description="Read downstream lineage refs for a source through StorageApplicationService.",
+            input_schema={
+                "type": "object",
+                "required": ["run_id", "source_type", "source_id"],
+                "properties": {
+                    "run_id": {"type": "string"},
+                    "source_type": {"type": "string"},
+                    "source_id": {"type": "string"},
+                },
+            },
+        ),
+        MCPTool(
             name="news.approval.submit",
             title="Submit approval request",
             description="Submit a human approval request through ApprovalApplicationService.",
@@ -626,6 +774,21 @@ def _resources() -> list[MCPResource]:
             uri=RUN_REPLAY_RESOURCE_TEMPLATE,
             name="Run Replay",
             description="Redacted workflow run replay bundle by run id.",
+        ),
+        MCPResource(
+            uri=RUN_LINEAGE_RESOURCE_TEMPLATE,
+            name="Run Lineage",
+            description="Local lineage refs by run id.",
+        ),
+        MCPResource(
+            uri=RUN_LINEAGE_UPSTREAM_RESOURCE_TEMPLATE,
+            name="Run Upstream Lineage",
+            description="Upstream lineage refs for a target by run id.",
+        ),
+        MCPResource(
+            uri=RUN_LINEAGE_DOWNSTREAM_RESOURCE_TEMPLATE,
+            name="Run Downstream Lineage",
+            description="Downstream lineage refs for a source by run id.",
         ),
         MCPResource(
             uri=RUN_ARTIFACT_RESOURCE_TEMPLATE,
@@ -802,6 +965,12 @@ def _artifact_service_factory():
     return ArtifactInspectionService()
 
 
+def _storage_service_factory():
+    from interfaces.services.storage_service import StorageApplicationService
+
+    return StorageApplicationService()
+
+
 def _report_resource_report_id(uri: str) -> str | None:
     if not uri.startswith(REPORT_RESOURCE_PREFIX):
         return None
@@ -836,6 +1005,36 @@ def _run_replay_resource_run_id(uri: str) -> str | None:
     return run_id or None
 
 
+def _run_lineage_resource_run_id(uri: str) -> str | None:
+    if not uri.startswith(RUN_MANIFEST_RESOURCE_PREFIX) or not uri.endswith(
+        RUN_LINEAGE_RESOURCE_SUFFIX
+    ):
+        return None
+    run_id = uri[len(RUN_MANIFEST_RESOURCE_PREFIX) : -len(RUN_LINEAGE_RESOURCE_SUFFIX)]
+    return run_id or None
+
+
+def _run_lineage_upstream_resource_ids(uri: str) -> tuple[str, str, str] | None:
+    return _run_lineage_resource_ids(uri, RUN_LINEAGE_UPSTREAM_RESOURCE_MARKER)
+
+
+def _run_lineage_downstream_resource_ids(uri: str) -> tuple[str, str, str] | None:
+    return _run_lineage_resource_ids(uri, RUN_LINEAGE_DOWNSTREAM_RESOURCE_MARKER)
+
+
+def _run_lineage_resource_ids(uri: str, marker: str) -> tuple[str, str, str] | None:
+    if not uri.startswith(RUN_MANIFEST_RESOURCE_PREFIX):
+        return None
+    rest = uri[len(RUN_MANIFEST_RESOURCE_PREFIX) :]
+    if marker not in rest:
+        return None
+    run_id, resource_ids = rest.split(marker, 1)
+    parts = resource_ids.split("/", 1)
+    if not run_id or len(parts) != 2 or not parts[0] or not parts[1]:
+        return None
+    return unquote(run_id), unquote(parts[0]), unquote(parts[1])
+
+
 def _run_artifact_resource_ids(uri: str) -> tuple[str, str] | None:
     if not uri.startswith(RUN_MANIFEST_RESOURCE_PREFIX):
         return None
@@ -853,6 +1052,13 @@ def _approval_id(args: dict[str, Any]) -> str:
     if not approval_id:
         raise ValueError("approval_id is required")
     return approval_id
+
+
+def _required_arg(args: dict[str, Any], name: str) -> str:
+    value = str(args.get(name) or "")
+    if not value:
+        raise ValueError(f"{name} is required")
+    return value
 
 
 def _decided_by(args: dict[str, Any]) -> str:

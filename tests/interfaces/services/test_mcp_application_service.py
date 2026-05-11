@@ -5,6 +5,8 @@ from interfaces.services.artifact_service import ArtifactInspectionService
 from interfaces.services.mcp_service import MCPApplicationService
 from interfaces.services.report_service import ReportApplicationService
 from interfaces.services.run_inspection_service import RunInspectionService
+from interfaces.services.storage_service import StorageApplicationService
+from storage.lineage import LineageRef, LocalJsonLineageStore
 
 
 def test_mcp_catalog_lists_tools_without_calling_factories() -> None:
@@ -28,12 +30,18 @@ def test_mcp_catalog_lists_tools_without_calling_factories() -> None:
     assert "news.run.show" in tool_names
     assert "news.run.events" in tool_names
     assert "news.run.replay" in tool_names
+    assert "news.run.lineage" in tool_names
+    assert "news.run.lineage.upstream" in tool_names
+    assert "news.run.lineage.downstream" in tool_names
     assert "news.approval.submit" in tool_names
     assert "news://reports/latest" in resource_uris
     assert "news://reports/{report_id}" in resource_uris
     assert "news://runs/{run_id}/manifest" in resource_uris
     assert "news://runs/{run_id}/events" in resource_uris
     assert "news://runs/{run_id}/replay" in resource_uris
+    assert "news://runs/{run_id}/lineage" in resource_uris
+    assert "news://runs/{run_id}/lineage/upstream/{target_type}/{target_id}" in resource_uris
+    assert "news://runs/{run_id}/lineage/downstream/{source_type}/{source_id}" in resource_uris
     assert "news://runs/{run_id}/artifacts/{artifact_key}" in resource_uris
     prompt_names = [prompt["name"] for prompt in catalog["prompts"]]
     assert "news.evidence_audit" in prompt_names
@@ -376,6 +384,51 @@ def test_mcp_reads_run_replay_resource_from_local_artifacts(tmp_path) -> None:
     assert artifacts["report_markdown"]["content"] == "# Replay\n"
 
 
+def test_mcp_run_lineage_tools_read_real_local_lineage(tmp_path) -> None:
+    _write_lineage_refs(tmp_path)
+    service = MCPApplicationService(
+        storage_service_factory=lambda: StorageApplicationService(artifact_root=tmp_path)
+    )
+
+    listed = service.call_tool("news.run.lineage", {"run_id": "run-lineage"})
+    upstream = service.call_tool(
+        "news.run.lineage.upstream",
+        {"run_id": "run-lineage", "target_type": "evidence", "target_id": "ev-1"},
+    )
+    downstream = service.call_tool(
+        "news.run.lineage.downstream",
+        {"run_id": "run-lineage", "source_type": "source_item", "source_id": "raw-1"},
+    )
+
+    assert listed.success is True
+    assert listed.data["lineage_count"] == 2
+    assert upstream.success is True
+    assert upstream.data["lineage_count"] == 2
+    assert downstream.success is True
+    assert downstream.data["lineage_count"] == 1
+    assert downstream.data["lineage_refs"][0]["source_id"] == "raw-1"
+
+
+def test_mcp_run_lineage_resources_read_real_local_lineage(tmp_path) -> None:
+    _write_lineage_refs(tmp_path)
+    service = MCPApplicationService(
+        storage_service_factory=lambda: StorageApplicationService(artifact_root=tmp_path)
+    )
+
+    listed = service.read_resource("news://runs/run-lineage/lineage")
+    upstream = service.read_resource("news://runs/run-lineage/lineage/upstream/evidence/ev-1")
+    downstream = service.read_resource(
+        "news://runs/run-lineage/lineage/downstream/source_item/raw-1"
+    )
+
+    assert listed.success is True
+    assert listed.data["lineage_count"] == 2
+    assert upstream.success is True
+    assert upstream.data["lineage_refs"][0]["target_id"] == "ev-1"
+    assert downstream.success is True
+    assert downstream.data["lineage_count"] == 1
+
+
 def test_mcp_reads_run_artifact_resource_from_local_artifact(tmp_path) -> None:
     run_dir = tmp_path / "run-6"
     run_dir.mkdir()
@@ -550,3 +603,27 @@ def _write_run_with_replay_artifacts(root, run_id) -> None:
         encoding="utf-8",
     )
     (run_dir / "report.md").write_text("# Replay\n", encoding="utf-8")
+
+
+def _write_lineage_refs(root) -> None:
+    store = LocalJsonLineageStore(root / "_records" / "lineage")
+    store.record_many(
+        [
+            LineageRef(
+                run_id="run-lineage",
+                source_type="source_item",
+                source_id="raw-1",
+                target_type="evidence",
+                target_id="ev-1",
+                relation_type="source_to_evidence",
+            ),
+            LineageRef(
+                run_id="run-lineage",
+                source_type="ranked_source_item",
+                source_id="rank-1",
+                target_type="evidence",
+                target_id="ev-1",
+                relation_type="ranked_to_evidence",
+            ),
+        ]
+    )

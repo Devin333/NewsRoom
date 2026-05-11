@@ -67,6 +67,24 @@ def test_stdio_handles_run_replay_resource_read() -> None:
     assert response["result"]["data"]["run_id"] == "run-1"
 
 
+def test_stdio_handles_run_lineage_resource_read() -> None:
+    service = _FakeMCPService()
+
+    response = handle_jsonrpc_request(
+        {
+            "jsonrpc": "2.0",
+            "id": "read-lineage",
+            "method": "resources/read",
+            "params": {"uri": "news://runs/run-1/lineage/upstream/evidence/ev-1"},
+        },
+        service=service,
+    )
+
+    assert service.resource_reads == ["news://runs/run-1/lineage/upstream/evidence/ev-1"]
+    assert response["result"]["success"] is True
+    assert response["result"]["data"]["lineage_count"] == 1
+
+
 def test_stdio_handles_prompt_get() -> None:
     service = _FakeMCPService()
 
@@ -181,4 +199,6 @@ class _FakePromptResult:
 def _resource_payload(uri):
     if uri.endswith("/replay"):
         return {"run_id": "run-1", "artifact_count": 0, "artifacts": []}
+    if "/lineage" in uri:
+        return {"run_id": "run-1", "lineage_count": 1, "lineage_refs": []}
     return {"source_count": 1}
