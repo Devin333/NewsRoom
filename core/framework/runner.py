@@ -17,6 +17,7 @@ from core.framework.workflow.step_runner import FunctionStepRegistry, FunctionSt
 from storage.artifacts import ArtifactRef, LocalJsonArtifactIndexStore
 from storage.events import EventRecord as StorageEventRecord
 from storage.events import LocalJsonEventStore
+from storage.lineage import LocalJsonLineageStore, lineage_refs_from_evidence_bundle
 from storage.security import StorageRedactor
 
 
@@ -28,6 +29,7 @@ class WorkflowRunner:
         function_registry: FunctionStepRegistry,
         artifact_index_store: LocalJsonArtifactIndexStore | None = None,
         event_store: LocalJsonEventStore | None = None,
+        lineage_store: LocalJsonLineageStore | None = None,
         redactor: StorageRedactor | None = None,
     ) -> None:
         self._artifact_root = Path(artifact_root)
@@ -37,6 +39,9 @@ class WorkflowRunner:
             self._artifact_root / "_records" / "artifact_index"
         )
         self._event_store = event_store or LocalJsonEventStore(self._artifact_root / "_records" / "events")
+        self._lineage_store = lineage_store or LocalJsonLineageStore(
+            self._artifact_root / "_records" / "lineage"
+        )
         self._redactor = redactor or StorageRedactor()
 
     def run(
@@ -58,6 +63,7 @@ class WorkflowRunner:
     def _persist_storage_indexes(self, result: WorkflowResult) -> None:
         self._index_artifacts(result)
         self._index_events(result)
+        self._index_lineage(result)
 
     def _index_artifacts(self, result: WorkflowResult) -> None:
         if result.artifact_dir is None:
@@ -121,6 +127,17 @@ class WorkflowRunner:
                     metadata=metadata,
                 )
                 self._event_store.append_event(event)
+
+    def _index_lineage(self, result: WorkflowResult) -> None:
+        evidence_bundle = result.output.get("evidence_bundle")
+        if evidence_bundle is None:
+            return
+        refs = lineage_refs_from_evidence_bundle(
+            evidence_bundle,
+            run_id=result.run_id,
+            workflow_id=result.workflow_id,
+        )
+        self._lineage_store.record_many(refs)
 
 
 def _artifact_path(run_dir: Path, relative_path: str) -> Path:

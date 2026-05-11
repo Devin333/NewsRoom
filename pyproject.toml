@@ -50,6 +50,7 @@ packages = [
   "quality",
   "storage.local_json",
   "storage.lifecycle",
+  "storage.lineage",
   "storage.memory",
   "storage.postgres",
   "storage.security",

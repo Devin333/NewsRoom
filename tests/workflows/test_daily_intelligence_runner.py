@@ -7,6 +7,7 @@ from domain.sources import SourceDefinition, SourceError
 from sources import SourceRegistry
 from sources.connectors import FeedConnector
 from sources.health import BasicSourceHealthManager
+from storage.lineage import LocalJsonLineageStore
 from workflows.daily_intelligence import DailyIntelligenceRunner
 
 
@@ -92,6 +93,16 @@ def test_daily_intelligence_runner_live_offline_writes_report_artifacts(tmp_path
     quality_metrics = json.loads((run_dir / "quality_gate_metrics.json").read_text())
     assert quality_metrics["blocked"] is False
     assert quality_metrics["quality_score"] == 1.0
+
+    lineage_store = LocalJsonLineageStore(tmp_path / "_records" / "lineage")
+    evidence_id = result.output["evidence_bundle"].items[0].evidence_id
+    upstream = lineage_store.upstream("daily-offline", "evidence", evidence_id)
+    assert {ref.source_type for ref in upstream} >= {
+        "source_url",
+        "source_item",
+        "normalized_source_item",
+        "ranked_source_item",
+    }
 
 
 def test_daily_intelligence_runner_live_missing_llm_key_fails_safely(tmp_path, monkeypatch) -> None:
