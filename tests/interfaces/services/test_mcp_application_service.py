@@ -38,6 +38,7 @@ def test_mcp_catalog_lists_tools_without_calling_factories() -> None:
     assert "news.run.lineage.downstream" in tool_names
     assert "news.storage.metrics" in tool_names
     assert "news.storage.retention.plan" in tool_names
+    assert "news.worker.status" in tool_names
     assert "news.approval.submit" in tool_names
     assert "news://reports/latest" in resource_uris
     assert "news://reports/{report_id}" in resource_uris
@@ -50,6 +51,8 @@ def test_mcp_catalog_lists_tools_without_calling_factories() -> None:
     assert "news://runs/{run_id}/artifacts/{artifact_key}" in resource_uris
     assert "news://storage/metrics" in resource_uris
     assert "news://storage/retention/plan" in resource_uris
+    assert "news://workers" in resource_uris
+    assert "news://workers/{worker_id}" in resource_uris
     prompt_names = [prompt["name"] for prompt in catalog["prompts"]]
     assert "news.evidence_audit" in prompt_names
     assert "news.quality_gate_explain" in prompt_names
@@ -63,6 +66,31 @@ def test_mcp_source_health_tool_calls_source_service() -> None:
 
     assert result.success is True
     assert result.to_dict()["data"]["health"][0]["source_id"] == "source-1"
+
+
+def test_mcp_worker_status_tool_calls_worker_service() -> None:
+    fake_worker = _FakeWorkerService()
+    service = MCPApplicationService(worker_service_factory=lambda: fake_worker)
+
+    result = service.call_tool(
+        "news.worker.status",
+        {"worker_id": "worker-1", "stale_after_seconds": 30},
+    )
+
+    assert result.success is True
+    assert result.data["worker_count"] == 1
+    assert fake_worker.calls == [{"worker_id": "worker-1", "stale_after_seconds": 30}]
+
+
+def test_mcp_worker_status_resource_calls_worker_service() -> None:
+    fake_worker = _FakeWorkerService()
+    service = MCPApplicationService(worker_service_factory=lambda: fake_worker)
+
+    result = service.read_resource("news://workers/worker-1?stale_after_seconds=45")
+
+    assert result.success is True
+    assert result.data["worker_id"] == "worker-1"
+    assert fake_worker.calls == [{"worker_id": "worker-1", "stale_after_seconds": 45}]
 
 
 def test_mcp_get_prompt_renders_arguments() -> None:
@@ -638,6 +666,34 @@ class _FakeSourceService:
 class _FakeMemoryService:
     def search(self, **kwargs):
         return _FakeResult({"result_count": 0, "results": []})
+
+
+class _FakeWorkerService:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def list_worker_status(self, *, worker_id=None, stale_after_seconds=60):
+        self.calls.append(
+            {
+                "worker_id": worker_id,
+                "stale_after_seconds": stale_after_seconds,
+            }
+        )
+        return _FakeResult(
+            {
+                "worker_id": worker_id,
+                "worker_count": 1,
+                "unhealthy_count": 0,
+                "stale_after_seconds": stale_after_seconds,
+                "workers": [
+                    {
+                        "worker_id": "worker-1",
+                        "status": "running",
+                        "stale": False,
+                    }
+                ],
+            }
+        )
 
 
 class _FakeResult:

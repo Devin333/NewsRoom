@@ -42,6 +42,8 @@ RUN_ARTIFACT_RESOURCE_SEPARATOR = "/artifacts/"
 STORAGE_METRICS_RESOURCE_URI = "news://storage/metrics"
 STORAGE_RETENTION_PLAN_RESOURCE_URI = "news://storage/retention/plan"
 SOURCE_HEALTH_RESOURCE_URI = "news://sources/health"
+WORKERS_RESOURCE_TEMPLATE = "news://workers"
+WORKER_RESOURCE_TEMPLATE = "news://workers/{worker_id}"
 RETENTION_POLICY_ARG_NAMES = (
     "raw_source_retention_days",
     "llm_artifact_retention_days",
@@ -154,6 +156,9 @@ class MCPApplicationService:
                 return self._read_storage_retention_plan_resource(uri, retention_plan_args)
             if uri == SOURCE_HEALTH_RESOURCE_URI:
                 return self._read_source_health_resource()
+            worker_status_args = _worker_status_resource_args(uri)
+            if worker_status_args is not None:
+                return self._read_worker_status_resource(uri, worker_status_args)
             return MCPResourceReadResult(
                 uri=uri,
                 success=False,
@@ -199,6 +204,8 @@ class MCPApplicationService:
                 return self._storage_metrics()
             if tool_name == "news.storage.retention.plan":
                 return self._storage_retention_plan(args)
+            if tool_name == "news.worker.status":
+                return self._worker_status(args)
             if tool_name == "news.approval.submit":
                 return self._approval_submit(args)
             if tool_name == "news.approval.list":
@@ -377,6 +384,17 @@ class MCPApplicationService:
         )
         return MCPToolCallResult(
             tool_name="news.storage.retention.plan",
+            success=True,
+            data=result.to_dict(),
+        )
+
+    def _worker_status(self, args: dict[str, Any]) -> MCPToolCallResult:
+        result = self.worker_service_factory().list_worker_status(
+            worker_id=_optional_arg(args, "worker_id"),
+            stale_after_seconds=_optional_int_arg(args, "stale_after_seconds", default=60),
+        )
+        return MCPToolCallResult(
+            tool_name="news.worker.status",
             success=True,
             data=result.to_dict(),
         )
@@ -586,6 +604,21 @@ class MCPApplicationService:
             data=result.to_dict(),
         )
 
+    def _read_worker_status_resource(
+        self,
+        uri: str,
+        args: dict[str, Any],
+    ) -> MCPResourceReadResult:
+        result = self.worker_service_factory().list_worker_status(
+            worker_id=_optional_arg(args, "worker_id"),
+            stale_after_seconds=_optional_int_arg(args, "stale_after_seconds", default=60),
+        )
+        return MCPResourceReadResult(
+            uri=uri,
+            success=True,
+            data=result.to_dict(),
+        )
+
 
 def _tools() -> list[MCPTool]:
     return [
@@ -749,6 +782,18 @@ def _tools() -> list[MCPTool]:
             },
         ),
         MCPTool(
+            name="news.worker.status",
+            title="Read worker status",
+            description="Read worker heartbeat status through WorkerApplicationService.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "worker_id": {"type": "string"},
+                    "stale_after_seconds": {"type": "integer", "minimum": 0},
+                },
+            },
+        ),
+        MCPTool(
             name="news.approval.submit",
             title="Submit approval request",
             description="Submit a human approval request through ApprovalApplicationService.",
@@ -898,6 +943,16 @@ def _resources() -> list[MCPResource]:
             uri=SOURCE_HEALTH_RESOURCE_URI,
             name="Source Health",
             description="Current source health view.",
+        ),
+        MCPResource(
+            uri=WORKERS_RESOURCE_TEMPLATE,
+            name="Worker Status",
+            description="Current worker heartbeat status.",
+        ),
+        MCPResource(
+            uri=WORKER_RESOURCE_TEMPLATE,
+            name="Worker Detail",
+            description="Worker heartbeat status by worker id.",
         ),
     ]
 
@@ -1154,6 +1209,19 @@ def _storage_retention_plan_resource_args(uri: str) -> dict[str, Any] | None:
     return {key: values[-1] for key, values in parse_qs(parsed.query).items() if values}
 
 
+def _worker_status_resource_args(uri: str) -> dict[str, Any] | None:
+    parsed = urlsplit(uri)
+    if parsed.scheme != "news" or parsed.netloc != "workers":
+        return None
+    worker_id = parsed.path.strip("/")
+    if "/" in worker_id:
+        return None
+    args = {key: values[-1] for key, values in parse_qs(parsed.query).items() if values}
+    if worker_id:
+        args["worker_id"] = unquote(worker_id)
+    return args
+
+
 def _approval_id(args: dict[str, Any]) -> str:
     approval_id = str(args.get("approval_id") or "")
     if not approval_id:
@@ -1173,6 +1241,13 @@ def _optional_arg(args: dict[str, Any], name: str) -> str | None:
     if value is None or value == "":
         return None
     return str(value)
+
+
+def _optional_int_arg(args: dict[str, Any], name: str, *, default: int) -> int:
+    value = args.get(name)
+    if value is None or value == "":
+        return default
+    return int(value)
 
 
 def _retention_policy_from_args(args: dict[str, Any]) -> RetentionPolicy | None:
