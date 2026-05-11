@@ -37,6 +37,38 @@ def test_artifact_service_reads_json_artifact(tmp_path) -> None:
     assert result.to_dict()["size_bytes"] is not None
 
 
+def test_artifact_service_redacts_sensitive_json_fields(tmp_path) -> None:
+    _write_run(
+        tmp_path,
+        "run-1",
+        artifacts={"output": "output.json"},
+        files={"output.json": {"token": "hidden", "nested": {"api_key": "secret"}, "safe": "ok"}},
+    )
+
+    result = ArtifactInspectionService(tmp_path).get_artifact("run-1", "output")
+
+    assert result.to_dict()["content"] == {
+        "token": "[redacted]",
+        "nested": {"api_key": "[redacted]"},
+        "safe": "ok",
+    }
+
+
+def test_artifact_service_redacts_sensitive_jsonl_fields(tmp_path) -> None:
+    _write_run(
+        tmp_path,
+        "run-1",
+        artifacts={"events": "events.jsonl"},
+        files={"events.jsonl": '{"payload": {"token": "hidden", "safe": "ok"}}\n'},
+    )
+
+    result = ArtifactInspectionService(tmp_path).get_artifact("run-1", "events")
+
+    assert '"token": "[redacted]"' in result.to_dict()["content"]
+    assert "hidden" not in result.to_dict()["content"]
+    assert '"safe": "ok"' in result.to_dict()["content"]
+
+
 def test_artifact_service_rejects_unknown_artifact_key(tmp_path) -> None:
     _write_run(tmp_path, "run-1", artifacts={}, files={})
 

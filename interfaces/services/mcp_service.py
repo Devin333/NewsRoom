@@ -24,6 +24,8 @@ RUN_MANIFEST_RESOURCE_PREFIX = "news://runs/"
 RUN_MANIFEST_RESOURCE_SUFFIX = "/manifest"
 RUN_EVENTS_RESOURCE_TEMPLATE = "news://runs/{run_id}/events"
 RUN_EVENTS_RESOURCE_SUFFIX = "/events"
+RUN_ARTIFACT_RESOURCE_TEMPLATE = "news://runs/{run_id}/artifacts/{artifact_key}"
+RUN_ARTIFACT_RESOURCE_SEPARATOR = "/artifacts/"
 SOURCE_HEALTH_RESOURCE_URI = "news://sources/health"
 
 
@@ -38,6 +40,7 @@ class MCPApplicationService:
         diagnostic_service_factory: Callable[[], Any] | None = None,
         approval_service_factory: Callable[[], Any] | None = None,
         run_inspection_service_factory: Callable[[], Any] | None = None,
+        artifact_service_factory: Callable[[], Any] | None = None,
     ) -> None:
         self.worker_service_factory = worker_service_factory or _worker_service_factory
         self.report_service_factory = report_service_factory or _report_service_factory
@@ -48,6 +51,7 @@ class MCPApplicationService:
         self.run_inspection_service_factory = (
             run_inspection_service_factory or _run_inspection_service_factory
         )
+        self.artifact_service_factory = artifact_service_factory or _artifact_service_factory
 
     def catalog(self) -> MCPCatalog:
         return MCPCatalog(tools=_tools(), resources=_resources(), prompts=_prompts())
@@ -89,6 +93,10 @@ class MCPApplicationService:
             report_id = _report_resource_report_id(uri)
             if report_id is not None:
                 return self._read_report_resource(uri, report_id)
+            artifact_resource = _run_artifact_resource_ids(uri)
+            if artifact_resource is not None:
+                run_id, artifact_key = artifact_resource
+                return self._read_run_artifact_resource(uri, run_id, artifact_key)
             run_id = _run_manifest_resource_run_id(uri)
             if run_id is not None:
                 return self._read_run_manifest_resource(uri, run_id)
@@ -356,6 +364,19 @@ class MCPApplicationService:
             data=result.to_dict(),
         )
 
+    def _read_run_artifact_resource(
+        self,
+        uri: str,
+        run_id: str,
+        artifact_key: str,
+    ) -> MCPResourceReadResult:
+        result = self.artifact_service_factory().get_artifact(run_id, artifact_key)
+        return MCPResourceReadResult(
+            uri=uri,
+            success=True,
+            data=result.to_dict(),
+        )
+
     def _read_source_health_resource(self) -> MCPResourceReadResult:
         result = self.source_service_factory().source_health(enabled_only=True)
         return MCPResourceReadResult(
@@ -566,6 +587,11 @@ def _resources() -> list[MCPResource]:
             description="Structured workflow run events by run id.",
         ),
         MCPResource(
+            uri=RUN_ARTIFACT_RESOURCE_TEMPLATE,
+            name="Run Artifact",
+            description="Manifest-listed workflow artifact by run id and artifact key.",
+        ),
+        MCPResource(
             uri=SOURCE_HEALTH_RESOURCE_URI,
             name="Source Health",
             description="Current source health view.",
@@ -729,6 +755,12 @@ def _run_inspection_service_factory():
     return RunInspectionService()
 
 
+def _artifact_service_factory():
+    from interfaces.services.artifact_service import ArtifactInspectionService
+
+    return ArtifactInspectionService()
+
+
 def _report_resource_report_id(uri: str) -> str | None:
     if not uri.startswith(REPORT_RESOURCE_PREFIX):
         return None
@@ -752,6 +784,18 @@ def _run_events_resource_run_id(uri: str) -> str | None:
         return None
     run_id = uri[len(RUN_MANIFEST_RESOURCE_PREFIX) : -len(RUN_EVENTS_RESOURCE_SUFFIX)]
     return run_id or None
+
+
+def _run_artifact_resource_ids(uri: str) -> tuple[str, str] | None:
+    if not uri.startswith(RUN_MANIFEST_RESOURCE_PREFIX):
+        return None
+    rest = uri[len(RUN_MANIFEST_RESOURCE_PREFIX) :]
+    if RUN_ARTIFACT_RESOURCE_SEPARATOR not in rest:
+        return None
+    run_id, artifact_key = rest.split(RUN_ARTIFACT_RESOURCE_SEPARATOR, 1)
+    if not run_id or not artifact_key:
+        return None
+    return run_id, artifact_key
 
 
 def _approval_id(args: dict[str, Any]) -> str:

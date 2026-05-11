@@ -79,7 +79,9 @@ class ArtifactInspectionService:
         path = self._artifact_path(run_id, relative_path)
         content_type = _content_type(path)
         if content_type == "application/json":
-            content = _read_json(path)
+            content = _redact_sensitive_keys(_read_json(path))
+        elif content_type == "application/x-ndjson":
+            content = _read_redacted_jsonl_text(path)
         else:
             content = path.read_text(encoding="utf-8")
         return ArtifactDetail(
@@ -124,3 +126,42 @@ def _content_type(path: Path) -> str:
 def _read_json(path: Path) -> Any:
     with path.open("r", encoding="utf-8") as handle:
         return json.load(handle)
+
+
+def _read_redacted_jsonl_text(path: Path) -> str:
+    redacted_lines = []
+    with path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            payload = json.loads(stripped)
+            redacted_lines.append(
+                json.dumps(_redact_sensitive_keys(payload), ensure_ascii=False, sort_keys=True)
+            )
+    return "\n".join(redacted_lines) + ("\n" if redacted_lines else "")
+
+
+def _redact_sensitive_keys(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: "[redacted]" if _is_sensitive_key(key) else _redact_sensitive_keys(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_sensitive_keys(item) for item in value]
+    return value
+
+
+def _is_sensitive_key(key: Any) -> bool:
+    normalized = str(key).lower().replace("-", "_")
+    sensitive_fragments = (
+        "api_key",
+        "apikey",
+        "authorization",
+        "cookie",
+        "password",
+        "secret",
+        "token",
+    )
+    return any(fragment in normalized for fragment in sensitive_fragments)

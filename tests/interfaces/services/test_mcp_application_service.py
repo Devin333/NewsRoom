@@ -1,6 +1,7 @@
 import json
 
 from interfaces.services.approval_service import ApprovalApplicationService
+from interfaces.services.artifact_service import ArtifactInspectionService
 from interfaces.services.mcp_service import MCPApplicationService
 from interfaces.services.report_service import ReportApplicationService
 from interfaces.services.run_inspection_service import RunInspectionService
@@ -15,6 +16,7 @@ def test_mcp_catalog_lists_tools_without_calling_factories() -> None:
         diagnostic_service_factory=_raising_factory,
         approval_service_factory=_raising_factory,
         run_inspection_service_factory=_raising_factory,
+        artifact_service_factory=_raising_factory,
     )
 
     catalog = service.catalog().to_dict()
@@ -30,6 +32,7 @@ def test_mcp_catalog_lists_tools_without_calling_factories() -> None:
     assert "news://reports/{report_id}" in resource_uris
     assert "news://runs/{run_id}/manifest" in resource_uris
     assert "news://runs/{run_id}/events" in resource_uris
+    assert "news://runs/{run_id}/artifacts/{artifact_key}" in resource_uris
     prompt_names = [prompt["name"] for prompt in catalog["prompts"]]
     assert "news.evidence_audit" in prompt_names
     assert "news.quality_gate_explain" in prompt_names
@@ -338,6 +341,81 @@ def test_mcp_reads_run_events_resource_from_local_events(tmp_path) -> None:
     assert result.data["event_count"] == 1
     assert result.data["events"][0]["payload"]["token"] == "[redacted]"
     assert result.data["events"][0]["payload"]["safe"] == "visible"
+
+
+def test_mcp_reads_run_artifact_resource_from_local_artifact(tmp_path) -> None:
+    run_dir = tmp_path / "run-6"
+    run_dir.mkdir()
+    (run_dir / "output.json").write_text(json.dumps({"status": "ok"}), encoding="utf-8")
+    (run_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "run_id": "run-6",
+                "status": "succeeded",
+                "artifacts": {"output": "output.json"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    service = MCPApplicationService(
+        artifact_service_factory=lambda: ArtifactInspectionService(artifact_root=tmp_path)
+    )
+
+    result = service.read_resource("news://runs/run-6/artifacts/output")
+
+    assert result.success is True
+    assert result.data["run_id"] == "run-6"
+    assert result.data["artifact_key"] == "output"
+    assert result.data["content_type"] == "application/json"
+    assert result.data["content"] == {"status": "ok"}
+
+
+def test_mcp_run_artifact_resource_allows_events_artifact_key(tmp_path) -> None:
+    run_dir = tmp_path / "run-7"
+    run_dir.mkdir()
+    (run_dir / "events.jsonl").write_text(
+        json.dumps({"event_type": "workflow_started"}) + "\n",
+        encoding="utf-8",
+    )
+    (run_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "run_id": "run-7",
+                "status": "succeeded",
+                "artifacts": {"events": "events.jsonl"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    service = MCPApplicationService(
+        artifact_service_factory=lambda: ArtifactInspectionService(artifact_root=tmp_path)
+    )
+
+    result = service.read_resource("news://runs/run-7/artifacts/events")
+
+    assert result.success is True
+    assert result.data["run_id"] == "run-7"
+    assert result.data["artifact_key"] == "events"
+    assert result.data["content_type"] == "application/x-ndjson"
+    assert "workflow_started" in result.data["content"]
+
+
+def test_mcp_run_artifact_resource_missing_key_fails_safely(tmp_path) -> None:
+    run_dir = tmp_path / "run-8"
+    run_dir.mkdir()
+    (run_dir / "manifest.json").write_text(
+        json.dumps({"run_id": "run-8", "status": "succeeded", "artifacts": {}}),
+        encoding="utf-8",
+    )
+    service = MCPApplicationService(
+        artifact_service_factory=lambda: ArtifactInspectionService(artifact_root=tmp_path)
+    )
+
+    result = service.read_resource("news://runs/run-8/artifacts/missing")
+
+    assert result.success is False
+    assert result.error_type == "FileNotFoundError"
+    assert "artifact not found" in result.error_message
 
 
 def test_mcp_run_show_rejects_invalid_run_id() -> None:
