@@ -9,6 +9,7 @@ from core.framework.llm.openai_compatible import (
     OpenAICompatibleClient,
     OpenAICompatibleConfig,
 )
+from core.framework.llm.redaction import REDACTED_VALUE, redact_sensitive_values
 
 __all__ = [
     "FakeLLMClient",
@@ -19,5 +20,7 @@ __all__ = [
     "LLMRetryPolicy",
     "OpenAICompatibleClient",
     "OpenAICompatibleConfig",
+    "REDACTED_VALUE",
     "TokenUsage",
+    "redact_sensitive_values",
 ]

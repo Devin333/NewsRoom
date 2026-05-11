@@ -9,6 +9,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from core.framework.llm.models import LLMRequest, LLMResponse, TokenUsage
+from core.framework.llm.redaction import redact_sensitive_values
 
 
 class LLMConfigurationError(RuntimeError):
@@ -34,6 +35,19 @@ class LLMProviderError(RuntimeError):
         self.retryable = retryable
         self.status_code = status_code
         self.attempts = attempts
+
+    def to_dict(self, *, redact: bool = True) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "message": str(self),
+            "provider": self.provider,
+            "error_type": self.error_type,
+            "retryable": self.retryable,
+            "status_code": self.status_code,
+            "attempts": self.attempts,
+        }
+        if redact:
+            return redact_sensitive_values(payload)
+        return payload
 
 
 Transport = Callable[[Request, float], bytes]

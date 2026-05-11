@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from core.framework.llm.redaction import redact_sensitive_values
+
 
 @dataclass(frozen=True)
 class TokenUsage:
@@ -27,12 +29,15 @@ class LLMRequest:
     tools: list[dict[str, Any]] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> dict[str, Any]:
-        return {
+    def to_dict(self, *, redact: bool = True) -> dict[str, Any]:
+        payload = {
             "messages": [dict(message) for message in self.messages],
             "tools": [dict(tool) for tool in self.tools],
             "metadata": dict(self.metadata),
         }
+        if redact:
+            return redact_sensitive_values(payload)
+        return payload
 
 
 @dataclass(frozen=True)
@@ -41,9 +46,12 @@ class LLMResponse:
     usage: TokenUsage = field(default_factory=TokenUsage)
     metadata: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> dict[str, Any]:
-        return {
+    def to_dict(self, *, redact: bool = True) -> dict[str, Any]:
+        payload = {
             "content": self.content,
             "usage": self.usage.to_dict(),
             "metadata": dict(self.metadata),
         }
+        if redact:
+            return redact_sensitive_values(payload)
+        return payload
