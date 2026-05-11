@@ -48,6 +48,7 @@ packages = [
   "storage.events",
   "quality",
   "storage.local_json",
+  "storage.lifecycle",
   "storage.memory",
   "storage.postgres",
   "storage.security",
