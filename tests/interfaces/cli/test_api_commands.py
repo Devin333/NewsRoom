@@ -1,3 +1,5 @@
+import json
+
 import interfaces.cli.news as news_cli
 import interfaces.api.server as api_server
 
@@ -46,3 +48,27 @@ def test_news_cli_api_serve_reports_invalid_port(monkeypatch, capsys) -> None:
     captured = capsys.readouterr()
     assert exit_code == 1
     assert "port must be between 1 and 65535" in captured.out
+
+
+def test_news_cli_api_openapi_json(capsys) -> None:
+    exit_code = news_cli.main(["api", "openapi", "--json"])
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert exit_code == 0
+    assert payload["info"]["title"] == "NewsRoom API"
+    assert "/api/v1/runs/daily" in payload["paths"]
+
+
+def test_news_cli_api_openapi_writes_output(tmp_path, capsys) -> None:
+    output_path = tmp_path / "openapi.json"
+
+    exit_code = news_cli.main(["api", "openapi", "--output", str(output_path)])
+
+    captured = capsys.readouterr()
+    written = json.loads(output_path.read_text(encoding="utf-8"))
+
+    assert exit_code == 0
+    assert captured.out == ""
+    assert written["info"]["title"] == "NewsRoom API"

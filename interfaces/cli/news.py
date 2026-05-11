@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Sequence
 
 from core.framework.specs import WorkflowStatus
@@ -116,6 +117,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Uvicorn log level",
     )
     api_serve_parser.set_defaults(handler=_api_serve)
+
+    api_openapi_parser = api_subparsers.add_parser("openapi", help="Export HTTP API OpenAPI schema")
+    api_openapi_parser.add_argument("--json", action="store_true", help="Print full OpenAPI JSON")
+    api_openapi_parser.add_argument("--output", default=None, help="Write OpenAPI JSON to this path")
+    api_openapi_parser.set_defaults(handler=_api_openapi)
 
     worker_parser = subparsers.add_parser("worker", help="Submit and process background tasks")
     worker_subparsers = worker_parser.add_subparsers(dest="worker_command", required=True)
@@ -930,6 +936,21 @@ def _api_serve(args: argparse.Namespace) -> int:
     except ValueError as exc:
         print(str(exc))
         return 1
+    return 0
+
+
+def _api_openapi(args: argparse.Namespace) -> int:
+    from interfaces.api.schema import export_openapi_schema, summarize_openapi_schema
+
+    schema = export_openapi_schema()
+    if args.output:
+        Path(args.output).write_text(
+            json.dumps(schema, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    if args.json or not args.output:
+        payload = schema if args.json else summarize_openapi_schema(schema)
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
     return 0
 
 
