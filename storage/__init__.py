@@ -24,7 +24,12 @@ from storage.lifecycle import (
     RetentionPlan,
     RetentionPolicy,
 )
-from storage.lineage import LineageRef, LocalJsonLineageStore, lineage_refs_from_evidence_bundle
+from storage.lineage import (
+    LineageRef,
+    LocalJsonLineageStore,
+    lineage_refs_from_evidence_bundle,
+    lineage_store_from_env,
+)
 from storage.metrics import (
     LocalStorageMetricsCollector,
     StorageMetrics,
@@ -68,4 +73,5 @@ __all__ = [
     "WorkflowCheckpoint",
     "artifact_index_store_from_env",
     "lineage_refs_from_evidence_bundle",
+    "lineage_store_from_env",
 ]

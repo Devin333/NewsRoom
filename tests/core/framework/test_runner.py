@@ -181,6 +181,54 @@ def test_workflow_runner_uses_artifact_index_factory_by_default(tmp_path, monkey
     assert all(ref.run_id == "artifact-factory-run" for ref in fake_index.refs)
 
 
+def test_workflow_runner_uses_lineage_store_factory_by_default(tmp_path, monkeypatch) -> None:
+    fake_lineage = _CollectingLineageStore()
+    monkeypatch.setattr(
+        runner_module,
+        "lineage_store_from_env",
+        lambda *, artifact_root: fake_lineage,
+    )
+    registry = FunctionStepRegistry()
+    registry.register(
+        "sample.evidence",
+        lambda buffer: {
+            "evidence_bundle": {
+                "bundle_id": "bundle-1",
+                "items": [
+                    {
+                        "evidence_id": "ev-1",
+                        "source_url": "https://example.com/a",
+                        "title": "Evidence",
+                        "metadata": {"source_lineage": {"source_item_id": "raw-1"}},
+                    }
+                ],
+            }
+        },
+    )
+    runner = WorkflowRunner(artifact_root=tmp_path, function_registry=registry)
+    spec = WorkflowSpec(
+        workflow_id="lineage-factory",
+        name="Lineage Factory",
+        version="1.0",
+        start_step_id="evidence",
+        steps=[
+            StepSpec(
+                step_id="evidence",
+                implementation="sample.evidence",
+                read_keys=[],
+                write_keys=["evidence_bundle"],
+                required_output_keys=["evidence_bundle"],
+            )
+        ],
+    )
+
+    runner.run(spec, {}, profile="test", run_id="lineage-factory-run")
+
+    assert len(fake_lineage.refs) == 2
+    assert {ref.source_type for ref in fake_lineage.refs} == {"source_url", "source_item"}
+    assert all(ref.run_id == "lineage-factory-run" for ref in fake_lineage.refs)
+
+
 class _CollectingEventStore:
     def __init__(self) -> None:
         self.events = []
@@ -196,3 +244,12 @@ class _CollectingArtifactIndex:
 
     def index_artifact(self, ref):
         self.refs.append(ref)
+
+
+class _CollectingLineageStore:
+    def __init__(self) -> None:
+        self.refs = []
+
+    def record_many(self, refs):
+        self.refs.extend(refs)
+        return []

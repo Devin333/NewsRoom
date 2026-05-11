@@ -8,6 +8,7 @@ def test_postgres_migration_sql_contains_required_tables() -> None:
         "workflow_runs",
         "workflow_events",
         "artifact_index",
+        "lineage_refs",
         "reports",
         "source_items",
         "evidence_items",

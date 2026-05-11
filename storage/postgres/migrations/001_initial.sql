@@ -79,6 +79,28 @@ CREATE INDEX IF NOT EXISTS idx_artifact_index_run_created
 CREATE INDEX IF NOT EXISTS idx_artifact_index_step
     ON artifact_index(run_id, step_id);
 
+CREATE TABLE IF NOT EXISTS lineage_refs (
+    lineage_id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    source_type TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    target_type TEXT NOT NULL,
+    target_id TEXT NOT NULL,
+    relation_type TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    indexed_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_lineage_refs_run
+    ON lineage_refs(run_id);
+
+CREATE INDEX IF NOT EXISTS idx_lineage_refs_target
+    ON lineage_refs(run_id, target_type, target_id);
+
+CREATE INDEX IF NOT EXISTS idx_lineage_refs_source
+    ON lineage_refs(run_id, source_type, source_id);
+
 CREATE TABLE IF NOT EXISTS source_items (
     source_item_id TEXT PRIMARY KEY,
     run_id TEXT REFERENCES workflow_runs(run_id) ON DELETE CASCADE,

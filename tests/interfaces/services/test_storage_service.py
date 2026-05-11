@@ -192,6 +192,37 @@ def test_storage_service_uses_metrics_collector_factory_by_default(tmp_path, mon
     assert fake_collector.collect_called is True
 
 
+def test_storage_service_uses_lineage_store_factory_by_default(tmp_path, monkeypatch) -> None:
+    ref = LineageRef(
+        run_id="run-1",
+        source_type="source_item",
+        source_id="raw-1",
+        target_type="evidence",
+        target_id="ev-1",
+        relation_type="source_to_evidence",
+    )
+    fake_store = _FakeLineageStore([ref])
+    monkeypatch.setattr(
+        storage_service_module,
+        "lineage_store_from_env",
+        lambda *, artifact_root: fake_store,
+    )
+
+    service = StorageApplicationService(tmp_path)
+
+    assert service.list_lineage("run-1").lineage_refs == [ref]
+    assert service.lineage_upstream(
+        run_id="run-1",
+        target_type="evidence",
+        target_id="ev-1",
+    ).lineage_refs == [ref]
+    assert service.lineage_downstream(
+        run_id="run-1",
+        source_type="source_item",
+        source_id="raw-1",
+    ).lineage_refs == [ref]
+
+
 class _FakeArtifactIndex:
     def __init__(self, refs) -> None:
         self.refs = refs
@@ -212,3 +243,25 @@ class _FakeMetricsCollector:
     def collect(self):
         self.collect_called = True
         return StorageMetrics(artifacts_count=7, metadata={"source": "fake"})
+
+
+class _FakeLineageStore:
+    def __init__(self, refs) -> None:
+        self.refs = refs
+
+    def list_by_run(self, run_id):
+        return [ref for ref in self.refs if ref.run_id == run_id]
+
+    def upstream(self, run_id, target_type, target_id):
+        return [
+            ref
+            for ref in self.refs
+            if ref.run_id == run_id and ref.target_type == target_type and ref.target_id == target_id
+        ]
+
+    def downstream(self, run_id, source_type, source_id):
+        return [
+            ref
+            for ref in self.refs
+            if ref.run_id == run_id and ref.source_type == source_type and ref.source_id == source_id
+        ]
