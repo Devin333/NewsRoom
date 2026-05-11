@@ -1,5 +1,6 @@
 from interfaces.services.memory_service import MemoryApplicationService
-from storage.vector import VectorSearchResult
+from storage.vector import InMemoryVectorStore, VectorSearchResult
+import json
 
 
 def test_memory_application_service_searches_vector_store() -> None:
@@ -22,6 +23,76 @@ def test_memory_application_service_searches_vector_store() -> None:
     assert result.to_dict()["results"][0]["document_id"] == "doc-1"
 
 
+def test_memory_application_service_reindexes_run_from_real_artifacts(tmp_path) -> None:
+    _write_run_artifacts(
+        tmp_path,
+        "run-1",
+        request={"topic": "AI policy"},
+        report={
+            "title": "Daily Intelligence",
+            "sections": [
+                {
+                    "title": "Summary",
+                    "content": "Agent runtime memory improved.",
+                    "sources": ["https://example.com/a"],
+                },
+                {
+                    "title": "Outlook",
+                    "content": "Vector recall remains useful.",
+                    "sources": ["https://example.com/b"],
+                },
+            ],
+            "source_urls": ["https://example.com/a", "https://example.com/b"],
+        },
+        evidence_bundle={
+            "bundle_id": "daily",
+            "items": [
+                {
+                    "evidence_id": "ev-1",
+                    "source_url": "https://example.com/a",
+                    "source_id": "source-1",
+                    "title": "Agent runtime memory",
+                    "summary": "A runtime improved memory recall.",
+                    "confidence": 0.9,
+                }
+            ],
+        },
+    )
+    store = InMemoryVectorStore()
+    service = MemoryApplicationService(vector_store=store, artifact_root=tmp_path)
+
+    result = service.reindex_run("run-1")
+    search = service.search(
+        text="Agent runtime memory",
+        collection="report_sections",
+        filters={"topic": "AI policy"},
+    )
+
+    payload = result.to_dict()
+    assert payload["run_id"] == "run-1"
+    assert payload["topic"] == "AI policy"
+    assert payload["documents_indexed"] == 3
+    assert payload["collections"] == ["evidence_items", "report_sections"]
+    assert "run-1:report_section:0" in payload["document_ids"]
+    assert "run-1:evidence:ev-1" in payload["document_ids"]
+    assert search.to_dict()["result_count"] == 2
+
+
+def test_memory_application_service_reindex_topic_override(tmp_path) -> None:
+    _write_run_artifacts(
+        tmp_path,
+        "run-1",
+        request={"topic": "AI policy"},
+        report={"title": "Daily", "sections": [{"title": "Summary", "content": "Memory."}]},
+        evidence_bundle={"bundle_id": "daily", "items": []},
+    )
+    service = MemoryApplicationService(vector_store=InMemoryVectorStore(), artifact_root=tmp_path)
+
+    result = service.reindex_run("run-1", topic="Override")
+
+    assert result.to_dict()["topic"] == "Override"
+
+
 class _FakeVectorStore:
     def __init__(self) -> None:
         self.queries = []
@@ -37,3 +108,21 @@ class _FakeVectorStore:
                 payload={"document_id": "doc-1"},
             )
         ]
+
+
+def _write_run_artifacts(root, run_id, *, request, report, evidence_bundle) -> None:
+    run_dir = root / run_id
+    run_dir.mkdir()
+    manifest = {
+        "run_id": run_id,
+        "status": "succeeded",
+        "artifacts": {
+            "request": "request.json",
+            "report_json": "report.json",
+            "evidence_bundle": "evidence_bundle.json",
+        },
+    }
+    (run_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    (run_dir / "request.json").write_text(json.dumps(request), encoding="utf-8")
+    (run_dir / "report.json").write_text(json.dumps(report), encoding="utf-8")
+    (run_dir / "evidence_bundle.json").write_text(json.dumps(evidence_bundle), encoding="utf-8")

@@ -292,6 +292,20 @@ def build_parser() -> argparse.ArgumentParser:
     memory_search_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     memory_search_parser.set_defaults(handler=_memory_search)
 
+    memory_reindex_parser = memory_subparsers.add_parser(
+        "reindex",
+        help="Rebuild vector memory from persisted run artifacts",
+    )
+    memory_reindex_parser.add_argument("--run-id", required=True, help="Run id to reindex")
+    memory_reindex_parser.add_argument("--topic", default=None, help="Override memory topic")
+    memory_reindex_parser.add_argument(
+        "--artifact-root",
+        default=".newsroom/runs",
+        help="Directory where run artifacts are stored",
+    )
+    memory_reindex_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    memory_reindex_parser.set_defaults(handler=_memory_reindex)
+
     diagnose_parser = subparsers.add_parser("diagnose", help="Run local diagnostics")
     diagnose_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     diagnose_parser.set_defaults(handler=_diagnose)
@@ -764,6 +778,26 @@ def _memory_search(args: argparse.Namespace) -> int:
             print(f"- {item['document_id']} score={item['score']:.4f} source_type={item['source_type']}")
             if item.get("text"):
                 print(f"  {item['text'][:160]}")
+    return 0
+
+
+def _memory_reindex(args: argparse.Namespace) -> int:
+    try:
+        result = MemoryApplicationService(artifact_root=args.artifact_root).reindex_run(
+            args.run_id,
+            topic=args.topic,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        print(str(exc))
+        return 1
+    payload = result.to_dict()
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        print(f"run_id={payload['run_id']}")
+        print(f"topic={payload['topic']}")
+        print(f"documents_indexed={payload['documents_indexed']}")
+        print(f"collections={','.join(payload['collections'])}")
     return 0
 
 

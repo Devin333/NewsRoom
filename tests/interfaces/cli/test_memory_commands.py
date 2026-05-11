@@ -31,7 +31,48 @@ def test_news_cli_memory_search_json(monkeypatch, capsys) -> None:
     assert payload["results"][0]["document_id"] == "doc-1"
 
 
+def test_news_cli_memory_reindex_json(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(news_cli, "MemoryApplicationService", _FakeMemoryService)
+
+    exit_code = news_cli.main(
+        [
+            "memory",
+            "reindex",
+            "--run-id",
+            "run-1",
+            "--topic",
+            "AI policy",
+            "--artifact-root",
+            ".newsroom/test-runs",
+            "--json",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert exit_code == 0
+    assert payload["run_id"] == "run-1"
+    assert payload["topic"] == "AI policy"
+    assert payload["documents_indexed"] == 3
+    assert payload["collections"] == ["evidence_items", "report_sections"]
+
+
+def test_news_cli_memory_reindex_missing_run_returns_error(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(news_cli, "MemoryApplicationService", _FakeMemoryService)
+
+    exit_code = news_cli.main(["memory", "reindex", "--run-id", "missing", "--json"])
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "run not found" in captured.out
+
+
 class _FakeMemoryService:
+    def __init__(self, artifact_root=".newsroom/runs") -> None:
+        self.artifact_root = artifact_root
+
     def search(self, **kwargs):
         return _FakeMemoryResult(
             {
@@ -53,6 +94,19 @@ class _FakeMemoryService:
                         "source_item_id": None,
                     }
                 ],
+            }
+        )
+
+    def reindex_run(self, run_id, *, topic=None):
+        if run_id == "missing":
+            raise FileNotFoundError("run not found: missing")
+        return _FakeMemoryResult(
+            {
+                "run_id": run_id,
+                "topic": topic,
+                "documents_indexed": 3,
+                "collections": ["evidence_items", "report_sections"],
+                "document_ids": ["run-1:report_section:0", "run-1:report_section:1", "run-1:evidence:ev-1"],
             }
         )
 
