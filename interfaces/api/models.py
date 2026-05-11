@@ -62,6 +62,11 @@ class MemorySearchRequest(BaseModel):
     filters: dict[str, Any] = Field(default_factory=dict)
 
 
+class MemoryReindexRequest(BaseModel):
+    run_id: str
+    topic: str | None = None
+
+
 class DailyScheduleRequest(BaseModel):
     schedule_id: str = "daily-intelligence"
     name: str = "Daily intelligence"

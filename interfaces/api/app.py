@@ -19,6 +19,7 @@ from interfaces.api.models import (
     DailyScheduleRequest,
     ManualScheduleTriggerRequest,
     MemorySearchRequest,
+    MemoryReindexRequest,
     ReportDetail,
     RunResponse,
     ScheduleTickRequest,
@@ -115,6 +116,21 @@ def create_app(
             limit=request.limit,
             filters=request.filters,
         )
+        return _success(result.to_dict())
+
+    @api.post("/api/v1/memory/reindex")
+    def memory_reindex(request: MemoryReindexRequest):
+        try:
+            result = memory_service_factory().reindex_run(request.run_id, topic=request.topic)
+        except FileNotFoundError as exc:
+            return _error(
+                status_code=404,
+                code="memory_reindex_source_not_found",
+                message=str(exc),
+                user_action_required=True,
+            )
+        except ValueError as exc:
+            return _error(status_code=400, code="invalid_memory_reindex_request", message=str(exc))
         return _success(result.to_dict())
 
     @api.get("/api/v1/admin/diagnose")

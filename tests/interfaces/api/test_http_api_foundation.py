@@ -89,6 +89,34 @@ def test_memory_search_returns_results() -> None:
     assert payload["data"]["results"][0]["document_id"] == "doc-1"
 
 
+def test_memory_reindex_returns_result() -> None:
+    fake_memory = _FakeMemoryService()
+    client = TestClient(create_app(memory_service_factory=lambda: fake_memory))
+
+    response = client.post(
+        "/api/v1/memory/reindex",
+        json={"run_id": "run-1", "topic": "AI policy"},
+    )
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert fake_memory.reindex_calls == [{"run_id": "run-1", "topic": "AI policy"}]
+    assert payload["success"] is True
+    assert payload["data"]["run_id"] == "run-1"
+    assert payload["data"]["documents_indexed"] == 3
+
+
+def test_memory_reindex_missing_run_uses_unified_error() -> None:
+    client = TestClient(create_app(memory_service_factory=lambda: _FakeMemoryService()))
+
+    response = client.post("/api/v1/memory/reindex", json={"run_id": "missing"})
+    payload = response.json()
+
+    assert response.status_code == 404
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "memory_reindex_source_not_found"
+
+
 def test_admin_diagnose_returns_result() -> None:
     client = TestClient(create_app(diagnostic_service_factory=lambda: _FakeDiagnosticService()))
 
@@ -245,6 +273,9 @@ class _MissingReportService:
 
 
 class _FakeMemoryService:
+    def __init__(self) -> None:
+        self.reindex_calls = []
+
     def search(self, **kwargs):
         return _FakeMemoryResult(
             {
@@ -265,6 +296,24 @@ class _FakeMemoryService:
                         "evidence_id": None,
                         "source_item_id": None,
                     }
+                ],
+            }
+        )
+
+    def reindex_run(self, run_id, *, topic=None):
+        if run_id == "missing":
+            raise FileNotFoundError("run not found: missing")
+        self.reindex_calls.append({"run_id": run_id, "topic": topic})
+        return _FakeMemoryResult(
+            {
+                "run_id": run_id,
+                "topic": topic,
+                "documents_indexed": 3,
+                "collections": ["evidence_items", "report_sections"],
+                "document_ids": [
+                    "run-1:report_section:0",
+                    "run-1:report_section:1",
+                    "run-1:evidence:ev-1",
                 ],
             }
         )
