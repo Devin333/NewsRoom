@@ -21,10 +21,14 @@ CREATE TABLE IF NOT EXISTS reports (
     report_json JSONB NOT NULL DEFAULT '{}'::jsonb,
     report_markdown TEXT,
     quality_score DOUBLE PRECISION,
+    citation_coverage_score DOUBLE PRECISION,
     manifest_path TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+ALTER TABLE reports
+    ADD COLUMN IF NOT EXISTS citation_coverage_score DOUBLE PRECISION;
 
 CREATE TABLE IF NOT EXISTS source_items (
     source_item_id TEXT PRIMARY KEY,

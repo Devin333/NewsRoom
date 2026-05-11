@@ -25,6 +25,7 @@ class PostgresReportDetailRecord:
     report_json: dict[str, Any] | None
     report_markdown: str | None
     quality_score: float | None
+    citation_coverage_score: float | None
     manifest_path: str | None
     report_json_path: str | None = None
     report_markdown_path: str | None = None
@@ -37,6 +38,7 @@ class PostgresReportDetailRecord:
             "finished_at": self.finished_at,
             "title": self.title,
             "quality_score": self.quality_score,
+            "citation_coverage_score": self.citation_coverage_score,
             "manifest_path": self.manifest_path,
             "report_json_path": self.report_json_path,
             "report_markdown_path": self.report_markdown_path,
@@ -53,6 +55,7 @@ class PostgresReportSearchRecord:
     finished_at: str
     title: str | None
     quality_score: float | None
+    citation_coverage_score: float | None
     manifest_path: str | None
     report_json_path: str | None = None
     report_markdown_path: str | None = None
@@ -65,6 +68,7 @@ class PostgresReportSearchRecord:
             "finished_at": self.finished_at,
             "title": self.title,
             "quality_score": self.quality_score,
+            "citation_coverage_score": self.citation_coverage_score,
             "manifest_path": self.manifest_path,
             "report_json_path": self.report_json_path,
             "report_markdown_path": self.report_markdown_path,
@@ -117,15 +121,16 @@ class PostgresRepository:
         sql = """
         INSERT INTO reports (
             report_id, run_id, status, title, report_json,
-            report_markdown, quality_score, manifest_path
+            report_markdown, quality_score, citation_coverage_score, manifest_path
         )
-        VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s)
         ON CONFLICT (report_id) DO UPDATE SET
             status = EXCLUDED.status,
             title = EXCLUDED.title,
             report_json = EXCLUDED.report_json,
             report_markdown = EXCLUDED.report_markdown,
             quality_score = EXCLUDED.quality_score,
+            citation_coverage_score = EXCLUDED.citation_coverage_score,
             manifest_path = EXCLUDED.manifest_path,
             updated_at = now()
         """
@@ -137,6 +142,7 @@ class PostgresRepository:
             _json(record.report_json),
             record.report_markdown,
             record.quality_score,
+            record.citation_coverage_score,
             record.manifest_path,
         )
         self._execute(sql, params)
@@ -145,7 +151,8 @@ class PostgresRepository:
         sql = """
         SELECT
             r.report_id, r.run_id, r.status, r.title, r.report_json,
-            r.report_markdown, r.quality_score, r.manifest_path, r.updated_at
+            r.report_markdown, r.quality_score, r.citation_coverage_score,
+            r.manifest_path, r.updated_at
         FROM reports r
         ORDER BY r.updated_at DESC
         LIMIT 1
@@ -159,7 +166,8 @@ class PostgresRepository:
         sql = """
         SELECT
             r.report_id, r.run_id, r.status, r.title, r.report_json,
-            r.report_markdown, r.quality_score, r.manifest_path, r.updated_at
+            r.report_markdown, r.quality_score, r.citation_coverage_score,
+            r.manifest_path, r.updated_at
         FROM reports r
         WHERE r.report_id = %s
         """
@@ -172,7 +180,7 @@ class PostgresRepository:
         sql = """
         SELECT
             r.report_id, r.run_id, r.status, r.title, r.quality_score,
-            r.manifest_path, r.updated_at
+            r.citation_coverage_score, r.manifest_path, r.updated_at
         FROM reports r
         WHERE
             COALESCE(r.title, '') ILIKE %s
@@ -217,8 +225,9 @@ def _detail_from_row(row: tuple[Any, ...]) -> PostgresReportDetailRecord:
         report_json=_dict_or_none(row[4]),
         report_markdown=row[5],
         quality_score=row[6],
-        manifest_path=row[7],
-        finished_at=_timestamp(row[8]),
+        citation_coverage_score=row[7],
+        manifest_path=row[8],
+        finished_at=_timestamp(row[9]),
     )
 
 
@@ -229,8 +238,9 @@ def _search_record_from_row(row: tuple[Any, ...]) -> PostgresReportSearchRecord:
         status=str(row[2]),
         title=row[3],
         quality_score=row[4],
-        manifest_path=row[5],
-        finished_at=_timestamp(row[6]),
+        citation_coverage_score=row[5],
+        manifest_path=row[6],
+        finished_at=_timestamp(row[7]),
     )
 
 

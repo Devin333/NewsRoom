@@ -32,6 +32,7 @@ class ReportRecord:
     report_json: dict[str, Any] | None = None
     report_markdown: str | None = None
     quality_score: float | None = None
+    citation_coverage_score: float | None = None
     manifest_path: str | None = None
 
 
@@ -100,6 +101,7 @@ def report_record_from_result(result: RunResult) -> ReportRecord | None:
     quality_payload = _to_dict(quality_summary)
     if quality_payload:
         quality_score = quality_payload.get("quality_score")
+    citation_coverage_score = _citation_coverage_score(result.output)
     return ReportRecord(
         report_id=f"{result.run_id}:{status}",
         run_id=result.run_id,
@@ -108,6 +110,7 @@ def report_record_from_result(result: RunResult) -> ReportRecord | None:
         report_json=report_payload,
         report_markdown=result.output.get("report_markdown"),
         quality_score=quality_score,
+        citation_coverage_score=citation_coverage_score,
         manifest_path=result.manifest_path,
     )
 
@@ -122,10 +125,23 @@ def persist_run_result(repository: PersistenceRepository, result: RunResult, *, 
 
 def _metrics_from_output(output: dict[str, Any]) -> dict[str, Any]:
     metrics: dict[str, Any] = {}
-    for key in ["source_pipeline_metrics", "agent_loop_metrics", "report_quality_summary"]:
+    for key in [
+        "source_pipeline_metrics",
+        "agent_loop_metrics",
+        "report_quality_summary",
+        "quality_gate_metrics",
+    ]:
         if key in output:
             metrics[key] = _to_dict(output[key])
     return metrics
+
+
+def _citation_coverage_score(output: dict[str, Any]) -> float | None:
+    quality_gate_metrics = _to_dict(output.get("quality_gate_metrics"))
+    if "citation_coverage_score" in quality_gate_metrics:
+        return quality_gate_metrics["citation_coverage_score"]
+    citation_check = _to_dict(output.get("citation_check_result"))
+    return citation_check.get("citation_coverage_score")
 
 
 def _to_dict(value: Any) -> dict[str, Any]:

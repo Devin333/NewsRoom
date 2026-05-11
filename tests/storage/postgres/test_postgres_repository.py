@@ -53,6 +53,7 @@ def test_postgres_repository_runs_migrations() -> None:
     repository.migrate()
 
     assert "CREATE TABLE IF NOT EXISTS workflow_runs" in connection.calls[0][0]
+    assert "citation_coverage_score" in connection.calls[0][0]
     assert connection.commits == 1
 
 
@@ -89,6 +90,7 @@ def test_postgres_repository_saves_report() -> None:
             title="Report",
             report_json={"title": "Report"},
             quality_score=0.9,
+            citation_coverage_score=0.8,
         )
     )
 
@@ -96,6 +98,7 @@ def test_postgres_repository_saves_report() -> None:
     assert "INSERT INTO reports" in sql
     assert params[0] == "report-1"
     assert params[4] == '{"title": "Report"}'
+    assert params[7] == 0.8
 
 
 def test_postgres_repository_reads_latest_report() -> None:
@@ -109,6 +112,7 @@ def test_postgres_repository_reads_latest_report() -> None:
                 {"title": "AI Report"},
                 "# AI Report",
                 0.9,
+                0.8,
                 ".newsroom/runs/run-1/manifest.json",
                 datetime(2026, 5, 11, 1, 0, tzinfo=UTC),
             )
@@ -127,6 +131,7 @@ def test_postgres_repository_reads_latest_report() -> None:
     assert record.title == "AI Report"
     assert record.report_json == {"title": "AI Report"}
     assert record.report_markdown == "# AI Report"
+    assert record.citation_coverage_score == 0.8
     assert record.finished_at == "2026-05-11T01:00:00Z"
 
 
@@ -141,6 +146,7 @@ def test_postgres_repository_gets_report_by_id() -> None:
                 '{"title": "AI Report"}',
                 "# AI Report",
                 0.9,
+                0.8,
                 ".newsroom/runs/run-1/manifest.json",
                 "2026-05-11T01:00:00Z",
             )
@@ -155,6 +161,7 @@ def test_postgres_repository_gets_report_by_id() -> None:
     assert params == ("report-1",)
     assert record.report_id == "report-1"
     assert record.report_json == {"title": "AI Report"}
+    assert record.citation_coverage_score == 0.8
 
 
 def test_postgres_repository_raises_when_report_missing() -> None:
@@ -174,6 +181,7 @@ def test_postgres_repository_searches_reports() -> None:
                 "final",
                 "AI Policy Report",
                 0.9,
+                0.8,
                 ".newsroom/runs/run-1/manifest.json",
                 "2026-05-11T01:00:00Z",
             )
@@ -188,3 +196,4 @@ def test_postgres_repository_searches_reports() -> None:
     assert params == ("%policy%", "%policy%", "%policy%", 5)
     assert records[0].report_id == "report-1"
     assert records[0].title == "AI Policy Report"
+    assert records[0].citation_coverage_score == 0.8
