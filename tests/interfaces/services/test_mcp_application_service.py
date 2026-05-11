@@ -33,6 +33,8 @@ def test_mcp_catalog_lists_tools_without_calling_factories() -> None:
     resource_uris = [resource["uri"] for resource in catalog["resources"]]
 
     assert "news.daily.enqueue" in tool_names
+    assert "news.report.list" in tool_names
+    assert "news.report.get" in tool_names
     assert "news.report.search" in tool_names
     assert "news.run.show" in tool_names
     assert "news.run.events" in tool_names
@@ -426,6 +428,64 @@ def test_mcp_reads_report_resource_from_local_json_artifact(tmp_path) -> None:
     assert result.data["run_id"] == "run-1"
     assert result.data["report_json"] == {"title": "Daily Intelligence"}
     assert result.data["report_markdown"] == "# Daily Intelligence"
+
+
+def test_mcp_report_list_reads_real_local_report_artifacts(tmp_path) -> None:
+    _write_report_run(
+        tmp_path,
+        "run-list-1",
+        "Daily Intelligence: OpenAI",
+        "OpenAI appeared in the report.",
+    )
+    _write_report_run(
+        tmp_path,
+        "run-list-2",
+        "Daily Intelligence: Anthropic",
+        "Anthropic appeared in the report.",
+    )
+    service = MCPApplicationService(
+        report_service_factory=lambda: ReportApplicationService(artifact_root=tmp_path)
+    )
+
+    result = service.call_tool(
+        "news.report.list",
+        {"workflow_id": "daily-intelligence-live", "limit": 5},
+    )
+
+    assert result.success is True
+    assert result.data["workflow_id"] == "daily-intelligence-live"
+    assert result.data["report_count"] == 2
+    assert {report["report_id"] for report in result.data["reports"]} == {
+        "run-list-1:final",
+        "run-list-2:final",
+    }
+
+
+def test_mcp_report_get_reads_real_local_report_artifact(tmp_path) -> None:
+    _write_report_run(
+        tmp_path,
+        "run-get-1",
+        "Daily Intelligence: OpenAI",
+        "OpenAI appeared in the report.",
+    )
+    service = MCPApplicationService(
+        report_service_factory=lambda: ReportApplicationService(artifact_root=tmp_path)
+    )
+
+    result = service.call_tool("news.report.get", {"report_id": "run-get-1:final"})
+
+    assert result.success is True
+    assert result.data["report_id"] == "run-get-1:final"
+    assert result.data["run_id"] == "run-get-1"
+    assert result.data["report_json"]["title"] == "Daily Intelligence: OpenAI"
+
+
+def test_mcp_report_get_requires_report_id() -> None:
+    result = MCPApplicationService().call_tool("news.report.get", {})
+
+    assert result.success is False
+    assert result.error_type == "ValueError"
+    assert "report_id is required" in result.error_message
 
 
 def test_mcp_report_search_reads_real_local_report_artifacts(tmp_path) -> None:

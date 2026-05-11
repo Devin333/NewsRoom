@@ -190,6 +190,10 @@ class MCPApplicationService:
                 return self._daily_enqueue(args)
             if tool_name == "news.report.latest":
                 return self._latest_report()
+            if tool_name == "news.report.list":
+                return self._report_list(args)
+            if tool_name == "news.report.get":
+                return self._report_get(args)
             if tool_name == "news.report.search":
                 return self._report_search(args)
             if tool_name == "news.source.health":
@@ -288,6 +292,25 @@ class MCPApplicationService:
         record = self.report_service_factory().latest_report()
         return MCPToolCallResult(
             tool_name="news.report.latest",
+            success=True,
+            data=_to_dict(record),
+        )
+
+    def _report_list(self, args: dict[str, Any]) -> MCPToolCallResult:
+        result = self.report_service_factory().list_reports(
+            limit=_optional_int_arg(args, "limit", default=20),
+            workflow_id=_optional_arg(args, "workflow_id"),
+        )
+        return MCPToolCallResult(
+            tool_name="news.report.list",
+            success=True,
+            data=result.to_dict(),
+        )
+
+    def _report_get(self, args: dict[str, Any]) -> MCPToolCallResult:
+        record = self.report_service_factory().get_report(_required_arg(args, "report_id"))
+        return MCPToolCallResult(
+            tool_name="news.report.get",
             success=True,
             data=_to_dict(record),
         )
@@ -856,6 +879,28 @@ def _tools() -> list[MCPTool]:
             title="Read latest report",
             description="Return the latest redacted report through ReportApplicationService.",
             input_schema={"type": "object", "properties": {}},
+        ),
+        MCPTool(
+            name="news.report.list",
+            title="List reports",
+            description="List persisted report artifacts through ReportApplicationService.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "minimum": 1},
+                    "workflow_id": {"type": "string"},
+                },
+            },
+        ),
+        MCPTool(
+            name="news.report.get",
+            title="Get report",
+            description="Return one persisted report artifact through ReportApplicationService.",
+            input_schema={
+                "type": "object",
+                "required": ["report_id"],
+                "properties": {"report_id": {"type": "string"}},
+            },
         ),
         MCPTool(
             name="news.report.search",
