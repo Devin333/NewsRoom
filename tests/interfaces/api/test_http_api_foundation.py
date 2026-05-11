@@ -481,6 +481,58 @@ def test_entities_create_invalid_metadata_returns_domain_error() -> None:
     assert payload["error"]["code"] == "invalid_entity_request"
 
 
+def test_subscriptions_create_and_list_return_payloads() -> None:
+    client = TestClient(create_app(subscription_service_factory=lambda: _FakeSubscriptionService()))
+
+    create_response = client.post(
+        "/api/v1/subscriptions",
+        json={"topic": "AI policy", "subscription_id": "weekly:ai-policy", "source_limit": 3},
+    )
+    list_response = client.get("/api/v1/subscriptions?enabled_only=true&cadence=weekly")
+
+    create_payload = create_response.json()
+    list_payload = list_response.json()
+
+    assert create_response.status_code == 200
+    assert create_payload["success"] is True
+    assert create_payload["data"]["subscription_id"] == "weekly:ai-policy"
+    assert list_response.status_code == 200
+    assert list_payload["data"]["subscription_count"] == 1
+    assert list_payload["data"]["subscriptions"][0]["topic"] == "AI policy"
+
+
+def test_subscriptions_lifecycle_routes_return_payloads() -> None:
+    client = TestClient(create_app(subscription_service_factory=lambda: _FakeSubscriptionService()))
+
+    disable_response = client.post("/api/v1/subscriptions/weekly:ai-policy/disable")
+    enable_response = client.post("/api/v1/subscriptions/weekly:ai-policy/enable")
+    delete_response = client.delete("/api/v1/subscriptions/weekly:ai-policy")
+
+    assert disable_response.status_code == 200
+    assert disable_response.json()["data"]["enabled"] is False
+    assert enable_response.status_code == 200
+    assert enable_response.json()["data"]["enabled"] is True
+    assert delete_response.status_code == 200
+    assert delete_response.json()["data"] == {
+        "subscription_id": "weekly:ai-policy",
+        "deleted": True,
+    }
+
+
+def test_subscriptions_create_invalid_metadata_returns_domain_error() -> None:
+    client = TestClient(create_app(subscription_service_factory=lambda: _FakeSubscriptionService()))
+
+    response = client.post(
+        "/api/v1/subscriptions",
+        json={"topic": "AI policy", "metadata": {"api_key": "hidden"}},
+    )
+    payload = response.json()
+
+    assert response.status_code == 400
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "invalid_subscription_request"
+
+
 def test_mcp_catalog_returns_catalog() -> None:
     client = TestClient(create_app(mcp_service_factory=lambda: _FakeMCPService()))
 
@@ -1010,6 +1062,81 @@ class _FakeEntityService:
 
 
 class _FakeEntity:
+    def __init__(self, payload) -> None:
+        self.payload = payload
+
+    def to_dict(self):
+        return self.payload
+
+
+class _FakeSubscriptionService:
+    def create_topic_subscription(
+        self,
+        *,
+        topic,
+        cadence,
+        profile,
+        source_limit,
+        subscription_id,
+        enabled,
+        metadata,
+    ):
+        if "api_key" in metadata:
+            raise ValueError("subscription metadata contains secret-like key: api_key")
+        return _FakeSubscription(
+            {
+                "subscription_id": subscription_id or "weekly:ai-policy",
+                "topic": topic,
+                "cadence": cadence,
+                "profile": profile,
+                "source_limit": source_limit,
+                "enabled": enabled,
+                "metadata": metadata,
+                "created_at": "2026-05-11T00:00:00Z",
+                "updated_at": "2026-05-11T00:00:00Z",
+            }
+        )
+
+    def list_topic_subscriptions(self, *, enabled_only, cadence):
+        return _FakeResult(
+            {
+                "subscription_count": 1,
+                "subscriptions": [
+                    {
+                        "subscription_id": "weekly:ai-policy",
+                        "topic": "AI policy",
+                        "cadence": "weekly",
+                        "profile": "live-offline",
+                        "source_limit": 3,
+                        "enabled": True,
+                        "metadata": {},
+                        "created_at": "2026-05-11T00:00:00Z",
+                        "updated_at": "2026-05-11T00:00:00Z",
+                    }
+                ],
+            }
+        )
+
+    def set_enabled(self, subscription_id, *, enabled):
+        return _FakeSubscription(
+            {
+                "subscription_id": subscription_id,
+                "topic": "AI policy",
+                "cadence": "weekly",
+                "profile": "live-offline",
+                "source_limit": 3,
+                "enabled": enabled,
+                "metadata": {},
+                "created_at": "2026-05-11T00:00:00Z",
+                "updated_at": "2026-05-11T00:00:00Z",
+            }
+        )
+
+    def delete_topic_subscription(self, subscription_id):
+        return True
+
+
+class _FakeSubscription:
     def __init__(self, payload) -> None:
         self.payload = payload
 

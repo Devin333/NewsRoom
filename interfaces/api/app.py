@@ -33,6 +33,7 @@ from interfaces.api.models import (
     ReportDetail,
     RunResponse,
     ScheduleTickRequest,
+    TopicSubscriptionCreateRequest,
 )
 from interfaces.api.rate_limit import Clock, InMemoryRateLimiter
 from interfaces.services.approval_service import ApprovalApplicationService
@@ -45,6 +46,7 @@ from interfaces.services.run_inspection_service import RunInspectionService
 from interfaces.services.schedule_service import ScheduleApplicationService
 from interfaces.services.source_service import SourceApplicationService
 from interfaces.services.storage_service import StorageApplicationService
+from interfaces.services.subscription_service import SubscriptionApplicationService
 from interfaces.services.worker_service import WorkerApplicationService
 from interfaces.services.artifact_service import ArtifactInspectionService
 from storage.lifecycle import RetentionPolicy
@@ -56,6 +58,7 @@ MemoryServiceFactory = Callable[[], MemoryApplicationService]
 DiagnosticServiceFactory = Callable[[], DiagnosticApplicationService]
 SourceServiceFactory = Callable[[], SourceApplicationService]
 EntityServiceFactory = Callable[[], EntityTrackingApplicationService]
+SubscriptionServiceFactory = Callable[[], SubscriptionApplicationService]
 MCPServiceFactory = Callable[[], MCPApplicationService]
 RunInspectionServiceFactory = Callable[[], RunInspectionService]
 ArtifactInspectionServiceFactory = Callable[[], ArtifactInspectionService]
@@ -75,6 +78,7 @@ def create_app(
     diagnostic_service_factory: DiagnosticServiceFactory = DiagnosticApplicationService,
     source_service_factory: SourceServiceFactory = SourceApplicationService,
     entity_service_factory: EntityServiceFactory = EntityTrackingApplicationService,
+    subscription_service_factory: SubscriptionServiceFactory = SubscriptionApplicationService,
     mcp_service_factory: MCPServiceFactory = MCPApplicationService,
     run_inspection_service_factory: RunInspectionServiceFactory = RunInspectionService,
     artifact_service_factory: ArtifactInspectionServiceFactory = ArtifactInspectionService,
@@ -438,6 +442,60 @@ def create_app(
         except ValueError as exc:
             return _error(status_code=400, code="invalid_entity_request", message=str(exc))
         return _success(entity.to_dict())
+
+    @api.get("/api/v1/subscriptions")
+    def list_subscriptions(enabled_only: bool = False, cadence: str | None = None):
+        try:
+            result = subscription_service_factory().list_topic_subscriptions(
+                enabled_only=enabled_only,
+                cadence=cadence,
+            )
+        except ValueError as exc:
+            return _error(status_code=400, code="invalid_subscription_list_request", message=str(exc))
+        return _success(result.to_dict())
+
+    @api.post("/api/v1/subscriptions")
+    def create_subscription(request: TopicSubscriptionCreateRequest):
+        try:
+            subscription = subscription_service_factory().create_topic_subscription(
+                topic=request.topic,
+                cadence=request.cadence,
+                profile=request.profile,
+                source_limit=request.source_limit,
+                subscription_id=request.subscription_id,
+                enabled=request.enabled,
+                metadata=request.metadata,
+            )
+        except ValueError as exc:
+            return _error(status_code=400, code="invalid_subscription_request", message=str(exc))
+        return _success(subscription.to_dict())
+
+    @api.post("/api/v1/subscriptions/{subscription_id}/enable")
+    def enable_subscription(subscription_id: str):
+        return _set_subscription_enabled(subscription_id, enabled=True)
+
+    @api.post("/api/v1/subscriptions/{subscription_id}/disable")
+    def disable_subscription(subscription_id: str):
+        return _set_subscription_enabled(subscription_id, enabled=False)
+
+    @api.delete("/api/v1/subscriptions/{subscription_id}")
+    def delete_subscription(subscription_id: str):
+        deleted = subscription_service_factory().delete_topic_subscription(subscription_id)
+        return _success({"subscription_id": subscription_id, "deleted": deleted})
+
+    def _set_subscription_enabled(subscription_id: str, *, enabled: bool):
+        try:
+            subscription = subscription_service_factory().set_enabled(subscription_id, enabled=enabled)
+        except KeyError as exc:
+            return _error(
+                status_code=404,
+                code="subscription_not_found",
+                message=str(exc),
+                user_action_required=True,
+            )
+        except ValueError as exc:
+            return _error(status_code=400, code="invalid_subscription_request", message=str(exc))
+        return _success(subscription.to_dict())
 
     @api.get("/api/v1/mcp/catalog")
     def mcp_catalog():

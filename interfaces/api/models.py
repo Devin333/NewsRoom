@@ -86,6 +86,16 @@ class EntityCreateRequest(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class TopicSubscriptionCreateRequest(BaseModel):
+    topic: str = Field(min_length=1)
+    cadence: Literal["daily", "weekly"] = "weekly"
+    profile: Literal["live", "live-offline"] = "live-offline"
+    source_limit: int = Field(default=5, ge=1)
+    subscription_id: str | None = None
+    enabled: bool = True
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class DailyScheduleRequest(BaseModel):
     schedule_id: str = "daily-intelligence"
     name: str = "Daily intelligence"
