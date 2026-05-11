@@ -39,6 +39,7 @@ def test_mcp_catalog_lists_tools_without_calling_factories() -> None:
     assert "news.storage.metrics" in tool_names
     assert "news.storage.retention.plan" in tool_names
     assert "news.worker.status" in tool_names
+    assert "news.queue.status" in tool_names
     assert "news.approval.submit" in tool_names
     assert "news://reports/latest" in resource_uris
     assert "news://reports/{report_id}" in resource_uris
@@ -53,6 +54,7 @@ def test_mcp_catalog_lists_tools_without_calling_factories() -> None:
     assert "news://storage/retention/plan" in resource_uris
     assert "news://workers" in resource_uris
     assert "news://workers/{worker_id}" in resource_uris
+    assert "news://queues" in resource_uris
     prompt_names = [prompt["name"] for prompt in catalog["prompts"]]
     assert "news.evidence_audit" in prompt_names
     assert "news.quality_gate_explain" in prompt_names
@@ -91,6 +93,30 @@ def test_mcp_worker_status_resource_calls_worker_service() -> None:
     assert result.success is True
     assert result.data["worker_id"] == "worker-1"
     assert fake_worker.calls == [{"worker_id": "worker-1", "stale_after_seconds": 45}]
+
+
+def test_mcp_queue_status_tool_calls_worker_service() -> None:
+    fake_worker = _FakeWorkerService()
+    service = MCPApplicationService(worker_service_factory=lambda: fake_worker)
+
+    result = service.call_tool("news.queue.status", {"queue_names": ["news:queue:daily"]})
+
+    assert result.success is True
+    assert result.data["queue_count"] == 1
+    assert fake_worker.queue_calls == [["news:queue:daily"]]
+
+
+def test_mcp_queue_status_resource_calls_worker_service() -> None:
+    fake_worker = _FakeWorkerService()
+    service = MCPApplicationService(worker_service_factory=lambda: fake_worker)
+
+    result = service.read_resource(
+        "news://queues?queue_name=news:queue:daily&queue_name=news:queue:memory"
+    )
+
+    assert result.success is True
+    assert result.data["queue_count"] == 2
+    assert fake_worker.queue_calls == [["news:queue:daily", "news:queue:memory"]]
 
 
 def test_mcp_get_prompt_renders_arguments() -> None:
@@ -671,6 +697,7 @@ class _FakeMemoryService:
 class _FakeWorkerService:
     def __init__(self) -> None:
         self.calls = []
+        self.queue_calls = []
 
     def list_worker_status(self, *, worker_id=None, stale_after_seconds=60):
         self.calls.append(
@@ -691,6 +718,25 @@ class _FakeWorkerService:
                         "status": "running",
                         "stale": False,
                     }
+                ],
+            }
+        )
+
+    def queue_status(self, *, queue_names=None):
+        self.queue_calls.append(queue_names)
+        actual_queue_names = queue_names or ["news:queue:daily"]
+        return _FakeResult(
+            {
+                "queue_count": len(actual_queue_names),
+                "total_stream_length": len(actual_queue_names),
+                "total_pending_count": 0,
+                "queues": [
+                    {
+                        "queue_name": queue_name,
+                        "stream_length": 1,
+                        "pending_count": 0,
+                    }
+                    for queue_name in actual_queue_names
                 ],
             }
         )

@@ -44,6 +44,7 @@ STORAGE_RETENTION_PLAN_RESOURCE_URI = "news://storage/retention/plan"
 SOURCE_HEALTH_RESOURCE_URI = "news://sources/health"
 WORKERS_RESOURCE_TEMPLATE = "news://workers"
 WORKER_RESOURCE_TEMPLATE = "news://workers/{worker_id}"
+QUEUES_RESOURCE_URI = "news://queues"
 RETENTION_POLICY_ARG_NAMES = (
     "raw_source_retention_days",
     "llm_artifact_retention_days",
@@ -159,6 +160,9 @@ class MCPApplicationService:
             worker_status_args = _worker_status_resource_args(uri)
             if worker_status_args is not None:
                 return self._read_worker_status_resource(uri, worker_status_args)
+            queue_status_args = _queue_status_resource_args(uri)
+            if queue_status_args is not None:
+                return self._read_queue_status_resource(uri, queue_status_args)
             return MCPResourceReadResult(
                 uri=uri,
                 success=False,
@@ -206,6 +210,8 @@ class MCPApplicationService:
                 return self._storage_retention_plan(args)
             if tool_name == "news.worker.status":
                 return self._worker_status(args)
+            if tool_name == "news.queue.status":
+                return self._queue_status(args)
             if tool_name == "news.approval.submit":
                 return self._approval_submit(args)
             if tool_name == "news.approval.list":
@@ -395,6 +401,14 @@ class MCPApplicationService:
         )
         return MCPToolCallResult(
             tool_name="news.worker.status",
+            success=True,
+            data=result.to_dict(),
+        )
+
+    def _queue_status(self, args: dict[str, Any]) -> MCPToolCallResult:
+        result = self.worker_service_factory().queue_status(queue_names=_queue_names_from_args(args))
+        return MCPToolCallResult(
+            tool_name="news.queue.status",
             success=True,
             data=result.to_dict(),
         )
@@ -619,6 +633,18 @@ class MCPApplicationService:
             data=result.to_dict(),
         )
 
+    def _read_queue_status_resource(
+        self,
+        uri: str,
+        args: dict[str, Any],
+    ) -> MCPResourceReadResult:
+        result = self.worker_service_factory().queue_status(queue_names=_queue_names_from_args(args))
+        return MCPResourceReadResult(
+            uri=uri,
+            success=True,
+            data=result.to_dict(),
+        )
+
 
 def _tools() -> list[MCPTool]:
     return [
@@ -794,6 +820,20 @@ def _tools() -> list[MCPTool]:
             },
         ),
         MCPTool(
+            name="news.queue.status",
+            title="Read queue status",
+            description="Read Redis worker queue status through WorkerApplicationService.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "queue_names": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    }
+                },
+            },
+        ),
+        MCPTool(
             name="news.approval.submit",
             title="Submit approval request",
             description="Submit a human approval request through ApprovalApplicationService.",
@@ -953,6 +993,11 @@ def _resources() -> list[MCPResource]:
             uri=WORKER_RESOURCE_TEMPLATE,
             name="Worker Detail",
             description="Worker heartbeat status by worker id.",
+        ),
+        MCPResource(
+            uri=QUEUES_RESOURCE_URI,
+            name="Queue Status",
+            description="Current Redis worker queue status.",
         ),
     ]
 
@@ -1222,6 +1267,14 @@ def _worker_status_resource_args(uri: str) -> dict[str, Any] | None:
     return args
 
 
+def _queue_status_resource_args(uri: str) -> dict[str, Any] | None:
+    parsed = urlsplit(uri)
+    if parsed.scheme != "news" or parsed.netloc != "queues" or parsed.path:
+        return None
+    query = parse_qs(parsed.query)
+    return {"queue_names": [value for value in query.get("queue_name", []) if value]}
+
+
 def _approval_id(args: dict[str, Any]) -> str:
     approval_id = str(args.get("approval_id") or "")
     if not approval_id:
@@ -1248,6 +1301,15 @@ def _optional_int_arg(args: dict[str, Any], name: str, *, default: int) -> int:
     if value is None or value == "":
         return default
     return int(value)
+
+
+def _queue_names_from_args(args: dict[str, Any]) -> list[str] | None:
+    value = args.get("queue_names", args.get("queue_name"))
+    if value is None or value == "":
+        return None
+    if isinstance(value, list):
+        return [str(item) for item in value if item]
+    return [str(value)]
 
 
 def _retention_policy_from_args(args: dict[str, Any]) -> RetentionPolicy | None:

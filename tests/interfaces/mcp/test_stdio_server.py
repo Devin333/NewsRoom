@@ -12,6 +12,7 @@ def test_stdio_handles_tools_list() -> None:
     assert tool_names[0] == "news.daily.enqueue"
     assert "news.approval.submit" in tool_names
     assert "news.worker.status" in tool_names
+    assert "news.queue.status" in tool_names
 
 
 def test_stdio_handles_tool_call() -> None:
@@ -140,6 +141,24 @@ def test_stdio_handles_worker_status_resource_read() -> None:
     assert response["result"]["data"]["worker_count"] == 1
 
 
+def test_stdio_handles_queue_status_resource_read() -> None:
+    service = _FakeMCPService()
+
+    response = handle_jsonrpc_request(
+        {
+            "jsonrpc": "2.0",
+            "id": "read-queues",
+            "method": "resources/read",
+            "params": {"uri": "news://queues"},
+        },
+        service=service,
+    )
+
+    assert service.resource_reads == ["news://queues"]
+    assert response["result"]["success"] is True
+    assert response["result"]["data"]["queue_count"] == 1
+
+
 def test_stdio_handles_prompt_get() -> None:
     service = _FakeMCPService()
 
@@ -262,4 +281,6 @@ def _resource_payload(uri):
         return {"artifact_count": 2, "delete_count": 1, "keep_count": 1}
     if uri.startswith("news://workers"):
         return {"worker_count": 1, "workers": [{"worker_id": "worker-1"}]}
+    if uri == "news://queues":
+        return {"queue_count": 1, "queues": [{"queue_name": "news:queue:daily"}]}
     return {"source_count": 1}
