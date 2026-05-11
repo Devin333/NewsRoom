@@ -10,6 +10,7 @@ from core.framework.tools.models import (
     ToolStatus,
     timed_tool_call,
 )
+from core.framework.tools.redaction import redact_sensitive_values
 from core.framework.tools.registry import ToolRegistry
 
 
@@ -36,7 +37,11 @@ class ToolExecutor:
                     f"missing required arguments for {call.tool_name}: {', '.join(missing)}"
                 )
 
-            return ToolResult(status=ToolStatus.SUCCEEDED, output=registered.executor(call.arguments))
+            raw_output = registered.executor(call.arguments)
+            return ToolResult(
+                status=ToolStatus.SUCCEEDED,
+                output=redact_sensitive_values(raw_output),
+            )
 
         try:
             result, elapsed_ms = timed_tool_call(invoke)

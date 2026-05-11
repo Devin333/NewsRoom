@@ -7,6 +7,8 @@ from time import perf_counter
 from typing import Any
 from uuid import uuid4
 
+from core.framework.tools.redaction import redact_sensitive_values
+
 
 class ToolRuntimeError(RuntimeError):
     """Base exception for ToolRuntime failures."""
@@ -82,7 +84,7 @@ class ToolCall:
         return {
             "call_id": self.call_id,
             "tool_name": self.tool_name,
-            "arguments": dict(self.arguments),
+            "arguments": redact_sensitive_values(dict(self.arguments)),
             "requested_by_agent_id": self.requested_by_agent_id,
         }
 
@@ -93,13 +95,15 @@ class ToolResult:
     output: Any = None
     error_type: str | None = None
     error_message: str | None = None
+    redacted: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "status": self.status.value,
-            "output": self.output,
+            "output": redact_sensitive_values(self.output),
             "error_type": self.error_type,
             "error_message": self.error_message,
+            "redacted": self.redacted,
         }
 
 

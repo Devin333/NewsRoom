@@ -1,6 +1,6 @@
 from core.framework.agent_loop import AgentLoopStatus, AgentRunner, AgentSpec
 from core.framework.llm import FakeLLMClient
-from core.framework.tools import ToolDefinition, ToolRegistry
+from core.framework.tools import REDACTED_VALUE, ToolDefinition, ToolRegistry
 
 
 def _registry() -> ToolRegistry:
@@ -97,3 +97,28 @@ def test_agent_runner_blocks_secret_like_final_output() -> None:
     assert result.success is False
     assert result.status == AgentLoopStatus.BLOCKED
     assert result.error == "output contains secret-like content"
+
+
+def test_agent_runner_redacts_tool_observations_before_next_prompt() -> None:
+    fake_secret = "sk" + "-abcdef1234567890"
+    registry = ToolRegistry()
+    registry.register(
+        ToolDefinition(name="memory.search", input_schema={"required": ["query"]}),
+        lambda args: {"token": fake_secret, "safe": "visible"},
+    )
+    llm = FakeLLMClient(
+        [
+            '{"action_type":"tool_call","tool_name":"memory.search","tool_args":{"query":"chips"}}',
+            '{"action_type":"final_output","output":{"analysis_result":{"summary":"ok"}}}',
+        ]
+    )
+
+    result = AgentRunner(llm_client=llm, tool_registry=registry).run(
+        _agent(),
+        {"request": {"topic": "chips"}},
+    )
+
+    second_prompt = llm.requests[1].messages[1]["content"]
+    assert result.success is True
+    assert fake_secret not in second_prompt
+    assert REDACTED_VALUE in second_prompt

@@ -14,8 +14,10 @@ from core.framework.tools.models import (
     ToolStatus,
 )
 from core.framework.tools.registry import RegisteredTool, ToolRegistry
+from core.framework.tools.redaction import REDACTED_VALUE, redact_sensitive_values
 
 __all__ = [
+    "REDACTED_VALUE",
     "RegisteredTool",
     "ToolCall",
     "ToolDefinition",
@@ -29,4 +31,5 @@ __all__ = [
     "ToolResult",
     "ToolRuntimeError",
     "ToolStatus",
+    "redact_sensitive_values",
 ]
