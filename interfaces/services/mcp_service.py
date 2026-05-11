@@ -3,11 +3,20 @@ from __future__ import annotations
 from dataclasses import asdict, is_dataclass
 from typing import Any, Callable
 
-from interfaces.mcp.models import MCPCatalog, MCPPrompt, MCPResource, MCPTool, MCPToolCallResult
+from interfaces.mcp.models import (
+    MCPCatalog,
+    MCPPrompt,
+    MCPResource,
+    MCPResourceReadResult,
+    MCPTool,
+    MCPToolCallResult,
+)
 
 
 DEFAULT_DAILY_QUEUE = "news:queue:daily"
 DEFAULT_MEMORY_COLLECTION = "report_sections"
+LATEST_REPORT_RESOURCE_URI = "news://reports/latest"
+SOURCE_HEALTH_RESOURCE_URI = "news://sources/health"
 
 
 class MCPApplicationService:
@@ -30,6 +39,26 @@ class MCPApplicationService:
 
     def catalog(self) -> MCPCatalog:
         return MCPCatalog(tools=_tools(), resources=_resources(), prompts=_prompts())
+
+    def read_resource(self, uri: str) -> MCPResourceReadResult:
+        try:
+            if uri == LATEST_REPORT_RESOURCE_URI:
+                return self._read_latest_report_resource()
+            if uri == SOURCE_HEALTH_RESOURCE_URI:
+                return self._read_source_health_resource()
+            return MCPResourceReadResult(
+                uri=uri,
+                success=False,
+                error_type="MCPResourceNotFound",
+                error_message=f"unknown MCP resource: {uri}",
+            )
+        except Exception as exc:
+            return MCPResourceReadResult(
+                uri=uri,
+                success=False,
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+            )
 
     def call_tool(self, tool_name: str, arguments: dict[str, Any] | None = None) -> MCPToolCallResult:
         args = arguments or {}
@@ -201,6 +230,22 @@ class MCPApplicationService:
             data=result.to_dict(),
         )
 
+    def _read_latest_report_resource(self) -> MCPResourceReadResult:
+        record = self.report_service_factory().latest_report()
+        return MCPResourceReadResult(
+            uri=LATEST_REPORT_RESOURCE_URI,
+            success=True,
+            data=_to_dict(record),
+        )
+
+    def _read_source_health_resource(self) -> MCPResourceReadResult:
+        result = self.source_service_factory().source_health(enabled_only=True)
+        return MCPResourceReadResult(
+            uri=SOURCE_HEALTH_RESOURCE_URI,
+            success=True,
+            data=result.to_dict(),
+        )
+
 
 def _tools() -> list[MCPTool]:
     return [
@@ -347,12 +392,12 @@ def _tools() -> list[MCPTool]:
 def _resources() -> list[MCPResource]:
     return [
         MCPResource(
-            uri="news://reports/latest",
+            uri=LATEST_REPORT_RESOURCE_URI,
             name="Latest Report",
             description="Latest redacted report view.",
         ),
         MCPResource(
-            uri="news://sources/health",
+            uri=SOURCE_HEALTH_RESOURCE_URI,
             name="Source Health",
             description="Current source health view.",
         ),

@@ -1,5 +1,8 @@
-from interfaces.services.mcp_service import MCPApplicationService
+import json
+
 from interfaces.services.approval_service import ApprovalApplicationService
+from interfaces.services.mcp_service import MCPApplicationService
+from interfaces.services.report_service import ReportApplicationService
 
 
 def test_mcp_catalog_lists_tools_without_calling_factories() -> None:
@@ -85,6 +88,46 @@ def test_mcp_approval_tools_persist_submit_approve_and_read(tmp_path) -> None:
     assert fetched.data["approval"]["status"] == "approved"
     assert listed.data["approval_count"] == 1
     assert listed.data["approvals"][0]["approval_id"] == approval_id
+
+
+def test_mcp_reads_latest_report_resource_from_local_json_artifact(tmp_path) -> None:
+    run_dir = tmp_path / "run-1"
+    run_dir.mkdir()
+    report_json = run_dir / "report.json"
+    report_markdown = run_dir / "report.md"
+    report_json.write_text(json.dumps({"title": "Daily Intelligence"}), encoding="utf-8")
+    report_markdown.write_text("# Daily Intelligence", encoding="utf-8")
+    (run_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "run_id": "run-1",
+                "status": "succeeded",
+                "finished_at": "2026-05-11T01:00:00Z",
+                "artifacts": {
+                    "report_json": "report.json",
+                    "report_markdown": "report.md",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    service = MCPApplicationService(
+        report_service_factory=lambda: ReportApplicationService(artifact_root=tmp_path)
+    )
+
+    result = service.read_resource("news://reports/latest")
+
+    assert result.success is True
+    assert result.data["run_id"] == "run-1"
+    assert result.data["report_json"] == {"title": "Daily Intelligence"}
+    assert result.data["report_markdown"] == "# Daily Intelligence"
+
+
+def test_mcp_unknown_resource_fails_safely() -> None:
+    result = MCPApplicationService().read_resource("news://missing")
+
+    assert result.success is False
+    assert result.error_type == "MCPResourceNotFound"
 
 
 def _raising_factory():

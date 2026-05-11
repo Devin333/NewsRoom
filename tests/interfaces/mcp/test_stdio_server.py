@@ -31,6 +31,24 @@ def test_stdio_handles_tool_call() -> None:
     assert response["result"]["data"]["source_count"] == 1
 
 
+def test_stdio_handles_resource_read() -> None:
+    service = _FakeMCPService()
+
+    response = handle_jsonrpc_request(
+        {
+            "jsonrpc": "2.0",
+            "id": "read-1",
+            "method": "resources/read",
+            "params": {"uri": "news://sources/health"},
+        },
+        service=service,
+    )
+
+    assert service.resource_reads == ["news://sources/health"]
+    assert response["result"]["success"] is True
+    assert response["result"]["data"]["source_count"] == 1
+
+
 def test_stdio_unknown_method_returns_jsonrpc_error() -> None:
     response = handle_jsonrpc_request({"jsonrpc": "2.0", "id": 7, "method": "unknown"})
 
@@ -55,6 +73,7 @@ def test_stdio_loop_reads_and_writes_json_lines() -> None:
 class _FakeMCPService:
     def __init__(self) -> None:
         self.calls = []
+        self.resource_reads = []
 
     def catalog(self):
         raise AssertionError("catalog should not be called")
@@ -62,6 +81,10 @@ class _FakeMCPService:
     def call_tool(self, tool_name, arguments):
         self.calls.append((tool_name, arguments))
         return _FakeToolResult(tool_name)
+
+    def read_resource(self, uri):
+        self.resource_reads.append(uri)
+        return _FakeResourceResult(uri)
 
 
 class _FakeToolResult:
@@ -72,6 +95,21 @@ class _FakeToolResult:
         return {
             "tool_name": self.tool_name,
             "success": True,
+            "data": {"source_count": 1},
+            "error_type": None,
+            "error_message": None,
+        }
+
+
+class _FakeResourceResult:
+    def __init__(self, uri) -> None:
+        self.uri = uri
+
+    def to_dict(self):
+        return {
+            "uri": self.uri,
+            "success": True,
+            "mime_type": "application/json",
             "data": {"source_count": 1},
             "error_type": None,
             "error_message": None,

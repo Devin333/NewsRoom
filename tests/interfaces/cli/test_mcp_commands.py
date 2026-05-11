@@ -38,6 +38,27 @@ def test_news_cli_mcp_call_json(monkeypatch, capsys) -> None:
     assert payload["data"]["source_count"] == 1
 
 
+def test_news_cli_mcp_read_resource_json(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(news_cli, "MCPApplicationService", _FakeMCPService)
+
+    exit_code = news_cli.main(
+        [
+            "mcp",
+            "read-resource",
+            "news://sources/health",
+            "--json",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert exit_code == 0
+    assert payload["uri"] == "news://sources/health"
+    assert payload["success"] is True
+    assert payload["data"]["source_count"] == 1
+
+
 class _FakeMCPService:
     def catalog(self):
         return _FakeResult(
@@ -66,16 +87,30 @@ class _FakeMCPService:
             }
         )
 
+    def read_resource(self, uri):
+        return _FakeResult(
+            {
+                "uri": uri,
+                "success": True,
+                "mime_type": "application/json",
+                "data": {"source_count": 1},
+                "error_type": None,
+                "error_message": None,
+            }
+        )
+
 
 class _FakeResult:
     def __init__(self, payload) -> None:
         self.payload = payload
+
+    @property
+    def success(self):
+        return self.payload.get("success", True)
 
     def to_dict(self):
         return self.payload
 
 
 class _FakeToolResult(_FakeResult):
-    @property
-    def success(self):
-        return self.payload["success"]
+    pass

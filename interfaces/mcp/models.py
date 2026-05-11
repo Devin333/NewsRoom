@@ -80,3 +80,23 @@ class MCPToolCallResult:
             "error_type": self.error_type,
             "error_message": self.error_message,
         }
+
+
+@dataclass(frozen=True)
+class MCPResourceReadResult:
+    uri: str
+    success: bool
+    mime_type: str = "application/json"
+    data: dict[str, Any] | None = None
+    error_type: str | None = None
+    error_message: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "uri": self.uri,
+            "success": self.success,
+            "mime_type": self.mime_type,
+            "data": dict(self.data) if self.data is not None else None,
+            "error_type": self.error_type,
+            "error_message": self.error_message,
+        }

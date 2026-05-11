@@ -369,6 +369,11 @@ def build_parser() -> argparse.ArgumentParser:
     mcp_call_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     mcp_call_parser.set_defaults(handler=_mcp_call)
 
+    mcp_read_resource_parser = mcp_subparsers.add_parser("read-resource", help="Read an MCP resource locally")
+    mcp_read_resource_parser.add_argument("uri", help="MCP resource URI")
+    mcp_read_resource_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    mcp_read_resource_parser.set_defaults(handler=_mcp_read_resource)
+
     mcp_serve_parser = mcp_subparsers.add_parser("serve-stdio", help="Run MCP stdio adapter")
     mcp_serve_parser.set_defaults(handler=_mcp_serve_stdio)
 
@@ -908,6 +913,21 @@ def _mcp_call(args: argparse.Namespace) -> int:
         print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
     else:
         print(f"tool_name={payload['tool_name']}")
+        print(f"success={str(payload['success']).lower()}")
+        if payload["error_message"]:
+            print(f"error={payload['error_message']}")
+        elif payload["data"] is not None:
+            print(json.dumps(payload["data"], ensure_ascii=False, indent=2, sort_keys=True))
+    return 0 if result.success else 1
+
+
+def _mcp_read_resource(args: argparse.Namespace) -> int:
+    result = MCPApplicationService().read_resource(args.uri)
+    payload = result.to_dict()
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        print(f"uri={payload['uri']}")
         print(f"success={str(payload['success']).lower()}")
         if payload["error_message"]:
             print(f"error={payload['error_message']}")

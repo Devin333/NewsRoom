@@ -37,6 +37,12 @@ def handle_jsonrpc_request(
         if method == "resources/list":
             catalog = service.catalog().to_dict()
             return _success(request_id, {"resources": catalog["resources"]})
+        if method == "resources/read":
+            uri = str(params.get("uri") or "")
+            if not uri:
+                return _error(request_id, -32602, "resources/read uri is required")
+            result = service.read_resource(uri)
+            return _success(request_id, result.to_dict())
         if method == "prompts/list":
             catalog = service.catalog().to_dict()
             return _success(request_id, {"prompts": catalog["prompts"]})
