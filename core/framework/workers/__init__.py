@@ -1,63 +1,49 @@
 """Worker and task queue primitives."""
 
-from core.framework.workers.approval import (
-    ApprovalAlreadyDecidedError,
-    ApprovalDecision,
-    ApprovalDecisionType,
-    ApprovalNotFoundError,
-    ApprovalRequest,
-    ApprovalStatus,
-    ApprovalStore,
-    InMemoryApprovalStore,
-)
-from core.framework.workers.handlers import DailyIntelligenceTaskHandler
-from core.framework.workers.in_memory import InMemoryTaskQueue
-from core.framework.workers.models import LeasedTask, Task, TaskError, TaskResult, TaskStatus
-from core.framework.workers.redis_queue import RedisStreamTaskQueue
-from core.framework.workers.schedule_store import (
-    InMemoryScheduleStore,
-    ScheduleNotFoundError,
-    ScheduleRecord,
-    ScheduleStore,
-)
-from core.framework.workers.scheduler import (
-    EnqueuedScheduleTask,
-    MisfirePolicy,
-    ScheduleEvaluation,
-    ScheduleSpec,
-    ScheduleTriggerType,
-    Scheduler,
-    SchedulerTickResult,
-)
-from core.framework.workers.worker_loop import WorkerLoop
+from __future__ import annotations
 
-__all__ = [
-    "ApprovalAlreadyDecidedError",
-    "ApprovalDecision",
-    "ApprovalDecisionType",
-    "ApprovalNotFoundError",
-    "ApprovalRequest",
-    "ApprovalStatus",
-    "ApprovalStore",
-    "DailyIntelligenceTaskHandler",
-    "EnqueuedScheduleTask",
-    "InMemoryApprovalStore",
-    "InMemoryScheduleStore",
-    "InMemoryTaskQueue",
-    "LeasedTask",
-    "MisfirePolicy",
-    "RedisStreamTaskQueue",
-    "ScheduleEvaluation",
-    "ScheduleNotFoundError",
-    "ScheduleRecord",
-    "ScheduleSpec",
-    "ScheduleStore",
-    "ScheduleTriggerType",
-    "Scheduler",
-    "SchedulerTickResult",
-    "Task",
-    "TaskError",
-    "TaskResult",
-    "TaskStatus",
-    "WorkerLoop",
-]
+from importlib import import_module
+from typing import Any
+
+
+_EXPORT_MODULES = {
+    "ApprovalAlreadyDecidedError": "core.framework.workers.approval",
+    "ApprovalDecision": "core.framework.workers.approval",
+    "ApprovalDecisionType": "core.framework.workers.approval",
+    "ApprovalNotFoundError": "core.framework.workers.approval",
+    "ApprovalRequest": "core.framework.workers.approval",
+    "ApprovalStatus": "core.framework.workers.approval",
+    "ApprovalStore": "core.framework.workers.approval",
+    "DailyIntelligenceTaskHandler": "core.framework.workers.handlers",
+    "EnqueuedScheduleTask": "core.framework.workers.scheduler",
+    "InMemoryApprovalStore": "core.framework.workers.approval",
+    "InMemoryScheduleStore": "core.framework.workers.schedule_store",
+    "InMemoryTaskQueue": "core.framework.workers.in_memory",
+    "LeasedTask": "core.framework.workers.models",
+    "MisfirePolicy": "core.framework.workers.scheduler",
+    "RedisStreamTaskQueue": "core.framework.workers.redis_queue",
+    "ScheduleEvaluation": "core.framework.workers.scheduler",
+    "ScheduleNotFoundError": "core.framework.workers.schedule_store",
+    "ScheduleRecord": "core.framework.workers.schedule_store",
+    "ScheduleSpec": "core.framework.workers.scheduler",
+    "ScheduleStore": "core.framework.workers.schedule_store",
+    "ScheduleTriggerType": "core.framework.workers.scheduler",
+    "Scheduler": "core.framework.workers.scheduler",
+    "SchedulerTickResult": "core.framework.workers.scheduler",
+    "Task": "core.framework.workers.models",
+    "TaskError": "core.framework.workers.models",
+    "TaskResult": "core.framework.workers.models",
+    "TaskStatus": "core.framework.workers.models",
+    "WorkerLoop": "core.framework.workers.worker_loop",
+}
+
+__all__ = list(_EXPORT_MODULES)
+
+
+def __getattr__(name: str) -> Any:
+    module_name = _EXPORT_MODULES.get(name)
+    if module_name is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    value = getattr(import_module(module_name), name)
+    globals()[name] = value
+    return value
