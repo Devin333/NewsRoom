@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Callable
 from uuid import uuid4
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Query
 from fastapi.responses import JSONResponse
 
 from core.framework.workers.approval import ApprovalAlreadyDecidedError, ApprovalNotFoundError
@@ -109,6 +109,11 @@ def create_app(
             )
         except ValueError as exc:
             return _error(status_code=400, code="invalid_worker_status_request", message=str(exc))
+        return _success(result.to_dict())
+
+    @api.get("/api/v1/queues")
+    def list_queues(queue_name: list[str] | None = Query(default=None)):
+        result = worker_service_factory().queue_status(queue_names=queue_name)
         return _success(result.to_dict())
 
     @api.get("/api/v1/reports/latest")
