@@ -10,6 +10,7 @@ from core.framework.llm.cost import (
     LLMBudgetPolicy,
     ModelPricing,
 )
+from core.framework.llm.cache import CachedLLMClient, InMemoryLLMCache, LLMCacheKey, LLMCachePolicy
 from core.framework.llm.models import LLMClient, LLMRequest, LLMResponse, LLMToolCall, TokenUsage
 from core.framework.llm.openai_compatible import (
     LLMConfigurationError,
@@ -26,6 +27,10 @@ from core.framework.llm.tool_adapters import LLMToolCallParseError, LLMToolSchem
 __all__ = [
     "FakeLLMClient",
     "CostEstimator",
+    "CachedLLMClient",
+    "InMemoryLLMCache",
+    "LLMCacheKey",
+    "LLMCachePolicy",
     "LLMClient",
     "LLMBudgetCheck",
     "LLMBudgetExceededError",
