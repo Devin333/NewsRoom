@@ -35,6 +35,7 @@ def test_local_json_repository_returns_latest_report(tmp_path) -> None:
 
     assert record.report_id == "new:final"
     assert record.run_id == "new"
+    assert record.status == "final"
     assert record.title == "New Report"
     assert record.quality_score == 0.9
     assert record.report_json == {"title": "New Report"}
@@ -48,6 +49,7 @@ def test_local_json_repository_gets_report_by_id(tmp_path) -> None:
 
     assert record.report_id == "run-1:final"
     assert record.run_id == "run-1"
+    assert record.status == "final"
     assert record.title == "AI Policy Report"
     assert record.report_json == {"title": "AI Policy Report"}
     assert record.report_markdown == "# AI Policy Report\n"
@@ -85,4 +87,5 @@ def test_local_json_repository_searches_reports(tmp_path) -> None:
 
     assert [record.run_id for record in records] == ["new"]
     assert records[0].report_id == "new:final"
+    assert records[0].status == "final"
     assert records[0].title == "AI Policy Report"

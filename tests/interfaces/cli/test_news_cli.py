@@ -215,6 +215,7 @@ def test_news_cli_latest_json_output(tmp_path, capsys) -> None:
 
     assert exit_code == 0
     assert payload["run_id"] == "latest-json-source"
+    assert payload["status"] == "final"
     assert payload["report_json"]["title"].startswith("Daily Intelligence:")
 
 
@@ -255,6 +256,7 @@ def test_news_cli_reports_search_json_output(tmp_path, capsys) -> None:
     assert payload["report_count"] == 1
     assert payload["reports"][0]["run_id"] == "search-source"
     assert payload["reports"][0]["report_id"] == "search-source:final"
+    assert payload["reports"][0]["status"] == "final"
 
 
 def test_news_cli_reports_show_json_output(tmp_path, capsys) -> None:
@@ -294,6 +296,7 @@ def test_news_cli_reports_show_json_output(tmp_path, capsys) -> None:
     assert exit_code == 0
     assert payload["report_id"] == "show-source:final"
     assert payload["run_id"] == "show-source"
+    assert payload["status"] == "final"
     assert payload["report_json"]["title"] == "Daily Intelligence: AI policy"
 
 

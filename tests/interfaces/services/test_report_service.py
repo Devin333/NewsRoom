@@ -15,6 +15,7 @@ def test_report_service_searches_local_report_artifacts(tmp_path) -> None:
     assert payload["report_count"] == 1
     assert payload["reports"][0]["run_id"] == "run-1"
     assert payload["reports"][0]["report_id"] == "run-1:final"
+    assert payload["reports"][0]["status"] == "final"
     assert payload["reports"][0]["title"] == "AI Policy Report"
 
 
@@ -25,6 +26,7 @@ def test_report_service_gets_report_by_id(tmp_path) -> None:
 
     assert record.report_id == "run-1:final"
     assert record.run_id == "run-1"
+    assert record.status == "final"
     assert record.title == "AI Policy Report"
     assert record.report_json == {"title": "AI Policy Report"}
 

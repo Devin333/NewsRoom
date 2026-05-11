@@ -10,6 +10,9 @@ class ReportNotFoundError(FileNotFoundError):
     """Raised when no local report artifact can be found."""
 
 
+FINAL_REPORT_STATUS = "final"
+
+
 @dataclass(frozen=True)
 class LatestReportRecord:
     report_id: str
@@ -137,7 +140,7 @@ class LocalJsonRepository:
                 ReportSearchRecord(
                     report_id=f"{manifest['run_id']}:final",
                     run_id=str(manifest["run_id"]),
-                    status=str(manifest["status"]),
+                    status=FINAL_REPORT_STATUS,
                     finished_at=manifest.get("finished_at") or "",
                     title=(report_json or {}).get("title"),
                     quality_score=manifest.get("quality_score"),
@@ -168,7 +171,7 @@ def _detail_from_manifest(manifest_path: Path, manifest: dict[str, Any]) -> Late
     return LatestReportRecord(
         report_id=f"{run_id}:final",
         run_id=run_id,
-        status=str(manifest["status"]),
+        status=FINAL_REPORT_STATUS,
         finished_at=manifest.get("finished_at") or "",
         title=(report_json or {}).get("title"),
         quality_score=manifest.get("quality_score"),
