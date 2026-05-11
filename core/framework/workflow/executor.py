@@ -151,6 +151,21 @@ class WorkflowExecutor:
                     output["evidence_bundle"],
                 )
                 manifest["artifacts"]["evidence_bundle"] = "evidence_bundle.json"
+                source_map = _evidence_source_map(output["evidence_bundle"])
+                if source_map is not None:
+                    self._artifact_manager.write_json(
+                        actual_run_id,
+                        "evidence_source_map.json",
+                        source_map,
+                    )
+                    manifest["artifacts"]["evidence_source_map"] = "evidence_source_map.json"
+            if "evidence_scores" in output:
+                self._artifact_manager.write_json(
+                    actual_run_id,
+                    "evidence_scores.json",
+                    output["evidence_scores"],
+                )
+                manifest["artifacts"]["evidence_scores"] = "evidence_scores.json"
             if "citation_check_result" in output:
                 self._artifact_manager.write_json(
                     actual_run_id,
@@ -290,3 +305,13 @@ class WorkflowExecutor:
                 "error_count": source_artifacts["error_count"],
                 "total_count": len(source_artifacts["entries"]),
             }
+
+
+def _evidence_source_map(evidence_bundle: Any) -> dict[str, list[str]] | None:
+    if isinstance(evidence_bundle, dict):
+        source_map = evidence_bundle.get("source_map")
+    else:
+        source_map = getattr(evidence_bundle, "source_map", None)
+    if source_map is None:
+        return None
+    return {str(key): list(value) for key, value in source_map.items()}

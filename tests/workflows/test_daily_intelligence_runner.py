@@ -41,6 +41,8 @@ def test_daily_intelligence_runner_live_offline_writes_report_artifacts(tmp_path
     assert manifest["profile"] == "live-offline"
     assert manifest["artifacts"]["raw_items"] == "raw_items.json"
     assert manifest["artifacts"]["evidence_bundle"] == "evidence_bundle.json"
+    assert manifest["artifacts"]["evidence_scores"] == "evidence_scores.json"
+    assert manifest["artifacts"]["evidence_source_map"] == "evidence_source_map.json"
     assert manifest["artifacts"]["citation_check_result"] == "citation_check_result.json"
     assert manifest["artifacts"]["editor_review"] == "editor_review.json"
     assert manifest["artifacts"]["support_matrix"] == "support_matrix.json"
@@ -70,6 +72,11 @@ def test_daily_intelligence_runner_live_offline_writes_report_artifacts(tmp_path
     first_item = source_artifacts["entries"][0]
     assert first_item["artifact_type"] == "source_item"
     assert (run_dir / first_item["path"]).exists()
+
+    evidence_scores = json.loads((run_dir / "evidence_scores.json").read_text())
+    evidence_source_map = json.loads((run_dir / "evidence_source_map.json").read_text())
+    assert len(evidence_scores) == len(result.output["evidence_bundle"].items)
+    assert set(evidence_source_map) == result.output["evidence_bundle"].source_urls
 
 
 def test_daily_intelligence_runner_live_missing_llm_key_fails_safely(tmp_path, monkeypatch) -> None:

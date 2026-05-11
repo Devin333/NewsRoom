@@ -326,8 +326,8 @@ def build_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
                 step_id="build_evidence",
                 implementation="daily.build_evidence",
                 read_keys=["ranked_items"],
-                write_keys=["evidence_bundle"],
-                required_output_keys=["evidence_bundle"],
+                write_keys=["evidence_bundle", "evidence_scores"],
+                required_output_keys=["evidence_bundle", "evidence_scores"],
             ),
             StepSpec(
                 step_id="draft_report",
@@ -464,10 +464,11 @@ def _rank_sources(buffer: ScopedDataBuffer) -> dict[str, Any]:
 
 
 def _build_evidence(buffer: ScopedDataBuffer) -> dict[str, Any]:
-    bundle = EvidenceBuilder().build(buffer.read("ranked_items"), bundle_id="daily")
+    build_result = EvidenceBuilder().build_with_scores(buffer.read("ranked_items"), bundle_id="daily")
+    bundle = build_result.bundle
     if not bundle.items:
         raise RuntimeError("no valid evidence built from ranked sources")
-    return {"evidence_bundle": bundle}
+    return {"evidence_bundle": bundle, "evidence_scores": build_result.evidence_scores}
 
 
 def _quality_gate(buffer: ScopedDataBuffer) -> dict[str, Any]:

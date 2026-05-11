@@ -30,6 +30,9 @@ class EvidenceItem:
 class EvidenceBundle:
     bundle_id: str
     items: list[EvidenceItem]
+    source_map: dict[str, list[str]] = field(default_factory=dict)
+    missing_information: list[str] = field(default_factory=list)
+    coverage_notes: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -40,5 +43,44 @@ class EvidenceBundle:
         return {
             "bundle_id": self.bundle_id,
             "items": [item.to_dict() for item in self.items],
+            "source_map": {key: list(value) for key, value in self.source_map.items()},
+            "missing_information": list(self.missing_information),
+            "coverage_notes": list(self.coverage_notes),
             "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class EvidenceScore:
+    evidence_id: str
+    source_reliability_score: float
+    freshness_score: float
+    specificity_score: float
+    corroboration_score: float
+    extraction_confidence_score: float
+    final_confidence: float
+    score_reason: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "evidence_id": self.evidence_id,
+            "source_reliability_score": self.source_reliability_score,
+            "freshness_score": self.freshness_score,
+            "specificity_score": self.specificity_score,
+            "corroboration_score": self.corroboration_score,
+            "extraction_confidence_score": self.extraction_confidence_score,
+            "final_confidence": self.final_confidence,
+            "score_reason": self.score_reason,
+        }
+
+
+@dataclass(frozen=True)
+class EvidenceBuildResult:
+    bundle: EvidenceBundle
+    evidence_scores: list[EvidenceScore]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "bundle": self.bundle.to_dict(),
+            "evidence_scores": [score.to_dict() for score in self.evidence_scores],
         }

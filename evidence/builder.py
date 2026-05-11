@@ -3,23 +3,35 @@ from __future__ import annotations
 from hashlib import sha256
 
 from domain.sources import RankedSourceItem
-from evidence.models import EvidenceBundle, EvidenceItem
+from evidence.models import EvidenceBuildResult, EvidenceBundle, EvidenceItem, EvidenceScore
 
 
 class EvidenceBuilder:
     def build(self, ranked_items: list[RankedSourceItem], *, bundle_id: str = "daily") -> EvidenceBundle:
+        return self.build_with_scores(ranked_items, bundle_id=bundle_id).bundle
+
+    def build_with_scores(
+        self,
+        ranked_items: list[RankedSourceItem],
+        *,
+        bundle_id: str = "daily",
+    ) -> EvidenceBuildResult:
         evidence_items = []
+        evidence_scores = []
+        source_map: dict[str, list[str]] = {}
         for ranked in ranked_items:
             item = ranked.item
             evidence_hash = sha256(item.canonical_url.encode("utf-8")).hexdigest()[:16]
+            evidence_id = f"ev_{evidence_hash}"
             source_lineage = ranked.metadata.get("lineage") or item.metadata.get("lineage") or {}
+            evidence_score = _evidence_score(ranked, evidence_id=evidence_id)
             evidence_items.append(
                 EvidenceItem(
-                    evidence_id=f"ev_{evidence_hash}",
+                    evidence_id=evidence_id,
                     source_url=item.canonical_url,
                     title=item.title,
                     summary=item.summary or item.title,
-                    confidence=round(min(1.0, max(0.1, ranked.final_score)), 4),
+                    confidence=evidence_score.final_confidence,
                     source_id=item.source_id,
                     metadata={
                         "ranked_item_id": ranked.ranked_item_id,
@@ -29,4 +41,46 @@ class EvidenceBuilder:
                     },
                 )
             )
-        return EvidenceBundle(bundle_id=bundle_id, items=evidence_items)
+            evidence_scores.append(evidence_score)
+            source_map.setdefault(item.canonical_url, []).append(evidence_id)
+        return EvidenceBuildResult(
+            bundle=EvidenceBundle(
+                bundle_id=bundle_id,
+                items=evidence_items,
+                source_map=source_map,
+                missing_information=[] if evidence_items else ["no ranked source items were available"],
+                coverage_notes=[
+                    f"Built {len(evidence_items)} evidence item(s) from {len(source_map)} source URL(s)."
+                ],
+                metadata={"evidence_count": len(evidence_items), "source_url_count": len(source_map)},
+            ),
+            evidence_scores=evidence_scores,
+        )
+
+
+def _evidence_score(ranked: RankedSourceItem, *, evidence_id: str) -> EvidenceScore:
+    item = ranked.item
+    final_confidence = round(min(1.0, max(0.1, ranked.final_score)), 4)
+    specificity_score = _specificity_score(item.title, item.summary)
+    return EvidenceScore(
+        evidence_id=evidence_id,
+        source_reliability_score=round(ranked.reliability_score, 4),
+        freshness_score=round(ranked.recency_score, 4),
+        specificity_score=specificity_score,
+        corroboration_score=0.5,
+        extraction_confidence_score=round(ranked.relevance_score, 4),
+        final_confidence=final_confidence,
+        score_reason=(
+            "final confidence follows ranked source score; component scores preserve "
+            "reliability, freshness, specificity, corroboration, and extraction signals"
+        ),
+    )
+
+
+def _specificity_score(title: str, summary: str | None) -> float:
+    text = " ".join(part for part in [title, summary or ""] if part).strip()
+    if len(text) >= 120:
+        return 1.0
+    if len(text) >= 60:
+        return 0.8
+    return 0.6
