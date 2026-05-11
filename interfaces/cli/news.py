@@ -332,6 +332,17 @@ def build_parser() -> argparse.ArgumentParser:
     runs_show_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     runs_show_parser.set_defaults(handler=_runs_show)
 
+    runs_events_parser = runs_subparsers.add_parser("events", help="Show local run events")
+    runs_events_parser.add_argument("run_id", help="Run id")
+    runs_events_parser.add_argument(
+        "--artifact-root",
+        default=".newsroom/runs",
+        help="Directory where run artifacts are stored",
+    )
+    runs_events_parser.add_argument("--limit", type=int, default=None, help="Maximum events")
+    runs_events_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    runs_events_parser.set_defaults(handler=_runs_events)
+
     artifacts_parser = subparsers.add_parser("artifacts", help="Inspect run artifacts")
     artifacts_subparsers = artifacts_parser.add_subparsers(dest="artifacts_command", required=True)
 
@@ -846,6 +857,26 @@ def _runs_show(args: argparse.Namespace) -> int:
         print(f"workflow_id={manifest.get('workflow_id')}")
         print(f"profile={manifest.get('profile')}")
         print(f"manifest_path={payload['manifest_path']}")
+    return 0
+
+
+def _runs_events(args: argparse.Namespace) -> int:
+    try:
+        result = RunInspectionService(artifact_root=args.artifact_root).get_run_events(
+            args.run_id,
+            limit=args.limit,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        print(str(exc))
+        return 1
+    payload = result.to_dict()
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        print(f"run_id={payload['run_id']}")
+        print(f"event_count={payload['event_count']}")
+        for event in payload["events"]:
+            print(f"- {event.get('event_type')} at {event.get('occurred_at')}")
     return 0
 
 
