@@ -1,6 +1,8 @@
 from core.framework import WorkflowRunner
 from core.framework.specs import StepSpec, WorkflowSpec, WorkflowStatus
 from core.framework.workflow import FunctionStepRegistry
+from storage.artifacts import LocalJsonArtifactIndexStore
+from storage.events import LocalJsonEventStore
 
 
 def test_workflow_runner_returns_stable_run_result(tmp_path) -> None:
@@ -34,3 +36,34 @@ def test_workflow_runner_returns_stable_run_result(tmp_path) -> None:
     assert result.manifest_path is not None
     assert result.events_path is not None
     assert result.to_dict()["status"] == "succeeded"
+
+    artifact_refs = LocalJsonArtifactIndexStore(tmp_path / "_records" / "artifact_index").list_by_run(
+        "runner-success"
+    )
+    artifact_types = {ref.artifact_type for ref in artifact_refs}
+    assert {
+        "request",
+        "workflow_spec",
+        "events",
+        "manifest",
+        "data_buffer_snapshot",
+        "output",
+    }.issubset(artifact_types)
+    output_ref = next(ref for ref in artifact_refs if ref.artifact_type == "output")
+    assert output_ref.path == "output.json"
+    assert output_ref.size_bytes is not None and output_ref.size_bytes > 0
+    assert output_ref.checksum is not None
+
+    event_store = LocalJsonEventStore(tmp_path / "_records" / "events")
+    events = event_store.list_by_run("runner-success")
+    assert [event.event_type for event in events] == [
+        "workflow_started",
+        "step_started",
+        "step_succeeded",
+        "workflow_succeeded",
+    ]
+    assert all(event.workflow_id == "echo" for event in events)
+    assert [event.event_type for event in event_store.list_by_step("runner-success", "echo")] == [
+        "step_started",
+        "step_succeeded",
+    ]
