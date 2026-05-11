@@ -2,6 +2,14 @@
 
 from core.framework.llm.fake import FakeLLMClient
 from core.framework.llm.capabilities import ModelCapabilities
+from core.framework.llm.cost import (
+    CostEstimator,
+    LLMBudgetCheck,
+    LLMBudgetExceededError,
+    LLMBudgetGuard,
+    LLMBudgetPolicy,
+    ModelPricing,
+)
 from core.framework.llm.models import LLMClient, LLMRequest, LLMResponse, TokenUsage
 from core.framework.llm.openai_compatible import (
     LLMConfigurationError,
@@ -15,7 +23,12 @@ from core.framework.llm.router import LLMRouteError, LLMRouter, ModelDeployment,
 
 __all__ = [
     "FakeLLMClient",
+    "CostEstimator",
     "LLMClient",
+    "LLMBudgetCheck",
+    "LLMBudgetExceededError",
+    "LLMBudgetGuard",
+    "LLMBudgetPolicy",
     "LLMConfigurationError",
     "LLMProviderError",
     "LLMRequest",
@@ -25,6 +38,7 @@ __all__ = [
     "LLMRouter",
     "ModelCapabilities",
     "ModelDeployment",
+    "ModelPricing",
     "ModelRoute",
     "OpenAICompatibleClient",
     "OpenAICompatibleConfig",
