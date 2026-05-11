@@ -158,6 +158,29 @@ def test_run_detail_missing_uses_unified_error() -> None:
     assert payload["error"]["code"] == "run_not_found"
 
 
+def test_run_events_returns_events() -> None:
+    client = TestClient(create_app(run_inspection_service_factory=lambda: _FakeRunInspectionService()))
+
+    response = client.get("/api/v1/runs/run-1/events?limit=1")
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["success"] is True
+    assert payload["data"]["event_count"] == 1
+    assert payload["data"]["events"][0]["event_type"] == "workflow_started"
+
+
+def test_run_events_invalid_limit_uses_unified_error() -> None:
+    client = TestClient(create_app(run_inspection_service_factory=lambda: _FakeRunInspectionService()))
+
+    response = client.get("/api/v1/runs/run-1/events?limit=0")
+    payload = response.json()
+
+    assert response.status_code == 400
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "invalid_run_events_request"
+
+
 def test_artifact_list_returns_artifacts() -> None:
     client = TestClient(create_app(artifact_service_factory=lambda: _FakeArtifactService()))
 
@@ -374,6 +397,32 @@ class _FakeRunInspectionService:
                 "run_id": run_id,
                 "manifest": {"run_id": run_id, "status": "succeeded"},
                 "manifest_path": f".newsroom/runs/{run_id}/manifest.json",
+            }
+        )
+
+    def get_run_events(self, run_id, *, limit=None):
+        if limit is not None and limit <= 0:
+            raise ValueError("limit must be greater than zero")
+        events = [
+            {
+                "event_type": "workflow_started",
+                "occurred_at": "2026-05-11T01:00:00Z",
+                "payload": {"profile": "live-offline"},
+            },
+            {
+                "event_type": "workflow_succeeded",
+                "occurred_at": "2026-05-11T01:00:01Z",
+                "payload": {},
+            },
+        ]
+        if limit is not None:
+            events = events[:limit]
+        return _FakeResult(
+            {
+                "run_id": run_id,
+                "event_count": len(events),
+                "events": events,
+                "events_path": f".newsroom/runs/{run_id}/events.jsonl",
             }
         )
 
