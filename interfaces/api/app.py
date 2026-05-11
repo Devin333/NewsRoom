@@ -108,6 +108,14 @@ def create_app(
         )
         return _success(_model_to_dict(data))
 
+    @api.get("/api/v1/search/reports")
+    def search_reports(q: str, limit: int = 20):
+        try:
+            result = report_service_factory().search_reports(query=q, limit=limit)
+        except ValueError as exc:
+            return _error(status_code=400, code="invalid_report_search", message=str(exc))
+        return _success(result.to_dict())
+
     @api.post("/api/v1/memory/search")
     def memory_search(request: MemorySearchRequest):
         result = memory_service_factory().search(

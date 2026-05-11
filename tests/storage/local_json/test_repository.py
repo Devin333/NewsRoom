@@ -40,3 +40,13 @@ def test_local_json_repository_returns_latest_report(tmp_path) -> None:
 def test_local_json_repository_raises_when_missing_report(tmp_path) -> None:
     with pytest.raises(ReportNotFoundError, match="no local report"):
         LocalJsonRepository(tmp_path).latest_report()
+
+
+def test_local_json_repository_searches_reports(tmp_path) -> None:
+    _write_report_run(tmp_path, "old", "2026-05-10T00:00:00Z", "Chip Supply Report")
+    _write_report_run(tmp_path, "new", "2026-05-11T00:00:00Z", "AI Policy Report")
+
+    records = LocalJsonRepository(tmp_path).search_reports("policy")
+
+    assert [record.run_id for record in records] == ["new"]
+    assert records[0].title == "AI Policy Report"

@@ -66,6 +66,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     latest_parser.set_defaults(handler=_latest_report)
 
+    reports_parser = subparsers.add_parser("reports", help="Inspect persisted reports")
+    reports_subparsers = reports_parser.add_subparsers(dest="reports_command", required=True)
+    reports_search_parser = reports_subparsers.add_parser("search", help="Search persisted reports")
+    reports_search_parser.add_argument("query", help="Search query")
+    reports_search_parser.add_argument("--limit", type=int, default=20, help="Maximum reports")
+    reports_search_parser.add_argument(
+        "--artifact-root",
+        default=".newsroom/runs",
+        help="Directory where run artifacts are stored",
+    )
+    reports_search_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    reports_search_parser.set_defaults(handler=_reports_search)
+
     worker_parser = subparsers.add_parser("worker", help="Submit and process background tasks")
     worker_subparsers = worker_parser.add_subparsers(dest="worker_command", required=True)
 
@@ -531,6 +544,25 @@ def _latest_report(args: argparse.Namespace) -> int:
         print(json.dumps(record.to_dict(), ensure_ascii=False, sort_keys=True))
     else:
         print(record.report_markdown or json.dumps(record.report_json, ensure_ascii=False, indent=2))
+    return 0
+
+
+def _reports_search(args: argparse.Namespace) -> int:
+    try:
+        result = ReportApplicationService(artifact_root=args.artifact_root).search_reports(
+            query=args.query,
+            limit=args.limit,
+        )
+    except ValueError as exc:
+        print(str(exc))
+        return 1
+    payload = result.to_dict()
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        print(f"report_count={payload['report_count']}")
+        for report in payload["reports"]:
+            print(f"- {report['run_id']} title={report['title']} finished_at={report['finished_at']}")
     return 0
 
 

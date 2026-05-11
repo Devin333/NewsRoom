@@ -226,6 +226,36 @@ def test_news_cli_latest_missing_report(tmp_path, capsys) -> None:
     assert "no local report" in captured.out
 
 
+def test_news_cli_reports_search_json_output(tmp_path, capsys) -> None:
+    assert (
+        main(
+            [
+                "run",
+                "daily",
+                "--profile",
+                "live-offline",
+                "--artifact-root",
+                str(tmp_path),
+                "--run-id",
+                "search-source",
+                "--topic",
+                "AI policy",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    exit_code = main(["reports", "search", "policy", "--artifact-root", str(tmp_path), "--json"])
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert exit_code == 0
+    assert payload["query"] == "policy"
+    assert payload["report_count"] == 1
+    assert payload["reports"][0]["run_id"] == "search-source"
+
+
 class _FakePersistenceRepository:
     def __init__(self) -> None:
         self.migrated = False

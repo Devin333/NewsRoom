@@ -68,6 +68,30 @@ def test_latest_report_missing_uses_unified_error() -> None:
     assert payload["error"]["user_action_required"] is True
 
 
+def test_report_search_returns_reports() -> None:
+    client = TestClient(create_app(report_service_factory=lambda: _FakeReportService()))
+
+    response = client.get("/api/v1/search/reports?q=policy&limit=1")
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["success"] is True
+    assert payload["data"]["query"] == "policy"
+    assert payload["data"]["report_count"] == 1
+    assert payload["data"]["reports"][0]["run_id"] == "run-1"
+
+
+def test_report_search_invalid_query_uses_unified_error() -> None:
+    client = TestClient(create_app(report_service_factory=lambda: _FakeReportService()))
+
+    response = client.get("/api/v1/search/reports?q=&limit=1")
+    payload = response.json()
+
+    assert response.status_code == 400
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "invalid_report_search"
+
+
 def test_memory_search_returns_results() -> None:
     client = TestClient(create_app(memory_service_factory=lambda: _FakeMemoryService()))
 
@@ -264,6 +288,29 @@ class _FakeReportService:
             report_markdown="# Daily Intelligence",
             quality_score=0.9,
             manifest_path=".newsroom/runs/run-1/manifest.json",
+        )
+
+    def search_reports(self, *, query, limit):
+        if not query:
+            raise ValueError("query is required")
+        return _FakeResult(
+            {
+                "query": query,
+                "limit": limit,
+                "report_count": 1,
+                "reports": [
+                    {
+                        "run_id": "run-1",
+                        "status": "succeeded",
+                        "finished_at": "2026-05-11T01:00:00Z",
+                        "title": "Daily Intelligence",
+                        "quality_score": 0.9,
+                        "manifest_path": ".newsroom/runs/run-1/manifest.json",
+                        "report_json_path": ".newsroom/runs/run-1/report.json",
+                        "report_markdown_path": ".newsroom/runs/run-1/report.md",
+                    }
+                ],
+            }
         )
 
 
