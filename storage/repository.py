@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+import json
+import re
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -46,16 +48,26 @@ class PersistenceRepository(Protocol):
 
 class LocalJsonPersistenceAdapter:
     def __init__(self, artifact_root: str | Path = ".newsroom/runs") -> None:
-        self.local_json = LocalJsonRepository(artifact_root)
+        self.artifact_root = Path(artifact_root)
+        self.local_json = LocalJsonRepository(self.artifact_root)
 
     def migrate(self) -> None:
-        return None
+        (self.artifact_root / "_records" / "workflow_runs").mkdir(parents=True, exist_ok=True)
+        (self.artifact_root / "_records" / "reports").mkdir(parents=True, exist_ok=True)
 
     def save_workflow_run(self, record: WorkflowRunRecord) -> None:
-        return None
+        self.migrate()
+        _write_record_json(
+            self.artifact_root / "_records" / "workflow_runs" / f"{_safe_record_name(record.run_id)}.json",
+            asdict(record),
+        )
 
     def save_report(self, record: ReportRecord) -> None:
-        return None
+        self.migrate()
+        _write_record_json(
+            self.artifact_root / "_records" / "reports" / f"{_safe_record_name(record.report_id)}.json",
+            asdict(record),
+        )
 
 
 def repository_from_env(
@@ -152,3 +164,14 @@ def _to_dict(value: Any) -> dict[str, Any]:
     if isinstance(value, dict):
         return value
     return {}
+
+
+def _write_record_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=False, indent=2, sort_keys=True)
+        handle.write("\n")
+
+
+def _safe_record_name(value: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", value).strip("._") or "record"

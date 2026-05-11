@@ -1,8 +1,13 @@
+import json
+
 from core.framework.run_result import RunResult
 from core.framework.specs import WorkflowStatus
 from domain.reports import FinalReport
 from quality import QualityGateMetrics, ReportQualitySummary
 from storage.repository import (
+    LocalJsonPersistenceAdapter,
+    ReportRecord,
+    WorkflowRunRecord,
     report_record_from_result,
     workflow_run_record_from_result,
 )
@@ -87,3 +92,37 @@ def test_report_record_from_result_extracts_final_report() -> None:
     assert record.status == "final"
     assert record.quality_score == 1.0
     assert record.citation_coverage_score == 1.0
+
+
+def test_local_json_persistence_adapter_writes_records(tmp_path) -> None:
+    repository = LocalJsonPersistenceAdapter(tmp_path)
+
+    repository.save_workflow_run(
+        WorkflowRunRecord(
+            run_id="run-1",
+            workflow_id="daily",
+            workflow_version="1",
+            status="succeeded",
+            profile="live-offline",
+            metrics={"quality_score": 1.0},
+        )
+    )
+    repository.save_report(
+        ReportRecord(
+            report_id="run-1:final",
+            run_id="run-1",
+            status="final",
+            title="Daily",
+            quality_score=1.0,
+            citation_coverage_score=1.0,
+        )
+    )
+
+    workflow_path = tmp_path / "_records" / "workflow_runs" / "run-1.json"
+    report_path = tmp_path / "_records" / "reports" / "run-1_final.json"
+    assert workflow_path.exists()
+    assert report_path.exists()
+    assert json.loads(workflow_path.read_text(encoding="utf-8"))["run_id"] == "run-1"
+    report_payload = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report_payload["report_id"] == "run-1:final"
+    assert report_payload["citation_coverage_score"] == 1.0
