@@ -1,0 +1,120 @@
+import json
+
+from interfaces.cli import news as news_cli
+
+
+def test_news_cli_approval_lifecycle_uses_local_json_store(tmp_path, capsys) -> None:
+    store_path = tmp_path / "approvals.json"
+
+    submit_exit = news_cli.main(
+        [
+            "approvals",
+            "submit",
+            "--requested-action",
+            "publish_report",
+            "--risk-level",
+            "high",
+            "--reason",
+            "operator approval required",
+            "--payload-json",
+            '{"report_id":"report-1"}',
+            "--requested-by",
+            "worker",
+            "--store-path",
+            str(store_path),
+            "--json",
+        ]
+    )
+    submitted = json.loads(capsys.readouterr().out)
+    approval_id = submitted["approval_id"]
+
+    list_exit = news_cli.main(
+        [
+            "approvals",
+            "list",
+            "--status",
+            "pending",
+            "--store-path",
+            str(store_path),
+            "--json",
+        ]
+    )
+    listed = json.loads(capsys.readouterr().out)
+
+    approve_exit = news_cli.main(
+        [
+            "approvals",
+            "approve",
+            approval_id,
+            "--decided-by",
+            "operator",
+            "--reason",
+            "ready",
+            "--store-path",
+            str(store_path),
+            "--json",
+        ]
+    )
+    approved = json.loads(capsys.readouterr().out)
+
+    show_exit = news_cli.main(
+        [
+            "approvals",
+            "show",
+            approval_id,
+            "--store-path",
+            str(store_path),
+            "--json",
+        ]
+    )
+    shown = json.loads(capsys.readouterr().out)
+
+    assert submit_exit == 0
+    assert list_exit == 0
+    assert approve_exit == 0
+    assert show_exit == 0
+    assert listed["approval_count"] == 1
+    assert approved["approval"]["status"] == "approved"
+    assert approved["approval"]["decision"]["decided_by"] == "operator"
+    assert shown["approval"]["status"] == "approved"
+
+
+def test_news_cli_approval_modify_uses_local_json_store(tmp_path, capsys) -> None:
+    store_path = tmp_path / "approvals.json"
+
+    news_cli.main(
+        [
+            "approvals",
+            "submit",
+            "--requested-action",
+            "send_notification",
+            "--payload-json",
+            '{"channel":"email"}',
+            "--store-path",
+            str(store_path),
+            "--json",
+        ]
+    )
+    approval_id = json.loads(capsys.readouterr().out)["approval_id"]
+
+    exit_code = news_cli.main(
+        [
+            "approvals",
+            "modify",
+            approval_id,
+            "--decided-by",
+            "operator",
+            "--modifications-json",
+            '{"channel":"slack"}',
+            "--reason",
+            "internal first",
+            "--store-path",
+            str(store_path),
+            "--json",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["approval"]["status"] == "modified"
+    assert payload["approval"]["decision"]["modifications"] == {"channel": "slack"}

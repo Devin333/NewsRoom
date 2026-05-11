@@ -6,8 +6,13 @@ from datetime import UTC, datetime
 from typing import Sequence
 
 from core.framework.specs import WorkflowStatus
+from core.framework.workers.approval import ApprovalAlreadyDecidedError, ApprovalNotFoundError
 from core.framework.workers.schedule_store import ScheduleRecord
 from core.framework.workers.scheduler import ScheduleSpec
+from interfaces.services.approval_service import (
+    ApprovalApplicationService,
+    DEFAULT_APPROVAL_STORE_PATH,
+)
 from interfaces.services.artifact_service import ArtifactInspectionService
 from interfaces.services.diagnose_service import DiagnosticApplicationService
 from interfaces.services.memory_service import DEFAULT_MEMORY_COLLECTION, MemoryApplicationService
@@ -183,6 +188,89 @@ def build_parser() -> argparse.ArgumentParser:
     schedules_trigger_parser.add_argument("--now", default=None, help="Optional current time as ISO datetime")
     schedules_trigger_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     schedules_trigger_parser.set_defaults(handler=_schedules_trigger)
+
+    approvals_parser = subparsers.add_parser("approvals", help="Manage human approvals")
+    approvals_subparsers = approvals_parser.add_subparsers(dest="approvals_command", required=True)
+
+    approvals_list_parser = approvals_subparsers.add_parser("list", help="List approval requests")
+    approvals_list_parser.add_argument(
+        "--status",
+        choices=["pending", "approved", "rejected", "modified", "expired", "cancelled"],
+        default=None,
+        help="Filter by approval status",
+    )
+    approvals_list_parser.add_argument(
+        "--store-path",
+        default=DEFAULT_APPROVAL_STORE_PATH,
+        help="Local JSON approval store path",
+    )
+    approvals_list_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    approvals_list_parser.set_defaults(handler=_approvals_list)
+
+    approvals_submit_parser = approvals_subparsers.add_parser("submit", help="Submit an approval request")
+    approvals_submit_parser.add_argument("--requested-action", required=True, help="Action requiring approval")
+    approvals_submit_parser.add_argument("--risk-level", default="medium", help="Risk level")
+    approvals_submit_parser.add_argument("--reason", default=None, help="Reason for approval")
+    approvals_submit_parser.add_argument("--payload-json", default="{}", help="Approval payload JSON object")
+    approvals_submit_parser.add_argument("--task-id", default=None, help="Related task id")
+    approvals_submit_parser.add_argument("--run-id", default=None, help="Related workflow run id")
+    approvals_submit_parser.add_argument("--requested-by", default=None, help="Requester id")
+    approvals_submit_parser.add_argument("--expires-at", default=None, help="Optional expiry as ISO datetime")
+    approvals_submit_parser.add_argument("--metadata-json", default="{}", help="Approval metadata JSON object")
+    approvals_submit_parser.add_argument(
+        "--store-path",
+        default=DEFAULT_APPROVAL_STORE_PATH,
+        help="Local JSON approval store path",
+    )
+    approvals_submit_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    approvals_submit_parser.set_defaults(handler=_approvals_submit)
+
+    approvals_show_parser = approvals_subparsers.add_parser("show", help="Show an approval request")
+    approvals_show_parser.add_argument("approval_id", help="Approval id")
+    approvals_show_parser.add_argument(
+        "--store-path",
+        default=DEFAULT_APPROVAL_STORE_PATH,
+        help="Local JSON approval store path",
+    )
+    approvals_show_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    approvals_show_parser.set_defaults(handler=_approvals_show)
+
+    approvals_approve_parser = approvals_subparsers.add_parser("approve", help="Approve a request")
+    approvals_approve_parser.add_argument("approval_id", help="Approval id")
+    approvals_approve_parser.add_argument("--decided-by", required=True, help="Decision maker")
+    approvals_approve_parser.add_argument("--reason", default=None, help="Decision reason")
+    approvals_approve_parser.add_argument(
+        "--store-path",
+        default=DEFAULT_APPROVAL_STORE_PATH,
+        help="Local JSON approval store path",
+    )
+    approvals_approve_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    approvals_approve_parser.set_defaults(handler=_approvals_approve)
+
+    approvals_reject_parser = approvals_subparsers.add_parser("reject", help="Reject a request")
+    approvals_reject_parser.add_argument("approval_id", help="Approval id")
+    approvals_reject_parser.add_argument("--decided-by", required=True, help="Decision maker")
+    approvals_reject_parser.add_argument("--reason", default=None, help="Decision reason")
+    approvals_reject_parser.add_argument(
+        "--store-path",
+        default=DEFAULT_APPROVAL_STORE_PATH,
+        help="Local JSON approval store path",
+    )
+    approvals_reject_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    approvals_reject_parser.set_defaults(handler=_approvals_reject)
+
+    approvals_modify_parser = approvals_subparsers.add_parser("modify", help="Approve with modifications")
+    approvals_modify_parser.add_argument("approval_id", help="Approval id")
+    approvals_modify_parser.add_argument("--decided-by", required=True, help="Decision maker")
+    approvals_modify_parser.add_argument("--modifications-json", required=True, help="Modification JSON object")
+    approvals_modify_parser.add_argument("--reason", default=None, help="Decision reason")
+    approvals_modify_parser.add_argument(
+        "--store-path",
+        default=DEFAULT_APPROVAL_STORE_PATH,
+        help="Local JSON approval store path",
+    )
+    approvals_modify_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    approvals_modify_parser.set_defaults(handler=_approvals_modify)
 
     memory_parser = subparsers.add_parser("memory", help="Search and manage memory")
     memory_subparsers = memory_parser.add_subparsers(dest="memory_command", required=True)
@@ -542,6 +630,102 @@ def _schedules_trigger(args: argparse.Namespace) -> int:
         print(f"task_id={task['task_id']}")
         print(f"message_id={payload['enqueued']['message_id']}")
     return 0
+
+
+def _approvals_list(args: argparse.Namespace) -> int:
+    result = ApprovalApplicationService(store_path=args.store_path).list_approvals(status=args.status)
+    payload = result.to_dict()
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        print(f"approval_count={payload['approval_count']}")
+        for approval in payload["approvals"]:
+            print(
+                f"- {approval['approval_id']} status={approval['status']} "
+                f"action={approval['requested_action']} risk={approval['risk_level']}"
+            )
+    return 0
+
+
+def _approvals_submit(args: argparse.Namespace) -> int:
+    result = ApprovalApplicationService(store_path=args.store_path).submit_request(
+        requested_action=args.requested_action,
+        risk_level=args.risk_level,
+        reason=args.reason,
+        payload=_parse_json_object(args.payload_json),
+        task_id=args.task_id,
+        run_id=args.run_id,
+        requested_by=args.requested_by,
+        expires_at=_parse_cli_datetime(args.expires_at),
+        metadata=_parse_json_object(args.metadata_json),
+    )
+    _print_approval_detail(result.to_dict(), json_output=args.json)
+    return 0
+
+
+def _approvals_show(args: argparse.Namespace) -> int:
+    try:
+        result = ApprovalApplicationService(store_path=args.store_path).get_approval(args.approval_id)
+    except ApprovalNotFoundError as exc:
+        print(str(exc))
+        return 1
+    _print_approval_detail(result.to_dict(), json_output=args.json)
+    return 0
+
+
+def _approvals_approve(args: argparse.Namespace) -> int:
+    return _approval_decision(
+        args,
+        lambda service: service.approve(
+            args.approval_id,
+            decided_by=args.decided_by,
+            reason=args.reason,
+        ),
+    )
+
+
+def _approvals_reject(args: argparse.Namespace) -> int:
+    return _approval_decision(
+        args,
+        lambda service: service.reject(
+            args.approval_id,
+            decided_by=args.decided_by,
+            reason=args.reason,
+        ),
+    )
+
+
+def _approvals_modify(args: argparse.Namespace) -> int:
+    return _approval_decision(
+        args,
+        lambda service: service.modify(
+            args.approval_id,
+            decided_by=args.decided_by,
+            modifications=_parse_json_object(args.modifications_json),
+            reason=args.reason,
+        ),
+    )
+
+
+def _approval_decision(args: argparse.Namespace, call) -> int:
+    try:
+        result = call(ApprovalApplicationService(store_path=args.store_path))
+    except (ApprovalNotFoundError, ApprovalAlreadyDecidedError, ValueError) as exc:
+        print(str(exc))
+        return 1
+    _print_approval_detail(result.to_dict(), json_output=args.json)
+    return 0
+
+
+def _print_approval_detail(payload: dict, *, json_output: bool) -> None:
+    if json_output:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+        return
+    approval = payload["approval"]
+    print(f"approval_id={approval['approval_id']}")
+    print(f"status={approval['status']}")
+    print(f"requested_action={approval['requested_action']}")
+    print(f"risk_level={approval['risk_level']}")
 
 
 def _memory_search(args: argparse.Namespace) -> int:

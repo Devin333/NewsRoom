@@ -81,3 +81,24 @@ class ScheduleTickRequest(BaseModel):
 
 class ManualScheduleTriggerRequest(BaseModel):
     now: datetime | None = None
+
+
+class ApprovalSubmitRequest(BaseModel):
+    requested_action: str
+    risk_level: str = "medium"
+    reason: str | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+    task_id: str | None = None
+    run_id: str | None = None
+    requested_by: str | None = None
+    expires_at: datetime | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ApprovalDecisionRequest(BaseModel):
+    decided_by: str
+    reason: str | None = None
+
+
+class ApprovalModifyRequest(ApprovalDecisionRequest):
+    modifications: dict[str, Any] = Field(default_factory=dict)

@@ -6,11 +6,15 @@ from uuid import uuid4
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
+from core.framework.workers.approval import ApprovalAlreadyDecidedError, ApprovalNotFoundError
 from core.framework.workers.schedule_store import ScheduleNotFoundError, ScheduleRecord
 from core.framework.workers.scheduler import ScheduleSpec
 from interfaces.api.models import (
     ApiError,
     ApiResponse,
+    ApprovalDecisionRequest,
+    ApprovalModifyRequest,
+    ApprovalSubmitRequest,
     DailyRunRequest,
     DailyScheduleRequest,
     ManualScheduleTriggerRequest,
@@ -19,6 +23,7 @@ from interfaces.api.models import (
     RunResponse,
     ScheduleTickRequest,
 )
+from interfaces.services.approval_service import ApprovalApplicationService
 from interfaces.services.diagnose_service import DiagnosticApplicationService
 from interfaces.services.memory_service import MemoryApplicationService
 from interfaces.services.mcp_service import MCPApplicationService
@@ -39,6 +44,7 @@ MCPServiceFactory = Callable[[], MCPApplicationService]
 RunInspectionServiceFactory = Callable[[], RunInspectionService]
 ArtifactInspectionServiceFactory = Callable[[], ArtifactInspectionService]
 ScheduleServiceFactory = Callable[[], ScheduleApplicationService]
+ApprovalServiceFactory = Callable[[], ApprovalApplicationService]
 
 
 def create_app(
@@ -52,6 +58,7 @@ def create_app(
     run_inspection_service_factory: RunInspectionServiceFactory = RunInspectionService,
     artifact_service_factory: ArtifactInspectionServiceFactory = ArtifactInspectionService,
     schedule_service_factory: ScheduleServiceFactory = ScheduleApplicationService,
+    approval_service_factory: ApprovalServiceFactory = ApprovalApplicationService,
 ) -> FastAPI:
     api = FastAPI(title="NewsRoom API", version="0.1.0")
 
@@ -218,7 +225,84 @@ def create_app(
             return _error(status_code=400, code="invalid_schedule_trigger", message=str(exc))
         return _success(result.to_dict())
 
+    @api.get("/api/v1/approvals")
+    def list_approvals(status: str | None = None):
+        try:
+            result = approval_service_factory().list_approvals(status=status)
+        except ValueError as exc:
+            return _error(status_code=400, code="invalid_approval_status", message=str(exc))
+        return _success(result.to_dict())
+
+    @api.post("/api/v1/approvals")
+    def submit_approval(request: ApprovalSubmitRequest):
+        try:
+            result = approval_service_factory().submit_request(
+                requested_action=request.requested_action,
+                risk_level=request.risk_level,
+                reason=request.reason,
+                payload=request.payload,
+                task_id=request.task_id,
+                run_id=request.run_id,
+                requested_by=request.requested_by,
+                expires_at=request.expires_at,
+                metadata=request.metadata,
+            )
+        except ValueError as exc:
+            return _error(status_code=400, code="invalid_approval", message=str(exc))
+        return _success(result.to_dict())
+
+    @api.get("/api/v1/approvals/{approval_id}")
+    def get_approval(approval_id: str):
+        try:
+            result = approval_service_factory().get_approval(approval_id)
+        except ApprovalNotFoundError as exc:
+            return _error(status_code=404, code="approval_not_found", message=str(exc))
+        return _success(result.to_dict())
+
+    @api.post("/api/v1/approvals/{approval_id}/approve")
+    def approve_approval(approval_id: str, request: ApprovalDecisionRequest):
+        return _approval_decision_response(
+            lambda: approval_service_factory().approve(
+                approval_id,
+                decided_by=request.decided_by,
+                reason=request.reason,
+            )
+        )
+
+    @api.post("/api/v1/approvals/{approval_id}/reject")
+    def reject_approval(approval_id: str, request: ApprovalDecisionRequest):
+        return _approval_decision_response(
+            lambda: approval_service_factory().reject(
+                approval_id,
+                decided_by=request.decided_by,
+                reason=request.reason,
+            )
+        )
+
+    @api.post("/api/v1/approvals/{approval_id}/modify")
+    def modify_approval(approval_id: str, request: ApprovalModifyRequest):
+        return _approval_decision_response(
+            lambda: approval_service_factory().modify(
+                approval_id,
+                decided_by=request.decided_by,
+                modifications=request.modifications,
+                reason=request.reason,
+            )
+        )
+
     return api
+
+
+def _approval_decision_response(call):
+    try:
+        result = call()
+    except ApprovalNotFoundError as exc:
+        return _error(status_code=404, code="approval_not_found", message=str(exc))
+    except ApprovalAlreadyDecidedError as exc:
+        return _error(status_code=409, code="approval_already_decided", message=str(exc))
+    except ValueError as exc:
+        return _error(status_code=400, code="invalid_approval_decision", message=str(exc))
+    return _success(result.to_dict())
 
 
 def _success(data: dict) -> dict:
