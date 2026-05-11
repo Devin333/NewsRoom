@@ -27,11 +27,13 @@ def test_mcp_catalog_lists_tools_without_calling_factories() -> None:
     assert "news.report.search" in tool_names
     assert "news.run.show" in tool_names
     assert "news.run.events" in tool_names
+    assert "news.run.replay" in tool_names
     assert "news.approval.submit" in tool_names
     assert "news://reports/latest" in resource_uris
     assert "news://reports/{report_id}" in resource_uris
     assert "news://runs/{run_id}/manifest" in resource_uris
     assert "news://runs/{run_id}/events" in resource_uris
+    assert "news://runs/{run_id}/replay" in resource_uris
     assert "news://runs/{run_id}/artifacts/{artifact_key}" in resource_uris
     prompt_names = [prompt["name"] for prompt in catalog["prompts"]]
     assert "news.evidence_audit" in prompt_names
@@ -319,6 +321,22 @@ def test_mcp_run_events_reads_real_local_events(tmp_path) -> None:
     assert result.data["events"][0]["event_type"] == "workflow_started"
 
 
+def test_mcp_run_replay_reads_real_local_replay_bundle(tmp_path) -> None:
+    _write_run_with_replay_artifacts(tmp_path, "run-replay")
+    service = MCPApplicationService(
+        run_inspection_service_factory=lambda: RunInspectionService(artifact_root=tmp_path)
+    )
+
+    result = service.call_tool("news.run.replay", {"run_id": "run-replay"})
+
+    artifacts = {artifact["artifact_key"]: artifact for artifact in result.data["artifacts"]}
+    assert result.success is True
+    assert result.data["run_id"] == "run-replay"
+    assert result.data["event_count"] == 1
+    assert result.data["events"][0]["payload"]["token"] == "[redacted]"
+    assert artifacts["report_json"]["content"]["api_key"] == "[redacted]"
+
+
 def test_mcp_reads_run_events_resource_from_local_events(tmp_path) -> None:
     _write_run_with_events(
         tmp_path,
@@ -341,6 +359,21 @@ def test_mcp_reads_run_events_resource_from_local_events(tmp_path) -> None:
     assert result.data["event_count"] == 1
     assert result.data["events"][0]["payload"]["token"] == "[redacted]"
     assert result.data["events"][0]["payload"]["safe"] == "visible"
+
+
+def test_mcp_reads_run_replay_resource_from_local_artifacts(tmp_path) -> None:
+    _write_run_with_replay_artifacts(tmp_path, "run-replay-resource")
+    service = MCPApplicationService(
+        run_inspection_service_factory=lambda: RunInspectionService(artifact_root=tmp_path)
+    )
+
+    result = service.read_resource("news://runs/run-replay-resource/replay")
+
+    artifacts = {artifact["artifact_key"]: artifact for artifact in result.data["artifacts"]}
+    assert result.success is True
+    assert result.data["run_id"] == "run-replay-resource"
+    assert result.data["artifact_count"] == 3
+    assert artifacts["report_markdown"]["content"] == "# Replay\n"
 
 
 def test_mcp_reads_run_artifact_resource_from_local_artifact(tmp_path) -> None:
@@ -489,3 +522,31 @@ def _write_run_with_events(root, run_id, events) -> None:
         "\n".join(json.dumps(event) for event in events) + "\n",
         encoding="utf-8",
     )
+
+
+def _write_run_with_replay_artifacts(root, run_id) -> None:
+    run_dir = root / run_id
+    run_dir.mkdir()
+    (run_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "run_id": run_id,
+                "status": "succeeded",
+                "artifacts": {
+                    "events": "events.jsonl",
+                    "report_json": "report.json",
+                    "report_markdown": "report.md",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "events.jsonl").write_text(
+        json.dumps({"event_type": "workflow_started", "payload": {"token": "hidden"}}) + "\n",
+        encoding="utf-8",
+    )
+    (run_dir / "report.json").write_text(
+        json.dumps({"title": "Replay", "api_key": "hidden"}),
+        encoding="utf-8",
+    )
+    (run_dir / "report.md").write_text("# Replay\n", encoding="utf-8")

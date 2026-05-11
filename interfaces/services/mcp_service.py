@@ -24,6 +24,8 @@ RUN_MANIFEST_RESOURCE_PREFIX = "news://runs/"
 RUN_MANIFEST_RESOURCE_SUFFIX = "/manifest"
 RUN_EVENTS_RESOURCE_TEMPLATE = "news://runs/{run_id}/events"
 RUN_EVENTS_RESOURCE_SUFFIX = "/events"
+RUN_REPLAY_RESOURCE_TEMPLATE = "news://runs/{run_id}/replay"
+RUN_REPLAY_RESOURCE_SUFFIX = "/replay"
 RUN_ARTIFACT_RESOURCE_TEMPLATE = "news://runs/{run_id}/artifacts/{artifact_key}"
 RUN_ARTIFACT_RESOURCE_SEPARATOR = "/artifacts/"
 SOURCE_HEALTH_RESOURCE_URI = "news://sources/health"
@@ -103,6 +105,9 @@ class MCPApplicationService:
             run_id = _run_events_resource_run_id(uri)
             if run_id is not None:
                 return self._read_run_events_resource(uri, run_id)
+            run_id = _run_replay_resource_run_id(uri)
+            if run_id is not None:
+                return self._read_run_replay_resource(uri, run_id)
             if uri == SOURCE_HEALTH_RESOURCE_URI:
                 return self._read_source_health_resource()
             return MCPResourceReadResult(
@@ -138,6 +143,8 @@ class MCPApplicationService:
                 return self._run_show(args)
             if tool_name == "news.run.events":
                 return self._run_events(args)
+            if tool_name == "news.run.replay":
+                return self._run_replay(args)
             if tool_name == "news.approval.submit":
                 return self._approval_submit(args)
             if tool_name == "news.approval.list":
@@ -256,6 +263,17 @@ class MCPApplicationService:
             data=result.to_dict(),
         )
 
+    def _run_replay(self, args: dict[str, Any]) -> MCPToolCallResult:
+        run_id = str(args.get("run_id") or "")
+        if not run_id:
+            raise ValueError("run_id is required")
+        result = self.run_inspection_service_factory().replay_run(run_id)
+        return MCPToolCallResult(
+            tool_name="news.run.replay",
+            success=True,
+            data=result.to_dict(),
+        )
+
     def _approval_submit(self, args: dict[str, Any]) -> MCPToolCallResult:
         requested_action = str(args.get("requested_action") or "")
         if not requested_action:
@@ -358,6 +376,14 @@ class MCPApplicationService:
 
     def _read_run_events_resource(self, uri: str, run_id: str) -> MCPResourceReadResult:
         result = self.run_inspection_service_factory().get_run_events(run_id)
+        return MCPResourceReadResult(
+            uri=uri,
+            success=True,
+            data=result.to_dict(),
+        )
+
+    def _read_run_replay_resource(self, uri: str, run_id: str) -> MCPResourceReadResult:
+        result = self.run_inspection_service_factory().replay_run(run_id)
         return MCPResourceReadResult(
             uri=uri,
             success=True,
@@ -476,6 +502,16 @@ def _tools() -> list[MCPTool]:
             },
         ),
         MCPTool(
+            name="news.run.replay",
+            title="Replay run artifacts",
+            description="Read a redacted run replay bundle through RunInspectionService.",
+            input_schema={
+                "type": "object",
+                "required": ["run_id"],
+                "properties": {"run_id": {"type": "string"}},
+            },
+        ),
+        MCPTool(
             name="news.approval.submit",
             title="Submit approval request",
             description="Submit a human approval request through ApprovalApplicationService.",
@@ -585,6 +621,11 @@ def _resources() -> list[MCPResource]:
             uri=RUN_EVENTS_RESOURCE_TEMPLATE,
             name="Run Events",
             description="Structured workflow run events by run id.",
+        ),
+        MCPResource(
+            uri=RUN_REPLAY_RESOURCE_TEMPLATE,
+            name="Run Replay",
+            description="Redacted workflow run replay bundle by run id.",
         ),
         MCPResource(
             uri=RUN_ARTIFACT_RESOURCE_TEMPLATE,
@@ -783,6 +824,15 @@ def _run_events_resource_run_id(uri: str) -> str | None:
     ):
         return None
     run_id = uri[len(RUN_MANIFEST_RESOURCE_PREFIX) : -len(RUN_EVENTS_RESOURCE_SUFFIX)]
+    return run_id or None
+
+
+def _run_replay_resource_run_id(uri: str) -> str | None:
+    if not uri.startswith(RUN_MANIFEST_RESOURCE_PREFIX) or not uri.endswith(
+        RUN_REPLAY_RESOURCE_SUFFIX
+    ):
+        return None
+    run_id = uri[len(RUN_MANIFEST_RESOURCE_PREFIX) : -len(RUN_REPLAY_RESOURCE_SUFFIX)]
     return run_id or None
 
 

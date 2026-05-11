@@ -49,6 +49,24 @@ def test_stdio_handles_resource_read() -> None:
     assert response["result"]["data"]["source_count"] == 1
 
 
+def test_stdio_handles_run_replay_resource_read() -> None:
+    service = _FakeMCPService()
+
+    response = handle_jsonrpc_request(
+        {
+            "jsonrpc": "2.0",
+            "id": "read-replay",
+            "method": "resources/read",
+            "params": {"uri": "news://runs/run-1/replay"},
+        },
+        service=service,
+    )
+
+    assert service.resource_reads == ["news://runs/run-1/replay"]
+    assert response["result"]["success"] is True
+    assert response["result"]["data"]["run_id"] == "run-1"
+
+
 def test_stdio_handles_prompt_get() -> None:
     service = _FakeMCPService()
 
@@ -133,7 +151,7 @@ class _FakeResourceResult:
             "uri": self.uri,
             "success": True,
             "mime_type": "application/json",
-            "data": {"source_count": 1},
+            "data": _resource_payload(self.uri),
             "error_type": None,
             "error_message": None,
         }
@@ -158,3 +176,9 @@ class _FakePromptResult:
             "error_type": None,
             "error_message": None,
         }
+
+
+def _resource_payload(uri):
+    if uri.endswith("/replay"):
+        return {"run_id": "run-1", "artifact_count": 0, "artifacts": []}
+    return {"source_count": 1}
