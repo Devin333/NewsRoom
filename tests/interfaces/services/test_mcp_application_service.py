@@ -3,6 +3,7 @@ import json
 from interfaces.services.approval_service import ApprovalApplicationService
 from interfaces.services.mcp_service import MCPApplicationService
 from interfaces.services.report_service import ReportApplicationService
+from interfaces.services.run_inspection_service import RunInspectionService
 
 
 def test_mcp_catalog_lists_tools_without_calling_factories() -> None:
@@ -13,14 +14,18 @@ def test_mcp_catalog_lists_tools_without_calling_factories() -> None:
         memory_service_factory=_raising_factory,
         diagnostic_service_factory=_raising_factory,
         approval_service_factory=_raising_factory,
+        run_inspection_service_factory=_raising_factory,
     )
 
     catalog = service.catalog().to_dict()
     tool_names = [tool["name"] for tool in catalog["tools"]]
+    resource_uris = [resource["uri"] for resource in catalog["resources"]]
 
     assert "news.daily.enqueue" in tool_names
+    assert "news.run.show" in tool_names
     assert "news.approval.submit" in tool_names
-    assert "news://reports/latest" in [resource["uri"] for resource in catalog["resources"]]
+    assert "news://reports/latest" in resource_uris
+    assert "news://runs/{run_id}/manifest" in resource_uris
     assert "news.evidence_audit" in [prompt["name"] for prompt in catalog["prompts"]]
 
 
@@ -128,6 +133,62 @@ def test_mcp_unknown_resource_fails_safely() -> None:
 
     assert result.success is False
     assert result.error_type == "MCPResourceNotFound"
+
+
+def test_mcp_run_show_reads_real_local_manifest(tmp_path) -> None:
+    run_dir = tmp_path / "run-1"
+    run_dir.mkdir()
+    (run_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "run_id": "run-1",
+                "status": "succeeded",
+                "workflow_id": "daily_intelligence",
+            }
+        ),
+        encoding="utf-8",
+    )
+    service = MCPApplicationService(
+        run_inspection_service_factory=lambda: RunInspectionService(artifact_root=tmp_path)
+    )
+
+    result = service.call_tool("news.run.show", {"run_id": "run-1"})
+
+    assert result.success is True
+    assert result.data["run_id"] == "run-1"
+    assert result.data["manifest"]["workflow_id"] == "daily_intelligence"
+
+
+def test_mcp_reads_run_manifest_resource_from_local_manifest(tmp_path) -> None:
+    run_dir = tmp_path / "run-2"
+    run_dir.mkdir()
+    (run_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "run_id": "run-2",
+                "status": "failed",
+                "workflow_id": "daily_intelligence",
+            }
+        ),
+        encoding="utf-8",
+    )
+    service = MCPApplicationService(
+        run_inspection_service_factory=lambda: RunInspectionService(artifact_root=tmp_path)
+    )
+
+    result = service.read_resource("news://runs/run-2/manifest")
+
+    assert result.success is True
+    assert result.data["run_id"] == "run-2"
+    assert result.data["manifest"]["status"] == "failed"
+
+
+def test_mcp_run_show_rejects_invalid_run_id() -> None:
+    result = MCPApplicationService().call_tool("news.run.show", {"run_id": "../secret"})
+
+    assert result.success is False
+    assert result.error_type == "ValueError"
+    assert "invalid run id" in result.error_message
 
 
 def _raising_factory():

@@ -16,6 +16,9 @@ from interfaces.mcp.models import (
 DEFAULT_DAILY_QUEUE = "news:queue:daily"
 DEFAULT_MEMORY_COLLECTION = "report_sections"
 LATEST_REPORT_RESOURCE_URI = "news://reports/latest"
+RUN_MANIFEST_RESOURCE_TEMPLATE = "news://runs/{run_id}/manifest"
+RUN_MANIFEST_RESOURCE_PREFIX = "news://runs/"
+RUN_MANIFEST_RESOURCE_SUFFIX = "/manifest"
 SOURCE_HEALTH_RESOURCE_URI = "news://sources/health"
 
 
@@ -29,6 +32,7 @@ class MCPApplicationService:
         memory_service_factory: Callable[[], Any] | None = None,
         diagnostic_service_factory: Callable[[], Any] | None = None,
         approval_service_factory: Callable[[], Any] | None = None,
+        run_inspection_service_factory: Callable[[], Any] | None = None,
     ) -> None:
         self.worker_service_factory = worker_service_factory or _worker_service_factory
         self.report_service_factory = report_service_factory or _report_service_factory
@@ -36,6 +40,9 @@ class MCPApplicationService:
         self.memory_service_factory = memory_service_factory or _memory_service_factory
         self.diagnostic_service_factory = diagnostic_service_factory or _diagnostic_service_factory
         self.approval_service_factory = approval_service_factory or _approval_service_factory
+        self.run_inspection_service_factory = (
+            run_inspection_service_factory or _run_inspection_service_factory
+        )
 
     def catalog(self) -> MCPCatalog:
         return MCPCatalog(tools=_tools(), resources=_resources(), prompts=_prompts())
@@ -44,6 +51,9 @@ class MCPApplicationService:
         try:
             if uri == LATEST_REPORT_RESOURCE_URI:
                 return self._read_latest_report_resource()
+            run_id = _run_manifest_resource_run_id(uri)
+            if run_id is not None:
+                return self._read_run_manifest_resource(uri, run_id)
             if uri == SOURCE_HEALTH_RESOURCE_URI:
                 return self._read_source_health_resource()
             return MCPResourceReadResult(
@@ -73,6 +83,8 @@ class MCPApplicationService:
                 return self._memory_search(args)
             if tool_name == "news.diagnose":
                 return self._diagnose()
+            if tool_name == "news.run.show":
+                return self._run_show(args)
             if tool_name == "news.approval.submit":
                 return self._approval_submit(args)
             if tool_name == "news.approval.list":
@@ -150,6 +162,17 @@ class MCPApplicationService:
         result = self.diagnostic_service_factory().run()
         return MCPToolCallResult(
             tool_name="news.diagnose",
+            success=True,
+            data=result.to_dict(),
+        )
+
+    def _run_show(self, args: dict[str, Any]) -> MCPToolCallResult:
+        run_id = str(args.get("run_id") or "")
+        if not run_id:
+            raise ValueError("run_id is required")
+        result = self.run_inspection_service_factory().get_run(run_id)
+        return MCPToolCallResult(
+            tool_name="news.run.show",
             success=True,
             data=result.to_dict(),
         )
@@ -238,6 +261,14 @@ class MCPApplicationService:
             data=_to_dict(record),
         )
 
+    def _read_run_manifest_resource(self, uri: str, run_id: str) -> MCPResourceReadResult:
+        result = self.run_inspection_service_factory().get_run(run_id)
+        return MCPResourceReadResult(
+            uri=uri,
+            success=True,
+            data=result.to_dict(),
+        )
+
     def _read_source_health_resource(self) -> MCPResourceReadResult:
         result = self.source_service_factory().source_health(enabled_only=True)
         return MCPResourceReadResult(
@@ -299,6 +330,16 @@ def _tools() -> list[MCPTool]:
             title="Run diagnostics",
             description="Run local dependency diagnostics through DiagnosticApplicationService.",
             input_schema={"type": "object", "properties": {}},
+        ),
+        MCPTool(
+            name="news.run.show",
+            title="Show run",
+            description="Read one workflow run manifest through RunInspectionService.",
+            input_schema={
+                "type": "object",
+                "required": ["run_id"],
+                "properties": {"run_id": {"type": "string"}},
+            },
         ),
         MCPTool(
             name="news.approval.submit",
@@ -397,6 +438,11 @@ def _resources() -> list[MCPResource]:
             description="Latest redacted report view.",
         ),
         MCPResource(
+            uri=RUN_MANIFEST_RESOURCE_TEMPLATE,
+            name="Run Manifest",
+            description="Workflow run manifest by run id.",
+        ),
+        MCPResource(
             uri=SOURCE_HEALTH_RESOURCE_URI,
             name="Source Health",
             description="Current source health view.",
@@ -468,6 +514,21 @@ def _approval_service_factory():
     from interfaces.services.approval_service import ApprovalApplicationService
 
     return ApprovalApplicationService()
+
+
+def _run_inspection_service_factory():
+    from interfaces.services.run_inspection_service import RunInspectionService
+
+    return RunInspectionService()
+
+
+def _run_manifest_resource_run_id(uri: str) -> str | None:
+    if not uri.startswith(RUN_MANIFEST_RESOURCE_PREFIX) or not uri.endswith(
+        RUN_MANIFEST_RESOURCE_SUFFIX
+    ):
+        return None
+    run_id = uri[len(RUN_MANIFEST_RESOURCE_PREFIX) : -len(RUN_MANIFEST_RESOURCE_SUFFIX)]
+    return run_id or None
 
 
 def _approval_id(args: dict[str, Any]) -> str:
