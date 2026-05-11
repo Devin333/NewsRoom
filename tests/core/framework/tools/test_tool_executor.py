@@ -1,3 +1,6 @@
+import json
+
+from core.framework.artifacts import ArtifactManager
 from core.framework.tools import (
     REDACTED_VALUE,
     ToolCall,
@@ -133,3 +136,66 @@ def test_tool_redactor_handles_nested_lists() -> None:
         {"password": REDACTED_VALUE},
         {"message": REDACTED_VALUE},
     ]
+
+
+def test_tool_executor_spills_large_redacted_result_to_artifact(tmp_path) -> None:
+    registry = ToolRegistry()
+    registry.register(
+        ToolDefinition(name="memory.large", input_schema={"required": ["query"]}),
+        lambda args: {
+            "items": [{"title": args["query"], "body": "x" * 80}],
+            "token": "hidden-token",
+        },
+    )
+    artifact_manager = ArtifactManager(tmp_path)
+    artifact_manager.start_run("run-1")
+    executor = ToolExecutor(
+        registry,
+        artifact_manager=artifact_manager,
+        run_id="run-1",
+    )
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="memory.large",
+            arguments={"query": "chips"},
+            requested_by_agent_id="analyst",
+            call_id="call-large",
+        ),
+        ToolPolicy(allowed_tools=["memory.large"], max_result_chars_inline=20),
+    )
+
+    payload = observation.to_dict()
+    artifact_ref = payload["result"]["artifact_refs"][0]
+    artifact_path = tmp_path / "run-1" / artifact_ref["relative_path"]
+    artifact_payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+
+    assert observation.status == ToolStatus.SUCCEEDED
+    assert observation.result.output is None
+    assert observation.result.output_bytes is not None
+    assert observation.result.output_bytes > 20
+    assert "Tool result spilled" in (observation.result.output_summary or "")
+    assert artifact_ref["artifact_id"] == "tool_result:call-large"
+    assert artifact_ref["content_type"] == "application/json"
+    assert artifact_path.exists()
+    assert artifact_payload["call"]["call_id"] == "call-large"
+    assert artifact_payload["output"]["token"] == REDACTED_VALUE
+    assert "hidden-token" not in artifact_path.read_text(encoding="utf-8")
+
+
+def test_tool_executor_keeps_large_result_inline_without_artifact_context() -> None:
+    registry = ToolRegistry()
+    registry.register(
+        ToolDefinition(name="memory.large", input_schema={"required": ["query"]}),
+        lambda args: {"items": ["x" * 80], "token": "hidden-token"},
+    )
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(tool_name="memory.large", arguments={"query": "chips"}),
+        ToolPolicy(allowed_tools=["memory.large"], max_result_chars_inline=20),
+    )
+
+    assert observation.status == ToolStatus.SUCCEEDED
+    assert observation.result.output == {"items": ["x" * 80], "token": REDACTED_VALUE}
+    assert observation.result.artifact_refs == []

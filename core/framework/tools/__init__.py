@@ -2,6 +2,7 @@
 
 from core.framework.tools.executor import ToolExecutor
 from core.framework.tools.models import (
+    ArtifactRef,
     ToolCall,
     ToolDefinition,
     ToolDefinitionError,
@@ -18,6 +19,7 @@ from core.framework.tools.redaction import REDACTED_VALUE, redact_sensitive_valu
 
 __all__ = [
     "REDACTED_VALUE",
+    "ArtifactRef",
     "RegisteredTool",
     "ToolCall",
     "ToolDefinition",

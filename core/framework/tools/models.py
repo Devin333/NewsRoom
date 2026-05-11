@@ -64,6 +64,8 @@ class ToolPolicy:
     allowed_tools: list[str] = field(default_factory=list)
     blocked_tools: list[str] = field(default_factory=list)
     require_explicit_allowlist: bool = True
+    max_result_chars_inline: int = 8000
+    spill_large_results_to_artifact: bool = True
 
     def allows(self, tool_name: str) -> bool:
         if tool_name in self.blocked_tools:
@@ -90,20 +92,42 @@ class ToolCall:
 
 
 @dataclass(frozen=True)
+class ArtifactRef:
+    artifact_id: str
+    relative_path: str
+    content_type: str = "application/json"
+    size_bytes: int | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "artifact_id": self.artifact_id,
+            "relative_path": self.relative_path,
+            "content_type": self.content_type,
+            "size_bytes": self.size_bytes,
+        }
+
+
+@dataclass(frozen=True)
 class ToolResult:
     status: ToolStatus
     output: Any = None
+    output_summary: str | None = None
+    artifact_refs: list[ArtifactRef] = field(default_factory=list)
     error_type: str | None = None
     error_message: str | None = None
     redacted: bool = True
+    output_bytes: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "status": self.status.value,
             "output": redact_sensitive_values(self.output),
+            "output_summary": self.output_summary,
+            "artifact_refs": [artifact_ref.to_dict() for artifact_ref in self.artifact_refs],
             "error_type": self.error_type,
             "error_message": self.error_message,
             "redacted": self.redacted,
+            "output_bytes": self.output_bytes,
         }
 
 
