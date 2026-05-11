@@ -7,7 +7,7 @@ from core.framework.agent_loop.models import AgentLoopResult, AgentSpec
 from core.framework.agent_loop.parser import AgentActionParser
 from core.framework.agent_loop.prompt import PromptBuilder
 from core.framework.agent_loop.judge import OutputJudge
-from core.framework.llm import FakeLLMClient
+from core.framework.llm import LLMClient
 from core.framework.tools import ToolExecutor, ToolRegistry
 
 
@@ -15,7 +15,7 @@ class AgentRunner:
     def __init__(
         self,
         *,
-        llm_client: FakeLLMClient,
+        llm_client: LLMClient,
         tool_registry: ToolRegistry,
     ) -> None:
         self._llm_client = llm_client

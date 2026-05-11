@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol
 
 from core.framework.llm.redaction import redact_sensitive_values
 
@@ -55,3 +55,8 @@ class LLMResponse:
         if redact:
             return redact_sensitive_values(payload)
         return payload
+
+
+class LLMClient(Protocol):
+    def complete(self, request: LLMRequest) -> LLMResponse:
+        ...

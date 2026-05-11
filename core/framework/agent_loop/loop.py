@@ -13,7 +13,7 @@ from core.framework.agent_loop.models import (
 )
 from core.framework.agent_loop.parser import AgentActionParser
 from core.framework.agent_loop.prompt import PromptBuilder
-from core.framework.llm import FakeLLMClient
+from core.framework.llm import LLMClient
 from core.framework.tools import ToolCall, ToolExecutor, ToolObservation, ToolStatus
 
 
@@ -21,7 +21,7 @@ class AgentLoop:
     def __init__(
         self,
         *,
-        llm_client: FakeLLMClient,
+        llm_client: LLMClient,
         tool_executor: ToolExecutor,
         prompt_builder: PromptBuilder | None = None,
         action_parser: AgentActionParser | None = None,

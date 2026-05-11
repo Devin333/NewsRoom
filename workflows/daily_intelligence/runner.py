@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from core.framework import RunResult, WorkflowRunner
-from core.framework.llm import LLMRequest, OpenAICompatibleClient, OpenAICompatibleConfig
+from core.framework.llm import LLMClient, LLMRequest, OpenAICompatibleClient, OpenAICompatibleConfig
 from core.framework.specs import EdgeSpec, StepSpec, WorkflowSpec
 from core.framework.workflow import FunctionStepRegistry, ScopedDataBuffer
 from domain.reports import BlockedReport, FinalReport, render_markdown
@@ -30,7 +30,7 @@ class DailyIntelligenceRunner:
         artifact_root: str | Path = ".newsroom/runs",
         source_registry: SourceRegistry | None = None,
         feed_connector: FeedConnector | None = None,
-        llm_client: OpenAICompatibleClient | None = None,
+        llm_client: LLMClient | None = None,
         source_health_manager: BasicSourceHealthManager | None = None,
     ) -> None:
         self.artifact_root = Path(artifact_root)
