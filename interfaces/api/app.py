@@ -29,6 +29,7 @@ from interfaces.api.models import (
     RunResponse,
     ScheduleTickRequest,
 )
+from interfaces.api.rate_limit import Clock, InMemoryRateLimiter
 from interfaces.services.approval_service import ApprovalApplicationService
 from interfaces.services.diagnose_service import DiagnosticApplicationService
 from interfaces.services.memory_service import MemoryApplicationService
@@ -73,9 +74,33 @@ def create_app(
     schedule_service_factory: ScheduleServiceFactory = ScheduleApplicationService,
     approval_service_factory: ApprovalServiceFactory = ApprovalApplicationService,
     api_token: str | None = None,
+    api_rate_limit_per_minute: int | None = None,
+    rate_limit_clock: Clock | None = None,
 ) -> FastAPI:
     api = FastAPI(title="NewsRoom API", version="0.1.0")
     resolved_api_token = _normalize_api_token(api_token)
+    rate_limiter = _build_rate_limiter(api_rate_limit_per_minute, clock=rate_limit_clock)
+
+    if rate_limiter is not None:
+
+        @api.middleware("http")
+        async def rate_limit_middleware(request: Request, call_next):
+            if _requires_api_auth(request.url.path):
+                decision = rate_limiter.check(_client_rate_limit_key(request))
+                if not decision.allowed:
+                    return _error(
+                        status_code=429,
+                        code="rate_limited",
+                        message="API rate limit exceeded",
+                        details={
+                            "limit": decision.limit,
+                            "window_seconds": rate_limiter.window_seconds,
+                            "remaining": decision.remaining,
+                        },
+                        retryable=True,
+                        headers={"Retry-After": str(decision.retry_after_seconds)},
+                    )
+            return await call_next(request)
 
     if resolved_api_token:
 
@@ -602,4 +627,33 @@ def _is_authorized_bearer(authorization: str | None, expected_token: str) -> boo
     return hmac.compare_digest(token.strip(), expected_token)
 
 
-app = create_app(api_token=os.environ.get("NEWS_API_TOKEN"))
+def _build_rate_limiter(
+    limit: int | None,
+    *,
+    clock: Clock | None = None,
+) -> InMemoryRateLimiter | None:
+    if limit is None:
+        return None
+    return InMemoryRateLimiter(limit=limit, window_seconds=60, clock=clock)
+
+
+def _client_rate_limit_key(request: Request) -> str:
+    if request.client is None:
+        return "unknown"
+    return request.client.host or "unknown"
+
+
+def _optional_positive_int_env(name: str) -> int | None:
+    value = os.environ.get(name)
+    if value is None or value == "":
+        return None
+    parsed = int(value)
+    if parsed <= 0:
+        raise ValueError(f"{name} must be positive")
+    return parsed
+
+
+app = create_app(
+    api_token=os.environ.get("NEWS_API_TOKEN"),
+    api_rate_limit_per_minute=_optional_positive_int_env("NEWS_API_RATE_LIMIT_PER_MINUTE"),
+)
