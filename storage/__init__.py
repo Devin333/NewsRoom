@@ -20,6 +20,7 @@ from storage.lifecycle import (
     RetentionPolicy,
 )
 from storage.lineage import LineageRef, LocalJsonLineageStore, lineage_refs_from_evidence_bundle
+from storage.metrics import LocalStorageMetricsCollector, StorageMetrics
 from storage.security import REDACTED_VALUE, RedactionReport, RedactionResult, StorageRedactor
 
 __all__ = [
@@ -41,6 +42,7 @@ __all__ = [
     "LocalJsonConversationStore",
     "LineageRef",
     "LocalJsonLineageStore",
+    "LocalStorageMetricsCollector",
     "REDACTED_VALUE",
     "RedactionReport",
     "RedactionResult",
@@ -48,6 +50,7 @@ __all__ = [
     "RetentionPlan",
     "RetentionPolicy",
     "StorageRedactor",
+    "StorageMetrics",
     "WorkflowCheckpoint",
     "lineage_refs_from_evidence_bundle",
 ]

@@ -52,6 +52,7 @@ packages = [
   "storage.lifecycle",
   "storage.lineage",
   "storage.memory",
+  "storage.metrics",
   "storage.postgres",
   "storage.security",
   "storage.vector",
