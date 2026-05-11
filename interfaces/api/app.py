@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hmac
 import os
+import re
+from contextvars import ContextVar
 from datetime import datetime
 from typing import Callable
 from uuid import uuid4
@@ -52,6 +54,9 @@ ArtifactInspectionServiceFactory = Callable[[], ArtifactInspectionService]
 StorageServiceFactory = Callable[[], StorageApplicationService]
 ScheduleServiceFactory = Callable[[], ScheduleApplicationService]
 ApprovalServiceFactory = Callable[[], ApprovalApplicationService]
+REQUEST_ID_HEADER = "X-Request-ID"
+_REQUEST_ID_CONTEXT: ContextVar[str | None] = ContextVar("news_api_request_id", default=None)
+_REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 
 
 def create_app(
@@ -88,6 +93,17 @@ def create_app(
                     headers={"WWW-Authenticate": "Bearer"},
                 )
             return await call_next(request)
+
+    @api.middleware("http")
+    async def request_id_middleware(request: Request, call_next):
+        request_id = _request_id_from_header(request.headers.get(REQUEST_ID_HEADER)) or _new_request_id()
+        context_token = _REQUEST_ID_CONTEXT.set(request_id)
+        try:
+            response = await call_next(request)
+        finally:
+            _REQUEST_ID_CONTEXT.reset(context_token)
+        response.headers[REQUEST_ID_HEADER] = request_id
+        return response
 
     @api.get("/health")
     def health() -> dict:
@@ -550,7 +566,20 @@ def _optional_str(value) -> str | None:
 
 
 def _request_id() -> str:
+    return _REQUEST_ID_CONTEXT.get() or _new_request_id()
+
+
+def _new_request_id() -> str:
     return f"req_{uuid4().hex}"
+
+
+def _request_id_from_header(value: str | None) -> str | None:
+    if value is None:
+        return None
+    request_id = value.strip()
+    if not _REQUEST_ID_PATTERN.fullmatch(request_id):
+        return None
+    return request_id
 
 
 def _normalize_api_token(api_token: str | None) -> str | None:

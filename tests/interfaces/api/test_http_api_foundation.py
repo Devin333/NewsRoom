@@ -19,7 +19,31 @@ def test_health_uses_common_envelope() -> None:
     assert payload["success"] is True
     assert payload["data"]["status"] == "ok"
     assert payload["request_id"].startswith("req_")
+    assert response.headers["x-request-id"] == payload["request_id"]
     assert payload["schema_version"] == "1.0"
+
+
+def test_api_uses_client_request_id_header() -> None:
+    client = TestClient(create_app())
+
+    response = client.get("/health", headers={"X-Request-ID": "client-req_1.2"})
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["request_id"] == "client-req_1.2"
+    assert response.headers["x-request-id"] == "client-req_1.2"
+
+
+def test_api_replaces_invalid_request_id_header() -> None:
+    client = TestClient(create_app())
+
+    response = client.get("/health", headers={"X-Request-ID": "../secret"})
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["request_id"].startswith("req_")
+    assert payload["request_id"] != "../secret"
+    assert response.headers["x-request-id"] == payload["request_id"]
 
 
 def test_health_does_not_require_api_token_when_auth_enabled() -> None:
@@ -47,6 +71,17 @@ def test_api_token_auth_rejects_missing_token() -> None:
     assert payload["success"] is False
     assert payload["error"]["code"] == "unauthorized"
     assert "test-token" not in json.dumps(payload)
+
+
+def test_api_token_auth_error_preserves_request_id_header() -> None:
+    client = TestClient(create_app(api_token="test-token"))
+
+    response = client.get("/api/v1/mcp/catalog", headers={"X-Request-ID": "auth-check"})
+    payload = response.json()
+
+    assert response.status_code == 401
+    assert payload["request_id"] == "auth-check"
+    assert response.headers["x-request-id"] == "auth-check"
 
 
 def test_api_token_auth_rejects_invalid_token() -> None:
