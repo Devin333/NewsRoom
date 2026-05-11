@@ -151,7 +151,12 @@ class DailyIntelligenceRunner:
 
         llm_client = self.llm_client or OpenAICompatibleClient(OpenAICompatibleConfig.dashscope_defaults())
         response = llm_client.complete(_report_request(request["topic"], evidence_bundle))
-        return {"report_draft": _parse_report_json(response.content)}
+        report_draft = (
+            _validate_report_payload(response.structured_output)
+            if response.structured_output is not None
+            else _parse_report_json(response.content)
+        )
+        return {"report_draft": report_draft}
 
 
 def build_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
@@ -383,6 +388,7 @@ def _report_request(topic: str, evidence_bundle: EvidenceBundle) -> LLMRequest:
             {"role": "user", "content": user},
         ],
         metadata={"profile": PROFILE_LIVE},
+        response_format="json_object",
     )
 
 
@@ -393,6 +399,10 @@ def _parse_report_json(content: str) -> dict[str, Any]:
         if clean.startswith("json"):
             clean = clean[4:]
     payload = json.loads(clean)
+    return _validate_report_payload(payload)
+
+
+def _validate_report_payload(payload: Any) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("LLM report output must be a JSON object")
     if "title" not in payload or "sections" not in payload:

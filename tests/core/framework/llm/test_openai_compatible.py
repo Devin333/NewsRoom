@@ -279,11 +279,117 @@ def test_openai_compatible_client_retries_network_timeout_then_succeeds(monkeypa
     assert response.metadata["attempts"] == 2
 
 
-def _success_body(*, response_id: str = "chatcmpl-test") -> bytes:
+def test_openai_compatible_client_sends_json_object_format_and_parses_structured_output(monkeypatch) -> None:
+    monkeypatch.setenv("TEST_LLM_KEY", "redacted-test-key")
+    captured: dict[str, object] = {}
+
+    def transport(request: Request, timeout: float) -> bytes:
+        captured["payload"] = json.loads(request.data.decode("utf-8"))
+        return _success_body(content="{\"title\":\"Report\",\"sections\":[]}")
+
+    client = OpenAICompatibleClient(
+        OpenAICompatibleConfig(
+            provider="test",
+            base_url="https://llm.example/v1",
+            model="test-model",
+            api_key_env="TEST_LLM_KEY",
+        ),
+        transport=transport,
+    )
+
+    response = client.complete(
+        LLMRequest(
+            messages=[{"role": "user", "content": "hi"}],
+            response_format="json_object",
+        )
+    )
+
+    assert captured["payload"]["response_format"] == {"type": "json_object"}
+    assert response.content == "{\"title\":\"Report\",\"sections\":[]}"
+    assert response.structured_output == {"title": "Report", "sections": []}
+
+
+def test_openai_compatible_client_sends_json_schema_response_format(monkeypatch) -> None:
+    monkeypatch.setenv("TEST_LLM_KEY", "redacted-test-key")
+    captured: dict[str, object] = {}
+    schema = {
+        "type": "object",
+        "properties": {"title": {"type": "string"}},
+        "required": ["title"],
+    }
+
+    def transport(request: Request, timeout: float) -> bytes:
+        captured["payload"] = json.loads(request.data.decode("utf-8"))
+        return _success_body(content="{\"title\":\"Report\"}")
+
+    client = OpenAICompatibleClient(
+        OpenAICompatibleConfig(
+            provider="test",
+            base_url="https://llm.example/v1",
+            model="test-model",
+            api_key_env="TEST_LLM_KEY",
+        ),
+        transport=transport,
+    )
+
+    response = client.complete(
+        LLMRequest(
+            messages=[{"role": "user", "content": "hi"}],
+            output_schema=schema,
+            output_schema_name="report",
+        )
+    )
+
+    assert captured["payload"]["response_format"] == {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "report",
+            "strict": True,
+            "schema": schema,
+        },
+    }
+    assert response.structured_output == {"title": "Report"}
+
+
+def test_openai_compatible_client_does_not_retry_invalid_structured_output(monkeypatch) -> None:
+    monkeypatch.setenv("TEST_LLM_KEY", "redacted-test-key")
+    calls = 0
+
+    def transport(request: Request, timeout: float) -> bytes:
+        nonlocal calls
+        calls += 1
+        return _success_body(content="not json")
+
+    client = OpenAICompatibleClient(
+        OpenAICompatibleConfig(
+            provider="test",
+            base_url="https://llm.example/v1",
+            model="test-model",
+            api_key_env="TEST_LLM_KEY",
+        ),
+        transport=transport,
+        retry_policy=LLMRetryPolicy(max_attempts=3, retry_delay_seconds=(0,)),
+        sleep=lambda seconds: None,
+    )
+
+    with pytest.raises(LLMProviderError) as exc_info:
+        client.complete(
+            LLMRequest(
+                messages=[{"role": "user", "content": "hi"}],
+                response_format="json_object",
+            )
+        )
+
+    assert calls == 1
+    assert exc_info.value.retryable is False
+    assert exc_info.value.error_type == "structured_output_parse_error"
+
+
+def _success_body(*, response_id: str = "chatcmpl-test", content: str = "{\"ok\": true}") -> bytes:
     return json.dumps(
         {
             "id": response_id,
-            "choices": [{"message": {"content": "{\"ok\": true}"}}],
+            "choices": [{"message": {"content": content}}],
             "usage": {"prompt_tokens": 7, "completion_tokens": 5},
         }
     ).encode("utf-8")

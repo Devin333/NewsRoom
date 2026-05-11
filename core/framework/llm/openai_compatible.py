@@ -118,12 +118,7 @@ class OpenAICompatibleClient:
 
     def complete(self, request: LLMRequest) -> LLMResponse:
         api_key = self.config.resolve_api_key()
-        payload = {
-            "model": self.config.model,
-            "messages": request.messages,
-        }
-        if request.tools:
-            payload["tools"] = request.tools
+        payload = self._build_payload(request)
 
         for attempt in range(1, self._retry_policy.max_attempts + 1):
             http_request = self._build_http_request(api_key, payload)
@@ -135,7 +130,7 @@ class OpenAICompatibleClient:
                 error = self._error_from_network(exc, attempts=attempt)
             else:
                 response_payload = self._parse_response_payload(raw_body, attempts=attempt)
-                return self._normalize_response(response_payload, attempts=attempt)
+                return self._normalize_response(response_payload, request=request, attempts=attempt)
 
             if not error.retryable or attempt >= self._retry_policy.max_attempts:
                 raise error
@@ -147,6 +142,19 @@ class OpenAICompatibleClient:
             provider=self.config.provider,
             attempts=self._retry_policy.max_attempts,
         )
+
+    def _build_payload(self, request: LLMRequest) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "model": self.config.model,
+            "messages": request.messages,
+        }
+        if request.tools:
+            payload["tools"] = request.tools
+
+        response_format = _provider_response_format(request)
+        if response_format is not None:
+            payload["response_format"] = response_format
+        return payload
 
     def _build_http_request(self, api_key: str, payload: dict[str, Any]) -> Request:
         return Request(
@@ -180,7 +188,13 @@ class OpenAICompatibleClient:
             )
         return payload
 
-    def _normalize_response(self, payload: dict[str, Any], *, attempts: int) -> LLMResponse:
+    def _normalize_response(
+        self,
+        payload: dict[str, Any],
+        *,
+        request: LLMRequest,
+        attempts: int,
+    ) -> LLMResponse:
         choices = payload.get("choices") or []
         if not choices:
             raise LLMProviderError(
@@ -217,6 +231,9 @@ class OpenAICompatibleClient:
                 retryable=False,
                 attempts=attempts,
             )
+        structured_output = None
+        if _expects_structured_output(request):
+            structured_output = self._parse_structured_output(content, attempts=attempts)
 
         usage_payload = payload.get("usage") or {}
         if not isinstance(usage_payload, dict):
@@ -244,7 +261,29 @@ class OpenAICompatibleClient:
                 "attempts": attempts,
                 "retry_count": attempts - 1,
             },
+            structured_output=structured_output,
         )
+
+    def _parse_structured_output(self, content: str, *, attempts: int) -> dict[str, Any]:
+        try:
+            structured_output = json.loads(content)
+        except json.JSONDecodeError as exc:
+            raise LLMProviderError(
+                f"{self.config.provider} structured output is not valid JSON",
+                provider=self.config.provider,
+                error_type="structured_output_parse_error",
+                retryable=False,
+                attempts=attempts,
+            ) from exc
+        if not isinstance(structured_output, dict):
+            raise LLMProviderError(
+                f"{self.config.provider} structured output is not a JSON object",
+                provider=self.config.provider,
+                error_type="structured_output_parse_error",
+                retryable=False,
+                attempts=attempts,
+            )
+        return structured_output
 
     def _error_from_http(self, exc: HTTPError, *, attempts: int) -> LLMProviderError:
         status_code = int(exc.code)
@@ -292,6 +331,34 @@ def _error_type_from_http_status(status_code: int) -> str:
     if 400 <= status_code <= 499:
         return "provider_client_error"
     return "unknown_llm_error"
+
+
+def _provider_response_format(request: LLMRequest) -> dict[str, Any] | None:
+    if request.response_format is not None:
+        if isinstance(request.response_format, str):
+            return {"type": request.response_format}
+        return dict(request.response_format)
+    if request.output_schema is not None:
+        return {
+            "type": "json_schema",
+            "json_schema": {
+                "name": request.output_schema_name or "structured_output",
+                "strict": True,
+                "schema": request.output_schema,
+            },
+        }
+    return None
+
+
+def _expects_structured_output(request: LLMRequest) -> bool:
+    if request.output_schema is not None:
+        return True
+    response_format = request.response_format
+    if isinstance(response_format, str):
+        return response_format in {"json_object", "json_schema"}
+    if isinstance(response_format, dict):
+        return response_format.get("type") in {"json_object", "json_schema"}
+    return False
 
 
 def _urlopen_transport(request: Request, timeout_seconds: float) -> bytes:

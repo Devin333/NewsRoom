@@ -46,6 +46,7 @@ def test_llm_response_to_dict_redacts_content_and_metadata_by_default() -> None:
         content=f"model echoed {secret}",
         usage=TokenUsage(input_tokens=3, output_tokens=5),
         metadata={"provider": "test", "session_token": secret},
+        structured_output={"leaked": secret},
     )
 
     payload = response.to_dict()
@@ -53,6 +54,7 @@ def test_llm_response_to_dict_redacts_content_and_metadata_by_default() -> None:
     assert secret not in str(payload)
     assert payload["content"] == f"model echoed {REDACTED_VALUE}"
     assert payload["metadata"]["session_token"] == REDACTED_VALUE
+    assert payload["structured_output"]["leaked"] == REDACTED_VALUE
     assert payload["usage"] == {
         "input_tokens": 3,
         "output_tokens": 5,

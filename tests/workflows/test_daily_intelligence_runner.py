@@ -79,6 +79,7 @@ def test_daily_intelligence_runner_live_missing_llm_key_fails_safely(tmp_path, m
 
 
 def test_daily_intelligence_runner_live_with_injected_llm_succeeds(tmp_path) -> None:
+    llm = _FakeReportLLM()
     registry = SourceRegistry(
         [
             SourceDefinition(
@@ -95,12 +96,37 @@ def test_daily_intelligence_runner_live_with_injected_llm_succeeds(tmp_path) -> 
         artifact_root=tmp_path,
         source_registry=registry,
         feed_connector=connector,
-        llm_client=_FakeReportLLM(),
+        llm_client=llm,
     ).run(profile="live", topic="AI policy", source_limit=1, run_id="daily-live-injected")
 
     assert result.status == WorkflowStatus.SUCCEEDED
     assert result.output["final_report"].title == "Injected Live Report"
+    assert llm.requests[0].response_format == "json_object"
     assert (Path(result.artifact_dir) / "report.json").exists()
+
+
+def test_daily_intelligence_runner_live_prefers_structured_llm_output(tmp_path) -> None:
+    registry = SourceRegistry(
+        [
+            SourceDefinition(
+                source_id="fixture",
+                name="Fixture",
+                source_type="rss",
+                url="https://example.com/rss.xml",
+                reliability="high",
+            )
+        ]
+    )
+    connector = FeedConnector(fetch_text=lambda url: RSS_FIXTURE)
+    result = DailyIntelligenceRunner(
+        artifact_root=tmp_path,
+        source_registry=registry,
+        feed_connector=connector,
+        llm_client=_StructuredReportLLM(),
+    ).run(profile="live", topic="AI policy", source_limit=1, run_id="daily-live-structured")
+
+    assert result.status == WorkflowStatus.SUCCEEDED
+    assert result.output["final_report"].title == "Structured Live Report"
 
 
 def test_daily_intelligence_runner_records_partial_source_failures(tmp_path) -> None:
@@ -188,7 +214,11 @@ def test_daily_intelligence_runner_skips_cooling_source(tmp_path) -> None:
 
 
 class _FakeReportLLM:
+    def __init__(self) -> None:
+        self.requests = []
+
     def complete(self, request):
+        self.requests.append(request)
         return LLMResponse(
             content=json.dumps(
                 {
@@ -203,4 +233,22 @@ class _FakeReportLLM:
                 }
             ),
             usage=TokenUsage(input_tokens=3, output_tokens=4),
+        )
+
+
+class _StructuredReportLLM:
+    def complete(self, request):
+        return LLMResponse(
+            content="not json",
+            usage=TokenUsage(input_tokens=3, output_tokens=4),
+            structured_output={
+                "title": "Structured Live Report",
+                "sections": [
+                    {
+                        "title": "Summary",
+                        "content": "Policy summary.",
+                        "sources": ["https://example.com/ai-policy"],
+                    }
+                ],
+            },
         )
