@@ -45,6 +45,7 @@ packages = [
   "storage",
   "storage.artifacts",
   "storage.checkpoint",
+  "storage.events",
   "quality",
   "storage.local_json",
   "storage.memory",

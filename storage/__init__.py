@@ -10,6 +10,7 @@ from storage.artifacts import (
     LocalJsonArtifactIndexStore,
 )
 from storage.checkpoint import CheckpointNotFoundError, LocalJsonCheckpointStore, WorkflowCheckpoint
+from storage.events import EventRecord, LocalJsonEventStore
 
 __all__ = [
     "ArtifactChecksumMismatchError",
@@ -18,8 +19,10 @@ __all__ = [
     "ArtifactRef",
     "ArtifactWriteRequest",
     "CheckpointNotFoundError",
+    "EventRecord",
     "FilesystemArtifactStore",
     "LocalJsonArtifactIndexStore",
     "LocalJsonCheckpointStore",
+    "LocalJsonEventStore",
     "WorkflowCheckpoint",
 ]
