@@ -6,6 +6,7 @@ from core.framework.llm import (
     LLMResponse,
     LLMRouteError,
     LLMRouter,
+    ModelCapabilities,
     ModelDeployment,
     ModelRoute,
 )
@@ -34,6 +35,62 @@ def test_llm_router_uses_primary_deployment() -> None:
     assert response.metadata["llm_deployment_id"] == "primary"
     assert response.metadata["llm_fallback_used"] is False
     assert response.metadata["llm_attempted_deployments"] == ["primary"]
+
+
+def test_llm_router_invokes_primary_when_required_capabilities_match() -> None:
+    primary = StaticClient(LLMResponse(content="primary"))
+    router = LLMRouter(
+        routes=[
+            ModelRoute(
+                route_id="writer",
+                primary_deployment_id="primary",
+                required_capabilities=("json_mode",),
+            )
+        ],
+        deployments=[
+            ModelDeployment(
+                deployment_id="primary",
+                provider="test",
+                model="model-a",
+                client=primary,
+                capabilities=ModelCapabilities(supports_json_mode=True),
+            )
+        ],
+    )
+
+    response = router.complete("writer", LLMRequest(messages=[{"role": "user", "content": "hi"}]))
+
+    assert primary.call_count == 1
+    assert response.metadata["llm_capabilities"]["supports_json_mode"] is True
+
+
+def test_llm_router_rejects_primary_missing_required_capability_before_calling() -> None:
+    primary = StaticClient(LLMResponse(content="primary"))
+    router = LLMRouter(
+        routes=[
+            ModelRoute(
+                route_id="writer",
+                primary_deployment_id="primary",
+                required_capabilities=("structured_output",),
+            )
+        ],
+        deployments=[
+            ModelDeployment(
+                deployment_id="primary",
+                provider="test",
+                model="model-a",
+                client=primary,
+            )
+        ],
+    )
+
+    with pytest.raises(LLMRouteError) as exc_info:
+        router.complete("writer", LLMRequest(messages=[{"role": "user", "content": "hi"}]))
+
+    assert primary.call_count == 0
+    assert exc_info.value.error_type == "missing_required_capability"
+    assert exc_info.value.attempted_deployments == ("primary",)
+    assert exc_info.value.errors[0]["missing_capabilities"] == ["structured_output"]
 
 
 def test_llm_router_falls_back_only_after_retryable_provider_error() -> None:
@@ -69,6 +126,51 @@ def test_llm_router_falls_back_only_after_retryable_provider_error() -> None:
     assert response.metadata["llm_deployment_id"] == "fallback"
     assert response.metadata["llm_fallback_used"] is True
     assert response.metadata["llm_attempted_deployments"] == ["primary", "fallback"]
+
+
+def test_llm_router_rejects_fallback_missing_required_capability() -> None:
+    primary = FailingClient(
+        LLMProviderError(
+            "temporary outage",
+            provider="primary",
+            error_type="provider_server_error",
+            retryable=True,
+            status_code=503,
+        )
+    )
+    fallback = StaticClient(LLMResponse(content="fallback"))
+    router = LLMRouter(
+        routes=[
+            ModelRoute(
+                route_id="writer",
+                primary_deployment_id="primary",
+                fallback_deployment_ids=("fallback",),
+                required_capabilities=("json_mode",),
+            )
+        ],
+        deployments=[
+            ModelDeployment(
+                "primary",
+                "test",
+                "model-a",
+                primary,
+                capabilities=ModelCapabilities(supports_json_mode=True),
+            ),
+            ModelDeployment("fallback", "test", "model-b", fallback),
+        ],
+    )
+
+    with pytest.raises(LLMRouteError) as exc_info:
+        router.complete("writer", LLMRequest(messages=[{"role": "user", "content": "hi"}]))
+
+    assert primary.call_count == 1
+    assert fallback.call_count == 0
+    assert exc_info.value.error_type == "missing_required_capability"
+    assert exc_info.value.attempted_deployments == ("primary", "fallback")
+    assert [error["error_type"] for error in exc_info.value.errors] == [
+        "provider_server_error",
+        "missing_required_capability",
+    ]
 
 
 def test_llm_router_does_not_fallback_after_non_retryable_provider_error() -> None:

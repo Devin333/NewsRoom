@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Any, Iterable
 
+from core.framework.llm.capabilities import ModelCapabilities
 from core.framework.llm.models import LLMClient, LLMRequest, LLMResponse
 from core.framework.llm.openai_compatible import LLMProviderError
 from core.framework.llm.redaction import redact_sensitive_values
@@ -14,6 +15,7 @@ class ModelDeployment:
     provider: str
     model: str
     client: LLMClient
+    capabilities: ModelCapabilities = field(default_factory=ModelCapabilities)
     enabled: bool = True
     metadata: dict[str, Any] | None = None
 
@@ -23,6 +25,7 @@ class ModelRoute:
     route_id: str
     primary_deployment_id: str
     fallback_deployment_ids: tuple[str, ...] = ()
+    required_capabilities: tuple[str, ...] = ()
     metadata: dict[str, Any] | None = None
 
     def deployment_chain(self) -> tuple[str, ...]:
@@ -88,6 +91,24 @@ class LLMRouter:
                     f"LLM route {route.route_id} deployment is disabled: {deployment_id}",
                     route_id=route.route_id,
                     error_type="deployment_disabled",
+                    retryable=False,
+                    attempted_deployments=attempted_deployments,
+                    errors=errors,
+                )
+            missing_capabilities = deployment.capabilities.missing(route.required_capabilities)
+            if missing_capabilities:
+                errors.append(
+                    {
+                        "deployment_id": deployment_id,
+                        "error_type": "missing_required_capability",
+                        "missing_capabilities": list(missing_capabilities),
+                        "retryable": False,
+                    }
+                )
+                raise LLMRouteError(
+                    f"LLM route {route.route_id} deployment lacks required capabilities: {deployment_id}",
+                    route_id=route.route_id,
+                    error_type="missing_required_capability",
                     retryable=False,
                     attempted_deployments=attempted_deployments,
                     errors=errors,
@@ -195,6 +216,7 @@ def _with_routing_metadata(
             "llm_deployment_id": deployment.deployment_id,
             "llm_provider": deployment.provider,
             "llm_model": deployment.model,
+            "llm_capabilities": deployment.capabilities.to_dict(),
             "llm_fallback_used": fallback_used,
             "llm_attempted_deployments": list(attempted_deployments),
         }

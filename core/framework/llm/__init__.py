@@ -1,6 +1,7 @@
 """LLM layer primitives."""
 
 from core.framework.llm.fake import FakeLLMClient
+from core.framework.llm.capabilities import ModelCapabilities
 from core.framework.llm.models import LLMClient, LLMRequest, LLMResponse, TokenUsage
 from core.framework.llm.openai_compatible import (
     LLMConfigurationError,
@@ -22,6 +23,7 @@ __all__ = [
     "LLMRetryPolicy",
     "LLMRouteError",
     "LLMRouter",
+    "ModelCapabilities",
     "ModelDeployment",
     "ModelRoute",
     "OpenAICompatibleClient",
