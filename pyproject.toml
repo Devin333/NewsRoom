@@ -43,6 +43,7 @@ packages = [
   "sources.health",
   "sources.processing",
   "storage",
+  "storage.artifacts",
   "storage.checkpoint",
   "quality",
   "storage.local_json",
