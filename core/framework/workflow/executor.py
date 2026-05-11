@@ -12,7 +12,11 @@ from core.framework.specs import EdgeCondition, StepSpec, StepStatus, WorkflowSp
 from core.framework.workflow.buffer import DataBuffer
 from core.framework.workflow.result import StepOutcome, WorkflowError, WorkflowResult
 from core.framework.workflow.routing import RoutingDecision, RoutingEngine
-from core.framework.workflow.step_runner import FunctionStepRunner, StepRunnerRegistry
+from core.framework.workflow.step_runner import (
+    FunctionStepRunner,
+    StepExecutionError,
+    StepRunnerRegistry,
+)
 from storage.checkpoint import WorkflowCheckpoint
 
 
@@ -49,6 +53,7 @@ class WorkflowExecutor:
         run_id: str | None = None,
     ) -> WorkflowResult:
         workflow.validate()
+        _validate_step_runners(workflow, self._step_runner_registry)
 
         actual_run_id = run_id or uuid4().hex
         run_dir = self._artifact_manager.start_run(actual_run_id)
@@ -551,3 +556,10 @@ def _record_step_artifacts(manifest: dict[str, Any], outcome: StepOutcome) -> No
 def _step_artifact_key(artifact_ref: Any) -> str:
     step_id = artifact_ref.step_id or "workflow"
     return f"step.{step_id}.{artifact_ref.artifact_type}.{artifact_ref.artifact_id}"
+
+
+def _validate_step_runners(workflow: WorkflowSpec, registry: StepRunnerRegistry) -> None:
+    missing = registry.missing_step_types([step.step_type for step in workflow.steps])
+    if missing:
+        labels = ", ".join(step_type.value for step_type in missing)
+        raise StepExecutionError(f"step runner is not registered: {labels}")

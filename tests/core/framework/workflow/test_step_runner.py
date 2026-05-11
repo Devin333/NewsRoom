@@ -67,8 +67,11 @@ def test_step_runner_registry_returns_registered_runner() -> None:
 
     registry.register(StepType.ARTIFACT, runner)
 
+    assert registry.is_registered(StepType.ARTIFACT)
+    assert not registry.is_registered(StepType.PERSIST)
     assert registry.get("artifact") is runner
     assert registry.registered_step_types() == [StepType.ARTIFACT]
+    assert registry.missing_step_types([StepType.ARTIFACT, StepType.PERSIST]) == [StepType.PERSIST]
 
 
 def test_step_runner_registry_rejects_duplicate_registration() -> None:

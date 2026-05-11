@@ -1,6 +1,8 @@
 import json
 from hashlib import sha256
 
+import pytest
+
 from core.framework.artifacts import ArtifactManager
 from core.framework.specs import (
     EdgeCondition,
@@ -16,6 +18,7 @@ from core.framework.specs import (
 from core.framework.workflow import (
     FunctionStepRegistry,
     FunctionStepRunner,
+    StepExecutionError,
     StepOutcome,
     StepRunnerRegistry,
     WorkflowExecutor,
@@ -605,7 +608,7 @@ def test_workflow_executor_records_step_artifact_refs(tmp_path) -> None:
     assert (tmp_path / run_id / "steps" / "artifact" / "output.json").exists()
 
 
-def test_workflow_executor_fails_step_when_runner_is_missing(tmp_path) -> None:
+def test_workflow_executor_rejects_missing_runner_before_run_creation(tmp_path) -> None:
     spec = WorkflowSpec(
         workflow_id="missing-runner",
         name="Missing Runner",
@@ -626,15 +629,10 @@ def test_workflow_executor_fails_step_when_runner_is_missing(tmp_path) -> None:
         artifact_manager=ArtifactManager(tmp_path),
     )
 
-    result = executor.execute(spec, {"topic": "ai"}, profile="test", run_id="run-missing-runner")
+    with pytest.raises(StepExecutionError, match="not registered: artifact"):
+        executor.execute(spec, {"topic": "ai"}, profile="test", run_id="run-missing-runner")
 
-    assert result.status == WorkflowStatus.FAILED
-    assert result.error is not None
-    assert result.error.error_type == "StepExecutionError"
-    assert result.error.message == "step runner is not registered: artifact"
-    assert (tmp_path / "run-missing-runner" / "error.json").exists()
-    events = (tmp_path / "run-missing-runner" / "events.jsonl").read_text(encoding="utf-8")
-    assert "step_failed" in events
+    assert not (tmp_path / "run-missing-runner").exists()
 
 
 class _ArtifactMarkerRunner:

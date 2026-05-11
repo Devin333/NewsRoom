@@ -42,6 +42,17 @@ class StepRunnerRegistry:
         except KeyError as exc:
             raise StepExecutionError(f"step runner is not registered: {actual_step_type.value}") from exc
 
+    def is_registered(self, step_type: StepType | str) -> bool:
+        return StepType(step_type) in self._runners
+
+    def missing_step_types(self, step_types: list[StepType | str]) -> list[StepType]:
+        missing = {
+            StepType(step_type)
+            for step_type in step_types
+            if not self.is_registered(step_type)
+        }
+        return sorted(missing, key=lambda step_type: step_type.value)
+
     def registered_step_types(self) -> list[StepType]:
         return sorted(self._runners, key=lambda step_type: step_type.value)
 
