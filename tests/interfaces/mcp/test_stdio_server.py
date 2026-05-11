@@ -85,6 +85,24 @@ def test_stdio_handles_run_lineage_resource_read() -> None:
     assert response["result"]["data"]["lineage_count"] == 1
 
 
+def test_stdio_handles_storage_metrics_resource_read() -> None:
+    service = _FakeMCPService()
+
+    response = handle_jsonrpc_request(
+        {
+            "jsonrpc": "2.0",
+            "id": "read-storage",
+            "method": "resources/read",
+            "params": {"uri": "news://storage/metrics"},
+        },
+        service=service,
+    )
+
+    assert service.resource_reads == ["news://storage/metrics"]
+    assert response["result"]["success"] is True
+    assert response["result"]["data"]["runs_count"] == 1
+
+
 def test_stdio_handles_prompt_get() -> None:
     service = _FakeMCPService()
 
@@ -201,4 +219,6 @@ def _resource_payload(uri):
         return {"run_id": "run-1", "artifact_count": 0, "artifacts": []}
     if "/lineage" in uri:
         return {"run_id": "run-1", "lineage_count": 1, "lineage_refs": []}
+    if uri == "news://storage/metrics":
+        return {"runs_count": 1, "artifacts_count": 2}
     return {"source_count": 1}

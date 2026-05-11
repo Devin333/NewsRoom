@@ -6,6 +6,7 @@ from interfaces.services.mcp_service import MCPApplicationService
 from interfaces.services.report_service import ReportApplicationService
 from interfaces.services.run_inspection_service import RunInspectionService
 from interfaces.services.storage_service import StorageApplicationService
+from storage.artifacts import ArtifactWriteRequest, FilesystemArtifactStore, LocalJsonArtifactIndexStore
 from storage.lineage import LineageRef, LocalJsonLineageStore
 
 
@@ -33,6 +34,7 @@ def test_mcp_catalog_lists_tools_without_calling_factories() -> None:
     assert "news.run.lineage" in tool_names
     assert "news.run.lineage.upstream" in tool_names
     assert "news.run.lineage.downstream" in tool_names
+    assert "news.storage.metrics" in tool_names
     assert "news.approval.submit" in tool_names
     assert "news://reports/latest" in resource_uris
     assert "news://reports/{report_id}" in resource_uris
@@ -43,6 +45,7 @@ def test_mcp_catalog_lists_tools_without_calling_factories() -> None:
     assert "news://runs/{run_id}/lineage/upstream/{target_type}/{target_id}" in resource_uris
     assert "news://runs/{run_id}/lineage/downstream/{source_type}/{source_id}" in resource_uris
     assert "news://runs/{run_id}/artifacts/{artifact_key}" in resource_uris
+    assert "news://storage/metrics" in resource_uris
     prompt_names = [prompt["name"] for prompt in catalog["prompts"]]
     assert "news.evidence_audit" in prompt_names
     assert "news.quality_gate_explain" in prompt_names
@@ -429,6 +432,34 @@ def test_mcp_run_lineage_resources_read_real_local_lineage(tmp_path) -> None:
     assert downstream.data["lineage_count"] == 1
 
 
+def test_mcp_storage_metrics_tool_reads_real_local_storage(tmp_path) -> None:
+    _write_metric_artifacts(tmp_path)
+    service = MCPApplicationService(
+        storage_service_factory=lambda: StorageApplicationService(artifact_root=tmp_path)
+    )
+
+    result = service.call_tool("news.storage.metrics")
+
+    assert result.success is True
+    assert result.data["runs_count"] == 1
+    assert result.data["artifacts_count"] == 1
+    assert result.data["artifact_bytes_total"] > 0
+
+
+def test_mcp_reads_storage_metrics_resource_from_real_local_storage(tmp_path) -> None:
+    _write_metric_artifacts(tmp_path)
+    service = MCPApplicationService(
+        storage_service_factory=lambda: StorageApplicationService(artifact_root=tmp_path)
+    )
+
+    result = service.read_resource("news://storage/metrics")
+
+    assert result.success is True
+    assert result.data["runs_count"] == 1
+    assert result.data["reports_count"] == 1
+    assert result.data["metadata"]["source"] == "local_json"
+
+
 def test_mcp_reads_run_artifact_resource_from_local_artifact(tmp_path) -> None:
     run_dir = tmp_path / "run-6"
     run_dir.mkdir()
@@ -626,4 +657,23 @@ def _write_lineage_refs(root) -> None:
                 relation_type="ranked_to_evidence",
             ),
         ]
+    )
+
+
+def _write_metric_artifacts(root) -> None:
+    artifact_store = FilesystemArtifactStore(root)
+    artifact_index = LocalJsonArtifactIndexStore(root / "_records" / "artifact_index")
+    ref = artifact_store.write(
+        ArtifactWriteRequest(
+            run_id="metrics-run",
+            artifact_id="report-1",
+            artifact_type="report_json",
+            content=b'{"title":"Report"}',
+            content_type="application/json",
+        )
+    )
+    artifact_index.index_artifact(ref)
+    (root / "metrics-run" / "manifest.json").write_text(
+        json.dumps({"run_id": "metrics-run", "artifacts": {"report_json": ref.path}}),
+        encoding="utf-8",
     )

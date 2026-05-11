@@ -37,6 +37,7 @@ RUN_LINEAGE_DOWNSTREAM_RESOURCE_TEMPLATE = (
 RUN_LINEAGE_DOWNSTREAM_RESOURCE_MARKER = "/lineage/downstream/"
 RUN_ARTIFACT_RESOURCE_TEMPLATE = "news://runs/{run_id}/artifacts/{artifact_key}"
 RUN_ARTIFACT_RESOURCE_SEPARATOR = "/artifacts/"
+STORAGE_METRICS_RESOURCE_URI = "news://storage/metrics"
 SOURCE_HEALTH_RESOURCE_URI = "news://sources/health"
 
 
@@ -135,6 +136,8 @@ class MCPApplicationService:
             run_id = _run_lineage_resource_run_id(uri)
             if run_id is not None:
                 return self._read_run_lineage_resource(uri, run_id)
+            if uri == STORAGE_METRICS_RESOURCE_URI:
+                return self._read_storage_metrics_resource()
             if uri == SOURCE_HEALTH_RESOURCE_URI:
                 return self._read_source_health_resource()
             return MCPResourceReadResult(
@@ -178,6 +181,8 @@ class MCPApplicationService:
                 return self._run_lineage_upstream(args)
             if tool_name == "news.run.lineage.downstream":
                 return self._run_lineage_downstream(args)
+            if tool_name == "news.storage.metrics":
+                return self._storage_metrics()
             if tool_name == "news.approval.submit":
                 return self._approval_submit(args)
             if tool_name == "news.approval.list":
@@ -336,6 +341,14 @@ class MCPApplicationService:
         )
         return MCPToolCallResult(
             tool_name="news.run.lineage.downstream",
+            success=True,
+            data=result.to_dict(),
+        )
+
+    def _storage_metrics(self) -> MCPToolCallResult:
+        result = self.storage_service_factory().metrics()
+        return MCPToolCallResult(
+            tool_name="news.storage.metrics",
             success=True,
             data=result.to_dict(),
         )
@@ -500,6 +513,14 @@ class MCPApplicationService:
             data=result.to_dict(),
         )
 
+    def _read_storage_metrics_resource(self) -> MCPResourceReadResult:
+        result = self.storage_service_factory().metrics()
+        return MCPResourceReadResult(
+            uri=STORAGE_METRICS_RESOURCE_URI,
+            success=True,
+            data=result.to_dict(),
+        )
+
     def _read_run_artifact_resource(
         self,
         uri: str,
@@ -660,6 +681,12 @@ def _tools() -> list[MCPTool]:
             },
         ),
         MCPTool(
+            name="news.storage.metrics",
+            title="Read storage metrics",
+            description="Read local storage metrics through StorageApplicationService.",
+            input_schema={"type": "object", "properties": {}},
+        ),
+        MCPTool(
             name="news.approval.submit",
             title="Submit approval request",
             description="Submit a human approval request through ApprovalApplicationService.",
@@ -794,6 +821,11 @@ def _resources() -> list[MCPResource]:
             uri=RUN_ARTIFACT_RESOURCE_TEMPLATE,
             name="Run Artifact",
             description="Manifest-listed workflow artifact by run id and artifact key.",
+        ),
+        MCPResource(
+            uri=STORAGE_METRICS_RESOURCE_URI,
+            name="Storage Metrics",
+            description="Local storage metrics.",
         ),
         MCPResource(
             uri=SOURCE_HEALTH_RESOURCE_URI,
