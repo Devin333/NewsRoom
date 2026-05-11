@@ -70,6 +70,22 @@ def test_source_service_fetches_arxiv_preview() -> None:
     assert payload["items"][0]["metadata"]["arxiv_id"] == "2605.00001v1"
 
 
+def test_source_service_fetches_github_release_preview() -> None:
+    service = SourceApplicationService(
+        source_registry=SourceRegistry([]),
+        github_connector=_FakeGithubConnector(),
+    )
+
+    result = service.fetch_github_releases(repository="owner/repo", limit=1)
+    payload = result.to_dict()
+
+    assert payload["source_type"] == "github"
+    assert payload["query"] == "owner/repo"
+    assert payload["item_count"] == 1
+    assert payload["items"][0]["title"] == "Version 1.0.0"
+    assert payload["items"][0]["metadata"]["repository"] == "owner/repo"
+
+
 class _FakeArxivConnector:
     def fetch(self, source, *, query, limit):
         return [
@@ -87,5 +103,26 @@ class _FakeArxivConnector:
                 tags=["cs.AI"],
                 language="en",
                 metadata={"arxiv_id": "2605.00001v1"},
+            )
+        ], []
+
+
+class _FakeGithubConnector:
+    def fetch_releases(self, source, *, repository, limit):
+        return [
+            RawSourceItem(
+                source_item_id="raw-github",
+                source_id=source.source_id,
+                source_name=source.name,
+                source_type=source.source_type,
+                title="Version 1.0.0",
+                url="https://github.com/owner/repo/releases/tag/v1.0.0",
+                fetched_at=datetime(2026, 5, 11, tzinfo=UTC),
+                published_at=datetime(2026, 5, 10, tzinfo=UTC),
+                summary="Release notes",
+                authors=["maintainer"],
+                tags=["v1.0.0"],
+                language="en",
+                metadata={"repository": "owner/repo"},
             )
         ], []

@@ -42,6 +42,20 @@ def test_news_cli_sources_arxiv_json(monkeypatch, capsys) -> None:
     assert payload["items"][0]["title"] == "Agent Runtime Evaluation"
 
 
+def test_news_cli_sources_github_json(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(news_cli, "SourceApplicationService", _FakeSourceService)
+
+    exit_code = news_cli.main(["sources", "github", "--repo", "owner/repo", "--limit", "1", "--json"])
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert exit_code == 0
+    assert payload["source_type"] == "github"
+    assert payload["item_count"] == 1
+    assert payload["items"][0]["title"] == "Version 1.0.0"
+
+
 class _FakeSourceService:
     def list_sources(self, *, enabled_only):
         return _FakeResult(
@@ -106,6 +120,36 @@ class _FakeSourceService:
                         "tags": ["cs.AI"],
                         "language": "en",
                         "metadata": {"arxiv_id": "2605.00001v1"},
+                    }
+                ],
+                "errors": [],
+            }
+        )
+
+    def fetch_github_releases(self, *, repository, limit):
+        return _FakeResult(
+            {
+                "source_id": "github",
+                "source_type": "github",
+                "query": repository,
+                "item_count": 1,
+                "error_count": 0,
+                "items": [
+                    {
+                        "source_item_id": "raw-github",
+                        "source_id": "github",
+                        "source_name": "GitHub",
+                        "source_type": "github",
+                        "title": "Version 1.0.0",
+                        "url": "https://github.com/owner/repo/releases/tag/v1.0.0",
+                        "fetched_at": "2026-05-11T00:00:00Z",
+                        "published_at": "2026-05-10T00:00:00Z",
+                        "summary": "Release notes",
+                        "raw_content": None,
+                        "authors": ["maintainer"],
+                        "tags": ["v1.0.0"],
+                        "language": "en",
+                        "metadata": {"repository": "owner/repo"},
                     }
                 ],
                 "errors": [],

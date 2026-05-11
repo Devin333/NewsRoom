@@ -6,7 +6,7 @@ from typing import Any
 
 from domain.sources import RawSourceItem, SourceDefinition, SourceError
 from sources import SourceRegistry
-from sources.connectors import ARXIV_API_URL, ArxivConnector
+from sources.connectors import ARXIV_API_URL, GITHUB_API_URL, ArxivConnector, GithubConnector
 from sources.health import BasicSourceHealthManager
 
 
@@ -87,6 +87,7 @@ class SourceApplicationService:
         source_registry: SourceRegistry | None = None,
         health_manager: BasicSourceHealthManager | None = None,
         arxiv_connector: ArxivConnector | None = None,
+        github_connector: GithubConnector | None = None,
     ) -> None:
         if source_registry is None:
             from workflows.daily_intelligence.runner import build_default_source_registry
@@ -95,6 +96,7 @@ class SourceApplicationService:
         self.source_registry = source_registry
         self.health_manager = health_manager or BasicSourceHealthManager()
         self.arxiv_connector = arxiv_connector or ArxivConnector()
+        self.github_connector = github_connector or GithubConnector()
 
     def list_sources(self, *, enabled_only: bool = True) -> SourceListResult:
         return SourceListResult(
@@ -144,6 +146,35 @@ class SourceApplicationService:
             source_id=source.source_id,
             source_type=source.source_type.value,
             query=query.strip(),
+            items=items,
+            errors=errors,
+        )
+
+    def fetch_github_releases(self, *, repository: str, limit: int = 5) -> SourceFetchPreviewResult:
+        if not repository.strip():
+            raise ValueError("repository is required")
+        if limit <= 0:
+            raise ValueError("limit must be greater than zero")
+        source = SourceDefinition(
+            source_id="github",
+            name="GitHub",
+            source_type="github",
+            url=GITHUB_API_URL,
+            reliability="high",
+            authority_score=0.9,
+            topics=["github", "release", "software"],
+            language="en",
+            metadata={"repository": repository.strip()},
+        )
+        items, errors = self.github_connector.fetch_releases(
+            source,
+            repository=repository,
+            limit=limit,
+        )
+        return SourceFetchPreviewResult(
+            source_id=source.source_id,
+            source_type=source.source_type.value,
+            query=repository.strip(),
             items=items,
             errors=errors,
         )

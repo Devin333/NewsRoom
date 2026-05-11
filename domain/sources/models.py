@@ -10,6 +10,7 @@ class SourceType(str, Enum):
     RSS = "rss"
     ATOM = "atom"
     ARXIV = "arxiv"
+    GITHUB = "github"
 
 
 class SourceReliability(str, Enum):
