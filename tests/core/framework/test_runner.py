@@ -49,6 +49,9 @@ def test_workflow_runner_returns_stable_run_result(tmp_path) -> None:
         "events",
         "manifest",
         "data_buffer_snapshot",
+        "data_buffer_initial",
+        "data_buffer_final",
+        "data_buffer_diff",
         "output",
     }.issubset(artifact_types)
     output_ref = next(ref for ref in artifact_refs if ref.artifact_type == "output")
@@ -177,7 +180,16 @@ def test_workflow_runner_uses_artifact_index_factory_by_default(tmp_path, monkey
     runner.run(spec, {"topic": "ai"}, profile="test", run_id="artifact-factory-run")
 
     artifact_types = {ref.artifact_type for ref in fake_index.refs}
-    assert {"request", "workflow_spec", "events", "manifest", "output"}.issubset(artifact_types)
+    assert {
+        "request",
+        "workflow_spec",
+        "events",
+        "manifest",
+        "data_buffer_initial",
+        "data_buffer_final",
+        "data_buffer_diff",
+        "output",
+    }.issubset(artifact_types)
     assert all(ref.run_id == "artifact-factory-run" for ref in fake_index.refs)
 
 

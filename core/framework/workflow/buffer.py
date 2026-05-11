@@ -17,6 +17,20 @@ class DataBufferSnapshot:
         return deepcopy(self.values)
 
 
+@dataclass(frozen=True)
+class DataBufferDiff:
+    added: dict[str, Any]
+    changed: dict[str, dict[str, Any]]
+    removed: dict[str, Any]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "added": deepcopy(self.added),
+            "changed": deepcopy(self.changed),
+            "removed": deepcopy(self.removed),
+        }
+
+
 class DataBuffer:
     def __init__(self, initial_values: dict[str, Any] | None = None) -> None:
         self._values: dict[str, Any] = deepcopy(initial_values or {})
@@ -34,6 +48,29 @@ class DataBuffer:
 
     def snapshot(self) -> DataBufferSnapshot:
         return DataBufferSnapshot(values=deepcopy(self._values))
+
+    def diff(self, previous: DataBufferSnapshot) -> DataBufferDiff:
+        previous_values = previous.to_dict()
+        current_values = deepcopy(self._values)
+        added = {
+            key: value
+            for key, value in current_values.items()
+            if key not in previous_values
+        }
+        removed = {
+            key: value
+            for key, value in previous_values.items()
+            if key not in current_values
+        }
+        changed = {
+            key: {
+                "previous": previous_values[key],
+                "current": current_values[key],
+            }
+            for key in current_values.keys() & previous_values.keys()
+            if current_values[key] != previous_values[key]
+        }
+        return DataBufferDiff(added=added, changed=changed, removed=removed)
 
     def scope(self, read_keys: list[str], write_keys: list[str]) -> ScopedDataBuffer:
         return ScopedDataBuffer(self, read_keys=read_keys, write_keys=write_keys)

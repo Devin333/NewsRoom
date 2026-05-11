@@ -64,6 +64,9 @@ def test_workflow_executor_runs_function_steps_and_writes_artifacts(tmp_path) ->
     assert (run_dir / "events.jsonl").exists()
     assert (run_dir / "manifest.json").exists()
     assert (run_dir / "data_buffer_snapshot.json").exists()
+    assert (run_dir / "data_buffer.initial.json").exists()
+    assert (run_dir / "data_buffer.final.json").exists()
+    assert (run_dir / "data_buffer.diff.json").exists()
     assert (run_dir / "output.json").exists()
 
     manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
@@ -71,6 +74,24 @@ def test_workflow_executor_runs_function_steps_and_writes_artifacts(tmp_path) ->
     assert manifest["profile"] == "test"
     assert manifest["path"] == ["plan", "write"]
     assert manifest["artifacts"]["events"] == "events.jsonl"
+    assert manifest["artifacts"]["data_buffer_snapshot"] == "data_buffer_snapshot.json"
+    assert manifest["artifacts"]["data_buffer_initial"] == "data_buffer.initial.json"
+    assert manifest["artifacts"]["data_buffer_final"] == "data_buffer.final.json"
+    assert manifest["artifacts"]["data_buffer_diff"] == "data_buffer.diff.json"
+
+    initial_buffer = json.loads((run_dir / "data_buffer.initial.json").read_text(encoding="utf-8"))
+    final_buffer = json.loads((run_dir / "data_buffer.final.json").read_text(encoding="utf-8"))
+    buffer_diff = json.loads((run_dir / "data_buffer.diff.json").read_text(encoding="utf-8"))
+    assert initial_buffer == {"request": {"topic": "ai"}}
+    assert final_buffer["report"] == "Report: ai"
+    assert buffer_diff == {
+        "added": {
+            "plan": {"topic": "ai"},
+            "report": "Report: ai",
+        },
+        "changed": {},
+        "removed": {},
+    }
 
     events = [
         json.loads(line)

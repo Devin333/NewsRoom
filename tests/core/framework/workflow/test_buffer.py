@@ -40,3 +40,33 @@ def test_buffer_snapshot_is_isolated_from_later_writes() -> None:
 
     assert snapshot.to_dict() == {"items": ["a"]}
     assert buffer.snapshot().to_dict() == {"items": ["b"]}
+
+
+def test_buffer_diff_reports_added_changed_and_removed_keys() -> None:
+    original = DataBuffer(
+        {
+            "request": {"topic": "AI"},
+            "removed": "old",
+            "changed": {"version": 1},
+        }
+    ).snapshot()
+    buffer = DataBuffer(
+        {
+            "request": {"topic": "AI"},
+            "changed": {"version": 2},
+        }
+    )
+    buffer.write("added", ["new"])
+
+    diff = buffer.diff(original).to_dict()
+
+    assert diff == {
+        "added": {"added": ["new"]},
+        "changed": {
+            "changed": {
+                "previous": {"version": 1},
+                "current": {"version": 2},
+            }
+        },
+        "removed": {"removed": "old"},
+    }

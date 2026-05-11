@@ -46,10 +46,16 @@ class WorkflowExecutor:
         run_dir = self._artifact_manager.start_run(actual_run_id)
         recorder = EventRecorder(actual_run_id)
         buffer = DataBuffer({"request": request})
+        initial_buffer_snapshot = buffer.snapshot()
         started_at = _utc_now()
 
         self._artifact_manager.write_json(actual_run_id, "request.json", request)
         self._artifact_manager.write_json(actual_run_id, "workflow_spec.json", workflow)
+        self._artifact_manager.write_json(
+            actual_run_id,
+            "data_buffer.initial.json",
+            initial_buffer_snapshot.to_dict(),
+        )
 
         manifest: dict[str, Any] = {
             "run_id": actual_run_id,
@@ -67,6 +73,9 @@ class WorkflowExecutor:
                 "events": "events.jsonl",
                 "manifest": "manifest.json",
                 "data_buffer_snapshot": "data_buffer_snapshot.json",
+                "data_buffer_initial": "data_buffer.initial.json",
+                "data_buffer_final": "data_buffer.final.json",
+                "data_buffer_diff": "data_buffer.diff.json",
             },
         }
 
@@ -129,7 +138,9 @@ class WorkflowExecutor:
                 )
                 current_step_id = None
 
-        output = buffer.snapshot().to_dict()
+        final_buffer_snapshot = buffer.snapshot()
+        output = final_buffer_snapshot.to_dict()
+        buffer_diff = buffer.diff(initial_buffer_snapshot)
         manifest["status"] = status.value
         manifest["finished_at"] = _utc_now()
         manifest["event_count"] = len(recorder.list_events()) + 1
@@ -246,6 +257,16 @@ class WorkflowExecutor:
             actual_run_id,
             "data_buffer_snapshot.json",
             output,
+        )
+        self._artifact_manager.write_json(
+            actual_run_id,
+            "data_buffer.final.json",
+            output,
+        )
+        self._artifact_manager.write_json(
+            actual_run_id,
+            "data_buffer.diff.json",
+            buffer_diff.to_dict(),
         )
         manifest_path = self._artifact_manager.write_json(actual_run_id, "manifest.json", manifest)
         events_path = recorder.write_jsonl(run_dir / "events.jsonl")

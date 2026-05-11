@@ -2,6 +2,7 @@
 
 from core.framework.workflow.buffer import (
     DataBuffer,
+    DataBufferDiff,
     DataBufferPermissionError,
     DataBufferSnapshot,
     ScopedDataBuffer,
@@ -18,6 +19,7 @@ from core.framework.workflow.step_runner import (
 
 __all__ = [
     "DataBuffer",
+    "DataBufferDiff",
     "DataBufferPermissionError",
     "DataBufferSnapshot",
     "FunctionStep",
