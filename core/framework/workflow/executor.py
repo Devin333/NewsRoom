@@ -110,6 +110,7 @@ class WorkflowExecutor:
 
             step_results[step.step_id] = outcome
             manifest["steps"][step.step_id] = outcome.to_dict()
+            _record_step_artifacts(manifest, outcome)
             manifest["path"] = list(path)
 
             if outcome.status == StepStatus.SUCCEEDED:
@@ -536,3 +537,17 @@ def _emit_routing_events(recorder: EventRecorder, decision: RoutingDecision) -> 
             recorder.emit("edge_traversed", payload)
         else:
             recorder.emit("edge_rejected", payload)
+
+
+def _record_step_artifacts(manifest: dict[str, Any], outcome: StepOutcome) -> None:
+    if not outcome.artifacts:
+        return
+    step_artifacts = manifest.setdefault("step_artifacts", [])
+    for artifact_ref in outcome.artifacts:
+        step_artifacts.append(artifact_ref.to_dict())
+        manifest["artifacts"][_step_artifact_key(artifact_ref)] = artifact_ref.path
+
+
+def _step_artifact_key(artifact_ref: Any) -> str:
+    step_id = artifact_ref.step_id or "workflow"
+    return f"step.{step_id}.{artifact_ref.artifact_type}.{artifact_ref.artifact_id}"

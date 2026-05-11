@@ -1,4 +1,5 @@
 import json
+from hashlib import sha256
 
 from core.framework.artifacts import ArtifactManager
 from core.framework.specs import (
@@ -19,6 +20,7 @@ from core.framework.workflow import (
     StepRunnerRegistry,
     WorkflowExecutor,
 )
+from storage.artifacts import ArtifactRef
 from storage.checkpoint import LocalJsonCheckpointStore
 
 
@@ -567,6 +569,42 @@ def test_workflow_executor_dispatches_custom_step_runner(tmp_path) -> None:
     ]
 
 
+def test_workflow_executor_records_step_artifact_refs(tmp_path) -> None:
+    run_id = "run-step-artifact"
+    runner_registry = StepRunnerRegistry()
+    runner_registry.register(StepType.ARTIFACT, _StepArtifactRunner(tmp_path, run_id))
+    spec = WorkflowSpec(
+        workflow_id="step-artifact",
+        name="Step Artifact",
+        version="1.0",
+        start_step_id="artifact",
+        steps=[
+            StepSpec(
+                step_id="artifact",
+                implementation="artifact.output",
+                step_type=StepType.ARTIFACT,
+                write_keys=["artifact_marker"],
+                required_output_keys=["artifact_marker"],
+            )
+        ],
+    )
+    executor = WorkflowExecutor(
+        function_step_runner=None,
+        step_runner_registry=runner_registry,
+        artifact_manager=ArtifactManager(tmp_path),
+    )
+
+    result = executor.execute(spec, {"topic": "ai"}, profile="test", run_id=run_id)
+
+    assert result.status == WorkflowStatus.SUCCEEDED
+    manifest = json.loads((tmp_path / run_id / "manifest.json").read_text(encoding="utf-8"))
+    artifact_key = "step.artifact.step_output.artifact-output"
+    assert manifest["artifacts"][artifact_key] == "steps/artifact/output.json"
+    assert manifest["step_artifacts"][0]["artifact_id"] == "artifact-output"
+    assert manifest["steps"]["artifact"]["artifacts"][0]["path"] == "steps/artifact/output.json"
+    assert (tmp_path / run_id / "steps" / "artifact" / "output.json").exists()
+
+
 def test_workflow_executor_fails_step_when_runner_is_missing(tmp_path) -> None:
     spec = WorkflowSpec(
         workflow_id="missing-runner",
@@ -607,3 +645,36 @@ class _ArtifactMarkerRunner:
         }
         buffer.write("artifact_marker", output)
         return StepOutcome(status=StepStatus.SUCCEEDED, outputs={"artifact_marker": output})
+
+
+class _StepArtifactRunner:
+    def __init__(self, artifact_root, run_id: str) -> None:
+        self._run_dir = artifact_root / run_id
+        self._run_id = run_id
+
+    def run(self, step: StepSpec, buffer) -> StepOutcome:
+        output = {"artifact": "real", "implementation": step.implementation}
+        relative_path = "steps/artifact/output.json"
+        target = self._run_dir / relative_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        content = json.dumps(output, sort_keys=True).encode("utf-8")
+        target.write_bytes(content)
+        buffer.write("artifact_marker", "written")
+        return StepOutcome(
+            status=StepStatus.SUCCEEDED,
+            outputs={"artifact_marker": "written"},
+            artifacts=[
+                ArtifactRef(
+                    artifact_id="artifact-output",
+                    run_id=self._run_id,
+                    step_id=step.step_id,
+                    artifact_type="step_output",
+                    path=relative_path,
+                    content_type="application/json",
+                    size_bytes=len(content),
+                    checksum=sha256(content).hexdigest(),
+                    redacted=True,
+                    metadata={"source": "custom_runner"},
+                )
+            ],
+        )

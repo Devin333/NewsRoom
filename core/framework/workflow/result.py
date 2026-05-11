@@ -6,6 +6,7 @@ from enum import Enum
 from typing import Any
 
 from core.framework.specs import StepStatus, WorkflowStatus
+from storage.artifacts import ArtifactRef
 
 
 def _json_safe(value: Any) -> Any:
@@ -47,6 +48,7 @@ class StepOutcome:
     error_type: str | None = None
     error_message: str | None = None
     error_details: dict[str, Any] = field(default_factory=dict)
+    artifacts: list[ArtifactRef] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -55,6 +57,7 @@ class StepOutcome:
             "error_type": self.error_type,
             "error_message": self.error_message,
             "error_details": _json_safe(self.error_details),
+            "artifacts": _json_safe(self.artifacts),
         }
 
 
