@@ -148,6 +148,39 @@ def test_workflow_runner_uses_event_store_factory_by_default(tmp_path, monkeypat
     assert all(event.workflow_id == "factory-echo" for event in fake_store.events)
 
 
+def test_workflow_runner_uses_artifact_index_factory_by_default(tmp_path, monkeypatch) -> None:
+    fake_index = _CollectingArtifactIndex()
+    monkeypatch.setattr(
+        runner_module,
+        "artifact_index_store_from_env",
+        lambda *, artifact_root: fake_index,
+    )
+    registry = FunctionStepRegistry()
+    registry.register("sample.echo", lambda buffer: {"echo": buffer.read("request")})
+    runner = WorkflowRunner(artifact_root=tmp_path, function_registry=registry)
+    spec = WorkflowSpec(
+        workflow_id="artifact-factory-echo",
+        name="Artifact Factory Echo",
+        version="1.0",
+        start_step_id="echo",
+        steps=[
+            StepSpec(
+                step_id="echo",
+                implementation="sample.echo",
+                read_keys=["request"],
+                write_keys=["echo"],
+                required_output_keys=["echo"],
+            )
+        ],
+    )
+
+    runner.run(spec, {"topic": "ai"}, profile="test", run_id="artifact-factory-run")
+
+    artifact_types = {ref.artifact_type for ref in fake_index.refs}
+    assert {"request", "workflow_spec", "events", "manifest", "output"}.issubset(artifact_types)
+    assert all(ref.run_id == "artifact-factory-run" for ref in fake_index.refs)
+
+
 class _CollectingEventStore:
     def __init__(self) -> None:
         self.events = []
@@ -155,3 +188,11 @@ class _CollectingEventStore:
     def append_event(self, event):
         self.events.append(event)
         return len(self.events) - 1
+
+
+class _CollectingArtifactIndex:
+    def __init__(self) -> None:
+        self.refs = []
+
+    def index_artifact(self, ref):
+        self.refs.append(ref)

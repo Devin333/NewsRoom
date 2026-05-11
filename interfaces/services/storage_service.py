@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from storage.artifacts import ArtifactRef, LocalJsonArtifactIndexStore
+from storage.artifacts import ArtifactRef, artifact_index_store_from_env
 from storage.lifecycle import (
     ArtifactRetentionPlanner,
     BackupManifest,
@@ -103,10 +103,15 @@ class StorageLineageQueryResult:
 
 
 class StorageApplicationService:
-    def __init__(self, artifact_root: str | Path = ".newsroom/runs") -> None:
+    def __init__(
+        self,
+        artifact_root: str | Path = ".newsroom/runs",
+        *,
+        artifact_index_store: Any | None = None,
+    ) -> None:
         self.artifact_root = Path(artifact_root)
-        self.artifact_index = LocalJsonArtifactIndexStore(
-            self.artifact_root / "_records" / "artifact_index"
+        self.artifact_index = artifact_index_store or artifact_index_store_from_env(
+            artifact_root=self.artifact_root
         )
         self.lineage_store = LocalJsonLineageStore(self.artifact_root / "_records" / "lineage")
 

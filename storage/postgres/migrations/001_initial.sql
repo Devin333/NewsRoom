@@ -57,6 +57,28 @@ CREATE INDEX IF NOT EXISTS idx_workflow_events_run_offset
 CREATE INDEX IF NOT EXISTS idx_workflow_events_step
     ON workflow_events(run_id, step_id);
 
+CREATE TABLE IF NOT EXISTS artifact_index (
+    artifact_id TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    step_id TEXT,
+    artifact_type TEXT NOT NULL,
+    path TEXT NOT NULL,
+    content_type TEXT NOT NULL,
+    size_bytes BIGINT,
+    checksum TEXT,
+    redacted BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    indexed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (run_id, artifact_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_artifact_index_run_created
+    ON artifact_index(run_id, created_at, artifact_id);
+
+CREATE INDEX IF NOT EXISTS idx_artifact_index_step
+    ON artifact_index(run_id, step_id);
+
 CREATE TABLE IF NOT EXISTS source_items (
     source_item_id TEXT PRIMARY KEY,
     run_id TEXT REFERENCES workflow_runs(run_id) ON DELETE CASCADE,

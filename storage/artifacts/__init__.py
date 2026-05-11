@@ -1,5 +1,6 @@
 """Storage-owned artifact models and stores."""
 
+from storage.artifacts.factory import artifact_index_store_from_env
 from storage.artifacts.filesystem import (
     ArtifactChecksumMismatchError,
     ArtifactNotFoundError,
@@ -16,4 +17,5 @@ __all__ = [
     "ArtifactWriteRequest",
     "FilesystemArtifactStore",
     "LocalJsonArtifactIndexStore",
+    "artifact_index_store_from_env",
 ]

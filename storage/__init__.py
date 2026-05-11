@@ -8,6 +8,7 @@ from storage.artifacts import (
     ArtifactWriteRequest,
     FilesystemArtifactStore,
     LocalJsonArtifactIndexStore,
+    artifact_index_store_from_env,
 )
 from storage.checkpoint import CheckpointNotFoundError, LocalJsonCheckpointStore, WorkflowCheckpoint
 from storage.conversation import AgentMessageRecord, ConversationNotFoundError, LocalJsonConversationStore
@@ -60,5 +61,6 @@ __all__ = [
     "StorageRedactor",
     "StorageMetrics",
     "WorkflowCheckpoint",
+    "artifact_index_store_from_env",
     "lineage_refs_from_evidence_bundle",
 ]

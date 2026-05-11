@@ -1,7 +1,13 @@
 from datetime import UTC, datetime
 
+import interfaces.services.storage_service as storage_service_module
 from interfaces.services.storage_service import StorageApplicationService
-from storage.artifacts import ArtifactWriteRequest, FilesystemArtifactStore, LocalJsonArtifactIndexStore
+from storage.artifacts import (
+    ArtifactRef,
+    ArtifactWriteRequest,
+    FilesystemArtifactStore,
+    LocalJsonArtifactIndexStore,
+)
 from storage.lineage import LineageRef, LocalJsonLineageStore
 
 
@@ -144,3 +150,40 @@ def test_storage_service_queries_lineage_from_real_store(tmp_path) -> None:
         source_type="source_item",
         source_id="raw-1",
     ).lineage_refs == [source_item]
+
+
+def test_storage_service_uses_artifact_index_factory_by_default(tmp_path, monkeypatch) -> None:
+    old_ref = ArtifactRef(
+        artifact_id="raw-old",
+        run_id="run-1",
+        artifact_type="source_item",
+        path="raw.json",
+        content_type="application/json",
+        created_at=datetime(2026, 4, 1, tzinfo=UTC),
+    )
+    fake_index = _FakeArtifactIndex([old_ref])
+    monkeypatch.setattr(
+        storage_service_module,
+        "artifact_index_store_from_env",
+        lambda *, artifact_root: fake_index,
+    )
+
+    result = StorageApplicationService(tmp_path).plan_retention(
+        now=datetime(2026, 5, 11, tzinfo=UTC)
+    )
+
+    assert result.to_dict()["delete_count"] == 1
+    assert fake_index.list_all_called is True
+
+
+class _FakeArtifactIndex:
+    def __init__(self, refs) -> None:
+        self.refs = refs
+        self.list_all_called = False
+
+    def list_all(self):
+        self.list_all_called = True
+        return list(self.refs)
+
+    def list_by_run(self, run_id):
+        return [ref for ref in self.refs if ref.run_id == run_id]
