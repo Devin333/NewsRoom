@@ -56,6 +56,19 @@ def test_latest_report_returns_report_detail() -> None:
     assert payload["data"]["title"] == "Daily Intelligence"
 
 
+def test_get_report_returns_report_detail() -> None:
+    client = TestClient(create_app(report_service_factory=lambda: _FakeReportService()))
+
+    response = client.get("/api/v1/reports/report-1")
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["success"] is True
+    assert payload["data"]["report_id"] == "report-1"
+    assert payload["data"]["run_id"] == "run-1"
+    assert payload["data"]["title"] == "Daily Intelligence"
+
+
 def test_latest_report_missing_uses_unified_error() -> None:
     client = TestClient(create_app(report_service_factory=lambda: _MissingReportService()))
 
@@ -68,6 +81,29 @@ def test_latest_report_missing_uses_unified_error() -> None:
     assert payload["error"]["user_action_required"] is True
 
 
+def test_get_report_missing_uses_unified_error() -> None:
+    client = TestClient(create_app(report_service_factory=lambda: _MissingReportService()))
+
+    response = client.get("/api/v1/reports/missing")
+    payload = response.json()
+
+    assert response.status_code == 404
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "report_not_found"
+    assert payload["error"]["user_action_required"] is True
+
+
+def test_get_report_invalid_id_uses_unified_error() -> None:
+    client = TestClient(create_app(report_service_factory=lambda: _FakeReportService()))
+
+    response = client.get("/api/v1/reports/bad-id")
+    payload = response.json()
+
+    assert response.status_code == 400
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "invalid_report_id"
+
+
 def test_report_search_returns_reports() -> None:
     client = TestClient(create_app(report_service_factory=lambda: _FakeReportService()))
 
@@ -78,6 +114,7 @@ def test_report_search_returns_reports() -> None:
     assert payload["success"] is True
     assert payload["data"]["query"] == "policy"
     assert payload["data"]["report_count"] == 1
+    assert payload["data"]["reports"][0]["report_id"] == "report-1"
     assert payload["data"]["reports"][0]["run_id"] == "run-1"
 
 
@@ -290,6 +327,11 @@ class _FakeReportService:
             manifest_path=".newsroom/runs/run-1/manifest.json",
         )
 
+    def get_report(self, report_id):
+        if report_id != "report-1":
+            raise ValueError(f"invalid report id: {report_id}")
+        return self.latest_report()
+
     def search_reports(self, *, query, limit):
         if not query:
             raise ValueError("query is required")
@@ -300,6 +342,7 @@ class _FakeReportService:
                 "report_count": 1,
                 "reports": [
                     {
+                        "report_id": "report-1",
                         "run_id": "run-1",
                         "status": "succeeded",
                         "finished_at": "2026-05-11T01:00:00Z",
@@ -317,6 +360,9 @@ class _FakeReportService:
 class _MissingReportService:
     def latest_report(self):
         raise FileNotFoundError("no local report found")
+
+    def get_report(self, report_id):
+        raise FileNotFoundError(f"report not found: {report_id}")
 
 
 class _FakeMemoryService:

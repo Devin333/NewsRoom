@@ -17,6 +17,8 @@ from interfaces.mcp.models import (
 DEFAULT_DAILY_QUEUE = "news:queue:daily"
 DEFAULT_MEMORY_COLLECTION = "report_sections"
 LATEST_REPORT_RESOURCE_URI = "news://reports/latest"
+REPORT_RESOURCE_TEMPLATE = "news://reports/{report_id}"
+REPORT_RESOURCE_PREFIX = "news://reports/"
 RUN_MANIFEST_RESOURCE_TEMPLATE = "news://runs/{run_id}/manifest"
 RUN_MANIFEST_RESOURCE_PREFIX = "news://runs/"
 RUN_MANIFEST_RESOURCE_SUFFIX = "/manifest"
@@ -84,6 +86,9 @@ class MCPApplicationService:
         try:
             if uri == LATEST_REPORT_RESOURCE_URI:
                 return self._read_latest_report_resource()
+            report_id = _report_resource_report_id(uri)
+            if report_id is not None:
+                return self._read_report_resource(uri, report_id)
             run_id = _run_manifest_resource_run_id(uri)
             if run_id is not None:
                 return self._read_run_manifest_resource(uri, run_id)
@@ -327,6 +332,14 @@ class MCPApplicationService:
             data=_to_dict(record),
         )
 
+    def _read_report_resource(self, uri: str, report_id: str) -> MCPResourceReadResult:
+        record = self.report_service_factory().get_report(report_id)
+        return MCPResourceReadResult(
+            uri=uri,
+            success=True,
+            data=_to_dict(record),
+        )
+
     def _read_run_manifest_resource(self, uri: str, run_id: str) -> MCPResourceReadResult:
         result = self.run_inspection_service_factory().get_run(run_id)
         return MCPResourceReadResult(
@@ -538,6 +551,11 @@ def _resources() -> list[MCPResource]:
             description="Latest redacted report view.",
         ),
         MCPResource(
+            uri=REPORT_RESOURCE_TEMPLATE,
+            name="Report Detail",
+            description="Persisted report detail by report id.",
+        ),
+        MCPResource(
             uri=RUN_MANIFEST_RESOURCE_TEMPLATE,
             name="Run Manifest",
             description="Workflow run manifest by run id.",
@@ -709,6 +727,13 @@ def _run_inspection_service_factory():
     from interfaces.services.run_inspection_service import RunInspectionService
 
     return RunInspectionService()
+
+
+def _report_resource_report_id(uri: str) -> str | None:
+    if not uri.startswith(REPORT_RESOURCE_PREFIX):
+        return None
+    report_id = uri[len(REPORT_RESOURCE_PREFIX) :]
+    return report_id or None
 
 
 def _run_manifest_resource_run_id(uri: str) -> str | None:

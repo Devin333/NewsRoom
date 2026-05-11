@@ -29,6 +29,11 @@ class ReportApplicationService:
     def latest_report(self) -> LatestReportRecord:
         return self.repository.latest_report()
 
+    def get_report(self, report_id: str) -> LatestReportRecord:
+        if not report_id:
+            raise ValueError("report_id is required")
+        return self.repository.get_report(report_id)
+
     def search_reports(self, *, query: str, limit: int = 20) -> ReportSearchResultSet:
         if not query:
             raise ValueError("query is required")

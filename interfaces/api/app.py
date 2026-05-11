@@ -104,7 +104,32 @@ def create_app(
             report_json=record.report_json,
             report_markdown=record.report_markdown,
             quality_score=record.quality_score,
-            manifest_path=record.manifest_path,
+            manifest_path=str(record.manifest_path),
+        )
+        return _success(_model_to_dict(data))
+
+    @api.get("/api/v1/reports/{report_id}")
+    def get_report(report_id: str):
+        try:
+            record = report_service_factory().get_report(report_id)
+        except FileNotFoundError as exc:
+            return _error(
+                status_code=404,
+                code="report_not_found",
+                message=str(exc),
+                user_action_required=True,
+            )
+        except ValueError as exc:
+            return _error(status_code=400, code="invalid_report_id", message=str(exc))
+        data = ReportDetail(
+            report_id=record.report_id,
+            run_id=record.run_id,
+            status=record.status,
+            title=record.title,
+            report_json=record.report_json,
+            report_markdown=record.report_markdown,
+            quality_score=record.quality_score,
+            manifest_path=str(record.manifest_path),
         )
         return _success(_model_to_dict(data))
 

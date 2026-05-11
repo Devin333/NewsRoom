@@ -27,6 +27,7 @@ def test_mcp_catalog_lists_tools_without_calling_factories() -> None:
     assert "news.run.events" in tool_names
     assert "news.approval.submit" in tool_names
     assert "news://reports/latest" in resource_uris
+    assert "news://reports/{report_id}" in resource_uris
     assert "news://runs/{run_id}/manifest" in resource_uris
     assert "news://runs/{run_id}/events" in resource_uris
     prompt_names = [prompt["name"] for prompt in catalog["prompts"]]
@@ -156,6 +157,41 @@ def test_mcp_reads_latest_report_resource_from_local_json_artifact(tmp_path) -> 
     result = service.read_resource("news://reports/latest")
 
     assert result.success is True
+    assert result.data["report_id"] == "run-1:final"
+    assert result.data["run_id"] == "run-1"
+    assert result.data["report_json"] == {"title": "Daily Intelligence"}
+    assert result.data["report_markdown"] == "# Daily Intelligence"
+
+
+def test_mcp_reads_report_resource_from_local_json_artifact(tmp_path) -> None:
+    run_dir = tmp_path / "run-1"
+    run_dir.mkdir()
+    report_json = run_dir / "report.json"
+    report_markdown = run_dir / "report.md"
+    report_json.write_text(json.dumps({"title": "Daily Intelligence"}), encoding="utf-8")
+    report_markdown.write_text("# Daily Intelligence", encoding="utf-8")
+    (run_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "run_id": "run-1",
+                "status": "succeeded",
+                "finished_at": "2026-05-11T01:00:00Z",
+                "artifacts": {
+                    "report_json": "report.json",
+                    "report_markdown": "report.md",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    service = MCPApplicationService(
+        report_service_factory=lambda: ReportApplicationService(artifact_root=tmp_path)
+    )
+
+    result = service.read_resource("news://reports/run-1:final")
+
+    assert result.success is True
+    assert result.data["report_id"] == "run-1:final"
     assert result.data["run_id"] == "run-1"
     assert result.data["report_json"] == {"title": "Daily Intelligence"}
     assert result.data["report_markdown"] == "# Daily Intelligence"
@@ -192,6 +228,7 @@ def test_mcp_report_search_reads_real_local_report_artifacts(tmp_path) -> None:
     assert result.success is True
     assert result.data["query"] == "policy"
     assert result.data["report_count"] == 1
+    assert result.data["reports"][0]["report_id"] == "run-1:final"
     assert result.data["reports"][0]["run_id"] == "run-1"
 
 

@@ -14,7 +14,26 @@ def test_report_service_searches_local_report_artifacts(tmp_path) -> None:
     assert payload["query"] == "policy"
     assert payload["report_count"] == 1
     assert payload["reports"][0]["run_id"] == "run-1"
+    assert payload["reports"][0]["report_id"] == "run-1:final"
     assert payload["reports"][0]["title"] == "AI Policy Report"
+
+
+def test_report_service_gets_report_by_id(tmp_path) -> None:
+    _write_report_run(tmp_path, "run-1", "2026-05-11T00:00:00Z", "AI Policy Report")
+
+    record = ReportApplicationService(artifact_root=tmp_path).get_report("run-1:final")
+
+    assert record.report_id == "run-1:final"
+    assert record.run_id == "run-1"
+    assert record.title == "AI Policy Report"
+    assert record.report_json == {"title": "AI Policy Report"}
+
+
+def test_report_service_rejects_empty_report_id(tmp_path) -> None:
+    service = ReportApplicationService(artifact_root=tmp_path)
+
+    with pytest.raises(ValueError, match="report_id is required"):
+        service.get_report("")
 
 
 def test_report_service_rejects_empty_query(tmp_path) -> None:
@@ -35,6 +54,7 @@ def _write_report_run(root, run_id: str, finished_at: str, title: str) -> None:
                 "run_id": run_id,
                 "status": "succeeded",
                 "finished_at": finished_at,
+                "quality_score": 0.9,
                 "artifacts": {
                     "report_json": "report.json",
                     "report_markdown": "report.md",

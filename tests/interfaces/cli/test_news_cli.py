@@ -254,6 +254,47 @@ def test_news_cli_reports_search_json_output(tmp_path, capsys) -> None:
     assert payload["query"] == "policy"
     assert payload["report_count"] == 1
     assert payload["reports"][0]["run_id"] == "search-source"
+    assert payload["reports"][0]["report_id"] == "search-source:final"
+
+
+def test_news_cli_reports_show_json_output(tmp_path, capsys) -> None:
+    assert (
+        main(
+            [
+                "run",
+                "daily",
+                "--profile",
+                "live-offline",
+                "--artifact-root",
+                str(tmp_path),
+                "--run-id",
+                "show-source",
+                "--topic",
+                "AI policy",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "reports",
+            "show",
+            "show-source:final",
+            "--artifact-root",
+            str(tmp_path),
+            "--format",
+            "json",
+        ]
+    )
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert exit_code == 0
+    assert payload["report_id"] == "show-source:final"
+    assert payload["run_id"] == "show-source"
+    assert payload["report_json"]["title"] == "Daily Intelligence: AI policy"
 
 
 class _FakePersistenceRepository:

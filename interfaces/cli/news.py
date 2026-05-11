@@ -68,6 +68,22 @@ def build_parser() -> argparse.ArgumentParser:
 
     reports_parser = subparsers.add_parser("reports", help="Inspect persisted reports")
     reports_subparsers = reports_parser.add_subparsers(dest="reports_command", required=True)
+
+    reports_show_parser = reports_subparsers.add_parser("show", help="Show one persisted report")
+    reports_show_parser.add_argument("report_id", help="Report id")
+    reports_show_parser.add_argument(
+        "--artifact-root",
+        default=".newsroom/runs",
+        help="Directory where run artifacts are stored",
+    )
+    reports_show_parser.add_argument(
+        "--format",
+        choices=["markdown", "json"],
+        default="markdown",
+        help="Output format",
+    )
+    reports_show_parser.set_defaults(handler=_reports_show)
+
     reports_search_parser = reports_subparsers.add_parser("search", help="Search persisted reports")
     reports_search_parser.add_argument("query", help="Search query")
     reports_search_parser.add_argument("--limit", type=int, default=20, help="Maximum reports")
@@ -569,6 +585,20 @@ def _reports_search(args: argparse.Namespace) -> int:
         print(f"report_count={payload['report_count']}")
         for report in payload["reports"]:
             print(f"- {report['run_id']} title={report['title']} finished_at={report['finished_at']}")
+    return 0
+
+
+def _reports_show(args: argparse.Namespace) -> int:
+    try:
+        record = ReportApplicationService(artifact_root=args.artifact_root).get_report(args.report_id)
+    except (FileNotFoundError, ValueError) as exc:
+        print(str(exc))
+        return 1
+    payload = record.to_dict()
+    if args.format == "json":
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        print(record.report_markdown or json.dumps(record.report_json, ensure_ascii=False, indent=2))
     return 0
 
 
