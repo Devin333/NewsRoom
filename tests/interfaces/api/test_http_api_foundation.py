@@ -22,6 +22,63 @@ def test_health_uses_common_envelope() -> None:
     assert payload["schema_version"] == "1.0"
 
 
+def test_health_does_not_require_api_token_when_auth_enabled() -> None:
+    client = TestClient(create_app(api_token="test-token"))
+
+    response = client.get("/health")
+
+    assert response.status_code == 200
+    assert response.json()["data"]["status"] == "ok"
+
+
+def test_api_token_auth_rejects_missing_token() -> None:
+    client = TestClient(
+        create_app(
+            api_token="test-token",
+            report_service_factory=lambda: _FakeReportService(),
+        )
+    )
+
+    response = client.get("/api/v1/reports/latest")
+    payload = response.json()
+
+    assert response.status_code == 401
+    assert response.headers["www-authenticate"] == "Bearer"
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "unauthorized"
+    assert "test-token" not in json.dumps(payload)
+
+
+def test_api_token_auth_rejects_invalid_token() -> None:
+    client = TestClient(
+        create_app(
+            api_token="test-token",
+            report_service_factory=lambda: _FakeReportService(),
+        )
+    )
+
+    response = client.get("/api/v1/reports/latest", headers={"Authorization": "Bearer wrong"})
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "unauthorized"
+
+
+def test_api_token_auth_allows_valid_bearer_token() -> None:
+    client = TestClient(
+        create_app(
+            api_token="test-token",
+            report_service_factory=lambda: _FakeReportService(),
+        )
+    )
+
+    response = client.get("/api/v1/reports/latest", headers={"Authorization": "Bearer test-token"})
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["success"] is True
+    assert payload["data"]["report_id"] == "report-1"
+
+
 def test_submit_daily_run_enqueues_task() -> None:
     fake_worker = _FakeWorkerService()
     client = TestClient(create_app(worker_service_factory=lambda: fake_worker))

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import hmac
+import os
 from datetime import datetime
 from typing import Callable
 from uuid import uuid4
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse
 
 from core.framework.workers.approval import ApprovalAlreadyDecidedError, ApprovalNotFoundError
@@ -65,8 +67,27 @@ def create_app(
     storage_service_factory: StorageServiceFactory = StorageApplicationService,
     schedule_service_factory: ScheduleServiceFactory = ScheduleApplicationService,
     approval_service_factory: ApprovalServiceFactory = ApprovalApplicationService,
+    api_token: str | None = None,
 ) -> FastAPI:
     api = FastAPI(title="NewsRoom API", version="0.1.0")
+    resolved_api_token = _normalize_api_token(api_token)
+
+    if resolved_api_token:
+
+        @api.middleware("http")
+        async def bearer_token_auth(request: Request, call_next):
+            if _requires_api_auth(request.url.path) and not _is_authorized_bearer(
+                request.headers.get("authorization"),
+                resolved_api_token,
+            ):
+                return _error(
+                    status_code=401,
+                    code="unauthorized",
+                    message="valid bearer token required",
+                    user_action_required=True,
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            return await call_next(request)
 
     @api.get("/health")
     def health() -> dict:
@@ -498,6 +519,7 @@ def _error(
     details: dict | None = None,
     retryable: bool = False,
     user_action_required: bool = False,
+    headers: dict[str, str] | None = None,
 ) -> JSONResponse:
     payload = ApiResponse(
         success=False,
@@ -510,7 +532,7 @@ def _error(
         ),
         request_id=_request_id(),
     )
-    return JSONResponse(status_code=status_code, content=_model_to_dict(payload))
+    return JSONResponse(status_code=status_code, content=_model_to_dict(payload), headers=headers)
 
 
 def _model_to_dict(model) -> dict:
@@ -531,4 +553,24 @@ def _request_id() -> str:
     return f"req_{uuid4().hex}"
 
 
-app = create_app()
+def _normalize_api_token(api_token: str | None) -> str | None:
+    if api_token is None:
+        return None
+    token = api_token.strip()
+    return token or None
+
+
+def _requires_api_auth(path: str) -> bool:
+    return path.startswith("/api/")
+
+
+def _is_authorized_bearer(authorization: str | None, expected_token: str) -> bool:
+    if not authorization:
+        return False
+    scheme, separator, token = authorization.partition(" ")
+    if not separator or scheme.lower() != "bearer":
+        return False
+    return hmac.compare_digest(token.strip(), expected_token)
+
+
+app = create_app(api_token=os.environ.get("NEWS_API_TOKEN"))
