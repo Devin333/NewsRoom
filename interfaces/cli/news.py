@@ -25,7 +25,7 @@ from interfaces.services.schedule_service import (
     ScheduleApplicationService,
 )
 from interfaces.services.source_service import SourceApplicationService
-from interfaces.services.worker_service import DEFAULT_DAILY_QUEUE, WorkerApplicationService
+from interfaces.services.worker_service import DEFAULT_DAILY_QUEUE, DEFAULT_MEMORY_QUEUE, WorkerApplicationService
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -86,6 +86,17 @@ def build_parser() -> argparse.ArgumentParser:
     enqueue_daily_parser.add_argument("--redis-url", default=None, help="Redis URL; defaults to NEWS_REDIS_URL")
     enqueue_daily_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     enqueue_daily_parser.set_defaults(handler=_worker_enqueue_daily)
+
+    enqueue_memory_parser = worker_subparsers.add_parser(
+        "enqueue-memory-reindex",
+        help="Enqueue a memory reindex task",
+    )
+    enqueue_memory_parser.add_argument("--run-id", required=True, help="Run id to reindex")
+    enqueue_memory_parser.add_argument("--topic", default=None, help="Optional topic override")
+    enqueue_memory_parser.add_argument("--queue-name", default=DEFAULT_MEMORY_QUEUE, help="Redis stream queue name")
+    enqueue_memory_parser.add_argument("--redis-url", default=None, help="Redis URL; defaults to NEWS_REDIS_URL")
+    enqueue_memory_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    enqueue_memory_parser.set_defaults(handler=_worker_enqueue_memory_reindex)
 
     run_once_parser = worker_subparsers.add_parser(
         "run-once",
@@ -543,6 +554,28 @@ def _worker_enqueue_daily(args: argparse.Namespace) -> int:
         print(f"message_id={payload['message_id']}")
         print(f"profile={payload['profile']}")
         print(f"topic={payload['topic']}")
+    return 0
+
+
+def _worker_enqueue_memory_reindex(args: argparse.Namespace) -> int:
+    service = WorkerApplicationService(redis_url=args.redis_url)
+    result = service.enqueue_memory_reindex(
+        run_id=args.run_id,
+        topic=args.topic,
+        queue_name=args.queue_name,
+    )
+    payload = result.to_dict()
+
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        print(f"task_id={payload['task_id']}")
+        print(f"task_type={payload['task_type']}")
+        print(f"queue_name={payload['queue_name']}")
+        print(f"message_id={payload['message_id']}")
+        print(f"run_id={payload['run_id']}")
+        if payload["topic"]:
+            print(f"topic={payload['topic']}")
     return 0
 
 

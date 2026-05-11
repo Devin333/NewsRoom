@@ -7,6 +7,7 @@ from typing import Any
 
 from core.framework.workers import (
     DailyIntelligenceTaskHandler,
+    MemoryReindexTaskHandler,
     RedisStreamTaskQueue,
     Task,
     TaskResult,
@@ -18,6 +19,7 @@ from interfaces.services.run_service import RunApplicationService
 
 DEFAULT_REDIS_URL = "redis://127.0.0.1:6379/0"
 DEFAULT_DAILY_QUEUE = "news:queue:daily"
+DEFAULT_MEMORY_QUEUE = "news:queue:memory"
 
 
 @dataclass(frozen=True)
@@ -84,7 +86,8 @@ class WorkerApplicationService:
             handlers = {
                 DailyIntelligenceTaskHandler.task_type: DailyIntelligenceTaskHandler(
                     RunApplicationService(artifact_root=self.artifact_root)
-                )
+                ),
+                MemoryReindexTaskHandler.task_type: MemoryReindexTaskHandler(),
             }
         self.handlers = handlers
 
@@ -107,6 +110,25 @@ class WorkerApplicationService:
         _reject_secret_payload_keys(payload)
         task = Task(
             task_type=DailyIntelligenceTaskHandler.task_type,
+            queue_name=queue_name,
+            payload=payload,
+        )
+        message_id = self.queue.enqueue(task)
+        return EnqueuedTaskResult(task=task, message_id=str(message_id))
+
+    def enqueue_memory_reindex(
+        self,
+        *,
+        run_id: str,
+        topic: str | None = None,
+        queue_name: str = DEFAULT_MEMORY_QUEUE,
+    ) -> EnqueuedTaskResult:
+        payload: dict[str, Any] = {"run_id": run_id}
+        if topic:
+            payload["topic"] = topic
+        _reject_secret_payload_keys(payload)
+        task = Task(
+            task_type=MemoryReindexTaskHandler.task_type,
             queue_name=queue_name,
             payload=payload,
         )

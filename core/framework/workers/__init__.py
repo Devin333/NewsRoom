@@ -20,6 +20,7 @@ _EXPORT_MODULES = {
     "InMemoryScheduleStore": "core.framework.workers.schedule_store",
     "InMemoryTaskQueue": "core.framework.workers.in_memory",
     "LeasedTask": "core.framework.workers.models",
+    "MemoryReindexTaskHandler": "core.framework.workers.handlers",
     "MisfirePolicy": "core.framework.workers.scheduler",
     "RedisStreamTaskQueue": "core.framework.workers.redis_queue",
     "ScheduleEvaluation": "core.framework.workers.scheduler",

@@ -1,5 +1,5 @@
 from core.framework.workers import LeasedTask, Task, TaskResult, TaskStatus
-from interfaces.services.worker_service import DEFAULT_DAILY_QUEUE, WorkerApplicationService
+from interfaces.services.worker_service import DEFAULT_DAILY_QUEUE, DEFAULT_MEMORY_QUEUE, WorkerApplicationService
 
 
 def test_worker_service_enqueue_daily_uses_queue() -> None:
@@ -21,6 +21,19 @@ def test_worker_service_enqueue_daily_uses_queue() -> None:
         "source_limit": 2,
         "run_id": "queued-run",
     }
+    assert result.message_id == "1-0"
+    assert queue.enqueued[0] is result.task
+
+
+def test_worker_service_enqueue_memory_reindex_uses_memory_queue() -> None:
+    queue = _FakeQueue()
+    service = WorkerApplicationService(queue=queue, handlers={})
+
+    result = service.enqueue_memory_reindex(run_id="run-1", topic="AI policy")
+
+    assert result.task.task_type == "memory.reindex"
+    assert result.task.queue_name == DEFAULT_MEMORY_QUEUE
+    assert result.task.payload == {"run_id": "run-1", "topic": "AI policy"}
     assert result.message_id == "1-0"
     assert queue.enqueued[0] is result.task
 
