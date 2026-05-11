@@ -3,6 +3,7 @@ from core.framework import WorkflowRunner
 from core.framework.specs import StepSpec, WorkflowSpec, WorkflowStatus
 from core.framework.workflow import FunctionStepRegistry
 from storage.artifacts import LocalJsonArtifactIndexStore
+from storage.checkpoint import LocalJsonCheckpointStore
 from storage.events import LocalJsonEventStore
 from storage.security import REDACTED_VALUE
 
@@ -112,6 +113,48 @@ def test_workflow_runner_redacts_event_store_failure_payload(tmp_path) -> None:
     report = failed_event.metadata["redaction_report"]
     assert "$.outcome.error_message" in report["redacted_fields"]
     assert "secret_like_string" in report["redaction_rules_applied"]
+
+
+def test_workflow_runner_can_persist_checkpoints_when_injected(tmp_path) -> None:
+    checkpoint_store = LocalJsonCheckpointStore(tmp_path / "checkpoints")
+    registry = FunctionStepRegistry()
+    registry.register("sample.echo", lambda buffer: {"echo": buffer.read("request")})
+    runner = WorkflowRunner(
+        artifact_root=tmp_path,
+        function_registry=registry,
+        checkpoint_store=checkpoint_store,
+    )
+    spec = WorkflowSpec(
+        workflow_id="checkpoint-echo",
+        name="Checkpoint Echo",
+        version="1.0",
+        start_step_id="echo",
+        steps=[
+            StepSpec(
+                step_id="echo",
+                implementation="sample.echo",
+                read_keys=["request"],
+                write_keys=["echo"],
+                required_output_keys=["echo"],
+            )
+        ],
+    )
+
+    result = runner.run(spec, {"topic": "ai"}, profile="test", run_id="runner-checkpoint")
+
+    assert result.status == WorkflowStatus.SUCCEEDED
+    checkpoint = checkpoint_store.get_latest_checkpoint("runner-checkpoint")
+    assert checkpoint is not None
+    assert checkpoint.current_step_ids == []
+    assert checkpoint.data_buffer_snapshot["echo"] == {"topic": "ai"}
+    events = LocalJsonEventStore(tmp_path / "_records" / "events").list_by_run("runner-checkpoint")
+    assert [event.event_type for event in events] == [
+        "workflow_started",
+        "step_started",
+        "step_succeeded",
+        "checkpoint_created",
+        "workflow_succeeded",
+    ]
 
 
 def test_workflow_runner_uses_event_store_factory_by_default(tmp_path, monkeypatch) -> None:

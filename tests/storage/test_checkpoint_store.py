@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from core.framework.specs import WorkflowStatus
 from storage.checkpoint import CheckpointNotFoundError, LocalJsonCheckpointStore, WorkflowCheckpoint
 
 
@@ -28,6 +29,20 @@ def test_workflow_checkpoint_round_trips() -> None:
 
     assert restored == checkpoint
     assert restored.to_dict()["created_at"] == "2026-05-11T01:00:00Z"
+
+
+def test_workflow_checkpoint_serializes_nested_json_safe_values() -> None:
+    checkpoint = WorkflowCheckpoint(
+        checkpoint_id="cp-1",
+        run_id="run-1",
+        workflow_id="daily",
+        workflow_version="1",
+        current_step_ids=[],
+        data_buffer_snapshot={"status": WorkflowStatus.SUCCEEDED},
+        created_at=datetime(2026, 5, 11, 1, 0, tzinfo=UTC),
+    )
+
+    assert checkpoint.to_dict()["data_buffer_snapshot"] == {"status": "succeeded"}
 
 
 def test_local_json_checkpoint_store_saves_lists_and_reads_latest(tmp_path) -> None:

@@ -2,11 +2,26 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from enum import Enum
 from typing import Any
 
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, Enum):
+        return value.value
+    if isinstance(value, datetime):
+        return value.isoformat().replace("+00:00", "Z")
+    if hasattr(value, "to_dict"):
+        return _json_safe(value.to_dict())
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    return value
 
 
 @dataclass(frozen=True)
@@ -30,12 +45,12 @@ class WorkflowCheckpoint:
             "workflow_id": self.workflow_id,
             "workflow_version": self.workflow_version,
             "current_step_ids": list(self.current_step_ids),
-            "data_buffer_snapshot": dict(self.data_buffer_snapshot),
-            "step_results": dict(self.step_results),
+            "data_buffer_snapshot": _json_safe(self.data_buffer_snapshot),
+            "step_results": _json_safe(self.step_results),
             "path": list(self.path),
             "event_offset": self.event_offset,
             "created_at": self.created_at.isoformat().replace("+00:00", "Z"),
-            "metadata": dict(self.metadata),
+            "metadata": _json_safe(self.metadata),
         }
 
     @classmethod

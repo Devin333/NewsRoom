@@ -30,6 +30,7 @@ class WorkflowRunner:
         artifact_index_store: Any | None = None,
         event_store: Any | None = None,
         lineage_store: Any | None = None,
+        checkpoint_store: Any | None = None,
         redactor: StorageRedactor | None = None,
     ) -> None:
         self._artifact_root = Path(artifact_root)
@@ -42,6 +43,7 @@ class WorkflowRunner:
         self._lineage_store = lineage_store or lineage_store_from_env(
             artifact_root=self._artifact_root
         )
+        self._checkpoint_store = checkpoint_store
         self._redactor = redactor or StorageRedactor()
 
     def run(
@@ -55,6 +57,7 @@ class WorkflowRunner:
         executor = WorkflowExecutor(
             function_step_runner=self._function_step_runner,
             artifact_manager=self._artifact_manager,
+            checkpoint_store=self._checkpoint_store,
         )
         result = executor.execute(workflow, request, profile=profile, run_id=run_id)
         self._persist_storage_indexes(result)

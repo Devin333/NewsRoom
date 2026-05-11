@@ -13,6 +13,7 @@ from core.framework.workflow.buffer import DataBuffer
 from core.framework.workflow.result import StepOutcome, WorkflowError, WorkflowResult
 from core.framework.workflow.routing import RoutingEngine
 from core.framework.workflow.step_runner import FunctionStepRunner, StepRunnerRegistry
+from storage.checkpoint import WorkflowCheckpoint
 
 
 def _utc_now() -> str:
@@ -27,6 +28,7 @@ class WorkflowExecutor:
         routing_engine: RoutingEngine | None = None,
         sleep_fn: Callable[[float], None] | None = None,
         step_runner_registry: StepRunnerRegistry | None = None,
+        checkpoint_store: Any | None = None,
     ) -> None:
         if step_runner_registry is None:
             if function_step_runner is None:
@@ -36,6 +38,7 @@ class WorkflowExecutor:
         self._artifact_manager = artifact_manager
         self._routing_engine = routing_engine or RoutingEngine()
         self._sleep_fn = sleep_fn or time.sleep
+        self._checkpoint_store = checkpoint_store
 
     def execute(
         self,
@@ -97,6 +100,7 @@ class WorkflowExecutor:
         error: WorkflowError | None = None
         path: list[str] = []
         step_results: dict[str, StepOutcome] = {}
+        checkpoint_ids: list[str] = []
         current_step_id: str | None = workflow.start_step_id
 
         while current_step_id:
@@ -153,6 +157,18 @@ class WorkflowExecutor:
                         status = WorkflowStatus.FAILED
                         error = step_error
                         current_step_id = None
+            checkpoint_id = self._write_checkpoint(
+                run_id=actual_run_id,
+                workflow=workflow,
+                profile=profile,
+                current_step_id=current_step_id,
+                buffer=buffer,
+                step_results=step_results,
+                path=path,
+                recorder=recorder,
+            )
+            if checkpoint_id is not None:
+                checkpoint_ids.append(checkpoint_id)
 
         final_buffer_snapshot = buffer.snapshot()
         output = final_buffer_snapshot.to_dict()
@@ -161,6 +177,9 @@ class WorkflowExecutor:
         manifest["finished_at"] = _utc_now()
         manifest["event_count"] = len(recorder.list_events()) + 1
         manifest["step_count"] = len(step_results)
+        manifest["checkpoint_count"] = len(checkpoint_ids)
+        if checkpoint_ids:
+            manifest["latest_checkpoint_id"] = checkpoint_ids[-1]
 
         if status == WorkflowStatus.SUCCEEDED:
             recorder.emit("workflow_succeeded", {"path": path})
@@ -425,6 +444,50 @@ class WorkflowExecutor:
                 "total_count": len(source_artifacts["entries"]),
             }
 
+    def _write_checkpoint(
+        self,
+        *,
+        run_id: str,
+        workflow: WorkflowSpec,
+        profile: str,
+        current_step_id: str | None,
+        buffer: DataBuffer,
+        step_results: dict[str, StepOutcome],
+        path: list[str],
+        recorder: EventRecorder,
+    ) -> str | None:
+        if self._checkpoint_store is None:
+            return None
+
+        current_step_ids = [current_step_id] if current_step_id is not None else []
+        event_offset = len(recorder.list_events())
+        checkpoint_id = _checkpoint_id(path[-1] if path else "start", event_offset)
+        checkpoint = WorkflowCheckpoint(
+            checkpoint_id=checkpoint_id,
+            run_id=run_id,
+            workflow_id=workflow.workflow_id,
+            workflow_version=workflow.version,
+            current_step_ids=current_step_ids,
+            data_buffer_snapshot=buffer.snapshot().to_dict(),
+            step_results={
+                step_id: outcome.to_dict()
+                for step_id, outcome in step_results.items()
+            },
+            path=list(path),
+            event_offset=event_offset,
+            metadata={"profile": profile},
+        )
+        self._checkpoint_store.save_checkpoint(checkpoint)
+        recorder.emit(
+            "checkpoint_created",
+            {
+                "checkpoint_id": checkpoint_id,
+                "current_step_ids": current_step_ids,
+                "path": list(path),
+            },
+        )
+        return checkpoint_id
+
 
 def _evidence_source_map(evidence_bundle: Any) -> dict[str, list[str]] | None:
     if isinstance(evidence_bundle, dict):
@@ -453,3 +516,11 @@ def _failure_fallback_step_id(workflow: WorkflowSpec, step: StepSpec) -> str | N
     if not edges:
         return None
     return edges[0].target_step_id
+
+
+def _checkpoint_id(step_id: str, event_offset: int) -> str:
+    safe_step_id = "".join(
+        character if character.isalnum() or character in "._-" else "_"
+        for character in step_id
+    ).strip("._-")
+    return f"cp-{event_offset:06d}-{safe_step_id or 'step'}"

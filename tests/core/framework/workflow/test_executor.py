@@ -19,6 +19,7 @@ from core.framework.workflow import (
     StepRunnerRegistry,
     WorkflowExecutor,
 )
+from storage.checkpoint import LocalJsonCheckpointStore
 
 
 def _sample_spec() -> WorkflowSpec:
@@ -112,6 +113,54 @@ def test_workflow_executor_runs_function_steps_and_writes_artifacts(tmp_path) ->
         "step_succeeded",
         "step_started",
         "step_succeeded",
+        "workflow_succeeded",
+    ]
+
+
+def test_workflow_executor_writes_checkpoints_when_store_is_configured(tmp_path) -> None:
+    registry = FunctionStepRegistry()
+    registry.register("sample.plan", lambda buffer: {"plan": {"topic": buffer.read("request")["topic"]}})
+    registry.register("sample.write", lambda buffer: {"report": f"Report: {buffer.read('plan')['topic']}"})
+    checkpoint_store = LocalJsonCheckpointStore(tmp_path / "checkpoints")
+    executor = WorkflowExecutor(
+        function_step_runner=FunctionStepRunner(registry),
+        artifact_manager=ArtifactManager(tmp_path / "runs"),
+        checkpoint_store=checkpoint_store,
+    )
+
+    result = executor.execute(
+        _sample_spec(),
+        {"topic": "ai"},
+        profile="test",
+        run_id="run-checkpoints",
+    )
+
+    assert result.status == WorkflowStatus.SUCCEEDED
+    checkpoints = checkpoint_store.list_checkpoints("run-checkpoints")
+    assert len(checkpoints) == 2
+    assert checkpoints[0].current_step_ids == ["write"]
+    assert checkpoints[0].path == ["plan"]
+    assert checkpoints[0].data_buffer_snapshot["plan"] == {"topic": "ai"}
+    assert checkpoints[1].current_step_ids == []
+    assert checkpoints[1].path == ["plan", "write"]
+    assert checkpoints[1].data_buffer_snapshot["report"] == "Report: ai"
+    assert set(checkpoints[1].step_results) == {"plan", "write"}
+
+    manifest = json.loads((tmp_path / "runs" / "run-checkpoints" / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["checkpoint_count"] == 2
+    assert manifest["latest_checkpoint_id"] == checkpoints[1].checkpoint_id
+    events = [
+        json.loads(line)["event_type"]
+        for line in (tmp_path / "runs" / "run-checkpoints" / "events.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert events == [
+        "workflow_started",
+        "step_started",
+        "step_succeeded",
+        "checkpoint_created",
+        "step_started",
+        "step_succeeded",
+        "checkpoint_created",
         "workflow_succeeded",
     ]
 
