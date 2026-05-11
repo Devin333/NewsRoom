@@ -33,9 +33,10 @@ def _rank_item(
     relevance = _relevance(item, topic)
     recency = _recency(item, now)
     reliability = RELIABILITY_SCORE[item.source_reliability]
+    authority = _authority(item)
     novelty = max(0.5, 1.0 - index * 0.05)
     final_score = round(
-        relevance * 0.45 + recency * 0.2 + reliability * 0.25 + novelty * 0.1,
+        relevance * 0.4 + recency * 0.2 + reliability * 0.2 + authority * 0.1 + novelty * 0.1,
         4,
     )
     ranked_item_id = f"rank_{item.normalized_item_id.removeprefix('norm_')}"
@@ -47,6 +48,7 @@ def _rank_item(
             "relevance_score": round(relevance, 4),
             "recency_score": round(recency, 4),
             "reliability_score": round(reliability, 4),
+            "authority_score": round(authority, 4),
             "novelty_score": round(novelty, 4),
             "final_score": final_score,
         }
@@ -59,7 +61,10 @@ def _rank_item(
         reliability_score=round(reliability, 4),
         novelty_score=round(novelty, 4),
         final_score=final_score,
-        rank_reason=f"topic={topic}; relevance={relevance:.2f}; reliability={reliability:.2f}",
+        rank_reason=(
+            f"topic={topic}; relevance={relevance:.2f}; "
+            f"reliability={reliability:.2f}; authority={authority:.2f}"
+        ),
         metadata={"lineage": lineage},
     )
 
@@ -81,3 +86,11 @@ def _recency(item: NormalizedSourceItem, now: datetime) -> float:
     if age_days >= 14:
         return 0.2
     return 1.0 - (age_days - 1) * (0.8 / 13)
+
+
+def _authority(item: NormalizedSourceItem) -> float:
+    try:
+        authority = float(item.metadata.get("source_authority_score", 0.5))
+    except (TypeError, ValueError):
+        authority = 0.5
+    return min(1.0, max(0.0, authority))

@@ -5,7 +5,14 @@ from sources.processing import deduplicate_items, normalize_items, rank_items
 from sources.processing.normalize import canonicalize_url, normalize_text
 
 
-def _raw_item(title: str, url: str, *, reliability: str = "medium", days_old: int = 0) -> RawSourceItem:
+def _raw_item(
+    title: str,
+    url: str,
+    *,
+    reliability: str = "medium",
+    days_old: int = 0,
+    authority_score: float = 0.5,
+) -> RawSourceItem:
     now = datetime(2026, 5, 11, tzinfo=UTC)
     return RawSourceItem(
         source_item_id=f"raw-{title}-{url}",
@@ -17,7 +24,7 @@ def _raw_item(title: str, url: str, *, reliability: str = "medium", days_old: in
         fetched_at=now,
         published_at=now - timedelta(days=days_old),
         summary=f"Summary for {title}",
-        metadata={"source_reliability": reliability},
+        metadata={"source_reliability": reliability, "source_authority_score": authority_score},
     )
 
 
@@ -62,3 +69,29 @@ def test_rank_items_prioritizes_topic_relevance_and_reliability() -> None:
     assert lineage["normalized_item_id"] == ranked[0].item.normalized_item_id
     assert lineage["ranked_item_id"] == ranked[0].ranked_item_id
     assert lineage["final_score"] == ranked[0].final_score
+    assert lineage["authority_score"] == 0.5
+
+
+def test_rank_items_uses_source_authority_score() -> None:
+    normalized = normalize_items(
+        [
+            _raw_item(
+                "AI chip export update",
+                "https://example.com/low-authority",
+                reliability="high",
+                authority_score=0.1,
+            ),
+            _raw_item(
+                "AI chip export update",
+                "https://example.com/high-authority",
+                reliability="high",
+                authority_score=1.0,
+            ),
+        ]
+    )
+
+    ranked = rank_items(normalized, topic="AI chip", now=datetime(2026, 5, 11, tzinfo=UTC))
+
+    assert ranked[0].item.url == "https://example.com/high-authority"
+    assert ranked[0].final_score > ranked[1].final_score
+    assert ranked[0].metadata["lineage"]["authority_score"] == 1.0

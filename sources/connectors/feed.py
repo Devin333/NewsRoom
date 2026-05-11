@@ -165,7 +165,10 @@ def _raw_item(
         summary=summary.strip() if summary else None,
         raw_content=raw_content,
         language=source.language,
-        metadata={"source_reliability": source.reliability.value},
+        metadata={
+            "source_reliability": source.reliability.value,
+            "source_authority_score": source.authority_score,
+        },
     )
 
 

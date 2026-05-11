@@ -45,6 +45,7 @@ def test_feed_connector_parses_rss_fixture() -> None:
     assert items[0].title == "AI chip export update"
     assert items[0].url == "https://example.com/articles/chips?utm_source=x"
     assert items[0].metadata["source_reliability"] == "high"
+    assert items[0].metadata["source_authority_score"] == 0.5
 
 
 def test_feed_connector_parses_atom_fixture() -> None:
