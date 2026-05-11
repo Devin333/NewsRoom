@@ -47,7 +47,10 @@ def test_daily_intelligence_runner_live_offline_writes_report_artifacts(tmp_path
     assert manifest["artifacts"]["editor_review"] == "editor_review.json"
     assert manifest["artifacts"]["support_matrix"] == "support_matrix.json"
     assert manifest["artifacts"]["report_quality_summary"] == "report_quality_summary.json"
+    assert manifest["artifacts"]["quality_events"] == "quality_events.json"
+    assert manifest["artifacts"]["quality_gate_metrics"] == "quality_gate_metrics.json"
     assert manifest["quality_score"] == 1.0
+    assert manifest["quality_event_count"] == 5
     assert manifest["artifacts"]["report_json"] == "report.json"
     assert manifest["artifacts"]["report_markdown"] == "report.md"
     assert manifest["artifacts"]["source_events"] == "source_events.json"
@@ -77,6 +80,18 @@ def test_daily_intelligence_runner_live_offline_writes_report_artifacts(tmp_path
     evidence_source_map = json.loads((run_dir / "evidence_source_map.json").read_text())
     assert len(evidence_scores) == len(result.output["evidence_bundle"].items)
     assert set(evidence_source_map) == result.output["evidence_bundle"].source_urls
+
+    quality_events = json.loads((run_dir / "quality_events.json").read_text())
+    assert [event["event_type"] for event in quality_events] == [
+        "evidence_build_succeeded",
+        "citation_check_started",
+        "citation_check_succeeded",
+        "editor_gate_started",
+        "editor_gate_passed",
+    ]
+    quality_metrics = json.loads((run_dir / "quality_gate_metrics.json").read_text())
+    assert quality_metrics["blocked"] is False
+    assert quality_metrics["quality_score"] == 1.0
 
 
 def test_daily_intelligence_runner_live_missing_llm_key_fails_safely(tmp_path, monkeypatch) -> None:
@@ -155,6 +170,41 @@ def test_daily_intelligence_runner_live_prefers_structured_llm_output(tmp_path) 
 
     assert result.status == WorkflowStatus.SUCCEEDED
     assert result.output["final_report"].title == "Structured Live Report"
+
+
+def test_daily_intelligence_runner_blocks_uncited_live_report(tmp_path) -> None:
+    registry = SourceRegistry(
+        [
+            SourceDefinition(
+                source_id="fixture",
+                name="Fixture",
+                source_type="rss",
+                url="https://example.com/rss.xml",
+                reliability="high",
+            )
+        ]
+    )
+    connector = FeedConnector(fetch_text=lambda url: RSS_FIXTURE)
+    result = DailyIntelligenceRunner(
+        artifact_root=tmp_path,
+        source_registry=registry,
+        feed_connector=connector,
+        llm_client=_UncitedReportLLM(),
+    ).run(profile="live", topic="AI policy", source_limit=1, run_id="daily-live-uncited")
+
+    assert result.status == WorkflowStatus.SUCCEEDED
+    assert "blocked_report" in result.output
+    assert "final_report" not in result.output
+    assert result.output["quality_gate_metrics"].blocked is True
+    assert result.output["quality_gate_metrics"].decision == "blocked"
+    assert result.output["quality_gate_metrics"].missing_section_sources_count == 1
+    assert any(event.event_type == "editor_gate_blocked" for event in result.output["quality_events"])
+
+    run_dir = Path(result.artifact_dir)
+    manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["artifacts"]["quality_events"] == "quality_events.json"
+    assert manifest["artifacts"]["quality_gate_metrics"] == "quality_gate_metrics.json"
+    assert manifest["artifacts"]["blocked_report"] == "blocked_report.json"
 
 
 def test_daily_intelligence_runner_live_uses_topic_source_selection(tmp_path) -> None:
@@ -403,6 +453,25 @@ class _StructuredReportLLM:
                     }
                 ],
             },
+        )
+
+
+class _UncitedReportLLM:
+    def complete(self, request):
+        return LLMResponse(
+            content=json.dumps(
+                {
+                    "title": "Uncited Live Report",
+                    "sections": [
+                        {
+                            "title": "Summary",
+                            "content": "Policy summary without citations.",
+                            "sources": [],
+                        }
+                    ],
+                }
+            ),
+            usage=TokenUsage(input_tokens=3, output_tokens=4),
         )
 
 

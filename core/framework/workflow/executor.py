@@ -199,6 +199,21 @@ class WorkflowExecutor:
                     manifest["quality_score"] = summary.quality_score
                 elif isinstance(summary, dict):
                     manifest["quality_score"] = summary.get("quality_score")
+            if "quality_events" in output:
+                self._artifact_manager.write_json(
+                    actual_run_id,
+                    "quality_events.json",
+                    output["quality_events"],
+                )
+                manifest["artifacts"]["quality_events"] = "quality_events.json"
+                manifest["quality_event_count"] = len(output["quality_events"])
+            if "quality_gate_metrics" in output:
+                self._artifact_manager.write_json(
+                    actual_run_id,
+                    "quality_gate_metrics.json",
+                    output["quality_gate_metrics"],
+                )
+                manifest["artifacts"]["quality_gate_metrics"] = "quality_gate_metrics.json"
             if "final_report" in output:
                 self._artifact_manager.write_json(actual_run_id, "report.json", output["final_report"])
                 manifest["artifacts"]["report_json"] = "report.json"

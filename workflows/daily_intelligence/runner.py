@@ -11,7 +11,15 @@ from core.framework.workflow import FunctionStepRegistry, ScopedDataBuffer
 from domain.reports import BlockedReport, FinalReport, render_markdown
 from domain.sources import SourceDefinition, SourceError, SourcePipelineEvent, SourcePipelineMetrics
 from evidence import EvidenceBuilder, EvidenceBundle
-from quality import CitationChecker, EditorDecision, EditorGate, QualityScorer, SupportMatrixBuilder
+from quality import (
+    CitationChecker,
+    EditorDecision,
+    EditorGate,
+    QualityEvent,
+    QualityGateMetrics,
+    QualityScorer,
+    SupportMatrixBuilder,
+)
 from sources import SourceRegistry
 from sources.connectors import FeedConnector
 from sources.health import BasicSourceHealthManager
@@ -326,8 +334,8 @@ def build_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
                 step_id="build_evidence",
                 implementation="daily.build_evidence",
                 read_keys=["ranked_items"],
-                write_keys=["evidence_bundle", "evidence_scores"],
-                required_output_keys=["evidence_bundle", "evidence_scores"],
+                write_keys=["evidence_bundle", "evidence_scores", "quality_events"],
+                required_output_keys=["evidence_bundle", "evidence_scores", "quality_events"],
             ),
             StepSpec(
                 step_id="draft_report",
@@ -339,12 +347,14 @@ def build_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
             StepSpec(
                 step_id="quality_gate",
                 implementation="daily.quality_gate",
-                read_keys=["report_draft", "evidence_bundle"],
+                read_keys=["report_draft", "evidence_bundle", "quality_events"],
                 write_keys=[
                     "citation_check_result",
                     "editor_review",
                     "support_matrix",
                     "report_quality_summary",
+                    "quality_events",
+                    "quality_gate_metrics",
                     "final_report",
                     "report_markdown",
                     "blocked_report",
@@ -354,6 +364,8 @@ def build_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
                     "editor_review",
                     "support_matrix",
                     "report_quality_summary",
+                    "quality_events",
+                    "quality_gate_metrics",
                 ],
             ),
         ],
@@ -468,25 +480,67 @@ def _build_evidence(buffer: ScopedDataBuffer) -> dict[str, Any]:
     bundle = build_result.bundle
     if not bundle.items:
         raise RuntimeError("no valid evidence built from ranked sources")
-    return {"evidence_bundle": bundle, "evidence_scores": build_result.evidence_scores}
+    return {
+        "evidence_bundle": bundle,
+        "evidence_scores": build_result.evidence_scores,
+        "quality_events": [
+            _quality_event(
+                "evidence_build_succeeded",
+                evidence_items_count=len(bundle.items),
+                evidence_scores_count=len(build_result.evidence_scores),
+            )
+        ],
+    }
 
 
 def _quality_gate(buffer: ScopedDataBuffer) -> dict[str, Any]:
     report_draft = buffer.read("report_draft")
     evidence_bundle = buffer.read("evidence_bundle")
+    quality_events = list(buffer.read("quality_events"))
+    quality_events.append(_quality_event("citation_check_started", evidence_items_count=len(evidence_bundle.items)))
     citation_check = CitationChecker().check(report_draft, evidence_bundle)
+    quality_events.append(
+        _quality_event(
+            "citation_check_succeeded" if citation_check.passed else "citation_check_failed",
+            unknown_urls_count=len(citation_check.unknown_urls),
+            missing_section_sources_count=len(citation_check.missing_section_sources),
+            citation_coverage_score=citation_check.citation_coverage_score,
+        )
+    )
     support_matrix = SupportMatrixBuilder().build(report_draft, evidence_bundle)
     quality_summary = QualityScorer().score(
         report=report_draft,
         citation_check=citation_check,
         support_matrix=support_matrix,
     )
+    quality_events.append(_quality_event("editor_gate_started", quality_score=quality_summary.quality_score))
     review = EditorGate().review(citation_check, support_matrix, quality_summary)
+    quality_events.append(
+        _quality_event(
+            "editor_gate_passed" if review.decision == EditorDecision.PASS else "editor_gate_blocked",
+            decision=review.decision.value,
+            quality_score=quality_summary.quality_score,
+            reason_count=len(review.reasons),
+        )
+    )
+    quality_gate_metrics = QualityGateMetrics(
+        evidence_items_count=len(evidence_bundle.items),
+        unsupported_urls_count=len(citation_check.unknown_urls),
+        missing_section_sources_count=len(citation_check.missing_section_sources),
+        unsupported_sections_count=len(support_matrix.unsupported_sections),
+        blocked=review.decision != EditorDecision.PASS,
+        decision=review.decision.value,
+        citation_coverage_score=citation_check.citation_coverage_score,
+        support_coverage=quality_summary.support_coverage,
+        quality_score=quality_summary.quality_score,
+    )
     outputs: dict[str, Any] = {
         "citation_check_result": citation_check,
         "editor_review": review,
         "support_matrix": support_matrix,
         "report_quality_summary": quality_summary,
+        "quality_events": quality_events,
+        "quality_gate_metrics": quality_gate_metrics,
     }
     if review.decision == EditorDecision.PASS:
         final_report = FinalReport(
@@ -572,6 +626,13 @@ def _source_event(event_type: str, source_id: str | None = None, **metadata: Any
     return SourcePipelineEvent(
         event_type=event_type,
         source_id=source_id,
+        metadata={key: value for key, value in metadata.items() if value is not None},
+    )
+
+
+def _quality_event(event_type: str, **metadata: Any) -> QualityEvent:
+    return QualityEvent(
+        event_type=event_type,
         metadata={key: value for key, value in metadata.items() if value is not None},
     )
 
