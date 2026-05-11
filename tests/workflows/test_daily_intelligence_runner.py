@@ -48,7 +48,15 @@ def test_daily_intelligence_runner_live_offline_writes_report_artifacts(tmp_path
     assert manifest["quality_score"] == 1.0
     assert manifest["artifacts"]["report_json"] == "report.json"
     assert manifest["artifacts"]["report_markdown"] == "report.md"
+    assert manifest["artifacts"]["source_artifacts"] == "source_artifacts/index.json"
+    assert manifest["source_artifacts"]["item_count"] == 2
+    assert manifest["source_artifacts"]["error_count"] == 0
     assert (run_dir / "report.md").exists()
+
+    source_artifacts = json.loads((run_dir / "source_artifacts" / "index.json").read_text())
+    first_item = source_artifacts["entries"][0]
+    assert first_item["artifact_type"] == "source_item"
+    assert (run_dir / first_item["path"]).exists()
 
 
 def test_daily_intelligence_runner_live_missing_llm_key_fails_safely(tmp_path, monkeypatch) -> None:
@@ -211,6 +219,15 @@ def test_daily_intelligence_runner_records_partial_source_failures(tmp_path) -> 
     assert manifest["artifacts"]["source_errors"] == "source_errors.json"
     assert manifest["artifacts"]["failed_sources"] == "failed_sources.json"
     assert manifest["artifacts"]["source_pipeline_metrics"] == "source_pipeline_metrics.json"
+    assert manifest["artifacts"]["source_artifacts"] == "source_artifacts/index.json"
+    assert manifest["source_artifacts"] == {"item_count": 1, "error_count": 1, "total_count": 2}
+
+    source_artifacts = json.loads((run_dir / "source_artifacts" / "index.json").read_text())
+    error_entry = next(
+        entry for entry in source_artifacts["entries"] if entry["artifact_type"] == "source_error"
+    )
+    error_payload = json.loads((run_dir / error_entry["path"]).read_text())
+    assert error_payload["error"]["source_id"] == "failing"
 
 
 def test_daily_intelligence_runner_skips_cooling_source(tmp_path) -> None:

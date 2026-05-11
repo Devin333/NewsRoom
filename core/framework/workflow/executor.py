@@ -5,6 +5,7 @@ from typing import Any
 from uuid import uuid4
 
 from core.framework.artifacts.filesystem import ArtifactManager
+from core.framework.artifacts.source_artifacts import SourceArtifactWriter
 from core.framework.events.recorder import EventRecorder
 from core.framework.specs import StepStatus, WorkflowSpec, WorkflowStatus
 from core.framework.workflow.buffer import DataBuffer
@@ -180,6 +181,18 @@ class WorkflowExecutor:
                     output["source_pipeline_metrics"],
                 )
                 manifest["artifacts"]["source_pipeline_metrics"] = "source_pipeline_metrics.json"
+            source_artifacts = SourceArtifactWriter(self._artifact_manager).write_source_artifacts(
+                actual_run_id,
+                raw_items=output.get("raw_items"),
+                source_errors=output.get("source_errors"),
+            )
+            if source_artifacts:
+                manifest["artifacts"]["source_artifacts"] = "source_artifacts/index.json"
+                manifest["source_artifacts"] = {
+                    "item_count": source_artifacts["item_count"],
+                    "error_count": source_artifacts["error_count"],
+                    "total_count": len(source_artifacts["entries"]),
+                }
             if "evidence_bundle" in output:
                 self._artifact_manager.write_json(
                     actual_run_id,
