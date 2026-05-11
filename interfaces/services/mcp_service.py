@@ -82,6 +82,8 @@ class MCPApplicationService:
                 return self._daily_enqueue(args)
             if tool_name == "news.report.latest":
                 return self._latest_report()
+            if tool_name == "news.report.search":
+                return self._report_search(args)
             if tool_name == "news.source.health":
                 return self._source_health(args)
             if tool_name == "news.memory.search":
@@ -138,6 +140,18 @@ class MCPApplicationService:
             tool_name="news.report.latest",
             success=True,
             data=_to_dict(record),
+        )
+
+    def _report_search(self, args: dict[str, Any]) -> MCPToolCallResult:
+        query = str(args.get("query") or "")
+        result = self.report_service_factory().search_reports(
+            query=query,
+            limit=int(args.get("limit") or 20),
+        )
+        return MCPToolCallResult(
+            tool_name="news.report.search",
+            success=True,
+            data=result.to_dict(),
         )
 
     def _source_health(self, args: dict[str, Any]) -> MCPToolCallResult:
@@ -329,6 +343,19 @@ def _tools() -> list[MCPTool]:
             title="Read latest report",
             description="Return the latest redacted report through ReportApplicationService.",
             input_schema={"type": "object", "properties": {}},
+        ),
+        MCPTool(
+            name="news.report.search",
+            title="Search reports",
+            description="Search persisted report artifacts through ReportApplicationService.",
+            input_schema={
+                "type": "object",
+                "required": ["query"],
+                "properties": {
+                    "query": {"type": "string"},
+                    "limit": {"type": "integer", "minimum": 1},
+                },
+            },
         ),
         MCPTool(
             name="news.source.health",

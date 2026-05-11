@@ -22,6 +22,7 @@ def test_mcp_catalog_lists_tools_without_calling_factories() -> None:
     resource_uris = [resource["uri"] for resource in catalog["resources"]]
 
     assert "news.daily.enqueue" in tool_names
+    assert "news.report.search" in tool_names
     assert "news.run.show" in tool_names
     assert "news.run.events" in tool_names
     assert "news.approval.submit" in tool_names
@@ -128,6 +129,48 @@ def test_mcp_reads_latest_report_resource_from_local_json_artifact(tmp_path) -> 
     assert result.data["run_id"] == "run-1"
     assert result.data["report_json"] == {"title": "Daily Intelligence"}
     assert result.data["report_markdown"] == "# Daily Intelligence"
+
+
+def test_mcp_report_search_reads_real_local_report_artifacts(tmp_path) -> None:
+    run_dir = tmp_path / "run-1"
+    run_dir.mkdir()
+    (run_dir / "report.json").write_text(
+        json.dumps({"title": "AI Policy Report"}),
+        encoding="utf-8",
+    )
+    (run_dir / "report.md").write_text("# AI Policy Report", encoding="utf-8")
+    (run_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "run_id": "run-1",
+                "status": "succeeded",
+                "finished_at": "2026-05-11T01:00:00Z",
+                "artifacts": {
+                    "report_json": "report.json",
+                    "report_markdown": "report.md",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    service = MCPApplicationService(
+        report_service_factory=lambda: ReportApplicationService(artifact_root=tmp_path)
+    )
+
+    result = service.call_tool("news.report.search", {"query": "policy", "limit": 5})
+
+    assert result.success is True
+    assert result.data["query"] == "policy"
+    assert result.data["report_count"] == 1
+    assert result.data["reports"][0]["run_id"] == "run-1"
+
+
+def test_mcp_report_search_requires_query() -> None:
+    result = MCPApplicationService().call_tool("news.report.search", {})
+
+    assert result.success is False
+    assert result.error_type == "ValueError"
+    assert "query is required" in result.error_message
 
 
 def test_mcp_unknown_resource_fails_safely() -> None:
