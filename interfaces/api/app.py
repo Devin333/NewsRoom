@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Callable
 from uuid import uuid4
 
@@ -35,6 +36,7 @@ from interfaces.services.source_service import SourceApplicationService
 from interfaces.services.storage_service import StorageApplicationService
 from interfaces.services.worker_service import WorkerApplicationService
 from interfaces.services.artifact_service import ArtifactInspectionService
+from storage.lifecycle import RetentionPolicy
 
 
 WorkerServiceFactory = Callable[[], WorkerApplicationService]
@@ -176,6 +178,41 @@ def create_app(
     @api.get("/api/v1/storage/metrics")
     def storage_metrics():
         return _success(storage_service_factory().metrics().to_dict())
+
+    @api.get("/api/v1/storage/retention/plan")
+    def storage_retention_plan(
+        run_id: str | None = None,
+        now: datetime | None = None,
+        raw_source_retention_days: int | None = None,
+        llm_artifact_retention_days: int | None = None,
+        run_artifact_retention_days: int | None = None,
+        report_retention_days: int | None = None,
+        evidence_retention_days: int | None = None,
+        vector_retention_days: int | None = None,
+    ):
+        try:
+            policy = RetentionPolicy.from_dict(
+                _provided_values(
+                    raw_source_retention_days=raw_source_retention_days,
+                    llm_artifact_retention_days=llm_artifact_retention_days,
+                    run_artifact_retention_days=run_artifact_retention_days,
+                    report_retention_days=report_retention_days,
+                    evidence_retention_days=evidence_retention_days,
+                    vector_retention_days=vector_retention_days,
+                )
+            )
+            result = storage_service_factory().plan_retention(
+                policy=policy,
+                run_id=run_id,
+                now=now,
+            )
+        except ValueError as exc:
+            return _error(
+                status_code=400,
+                code="invalid_storage_retention_request",
+                message=str(exc),
+            )
+        return _success(result.to_dict())
 
     @api.get("/api/v1/sources")
     def list_sources(include_disabled: bool = False):
@@ -454,6 +491,10 @@ def _model_to_dict(model) -> dict:
     if hasattr(model, "model_dump"):
         return model.model_dump()
     return model.dict()
+
+
+def _provided_values(**values) -> dict:
+    return {key: value for key, value in values.items() if value is not None}
 
 
 def _optional_str(value) -> str | None:
