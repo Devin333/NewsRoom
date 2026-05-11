@@ -8,7 +8,9 @@ def test_stdio_handles_tools_list() -> None:
     response = handle_jsonrpc_request({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
 
     assert response["id"] == 1
-    assert response["result"]["tools"][0]["name"] == "news.daily.enqueue"
+    tool_names = [tool["name"] for tool in response["result"]["tools"]]
+    assert tool_names[0] == "news.daily.enqueue"
+    assert "news.approval.submit" in tool_names
 
 
 def test_stdio_handles_tool_call() -> None:

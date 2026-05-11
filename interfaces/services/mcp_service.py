@@ -19,12 +19,14 @@ class MCPApplicationService:
         source_service_factory: Callable[[], Any] | None = None,
         memory_service_factory: Callable[[], Any] | None = None,
         diagnostic_service_factory: Callable[[], Any] | None = None,
+        approval_service_factory: Callable[[], Any] | None = None,
     ) -> None:
         self.worker_service_factory = worker_service_factory or _worker_service_factory
         self.report_service_factory = report_service_factory or _report_service_factory
         self.source_service_factory = source_service_factory or _source_service_factory
         self.memory_service_factory = memory_service_factory or _memory_service_factory
         self.diagnostic_service_factory = diagnostic_service_factory or _diagnostic_service_factory
+        self.approval_service_factory = approval_service_factory or _approval_service_factory
 
     def catalog(self) -> MCPCatalog:
         return MCPCatalog(tools=_tools(), resources=_resources(), prompts=_prompts())
@@ -42,6 +44,18 @@ class MCPApplicationService:
                 return self._memory_search(args)
             if tool_name == "news.diagnose":
                 return self._diagnose()
+            if tool_name == "news.approval.submit":
+                return self._approval_submit(args)
+            if tool_name == "news.approval.list":
+                return self._approval_list(args)
+            if tool_name == "news.approval.get":
+                return self._approval_get(args)
+            if tool_name == "news.approval.approve":
+                return self._approval_approve(args)
+            if tool_name == "news.approval.reject":
+                return self._approval_reject(args)
+            if tool_name == "news.approval.modify":
+                return self._approval_modify(args)
             return MCPToolCallResult(
                 tool_name=tool_name,
                 success=False,
@@ -111,6 +125,82 @@ class MCPApplicationService:
             data=result.to_dict(),
         )
 
+    def _approval_submit(self, args: dict[str, Any]) -> MCPToolCallResult:
+        requested_action = str(args.get("requested_action") or "")
+        if not requested_action:
+            raise ValueError("requested_action is required")
+        result = self.approval_service_factory().submit_request(
+            requested_action=requested_action,
+            risk_level=str(args.get("risk_level") or "medium"),
+            reason=args.get("reason"),
+            payload=dict(args.get("payload") or {}),
+            task_id=args.get("task_id"),
+            run_id=args.get("run_id"),
+            requested_by=args.get("requested_by"),
+            metadata=dict(args.get("metadata") or {}),
+        )
+        return MCPToolCallResult(
+            tool_name="news.approval.submit",
+            success=True,
+            data=result.to_dict(),
+        )
+
+    def _approval_list(self, args: dict[str, Any]) -> MCPToolCallResult:
+        result = self.approval_service_factory().list_approvals(status=args.get("status"))
+        return MCPToolCallResult(
+            tool_name="news.approval.list",
+            success=True,
+            data=result.to_dict(),
+        )
+
+    def _approval_get(self, args: dict[str, Any]) -> MCPToolCallResult:
+        approval_id = str(args.get("approval_id") or "")
+        if not approval_id:
+            raise ValueError("approval_id is required")
+        result = self.approval_service_factory().get_approval(approval_id)
+        return MCPToolCallResult(
+            tool_name="news.approval.get",
+            success=True,
+            data=result.to_dict(),
+        )
+
+    def _approval_approve(self, args: dict[str, Any]) -> MCPToolCallResult:
+        result = self.approval_service_factory().approve(
+            _approval_id(args),
+            decided_by=_decided_by(args),
+            reason=args.get("reason"),
+        )
+        return MCPToolCallResult(
+            tool_name="news.approval.approve",
+            success=True,
+            data=result.to_dict(),
+        )
+
+    def _approval_reject(self, args: dict[str, Any]) -> MCPToolCallResult:
+        result = self.approval_service_factory().reject(
+            _approval_id(args),
+            decided_by=_decided_by(args),
+            reason=args.get("reason"),
+        )
+        return MCPToolCallResult(
+            tool_name="news.approval.reject",
+            success=True,
+            data=result.to_dict(),
+        )
+
+    def _approval_modify(self, args: dict[str, Any]) -> MCPToolCallResult:
+        result = self.approval_service_factory().modify(
+            _approval_id(args),
+            decided_by=_decided_by(args),
+            modifications=dict(args.get("modifications") or {}),
+            reason=args.get("reason"),
+        )
+        return MCPToolCallResult(
+            tool_name="news.approval.modify",
+            success=True,
+            data=result.to_dict(),
+        )
+
 
 def _tools() -> list[MCPTool]:
     return [
@@ -164,6 +254,92 @@ def _tools() -> list[MCPTool]:
             title="Run diagnostics",
             description="Run local dependency diagnostics through DiagnosticApplicationService.",
             input_schema={"type": "object", "properties": {}},
+        ),
+        MCPTool(
+            name="news.approval.submit",
+            title="Submit approval request",
+            description="Submit a human approval request through ApprovalApplicationService.",
+            input_schema={
+                "type": "object",
+                "required": ["requested_action"],
+                "properties": {
+                    "requested_action": {"type": "string"},
+                    "risk_level": {"type": "string"},
+                    "reason": {"type": "string"},
+                    "payload": {"type": "object"},
+                    "task_id": {"type": "string"},
+                    "run_id": {"type": "string"},
+                    "requested_by": {"type": "string"},
+                    "metadata": {"type": "object"},
+                },
+            },
+        ),
+        MCPTool(
+            name="news.approval.list",
+            title="List approvals",
+            description="List human approval requests.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "status": {
+                        "type": "string",
+                        "enum": ["pending", "approved", "rejected", "modified", "expired", "cancelled"],
+                    }
+                },
+            },
+        ),
+        MCPTool(
+            name="news.approval.get",
+            title="Get approval",
+            description="Read one human approval request.",
+            input_schema={
+                "type": "object",
+                "required": ["approval_id"],
+                "properties": {"approval_id": {"type": "string"}},
+            },
+        ),
+        MCPTool(
+            name="news.approval.approve",
+            title="Approve request",
+            description="Approve a pending human approval request.",
+            input_schema={
+                "type": "object",
+                "required": ["approval_id", "decided_by"],
+                "properties": {
+                    "approval_id": {"type": "string"},
+                    "decided_by": {"type": "string"},
+                    "reason": {"type": "string"},
+                },
+            },
+        ),
+        MCPTool(
+            name="news.approval.reject",
+            title="Reject request",
+            description="Reject a pending human approval request.",
+            input_schema={
+                "type": "object",
+                "required": ["approval_id", "decided_by"],
+                "properties": {
+                    "approval_id": {"type": "string"},
+                    "decided_by": {"type": "string"},
+                    "reason": {"type": "string"},
+                },
+            },
+        ),
+        MCPTool(
+            name="news.approval.modify",
+            title="Modify request",
+            description="Approve a pending human approval request with modifications.",
+            input_schema={
+                "type": "object",
+                "required": ["approval_id", "decided_by", "modifications"],
+                "properties": {
+                    "approval_id": {"type": "string"},
+                    "decided_by": {"type": "string"},
+                    "modifications": {"type": "object"},
+                    "reason": {"type": "string"},
+                },
+            },
         ),
     ]
 
@@ -241,3 +417,23 @@ def _diagnostic_service_factory():
     from interfaces.services.diagnose_service import DiagnosticApplicationService
 
     return DiagnosticApplicationService()
+
+
+def _approval_service_factory():
+    from interfaces.services.approval_service import ApprovalApplicationService
+
+    return ApprovalApplicationService()
+
+
+def _approval_id(args: dict[str, Any]) -> str:
+    approval_id = str(args.get("approval_id") or "")
+    if not approval_id:
+        raise ValueError("approval_id is required")
+    return approval_id
+
+
+def _decided_by(args: dict[str, Any]) -> str:
+    decided_by = str(args.get("decided_by") or "")
+    if not decided_by:
+        raise ValueError("decided_by is required")
+    return decided_by

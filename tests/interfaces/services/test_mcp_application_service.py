@@ -1,4 +1,5 @@
 from interfaces.services.mcp_service import MCPApplicationService
+from interfaces.services.approval_service import ApprovalApplicationService
 
 
 def test_mcp_catalog_lists_tools_without_calling_factories() -> None:
@@ -8,11 +9,14 @@ def test_mcp_catalog_lists_tools_without_calling_factories() -> None:
         source_service_factory=_raising_factory,
         memory_service_factory=_raising_factory,
         diagnostic_service_factory=_raising_factory,
+        approval_service_factory=_raising_factory,
     )
 
     catalog = service.catalog().to_dict()
+    tool_names = [tool["name"] for tool in catalog["tools"]]
 
-    assert "news.daily.enqueue" in [tool["name"] for tool in catalog["tools"]]
+    assert "news.daily.enqueue" in tool_names
+    assert "news.approval.submit" in tool_names
     assert "news://reports/latest" in [resource["uri"] for resource in catalog["resources"]]
     assert "news.evidence_audit" in [prompt["name"] for prompt in catalog["prompts"]]
 
@@ -43,6 +47,44 @@ def test_mcp_memory_search_requires_query() -> None:
     assert result.success is False
     assert result.error_type == "ValueError"
     assert "query is required" in result.error_message
+
+
+def test_mcp_approval_tools_persist_submit_approve_and_read(tmp_path) -> None:
+    store_path = tmp_path / "approvals.json"
+    service = MCPApplicationService(
+        approval_service_factory=lambda: ApprovalApplicationService(store_path=store_path)
+    )
+
+    submitted = service.call_tool(
+        "news.approval.submit",
+        {
+            "requested_action": "publish_report",
+            "risk_level": "high",
+            "reason": "operator review required",
+            "payload": {"report_id": "report-1"},
+            "run_id": "run-1",
+            "requested_by": "worker",
+        },
+    )
+
+    assert submitted.success is True
+    approval_id = submitted.data["approval_id"]
+    assert submitted.data["approval"]["status"] == "pending"
+
+    approved = service.call_tool(
+        "news.approval.approve",
+        {"approval_id": approval_id, "decided_by": "operator", "reason": "ready"},
+    )
+    fetched = service.call_tool("news.approval.get", {"approval_id": approval_id})
+    listed = service.call_tool("news.approval.list", {"status": "approved"})
+
+    assert store_path.exists()
+    assert approved.success is True
+    assert approved.data["approval"]["status"] == "approved"
+    assert approved.data["approval"]["decision"]["decided_by"] == "operator"
+    assert fetched.data["approval"]["status"] == "approved"
+    assert listed.data["approval_count"] == 1
+    assert listed.data["approvals"][0]["approval_id"] == approval_id
 
 
 def _raising_factory():
