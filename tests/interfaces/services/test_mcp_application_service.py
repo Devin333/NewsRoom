@@ -23,9 +23,11 @@ def test_mcp_catalog_lists_tools_without_calling_factories() -> None:
 
     assert "news.daily.enqueue" in tool_names
     assert "news.run.show" in tool_names
+    assert "news.run.events" in tool_names
     assert "news.approval.submit" in tool_names
     assert "news://reports/latest" in resource_uris
     assert "news://runs/{run_id}/manifest" in resource_uris
+    assert "news://runs/{run_id}/events" in resource_uris
     assert "news.evidence_audit" in [prompt["name"] for prompt in catalog["prompts"]]
 
 
@@ -183,12 +185,70 @@ def test_mcp_reads_run_manifest_resource_from_local_manifest(tmp_path) -> None:
     assert result.data["manifest"]["status"] == "failed"
 
 
+def test_mcp_run_events_reads_real_local_events(tmp_path) -> None:
+    _write_run_with_events(
+        tmp_path,
+        "run-3",
+        [
+            {"event_type": "workflow_started", "payload": {"profile": "live"}},
+            {"event_type": "workflow_succeeded", "payload": {"status": "ok"}},
+        ],
+    )
+    service = MCPApplicationService(
+        run_inspection_service_factory=lambda: RunInspectionService(artifact_root=tmp_path)
+    )
+
+    result = service.call_tool("news.run.events", {"run_id": "run-3", "limit": 1})
+
+    assert result.success is True
+    assert result.data["run_id"] == "run-3"
+    assert result.data["event_count"] == 1
+    assert result.data["events"][0]["event_type"] == "workflow_started"
+
+
+def test_mcp_reads_run_events_resource_from_local_events(tmp_path) -> None:
+    _write_run_with_events(
+        tmp_path,
+        "run-4",
+        [
+            {
+                "event_type": "tool_called",
+                "payload": {"token": "hidden-value", "safe": "visible"},
+            }
+        ],
+    )
+    service = MCPApplicationService(
+        run_inspection_service_factory=lambda: RunInspectionService(artifact_root=tmp_path)
+    )
+
+    result = service.read_resource("news://runs/run-4/events")
+
+    assert result.success is True
+    assert result.data["run_id"] == "run-4"
+    assert result.data["event_count"] == 1
+    assert result.data["events"][0]["payload"]["token"] == "[redacted]"
+    assert result.data["events"][0]["payload"]["safe"] == "visible"
+
+
 def test_mcp_run_show_rejects_invalid_run_id() -> None:
     result = MCPApplicationService().call_tool("news.run.show", {"run_id": "../secret"})
 
     assert result.success is False
     assert result.error_type == "ValueError"
     assert "invalid run id" in result.error_message
+
+
+def test_mcp_run_events_rejects_invalid_limit(tmp_path) -> None:
+    _write_run_with_events(tmp_path, "run-5", [{"event_type": "workflow_started", "payload": {}}])
+    service = MCPApplicationService(
+        run_inspection_service_factory=lambda: RunInspectionService(artifact_root=tmp_path)
+    )
+
+    result = service.call_tool("news.run.events", {"run_id": "run-5", "limit": 0})
+
+    assert result.success is False
+    assert result.error_type == "ValueError"
+    assert "limit must be greater than zero" in result.error_message
 
 
 def _raising_factory():
@@ -226,3 +286,18 @@ class _FakeResult:
 
     def to_dict(self):
         return self.payload
+
+
+def _write_run_with_events(root, run_id, events) -> None:
+    run_dir = root / run_id
+    run_dir.mkdir()
+    manifest = {
+        "run_id": run_id,
+        "status": "succeeded",
+        "artifacts": {"events": "events.jsonl"},
+    }
+    (run_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    (run_dir / "events.jsonl").write_text(
+        "\n".join(json.dumps(event) for event in events) + "\n",
+        encoding="utf-8",
+    )

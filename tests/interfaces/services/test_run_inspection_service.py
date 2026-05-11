@@ -38,12 +38,86 @@ def test_run_inspection_get_run_reads_manifest(tmp_path) -> None:
     assert result.to_dict()["manifest"]["workflow_id"] == "daily"
 
 
+def test_run_inspection_reads_events_jsonl(tmp_path) -> None:
+    _write_run_with_events(
+        tmp_path,
+        "run-1",
+        [
+            {"event_type": "workflow_started", "payload": {"profile": "live"}},
+            {"event_type": "workflow_succeeded", "payload": {"status": "ok"}},
+        ],
+    )
+
+    result = RunInspectionService(tmp_path).get_run_events("run-1")
+
+    payload = result.to_dict()
+    assert payload["event_count"] == 2
+    assert payload["events"][0]["event_type"] == "workflow_started"
+    assert payload["events"][1]["payload"] == {"status": "ok"}
+
+
+def test_run_inspection_limits_events(tmp_path) -> None:
+    _write_run_with_events(
+        tmp_path,
+        "run-1",
+        [
+            {"event_type": "event-1", "payload": {}},
+            {"event_type": "event-2", "payload": {}},
+        ],
+    )
+
+    result = RunInspectionService(tmp_path).get_run_events("run-1", limit=1)
+
+    assert result.to_dict()["event_count"] == 1
+    assert result.to_dict()["events"][0]["event_type"] == "event-1"
+
+
+def test_run_inspection_redacts_sensitive_event_keys(tmp_path) -> None:
+    _write_run_with_events(
+        tmp_path,
+        "run-1",
+        [
+            {
+                "event_type": "tool_called",
+                "payload": {"api_key": "hidden-value", "nested": {"authorization": "bearer"}},
+            }
+        ],
+    )
+
+    result = RunInspectionService(tmp_path).get_run_events("run-1")
+
+    payload = result.to_dict()
+    assert payload["events"][0]["payload"]["api_key"] == "[redacted]"
+    assert payload["events"][0]["payload"]["nested"]["authorization"] == "[redacted]"
+    assert "hidden-value" not in json.dumps(payload)
+
+
 def test_run_inspection_rejects_path_traversal(tmp_path) -> None:
     with pytest.raises(ValueError):
         RunInspectionService(tmp_path).get_run("../secret")
+
+
+def test_run_inspection_rejects_invalid_event_limit(tmp_path) -> None:
+    with pytest.raises(ValueError):
+        RunInspectionService(tmp_path).get_run_events("run-1", limit=0)
 
 
 def _write_manifest(root, run_id, payload) -> None:
     run_dir = root / run_id
     run_dir.mkdir()
     (run_dir / "manifest.json").write_text(json.dumps(payload), encoding="utf-8")
+
+
+def _write_run_with_events(root, run_id, events) -> None:
+    run_dir = root / run_id
+    run_dir.mkdir()
+    manifest = {
+        "run_id": run_id,
+        "status": "succeeded",
+        "artifacts": {"events": "events.jsonl"},
+    }
+    (run_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    (run_dir / "events.jsonl").write_text(
+        "\n".join(json.dumps(event) for event in events) + "\n",
+        encoding="utf-8",
+    )

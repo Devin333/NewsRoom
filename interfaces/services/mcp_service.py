@@ -19,6 +19,8 @@ LATEST_REPORT_RESOURCE_URI = "news://reports/latest"
 RUN_MANIFEST_RESOURCE_TEMPLATE = "news://runs/{run_id}/manifest"
 RUN_MANIFEST_RESOURCE_PREFIX = "news://runs/"
 RUN_MANIFEST_RESOURCE_SUFFIX = "/manifest"
+RUN_EVENTS_RESOURCE_TEMPLATE = "news://runs/{run_id}/events"
+RUN_EVENTS_RESOURCE_SUFFIX = "/events"
 SOURCE_HEALTH_RESOURCE_URI = "news://sources/health"
 
 
@@ -54,6 +56,9 @@ class MCPApplicationService:
             run_id = _run_manifest_resource_run_id(uri)
             if run_id is not None:
                 return self._read_run_manifest_resource(uri, run_id)
+            run_id = _run_events_resource_run_id(uri)
+            if run_id is not None:
+                return self._read_run_events_resource(uri, run_id)
             if uri == SOURCE_HEALTH_RESOURCE_URI:
                 return self._read_source_health_resource()
             return MCPResourceReadResult(
@@ -85,6 +90,8 @@ class MCPApplicationService:
                 return self._diagnose()
             if tool_name == "news.run.show":
                 return self._run_show(args)
+            if tool_name == "news.run.events":
+                return self._run_events(args)
             if tool_name == "news.approval.submit":
                 return self._approval_submit(args)
             if tool_name == "news.approval.list":
@@ -173,6 +180,20 @@ class MCPApplicationService:
         result = self.run_inspection_service_factory().get_run(run_id)
         return MCPToolCallResult(
             tool_name="news.run.show",
+            success=True,
+            data=result.to_dict(),
+        )
+
+    def _run_events(self, args: dict[str, Any]) -> MCPToolCallResult:
+        run_id = str(args.get("run_id") or "")
+        if not run_id:
+            raise ValueError("run_id is required")
+        result = self.run_inspection_service_factory().get_run_events(
+            run_id,
+            limit=int(args["limit"]) if args.get("limit") is not None else None,
+        )
+        return MCPToolCallResult(
+            tool_name="news.run.events",
             success=True,
             data=result.to_dict(),
         )
@@ -269,6 +290,14 @@ class MCPApplicationService:
             data=result.to_dict(),
         )
 
+    def _read_run_events_resource(self, uri: str, run_id: str) -> MCPResourceReadResult:
+        result = self.run_inspection_service_factory().get_run_events(run_id)
+        return MCPResourceReadResult(
+            uri=uri,
+            success=True,
+            data=result.to_dict(),
+        )
+
     def _read_source_health_resource(self) -> MCPResourceReadResult:
         result = self.source_service_factory().source_health(enabled_only=True)
         return MCPResourceReadResult(
@@ -339,6 +368,19 @@ def _tools() -> list[MCPTool]:
                 "type": "object",
                 "required": ["run_id"],
                 "properties": {"run_id": {"type": "string"}},
+            },
+        ),
+        MCPTool(
+            name="news.run.events",
+            title="Show run events",
+            description="Read structured workflow run events through RunInspectionService.",
+            input_schema={
+                "type": "object",
+                "required": ["run_id"],
+                "properties": {
+                    "run_id": {"type": "string"},
+                    "limit": {"type": "integer", "minimum": 1},
+                },
             },
         ),
         MCPTool(
@@ -443,6 +485,11 @@ def _resources() -> list[MCPResource]:
             description="Workflow run manifest by run id.",
         ),
         MCPResource(
+            uri=RUN_EVENTS_RESOURCE_TEMPLATE,
+            name="Run Events",
+            description="Structured workflow run events by run id.",
+        ),
+        MCPResource(
             uri=SOURCE_HEALTH_RESOURCE_URI,
             name="Source Health",
             description="Current source health view.",
@@ -528,6 +575,15 @@ def _run_manifest_resource_run_id(uri: str) -> str | None:
     ):
         return None
     run_id = uri[len(RUN_MANIFEST_RESOURCE_PREFIX) : -len(RUN_MANIFEST_RESOURCE_SUFFIX)]
+    return run_id or None
+
+
+def _run_events_resource_run_id(uri: str) -> str | None:
+    if not uri.startswith(RUN_MANIFEST_RESOURCE_PREFIX) or not uri.endswith(
+        RUN_EVENTS_RESOURCE_SUFFIX
+    ):
+        return None
+    run_id = uri[len(RUN_MANIFEST_RESOURCE_PREFIX) : -len(RUN_EVENTS_RESOURCE_SUFFIX)]
     return run_id or None
 
 
