@@ -28,6 +28,10 @@ from interfaces.services.schedule_service import (
 )
 from interfaces.services.source_service import SourceApplicationService
 from interfaces.services.storage_service import StorageApplicationService
+from interfaces.services.subscription_service import (
+    DEFAULT_SUBSCRIPTION_STORE_PATH,
+    SubscriptionApplicationService,
+)
 from interfaces.services.worker_service import (
     DEFAULT_DAILY_QUEUE,
     DEFAULT_DEAD_LETTER_QUEUE,
@@ -103,6 +107,68 @@ def build_parser() -> argparse.ArgumentParser:
     )
     reports_search_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     reports_search_parser.set_defaults(handler=_reports_search)
+
+    subscriptions_parser = subparsers.add_parser("subscriptions", help="Manage topic subscriptions")
+    subscriptions_subparsers = subscriptions_parser.add_subparsers(
+        dest="subscriptions_command",
+        required=True,
+    )
+    subscriptions_create_parser = subscriptions_subparsers.add_parser(
+        "create",
+        help="Create or update a topic subscription",
+    )
+    subscriptions_create_parser.add_argument("--topic", required=True, help="Topic to track")
+    subscriptions_create_parser.add_argument("--subscription-id", default=None, help="Optional subscription id")
+    subscriptions_create_parser.add_argument("--cadence", choices=["daily", "weekly"], default="weekly")
+    subscriptions_create_parser.add_argument(
+        "--profile",
+        choices=["live", "live-offline"],
+        default="live-offline",
+    )
+    subscriptions_create_parser.add_argument("--source-limit", type=int, default=5)
+    subscriptions_create_parser.add_argument("--disabled", action="store_true")
+    subscriptions_create_parser.add_argument(
+        "--metadata",
+        action="append",
+        default=None,
+        help="Metadata key=value; repeat for multiple values",
+    )
+    subscriptions_create_parser.add_argument(
+        "--store-path",
+        default=DEFAULT_SUBSCRIPTION_STORE_PATH,
+        help="Local JSON subscription store path",
+    )
+    subscriptions_create_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    subscriptions_create_parser.set_defaults(handler=_subscriptions_create)
+
+    subscriptions_list_parser = subscriptions_subparsers.add_parser("list", help="List topic subscriptions")
+    subscriptions_list_parser.add_argument("--enabled-only", action="store_true")
+    subscriptions_list_parser.add_argument("--cadence", choices=["daily", "weekly"], default=None)
+    subscriptions_list_parser.add_argument(
+        "--store-path",
+        default=DEFAULT_SUBSCRIPTION_STORE_PATH,
+        help="Local JSON subscription store path",
+    )
+    subscriptions_list_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    subscriptions_list_parser.set_defaults(handler=_subscriptions_list)
+
+    subscriptions_enable_parser = subscriptions_subparsers.add_parser("enable", help="Enable a topic subscription")
+    subscriptions_enable_parser.add_argument("subscription_id")
+    subscriptions_enable_parser.add_argument("--store-path", default=DEFAULT_SUBSCRIPTION_STORE_PATH)
+    subscriptions_enable_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    subscriptions_enable_parser.set_defaults(handler=_subscriptions_enable)
+
+    subscriptions_disable_parser = subscriptions_subparsers.add_parser("disable", help="Disable a topic subscription")
+    subscriptions_disable_parser.add_argument("subscription_id")
+    subscriptions_disable_parser.add_argument("--store-path", default=DEFAULT_SUBSCRIPTION_STORE_PATH)
+    subscriptions_disable_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    subscriptions_disable_parser.set_defaults(handler=_subscriptions_disable)
+
+    subscriptions_delete_parser = subscriptions_subparsers.add_parser("delete", help="Delete a topic subscription")
+    subscriptions_delete_parser.add_argument("subscription_id")
+    subscriptions_delete_parser.add_argument("--store-path", default=DEFAULT_SUBSCRIPTION_STORE_PATH)
+    subscriptions_delete_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    subscriptions_delete_parser.set_defaults(handler=_subscriptions_delete)
 
     api_parser = subparsers.add_parser("api", help="Run HTTP API server")
     api_subparsers = api_parser.add_subparsers(dest="api_command", required=True)
@@ -923,6 +989,87 @@ def _reports_show(args: argparse.Namespace) -> int:
     return 0
 
 
+def _subscriptions_create(args: argparse.Namespace) -> int:
+    try:
+        subscription = SubscriptionApplicationService(store_path=args.store_path).create_topic_subscription(
+            topic=args.topic,
+            cadence=args.cadence,
+            profile=args.profile,
+            source_limit=args.source_limit,
+            subscription_id=args.subscription_id,
+            enabled=not args.disabled,
+            metadata=_parse_key_values(args.metadata or []),
+        )
+    except ValueError as exc:
+        print(str(exc))
+        return 1
+    return _print_subscription(subscription.to_dict(), json_output=args.json)
+
+
+def _subscriptions_list(args: argparse.Namespace) -> int:
+    try:
+        result = SubscriptionApplicationService(store_path=args.store_path).list_topic_subscriptions(
+            enabled_only=args.enabled_only,
+            cadence=args.cadence,
+        )
+    except ValueError as exc:
+        print(str(exc))
+        return 1
+    payload = result.to_dict()
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        print(f"subscription_count={payload['subscription_count']}")
+        for item in payload["subscriptions"]:
+            state = "enabled" if item["enabled"] else "disabled"
+            print(f"- {item['subscription_id']} {state} cadence={item['cadence']} topic={item['topic']}")
+    return 0
+
+
+def _subscriptions_enable(args: argparse.Namespace) -> int:
+    return _subscriptions_set_enabled(args, enabled=True)
+
+
+def _subscriptions_disable(args: argparse.Namespace) -> int:
+    return _subscriptions_set_enabled(args, enabled=False)
+
+
+def _subscriptions_set_enabled(args: argparse.Namespace, *, enabled: bool) -> int:
+    try:
+        subscription = SubscriptionApplicationService(store_path=args.store_path).set_enabled(
+            args.subscription_id,
+            enabled=enabled,
+        )
+    except (KeyError, ValueError) as exc:
+        print(str(exc))
+        return 1
+    return _print_subscription(subscription.to_dict(), json_output=args.json)
+
+
+def _subscriptions_delete(args: argparse.Namespace) -> int:
+    deleted = SubscriptionApplicationService(store_path=args.store_path).delete_topic_subscription(
+        args.subscription_id,
+    )
+    payload = {"subscription_id": args.subscription_id, "deleted": deleted}
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        print(f"deleted={str(deleted).lower()}")
+    return 0
+
+
+def _print_subscription(payload: dict, *, json_output: bool) -> int:
+    if json_output:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        state = "enabled" if payload["enabled"] else "disabled"
+        print(f"subscription_id={payload['subscription_id']}")
+        print(f"topic={payload['topic']}")
+        print(f"cadence={payload['cadence']}")
+        print(f"state={state}")
+    return 0
+
+
 def _api_serve(args: argparse.Namespace) -> int:
     from interfaces.api.server import run_api_server
 
@@ -1419,6 +1566,18 @@ def _parse_filters(values: list[str]) -> dict[str, str]:
             raise SystemExit(f"invalid filter '{value}', expected key=value")
         filters[key] = filter_value
     return filters
+
+
+def _parse_key_values(values: list[str]) -> dict[str, str]:
+    parsed: dict[str, str] = {}
+    for value in values:
+        if "=" not in value:
+            raise ValueError(f"invalid metadata '{value}', expected key=value")
+        key, parsed_value = value.split("=", 1)
+        if not key:
+            raise ValueError(f"invalid metadata '{value}', expected key=value")
+        parsed[key] = parsed_value
+    return parsed
 
 
 def _add_storage_backup_arguments(parser: argparse.ArgumentParser) -> None:

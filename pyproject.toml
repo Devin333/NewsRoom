@@ -55,6 +55,7 @@ packages = [
   "storage.metrics",
   "storage.postgres",
   "storage.security",
+  "storage.subscriptions",
   "storage.vector",
   "workflows",
   "workflows.daily_intelligence",
