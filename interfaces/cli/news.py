@@ -405,6 +405,43 @@ def build_parser() -> argparse.ArgumentParser:
     storage_backup_restore_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     storage_backup_restore_parser.set_defaults(handler=_storage_backup_restore)
 
+    storage_lineage_parser = storage_subparsers.add_parser(
+        "lineage",
+        help="Query local lineage records",
+    )
+    storage_lineage_subparsers = storage_lineage_parser.add_subparsers(
+        dest="storage_lineage_command",
+        required=True,
+    )
+
+    storage_lineage_list_parser = storage_lineage_subparsers.add_parser(
+        "list",
+        help="List lineage refs for a run",
+    )
+    _add_storage_lineage_base_arguments(storage_lineage_list_parser)
+    storage_lineage_list_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    storage_lineage_list_parser.set_defaults(handler=_storage_lineage_list)
+
+    storage_lineage_upstream_parser = storage_lineage_subparsers.add_parser(
+        "upstream",
+        help="List upstream lineage refs for a target",
+    )
+    _add_storage_lineage_base_arguments(storage_lineage_upstream_parser)
+    storage_lineage_upstream_parser.add_argument("--target-type", required=True, help="Target record type")
+    storage_lineage_upstream_parser.add_argument("--target-id", required=True, help="Target record id")
+    storage_lineage_upstream_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    storage_lineage_upstream_parser.set_defaults(handler=_storage_lineage_upstream)
+
+    storage_lineage_downstream_parser = storage_lineage_subparsers.add_parser(
+        "downstream",
+        help="List downstream lineage refs for a source",
+    )
+    _add_storage_lineage_base_arguments(storage_lineage_downstream_parser)
+    storage_lineage_downstream_parser.add_argument("--source-type", required=True, help="Source record type")
+    storage_lineage_downstream_parser.add_argument("--source-id", required=True, help="Source record id")
+    storage_lineage_downstream_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    storage_lineage_downstream_parser.set_defaults(handler=_storage_lineage_downstream)
+
     storage_retention_parser = storage_subparsers.add_parser(
         "retention",
         help="Plan and apply local artifact retention",
@@ -1008,6 +1045,15 @@ def _add_storage_backup_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--backup-path", required=True, help="Backup archive path")
 
 
+def _add_storage_lineage_base_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--artifact-root",
+        default=".newsroom/runs",
+        help="Directory where run artifacts are stored",
+    )
+    parser.add_argument("--run-id", required=True, help="Workflow run id")
+
+
 def _add_storage_retention_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--artifact-root",
@@ -1113,6 +1159,59 @@ def _print_storage_backup_result(
     print(f"backup_path={payload['backup_path']}")
     print(f"{count_key}={payload[count_key]}")
     print(f"total_bytes={payload['total_bytes']}")
+
+
+def _storage_lineage_list(args: argparse.Namespace) -> int:
+    try:
+        result = StorageApplicationService(args.artifact_root).list_lineage(args.run_id)
+    except ValueError as exc:
+        print(str(exc))
+        return 1
+    _print_storage_lineage_result(result.to_dict(), json_output=args.json)
+    return 0
+
+
+def _storage_lineage_upstream(args: argparse.Namespace) -> int:
+    try:
+        result = StorageApplicationService(args.artifact_root).lineage_upstream(
+            run_id=args.run_id,
+            target_type=args.target_type,
+            target_id=args.target_id,
+        )
+    except ValueError as exc:
+        print(str(exc))
+        return 1
+    _print_storage_lineage_result(result.to_dict(), json_output=args.json)
+    return 0
+
+
+def _storage_lineage_downstream(args: argparse.Namespace) -> int:
+    try:
+        result = StorageApplicationService(args.artifact_root).lineage_downstream(
+            run_id=args.run_id,
+            source_type=args.source_type,
+            source_id=args.source_id,
+        )
+    except ValueError as exc:
+        print(str(exc))
+        return 1
+    _print_storage_lineage_result(result.to_dict(), json_output=args.json)
+    return 0
+
+
+def _print_storage_lineage_result(payload: dict, *, json_output: bool) -> None:
+    if json_output:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+        return
+    print(f"artifact_root={payload['artifact_root']}")
+    print(f"run_id={payload['run_id']}")
+    print(f"query_type={payload['query_type']}")
+    print(f"lineage_count={payload['lineage_count']}")
+    for ref in payload["lineage_refs"]:
+        print(
+            f"- {ref['source_type']}:{ref['source_id']} -> "
+            f"{ref['target_type']}:{ref['target_id']} relation={ref['relation_type']}"
+        )
 
 
 def _storage_retention_plan(args: argparse.Namespace) -> int:

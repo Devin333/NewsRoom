@@ -14,6 +14,7 @@ from storage.lifecycle import (
     RetentionPlan,
     RetentionPolicy,
 )
+from storage.lineage import LineageRef, LocalJsonLineageStore
 from storage.metrics import LocalStorageMetricsCollector, StorageMetrics
 
 
@@ -84,12 +85,30 @@ class StorageRestoreResult:
         }
 
 
+@dataclass(frozen=True)
+class StorageLineageQueryResult:
+    artifact_root: Path
+    run_id: str
+    query_type: str
+    lineage_refs: list[LineageRef]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "artifact_root": str(self.artifact_root),
+            "run_id": self.run_id,
+            "query_type": self.query_type,
+            "lineage_count": len(self.lineage_refs),
+            "lineage_refs": [ref.to_dict() for ref in self.lineage_refs],
+        }
+
+
 class StorageApplicationService:
     def __init__(self, artifact_root: str | Path = ".newsroom/runs") -> None:
         self.artifact_root = Path(artifact_root)
         self.artifact_index = LocalJsonArtifactIndexStore(
             self.artifact_root / "_records" / "artifact_index"
         )
+        self.lineage_store = LocalJsonLineageStore(self.artifact_root / "_records" / "lineage")
 
     def metrics(self) -> StorageMetrics:
         return LocalStorageMetricsCollector(self.artifact_root).collect()
@@ -126,6 +145,45 @@ class StorageApplicationService:
             artifact_root=self.artifact_root,
             backup_path=Path(backup_path),
             manifest=manifest,
+        )
+
+    def list_lineage(self, run_id: str) -> StorageLineageQueryResult:
+        refs = self.lineage_store.list_by_run(run_id)
+        return StorageLineageQueryResult(
+            artifact_root=self.artifact_root,
+            run_id=run_id,
+            query_type="list",
+            lineage_refs=refs,
+        )
+
+    def lineage_upstream(
+        self,
+        *,
+        run_id: str,
+        target_type: str,
+        target_id: str,
+    ) -> StorageLineageQueryResult:
+        refs = self.lineage_store.upstream(run_id, target_type, target_id)
+        return StorageLineageQueryResult(
+            artifact_root=self.artifact_root,
+            run_id=run_id,
+            query_type="upstream",
+            lineage_refs=refs,
+        )
+
+    def lineage_downstream(
+        self,
+        *,
+        run_id: str,
+        source_type: str,
+        source_id: str,
+    ) -> StorageLineageQueryResult:
+        refs = self.lineage_store.downstream(run_id, source_type, source_id)
+        return StorageLineageQueryResult(
+            artifact_root=self.artifact_root,
+            run_id=run_id,
+            query_type="downstream",
+            lineage_refs=refs,
         )
 
     def plan_retention(
