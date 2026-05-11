@@ -519,6 +519,16 @@ def build_parser() -> argparse.ArgumentParser:
     runs_events_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     runs_events_parser.set_defaults(handler=_runs_events)
 
+    runs_replay_parser = runs_subparsers.add_parser("replay", help="Build a run replay bundle")
+    runs_replay_parser.add_argument("run_id", help="Run id")
+    runs_replay_parser.add_argument(
+        "--artifact-root",
+        default=".newsroom/runs",
+        help="Directory where run artifacts are stored",
+    )
+    runs_replay_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    runs_replay_parser.set_defaults(handler=_runs_replay)
+
     artifacts_parser = subparsers.add_parser("artifacts", help="Inspect run artifacts")
     artifacts_subparsers = artifacts_parser.add_subparsers(dest="artifacts_command", required=True)
 
@@ -1344,6 +1354,35 @@ def _runs_events(args: argparse.Namespace) -> int:
         print(f"event_count={payload['event_count']}")
         for event in payload["events"]:
             print(f"- {event.get('event_type')} at {event.get('occurred_at')}")
+    return 0
+
+
+def _runs_replay(args: argparse.Namespace) -> int:
+    try:
+        result = RunInspectionService(artifact_root=args.artifact_root).replay_run(args.run_id)
+    except (FileNotFoundError, ValueError) as exc:
+        print(str(exc))
+        return 1
+    payload = result.to_dict()
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        manifest = payload["manifest"]
+        print(f"run_id={payload['run_id']}")
+        print(f"status={manifest.get('status')}")
+        print(f"manifest_path={payload['manifest_path']}")
+        print(f"event_count={payload['event_count']}")
+        if payload["events_error"]:
+            print(f"events_error={payload['events_error']}")
+        print(f"artifact_count={payload['artifact_count']}")
+        for artifact in payload["artifacts"]:
+            line = (
+                f"- {artifact['artifact_key']} path={artifact['relative_path']} "
+                f"type={artifact['content_type']} size={artifact['size_bytes']}"
+            )
+            if artifact["read_error"]:
+                line = f"{line} error={artifact['read_error']}"
+            print(line)
     return 0
 
 

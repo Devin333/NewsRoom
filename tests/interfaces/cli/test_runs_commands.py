@@ -54,6 +54,42 @@ def test_news_cli_runs_events_invalid_limit_returns_error(monkeypatch, capsys) -
     assert "limit must be greater than zero" in captured.out
 
 
+def test_news_cli_runs_replay_json_reads_real_files(tmp_path, capsys) -> None:
+    _write_replay_run(tmp_path)
+
+    exit_code = news_cli.main(
+        [
+            "runs",
+            "replay",
+            "run-1",
+            "--artifact-root",
+            str(tmp_path),
+            "--json",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    artifacts = {artifact["artifact_key"]: artifact for artifact in payload["artifacts"]}
+
+    assert exit_code == 0
+    assert payload["run_id"] == "run-1"
+    assert payload["event_count"] == 1
+    assert artifacts["report_json"]["content"]["password"] == "[redacted]"
+
+
+def test_news_cli_runs_replay_text_reads_real_files(tmp_path, capsys) -> None:
+    _write_replay_run(tmp_path)
+
+    exit_code = news_cli.main(["runs", "replay", "run-1", "--artifact-root", str(tmp_path)])
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "run_id=run-1" in captured.out
+    assert "artifact_count=3" in captured.out
+    assert "- report_json path=report.json" in captured.out
+
+
 class _FakeRunInspectionService:
     def __init__(self, artifact_root=".newsroom/runs") -> None:
         self.artifact_root = artifact_root
@@ -122,3 +158,27 @@ class _FakeResult:
 
     def to_dict(self):
         return self.payload
+
+
+def _write_replay_run(root) -> None:
+    run_dir = root / "run-1"
+    run_dir.mkdir()
+    manifest = {
+        "run_id": "run-1",
+        "status": "succeeded",
+        "artifacts": {
+            "events": "events.jsonl",
+            "report_json": "report.json",
+            "report_markdown": "report.md",
+        },
+    }
+    (run_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    (run_dir / "events.jsonl").write_text(
+        json.dumps({"event_type": "workflow_started", "payload": {"profile": "live"}}) + "\n",
+        encoding="utf-8",
+    )
+    (run_dir / "report.json").write_text(
+        json.dumps({"title": "Report", "password": "hidden"}),
+        encoding="utf-8",
+    )
+    (run_dir / "report.md").write_text("# Report\n", encoding="utf-8")

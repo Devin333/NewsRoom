@@ -92,6 +92,42 @@ def test_run_inspection_redacts_sensitive_event_keys(tmp_path) -> None:
     assert "hidden-value" not in json.dumps(payload)
 
 
+def test_run_inspection_replay_reads_real_artifacts_and_redacts(tmp_path) -> None:
+    run_dir = tmp_path / "run-1"
+    run_dir.mkdir()
+    manifest = {
+        "run_id": "run-1",
+        "status": "succeeded",
+        "artifacts": {
+            "events": "events.jsonl",
+            "report_json": "report.json",
+            "report_markdown": "report.md",
+            "missing": "missing.json",
+        },
+    }
+    (run_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    (run_dir / "events.jsonl").write_text(
+        json.dumps({"event_type": "workflow_started", "payload": {"token": "hidden"}}) + "\n",
+        encoding="utf-8",
+    )
+    (run_dir / "report.json").write_text(
+        json.dumps({"title": "Report", "api_key": "hidden-key"}),
+        encoding="utf-8",
+    )
+    (run_dir / "report.md").write_text("# Report\n", encoding="utf-8")
+
+    result = RunInspectionService(tmp_path).replay_run("run-1")
+
+    payload = result.to_dict()
+    artifacts = {artifact["artifact_key"]: artifact for artifact in payload["artifacts"]}
+    assert payload["event_count"] == 1
+    assert payload["events"][0]["payload"]["token"] == "[redacted]"
+    assert artifacts["report_json"]["content"]["api_key"] == "[redacted]"
+    assert artifacts["report_markdown"]["content"] == "# Report\n"
+    assert artifacts["missing"]["read_error"] == "artifact file not found: missing.json"
+    assert "hidden-key" not in json.dumps(payload)
+
+
 def test_run_inspection_rejects_path_traversal(tmp_path) -> None:
     with pytest.raises(ValueError):
         RunInspectionService(tmp_path).get_run("../secret")

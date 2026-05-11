@@ -73,6 +73,50 @@ class RunEventsResult:
         }
 
 
+@dataclass(frozen=True)
+class RunReplayArtifact:
+    artifact_key: str
+    relative_path: str
+    content_type: str
+    size_bytes: int | None
+    content: Any = None
+    read_error: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "artifact_key": self.artifact_key,
+            "relative_path": self.relative_path,
+            "content_type": self.content_type,
+            "size_bytes": self.size_bytes,
+            "content": self.content,
+            "read_error": self.read_error,
+        }
+
+
+@dataclass(frozen=True)
+class RunReplayResult:
+    run_id: str
+    manifest: dict[str, Any]
+    manifest_path: str
+    events: list[dict[str, Any]]
+    events_path: str | None
+    artifacts: list[RunReplayArtifact]
+    events_error: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "run_id": self.run_id,
+            "manifest": dict(self.manifest),
+            "manifest_path": self.manifest_path,
+            "event_count": len(self.events),
+            "events": [dict(event) for event in self.events],
+            "events_path": self.events_path,
+            "events_error": self.events_error,
+            "artifact_count": len(self.artifacts),
+            "artifacts": [artifact.to_dict() for artifact in self.artifacts],
+        }
+
+
 class RunInspectionService:
     def __init__(self, artifact_root: str | Path = ".newsroom/runs") -> None:
         self.artifact_root = Path(artifact_root)
@@ -117,6 +161,33 @@ class RunInspectionService:
             events_path=str(events_path),
         )
 
+    def replay_run(self, run_id: str) -> RunReplayResult:
+        detail = self.get_run(run_id)
+        artifact_paths = detail.manifest.get("artifacts") or {}
+        events: list[dict[str, Any]] = []
+        events_path = None
+        events_error = None
+        if "events" in artifact_paths:
+            try:
+                events_result = self.get_run_events(run_id)
+                events = events_result.events
+                events_path = events_result.events_path
+            except (FileNotFoundError, ValueError, json.JSONDecodeError) as exc:
+                events_error = str(exc)
+        artifacts = [
+            _read_replay_artifact(self.artifact_root, run_id, key, str(relative_path))
+            for key, relative_path in sorted(artifact_paths.items())
+        ]
+        return RunReplayResult(
+            run_id=detail.run_id,
+            manifest=detail.manifest,
+            manifest_path=detail.manifest_path,
+            events=events,
+            events_path=events_path,
+            events_error=events_error,
+            artifacts=artifacts,
+        )
+
 
 def _summary_from_manifest(manifest: dict[str, Any], manifest_path: Path) -> RunSummary:
     return RunSummary(
@@ -142,6 +213,11 @@ def _read_json(path: Path) -> dict[str, Any]:
     return payload
 
 
+def _read_json_value(path: Path) -> Any:
+    with path.open("r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
 def _read_jsonl_events(path: Path) -> list[dict[str, Any]]:
     events: list[dict[str, Any]] = []
     with path.open("r", encoding="utf-8") as handle:
@@ -156,6 +232,55 @@ def _read_jsonl_events(path: Path) -> list[dict[str, Any]]:
     return events
 
 
+def _read_jsonl_values(path: Path) -> list[Any]:
+    values: list[Any] = []
+    with path.open("r", encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, start=1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                values.append(json.loads(line))
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"jsonl line is invalid: {line_number}") from exc
+    return values
+
+
+def _read_replay_artifact(
+    artifact_root: Path,
+    run_id: str,
+    artifact_key: str,
+    relative_path: str,
+) -> RunReplayArtifact:
+    content_type = _content_type(Path(relative_path))
+    try:
+        path = _artifact_path(artifact_root, run_id, relative_path)
+        content = _read_replay_artifact_content(path, content_type)
+        return RunReplayArtifact(
+            artifact_key=artifact_key,
+            relative_path=relative_path,
+            content_type=content_type,
+            size_bytes=path.stat().st_size,
+            content=content,
+        )
+    except (OSError, UnicodeDecodeError, ValueError, json.JSONDecodeError) as exc:
+        return RunReplayArtifact(
+            artifact_key=artifact_key,
+            relative_path=relative_path,
+            content_type=content_type,
+            size_bytes=None,
+            read_error=str(exc),
+        )
+
+
+def _read_replay_artifact_content(path: Path, content_type: str) -> Any:
+    if content_type == "application/json":
+        return _redact_sensitive_keys(_read_json_value(path))
+    if content_type == "application/x-ndjson":
+        return [_redact_sensitive_keys(value) for value in _read_jsonl_values(path)]
+    return path.read_text(encoding="utf-8")
+
+
 def _artifact_path(artifact_root: Path, run_id: str, relative_path: str) -> Path:
     relative = Path(relative_path)
     if relative.is_absolute() or ".." in relative.parts:
@@ -164,6 +289,17 @@ def _artifact_path(artifact_root: Path, run_id: str, relative_path: str) -> Path
     if not path.exists():
         raise FileNotFoundError(f"artifact file not found: {relative_path}")
     return path
+
+
+def _content_type(path: Path) -> str:
+    suffix = path.suffix.lower()
+    if suffix == ".json":
+        return "application/json"
+    if suffix == ".jsonl":
+        return "application/x-ndjson"
+    if suffix == ".md":
+        return "text/markdown"
+    return "text/plain"
 
 
 def _redact_sensitive_keys(value: Any) -> Any:
