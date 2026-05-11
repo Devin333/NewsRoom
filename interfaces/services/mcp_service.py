@@ -226,6 +226,8 @@ class MCPApplicationService:
                 return self._subscription_delete(args)
             if tool_name == "news.memory.search":
                 return self._memory_search(args)
+            if tool_name == "news.memory.reindex":
+                return self._memory_reindex(args)
             if tool_name == "news.diagnose":
                 return self._diagnose()
             if tool_name == "news.run.show":
@@ -504,6 +506,17 @@ class MCPApplicationService:
         )
         return MCPToolCallResult(
             tool_name="news.memory.search",
+            success=True,
+            data=result.to_dict(),
+        )
+
+    def _memory_reindex(self, args: dict[str, Any]) -> MCPToolCallResult:
+        result = self.memory_service_factory().reindex_run(
+            _required_arg(args, "run_id"),
+            topic=_optional_arg(args, "topic"),
+        )
+        return MCPToolCallResult(
+            tool_name="news.memory.reindex",
             success=True,
             data=result.to_dict(),
         )
@@ -1102,6 +1115,19 @@ def _tools() -> list[MCPTool]:
                     "collection": {"type": "string"},
                     "limit": {"type": "integer", "minimum": 1},
                     "filters": {"type": "object"},
+                },
+            },
+        ),
+        MCPTool(
+            name="news.memory.reindex",
+            title="Reindex run memory",
+            description="Reindex a completed run into vector memory through MemoryApplicationService.",
+            input_schema={
+                "type": "object",
+                "required": ["run_id"],
+                "properties": {
+                    "run_id": {"type": "string"},
+                    "topic": {"type": "string"},
                 },
             },
         ),

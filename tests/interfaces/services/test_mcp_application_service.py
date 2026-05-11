@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from interfaces.services.approval_service import ApprovalApplicationService
 from interfaces.services.artifact_service import ArtifactInspectionService
 from interfaces.services.entity_service import EntityTrackingApplicationService
+from interfaces.services.memory_service import MemoryApplicationService
 from interfaces.services.mcp_service import MCPApplicationService
 from interfaces.services.report_service import ReportApplicationService
 from interfaces.services.run_inspection_service import RunInspectionService
@@ -11,6 +12,7 @@ from interfaces.services.storage_service import StorageApplicationService
 from interfaces.services.subscription_service import SubscriptionApplicationService
 from storage.artifacts import ArtifactWriteRequest, FilesystemArtifactStore, LocalJsonArtifactIndexStore
 from storage.lineage import LineageRef, LocalJsonLineageStore
+from storage.vector import InMemoryVectorStore
 
 
 def test_mcp_catalog_lists_tools_without_calling_factories() -> None:
@@ -51,6 +53,7 @@ def test_mcp_catalog_lists_tools_without_calling_factories() -> None:
     assert "news.entity.match_reports" in tool_names
     assert "news.subscription.list" in tool_names
     assert "news.subscription.create" in tool_names
+    assert "news.memory.reindex" in tool_names
     assert "news.worker.status" in tool_names
     assert "news.queue.status" in tool_names
     assert "news.approval.submit" in tool_names
@@ -322,6 +325,44 @@ def test_mcp_memory_search_requires_query() -> None:
     assert result.success is False
     assert result.error_type == "ValueError"
     assert "query is required" in result.error_message
+
+
+def test_mcp_memory_reindex_reads_real_artifacts_and_indexes(tmp_path) -> None:
+    _write_memory_run_artifacts(tmp_path, "memory-run")
+    store = InMemoryVectorStore()
+    service = MCPApplicationService(
+        memory_service_factory=lambda: MemoryApplicationService(
+            vector_store=store,
+            artifact_root=tmp_path,
+        )
+    )
+
+    result = service.call_tool("news.memory.reindex", {"run_id": "memory-run"})
+    search = service.call_tool(
+        "news.memory.search",
+        {
+            "query": "Agent runtime memory",
+            "collection": "report_sections",
+            "filters": {"topic": "AI policy"},
+        },
+    )
+
+    assert result.success is True
+    assert result.data["run_id"] == "memory-run"
+    assert result.data["topic"] == "AI policy"
+    assert result.data["documents_indexed"] == 2
+    assert result.data["collections"] == ["evidence_items", "report_sections"]
+    assert "memory-run:report_section:0" in result.data["document_ids"]
+    assert search.success is True
+    assert search.data["result_count"] == 1
+
+
+def test_mcp_memory_reindex_requires_run_id() -> None:
+    result = MCPApplicationService().call_tool("news.memory.reindex", {})
+
+    assert result.success is False
+    assert result.error_type == "ValueError"
+    assert "run_id is required" in result.error_message
 
 
 def test_mcp_approval_tools_persist_submit_approve_and_read(tmp_path) -> None:
@@ -1060,6 +1101,60 @@ def _write_report_run(root, run_id: str, title: str, body: str) -> None:
                     "report_json": "report.json",
                     "report_markdown": "report.md",
                 },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _write_memory_run_artifacts(root, run_id: str) -> None:
+    run_dir = root / run_id
+    run_dir.mkdir(parents=True)
+    (run_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "run_id": run_id,
+                "status": "succeeded",
+                "artifacts": {
+                    "request": "request.json",
+                    "report_json": "report.json",
+                    "evidence_bundle": "evidence_bundle.json",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "request.json").write_text(json.dumps({"topic": "AI policy"}), encoding="utf-8")
+    (run_dir / "report.json").write_text(
+        json.dumps(
+            {
+                "title": "Daily Intelligence",
+                "sections": [
+                    {
+                        "title": "Summary",
+                        "content": "Agent runtime memory improved.",
+                        "sources": ["https://example.com/memory"],
+                    }
+                ],
+                "source_urls": ["https://example.com/memory"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "evidence_bundle.json").write_text(
+        json.dumps(
+            {
+                "bundle_id": "daily",
+                "items": [
+                    {
+                        "evidence_id": "ev-1",
+                        "source_url": "https://example.com/memory",
+                        "source_id": "source-1",
+                        "title": "Agent runtime memory",
+                        "summary": "A runtime improved memory recall.",
+                        "confidence": 0.9,
+                    }
+                ],
             }
         ),
         encoding="utf-8",
