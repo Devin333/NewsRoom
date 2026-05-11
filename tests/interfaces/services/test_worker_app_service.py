@@ -177,6 +177,43 @@ def test_worker_service_queue_status_uses_default_queues() -> None:
     assert payload["total_stream_length"] == 0
 
 
+def test_worker_service_run_loop_stops_after_max_tasks() -> None:
+    tasks = [
+        LeasedTask(DEFAULT_DAILY_QUEUE, "1-0", Task(task_type="daily_intelligence.run", payload={})),
+        LeasedTask(DEFAULT_DAILY_QUEUE, "2-0", Task(task_type="daily_intelligence.run", payload={})),
+    ]
+    queue = _FakeQueue(leased=tasks)
+    handler = _FakeHandler(success=True)
+    service = WorkerApplicationService(queue=queue, handlers={handler.task_type: handler})
+
+    result = service.run_loop(
+        worker_id="worker-1",
+        max_tasks=2,
+        idle_sleep_seconds=0,
+    )
+
+    payload = result.to_dict()
+    assert payload["stop_reason"] == "max_tasks"
+    assert payload["processed_count"] == 2
+    assert payload["succeeded_count"] == 2
+    assert payload["idle_count"] == 0
+
+
+def test_worker_service_run_loop_stops_after_idle_polls() -> None:
+    service = WorkerApplicationService(queue=_FakeQueue(), handlers={})
+
+    result = service.run_loop(
+        worker_id="worker-1",
+        max_idle_polls=2,
+        idle_sleep_seconds=0,
+    )
+
+    payload = result.to_dict()
+    assert payload["stop_reason"] == "max_idle_polls"
+    assert payload["processed_count"] == 0
+    assert payload["idle_count"] == 2
+
+
 class _FakeQueue:
     def __init__(self, leased=None, reclaimed=None) -> None:
         self.leased = leased
@@ -192,6 +229,10 @@ class _FakeQueue:
         return "1-0"
 
     def lease_one(self, worker_id, queue_names, *, block_ms):
+        if isinstance(self.leased, list):
+            if not self.leased:
+                return None
+            return self.leased.pop(0)
         return self.leased
 
     def reclaim_stale_one(self, worker_id, queue_names, *, min_idle_ms):

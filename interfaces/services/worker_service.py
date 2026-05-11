@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from core.framework.workers import (
     DailyIntelligenceTaskHandler,
@@ -116,6 +117,30 @@ class WorkerQueueStatusResult:
             "total_stream_length": sum(queue["stream_length"] for queue in queue_payloads),
             "total_pending_count": sum(queue["pending_count"] for queue in queue_payloads),
             "queues": queue_payloads,
+        }
+
+
+@dataclass(frozen=True)
+class WorkerRunLoopResult:
+    worker_id: str
+    iterations: int
+    processed_count: int
+    succeeded_count: int
+    failed_count: int
+    idle_count: int
+    stop_reason: str
+    last_result: WorkerRunOnceResult | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "worker_id": self.worker_id,
+            "iterations": self.iterations,
+            "processed_count": self.processed_count,
+            "succeeded_count": self.succeeded_count,
+            "failed_count": self.failed_count,
+            "idle_count": self.idle_count,
+            "stop_reason": self.stop_reason,
+            "last_result": self.last_result.to_dict() if self.last_result else None,
         }
 
 
@@ -315,6 +340,76 @@ class WorkerApplicationService:
             queue_names or [DEFAULT_DAILY_QUEUE, DEFAULT_MEMORY_QUEUE, DEFAULT_DEAD_LETTER_QUEUE]
         )
         return WorkerQueueStatusResult(queues=self.queue.status(queues))
+
+    def run_loop(
+        self,
+        *,
+        worker_id: str,
+        queue_names: list[str] | None = None,
+        block_ms: int = 1000,
+        reclaim_stale_ms: int | None = None,
+        max_tasks: int | None = None,
+        max_idle_polls: int | None = None,
+        idle_sleep_seconds: float = 1.0,
+        sleep_fn: Callable[[float], None] | None = None,
+    ) -> WorkerRunLoopResult:
+        if max_tasks is not None and max_tasks <= 0:
+            raise ValueError("max_tasks must be greater than zero")
+        if max_idle_polls is not None and max_idle_polls <= 0:
+            raise ValueError("max_idle_polls must be greater than zero")
+        if idle_sleep_seconds < 0:
+            raise ValueError("idle_sleep_seconds must be non-negative")
+
+        actual_sleep = sleep_fn or time.sleep
+        iterations = 0
+        processed_count = 0
+        succeeded_count = 0
+        failed_count = 0
+        idle_count = 0
+        last_result: WorkerRunOnceResult | None = None
+
+        while True:
+            result = self.run_once(
+                worker_id=worker_id,
+                queue_names=queue_names,
+                block_ms=block_ms,
+                reclaim_stale_ms=reclaim_stale_ms,
+            )
+            last_result = result
+            iterations += 1
+            if result.processed:
+                processed_count += 1
+                if result.success:
+                    succeeded_count += 1
+                else:
+                    failed_count += 1
+                if max_tasks is not None and processed_count >= max_tasks:
+                    return WorkerRunLoopResult(
+                        worker_id=worker_id,
+                        iterations=iterations,
+                        processed_count=processed_count,
+                        succeeded_count=succeeded_count,
+                        failed_count=failed_count,
+                        idle_count=idle_count,
+                        stop_reason="max_tasks",
+                        last_result=last_result,
+                    )
+                continue
+
+            idle_count += 1
+            if max_idle_polls is not None and idle_count >= max_idle_polls:
+                return WorkerRunLoopResult(
+                    worker_id=worker_id,
+                    iterations=iterations,
+                    processed_count=processed_count,
+                    succeeded_count=succeeded_count,
+                    failed_count=failed_count,
+                    idle_count=idle_count,
+                    stop_reason="max_idle_polls",
+                    last_result=last_result,
+                )
+            if idle_sleep_seconds:
+                actual_sleep(idle_sleep_seconds)
 
     def _handle_leased_task(self, leased: LeasedTask) -> TaskResult:
         handler = self.handlers.get(leased.task.task_type)

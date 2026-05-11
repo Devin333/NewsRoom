@@ -111,6 +111,33 @@ def test_news_cli_worker_run_once_reclaim_stale_json(monkeypatch, capsys) -> Non
     assert _FakeWorkerService.run_once_calls[-1]["reclaim_stale_ms"] == 60000
 
 
+def test_news_cli_worker_run_json(monkeypatch, capsys) -> None:
+    _FakeWorkerService.run_loop_calls = []
+    monkeypatch.setattr(news_cli, "WorkerApplicationService", _FakeWorkerService)
+
+    exit_code = news_cli.main(
+        [
+            "worker",
+            "run",
+            "--worker-id",
+            "worker-1",
+            "--max-idle-polls",
+            "1",
+            "--idle-sleep-seconds",
+            "0",
+            "--json",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert exit_code == 0
+    assert payload["stop_reason"] == "max_idle_polls"
+    assert _FakeWorkerService.run_loop_calls[-1]["max_idle_polls"] == 1
+    assert _FakeWorkerService.run_loop_calls[-1]["idle_sleep_seconds"] == 0
+
+
 def test_news_cli_worker_heartbeat_json(monkeypatch, capsys) -> None:
     monkeypatch.setattr(news_cli, "WorkerApplicationService", _FakeWorkerService)
 
@@ -185,6 +212,7 @@ def test_news_cli_worker_queues_json(monkeypatch, capsys) -> None:
 
 class _FakeWorkerService:
     run_once_calls = []
+    run_loop_calls = []
 
     def __init__(self, *args, **kwargs) -> None:
         self.args = args
@@ -223,6 +251,10 @@ class _FakeWorkerService:
     def run_once(self, **kwargs):
         self.__class__.run_once_calls.append(kwargs)
         return _FakeRunOnceResult(reclaimed=kwargs.get("reclaim_stale_ms") is not None)
+
+    def run_loop(self, **kwargs):
+        self.__class__.run_loop_calls.append(kwargs)
+        return _FakeLoopResult()
 
     def record_heartbeat(self, **kwargs):
         return _FakeResult(
@@ -318,4 +350,31 @@ class _FakeRunOnceResult:
             "workflow_run_id": "workflow-1",
             "error_type": None,
             "error_message": None,
+        }
+
+
+class _FakeLoopResult:
+    def to_dict(self):
+        return {
+            "worker_id": "worker-1",
+            "iterations": 1,
+            "processed_count": 0,
+            "succeeded_count": 0,
+            "failed_count": 0,
+            "idle_count": 1,
+            "stop_reason": "max_idle_polls",
+            "last_result": {
+                "processed": False,
+                "worker_id": "worker-1",
+                "reclaimed": False,
+                "queue_name": None,
+                "message_id": None,
+                "task_id": None,
+                "task_type": None,
+                "success": None,
+                "task_status": None,
+                "workflow_run_id": None,
+                "error_type": None,
+                "error_message": None,
+            },
         }

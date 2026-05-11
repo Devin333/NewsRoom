@@ -163,6 +163,47 @@ def build_parser() -> argparse.ArgumentParser:
     run_once_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     run_once_parser.set_defaults(handler=_worker_run_once)
 
+    run_worker_parser = worker_subparsers.add_parser(
+        "run",
+        help="Continuously process queued worker tasks",
+    )
+    run_worker_parser.add_argument("--worker-id", default="news-worker-1", help="Worker consumer id")
+    run_worker_parser.add_argument(
+        "--queue-name",
+        dest="queue_names",
+        action="append",
+        default=None,
+        help="Queue stream to read; can be passed multiple times",
+    )
+    run_worker_parser.add_argument("--block-ms", type=int, default=1000, help="Redis read block time in milliseconds")
+    run_worker_parser.add_argument(
+        "--reclaim-stale-ms",
+        type=int,
+        default=None,
+        help="Claim pending tasks idle for at least this many milliseconds when no new task is available",
+    )
+    run_worker_parser.add_argument("--max-tasks", type=int, default=None, help="Stop after processing this many tasks")
+    run_worker_parser.add_argument(
+        "--max-idle-polls",
+        type=int,
+        default=None,
+        help="Stop after this many idle polls",
+    )
+    run_worker_parser.add_argument(
+        "--idle-sleep-seconds",
+        type=float,
+        default=1.0,
+        help="Sleep interval after idle polls",
+    )
+    run_worker_parser.add_argument(
+        "--artifact-root",
+        default=".newsroom/runs",
+        help="Directory where run artifacts are written",
+    )
+    run_worker_parser.add_argument("--redis-url", default=None, help="Redis URL; defaults to NEWS_REDIS_URL")
+    run_worker_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    run_worker_parser.set_defaults(handler=_worker_run)
+
     heartbeat_parser = worker_subparsers.add_parser(
         "heartbeat",
         help="Record a worker heartbeat",
@@ -905,6 +946,39 @@ def _worker_run_once(args: argparse.Namespace) -> int:
             if payload["error_message"]:
                 print(f"error={payload['error_message']}")
     return 0 if result.success is not False else 1
+
+
+def _worker_run(args: argparse.Namespace) -> int:
+    service = WorkerApplicationService(artifact_root=args.artifact_root, redis_url=args.redis_url)
+    try:
+        result = service.run_loop(
+            worker_id=args.worker_id,
+            queue_names=args.queue_names or [DEFAULT_DAILY_QUEUE],
+            block_ms=args.block_ms,
+            reclaim_stale_ms=args.reclaim_stale_ms,
+            max_tasks=args.max_tasks,
+            max_idle_polls=args.max_idle_polls,
+            idle_sleep_seconds=args.idle_sleep_seconds,
+        )
+    except ValueError as exc:
+        print(str(exc))
+        return 1
+    except KeyboardInterrupt:
+        print("worker interrupted")
+        return 130
+    payload = result.to_dict()
+
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        print(f"worker_id={payload['worker_id']}")
+        print(f"stop_reason={payload['stop_reason']}")
+        print(f"iterations={payload['iterations']}")
+        print(f"processed_count={payload['processed_count']}")
+        print(f"succeeded_count={payload['succeeded_count']}")
+        print(f"failed_count={payload['failed_count']}")
+        print(f"idle_count={payload['idle_count']}")
+    return 0 if payload["failed_count"] == 0 else 1
 
 
 def _worker_heartbeat(args: argparse.Namespace) -> int:
