@@ -23,6 +23,10 @@ WORKFLOW_ID = "daily-intelligence-live"
 WORKFLOW_VERSION = "0.1.0"
 
 
+class AllSourcesFailedError(RuntimeError):
+    pass
+
+
 class DailyIntelligenceRunner:
     def __init__(
         self,
@@ -61,6 +65,7 @@ class DailyIntelligenceRunner:
     def _function_registry(self, profile: str) -> FunctionStepRegistry:
         registry = FunctionStepRegistry()
         registry.register("daily.collect_sources", lambda buffer: self._collect_sources(buffer, profile))
+        registry.register("daily.require_sources", _require_sources)
         registry.register("daily.normalize_sources", _normalize_sources)
         registry.register("daily.deduplicate_sources", _deduplicate_sources)
         registry.register("daily.rank_sources", _rank_sources)
@@ -208,7 +213,29 @@ class DailyIntelligenceRunner:
                     )
         metrics.raw_items_count = len(raw_items)
         if not raw_items:
-            raise RuntimeError("no source items collected from enabled sources")
+            all_sources_error = SourceError(
+                source_id="source_pipeline",
+                error_type="all_sources_failed",
+                error_message="all enabled sources failed or returned no valid items",
+                metadata={
+                    "sources_total": metrics.sources_total,
+                    "sources_failed": metrics.sources_failed,
+                    "sources_skipped": metrics.sources_skipped,
+                },
+            )
+            source_errors.append(all_sources_error)
+            failed_sources.append(all_sources_error.to_dict())
+            metrics.record_error(all_sources_error)
+            source_events.append(
+                _source_event(
+                    "source_fetch_failed",
+                    error_type="all_sources_failed",
+                    retryable=False,
+                    sources_total=metrics.sources_total,
+                    sources_failed=metrics.sources_failed,
+                    sources_skipped=metrics.sources_skipped,
+                )
+            )
         return {
             "raw_items": raw_items,
             "source_errors": source_errors,
@@ -268,6 +295,13 @@ def build_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
                 ],
             ),
             StepSpec(
+                step_id="require_sources",
+                implementation="daily.require_sources",
+                read_keys=["raw_items", "source_errors"],
+                write_keys=["source_collection_status"],
+                required_output_keys=["source_collection_status"],
+            ),
+            StepSpec(
                 step_id="normalize_sources",
                 implementation="daily.normalize_sources",
                 read_keys=["raw_items", "source_events", "source_pipeline_metrics"],
@@ -324,7 +358,8 @@ def build_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
             ),
         ],
         edges=[
-            EdgeSpec("collect-to-normalize", "collect_sources", "normalize_sources"),
+            EdgeSpec("collect-to-require", "collect_sources", "require_sources"),
+            EdgeSpec("require-to-normalize", "require_sources", "normalize_sources"),
             EdgeSpec("normalize-to-dedupe", "normalize_sources", "deduplicate_sources"),
             EdgeSpec("dedupe-to-rank", "deduplicate_sources", "rank_sources"),
             EdgeSpec("rank-to-evidence", "rank_sources", "build_evidence"),
@@ -357,6 +392,22 @@ def build_default_source_registry() -> SourceRegistry:
                 topics=["ai", "research"],
             ),
         ]
+    )
+
+
+def _require_sources(buffer: ScopedDataBuffer) -> dict[str, Any]:
+    raw_items = buffer.read("raw_items")
+    if raw_items:
+        return {"source_collection_status": "ready"}
+
+    source_errors = buffer.read("source_errors")
+    error_types = [
+        error.error_type if hasattr(error, "error_type") else error.get("error_type", "unknown")
+        for error in source_errors
+    ]
+    raise AllSourcesFailedError(
+        "all_sources_failed: no source items collected from enabled sources "
+        f"(errors: {', '.join(error_types)})"
     )
 
 

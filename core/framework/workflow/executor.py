@@ -143,64 +143,7 @@ class WorkflowExecutor:
                     output["agent_loop_events"],
                 )
                 manifest["artifacts"]["agent_loop_events"] = "agent_loop_events.json"
-            if "raw_items" in output:
-                self._artifact_manager.write_json(actual_run_id, "raw_items.json", output["raw_items"])
-                manifest["artifacts"]["raw_items"] = "raw_items.json"
-            if "source_errors" in output:
-                self._artifact_manager.write_json(
-                    actual_run_id,
-                    "source_errors.json",
-                    output["source_errors"],
-                )
-                manifest["artifacts"]["source_errors"] = "source_errors.json"
-            if "skipped_sources" in output:
-                self._artifact_manager.write_json(
-                    actual_run_id,
-                    "skipped_sources.json",
-                    output["skipped_sources"],
-                )
-                manifest["artifacts"]["skipped_sources"] = "skipped_sources.json"
-            if "failed_sources" in output:
-                self._artifact_manager.write_json(
-                    actual_run_id,
-                    "failed_sources.json",
-                    output["failed_sources"],
-                )
-                manifest["artifacts"]["failed_sources"] = "failed_sources.json"
-            if "source_health_updates" in output:
-                self._artifact_manager.write_json(
-                    actual_run_id,
-                    "source_health_updates.json",
-                    output["source_health_updates"],
-                )
-                manifest["artifacts"]["source_health_updates"] = "source_health_updates.json"
-            if "source_events" in output:
-                self._artifact_manager.write_json(
-                    actual_run_id,
-                    "source_events.json",
-                    output["source_events"],
-                )
-                manifest["artifacts"]["source_events"] = "source_events.json"
-                manifest["source_event_count"] = len(output["source_events"])
-            if "source_pipeline_metrics" in output:
-                self._artifact_manager.write_json(
-                    actual_run_id,
-                    "source_pipeline_metrics.json",
-                    output["source_pipeline_metrics"],
-                )
-                manifest["artifacts"]["source_pipeline_metrics"] = "source_pipeline_metrics.json"
-            source_artifacts = SourceArtifactWriter(self._artifact_manager).write_source_artifacts(
-                actual_run_id,
-                raw_items=output.get("raw_items"),
-                source_errors=output.get("source_errors"),
-            )
-            if source_artifacts:
-                manifest["artifacts"]["source_artifacts"] = "source_artifacts/index.json"
-                manifest["source_artifacts"] = {
-                    "item_count": source_artifacts["item_count"],
-                    "error_count": source_artifacts["error_count"],
-                    "total_count": len(source_artifacts["entries"]),
-                }
+            self._write_source_diagnostic_artifacts(actual_run_id, manifest, output)
             if "evidence_bundle" in output:
                 self._artifact_manager.write_json(
                     actual_run_id,
@@ -258,6 +201,7 @@ class WorkflowExecutor:
             recorder.emit("workflow_failed", {"path": path, "error": error})
             self._artifact_manager.write_json(actual_run_id, "error.json", error)
             manifest["artifacts"]["error"] = "error.json"
+            self._write_source_diagnostic_artifacts(actual_run_id, manifest, output)
 
         self._artifact_manager.write_json(
             actual_run_id,
@@ -281,3 +225,68 @@ class WorkflowExecutor:
             manifest_path=str(manifest_path),
             events_path=str(events_path),
         )
+
+    def _write_source_diagnostic_artifacts(
+        self,
+        run_id: str,
+        manifest: dict[str, Any],
+        output: dict[str, Any],
+    ) -> None:
+        if "raw_items" in output:
+            self._artifact_manager.write_json(run_id, "raw_items.json", output["raw_items"])
+            manifest["artifacts"]["raw_items"] = "raw_items.json"
+        if "source_errors" in output:
+            self._artifact_manager.write_json(
+                run_id,
+                "source_errors.json",
+                output["source_errors"],
+            )
+            manifest["artifacts"]["source_errors"] = "source_errors.json"
+        if "skipped_sources" in output:
+            self._artifact_manager.write_json(
+                run_id,
+                "skipped_sources.json",
+                output["skipped_sources"],
+            )
+            manifest["artifacts"]["skipped_sources"] = "skipped_sources.json"
+        if "failed_sources" in output:
+            self._artifact_manager.write_json(
+                run_id,
+                "failed_sources.json",
+                output["failed_sources"],
+            )
+            manifest["artifacts"]["failed_sources"] = "failed_sources.json"
+        if "source_health_updates" in output:
+            self._artifact_manager.write_json(
+                run_id,
+                "source_health_updates.json",
+                output["source_health_updates"],
+            )
+            manifest["artifacts"]["source_health_updates"] = "source_health_updates.json"
+        if "source_events" in output:
+            self._artifact_manager.write_json(
+                run_id,
+                "source_events.json",
+                output["source_events"],
+            )
+            manifest["artifacts"]["source_events"] = "source_events.json"
+            manifest["source_event_count"] = len(output["source_events"])
+        if "source_pipeline_metrics" in output:
+            self._artifact_manager.write_json(
+                run_id,
+                "source_pipeline_metrics.json",
+                output["source_pipeline_metrics"],
+            )
+            manifest["artifacts"]["source_pipeline_metrics"] = "source_pipeline_metrics.json"
+        source_artifacts = SourceArtifactWriter(self._artifact_manager).write_source_artifacts(
+            run_id,
+            raw_items=output.get("raw_items"),
+            source_errors=output.get("source_errors"),
+        )
+        if source_artifacts:
+            manifest["artifacts"]["source_artifacts"] = "source_artifacts/index.json"
+            manifest["source_artifacts"] = {
+                "item_count": source_artifacts["item_count"],
+                "error_count": source_artifacts["error_count"],
+                "total_count": len(source_artifacts["entries"]),
+            }

@@ -255,6 +255,67 @@ def test_daily_intelligence_runner_records_partial_source_failures(tmp_path) -> 
     assert error_payload["error"]["source_id"] == "failing"
 
 
+def test_daily_intelligence_runner_all_sources_failed_preserves_diagnostics(tmp_path) -> None:
+    registry = SourceRegistry(
+        [
+            SourceDefinition(
+                source_id="failing",
+                name="Failing",
+                source_type="rss",
+                url="https://example.com/failing.xml",
+                reliability="medium",
+            )
+        ]
+    )
+
+    def fetch_text(url: str) -> str:
+        raise RuntimeError("fetch failed")
+
+    result = DailyIntelligenceRunner(
+        artifact_root=tmp_path,
+        source_registry=registry,
+        feed_connector=FeedConnector(fetch_text=fetch_text),
+        llm_client=_FailIfCalledLLM(),
+    ).run(profile="live", topic="AI policy", source_limit=1, run_id="daily-all-sources-failed")
+
+    assert result.status == WorkflowStatus.FAILED
+    assert result.error is not None
+    assert result.error["error_type"] == "AllSourcesFailedError"
+    assert result.error["step_id"] == "require_sources"
+    assert "all_sources_failed" in result.error["message"]
+    assert result.output["raw_items"] == []
+    assert any(error.error_type == "all_sources_failed" for error in result.output["source_errors"])
+
+    run_dir = Path(result.artifact_dir)
+    manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["status"] == "failed"
+    assert manifest["path"] == ["collect_sources", "require_sources"]
+    assert manifest["artifacts"]["error"] == "error.json"
+    assert manifest["artifacts"]["source_errors"] == "source_errors.json"
+    assert manifest["artifacts"]["source_events"] == "source_events.json"
+    assert manifest["artifacts"]["source_pipeline_metrics"] == "source_pipeline_metrics.json"
+    assert manifest["artifacts"]["source_artifacts"] == "source_artifacts/index.json"
+    assert "report_json" not in manifest["artifacts"]
+
+    source_errors = json.loads((run_dir / "source_errors.json").read_text(encoding="utf-8"))
+    assert any(error["error_type"] == "all_sources_failed" for error in source_errors)
+
+    metrics = json.loads((run_dir / "source_pipeline_metrics.json").read_text(encoding="utf-8"))
+    assert metrics["raw_items_count"] == 0
+    assert metrics["errors_by_type"]["all_sources_failed"] == 1
+
+    source_events = json.loads((run_dir / "source_events.json").read_text(encoding="utf-8"))
+    assert any(
+        event["event_type"] == "source_fetch_failed"
+        and event["metadata"]["error_type"] == "all_sources_failed"
+        for event in source_events
+    )
+
+    source_artifacts = json.loads((run_dir / "source_artifacts" / "index.json").read_text())
+    assert source_artifacts["item_count"] == 0
+    assert source_artifacts["error_count"] == 2
+
+
 def test_daily_intelligence_runner_skips_cooling_source(tmp_path) -> None:
     registry = SourceRegistry(
         [
@@ -336,3 +397,8 @@ class _StructuredReportLLM:
                 ],
             },
         )
+
+
+class _FailIfCalledLLM:
+    def complete(self, request):
+        raise AssertionError("LLM should not be called when all sources fail")
