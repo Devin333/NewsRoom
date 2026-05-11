@@ -38,8 +38,21 @@ def _rank_item(
         relevance * 0.45 + recency * 0.2 + reliability * 0.25 + novelty * 0.1,
         4,
     )
+    ranked_item_id = f"rank_{item.normalized_item_id.removeprefix('norm_')}"
+    lineage = dict(item.metadata.get("lineage") or {})
+    lineage.update(
+        {
+            "normalized_item_id": item.normalized_item_id,
+            "ranked_item_id": ranked_item_id,
+            "relevance_score": round(relevance, 4),
+            "recency_score": round(recency, 4),
+            "reliability_score": round(reliability, 4),
+            "novelty_score": round(novelty, 4),
+            "final_score": final_score,
+        }
+    )
     return RankedSourceItem(
-        ranked_item_id=f"rank_{item.normalized_item_id.removeprefix('norm_')}",
+        ranked_item_id=ranked_item_id,
         item=item,
         relevance_score=round(relevance, 4),
         recency_score=round(recency, 4),
@@ -47,6 +60,7 @@ def _rank_item(
         novelty_score=round(novelty, 4),
         final_score=final_score,
         rank_reason=f"topic={topic}; relevance={relevance:.2f}; reliability={reliability:.2f}",
+        metadata={"lineage": lineage},
     )
 
 

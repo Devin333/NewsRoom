@@ -12,6 +12,7 @@ class EvidenceBuilder:
         for ranked in ranked_items:
             item = ranked.item
             evidence_hash = sha256(item.canonical_url.encode("utf-8")).hexdigest()[:16]
+            source_lineage = ranked.metadata.get("lineage") or item.metadata.get("lineage") or {}
             evidence_items.append(
                 EvidenceItem(
                     evidence_id=f"ev_{evidence_hash}",
@@ -24,6 +25,7 @@ class EvidenceBuilder:
                         "ranked_item_id": ranked.ranked_item_id,
                         "final_score": ranked.final_score,
                         "rank_reason": ranked.rank_reason,
+                        "source_lineage": dict(source_lineage),
                     },
                 )
             )

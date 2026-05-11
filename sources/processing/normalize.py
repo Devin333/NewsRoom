@@ -20,6 +20,15 @@ def normalize_item(item: RawSourceItem) -> NormalizedSourceItem:
     normalized_title = normalize_text(item.title)
     normalized_summary = normalize_text(item.summary) if item.summary else None
     reliability = SourceReliability(item.metadata.get("source_reliability", "medium"))
+    metadata = dict(item.metadata)
+    metadata["lineage"] = {
+        "source_id": item.source_id,
+        "source_item_id": item.source_item_id,
+        "raw_url": item.url,
+        "canonical_url": canonical_url,
+        "fetched_at": _dt(item.fetched_at),
+        "published_at": _dt(item.published_at),
+    }
     return NormalizedSourceItem(
         normalized_item_id=f"norm_{_hash(item.source_item_id + canonical_url)[:16]}",
         source_item_id=item.source_item_id,
@@ -37,7 +46,7 @@ def normalize_item(item: RawSourceItem) -> NormalizedSourceItem:
         summary=item.summary,
         normalized_summary=normalized_summary,
         language=item.language,
-        metadata=dict(item.metadata),
+        metadata=metadata,
     )
 
 
@@ -66,3 +75,7 @@ def canonicalize_url(url: str) -> str:
 
 def _hash(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _dt(value) -> str | None:
+    return value.isoformat().replace("+00:00", "Z") if value else None

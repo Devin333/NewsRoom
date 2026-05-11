@@ -41,6 +41,8 @@ def test_deduplicate_items_removes_duplicate_canonical_urls() -> None:
 
     assert len(unique) == 1
     assert unique[0].canonical_url == "https://example.com/post"
+    assert unique[0].metadata["lineage"]["canonical_url"] == "https://example.com/post"
+    assert unique[0].metadata["lineage"]["source_item_id"].startswith("raw-")
 
 
 def test_rank_items_prioritizes_topic_relevance_and_reliability() -> None:
@@ -55,3 +57,8 @@ def test_rank_items_prioritizes_topic_relevance_and_reliability() -> None:
 
     assert ranked[0].item.title == "AI chip export update"
     assert ranked[0].final_score > ranked[1].final_score
+    lineage = ranked[0].metadata["lineage"]
+    assert lineage["source_id"] == "source"
+    assert lineage["normalized_item_id"] == ranked[0].item.normalized_item_id
+    assert lineage["ranked_item_id"] == ranked[0].ranked_item_id
+    assert lineage["final_score"] == ranked[0].final_score

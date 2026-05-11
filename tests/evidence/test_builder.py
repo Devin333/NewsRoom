@@ -19,6 +19,13 @@ def test_evidence_builder_creates_bundle_from_ranked_sources() -> None:
         source_reliability="high",
         fetched_at=datetime(2026, 5, 11, tzinfo=UTC),
         summary="Chip summary",
+        metadata={
+            "lineage": {
+                "source_id": "source",
+                "source_item_id": "raw_1",
+                "canonical_url": "https://example.com/chips",
+            }
+        },
     )
     ranked = RankedSourceItem(
         ranked_item_id="rank_1",
@@ -28,6 +35,15 @@ def test_evidence_builder_creates_bundle_from_ranked_sources() -> None:
         reliability_score=1.0,
         novelty_score=1.0,
         final_score=0.95,
+        metadata={
+            "lineage": {
+                "source_id": "source",
+                "source_item_id": "raw_1",
+                "normalized_item_id": "norm_1",
+                "ranked_item_id": "rank_1",
+                "canonical_url": "https://example.com/chips",
+            }
+        },
     )
 
     bundle = EvidenceBuilder().build([ranked], bundle_id="run-1")
@@ -35,4 +51,6 @@ def test_evidence_builder_creates_bundle_from_ranked_sources() -> None:
     assert bundle.bundle_id == "run-1"
     assert bundle.items[0].source_url == "https://example.com/chips"
     assert bundle.items[0].confidence == 0.95
+    assert bundle.items[0].metadata["source_lineage"]["source_item_id"] == "raw_1"
+    assert bundle.items[0].metadata["source_lineage"]["ranked_item_id"] == "rank_1"
     assert bundle.source_urls == {"https://example.com/chips"}
