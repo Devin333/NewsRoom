@@ -103,6 +103,20 @@ def build_parser() -> argparse.ArgumentParser:
     reports_search_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     reports_search_parser.set_defaults(handler=_reports_search)
 
+    api_parser = subparsers.add_parser("api", help="Run HTTP API server")
+    api_subparsers = api_parser.add_subparsers(dest="api_command", required=True)
+    api_serve_parser = api_subparsers.add_parser("serve", help="Serve the HTTP API")
+    api_serve_parser.add_argument("--host", default="127.0.0.1", help="Bind host")
+    api_serve_parser.add_argument("--port", type=int, default=8000, help="Bind port")
+    api_serve_parser.add_argument("--reload", action="store_true", help="Enable uvicorn reload")
+    api_serve_parser.add_argument(
+        "--log-level",
+        choices=["critical", "error", "warning", "info", "debug", "trace"],
+        default="info",
+        help="Uvicorn log level",
+    )
+    api_serve_parser.set_defaults(handler=_api_serve)
+
     worker_parser = subparsers.add_parser("worker", help="Submit and process background tasks")
     worker_subparsers = worker_parser.add_subparsers(dest="worker_command", required=True)
 
@@ -900,6 +914,22 @@ def _reports_show(args: argparse.Namespace) -> int:
         print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
     else:
         print(record.report_markdown or json.dumps(record.report_json, ensure_ascii=False, indent=2))
+    return 0
+
+
+def _api_serve(args: argparse.Namespace) -> int:
+    from interfaces.api.server import run_api_server
+
+    try:
+        run_api_server(
+            host=args.host,
+            port=args.port,
+            reload=args.reload,
+            log_level=args.log_level,
+        )
+    except ValueError as exc:
+        print(str(exc))
+        return 1
     return 0
 
 
