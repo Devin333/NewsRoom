@@ -32,6 +32,7 @@ from interfaces.services.report_service import ReportApplicationService
 from interfaces.services.run_inspection_service import RunInspectionService
 from interfaces.services.schedule_service import ScheduleApplicationService
 from interfaces.services.source_service import SourceApplicationService
+from interfaces.services.storage_service import StorageApplicationService
 from interfaces.services.worker_service import WorkerApplicationService
 from interfaces.services.artifact_service import ArtifactInspectionService
 
@@ -44,6 +45,7 @@ SourceServiceFactory = Callable[[], SourceApplicationService]
 MCPServiceFactory = Callable[[], MCPApplicationService]
 RunInspectionServiceFactory = Callable[[], RunInspectionService]
 ArtifactInspectionServiceFactory = Callable[[], ArtifactInspectionService]
+StorageServiceFactory = Callable[[], StorageApplicationService]
 ScheduleServiceFactory = Callable[[], ScheduleApplicationService]
 ApprovalServiceFactory = Callable[[], ApprovalApplicationService]
 
@@ -58,6 +60,7 @@ def create_app(
     mcp_service_factory: MCPServiceFactory = MCPApplicationService,
     run_inspection_service_factory: RunInspectionServiceFactory = RunInspectionService,
     artifact_service_factory: ArtifactInspectionServiceFactory = ArtifactInspectionService,
+    storage_service_factory: StorageServiceFactory = StorageApplicationService,
     schedule_service_factory: ScheduleServiceFactory = ScheduleApplicationService,
     approval_service_factory: ApprovalServiceFactory = ApprovalApplicationService,
 ) -> FastAPI:
@@ -229,6 +232,38 @@ def create_app(
             )
         except ValueError as exc:
             return _error(status_code=400, code="invalid_run_replay_request", message=str(exc))
+        return _success(result.to_dict())
+
+    @api.get("/api/v1/runs/{run_id}/lineage")
+    def list_run_lineage(run_id: str):
+        try:
+            result = storage_service_factory().list_lineage(run_id)
+        except ValueError as exc:
+            return _error(status_code=400, code="invalid_lineage_request", message=str(exc))
+        return _success(result.to_dict())
+
+    @api.get("/api/v1/runs/{run_id}/lineage/upstream")
+    def run_lineage_upstream(run_id: str, target_type: str, target_id: str):
+        try:
+            result = storage_service_factory().lineage_upstream(
+                run_id=run_id,
+                target_type=target_type,
+                target_id=target_id,
+            )
+        except ValueError as exc:
+            return _error(status_code=400, code="invalid_lineage_request", message=str(exc))
+        return _success(result.to_dict())
+
+    @api.get("/api/v1/runs/{run_id}/lineage/downstream")
+    def run_lineage_downstream(run_id: str, source_type: str, source_id: str):
+        try:
+            result = storage_service_factory().lineage_downstream(
+                run_id=run_id,
+                source_type=source_type,
+                source_id=source_id,
+            )
+        except ValueError as exc:
+            return _error(status_code=400, code="invalid_lineage_request", message=str(exc))
         return _success(result.to_dict())
 
     @api.get("/api/v1/runs/{run_id}/artifacts")
