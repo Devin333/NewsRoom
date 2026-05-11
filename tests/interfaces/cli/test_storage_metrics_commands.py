@@ -29,6 +29,34 @@ def test_news_cli_storage_metrics_text(monkeypatch, capsys) -> None:
     assert "lineage_refs_count=4" in captured.out
 
 
+def test_news_cli_storage_migrate_json(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(news_cli, "StorageApplicationService", _FakeStorageService)
+
+    exit_code = news_cli.main(
+        ["storage", "migrate", "--artifact-root", "runs", "--require-postgres", "--json"]
+    )
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert exit_code == 0
+    assert payload["migrated"] is True
+    assert payload["backend"] == "_FakePostgresRepository"
+    assert payload["postgres_required"] is True
+    assert "dsn" not in captured.out.lower()
+
+
+def test_news_cli_storage_migrate_require_postgres_failure(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(news_cli, "StorageApplicationService", _RejectingStorageService)
+
+    exit_code = news_cli.main(["storage", "migrate", "--artifact-root", "runs", "--require-postgres"])
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "NEWS_DATABASE_DSN" in captured.out
+
+
 class _FakeStorageService:
     def __init__(self, artifact_root=".newsroom/runs") -> None:
         self.artifact_root = artifact_root
@@ -46,6 +74,24 @@ class _FakeStorageService:
                 "metadata": {"artifact_root": self.artifact_root, "source": "test"},
             }
         )
+
+    def migrate_persistence(self, *, require_postgres=False):
+        return _FakeMetrics(
+            {
+                "artifact_root": self.artifact_root,
+                "backend": "_FakePostgresRepository",
+                "postgres_required": require_postgres,
+                "migrated": True,
+            }
+        )
+
+
+class _RejectingStorageService:
+    def __init__(self, artifact_root=".newsroom/runs") -> None:
+        self.artifact_root = artifact_root
+
+    def migrate_persistence(self, *, require_postgres=False):
+        raise ValueError("PostgreSQL migration requires NEWS_DATABASE_DSN")
 
 
 class _FakeMetrics:

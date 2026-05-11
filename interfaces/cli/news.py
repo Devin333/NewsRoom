@@ -423,6 +423,23 @@ def build_parser() -> argparse.ArgumentParser:
     storage_metrics_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     storage_metrics_parser.set_defaults(handler=_storage_metrics)
 
+    storage_migrate_parser = storage_subparsers.add_parser(
+        "migrate",
+        help="Run configured persistence migrations",
+    )
+    storage_migrate_parser.add_argument(
+        "--artifact-root",
+        default=".newsroom/runs",
+        help="Directory where local fallback records are stored",
+    )
+    storage_migrate_parser.add_argument(
+        "--require-postgres",
+        action="store_true",
+        help="Fail if NEWS_DATABASE_DSN is not configured",
+    )
+    storage_migrate_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    storage_migrate_parser.set_defaults(handler=_storage_migrate)
+
     storage_backup_parser = storage_subparsers.add_parser(
         "backup",
         help="Create and restore local artifact backups",
@@ -1254,6 +1271,24 @@ def _storage_metrics(args: argparse.Namespace) -> int:
         print(f"artifact_bytes_total={payload['artifact_bytes_total']}")
         print(f"events_count={payload['events_count']}")
         print(f"lineage_refs_count={payload['lineage_refs_count']}")
+    return 0
+
+
+def _storage_migrate(args: argparse.Namespace) -> int:
+    try:
+        result = StorageApplicationService(args.artifact_root).migrate_persistence(
+            require_postgres=args.require_postgres
+        )
+    except ValueError as exc:
+        print(str(exc))
+        return 1
+    payload = result.to_dict()
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        print(f"migrated={str(payload['migrated']).lower()}")
+        print(f"backend={payload['backend']}")
+        print(f"postgres_required={str(payload['postgres_required']).lower()}")
     return 0
 
 

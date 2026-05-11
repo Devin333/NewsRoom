@@ -1,5 +1,7 @@
 from datetime import UTC, datetime
 
+import pytest
+
 import interfaces.services.storage_service as storage_service_module
 from interfaces.services.storage_service import StorageApplicationService
 from storage.artifacts import (
@@ -223,6 +225,26 @@ def test_storage_service_uses_lineage_store_factory_by_default(tmp_path, monkeyp
     ).lineage_refs == [ref]
 
 
+def test_storage_service_migrates_configured_postgres_repository(tmp_path) -> None:
+    repository = _FakePostgresRepository()
+    service = StorageApplicationService(tmp_path, repository=repository)
+
+    result = service.migrate_persistence(require_postgres=True)
+
+    payload = result.to_dict()
+    assert repository.migrated is True
+    assert payload["backend"] == "_FakePostgresRepository"
+    assert payload["postgres_required"] is True
+    assert "dsn" not in payload
+
+
+def test_storage_service_require_postgres_rejects_local_repository(tmp_path) -> None:
+    service = StorageApplicationService(tmp_path, repository=_FakeLocalRepository())
+
+    with pytest.raises(ValueError, match="NEWS_DATABASE_DSN"):
+        service.migrate_persistence(require_postgres=True)
+
+
 class _FakeArtifactIndex:
     def __init__(self, refs) -> None:
         self.refs = refs
@@ -265,3 +287,16 @@ class _FakeLineageStore:
             for ref in self.refs
             if ref.run_id == run_id and ref.source_type == source_type and ref.source_id == source_id
         ]
+
+
+class _FakePostgresRepository:
+    def __init__(self) -> None:
+        self.migrated = False
+
+    def migrate(self) -> None:
+        self.migrated = True
+
+
+class _FakeLocalRepository:
+    def migrate(self) -> None:
+        raise AssertionError("local migration should not run when PostgreSQL is required")

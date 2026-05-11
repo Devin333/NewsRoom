@@ -16,6 +16,7 @@ from storage.lifecycle import (
 )
 from storage.lineage import LineageRef, lineage_store_from_env
 from storage.metrics import StorageMetrics, storage_metrics_collector_from_env
+from storage.repository import repository_from_env
 
 
 @dataclass(frozen=True)
@@ -102,6 +103,22 @@ class StorageLineageQueryResult:
         }
 
 
+@dataclass(frozen=True)
+class StorageMigrationResult:
+    artifact_root: Path
+    backend: str
+    postgres_required: bool
+    migrated: bool
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "artifact_root": str(self.artifact_root),
+            "backend": self.backend,
+            "postgres_required": self.postgres_required,
+            "migrated": self.migrated,
+        }
+
+
 class StorageApplicationService:
     def __init__(
         self,
@@ -110,6 +127,7 @@ class StorageApplicationService:
         artifact_index_store: Any | None = None,
         lineage_store: Any | None = None,
         metrics_collector: Any | None = None,
+        repository: Any | None = None,
     ) -> None:
         self.artifact_root = Path(artifact_root)
         self.artifact_index = artifact_index_store or artifact_index_store_from_env(
@@ -119,9 +137,22 @@ class StorageApplicationService:
             artifact_root=self.artifact_root
         )
         self.lineage_store = lineage_store or lineage_store_from_env(artifact_root=self.artifact_root)
+        self.repository = repository or repository_from_env(artifact_root=self.artifact_root)
 
     def metrics(self) -> StorageMetrics:
         return self.metrics_collector.collect()
+
+    def migrate_persistence(self, *, require_postgres: bool = False) -> StorageMigrationResult:
+        backend = self.repository.__class__.__name__
+        if require_postgres and not _is_postgres_repository(self.repository):
+            raise ValueError("PostgreSQL migration requires NEWS_DATABASE_DSN")
+        self.repository.migrate()
+        return StorageMigrationResult(
+            artifact_root=self.artifact_root,
+            backend=backend,
+            postgres_required=require_postgres,
+            migrated=True,
+        )
 
     def create_backup(
         self,
@@ -225,3 +256,7 @@ class StorageApplicationService:
             plan_result.plan
         )
         return StorageRetentionApplyResult(plan_result=plan_result, deleted_artifacts=deleted)
+
+
+def _is_postgres_repository(repository: Any) -> bool:
+    return "Postgres" in repository.__class__.__name__
