@@ -77,3 +77,32 @@ def test_storage_service_filters_retention_by_run_id(tmp_path) -> None:
 
     assert result.to_dict()["run_id"] == "run-2"
     assert [decision.artifact_ref.artifact_id for decision in result.plan.decisions] == ["raw-old-2"]
+
+
+def test_storage_service_creates_and_restores_backup_from_real_files(tmp_path) -> None:
+    source_root = tmp_path / "runs"
+    restored_root = tmp_path / "restored"
+    backup_path = tmp_path / "runs.zip"
+    artifact_store = FilesystemArtifactStore(source_root)
+    artifact_index = LocalJsonArtifactIndexStore(source_root / "_records" / "artifact_index")
+    ref = artifact_store.write(
+        ArtifactWriteRequest(
+            run_id="run-1",
+            artifact_id="report-1",
+            artifact_type="report_json",
+            content=b'{"title":"Report"}',
+            content_type="application/json",
+            created_at=datetime(2026, 5, 11, tzinfo=UTC),
+        )
+    )
+    artifact_index.index_artifact(ref)
+
+    backup_result = StorageApplicationService(source_root).create_backup(
+        backup_path,
+        now=datetime(2026, 5, 11, 1, 0, tzinfo=UTC),
+    )
+    restore_result = StorageApplicationService(restored_root).restore_backup(backup_path)
+
+    assert backup_result.to_dict()["file_count"] == 2
+    assert restore_result.to_dict()["restored_count"] == 2
+    assert FilesystemArtifactStore(restored_root).read(ref) == b'{"title":"Report"}'

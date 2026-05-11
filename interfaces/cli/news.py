@@ -364,6 +364,47 @@ def build_parser() -> argparse.ArgumentParser:
     storage_metrics_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     storage_metrics_parser.set_defaults(handler=_storage_metrics)
 
+    storage_backup_parser = storage_subparsers.add_parser(
+        "backup",
+        help="Create and restore local artifact backups",
+    )
+    storage_backup_subparsers = storage_backup_parser.add_subparsers(
+        dest="storage_backup_command",
+        required=True,
+    )
+
+    storage_backup_create_parser = storage_backup_subparsers.add_parser(
+        "create",
+        help="Create a local artifact backup",
+    )
+    _add_storage_backup_arguments(storage_backup_create_parser)
+    storage_backup_create_parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Replace an existing backup archive",
+    )
+    storage_backup_create_parser.add_argument("--now", default=None, help="Optional current time as ISO datetime")
+    storage_backup_create_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    storage_backup_create_parser.set_defaults(handler=_storage_backup_create)
+
+    storage_backup_restore_parser = storage_backup_subparsers.add_parser(
+        "restore",
+        help="Restore a local artifact backup",
+    )
+    _add_storage_backup_arguments(storage_backup_restore_parser)
+    storage_backup_restore_parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="Confirm writing backed-up files",
+    )
+    storage_backup_restore_parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Replace existing restored files",
+    )
+    storage_backup_restore_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    storage_backup_restore_parser.set_defaults(handler=_storage_backup_restore)
+
     storage_retention_parser = storage_subparsers.add_parser(
         "retention",
         help="Plan and apply local artifact retention",
@@ -958,6 +999,15 @@ def _parse_filters(values: list[str]) -> dict[str, str]:
     return filters
 
 
+def _add_storage_backup_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--artifact-root",
+        default=".newsroom/runs",
+        help="Directory where run artifacts are stored",
+    )
+    parser.add_argument("--backup-path", required=True, help="Backup archive path")
+
+
 def _add_storage_retention_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--artifact-root",
@@ -1018,6 +1068,51 @@ def _storage_metrics(args: argparse.Namespace) -> int:
         print(f"events_count={payload['events_count']}")
         print(f"lineage_refs_count={payload['lineage_refs_count']}")
     return 0
+
+
+def _storage_backup_create(args: argparse.Namespace) -> int:
+    try:
+        result = StorageApplicationService(args.artifact_root).create_backup(
+            args.backup_path,
+            overwrite=args.overwrite,
+            now=_parse_cli_datetime(args.now),
+        )
+    except (FileNotFoundError, FileExistsError, ValueError) as exc:
+        print(str(exc))
+        return 1
+    _print_storage_backup_result(result.to_dict(), json_output=args.json, count_key="file_count")
+    return 0
+
+
+def _storage_backup_restore(args: argparse.Namespace) -> int:
+    if not args.yes:
+        print("backup restore requires --yes")
+        return 1
+    try:
+        result = StorageApplicationService(args.artifact_root).restore_backup(
+            args.backup_path,
+            overwrite=args.overwrite,
+        )
+    except (FileNotFoundError, FileExistsError, ValueError) as exc:
+        print(str(exc))
+        return 1
+    _print_storage_backup_result(result.to_dict(), json_output=args.json, count_key="restored_count")
+    return 0
+
+
+def _print_storage_backup_result(
+    payload: dict,
+    *,
+    json_output: bool,
+    count_key: str,
+) -> None:
+    if json_output:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+        return
+    print(f"artifact_root={payload['artifact_root']}")
+    print(f"backup_path={payload['backup_path']}")
+    print(f"{count_key}={payload[count_key]}")
+    print(f"total_bytes={payload['total_bytes']}")
 
 
 def _storage_retention_plan(args: argparse.Namespace) -> int:

@@ -1,5 +1,11 @@
 """Storage lifecycle helpers."""
 
+from storage.lifecycle.backup import (
+    BackupFileEntry,
+    BackupManifest,
+    BackupValidationError,
+    LocalArtifactBackupService,
+)
 from storage.lifecycle.retention import (
     ArtifactRetentionPlanner,
     LocalArtifactRetentionExecutor,
@@ -10,7 +16,11 @@ from storage.lifecycle.retention import (
 
 __all__ = [
     "ArtifactRetentionPlanner",
+    "BackupFileEntry",
+    "BackupManifest",
+    "BackupValidationError",
     "LocalArtifactRetentionExecutor",
+    "LocalArtifactBackupService",
     "RetentionDecision",
     "RetentionPlan",
     "RetentionPolicy",

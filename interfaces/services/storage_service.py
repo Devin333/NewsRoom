@@ -8,6 +8,8 @@ from typing import Any
 from storage.artifacts import ArtifactRef, LocalJsonArtifactIndexStore
 from storage.lifecycle import (
     ArtifactRetentionPlanner,
+    BackupManifest,
+    LocalArtifactBackupService,
     LocalArtifactRetentionExecutor,
     RetentionPlan,
     RetentionPolicy,
@@ -50,6 +52,38 @@ class StorageRetentionApplyResult:
         return payload
 
 
+@dataclass(frozen=True)
+class StorageBackupResult:
+    artifact_root: Path
+    backup_path: Path
+    manifest: BackupManifest
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "artifact_root": str(self.artifact_root),
+            "backup_path": str(self.backup_path),
+            "file_count": self.manifest.file_count,
+            "total_bytes": self.manifest.total_bytes,
+            "manifest": self.manifest.to_dict(),
+        }
+
+
+@dataclass(frozen=True)
+class StorageRestoreResult:
+    artifact_root: Path
+    backup_path: Path
+    manifest: BackupManifest
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "artifact_root": str(self.artifact_root),
+            "backup_path": str(self.backup_path),
+            "restored_count": self.manifest.file_count,
+            "total_bytes": self.manifest.total_bytes,
+            "manifest": self.manifest.to_dict(),
+        }
+
+
 class StorageApplicationService:
     def __init__(self, artifact_root: str | Path = ".newsroom/runs") -> None:
         self.artifact_root = Path(artifact_root)
@@ -59,6 +93,40 @@ class StorageApplicationService:
 
     def metrics(self) -> StorageMetrics:
         return LocalStorageMetricsCollector(self.artifact_root).collect()
+
+    def create_backup(
+        self,
+        backup_path: str | Path,
+        *,
+        overwrite: bool = False,
+        now: datetime | None = None,
+    ) -> StorageBackupResult:
+        manifest = LocalArtifactBackupService(self.artifact_root).create_backup(
+            backup_path,
+            overwrite=overwrite,
+            now=now,
+        )
+        return StorageBackupResult(
+            artifact_root=self.artifact_root,
+            backup_path=Path(backup_path),
+            manifest=manifest,
+        )
+
+    def restore_backup(
+        self,
+        backup_path: str | Path,
+        *,
+        overwrite: bool = False,
+    ) -> StorageRestoreResult:
+        manifest = LocalArtifactBackupService(self.artifact_root).restore_backup(
+            backup_path,
+            overwrite=overwrite,
+        )
+        return StorageRestoreResult(
+            artifact_root=self.artifact_root,
+            backup_path=Path(backup_path),
+            manifest=manifest,
+        )
 
     def plan_retention(
         self,
