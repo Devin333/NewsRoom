@@ -62,6 +62,34 @@ def test_in_memory_vector_store_filters_payload() -> None:
     assert [result.document_id for result in results] == ["ai"]
 
 
+def test_in_memory_vector_store_ensure_collections_is_idempotent() -> None:
+    store = InMemoryVectorStore()
+
+    created = store.ensure_collections(["report_sections", "evidence_items"])
+    existing = store.ensure_collections(["report_sections"])
+
+    assert [status.to_dict() for status in created] == [
+        {
+            "collection": "report_sections",
+            "vector_size": 64,
+            "existed_before": False,
+            "created": True,
+        },
+        {
+            "collection": "evidence_items",
+            "vector_size": 64,
+            "existed_before": False,
+            "created": True,
+        },
+    ]
+    assert existing[0].to_dict() == {
+        "collection": "report_sections",
+        "vector_size": 64,
+        "existed_before": True,
+        "created": False,
+    }
+
+
 def test_in_memory_vector_store_delete_by_filter() -> None:
     store = InMemoryVectorStore()
     store.upsert_documents(

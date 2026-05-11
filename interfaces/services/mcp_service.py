@@ -234,6 +234,8 @@ class MCPApplicationService:
                 return self._memory_search(args)
             if tool_name == "news.memory.reindex":
                 return self._memory_reindex(args)
+            if tool_name == "news.memory.bootstrap":
+                return self._memory_bootstrap(args)
             if tool_name == "news.diagnose":
                 return self._diagnose()
             if tool_name == "news.run.show":
@@ -551,6 +553,15 @@ class MCPApplicationService:
         )
         return MCPToolCallResult(
             tool_name="news.memory.reindex",
+            success=True,
+            data=result.to_dict(),
+        )
+
+    def _memory_bootstrap(self, args: dict[str, Any]) -> MCPToolCallResult:
+        collections = _string_list_arg(args, "collections")
+        result = self.memory_service_factory().bootstrap_collections(collections or None)
+        return MCPToolCallResult(
+            tool_name="news.memory.bootstrap",
             success=True,
             data=result.to_dict(),
         )
@@ -1192,6 +1203,20 @@ def _tools() -> list[MCPTool]:
                 "properties": {
                     "run_id": {"type": "string"},
                     "topic": {"type": "string"},
+                },
+            },
+        ),
+        MCPTool(
+            name="news.memory.bootstrap",
+            title="Bootstrap vector memory",
+            description="Create or verify vector memory collections through MemoryApplicationService.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "collections": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    }
                 },
             },
         ),

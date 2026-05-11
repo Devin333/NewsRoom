@@ -4,7 +4,12 @@ import math
 from typing import Any
 
 from storage.vector.embeddings import DeterministicEmbeddingModel
-from storage.vector.models import VectorDocument, VectorSearchQuery, VectorSearchResult
+from storage.vector.models import (
+    VectorCollectionStatus,
+    VectorDocument,
+    VectorSearchQuery,
+    VectorSearchResult,
+)
 
 
 class InMemoryVectorStore:
@@ -16,6 +21,22 @@ class InMemoryVectorStore:
         for doc in docs:
             stored = doc if doc.vector is not None else doc.with_vector(self.embedding_model.embed_text(doc.text))
             self._collections.setdefault(stored.collection, {})[stored.document_id] = stored
+
+    def ensure_collections(self, collections: list[str]) -> list[VectorCollectionStatus]:
+        statuses = []
+        for collection in collections:
+            existed_before = collection in self._collections
+            if not existed_before:
+                self._collections[collection] = {}
+            statuses.append(
+                VectorCollectionStatus(
+                    collection=collection,
+                    vector_size=self.embedding_model.dimension,
+                    existed_before=existed_before,
+                    created=not existed_before,
+                )
+            )
+        return statuses
 
     def search(self, query: VectorSearchQuery) -> list[VectorSearchResult]:
         query_vector = query.vector or self.embedding_model.embed_text(query.text)

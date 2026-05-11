@@ -58,6 +58,7 @@ def test_mcp_catalog_lists_tools_without_calling_factories() -> None:
     assert "news.subscription.list" in tool_names
     assert "news.subscription.create" in tool_names
     assert "news.memory.reindex" in tool_names
+    assert "news.memory.bootstrap" in tool_names
     assert "news.worker.status" in tool_names
     assert "news.queue.status" in tool_names
     assert "news.approval.submit" in tool_names
@@ -419,6 +420,24 @@ def test_mcp_memory_reindex_requires_run_id() -> None:
     assert result.success is False
     assert result.error_type == "ValueError"
     assert "run_id is required" in result.error_message
+
+
+def test_mcp_memory_bootstrap_uses_real_in_memory_vector_store() -> None:
+    store = InMemoryVectorStore()
+    service = MCPApplicationService(
+        memory_service_factory=lambda: MemoryApplicationService(vector_store=store)
+    )
+
+    created = service.call_tool("news.memory.bootstrap", {"collections": ["custom_memory"]})
+    existing = service.call_tool("news.memory.bootstrap", {"collections": ["custom_memory"]})
+
+    assert created.success is True
+    assert created.data["collection_count"] == 1
+    assert created.data["created_collections"] == ["custom_memory"]
+    assert created.data["existing_collections"] == []
+    assert existing.success is True
+    assert existing.data["created_collections"] == []
+    assert existing.data["existing_collections"] == ["custom_memory"]
 
 
 def test_mcp_approval_tools_persist_submit_approve_and_read(tmp_path) -> None:
