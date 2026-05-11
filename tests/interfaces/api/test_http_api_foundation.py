@@ -56,6 +56,16 @@ def test_latest_report_returns_report_detail() -> None:
     assert payload["data"]["title"] == "Daily Intelligence"
 
 
+def test_latest_report_preserves_missing_manifest_path() -> None:
+    client = TestClient(create_app(report_service_factory=lambda: _NullManifestReportService()))
+
+    response = client.get("/api/v1/reports/latest")
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["data"]["manifest_path"] is None
+
+
 def test_get_report_returns_report_detail() -> None:
     client = TestClient(create_app(report_service_factory=lambda: _FakeReportService()))
 
@@ -363,6 +373,20 @@ class _MissingReportService:
 
     def get_report(self, report_id):
         raise FileNotFoundError(f"report not found: {report_id}")
+
+
+class _NullManifestReportService:
+    def latest_report(self):
+        return ReportRecord(
+            report_id="report-1",
+            run_id="run-1",
+            status="final",
+            title="Daily Intelligence",
+            report_json={"title": "Daily Intelligence"},
+            report_markdown="# Daily Intelligence",
+            quality_score=0.9,
+            manifest_path=None,
+        )
 
 
 class _FakeMemoryService:

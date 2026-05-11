@@ -104,7 +104,7 @@ def create_app(
             report_json=record.report_json,
             report_markdown=record.report_markdown,
             quality_score=record.quality_score,
-            manifest_path=str(record.manifest_path),
+            manifest_path=_optional_str(record.manifest_path),
         )
         return _success(_model_to_dict(data))
 
@@ -129,7 +129,7 @@ def create_app(
             report_json=record.report_json,
             report_markdown=record.report_markdown,
             quality_score=record.quality_score,
-            manifest_path=str(record.manifest_path),
+            manifest_path=_optional_str(record.manifest_path),
         )
         return _success(_model_to_dict(data))
 
@@ -400,6 +400,10 @@ def _model_to_dict(model) -> dict:
     if hasattr(model, "model_dump"):
         return model.model_dump()
     return model.dict()
+
+
+def _optional_str(value) -> str | None:
+    return str(value) if value is not None else None
 
 
 def _request_id() -> str:

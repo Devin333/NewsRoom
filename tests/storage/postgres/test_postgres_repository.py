@@ -1,10 +1,15 @@
+from datetime import UTC, datetime
+
+import pytest
+
 from storage.postgres import PostgresRepository
 from storage.repository import ReportRecord, WorkflowRunRecord
 
 
 class FakeCursor:
-    def __init__(self, calls):
+    def __init__(self, calls, rows):
         self.calls = calls
+        self.rows = rows
 
     def __enter__(self):
         return self
@@ -15,11 +20,18 @@ class FakeCursor:
     def execute(self, sql, params=None):
         self.calls.append((sql, params))
 
+    def fetchone(self):
+        return self.rows[0] if self.rows else None
+
+    def fetchall(self):
+        return list(self.rows)
+
 
 class FakeConnection:
-    def __init__(self):
+    def __init__(self, rows=None):
         self.calls = []
         self.commits = 0
+        self.rows = rows or []
 
     def __enter__(self):
         return self
@@ -28,7 +40,7 @@ class FakeConnection:
         return False
 
     def cursor(self):
-        return FakeCursor(self.calls)
+        return FakeCursor(self.calls, self.rows)
 
     def commit(self):
         self.commits += 1
@@ -84,3 +96,95 @@ def test_postgres_repository_saves_report() -> None:
     assert "INSERT INTO reports" in sql
     assert params[0] == "report-1"
     assert params[4] == '{"title": "Report"}'
+
+
+def test_postgres_repository_reads_latest_report() -> None:
+    connection = FakeConnection(
+        rows=[
+            (
+                "report-1",
+                "run-1",
+                "final",
+                "AI Report",
+                {"title": "AI Report"},
+                "# AI Report",
+                0.9,
+                ".newsroom/runs/run-1/manifest.json",
+                datetime(2026, 5, 11, 1, 0, tzinfo=UTC),
+            )
+        ]
+    )
+    repository = PostgresRepository("postgresql://example", connection_factory=lambda: connection)
+
+    record = repository.latest_report()
+
+    sql, params = connection.calls[0]
+    assert "FROM reports r" in sql
+    assert "ORDER BY r.updated_at DESC" in sql
+    assert params == ()
+    assert record.report_id == "report-1"
+    assert record.run_id == "run-1"
+    assert record.title == "AI Report"
+    assert record.report_json == {"title": "AI Report"}
+    assert record.report_markdown == "# AI Report"
+    assert record.finished_at == "2026-05-11T01:00:00Z"
+
+
+def test_postgres_repository_gets_report_by_id() -> None:
+    connection = FakeConnection(
+        rows=[
+            (
+                "report-1",
+                "run-1",
+                "final",
+                "AI Report",
+                '{"title": "AI Report"}',
+                "# AI Report",
+                0.9,
+                ".newsroom/runs/run-1/manifest.json",
+                "2026-05-11T01:00:00Z",
+            )
+        ]
+    )
+    repository = PostgresRepository("postgresql://example", connection_factory=lambda: connection)
+
+    record = repository.get_report("report-1")
+
+    sql, params = connection.calls[0]
+    assert "WHERE r.report_id = %s" in sql
+    assert params == ("report-1",)
+    assert record.report_id == "report-1"
+    assert record.report_json == {"title": "AI Report"}
+
+
+def test_postgres_repository_raises_when_report_missing() -> None:
+    connection = FakeConnection(rows=[])
+    repository = PostgresRepository("postgresql://example", connection_factory=lambda: connection)
+
+    with pytest.raises(FileNotFoundError, match="report not found"):
+        repository.get_report("missing")
+
+
+def test_postgres_repository_searches_reports() -> None:
+    connection = FakeConnection(
+        rows=[
+            (
+                "report-1",
+                "run-1",
+                "final",
+                "AI Policy Report",
+                0.9,
+                ".newsroom/runs/run-1/manifest.json",
+                "2026-05-11T01:00:00Z",
+            )
+        ]
+    )
+    repository = PostgresRepository("postgresql://example", connection_factory=lambda: connection)
+
+    records = repository.search_reports("policy", limit=5)
+
+    sql, params = connection.calls[0]
+    assert "ILIKE" in sql
+    assert params == ("%policy%", "%policy%", "%policy%", 5)
+    assert records[0].report_id == "report-1"
+    assert records[0].title == "AI Policy Report"

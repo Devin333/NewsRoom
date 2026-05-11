@@ -43,6 +43,15 @@ def test_report_service_rejects_empty_query(tmp_path) -> None:
         service.search_reports(query="")
 
 
+def test_report_service_uses_postgres_when_database_dsn_is_configured(tmp_path) -> None:
+    service = ReportApplicationService(
+        artifact_root=tmp_path,
+        env={"NEWS_DATABASE_DSN": "postgresql://example"},
+    )
+
+    assert service.repository.__class__.__name__ == "PostgresRepository"
+
+
 def _write_report_run(root, run_id: str, finished_at: str, title: str) -> None:
     run_dir = root / run_id
     run_dir.mkdir(parents=True)
