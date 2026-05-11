@@ -1,5 +1,15 @@
 """Worker and task queue primitives."""
 
+from core.framework.workers.approval import (
+    ApprovalAlreadyDecidedError,
+    ApprovalDecision,
+    ApprovalDecisionType,
+    ApprovalNotFoundError,
+    ApprovalRequest,
+    ApprovalStatus,
+    ApprovalStore,
+    InMemoryApprovalStore,
+)
 from core.framework.workers.handlers import DailyIntelligenceTaskHandler
 from core.framework.workers.in_memory import InMemoryTaskQueue
 from core.framework.workers.models import LeasedTask, Task, TaskError, TaskResult, TaskStatus
@@ -22,8 +32,16 @@ from core.framework.workers.scheduler import (
 from core.framework.workers.worker_loop import WorkerLoop
 
 __all__ = [
+    "ApprovalAlreadyDecidedError",
+    "ApprovalDecision",
+    "ApprovalDecisionType",
+    "ApprovalNotFoundError",
+    "ApprovalRequest",
+    "ApprovalStatus",
+    "ApprovalStore",
     "DailyIntelligenceTaskHandler",
     "EnqueuedScheduleTask",
+    "InMemoryApprovalStore",
     "InMemoryScheduleStore",
     "InMemoryTaskQueue",
     "LeasedTask",
