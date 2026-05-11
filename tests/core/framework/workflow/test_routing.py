@@ -34,6 +34,26 @@ def test_routing_engine_continues_after_false_conditional_edge() -> None:
     assert next_step == "hold"
 
 
+def test_routing_engine_returns_decision_metadata() -> None:
+    workflow = _routing_workflow(condition_expr='buffer["decision"] == "publish"')
+    buffer = DataBuffer({"decision": "hold"})
+
+    decision = RoutingEngine().decide(
+        workflow,
+        workflow.step_by_id("decide"),
+        StepOutcome(status=StepStatus.SUCCEEDED),
+        buffer=buffer,
+    )
+
+    assert decision.target_step_id == "hold"
+    assert [evaluation.edge_id for evaluation in decision.evaluations] == [
+        "conditional-publish",
+        "fallback-hold",
+    ]
+    assert [evaluation.matched for evaluation in decision.evaluations] == [False, True]
+    assert decision.traversed_edge().edge_id == "fallback-hold"
+
+
 def test_routing_engine_blocks_unsafe_function_calls() -> None:
     workflow = _routing_workflow(condition_expr='__import__("os").system("echo unsafe")')
 

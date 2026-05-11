@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import ast
 import operator
+from dataclasses import dataclass
 from typing import Any
 
-from core.framework.specs import EdgeCondition, StepSpec, StepStatus, WorkflowSpec
+from core.framework.specs import EdgeCondition, EdgeSpec, StepSpec, StepStatus, WorkflowSpec
 from core.framework.workflow.buffer import DataBuffer
 from core.framework.workflow.result import StepOutcome
 
@@ -13,7 +14,80 @@ class ConditionalExpressionError(ValueError):
     """Raised when a conditional routing expression is invalid or unsafe."""
 
 
+@dataclass(frozen=True)
+class EdgeEvaluation:
+    edge_id: str
+    source_step_id: str
+    target_step_id: str
+    condition: EdgeCondition
+    matched: bool
+    condition_expr: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "edge_id": self.edge_id,
+            "source_step_id": self.source_step_id,
+            "target_step_id": self.target_step_id,
+            "condition": self.condition.value,
+            "matched": self.matched,
+            "condition_expr": self.condition_expr,
+        }
+
+
+@dataclass(frozen=True)
+class RoutingDecision:
+    target_step_id: str | None
+    evaluations: list[EdgeEvaluation]
+
+    def traversed_edge(self) -> EdgeEvaluation | None:
+        for evaluation in self.evaluations:
+            if evaluation.matched:
+                return evaluation
+        return None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "target_step_id": self.target_step_id,
+            "evaluations": [evaluation.to_dict() for evaluation in self.evaluations],
+        }
+
+
 class RoutingEngine:
+    def decide(
+        self,
+        workflow: WorkflowSpec,
+        current_step: StepSpec,
+        outcome: StepOutcome,
+        *,
+        buffer: DataBuffer | None = None,
+    ) -> RoutingDecision:
+        if current_step.step_id in workflow.terminal_step_ids:
+            return RoutingDecision(target_step_id=None, evaluations=[])
+
+        edges = [
+            edge for edge in workflow.edges if edge.source_step_id == current_step.step_id
+        ]
+        edges.sort(key=lambda edge: (edge.priority, edge.edge_id))
+
+        evaluations: list[EdgeEvaluation] = []
+        for edge in edges:
+            matched = _edge_matches(edge, outcome=outcome, buffer=buffer)
+            evaluation = EdgeEvaluation(
+                edge_id=edge.edge_id,
+                source_step_id=edge.source_step_id,
+                target_step_id=edge.target_step_id,
+                condition=edge.condition,
+                condition_expr=edge.condition_expr,
+                matched=matched,
+            )
+            evaluations.append(evaluation)
+            if matched:
+                return RoutingDecision(
+                    target_step_id=edge.target_step_id,
+                    evaluations=evaluations,
+                )
+        return RoutingDecision(target_step_id=None, evaluations=evaluations)
+
     def next_step(
         self,
         workflow: WorkflowSpec,
@@ -22,28 +96,33 @@ class RoutingEngine:
         *,
         buffer: DataBuffer | None = None,
     ) -> str | None:
-        if current_step.step_id in workflow.terminal_step_ids:
-            return None
+        return self.decide(
+            workflow,
+            current_step,
+            outcome,
+            buffer=buffer,
+        ).target_step_id
 
-        edges = [
-            edge for edge in workflow.edges if edge.source_step_id == current_step.step_id
-        ]
-        edges.sort(key=lambda edge: (edge.priority, edge.edge_id))
 
-        for edge in edges:
-            if edge.condition == EdgeCondition.ALWAYS:
-                return edge.target_step_id
-            if edge.condition == EdgeCondition.ON_SUCCESS and outcome.status == StepStatus.SUCCEEDED:
-                return edge.target_step_id
-            if edge.condition == EdgeCondition.ON_FAILURE and outcome.status == StepStatus.FAILED:
-                return edge.target_step_id
-            if edge.condition == EdgeCondition.CONDITIONAL and _evaluate_condition(
-                edge.condition_expr,
-                outcome=outcome,
-                buffer=buffer,
-            ):
-                return edge.target_step_id
-        return None
+def _edge_matches(
+    edge: EdgeSpec,
+    *,
+    outcome: StepOutcome,
+    buffer: DataBuffer | None,
+) -> bool:
+    if edge.condition == EdgeCondition.ALWAYS:
+        return True
+    if edge.condition == EdgeCondition.ON_SUCCESS:
+        return outcome.status == StepStatus.SUCCEEDED
+    if edge.condition == EdgeCondition.ON_FAILURE:
+        return outcome.status == StepStatus.FAILED
+    if edge.condition == EdgeCondition.CONDITIONAL:
+        return _evaluate_condition(
+            edge.condition_expr,
+            outcome=outcome,
+            buffer=buffer,
+        )
+    return False
 
 
 def _evaluate_condition(

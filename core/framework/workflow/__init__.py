@@ -9,7 +9,12 @@ from core.framework.workflow.buffer import (
 )
 from core.framework.workflow.executor import WorkflowExecutor
 from core.framework.workflow.result import StepOutcome, WorkflowError, WorkflowResult
-from core.framework.workflow.routing import ConditionalExpressionError, RoutingEngine
+from core.framework.workflow.routing import (
+    ConditionalExpressionError,
+    EdgeEvaluation,
+    RoutingDecision,
+    RoutingEngine,
+)
 from core.framework.workflow.step_runner import (
     FunctionStep,
     FunctionStepRegistry,
@@ -24,6 +29,7 @@ __all__ = [
     "DataBufferDiff",
     "DataBufferPermissionError",
     "DataBufferSnapshot",
+    "EdgeEvaluation",
     "FunctionStep",
     "FunctionStepRegistry",
     "FunctionStepRunner",
@@ -34,6 +40,7 @@ __all__ = [
     "StepOutcome",
     "StepRunner",
     "StepRunnerRegistry",
+    "RoutingDecision",
     "WorkflowError",
     "WorkflowExecutor",
     "WorkflowResult",

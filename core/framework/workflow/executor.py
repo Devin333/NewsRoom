@@ -11,7 +11,7 @@ from core.framework.events.recorder import EventRecorder
 from core.framework.specs import EdgeCondition, StepSpec, StepStatus, WorkflowSpec, WorkflowStatus
 from core.framework.workflow.buffer import DataBuffer
 from core.framework.workflow.result import StepOutcome, WorkflowError, WorkflowResult
-from core.framework.workflow.routing import RoutingEngine
+from core.framework.workflow.routing import RoutingDecision, RoutingEngine
 from core.framework.workflow.step_runner import FunctionStepRunner, StepRunnerRegistry
 from storage.checkpoint import WorkflowCheckpoint
 
@@ -118,7 +118,7 @@ class WorkflowExecutor:
                     {"step_id": step.step_id, "outputs": sorted(outcome.outputs.keys())},
                 )
                 try:
-                    current_step_id = self._routing_engine.next_step(
+                    routing_decision = self._routing_engine.decide(
                         workflow,
                         step,
                         outcome,
@@ -134,6 +134,8 @@ class WorkflowExecutor:
                     )
                     current_step_id = None
                 else:
+                    _emit_routing_events(recorder, routing_decision)
+                    current_step_id = routing_decision.target_step_id
                     if current_step_id is None:
                         status = WorkflowStatus.SUCCEEDED
             else:
@@ -524,3 +526,13 @@ def _checkpoint_id(step_id: str, event_offset: int) -> str:
         for character in step_id
     ).strip("._-")
     return f"cp-{event_offset:06d}-{safe_step_id or 'step'}"
+
+
+def _emit_routing_events(recorder: EventRecorder, decision: RoutingDecision) -> None:
+    for evaluation in decision.evaluations:
+        payload = evaluation.to_dict()
+        recorder.emit("edge_evaluated", payload)
+        if evaluation.matched:
+            recorder.emit("edge_traversed", payload)
+        else:
+            recorder.emit("edge_rejected", payload)
