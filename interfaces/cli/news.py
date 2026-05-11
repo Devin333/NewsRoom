@@ -26,6 +26,7 @@ from interfaces.services.schedule_service import (
 )
 from interfaces.services.source_service import SourceApplicationService
 from interfaces.services.worker_service import DEFAULT_DAILY_QUEUE, DEFAULT_MEMORY_QUEUE, WorkerApplicationService
+from storage.metrics import LocalStorageMetricsCollector
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -349,6 +350,18 @@ def build_parser() -> argparse.ArgumentParser:
     diagnose_parser = subparsers.add_parser("diagnose", help="Run local diagnostics")
     diagnose_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     diagnose_parser.set_defaults(handler=_diagnose)
+
+    storage_parser = subparsers.add_parser("storage", help="Inspect local storage")
+    storage_subparsers = storage_parser.add_subparsers(dest="storage_command", required=True)
+
+    storage_metrics_parser = storage_subparsers.add_parser("metrics", help="Show local storage metrics")
+    storage_metrics_parser.add_argument(
+        "--artifact-root",
+        default=".newsroom/runs",
+        help="Directory where run artifacts are stored",
+    )
+    storage_metrics_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    storage_metrics_parser.set_defaults(handler=_storage_metrics)
 
     sources_parser = subparsers.add_parser("sources", help="Inspect source registry and health")
     sources_subparsers = sources_parser.add_subparsers(dest="sources_command", required=True)
@@ -928,6 +941,20 @@ def _diagnose(args: argparse.Namespace) -> int:
             if check.get("remediation"):
                 print(f"  fix={check['remediation']}")
     return 0 if result.status != "error" else 1
+
+
+def _storage_metrics(args: argparse.Namespace) -> int:
+    payload = LocalStorageMetricsCollector(args.artifact_root).collect().to_dict()
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        print(f"runs_count={payload['runs_count']}")
+        print(f"reports_count={payload['reports_count']}")
+        print(f"artifacts_count={payload['artifacts_count']}")
+        print(f"artifact_bytes_total={payload['artifact_bytes_total']}")
+        print(f"events_count={payload['events_count']}")
+        print(f"lineage_refs_count={payload['lineage_refs_count']}")
+    return 0
 
 
 def _sources_list(args: argparse.Namespace) -> int:
