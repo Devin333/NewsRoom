@@ -224,7 +224,7 @@ def test_daily_intelligence_runner_records_partial_source_failures(tmp_path) -> 
     metrics = result.output["source_pipeline_metrics"]
     assert metrics.sources_failed == 1
     assert metrics.sources_fetched == 1
-    assert metrics.errors_by_type == {"RuntimeError": 1}
+    assert metrics.errors_by_type == {"fetch_connection_error": 1}
     assert result.output["failed_sources"][0]["source_id"] == "failing"
 
     run_dir = Path(result.artifact_dir)

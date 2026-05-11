@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from hashlib import sha256
 from typing import Callable
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from xml.etree import ElementTree
 
@@ -42,21 +43,42 @@ class FeedConnector:
     def fetch(self, source: SourceDefinition, *, limit: int | None = None) -> tuple[list[RawSourceItem], list[SourceError]]:
         try:
             xml_text = self._fetch_text(source.url)
-            if not xml_text.strip():
-                return [], [_source_error(source, "empty_source_response", "source returned an empty response")]
-            items = self.parse(source, xml_text, limit=limit)
-            if not items:
-                return [], [_source_error(source, "empty_feed", "feed contained no valid items")]
-            return items, []
         except Exception as exc:
+            return [], [_exception_source_error(source, exc, phase="fetch")]
+
+        if not xml_text.strip():
             return [], [
-                SourceError(
-                    source_id=source.source_id,
-                    error_type=type(exc).__name__,
-                    error_message=str(exc),
-                    url=source.url,
+                _source_error(
+                    source,
+                    "empty_source_response",
+                    "source returned an empty response",
+                    metadata={
+                        "phase": "fetch",
+                        "retryable": True,
+                        "source_health_affecting": True,
+                    },
                 )
             ]
+
+        try:
+            items = self.parse(source, xml_text, limit=limit)
+        except Exception as exc:
+            return [], [_exception_source_error(source, exc, phase="parse")]
+
+        if not items:
+            return [], [
+                _source_error(
+                    source,
+                    "empty_feed",
+                    "feed contained no valid items",
+                    metadata={
+                        "phase": "parse",
+                        "retryable": False,
+                        "source_health_affecting": False,
+                    },
+                )
+            ]
+        return items, []
 
     def parse(self, source: SourceDefinition, xml_text: str, *, limit: int | None = None) -> list[RawSourceItem]:
         root = ElementTree.fromstring(xml_text)
@@ -133,13 +155,60 @@ class FeedConnector:
         return body.decode("utf-8", errors="replace")
 
 
-def _source_error(source: SourceDefinition, error_type: str, error_message: str) -> SourceError:
+def _source_error(
+    source: SourceDefinition,
+    error_type: str,
+    error_message: str,
+    *,
+    metadata: dict[str, object] | None = None,
+) -> SourceError:
     return SourceError(
         source_id=source.source_id,
         error_type=error_type,
         error_message=error_message,
         url=source.url,
+        metadata=metadata or {},
     )
+
+
+def _exception_source_error(source: SourceDefinition, exc: Exception, *, phase: str) -> SourceError:
+    error_type, retryable = _taxonomy_for_exception(exc, phase=phase)
+    metadata: dict[str, object] = {
+        "phase": phase,
+        "original_exception_type": type(exc).__name__,
+        "retryable": retryable,
+        "source_health_affecting": phase == "fetch" or retryable,
+    }
+    if isinstance(exc, HTTPError):
+        metadata["status_code"] = exc.code
+    return _source_error(source, error_type, str(exc), metadata=metadata)
+
+
+def _taxonomy_for_exception(exc: Exception, *, phase: str) -> tuple[str, bool]:
+    if phase == "parse":
+        return "parse_error", False
+    if isinstance(exc, HTTPError):
+        if 400 <= exc.code < 500:
+            return "fetch_http_4xx", exc.code in {408, 409, 425, 429}
+        if exc.code >= 500:
+            return "fetch_http_5xx", True
+        return "fetch_connection_error", True
+    if _is_timeout_exception(exc):
+        return "fetch_timeout", True
+    if isinstance(exc, ValueError) and "max_bytes" in str(exc):
+        return "max_bytes_exceeded", False
+    return "fetch_connection_error", True
+
+
+def _is_timeout_exception(exc: Exception) -> bool:
+    if isinstance(exc, TimeoutError):
+        return True
+    if isinstance(exc, URLError):
+        reason = getattr(exc, "reason", None)
+        if isinstance(reason, TimeoutError):
+            return True
+        return "timed out" in str(reason).casefold() or "timeout" in str(reason).casefold()
+    return False
 
 
 def _raw_item(

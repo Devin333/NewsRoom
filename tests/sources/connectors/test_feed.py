@@ -1,3 +1,8 @@
+from io import BytesIO
+from urllib.error import HTTPError, URLError
+
+import pytest
+
 from domain.sources import SourceDefinition
 from sources.connectors import FeedConnector, SourceFetchPolicy
 
@@ -76,7 +81,9 @@ def test_feed_connector_fetch_returns_structured_error() -> None:
 
     assert items == []
     assert errors[0].source_id == "rss-source"
-    assert errors[0].error_type == "RuntimeError"
+    assert errors[0].error_type == "fetch_connection_error"
+    assert errors[0].metadata["original_exception_type"] == "RuntimeError"
+    assert errors[0].metadata["retryable"] is True
 
 
 def test_feed_connector_fetch_returns_empty_response_error() -> None:
@@ -93,6 +100,7 @@ def test_feed_connector_fetch_returns_empty_response_error() -> None:
     assert items == []
     assert errors[0].error_type == "empty_source_response"
     assert errors[0].url == "https://example.com/rss.xml"
+    assert errors[0].metadata["phase"] == "fetch"
 
 
 def test_feed_connector_fetch_returns_empty_feed_error() -> None:
@@ -110,6 +118,70 @@ def test_feed_connector_fetch_returns_empty_feed_error() -> None:
 
     assert items == []
     assert errors[0].error_type == "empty_feed"
+    assert errors[0].metadata["phase"] == "parse"
+
+
+def test_feed_connector_fetch_maps_parse_error() -> None:
+    source = SourceDefinition(
+        source_id="rss-source",
+        name="RSS Source",
+        source_type="rss",
+        url="https://example.com/rss.xml",
+    )
+    connector = FeedConnector(fetch_text=lambda url: "<rss")
+
+    items, errors = connector.fetch(source)
+
+    assert items == []
+    assert errors[0].error_type == "parse_error"
+    assert errors[0].metadata["phase"] == "parse"
+    assert errors[0].metadata["retryable"] is False
+
+
+def test_feed_connector_fetch_maps_timeout_error() -> None:
+    source = SourceDefinition(
+        source_id="rss-source",
+        name="RSS Source",
+        source_type="rss",
+        url="https://example.com/rss.xml",
+    )
+    connector = FeedConnector(fetch_text=lambda url: (_ for _ in ()).throw(URLError(TimeoutError("timed out"))))
+
+    items, errors = connector.fetch(source)
+
+    assert items == []
+    assert errors[0].error_type == "fetch_timeout"
+    assert errors[0].metadata["original_exception_type"] == "URLError"
+    assert errors[0].metadata["retryable"] is True
+
+
+@pytest.mark.parametrize(
+    ("status_code", "expected_error_type", "expected_retryable"),
+    [(404, "fetch_http_4xx", False), (429, "fetch_http_4xx", True), (503, "fetch_http_5xx", True)],
+)
+def test_feed_connector_fetch_maps_http_errors(
+    status_code: int,
+    expected_error_type: str,
+    expected_retryable: bool,
+) -> None:
+    source = SourceDefinition(
+        source_id="rss-source",
+        name="RSS Source",
+        source_type="rss",
+        url="https://example.com/rss.xml",
+    )
+    connector = FeedConnector(
+        fetch_text=lambda url: (_ for _ in ()).throw(
+            HTTPError(url, status_code, "http error", hdrs=None, fp=BytesIO(b""))
+        )
+    )
+
+    items, errors = connector.fetch(source)
+
+    assert items == []
+    assert errors[0].error_type == expected_error_type
+    assert errors[0].metadata["status_code"] == status_code
+    assert errors[0].metadata["retryable"] is expected_retryable
 
 
 def test_feed_connector_default_fetch_applies_policy(monkeypatch) -> None:
@@ -145,7 +217,7 @@ def test_feed_connector_default_fetch_applies_policy(monkeypatch) -> None:
     items, errors = connector.fetch(source)
 
     assert items == []
-    assert errors[0].error_type == "ValueError"
+    assert errors[0].error_type == "max_bytes_exceeded"
     assert "max_bytes" in errors[0].error_message
     assert captured == {
         "user_agent": "NewsRoomTest/1.0",
@@ -155,8 +227,6 @@ def test_feed_connector_default_fetch_applies_policy(monkeypatch) -> None:
 
 
 def test_source_fetch_policy_rejects_invalid_values() -> None:
-    import pytest
-
     with pytest.raises(ValueError, match="timeout_seconds"):
         SourceFetchPolicy(timeout_seconds=0)
     with pytest.raises(ValueError, match="max_bytes"):
