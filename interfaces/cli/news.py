@@ -322,6 +322,38 @@ def build_parser() -> argparse.ArgumentParser:
     schedules_tick_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     schedules_tick_parser.set_defaults(handler=_schedules_tick)
 
+    schedules_run_parser = schedules_subparsers.add_parser(
+        "run",
+        help="Continuously evaluate schedules and enqueue due tasks",
+    )
+    schedules_run_parser.add_argument(
+        "--store-path",
+        default=DEFAULT_SCHEDULE_STORE_PATH,
+        help="Local JSON schedule store path",
+    )
+    schedules_run_parser.add_argument("--redis-url", default=None, help="Redis URL; defaults to NEWS_REDIS_URL")
+    schedules_run_parser.add_argument("--now", default=None, help="Optional fixed current time as ISO datetime")
+    schedules_run_parser.add_argument(
+        "--include-disabled",
+        action="store_true",
+        help="Evaluate disabled schedules too",
+    )
+    schedules_run_parser.add_argument("--max-ticks", type=int, default=None, help="Stop after this many ticks")
+    schedules_run_parser.add_argument(
+        "--max-idle-ticks",
+        type=int,
+        default=None,
+        help="Stop after this many ticks with no enqueued tasks",
+    )
+    schedules_run_parser.add_argument(
+        "--tick-interval-seconds",
+        type=float,
+        default=60.0,
+        help="Sleep interval between scheduler ticks",
+    )
+    schedules_run_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    schedules_run_parser.set_defaults(handler=_schedules_run)
+
     schedules_trigger_parser = schedules_subparsers.add_parser(
         "trigger",
         help="Manually trigger a schedule",
@@ -1115,6 +1147,35 @@ def _schedules_tick(args: argparse.Namespace) -> int:
         for item in payload["enqueued"]:
             task = item["task"]
             print(f"- {item['schedule_id']} task_id={task['task_id']} message_id={item['message_id']}")
+    return 0
+
+
+def _schedules_run(args: argparse.Namespace) -> int:
+    try:
+        result = ScheduleApplicationService(
+            store_path=args.store_path,
+            redis_url=args.redis_url,
+        ).run_loop(
+            now=_parse_cli_datetime(args.now),
+            enabled_only=not args.include_disabled,
+            max_ticks=args.max_ticks,
+            max_idle_ticks=args.max_idle_ticks,
+            tick_interval_seconds=args.tick_interval_seconds,
+        )
+    except ValueError as exc:
+        print(str(exc))
+        return 1
+    except KeyboardInterrupt:
+        print("scheduler interrupted")
+        return 130
+    payload = result.to_dict()
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        print(f"stop_reason={payload['stop_reason']}")
+        print(f"tick_count={payload['tick_count']}")
+        print(f"enqueued_count={payload['enqueued_count']}")
+        print(f"idle_tick_count={payload['idle_tick_count']}")
     return 0
 
 

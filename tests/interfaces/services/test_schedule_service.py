@@ -94,6 +94,44 @@ def test_schedule_service_manual_trigger_enqueues_and_updates_state() -> None:
     assert queue.enqueued[0].payload == {"topic": "AI"}
 
 
+def test_schedule_service_run_loop_stops_after_max_ticks() -> None:
+    store = InMemoryScheduleStore(
+        [
+            _record(
+                "daily",
+                last_run_at=_dt("2026-05-11T00:00:00Z"),
+                interval_seconds=3600,
+            )
+        ]
+    )
+    queue = _FakeQueue()
+    service = ScheduleApplicationService(store=store, queue=queue)
+
+    result = service.run_loop(
+        now=_dt("2026-05-11T01:00:00Z"),
+        max_ticks=2,
+        tick_interval_seconds=0,
+    )
+
+    payload = result.to_dict()
+    assert payload["stop_reason"] == "max_ticks"
+    assert payload["tick_count"] == 2
+    assert payload["enqueued_count"] == 1
+    assert payload["idle_tick_count"] == 1
+
+
+def test_schedule_service_run_loop_stops_after_idle_ticks() -> None:
+    service = ScheduleApplicationService(store=InMemoryScheduleStore(), queue=_FakeQueue())
+
+    result = service.run_loop(max_idle_ticks=2, tick_interval_seconds=0)
+
+    payload = result.to_dict()
+    assert payload["stop_reason"] == "max_idle_ticks"
+    assert payload["tick_count"] == 2
+    assert payload["enqueued_count"] == 0
+    assert payload["idle_tick_count"] == 2
+
+
 class _FakeQueue:
     def __init__(self) -> None:
         self.enqueued = []

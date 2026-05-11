@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from core.framework.workers.models import Task
 from core.framework.workers.redis_queue import RedisStreamTaskQueue
@@ -76,6 +77,24 @@ class ManualScheduleTriggerResult:
         }
 
 
+@dataclass(frozen=True)
+class ScheduleRunLoopResult:
+    tick_count: int
+    enqueued_count: int
+    idle_tick_count: int
+    stop_reason: str
+    last_tick: ScheduleServiceTickResult | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "tick_count": self.tick_count,
+            "enqueued_count": self.enqueued_count,
+            "idle_tick_count": self.idle_tick_count,
+            "stop_reason": self.stop_reason,
+            "last_tick": self.last_tick.to_dict() if self.last_tick else None,
+        }
+
+
 class ScheduleApplicationService:
     def __init__(
         self,
@@ -140,6 +159,56 @@ class ScheduleApplicationService:
             next_run_at=None,
         )
         return ManualScheduleTriggerResult(enqueued=enqueued, updated_record=updated)
+
+    def run_loop(
+        self,
+        *,
+        now: datetime | None = None,
+        enabled_only: bool = True,
+        max_ticks: int | None = None,
+        max_idle_ticks: int | None = None,
+        tick_interval_seconds: float = 60.0,
+        sleep_fn: Callable[[float], None] | None = None,
+    ) -> ScheduleRunLoopResult:
+        if max_ticks is not None and max_ticks <= 0:
+            raise ValueError("max_ticks must be greater than zero")
+        if max_idle_ticks is not None and max_idle_ticks <= 0:
+            raise ValueError("max_idle_ticks must be greater than zero")
+        if tick_interval_seconds < 0:
+            raise ValueError("tick_interval_seconds must be non-negative")
+
+        actual_sleep = sleep_fn or time.sleep
+        tick_count = 0
+        enqueued_count = 0
+        idle_tick_count = 0
+        last_tick: ScheduleServiceTickResult | None = None
+
+        while True:
+            tick_result = self.tick(now=now, enabled_only=enabled_only)
+            last_tick = tick_result
+            tick_count += 1
+            enqueued_count += tick_result.tick.enqueued_count
+            if tick_result.tick.enqueued_count == 0:
+                idle_tick_count += 1
+
+            if max_ticks is not None and tick_count >= max_ticks:
+                return ScheduleRunLoopResult(
+                    tick_count=tick_count,
+                    enqueued_count=enqueued_count,
+                    idle_tick_count=idle_tick_count,
+                    stop_reason="max_ticks",
+                    last_tick=last_tick,
+                )
+            if max_idle_ticks is not None and idle_tick_count >= max_idle_ticks:
+                return ScheduleRunLoopResult(
+                    tick_count=tick_count,
+                    enqueued_count=enqueued_count,
+                    idle_tick_count=idle_tick_count,
+                    stop_reason="max_idle_ticks",
+                    last_tick=last_tick,
+                )
+            if tick_interval_seconds:
+                actual_sleep(tick_interval_seconds)
 
 
 def _evaluation_to_dict(evaluation: ScheduleEvaluation) -> dict[str, Any]:

@@ -80,6 +80,33 @@ def test_news_cli_schedules_tick_json(monkeypatch, capsys) -> None:
     assert instance.tick_calls[0]["now"].isoformat().replace("+00:00", "Z") == "2026-05-11T01:00:00Z"
 
 
+def test_news_cli_schedules_run_json(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(news_cli, "ScheduleApplicationService", _FakeScheduleService)
+
+    exit_code = news_cli.main(
+        [
+            "schedules",
+            "run",
+            "--now",
+            "2026-05-11T01:00:00Z",
+            "--max-idle-ticks",
+            "1",
+            "--tick-interval-seconds",
+            "0",
+            "--json",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    instance = _FakeScheduleService.last_instance
+    assert exit_code == 0
+    assert payload["stop_reason"] == "max_idle_ticks"
+    assert instance.run_loop_calls[0]["max_idle_ticks"] == 1
+    assert instance.run_loop_calls[0]["tick_interval_seconds"] == 0
+    assert instance.run_loop_calls[0]["now"].isoformat().replace("+00:00", "Z") == "2026-05-11T01:00:00Z"
+
+
 def test_news_cli_schedules_trigger_json(monkeypatch, capsys) -> None:
     monkeypatch.setattr(news_cli, "ScheduleApplicationService", _FakeScheduleService)
 
@@ -111,6 +138,7 @@ class _FakeScheduleService:
         self.list_calls = []
         self.tick_calls = []
         self.trigger_calls = []
+        self.run_loop_calls = []
         self.upserted_record = None
         _FakeScheduleService.last_instance = self
 
@@ -147,6 +175,18 @@ class _FakeScheduleService:
                 "enqueued": [],
                 "state_updates": {"daily": "2026-05-11T01:00:00Z"},
                 "updated_schedules": [],
+            }
+        )
+
+    def run_loop(self, **kwargs):
+        self.run_loop_calls.append(kwargs)
+        return _Result(
+            {
+                "tick_count": 1,
+                "enqueued_count": 0,
+                "idle_tick_count": 1,
+                "stop_reason": "max_idle_ticks",
+                "last_tick": {},
             }
         )
 
