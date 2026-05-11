@@ -31,6 +31,25 @@ def test_report_service_gets_report_by_id(tmp_path) -> None:
     assert record.report_json == {"title": "AI Policy Report"}
 
 
+def test_report_service_lists_report_artifacts(tmp_path) -> None:
+    _write_report_run(
+        tmp_path,
+        "run-1",
+        "2026-05-11T00:00:00Z",
+        "AI Policy Report",
+        workflow_id="daily-intelligence-live",
+    )
+
+    result = ReportApplicationService(artifact_root=tmp_path).list_reports(
+        workflow_id="daily-intelligence-live"
+    )
+
+    payload = result.to_dict()
+    assert payload["workflow_id"] == "daily-intelligence-live"
+    assert payload["report_count"] == 1
+    assert payload["reports"][0]["report_id"] == "run-1:final"
+
+
 def test_report_service_rejects_empty_report_id(tmp_path) -> None:
     service = ReportApplicationService(artifact_root=tmp_path)
 
@@ -54,7 +73,14 @@ def test_report_service_uses_postgres_when_database_dsn_is_configured(tmp_path) 
     assert service.repository.__class__.__name__ == "PostgresRepository"
 
 
-def _write_report_run(root, run_id: str, finished_at: str, title: str) -> None:
+def _write_report_run(
+    root,
+    run_id: str,
+    finished_at: str,
+    title: str,
+    *,
+    workflow_id: str | None = None,
+) -> None:
     run_dir = root / run_id
     run_dir.mkdir(parents=True)
     (run_dir / "report.json").write_text(json.dumps({"title": title}), encoding="utf-8")
@@ -63,6 +89,7 @@ def _write_report_run(root, run_id: str, finished_at: str, title: str) -> None:
         json.dumps(
             {
                 "run_id": run_id,
+                "workflow_id": workflow_id,
                 "status": "succeeded",
                 "finished_at": finished_at,
                 "quality_score": 0.9,

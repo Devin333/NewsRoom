@@ -53,6 +53,8 @@ class ReportSearchRecord:
     finished_at: str
     title: str | None
     quality_score: float | None
+    workflow_id: str | None
+    profile: str | None
     manifest_path: Path
     report_json_path: Path | None
     report_markdown_path: Path | None
@@ -65,6 +67,8 @@ class ReportSearchRecord:
             "finished_at": self.finished_at,
             "title": self.title,
             "quality_score": self.quality_score,
+            "workflow_id": self.workflow_id,
+            "profile": self.profile,
             "manifest_path": str(self.manifest_path),
             "report_json_path": str(self.report_json_path) if self.report_json_path else None,
             "report_markdown_path": (
@@ -109,19 +113,25 @@ class LocalJsonRepository:
             raise ReportNotFoundError(f"report not found: {report_id}")
         return _detail_from_manifest(manifest_path, manifest)
 
+    def list_reports(
+        self,
+        *,
+        limit: int = 20,
+        workflow_id: str | None = None,
+    ) -> list[ReportSearchRecord]:
+        if limit <= 0:
+            raise ValueError("limit must be greater than zero")
+        records: list[ReportSearchRecord] = []
+        for manifest_path, manifest in self._iter_report_manifests(workflow_id=workflow_id):
+            records.append(_summary_from_manifest(manifest_path, manifest))
+        records.sort(key=lambda item: item.finished_at, reverse=True)
+        return records[:limit]
+
     def search_reports(self, query: str, *, limit: int = 20) -> list[ReportSearchRecord]:
         normalized_query = query.lower()
         matches: list[ReportSearchRecord] = []
-        for manifest_path in self.artifact_root.glob("*/manifest.json"):
-            try:
-                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                continue
-            if manifest.get("status") != "succeeded":
-                continue
+        for manifest_path, manifest in self._iter_report_manifests():
             artifacts = manifest.get("artifacts", {})
-            if "report_json" not in artifacts and "report_markdown" not in artifacts:
-                continue
             run_dir = manifest_path.parent
             report_json_path = _artifact_path(run_dir, artifacts.get("report_json"))
             report_markdown_path = _artifact_path(run_dir, artifacts.get("report_markdown"))
@@ -136,21 +146,30 @@ class LocalJsonRepository:
             ).lower()
             if normalized_query not in haystack:
                 continue
-            matches.append(
-                ReportSearchRecord(
-                    report_id=f"{manifest['run_id']}:final",
-                    run_id=str(manifest["run_id"]),
-                    status=FINAL_REPORT_STATUS,
-                    finished_at=manifest.get("finished_at") or "",
-                    title=(report_json or {}).get("title"),
-                    quality_score=manifest.get("quality_score"),
-                    manifest_path=manifest_path,
-                    report_json_path=report_json_path,
-                    report_markdown_path=report_markdown_path,
-                )
-            )
+            matches.append(_summary_from_manifest(manifest_path, manifest))
         matches.sort(key=lambda item: item.finished_at, reverse=True)
         return matches[:limit]
+
+    def _iter_report_manifests(
+        self,
+        *,
+        workflow_id: str | None = None,
+    ) -> list[tuple[Path, dict[str, Any]]]:
+        manifests: list[tuple[Path, dict[str, Any]]] = []
+        for manifest_path in self.artifact_root.glob("*/manifest.json"):
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if manifest.get("status") != "succeeded":
+                continue
+            if workflow_id is not None and manifest.get("workflow_id") != workflow_id:
+                continue
+            artifacts = manifest.get("artifacts", {})
+            if "report_json" not in artifacts and "report_markdown" not in artifacts:
+                continue
+            manifests.append((manifest_path, manifest))
+        return manifests
 
 
 def _artifact_path(run_dir: Path, relative: str | None) -> Path | None:
@@ -180,6 +199,28 @@ def _detail_from_manifest(manifest_path: Path, manifest: dict[str, Any]) -> Late
         report_markdown_path=report_markdown_path,
         report_json=report_json,
         report_markdown=report_markdown,
+    )
+
+
+def _summary_from_manifest(manifest_path: Path, manifest: dict[str, Any]) -> ReportSearchRecord:
+    run_dir = manifest_path.parent
+    artifacts = manifest.get("artifacts", {})
+    report_json_path = _artifact_path(run_dir, artifacts.get("report_json"))
+    report_markdown_path = _artifact_path(run_dir, artifacts.get("report_markdown"))
+    report_json = _read_optional_json(report_json_path)
+    run_id = str(manifest["run_id"])
+    return ReportSearchRecord(
+        report_id=f"{run_id}:final",
+        run_id=run_id,
+        status=FINAL_REPORT_STATUS,
+        finished_at=manifest.get("finished_at") or "",
+        title=(report_json or {}).get("title"),
+        quality_score=manifest.get("quality_score"),
+        workflow_id=manifest.get("workflow_id"),
+        profile=manifest.get("profile"),
+        manifest_path=manifest_path,
+        report_json_path=report_json_path,
+        report_markdown_path=report_markdown_path,
     )
 
 

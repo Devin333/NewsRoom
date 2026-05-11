@@ -5,7 +5,14 @@ import pytest
 from storage.local_json import LocalJsonRepository, ReportNotFoundError
 
 
-def _write_report_run(root, run_id: str, finished_at: str, title: str) -> None:
+def _write_report_run(
+    root,
+    run_id: str,
+    finished_at: str,
+    title: str,
+    *,
+    workflow_id: str | None = None,
+) -> None:
     run_dir = root / run_id
     run_dir.mkdir(parents=True)
     (run_dir / "report.json").write_text(json.dumps({"title": title}), encoding="utf-8")
@@ -14,6 +21,8 @@ def _write_report_run(root, run_id: str, finished_at: str, title: str) -> None:
         json.dumps(
             {
                 "run_id": run_id,
+                "workflow_id": workflow_id,
+                "profile": "live-offline",
                 "status": "succeeded",
                 "finished_at": finished_at,
                 "quality_score": 0.9,
@@ -89,3 +98,36 @@ def test_local_json_repository_searches_reports(tmp_path) -> None:
     assert records[0].report_id == "new:final"
     assert records[0].status == "final"
     assert records[0].title == "AI Policy Report"
+
+
+def test_local_json_repository_lists_reports_with_workflow_filter(tmp_path) -> None:
+    _write_report_run(
+        tmp_path,
+        "daily-old",
+        "2026-05-10T00:00:00Z",
+        "Old Daily",
+        workflow_id="daily-intelligence-live",
+    )
+    _write_report_run(
+        tmp_path,
+        "daily-new",
+        "2026-05-11T00:00:00Z",
+        "New Daily",
+        workflow_id="daily-intelligence-live",
+    )
+    _write_report_run(
+        tmp_path,
+        "weekly",
+        "2026-05-12T00:00:00Z",
+        "Weekly",
+        workflow_id="weekly-intelligence",
+    )
+
+    records = LocalJsonRepository(tmp_path).list_reports(
+        limit=10,
+        workflow_id="daily-intelligence-live",
+    )
+
+    assert [record.run_id for record in records] == ["daily-new", "daily-old"]
+    assert records[0].workflow_id == "daily-intelligence-live"
+    assert records[0].profile == "live-offline"

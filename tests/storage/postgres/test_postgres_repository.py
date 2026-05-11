@@ -197,3 +197,31 @@ def test_postgres_repository_searches_reports() -> None:
     assert records[0].report_id == "report-1"
     assert records[0].title == "AI Policy Report"
     assert records[0].citation_coverage_score == 0.8
+
+
+def test_postgres_repository_lists_reports_with_workflow_filter() -> None:
+    connection = FakeConnection(
+        rows=[
+            (
+                "report-1",
+                "run-1",
+                "final",
+                "AI Policy Report",
+                0.9,
+                0.8,
+                ".newsroom/runs/run-1/manifest.json",
+                "2026-05-11T01:00:00Z",
+                "daily-intelligence-live",
+            )
+        ]
+    )
+    repository = PostgresRepository("postgresql://example", connection_factory=lambda: connection)
+
+    records = repository.list_reports(limit=5, workflow_id="daily-intelligence-live")
+
+    sql, params = connection.calls[0]
+    assert "LEFT JOIN workflow_runs" in sql
+    assert "wr.workflow_id = %s" in sql
+    assert params == ("daily-intelligence-live", 5)
+    assert records[0].report_id == "report-1"
+    assert records[0].workflow_id == "daily-intelligence-live"

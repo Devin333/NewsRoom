@@ -8,6 +8,8 @@ from storage.repository import persist_run_result, repository_from_env
 from workflows.daily_intelligence import DailyIntelligenceRunner
 from workflows.daily_intelligence.test_agent_loop import run_test_agent_loop
 from workflows.daily_intelligence.test_no_llm import run_test_no_llm
+from workflows.weekly_intelligence import PROFILE_WEEKLY, WeeklyIntelligenceRunner
+from interfaces.services.report_service import ReportApplicationService
 
 
 class RunApplicationService:
@@ -57,6 +59,38 @@ class RunApplicationService:
             migrate=False,
         )
         self._index_memory_if_configured(result, topic=topic)
+        return result
+
+    def run_weekly(
+        self,
+        *,
+        language: str = "en",
+        topic: str | None = None,
+        source_limit: int = 20,
+        period_start: str | None = None,
+        period_end: str | None = None,
+        run_id: str | None = None,
+    ) -> RunResult:
+        repository = repository_from_env(artifact_root=self.artifact_root)
+        repository.migrate()
+        report_repository = ReportApplicationService(artifact_root=self.artifact_root).repository
+        result = WeeklyIntelligenceRunner(
+            artifact_root=self.artifact_root,
+            report_repository=report_repository,
+        ).run(
+            language=language,
+            topic=topic,
+            source_limit=source_limit,
+            period_start=period_start,
+            period_end=period_end,
+            run_id=run_id,
+        )
+        persist_run_result(
+            repository,
+            result,
+            profile=PROFILE_WEEKLY,
+            migrate=False,
+        )
         return result
 
     def _index_memory_if_configured(self, result: RunResult, *, topic: str) -> None:

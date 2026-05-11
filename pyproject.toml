@@ -59,6 +59,7 @@ packages = [
   "storage.vector",
   "workflows",
   "workflows.daily_intelligence",
+  "workflows.weekly_intelligence",
 ]
 
 [tool.pytest.ini_options]

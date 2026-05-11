@@ -59,6 +59,7 @@ class PostgresReportSearchRecord:
     manifest_path: str | None
     report_json_path: str | None = None
     report_markdown_path: str | None = None
+    workflow_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -72,6 +73,7 @@ class PostgresReportSearchRecord:
             "manifest_path": self.manifest_path,
             "report_json_path": self.report_json_path,
             "report_markdown_path": self.report_markdown_path,
+            "workflow_id": self.workflow_id,
         }
 
 
@@ -176,6 +178,35 @@ class PostgresRepository:
             raise ReportNotFoundError(f"report not found: {report_id}")
         return _detail_from_row(row)
 
+    def list_reports(
+        self,
+        *,
+        limit: int = 20,
+        workflow_id: str | None = None,
+    ) -> list[PostgresReportSearchRecord]:
+        if limit <= 0:
+            raise ValueError("limit must be greater than zero")
+        where = ""
+        params: tuple[Any, ...]
+        if workflow_id:
+            where = "WHERE wr.workflow_id = %s"
+            params = (workflow_id, limit)
+        else:
+            params = (limit,)
+        sql = f"""
+        SELECT
+            r.report_id, r.run_id, r.status, r.title, r.quality_score,
+            r.citation_coverage_score, r.manifest_path, r.updated_at,
+            wr.workflow_id
+        FROM reports r
+        LEFT JOIN workflow_runs wr ON wr.run_id = r.run_id
+        {where}
+        ORDER BY r.updated_at DESC
+        LIMIT %s
+        """
+        rows = self._fetch_all(sql, params)
+        return [_list_record_from_row(row) for row in rows]
+
     def search_reports(self, query: str, *, limit: int = 20) -> list[PostgresReportSearchRecord]:
         sql = """
         SELECT
@@ -241,6 +272,20 @@ def _search_record_from_row(row: tuple[Any, ...]) -> PostgresReportSearchRecord:
         citation_coverage_score=row[5],
         manifest_path=row[6],
         finished_at=_timestamp(row[7]),
+    )
+
+
+def _list_record_from_row(row: tuple[Any, ...]) -> PostgresReportSearchRecord:
+    return PostgresReportSearchRecord(
+        report_id=str(row[0]),
+        run_id=str(row[1]),
+        status=str(row[2]),
+        title=row[3],
+        quality_score=row[4],
+        citation_coverage_score=row[5],
+        manifest_path=row[6],
+        finished_at=_timestamp(row[7]),
+        workflow_id=row[8],
     )
 
 

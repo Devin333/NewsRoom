@@ -166,6 +166,57 @@ def test_news_cli_run_daily_live_offline_human_output(tmp_path, capsys) -> None:
     assert "run_id=cli-daily-human" in captured.out
 
 
+def test_news_cli_run_weekly_json_output_from_daily_artifacts(tmp_path, capsys) -> None:
+    assert (
+        main(
+            [
+                "run",
+                "daily",
+                "--profile",
+                "live-offline",
+                "--artifact-root",
+                str(tmp_path),
+                "--run-id",
+                "weekly-cli-daily",
+                "--topic",
+                "AI policy",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "run",
+            "weekly",
+            "--artifact-root",
+            str(tmp_path),
+            "--run-id",
+            "weekly-cli",
+            "--topic",
+            "AI policy",
+            "--period-start",
+            "2026-05-01T00:00:00Z",
+            "--period-end",
+            "2026-05-20T00:00:00Z",
+            "--json",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert exit_code == 0
+    assert payload["status"] == "succeeded"
+    assert payload["run_id"] == "weekly-cli"
+    assert payload["workflow_id"] == "weekly-intelligence"
+    assert payload["output"]["weekly_metrics"]["source_report_count"] == 1
+    assert payload["output"]["final_report"]["metadata"]["source_report_ids"] == [
+        "weekly-cli-daily:final"
+    ]
+
+
 def test_news_cli_latest_markdown_output(tmp_path, capsys) -> None:
     assert (
         main(

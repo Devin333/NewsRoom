@@ -23,6 +23,21 @@ class ReportSearchResultSet:
         }
 
 
+@dataclass(frozen=True)
+class ReportListResultSet:
+    limit: int
+    reports: list[Any]
+    workflow_id: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "limit": self.limit,
+            "workflow_id": self.workflow_id,
+            "report_count": len(self.reports),
+            "reports": [report.to_dict() for report in self.reports],
+        }
+
+
 class ReportApplicationService:
     def __init__(
         self,
@@ -45,6 +60,20 @@ class ReportApplicationService:
         if not report_id:
             raise ValueError("report_id is required")
         return self.repository.get_report(report_id)
+
+    def list_reports(
+        self,
+        *,
+        limit: int = 20,
+        workflow_id: str | None = None,
+    ) -> ReportListResultSet:
+        if limit <= 0:
+            raise ValueError("limit must be greater than zero")
+        return ReportListResultSet(
+            limit=limit,
+            workflow_id=workflow_id,
+            reports=self.repository.list_reports(limit=limit, workflow_id=workflow_id),
+        )
 
     def search_reports(self, *, query: str, limit: int = 20) -> ReportSearchResultSet:
         if not query:
