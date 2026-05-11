@@ -25,8 +25,9 @@ from interfaces.services.schedule_service import (
     ScheduleApplicationService,
 )
 from interfaces.services.source_service import SourceApplicationService
+from interfaces.services.storage_service import StorageApplicationService
 from interfaces.services.worker_service import DEFAULT_DAILY_QUEUE, DEFAULT_MEMORY_QUEUE, WorkerApplicationService
-from storage.metrics import LocalStorageMetricsCollector
+from storage.lifecycle import RetentionPolicy
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -362,6 +363,36 @@ def build_parser() -> argparse.ArgumentParser:
     )
     storage_metrics_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     storage_metrics_parser.set_defaults(handler=_storage_metrics)
+
+    storage_retention_parser = storage_subparsers.add_parser(
+        "retention",
+        help="Plan and apply local artifact retention",
+    )
+    storage_retention_subparsers = storage_retention_parser.add_subparsers(
+        dest="storage_retention_command",
+        required=True,
+    )
+
+    storage_retention_plan_parser = storage_retention_subparsers.add_parser(
+        "plan",
+        help="Plan local artifact retention",
+    )
+    _add_storage_retention_arguments(storage_retention_plan_parser)
+    storage_retention_plan_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    storage_retention_plan_parser.set_defaults(handler=_storage_retention_plan)
+
+    storage_retention_apply_parser = storage_retention_subparsers.add_parser(
+        "apply",
+        help="Delete expired local artifacts",
+    )
+    _add_storage_retention_arguments(storage_retention_apply_parser)
+    storage_retention_apply_parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="Confirm deletion of expired artifacts",
+    )
+    storage_retention_apply_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    storage_retention_apply_parser.set_defaults(handler=_storage_retention_apply)
 
     sources_parser = subparsers.add_parser("sources", help="Inspect source registry and health")
     sources_subparsers = sources_parser.add_subparsers(dest="sources_command", required=True)
@@ -927,6 +958,38 @@ def _parse_filters(values: list[str]) -> dict[str, str]:
     return filters
 
 
+def _add_storage_retention_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--artifact-root",
+        default=".newsroom/runs",
+        help="Directory where run artifacts are stored",
+    )
+    parser.add_argument("--run-id", default=None, help="Optional run id filter")
+    parser.add_argument("--now", default=None, help="Optional current time as ISO datetime")
+    parser.add_argument("--raw-source-retention-days", type=int, default=None)
+    parser.add_argument("--llm-artifact-retention-days", type=int, default=None)
+    parser.add_argument("--run-artifact-retention-days", type=int, default=None)
+    parser.add_argument("--report-retention-days", type=int, default=None)
+    parser.add_argument("--evidence-retention-days", type=int, default=None)
+    parser.add_argument("--vector-retention-days", type=int, default=None)
+
+
+def _retention_policy_from_args(args: argparse.Namespace) -> RetentionPolicy:
+    payload = {}
+    for name in [
+        "raw_source_retention_days",
+        "llm_artifact_retention_days",
+        "run_artifact_retention_days",
+        "report_retention_days",
+        "evidence_retention_days",
+        "vector_retention_days",
+    ]:
+        value = getattr(args, name)
+        if value is not None:
+            payload[name] = value
+    return RetentionPolicy.from_dict(payload)
+
+
 def _diagnose(args: argparse.Namespace) -> int:
     result = DiagnosticApplicationService().run()
     payload = result.to_dict()
@@ -944,7 +1007,7 @@ def _diagnose(args: argparse.Namespace) -> int:
 
 
 def _storage_metrics(args: argparse.Namespace) -> int:
-    payload = LocalStorageMetricsCollector(args.artifact_root).collect().to_dict()
+    payload = StorageApplicationService(args.artifact_root).metrics().to_dict()
     if args.json:
         print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
     else:
@@ -955,6 +1018,54 @@ def _storage_metrics(args: argparse.Namespace) -> int:
         print(f"events_count={payload['events_count']}")
         print(f"lineage_refs_count={payload['lineage_refs_count']}")
     return 0
+
+
+def _storage_retention_plan(args: argparse.Namespace) -> int:
+    try:
+        result = StorageApplicationService(args.artifact_root).plan_retention(
+            policy=_retention_policy_from_args(args),
+            run_id=args.run_id,
+            now=_parse_cli_datetime(args.now),
+        )
+    except ValueError as exc:
+        print(str(exc))
+        return 1
+    _print_storage_retention_result(result.to_dict(), json_output=args.json)
+    return 0
+
+
+def _storage_retention_apply(args: argparse.Namespace) -> int:
+    if not args.yes:
+        print("retention apply requires --yes")
+        return 1
+    try:
+        result = StorageApplicationService(args.artifact_root).apply_retention(
+            policy=_retention_policy_from_args(args),
+            run_id=args.run_id,
+            now=_parse_cli_datetime(args.now),
+        )
+    except ValueError as exc:
+        print(str(exc))
+        return 1
+    payload = result.to_dict()
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        _print_storage_retention_result(payload, json_output=False)
+        print(f"deleted_count={payload['deleted_count']}")
+    return 0
+
+
+def _print_storage_retention_result(payload: dict[str, Any], *, json_output: bool) -> None:
+    if json_output:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+        return
+    print(f"artifact_root={payload['artifact_root']}")
+    if payload["run_id"]:
+        print(f"run_id={payload['run_id']}")
+    print(f"artifact_count={payload['artifact_count']}")
+    print(f"delete_count={payload['delete_count']}")
+    print(f"keep_count={payload['keep_count']}")
 
 
 def _sources_list(args: argparse.Namespace) -> int:

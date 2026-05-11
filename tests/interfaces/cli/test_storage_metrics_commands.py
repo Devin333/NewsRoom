@@ -4,7 +4,7 @@ import interfaces.cli.news as news_cli
 
 
 def test_news_cli_storage_metrics_json(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(news_cli, "LocalStorageMetricsCollector", _FakeMetricsCollector)
+    monkeypatch.setattr(news_cli, "StorageApplicationService", _FakeStorageService)
 
     exit_code = news_cli.main(["storage", "metrics", "--artifact-root", "runs", "--json"])
 
@@ -18,7 +18,7 @@ def test_news_cli_storage_metrics_json(monkeypatch, capsys) -> None:
 
 
 def test_news_cli_storage_metrics_text(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(news_cli, "LocalStorageMetricsCollector", _FakeMetricsCollector)
+    monkeypatch.setattr(news_cli, "StorageApplicationService", _FakeStorageService)
 
     exit_code = news_cli.main(["storage", "metrics", "--artifact-root", "runs"])
 
@@ -29,11 +29,11 @@ def test_news_cli_storage_metrics_text(monkeypatch, capsys) -> None:
     assert "lineage_refs_count=4" in captured.out
 
 
-class _FakeMetricsCollector:
+class _FakeStorageService:
     def __init__(self, artifact_root=".newsroom/runs") -> None:
         self.artifact_root = artifact_root
 
-    def collect(self):
+    def metrics(self):
         return _FakeMetrics(
             {
                 "runs_count": 1,

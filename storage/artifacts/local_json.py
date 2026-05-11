@@ -43,6 +43,15 @@ class LocalJsonArtifactIndexStore:
         refs = [ArtifactRef.from_dict(json.loads(path.read_text(encoding="utf-8"))) for path in run_dir.glob("*.json")]
         return sorted(refs, key=lambda ref: (ref.created_at, ref.artifact_id))
 
+    def list_all(self) -> list[ArtifactRef]:
+        if not self.root.exists():
+            return []
+        refs = []
+        for run_dir in sorted(path for path in self.root.iterdir() if path.is_dir()):
+            for path in sorted(run_dir.glob("*.json")):
+                refs.append(ArtifactRef.from_dict(json.loads(path.read_text(encoding="utf-8"))))
+        return sorted(refs, key=lambda ref: (ref.run_id, ref.created_at, ref.artifact_id))
+
     def list_by_step(self, run_id: str, step_id: str) -> list[ArtifactRef]:
         _validate_id(step_id, "step_id")
         return [ref for ref in self.list_by_run(run_id) if ref.step_id == step_id]

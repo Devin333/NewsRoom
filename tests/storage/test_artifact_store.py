@@ -17,12 +17,13 @@ from storage.artifacts import (
 def _ref(
     artifact_id: str,
     *,
+    run_id: str = "run-1",
     step_id: str | None = None,
     created_at: datetime | None = None,
 ) -> ArtifactRef:
     return ArtifactRef(
         artifact_id=artifact_id,
-        run_id="run-1",
+        run_id=run_id,
         step_id=step_id,
         artifact_type="report",
         path=f"artifacts/report/{artifact_id}.json",
@@ -134,6 +135,17 @@ def test_local_json_artifact_index_store_indexes_by_run_and_step(tmp_path) -> No
     assert [ref.artifact_id for ref in store.list_by_run("run-1")] == ["artifact-1", "artifact-2"]
     assert store.list_by_step("run-1", "draft_report") == [first]
     assert store.list_by_step("run-1", "missing") == []
+
+
+def test_local_json_artifact_index_store_lists_all_runs(tmp_path) -> None:
+    store = LocalJsonArtifactIndexStore(tmp_path)
+    first = _ref("artifact-1", run_id="run-1", created_at=datetime(2026, 5, 11, 1, 0, tzinfo=UTC))
+    second = _ref("artifact-2", run_id="run-2", created_at=datetime(2026, 5, 11, 2, 0, tzinfo=UTC))
+
+    store.index_artifact(second)
+    store.index_artifact(first)
+
+    assert [ref.artifact_id for ref in store.list_all()] == ["artifact-1", "artifact-2"]
 
 
 def test_local_json_artifact_index_store_handles_missing_and_rejects_unsafe_ids(tmp_path) -> None:

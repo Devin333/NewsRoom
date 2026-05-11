@@ -10,6 +10,7 @@ from interfaces.services.report_service import ReportApplicationService
 from interfaces.services.run_inspection_service import RunInspectionService
 from interfaces.services.source_service import SourceApplicationService
 from interfaces.services.schedule_service import ScheduleApplicationService
+from interfaces.services.storage_service import StorageApplicationService
 
 __all__ = [
     "ApprovalApplicationService",
@@ -22,4 +23,5 @@ __all__ = [
     "RunApplicationService",
     "ScheduleApplicationService",
     "SourceApplicationService",
+    "StorageApplicationService",
 ]
