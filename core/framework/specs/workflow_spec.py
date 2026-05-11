@@ -203,6 +203,7 @@ class WorkflowSpec:
             raise WorkflowSpecError(f"duplicate step ids: {', '.join(duplicate_ids)}")
 
         step_id_set = set(step_ids)
+        step_by_id = {step.step_id: step for step in self.steps}
         if self.start_step_id not in step_id_set:
             raise WorkflowSpecError(f"start step does not exist: {self.start_step_id}")
 
@@ -211,6 +212,12 @@ class WorkflowSpec:
                 raise WorkflowSpecError(f"terminal step does not exist: {terminal_step_id}")
 
         for step in self.steps:
+            undeclared_outputs = sorted(set(step.required_output_keys) - set(step.write_keys))
+            if undeclared_outputs:
+                raise WorkflowSpecError(
+                    f"required_output_keys must be declared in write_keys for step "
+                    f"{step.step_id}: {', '.join(undeclared_outputs)}"
+                )
             fallback_step_id = step.failure_policy.fallback_step_id
             if fallback_step_id is not None and fallback_step_id not in step_id_set:
                 raise WorkflowSpecError(
@@ -236,6 +243,27 @@ class WorkflowSpec:
                     f"conditional edge {edge.edge_id} requires condition_expr"
                 )
 
+        adjacency = _workflow_adjacency(self)
+        reachable_step_ids = _reachable_step_ids(self.start_step_id, adjacency)
+        for terminal_step_id in self.terminal_step_ids:
+            if terminal_step_id not in reachable_step_ids:
+                raise WorkflowSpecError(f"terminal step is not reachable: {terminal_step_id}")
+
+        reverse_adjacency = _reverse_adjacency(adjacency)
+        for step in self.steps:
+            if step.step_id not in reachable_step_ids:
+                continue
+            upstream_step_ids = _reachable_step_ids(step.step_id, reverse_adjacency) - {step.step_id}
+            available_keys = {"request"}
+            for upstream_step_id in upstream_step_ids:
+                available_keys.update(step_by_id[upstream_step_id].write_keys)
+            missing_reads = sorted(set(step.read_keys) - available_keys)
+            if missing_reads:
+                raise WorkflowSpecError(
+                    f"read_keys are not produced by upstream steps for step "
+                    f"{step.step_id}: {', '.join(missing_reads)}"
+                )
+
     def step_by_id(self, step_id: str) -> StepSpec:
         for step in self.steps:
             if step.step_id == step_id:
@@ -256,3 +284,34 @@ class WorkflowSpec:
             "output_schema": dict(self.output_schema),
             "metadata": dict(self.metadata),
         }
+
+
+def _workflow_adjacency(workflow: WorkflowSpec) -> dict[str, set[str]]:
+    adjacency = {step.step_id: set() for step in workflow.steps}
+    for edge in workflow.edges:
+        adjacency[edge.source_step_id].add(edge.target_step_id)
+    for step in workflow.steps:
+        fallback_step_id = step.failure_policy.fallback_step_id
+        if fallback_step_id is not None:
+            adjacency[step.step_id].add(fallback_step_id)
+    return adjacency
+
+
+def _reverse_adjacency(adjacency: dict[str, set[str]]) -> dict[str, set[str]]:
+    reverse = {step_id: set() for step_id in adjacency}
+    for source_step_id, target_step_ids in adjacency.items():
+        for target_step_id in target_step_ids:
+            reverse[target_step_id].add(source_step_id)
+    return reverse
+
+
+def _reachable_step_ids(start_step_id: str, adjacency: dict[str, set[str]]) -> set[str]:
+    reachable: set[str] = set()
+    stack = [start_step_id]
+    while stack:
+        step_id = stack.pop()
+        if step_id in reachable:
+            continue
+        reachable.add(step_id)
+        stack.extend(sorted(adjacency.get(step_id, set()) - reachable, reverse=True))
+    return reachable

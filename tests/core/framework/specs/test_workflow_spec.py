@@ -145,6 +145,84 @@ def test_workflow_spec_rejects_missing_failure_fallback_step() -> None:
         spec.validate()
 
 
+def test_workflow_spec_rejects_required_output_not_declared_in_write_keys() -> None:
+    spec = WorkflowSpec(
+        workflow_id="sample",
+        name="Sample",
+        version="1.0",
+        start_step_id="start",
+        steps=[
+            StepSpec(
+                step_id="start",
+                implementation="sample.start",
+                write_keys=["other"],
+                required_output_keys=["missing"],
+            )
+        ],
+    )
+
+    with pytest.raises(WorkflowSpecError, match="required_output_keys"):
+        spec.validate()
+
+
+def test_workflow_spec_rejects_read_key_without_upstream_producer() -> None:
+    spec = WorkflowSpec(
+        workflow_id="sample",
+        name="Sample",
+        version="1.0",
+        start_step_id="start",
+        steps=[
+            StepSpec(step_id="start", implementation="sample.start", write_keys=["plan"]),
+            StepSpec(
+                step_id="finish",
+                implementation="sample.finish",
+                read_keys=["missing"],
+            ),
+        ],
+        edges=[EdgeSpec(edge_id="start-to-finish", source_step_id="start", target_step_id="finish")],
+    )
+
+    with pytest.raises(WorkflowSpecError, match="read_keys are not produced"):
+        spec.validate()
+
+
+def test_workflow_spec_rejects_unreachable_terminal_step() -> None:
+    spec = WorkflowSpec(
+        workflow_id="sample",
+        name="Sample",
+        version="1.0",
+        start_step_id="start",
+        terminal_step_ids=["orphan"],
+        steps=[
+            StepSpec(step_id="start", implementation="sample.start"),
+            StepSpec(step_id="orphan", implementation="sample.orphan"),
+        ],
+    )
+
+    with pytest.raises(WorkflowSpecError, match="terminal step is not reachable"):
+        spec.validate()
+
+
+def test_workflow_spec_accepts_terminal_step_reachable_by_fallback_policy() -> None:
+    spec = WorkflowSpec(
+        workflow_id="sample",
+        name="Sample",
+        version="1.0",
+        start_step_id="start",
+        terminal_step_ids=["recover"],
+        steps=[
+            StepSpec(
+                step_id="start",
+                implementation="sample.start",
+                failure_policy=FailurePolicySpec(fallback_step_id="recover"),
+            ),
+            StepSpec(step_id="recover", implementation="sample.recover"),
+        ],
+    )
+
+    spec.validate()
+
+
 def test_workflow_spec_rejects_conditional_edge_without_expression() -> None:
     spec = WorkflowSpec(
         workflow_id="sample",
