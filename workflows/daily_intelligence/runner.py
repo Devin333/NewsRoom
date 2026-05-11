@@ -9,7 +9,7 @@ from core.framework.llm import LLMClient, LLMRequest, OpenAICompatibleClient, Op
 from core.framework.specs import EdgeSpec, StepSpec, WorkflowSpec
 from core.framework.workflow import FunctionStepRegistry, ScopedDataBuffer
 from domain.reports import BlockedReport, FinalReport, render_markdown
-from domain.sources import SourceDefinition, SourceError, SourcePipelineMetrics
+from domain.sources import SourceDefinition, SourceError, SourcePipelineEvent, SourcePipelineMetrics
 from evidence import EvidenceBuilder, EvidenceBundle
 from quality import CitationChecker, EditorDecision, EditorGate, QualityScorer, SupportMatrixBuilder
 from sources import SourceRegistry
@@ -76,20 +76,40 @@ class DailyIntelligenceRunner:
         skipped_sources: list[dict[str, Any]] = []
         failed_sources: list[dict[str, Any]] = []
         source_health_updates = []
+        source_events: list[SourcePipelineEvent] = []
         metrics = SourcePipelineMetrics()
         if profile == PROFILE_LIVE_OFFLINE:
+            source_events.append(
+                _source_event(
+                    "source_fetch_started",
+                    "fixture-ai",
+                    source_type="rss",
+                    url="fixture://ai",
+                )
+            )
             raw_items = FeedConnector().parse(_fixture_source(), _fixture_feed(), limit=limit)
             metrics.sources_total = 1
             metrics.sources_fetched = 1
             metrics.raw_items_count = len(raw_items)
             metrics.items_by_source = {"fixture-ai": len(raw_items)}
-            source_health_updates.append(self.source_health_manager.record_success("fixture-ai"))
+            source_events.append(_source_event("source_fetch_succeeded", "fixture-ai", item_count=len(raw_items)))
+            source_health = self.source_health_manager.record_success("fixture-ai")
+            source_health_updates.append(source_health)
+            source_events.append(
+                _source_event(
+                    "source_health_updated",
+                    "fixture-ai",
+                    status=source_health.status.value,
+                    consecutive_failures=source_health.consecutive_failures,
+                )
+            )
             return {
                 "raw_items": raw_items,
                 "source_errors": source_errors,
                 "skipped_sources": skipped_sources,
                 "failed_sources": failed_sources,
                 "source_health_updates": source_health_updates,
+                "source_events": source_events,
                 "source_pipeline_metrics": metrics,
             }
 
@@ -114,22 +134,77 @@ class DailyIntelligenceRunner:
                     }
                 )
                 source_health_updates.append(health)
+                source_events.append(
+                    _source_event(
+                        "source_fetch_skipped",
+                        source.source_id,
+                        reason="cooldown",
+                        cooldown_until=(
+                            health.cooldown_until.isoformat().replace("+00:00", "Z")
+                            if health.cooldown_until
+                            else None
+                        ),
+                    )
+                )
+                source_events.append(
+                    _source_event(
+                        "source_health_updated",
+                        source.source_id,
+                        status=health.status.value,
+                        consecutive_failures=health.consecutive_failures,
+                    )
+                )
                 metrics.sources_skipped += 1
                 continue
+            source_events.append(
+                _source_event(
+                    "source_fetch_started",
+                    source.source_id,
+                    source_type=source.source_type.value,
+                    url=source.url,
+                )
+            )
             items, errors = self.feed_connector.fetch(source, limit=remaining)
             raw_items.extend(items)
             if items:
                 metrics.sources_fetched += 1
                 metrics.items_by_source[source.source_id] = len(items)
-                source_health_updates.append(self.source_health_manager.record_success(source.source_id))
+                source_events.append(
+                    _source_event("source_fetch_succeeded", source.source_id, item_count=len(items))
+                )
+                source_health = self.source_health_manager.record_success(source.source_id)
+                source_health_updates.append(source_health)
+                source_events.append(
+                    _source_event(
+                        "source_health_updated",
+                        source.source_id,
+                        status=source_health.status.value,
+                        consecutive_failures=source_health.consecutive_failures,
+                    )
+                )
             if errors:
                 metrics.sources_failed += 1
                 source_errors.extend(errors)
                 failed_sources.extend(error.to_dict() for error in errors)
                 for error in errors:
+                    source_events.append(
+                        _source_event(
+                            "source_fetch_failed",
+                            source.source_id,
+                            error_type=error.error_type,
+                            retryable=True,
+                        )
+                    )
                     metrics.record_error(error)
-                    source_health_updates.append(
-                        self.source_health_manager.record_failure(source.source_id, error)
+                    source_health = self.source_health_manager.record_failure(source.source_id, error)
+                    source_health_updates.append(source_health)
+                    source_events.append(
+                        _source_event(
+                            "source_health_updated",
+                            source.source_id,
+                            status=source_health.status.value,
+                            consecutive_failures=source_health.consecutive_failures,
+                        )
                     )
         metrics.raw_items_count = len(raw_items)
         if not raw_items:
@@ -140,6 +215,7 @@ class DailyIntelligenceRunner:
             "skipped_sources": skipped_sources,
             "failed_sources": failed_sources,
             "source_health_updates": source_health_updates,
+            "source_events": source_events,
             "source_pipeline_metrics": metrics,
         }
 
@@ -178,6 +254,7 @@ def build_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
                     "skipped_sources",
                     "failed_sources",
                     "source_health_updates",
+                    "source_events",
                     "source_pipeline_metrics",
                 ],
                 required_output_keys=[
@@ -186,29 +263,30 @@ def build_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
                     "skipped_sources",
                     "failed_sources",
                     "source_health_updates",
+                    "source_events",
                     "source_pipeline_metrics",
                 ],
             ),
             StepSpec(
                 step_id="normalize_sources",
                 implementation="daily.normalize_sources",
-                read_keys=["raw_items", "source_pipeline_metrics"],
-                write_keys=["normalized_items", "source_pipeline_metrics"],
-                required_output_keys=["normalized_items", "source_pipeline_metrics"],
+                read_keys=["raw_items", "source_events", "source_pipeline_metrics"],
+                write_keys=["normalized_items", "source_events", "source_pipeline_metrics"],
+                required_output_keys=["normalized_items", "source_events", "source_pipeline_metrics"],
             ),
             StepSpec(
                 step_id="deduplicate_sources",
                 implementation="daily.deduplicate_sources",
-                read_keys=["normalized_items", "source_pipeline_metrics"],
-                write_keys=["deduplicated_items", "source_pipeline_metrics"],
-                required_output_keys=["deduplicated_items", "source_pipeline_metrics"],
+                read_keys=["normalized_items", "source_events", "source_pipeline_metrics"],
+                write_keys=["deduplicated_items", "source_events", "source_pipeline_metrics"],
+                required_output_keys=["deduplicated_items", "source_events", "source_pipeline_metrics"],
             ),
             StepSpec(
                 step_id="rank_sources",
                 implementation="daily.rank_sources",
-                read_keys=["deduplicated_items", "request", "source_pipeline_metrics"],
-                write_keys=["ranked_items", "source_pipeline_metrics"],
-                required_output_keys=["ranked_items", "source_pipeline_metrics"],
+                read_keys=["deduplicated_items", "request", "source_events", "source_pipeline_metrics"],
+                write_keys=["ranked_items", "source_events", "source_pipeline_metrics"],
+                required_output_keys=["ranked_items", "source_events", "source_pipeline_metrics"],
             ),
             StepSpec(
                 step_id="build_evidence",
@@ -283,27 +361,55 @@ def build_default_source_registry() -> SourceRegistry:
 
 
 def _normalize_sources(buffer: ScopedDataBuffer) -> dict[str, Any]:
-    normalized_items = normalize_items(buffer.read("raw_items"))
+    raw_items = buffer.read("raw_items")
+    normalized_items = normalize_items(raw_items)
+    source_events = list(buffer.read("source_events"))
+    source_events.append(
+        _source_event("source_normalized", input_count=len(raw_items), output_count=len(normalized_items))
+    )
     metrics = buffer.read("source_pipeline_metrics")
     metrics.normalized_items_count = len(normalized_items)
-    return {"normalized_items": normalized_items, "source_pipeline_metrics": metrics}
+    return {"normalized_items": normalized_items, "source_events": source_events, "source_pipeline_metrics": metrics}
 
 
 def _deduplicate_sources(buffer: ScopedDataBuffer) -> dict[str, Any]:
     normalized_items = buffer.read("normalized_items")
     deduplicated_items = deduplicate_items(normalized_items)
+    source_events = list(buffer.read("source_events"))
     metrics = buffer.read("source_pipeline_metrics")
     metrics.deduplicated_items_count = len(deduplicated_items)
     metrics.duplicate_count = max(0, len(normalized_items) - len(deduplicated_items))
-    return {"deduplicated_items": deduplicated_items, "source_pipeline_metrics": metrics}
+    source_events.append(
+        _source_event(
+            "source_deduplicated",
+            input_count=len(normalized_items),
+            output_count=len(deduplicated_items),
+            duplicate_count=metrics.duplicate_count,
+        )
+    )
+    return {
+        "deduplicated_items": deduplicated_items,
+        "source_events": source_events,
+        "source_pipeline_metrics": metrics,
+    }
 
 
 def _rank_sources(buffer: ScopedDataBuffer) -> dict[str, Any]:
     request = buffer.read("request")
-    ranked_items = rank_items(buffer.read("deduplicated_items"), topic=request["topic"])
+    deduplicated_items = buffer.read("deduplicated_items")
+    ranked_items = rank_items(deduplicated_items, topic=request["topic"])
+    source_events = list(buffer.read("source_events"))
+    source_events.append(
+        _source_event(
+            "source_ranked",
+            input_count=len(deduplicated_items),
+            output_count=len(ranked_items),
+            topic=request["topic"],
+        )
+    )
     metrics = buffer.read("source_pipeline_metrics")
     metrics.ranked_items_count = len(ranked_items)
-    return {"ranked_items": ranked_items, "source_pipeline_metrics": metrics}
+    return {"ranked_items": ranked_items, "source_events": source_events, "source_pipeline_metrics": metrics}
 
 
 def _build_evidence(buffer: ScopedDataBuffer) -> dict[str, Any]:
@@ -408,6 +514,14 @@ def _validate_report_payload(payload: Any) -> dict[str, Any]:
     if "title" not in payload or "sections" not in payload:
         raise ValueError("LLM report output must include title and sections")
     return payload
+
+
+def _source_event(event_type: str, source_id: str | None = None, **metadata: Any) -> SourcePipelineEvent:
+    return SourcePipelineEvent(
+        event_type=event_type,
+        source_id=source_id,
+        metadata={key: value for key, value in metadata.items() if value is not None},
+    )
 
 
 def _fixture_source() -> SourceDefinition:

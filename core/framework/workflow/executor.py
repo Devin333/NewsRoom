@@ -174,6 +174,14 @@ class WorkflowExecutor:
                     output["source_health_updates"],
                 )
                 manifest["artifacts"]["source_health_updates"] = "source_health_updates.json"
+            if "source_events" in output:
+                self._artifact_manager.write_json(
+                    actual_run_id,
+                    "source_events.json",
+                    output["source_events"],
+                )
+                manifest["artifacts"]["source_events"] = "source_events.json"
+                manifest["source_event_count"] = len(output["source_events"])
             if "source_pipeline_metrics" in output:
                 self._artifact_manager.write_json(
                     actual_run_id,

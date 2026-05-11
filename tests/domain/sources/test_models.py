@@ -1,6 +1,8 @@
+from datetime import UTC, datetime
+
 import pytest
 
-from domain.sources import SourceDefinition, SourceReliability, SourceType
+from domain.sources import SourceDefinition, SourcePipelineEvent, SourceReliability, SourceType
 
 
 def test_source_definition_normalizes_enums() -> None:
@@ -19,3 +21,19 @@ def test_source_definition_normalizes_enums() -> None:
 def test_source_definition_requires_url() -> None:
     with pytest.raises(ValueError, match="url"):
         SourceDefinition(source_id="bad", name="Bad", source_type="rss", url="")
+
+
+def test_source_pipeline_event_serializes() -> None:
+    event = SourcePipelineEvent(
+        event_type="source_fetch_succeeded",
+        source_id="openai",
+        occurred_at=datetime(2026, 5, 11, tzinfo=UTC),
+        metadata={"item_count": 2},
+    )
+
+    assert event.to_dict() == {
+        "event_type": "source_fetch_succeeded",
+        "source_id": "openai",
+        "occurred_at": "2026-05-11T00:00:00Z",
+        "metadata": {"item_count": 2},
+    }

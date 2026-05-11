@@ -48,10 +48,23 @@ def test_daily_intelligence_runner_live_offline_writes_report_artifacts(tmp_path
     assert manifest["quality_score"] == 1.0
     assert manifest["artifacts"]["report_json"] == "report.json"
     assert manifest["artifacts"]["report_markdown"] == "report.md"
+    assert manifest["artifacts"]["source_events"] == "source_events.json"
     assert manifest["artifacts"]["source_artifacts"] == "source_artifacts/index.json"
+    assert manifest["source_event_count"] == 6
     assert manifest["source_artifacts"]["item_count"] == 2
     assert manifest["source_artifacts"]["error_count"] == 0
     assert (run_dir / "report.md").exists()
+
+    source_events = json.loads((run_dir / "source_events.json").read_text())
+    event_types = [event["event_type"] for event in source_events]
+    assert event_types == [
+        "source_fetch_started",
+        "source_fetch_succeeded",
+        "source_health_updated",
+        "source_normalized",
+        "source_deduplicated",
+        "source_ranked",
+    ]
 
     source_artifacts = json.loads((run_dir / "source_artifacts" / "index.json").read_text())
     first_item = source_artifacts["entries"][0]
@@ -218,9 +231,21 @@ def test_daily_intelligence_runner_records_partial_source_failures(tmp_path) -> 
     manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["artifacts"]["source_errors"] == "source_errors.json"
     assert manifest["artifacts"]["failed_sources"] == "failed_sources.json"
+    assert manifest["artifacts"]["source_events"] == "source_events.json"
     assert manifest["artifacts"]["source_pipeline_metrics"] == "source_pipeline_metrics.json"
     assert manifest["artifacts"]["source_artifacts"] == "source_artifacts/index.json"
+    assert manifest["source_event_count"] == 9
     assert manifest["source_artifacts"] == {"item_count": 1, "error_count": 1, "total_count": 2}
+
+    source_events = json.loads((run_dir / "source_events.json").read_text())
+    assert any(
+        event["event_type"] == "source_fetch_failed" and event["source_id"] == "failing"
+        for event in source_events
+    )
+    assert any(
+        event["event_type"] == "source_fetch_succeeded" and event["source_id"] == "working"
+        for event in source_events
+    )
 
     source_artifacts = json.loads((run_dir / "source_artifacts" / "index.json").read_text())
     error_entry = next(
@@ -266,6 +291,10 @@ def test_daily_intelligence_runner_skips_cooling_source(tmp_path) -> None:
     assert result.status == WorkflowStatus.SUCCEEDED
     assert result.output["skipped_sources"][0]["source_id"] == "cooling"
     assert result.output["source_pipeline_metrics"].sources_skipped == 1
+    assert any(
+        event.event_type == "source_fetch_skipped" and event.source_id == "cooling"
+        for event in result.output["source_events"]
+    )
 
 
 class _FakeReportLLM:

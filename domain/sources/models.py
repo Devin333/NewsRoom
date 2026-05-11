@@ -131,6 +131,22 @@ class SourceError:
 
 
 @dataclass(frozen=True)
+class SourcePipelineEvent:
+    event_type: str
+    source_id: str | None = None
+    occurred_at: datetime = field(default_factory=utc_now)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "event_type": self.event_type,
+            "source_id": self.source_id,
+            "occurred_at": self.occurred_at.isoformat().replace("+00:00", "Z"),
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
 class SourceHealth:
     source_id: str
     status: SourceHealthStatus = SourceHealthStatus.HEALTHY
