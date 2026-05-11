@@ -67,6 +67,16 @@ class MemoryReindexRequest(BaseModel):
     topic: str | None = None
 
 
+class ArxivSourceFetchRequest(BaseModel):
+    query: str = Field(min_length=1)
+    limit: int = Field(default=5, ge=1)
+
+
+class GithubReleaseFetchRequest(BaseModel):
+    repository: str = Field(min_length=1)
+    limit: int = Field(default=5, ge=1)
+
+
 class DailyScheduleRequest(BaseModel):
     schedule_id: str = "daily-intelligence"
     name: str = "Daily intelligence"

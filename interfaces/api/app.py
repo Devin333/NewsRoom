@@ -21,8 +21,10 @@ from interfaces.api.models import (
     ApiResponse,
     ApprovalDecisionRequest,
     ApprovalModifyRequest,
+    ArxivSourceFetchRequest,
     ApprovalSubmitRequest,
     DailyRunRequest,
+    GithubReleaseFetchRequest,
     DailyScheduleRequest,
     ManualScheduleTriggerRequest,
     MemorySearchRequest,
@@ -341,6 +343,25 @@ def create_app(
     @api.get("/api/v1/sources/health")
     def source_health(include_disabled: bool = False):
         return _success(source_service_factory().source_health(enabled_only=not include_disabled).to_dict())
+
+    @api.post("/api/v1/sources/arxiv/fetch")
+    def fetch_arxiv_source(request: ArxivSourceFetchRequest):
+        try:
+            result = source_service_factory().fetch_arxiv(query=request.query, limit=request.limit)
+        except ValueError as exc:
+            return _error(status_code=400, code="invalid_arxiv_source_request", message=str(exc))
+        return _success(result.to_dict())
+
+    @api.post("/api/v1/sources/github/releases")
+    def fetch_github_releases(request: GithubReleaseFetchRequest):
+        try:
+            result = source_service_factory().fetch_github_releases(
+                repository=request.repository,
+                limit=request.limit,
+            )
+        except ValueError as exc:
+            return _error(status_code=400, code="invalid_github_source_request", message=str(exc))
+        return _success(result.to_dict())
 
     @api.get("/api/v1/mcp/catalog")
     def mcp_catalog():
