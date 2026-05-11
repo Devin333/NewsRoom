@@ -4,6 +4,7 @@ from interfaces.services.approval_service import ApprovalApplicationService
 from interfaces.services.run_service import RunApplicationService
 from interfaces.services.artifact_service import ArtifactInspectionService
 from interfaces.services.diagnose_service import DiagnosticApplicationService
+from interfaces.services.entity_service import EntityTrackingApplicationService
 from interfaces.services.memory_service import MemoryApplicationService
 from interfaces.services.mcp_service import MCPApplicationService
 from interfaces.services.report_service import ReportApplicationService
@@ -16,6 +17,7 @@ from interfaces.services.subscription_service import SubscriptionApplicationServ
 __all__ = [
     "ApprovalApplicationService",
     "DiagnosticApplicationService",
+    "EntityTrackingApplicationService",
     "ArtifactInspectionService",
     "MemoryApplicationService",
     "MCPApplicationService",

@@ -17,6 +17,10 @@ from interfaces.services.approval_service import (
 )
 from interfaces.services.artifact_service import ArtifactInspectionService
 from interfaces.services.diagnose_service import DiagnosticApplicationService
+from interfaces.services.entity_service import (
+    DEFAULT_ENTITY_STORE_PATH,
+    EntityTrackingApplicationService,
+)
 from interfaces.services.memory_service import DEFAULT_MEMORY_COLLECTION, MemoryApplicationService
 from interfaces.services.mcp_service import MCPApplicationService
 from interfaces.services.report_service import ReportApplicationService
@@ -195,6 +199,73 @@ def build_parser() -> argparse.ArgumentParser:
     subscriptions_delete_parser.add_argument("--store-path", default=DEFAULT_SUBSCRIPTION_STORE_PATH)
     subscriptions_delete_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     subscriptions_delete_parser.set_defaults(handler=_subscriptions_delete)
+
+    entities_parser = subparsers.add_parser("entities", help="Manage tracked entities")
+    entities_subparsers = entities_parser.add_subparsers(dest="entities_command", required=True)
+
+    entities_create_parser = entities_subparsers.add_parser(
+        "create",
+        help="Create or update a tracked entity",
+    )
+    entities_create_parser.add_argument("--name", required=True, help="Entity display name")
+    entities_create_parser.add_argument(
+        "--kind",
+        choices=["company", "project", "person", "organization"],
+        default="company",
+    )
+    entities_create_parser.add_argument("--entity-id", default=None, help="Optional entity id")
+    entities_create_parser.add_argument("--alias", action="append", default=None, help="Alias; repeatable")
+    entities_create_parser.add_argument("--disabled", action="store_true")
+    entities_create_parser.add_argument(
+        "--metadata",
+        action="append",
+        default=None,
+        help="Metadata key=value; repeat for multiple values",
+    )
+    entities_create_parser.add_argument("--store-path", default=DEFAULT_ENTITY_STORE_PATH)
+    entities_create_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    entities_create_parser.set_defaults(handler=_entities_create)
+
+    entities_list_parser = entities_subparsers.add_parser("list", help="List tracked entities")
+    entities_list_parser.add_argument("--enabled-only", action="store_true")
+    entities_list_parser.add_argument(
+        "--kind",
+        choices=["company", "project", "person", "organization"],
+        default=None,
+    )
+    entities_list_parser.add_argument("--store-path", default=DEFAULT_ENTITY_STORE_PATH)
+    entities_list_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    entities_list_parser.set_defaults(handler=_entities_list)
+
+    entities_enable_parser = entities_subparsers.add_parser("enable", help="Enable a tracked entity")
+    entities_enable_parser.add_argument("entity_id")
+    entities_enable_parser.add_argument("--store-path", default=DEFAULT_ENTITY_STORE_PATH)
+    entities_enable_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    entities_enable_parser.set_defaults(handler=_entities_enable)
+
+    entities_disable_parser = entities_subparsers.add_parser("disable", help="Disable a tracked entity")
+    entities_disable_parser.add_argument("entity_id")
+    entities_disable_parser.add_argument("--store-path", default=DEFAULT_ENTITY_STORE_PATH)
+    entities_disable_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    entities_disable_parser.set_defaults(handler=_entities_disable)
+
+    entities_delete_parser = entities_subparsers.add_parser("delete", help="Delete a tracked entity")
+    entities_delete_parser.add_argument("entity_id")
+    entities_delete_parser.add_argument("--store-path", default=DEFAULT_ENTITY_STORE_PATH)
+    entities_delete_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    entities_delete_parser.set_defaults(handler=_entities_delete)
+
+    entities_match_parser = entities_subparsers.add_parser(
+        "match-reports",
+        help="Match a tracked entity against persisted reports",
+    )
+    entities_match_parser.add_argument("entity_id")
+    entities_match_parser.add_argument("--store-path", default=DEFAULT_ENTITY_STORE_PATH)
+    entities_match_parser.add_argument("--artifact-root", default=".newsroom/runs")
+    entities_match_parser.add_argument("--limit", type=int, default=20)
+    entities_match_parser.add_argument("--workflow-id", default=None)
+    entities_match_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    entities_match_parser.set_defaults(handler=_entities_match_reports)
 
     api_parser = subparsers.add_parser("api", help="Run HTTP API server")
     api_subparsers = api_parser.add_subparsers(dest="api_command", required=True)
@@ -1156,6 +1227,106 @@ def _print_subscription(payload: dict, *, json_output: bool) -> int:
         print(f"subscription_id={payload['subscription_id']}")
         print(f"topic={payload['topic']}")
         print(f"cadence={payload['cadence']}")
+        print(f"state={state}")
+    return 0
+
+
+def _entities_create(args: argparse.Namespace) -> int:
+    try:
+        entity = EntityTrackingApplicationService(store_path=args.store_path).create_entity(
+            name=args.name,
+            kind=args.kind,
+            aliases=args.alias or [],
+            entity_id=args.entity_id,
+            enabled=not args.disabled,
+            metadata=_parse_key_values(args.metadata or []),
+        )
+    except ValueError as exc:
+        print(str(exc))
+        return 1
+    return _print_entity(entity.to_dict(), json_output=args.json)
+
+
+def _entities_list(args: argparse.Namespace) -> int:
+    try:
+        result = EntityTrackingApplicationService(store_path=args.store_path).list_entities(
+            enabled_only=args.enabled_only,
+            kind=args.kind,
+        )
+    except ValueError as exc:
+        print(str(exc))
+        return 1
+    payload = result.to_dict()
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        print(f"entity_count={payload['entity_count']}")
+        for item in payload["entities"]:
+            state = "enabled" if item["enabled"] else "disabled"
+            print(f"- {item['entity_id']} {state} kind={item['kind']} name={item['name']}")
+    return 0
+
+
+def _entities_enable(args: argparse.Namespace) -> int:
+    return _entities_set_enabled(args, enabled=True)
+
+
+def _entities_disable(args: argparse.Namespace) -> int:
+    return _entities_set_enabled(args, enabled=False)
+
+
+def _entities_set_enabled(args: argparse.Namespace, *, enabled: bool) -> int:
+    try:
+        entity = EntityTrackingApplicationService(store_path=args.store_path).set_enabled(
+            args.entity_id,
+            enabled=enabled,
+        )
+    except (KeyError, ValueError) as exc:
+        print(str(exc))
+        return 1
+    return _print_entity(entity.to_dict(), json_output=args.json)
+
+
+def _entities_delete(args: argparse.Namespace) -> int:
+    deleted = EntityTrackingApplicationService(store_path=args.store_path).delete_entity(args.entity_id)
+    payload = {"entity_id": args.entity_id, "deleted": deleted}
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        print(f"deleted={str(deleted).lower()}")
+    return 0
+
+
+def _entities_match_reports(args: argparse.Namespace) -> int:
+    try:
+        result = EntityTrackingApplicationService(store_path=args.store_path).match_reports(
+            args.entity_id,
+            artifact_root=args.artifact_root,
+            limit=args.limit,
+            workflow_id=args.workflow_id,
+        )
+    except (KeyError, ValueError) as exc:
+        print(str(exc))
+        return 1
+    payload = result.to_dict()
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        print(f"match_count={payload['match_count']}")
+        for item in payload["matches"]:
+            aliases = ",".join(item["matched_aliases"])
+            print(f"- {item['report_id']} aliases={aliases} title={item['title']}")
+    return 0
+
+
+def _print_entity(payload: dict, *, json_output: bool) -> int:
+    if json_output:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        state = "enabled" if payload["enabled"] else "disabled"
+        print(f"entity_id={payload['entity_id']}")
+        print(f"name={payload['name']}")
+        print(f"kind={payload['kind']}")
         print(f"state={state}")
     return 0
 

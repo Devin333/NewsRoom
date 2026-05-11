@@ -47,6 +47,7 @@ packages = [
   "storage.checkpoint",
   "storage.conversation",
   "storage.events",
+  "storage.entities",
   "quality",
   "storage.local_json",
   "storage.lifecycle",
