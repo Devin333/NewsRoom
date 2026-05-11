@@ -8,6 +8,7 @@ from interfaces.services.memory_service import MemoryApplicationService
 from interfaces.services.mcp_service import MCPApplicationService
 from interfaces.services.report_service import ReportApplicationService
 from interfaces.services.run_inspection_service import RunInspectionService
+from interfaces.services.run_service import RunApplicationService
 from interfaces.services.storage_service import StorageApplicationService
 from interfaces.services.subscription_service import SubscriptionApplicationService
 from storage.artifacts import ArtifactWriteRequest, FilesystemArtifactStore, LocalJsonArtifactIndexStore
@@ -18,6 +19,7 @@ from storage.vector import InMemoryVectorStore
 def test_mcp_catalog_lists_tools_without_calling_factories() -> None:
     service = MCPApplicationService(
         worker_service_factory=_raising_factory,
+        run_service_factory=_raising_factory,
         report_service_factory=_raising_factory,
         source_service_factory=_raising_factory,
         entity_service_factory=_raising_factory,
@@ -35,6 +37,8 @@ def test_mcp_catalog_lists_tools_without_calling_factories() -> None:
     resource_uris = [resource["uri"] for resource in catalog["resources"]]
 
     assert "news.daily.enqueue" in tool_names
+    assert "news.daily.run" in tool_names
+    assert "news.weekly.run" in tool_names
     assert "news.report.list" in tool_names
     assert "news.report.get" in tool_names
     assert "news.report.search" in tool_names
@@ -119,6 +123,58 @@ def test_mcp_source_arxiv_fetch_requires_query() -> None:
     assert result.success is False
     assert result.error_type == "ValueError"
     assert "query is required" in result.error_message
+
+
+def test_mcp_daily_and_weekly_run_use_real_runners(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("NEWS_DATABASE_DSN", raising=False)
+    service = MCPApplicationService(
+        run_service_factory=lambda: RunApplicationService(artifact_root=tmp_path)
+    )
+
+    daily = service.call_tool(
+        "news.daily.run",
+        {
+            "profile": "live-offline",
+            "topic": "AI policy",
+            "source_limit": 2,
+            "run_id": "mcp-daily-run",
+        },
+    )
+    weekly = service.call_tool(
+        "news.weekly.run",
+        {
+            "topic": "AI policy",
+            "source_limit": 5,
+            "period_start": "2026-05-01T00:00:00Z",
+            "period_end": "2026-05-20T00:00:00Z",
+            "run_id": "mcp-weekly-run",
+        },
+    )
+
+    assert daily.success is True
+    assert daily.data["run_id"] == "mcp-daily-run"
+    assert daily.data["workflow_id"] == "daily-intelligence-live"
+    assert daily.data["status"] == "succeeded"
+    assert weekly.success is True
+    assert weekly.data["run_id"] == "mcp-weekly-run"
+    assert weekly.data["workflow_id"] == "weekly-intelligence"
+    assert weekly.data["status"] == "succeeded"
+    assert weekly.data["output"]["weekly_metrics"]["source_report_count"] == 1
+    assert (tmp_path / "mcp-daily-run" / "manifest.json").exists()
+    assert (tmp_path / "mcp-weekly-run" / "manifest.json").exists()
+
+
+def test_mcp_daily_run_returns_runner_validation_error(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("NEWS_DATABASE_DSN", raising=False)
+    service = MCPApplicationService(
+        run_service_factory=lambda: RunApplicationService(artifact_root=tmp_path)
+    )
+
+    result = service.call_tool("news.daily.run", {"profile": "unsupported"})
+
+    assert result.success is False
+    assert result.error_type == "ValueError"
+    assert "unsupported daily intelligence profile" in result.error_message
 
 
 def test_mcp_entity_tools_use_real_local_json_service(tmp_path) -> None:

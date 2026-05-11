@@ -60,6 +60,7 @@ class MCPApplicationService:
         self,
         *,
         worker_service_factory: Callable[[], Any] | None = None,
+        run_service_factory: Callable[[], Any] | None = None,
         report_service_factory: Callable[[], Any] | None = None,
         source_service_factory: Callable[[], Any] | None = None,
         entity_service_factory: Callable[[], Any] | None = None,
@@ -72,6 +73,7 @@ class MCPApplicationService:
         storage_service_factory: Callable[[], Any] | None = None,
     ) -> None:
         self.worker_service_factory = worker_service_factory or _worker_service_factory
+        self.run_service_factory = run_service_factory or _run_service_factory
         self.report_service_factory = report_service_factory or _report_service_factory
         self.source_service_factory = source_service_factory or _source_service_factory
         self.entity_service_factory = entity_service_factory or _entity_service_factory
@@ -186,6 +188,10 @@ class MCPApplicationService:
     def call_tool(self, tool_name: str, arguments: dict[str, Any] | None = None) -> MCPToolCallResult:
         args = arguments or {}
         try:
+            if tool_name == "news.daily.run":
+                return self._daily_run(args)
+            if tool_name == "news.weekly.run":
+                return self._weekly_run(args)
             if tool_name == "news.daily.enqueue":
                 return self._daily_enqueue(args)
             if tool_name == "news.report.latest":
@@ -275,6 +281,34 @@ class MCPApplicationService:
                 error_type=type(exc).__name__,
                 error_message=str(exc),
             )
+
+    def _daily_run(self, args: dict[str, Any]) -> MCPToolCallResult:
+        result = self.run_service_factory().run_daily(
+            profile=str(args.get("profile") or "live-offline"),
+            topic=str(args.get("topic") or "AI"),
+            source_limit=_optional_int_arg(args, "source_limit", default=3),
+            run_id=_optional_arg(args, "run_id"),
+        )
+        return MCPToolCallResult(
+            tool_name="news.daily.run",
+            success=True,
+            data=result.to_dict(),
+        )
+
+    def _weekly_run(self, args: dict[str, Any]) -> MCPToolCallResult:
+        result = self.run_service_factory().run_weekly(
+            language=str(args.get("language") or "en"),
+            topic=_optional_arg(args, "topic"),
+            source_limit=_optional_int_arg(args, "source_limit", default=20),
+            period_start=_optional_arg(args, "period_start"),
+            period_end=_optional_arg(args, "period_end"),
+            run_id=_optional_arg(args, "run_id"),
+        )
+        return MCPToolCallResult(
+            tool_name="news.weekly.run",
+            success=True,
+            data=result.to_dict(),
+        )
 
     def _daily_enqueue(self, args: dict[str, Any]) -> MCPToolCallResult:
         result = self.worker_service_factory().enqueue_daily(
@@ -884,6 +918,36 @@ def _tools() -> list[MCPTool]:
                     "source_limit": {"type": "integer", "minimum": 1},
                     "run_id": {"type": "string"},
                     "queue_name": {"type": "string"},
+                },
+            },
+        ),
+        MCPTool(
+            name="news.daily.run",
+            title="Run daily intelligence",
+            description="Run daily intelligence directly through RunApplicationService.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "profile": {"type": "string", "enum": ["live", "live-offline"]},
+                    "topic": {"type": "string"},
+                    "source_limit": {"type": "integer", "minimum": 1},
+                    "run_id": {"type": "string"},
+                },
+            },
+        ),
+        MCPTool(
+            name="news.weekly.run",
+            title="Run weekly intelligence",
+            description="Run weekly intelligence directly through RunApplicationService.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "language": {"type": "string", "enum": ["en"]},
+                    "topic": {"type": "string"},
+                    "source_limit": {"type": "integer", "minimum": 1},
+                    "period_start": {"type": "string", "format": "date-time"},
+                    "period_end": {"type": "string", "format": "date-time"},
+                    "run_id": {"type": "string"},
                 },
             },
         ),
@@ -1545,6 +1609,12 @@ def _worker_service_factory():
     from interfaces.services.worker_service import WorkerApplicationService
 
     return WorkerApplicationService()
+
+
+def _run_service_factory():
+    from interfaces.services.run_service import RunApplicationService
+
+    return RunApplicationService()
 
 
 def _report_service_factory():
