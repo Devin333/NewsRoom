@@ -15,6 +15,8 @@ from core.framework.workflow.step_runner import (
     FunctionStepRegistry,
     FunctionStepRunner,
     StepExecutionError,
+    StepRunner,
+    StepRunnerRegistry,
 )
 
 __all__ = [
@@ -30,6 +32,8 @@ __all__ = [
     "ScopedDataBuffer",
     "StepExecutionError",
     "StepOutcome",
+    "StepRunner",
+    "StepRunnerRegistry",
     "WorkflowError",
     "WorkflowExecutor",
     "WorkflowResult",

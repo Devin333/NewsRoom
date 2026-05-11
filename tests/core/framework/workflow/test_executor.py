@@ -5,11 +5,19 @@ from core.framework.specs import (
     EdgeCondition,
     EdgeSpec,
     RetryPolicySpec,
+    StepStatus,
     StepSpec,
+    StepType,
     WorkflowSpec,
     WorkflowStatus,
 )
-from core.framework.workflow import FunctionStepRegistry, FunctionStepRunner, WorkflowExecutor
+from core.framework.workflow import (
+    FunctionStepRegistry,
+    FunctionStepRunner,
+    StepOutcome,
+    StepRunnerRegistry,
+    WorkflowExecutor,
+)
 
 
 def _sample_spec() -> WorkflowSpec:
@@ -328,3 +336,90 @@ def test_workflow_executor_records_routing_failure_artifacts(tmp_path) -> None:
     events = (tmp_path / "run-routing-failed" / "events.jsonl").read_text(encoding="utf-8")
     assert "step_succeeded" in events
     assert "workflow_failed" in events
+
+
+def test_workflow_executor_dispatches_custom_step_runner(tmp_path) -> None:
+    runner_registry = StepRunnerRegistry()
+    runner_registry.register(StepType.ARTIFACT, _ArtifactMarkerRunner())
+    spec = WorkflowSpec(
+        workflow_id="custom-runner",
+        name="Custom Runner",
+        version="1.0",
+        start_step_id="artifact",
+        steps=[
+            StepSpec(
+                step_id="artifact",
+                implementation="artifact.marker",
+                step_type=StepType.ARTIFACT,
+                write_keys=["artifact_marker"],
+                required_output_keys=["artifact_marker"],
+                metadata={"artifact_id": "artifact-1"},
+            )
+        ],
+    )
+    executor = WorkflowExecutor(
+        function_step_runner=None,
+        step_runner_registry=runner_registry,
+        artifact_manager=ArtifactManager(tmp_path),
+    )
+
+    result = executor.execute(spec, {"topic": "ai"}, profile="test", run_id="run-custom-runner")
+
+    assert result.status == WorkflowStatus.SUCCEEDED
+    assert result.output["artifact_marker"] == {
+        "artifact_id": "artifact-1",
+        "implementation": "artifact.marker",
+    }
+    assert (tmp_path / "run-custom-runner" / "manifest.json").exists()
+    events = [
+        json.loads(line)["event_type"]
+        for line in (tmp_path / "run-custom-runner" / "events.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert events == [
+        "workflow_started",
+        "step_started",
+        "step_succeeded",
+        "workflow_succeeded",
+    ]
+
+
+def test_workflow_executor_fails_step_when_runner_is_missing(tmp_path) -> None:
+    spec = WorkflowSpec(
+        workflow_id="missing-runner",
+        name="Missing Runner",
+        version="1.0",
+        start_step_id="artifact",
+        steps=[
+            StepSpec(
+                step_id="artifact",
+                implementation="artifact.marker",
+                step_type=StepType.ARTIFACT,
+                write_keys=["artifact_marker"],
+                required_output_keys=["artifact_marker"],
+            )
+        ],
+    )
+    executor = WorkflowExecutor(
+        function_step_runner=FunctionStepRunner(FunctionStepRegistry()),
+        artifact_manager=ArtifactManager(tmp_path),
+    )
+
+    result = executor.execute(spec, {"topic": "ai"}, profile="test", run_id="run-missing-runner")
+
+    assert result.status == WorkflowStatus.FAILED
+    assert result.error is not None
+    assert result.error.error_type == "StepExecutionError"
+    assert result.error.message == "step runner is not registered: artifact"
+    assert (tmp_path / "run-missing-runner" / "error.json").exists()
+    events = (tmp_path / "run-missing-runner" / "events.jsonl").read_text(encoding="utf-8")
+    assert "step_failed" in events
+
+
+class _ArtifactMarkerRunner:
+    def run(self, step: StepSpec, buffer) -> StepOutcome:
+        output = {
+            "artifact_id": step.metadata["artifact_id"],
+            "implementation": step.implementation,
+        }
+        buffer.write("artifact_marker", output)
+        return StepOutcome(status=StepStatus.SUCCEEDED, outputs={"artifact_marker": output})

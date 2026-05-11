@@ -1,11 +1,13 @@
 import pytest
 
-from core.framework.specs import StepSpec
+from core.framework.specs import StepSpec, StepStatus, StepType
 from core.framework.workflow import (
     DataBuffer,
     FunctionStepRegistry,
     FunctionStepRunner,
     StepExecutionError,
+    StepOutcome,
+    StepRunnerRegistry,
 )
 
 
@@ -56,4 +58,38 @@ def test_function_step_runner_rejects_unregistered_function() -> None:
         runner.run(
             StepSpec(step_id="missing", implementation="sample.missing"),
             DataBuffer().scope(read_keys=[], write_keys=[]),
+        )
+
+
+def test_step_runner_registry_returns_registered_runner() -> None:
+    runner = _CustomRunner()
+    registry = StepRunnerRegistry()
+
+    registry.register(StepType.ARTIFACT, runner)
+
+    assert registry.get("artifact") is runner
+    assert registry.registered_step_types() == [StepType.ARTIFACT]
+
+
+def test_step_runner_registry_rejects_duplicate_registration() -> None:
+    registry = StepRunnerRegistry()
+    registry.register(StepType.ARTIFACT, _CustomRunner())
+
+    with pytest.raises(StepExecutionError, match="already registered"):
+        registry.register(StepType.ARTIFACT, _CustomRunner())
+
+
+def test_step_runner_registry_rejects_missing_runner() -> None:
+    registry = StepRunnerRegistry()
+
+    with pytest.raises(StepExecutionError, match="not registered: artifact"):
+        registry.get(StepType.ARTIFACT)
+
+
+class _CustomRunner:
+    def run(self, step: StepSpec, buffer) -> StepOutcome:
+        buffer.write("artifact_marker", step.implementation)
+        return StepOutcome(
+            status=StepStatus.SUCCEEDED,
+            outputs={"artifact_marker": step.implementation},
         )

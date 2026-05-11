@@ -12,7 +12,7 @@ from core.framework.specs import StepSpec, StepStatus, WorkflowSpec, WorkflowSta
 from core.framework.workflow.buffer import DataBuffer
 from core.framework.workflow.result import StepOutcome, WorkflowError, WorkflowResult
 from core.framework.workflow.routing import RoutingEngine
-from core.framework.workflow.step_runner import FunctionStepRunner
+from core.framework.workflow.step_runner import FunctionStepRunner, StepRunnerRegistry
 
 
 def _utc_now() -> str:
@@ -22,12 +22,17 @@ def _utc_now() -> str:
 class WorkflowExecutor:
     def __init__(
         self,
-        function_step_runner: FunctionStepRunner,
+        function_step_runner: FunctionStepRunner | None,
         artifact_manager: ArtifactManager,
         routing_engine: RoutingEngine | None = None,
         sleep_fn: Callable[[float], None] | None = None,
+        step_runner_registry: StepRunnerRegistry | None = None,
     ) -> None:
-        self._function_step_runner = function_step_runner
+        if step_runner_registry is None:
+            if function_step_runner is None:
+                raise ValueError("function_step_runner is required without step_runner_registry")
+            step_runner_registry = StepRunnerRegistry.with_function_runner(function_step_runner)
+        self._step_runner_registry = step_runner_registry
         self._artifact_manager = artifact_manager
         self._routing_engine = routing_engine or RoutingEngine()
         self._sleep_fn = sleep_fn or time.sleep
@@ -307,7 +312,8 @@ class WorkflowExecutor:
             )
             scoped_buffer = buffer.scope(step.read_keys, step.write_keys)
             try:
-                outcome = self._function_step_runner.run(step, scoped_buffer)
+                runner = self._step_runner_registry.get(step.step_type)
+                outcome = runner.run(step, scoped_buffer)
             except Exception as exc:  # pragma: no cover - concrete branches covered by tests
                 outcome = StepOutcome(
                     status=StepStatus.FAILED,

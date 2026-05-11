@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Protocol
 
 from core.framework.specs import StepSpec, StepStatus, StepType
 from core.framework.workflow.buffer import ScopedDataBuffer
@@ -12,6 +12,38 @@ FunctionStep = Callable[[ScopedDataBuffer], dict[str, Any] | None]
 
 class StepExecutionError(RuntimeError):
     """Raised when a step cannot be executed by a runner."""
+
+
+class StepRunner(Protocol):
+    def run(self, step: StepSpec, buffer: ScopedDataBuffer) -> StepOutcome:
+        ...
+
+
+class StepRunnerRegistry:
+    def __init__(self) -> None:
+        self._runners: dict[StepType, StepRunner] = {}
+
+    @classmethod
+    def with_function_runner(cls, runner: FunctionStepRunner) -> StepRunnerRegistry:
+        registry = cls()
+        registry.register(StepType.FUNCTION, runner)
+        return registry
+
+    def register(self, step_type: StepType | str, runner: StepRunner) -> None:
+        actual_step_type = StepType(step_type)
+        if actual_step_type in self._runners:
+            raise StepExecutionError(f"step runner is already registered: {actual_step_type.value}")
+        self._runners[actual_step_type] = runner
+
+    def get(self, step_type: StepType | str) -> StepRunner:
+        actual_step_type = StepType(step_type)
+        try:
+            return self._runners[actual_step_type]
+        except KeyError as exc:
+            raise StepExecutionError(f"step runner is not registered: {actual_step_type.value}") from exc
+
+    def registered_step_types(self) -> list[StepType]:
+        return sorted(self._runners, key=lambda step_type: step_type.value)
 
 
 class FunctionStepRegistry:
