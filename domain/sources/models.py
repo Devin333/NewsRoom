@@ -9,6 +9,7 @@ from typing import Any
 class SourceType(str, Enum):
     RSS = "rss"
     ATOM = "atom"
+    ARXIV = "arxiv"
 
 
 class SourceReliability(str, Enum):

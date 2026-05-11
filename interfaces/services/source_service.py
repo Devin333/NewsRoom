@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
+from domain.sources import RawSourceItem, SourceDefinition, SourceError
 from sources import SourceRegistry
+from sources.connectors import ARXIV_API_URL, ArxivConnector
 from sources.health import BasicSourceHealthManager
 
 
@@ -57,12 +60,33 @@ class SourceHealthResult:
         }
 
 
+@dataclass(frozen=True)
+class SourceFetchPreviewResult:
+    source_id: str
+    source_type: str
+    query: str
+    items: list[RawSourceItem]
+    errors: list[SourceError]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "source_id": self.source_id,
+            "source_type": self.source_type,
+            "query": self.query,
+            "item_count": len(self.items),
+            "error_count": len(self.errors),
+            "items": [_raw_item_to_dict(item) for item in self.items],
+            "errors": [error.to_dict() for error in self.errors],
+        }
+
+
 class SourceApplicationService:
     def __init__(
         self,
         *,
         source_registry: SourceRegistry | None = None,
         health_manager: BasicSourceHealthManager | None = None,
+        arxiv_connector: ArxivConnector | None = None,
     ) -> None:
         if source_registry is None:
             from workflows.daily_intelligence.runner import build_default_source_registry
@@ -70,6 +94,7 @@ class SourceApplicationService:
             source_registry = build_default_source_registry()
         self.source_registry = source_registry
         self.health_manager = health_manager or BasicSourceHealthManager()
+        self.arxiv_connector = arxiv_connector or ArxivConnector()
 
     def list_sources(self, *, enabled_only: bool = True) -> SourceListResult:
         return SourceListResult(
@@ -97,3 +122,51 @@ class SourceApplicationService:
                 for source in self.source_registry.list_sources(enabled_only=enabled_only)
             ]
         )
+
+    def fetch_arxiv(self, *, query: str, limit: int = 5) -> SourceFetchPreviewResult:
+        if not query.strip():
+            raise ValueError("query is required")
+        if limit <= 0:
+            raise ValueError("limit must be greater than zero")
+        source = SourceDefinition(
+            source_id="arxiv",
+            name="arXiv",
+            source_type="arxiv",
+            url=ARXIV_API_URL,
+            reliability="high",
+            authority_score=0.95,
+            topics=["papers", "research"],
+            language="en",
+            metadata={"query": query.strip()},
+        )
+        items, errors = self.arxiv_connector.fetch(source, query=query, limit=limit)
+        return SourceFetchPreviewResult(
+            source_id=source.source_id,
+            source_type=source.source_type.value,
+            query=query.strip(),
+            items=items,
+            errors=errors,
+        )
+
+
+def _raw_item_to_dict(item: RawSourceItem) -> dict[str, Any]:
+    return {
+        "source_item_id": item.source_item_id,
+        "source_id": item.source_id,
+        "source_name": item.source_name,
+        "source_type": item.source_type.value,
+        "title": item.title,
+        "url": item.url,
+        "fetched_at": _dt(item.fetched_at),
+        "published_at": _dt(item.published_at),
+        "summary": item.summary,
+        "raw_content": item.raw_content,
+        "authors": list(item.authors),
+        "tags": list(item.tags),
+        "language": item.language,
+        "metadata": dict(item.metadata),
+    }
+
+
+def _dt(value: datetime | None) -> str | None:
+    return value.isoformat().replace("+00:00", "Z") if value else None

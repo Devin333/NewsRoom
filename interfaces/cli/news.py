@@ -761,6 +761,12 @@ def build_parser() -> argparse.ArgumentParser:
     sources_list_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     sources_list_parser.set_defaults(handler=_sources_list)
 
+    sources_arxiv_parser = sources_subparsers.add_parser("arxiv", help="Fetch arXiv source items")
+    sources_arxiv_parser.add_argument("--query", required=True, help="arXiv search query")
+    sources_arxiv_parser.add_argument("--limit", type=int, default=5, help="Maximum paper entries")
+    sources_arxiv_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    sources_arxiv_parser.set_defaults(handler=_sources_arxiv)
+
     sources_health_parser = sources_subparsers.add_parser("health", help="Show source health")
     sources_health_parser.add_argument("--include-disabled", action="store_true", help="Include disabled sources")
     sources_health_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
@@ -1917,6 +1923,26 @@ def _sources_list(args: argparse.Namespace) -> int:
             )
             print(f"  {source['name']} <{source['url']}>")
     return 0
+
+
+def _sources_arxiv(args: argparse.Namespace) -> int:
+    try:
+        result = SourceApplicationService().fetch_arxiv(query=args.query, limit=args.limit)
+    except ValueError as exc:
+        print(str(exc))
+        return 1
+    payload = result.to_dict()
+
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        print(f"item_count={payload['item_count']}")
+        print(f"error_count={payload['error_count']}")
+        for item in payload["items"]:
+            print(f"- {item['title']} <{item['url']}>")
+        for error in payload["errors"]:
+            print(f"error={error['error_type']}: {error['error_message']}")
+    return 0 if payload["error_count"] == 0 else 1
 
 
 def _sources_health(args: argparse.Namespace) -> int:

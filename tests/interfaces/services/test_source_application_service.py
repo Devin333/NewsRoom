@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from domain.sources import SourceDefinition, SourceError
+from domain.sources import RawSourceItem, SourceDefinition, SourceError
 from interfaces.services.source_service import SourceApplicationService
 from sources import SourceRegistry
 from sources.health import BasicSourceHealthManager
@@ -52,3 +52,40 @@ def test_source_service_returns_health_views() -> None:
     assert result.to_dict()["source_count"] == 1
     assert result.to_dict()["health"][0]["source_id"] == "source-1"
     assert result.to_dict()["health"][0]["status"] == "degraded"
+
+
+def test_source_service_fetches_arxiv_preview() -> None:
+    service = SourceApplicationService(
+        source_registry=SourceRegistry([]),
+        arxiv_connector=_FakeArxivConnector(),
+    )
+
+    result = service.fetch_arxiv(query="cat:cs.AI", limit=1)
+    payload = result.to_dict()
+
+    assert payload["source_type"] == "arxiv"
+    assert payload["query"] == "cat:cs.AI"
+    assert payload["item_count"] == 1
+    assert payload["items"][0]["title"] == "Agent Runtime Evaluation"
+    assert payload["items"][0]["metadata"]["arxiv_id"] == "2605.00001v1"
+
+
+class _FakeArxivConnector:
+    def fetch(self, source, *, query, limit):
+        return [
+            RawSourceItem(
+                source_item_id="raw-arxiv",
+                source_id=source.source_id,
+                source_name=source.name,
+                source_type=source.source_type,
+                title="Agent Runtime Evaluation",
+                url="https://arxiv.org/abs/2605.00001",
+                fetched_at=datetime(2026, 5, 11, tzinfo=UTC),
+                published_at=datetime(2026, 5, 10, tzinfo=UTC),
+                summary="Paper summary",
+                authors=["Alice Example"],
+                tags=["cs.AI"],
+                language="en",
+                metadata={"arxiv_id": "2605.00001v1"},
+            )
+        ], []
