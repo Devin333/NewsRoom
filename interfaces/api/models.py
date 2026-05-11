@@ -33,6 +33,15 @@ class DailyRunRequest(BaseModel):
     queue_name: str = "news:queue:daily"
 
 
+class WeeklyRunRequest(BaseModel):
+    language: Literal["en"] = "en"
+    topic: str | None = None
+    source_limit: int = Field(default=20, ge=1)
+    period_start: str | None = None
+    period_end: str | None = None
+    run_id: str | None = None
+
+
 class RunResponse(BaseModel):
     run_id: str | None = None
     task_id: str | None = None

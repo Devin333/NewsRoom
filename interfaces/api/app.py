@@ -34,6 +34,7 @@ from interfaces.api.models import (
     RunResponse,
     ScheduleTickRequest,
     TopicSubscriptionCreateRequest,
+    WeeklyRunRequest,
 )
 from interfaces.api.rate_limit import Clock, InMemoryRateLimiter
 from interfaces.services.approval_service import ApprovalApplicationService
@@ -43,6 +44,7 @@ from interfaces.services.memory_service import MemoryApplicationService
 from interfaces.services.mcp_service import MCPApplicationService
 from interfaces.services.report_service import ReportApplicationService
 from interfaces.services.run_inspection_service import RunInspectionService
+from interfaces.services.run_service import RunApplicationService
 from interfaces.services.schedule_service import ScheduleApplicationService
 from interfaces.services.source_service import SourceApplicationService
 from interfaces.services.storage_service import StorageApplicationService
@@ -53,6 +55,7 @@ from storage.lifecycle import RetentionPolicy
 
 
 WorkerServiceFactory = Callable[[], WorkerApplicationService]
+RunServiceFactory = Callable[[], RunApplicationService]
 ReportServiceFactory = Callable[[], ReportApplicationService]
 MemoryServiceFactory = Callable[[], MemoryApplicationService]
 DiagnosticServiceFactory = Callable[[], DiagnosticApplicationService]
@@ -73,6 +76,7 @@ _REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 def create_app(
     *,
     worker_service_factory: WorkerServiceFactory = WorkerApplicationService,
+    run_service_factory: RunServiceFactory = RunApplicationService,
     report_service_factory: ReportServiceFactory = ReportApplicationService,
     memory_service_factory: MemoryServiceFactory = MemoryApplicationService,
     diagnostic_service_factory: DiagnosticServiceFactory = DiagnosticApplicationService,
@@ -182,6 +186,21 @@ def create_app(
             message=f"queued as {result.message_id}",
         )
         return _success(_model_to_dict(data))
+
+    @api.post("/api/v1/runs/weekly")
+    def run_weekly(request: WeeklyRunRequest):
+        try:
+            result = run_service_factory().run_weekly(
+                language=request.language,
+                topic=request.topic,
+                source_limit=request.source_limit,
+                period_start=request.period_start,
+                period_end=request.period_end,
+                run_id=request.run_id,
+            )
+        except ValueError as exc:
+            return _error(status_code=400, code="invalid_weekly_run_request", message=str(exc))
+        return _success(result.to_dict())
 
     @api.get("/api/v1/workers")
     def list_workers(stale_after_seconds: int = 60):
