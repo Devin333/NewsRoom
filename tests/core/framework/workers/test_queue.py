@@ -44,6 +44,43 @@ def test_redis_stream_queue_lease_one_decodes_task_payload() -> None:
     assert leased.message_id == "1-0"
 
 
+def test_redis_stream_queue_reclaim_stale_one_claims_pending_payload() -> None:
+    task = Task(task_type="daily_intelligence.run", payload={"topic": "AI"}, task_id="task-1")
+    redis = _FakeRedisPending(task.to_dict(), idle_ms=120_000)
+    queue = RedisStreamTaskQueue(redis)
+
+    leased = queue.reclaim_stale_one(
+        "worker-2",
+        ["news:queue:daily"],
+        min_idle_ms=60_000,
+    )
+
+    assert leased.task.task_id == "task-1"
+    assert leased.task.status == TaskStatus.LEASED
+    assert leased.task.leased_by == "worker-2"
+    assert leased.task.attempts == 1
+    assert leased.queue_name == "news:queue:daily"
+    assert leased.message_id == "1-0"
+    assert redis.xclaim_calls == [
+        ("news:queue:daily", "news-workers", "worker-2", 60_000, ["1-0"])
+    ]
+
+
+def test_redis_stream_queue_reclaim_stale_one_skips_fresh_pending_payload() -> None:
+    task = Task(task_type="daily_intelligence.run", payload={"topic": "AI"}, task_id="task-1")
+    redis = _FakeRedisPending(task.to_dict(), idle_ms=1_000)
+    queue = RedisStreamTaskQueue(redis)
+
+    leased = queue.reclaim_stale_one(
+        "worker-2",
+        ["news:queue:daily"],
+        min_idle_ms=60_000,
+    )
+
+    assert leased is None
+    assert redis.xclaim_calls == []
+
+
 class _FakeRedis:
     def __init__(self) -> None:
         self.xadd_calls = []
@@ -64,3 +101,24 @@ class _FakeRedisReader:
     def xreadgroup(self, group, consumer, streams, count, block):
         payload = json.dumps(self.task_payload).encode("utf-8")
         return [(b"news:queue:daily", [(b"1-0", {b"task": payload})])]
+
+
+class _FakeRedisPending:
+    def __init__(self, task_payload, *, idle_ms) -> None:
+        self.task_payload = task_payload
+        self.idle_ms = idle_ms
+        self.xgroup_create_calls = []
+        self.xpending_range_calls = []
+        self.xclaim_calls = []
+
+    def xgroup_create(self, stream, group, id, mkstream):
+        self.xgroup_create_calls.append((stream, group, id, mkstream))
+
+    def xpending_range(self, stream, group, min, max, count):
+        self.xpending_range_calls.append((stream, group, min, max, count))
+        return [{"message_id": b"1-0", "time_since_delivered": self.idle_ms}]
+
+    def xclaim(self, stream, group, consumer, min_idle_ms, message_ids):
+        self.xclaim_calls.append((stream, group, consumer, min_idle_ms, list(message_ids)))
+        payload = json.dumps(self.task_payload).encode("utf-8")
+        return [(b"1-0", {b"task": payload})]

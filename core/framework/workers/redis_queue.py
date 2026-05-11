@@ -43,15 +43,53 @@ class RedisStreamTaskQueue:
         for queue_name, messages in records or []:
             decoded_queue_name = _decode(queue_name)
             for message_id, fields in messages:
-                raw_task = _field_value(fields, "task")
-                task = Task.from_dict(json.loads(_decode(raw_task)))
-                task.status = TaskStatus.LEASED
-                task.leased_by = worker_id
-                task.attempts += 1
-                return LeasedTask(
+                return _leased_task_from_message(
                     queue_name=decoded_queue_name,
-                    message_id=_decode(message_id),
-                    task=task,
+                    message_id=message_id,
+                    fields=fields,
+                    worker_id=worker_id,
+                )
+        return None
+
+    def reclaim_stale_one(
+        self,
+        worker_id: str,
+        queue_names: list[str],
+        *,
+        min_idle_ms: int,
+        pending_count: int = 10,
+    ) -> LeasedTask | None:
+        if min_idle_ms < 0:
+            raise ValueError("min_idle_ms must be non-negative")
+        self.ensure_group(queue_names)
+        for queue_name in queue_names:
+            pending_entries = self.redis.xpending_range(
+                queue_name,
+                self.group_name,
+                min="-",
+                max="+",
+                count=pending_count,
+            )
+            stale_ids = [
+                _pending_message_id(entry)
+                for entry in pending_entries or []
+                if _pending_idle_ms(entry) >= min_idle_ms
+            ]
+            if not stale_ids:
+                continue
+            messages = self.redis.xclaim(
+                queue_name,
+                self.group_name,
+                worker_id,
+                min_idle_ms,
+                stale_ids[:1],
+            )
+            for message_id, fields in messages or []:
+                return _leased_task_from_message(
+                    queue_name=queue_name,
+                    message_id=message_id,
+                    fields=fields,
+                    worker_id=worker_id,
                 )
         return None
 
@@ -81,3 +119,43 @@ def _field_value(fields: dict[Any, Any], key: str) -> Any:
     if byte_key in fields:
         return fields[byte_key]
     raise KeyError(key)
+
+
+def _leased_task_from_message(
+    *,
+    queue_name: str,
+    message_id: Any,
+    fields: dict[Any, Any],
+    worker_id: str,
+) -> LeasedTask:
+    raw_task = _field_value(fields, "task")
+    task = Task.from_dict(json.loads(_decode(raw_task)))
+    task.status = TaskStatus.LEASED
+    task.leased_by = worker_id
+    task.attempts += 1
+    return LeasedTask(
+        queue_name=queue_name,
+        message_id=_decode(message_id),
+        task=task,
+    )
+
+
+def _pending_message_id(entry: Any) -> str:
+    if isinstance(entry, dict):
+        return _decode(_dict_value(entry, "message_id"))
+    return _decode(entry[0])
+
+
+def _pending_idle_ms(entry: Any) -> int:
+    if isinstance(entry, dict):
+        return int(_dict_value(entry, "time_since_delivered") or 0)
+    return int(entry[2] or 0)
+
+
+def _dict_value(data: dict[Any, Any], key: str) -> Any:
+    if key in data:
+        return data[key]
+    byte_key = key.encode("utf-8")
+    if byte_key in data:
+        return data[byte_key]
+    return None

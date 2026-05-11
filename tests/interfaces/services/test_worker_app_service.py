@@ -141,12 +141,33 @@ def test_worker_service_run_once_updates_worker_heartbeat_counters() -> None:
     assert registry.saved[-1].failed_count == 0
 
 
+def test_worker_service_run_once_reclaims_stale_task_when_no_new_task() -> None:
+    task = Task(task_type="daily_intelligence.run", payload={"topic": "AI"}, task_id="task-1")
+    queue = _FakeQueue(reclaimed=LeasedTask(DEFAULT_DAILY_QUEUE, "1-0", task))
+    handler = _FakeHandler(success=True)
+    service = WorkerApplicationService(queue=queue, handlers={handler.task_type: handler})
+
+    result = service.run_once(
+        worker_id="worker-1",
+        block_ms=10,
+        reclaim_stale_ms=60_000,
+    )
+
+    assert result.processed is True
+    assert result.reclaimed is True
+    assert result.success is True
+    assert queue.reclaim_calls == [("worker-1", [DEFAULT_DAILY_QUEUE], 60_000)]
+    assert queue.acked == [(DEFAULT_DAILY_QUEUE, "1-0")]
+
+
 class _FakeQueue:
-    def __init__(self, leased=None) -> None:
+    def __init__(self, leased=None, reclaimed=None) -> None:
         self.leased = leased
+        self.reclaimed = reclaimed
         self.enqueued = []
         self.acked = []
         self.dead_letters = []
+        self.reclaim_calls = []
 
     def enqueue(self, task):
         self.enqueued.append(task)
@@ -154,6 +175,10 @@ class _FakeQueue:
 
     def lease_one(self, worker_id, queue_names, *, block_ms):
         return self.leased
+
+    def reclaim_stale_one(self, worker_id, queue_names, *, min_idle_ms):
+        self.reclaim_calls.append((worker_id, queue_names, min_idle_ms))
+        return self.reclaimed
 
     def ack(self, queue_name, message_id):
         self.acked.append((queue_name, message_id))

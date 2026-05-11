@@ -50,6 +50,7 @@ class EnqueuedTaskResult:
 class WorkerRunOnceResult:
     processed: bool
     worker_id: str
+    reclaimed: bool = False
     queue_name: str | None = None
     message_id: str | None = None
     task_id: str | None = None
@@ -64,6 +65,7 @@ class WorkerRunOnceResult:
         return {
             "processed": self.processed,
             "worker_id": self.worker_id,
+            "reclaimed": self.reclaimed,
             "queue_name": self.queue_name,
             "message_id": self.message_id,
             "task_id": self.task_id,
@@ -178,6 +180,7 @@ class WorkerApplicationService:
         worker_id: str,
         queue_names: list[str] | None = None,
         block_ms: int = 1000,
+        reclaim_stale_ms: int | None = None,
     ) -> WorkerRunOnceResult:
         queues = queue_names or [DEFAULT_DAILY_QUEUE]
         self._record_worker_heartbeat(
@@ -186,6 +189,14 @@ class WorkerApplicationService:
             status=WorkerStatus.RUNNING,
         )
         leased = self.queue.lease_one(worker_id, queues, block_ms=block_ms)
+        reclaimed = False
+        if leased is None and reclaim_stale_ms is not None:
+            leased = self.queue.reclaim_stale_one(
+                worker_id,
+                queues,
+                min_idle_ms=reclaim_stale_ms,
+            )
+            reclaimed = leased is not None
         if leased is None:
             self._record_worker_heartbeat(
                 worker_id=worker_id,
@@ -216,6 +227,7 @@ class WorkerApplicationService:
         return WorkerRunOnceResult(
             processed=True,
             worker_id=worker_id,
+            reclaimed=reclaimed,
             queue_name=leased.queue_name,
             message_id=leased.message_id,
             task_id=leased.task.task_id,

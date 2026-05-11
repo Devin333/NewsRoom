@@ -144,6 +144,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run_once_parser.add_argument("--block-ms", type=int, default=1000, help="Redis read block time in milliseconds")
     run_once_parser.add_argument(
+        "--reclaim-stale-ms",
+        type=int,
+        default=None,
+        help="Claim pending tasks idle for at least this many milliseconds when no new task is available",
+    )
+    run_once_parser.add_argument(
         "--artifact-root",
         default=".newsroom/runs",
         help="Directory where run artifacts are written",
@@ -834,11 +840,16 @@ def _worker_enqueue_memory_reindex(args: argparse.Namespace) -> int:
 
 def _worker_run_once(args: argparse.Namespace) -> int:
     service = WorkerApplicationService(artifact_root=args.artifact_root, redis_url=args.redis_url)
-    result = service.run_once(
-        worker_id=args.worker_id,
-        queue_names=args.queue_names or [DEFAULT_DAILY_QUEUE],
-        block_ms=args.block_ms,
-    )
+    try:
+        result = service.run_once(
+            worker_id=args.worker_id,
+            queue_names=args.queue_names or [DEFAULT_DAILY_QUEUE],
+            block_ms=args.block_ms,
+            reclaim_stale_ms=args.reclaim_stale_ms,
+        )
+    except ValueError as exc:
+        print(str(exc))
+        return 1
     payload = result.to_dict()
 
     if args.json:
@@ -851,6 +862,7 @@ def _worker_run_once(args: argparse.Namespace) -> int:
             print(f"task_type={payload['task_type']}")
             print(f"queue_name={payload['queue_name']}")
             print(f"message_id={payload['message_id']}")
+            print(f"reclaimed={str(payload.get('reclaimed')).lower()}")
             print(f"success={str(payload['success']).lower()}")
             print(f"workflow_run_id={payload['workflow_run_id']}")
             if payload["error_message"]:

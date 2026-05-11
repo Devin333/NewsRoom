@@ -58,6 +58,7 @@ def test_news_cli_worker_enqueue_memory_reindex_json(monkeypatch, capsys) -> Non
 
 
 def test_news_cli_worker_run_once_json(monkeypatch, capsys) -> None:
+    _FakeWorkerService.run_once_calls = []
     monkeypatch.setattr(news_cli, "WorkerApplicationService", _FakeWorkerService)
 
     exit_code = news_cli.main(
@@ -79,6 +80,35 @@ def test_news_cli_worker_run_once_json(monkeypatch, capsys) -> None:
     assert payload["processed"] is True
     assert payload["task_id"] == "task-1"
     assert payload["workflow_run_id"] == "workflow-1"
+    assert payload["reclaimed"] is False
+    assert _FakeWorkerService.run_once_calls[-1]["reclaim_stale_ms"] is None
+
+
+def test_news_cli_worker_run_once_reclaim_stale_json(monkeypatch, capsys) -> None:
+    _FakeWorkerService.run_once_calls = []
+    monkeypatch.setattr(news_cli, "WorkerApplicationService", _FakeWorkerService)
+
+    exit_code = news_cli.main(
+        [
+            "worker",
+            "run-once",
+            "--worker-id",
+            "worker-1",
+            "--block-ms",
+            "10",
+            "--reclaim-stale-ms",
+            "60000",
+            "--json",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert exit_code == 0
+    assert payload["processed"] is True
+    assert payload["reclaimed"] is True
+    assert _FakeWorkerService.run_once_calls[-1]["reclaim_stale_ms"] == 60000
 
 
 def test_news_cli_worker_heartbeat_json(monkeypatch, capsys) -> None:
@@ -132,6 +162,8 @@ def test_news_cli_worker_status_json(monkeypatch, capsys) -> None:
 
 
 class _FakeWorkerService:
+    run_once_calls = []
+
     def __init__(self, *args, **kwargs) -> None:
         self.args = args
         self.kwargs = kwargs
@@ -167,7 +199,8 @@ class _FakeWorkerService:
         )
 
     def run_once(self, **kwargs):
-        return _FakeRunOnceResult()
+        self.__class__.run_once_calls.append(kwargs)
+        return _FakeRunOnceResult(reclaimed=kwargs.get("reclaim_stale_ms") is not None)
 
     def record_heartbeat(self, **kwargs):
         return _FakeResult(
@@ -225,10 +258,14 @@ class _FakeResult:
 class _FakeRunOnceResult:
     success = True
 
+    def __init__(self, *, reclaimed=False) -> None:
+        self.reclaimed = reclaimed
+
     def to_dict(self):
         return {
             "processed": True,
             "worker_id": "worker-1",
+            "reclaimed": self.reclaimed,
             "queue_name": "news:queue:daily",
             "message_id": "1-0",
             "task_id": "task-1",
