@@ -4,6 +4,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Iterable
 
 from core.framework.llm.capabilities import ModelCapabilities
+from core.framework.llm.cost import LLMBudgetExceededError, LLMBudgetGuard, LLMBudgetPolicy, ModelPricing
 from core.framework.llm.models import LLMClient, LLMRequest, LLMResponse
 from core.framework.llm.openai_compatible import LLMProviderError
 from core.framework.llm.redaction import redact_sensitive_values
@@ -16,6 +17,7 @@ class ModelDeployment:
     model: str
     client: LLMClient
     capabilities: ModelCapabilities = field(default_factory=ModelCapabilities)
+    pricing: ModelPricing | None = None
     enabled: bool = True
     metadata: dict[str, Any] | None = None
 
@@ -26,6 +28,7 @@ class ModelRoute:
     primary_deployment_id: str
     fallback_deployment_ids: tuple[str, ...] = ()
     required_capabilities: tuple[str, ...] = ()
+    budget_policy: LLMBudgetPolicy | None = None
     metadata: dict[str, Any] | None = None
 
     def deployment_chain(self) -> tuple[str, ...]:
@@ -147,12 +150,33 @@ class LLMRouter:
                     errors=errors,
                 ) from exc
 
+            try:
+                budget_check = _check_budget(route, deployment, response)
+            except LLMBudgetExceededError as exc:
+                errors.append(
+                    {
+                        "deployment_id": deployment_id,
+                        "error_type": "llm_budget_exceeded",
+                        "retryable": False,
+                        "budget_check": exc.check.to_dict(),
+                    }
+                )
+                raise LLMRouteError(
+                    f"LLM route {route.route_id} exceeded budget at deployment {deployment_id}",
+                    route_id=route.route_id,
+                    error_type="llm_budget_exceeded",
+                    retryable=False,
+                    attempted_deployments=attempted_deployments,
+                    errors=errors,
+                ) from exc
+
             return _with_routing_metadata(
                 response,
                 route_id=route.route_id,
                 deployment=deployment,
                 attempted_deployments=attempted_deployments,
                 fallback_used=index > 0,
+                budget_check=budget_check,
             )
 
         raise LLMRouteError(
@@ -201,6 +225,16 @@ def _provider_error_payload(deployment_id: str, error: LLMProviderError) -> dict
     return payload
 
 
+def _check_budget(
+    route: ModelRoute,
+    deployment: ModelDeployment,
+    response: LLMResponse,
+):
+    if route.budget_policy is None:
+        return None
+    return LLMBudgetGuard(route.budget_policy).check_call(response.usage, deployment.pricing)
+
+
 def _with_routing_metadata(
     response: LLMResponse,
     *,
@@ -208,6 +242,7 @@ def _with_routing_metadata(
     deployment: ModelDeployment,
     attempted_deployments: list[str],
     fallback_used: bool,
+    budget_check,
 ) -> LLMResponse:
     metadata = dict(response.metadata)
     metadata.update(
@@ -221,4 +256,7 @@ def _with_routing_metadata(
             "llm_attempted_deployments": list(attempted_deployments),
         }
     )
+    if budget_check is not None:
+        metadata["llm_estimated_cost_usd"] = budget_check.estimated_cost_usd
+        metadata["llm_budget_check"] = budget_check.to_dict()
     return replace(response, metadata=metadata)

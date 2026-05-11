@@ -6,9 +6,12 @@ from core.framework.llm import (
     LLMResponse,
     LLMRouteError,
     LLMRouter,
+    LLMBudgetPolicy,
     ModelCapabilities,
     ModelDeployment,
+    ModelPricing,
     ModelRoute,
+    TokenUsage,
 )
 
 
@@ -91,6 +94,100 @@ def test_llm_router_rejects_primary_missing_required_capability_before_calling()
     assert exc_info.value.error_type == "missing_required_capability"
     assert exc_info.value.attempted_deployments == ("primary",)
     assert exc_info.value.errors[0]["missing_capabilities"] == ["structured_output"]
+
+
+def test_llm_router_adds_cost_budget_metadata_when_policy_is_configured() -> None:
+    primary = StaticClient(
+        LLMResponse(content="primary", usage=TokenUsage(input_tokens=1_000, output_tokens=500))
+    )
+    router = LLMRouter(
+        routes=[
+            ModelRoute(
+                route_id="writer",
+                primary_deployment_id="primary",
+                budget_policy=LLMBudgetPolicy(max_cost_per_call_usd=0.01),
+            )
+        ],
+        deployments=[
+            ModelDeployment(
+                deployment_id="primary",
+                provider="test",
+                model="model-a",
+                client=primary,
+                pricing=ModelPricing(input_usd_per_1m_tokens=2.0, output_usd_per_1m_tokens=10.0),
+            )
+        ],
+    )
+
+    response = router.complete("writer", LLMRequest(messages=[{"role": "user", "content": "hi"}]))
+
+    assert response.metadata["llm_estimated_cost_usd"] == 0.007
+    assert response.metadata["llm_budget_check"]["within_budget"] is True
+    assert response.metadata["llm_budget_check"]["violations"] == []
+
+
+def test_llm_router_raises_route_error_for_fail_mode_budget_violation() -> None:
+    primary = StaticClient(
+        LLMResponse(content="primary", usage=TokenUsage(input_tokens=1_000, output_tokens=500))
+    )
+    router = LLMRouter(
+        routes=[
+            ModelRoute(
+                route_id="writer",
+                primary_deployment_id="primary",
+                budget_policy=LLMBudgetPolicy(max_cost_per_call_usd=0.001),
+            )
+        ],
+        deployments=[
+            ModelDeployment(
+                deployment_id="primary",
+                provider="test",
+                model="model-a",
+                client=primary,
+                pricing=ModelPricing(input_usd_per_1m_tokens=2.0, output_usd_per_1m_tokens=10.0),
+            )
+        ],
+    )
+
+    with pytest.raises(LLMRouteError) as exc_info:
+        router.complete("writer", LLMRequest(messages=[{"role": "user", "content": "hi"}]))
+
+    assert primary.call_count == 1
+    assert exc_info.value.error_type == "llm_budget_exceeded"
+    assert exc_info.value.errors[0]["budget_check"]["estimated_cost_usd"] == 0.007
+    assert exc_info.value.errors[0]["budget_check"]["violations"] == ["max_cost_per_call_usd"]
+
+
+def test_llm_router_returns_failed_budget_check_for_non_fail_policy() -> None:
+    primary = StaticClient(
+        LLMResponse(content="primary", usage=TokenUsage(input_tokens=1_000, output_tokens=500))
+    )
+    router = LLMRouter(
+        routes=[
+            ModelRoute(
+                route_id="writer",
+                primary_deployment_id="primary",
+                budget_policy=LLMBudgetPolicy(
+                    max_cost_per_call_usd=0.001,
+                    on_budget_exceeded="ask_approval",
+                ),
+            )
+        ],
+        deployments=[
+            ModelDeployment(
+                deployment_id="primary",
+                provider="test",
+                model="model-a",
+                client=primary,
+                pricing=ModelPricing(input_usd_per_1m_tokens=2.0, output_usd_per_1m_tokens=10.0),
+            )
+        ],
+    )
+
+    response = router.complete("writer", LLMRequest(messages=[{"role": "user", "content": "hi"}]))
+
+    assert response.metadata["llm_budget_check"]["within_budget"] is False
+    assert response.metadata["llm_budget_check"]["violations"] == ["max_cost_per_call_usd"]
 
 
 def test_llm_router_falls_back_only_after_retryable_provider_error() -> None:
