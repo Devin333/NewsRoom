@@ -527,6 +527,53 @@ def test_workflow_executor_records_routing_failure_artifacts(tmp_path) -> None:
     assert "workflow_failed" in events
 
 
+def test_workflow_executor_fails_when_step_visit_limit_is_exceeded(tmp_path) -> None:
+    calls = {"count": 0}
+    registry = FunctionStepRegistry()
+
+    def loop(buffer):
+        calls["count"] += 1
+        return {"counter": calls["count"]}
+
+    registry.register("sample.loop", loop)
+    spec = WorkflowSpec(
+        workflow_id="loop-limit",
+        name="Loop Limit",
+        version="1.0",
+        start_step_id="loop",
+        max_step_visits=2,
+        steps=[
+            StepSpec(
+                step_id="loop",
+                implementation="sample.loop",
+                write_keys=["counter"],
+                required_output_keys=["counter"],
+            )
+        ],
+        edges=[EdgeSpec(edge_id="loop-self", source_step_id="loop", target_step_id="loop")],
+    )
+    executor = WorkflowExecutor(
+        function_step_runner=FunctionStepRunner(registry),
+        artifact_manager=ArtifactManager(tmp_path),
+    )
+
+    result = executor.execute(spec, {"topic": "ai"}, profile="test", run_id="run-loop-limit")
+
+    assert result.status == WorkflowStatus.FAILED
+    assert calls["count"] == 2
+    assert result.error is not None
+    assert result.error.error_type == "WorkflowLoopLimitExceeded"
+    assert result.error.details == {"max_step_visits": 2, "visit_count": 3}
+    assert result.path == ["loop", "loop"]
+    assert (tmp_path / "run-loop-limit" / "error.json").exists()
+    events = [
+        json.loads(line)["event_type"]
+        for line in (tmp_path / "run-loop-limit" / "events.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert "workflow_loop_limit_exceeded" in events
+    assert events[-1] == "workflow_failed"
+
+
 def test_workflow_executor_dispatches_custom_step_runner(tmp_path) -> None:
     runner_registry = StepRunnerRegistry()
     runner_registry.register(StepType.ARTIFACT, _ArtifactMarkerRunner())

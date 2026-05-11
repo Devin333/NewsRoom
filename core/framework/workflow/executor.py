@@ -106,9 +106,37 @@ class WorkflowExecutor:
         path: list[str] = []
         step_results: dict[str, StepOutcome] = {}
         checkpoint_ids: list[str] = []
+        step_visit_counts: dict[str, int] = {}
         current_step_id: str | None = workflow.start_step_id
 
         while current_step_id:
+            visit_count = step_visit_counts.get(current_step_id, 0) + 1
+            step_visit_counts[current_step_id] = visit_count
+            if visit_count > workflow.max_step_visits:
+                status = WorkflowStatus.FAILED
+                error = WorkflowError(
+                    error_type="WorkflowLoopLimitExceeded",
+                    message=(
+                        f"step visit limit exceeded for {current_step_id}: "
+                        f"{workflow.max_step_visits}"
+                    ),
+                    step_id=current_step_id,
+                    details={
+                        "max_step_visits": workflow.max_step_visits,
+                        "visit_count": visit_count,
+                    },
+                )
+                recorder.emit(
+                    "workflow_loop_limit_exceeded",
+                    {
+                        "step_id": current_step_id,
+                        "max_step_visits": workflow.max_step_visits,
+                        "visit_count": visit_count,
+                    },
+                )
+                current_step_id = None
+                break
+
             step = workflow.step_by_id(current_step_id)
             path.append(step.step_id)
             outcome = self._run_step_with_retries(step, buffer, recorder)

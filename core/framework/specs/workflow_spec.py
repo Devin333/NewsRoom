@@ -187,6 +187,7 @@ class WorkflowSpec:
     terminal_step_ids: list[str] = field(default_factory=list)
     input_schema: dict[str, Any] = field(default_factory=dict)
     output_schema: dict[str, Any] = field(default_factory=dict)
+    max_step_visits: int = 100
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def validate(self) -> None:
@@ -196,6 +197,8 @@ class WorkflowSpec:
             raise WorkflowSpecError(f"version is required for workflow {self.workflow_id}")
         if not self.steps:
             raise WorkflowSpecError(f"workflow {self.workflow_id} must define at least one step")
+        if self.max_step_visits <= 0:
+            raise WorkflowSpecError("max_step_visits must be positive")
 
         step_ids = [step.step_id for step in self.steps]
         duplicate_ids = sorted({step_id for step_id in step_ids if step_ids.count(step_id) > 1})
@@ -282,6 +285,7 @@ class WorkflowSpec:
             "edges": [edge.to_dict() for edge in self.edges],
             "input_schema": dict(self.input_schema),
             "output_schema": dict(self.output_schema),
+            "max_step_visits": self.max_step_visits,
             "metadata": dict(self.metadata),
         }
 

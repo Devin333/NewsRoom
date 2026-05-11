@@ -29,6 +29,7 @@ def test_valid_workflow_spec_passes_validation() -> None:
 
     assert spec.step_by_id("finish").implementation == "sample.finish"
     assert spec.to_dict()["steps"][0]["step_type"] == "function"
+    assert spec.to_dict()["max_step_visits"] == 100
 
 
 def test_step_spec_serializes_retry_policy() -> None:
@@ -81,6 +82,20 @@ def test_retry_policy_rejects_negative_values() -> None:
 
     with pytest.raises(WorkflowSpecError, match="retry_delay_seconds"):
         RetryPolicySpec(retry_delay_seconds=[-1])
+
+
+def test_workflow_spec_rejects_non_positive_step_visit_limit() -> None:
+    spec = WorkflowSpec(
+        workflow_id="sample",
+        name="Sample",
+        version="1.0",
+        start_step_id="start",
+        max_step_visits=0,
+        steps=[StepSpec(step_id="start", implementation="sample.start")],
+    )
+
+    with pytest.raises(WorkflowSpecError, match="max_step_visits must be positive"):
+        spec.validate()
 
 
 def test_workflow_spec_rejects_missing_start_step() -> None:
