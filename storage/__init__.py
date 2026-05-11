@@ -10,6 +10,7 @@ from storage.artifacts import (
     LocalJsonArtifactIndexStore,
 )
 from storage.checkpoint import CheckpointNotFoundError, LocalJsonCheckpointStore, WorkflowCheckpoint
+from storage.conversation import AgentMessageRecord, ConversationNotFoundError, LocalJsonConversationStore
 from storage.events import EventRecord, LocalJsonEventStore
 from storage.lifecycle import (
     ArtifactRetentionPlanner,
@@ -27,13 +28,16 @@ __all__ = [
     "ArtifactRef",
     "ArtifactRetentionPlanner",
     "ArtifactWriteRequest",
+    "AgentMessageRecord",
     "CheckpointNotFoundError",
+    "ConversationNotFoundError",
     "EventRecord",
     "FilesystemArtifactStore",
     "LocalJsonArtifactIndexStore",
     "LocalJsonCheckpointStore",
     "LocalJsonEventStore",
     "LocalArtifactRetentionExecutor",
+    "LocalJsonConversationStore",
     "REDACTED_VALUE",
     "RedactionReport",
     "RedactionResult",

@@ -1,0 +1,138 @@
+from __future__ import annotations
+
+import json
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+from storage.conversation.models import AgentMessageRecord
+from storage.security import StorageRedactor
+
+
+class ConversationNotFoundError(FileNotFoundError):
+    pass
+
+
+class LocalJsonConversationStore:
+    def __init__(
+        self,
+        root: str | Path = ".newsroom/conversations",
+        *,
+        redactor: StorageRedactor | None = None,
+    ) -> None:
+        self.root = Path(root)
+        self.redactor = redactor or StorageRedactor()
+
+    def append_message(self, conversation_id: str, message: AgentMessageRecord) -> Path:
+        _validate_id(conversation_id, "conversation_id")
+        _validate_id(message.message_id, "message_id")
+        if message.conversation_id != conversation_id:
+            raise ValueError("message conversation_id does not match")
+        message = self._redacted_message(message)
+        path = self._messages_path(conversation_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(message.to_dict(), ensure_ascii=False, sort_keys=True))
+            handle.write("\n")
+        return path
+
+    def read_messages(self, conversation_id: str, limit: int | None = None) -> list[AgentMessageRecord]:
+        _validate_id(conversation_id, "conversation_id")
+        if limit is not None and limit <= 0:
+            raise ValueError("limit must be greater than zero")
+        path = self._messages_path(conversation_id)
+        if not path.exists():
+            return []
+        messages = _read_messages(path)
+        if limit is not None:
+            return messages[-limit:]
+        return messages
+
+    def write_summary(self, conversation_id: str, summary: str) -> Path:
+        _validate_id(conversation_id, "conversation_id")
+        redaction = self.redactor.redact(
+            summary,
+            run_id=conversation_id,
+            artifact_id="conversation_summary",
+        )
+        payload: dict[str, Any] = {
+            "conversation_id": conversation_id,
+            "summary": redaction.value,
+            "updated_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            "redacted": True,
+        }
+        if redaction.redacted:
+            payload["redaction_report"] = redaction.report.to_dict()
+        path = self._summary_path(conversation_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, indent=2, sort_keys=True)
+            handle.write("\n")
+        return path
+
+    def get_summary(self, conversation_id: str) -> str | None:
+        _validate_id(conversation_id, "conversation_id")
+        path = self._summary_path(conversation_id)
+        if not path.exists():
+            return None
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        return str(payload.get("summary") or "")
+
+    def _redacted_message(self, message: AgentMessageRecord) -> AgentMessageRecord:
+        content_redaction = self.redactor.redact(
+            message.content,
+            run_id=message.conversation_id,
+            artifact_id=message.message_id,
+        )
+        metadata_redaction = self.redactor.redact(
+            message.metadata,
+            run_id=message.conversation_id,
+            artifact_id=message.message_id,
+        )
+        metadata = dict(metadata_redaction.value)
+        reports = []
+        if content_redaction.redacted:
+            reports.append(content_redaction.report.to_dict())
+        if metadata_redaction.redacted:
+            reports.append(metadata_redaction.report.to_dict())
+        if reports:
+            metadata["redaction_reports"] = reports
+        return AgentMessageRecord(
+            message_id=message.message_id,
+            conversation_id=message.conversation_id,
+            role=message.role,
+            content=content_redaction.value,
+            created_at=message.created_at,
+            agent_id=message.agent_id,
+            run_id=message.run_id,
+            step_id=message.step_id,
+            redacted=True,
+            metadata=metadata,
+        )
+
+    def _messages_path(self, conversation_id: str) -> Path:
+        _validate_id(conversation_id, "conversation_id")
+        return self.root / conversation_id / "messages.jsonl"
+
+    def _summary_path(self, conversation_id: str) -> Path:
+        _validate_id(conversation_id, "conversation_id")
+        return self.root / conversation_id / "summary.json"
+
+
+def _read_messages(path: Path) -> list[AgentMessageRecord]:
+    messages = []
+    with path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            messages.append(AgentMessageRecord.from_dict(json.loads(stripped)))
+    return messages
+
+
+def _validate_id(value: str, label: str) -> None:
+    if not value:
+        raise ValueError(f"{label} is required")
+    relative = Path(value)
+    if relative.is_absolute() or ".." in relative.parts or len(relative.parts) != 1:
+        raise ValueError(f"invalid {label}: {value}")
