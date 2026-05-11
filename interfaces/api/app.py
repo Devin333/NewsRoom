@@ -173,6 +173,10 @@ def create_app(
     def diagnose():
         return _success(diagnostic_service_factory().run().to_dict())
 
+    @api.get("/api/v1/storage/metrics")
+    def storage_metrics():
+        return _success(storage_service_factory().metrics().to_dict())
+
     @api.get("/api/v1/sources")
     def list_sources(include_disabled: bool = False):
         return _success(source_service_factory().list_sources(enabled_only=not include_disabled).to_dict())
