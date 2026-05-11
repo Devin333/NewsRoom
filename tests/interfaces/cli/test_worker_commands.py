@@ -81,6 +81,56 @@ def test_news_cli_worker_run_once_json(monkeypatch, capsys) -> None:
     assert payload["workflow_run_id"] == "workflow-1"
 
 
+def test_news_cli_worker_heartbeat_json(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(news_cli, "WorkerApplicationService", _FakeWorkerService)
+
+    exit_code = news_cli.main(
+        [
+            "worker",
+            "heartbeat",
+            "--worker-id",
+            "worker-1",
+            "--queue-name",
+            "news:queue:daily",
+            "--current-task-id",
+            "task-1",
+            "--json",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert exit_code == 0
+    assert payload["worker"]["worker_id"] == "worker-1"
+    assert payload["worker"]["status"] == "running"
+    assert payload["worker"]["current_task_id"] == "task-1"
+
+
+def test_news_cli_worker_status_json(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(news_cli, "WorkerApplicationService", _FakeWorkerService)
+
+    exit_code = news_cli.main(
+        [
+            "worker",
+            "status",
+            "--worker-id",
+            "worker-1",
+            "--stale-after-seconds",
+            "30",
+            "--json",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert exit_code == 0
+    assert payload["worker_count"] == 1
+    assert payload["workers"][0]["worker_id"] == "worker-1"
+    assert payload["stale_after_seconds"] == 30
+
+
 class _FakeWorkerService:
     def __init__(self, *args, **kwargs) -> None:
         self.args = args
@@ -118,6 +168,50 @@ class _FakeWorkerService:
 
     def run_once(self, **kwargs):
         return _FakeRunOnceResult()
+
+    def record_heartbeat(self, **kwargs):
+        return _FakeResult(
+            {
+                "worker": {
+                    "worker_id": kwargs["worker_id"],
+                    "queue_names": kwargs["queue_names"],
+                    "status": kwargs["status"],
+                    "stored_status": kwargs["status"],
+                    "stale": False,
+                    "started_at": "2026-05-11T00:00:00Z",
+                    "last_heartbeat_at": "2026-05-11T00:00:00Z",
+                    "current_task_id": kwargs["current_task_id"],
+                    "processed_count": 0,
+                    "failed_count": 0,
+                    "metadata": {},
+                }
+            }
+        )
+
+    def list_worker_status(self, **kwargs):
+        return _FakeResult(
+            {
+                "worker_id": kwargs["worker_id"],
+                "worker_count": 1,
+                "unhealthy_count": 0,
+                "stale_after_seconds": kwargs["stale_after_seconds"],
+                "workers": [
+                    {
+                        "worker_id": "worker-1",
+                        "queue_names": ["news:queue:daily"],
+                        "status": "running",
+                        "stored_status": "running",
+                        "stale": False,
+                        "started_at": "2026-05-11T00:00:00Z",
+                        "last_heartbeat_at": "2026-05-11T00:00:00Z",
+                        "current_task_id": None,
+                        "processed_count": 1,
+                        "failed_count": 0,
+                        "metadata": {},
+                    }
+                ],
+            }
+        )
 
 
 class _FakeResult:

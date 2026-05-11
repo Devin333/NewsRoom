@@ -23,6 +23,7 @@ _EXPORT_MODULES = {
     "MemoryReindexTaskHandler": "core.framework.workers.handlers",
     "MisfirePolicy": "core.framework.workers.scheduler",
     "RedisStreamTaskQueue": "core.framework.workers.redis_queue",
+    "RedisWorkerRegistry": "core.framework.workers.heartbeat",
     "ScheduleEvaluation": "core.framework.workers.scheduler",
     "ScheduleNotFoundError": "core.framework.workers.schedule_store",
     "ScheduleRecord": "core.framework.workers.schedule_store",
@@ -35,7 +36,10 @@ _EXPORT_MODULES = {
     "TaskError": "core.framework.workers.models",
     "TaskResult": "core.framework.workers.models",
     "TaskStatus": "core.framework.workers.models",
+    "WorkerHeartbeat": "core.framework.workers.heartbeat",
+    "WorkerHeartbeatStatus": "core.framework.workers.heartbeat",
     "WorkerLoop": "core.framework.workers.worker_loop",
+    "WorkerStatus": "core.framework.workers.heartbeat",
 }
 
 __all__ = list(_EXPORT_MODULES)

@@ -1,4 +1,4 @@
-from core.framework.workers import LeasedTask, Task, TaskResult, TaskStatus
+from core.framework.workers import LeasedTask, Task, TaskResult, TaskStatus, WorkerStatus
 from interfaces.services.worker_service import DEFAULT_DAILY_QUEUE, DEFAULT_MEMORY_QUEUE, WorkerApplicationService
 
 
@@ -93,6 +93,54 @@ def test_worker_service_run_once_dead_letters_exhausted_task() -> None:
     assert queue.acked == [(DEFAULT_DAILY_QUEUE, "1-0")]
 
 
+def test_worker_service_records_and_lists_worker_status() -> None:
+    registry = _FakeWorkerRegistry()
+    service = WorkerApplicationService(queue=_FakeQueue(), worker_registry=registry, handlers={})
+
+    result = service.record_heartbeat(
+        worker_id="worker-1",
+        queue_names=[DEFAULT_DAILY_QUEUE],
+        status=WorkerStatus.RUNNING,
+        current_task_id="task-1",
+        now=_dt("2026-05-11T00:00:00Z"),
+    )
+
+    payload = result.to_dict()["worker"]
+    assert payload["worker_id"] == "worker-1"
+    assert payload["status"] == "running"
+    assert payload["current_task_id"] == "task-1"
+
+    status = service.list_worker_status(
+        stale_after_seconds=60,
+        now=_dt("2026-05-11T00:02:00Z"),
+    )
+
+    status_payload = status.to_dict()
+    assert status_payload["worker_count"] == 1
+    assert status_payload["unhealthy_count"] == 1
+    assert status_payload["workers"][0]["status"] == "unhealthy"
+    assert status_payload["workers"][0]["stored_status"] == "running"
+
+
+def test_worker_service_run_once_updates_worker_heartbeat_counters() -> None:
+    task = Task(task_type="daily_intelligence.run", payload={"topic": "AI"}, task_id="task-1")
+    queue = _FakeQueue(leased=LeasedTask(DEFAULT_DAILY_QUEUE, "1-0", task))
+    registry = _FakeWorkerRegistry()
+    handler = _FakeHandler(success=True)
+    service = WorkerApplicationService(
+        queue=queue,
+        worker_registry=registry,
+        handlers={handler.task_type: handler},
+    )
+
+    result = service.run_once(worker_id="worker-1", block_ms=10)
+
+    assert result.success is True
+    assert [record.current_task_id for record in registry.saved] == [None, "task-1", None]
+    assert registry.saved[-1].processed_count == 1
+    assert registry.saved[-1].failed_count == 0
+
+
 class _FakeQueue:
     def __init__(self, leased=None) -> None:
         self.leased = leased
@@ -114,6 +162,23 @@ class _FakeQueue:
         self.dead_letters.append((task, reason))
 
 
+class _FakeWorkerRegistry:
+    def __init__(self) -> None:
+        self.records = {}
+        self.saved = []
+
+    def save(self, worker):
+        self.records[worker.worker_id] = worker
+        self.saved.append(worker)
+        return worker
+
+    def get(self, worker_id):
+        return self.records.get(worker_id)
+
+    def list(self):
+        return list(self.records.values())
+
+
 class _FakeHandler:
     task_type = "daily_intelligence.run"
 
@@ -129,3 +194,9 @@ class _FakeHandler:
             error_type=None if self.success else "FakeFailure",
             error_message=None if self.success else "failed",
         )
+
+
+def _dt(value: str):
+    from datetime import UTC, datetime
+
+    return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(UTC)

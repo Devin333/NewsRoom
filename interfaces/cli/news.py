@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from typing import Sequence
 
 from core.framework.specs import WorkflowStatus
+from core.framework.workers import WorkerStatus
 from core.framework.workers.approval import ApprovalAlreadyDecidedError, ApprovalNotFoundError
 from core.framework.workers.schedule_store import ScheduleRecord
 from core.framework.workers.scheduler import ScheduleSpec
@@ -150,6 +151,44 @@ def build_parser() -> argparse.ArgumentParser:
     run_once_parser.add_argument("--redis-url", default=None, help="Redis URL; defaults to NEWS_REDIS_URL")
     run_once_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     run_once_parser.set_defaults(handler=_worker_run_once)
+
+    heartbeat_parser = worker_subparsers.add_parser(
+        "heartbeat",
+        help="Record a worker heartbeat",
+    )
+    heartbeat_parser.add_argument("--worker-id", required=True, help="Worker id")
+    heartbeat_parser.add_argument(
+        "--queue-name",
+        dest="queue_names",
+        action="append",
+        default=None,
+        help="Queue stream handled by the worker; can be passed multiple times",
+    )
+    heartbeat_parser.add_argument(
+        "--status",
+        choices=[status.value for status in WorkerStatus],
+        default=WorkerStatus.RUNNING.value,
+        help="Worker lifecycle status",
+    )
+    heartbeat_parser.add_argument("--current-task-id", default=None, help="Current task id, if any")
+    heartbeat_parser.add_argument("--redis-url", default=None, help="Redis URL; defaults to NEWS_REDIS_URL")
+    heartbeat_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    heartbeat_parser.set_defaults(handler=_worker_heartbeat)
+
+    worker_status_parser = worker_subparsers.add_parser(
+        "status",
+        help="Read worker heartbeat status",
+    )
+    worker_status_parser.add_argument("--worker-id", default=None, help="Filter to one worker id")
+    worker_status_parser.add_argument(
+        "--stale-after-seconds",
+        type=int,
+        default=60,
+        help="Mark workers unhealthy after this many seconds without heartbeat",
+    )
+    worker_status_parser.add_argument("--redis-url", default=None, help="Redis URL; defaults to NEWS_REDIS_URL")
+    worker_status_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    worker_status_parser.set_defaults(handler=_worker_status)
 
     schedules_parser = subparsers.add_parser("schedules", help="Manage background schedules")
     schedules_subparsers = schedules_parser.add_subparsers(dest="schedules_command", required=True)
@@ -817,6 +856,51 @@ def _worker_run_once(args: argparse.Namespace) -> int:
             if payload["error_message"]:
                 print(f"error={payload['error_message']}")
     return 0 if result.success is not False else 1
+
+
+def _worker_heartbeat(args: argparse.Namespace) -> int:
+    service = WorkerApplicationService(redis_url=args.redis_url)
+    result = service.record_heartbeat(
+        worker_id=args.worker_id,
+        queue_names=args.queue_names or [DEFAULT_DAILY_QUEUE],
+        status=args.status,
+        current_task_id=args.current_task_id,
+    )
+    payload = result.to_dict()
+
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        worker = payload["worker"]
+        print(f"worker_id={worker['worker_id']}")
+        print(f"status={worker['status']}")
+        print(f"stale={str(worker['stale']).lower()}")
+        print(f"last_heartbeat_at={worker['last_heartbeat_at']}")
+    return 0
+
+
+def _worker_status(args: argparse.Namespace) -> int:
+    try:
+        result = WorkerApplicationService(redis_url=args.redis_url).list_worker_status(
+            worker_id=args.worker_id,
+            stale_after_seconds=args.stale_after_seconds,
+        )
+    except ValueError as exc:
+        print(str(exc))
+        return 1
+    payload = result.to_dict()
+
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        print(f"worker_count={payload['worker_count']}")
+        print(f"unhealthy_count={payload['unhealthy_count']}")
+        for worker in payload["workers"]:
+            print(
+                f"- {worker['worker_id']} status={worker['status']} "
+                f"stale={str(worker['stale']).lower()} heartbeat={worker['last_heartbeat_at']}"
+            )
+    return 0
 
 
 def _schedules_list(args: argparse.Namespace) -> int:
