@@ -1,5 +1,5 @@
 """Source connector implementations."""
 
-from sources.connectors.feed import FeedConnector
+from sources.connectors.feed import FeedConnector, SourceFetchPolicy
 
-__all__ = ["FeedConnector"]
+__all__ = ["FeedConnector", "SourceFetchPolicy"]

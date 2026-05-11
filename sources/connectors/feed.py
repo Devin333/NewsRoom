@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from hashlib import sha256
@@ -13,14 +14,40 @@ from domain.sources import RawSourceItem, SourceDefinition, SourceError, SourceT
 FetchText = Callable[[str], str]
 
 
+@dataclass(frozen=True)
+class SourceFetchPolicy:
+    timeout_seconds: float = 15.0
+    max_bytes: int = 1_000_000
+    user_agent: str = "NewsRoom/0.1"
+
+    def __post_init__(self) -> None:
+        if self.timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be positive")
+        if self.max_bytes < 1:
+            raise ValueError("max_bytes must be at least 1")
+        if not self.user_agent:
+            raise ValueError("user_agent is required")
+
+
 class FeedConnector:
-    def __init__(self, fetch_text: FetchText | None = None) -> None:
+    def __init__(
+        self,
+        fetch_text: FetchText | None = None,
+        *,
+        fetch_policy: SourceFetchPolicy | None = None,
+    ) -> None:
+        self.fetch_policy = fetch_policy or SourceFetchPolicy()
         self._fetch_text = fetch_text or self._default_fetch_text
 
     def fetch(self, source: SourceDefinition, *, limit: int | None = None) -> tuple[list[RawSourceItem], list[SourceError]]:
         try:
             xml_text = self._fetch_text(source.url)
-            return self.parse(source, xml_text, limit=limit), []
+            if not xml_text.strip():
+                return [], [_source_error(source, "empty_source_response", "source returned an empty response")]
+            items = self.parse(source, xml_text, limit=limit)
+            if not items:
+                return [], [_source_error(source, "empty_feed", "feed contained no valid items")]
+            return items, []
         except Exception as exc:
             return [], [
                 SourceError(
@@ -98,9 +125,21 @@ class FeedConnector:
         return raw_items
 
     def _default_fetch_text(self, url: str) -> str:
-        request = Request(url, headers={"User-Agent": "NewsRoom/0.1"})
-        with urlopen(request, timeout=15) as response:
-            return response.read(1_000_000).decode("utf-8", errors="replace")
+        request = Request(url, headers={"User-Agent": self.fetch_policy.user_agent})
+        with urlopen(request, timeout=self.fetch_policy.timeout_seconds) as response:
+            body = response.read(self.fetch_policy.max_bytes + 1)
+        if len(body) > self.fetch_policy.max_bytes:
+            raise ValueError(f"source response exceeds max_bytes: {self.fetch_policy.max_bytes}")
+        return body.decode("utf-8", errors="replace")
+
+
+def _source_error(source: SourceDefinition, error_type: str, error_message: str) -> SourceError:
+    return SourceError(
+        source_id=source.source_id,
+        error_type=error_type,
+        error_message=error_message,
+        url=source.url,
+    )
 
 
 def _raw_item(
