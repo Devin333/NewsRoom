@@ -5,11 +5,13 @@ import os
 import re
 from contextvars import ContextVar
 from datetime import datetime
-from typing import Callable
+from typing import Any, Callable
 from uuid import uuid4
 
 from fastapi import FastAPI, Query, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from core.framework.workers.approval import ApprovalAlreadyDecidedError, ApprovalNotFoundError
 from core.framework.workers.schedule_store import ScheduleNotFoundError, ScheduleRecord
@@ -129,6 +131,25 @@ def create_app(
             _REQUEST_ID_CONTEXT.reset(context_token)
         response.headers[REQUEST_ID_HEADER] = request_id
         return response
+
+    @api.exception_handler(RequestValidationError)
+    async def validation_exception_handler(request: Request, exc: RequestValidationError):
+        return _error(
+            status_code=422,
+            code="invalid_request",
+            message="request validation failed",
+            details=_validation_error_details(exc.errors()),
+            user_action_required=True,
+        )
+
+    @api.exception_handler(StarletteHTTPException)
+    async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+        return _error(
+            status_code=exc.status_code,
+            code=_http_error_code(exc.status_code),
+            message=str(exc.detail or "HTTP error"),
+            headers=exc.headers,
+        )
 
     @api.get("/health")
     def health() -> dict:
@@ -651,6 +672,35 @@ def _optional_positive_int_env(name: str) -> int | None:
     if parsed <= 0:
         raise ValueError(f"{name} must be positive")
     return parsed
+
+
+def _validation_error_details(errors: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "errors": [
+            {
+                "loc": [str(part) for part in error.get("loc", [])],
+                "message": str(error.get("msg") or "invalid value"),
+                "type": str(error.get("type") or "validation_error"),
+            }
+            for error in errors
+        ]
+    }
+
+
+def _http_error_code(status_code: int) -> str:
+    if status_code == 401:
+        return "unauthorized"
+    if status_code == 403:
+        return "forbidden"
+    if status_code == 404:
+        return "not_found"
+    if status_code == 409:
+        return "conflict"
+    if status_code == 429:
+        return "rate_limited"
+    if status_code >= 500:
+        return "internal_error"
+    return "invalid_request"
 
 
 app = create_app(

@@ -114,6 +114,40 @@ def test_api_token_auth_allows_valid_bearer_token() -> None:
     assert payload["data"]["report_id"] == "report-1"
 
 
+def test_api_validation_errors_use_common_envelope() -> None:
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/api/v1/runs/daily",
+        json={"profile": "live-offline", "topic": "AI", "source_limit": 0},
+        headers={"X-Request-ID": "invalid-run"},
+    )
+    payload = response.json()
+
+    assert response.status_code == 422
+    assert response.headers["x-request-id"] == "invalid-run"
+    assert payload["success"] is False
+    assert payload["request_id"] == "invalid-run"
+    assert payload["error"]["code"] == "invalid_request"
+    assert payload["error"]["user_action_required"] is True
+    errors = payload["error"]["details"]["errors"]
+    assert errors[0]["loc"] == ["body", "source_limit"]
+    assert errors[0]["type"]
+
+
+def test_api_unknown_route_uses_common_envelope() -> None:
+    client = TestClient(create_app())
+
+    response = client.get("/api/v1/not-a-route", headers={"X-Request-ID": "missing-route"})
+    payload = response.json()
+
+    assert response.status_code == 404
+    assert response.headers["x-request-id"] == "missing-route"
+    assert payload["success"] is False
+    assert payload["request_id"] == "missing-route"
+    assert payload["error"]["code"] == "not_found"
+
+
 def test_submit_daily_run_enqueues_task() -> None:
     fake_worker = _FakeWorkerService()
     client = TestClient(create_app(worker_service_factory=lambda: fake_worker))
