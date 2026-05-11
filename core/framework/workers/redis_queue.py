@@ -1,9 +1,44 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from typing import Any
 
 from core.framework.workers.models import LeasedTask, Task, TaskStatus
+
+
+@dataclass(frozen=True)
+class RedisQueueConsumerStatus:
+    consumer_name: str
+    pending_count: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "consumer_name": self.consumer_name,
+            "pending_count": self.pending_count,
+        }
+
+
+@dataclass(frozen=True)
+class RedisQueueStatus:
+    queue_name: str
+    stream_length: int
+    group_name: str
+    group_exists: bool
+    pending_count: int = 0
+    consumers: list[RedisQueueConsumerStatus] | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        consumers = self.consumers or []
+        return {
+            "queue_name": self.queue_name,
+            "stream_length": self.stream_length,
+            "group_name": self.group_name,
+            "group_exists": self.group_exists,
+            "pending_count": self.pending_count,
+            "consumer_count": len(consumers),
+            "consumers": [consumer.to_dict() for consumer in consumers],
+        }
 
 
 class RedisStreamTaskQueue:
@@ -103,6 +138,39 @@ class RedisStreamTaskQueue:
         return self.redis.xadd(
             "news:queue:dead-letter",
             {"task": json.dumps(payload, ensure_ascii=False, sort_keys=True)},
+        )
+
+    def status(self, queue_names: list[str]) -> list[RedisQueueStatus]:
+        return [self._queue_status(queue_name) for queue_name in queue_names]
+
+    def _queue_status(self, queue_name: str) -> RedisQueueStatus:
+        stream_length = int(self.redis.xlen(queue_name) or 0)
+        try:
+            pending = self.redis.xpending(queue_name, self.group_name)
+        except Exception as exc:
+            if "NOGROUP" not in str(exc):
+                raise
+            return RedisQueueStatus(
+                queue_name=queue_name,
+                stream_length=stream_length,
+                group_name=self.group_name,
+                group_exists=False,
+            )
+
+        consumers = [
+            RedisQueueConsumerStatus(
+                consumer_name=str(_decode(_dict_value(consumer, "name"))),
+                pending_count=int(_dict_value(consumer, "pending") or 0),
+            )
+            for consumer in _dict_value(pending, "consumers") or []
+        ]
+        return RedisQueueStatus(
+            queue_name=queue_name,
+            stream_length=stream_length,
+            group_name=self.group_name,
+            group_exists=True,
+            pending_count=int(_dict_value(pending, "pending") or 0),
+            consumers=consumers,
         )
 
 

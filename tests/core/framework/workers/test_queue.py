@@ -81,6 +81,38 @@ def test_redis_stream_queue_reclaim_stale_one_skips_fresh_pending_payload() -> N
     assert redis.xclaim_calls == []
 
 
+def test_redis_stream_queue_status_reads_pending_summary() -> None:
+    redis = _FakeRedisStatus(
+        stream_length=3,
+        pending={
+            "pending": 2,
+            "consumers": [{"name": b"worker-1", "pending": 2}],
+        },
+    )
+    queue = RedisStreamTaskQueue(redis)
+
+    statuses = queue.status(["news:queue:daily"])
+
+    payload = statuses[0].to_dict()
+    assert payload["queue_name"] == "news:queue:daily"
+    assert payload["stream_length"] == 3
+    assert payload["group_exists"] is True
+    assert payload["pending_count"] == 2
+    assert payload["consumers"] == [{"consumer_name": "worker-1", "pending_count": 2}]
+
+
+def test_redis_stream_queue_status_reports_missing_group() -> None:
+    redis = _FakeRedisStatus(stream_length=1, pending_error=Exception("NOGROUP missing"))
+    queue = RedisStreamTaskQueue(redis)
+
+    statuses = queue.status(["news:queue:daily"])
+
+    payload = statuses[0].to_dict()
+    assert payload["stream_length"] == 1
+    assert payload["group_exists"] is False
+    assert payload["pending_count"] == 0
+
+
 class _FakeRedis:
     def __init__(self) -> None:
         self.xadd_calls = []
@@ -122,3 +154,22 @@ class _FakeRedisPending:
         self.xclaim_calls.append((stream, group, consumer, min_idle_ms, list(message_ids)))
         payload = json.dumps(self.task_payload).encode("utf-8")
         return [(b"1-0", {b"task": payload})]
+
+
+class _FakeRedisStatus:
+    def __init__(self, *, stream_length, pending=None, pending_error=None) -> None:
+        self.stream_length = stream_length
+        self.pending = pending or {"pending": 0, "consumers": []}
+        self.pending_error = pending_error
+        self.xlen_calls = []
+        self.xpending_calls = []
+
+    def xlen(self, stream):
+        self.xlen_calls.append(stream)
+        return self.stream_length
+
+    def xpending(self, stream, group):
+        self.xpending_calls.append((stream, group))
+        if self.pending_error:
+            raise self.pending_error
+        return self.pending

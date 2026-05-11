@@ -27,7 +27,12 @@ from interfaces.services.schedule_service import (
 )
 from interfaces.services.source_service import SourceApplicationService
 from interfaces.services.storage_service import StorageApplicationService
-from interfaces.services.worker_service import DEFAULT_DAILY_QUEUE, DEFAULT_MEMORY_QUEUE, WorkerApplicationService
+from interfaces.services.worker_service import (
+    DEFAULT_DAILY_QUEUE,
+    DEFAULT_DEAD_LETTER_QUEUE,
+    DEFAULT_MEMORY_QUEUE,
+    WorkerApplicationService,
+)
 from storage.lifecycle import RetentionPolicy
 
 
@@ -195,6 +200,21 @@ def build_parser() -> argparse.ArgumentParser:
     worker_status_parser.add_argument("--redis-url", default=None, help="Redis URL; defaults to NEWS_REDIS_URL")
     worker_status_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     worker_status_parser.set_defaults(handler=_worker_status)
+
+    worker_queues_parser = worker_subparsers.add_parser(
+        "queues",
+        help="Read Redis worker queue status",
+    )
+    worker_queues_parser.add_argument(
+        "--queue-name",
+        dest="queue_names",
+        action="append",
+        default=None,
+        help="Queue stream to inspect; can be passed multiple times",
+    )
+    worker_queues_parser.add_argument("--redis-url", default=None, help="Redis URL; defaults to NEWS_REDIS_URL")
+    worker_queues_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    worker_queues_parser.set_defaults(handler=_worker_queues)
 
     schedules_parser = subparsers.add_parser("schedules", help="Manage background schedules")
     schedules_subparsers = schedules_parser.add_subparsers(dest="schedules_command", required=True)
@@ -928,6 +948,27 @@ def _worker_status(args: argparse.Namespace) -> int:
             print(
                 f"- {worker['worker_id']} status={worker['status']} "
                 f"stale={str(worker['stale']).lower()} heartbeat={worker['last_heartbeat_at']}"
+            )
+    return 0
+
+
+def _worker_queues(args: argparse.Namespace) -> int:
+    result = WorkerApplicationService(redis_url=args.redis_url).queue_status(
+        queue_names=args.queue_names
+        or [DEFAULT_DAILY_QUEUE, DEFAULT_MEMORY_QUEUE, DEFAULT_DEAD_LETTER_QUEUE]
+    )
+    payload = result.to_dict()
+
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        print(f"queue_count={payload['queue_count']}")
+        print(f"total_stream_length={payload['total_stream_length']}")
+        print(f"total_pending_count={payload['total_pending_count']}")
+        for queue in payload["queues"]:
+            print(
+                f"- {queue['queue_name']} length={queue['stream_length']} "
+                f"pending={queue['pending_count']} group_exists={str(queue['group_exists']).lower()}"
             )
     return 0
 

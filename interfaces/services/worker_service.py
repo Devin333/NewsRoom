@@ -9,6 +9,7 @@ from typing import Any
 from core.framework.workers import (
     DailyIntelligenceTaskHandler,
     MemoryReindexTaskHandler,
+    RedisQueueStatus,
     RedisStreamTaskQueue,
     RedisWorkerRegistry,
     Task,
@@ -25,6 +26,7 @@ from interfaces.services.run_service import RunApplicationService
 DEFAULT_REDIS_URL = "redis://127.0.0.1:6379/0"
 DEFAULT_DAILY_QUEUE = "news:queue:daily"
 DEFAULT_MEMORY_QUEUE = "news:queue:memory"
+DEFAULT_DEAD_LETTER_QUEUE = "news:queue:dead-letter"
 
 
 @dataclass(frozen=True)
@@ -100,6 +102,20 @@ class WorkerStatusResult:
             "unhealthy_count": sum(1 for worker in self.workers if worker.status == WorkerStatus.UNHEALTHY),
             "stale_after_seconds": self.stale_after_seconds,
             "workers": worker_payloads,
+        }
+
+
+@dataclass(frozen=True)
+class WorkerQueueStatusResult:
+    queues: list[RedisQueueStatus]
+
+    def to_dict(self) -> dict[str, Any]:
+        queue_payloads = [queue.to_dict() for queue in self.queues]
+        return {
+            "queue_count": len(queue_payloads),
+            "total_stream_length": sum(queue["stream_length"] for queue in queue_payloads),
+            "total_pending_count": sum(queue["pending_count"] for queue in queue_payloads),
+            "queues": queue_payloads,
         }
 
 
@@ -293,6 +309,12 @@ class WorkerApplicationService:
                 for record in records
             ],
         )
+
+    def queue_status(self, *, queue_names: list[str] | None = None) -> WorkerQueueStatusResult:
+        queues = _unique_queue_names(
+            queue_names or [DEFAULT_DAILY_QUEUE, DEFAULT_MEMORY_QUEUE, DEFAULT_DEAD_LETTER_QUEUE]
+        )
+        return WorkerQueueStatusResult(queues=self.queue.status(queues))
 
     def _handle_leased_task(self, leased: LeasedTask) -> TaskResult:
         handler = self.handlers.get(leased.task.task_type)

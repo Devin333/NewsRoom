@@ -23,6 +23,8 @@ _EXPORT_MODULES = {
     "MemoryReindexTaskHandler": "core.framework.workers.handlers",
     "MisfirePolicy": "core.framework.workers.scheduler",
     "RedisStreamTaskQueue": "core.framework.workers.redis_queue",
+    "RedisQueueConsumerStatus": "core.framework.workers.redis_queue",
+    "RedisQueueStatus": "core.framework.workers.redis_queue",
     "RedisWorkerRegistry": "core.framework.workers.heartbeat",
     "ScheduleEvaluation": "core.framework.workers.scheduler",
     "ScheduleNotFoundError": "core.framework.workers.schedule_store",

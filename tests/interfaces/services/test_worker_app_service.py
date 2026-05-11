@@ -1,5 +1,10 @@
-from core.framework.workers import LeasedTask, Task, TaskResult, TaskStatus, WorkerStatus
-from interfaces.services.worker_service import DEFAULT_DAILY_QUEUE, DEFAULT_MEMORY_QUEUE, WorkerApplicationService
+from core.framework.workers import RedisQueueStatus, LeasedTask, Task, TaskResult, TaskStatus, WorkerStatus
+from interfaces.services.worker_service import (
+    DEFAULT_DAILY_QUEUE,
+    DEFAULT_DEAD_LETTER_QUEUE,
+    DEFAULT_MEMORY_QUEUE,
+    WorkerApplicationService,
+)
 
 
 def test_worker_service_enqueue_daily_uses_queue() -> None:
@@ -160,6 +165,18 @@ def test_worker_service_run_once_reclaims_stale_task_when_no_new_task() -> None:
     assert queue.acked == [(DEFAULT_DAILY_QUEUE, "1-0")]
 
 
+def test_worker_service_queue_status_uses_default_queues() -> None:
+    queue = _FakeQueue()
+    service = WorkerApplicationService(queue=queue, handlers={})
+
+    result = service.queue_status()
+
+    payload = result.to_dict()
+    assert queue.status_calls == [[DEFAULT_DAILY_QUEUE, DEFAULT_MEMORY_QUEUE, DEFAULT_DEAD_LETTER_QUEUE]]
+    assert payload["queue_count"] == 3
+    assert payload["total_stream_length"] == 0
+
+
 class _FakeQueue:
     def __init__(self, leased=None, reclaimed=None) -> None:
         self.leased = leased
@@ -168,6 +185,7 @@ class _FakeQueue:
         self.acked = []
         self.dead_letters = []
         self.reclaim_calls = []
+        self.status_calls = []
 
     def enqueue(self, task):
         self.enqueued.append(task)
@@ -185,6 +203,18 @@ class _FakeQueue:
 
     def move_to_dead_letter(self, task, reason):
         self.dead_letters.append((task, reason))
+
+    def status(self, queue_names):
+        self.status_calls.append(list(queue_names))
+        return [
+            RedisQueueStatus(
+                queue_name=queue_name,
+                stream_length=0,
+                group_name="news-workers",
+                group_exists=False,
+            )
+            for queue_name in queue_names
+        ]
 
 
 class _FakeWorkerRegistry:

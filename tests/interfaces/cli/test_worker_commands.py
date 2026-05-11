@@ -161,6 +161,28 @@ def test_news_cli_worker_status_json(monkeypatch, capsys) -> None:
     assert payload["stale_after_seconds"] == 30
 
 
+def test_news_cli_worker_queues_json(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(news_cli, "WorkerApplicationService", _FakeWorkerService)
+
+    exit_code = news_cli.main(
+        [
+            "worker",
+            "queues",
+            "--queue-name",
+            "news:queue:daily",
+            "--json",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert exit_code == 0
+    assert payload["queue_count"] == 1
+    assert payload["queues"][0]["queue_name"] == "news:queue:daily"
+    assert payload["queues"][0]["pending_count"] == 2
+
+
 class _FakeWorkerService:
     run_once_calls = []
 
@@ -242,6 +264,27 @@ class _FakeWorkerService:
                         "failed_count": 0,
                         "metadata": {},
                     }
+                ],
+            }
+        )
+
+    def queue_status(self, **kwargs):
+        return _FakeResult(
+            {
+                "queue_count": len(kwargs["queue_names"]),
+                "total_stream_length": 3,
+                "total_pending_count": 2,
+                "queues": [
+                    {
+                        "queue_name": queue_name,
+                        "stream_length": 3,
+                        "group_name": "news-workers",
+                        "group_exists": True,
+                        "pending_count": 2,
+                        "consumer_count": 1,
+                        "consumers": [{"consumer_name": "worker-1", "pending_count": 2}],
+                    }
+                    for queue_name in kwargs["queue_names"]
                 ],
             }
         )
