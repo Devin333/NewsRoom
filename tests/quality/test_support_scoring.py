@@ -46,7 +46,7 @@ def test_quality_scorer_penalizes_unsupported_and_duplicate_sections() -> None:
 
     assert summary.support_coverage == 0.5
     assert summary.duplicate_sections == ["B"]
-    assert summary.quality_score == 0.6
+    assert summary.quality_score == 0.2
 
 
 def test_editor_gate_blocks_unsupported_sections_even_when_citations_pass() -> None:
@@ -61,7 +61,8 @@ def test_editor_gate_blocks_unsupported_sections_even_when_citations_pass() -> N
 
     review = EditorGate().review(citation, matrix, summary)
 
-    assert citation.passed is True
+    assert citation.passed is False
     assert review.decision == EditorDecision.BLOCKED
-    assert review.quality_score == 0.6
+    assert review.quality_score == 0.2
+    assert "missing section sources: Unsupported" in review.reasons
     assert "unsupported section: Unsupported" in review.reasons

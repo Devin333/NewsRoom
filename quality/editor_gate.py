@@ -35,13 +35,21 @@ class EditorGate:
         quality_summary: ReportQualitySummary | None = None,
     ) -> EditorReview:
         reasons = []
-        if not citation_check.passed:
+        if citation_check.unknown_urls:
             reasons.extend(
                 [
                     "report cites URLs outside the evidence bundle",
                     *citation_check.unknown_urls,
                 ]
             )
+        if citation_check.missing_section_sources:
+            reasons.append("report sections missing source citations")
+            reasons.extend(
+                f"missing section sources: {section_title}"
+                for section_title in citation_check.missing_section_sources
+            )
+        if not citation_check.passed and not citation_check.unknown_urls and not citation_check.missing_section_sources:
+            reasons.append("citation check failed")
         if support_matrix and support_matrix.unsupported_sections:
             reasons.append("report sections lack evidence support")
             reasons.extend(
