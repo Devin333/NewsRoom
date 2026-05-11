@@ -129,6 +129,44 @@ def test_daily_intelligence_runner_live_prefers_structured_llm_output(tmp_path) 
     assert result.output["final_report"].title == "Structured Live Report"
 
 
+def test_daily_intelligence_runner_live_uses_topic_source_selection(tmp_path) -> None:
+    fetched_urls = []
+    registry = SourceRegistry(
+        [
+            SourceDefinition(
+                source_id="sports",
+                name="Sports",
+                source_type="rss",
+                url="https://example.com/sports.xml",
+                reliability="high",
+                topics=["sports"],
+            ),
+            SourceDefinition(
+                source_id="ai",
+                name="AI",
+                source_type="rss",
+                url="https://example.com/ai.xml",
+                reliability="medium",
+                topics=["ai", "policy"],
+            ),
+        ]
+    )
+
+    def fetch_text(url: str) -> str:
+        fetched_urls.append(url)
+        return RSS_FIXTURE
+
+    result = DailyIntelligenceRunner(
+        artifact_root=tmp_path,
+        source_registry=registry,
+        feed_connector=FeedConnector(fetch_text=fetch_text),
+        llm_client=_FakeReportLLM(),
+    ).run(profile="live", topic="AI policy", source_limit=1, run_id="daily-topic-selected")
+
+    assert result.status == WorkflowStatus.SUCCEEDED
+    assert fetched_urls == ["https://example.com/ai.xml"]
+
+
 def test_daily_intelligence_runner_records_partial_source_failures(tmp_path) -> None:
     registry = SourceRegistry(
         [

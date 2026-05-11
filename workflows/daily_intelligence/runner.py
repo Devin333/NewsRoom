@@ -94,7 +94,7 @@ class DailyIntelligenceRunner:
             }
 
         raw_items = []
-        enabled_sources = self.source_registry.list_sources()
+        enabled_sources = self.source_registry.select_sources(topic=request["topic"])
         metrics.sources_total = len(enabled_sources)
         for source in enabled_sources:
             remaining = max(0, limit - len(raw_items))
