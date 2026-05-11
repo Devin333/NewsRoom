@@ -51,6 +51,26 @@ class MCPPrompt:
 
 
 @dataclass(frozen=True)
+class MCPPromptGetResult:
+    name: str
+    success: bool
+    description: str | None = None
+    messages: list[dict[str, Any]] = field(default_factory=list)
+    error_type: str | None = None
+    error_message: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "success": self.success,
+            "description": self.description,
+            "messages": [dict(message) for message in self.messages],
+            "error_type": self.error_type,
+            "error_message": self.error_message,
+        }
+
+
+@dataclass(frozen=True)
 class MCPCatalog:
     tools: list[MCPTool]
     resources: list[MCPResource]

@@ -59,6 +59,29 @@ def test_news_cli_mcp_read_resource_json(monkeypatch, capsys) -> None:
     assert payload["data"]["source_count"] == 1
 
 
+def test_news_cli_mcp_get_prompt_json(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(news_cli, "MCPApplicationService", _FakeMCPService)
+
+    exit_code = news_cli.main(
+        [
+            "mcp",
+            "get-prompt",
+            "news.evidence_audit",
+            "--args-json",
+            "{\"run_id\": \"run-1\"}",
+            "--json",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert exit_code == 0
+    assert payload["name"] == "news.evidence_audit"
+    assert payload["success"] is True
+    assert "run-1" in payload["messages"][0]["content"]
+
+
 class _FakeMCPService:
     def catalog(self):
         return _FakeResult(
@@ -94,6 +117,23 @@ class _FakeMCPService:
                 "success": True,
                 "mime_type": "application/json",
                 "data": {"source_count": 1},
+                "error_type": None,
+                "error_message": None,
+            }
+        )
+
+    def get_prompt(self, name, arguments):
+        return _FakeResult(
+            {
+                "name": name,
+                "success": True,
+                "description": "Prompt",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": f"Audit {arguments.get('run_id')}",
+                    }
+                ],
                 "error_type": None,
                 "error_message": None,
             }

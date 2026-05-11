@@ -423,6 +423,12 @@ def build_parser() -> argparse.ArgumentParser:
     mcp_read_resource_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     mcp_read_resource_parser.set_defaults(handler=_mcp_read_resource)
 
+    mcp_get_prompt_parser = mcp_subparsers.add_parser("get-prompt", help="Get an MCP prompt locally")
+    mcp_get_prompt_parser.add_argument("prompt_name", help="MCP prompt name")
+    mcp_get_prompt_parser.add_argument("--args-json", default="{}", help="Prompt arguments as a JSON object")
+    mcp_get_prompt_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    mcp_get_prompt_parser.set_defaults(handler=_mcp_get_prompt)
+
     mcp_serve_parser = mcp_subparsers.add_parser("serve-stdio", help="Run MCP stdio adapter")
     mcp_serve_parser.set_defaults(handler=_mcp_serve_stdio)
 
@@ -1063,6 +1069,23 @@ def _mcp_read_resource(args: argparse.Namespace) -> int:
             print(f"error={payload['error_message']}")
         elif payload["data"] is not None:
             print(json.dumps(payload["data"], ensure_ascii=False, indent=2, sort_keys=True))
+    return 0 if result.success else 1
+
+
+def _mcp_get_prompt(args: argparse.Namespace) -> int:
+    arguments = _parse_json_object(args.args_json)
+    result = MCPApplicationService().get_prompt(args.prompt_name, arguments)
+    payload = result.to_dict()
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        print(f"name={payload['name']}")
+        print(f"success={str(payload['success']).lower()}")
+        if payload["error_message"]:
+            print(f"error={payload['error_message']}")
+        else:
+            for message in payload["messages"]:
+                print(f"[{message['role']}] {message['content']}")
     return 0 if result.success else 1
 
 

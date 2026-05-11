@@ -49,6 +49,24 @@ def test_stdio_handles_resource_read() -> None:
     assert response["result"]["data"]["source_count"] == 1
 
 
+def test_stdio_handles_prompt_get() -> None:
+    service = _FakeMCPService()
+
+    response = handle_jsonrpc_request(
+        {
+            "jsonrpc": "2.0",
+            "id": "prompt-1",
+            "method": "prompts/get",
+            "params": {"name": "news.evidence_audit", "arguments": {"run_id": "run-1"}},
+        },
+        service=service,
+    )
+
+    assert service.prompt_gets == [("news.evidence_audit", {"run_id": "run-1"})]
+    assert response["result"]["success"] is True
+    assert "run-1" in response["result"]["messages"][0]["content"]
+
+
 def test_stdio_unknown_method_returns_jsonrpc_error() -> None:
     response = handle_jsonrpc_request({"jsonrpc": "2.0", "id": 7, "method": "unknown"})
 
@@ -74,6 +92,7 @@ class _FakeMCPService:
     def __init__(self) -> None:
         self.calls = []
         self.resource_reads = []
+        self.prompt_gets = []
 
     def catalog(self):
         raise AssertionError("catalog should not be called")
@@ -85,6 +104,10 @@ class _FakeMCPService:
     def read_resource(self, uri):
         self.resource_reads.append(uri)
         return _FakeResourceResult(uri)
+
+    def get_prompt(self, name, arguments):
+        self.prompt_gets.append((name, arguments))
+        return _FakePromptResult(name, arguments)
 
 
 class _FakeToolResult:
@@ -111,6 +134,27 @@ class _FakeResourceResult:
             "success": True,
             "mime_type": "application/json",
             "data": {"source_count": 1},
+            "error_type": None,
+            "error_message": None,
+        }
+
+
+class _FakePromptResult:
+    def __init__(self, name, arguments) -> None:
+        self.name = name
+        self.arguments = arguments
+
+    def to_dict(self):
+        return {
+            "name": self.name,
+            "success": True,
+            "description": "Prompt",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": f"Audit {self.arguments.get('run_id')}",
+                }
+            ],
             "error_type": None,
             "error_message": None,
         }

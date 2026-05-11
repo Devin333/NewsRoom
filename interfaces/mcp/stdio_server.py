@@ -46,6 +46,15 @@ def handle_jsonrpc_request(
         if method == "prompts/list":
             catalog = service.catalog().to_dict()
             return _success(request_id, {"prompts": catalog["prompts"]})
+        if method == "prompts/get":
+            prompt_name = str(params.get("name") or "")
+            arguments = params.get("arguments") or {}
+            if not prompt_name:
+                return _error(request_id, -32602, "prompts/get name is required")
+            if not isinstance(arguments, dict):
+                return _error(request_id, -32602, "prompts/get arguments must be an object")
+            result = service.get_prompt(prompt_name, arguments)
+            return _success(request_id, result.to_dict())
         if method == "tools/call":
             tool_name = str(params.get("name") or "")
             arguments = params.get("arguments") or {}

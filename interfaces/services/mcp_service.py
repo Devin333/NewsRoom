@@ -6,6 +6,7 @@ from typing import Any, Callable
 from interfaces.mcp.models import (
     MCPCatalog,
     MCPPrompt,
+    MCPPromptGetResult,
     MCPResource,
     MCPResourceReadResult,
     MCPTool,
@@ -48,6 +49,36 @@ class MCPApplicationService:
 
     def catalog(self) -> MCPCatalog:
         return MCPCatalog(tools=_tools(), resources=_resources(), prompts=_prompts())
+
+    def get_prompt(self, name: str, arguments: dict[str, Any] | None = None) -> MCPPromptGetResult:
+        args = arguments or {}
+        try:
+            template = _prompt_templates().get(name)
+            if template is None:
+                return MCPPromptGetResult(
+                    name=name,
+                    success=False,
+                    error_type="MCPPromptNotFound",
+                    error_message=f"unknown MCP prompt: {name}",
+                )
+            return MCPPromptGetResult(
+                name=name,
+                success=True,
+                description=template["description"],
+                messages=[
+                    {
+                        "role": "user",
+                        "content": _render_prompt_text(str(template["text"]), args),
+                    }
+                ],
+            )
+        except Exception as exc:
+            return MCPPromptGetResult(
+                name=name,
+                success=False,
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+            )
 
     def read_resource(self, uri: str) -> MCPResourceReadResult:
         try:
@@ -541,7 +572,91 @@ def _prompts() -> list[MCPPrompt]:
             description="Diagnose source health and reliability issues.",
             arguments_schema={"type": "object", "properties": {"source_id": {"type": "string"}}},
         ),
+        MCPPrompt(
+            name="news.quality_gate_explain",
+            description="Explain quality gate decisions and remediation options.",
+            arguments_schema={
+                "type": "object",
+                "properties": {
+                    "run_id": {"type": "string"},
+                    "quality_gate_id": {"type": "string"},
+                },
+            },
+        ),
+        MCPPrompt(
+            name="news.trend_analysis_prompt",
+            description="Analyze trends across report or memory search context.",
+            arguments_schema={
+                "type": "object",
+                "properties": {
+                    "topic": {"type": "string"},
+                    "time_window": {"type": "string"},
+                },
+            },
+        ),
     ]
+
+
+def _prompt_templates() -> dict[str, dict[str, str]]:
+    return {
+        "news.daily_report_review": {
+            "description": "Review a generated daily report for evidence coverage and clarity.",
+            "text": (
+                "Review the daily intelligence report.\n"
+                "Report id: {report_id}\n"
+                "Check evidence coverage, citation clarity, unsupported claims, and rewrite risks. "
+                "Return concise findings and recommended fixes."
+            ),
+        },
+        "news.evidence_audit": {
+            "description": "Audit evidence lineage and citation support.",
+            "text": (
+                "Audit evidence lineage for run {run_id}.\n"
+                "Verify that report sections are supported by evidence items and cited source URLs. "
+                "Flag missing, weak, or stale evidence."
+            ),
+        },
+        "news.source_diagnose": {
+            "description": "Diagnose source health and reliability issues.",
+            "text": (
+                "Diagnose source health for source {source_id}.\n"
+                "Review recent failures, cooldown state, reliability, and remediation steps."
+            ),
+        },
+        "news.quality_gate_explain": {
+            "description": "Explain quality gate decisions and remediation options.",
+            "text": (
+                "Explain the quality gate result for run {run_id}.\n"
+                "Quality gate id: {quality_gate_id}\n"
+                "Summarize the decision, failed checks, and concrete remediation steps."
+            ),
+        },
+        "news.trend_analysis_prompt": {
+            "description": "Analyze trends across report or memory search context.",
+            "text": (
+                "Analyze trends for topic {topic} over {time_window}.\n"
+                "Compare recurring entities, policy shifts, evidence changes, and confidence limits. "
+                "Separate historical context from current facts."
+            ),
+        },
+    }
+
+
+def _render_prompt_text(template: str, arguments: dict[str, Any]) -> str:
+    values = {key: str(value) for key, value in arguments.items()}
+    for key in _prompt_placeholder_names(template):
+        values.setdefault(key, "<unspecified>")
+    return template.format(**values)
+
+
+def _prompt_placeholder_names(template: str) -> set[str]:
+    import string
+
+    return {
+        field_name
+        for _, field_name, _, _ in string.Formatter().parse(template)
+        if field_name
+    }
 
 
 def _to_dict(value: Any) -> dict[str, Any]:

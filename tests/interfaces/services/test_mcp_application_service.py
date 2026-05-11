@@ -29,7 +29,10 @@ def test_mcp_catalog_lists_tools_without_calling_factories() -> None:
     assert "news://reports/latest" in resource_uris
     assert "news://runs/{run_id}/manifest" in resource_uris
     assert "news://runs/{run_id}/events" in resource_uris
-    assert "news.evidence_audit" in [prompt["name"] for prompt in catalog["prompts"]]
+    prompt_names = [prompt["name"] for prompt in catalog["prompts"]]
+    assert "news.evidence_audit" in prompt_names
+    assert "news.quality_gate_explain" in prompt_names
+    assert "news.trend_analysis_prompt" in prompt_names
 
 
 def test_mcp_source_health_tool_calls_source_service() -> None:
@@ -39,6 +42,33 @@ def test_mcp_source_health_tool_calls_source_service() -> None:
 
     assert result.success is True
     assert result.to_dict()["data"]["health"][0]["source_id"] == "source-1"
+
+
+def test_mcp_get_prompt_renders_arguments() -> None:
+    service = MCPApplicationService()
+
+    result = service.get_prompt("news.evidence_audit", {"run_id": "run-1"})
+
+    assert result.success is True
+    payload = result.to_dict()
+    assert payload["name"] == "news.evidence_audit"
+    assert "run-1" in payload["messages"][0]["content"]
+
+
+def test_mcp_get_prompt_fills_missing_arguments() -> None:
+    service = MCPApplicationService()
+
+    result = service.get_prompt("news.source_diagnose", {})
+
+    assert result.success is True
+    assert "<unspecified>" in result.to_dict()["messages"][0]["content"]
+
+
+def test_mcp_unknown_prompt_fails_safely() -> None:
+    result = MCPApplicationService().get_prompt("news.unknown")
+
+    assert result.success is False
+    assert result.error_type == "MCPPromptNotFound"
 
 
 def test_mcp_unknown_tool_fails_safely() -> None:

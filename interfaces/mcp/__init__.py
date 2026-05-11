@@ -3,6 +3,7 @@
 from interfaces.mcp.models import (
     MCPCatalog,
     MCPPrompt,
+    MCPPromptGetResult,
     MCPResource,
     MCPResourceReadResult,
     MCPTool,
@@ -12,6 +13,7 @@ from interfaces.mcp.models import (
 __all__ = [
     "MCPCatalog",
     "MCPPrompt",
+    "MCPPromptGetResult",
     "MCPResource",
     "MCPResourceReadResult",
     "MCPTool",
