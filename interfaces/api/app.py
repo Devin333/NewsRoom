@@ -90,6 +90,27 @@ def create_app(
         )
         return _success(_model_to_dict(data))
 
+    @api.get("/api/v1/workers")
+    def list_workers(stale_after_seconds: int = 60):
+        try:
+            result = worker_service_factory().list_worker_status(
+                stale_after_seconds=stale_after_seconds
+            )
+        except ValueError as exc:
+            return _error(status_code=400, code="invalid_worker_status_request", message=str(exc))
+        return _success(result.to_dict())
+
+    @api.get("/api/v1/workers/{worker_id}")
+    def get_worker(worker_id: str, stale_after_seconds: int = 60):
+        try:
+            result = worker_service_factory().list_worker_status(
+                worker_id=worker_id,
+                stale_after_seconds=stale_after_seconds,
+            )
+        except ValueError as exc:
+            return _error(status_code=400, code="invalid_worker_status_request", message=str(exc))
+        return _success(result.to_dict())
+
     @api.get("/api/v1/reports/latest")
     def latest_report():
         try:
