@@ -1,4 +1,5 @@
 import json
+from datetime import UTC, datetime
 
 from interfaces.services.approval_service import ApprovalApplicationService
 from interfaces.services.artifact_service import ArtifactInspectionService
@@ -20,6 +21,7 @@ def test_mcp_catalog_lists_tools_without_calling_factories() -> None:
         approval_service_factory=_raising_factory,
         run_inspection_service_factory=_raising_factory,
         artifact_service_factory=_raising_factory,
+        storage_service_factory=_raising_factory,
     )
 
     catalog = service.catalog().to_dict()
@@ -35,6 +37,7 @@ def test_mcp_catalog_lists_tools_without_calling_factories() -> None:
     assert "news.run.lineage.upstream" in tool_names
     assert "news.run.lineage.downstream" in tool_names
     assert "news.storage.metrics" in tool_names
+    assert "news.storage.retention.plan" in tool_names
     assert "news.approval.submit" in tool_names
     assert "news://reports/latest" in resource_uris
     assert "news://reports/{report_id}" in resource_uris
@@ -46,6 +49,7 @@ def test_mcp_catalog_lists_tools_without_calling_factories() -> None:
     assert "news://runs/{run_id}/lineage/downstream/{source_type}/{source_id}" in resource_uris
     assert "news://runs/{run_id}/artifacts/{artifact_key}" in resource_uris
     assert "news://storage/metrics" in resource_uris
+    assert "news://storage/retention/plan" in resource_uris
     prompt_names = [prompt["name"] for prompt in catalog["prompts"]]
     assert "news.evidence_audit" in prompt_names
     assert "news.quality_gate_explain" in prompt_names
@@ -460,6 +464,57 @@ def test_mcp_reads_storage_metrics_resource_from_real_local_storage(tmp_path) ->
     assert result.data["metadata"]["source"] == "local_json"
 
 
+def test_mcp_storage_retention_plan_tool_reads_real_local_storage(tmp_path) -> None:
+    old_ref = _write_retention_artifacts(tmp_path)
+    service = MCPApplicationService(
+        storage_service_factory=lambda: StorageApplicationService(artifact_root=tmp_path)
+    )
+
+    result = service.call_tool(
+        "news.storage.retention.plan",
+        {
+            "run_id": "retention-run",
+            "raw_source_retention_days": 1,
+            "now": "2026-05-11T00:00:00Z",
+        },
+    )
+
+    assert result.success is True
+    assert result.data["run_id"] == "retention-run"
+    assert result.data["artifact_count"] == 2
+    assert result.data["delete_count"] == 1
+    assert result.data["plan"]["decisions"][0]["artifact_ref"]["artifact_id"] == "raw-old"
+    assert (tmp_path / old_ref.run_id / old_ref.path).exists()
+
+
+def test_mcp_reads_storage_retention_plan_resource_from_real_local_storage(tmp_path) -> None:
+    _write_retention_artifacts(tmp_path)
+    service = MCPApplicationService(
+        storage_service_factory=lambda: StorageApplicationService(artifact_root=tmp_path)
+    )
+
+    result = service.read_resource(
+        "news://storage/retention/plan?run_id=retention-run&raw_source_retention_days=1"
+        "&now=2026-05-11T00%3A00%3A00Z"
+    )
+
+    assert result.success is True
+    assert result.data["run_id"] == "retention-run"
+    assert result.data["delete_count"] == 1
+    assert result.data["keep_count"] == 1
+
+
+def test_mcp_storage_retention_plan_rejects_invalid_policy() -> None:
+    result = MCPApplicationService().call_tool(
+        "news.storage.retention.plan",
+        {"raw_source_retention_days": -1},
+    )
+
+    assert result.success is False
+    assert result.error_type == "ValueError"
+    assert "raw_source_retention_days" in result.error_message
+
+
 def test_mcp_reads_run_artifact_resource_from_local_artifact(tmp_path) -> None:
     run_dir = tmp_path / "run-6"
     run_dir.mkdir()
@@ -677,3 +732,32 @@ def _write_metric_artifacts(root) -> None:
         json.dumps({"run_id": "metrics-run", "artifacts": {"report_json": ref.path}}),
         encoding="utf-8",
     )
+
+
+def _write_retention_artifacts(root):
+    artifact_store = FilesystemArtifactStore(root)
+    artifact_index = LocalJsonArtifactIndexStore(root / "_records" / "artifact_index")
+    old_created_at = datetime(2020, 1, 1, tzinfo=UTC)
+    old_ref = artifact_store.write(
+        ArtifactWriteRequest(
+            run_id="retention-run",
+            artifact_id="raw-old",
+            artifact_type="source_item",
+            content="old source",
+            content_type="text/plain",
+            created_at=old_created_at,
+        )
+    )
+    report_ref = artifact_store.write(
+        ArtifactWriteRequest(
+            run_id="retention-run",
+            artifact_id="report-keep",
+            artifact_type="report_json",
+            content=b'{"title":"Keep"}',
+            content_type="application/json",
+            created_at=old_created_at,
+        )
+    )
+    artifact_index.index_artifact(old_ref)
+    artifact_index.index_artifact(report_ref)
+    return old_ref

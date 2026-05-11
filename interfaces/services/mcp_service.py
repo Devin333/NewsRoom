@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
+from datetime import UTC, datetime
 from typing import Any, Callable
-from urllib.parse import unquote
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from interfaces.mcp.models import (
     MCPCatalog,
@@ -13,6 +14,7 @@ from interfaces.mcp.models import (
     MCPTool,
     MCPToolCallResult,
 )
+from storage.lifecycle import RetentionPolicy
 
 
 DEFAULT_DAILY_QUEUE = "news:queue:daily"
@@ -38,7 +40,16 @@ RUN_LINEAGE_DOWNSTREAM_RESOURCE_MARKER = "/lineage/downstream/"
 RUN_ARTIFACT_RESOURCE_TEMPLATE = "news://runs/{run_id}/artifacts/{artifact_key}"
 RUN_ARTIFACT_RESOURCE_SEPARATOR = "/artifacts/"
 STORAGE_METRICS_RESOURCE_URI = "news://storage/metrics"
+STORAGE_RETENTION_PLAN_RESOURCE_URI = "news://storage/retention/plan"
 SOURCE_HEALTH_RESOURCE_URI = "news://sources/health"
+RETENTION_POLICY_ARG_NAMES = (
+    "raw_source_retention_days",
+    "llm_artifact_retention_days",
+    "run_artifact_retention_days",
+    "report_retention_days",
+    "evidence_retention_days",
+    "vector_retention_days",
+)
 
 
 class MCPApplicationService:
@@ -138,6 +149,9 @@ class MCPApplicationService:
                 return self._read_run_lineage_resource(uri, run_id)
             if uri == STORAGE_METRICS_RESOURCE_URI:
                 return self._read_storage_metrics_resource()
+            retention_plan_args = _storage_retention_plan_resource_args(uri)
+            if retention_plan_args is not None:
+                return self._read_storage_retention_plan_resource(uri, retention_plan_args)
             if uri == SOURCE_HEALTH_RESOURCE_URI:
                 return self._read_source_health_resource()
             return MCPResourceReadResult(
@@ -183,6 +197,8 @@ class MCPApplicationService:
                 return self._run_lineage_downstream(args)
             if tool_name == "news.storage.metrics":
                 return self._storage_metrics()
+            if tool_name == "news.storage.retention.plan":
+                return self._storage_retention_plan(args)
             if tool_name == "news.approval.submit":
                 return self._approval_submit(args)
             if tool_name == "news.approval.list":
@@ -349,6 +365,18 @@ class MCPApplicationService:
         result = self.storage_service_factory().metrics()
         return MCPToolCallResult(
             tool_name="news.storage.metrics",
+            success=True,
+            data=result.to_dict(),
+        )
+
+    def _storage_retention_plan(self, args: dict[str, Any]) -> MCPToolCallResult:
+        result = self.storage_service_factory().plan_retention(
+            policy=_retention_policy_from_args(args),
+            run_id=_optional_arg(args, "run_id"),
+            now=_optional_datetime_arg(args, "now"),
+        )
+        return MCPToolCallResult(
+            tool_name="news.storage.retention.plan",
             success=True,
             data=result.to_dict(),
         )
@@ -521,6 +549,22 @@ class MCPApplicationService:
             data=result.to_dict(),
         )
 
+    def _read_storage_retention_plan_resource(
+        self,
+        uri: str,
+        args: dict[str, Any],
+    ) -> MCPResourceReadResult:
+        result = self.storage_service_factory().plan_retention(
+            policy=_retention_policy_from_args(args),
+            run_id=_optional_arg(args, "run_id"),
+            now=_optional_datetime_arg(args, "now"),
+        )
+        return MCPResourceReadResult(
+            uri=uri,
+            success=True,
+            data=result.to_dict(),
+        )
+
     def _read_run_artifact_resource(
         self,
         uri: str,
@@ -687,6 +731,24 @@ def _tools() -> list[MCPTool]:
             input_schema={"type": "object", "properties": {}},
         ),
         MCPTool(
+            name="news.storage.retention.plan",
+            title="Plan storage retention",
+            description="Read a non-destructive storage retention plan through StorageApplicationService.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "run_id": {"type": "string"},
+                    "now": {"type": "string", "format": "date-time"},
+                    "raw_source_retention_days": {"type": "integer", "minimum": 0},
+                    "llm_artifact_retention_days": {"type": "integer", "minimum": 0},
+                    "run_artifact_retention_days": {"type": "integer", "minimum": 0},
+                    "report_retention_days": {"type": "integer", "minimum": 0},
+                    "evidence_retention_days": {"type": "integer", "minimum": 0},
+                    "vector_retention_days": {"type": "integer", "minimum": 0},
+                },
+            },
+        ),
+        MCPTool(
             name="news.approval.submit",
             title="Submit approval request",
             description="Submit a human approval request through ApprovalApplicationService.",
@@ -826,6 +888,11 @@ def _resources() -> list[MCPResource]:
             uri=STORAGE_METRICS_RESOURCE_URI,
             name="Storage Metrics",
             description="Local storage metrics.",
+        ),
+        MCPResource(
+            uri=STORAGE_RETENTION_PLAN_RESOURCE_URI,
+            name="Storage Retention Plan",
+            description="Read-only local storage retention plan.",
         ),
         MCPResource(
             uri=SOURCE_HEALTH_RESOURCE_URI,
@@ -1079,6 +1146,14 @@ def _run_artifact_resource_ids(uri: str) -> tuple[str, str] | None:
     return run_id, artifact_key
 
 
+def _storage_retention_plan_resource_args(uri: str) -> dict[str, Any] | None:
+    parsed = urlsplit(uri)
+    base_uri = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+    if base_uri != STORAGE_RETENTION_PLAN_RESOURCE_URI:
+        return None
+    return {key: values[-1] for key, values in parse_qs(parsed.query).items() if values}
+
+
 def _approval_id(args: dict[str, Any]) -> str:
     approval_id = str(args.get("approval_id") or "")
     if not approval_id:
@@ -1091,6 +1166,36 @@ def _required_arg(args: dict[str, Any], name: str) -> str:
     if not value:
         raise ValueError(f"{name} is required")
     return value
+
+
+def _optional_arg(args: dict[str, Any], name: str) -> str | None:
+    value = args.get(name)
+    if value is None or value == "":
+        return None
+    return str(value)
+
+
+def _retention_policy_from_args(args: dict[str, Any]) -> RetentionPolicy | None:
+    values = {
+        name: int(args[name])
+        for name in RETENTION_POLICY_ARG_NAMES
+        if name in args and args[name] is not None and args[name] != ""
+    }
+    if not values:
+        return None
+    return RetentionPolicy.from_dict(values)
+
+
+def _optional_datetime_arg(args: dict[str, Any], name: str) -> datetime | None:
+    value = args.get(name)
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        return value
+    parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def _decided_by(args: dict[str, Any]) -> str:

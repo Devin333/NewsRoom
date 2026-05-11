@@ -103,6 +103,24 @@ def test_stdio_handles_storage_metrics_resource_read() -> None:
     assert response["result"]["data"]["runs_count"] == 1
 
 
+def test_stdio_handles_storage_retention_plan_resource_read() -> None:
+    service = _FakeMCPService()
+
+    response = handle_jsonrpc_request(
+        {
+            "jsonrpc": "2.0",
+            "id": "read-retention",
+            "method": "resources/read",
+            "params": {"uri": "news://storage/retention/plan"},
+        },
+        service=service,
+    )
+
+    assert service.resource_reads == ["news://storage/retention/plan"]
+    assert response["result"]["success"] is True
+    assert response["result"]["data"]["delete_count"] == 1
+
+
 def test_stdio_handles_prompt_get() -> None:
     service = _FakeMCPService()
 
@@ -221,4 +239,6 @@ def _resource_payload(uri):
         return {"run_id": "run-1", "lineage_count": 1, "lineage_refs": []}
     if uri == "news://storage/metrics":
         return {"runs_count": 1, "artifacts_count": 2}
+    if uri == "news://storage/retention/plan":
+        return {"artifact_count": 2, "delete_count": 1, "keep_count": 1}
     return {"source_count": 1}
