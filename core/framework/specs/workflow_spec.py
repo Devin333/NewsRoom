@@ -21,6 +21,7 @@ class EdgeCondition(str, Enum):
     ALWAYS = "always"
     ON_SUCCESS = "on_success"
     ON_FAILURE = "on_failure"
+    CONDITIONAL = "conditional"
 
 
 class StepStatus(str, Enum):
@@ -198,6 +199,10 @@ class WorkflowSpec:
             if edge.target_step_id not in step_id_set:
                 raise WorkflowSpecError(
                     f"edge {edge.edge_id} references missing target step {edge.target_step_id}"
+                )
+            if edge.condition == EdgeCondition.CONDITIONAL and not edge.condition_expr:
+                raise WorkflowSpecError(
+                    f"conditional edge {edge.edge_id} requires condition_expr"
                 )
 
     def step_by_id(self, step_id: str) -> StepSpec:

@@ -99,9 +99,25 @@ class WorkflowExecutor:
                     "step_succeeded",
                     {"step_id": step.step_id, "outputs": sorted(outcome.outputs.keys())},
                 )
-                current_step_id = self._routing_engine.next_step(workflow, step, outcome)
-                if current_step_id is None:
-                    status = WorkflowStatus.SUCCEEDED
+                try:
+                    current_step_id = self._routing_engine.next_step(
+                        workflow,
+                        step,
+                        outcome,
+                        buffer=buffer,
+                    )
+                except Exception as exc:
+                    status = WorkflowStatus.FAILED
+                    error = WorkflowError(
+                        error_type=type(exc).__name__,
+                        message=str(exc),
+                        step_id=step.step_id,
+                        details={"phase": "routing"},
+                    )
+                    current_step_id = None
+                else:
+                    if current_step_id is None:
+                        status = WorkflowStatus.SUCCEEDED
             else:
                 recorder.emit("step_failed", {"step_id": step.step_id, "outcome": outcome})
                 status = WorkflowStatus.FAILED

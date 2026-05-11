@@ -1,6 +1,7 @@
 import pytest
 
 from core.framework.specs import (
+    EdgeCondition,
     EdgeSpec,
     RetryPolicySpec,
     StepSpec,
@@ -100,4 +101,28 @@ def test_workflow_spec_rejects_missing_edge_endpoint() -> None:
     )
 
     with pytest.raises(WorkflowSpecError, match="missing target step"):
+        spec.validate()
+
+
+def test_workflow_spec_rejects_conditional_edge_without_expression() -> None:
+    spec = WorkflowSpec(
+        workflow_id="sample",
+        name="Sample",
+        version="1.0",
+        start_step_id="start",
+        steps=[
+            StepSpec(step_id="start", implementation="sample.start"),
+            StepSpec(step_id="finish", implementation="sample.finish"),
+        ],
+        edges=[
+            EdgeSpec(
+                edge_id="conditional",
+                source_step_id="start",
+                target_step_id="finish",
+                condition=EdgeCondition.CONDITIONAL,
+            )
+        ],
+    )
+
+    with pytest.raises(WorkflowSpecError, match="requires condition_expr"):
         spec.validate()

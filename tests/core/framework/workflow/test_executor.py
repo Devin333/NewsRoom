@@ -1,7 +1,14 @@
 import json
 
 from core.framework.artifacts import ArtifactManager
-from core.framework.specs import EdgeSpec, RetryPolicySpec, StepSpec, WorkflowSpec, WorkflowStatus
+from core.framework.specs import (
+    EdgeCondition,
+    EdgeSpec,
+    RetryPolicySpec,
+    StepSpec,
+    WorkflowSpec,
+    WorkflowStatus,
+)
 from core.framework.workflow import FunctionStepRegistry, FunctionStepRunner, WorkflowExecutor
 
 
@@ -249,3 +256,54 @@ def test_workflow_executor_fails_after_retry_exhaustion(tmp_path) -> None:
         for line in (tmp_path / "run-exhausted" / "events.jsonl").read_text(encoding="utf-8").splitlines()
     ]
     assert events.count("step_retry_scheduled") == 2
+
+
+def test_workflow_executor_records_routing_failure_artifacts(tmp_path) -> None:
+    registry = FunctionStepRegistry()
+    registry.register("sample.decide", lambda buffer: {"decision": "publish"})
+    registry.register("sample.publish", lambda buffer: {"report": "published"})
+    spec = WorkflowSpec(
+        workflow_id="routing-failure",
+        name="Routing Failure",
+        version="1.0",
+        start_step_id="decide",
+        steps=[
+            StepSpec(
+                step_id="decide",
+                implementation="sample.decide",
+                write_keys=["decision"],
+                required_output_keys=["decision"],
+            ),
+            StepSpec(
+                step_id="publish",
+                implementation="sample.publish",
+                write_keys=["report"],
+                required_output_keys=["report"],
+            ),
+        ],
+        edges=[
+            EdgeSpec(
+                edge_id="unsafe-route",
+                source_step_id="decide",
+                target_step_id="publish",
+                condition=EdgeCondition.CONDITIONAL,
+                condition_expr='__import__("os").system("echo unsafe")',
+            )
+        ],
+    )
+    executor = WorkflowExecutor(
+        function_step_runner=FunctionStepRunner(registry),
+        artifact_manager=ArtifactManager(tmp_path),
+    )
+
+    result = executor.execute(spec, {"topic": "ai"}, profile="test", run_id="run-routing-failed")
+
+    assert result.status == WorkflowStatus.FAILED
+    assert result.error is not None
+    assert result.error.step_id == "decide"
+    assert result.error.details == {"phase": "routing"}
+    assert result.error.error_type == "ConditionalExpressionError"
+    assert (tmp_path / "run-routing-failed" / "error.json").exists()
+    events = (tmp_path / "run-routing-failed" / "events.jsonl").read_text(encoding="utf-8")
+    assert "step_succeeded" in events
+    assert "workflow_failed" in events
