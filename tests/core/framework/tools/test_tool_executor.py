@@ -45,6 +45,15 @@ def test_tool_executor_runs_allowed_tool_and_returns_observation() -> None:
     assert observation.call.call_id == "call-1"
     assert observation.result.output["matches"][0]["title"] == "chip exports"
     assert observation.elapsed_ms >= 0
+    assert [event.event_type for event in executor.list_events()] == [
+        "tool_call_requested",
+        "tool_args_validated",
+        "tool_started",
+        "tool_succeeded",
+        "tool_observation_created",
+    ]
+    assert executor.metrics.to_dict()["succeeded_calls"] == 1
+    assert executor.metrics.to_dict()["calls_by_tool"] == {"memory.search": 1}
 
 
 def test_tool_executor_blocks_disallowed_tool() -> None:
@@ -269,6 +278,14 @@ def test_tool_executor_fails_missing_required_arguments() -> None:
     assert observation.status == ToolStatus.FAILED
     assert observation.result.error_type == "ToolRuntimeError"
     assert "missing required arguments" in (observation.result.error_message or "")
+    metrics = executor.metrics.to_dict()
+    assert metrics["failed_calls"] == 1
+    assert metrics["failures_by_error_type"] == {"ToolRuntimeError": 1}
+    assert [event.event_type for event in executor.list_events()] == [
+        "tool_call_requested",
+        "tool_failed",
+        "tool_observation_created",
+    ]
 
 
 def test_tool_executor_rejects_invalid_argument_type_before_invocation() -> None:
@@ -488,6 +505,8 @@ def test_tool_executor_spills_large_redacted_result_to_artifact(tmp_path) -> Non
     assert artifact_payload["call"]["call_id"] == "call-large"
     assert artifact_payload["output"]["token"] == REDACTED_VALUE
     assert "hidden-token" not in artifact_path.read_text(encoding="utf-8")
+    assert "tool_result_spilled" in [event.event_type for event in executor.list_events()]
+    assert executor.metrics.to_dict()["spilled_result_count"] == 1
 
 
 def test_tool_executor_keeps_large_result_inline_without_artifact_context() -> None:

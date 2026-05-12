@@ -23,6 +23,7 @@ from core.framework.tools.models import (
 )
 from core.framework.tools.redaction import redact_sensitive_values
 from core.framework.tools.registry import ToolRegistry
+from core.framework.tools.telemetry import ToolEvent, ToolMetrics
 from core.framework.tools.validation import validate_tool_arguments
 
 
@@ -37,6 +38,15 @@ class ToolExecutor:
         self._registry = registry
         self._artifact_manager = artifact_manager
         self._run_id = run_id
+        self._events: list[ToolEvent] = []
+        self._metrics = ToolMetrics()
+
+    @property
+    def metrics(self) -> ToolMetrics:
+        return self._metrics.snapshot()
+
+    def list_events(self) -> list[ToolEvent]:
+        return list(self._events)
 
     def execute(self, call: ToolCall, policy: ToolPolicy) -> ToolObservation:
         def invoke() -> ToolResult:
@@ -52,7 +62,9 @@ class ToolExecutor:
                 return safety_result
 
             validate_tool_arguments(registered.definition, call.arguments)
+            self._emit("tool_args_validated", call)
 
+            self._emit("tool_started", call)
             raw_output = _invoke_with_retry(
                 registered.executor,
                 call.arguments,
@@ -63,6 +75,7 @@ class ToolExecutor:
             safe_output = redact_sensitive_values(raw_output)
             return self._tool_result(call, safe_output, policy)
 
+        self._emit("tool_call_requested", call, {"call": call.to_dict()})
         try:
             result, elapsed_ms = timed_tool_call(invoke)
         except ToolPermissionError as exc:
@@ -87,7 +100,9 @@ class ToolExecutor:
             )
             elapsed_ms = 0.0
 
-        return ToolObservation(call=call, result=result, elapsed_ms=elapsed_ms)
+        observation = ToolObservation(call=call, result=result, elapsed_ms=elapsed_ms)
+        self._record_observation(observation)
+        return observation
 
     def _tool_result(
         self,
@@ -126,6 +141,48 @@ class ToolExecutor:
             output=safe_output,
             output_bytes=output_bytes,
         )
+
+    def _record_observation(self, observation: ToolObservation) -> None:
+        self._metrics.record(observation)
+        if observation.status == ToolStatus.SUCCEEDED:
+            self._emit("tool_succeeded", observation.call, _result_event_payload(observation))
+            if observation.result.artifact_refs:
+                self._emit("tool_result_spilled", observation.call, _result_event_payload(observation))
+        elif observation.status == ToolStatus.FAILED:
+            self._emit("tool_failed", observation.call, _result_event_payload(observation))
+        elif observation.status == ToolStatus.BLOCKED:
+            self._emit("tool_call_blocked", observation.call, _result_event_payload(observation))
+        elif observation.status == ToolStatus.APPROVAL_REQUIRED:
+            self._emit("tool_approval_required", observation.call, _result_event_payload(observation))
+        elif observation.status == ToolStatus.TIMEOUT:
+            self._emit("tool_timeout", observation.call, _result_event_payload(observation))
+        self._emit("tool_observation_created", observation.call, observation.to_dict())
+
+    def _emit(
+        self,
+        event_type: str,
+        call: ToolCall,
+        payload: dict[str, Any] | None = None,
+    ) -> ToolEvent:
+        event = ToolEvent(
+            event_type=event_type,
+            tool_name=call.tool_name,
+            tool_call_id=call.call_id,
+            payload=payload or {},
+        )
+        self._events.append(event)
+        return event
+
+
+def _result_event_payload(observation: ToolObservation) -> dict[str, Any]:
+    return {
+        "status": observation.status.value,
+        "elapsed_ms": observation.elapsed_ms,
+        "error_type": observation.result.error_type,
+        "error_message": observation.result.error_message,
+        "output_bytes": observation.result.output_bytes,
+        "artifact_refs": [artifact_ref.to_dict() for artifact_ref in observation.result.artifact_refs],
+    }
 
 
 def _safety_gate(definition: Any, policy: ToolPolicy) -> ToolResult | None:
