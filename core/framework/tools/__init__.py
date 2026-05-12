@@ -21,6 +21,7 @@ from core.framework.tools.models import (
 from core.framework.tools.registry import RegisteredTool, ToolRegistry
 from core.framework.tools.redaction import REDACTED_VALUE, redact_sensitive_values
 from core.framework.tools.report_tools import register_report_tools
+from core.framework.tools.source_tools import register_source_tools
 from core.framework.tools.telemetry import ToolEvent, ToolMetrics
 from core.framework.tools.testing import ToolTestCase, ToolTestReport, ToolTestRunner
 from core.framework.tools.validation import validate_tool_arguments
@@ -52,5 +53,6 @@ __all__ = [
     "redact_sensitive_values",
     "register_artifact_tools",
     "register_report_tools",
+    "register_source_tools",
     "validate_tool_arguments",
 ]
