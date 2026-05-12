@@ -593,6 +593,17 @@ def test_daily_intelligence_runner_records_partial_source_failures(tmp_path) -> 
     assert source_fetch_results[0]["success"] is False
     assert source_fetch_results[0]["error_type"] == "fetch_connection_error"
     assert source_fetch_results[1]["success"] is True
+    assert result.output["source_errors"][0].metadata["request_id"] == source_fetch_requests[0]["request_id"]
+    assert result.output["failed_sources"][0]["metadata"]["request_id"] == source_fetch_requests[0]["request_id"]
+    assert error_entry["request_id"] == source_fetch_requests[0]["request_id"]
+    assert error_entry["request_ref"]["artifact_type"] == "source_fetch_request"
+    assert error_entry["request_ref"]["artifact_id"] == "source-fetch-request-failing-source-fetch-0001-failing"
+    assert error_entry["response_ref"]["artifact_type"] == "source_fetch_result"
+    assert error_entry["response_ref"]["artifact_id"] == "source-fetch-result-failing-source-fetch-0001-failing"
+    assert error_payload["request_ref"] == error_entry["request_ref"]
+    assert error_payload["response_ref"] == error_entry["response_ref"]
+    assert error_payload["error"]["request_ref"] == error_entry["request_ref"]
+    assert error_payload["error"]["response_ref"] == error_entry["response_ref"]
     fetch_result_artifacts = [
         entry for entry in source_artifacts["entries"] if entry["artifact_type"] == "source_fetch_result"
     ]
@@ -771,6 +782,20 @@ def test_daily_intelligence_runner_all_sources_failed_preserves_diagnostics(tmp_
     assert source_artifacts["error_count"] == 2
     assert source_artifacts["fetch_request_count"] == 1
     assert source_artifacts["fetch_result_count"] == 1
+    failing_error_entry = next(
+        entry
+        for entry in source_artifacts["entries"]
+        if entry["artifact_type"] == "source_error" and entry["source_id"] == "failing"
+    )
+    assert failing_error_entry["request_ref"]["artifact_type"] == "source_fetch_request"
+    assert failing_error_entry["response_ref"]["artifact_type"] == "source_fetch_result"
+    aggregate_error_entry = next(
+        entry
+        for entry in source_artifacts["entries"]
+        if entry["artifact_type"] == "source_error" and entry["source_id"] == "source_pipeline"
+    )
+    assert "request_ref" not in aggregate_error_entry
+    assert "response_ref" not in aggregate_error_entry
 
 
 def test_daily_intelligence_runner_skips_cooling_source(tmp_path) -> None:

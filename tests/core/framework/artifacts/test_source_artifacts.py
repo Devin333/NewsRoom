@@ -128,4 +128,10 @@ def test_source_artifact_writer_writes_items_errors_and_redacts(tmp_path) -> Non
     assert error_payload["error"]["error_type"] == "fetch_timeout"
     assert error_payload["error"]["source_name"] == "Feed Source"
     assert error_payload["error"]["retryable"] is True
+    assert error_payload["request_ref"] == fetch_request_entry["artifact_ref"]
+    assert error_payload["response_ref"] == fetch_result_entry["artifact_ref"]
+    assert error_payload["error"]["request_ref"] == fetch_request_entry["artifact_ref"]
+    assert error_payload["error"]["response_ref"] == fetch_result_entry["artifact_ref"]
+    assert error_entry["request_ref"] == fetch_request_entry["artifact_ref"]
+    assert error_entry["response_ref"] == fetch_result_entry["artifact_ref"]
     assert "value" not in json.dumps(error_payload)

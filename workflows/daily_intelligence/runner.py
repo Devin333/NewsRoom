@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 from time import perf_counter
 from typing import Any
@@ -294,6 +295,7 @@ class DailyIntelligenceRunner:
             )
             latency_start = perf_counter()
             items, errors = self._fetch_source(source, request=request, limit=remaining)
+            errors = _with_error_request_id(errors, request_id)
             fetch_latency_ms = _elapsed_ms(latency_start)
             source_fetch_results.append(
                 _source_fetch_result(
@@ -998,6 +1000,15 @@ def _source_fetch_result(
             "error_count": len(errors),
         },
     )
+
+
+def _with_error_request_id(errors: list[SourceError], request_id: str) -> list[SourceError]:
+    linked_errors = []
+    for error in errors:
+        metadata = dict(error.metadata)
+        metadata.setdefault("request_id", request_id)
+        linked_errors.append(replace(error, metadata=metadata))
+    return linked_errors
 
 
 def _raw_content_bytes(items: list[Any]) -> int | None:

@@ -42,6 +42,10 @@ class SourceArtifactWriter:
         source_errors: list[Any] | None = None,
     ) -> dict[str, Any] | None:
         entries: list[dict[str, Any]] = []
+        request_refs_by_request_id: dict[str, ArtifactRef] = {}
+        request_refs_by_source_id: dict[str, list[ArtifactRef]] = {}
+        response_refs_by_request_id: dict[str, ArtifactRef] = {}
+        response_refs_by_source_id: dict[str, list[ArtifactRef]] = {}
 
         for raw_item in raw_items or []:
             source_id = _string_value(raw_item, "source_id", default="unknown-source")
@@ -120,6 +124,13 @@ class SourceArtifactWriter:
                 path=path,
                 artifact_path=artifact_path,
             )
+            _remember_ref(
+                request_refs_by_request_id,
+                request_refs_by_source_id,
+                artifact_ref=artifact_ref,
+                source_id=source_id,
+                request_id=object_id,
+            )
             entries.append(
                 _entry_from_ref(
                     artifact_ref=artifact_ref,
@@ -151,6 +162,13 @@ class SourceArtifactWriter:
                 path=path,
                 artifact_path=artifact_path,
             )
+            _remember_ref(
+                response_refs_by_request_id,
+                response_refs_by_source_id,
+                artifact_ref=artifact_ref,
+                source_id=source_id,
+                request_id=object_id,
+            )
             entries.append(
                 _entry_from_ref(
                     artifact_ref=artifact_ref,
@@ -164,15 +182,45 @@ class SourceArtifactWriter:
             source_id = _string_value(source_error, "source_id", default="unknown-source")
             object_id = _source_error_id(source_error, index)
             path = f"sources/errors/{_path_segment(source_id)}/{_path_segment(object_id)}.json"
+            request_id = _optional_string(_metadata_value(source_error, "request_id"))
+            request_ref = _resolve_error_ref(
+                source_error,
+                "request_ref",
+                request_id=request_id,
+                source_id=source_id,
+                refs_by_request_id=request_refs_by_request_id,
+                refs_by_source_id=request_refs_by_source_id,
+            )
+            response_ref = _resolve_error_ref(
+                source_error,
+                "response_ref",
+                request_id=request_id,
+                source_id=source_id,
+                refs_by_request_id=response_refs_by_request_id,
+                refs_by_source_id=response_refs_by_source_id,
+            )
+            error_payload = _redact(_to_json_safe(source_error))
+            request_ref_payload = _ref_payload(request_ref)
+            response_ref_payload = _ref_payload(response_ref)
+            if isinstance(error_payload, dict):
+                if request_ref_payload is not None:
+                    error_payload["request_ref"] = request_ref_payload
+                if response_ref_payload is not None:
+                    error_payload["response_ref"] = response_ref_payload
+            payload = {
+                "artifact_type": "source_error",
+                "source_id": source_id,
+                "error_id": object_id,
+                "error": error_payload,
+            }
+            if request_ref_payload is not None:
+                payload["request_ref"] = request_ref_payload
+            if response_ref_payload is not None:
+                payload["response_ref"] = response_ref_payload
             artifact_path = self._artifact_manager.write_json(
                 run_id,
                 path,
-                {
-                    "artifact_type": "source_error",
-                    "source_id": source_id,
-                    "error_id": object_id,
-                    "error": _redact(_to_json_safe(source_error)),
-                },
+                payload,
             )
             artifact_ref = _artifact_ref(
                 run_id=run_id,
@@ -182,14 +230,19 @@ class SourceArtifactWriter:
                 path=path,
                 artifact_path=artifact_path,
             )
-            entries.append(
-                _entry_from_ref(
-                    artifact_ref=artifact_ref,
-                    source_id=source_id,
-                    object_id=object_id,
-                    artifact_path=artifact_path,
-                )
+            entry = _entry_from_ref(
+                artifact_ref=artifact_ref,
+                source_id=source_id,
+                object_id=object_id,
+                artifact_path=artifact_path,
             )
+            if request_id is not None:
+                entry["request_id"] = request_id
+            if request_ref_payload is not None:
+                entry["request_ref"] = request_ref_payload
+            if response_ref_payload is not None:
+                entry["response_ref"] = response_ref_payload
+            entries.append(entry)
 
         if not entries:
             return None
@@ -324,6 +377,63 @@ def _entry_from_ref(
         "redacted": artifact_ref.redacted,
         "artifact_ref": artifact_ref.to_dict(),
     }
+
+
+def _remember_ref(
+    refs_by_request_id: dict[str, ArtifactRef],
+    refs_by_source_id: dict[str, list[ArtifactRef]],
+    *,
+    artifact_ref: ArtifactRef,
+    source_id: str,
+    request_id: str,
+) -> None:
+    refs_by_request_id[request_id] = artifact_ref
+    refs_by_source_id.setdefault(source_id, []).append(artifact_ref)
+
+
+def _resolve_error_ref(
+    source_error: Any,
+    field_name: str,
+    *,
+    request_id: str | None,
+    source_id: str,
+    refs_by_request_id: dict[str, ArtifactRef],
+    refs_by_source_id: dict[str, list[ArtifactRef]],
+) -> Any:
+    existing_ref = _existing_artifact_ref(source_error, field_name)
+    if existing_ref is not None:
+        return existing_ref
+    if request_id:
+        request_ref = refs_by_request_id.get(request_id)
+        if request_ref is not None:
+            return request_ref
+    source_refs = refs_by_source_id.get(source_id, [])
+    if len(source_refs) == 1:
+        return source_refs[0]
+    return None
+
+
+def _metadata_value(value: Any, name: str) -> Any:
+    if isinstance(value, dict):
+        metadata = value.get("metadata")
+    else:
+        metadata = getattr(value, "metadata", None)
+    if not isinstance(metadata, dict):
+        return None
+    return metadata.get(name)
+
+
+def _optional_string(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _ref_payload(value: Any) -> Any:
+    if value is None:
+        return None
+    return _redact(_to_json_safe(value))
 
 
 def _stable_id(value: Any) -> str:
