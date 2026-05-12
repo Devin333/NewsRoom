@@ -16,6 +16,7 @@ from sources.connectors.fetch_policy import (
     rate_limited_source_error,
     run_with_fetch_retries,
 )
+from sources.connectors.metadata import source_item_metadata
 
 
 FetchText = Callable[[str], str]
@@ -240,10 +241,7 @@ def _raw_item(
         summary=summary.strip() if summary else None,
         raw_content=raw_content,
         language=source.language,
-        metadata={
-            "source_reliability": source.reliability.value,
-            "source_authority_score": source.authority_score,
-        },
+        metadata=source_item_metadata(source),
     )
 
 

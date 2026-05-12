@@ -17,6 +17,7 @@ from sources.connectors.fetch_policy import (
     rate_limited_source_error,
     run_with_fetch_retries,
 )
+from sources.connectors.metadata import source_item_metadata
 
 
 FetchText = Callable[[str], str]
@@ -332,17 +333,18 @@ def _raw_item_from_release(
         authors=[str(author["login"])] if author.get("login") else [],
         tags=[str(tag_name)] if tag_name else [],
         language=source.language,
-        metadata={
-            "repository": repository.slug(),
-            "release_id": release.get("id"),
-            "tag_name": tag_name,
-            "target_commitish": release.get("target_commitish"),
-            "draft": bool(release.get("draft", False)),
-            "prerelease": bool(release.get("prerelease", False)),
-            "api_url": release.get("url"),
-            "source_reliability": source.reliability.value,
-            "source_authority_score": source.authority_score,
-        },
+        metadata=source_item_metadata(
+            source,
+            extra={
+                "repository": repository.slug(),
+                "release_id": release.get("id"),
+                "tag_name": tag_name,
+                "target_commitish": release.get("target_commitish"),
+                "draft": bool(release.get("draft", False)),
+                "prerelease": bool(release.get("prerelease", False)),
+                "api_url": release.get("url"),
+            },
+        ),
     )
 
 

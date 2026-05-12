@@ -7,6 +7,7 @@ from hashlib import sha256
 from typing import Any
 
 from domain.sources import RawSourceItem, SourceDefinition, SourceError
+from sources.connectors.metadata import source_item_metadata
 
 
 class ManualConnector:
@@ -63,11 +64,10 @@ def _raw_item(*, source: SourceDefinition, record: dict[str, Any], index: int) -
         raise ValueError("manual source record must be an object")
     title = _required_text(record.get("title"), "title")
     url = _required_text(record.get("url"), "url")
-    metadata = dict(record.get("metadata") or {})
+    metadata = source_item_metadata(source)
+    metadata.update(dict(record.get("metadata") or {}))
     metadata.update(
         {
-            "source_reliability": source.reliability.value,
-            "source_authority_score": source.authority_score,
             "manual_record_index": index,
         }
     )

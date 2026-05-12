@@ -18,6 +18,7 @@ from sources.connectors.fetch_policy import (
     rate_limited_source_error,
     run_with_fetch_retries,
 )
+from sources.connectors.metadata import source_item_metadata
 from sources.processing.normalize import canonicalize_url
 
 FetchText = Callable[[str], str]
@@ -150,14 +151,15 @@ class HtmlConnector:
             raw_content=extraction.text,
             authors=extraction.authors,
             language=extraction.language or source.language,
-            metadata={
-                "source_reliability": source.reliability.value,
-                "source_authority_score": source.authority_score,
-                "extractor_name": extraction.extractor_name,
-                "extraction_confidence": extraction.confidence,
-                "canonical_url": url,
-                "raw_html_bytes": len(html_text.encode("utf-8")),
-            },
+            metadata=source_item_metadata(
+                source,
+                extra={
+                    "extractor_name": extraction.extractor_name,
+                    "extraction_confidence": extraction.confidence,
+                    "canonical_url": url,
+                    "raw_html_bytes": len(html_text.encode("utf-8")),
+                },
+            ),
         )
         items = [item]
         return items[:limit] if limit else items

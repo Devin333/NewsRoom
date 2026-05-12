@@ -54,6 +54,27 @@ def test_feed_connector_parses_rss_fixture() -> None:
     assert items[0].metadata["source_authority_score"] == 0.5
 
 
+def test_feed_connector_propagates_allowlisted_governance_metadata() -> None:
+    source = SourceDefinition(
+        source_id="official-rss",
+        name="Official RSS",
+        source_type="rss",
+        url="https://example.com/rss.xml",
+        metadata={
+            "official_blog": True,
+            "category": "official_blog",
+            "api_key": "should-not-propagate",
+        },
+    )
+
+    items = FeedConnector().parse(source, RSS_FIXTURE)
+
+    assert len(items) == 1
+    assert items[0].metadata["official_blog"] is True
+    assert items[0].metadata["category"] == "official_blog"
+    assert "api_key" not in items[0].metadata
+
+
 def test_feed_connector_parses_atom_fixture() -> None:
     source = SourceDefinition(
         source_id="atom-source",

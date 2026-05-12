@@ -17,6 +17,7 @@ from sources.connectors.fetch_policy import (
     rate_limited_source_error,
     run_with_fetch_retries,
 )
+from sources.connectors.metadata import source_item_metadata
 
 
 FetchText = Callable[[str], str]
@@ -165,15 +166,16 @@ def _raw_item_from_entry(
         authors=[name for name in (_child_text(author, "name") for author in _children(entry, "author")) if name],
         tags=categories,
         language=source.language,
-        metadata={
-            "arxiv_id": arxiv_id.rsplit("/", 1)[-1],
-            "primary_category": _primary_category(entry),
-            "doi": _arxiv_child_text(entry, "doi"),
-            "journal_ref": _arxiv_child_text(entry, "journal_ref"),
-            "comment": _arxiv_child_text(entry, "comment"),
-            "source_reliability": source.reliability.value,
-            "source_authority_score": source.authority_score,
-        },
+        metadata=source_item_metadata(
+            source,
+            extra={
+                "arxiv_id": arxiv_id.rsplit("/", 1)[-1],
+                "primary_category": _primary_category(entry),
+                "doi": _arxiv_child_text(entry, "doi"),
+                "journal_ref": _arxiv_child_text(entry, "journal_ref"),
+                "comment": _arxiv_child_text(entry, "comment"),
+            },
+        ),
     )
 
 
