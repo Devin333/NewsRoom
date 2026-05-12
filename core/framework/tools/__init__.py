@@ -16,6 +16,7 @@ from core.framework.tools.models import (
     ToolPolicy,
     ToolResult,
     ToolRuntimeError,
+    ToolSecretError,
     ToolStatus,
     ToolTimeoutError,
 )
@@ -23,6 +24,11 @@ from core.framework.tools.registry import DuplicateToolPolicy, RegisteredTool, T
 from core.framework.tools.redaction import REDACTED_VALUE, redact_sensitive_values
 from core.framework.tools.quality_tools import register_quality_tools
 from core.framework.tools.report_tools import register_report_tools
+from core.framework.tools.secrets import (
+    EnvironmentSecretProvider,
+    MappingSecretProvider,
+    SecretProvider,
+)
 from core.framework.tools.source_tools import register_source_tools
 from core.framework.tools.telemetry import ToolEvent, ToolExecutionRecord, ToolMetrics
 from core.framework.tools.testing import ToolTestCase, ToolTestReport, ToolTestRunner
@@ -51,11 +57,15 @@ __all__ = [
     "ToolRegistry",
     "ToolResult",
     "ToolRuntimeError",
+    "ToolSecretError",
     "ToolStatus",
     "ToolTimeoutError",
     "ToolTestCase",
     "ToolTestReport",
     "ToolTestRunner",
+    "SecretProvider",
+    "MappingSecretProvider",
+    "EnvironmentSecretProvider",
     "redact_sensitive_values",
     "register_artifact_tools",
     "register_quality_tools",

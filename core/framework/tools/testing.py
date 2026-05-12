@@ -7,6 +7,7 @@ from core.framework.artifacts import ArtifactManager
 from core.framework.tools.executor import ToolExecutor
 from core.framework.tools.models import ToolCall, ToolObservation, ToolPolicy, ToolStatus
 from core.framework.tools.registry import ToolRegistry
+from core.framework.tools.secrets import SecretProvider
 from core.framework.tools.telemetry import ToolEvent, ToolMetrics
 
 
@@ -47,16 +48,19 @@ class ToolTestRunner:
         *,
         artifact_manager: ArtifactManager | None = None,
         run_id: str | None = None,
+        secret_provider: SecretProvider | None = None,
     ) -> None:
         self._registry = registry
         self._artifact_manager = artifact_manager
         self._run_id = run_id
+        self._secret_provider = secret_provider
 
     def run_case(self, test_case: ToolTestCase) -> ToolTestReport:
         executor = ToolExecutor(
             self._registry,
             artifact_manager=self._artifact_manager,
             run_id=self._run_id,
+            secret_provider=self._secret_provider,
         )
         observation = executor.execute(test_case.call, test_case.policy)
         errors = _expectation_errors(test_case, observation)

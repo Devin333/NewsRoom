@@ -18,15 +18,20 @@ from core.framework.tools.models import (
     ToolPolicy,
     ToolResult,
     ToolRuntimeError,
+    ToolSecretError,
     ToolStatus,
     ToolTimeoutError,
     timed_tool_call,
 )
 from core.framework.tools.redaction import redact_sensitive_values
 from core.framework.tools.registry import ToolRegistry
+from core.framework.tools.secrets import SecretProvider
 from core.framework.tools.telemetry import ToolEvent, ToolExecutionRecord, ToolMetrics
 from core.framework.tools.validation import validate_tool_arguments
 from core.framework.workers.approval import ApprovalStore
+
+
+_RUNTIME_SECRETS_ARGUMENT = "_secrets"
 
 
 class ToolExecutor:
@@ -37,11 +42,13 @@ class ToolExecutor:
         artifact_manager: ArtifactManager | None = None,
         run_id: str | None = None,
         approval_store: ApprovalStore | None = None,
+        secret_provider: SecretProvider | None = None,
     ) -> None:
         self._registry = registry
         self._artifact_manager = artifact_manager
         self._run_id = run_id
         self._approval_store = approval_store
+        self._secret_provider = secret_provider
         self._events: list[ToolEvent] = []
         self._metrics = ToolMetrics()
         self._records: list[ToolExecutionRecord] = []
@@ -71,6 +78,11 @@ class ToolExecutor:
             if dangerous_result is not None:
                 return dangerous_result
 
+            if _RUNTIME_SECRETS_ARGUMENT in call.arguments:
+                raise ToolRuntimeError(
+                    f"reserved tool argument is not allowed: {_RUNTIME_SECRETS_ARGUMENT}"
+                )
+
             validate_tool_arguments(registered.definition, call.arguments)
             self._emit("tool_args_validated", call)
 
@@ -78,10 +90,16 @@ class ToolExecutor:
             if approval_result is not None:
                 return approval_result
 
+            arguments = _arguments_with_secrets(
+                call.arguments,
+                registered.definition,
+                self._secret_provider,
+            )
+
             self._emit("tool_started", call)
             raw_output = _invoke_with_retry(
                 registered.executor,
-                call.arguments,
+                arguments,
                 _timeout_seconds(registered.definition, policy),
                 _max_attempts(registered.definition, policy),
                 call.tool_name,
@@ -294,6 +312,36 @@ def _max_attempts(definition: Any, policy: ToolPolicy) -> int:
     if attempts is None:
         attempts = policy.max_attempts_default
     return max(1, int(attempts))
+
+
+def _arguments_with_secrets(
+    arguments: dict[str, Any],
+    definition: Any,
+    secret_provider: SecretProvider | None,
+) -> dict[str, Any]:
+    required_secret_names = list(getattr(definition, "required_secret_names", []))
+    if not required_secret_names:
+        return arguments
+    if secret_provider is None:
+        raise ToolSecretError(
+            f"missing secret provider for tool {definition.name}; "
+            f"required secrets: {', '.join(required_secret_names)}"
+        )
+
+    resolved: dict[str, str] = {}
+    missing: list[str] = []
+    for secret_name in required_secret_names:
+        value = secret_provider.get_secret(secret_name)
+        if value:
+            resolved[secret_name] = value
+        else:
+            missing.append(secret_name)
+    if missing:
+        raise ToolSecretError(
+            f"missing required secrets for tool {definition.name}: {', '.join(missing)}"
+        )
+
+    return {**arguments, _RUNTIME_SECRETS_ARGUMENT: resolved}
 
 
 def _invoke_with_retry(

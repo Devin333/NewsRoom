@@ -26,6 +26,10 @@ class ToolTimeoutError(ToolRuntimeError):
     """Raised when a tool exceeds its execution timeout."""
 
 
+class ToolSecretError(ToolRuntimeError):
+    """Raised when a tool secret cannot be safely resolved."""
+
+
 class ToolStatus(str, Enum):
     SUCCEEDED = "succeeded"
     FAILED = "failed"
@@ -45,6 +49,7 @@ class ToolDefinition:
     timeout_seconds: float | None = None
     max_attempts: int | None = None
     concurrency_safe: bool = False
+    required_secret_names: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
     version: str = "1.0.0"
 
@@ -55,6 +60,8 @@ class ToolDefinition:
             raise ToolDefinitionError(f"tool name must be namespaced: {self.name}")
         if not self.version:
             raise ToolDefinitionError(f"tool version is required for {self.name}")
+        if any(not isinstance(name, str) or not name for name in self.required_secret_names):
+            raise ToolDefinitionError(f"required secret names must be non-empty strings for {self.name}")
 
     @property
     def namespace(self) -> str:
@@ -85,6 +92,7 @@ class ToolDefinition:
             "timeout_seconds": self.timeout_seconds,
             "max_attempts": self.max_attempts,
             "concurrency_safe": self.concurrency_safe,
+            "required_secret_names": list(self.required_secret_names),
             "metadata": dict(self.metadata),
         }
 

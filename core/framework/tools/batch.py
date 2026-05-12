@@ -11,6 +11,7 @@ from core.framework.tools.models import (
     ToolPolicy,
 )
 from core.framework.tools.registry import ToolRegistry
+from core.framework.tools.secrets import SecretProvider
 
 
 _READ_ONLY_SIDE_EFFECTS = {"", "none", "read_only"}
@@ -23,11 +24,13 @@ class ToolBatchExecutor:
         *,
         artifact_manager: ArtifactManager | None = None,
         run_id: str | None = None,
+        secret_provider: SecretProvider | None = None,
         max_workers: int = 4,
     ) -> None:
         self._registry = registry
         self._artifact_manager = artifact_manager
         self._run_id = run_id
+        self._secret_provider = secret_provider
         self._max_workers = max(1, max_workers)
 
     def execute_batch(self, calls: list[ToolCall], policy: ToolPolicy) -> list[ToolObservation]:
@@ -57,6 +60,7 @@ class ToolBatchExecutor:
             self._registry,
             artifact_manager=self._artifact_manager,
             run_id=self._run_id,
+            secret_provider=self._secret_provider,
         )
         return executor.execute(call, policy)
 

@@ -87,6 +87,11 @@ class MCPToolAdapter:
             requires_approval=bool(remote_tool.get("requires_approval", False)),
             timeout_seconds=server.timeout_seconds,
             concurrency_safe=bool(remote_tool.get("concurrency_safe", False)),
+            required_secret_names=_string_list(
+                remote_tool.get("required_secret_names", []),
+                "required_secret_names",
+                remote_tool_name,
+            ),
             metadata={
                 "source": "mcp",
                 "server_id": server.server_id,
@@ -100,3 +105,9 @@ class MCPToolAdapter:
 def _safe_name(value: str) -> str:
     safe = re.sub(r"[^A-Za-z0-9_]+", "_", value.strip())
     return safe.strip("_") or "unnamed"
+
+
+def _string_list(value: Any, field_name: str, tool_name: str) -> list[str]:
+    if not isinstance(value, list):
+        raise ValueError(f"{field_name} must be a list for MCP tool {tool_name}")
+    return [str(item) for item in value]
