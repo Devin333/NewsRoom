@@ -25,7 +25,11 @@ from core.framework.tools.models import (
     ToolStatus,
     ToolTimeoutError,
 )
-from core.framework.tools.notification_tools import RssFeedPublisher, register_notification_tools
+from core.framework.tools.notification_tools import (
+    RssFeedPublisher,
+    SmtpEmailSender,
+    register_notification_tools,
+)
 from core.framework.tools.postgres_tools import register_postgres_tools
 from core.framework.tools.registry import (
     DuplicateToolPolicy,
@@ -58,6 +62,7 @@ __all__ = [
     "MCPToolAdapter",
     "RegisteredTool",
     "RssFeedPublisher",
+    "SmtpEmailSender",
     "DuplicateToolPolicy",
     "LocalJsonToolStore",
     "ToolRegistryValidationResult",

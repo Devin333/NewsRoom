@@ -170,6 +170,149 @@ def test_notification_webhook_tool_rejects_secret_headers_before_send() -> None:
     assert "header is not allowed" in (observation.result.error_message or "")
 
 
+def test_notification_email_tool_sends_mime_message_to_allowed_domain() -> None:
+    sender = _CapturingEmailSender()
+    registry = ToolRegistry()
+    register_notification_tools(
+        registry,
+        allowed_email_domains=["example.com"],
+        email_from_address="newsroom@example.com",
+        email_sender=sender,
+    )
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="notification.email",
+            arguments={
+                "to": ["Editor <editor@example.com>"],
+                "cc": ["desk@example.com"],
+                "bcc": ["audit@example.com"],
+                "subject": "Daily report ready",
+                "text_body": "The daily report is ready.",
+                "html_body": "<p>The daily report is ready.</p>",
+                "reply_to": "replies@example.com",
+                "timeout_seconds": 3,
+            },
+        ),
+        ToolPolicy(
+            allowed_tools=["notification.email"],
+            require_approval_for_side_effects=False,
+        ),
+    )
+
+    assert observation.status == ToolStatus.SUCCEEDED
+    assert observation.result.output["sent"] is True
+    assert observation.result.output["from"] == "newsroom@example.com"
+    assert observation.result.output["to"] == ["editor@example.com"]
+    assert observation.result.output["cc"] == ["desk@example.com"]
+    assert observation.result.output["bcc_count"] == 1
+    assert observation.result.output["accepted_count"] == 3
+    assert observation.result.output["refused_count"] == 0
+    assert sender.recipients == ["editor@example.com", "desk@example.com", "audit@example.com"]
+    assert sender.timeout_seconds == 3.0
+    assert sender.message["From"] == "newsroom@example.com"
+    assert sender.message["To"] == "editor@example.com"
+    assert sender.message["Cc"] == "desk@example.com"
+    assert sender.message["Reply-To"] == "replies@example.com"
+    assert sender.message["Subject"] == "Daily report ready"
+    assert sender.message["Bcc"] is None
+    assert sender.message.get_body(("plain",)).get_content().strip() == (
+        "The daily report is ready."
+    )
+    assert sender.message.get_body(("html",)).get_content().strip() == (
+        "<p>The daily report is ready.</p>"
+    )
+
+
+def test_notification_email_tool_requires_approval_by_default() -> None:
+    sender = _CapturingEmailSender()
+    registry = ToolRegistry()
+    register_notification_tools(
+        registry,
+        allowed_email_domains=["example.com"],
+        email_from_address="newsroom@example.com",
+        email_sender=sender,
+    )
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="notification.email",
+            arguments={
+                "to": ["editor@example.com"],
+                "subject": "Daily report ready",
+                "text_body": "Ready.",
+            },
+        ),
+        ToolPolicy(allowed_tools=["notification.email"]),
+    )
+
+    assert observation.status == ToolStatus.APPROVAL_REQUIRED
+    assert sender.message is None
+
+
+def test_notification_email_tool_blocks_domains_outside_allowlist_before_send() -> None:
+    sender = _CapturingEmailSender()
+    registry = ToolRegistry()
+    register_notification_tools(
+        registry,
+        allowed_email_domains=["example.com"],
+        email_from_address="newsroom@example.com",
+        email_sender=sender,
+    )
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="notification.email",
+            arguments={
+                "to": ["editor@outside.test"],
+                "subject": "Daily report ready",
+                "text_body": "Ready.",
+            },
+        ),
+        ToolPolicy(
+            allowed_tools=["notification.email"],
+            require_approval_for_side_effects=False,
+        ),
+    )
+
+    assert observation.status == ToolStatus.FAILED
+    assert sender.message is None
+    assert "recipient domain is not allowed" in (observation.result.error_message or "")
+
+
+def test_notification_email_tool_requires_body_before_send() -> None:
+    sender = _CapturingEmailSender()
+    registry = ToolRegistry()
+    register_notification_tools(
+        registry,
+        allowed_email_domains=["example.com"],
+        email_from_address="newsroom@example.com",
+        email_sender=sender,
+    )
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="notification.email",
+            arguments={
+                "to": ["editor@example.com"],
+                "subject": "Daily report ready",
+            },
+        ),
+        ToolPolicy(
+            allowed_tools=["notification.email"],
+            require_approval_for_side_effects=False,
+        ),
+    )
+
+    assert observation.status == ToolStatus.FAILED
+    assert sender.message is None
+    assert "text_body or html_body is required" in (observation.result.error_message or "")
+
+
 def test_notification_rss_publish_tool_writes_configured_feed_item(tmp_path) -> None:
     feed_path = tmp_path / "feeds" / "news.xml"
     registry = ToolRegistry()
@@ -231,3 +374,19 @@ def test_notification_rss_publish_tool_requires_approval_by_default(tmp_path) ->
 
     assert observation.status == ToolStatus.APPROVAL_REQUIRED
     assert not feed_path.exists()
+
+
+class _CapturingEmailSender:
+    def __init__(self) -> None:
+        self.message = None
+        self.recipients = []
+        self.timeout_seconds = None
+
+    def __call__(self, message, recipients, timeout_seconds):
+        self.message = message
+        self.recipients = list(recipients)
+        self.timeout_seconds = timeout_seconds
+        return {
+            "accepted_recipients": list(recipients),
+            "refused_recipients": [],
+        }

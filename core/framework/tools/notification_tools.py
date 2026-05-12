@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+import smtplib
+import ssl
 from datetime import UTC, datetime
-from email.utils import format_datetime, parsedate_to_datetime
+from email.message import EmailMessage
+from email.utils import format_datetime, getaddresses, make_msgid, parsedate_to_datetime
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlsplit
@@ -14,6 +17,7 @@ from core.framework.tools.registry import ToolRegistry
 
 
 WebhookSender = Callable[[str, bytes, dict[str, str], float], dict[str, Any]]
+EmailSender = Callable[[EmailMessage, list[str], float], dict[str, Any]]
 _SECRET_HEADER_NAMES = {"authorization", "cookie", "x-api-key", "api-key"}
 
 
@@ -22,6 +26,15 @@ def register_notification_tools(
     *,
     allowed_webhook_domains: list[str] | None = None,
     webhook_sender: WebhookSender | None = None,
+    allowed_email_domains: list[str] | None = None,
+    email_sender: EmailSender | None = None,
+    email_from_address: str | None = None,
+    smtp_host: str | None = None,
+    smtp_port: int = 587,
+    smtp_username: str | None = None,
+    smtp_password: str | None = None,
+    smtp_use_tls: bool = False,
+    smtp_use_starttls: bool = True,
     rss_feed_path: str | Path | None = None,
     rss_feed_title: str = "NewsRoom Updates",
     rss_feed_link: str = "https://localhost/",
@@ -55,6 +68,47 @@ def register_notification_tools(
             sender=sender,
         ),
     )
+    if email_sender is not None or smtp_host is not None or email_from_address is not None:
+        from_address = _single_email_address(email_from_address, "email_from_address")
+        sender_fn = email_sender or SmtpEmailSender(
+            host=_required_text(smtp_host, "smtp_host"),
+            port=smtp_port,
+            username=smtp_username,
+            password=smtp_password,
+            use_tls=smtp_use_tls,
+            use_starttls=smtp_use_starttls,
+        )
+        registry.register(
+            ToolDefinition(
+                name="notification.email",
+                description="Send an email notification through the configured SMTP sender.",
+                input_schema={
+                    "required": ["to", "subject"],
+                    "properties": {
+                        "to": {"type": "array"},
+                        "cc": {"type": "array"},
+                        "bcc": {"type": "array"},
+                        "subject": {"type": "string"},
+                        "text_body": {"type": "string"},
+                        "html_body": {"type": "string"},
+                        "reply_to": {"type": "string"},
+                        "timeout_seconds": {"type": "number"},
+                    },
+                    "additionalProperties": False,
+                },
+                side_effect="writes_external_state",
+                requires_approval=True,
+                concurrency_safe=False,
+                max_result_bytes=100_000,
+                metadata={"notification_channel": "email"},
+            ),
+            lambda args: _send_email(
+                args,
+                from_address=from_address,
+                allowed_domains=_allowed_domains(allowed_email_domains),
+                sender=sender_fn,
+            ),
+        )
     if rss_feed_path is not None:
         rss_publisher = RssFeedPublisher(
             rss_feed_path,
@@ -87,6 +141,52 @@ def register_notification_tools(
         )
 
 
+class SmtpEmailSender:
+    def __init__(
+        self,
+        *,
+        host: str,
+        port: int,
+        username: str | None = None,
+        password: str | None = None,
+        use_tls: bool = False,
+        use_starttls: bool = True,
+    ) -> None:
+        self.host = _required_text(host, "smtp_host")
+        self.port = int(port)
+        if self.port <= 0:
+            raise ValueError("smtp_port must be positive")
+        if use_tls and use_starttls:
+            raise ValueError("smtp_use_tls and smtp_use_starttls cannot both be true")
+        if (username is None) != (password is None):
+            raise ValueError("smtp_username and smtp_password must be configured together")
+        self.username = username
+        self.password = password
+        self.use_tls = use_tls
+        self.use_starttls = use_starttls
+
+    def __call__(
+        self,
+        message: EmailMessage,
+        recipients: list[str],
+        timeout_seconds: float,
+    ) -> dict[str, Any]:
+        context = ssl.create_default_context()
+        smtp_cls = smtplib.SMTP_SSL if self.use_tls else smtplib.SMTP
+        with smtp_cls(self.host, self.port, timeout=timeout_seconds) as smtp:
+            if self.use_starttls:
+                smtp.starttls(context=context)
+            if self.username is not None and self.password is not None:
+                smtp.login(self.username, self.password)
+            refused = smtp.send_message(message, to_addrs=recipients)
+        refused_recipients = sorted(str(recipient) for recipient in refused)
+        accepted = [recipient for recipient in recipients if recipient not in refused]
+        return {
+            "accepted_recipients": accepted,
+            "refused_recipients": refused_recipients,
+        }
+
+
 def _send_webhook(
     args: dict[str, Any],
     *,
@@ -111,6 +211,60 @@ def _send_webhook(
         "content_type": response.get("content_type"),
         "response_preview": str(response.get("response_text") or "")[:500],
         "payload_bytes": len(body),
+    }
+
+
+def _send_email(
+    args: dict[str, Any],
+    *,
+    from_address: str,
+    allowed_domains: tuple[str, ...],
+    sender: EmailSender,
+) -> dict[str, Any]:
+    to_addresses = _email_addresses(args["to"], "to")
+    cc_addresses = _email_addresses(args.get("cc"), "cc")
+    bcc_addresses = _email_addresses(args.get("bcc"), "bcc")
+    recipients = to_addresses + cc_addresses + bcc_addresses
+    if not recipients:
+        raise ValueError("to must contain at least one recipient")
+    _ensure_allowed_email_domains(recipients, allowed_domains)
+
+    subject = _required_text(args["subject"], "subject")
+    text_body = _optional_text(args.get("text_body"))
+    html_body = _optional_text(args.get("html_body"))
+    if text_body is None and html_body is None:
+        raise ValueError("text_body or html_body is required")
+
+    reply_to = args.get("reply_to")
+    reply_to_address = (
+        _single_email_address(reply_to, "reply_to") if reply_to is not None else None
+    )
+    if reply_to_address is not None:
+        _ensure_allowed_email_domains([reply_to_address], allowed_domains)
+
+    message = _email_message(
+        from_address=from_address,
+        to_addresses=to_addresses,
+        cc_addresses=cc_addresses,
+        subject=subject,
+        text_body=text_body,
+        html_body=html_body,
+        reply_to=reply_to_address,
+    )
+    send_result = sender(message, recipients, _timeout(args.get("timeout_seconds")))
+    accepted_recipients = list(send_result.get("accepted_recipients") or recipients)
+    refused_recipients = list(send_result.get("refused_recipients") or [])
+    return {
+        "sent": True,
+        "message_id": message["Message-ID"],
+        "from": from_address,
+        "to": list(to_addresses),
+        "cc": list(cc_addresses),
+        "bcc_count": len(bcc_addresses),
+        "subject": subject,
+        "accepted_count": len(accepted_recipients),
+        "refused_count": len(refused_recipients),
+        "refused_recipients": refused_recipients,
     }
 
 
@@ -239,10 +393,91 @@ def _headers(value: Any) -> dict[str, str]:
     return headers
 
 
+def _email_message(
+    *,
+    from_address: str,
+    to_addresses: list[str],
+    cc_addresses: list[str],
+    subject: str,
+    text_body: str | None,
+    html_body: str | None,
+    reply_to: str | None,
+) -> EmailMessage:
+    message = EmailMessage()
+    message["From"] = from_address
+    message["To"] = ", ".join(to_addresses)
+    if cc_addresses:
+        message["Cc"] = ", ".join(cc_addresses)
+    if reply_to is not None:
+        message["Reply-To"] = reply_to
+    message["Subject"] = subject
+    message["Date"] = format_datetime(datetime.now(UTC), usegmt=True)
+    message["Message-ID"] = make_msgid(domain=_email_domain(from_address))
+    if text_body is not None:
+        message.set_content(text_body)
+        if html_body is not None:
+            message.add_alternative(html_body, subtype="html")
+    else:
+        message.set_content(html_body or "", subtype="html")
+    return message
+
+
+def _email_addresses(value: Any, field_name: str) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError(f"{field_name} must be an array")
+    addresses: list[str] = []
+    for _, address in getaddresses([str(item) for item in value]):
+        normalized = address.strip().casefold()
+        if not _is_email_address(normalized):
+            raise ValueError(f"{field_name} contains an invalid email address")
+        addresses.append(normalized)
+    if len(addresses) != len(value):
+        raise ValueError(f"{field_name} contains an invalid email address")
+    return addresses
+
+
+def _single_email_address(value: Any, field_name: str) -> str:
+    text = _required_text(value, field_name)
+    addresses = _email_addresses([text], field_name)
+    if len(addresses) != 1:
+        raise ValueError(f"{field_name} must contain exactly one email address")
+    return addresses[0]
+
+
+def _is_email_address(value: str) -> bool:
+    local_part, separator, domain = value.partition("@")
+    return bool(local_part and separator and _email_domain(value))
+
+
+def _email_domain(value: str) -> str:
+    return value.rsplit("@", maxsplit=1)[-1].casefold()
+
+
+def _ensure_allowed_email_domains(addresses: list[str], allowed_domains: tuple[str, ...]) -> None:
+    if not allowed_domains:
+        raise ValueError("notification.email has no allowed email domains configured")
+    for address in addresses:
+        domain = _email_domain(address)
+        if any(domain == allowed or domain.endswith(f".{allowed}") for allowed in allowed_domains):
+            continue
+        raise ValueError(f"notification.email recipient domain is not allowed: {domain}")
+
+
 def _timeout(value: Any) -> float:
     if value is None:
         return 10.0
     return max(0.1, min(float(value), 30.0))
+
+
+def _required_text(value: Any, field_name: str) -> str:
+    if value is None:
+        raise ValueError(f"{field_name} is required")
+    text = str(value).strip()
+    if not text:
+        raise ValueError(f"{field_name} is required")
+    return text
 
 
 def _optional_text(value: Any) -> str | None:
