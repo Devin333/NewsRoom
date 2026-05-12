@@ -36,6 +36,7 @@ from core.framework.tools.redaction import (
     redact_sensitive_values,
 )
 from core.framework.tools.quality_tools import register_quality_tools
+from core.framework.tools.qdrant_tools import register_qdrant_tools
 from core.framework.tools.report_tools import register_report_tools
 from core.framework.tools.secrets import (
     EnvironmentSecretProvider,
@@ -88,6 +89,7 @@ __all__ = [
     "register_github_tools",
     "register_memory_tools",
     "register_quality_tools",
+    "register_qdrant_tools",
     "register_report_tools",
     "register_source_tools",
     "validate_tool_arguments",
