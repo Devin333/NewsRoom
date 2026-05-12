@@ -47,6 +47,8 @@ def test_quality_scorer_penalizes_unsupported_and_duplicate_sections() -> None:
     assert summary.support_coverage == 0.5
     assert summary.duplicate_sections == ["B"]
     assert summary.quality_score == 0.2
+    assert summary.overall_score == 0.2
+    assert summary.decision == "blocked"
 
 
 def test_editor_gate_blocks_unsupported_sections_even_when_citations_pass() -> None:
@@ -66,3 +68,25 @@ def test_editor_gate_blocks_unsupported_sections_even_when_citations_pass() -> N
     assert review.quality_score == 0.2
     assert "missing section sources: Unsupported" in review.reasons
     assert "unsupported section: Unsupported" in review.reasons
+
+
+def test_editor_gate_requests_rewrite_for_duplicate_supported_sections() -> None:
+    report = {
+        "sections": [
+            {"title": "A", "content": "A summary.", "sources": ["https://example.com/a"]},
+            {"title": "B", "content": "A summary.", "sources": ["https://example.com/a"]},
+        ]
+    }
+    citation = CitationChecker().check(report, _bundle())
+    matrix = SupportMatrixBuilder().build(report, _bundle())
+    summary = QualityScorer().score(
+        report=report,
+        citation_check=citation,
+        support_matrix=matrix,
+    )
+
+    review = EditorGate().review(citation, matrix, summary)
+
+    assert citation.passed is True
+    assert review.decision == EditorDecision.REWRITE_REQUIRED
+    assert "deduplicate repeated report sections" in review.rewrite_instructions

@@ -261,6 +261,20 @@ class WorkflowExecutor:
                     output["evidence_scores"],
                 )
                 manifest["artifacts"]["evidence_scores"] = "evidence_scores.json"
+            if "candidate_claims" in output:
+                self._artifact_manager.write_json(
+                    actual_run_id,
+                    "candidate_claims.json",
+                    output["candidate_claims"],
+                )
+                manifest["artifacts"]["candidate_claims"] = "candidate_claims.json"
+            if "verified_findings" in output:
+                self._artifact_manager.write_json(
+                    actual_run_id,
+                    "verified_findings.json",
+                    output["verified_findings"],
+                )
+                manifest["artifacts"]["verified_findings"] = "verified_findings.json"
             if "citation_check_result" in output:
                 self._artifact_manager.write_json(
                     actual_run_id,
@@ -268,6 +282,22 @@ class WorkflowExecutor:
                     output["citation_check_result"],
                 )
                 manifest["artifacts"]["citation_check_result"] = "citation_check_result.json"
+                unsupported_claims = _field_value(output["citation_check_result"], "unsupported_claims")
+                if unsupported_claims:
+                    self._artifact_manager.write_json(
+                        actual_run_id,
+                        "unsupported_claims.json",
+                        unsupported_claims,
+                    )
+                    manifest["artifacts"]["unsupported_claims"] = "unsupported_claims.json"
+                rejected_claim_usage = _field_value(output["citation_check_result"], "rejected_claim_usage")
+                if rejected_claim_usage:
+                    self._artifact_manager.write_json(
+                        actual_run_id,
+                        "rejected_claim_usage.json",
+                        rejected_claim_usage,
+                    )
+                    manifest["artifacts"]["rejected_claim_usage"] = "rejected_claim_usage.json"
             if "editor_review" in output:
                 self._artifact_manager.write_json(
                     actual_run_id,
@@ -309,6 +339,34 @@ class WorkflowExecutor:
                     output["quality_gate_metrics"],
                 )
                 manifest["artifacts"]["quality_gate_metrics"] = "quality_gate_metrics.json"
+            if "rewrite_policy" in output:
+                self._artifact_manager.write_json(
+                    actual_run_id,
+                    "rewrite_policy.json",
+                    output["rewrite_policy"],
+                )
+                manifest["artifacts"]["rewrite_policy"] = "rewrite_policy.json"
+            if "rewrite_instructions" in output:
+                self._artifact_manager.write_json(
+                    actual_run_id,
+                    "rewrite_instructions.json",
+                    output["rewrite_instructions"],
+                )
+                manifest["artifacts"]["rewrite_instructions"] = "rewrite_instructions.json"
+            if "rewritten_report_draft" in output:
+                self._artifact_manager.write_json(
+                    actual_run_id,
+                    "rewritten_report_draft.json",
+                    output["rewritten_report_draft"],
+                )
+                manifest["artifacts"]["rewritten_report_draft"] = "rewritten_report_draft.json"
+            if "human_review_request" in output:
+                self._artifact_manager.write_json(
+                    actual_run_id,
+                    "human_review_request.json",
+                    output["human_review_request"],
+                )
+                manifest["artifacts"]["human_review_request"] = "human_review_request.json"
             if "final_report" in output:
                 self._artifact_manager.write_json(actual_run_id, "report.json", output["final_report"])
                 manifest["artifacts"]["report_json"] = "report.json"
@@ -777,6 +835,14 @@ def _record_step_artifacts(manifest: dict[str, Any], outcome: StepOutcome) -> No
 def _step_artifact_key(artifact_ref: Any) -> str:
     step_id = artifact_ref.step_id or "workflow"
     return f"step.{step_id}.{artifact_ref.artifact_type}.{artifact_ref.artifact_id}"
+
+
+def _field_value(value: Any, field_name: str) -> Any:
+    if hasattr(value, field_name):
+        return getattr(value, field_name)
+    if isinstance(value, dict):
+        return value.get(field_name)
+    return None
 
 
 def _validate_step_runners(workflow: WorkflowSpec, registry: StepRunnerRegistry) -> None:

@@ -265,7 +265,7 @@ def _bundle(source_urls: list[str]) -> dict:
                 "evidence_id": f"ev-{index}",
                 "source_url": source_url,
                 "title": "Evidence",
-                "summary": "Evidence summary",
+                "summary": "Supported claim.",
                 "confidence": 0.9,
                 "source_id": "source-1",
             }

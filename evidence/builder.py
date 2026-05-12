@@ -3,6 +3,7 @@ from __future__ import annotations
 from hashlib import sha256
 
 from domain.sources import RankedSourceItem
+from evidence.claim_verifier import ClaimExtractor, ClaimVerifier
 from evidence.models import EvidenceBuildResult, EvidenceBundle, EvidenceItem, EvidenceScore
 
 
@@ -23,7 +24,12 @@ class EvidenceBuilder:
             item = ranked.item
             evidence_hash = sha256(item.canonical_url.encode("utf-8")).hexdigest()[:16]
             evidence_id = f"ev_{evidence_hash}"
-            source_lineage = ranked.metadata.get("lineage") or item.metadata.get("lineage") or {}
+            source_lineage = ranked.lineage or item.lineage
+            source_lineage_payload = (
+                source_lineage.to_dict()
+                if hasattr(source_lineage, "to_dict")
+                else dict(ranked.metadata.get("lineage") or item.metadata.get("lineage") or {})
+            )
             evidence_score = _evidence_score(ranked, evidence_id=evidence_id)
             evidence_items.append(
                 EvidenceItem(
@@ -33,28 +39,34 @@ class EvidenceBuilder:
                     summary=item.summary or item.title,
                     confidence=evidence_score.final_confidence,
                     source_id=item.source_id,
+                    lineage=source_lineage,
                     metadata={
                         "ranked_item_id": ranked.ranked_item_id,
                         "final_score": ranked.final_score,
                         "rank_reason": ranked.rank_reason,
-                        "source_lineage": dict(source_lineage),
+                        "source_lineage": source_lineage_payload,
                     },
                 )
             )
             evidence_scores.append(evidence_score)
             source_map.setdefault(item.canonical_url, []).append(evidence_id)
+        bundle = EvidenceBundle(
+            bundle_id=bundle_id,
+            items=evidence_items,
+            source_map=source_map,
+            missing_information=[] if evidence_items else ["no ranked source items were available"],
+            coverage_notes=[
+                f"Built {len(evidence_items)} evidence item(s) from {len(source_map)} source URL(s)."
+            ],
+            metadata={"evidence_count": len(evidence_items), "source_url_count": len(source_map)},
+        )
+        candidate_claims = ClaimExtractor().extract(bundle)
+        verified_findings = ClaimVerifier().verify(candidate_claims, bundle)
         return EvidenceBuildResult(
-            bundle=EvidenceBundle(
-                bundle_id=bundle_id,
-                items=evidence_items,
-                source_map=source_map,
-                missing_information=[] if evidence_items else ["no ranked source items were available"],
-                coverage_notes=[
-                    f"Built {len(evidence_items)} evidence item(s) from {len(source_map)} source URL(s)."
-                ],
-                metadata={"evidence_count": len(evidence_items), "source_url_count": len(source_map)},
-            ),
+            bundle=bundle,
             evidence_scores=evidence_scores,
+            candidate_claims=candidate_claims,
+            verified_findings=verified_findings,
         )
 
 

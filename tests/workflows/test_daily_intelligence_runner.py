@@ -21,6 +21,7 @@ from sources.connectors import (
 )
 from sources.health import BasicSourceHealthManager
 from storage.lineage import LocalJsonLineageStore
+from quality import EditorDecision
 from workflows.daily_intelligence import DailyIntelligenceRunner
 
 
@@ -138,6 +139,8 @@ def test_daily_intelligence_runner_live_offline_writes_report_artifacts(tmp_path
     assert manifest["artifacts"]["raw_items"] == "raw_items.json"
     assert manifest["artifacts"]["evidence_bundle"] == "evidence_bundle.json"
     assert manifest["artifacts"]["evidence_scores"] == "evidence_scores.json"
+    assert manifest["artifacts"]["candidate_claims"] == "candidate_claims.json"
+    assert manifest["artifacts"]["verified_findings"] == "verified_findings.json"
     assert manifest["artifacts"]["evidence_source_map"] == "evidence_source_map.json"
     assert manifest["artifacts"]["citation_check_result"] == "citation_check_result.json"
     assert manifest["artifacts"]["editor_review"] == "editor_review.json"
@@ -145,8 +148,10 @@ def test_daily_intelligence_runner_live_offline_writes_report_artifacts(tmp_path
     assert manifest["artifacts"]["report_quality_summary"] == "report_quality_summary.json"
     assert manifest["artifacts"]["quality_events"] == "quality_events.json"
     assert manifest["artifacts"]["quality_gate_metrics"] == "quality_gate_metrics.json"
+    assert manifest["artifacts"]["rewrite_policy"] == "rewrite_policy.json"
+    assert manifest["artifacts"]["rewrite_instructions"] == "rewrite_instructions.json"
     assert manifest["quality_score"] == 1.0
-    assert manifest["quality_event_count"] == 5
+    assert manifest["quality_event_count"] == 6
     assert manifest["artifacts"]["report_json"] == "report.json"
     assert manifest["artifacts"]["report_markdown"] == "report.md"
     assert manifest["artifacts"]["source_events"] == "source_events.json"
@@ -303,13 +308,18 @@ def test_daily_intelligence_runner_live_offline_writes_report_artifacts(tmp_path
     assert (run_dir / first_raw["path"]).exists()
 
     evidence_scores = json.loads((run_dir / "evidence_scores.json").read_text())
+    candidate_claims = json.loads((run_dir / "candidate_claims.json").read_text())
+    verified_findings = json.loads((run_dir / "verified_findings.json").read_text())
     evidence_source_map = json.loads((run_dir / "evidence_source_map.json").read_text())
     assert len(evidence_scores) == len(result.output["evidence_bundle"].items)
+    assert len(candidate_claims) == len(result.output["evidence_bundle"].items)
+    assert len(verified_findings["accepted_claims"]) == len(result.output["evidence_bundle"].items)
     assert set(evidence_source_map) == result.output["evidence_bundle"].source_urls
 
     quality_events = json.loads((run_dir / "quality_events.json").read_text())
     assert [event["event_type"] for event in quality_events] == [
         "evidence_build_succeeded",
+        "claim_verification_succeeded",
         "citation_check_started",
         "citation_check_succeeded",
         "editor_gate_started",
@@ -318,6 +328,8 @@ def test_daily_intelligence_runner_live_offline_writes_report_artifacts(tmp_path
     quality_metrics = json.loads((run_dir / "quality_gate_metrics.json").read_text())
     assert quality_metrics["blocked"] is False
     assert quality_metrics["quality_score"] == 1.0
+    assert quality_metrics["accepted_claims_count"] == len(result.output["evidence_bundle"].items)
+    assert quality_metrics["claim_support_score"] == 1.0
 
     lineage_store = LocalJsonLineageStore(tmp_path / "_records" / "lineage")
     evidence_id = result.output["evidence_bundle"].items[0].evidence_id
@@ -384,6 +396,43 @@ def test_daily_intelligence_runner_live_with_injected_llm_succeeds(tmp_path) -> 
     assert (Path(result.artifact_dir) / "report.json").exists()
 
 
+def test_daily_intelligence_runner_rewrites_duplicate_supported_report(tmp_path) -> None:
+    registry = SourceRegistry(
+        [
+            SourceDefinition(
+                source_id="fixture",
+                name="Fixture",
+                source_type="rss",
+                url="https://example.com/rss.xml",
+                reliability="high",
+            )
+        ]
+    )
+    connector = FeedConnector(fetch_text=lambda url: RSS_FIXTURE)
+    result = DailyIntelligenceRunner(
+        artifact_root=tmp_path,
+        source_registry=registry,
+        feed_connector=connector,
+        llm_client=_DuplicateReportLLM(),
+    ).run(profile="live", topic="AI policy", source_limit=1, run_id="daily-live-duplicate")
+
+    assert result.status == WorkflowStatus.SUCCEEDED
+    assert result.output["editor_review"].decision == EditorDecision.PASS
+    assert result.output["quality_gate_metrics"].rewrite_attempts == 1
+    assert "rewritten_report_draft" in result.output
+    assert len(result.output["final_report"].sections) == 1
+
+    run_dir = Path(result.artifact_dir)
+    manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["artifacts"]["rewritten_report_draft"] == "rewritten_report_draft.json"
+    event_types = [
+        event["event_type"]
+        for event in json.loads((run_dir / "quality_events.json").read_text(encoding="utf-8"))
+    ]
+    assert "editor_gate_rewrite_required" in event_types
+    assert "rewrite_succeeded" in event_types
+
+
 def test_daily_intelligence_runner_live_prefers_structured_llm_output(tmp_path) -> None:
     registry = SourceRegistry(
         [
@@ -441,6 +490,7 @@ def test_daily_intelligence_runner_blocks_uncited_live_report(tmp_path) -> None:
     assert manifest["artifacts"]["quality_events"] == "quality_events.json"
     assert manifest["artifacts"]["quality_gate_metrics"] == "quality_gate_metrics.json"
     assert manifest["artifacts"]["blocked_report"] == "blocked_report.json"
+    assert manifest["artifacts"]["human_review_request"] == "human_review_request.json"
 
 
 def test_daily_intelligence_runner_live_uses_topic_source_selection(tmp_path) -> None:
@@ -1410,6 +1460,30 @@ class _FakeReportLLM:
                             "content": "Policy summary.",
                             "sources": ["https://example.com/ai-policy"],
                         }
+                    ],
+                }
+            ),
+            usage=TokenUsage(input_tokens=3, output_tokens=4),
+        )
+
+
+class _DuplicateReportLLM:
+    def complete(self, request):
+        return LLMResponse(
+            content=json.dumps(
+                {
+                    "title": "Duplicate Live Report",
+                    "sections": [
+                        {
+                            "title": "Summary",
+                            "content": "Policy summary.",
+                            "sources": ["https://example.com/ai-policy"],
+                        },
+                        {
+                            "title": "Repeated",
+                            "content": "Policy summary.",
+                            "sources": ["https://example.com/ai-policy"],
+                        },
                     ],
                 }
             ),

@@ -52,6 +52,8 @@ def test_evidence_builder_creates_bundle_from_ranked_sources() -> None:
     assert bundle.bundle_id == "run-1"
     assert bundle.items[0].source_url == "https://example.com/chips"
     assert bundle.items[0].confidence == 0.95
+    assert bundle.items[0].lineage is not None
+    assert bundle.items[0].lineage.ranked_item_id == "rank_1"
     assert bundle.items[0].metadata["source_lineage"]["source_item_id"] == "raw_1"
     assert bundle.items[0].metadata["source_lineage"]["ranked_item_id"] == "rank_1"
     assert bundle.source_urls == {"https://example.com/chips"}
@@ -65,6 +67,12 @@ def test_evidence_builder_creates_bundle_from_ranked_sources() -> None:
     assert score.freshness_score == 1.0
     assert score.extraction_confidence_score == 1.0
     assert score.final_confidence == 0.95
+    assert build_result.candidate_claims[0].source_evidence_ids == [bundle.items[0].evidence_id]
+    assert build_result.verified_findings is not None
+    assert len(build_result.verified_findings.accepted_claims) == 1
+    assert build_result.verified_findings.accepted_claims[0].supporting_sources == [
+        "https://example.com/chips"
+    ]
 
     compatibility_bundle = EvidenceBuilder().build([ranked], bundle_id="run-1")
     assert compatibility_bundle.to_dict() == bundle.to_dict()

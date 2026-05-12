@@ -12,6 +12,7 @@ class SectionSupport:
     cited_urls: list[str]
     matched_evidence_ids: list[str]
     supported: bool
+    matched_evidence_confidences: list[float] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -19,6 +20,7 @@ class SectionSupport:
             "cited_urls": list(self.cited_urls),
             "matched_evidence_ids": list(self.matched_evidence_ids),
             "supported": self.supported,
+            "matched_evidence_confidences": list(self.matched_evidence_confidences),
         }
 
 
@@ -50,16 +52,19 @@ class SupportMatrix:
 class SupportMatrixBuilder:
     def build(self, report: dict, evidence_bundle: EvidenceBundle) -> SupportMatrix:
         evidence_by_url = {item.source_url: item.evidence_id for item in evidence_bundle.items}
+        confidence_by_url = {item.source_url: item.confidence for item in evidence_bundle.items}
         sections = []
         for section in report.get("sections", []):
             cited_urls = _section_sources(section)
             matched = [evidence_by_url[url] for url in cited_urls if url in evidence_by_url]
+            confidences = [confidence_by_url[url] for url in cited_urls if url in confidence_by_url]
             sections.append(
                 SectionSupport(
                     section_title=str(section.get("title", "Untitled")),
                     cited_urls=cited_urls,
                     matched_evidence_ids=matched,
                     supported=bool(matched),
+                    matched_evidence_confidences=confidences,
                 )
             )
         return SupportMatrix(sections=sections)

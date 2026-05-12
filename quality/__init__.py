@@ -1,8 +1,16 @@
 """Quality gate package."""
 
 from quality.citation_checker import CitationCheckResult, CitationChecker
-from quality.editor_gate import EditorDecision, EditorGate, EditorReview
-from quality.models import QualityEvent, QualityGateMetrics
+from quality.editor_gate import EditorDecision, EditorGate, EditorReview, RewritePolicy
+from quality.errors import QualityError, QualityErrorType, quality_error_policy
+from quality.models import (
+    HumanReviewDecision,
+    HumanReviewRequest,
+    QualityEvalCase,
+    QualityEvalRecord,
+    QualityEvent,
+    QualityGateMetrics,
+)
 from quality.scoring import QualityScorer, ReportQualitySummary
 from quality.support_matrix import SectionSupport, SupportMatrix, SupportMatrixBuilder
 
@@ -12,11 +20,19 @@ __all__ = [
     "EditorDecision",
     "EditorGate",
     "EditorReview",
+    "HumanReviewDecision",
+    "HumanReviewRequest",
+    "QualityEvalCase",
+    "QualityEvalRecord",
     "QualityEvent",
+    "QualityError",
+    "QualityErrorType",
     "QualityGateMetrics",
     "QualityScorer",
     "ReportQualitySummary",
+    "RewritePolicy",
     "SectionSupport",
     "SupportMatrix",
     "SupportMatrixBuilder",
+    "quality_error_policy",
 ]

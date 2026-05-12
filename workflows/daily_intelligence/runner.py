@@ -22,14 +22,16 @@ from domain.sources import (
     SourcePipelineMetrics,
     SourceType,
 )
-from evidence import EvidenceBuilder, EvidenceBundle
+from evidence import EvidenceBuilder, EvidenceBundle, VerifiedFindings
 from quality import (
     CitationChecker,
     EditorDecision,
     EditorGate,
+    HumanReviewRequest,
     QualityEvent,
     QualityGateMetrics,
     QualityScorer,
+    RewritePolicy,
     SupportMatrixBuilder,
 )
 from sources import SourceConfigError, SourceRegistry, load_source_registry
@@ -836,8 +838,20 @@ def build_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
                 step_id="build_evidence",
                 implementation="daily.build_evidence",
                 read_keys=["ranked_items"],
-                write_keys=["evidence_bundle", "evidence_scores", "quality_events"],
-                required_output_keys=["evidence_bundle", "evidence_scores", "quality_events"],
+                write_keys=[
+                    "evidence_bundle",
+                    "evidence_scores",
+                    "candidate_claims",
+                    "verified_findings",
+                    "quality_events",
+                ],
+                required_output_keys=[
+                    "evidence_bundle",
+                    "evidence_scores",
+                    "candidate_claims",
+                    "verified_findings",
+                    "quality_events",
+                ],
             ),
             StepSpec(
                 step_id="draft_report",
@@ -849,7 +863,7 @@ def build_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
             StepSpec(
                 step_id="quality_gate",
                 implementation="daily.quality_gate",
-                read_keys=["report_draft", "evidence_bundle", "quality_events"],
+                read_keys=["report_draft", "evidence_bundle", "verified_findings", "quality_events"],
                 write_keys=[
                     "citation_check_result",
                     "editor_review",
@@ -857,6 +871,10 @@ def build_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
                     "report_quality_summary",
                     "quality_events",
                     "quality_gate_metrics",
+                    "rewrite_policy",
+                    "rewrite_instructions",
+                    "rewritten_report_draft",
+                    "human_review_request",
                     "final_report",
                     "report_markdown",
                     "blocked_report",
@@ -1090,12 +1108,33 @@ def _build_evidence(buffer: ScopedDataBuffer) -> dict[str, Any]:
     return {
         "evidence_bundle": bundle,
         "evidence_scores": build_result.evidence_scores,
+        "candidate_claims": build_result.candidate_claims,
+        "verified_findings": build_result.verified_findings,
         "quality_events": [
             _quality_event(
                 "evidence_build_succeeded",
                 evidence_items_count=len(bundle.items),
                 evidence_scores_count=len(build_result.evidence_scores),
-            )
+                candidate_claims_count=len(build_result.candidate_claims),
+            ),
+            _quality_event(
+                "claim_verification_succeeded",
+                accepted_claims_count=(
+                    len(build_result.verified_findings.accepted_claims)
+                    if build_result.verified_findings
+                    else 0
+                ),
+                rejected_claims_count=(
+                    len(build_result.verified_findings.rejected_claims)
+                    if build_result.verified_findings
+                    else 0
+                ),
+                uncertain_claims_count=(
+                    len(build_result.verified_findings.uncertain_claims)
+                    if build_result.verified_findings
+                    else 0
+                ),
+            ),
         ],
     }
 
@@ -1103,43 +1142,94 @@ def _build_evidence(buffer: ScopedDataBuffer) -> dict[str, Any]:
 def _quality_gate(buffer: ScopedDataBuffer) -> dict[str, Any]:
     report_draft = buffer.read("report_draft")
     evidence_bundle = buffer.read("evidence_bundle")
+    verified_findings = buffer.read("verified_findings")
     quality_events = list(buffer.read("quality_events"))
-    quality_events.append(_quality_event("citation_check_started", evidence_items_count=len(evidence_bundle.items)))
-    citation_check = CitationChecker().check(report_draft, evidence_bundle)
-    quality_events.append(
-        _quality_event(
-            "citation_check_succeeded" if citation_check.passed else "citation_check_failed",
-            unknown_urls_count=len(citation_check.unknown_urls),
-            missing_section_sources_count=len(citation_check.missing_section_sources),
-            citation_coverage_score=citation_check.citation_coverage_score,
-        )
+    rewrite_policy = RewritePolicy()
+    evaluation = _evaluate_report_quality(
+        report_draft,
+        evidence_bundle,
+        verified_findings,
+        quality_events=quality_events,
+        rewrite_policy=rewrite_policy,
+        rewrite_attempts=0,
     )
-    support_matrix = SupportMatrixBuilder().build(report_draft, evidence_bundle)
-    quality_summary = QualityScorer().score(
-        report=report_draft,
+    citation_check = evaluation["citation_check"]
+    support_matrix = evaluation["support_matrix"]
+    quality_summary = evaluation["quality_summary"]
+    review = evaluation["review"]
+    final_report_draft = report_draft
+    rewritten_report_draft = None
+    rewrite_attempts = 0
+
+    if review.decision == EditorDecision.REWRITE_REQUIRED:
+        quality_events.append(
+            _quality_event(
+                "rewrite_started",
+                rewrite_attempt=1,
+                instruction_count=len(review.rewrite_instructions),
+            )
+        )
+        rewritten_report_draft = _rewrite_report_draft(
+            report_draft,
+            evidence_bundle,
+            review,
+        )
+        rewrite_attempts = 1
+        evaluation = _evaluate_report_quality(
+            rewritten_report_draft,
+            evidence_bundle,
+            verified_findings,
+            quality_events=quality_events,
+            rewrite_policy=rewrite_policy,
+            rewrite_attempts=rewrite_attempts,
+        )
+        citation_check = evaluation["citation_check"]
+        support_matrix = evaluation["support_matrix"]
+        quality_summary = evaluation["quality_summary"]
+        review = evaluation["review"]
+        if review.decision == EditorDecision.PASS:
+            quality_events.append(
+                _quality_event(
+                    "rewrite_succeeded",
+                    rewrite_attempt=rewrite_attempts,
+                    quality_score=quality_summary.quality_score,
+                )
+            )
+            final_report_draft = rewritten_report_draft
+        else:
+            quality_events.append(
+                _quality_event(
+                    "rewrite_failed",
+                    rewrite_attempt=rewrite_attempts,
+                    decision=review.decision.value,
+                    reason_count=len(review.reasons),
+                )
+            )
+
+    human_review_request = _human_review_request(
+        evidence_bundle=evidence_bundle,
+        review=review,
+        quality_summary=quality_summary,
+    )
+    human_review_required = human_review_request is not None
+    if human_review_request:
+        quality_events.append(
+            _quality_event(
+                "human_review_requested",
+                risk_level=human_review_request.risk_level,
+                reason=human_review_request.reason,
+            )
+        )
+
+    quality_gate_metrics = _quality_gate_metrics(
+        evidence_bundle=evidence_bundle,
+        verified_findings=verified_findings,
         citation_check=citation_check,
         support_matrix=support_matrix,
-    )
-    quality_events.append(_quality_event("editor_gate_started", quality_score=quality_summary.quality_score))
-    review = EditorGate().review(citation_check, support_matrix, quality_summary)
-    quality_events.append(
-        _quality_event(
-            "editor_gate_passed" if review.decision == EditorDecision.PASS else "editor_gate_blocked",
-            decision=review.decision.value,
-            quality_score=quality_summary.quality_score,
-            reason_count=len(review.reasons),
-        )
-    )
-    quality_gate_metrics = QualityGateMetrics(
-        evidence_items_count=len(evidence_bundle.items),
-        unsupported_urls_count=len(citation_check.unknown_urls),
-        missing_section_sources_count=len(citation_check.missing_section_sources),
-        unsupported_sections_count=len(support_matrix.unsupported_sections),
-        blocked=review.decision != EditorDecision.PASS,
-        decision=review.decision.value,
-        citation_coverage_score=citation_check.citation_coverage_score,
-        support_coverage=quality_summary.support_coverage,
-        quality_score=quality_summary.quality_score,
+        quality_summary=quality_summary,
+        review=review,
+        rewrite_attempts=rewrite_attempts,
+        human_review_required=human_review_required,
     )
     outputs: dict[str, Any] = {
         "citation_check_result": citation_check,
@@ -1148,30 +1238,281 @@ def _quality_gate(buffer: ScopedDataBuffer) -> dict[str, Any]:
         "report_quality_summary": quality_summary,
         "quality_events": quality_events,
         "quality_gate_metrics": quality_gate_metrics,
+        "rewrite_policy": rewrite_policy,
+        "rewrite_instructions": review.rewrite_instructions,
     }
+    if rewritten_report_draft is not None:
+        outputs["rewritten_report_draft"] = rewritten_report_draft
+    if human_review_request is not None:
+        outputs["human_review_request"] = human_review_request
     if review.decision == EditorDecision.PASS:
         final_report = FinalReport(
-            title=report_draft["title"],
-            sections=report_draft["sections"],
+            title=final_report_draft["title"],
+            sections=final_report_draft["sections"],
             source_urls=sorted(evidence_bundle.source_urls),
             metadata={
                 "evidence_bundle_id": evidence_bundle.bundle_id,
                 "quality_score": quality_summary.quality_score,
+                "accepted_claims_count": len(verified_findings.accepted_claims),
+                "rejected_claims_count": len(verified_findings.rejected_claims),
+                "uncertain_claims_count": len(verified_findings.uncertain_claims),
+                "rewrite_attempts": rewrite_attempts,
             },
         )
         outputs["final_report"] = final_report
         outputs["report_markdown"] = render_markdown(final_report)
     else:
         outputs["blocked_report"] = BlockedReport(
-            title=report_draft.get("title", "Blocked Daily Intelligence Report"),
+            title=final_report_draft.get("title", "Blocked Daily Intelligence Report"),
             reasons=review.reasons,
-            draft=report_draft,
+            draft=final_report_draft,
             metadata={
                 "citation_check_result": citation_check.to_dict(),
+                "editor_review": review.to_dict(),
                 "quality_score": quality_summary.quality_score,
+                "rewrite_attempts": rewrite_attempts,
+                "human_review_required": human_review_required,
             },
         )
     return outputs
+
+
+def _evaluate_report_quality(
+    report_draft: dict[str, Any],
+    evidence_bundle: EvidenceBundle,
+    verified_findings: VerifiedFindings,
+    *,
+    quality_events: list[QualityEvent],
+    rewrite_policy: RewritePolicy,
+    rewrite_attempts: int,
+) -> dict[str, Any]:
+    quality_events.append(
+        _quality_event(
+            "citation_check_started",
+            evidence_items_count=len(evidence_bundle.items),
+            rewrite_attempt=rewrite_attempts,
+        )
+    )
+    citation_check = CitationChecker().check(report_draft, evidence_bundle, verified_findings)
+    quality_events.append(
+        _quality_event(
+            "citation_check_succeeded" if citation_check.passed else "citation_check_failed",
+            unsupported_urls_count=len(citation_check.unsupported_urls),
+            unknown_urls_count=len(citation_check.unknown_urls),
+            missing_section_sources_count=len(citation_check.missing_section_sources),
+            unsupported_claims_count=len(citation_check.unsupported_claims),
+            rejected_claim_usage_count=len(citation_check.rejected_claim_usage),
+            citation_coverage_score=citation_check.citation_coverage_score,
+            claim_support_score=citation_check.claim_support_score,
+            rewrite_attempt=rewrite_attempts,
+        )
+    )
+    support_matrix = SupportMatrixBuilder().build(report_draft, evidence_bundle)
+    quality_summary = QualityScorer().score(
+        report=report_draft,
+        citation_check=citation_check,
+        support_matrix=support_matrix,
+    )
+    quality_events.append(
+        _quality_event(
+            "editor_gate_started",
+            quality_score=quality_summary.quality_score,
+            rewrite_attempt=rewrite_attempts,
+        )
+    )
+    review = EditorGate().review(
+        citation_check,
+        support_matrix,
+        quality_summary,
+        rewrite_policy=rewrite_policy,
+        rewrite_attempts=rewrite_attempts,
+    )
+    quality_events.append(
+        _quality_event(
+            _editor_event_type(review.decision),
+            decision=review.decision.value,
+            quality_score=quality_summary.quality_score,
+            reason_count=len(review.reasons),
+            rewrite_attempt=rewrite_attempts,
+        )
+    )
+    return {
+        "citation_check": citation_check,
+        "support_matrix": support_matrix,
+        "quality_summary": quality_summary,
+        "review": review,
+    }
+
+
+def _editor_event_type(decision: EditorDecision) -> str:
+    if decision == EditorDecision.PASS:
+        return "editor_gate_passed"
+    if decision == EditorDecision.REWRITE_REQUIRED:
+        return "editor_gate_rewrite_required"
+    return "editor_gate_blocked"
+
+
+def _rewrite_report_draft(
+    report_draft: dict[str, Any],
+    evidence_bundle: EvidenceBundle,
+    review: Any,
+) -> dict[str, Any]:
+    sections = [dict(section) for section in report_draft.get("sections", [])]
+    sections = _drop_duplicate_sections(sections)
+    unsupported_claims = _unsupported_claim_texts(review.unsupported_claims)
+    if unsupported_claims:
+        sections = [
+            rewritten
+            for section in sections
+            if (rewritten := _remove_unsupported_claims(section, unsupported_claims)) is not None
+        ]
+    evidence_by_url = {item.source_url: item for item in evidence_bundle.items}
+    for section in sections:
+        sources = section.get("sources") or section.get("source_urls") or []
+        if sources:
+            continue
+        matched_urls = _matching_source_urls(str(section.get("content", "")), evidence_by_url)
+        if matched_urls:
+            section["sources"] = matched_urls
+    rewritten = dict(report_draft)
+    rewritten["sections"] = sections
+    metadata = dict(rewritten.get("metadata") or {})
+    metadata["rewrite"] = {
+        "method": "rule",
+        "instructions": list(review.rewrite_instructions),
+        "preserve_evidence_boundary": True,
+    }
+    rewritten["metadata"] = metadata
+    return rewritten
+
+
+def _drop_duplicate_sections(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen = set()
+    deduplicated = []
+    for section in sections:
+        key = " ".join(str(section.get("content", "")).split()).casefold()
+        if key and key in seen:
+            continue
+        if key:
+            seen.add(key)
+        deduplicated.append(section)
+    return deduplicated
+
+
+def _unsupported_claim_texts(unsupported_claims: list[str]) -> list[str]:
+    texts = []
+    for claim in unsupported_claims:
+        if ": " in claim:
+            texts.append(claim.split(": ", 1)[1])
+        else:
+            texts.append(claim)
+    return texts
+
+
+def _remove_unsupported_claims(
+    section: dict[str, Any],
+    unsupported_claims: list[str],
+) -> dict[str, Any] | None:
+    content = str(section.get("content", ""))
+    for claim in unsupported_claims:
+        content = content.replace(claim, "").strip()
+    content = " ".join(content.split())
+    if not content:
+        return None
+    updated = dict(section)
+    updated["content"] = content
+    return updated
+
+
+def _matching_source_urls(content: str, evidence_by_url: dict[str, Any]) -> list[str]:
+    matches = []
+    for url, item in evidence_by_url.items():
+        if _token_overlap(content, f"{item.title} {item.summary}") >= 0.25:
+            matches.append(url)
+    return sorted(matches)
+
+
+def _token_overlap(left: str, right: str) -> float:
+    import re
+
+    left_tokens = {
+        token
+        for token in re.findall(r"[a-z0-9]+", left.casefold())
+        if len(token) > 2
+    }
+    if not left_tokens:
+        return 0.0
+    right_tokens = {
+        token
+        for token in re.findall(r"[a-z0-9]+", right.casefold())
+        if len(token) > 2
+    }
+    if not right_tokens:
+        return 0.0
+    return len(left_tokens & right_tokens) / len(left_tokens)
+
+
+def _human_review_request(
+    *,
+    evidence_bundle: EvidenceBundle,
+    review: Any,
+    quality_summary: Any,
+) -> HumanReviewRequest | None:
+    if review.decision == EditorDecision.PASS and quality_summary.quality_score >= 0.8:
+        return None
+    risk_level = "critical" if review.decision == EditorDecision.BLOCKED else "medium"
+    reason = "quality gate blocked" if review.decision == EditorDecision.BLOCKED else "quality gate rewrite required"
+    return HumanReviewRequest(
+        review_id=f"review-{evidence_bundle.bundle_id}",
+        run_id=evidence_bundle.bundle_id,
+        draft_id=f"draft-{evidence_bundle.bundle_id}",
+        reason=reason,
+        risk_level=risk_level,
+        quality_artifact_refs={
+            "citation_check_result": "citation_check_result.json",
+            "editor_review": "editor_review.json",
+            "report_quality_summary": "report_quality_summary.json",
+        },
+        metadata={
+            "decision": review.decision.value,
+            "quality_score": quality_summary.quality_score,
+            "reason_count": len(review.reasons),
+        },
+    )
+
+
+def _quality_gate_metrics(
+    *,
+    evidence_bundle: EvidenceBundle,
+    verified_findings: VerifiedFindings,
+    citation_check: Any,
+    support_matrix: Any,
+    quality_summary: Any,
+    review: Any,
+    rewrite_attempts: int,
+    human_review_required: bool,
+) -> QualityGateMetrics:
+    return QualityGateMetrics(
+        evidence_items_count=len(evidence_bundle.items),
+        unsupported_urls_count=len(citation_check.unsupported_urls),
+        missing_section_sources_count=len(citation_check.missing_section_sources),
+        unsupported_sections_count=len(support_matrix.unsupported_sections),
+        blocked=review.decision != EditorDecision.PASS,
+        decision=review.decision.value,
+        citation_coverage_score=citation_check.citation_coverage_score,
+        support_coverage=quality_summary.support_coverage,
+        quality_score=quality_summary.quality_score,
+        accepted_claims_count=len(verified_findings.accepted_claims),
+        rejected_claims_count=len(verified_findings.rejected_claims),
+        uncertain_claims_count=len(verified_findings.uncertain_claims),
+        unsupported_claims_count=len(citation_check.unsupported_claims),
+        rejected_claim_usage_count=len(citation_check.rejected_claim_usage),
+        claim_support_score=citation_check.claim_support_score,
+        section_source_coverage_score=citation_check.section_source_coverage_score,
+        rewrite_attempts=rewrite_attempts,
+        rewrite_required=review.decision == EditorDecision.REWRITE_REQUIRED,
+        human_review_required=human_review_required,
+    )
 
 
 def _deterministic_report(topic: str, evidence_bundle: EvidenceBundle) -> dict[str, Any]:
