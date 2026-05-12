@@ -615,6 +615,43 @@ def test_source_search_tool_filters_by_source_type() -> None:
     assert [source["source_id"] for source in observation.result.output["sources"]] == ["html"]
 
 
+def test_source_search_tool_filters_by_reliability() -> None:
+    registry = ToolRegistry()
+    source_registry = SourceRegistry(
+        [
+            SourceDefinition(
+                source_id="high",
+                name="High",
+                source_type="rss",
+                url="https://example.com/high.xml",
+                topics=["ai"],
+                reliability="high",
+            ),
+            SourceDefinition(
+                source_id="low",
+                name="Low",
+                source_type="rss",
+                url="https://example.com/low.xml",
+                topics=["ai"],
+                reliability="low",
+            ),
+        ]
+    )
+    register_source_tools(registry, source_registry=source_registry)
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="source.search",
+            arguments={"query": "ai", "reliability": "high"},
+        ),
+        ToolPolicy(allowed_tools=["source.search"]),
+    )
+
+    assert observation.status == ToolStatus.SUCCEEDED
+    assert [source["source_id"] for source in observation.result.output["sources"]] == ["high"]
+
+
 def test_source_fetch_url_tool_applies_max_bytes_to_injected_fetcher() -> None:
     registry = ToolRegistry()
     register_source_tools(registry, fetch_text=lambda url: "abcdef")

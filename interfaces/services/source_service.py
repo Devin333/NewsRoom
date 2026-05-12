@@ -98,7 +98,17 @@ class SourceApplicationService:
         self.arxiv_connector = arxiv_connector or ArxivConnector()
         self.github_connector = github_connector or GithubConnector()
 
-    def list_sources(self, *, enabled_only: bool = True) -> SourceListResult:
+    def list_sources(
+        self,
+        *,
+        enabled_only: bool = True,
+        reliability: str | None = None,
+    ) -> SourceListResult:
+        sources = (
+            self.source_registry.list_by_reliability(reliability, enabled_only=enabled_only)
+            if reliability is not None
+            else self.source_registry.list_sources(enabled_only=enabled_only)
+        )
         return SourceListResult(
             [
                 SourceSummary(
@@ -113,7 +123,7 @@ class SourceApplicationService:
                     language=source.language,
                     region=source.region,
                 )
-                for source in self.source_registry.list_sources(enabled_only=enabled_only)
+                for source in sources
             ]
         )
 

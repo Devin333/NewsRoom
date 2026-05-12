@@ -50,6 +50,36 @@ def test_source_registry_lists_sources_by_type() -> None:
     assert registry.list_by_type("html", enabled_only=False) == [html, disabled_html]
 
 
+def test_source_registry_lists_sources_by_reliability() -> None:
+    high = SourceDefinition(
+        source_id="high",
+        name="High",
+        source_type="rss",
+        url="https://example.com/high.xml",
+        reliability="high",
+    )
+    low = SourceDefinition(
+        source_id="low",
+        name="Low",
+        source_type="rss",
+        url="https://example.com/low.xml",
+        reliability="low",
+    )
+    disabled_high = SourceDefinition(
+        source_id="disabled-high",
+        name="Disabled High",
+        source_type="rss",
+        url="https://example.com/disabled-high.xml",
+        reliability="high",
+        enabled=False,
+    )
+
+    registry = SourceRegistry([low, disabled_high, high])
+
+    assert registry.list_by_reliability("high") == [high]
+    assert registry.list_by_reliability("high", enabled_only=False) == [disabled_high, high]
+
+
 def test_source_registry_lists_by_topic_with_language_and_region_filters() -> None:
     ai_us = SourceDefinition(
         source_id="ai-us",
@@ -59,6 +89,7 @@ def test_source_registry_lists_by_topic_with_language_and_region_filters() -> No
         topics=["ai", "policy"],
         language="en",
         region="us",
+        reliability="high",
     )
     ai_cn = SourceDefinition(
         source_id="ai-cn",
@@ -82,6 +113,7 @@ def test_source_registry_lists_by_topic_with_language_and_region_filters() -> No
     registry = SourceRegistry([chips, ai_cn, ai_us])
 
     assert registry.list_by_topic("AI policy", language="en", region="us") == [ai_us]
+    assert registry.list_by_topic("AI policy", reliability="medium") == [ai_cn]
 
 
 def test_source_registry_select_sources_orders_by_match_reliability_authority() -> None:

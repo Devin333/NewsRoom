@@ -98,6 +98,19 @@ class SourceRegistry:
             if source.source_type == expected_type
         ]
 
+    def list_by_reliability(
+        self,
+        reliability: str | SourceReliability,
+        *,
+        enabled_only: bool = True,
+    ) -> list[SourceDefinition]:
+        expected_reliability = SourceReliability(reliability)
+        return [
+            source
+            for source in self.list_sources(enabled_only=enabled_only)
+            if source.reliability == expected_reliability
+        ]
+
     def validate(self) -> SourceRegistryValidationResult:
         issues: list[SourceRegistryValidationIssue] = []
         for source in self.list_sources(enabled_only=False):
@@ -111,11 +124,13 @@ class SourceRegistry:
         enabled_only: bool = True,
         language: str | None = None,
         region: str | None = None,
+        reliability: str | SourceReliability | None = None,
     ) -> list[SourceDefinition]:
         sources = self._filter_sources(
             enabled_only=enabled_only,
             language=language,
             region=region,
+            reliability=reliability,
         )
         matched = [source for source in sources if _topic_match_score(source, topic) > 0]
         return self._sort_for_topic(matched, topic)
@@ -127,12 +142,14 @@ class SourceRegistry:
         enabled_only: bool = True,
         language: str | None = None,
         region: str | None = None,
+        reliability: str | SourceReliability | None = None,
         fallback_to_enabled: bool = True,
     ) -> list[SourceDefinition]:
         sources = self._filter_sources(
             enabled_only=enabled_only,
             language=language,
             region=region,
+            reliability=reliability,
         )
         matched = [source for source in sources if _topic_match_score(source, topic) > 0]
         if matched or not fallback_to_enabled:
@@ -145,12 +162,16 @@ class SourceRegistry:
         enabled_only: bool,
         language: str | None,
         region: str | None,
+        reliability: str | SourceReliability | None,
     ) -> list[SourceDefinition]:
         sources = self.list_sources(enabled_only=enabled_only)
         if language is not None:
             sources = [source for source in sources if source.language == language]
         if region is not None:
             sources = [source for source in sources if source.region == region]
+        if reliability is not None:
+            expected_reliability = SourceReliability(reliability)
+            sources = [source for source in sources if source.reliability == expected_reliability]
         return sources
 
     def _sort_for_topic(self, sources: list[SourceDefinition], topic: str) -> list[SourceDefinition]:

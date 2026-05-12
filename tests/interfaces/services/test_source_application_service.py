@@ -36,6 +36,34 @@ def test_source_service_lists_enabled_sources() -> None:
     assert result.to_dict()["sources"][0]["reliability"] == "high"
 
 
+def test_source_service_filters_sources_by_reliability() -> None:
+    service = SourceApplicationService(
+        source_registry=SourceRegistry(
+            [
+                SourceDefinition(
+                    source_id="high",
+                    name="High",
+                    source_type="rss",
+                    url="https://example.com/high",
+                    reliability="high",
+                ),
+                SourceDefinition(
+                    source_id="low",
+                    name="Low",
+                    source_type="rss",
+                    url="https://example.com/low",
+                    reliability="low",
+                ),
+            ]
+        )
+    )
+
+    result = service.list_sources(reliability="high")
+
+    assert result.to_dict()["source_count"] == 1
+    assert result.to_dict()["sources"][0]["source_id"] == "high"
+
+
 def test_source_service_returns_health_views() -> None:
     registry = SourceRegistry(
         [SourceDefinition(source_id="source-1", name="Source", source_type="rss", url="https://example.com/rss")]

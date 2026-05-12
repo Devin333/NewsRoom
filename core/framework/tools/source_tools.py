@@ -8,7 +8,7 @@ from urllib.request import Request, urlopen
 
 from core.framework.tools.models import ToolDefinition
 from core.framework.tools.registry import ToolRegistry
-from domain.sources import RawSourceItem, SourceDefinition, SourceError, SourceType
+from domain.sources import RawSourceItem, SourceDefinition, SourceError, SourceReliability, SourceType
 from sources import SourceRegistry
 from sources.connectors import (
     FeedConnector,
@@ -180,6 +180,7 @@ def register_source_tools(
                         "enabled_only": {"type": "boolean"},
                         "language": {"type": "string"},
                         "region": {"type": "string"},
+                        "reliability": {"type": "string"},
                         "source_type": {"type": "string"},
                         "fallback_to_enabled": {"type": "boolean"},
                         "limit": {"type": "integer"},
@@ -451,6 +452,7 @@ def _search_sources(
     enabled_only = bool(args.get("enabled_only", True))
     language = args.get("language")
     region = args.get("region")
+    reliability = args.get("reliability")
     source_type = args.get("source_type")
     limit = _optional_limit(args.get("limit"))
     query = str(args.get("query") or "").strip()
@@ -460,6 +462,7 @@ def _search_sources(
             enabled_only=enabled_only,
             language=str(language) if language is not None else None,
             region=str(region) if region is not None else None,
+            reliability=str(reliability) if reliability is not None else None,
             fallback_to_enabled=bool(args.get("fallback_to_enabled", True)),
         )
     else:
@@ -468,6 +471,9 @@ def _search_sources(
             sources = [source for source in sources if source.language == str(language)]
         if region is not None:
             sources = [source for source in sources if source.region == str(region)]
+        if reliability is not None:
+            expected_reliability = SourceReliability(str(reliability))
+            sources = [source for source in sources if source.reliability == expected_reliability]
     if source_type is not None:
         expected_type = SourceType(str(source_type))
         sources = [source for source in sources if source.source_type == expected_type]
