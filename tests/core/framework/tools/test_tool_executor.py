@@ -62,6 +62,79 @@ def test_tool_executor_blocks_disallowed_tool() -> None:
     assert observation.result.error_type == "ToolPermissionError"
 
 
+def test_tool_executor_blocks_dangerous_tool_by_default() -> None:
+    calls = {"count": 0}
+    registry = ToolRegistry()
+    registry.register(
+        ToolDefinition(
+            name="system.command",
+            is_dangerous=True,
+            input_schema={"required": ["command"], "properties": {"command": {"type": "string"}}},
+        ),
+        lambda args: calls.__setitem__("count", calls["count"] + 1),
+    )
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(tool_name="system.command", arguments={"command": "echo hello"}),
+        ToolPolicy(allowed_tools=["system.command"]),
+    )
+
+    assert observation.status == ToolStatus.BLOCKED
+    assert calls["count"] == 0
+    assert observation.result.error_type == "ToolPermissionError"
+    assert "dangerous tool is not allowed" in (observation.result.error_message or "")
+
+
+def test_tool_executor_requires_approval_for_side_effecting_tool() -> None:
+    calls = {"count": 0}
+    registry = ToolRegistry()
+    registry.register(
+        ToolDefinition(
+            name="report.publish",
+            side_effect="publishing",
+            input_schema={"required": ["report_id"], "properties": {"report_id": {"type": "string"}}},
+        ),
+        lambda args: calls.__setitem__("count", calls["count"] + 1),
+    )
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(tool_name="report.publish", arguments={"report_id": "report-1"}),
+        ToolPolicy(allowed_tools=["report.publish"]),
+    )
+
+    assert observation.status == ToolStatus.APPROVAL_REQUIRED
+    assert calls["count"] == 0
+    assert "requires approval" in (observation.result.output_summary or "")
+
+
+def test_tool_executor_can_run_side_effecting_tool_when_approval_gate_is_disabled() -> None:
+    calls = {"count": 0}
+    registry = ToolRegistry()
+    registry.register(
+        ToolDefinition(
+            name="notification.send",
+            side_effect="external_write",
+            input_schema={"required": ["message"], "properties": {"message": {"type": "string"}}},
+        ),
+        lambda args: calls.__setitem__("count", calls["count"] + 1) or {"sent": args["message"]},
+    )
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(tool_name="notification.send", arguments={"message": "ready"}),
+        ToolPolicy(
+            allowed_tools=["notification.send"],
+            require_approval_for_side_effects=False,
+        ),
+    )
+
+    assert observation.status == ToolStatus.SUCCEEDED
+    assert calls["count"] == 1
+    assert observation.result.output == {"sent": "ready"}
+
+
 def test_tool_executor_fails_missing_required_arguments() -> None:
     executor = ToolExecutor(_registry())
 

@@ -44,6 +44,10 @@ class ToolExecutor:
                     f"agent {call.requested_by_agent_id} is not allowed to call {call.tool_name}"
                 )
 
+            safety_result = _safety_gate(registered.definition, policy)
+            if safety_result is not None:
+                return safety_result
+
             validate_tool_arguments(registered.definition, call.arguments)
 
             raw_output = registered.executor(call.arguments)
@@ -106,6 +110,28 @@ class ToolExecutor:
             output=safe_output,
             output_bytes=output_bytes,
         )
+
+
+def _safety_gate(definition: Any, policy: ToolPolicy) -> ToolResult | None:
+    if definition.is_dangerous and not policy.allow_dangerous_tools:
+        return ToolResult(
+            status=ToolStatus.BLOCKED,
+            error_type="ToolPermissionError",
+            error_message=f"dangerous tool is not allowed: {definition.name}",
+        )
+    if (
+        policy.require_approval_for_side_effects
+        and (definition.requires_approval or _has_side_effects(definition.side_effect))
+    ):
+        return ToolResult(
+            status=ToolStatus.APPROVAL_REQUIRED,
+            output_summary=f"Tool requires approval before execution: {definition.name}",
+        )
+    return None
+
+
+def _has_side_effects(side_effect: str) -> bool:
+    return side_effect not in {"", "none", "read_only"}
 
 
 def _json_size_bytes(value: Any) -> int:
