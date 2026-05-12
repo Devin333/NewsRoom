@@ -51,6 +51,7 @@ from sources.processing import (
     build_source_freshness_report,
     build_source_governance_report,
     build_source_health_report,
+    build_source_quality_summary_report,
     build_source_ranking_scores,
     build_source_traceability_report,
     deduplicate_with_result,
@@ -716,6 +717,7 @@ def build_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
                     "source_pipeline_metrics",
                     "source_coverage_report",
                     "source_quality_scores",
+                    "source_quality_summary_report",
                     "source_ranking_scores",
                     "source_freshness_report",
                     "source_traceability_report",
@@ -727,6 +729,7 @@ def build_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
                     "source_pipeline_metrics",
                     "source_coverage_report",
                     "source_quality_scores",
+                    "source_quality_summary_report",
                     "source_ranking_scores",
                     "source_freshness_report",
                     "source_traceability_report",
@@ -906,6 +909,7 @@ def _rank_sources(buffer: ScopedDataBuffer) -> dict[str, Any]:
     source_ranking_scores = build_source_ranking_scores(ranked_items)
     source_freshness_report = build_source_freshness_report(ranked_items)
     source_traceability_report = build_source_traceability_report(ranked_items)
+    source_quality_summary_report = build_source_quality_summary_report(source_quality_scores)
     return {
         "ranked_items": ranked_items,
         "source_events": source_events,
@@ -917,6 +921,7 @@ def _rank_sources(buffer: ScopedDataBuffer) -> dict[str, Any]:
             failed_sources=buffer.read("failed_sources"),
         ),
         "source_quality_scores": source_quality_scores,
+        "source_quality_summary_report": source_quality_summary_report,
         "source_ranking_scores": source_ranking_scores,
         "source_freshness_report": source_freshness_report,
         "source_traceability_report": source_traceability_report,

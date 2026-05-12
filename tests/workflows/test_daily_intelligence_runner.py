@@ -157,6 +157,7 @@ def test_daily_intelligence_runner_live_offline_writes_report_artifacts(tmp_path
     assert manifest["artifacts"]["source_selection_report"] == "source_selection_report.json"
     assert manifest["artifacts"]["source_coverage_report"] == "source_coverage_report.json"
     assert manifest["artifacts"]["source_quality_scores"] == "source_quality_scores.json"
+    assert manifest["artifacts"]["source_quality_summary_report"] == "source_quality_summary_report.json"
     assert manifest["artifacts"]["source_ranking_scores"] == "source_ranking_scores.json"
     assert manifest["artifacts"]["source_freshness_report"] == "source_freshness_report.json"
     assert manifest["artifacts"]["source_traceability_report"] == "source_traceability_report.json"
@@ -250,6 +251,15 @@ def test_daily_intelligence_runner_live_offline_writes_report_artifacts(tmp_path
     assert source_quality_scores[0]["quality_score"] > 0.8
     assert source_quality_scores[0]["traceability_score"] == 1.0
     assert result.output["source_quality_scores"] == source_quality_scores
+
+    quality_summary_report = json.loads(
+        (run_dir / "source_quality_summary_report.json").read_text(encoding="utf-8")
+    )
+    assert quality_summary_report["item_count"] == 2
+    assert quality_summary_report["low_quality_count"] == 0
+    assert quality_summary_report["weak_traceability_count"] == 0
+    assert quality_summary_report["average_quality_score"] > 0.8
+    assert result.output["source_quality_summary_report"].item_count == 2
 
     source_ranking_scores = json.loads((run_dir / "source_ranking_scores.json").read_text(encoding="utf-8"))
     assert len(source_ranking_scores) == 2

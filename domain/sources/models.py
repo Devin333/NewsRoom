@@ -793,6 +793,30 @@ class SourceTraceabilityReport:
         }
 
 
+@dataclass(frozen=True)
+class SourceQualitySummaryReport:
+    item_count: int
+    average_quality_score: float | None = None
+    min_quality_score: float | None = None
+    max_quality_score: float | None = None
+    low_quality_count: int = 0
+    weak_traceability_count: int = 0
+    penalty_counts: dict[str, int] = field(default_factory=dict)
+    rows: list[dict[str, Any]] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "item_count": self.item_count,
+            "average_quality_score": self.average_quality_score,
+            "min_quality_score": self.min_quality_score,
+            "max_quality_score": self.max_quality_score,
+            "low_quality_count": self.low_quality_count,
+            "weak_traceability_count": self.weak_traceability_count,
+            "penalty_counts": dict(self.penalty_counts),
+            "rows": [dict(row) for row in self.rows],
+        }
+
+
 def _dt(value: datetime | None) -> str | None:
     return value.isoformat().replace("+00:00", "Z") if value else None
 

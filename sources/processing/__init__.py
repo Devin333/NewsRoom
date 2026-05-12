@@ -11,6 +11,7 @@ from sources.processing.health_report import build_source_health_report
 from sources.processing.language import detect_language
 from sources.processing.normalize import normalize_items
 from sources.processing.quality import score_source_item, score_source_items
+from sources.processing.quality_summary import build_source_quality_summary_report
 from sources.processing.rank import rank_items
 from sources.processing.ranking_report import build_source_ranking_scores
 from sources.processing.traceability import build_source_traceability_report
@@ -28,6 +29,7 @@ __all__ = [
     "detect_language",
     "normalize_items",
     "rank_items",
+    "build_source_quality_summary_report",
     "build_source_ranking_scores",
     "build_source_traceability_report",
     "score_source_item",

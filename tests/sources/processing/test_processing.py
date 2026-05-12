@@ -19,6 +19,7 @@ from sources.processing import (
     build_source_freshness_report,
     build_source_governance_report,
     build_source_health_report,
+    build_source_quality_summary_report,
     build_source_ranking_scores,
     build_source_traceability_report,
     deduplicate_items,
@@ -384,6 +385,38 @@ def test_score_source_item_summarizes_source_side_quality_signals() -> None:
     assert quality.quality_score == 0.635
     assert quality.penalties == ["low_reliability", "low_authority", "thin_content", "language_unknown"]
     assert quality.to_dict()["quality_score"] == 0.635
+
+
+def test_build_source_quality_summary_report_aggregates_scores_and_penalties() -> None:
+    report = build_source_quality_summary_report(
+        [
+            {
+                "normalized_item_id": "norm-1",
+                "source_item_id": "raw-1",
+                "source_id": "official",
+                "quality_score": 0.9,
+                "traceability_score": 1.0,
+                "penalties": [],
+            },
+            {
+                "normalized_item_id": "norm-2",
+                "source_item_id": "raw-2",
+                "source_id": "community",
+                "quality_score": 0.6,
+                "traceability_score": 0.8,
+                "penalties": ["low_reliability", "weak_traceability"],
+            },
+        ]
+    )
+
+    assert report.item_count == 2
+    assert report.average_quality_score == 0.75
+    assert report.min_quality_score == 0.6
+    assert report.max_quality_score == 0.9
+    assert report.low_quality_count == 1
+    assert report.weak_traceability_count == 1
+    assert report.penalty_counts == {"low_reliability": 1, "weak_traceability": 1}
+    assert report.rows[1]["low_quality"] is True
 
 
 def test_canonicalize_url_removes_default_ports_and_preserves_custom_ports() -> None:
