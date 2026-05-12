@@ -9,6 +9,7 @@ from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from core.framework.artifacts.filesystem import ArtifactManager
+from storage.artifacts import ArtifactRef
 
 
 _SAFE_SEGMENT_RE = re.compile(r"[^A-Za-z0-9_.-]+")
@@ -54,12 +55,25 @@ class SourceArtifactWriter:
                     "item": _redact(_to_json_safe(raw_item)),
                 },
             )
+            artifact_ref = _artifact_ref(
+                run_id=run_id,
+                artifact_type="source_item",
+                source_id=source_id,
+                object_id=object_id,
+                path=path,
+                artifact_path=artifact_path,
+            )
             entry = {
                 "artifact_type": "source_item",
+                "artifact_id": artifact_ref.artifact_id,
                 "source_id": source_id,
                 "object_id": object_id,
                 "path": path,
                 "size_bytes": artifact_path.stat().st_size,
+                "content_type": artifact_ref.content_type,
+                "checksum": artifact_ref.checksum,
+                "redacted": artifact_ref.redacted,
+                "artifact_ref": artifact_ref.to_dict(),
             }
             entry.update(_raw_content_fingerprint(raw_item))
             entries.append(entry)
@@ -78,13 +92,26 @@ class SourceArtifactWriter:
                     "error": _redact(_to_json_safe(source_error)),
                 },
             )
+            artifact_ref = _artifact_ref(
+                run_id=run_id,
+                artifact_type="source_error",
+                source_id=source_id,
+                object_id=object_id,
+                path=path,
+                artifact_path=artifact_path,
+            )
             entries.append(
                 {
                     "artifact_type": "source_error",
+                    "artifact_id": artifact_ref.artifact_id,
                     "source_id": source_id,
                     "object_id": object_id,
                     "path": path,
                     "size_bytes": artifact_path.stat().st_size,
+                    "content_type": artifact_ref.content_type,
+                    "checksum": artifact_ref.checksum,
+                    "redacted": artifact_ref.redacted,
+                    "artifact_ref": artifact_ref.to_dict(),
                 }
             )
 
@@ -105,6 +132,38 @@ def _source_error_id(source_error: Any, index: int) -> str:
     error_type = _string_value(source_error, "error_type", default="source_error")
     digest = _stable_id(source_error)[:12]
     return f"{index:04d}_{source_id}_{error_type}_{digest}"
+
+
+def _artifact_ref(
+    *,
+    run_id: str,
+    artifact_type: str,
+    source_id: str,
+    object_id: str,
+    path: str,
+    artifact_path: Any,
+) -> ArtifactRef:
+    data = artifact_path.read_bytes()
+    return ArtifactRef(
+        artifact_id=_artifact_id(artifact_type, source_id, object_id),
+        run_id=run_id,
+        artifact_type=artifact_type,
+        path=path,
+        content_type="application/json",
+        size_bytes=len(data),
+        checksum=sha256(data).hexdigest(),
+        redacted=True,
+        metadata={
+            "source_id": source_id,
+            "object_id": object_id,
+            "source_artifact_type": artifact_type,
+        },
+    )
+
+
+def _artifact_id(artifact_type: str, source_id: str, object_id: str) -> str:
+    prefix = artifact_type.replace("_", "-")
+    return f"{prefix}-{_path_segment(source_id)}-{_path_segment(object_id)}"
 
 
 def _stable_id(value: Any) -> str:

@@ -2,6 +2,7 @@ import core.framework.runner as runner_module
 from core.framework import WorkflowRunner
 from core.framework.specs import StepSpec, WorkflowSpec, WorkflowStatus
 from core.framework.workflow import FunctionStepRegistry
+from domain.sources import SourceError
 from storage.artifacts import LocalJsonArtifactIndexStore
 from storage.checkpoint import LocalJsonCheckpointStore
 from storage.events import LocalJsonEventStore
@@ -234,6 +235,64 @@ def test_workflow_runner_uses_artifact_index_factory_by_default(tmp_path, monkey
         "output",
     }.issubset(artifact_types)
     assert all(ref.run_id == "artifact-factory-run" for ref in fake_index.refs)
+
+
+def test_workflow_runner_indexes_expanded_source_artifact_refs(tmp_path) -> None:
+    registry = FunctionStepRegistry()
+    registry.register(
+        "sample.sources",
+        lambda buffer: {
+            "raw_items": [
+                {
+                    "source_id": "feed/source",
+                    "source_item_id": "item-1",
+                    "title": "Real source item",
+                    "url": "https://example.com/item",
+                    "raw_content": "<item>content</item>",
+                }
+            ],
+            "source_errors": [
+                SourceError(
+                    source_id="feed/source",
+                    source_name="Feed Source",
+                    error_type="fetch_timeout",
+                    error_message="timeout",
+                    url="https://example.com/feed",
+                )
+            ],
+        },
+    )
+    runner = WorkflowRunner(artifact_root=tmp_path, function_registry=registry)
+    spec = WorkflowSpec(
+        workflow_id="source-artifacts",
+        name="Source Artifacts",
+        version="1.0",
+        start_step_id="sources",
+        steps=[
+            StepSpec(
+                step_id="sources",
+                implementation="sample.sources",
+                read_keys=[],
+                write_keys=["raw_items", "source_errors"],
+                required_output_keys=["raw_items", "source_errors"],
+            )
+        ],
+    )
+
+    result = runner.run(spec, {}, profile="test", run_id="runner-source-artifacts")
+
+    assert result.status == WorkflowStatus.SUCCEEDED
+    refs = LocalJsonArtifactIndexStore(tmp_path / "_records" / "artifact_index").list_by_run(
+        "runner-source-artifacts"
+    )
+    source_refs = {ref.artifact_type: ref for ref in refs if ref.artifact_type in {"source_item", "source_error"}}
+    assert set(source_refs) == {"source_item", "source_error"}
+    assert source_refs["source_item"].path == "sources/items/feed_source/item-1.json"
+    assert source_refs["source_item"].checksum is not None
+    assert source_refs["source_item"].metadata["source_id"] == "feed/source"
+    assert source_refs["source_error"].path.startswith("sources/errors/feed_source/")
+    assert source_refs["source_error"].checksum is not None
+    assert source_refs["source_error"].metadata["source_artifact_type"] == "source_error"
 
 
 def test_workflow_runner_uses_lineage_store_factory_by_default(tmp_path, monkeypatch) -> None:
