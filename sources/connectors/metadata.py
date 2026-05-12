@@ -28,6 +28,8 @@ def source_item_metadata(
         metadata.setdefault("source_kind", "official_blog")
     elif source.source_type.value == "web_page":
         metadata.setdefault("source_kind", "web_page")
+    if source.category:
+        metadata["source_category"] = source.category
     for key in GOVERNANCE_METADATA_KEYS:
         if key in source.metadata:
             metadata[key] = source.metadata[key]

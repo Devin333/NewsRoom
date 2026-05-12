@@ -47,6 +47,7 @@ class SourceDefinition:
     enabled: bool = True
     respect_robots: bool = True
     topics: list[str] = field(default_factory=list)
+    category: str | None = None
     language: str | None = None
     region: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)

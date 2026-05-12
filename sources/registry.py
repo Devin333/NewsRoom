@@ -128,6 +128,19 @@ class SourceRegistry:
             if source.reliability == expected_reliability
         ]
 
+    def list_by_category(
+        self,
+        category: str,
+        *,
+        enabled_only: bool = True,
+    ) -> list[SourceDefinition]:
+        expected_category = _normalize_category(category)
+        return [
+            source
+            for source in self.list_sources(enabled_only=enabled_only)
+            if _normalize_category(source.category) == expected_category
+        ]
+
     def validate(self) -> SourceRegistryValidationResult:
         issues: list[SourceRegistryValidationIssue] = []
         for source in self.list_sources(enabled_only=False):
@@ -141,12 +154,14 @@ class SourceRegistry:
         enabled_only: bool = True,
         language: str | None = None,
         region: str | None = None,
+        category: str | None = None,
         reliability: str | SourceReliability | None = None,
     ) -> list[SourceDefinition]:
         sources = self._filter_sources(
             enabled_only=enabled_only,
             language=language,
             region=region,
+            category=category,
             reliability=reliability,
         )
         matched = [source for source in sources if _topic_match_score(source, topic) > 0]
@@ -159,6 +174,7 @@ class SourceRegistry:
         enabled_only: bool = True,
         language: str | None = None,
         region: str | None = None,
+        category: str | None = None,
         reliability: str | SourceReliability | None = None,
         fallback_to_enabled: bool = True,
     ) -> list[SourceDefinition]:
@@ -167,6 +183,7 @@ class SourceRegistry:
             enabled_only=enabled_only,
             language=language,
             region=region,
+            category=category,
             reliability=reliability,
             fallback_to_enabled=fallback_to_enabled,
         )
@@ -179,6 +196,7 @@ class SourceRegistry:
         enabled_only: bool = True,
         language: str | None = None,
         region: str | None = None,
+        category: str | None = None,
         reliability: str | SourceReliability | None = None,
         fallback_to_enabled: bool = True,
     ) -> tuple[list[SourceDefinition], SourceSelectionReport]:
@@ -186,6 +204,7 @@ class SourceRegistry:
             enabled_only=enabled_only,
             language=language,
             region=region,
+            category=category,
             reliability=reliability,
         )
         matched = [source for source in sources if _topic_match_score(source, topic) > 0]
@@ -201,6 +220,7 @@ class SourceRegistry:
                 "enabled_only": enabled_only,
                 "language": language,
                 "region": region,
+                "category": category,
                 "reliability": (
                     SourceReliability(reliability).value if reliability is not None else None
                 ),
@@ -239,6 +259,7 @@ class SourceRegistry:
         enabled_only: bool,
         language: str | None,
         region: str | None,
+        category: str | None,
         reliability: str | SourceReliability | None,
     ) -> list[SourceDefinition]:
         sources = self.list_sources(enabled_only=enabled_only)
@@ -246,6 +267,13 @@ class SourceRegistry:
             sources = [source for source in sources if source.language == language]
         if region is not None:
             sources = [source for source in sources if source.region == region]
+        if category is not None:
+            expected_category = _normalize_category(category)
+            sources = [
+                source
+                for source in sources
+                if _normalize_category(source.category) == expected_category
+            ]
         if reliability is not None:
             expected_reliability = SourceReliability(reliability)
             sources = [source for source in sources if source.reliability == expected_reliability]
@@ -310,6 +338,7 @@ def _source_summary(source: SourceDefinition) -> dict[str, Any]:
         "authority_score": source.authority_score,
         "enabled": source.enabled,
         "topics": list(source.topics),
+        "category": source.category,
         "language": source.language,
         "region": source.region,
     }
@@ -408,3 +437,9 @@ def _topic_terms(topic: str) -> set[str]:
 
 def _normalize_topic(topic: str) -> str:
     return " ".join(topic.casefold().replace("-", " ").replace("_", " ").split())
+
+
+def _normalize_category(category: str | None) -> str | None:
+    if category is None:
+        return None
+    return " ".join(str(category).casefold().replace("-", " ").replace("_", " ").split())

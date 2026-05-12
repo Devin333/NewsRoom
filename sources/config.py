@@ -88,6 +88,7 @@ def _source_definition(payload: dict[str, Any]) -> SourceDefinition:
         enabled=_bool_value(payload.get("enabled"), default=True),
         respect_robots=_bool_value(payload.get("respect_robots"), default=True),
         topics=_string_list(payload.get("topics")),
+        category=_optional_text(payload.get("category")),
         language=_optional_text(payload.get("language")),
         region=_optional_text(payload.get("region")),
         metadata=_dict_value(payload.get("metadata")),

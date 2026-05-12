@@ -19,6 +19,7 @@ def test_load_source_registry_reads_json_sources_payload(tmp_path) -> None:
                         "reliability": "high",
                         "authority_score": 0.9,
                         "topics": ["ai", "models"],
+                        "category": "official",
                         "language": "en",
                         "metadata": {"source_kind": "official_blog"},
                     },
@@ -42,6 +43,7 @@ def test_load_source_registry_reads_json_sources_payload(tmp_path) -> None:
     openai = registry.get("openai")
     assert openai.reliability.value == "high"
     assert openai.authority_score == 0.9
+    assert openai.category == "official"
     assert openai.metadata["source_kind"] == "official_blog"
 
 

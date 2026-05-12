@@ -130,6 +130,30 @@ def test_source_registry_lists_sources_by_reliability() -> None:
     assert registry.list_by_reliability("high", enabled_only=False) == [disabled_high, high]
 
 
+def test_source_registry_lists_and_filters_by_category() -> None:
+    official = SourceDefinition(
+        source_id="official",
+        name="Official",
+        source_type="rss",
+        url="https://example.com/official.xml",
+        topics=["ai"],
+        category="official",
+    )
+    community = SourceDefinition(
+        source_id="community",
+        name="Community",
+        source_type="rss",
+        url="https://example.com/community.xml",
+        topics=["ai"],
+        category="community",
+        reliability="low",
+    )
+    registry = SourceRegistry([community, official])
+
+    assert registry.list_by_category("official") == [official]
+    assert registry.select_sources(topic="AI", category="community") == [community]
+
+
 def test_source_registry_lists_by_topic_with_language_and_region_filters() -> None:
     ai_us = SourceDefinition(
         source_id="ai-us",

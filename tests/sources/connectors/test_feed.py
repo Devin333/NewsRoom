@@ -83,6 +83,7 @@ def test_feed_connector_propagates_allowlisted_governance_metadata() -> None:
         name="Official RSS",
         source_type="rss",
         url="https://example.com/rss.xml",
+        category="official",
         metadata={
             "official_blog": True,
             "category": "official_blog",
@@ -94,6 +95,7 @@ def test_feed_connector_propagates_allowlisted_governance_metadata() -> None:
 
     assert len(items) == 1
     assert items[0].metadata["official_blog"] is True
+    assert items[0].metadata["source_category"] == "official"
     assert items[0].metadata["category"] == "official_blog"
     assert "api_key" not in items[0].metadata
 
