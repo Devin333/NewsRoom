@@ -38,6 +38,51 @@ class ModelRoute:
 
 
 @dataclass(frozen=True)
+class LLMRoutingPolicy:
+    default_route_id: str | None = None
+    agent_routes: dict[str, str] = field(default_factory=dict)
+    task_routes: dict[str, str] = field(default_factory=dict)
+    agent_task_routes: dict[tuple[str, str], str] = field(default_factory=dict)
+
+    def resolve(
+        self,
+        *,
+        route_id: str | None = None,
+        agent_id: str | None = None,
+        task_type: str | None = None,
+    ) -> str | None:
+        explicit_route = _optional_text(route_id)
+        if explicit_route:
+            return explicit_route
+        clean_agent_id = _optional_text(agent_id)
+        clean_task_type = _optional_text(task_type)
+        if clean_agent_id and clean_task_type:
+            pair_route = self.agent_task_routes.get((clean_agent_id, clean_task_type))
+            if pair_route:
+                return pair_route
+        if clean_agent_id:
+            agent_route = self.agent_routes.get(clean_agent_id)
+            if agent_route:
+                return agent_route
+        if clean_task_type:
+            task_route = self.task_routes.get(clean_task_type)
+            if task_route:
+                return task_route
+        return _optional_text(self.default_route_id)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "default_route_id": self.default_route_id,
+            "agent_routes": dict(self.agent_routes),
+            "task_routes": dict(self.task_routes),
+            "agent_task_routes": [
+                {"agent_id": agent_id, "task_type": task_type, "route_id": route_id}
+                for (agent_id, task_type), route_id in self.agent_task_routes.items()
+            ],
+        }
+
+
+@dataclass(frozen=True)
 class LLMCooldownPolicy:
     cooldown_on_rate_limit_seconds: int = 60
     cooldown_on_server_error_seconds: int = 30
@@ -169,6 +214,7 @@ class LLMRouter:
         *,
         routes: Iterable[ModelRoute],
         deployments: Iterable[ModelDeployment],
+        routing_policy: LLMRoutingPolicy | None = None,
         cooldown_tracker: InMemoryLLMCooldownTracker | None = None,
         now_fn: Any | None = None,
     ) -> None:
@@ -177,8 +223,58 @@ class LLMRouter:
             deployment.deployment_id: deployment
             for deployment in deployments
         }
+        self._routing_policy = routing_policy
         self._cooldown_tracker = cooldown_tracker
         self._now_fn = now_fn or (lambda: datetime.now(UTC))
+
+    def resolve_route_id(
+        self,
+        *,
+        route_id: str | None = None,
+        agent_id: str | None = None,
+        task_type: str | None = None,
+    ) -> str:
+        resolved = (
+            _optional_text(route_id)
+            if self._routing_policy is None
+            else self._routing_policy.resolve(
+                route_id=route_id,
+                agent_id=agent_id,
+                task_type=task_type,
+            )
+        )
+        if not resolved:
+            raise LLMRouteError(
+                "LLM route could not be resolved",
+                route_id=route_id or "",
+                error_type="route_not_resolved",
+                retryable=False,
+                errors=[
+                    {
+                        "agent_id": agent_id,
+                        "task_type": task_type,
+                        "routing_policy_configured": self._routing_policy is not None,
+                    }
+                ],
+            )
+        return resolved
+
+    def complete_for(
+        self,
+        request: LLMRequest,
+        *,
+        route_id: str | None = None,
+        agent_id: str | None = None,
+        task_type: str | None = None,
+    ) -> LLMResponse:
+        return self.complete(
+            self.resolve_route_id(
+                route_id=route_id,
+                agent_id=agent_id,
+                task_type=task_type,
+            ),
+            request,
+        )
 
     def complete(self, route_id: str, request: LLMRequest) -> LLMResponse:
         route = self._route(route_id)
@@ -389,6 +485,13 @@ def _datetime_to_json(value: datetime | None) -> str | None:
     if value is None:
         return None
     return _normalize_datetime(value).isoformat().replace("+00:00", "Z")
+
+
+def _optional_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 def _check_budget(

@@ -33,6 +33,7 @@ from core.framework.llm.router import (
     LLMCooldownState,
     LLMRouteError,
     LLMRouter,
+    LLMRoutingPolicy,
     ModelDeployment,
     ModelRoute,
 )
@@ -68,6 +69,7 @@ __all__ = [
     "LLMRetryPolicy",
     "LLMRouteError",
     "LLMRouter",
+    "LLMRoutingPolicy",
     "LLMStreamAccumulator",
     "LLMStreamEvent",
     "LLMStructuredOutputValidationError",

@@ -10,6 +10,7 @@ from core.framework.llm import (
     LLMResponse,
     LLMRouteError,
     LLMRouter,
+    LLMRoutingPolicy,
     LLMBudgetPolicy,
     ModelCapabilities,
     ModelDeployment,
@@ -42,6 +43,82 @@ def test_llm_router_uses_primary_deployment() -> None:
     assert response.metadata["llm_deployment_id"] == "primary"
     assert response.metadata["llm_fallback_used"] is False
     assert response.metadata["llm_attempted_deployments"] == ["primary"]
+
+
+def test_llm_router_complete_for_uses_agent_task_route_first() -> None:
+    writer = StaticClient(LLMResponse(content="writer"))
+    editor = StaticClient(LLMResponse(content="editor"))
+    default = StaticClient(LLMResponse(content="default"))
+    router = LLMRouter(
+        routes=[
+            ModelRoute(route_id="writer", primary_deployment_id="writer-deployment"),
+            ModelRoute(route_id="editor", primary_deployment_id="editor-deployment"),
+            ModelRoute(route_id="default", primary_deployment_id="default-deployment"),
+        ],
+        deployments=[
+            ModelDeployment("writer-deployment", "test", "writer-model", writer),
+            ModelDeployment("editor-deployment", "test", "editor-model", editor),
+            ModelDeployment("default-deployment", "test", "default-model", default),
+        ],
+        routing_policy=LLMRoutingPolicy(
+            default_route_id="default",
+            agent_routes={"writer-agent": "writer"},
+            task_routes={"review": "default"},
+            agent_task_routes={("writer-agent", "review"): "editor"},
+        ),
+    )
+
+    response = router.complete_for(
+        LLMRequest(messages=[{"role": "user", "content": "hi"}]),
+        agent_id="writer-agent",
+        task_type="review",
+    )
+
+    assert response.content == "editor"
+    assert writer.call_count == 0
+    assert editor.call_count == 1
+    assert default.call_count == 0
+
+
+def test_llm_router_complete_for_explicit_route_overrides_policy() -> None:
+    writer = StaticClient(LLMResponse(content="writer"))
+    editor = StaticClient(LLMResponse(content="editor"))
+    router = LLMRouter(
+        routes=[
+            ModelRoute(route_id="writer", primary_deployment_id="writer-deployment"),
+            ModelRoute(route_id="editor", primary_deployment_id="editor-deployment"),
+        ],
+        deployments=[
+            ModelDeployment("writer-deployment", "test", "writer-model", writer),
+            ModelDeployment("editor-deployment", "test", "editor-model", editor),
+        ],
+        routing_policy=LLMRoutingPolicy(agent_routes={"writer-agent": "writer"}),
+    )
+
+    response = router.complete_for(
+        LLMRequest(messages=[{"role": "user", "content": "hi"}]),
+        route_id="editor",
+        agent_id="writer-agent",
+    )
+
+    assert response.content == "editor"
+    assert writer.call_count == 0
+    assert editor.call_count == 1
+
+
+def test_llm_router_complete_for_raises_when_route_not_resolved() -> None:
+    router = LLMRouter(routes=[], deployments=[])
+
+    with pytest.raises(LLMRouteError) as exc_info:
+        router.complete_for(
+            LLMRequest(messages=[{"role": "user", "content": "hi"}]),
+            agent_id="unknown",
+            task_type="unknown",
+        )
+
+    assert exc_info.value.error_type == "route_not_resolved"
+    assert exc_info.value.errors[0]["agent_id"] == "unknown"
+    assert exc_info.value.errors[0]["task_type"] == "unknown"
 
 
 def test_llm_router_invokes_primary_when_required_capabilities_match() -> None:
