@@ -21,7 +21,11 @@ from core.framework.tools.models import (
     ToolTimeoutError,
 )
 from core.framework.tools.registry import DuplicateToolPolicy, RegisteredTool, ToolRegistry
-from core.framework.tools.redaction import REDACTED_VALUE, redact_sensitive_values
+from core.framework.tools.redaction import (
+    REDACTED_VALUE,
+    contains_redacted_value,
+    redact_sensitive_values,
+)
 from core.framework.tools.quality_tools import register_quality_tools
 from core.framework.tools.report_tools import register_report_tools
 from core.framework.tools.secrets import (
@@ -66,6 +70,7 @@ __all__ = [
     "SecretProvider",
     "MappingSecretProvider",
     "EnvironmentSecretProvider",
+    "contains_redacted_value",
     "redact_sensitive_values",
     "register_artifact_tools",
     "register_quality_tools",

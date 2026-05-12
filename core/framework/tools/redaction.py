@@ -36,6 +36,16 @@ def redact_sensitive_values(value: Any) -> Any:
     return value
 
 
+def contains_redacted_value(value: Any) -> bool:
+    if value == REDACTED_VALUE:
+        return True
+    if isinstance(value, dict):
+        return any(contains_redacted_value(item) for item in value.values())
+    if isinstance(value, (list, tuple)):
+        return any(contains_redacted_value(item) for item in value)
+    return False
+
+
 def _is_sensitive_key(key: Any) -> bool:
     normalized = str(key).lower().replace("-", "_")
     return any(fragment in normalized for fragment in SENSITIVE_KEY_FRAGMENTS)

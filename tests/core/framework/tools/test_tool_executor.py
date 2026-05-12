@@ -13,7 +13,7 @@ from core.framework.tools import (
     ToolResult,
     ToolStatus,
 )
-from core.framework.tools.redaction import redact_sensitive_values
+from core.framework.tools.redaction import contains_redacted_value, redact_sensitive_values
 
 
 def _registry() -> ToolRegistry:
@@ -565,6 +565,12 @@ def test_tool_executor_redacts_sensitive_output_and_serialized_arguments() -> No
     assert "hidden-token" not in str(payload)
     assert "hidden-key" not in str(payload)
     assert "input-secret" not in str(payload)
+    redaction_events = [
+        event for event in executor.list_events() if event.event_type == "tool_result_redacted"
+    ]
+    assert len(redaction_events) == 1
+    assert redaction_events[0].payload == {"redacted": True}
+    assert "hidden-token" not in str(redaction_events[0].to_dict())
 
 
 def test_tool_result_to_dict_redacts_secret_like_strings() -> None:
@@ -588,6 +594,7 @@ def test_tool_redactor_handles_nested_lists() -> None:
         {"password": REDACTED_VALUE},
         {"message": REDACTED_VALUE},
     ]
+    assert contains_redacted_value(payload) is True
 
 
 def test_tool_executor_spills_large_redacted_result_to_artifact(tmp_path) -> None:

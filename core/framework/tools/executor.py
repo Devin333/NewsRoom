@@ -23,7 +23,7 @@ from core.framework.tools.models import (
     ToolTimeoutError,
     timed_tool_call,
 )
-from core.framework.tools.redaction import redact_sensitive_values
+from core.framework.tools.redaction import contains_redacted_value, redact_sensitive_values
 from core.framework.tools.registry import ToolRegistry
 from core.framework.tools.secrets import SecretProvider
 from core.framework.tools.telemetry import ToolEvent, ToolExecutionRecord, ToolMetrics
@@ -105,6 +105,8 @@ class ToolExecutor:
                 call.tool_name,
             )
             safe_output = redact_sensitive_values(raw_output)
+            if contains_redacted_value(safe_output):
+                self._emit("tool_result_redacted", call, {"redacted": True})
             return self._tool_result(call, safe_output, policy)
 
         self._emit("tool_call_requested", call, {"call": call.to_dict()})
