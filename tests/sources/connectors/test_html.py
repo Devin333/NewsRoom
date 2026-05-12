@@ -74,6 +74,25 @@ def test_html_connector_falls_back_to_source_name_and_url_for_minimal_html() -> 
     assert items[0].metadata["extraction_confidence"] > 0
 
 
+def test_html_connector_normalizes_relative_canonical_url() -> None:
+    source = SourceDefinition(
+        source_id="blog",
+        name="Example Blog",
+        source_type="html",
+        url="https://Example.com/blog/index.html",
+    )
+    html = """<html><head>
+      <title>Relative Canonical</title>
+      <link rel="canonical" href="/blog/post?utm_source=x" />
+    </head><body><p>Body text for a relative canonical page.</p></body></html>"""
+
+    items = HtmlConnector().parse(source, html)
+
+    assert len(items) == 1
+    assert items[0].url == "https://example.com/blog/post"
+    assert items[0].metadata["canonical_url"] == "https://example.com/blog/post"
+
+
 def test_html_connector_fetch_retries_transient_failure() -> None:
     calls = []
 

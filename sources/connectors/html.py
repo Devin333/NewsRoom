@@ -18,6 +18,7 @@ from sources.connectors.fetch_policy import (
     rate_limited_source_error,
     run_with_fetch_retries,
 )
+from sources.processing.normalize import canonicalize_url
 
 FetchText = Callable[[str], str]
 
@@ -133,7 +134,7 @@ class HtmlConnector:
         if not extraction.text and not extraction.title:
             return []
         fetched_at = datetime.now(UTC)
-        url = extraction.canonical_url or source.url
+        url = canonicalize_url(extraction.canonical_url or source.url, base_url=source.url)
         title = extraction.title or source.name
         item_hash = sha256(f"{source.source_id}|{url}".encode("utf-8")).hexdigest()
         item = RawSourceItem(
@@ -154,7 +155,7 @@ class HtmlConnector:
                 "source_authority_score": source.authority_score,
                 "extractor_name": extraction.extractor_name,
                 "extraction_confidence": extraction.confidence,
-                "canonical_url": extraction.canonical_url,
+                "canonical_url": url,
                 "raw_html_bytes": len(html_text.encode("utf-8")),
             },
         )
