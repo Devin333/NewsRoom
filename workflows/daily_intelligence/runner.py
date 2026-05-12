@@ -10,7 +10,13 @@ from core.framework.llm import LLMClient, LLMRequest, OpenAICompatibleClient, Op
 from core.framework.specs import EdgeSpec, StepSpec, WorkflowSpec
 from core.framework.workflow import FunctionStepRegistry, ScopedDataBuffer
 from domain.reports import BlockedReport, FinalReport, render_markdown
-from domain.sources import SourceDefinition, SourceError, SourcePipelineEvent, SourcePipelineMetrics
+from domain.sources import (
+    SourceDefinition,
+    SourceError,
+    SourcePipelineEvent,
+    SourcePipelineMetrics,
+    SourceType,
+)
 from evidence import EvidenceBuilder, EvidenceBundle
 from quality import (
     CitationChecker,
@@ -22,7 +28,13 @@ from quality import (
     SupportMatrixBuilder,
 )
 from sources import SourceRegistry
-from sources.connectors import FeedConnector
+from sources.connectors import (
+    ArxivConnector,
+    FeedConnector,
+    GithubConnector,
+    HtmlConnector,
+    ManualConnector,
+)
 from sources.health import BasicSourceHealthManager
 from sources.processing import deduplicate_items, normalize_items, rank_items
 
@@ -43,12 +55,20 @@ class DailyIntelligenceRunner:
         artifact_root: str | Path = ".newsroom/runs",
         source_registry: SourceRegistry | None = None,
         feed_connector: FeedConnector | None = None,
+        html_connector: HtmlConnector | None = None,
+        manual_connector: ManualConnector | None = None,
+        arxiv_connector: ArxivConnector | None = None,
+        github_connector: GithubConnector | None = None,
         llm_client: LLMClient | None = None,
         source_health_manager: BasicSourceHealthManager | None = None,
     ) -> None:
         self.artifact_root = Path(artifact_root)
         self.source_registry = source_registry or build_default_source_registry()
         self.feed_connector = feed_connector or FeedConnector()
+        self.html_connector = html_connector or HtmlConnector()
+        self.manual_connector = manual_connector or ManualConnector()
+        self.arxiv_connector = arxiv_connector or ArxivConnector()
+        self.github_connector = github_connector or GithubConnector()
         self.llm_client = llm_client
         self.source_health_manager = source_health_manager or BasicSourceHealthManager()
 
@@ -200,7 +220,7 @@ class DailyIntelligenceRunner:
                 )
             )
             latency_start = perf_counter()
-            items, errors = self.feed_connector.fetch(source, limit=remaining)
+            items, errors = self._fetch_source(source, request=request, limit=remaining)
             fetch_latency_ms = _elapsed_ms(latency_start)
             metrics.record_fetch_latency(fetch_latency_ms)
             raw_items.extend(items)
@@ -304,6 +324,43 @@ class DailyIntelligenceRunner:
             "source_events": source_events,
             "source_pipeline_metrics": metrics,
         }
+
+    def _fetch_source(
+        self,
+        source: SourceDefinition,
+        *,
+        request: dict[str, Any],
+        limit: int,
+    ) -> tuple[list[Any], list[SourceError]]:
+        if source.source_type in {SourceType.RSS, SourceType.ATOM}:
+            return self.feed_connector.fetch(source, limit=limit)
+        if source.source_type == SourceType.HTML:
+            return self.html_connector.fetch(source, limit=limit)
+        if source.source_type == SourceType.MANUAL:
+            return self.manual_connector.fetch(source, limit=limit)
+        if source.source_type == SourceType.ARXIV:
+            query = str(source.metadata.get("query") or request["topic"])
+            return self.arxiv_connector.fetch(source, query=query, limit=limit)
+        if source.source_type == SourceType.GITHUB:
+            repository = source.metadata.get("repository")
+            return self.github_connector.fetch_releases(
+                source,
+                repository=str(repository) if repository is not None else None,
+                limit=limit,
+            )
+        return [], [
+            SourceError(
+                source_id=source.source_id,
+                error_type="unsupported_source_type",
+                error_message=f"unsupported source type: {source.source_type.value}",
+                url=source.url,
+                metadata={
+                    "retryable": False,
+                    "source_health_affecting": False,
+                    "workflow_blocking": False,
+                },
+            )
+        ]
 
     def _draft_report(self, buffer: ScopedDataBuffer, profile: str) -> dict[str, Any]:
         request = buffer.read("request")

@@ -6,7 +6,14 @@ from core.framework.llm import LLMResponse, TokenUsage
 from core.framework.specs import WorkflowStatus
 from domain.sources import SourceDefinition, SourceError
 from sources import SourceRegistry
-from sources.connectors import FeedConnector
+from sources.connectors import (
+    ARXIV_API_URL,
+    GITHUB_API_URL,
+    ArxivConnector,
+    FeedConnector,
+    GithubConnector,
+    HtmlConnector,
+)
 from sources.health import BasicSourceHealthManager
 from storage.lineage import LocalJsonLineageStore
 from workflows.daily_intelligence import DailyIntelligenceRunner
@@ -25,6 +32,48 @@ RSS_FIXTURE = """<?xml version="1.0"?>
   </channel>
 </rss>
 """
+
+HTML_FIXTURE = """<html lang="en">
+  <head>
+    <title>AI policy update</title>
+    <link rel="canonical" href="https://example.com/ai-policy" />
+  </head>
+  <body><article><p>Policy summary from an official HTML source.</p></article></body>
+</html>
+"""
+
+ARXIV_FIXTURE = """<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="http://arxiv.org/schemas/atom">
+  <entry>
+    <id>http://arxiv.org/abs/2605.00001v1</id>
+    <updated>2026-05-11T12:00:00Z</updated>
+    <published>2026-05-10T10:00:00Z</published>
+    <title>Agent Runtime Evaluation</title>
+    <summary>We evaluate agent runtime systems.</summary>
+    <author><name>Alice Example</name></author>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+    <link href="http://arxiv.org/abs/2605.00001v1" rel="alternate" type="text/html"/>
+  </entry>
+</feed>
+"""
+
+GITHUB_RELEASES = json.dumps(
+    [
+        {
+            "id": 1,
+            "url": "https://api.github.com/repos/owner/repo/releases/1",
+            "html_url": "https://github.com/owner/repo/releases/tag/v1.0.0",
+            "tag_name": "v1.0.0",
+            "name": "Version 1.0.0",
+            "body": "Release notes for version 1.",
+            "draft": False,
+            "prerelease": False,
+            "created_at": "2026-05-10T10:00:00Z",
+            "published_at": "2026-05-11T12:00:00Z",
+            "author": {"login": "maintainer"},
+        }
+    ]
+)
 
 
 def test_daily_intelligence_runner_live_offline_writes_report_artifacts(tmp_path) -> None:
@@ -260,6 +309,125 @@ def test_daily_intelligence_runner_live_uses_topic_source_selection(tmp_path) ->
 
     assert result.status == WorkflowStatus.SUCCEEDED
     assert fetched_urls == ["https://example.com/ai.xml"]
+
+
+def test_daily_intelligence_runner_live_collects_html_source(tmp_path) -> None:
+    registry = SourceRegistry(
+        [
+            SourceDefinition(
+                source_id="html",
+                name="HTML",
+                source_type="html",
+                url="https://example.com/blog",
+                reliability="high",
+                topics=["ai", "policy"],
+            )
+        ]
+    )
+
+    result = DailyIntelligenceRunner(
+        artifact_root=tmp_path,
+        source_registry=registry,
+        html_connector=HtmlConnector(fetch_text=lambda url: HTML_FIXTURE),
+        llm_client=_FakeReportLLM(),
+    ).run(profile="live", topic="AI policy", source_limit=1, run_id="daily-html-source")
+
+    assert result.status == WorkflowStatus.SUCCEEDED
+    assert result.output["raw_items"][0].source_type.value == "html"
+    assert result.output["raw_items"][0].url == "https://example.com/ai-policy"
+    assert any(
+        event.event_type == "source_fetch_started" and event.metadata["source_type"] == "html"
+        for event in result.output["source_events"]
+    )
+
+
+def test_daily_intelligence_runner_live_collects_manual_source(tmp_path) -> None:
+    registry = SourceRegistry(
+        [
+            SourceDefinition(
+                source_id="manual",
+                name="Manual",
+                source_type="manual",
+                url="manual://operator",
+                reliability="high",
+                topics=["ai", "policy"],
+                metadata={
+                    "records": [
+                        {
+                            "title": "AI policy update",
+                            "url": "https://example.com/ai-policy",
+                            "summary": "Policy summary.",
+                            "published_at": "2026-05-11T02:00:00Z",
+                        }
+                    ]
+                },
+            )
+        ]
+    )
+
+    result = DailyIntelligenceRunner(
+        artifact_root=tmp_path,
+        source_registry=registry,
+        llm_client=_FakeReportLLM(),
+    ).run(profile="live", topic="AI policy", source_limit=1, run_id="daily-manual-source")
+
+    assert result.status == WorkflowStatus.SUCCEEDED
+    assert result.output["raw_items"][0].source_type.value == "manual"
+    assert result.output["raw_items"][0].metadata["manual_record_index"] == 0
+
+
+def test_daily_intelligence_runner_live_collects_arxiv_source(tmp_path) -> None:
+    registry = SourceRegistry(
+        [
+            SourceDefinition(
+                source_id="arxiv",
+                name="arXiv",
+                source_type="arxiv",
+                url=ARXIV_API_URL,
+                reliability="high",
+                topics=["ai", "papers"],
+                metadata={"query": "cat:cs.AI"},
+            )
+        ]
+    )
+
+    result = DailyIntelligenceRunner(
+        artifact_root=tmp_path,
+        source_registry=registry,
+        arxiv_connector=ArxivConnector(fetch_text=lambda url: ARXIV_FIXTURE),
+        llm_client=_CitedReportLLM("http://arxiv.org/abs/2605.00001v1"),
+    ).run(profile="live", topic="AI papers", source_limit=1, run_id="daily-arxiv-source")
+
+    assert result.status == WorkflowStatus.SUCCEEDED
+    assert result.output["raw_items"][0].source_type.value == "arxiv"
+    assert result.output["raw_items"][0].metadata["arxiv_id"] == "2605.00001v1"
+
+
+def test_daily_intelligence_runner_live_collects_github_source(tmp_path) -> None:
+    registry = SourceRegistry(
+        [
+            SourceDefinition(
+                source_id="github",
+                name="GitHub",
+                source_type="github",
+                url=GITHUB_API_URL,
+                reliability="high",
+                topics=["ai", "release"],
+                metadata={"repository": "owner/repo"},
+            )
+        ]
+    )
+
+    result = DailyIntelligenceRunner(
+        artifact_root=tmp_path,
+        source_registry=registry,
+        github_connector=GithubConnector(fetch_text=lambda url: GITHUB_RELEASES),
+        llm_client=_CitedReportLLM("https://github.com/owner/repo/releases/tag/v1.0.0"),
+    ).run(profile="live", topic="AI release", source_limit=1, run_id="daily-github-source")
+
+    assert result.status == WorkflowStatus.SUCCEEDED
+    assert result.output["raw_items"][0].source_type.value == "github"
+    assert result.output["raw_items"][0].metadata["repository"] == "owner/repo"
 
 
 def test_daily_intelligence_runner_records_partial_source_failures(tmp_path) -> None:
@@ -537,6 +705,28 @@ class _FakeReportLLM:
                             "title": "Summary",
                             "content": "Policy summary.",
                             "sources": ["https://example.com/ai-policy"],
+                        }
+                    ],
+                }
+            ),
+            usage=TokenUsage(input_tokens=3, output_tokens=4),
+        )
+
+
+class _CitedReportLLM:
+    def __init__(self, source_url: str) -> None:
+        self.source_url = source_url
+
+    def complete(self, request):
+        return LLMResponse(
+            content=json.dumps(
+                {
+                    "title": "Cited Live Report",
+                    "sections": [
+                        {
+                            "title": "Summary",
+                            "content": "Source-grounded summary.",
+                            "sources": [self.source_url],
                         }
                     ],
                 }
