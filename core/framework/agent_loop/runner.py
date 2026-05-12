@@ -53,6 +53,7 @@ class AgentRunner:
             output_judge=OutputJudge(),
         )
         result = loop.run(agent, inputs, tools)
+        self._append_conversation_events(conversation_id, agent, result.events)
         self._append_conversation_message(
             conversation_id,
             AgentMessageRecord(
@@ -86,6 +87,19 @@ class AgentRunner:
             return
         self._conversation_store.append_message(conversation_id, message)
 
+    def _append_conversation_events(
+        self,
+        conversation_id: str | None,
+        agent: AgentSpec,
+        events: list[dict[str, Any]],
+    ) -> None:
+        if self._conversation_store is None or not conversation_id:
+            return
+        for event in events:
+            message = _conversation_message_from_event(conversation_id, agent, event)
+            if message is not None:
+                self._conversation_store.append_message(conversation_id, message)
+
 
 def _conversation_result_payload(result: AgentLoopResult) -> dict[str, Any]:
     if result.success:
@@ -96,3 +110,45 @@ def _conversation_result_payload(result: AgentLoopResult) -> dict[str, Any]:
         "error": result.error,
         "verdict": result.verdict.to_dict() if result.verdict else None,
     }
+
+
+def _conversation_message_from_event(
+    conversation_id: str,
+    agent: AgentSpec,
+    event: dict[str, Any],
+) -> AgentMessageRecord | None:
+    event_type = str(event.get("event_type") or "")
+    if event_type == "tool_observation":
+        observation = event.get("observation")
+        if not isinstance(observation, dict):
+            return None
+        return AgentMessageRecord(
+            conversation_id=conversation_id,
+            role="tool",
+            content=dict(observation),
+            agent_id=agent.agent_id,
+            metadata={
+                "message_type": "agent_tool_observation",
+                "event_type": event_type,
+                "tool_name": observation.get("tool_name"),
+                "tool_call_id": observation.get("tool_call_id"),
+                "status": observation.get("status"),
+            },
+        )
+    if event_type == "judge_retry":
+        return AgentMessageRecord(
+            conversation_id=conversation_id,
+            role="judge",
+            content={
+                "feedback": event.get("feedback"),
+                "verdict": event.get("verdict"),
+                "via_tool": event.get("via_tool"),
+            },
+            agent_id=agent.agent_id,
+            metadata={
+                "message_type": "agent_judge_retry",
+                "event_type": event_type,
+                "status": "retry",
+            },
+        )
+    return None

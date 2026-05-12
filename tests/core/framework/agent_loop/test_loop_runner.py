@@ -276,3 +276,42 @@ def test_agent_runner_persists_conversation_when_store_is_provided(tmp_path) -> 
     assert messages[1].content["output"] == {"analysis_result": {"summary": "ok"}}
     assert messages[1].metadata["status"] == "accepted"
     assert store.get_summary("conversation-1") == "agent_id=analyst status=accepted iterations=1"
+
+
+def test_agent_runner_persists_tool_and_judge_events_to_conversation(tmp_path) -> None:
+    llm = FakeLLMClient(
+        [
+            '{"action_type":"tool_call","tool_name":"memory.search","tool_args":{"query":"chips"}}',
+            '{"action_type":"final_output","output":{"wrong_key":{"summary":"missing"}}}',
+            '{"action_type":"final_output","output":{"analysis_result":{"summary":"ok"}}}',
+        ]
+    )
+    store = LocalJsonConversationStore(tmp_path)
+
+    result = AgentRunner(
+        llm_client=llm,
+        tool_registry=_registry(),
+        conversation_store=store,
+    ).run(
+        _agent(),
+        {"request": {"topic": "chips"}},
+        conversation_id="conversation-events",
+    )
+
+    messages = store.read_messages("conversation-events")
+
+    assert result.success is True
+    assert [message.role for message in messages] == ["user", "tool", "judge", "assistant"]
+    assert messages[1].metadata == {
+        "message_type": "agent_tool_observation",
+        "event_type": "tool_observation",
+        "tool_name": "memory.search",
+        "tool_call_id": messages[1].content["tool_call_id"],
+        "status": "succeeded",
+    }
+    assert messages[1].content["tool_name"] == "memory.search"
+    assert messages[1].content["result"]["output"]["matches"][0]["title"] == "chips"
+    assert messages[2].role == "judge"
+    assert messages[2].content["feedback"] == "missing output keys: analysis_result"
+    assert messages[2].content["verdict"]["decision"] == "retry"
+    assert messages[3].content["output"] == {"analysis_result": {"summary": "ok"}}
