@@ -1,4 +1,5 @@
 import json
+from hashlib import sha256
 
 from core.framework.artifacts import ArtifactManager, SourceArtifactWriter
 from domain.sources import SourceError
@@ -41,10 +42,15 @@ def test_source_artifact_writer_writes_items_errors_and_redacts(tmp_path) -> Non
 
     item_entry = next(entry for entry in index["entries"] if entry["artifact_type"] == "source_item")
     item_payload = json.loads((run_dir / item_entry["path"]).read_text())
+    raw_content = "<item>Real source content</item>"
+    assert item_entry["size_bytes"] == (run_dir / item_entry["path"]).stat().st_size
+    assert item_entry["raw_content_bytes"] == len(raw_content.encode("utf-8"))
+    assert item_entry["raw_content_sha256"] == sha256(raw_content.encode("utf-8")).hexdigest()
     assert item_payload["item"]["raw_content"] == "<item>Real source content</item>"
     assert item_payload["item"]["metadata"]["api_key"] == "[REDACTED]"
 
     error_entry = next(entry for entry in index["entries"] if entry["artifact_type"] == "source_error")
     error_payload = json.loads((run_dir / error_entry["path"]).read_text())
+    assert error_entry["size_bytes"] == (run_dir / error_entry["path"]).stat().st_size
     assert error_payload["error"]["error_type"] == "fetch_timeout"
     assert "value" not in json.dumps(error_payload)

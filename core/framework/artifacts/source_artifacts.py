@@ -44,7 +44,7 @@ class SourceArtifactWriter:
             source_id = _string_value(raw_item, "source_id", default="unknown-source")
             object_id = _string_value(raw_item, "source_item_id", default=_stable_id(raw_item))
             path = f"sources/items/{_path_segment(source_id)}/{_path_segment(object_id)}.json"
-            self._artifact_manager.write_json(
+            artifact_path = self._artifact_manager.write_json(
                 run_id,
                 path,
                 {
@@ -54,20 +54,21 @@ class SourceArtifactWriter:
                     "item": _redact(_to_json_safe(raw_item)),
                 },
             )
-            entries.append(
-                {
-                    "artifact_type": "source_item",
-                    "source_id": source_id,
-                    "object_id": object_id,
-                    "path": path,
-                }
-            )
+            entry = {
+                "artifact_type": "source_item",
+                "source_id": source_id,
+                "object_id": object_id,
+                "path": path,
+                "size_bytes": artifact_path.stat().st_size,
+            }
+            entry.update(_raw_content_fingerprint(raw_item))
+            entries.append(entry)
 
         for index, source_error in enumerate(source_errors or [], start=1):
             source_id = _string_value(source_error, "source_id", default="unknown-source")
             object_id = _source_error_id(source_error, index)
             path = f"sources/errors/{_path_segment(source_id)}/{_path_segment(object_id)}.json"
-            self._artifact_manager.write_json(
+            artifact_path = self._artifact_manager.write_json(
                 run_id,
                 path,
                 {
@@ -83,6 +84,7 @@ class SourceArtifactWriter:
                     "source_id": source_id,
                     "object_id": object_id,
                     "path": path,
+                    "size_bytes": artifact_path.stat().st_size,
                 }
             )
 
@@ -118,6 +120,20 @@ def _string_value(value: Any, name: str, *, default: str) -> str:
     if candidate is None or str(candidate) == "":
         return default
     return str(candidate)
+
+
+def _raw_content_fingerprint(raw_item: Any) -> dict[str, Any]:
+    if isinstance(raw_item, dict):
+        raw_content = raw_item.get("raw_content")
+    else:
+        raw_content = getattr(raw_item, "raw_content", None)
+    if raw_content is None:
+        return {}
+    raw_bytes = str(raw_content).encode("utf-8")
+    return {
+        "raw_content_bytes": len(raw_bytes),
+        "raw_content_sha256": sha256(raw_bytes).hexdigest(),
+    }
 
 
 def _path_segment(value: str) -> str:
