@@ -1,7 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
 from domain.sources import RawSourceItem, SourceType
-from sources.processing import deduplicate_items, normalize_items, rank_items
+from sources.processing import deduplicate_items, deduplicate_with_result, normalize_items, rank_items
 from sources.processing.normalize import canonicalize_url, normalize_text
 
 
@@ -76,6 +76,27 @@ def test_deduplicate_items_removes_duplicate_canonical_urls() -> None:
     assert unique[0].canonical_url == "https://example.com/post"
     assert unique[0].metadata["lineage"]["canonical_url"] == "https://example.com/post"
     assert unique[0].metadata["lineage"]["source_item_id"].startswith("raw-")
+
+
+def test_deduplicate_with_result_reports_duplicate_groups() -> None:
+    normalized = normalize_items(
+        [
+            _raw_item("AI chip news", "https://example.com/post?utm_source=a", reliability="low"),
+            _raw_item("AI chip news", "https://example.com/post", reliability="high"),
+        ]
+    )
+
+    result = deduplicate_with_result(normalized)
+    payload = result.to_dict()
+
+    assert len(result.kept_items) == 1
+    assert result.kept_items[0].source_reliability.value == "high"
+    assert len(result.dropped_items) == 1
+    assert payload["duplicate_group_count"] == 1
+    assert payload["dropped_item_count"] == 1
+    assert result.duplicate_groups[0].kept_item_id == result.kept_items[0].normalized_item_id
+    assert result.duplicate_groups[0].duplicate_item_ids == [result.dropped_items[0].normalized_item_id]
+    assert set(result.duplicate_groups[0].reasons) >= {"canonical_url_hash", "title_hash"}
 
 
 def test_deduplicate_items_removes_duplicate_content_hashes() -> None:

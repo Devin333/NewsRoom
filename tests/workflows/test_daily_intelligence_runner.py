@@ -588,6 +588,60 @@ def test_daily_intelligence_runner_records_partial_source_failures(tmp_path) -> 
     assert any(section["title"] == "Source Notes" for section in report["sections"])
 
 
+def test_daily_intelligence_runner_persists_source_duplicate_groups(tmp_path) -> None:
+    duplicate_feed = """<?xml version="1.0"?>
+<rss version="2.0">
+  <channel>
+    <title>Duplicates</title>
+    <item>
+      <title>AI policy update</title>
+      <link>https://example.com/ai-policy?utm_source=a</link>
+      <description>Policy summary.</description>
+      <pubDate>Mon, 11 May 2026 02:00:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>AI policy update</title>
+      <link>https://example.com/ai-policy</link>
+      <description>Policy summary.</description>
+      <pubDate>Mon, 11 May 2026 03:00:00 GMT</pubDate>
+    </item>
+  </channel>
+</rss>
+"""
+    registry = SourceRegistry(
+        [
+            SourceDefinition(
+                source_id="duplicates",
+                name="Duplicates",
+                source_type="rss",
+                url="https://example.com/duplicates.xml",
+                reliability="high",
+            )
+        ]
+    )
+
+    result = DailyIntelligenceRunner(
+        artifact_root=tmp_path,
+        source_registry=registry,
+        feed_connector=FeedConnector(fetch_text=lambda url: duplicate_feed),
+        llm_client=_FakeReportLLM(),
+    ).run(profile="live", topic="AI policy", source_limit=2, run_id="daily-duplicate-groups")
+
+    assert result.status == WorkflowStatus.SUCCEEDED
+    assert result.output["source_pipeline_metrics"].duplicate_count == 1
+    assert len(result.output["source_duplicate_groups"]) == 1
+    group = result.output["source_duplicate_groups"][0]
+    assert group["kept_item_id"]
+    assert len(group["duplicate_item_ids"]) == 1
+    assert "canonical_url_hash" in group["reasons"]
+
+    run_dir = Path(result.artifact_dir)
+    manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["artifacts"]["source_duplicate_groups"] == "source_duplicate_groups.json"
+    persisted_groups = json.loads((run_dir / "source_duplicate_groups.json").read_text(encoding="utf-8"))
+    assert persisted_groups == result.output["source_duplicate_groups"]
+
+
 def test_daily_intelligence_runner_honors_non_health_affecting_source_errors(tmp_path) -> None:
     registry = SourceRegistry(
         [

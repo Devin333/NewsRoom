@@ -37,7 +37,7 @@ from sources.connectors import (
     ManualConnector,
 )
 from sources.health import BasicSourceHealthManager
-from sources.processing import deduplicate_items, normalize_items, rank_items
+from sources.processing import deduplicate_with_result, normalize_items, rank_items
 
 PROFILE_LIVE = "live"
 PROFILE_LIVE_OFFLINE = "live-offline"
@@ -533,8 +533,18 @@ def build_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
                 step_id="deduplicate_sources",
                 implementation="daily.deduplicate_sources",
                 read_keys=["normalized_items", "source_events", "source_pipeline_metrics"],
-                write_keys=["deduplicated_items", "source_events", "source_pipeline_metrics"],
-                required_output_keys=["deduplicated_items", "source_events", "source_pipeline_metrics"],
+                write_keys=[
+                    "deduplicated_items",
+                    "source_duplicate_groups",
+                    "source_events",
+                    "source_pipeline_metrics",
+                ],
+                required_output_keys=[
+                    "deduplicated_items",
+                    "source_duplicate_groups",
+                    "source_events",
+                    "source_pipeline_metrics",
+                ],
             ),
             StepSpec(
                 step_id="rank_sources",
@@ -650,21 +660,25 @@ def _normalize_sources(buffer: ScopedDataBuffer) -> dict[str, Any]:
 
 def _deduplicate_sources(buffer: ScopedDataBuffer) -> dict[str, Any]:
     normalized_items = buffer.read("normalized_items")
-    deduplicated_items = deduplicate_items(normalized_items)
+    dedup_result = deduplicate_with_result(normalized_items)
+    deduplicated_items = dedup_result.kept_items
+    source_duplicate_groups = [group.to_dict() for group in dedup_result.duplicate_groups]
     source_events = list(buffer.read("source_events"))
     metrics = buffer.read("source_pipeline_metrics")
     metrics.deduplicated_items_count = len(deduplicated_items)
-    metrics.duplicate_count = max(0, len(normalized_items) - len(deduplicated_items))
+    metrics.duplicate_count = len(dedup_result.dropped_items)
     source_events.append(
         _source_event(
             "source_deduplicated",
             input_count=len(normalized_items),
             output_count=len(deduplicated_items),
             duplicate_count=metrics.duplicate_count,
+            duplicate_group_count=len(source_duplicate_groups),
         )
     )
     return {
         "deduplicated_items": deduplicated_items,
+        "source_duplicate_groups": source_duplicate_groups,
         "source_events": source_events,
         "source_pipeline_metrics": metrics,
     }

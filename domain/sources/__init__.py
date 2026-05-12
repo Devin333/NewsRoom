@@ -1,6 +1,8 @@
 """Sources domain package."""
 
 from domain.sources.models import (
+    DedupResult,
+    DuplicateGroup,
     NormalizedSourceItem,
     RankedSourceItem,
     RawSourceItem,
@@ -18,6 +20,8 @@ from domain.sources.models import (
 
 __all__ = [
     "NormalizedSourceItem",
+    "DedupResult",
+    "DuplicateGroup",
     "RankedSourceItem",
     "RawSourceItem",
     "SourceDefinition",

@@ -3,6 +3,8 @@ from datetime import UTC, datetime
 import pytest
 
 from domain.sources import (
+    DedupResult,
+    DuplicateGroup,
     SourceDefinition,
     SourceError,
     SourceFetchRequest,
@@ -129,6 +131,23 @@ def test_source_health_serializes_window_metrics() -> None:
     assert payload["success_count_24h"] == 3
     assert payload["failure_count_24h"] == 1
     assert payload["avg_latency_ms_24h"] == 42.5
+
+
+def test_dedup_result_serializes_duplicate_groups() -> None:
+    group = DuplicateGroup(
+        group_id="dup-1",
+        kept_item_id="norm-1",
+        duplicate_item_ids=["norm-2"],
+        reasons=["canonical_url_hash"],
+        canonical_urls=["https://example.com/post"],
+    )
+    result = DedupResult(kept_items=[], duplicate_groups=[group], dropped_items=[])
+
+    payload = result.to_dict()
+
+    assert payload["duplicate_group_count"] == 1
+    assert payload["duplicate_groups"][0]["kept_item_id"] == "norm-1"
+    assert payload["duplicate_groups"][0]["duplicate_item_ids"] == ["norm-2"]
 
 
 def test_source_pipeline_event_serializes() -> None:

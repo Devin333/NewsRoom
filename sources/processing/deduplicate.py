@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import re
 from datetime import UTC, datetime
+from hashlib import sha256
 
-from domain.sources import NormalizedSourceItem, SourceReliability
+from domain.sources import DedupResult, DuplicateGroup, NormalizedSourceItem, SourceReliability
 
 
 RELIABILITY_PRIORITY = {
@@ -29,6 +30,10 @@ TITLE_STOPWORDS = {
 
 
 def deduplicate_items(items: list[NormalizedSourceItem]) -> list[NormalizedSourceItem]:
+    return deduplicate_with_result(items).kept_items
+
+
+def deduplicate_with_result(items: list[NormalizedSourceItem]) -> DedupResult:
     groups: list[list[NormalizedSourceItem]] = []
     for item in items:
         matching_indexes = [
@@ -46,15 +51,72 @@ def deduplicate_items(items: list[NormalizedSourceItem]) -> list[NormalizedSourc
             groups[target_index].extend(groups[merge_index])
             del groups[merge_index]
 
-    return [max(group, key=_retention_priority) for group in groups]
+    kept_items: list[NormalizedSourceItem] = []
+    dropped_items: list[NormalizedSourceItem] = []
+    duplicate_groups: list[DuplicateGroup] = []
+    for group in groups:
+        kept_item = max(group, key=_retention_priority)
+        kept_items.append(kept_item)
+        if len(group) <= 1:
+            continue
+        dropped = [item for item in group if item is not kept_item]
+        dropped_items.extend(dropped)
+        duplicate_groups.append(_duplicate_group(group, kept_item, dropped))
+    return DedupResult(
+        kept_items=kept_items,
+        duplicate_groups=duplicate_groups,
+        dropped_items=dropped_items,
+        metadata={
+            "input_count": len(items),
+            "kept_count": len(kept_items),
+            "dropped_count": len(dropped_items),
+        },
+    )
 
 
 def _is_duplicate(left: NormalizedSourceItem, right: NormalizedSourceItem) -> bool:
-    return (
-        left.canonical_url_hash == right.canonical_url_hash
-        or left.title_hash == right.title_hash
-        or left.content_hash == right.content_hash
-        or _near_duplicate_title(left.normalized_title, right.normalized_title)
+    return bool(_duplicate_reasons(left, right))
+
+
+def _duplicate_reasons(left: NormalizedSourceItem, right: NormalizedSourceItem) -> list[str]:
+    reasons = []
+    if left.canonical_url_hash == right.canonical_url_hash:
+        reasons.append("canonical_url_hash")
+    if left.title_hash == right.title_hash:
+        reasons.append("title_hash")
+    if left.content_hash == right.content_hash:
+        reasons.append("content_hash")
+    if _near_duplicate_title(left.normalized_title, right.normalized_title):
+        reasons.append("near_duplicate_title")
+    return reasons
+
+
+def _duplicate_group(
+    group: list[NormalizedSourceItem],
+    kept_item: NormalizedSourceItem,
+    dropped_items: list[NormalizedSourceItem],
+) -> DuplicateGroup:
+    item_ids = sorted(item.normalized_item_id for item in group)
+    reasons = sorted(
+        {
+            reason
+            for index, left in enumerate(group)
+            for right in group[index + 1 :]
+            for reason in _duplicate_reasons(left, right)
+        }
+    )
+    canonical_urls = sorted({item.canonical_url for item in group if item.canonical_url})
+    return DuplicateGroup(
+        group_id=f"dup_{sha256('|'.join(item_ids).encode('utf-8')).hexdigest()[:16]}",
+        kept_item_id=kept_item.normalized_item_id,
+        duplicate_item_ids=[item.normalized_item_id for item in dropped_items],
+        reasons=reasons,
+        canonical_urls=canonical_urls,
+        metadata={
+            "group_size": len(group),
+            "source_item_ids": [item.source_item_id for item in group],
+            "dropped_source_item_ids": [item.source_item_id for item in dropped_items],
+        },
     )
 
 

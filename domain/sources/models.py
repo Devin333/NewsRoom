@@ -226,6 +226,45 @@ class RankedSourceItem:
 
 
 @dataclass(frozen=True)
+class DuplicateGroup:
+    group_id: str
+    kept_item_id: str
+    duplicate_item_ids: list[str]
+    reasons: list[str] = field(default_factory=list)
+    canonical_urls: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "group_id": self.group_id,
+            "kept_item_id": self.kept_item_id,
+            "duplicate_item_ids": list(self.duplicate_item_ids),
+            "reasons": list(self.reasons),
+            "canonical_urls": list(self.canonical_urls),
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class DedupResult:
+    kept_items: list[NormalizedSourceItem]
+    duplicate_groups: list[DuplicateGroup]
+    dropped_items: list[NormalizedSourceItem]
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "kept_item_count": len(self.kept_items),
+            "duplicate_group_count": len(self.duplicate_groups),
+            "dropped_item_count": len(self.dropped_items),
+            "kept_item_ids": [item.normalized_item_id for item in self.kept_items],
+            "dropped_item_ids": [item.normalized_item_id for item in self.dropped_items],
+            "duplicate_groups": [group.to_dict() for group in self.duplicate_groups],
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
 class SourceError:
     source_id: str
     error_type: str
