@@ -1,3 +1,6 @@
+import json
+
+from core.framework.artifacts import ArtifactManager
 from core.framework.tools import (
     ToolCall,
     ToolExecutor,
@@ -89,3 +92,54 @@ def test_report_validate_tool_returns_structured_errors_for_invalid_report() -> 
     assert observation.status == ToolStatus.SUCCEEDED
     assert observation.result.output["valid"] is False
     assert observation.result.output["errors"] == ["report.title is required"]
+
+
+def test_report_export_tool_writes_markdown_and_json_artifacts(tmp_path) -> None:
+    artifact_manager = ArtifactManager(tmp_path)
+    artifact_manager.start_run("report-run")
+    registry = ToolRegistry()
+    register_report_tools(
+        registry,
+        artifact_manager=artifact_manager,
+        run_id="report-run",
+    )
+    executor = ToolExecutor(registry)
+    report = {
+        "title": "Daily Report",
+        "sections": [{"title": "Summary", "content": "All systems nominal."}],
+        "source_urls": ["https://example.com/source"],
+        "metadata": {"profile": "test"},
+    }
+
+    markdown_observation = executor.execute(
+        ToolCall(
+            tool_name="report.export",
+            arguments={"report": report, "path": "exports/daily.md"},
+        ),
+        ToolPolicy(
+            allowed_tools=["report.export"],
+            require_approval_for_side_effects=False,
+        ),
+    )
+    json_observation = executor.execute(
+        ToolCall(
+            tool_name="report.export",
+            arguments={"report": report, "format": "json"},
+        ),
+        ToolPolicy(
+            allowed_tools=["report.export"],
+            require_approval_for_side_effects=False,
+        ),
+    )
+
+    markdown_path = tmp_path / "report-run" / "exports" / "daily.md"
+    json_path = tmp_path / "report-run" / "reports" / "daily-report.json"
+
+    assert markdown_observation.status == ToolStatus.SUCCEEDED
+    assert markdown_path.read_text(encoding="utf-8").startswith("# Daily Report")
+    assert markdown_observation.result.output["relative_path"] == "exports/daily.md"
+    assert markdown_observation.result.output["content_type"] == "text/markdown"
+    assert json_observation.status == ToolStatus.SUCCEEDED
+    assert json.loads(json_path.read_text(encoding="utf-8"))["title"] == "Daily Report"
+    assert json_observation.result.output["relative_path"] == "reports/daily-report.json"
+    assert json_observation.result.output["content_type"] == "application/json"
