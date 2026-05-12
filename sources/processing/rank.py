@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from domain.sources import NormalizedSourceItem, RankedSourceItem, SourceReliability
+from sources.processing.quality import score_source_item
 
 
 RELIABILITY_SCORE = {
@@ -30,6 +31,7 @@ def _rank_item(
     now: datetime,
     index: int,
 ) -> RankedSourceItem:
+    quality_score = score_source_item(item, now=now)
     relevance = _relevance(item, topic)
     recency = _recency(item, now)
     reliability = RELIABILITY_SCORE[item.source_reliability]
@@ -50,6 +52,7 @@ def _rank_item(
             "reliability_score": round(reliability, 4),
             "authority_score": round(authority, 4),
             "novelty_score": round(novelty, 4),
+            "source_quality_score": quality_score.quality_score,
             "final_score": final_score,
         }
     )
@@ -65,7 +68,7 @@ def _rank_item(
             f"topic={topic}; relevance={relevance:.2f}; "
             f"reliability={reliability:.2f}; authority={authority:.2f}"
         ),
-        metadata={"lineage": lineage},
+        metadata={"lineage": lineage, "source_quality": quality_score.to_dict()},
     )
 
 

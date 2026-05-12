@@ -7,6 +7,7 @@ from sources.processing import (
     deduplicate_with_result,
     normalize_items,
     rank_items,
+    score_source_item,
 )
 from sources.processing.normalize import canonicalize_url, normalize_text
 
@@ -129,6 +130,36 @@ def test_build_source_coverage_report_marks_no_source_run_empty() -> None:
     assert report.failed_source_ids == []
     assert report.fetch_success_ratio == 0.0
     assert report.partial_reasons == ["no_raw_items", "source_failures", "source_errors"]
+
+
+def test_score_source_item_summarizes_source_side_quality_signals() -> None:
+    normalized = normalize_items(
+        [
+            _raw_item(
+                "AI policy update",
+                "https://example.com/quality",
+                reliability="low",
+                authority_score=0.2,
+                summary="Short summary.",
+                language=None,
+            )
+        ]
+    )[0]
+
+    quality = score_source_item(normalized, now=datetime(2026, 5, 11, tzinfo=UTC))
+
+    assert quality.normalized_item_id == normalized.normalized_item_id
+    assert quality.source_item_id == normalized.source_item_id
+    assert quality.source_id == "source"
+    assert quality.reliability_score == 0.4
+    assert quality.authority_score == 0.2
+    assert quality.traceability_score == 1.0
+    assert quality.freshness_score == 1.0
+    assert quality.content_score == 0.6
+    assert quality.language_score == 0.7
+    assert quality.quality_score == 0.635
+    assert quality.penalties == ["low_reliability", "low_authority", "thin_content", "language_unknown"]
+    assert quality.to_dict()["quality_score"] == 0.635
 
 
 def test_canonicalize_url_removes_default_ports_and_preserves_custom_ports() -> None:
@@ -408,6 +439,8 @@ def test_rank_items_prioritizes_topic_relevance_and_reliability() -> None:
     assert lineage["ranked_item_id"] == ranked[0].ranked_item_id
     assert lineage["final_score"] == ranked[0].final_score
     assert lineage["authority_score"] == 0.5
+    assert lineage["source_quality_score"] == ranked[0].metadata["source_quality"]["quality_score"]
+    assert ranked[0].metadata["source_quality"]["traceability_score"] == 1.0
 
 
 def test_rank_items_uses_source_authority_score() -> None:

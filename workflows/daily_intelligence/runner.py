@@ -632,12 +632,14 @@ def build_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
                     "source_events",
                     "source_pipeline_metrics",
                     "source_coverage_report",
+                    "source_quality_scores",
                 ],
                 required_output_keys=[
                     "ranked_items",
                     "source_events",
                     "source_pipeline_metrics",
                     "source_coverage_report",
+                    "source_quality_scores",
                 ],
             ),
             StepSpec(
@@ -815,6 +817,11 @@ def _rank_sources(buffer: ScopedDataBuffer) -> dict[str, Any]:
             skipped_sources=buffer.read("skipped_sources"),
             failed_sources=buffer.read("failed_sources"),
         ),
+        "source_quality_scores": [
+            ranked.metadata["source_quality"]
+            for ranked in ranked_items
+            if "source_quality" in ranked.metadata
+        ],
     }
 
 

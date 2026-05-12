@@ -151,6 +151,8 @@ def test_daily_intelligence_runner_live_offline_writes_report_artifacts(tmp_path
     assert manifest["artifacts"]["report_markdown"] == "report.md"
     assert manifest["artifacts"]["source_events"] == "source_events.json"
     assert manifest["artifacts"]["source_coverage_report"] == "source_coverage_report.json"
+    assert manifest["artifacts"]["source_quality_scores"] == "source_quality_scores.json"
+    assert manifest["source_quality_score_count"] == 2
     assert manifest["artifacts"]["source_fetch_requests"] == "source_fetch_requests.json"
     assert manifest["artifacts"]["source_artifacts"] == "source_artifacts/index.json"
     assert manifest["source_event_count"] == 6
@@ -198,6 +200,13 @@ def test_daily_intelligence_runner_live_offline_writes_report_artifacts(tmp_path
     assert coverage_report["fetch_success_ratio"] == 1.0
     assert coverage_report["sources_by_type"] == {"rss": 1}
     assert result.output["source_coverage_report"].coverage_status == "covered"
+
+    source_quality_scores = json.loads((run_dir / "source_quality_scores.json").read_text(encoding="utf-8"))
+    assert len(source_quality_scores) == 2
+    assert source_quality_scores[0]["source_id"] == "fixture-ai"
+    assert source_quality_scores[0]["quality_score"] > 0.8
+    assert source_quality_scores[0]["traceability_score"] == 1.0
+    assert result.output["source_quality_scores"] == source_quality_scores
 
     source_fetch_requests = json.loads((run_dir / "source_fetch_requests.json").read_text())
     assert source_fetch_requests[0]["request_id"] == result.output["source_fetch_results"][0].request_id

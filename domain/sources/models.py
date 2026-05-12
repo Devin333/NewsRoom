@@ -502,6 +502,38 @@ class SourceCoverageReport:
         }
 
 
+@dataclass(frozen=True)
+class SourceItemQualityScore:
+    normalized_item_id: str
+    source_item_id: str
+    source_id: str
+    quality_score: float
+    reliability_score: float
+    authority_score: float
+    traceability_score: float
+    freshness_score: float
+    content_score: float
+    language_score: float
+    penalties: list[str] = field(default_factory=list)
+    score_reason: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "normalized_item_id": self.normalized_item_id,
+            "source_item_id": self.source_item_id,
+            "source_id": self.source_id,
+            "quality_score": self.quality_score,
+            "reliability_score": self.reliability_score,
+            "authority_score": self.authority_score,
+            "traceability_score": self.traceability_score,
+            "freshness_score": self.freshness_score,
+            "content_score": self.content_score,
+            "language_score": self.language_score,
+            "penalties": list(self.penalties),
+            "score_reason": self.score_reason,
+        }
+
+
 def _dt(value: datetime | None) -> str | None:
     return value.isoformat().replace("+00:00", "Z") if value else None
 
