@@ -726,6 +726,28 @@ class SourceErrorPolicyReport:
 
 
 @dataclass(frozen=True)
+class SourceHealthReport:
+    health_update_count: int
+    status_counts: dict[str, int] = field(default_factory=dict)
+    cooling_down_source_ids: list[str] = field(default_factory=list)
+    degraded_source_ids: list[str] = field(default_factory=list)
+    disabled_source_ids: list[str] = field(default_factory=list)
+    max_consecutive_failures: int = 0
+    rows: list[dict[str, Any]] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "health_update_count": self.health_update_count,
+            "status_counts": dict(self.status_counts),
+            "cooling_down_source_ids": list(self.cooling_down_source_ids),
+            "degraded_source_ids": list(self.degraded_source_ids),
+            "disabled_source_ids": list(self.disabled_source_ids),
+            "max_consecutive_failures": self.max_consecutive_failures,
+            "rows": [dict(row) for row in self.rows],
+        }
+
+
+@dataclass(frozen=True)
 class SourceTraceabilityIssue:
     ranked_item_id: str
     normalized_item_id: str

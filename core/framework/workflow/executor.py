@@ -531,6 +531,13 @@ class WorkflowExecutor:
                 output["source_health_updates"],
             )
             manifest["artifacts"]["source_health_updates"] = "source_health_updates.json"
+        if "source_health_report" in output:
+            self._artifact_manager.write_json(
+                run_id,
+                "source_health_report.json",
+                output["source_health_report"],
+            )
+            manifest["artifacts"]["source_health_report"] = "source_health_report.json"
         if "source_duplicate_groups" in output:
             self._artifact_manager.write_json(
                 run_id,

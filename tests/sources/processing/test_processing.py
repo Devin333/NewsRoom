@@ -6,6 +6,8 @@ from domain.sources import (
     SourceError,
     SourceFetchRequest,
     SourceFetchResult,
+    SourceHealth,
+    SourceHealthStatus,
     SourcePipelineMetrics,
     SourceType,
 )
@@ -16,6 +18,7 @@ from sources.processing import (
     build_source_fallback_report,
     build_source_freshness_report,
     build_source_governance_report,
+    build_source_health_report,
     build_source_ranking_scores,
     build_source_traceability_report,
     deduplicate_items,
@@ -276,6 +279,47 @@ def test_build_source_error_policy_report_counts_policy_fields() -> None:
     assert report.operator_action_required_count == 1
     assert report.errors_by_type == {"fetch_timeout": 1, "all_sources_failed": 1}
     assert report.rows[1]["workflow_blocking"] is True
+
+
+def test_build_source_health_report_summarizes_statuses() -> None:
+    now = datetime(2026, 5, 11, tzinfo=UTC)
+    report = build_source_health_report(
+        [
+            SourceHealth(
+                source_id="healthy",
+                source_name="Healthy",
+                status=SourceHealthStatus.HEALTHY,
+                success_count_24h=2,
+                avg_latency_ms_24h=12.5,
+            ),
+            SourceHealth(
+                source_id="cooling",
+                source_name="Cooling",
+                status=SourceHealthStatus.COOLING_DOWN,
+                consecutive_failures=2,
+                failure_count_24h=2,
+                cooldown_until=now,
+                last_error=SourceError(
+                    source_id="cooling",
+                    error_type="fetch_timeout",
+                    error_message="timeout",
+                ),
+            ),
+            SourceHealth(
+                source_id="degraded",
+                source_name="Degraded",
+                status=SourceHealthStatus.DEGRADED,
+                consecutive_failures=1,
+            ),
+        ]
+    )
+
+    assert report.health_update_count == 3
+    assert report.status_counts == {"healthy": 1, "cooling_down": 1, "degraded": 1}
+    assert report.cooling_down_source_ids == ["cooling"]
+    assert report.degraded_source_ids == ["degraded"]
+    assert report.max_consecutive_failures == 2
+    assert report.rows[1]["last_error_type"] == "fetch_timeout"
 
 
 def test_build_source_governance_report_flags_policy_findings() -> None:

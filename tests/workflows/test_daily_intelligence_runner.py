@@ -150,6 +150,7 @@ def test_daily_intelligence_runner_live_offline_writes_report_artifacts(tmp_path
     assert manifest["artifacts"]["report_json"] == "report.json"
     assert manifest["artifacts"]["report_markdown"] == "report.md"
     assert manifest["artifacts"]["source_events"] == "source_events.json"
+    assert manifest["artifacts"]["source_health_report"] == "source_health_report.json"
     assert manifest["artifacts"]["source_connector_dispatch_report"] == "source_connector_dispatch_report.json"
     assert manifest["artifacts"]["source_error_policy_report"] == "source_error_policy_report.json"
     assert manifest["artifacts"]["source_fallback_report"] == "source_fallback_report.json"
@@ -196,6 +197,12 @@ def test_daily_intelligence_runner_live_offline_writes_report_artifacts(tmp_path
     assert source_metrics["fetched_by_type"] == {"rss": 1}
     assert source_metrics["items_by_source_type"] == {"rss": 2}
     assert source_metrics["items_by_reliability"] == {"high": 2}
+
+    health_report = json.loads((run_dir / "source_health_report.json").read_text(encoding="utf-8"))
+    assert health_report["health_update_count"] == 1
+    assert health_report["status_counts"] == {"healthy": 1}
+    assert health_report["rows"][0]["source_id"] == "fixture-ai"
+    assert result.output["source_health_report"].status_counts == {"healthy": 1}
 
     dispatch_report = json.loads((run_dir / "source_connector_dispatch_report.json").read_text(encoding="utf-8"))
     assert dispatch_report["total_dispatch_count"] == 1
