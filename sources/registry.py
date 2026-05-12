@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from domain.sources import SourceDefinition, SourceReliability
+from domain.sources import SourceDefinition, SourceReliability, SourceType
 
 
 _RELIABILITY_SCORE = {
@@ -32,6 +32,19 @@ class SourceRegistry:
         if enabled_only:
             sources = [source for source in sources if source.enabled]
         return sorted(sources, key=lambda source: source.source_id)
+
+    def list_by_type(
+        self,
+        source_type: str | SourceType,
+        *,
+        enabled_only: bool = True,
+    ) -> list[SourceDefinition]:
+        expected_type = SourceType(source_type)
+        return [
+            source
+            for source in self.list_sources(enabled_only=enabled_only)
+            if source.source_type == expected_type
+        ]
 
     def list_by_topic(
         self,

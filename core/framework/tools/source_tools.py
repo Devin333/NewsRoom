@@ -174,6 +174,7 @@ def register_source_tools(
                         "enabled_only": {"type": "boolean"},
                         "language": {"type": "string"},
                         "region": {"type": "string"},
+                        "source_type": {"type": "string"},
                         "fallback_to_enabled": {"type": "boolean"},
                         "limit": {"type": "integer"},
                     },
@@ -402,6 +403,7 @@ def _search_sources(
     enabled_only = bool(args.get("enabled_only", True))
     language = args.get("language")
     region = args.get("region")
+    source_type = args.get("source_type")
     limit = _optional_limit(args.get("limit"))
     query = str(args.get("query") or "").strip()
     if query:
@@ -418,6 +420,9 @@ def _search_sources(
             sources = [source for source in sources if source.language == str(language)]
         if region is not None:
             sources = [source for source in sources if source.region == str(region)]
+    if source_type is not None:
+        expected_type = SourceType(str(source_type))
+        sources = [source for source in sources if source.source_type == expected_type]
     if limit is not None:
         sources = sources[:limit]
     return {

@@ -580,6 +580,41 @@ def test_source_search_tool_lists_configured_sources_when_query_is_omitted() -> 
     ]
 
 
+def test_source_search_tool_filters_by_source_type() -> None:
+    registry = ToolRegistry()
+    source_registry = SourceRegistry(
+        [
+            SourceDefinition(
+                source_id="rss",
+                name="RSS",
+                source_type="rss",
+                url="https://example.com/rss.xml",
+                topics=["ai"],
+            ),
+            SourceDefinition(
+                source_id="html",
+                name="HTML",
+                source_type="html",
+                url="https://example.com/blog",
+                topics=["ai"],
+            ),
+        ]
+    )
+    register_source_tools(registry, source_registry=source_registry)
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="source.search",
+            arguments={"query": "ai", "source_type": "html"},
+        ),
+        ToolPolicy(allowed_tools=["source.search"]),
+    )
+
+    assert observation.status == ToolStatus.SUCCEEDED
+    assert [source["source_id"] for source in observation.result.output["sources"]] == ["html"]
+
+
 def test_source_fetch_url_tool_applies_max_bytes_to_injected_fetcher() -> None:
     registry = ToolRegistry()
     register_source_tools(registry, fetch_text=lambda url: "abcdef")

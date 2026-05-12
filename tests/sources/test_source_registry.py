@@ -23,6 +23,33 @@ def test_source_registry_lists_enabled_sources_only_by_default() -> None:
     assert registry.list_sources(enabled_only=False) == [disabled, enabled]
 
 
+def test_source_registry_lists_sources_by_type() -> None:
+    rss = SourceDefinition(
+        source_id="rss",
+        name="RSS",
+        source_type="rss",
+        url="https://example.com/rss.xml",
+    )
+    html = SourceDefinition(
+        source_id="html",
+        name="HTML",
+        source_type="html",
+        url="https://example.com/blog",
+    )
+    disabled_html = SourceDefinition(
+        source_id="html-disabled",
+        name="HTML Disabled",
+        source_type="html",
+        url="https://example.com/disabled",
+        enabled=False,
+    )
+
+    registry = SourceRegistry([disabled_html, html, rss])
+
+    assert registry.list_by_type("html") == [html]
+    assert registry.list_by_type("html", enabled_only=False) == [html, disabled_html]
+
+
 def test_source_registry_lists_by_topic_with_language_and_region_filters() -> None:
     ai_us = SourceDefinition(
         source_id="ai-us",
