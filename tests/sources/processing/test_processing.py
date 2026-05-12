@@ -14,8 +14,14 @@ def _raw_item(
     authority_score: float = 0.5,
     summary: str | None = None,
     language: str | None = None,
+    metadata: dict[str, object] | None = None,
 ) -> RawSourceItem:
     now = datetime(2026, 5, 11, tzinfo=UTC)
+    item_metadata: dict[str, object] = {
+        "source_reliability": reliability,
+        "source_authority_score": authority_score,
+    }
+    item_metadata.update(metadata or {})
     return RawSourceItem(
         source_item_id=f"raw-{title}-{url}",
         source_id="source",
@@ -27,7 +33,7 @@ def _raw_item(
         published_at=now - timedelta(days=days_old),
         summary=summary if summary is not None else f"Summary for {title}",
         language=language,
-        metadata={"source_reliability": reliability, "source_authority_score": authority_score},
+        metadata=item_metadata,
     )
 
 
@@ -85,6 +91,92 @@ def test_deduplicate_items_removes_duplicate_content_hashes() -> None:
     assert len(unique) == 1
     assert unique[0].title == "First headline"
     assert normalized[0].content_hash == normalized[1].content_hash
+
+
+def test_deduplicate_items_retains_higher_reliability_duplicate() -> None:
+    normalized = normalize_items(
+        [
+            _raw_item(
+                "Lower reliability",
+                "https://example.com/post?utm_source=a",
+                reliability="low",
+            ),
+            _raw_item("Higher reliability", "https://example.com/post", reliability="high"),
+        ]
+    )
+
+    unique = deduplicate_items(normalized)
+
+    assert len(unique) == 1
+    assert unique[0].title == "Higher reliability"
+    assert unique[0].source_reliability.value == "high"
+
+
+def test_deduplicate_items_prefers_newer_duplicate_when_reliability_ties() -> None:
+    normalized = normalize_items(
+        [
+            _raw_item("AI launch", "https://example.com/newer", days_old=1),
+            _raw_item("AI launch", "https://example.com/latest"),
+        ]
+    )
+
+    unique = deduplicate_items(normalized)
+
+    assert len(unique) == 1
+    assert unique[0].url == "https://example.com/latest"
+
+
+def test_deduplicate_items_prefers_more_complete_summary_when_other_signals_tie() -> None:
+    normalized = normalize_items(
+        [
+            _raw_item("AI launch", "https://example.com/brief", summary="Brief."),
+            _raw_item(
+                "AI launch",
+                "https://example.com/complete",
+                summary="Detailed summary with more complete source context.",
+            ),
+        ]
+    )
+
+    unique = deduplicate_items(normalized)
+
+    assert len(unique) == 1
+    assert unique[0].url == "https://example.com/complete"
+
+
+def test_deduplicate_items_prefers_official_source_when_other_signals_tie() -> None:
+    normalized = normalize_items(
+        [
+            _raw_item("AI launch", "https://example.com/community"),
+            _raw_item(
+                "AI launch",
+                "https://example.com/official",
+                metadata={"official_blog": True},
+            ),
+        ]
+    )
+
+    unique = deduplicate_items(normalized)
+
+    assert len(unique) == 1
+    assert unique[0].url == "https://example.com/official"
+
+
+def test_deduplicate_items_prefers_canonical_url_when_other_signals_tie() -> None:
+    normalized = normalize_items(
+        [
+            _raw_item("AI launch", "https://example.com/tracked?utm_source=a"),
+            _raw_item(
+                "AI launch",
+                "https://example.com/tracked",
+            ),
+        ]
+    )
+
+    unique = deduplicate_items(normalized)
+
+    assert len(unique) == 1
+    assert unique[0].url == "https://example.com/tracked"
 
 
 def test_normalize_item_detects_future_published_at() -> None:
