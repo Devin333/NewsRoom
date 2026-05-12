@@ -489,6 +489,12 @@ def test_daily_intelligence_runner_records_partial_source_failures(tmp_path) -> 
     )
     assert failing_health.source_name == "Failing"
     assert failing_health.url == "https://example.com/failing.xml"
+    source_notes = next(
+        section for section in result.output["final_report"].sections if section["title"] == "Source Notes"
+    )
+    assert "1 source(s) failed" in source_notes["content"]
+    assert "fetch_connection_error" in source_notes["content"]
+    assert source_notes["sources"] == ["https://example.com/ai-policy"]
 
     run_dir = Path(result.artifact_dir)
     manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
@@ -531,6 +537,8 @@ def test_daily_intelligence_runner_records_partial_source_failures(tmp_path) -> 
     assert source_fetch_results[0]["success"] is False
     assert source_fetch_results[0]["error_type"] == "fetch_connection_error"
     assert source_fetch_results[1]["success"] is True
+    report = json.loads((run_dir / "report.json").read_text(encoding="utf-8"))
+    assert any(section["title"] == "Source Notes" for section in report["sections"])
 
 
 def test_daily_intelligence_runner_honors_non_health_affecting_source_errors(tmp_path) -> None:

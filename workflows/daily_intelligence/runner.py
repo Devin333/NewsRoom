@@ -455,8 +455,17 @@ class DailyIntelligenceRunner:
     def _draft_report(self, buffer: ScopedDataBuffer, profile: str) -> dict[str, Any]:
         request = buffer.read("request")
         evidence_bundle = buffer.read("evidence_bundle")
+        source_errors = buffer.read("source_errors")
+        source_metrics = buffer.read("source_pipeline_metrics")
         if profile == PROFILE_LIVE_OFFLINE:
-            return {"report_draft": _deterministic_report(request["topic"], evidence_bundle)}
+            return {
+                "report_draft": _with_source_notes(
+                    _deterministic_report(request["topic"], evidence_bundle),
+                    evidence_bundle,
+                    source_errors,
+                    source_metrics,
+                )
+            }
 
         llm_client = self.llm_client or OpenAICompatibleClient(OpenAICompatibleConfig.dashscope_defaults())
         response = llm_client.complete(_report_request(request["topic"], evidence_bundle))
@@ -465,6 +474,7 @@ class DailyIntelligenceRunner:
             if response.structured_output is not None
             else _parse_report_json(response.content)
         )
+        report_draft = _with_source_notes(report_draft, evidence_bundle, source_errors, source_metrics)
         return {"report_draft": report_draft}
 
 
@@ -540,7 +550,7 @@ def build_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
             StepSpec(
                 step_id="draft_report",
                 implementation="daily.draft_report",
-                read_keys=["request", "evidence_bundle"],
+                read_keys=["request", "evidence_bundle", "source_errors", "source_pipeline_metrics"],
                 write_keys=["report_draft"],
                 required_output_keys=["report_draft"],
             ),
@@ -784,6 +794,52 @@ def _deterministic_report(topic: str, evidence_bundle: EvidenceBundle) -> dict[s
             },
         ],
     }
+
+
+def _with_source_notes(
+    report_draft: dict[str, Any],
+    evidence_bundle: EvidenceBundle,
+    source_errors: list[Any],
+    source_metrics: SourcePipelineMetrics,
+) -> dict[str, Any]:
+    if not _needs_source_notes(source_errors, source_metrics):
+        return report_draft
+    sections = [dict(section) for section in report_draft.get("sections", [])]
+    if any(str(section.get("title") or "").strip().casefold() == "source notes" for section in sections):
+        return report_draft
+    source_urls = sorted(evidence_bundle.source_urls)
+    if not source_urls:
+        return report_draft
+    error_types = sorted(
+        {
+            error.error_type if hasattr(error, "error_type") else str(error.get("error_type", "unknown"))
+            for error in source_errors
+        }
+    )
+    content_parts = [
+        (
+            f"Source collection was partial: {source_metrics.sources_failed} source(s) failed "
+            f"and {source_metrics.sources_skipped} source(s) were skipped."
+        )
+    ]
+    if error_types:
+        content_parts.append(f"Observed source error types: {', '.join(error_types)}.")
+    sections.append(
+        {
+            "title": "Source Notes",
+            "content": " ".join(content_parts),
+            "sources": source_urls,
+        }
+    )
+    updated = dict(report_draft)
+    updated["sections"] = sections
+    return updated
+
+
+def _needs_source_notes(source_errors: list[Any], source_metrics: SourcePipelineMetrics) -> bool:
+    if source_metrics.sources_failed > 0 or source_metrics.sources_skipped > 0:
+        return True
+    return bool(source_errors)
 
 
 def _report_request(topic: str, evidence_bundle: EvidenceBundle) -> LLMRequest:
