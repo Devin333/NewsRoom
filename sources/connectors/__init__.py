@@ -15,6 +15,7 @@ from sources.connectors.github import (
     GithubRepositorySearchResult,
 )
 from sources.connectors.html import HtmlConnector, HtmlExtractionResult, extract_html
+from sources.connectors.manual import ManualConnector
 
 __all__ = [
     "ARXIV_API_URL",
@@ -28,6 +29,7 @@ __all__ = [
     "GithubRepositorySearchResult",
     "HtmlConnector",
     "HtmlExtractionResult",
+    "ManualConnector",
     "RateLimitDecision",
     "SourceFetchPolicy",
     "extract_html",
