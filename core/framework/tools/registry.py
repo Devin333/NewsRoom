@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from core.framework.tools.models import (
     ToolDefinition,
@@ -9,6 +9,10 @@ from core.framework.tools.models import (
     ToolExecutorFn,
     ToolPolicy,
 )
+
+
+DuplicateToolPolicy = Literal["error", "skip", "replace_explicit"]
+_DUPLICATE_POLICIES = {"error", "skip", "replace_explicit"}
 
 
 @dataclass(frozen=True)
@@ -21,10 +25,25 @@ class ToolRegistry:
     def __init__(self) -> None:
         self._tools: dict[str, RegisteredTool] = {}
 
-    def register(self, definition: ToolDefinition, executor: ToolExecutorFn) -> None:
-        if definition.name in self._tools:
+    def register(
+        self,
+        definition: ToolDefinition,
+        executor: ToolExecutorFn,
+        *,
+        duplicate_policy: DuplicateToolPolicy = "error",
+    ) -> RegisteredTool:
+        if duplicate_policy not in _DUPLICATE_POLICIES:
+            raise ToolDefinitionError(f"unsupported duplicate policy: {duplicate_policy}")
+
+        existing = self._tools.get(definition.name)
+        if existing is not None and duplicate_policy == "error":
             raise ToolDefinitionError(f"tool already registered: {definition.name}")
-        self._tools[definition.name] = RegisteredTool(definition=definition, executor=executor)
+        if existing is not None and duplicate_policy == "skip":
+            return existing
+
+        registered = RegisteredTool(definition=definition, executor=executor)
+        self._tools[definition.name] = registered
+        return registered
 
     def unregister(self, tool_name: str) -> None:
         self._tools.pop(tool_name, None)

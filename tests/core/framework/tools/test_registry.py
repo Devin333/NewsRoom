@@ -38,6 +38,52 @@ def test_tool_registry_rejects_duplicate_tool_name() -> None:
         registry.register(definition, lambda args: args)
 
 
+def test_tool_registry_skip_duplicate_keeps_existing_registration() -> None:
+    registry = ToolRegistry()
+    original = ToolDefinition(name="artifact.load", description="Original")
+    replacement = ToolDefinition(name="artifact.load", description="Replacement")
+    registry.register(original, lambda args: {"source": "original"})
+
+    registered = registry.register(
+        replacement,
+        lambda args: {"source": "replacement"},
+        duplicate_policy="skip",
+    )
+
+    assert registered.definition == original
+    assert registry.get("artifact.load").definition == original
+    assert registry.get("artifact.load").executor({}) == {"source": "original"}
+
+
+def test_tool_registry_replace_explicit_replaces_duplicate_registration() -> None:
+    registry = ToolRegistry()
+    original = ToolDefinition(name="artifact.load", description="Original")
+    replacement = ToolDefinition(name="artifact.load", description="Replacement")
+    registry.register(original, lambda args: {"source": "original"})
+
+    registered = registry.register(
+        replacement,
+        lambda args: {"source": "replacement"},
+        duplicate_policy="replace_explicit",
+    )
+
+    assert registered.definition == replacement
+    assert registry.get("artifact.load").definition == replacement
+    assert registry.get("artifact.load").executor({}) == {"source": "replacement"}
+
+
+def test_tool_registry_rejects_unknown_duplicate_policy() -> None:
+    registry = ToolRegistry()
+    registry.register(ToolDefinition(name="artifact.load"), lambda args: args)
+
+    with pytest.raises(ToolDefinitionError, match="unsupported duplicate policy"):
+        registry.register(
+            ToolDefinition(name="artifact.load"),
+            lambda args: args,
+            duplicate_policy="replace",
+        )
+
+
 def test_tool_definition_requires_namespace() -> None:
     with pytest.raises(ToolDefinitionError, match="namespaced"):
         ToolDefinition(name="search")
