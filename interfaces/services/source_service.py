@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from domain.sources import RawSourceItem, SourceDefinition, SourceError
+from domain.sources import RawSourceItem, SourceDefinition, SourceError, SourceHealth
 from sources import SourceRegistry
 from sources.connectors import ARXIV_API_URL, GITHUB_API_URL, ArxivConnector, GithubConnector
 from sources.health import BasicSourceHealthManager
@@ -120,10 +120,18 @@ class SourceApplicationService:
     def source_health(self, *, enabled_only: bool = True) -> SourceHealthResult:
         return SourceHealthResult(
             [
-                self.health_manager.get(source.source_id).to_dict()
+                self._health_for_source(source).to_dict()
                 for source in self.source_registry.list_sources(enabled_only=enabled_only)
             ]
         )
+
+    def _health_for_source(self, source: SourceDefinition) -> SourceHealth:
+        if not source.enabled:
+            return self.health_manager.record_disabled(
+                source.source_id,
+                reason="source disabled by configuration",
+            )
+        return self.health_manager.get(source.source_id)
 
     def fetch_arxiv(self, *, query: str, limit: int = 5) -> SourceFetchPreviewResult:
         if not query.strip():

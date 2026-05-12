@@ -24,6 +24,7 @@ class SourceHealthStatus(str, Enum):
     HEALTHY = "healthy"
     DEGRADED = "degraded"
     COOLING_DOWN = "cooling_down"
+    DISABLED = "disabled"
 
 
 def utc_now() -> datetime:

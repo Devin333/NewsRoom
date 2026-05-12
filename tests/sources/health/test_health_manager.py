@@ -31,3 +31,15 @@ def test_health_manager_opens_cooldown_after_failures() -> None:
     assert second.status == SourceHealthStatus.COOLING_DOWN
     assert second.cooldown_until == now + timedelta(seconds=60)
     assert manager.should_skip("source") is True
+
+
+def test_health_manager_records_disabled_source_as_skipped() -> None:
+    manager = BasicSourceHealthManager()
+
+    health = manager.record_disabled("source", reason="manual disable")
+
+    assert health.status == SourceHealthStatus.DISABLED
+    assert health.last_error is not None
+    assert health.last_error.error_type == "source_disabled"
+    assert health.last_error.error_message == "manual disable"
+    assert manager.should_skip("source") is True

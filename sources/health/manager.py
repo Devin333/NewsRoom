@@ -24,6 +24,8 @@ class BasicSourceHealthManager:
 
     def should_skip(self, source_id: str) -> bool:
         health = self.get(source_id)
+        if health.status == SourceHealthStatus.DISABLED:
+            return True
         return (
             health.status == SourceHealthStatus.COOLING_DOWN
             and health.cooldown_until is not None
@@ -36,6 +38,22 @@ class BasicSourceHealthManager:
             status=SourceHealthStatus.HEALTHY,
             consecutive_failures=0,
             last_success_at=self._now(),
+        )
+        self._health[source_id] = health
+        return health
+
+    def record_disabled(self, source_id: str, *, reason: str | None = None) -> SourceHealth:
+        error = SourceError(
+            source_id=source_id,
+            error_type="source_disabled",
+            error_message=reason or "source is disabled",
+            metadata={"retryable": False, "source_health_affecting": False},
+        )
+        health = SourceHealth(
+            source_id=source_id,
+            status=SourceHealthStatus.DISABLED,
+            consecutive_failures=0,
+            last_error=error,
         )
         self._health[source_id] = health
         return health

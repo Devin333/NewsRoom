@@ -54,6 +54,27 @@ def test_source_service_returns_health_views() -> None:
     assert result.to_dict()["health"][0]["status"] == "degraded"
 
 
+def test_source_service_reports_disabled_sources_as_disabled() -> None:
+    registry = SourceRegistry(
+        [
+            SourceDefinition(
+                source_id="disabled",
+                name="Disabled",
+                source_type="rss",
+                url="https://example.com/rss",
+                enabled=False,
+            )
+        ]
+    )
+
+    result = SourceApplicationService(source_registry=registry).source_health(enabled_only=False)
+
+    health = result.to_dict()["health"][0]
+    assert health["source_id"] == "disabled"
+    assert health["status"] == "disabled"
+    assert health["last_error"]["error_type"] == "source_disabled"
+
+
 def test_source_service_fetches_arxiv_preview() -> None:
     service = SourceApplicationService(
         source_registry=SourceRegistry([]),
