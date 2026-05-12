@@ -1,5 +1,4 @@
 import pytest
-
 from core.framework.specs import (
     EdgeCondition,
     EdgeSpec,
@@ -7,6 +6,7 @@ from core.framework.specs import (
     RetryPolicySpec,
     StepSpec,
     StepType,
+    TimeoutPolicySpec,
     WorkflowSpec,
     WorkflowSpecError,
 )
@@ -55,6 +55,21 @@ def test_step_spec_serializes_retry_policy() -> None:
     }
 
 
+def test_step_spec_serializes_timeout_policy() -> None:
+    step = StepSpec(
+        step_id="slow",
+        implementation="sample.slow",
+        timeout_policy=TimeoutPolicySpec(timeout_seconds=1.5, on_timeout="retry"),
+    )
+
+    payload = step.to_dict()
+
+    assert payload["timeout_policy"] == {
+        "timeout_seconds": 1.5,
+        "on_timeout": "retry",
+    }
+
+
 def test_step_spec_serializes_failure_policy() -> None:
     step = StepSpec(
         step_id="risky",
@@ -82,6 +97,14 @@ def test_retry_policy_rejects_negative_values() -> None:
 
     with pytest.raises(WorkflowSpecError, match="retry_delay_seconds"):
         RetryPolicySpec(retry_delay_seconds=[-1])
+
+
+def test_timeout_policy_rejects_invalid_values() -> None:
+    with pytest.raises(WorkflowSpecError, match="timeout_seconds must be positive"):
+        TimeoutPolicySpec(timeout_seconds=0)
+
+    with pytest.raises(WorkflowSpecError, match="on_timeout"):
+        TimeoutPolicySpec(timeout_seconds=1, on_timeout="pause")
 
 
 def test_workflow_spec_rejects_non_positive_step_visit_limit() -> None:

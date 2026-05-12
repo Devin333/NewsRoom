@@ -31,6 +31,7 @@ class StepStatus(str, Enum):
     FAILED = "failed"
     SKIPPED = "skipped"
     RETRYING = "retrying"
+    TIMEOUT = "timeout"
 
 
 class WorkflowStatus(str, Enum):
@@ -100,6 +101,24 @@ class FailurePolicySpec:
 
 
 @dataclass(frozen=True)
+class TimeoutPolicySpec:
+    timeout_seconds: float | None = None
+    on_timeout: str = "fail"
+
+    def __post_init__(self) -> None:
+        if self.timeout_seconds is not None and self.timeout_seconds <= 0:
+            raise WorkflowSpecError("timeout_seconds must be positive when set")
+        if self.on_timeout not in {"fail", "retry"}:
+            raise WorkflowSpecError("on_timeout must be one of: fail, retry")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "timeout_seconds": self.timeout_seconds,
+            "on_timeout": self.on_timeout,
+        }
+
+
+@dataclass(frozen=True)
 class StepSpec:
     step_id: str
     implementation: str
@@ -111,6 +130,7 @@ class StepSpec:
     required_output_keys: list[str] = field(default_factory=list)
     nullable_output_keys: list[str] = field(default_factory=list)
     retry_policy: RetryPolicySpec = field(default_factory=RetryPolicySpec)
+    timeout_policy: TimeoutPolicySpec = field(default_factory=TimeoutPolicySpec)
     failure_policy: FailurePolicySpec = field(default_factory=FailurePolicySpec)
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -118,6 +138,8 @@ class StepSpec:
         object.__setattr__(self, "step_type", StepType(self.step_type))
         if not isinstance(self.retry_policy, RetryPolicySpec):
             object.__setattr__(self, "retry_policy", RetryPolicySpec(**self.retry_policy))
+        if not isinstance(self.timeout_policy, TimeoutPolicySpec):
+            object.__setattr__(self, "timeout_policy", TimeoutPolicySpec(**self.timeout_policy))
         if not isinstance(self.failure_policy, FailurePolicySpec):
             object.__setattr__(self, "failure_policy", FailurePolicySpec(**self.failure_policy))
         if not self.step_id:
@@ -137,6 +159,7 @@ class StepSpec:
             "required_output_keys": list(self.required_output_keys),
             "nullable_output_keys": list(self.nullable_output_keys),
             "retry_policy": self.retry_policy.to_dict(),
+            "timeout_policy": self.timeout_policy.to_dict(),
             "failure_policy": self.failure_policy.to_dict(),
             "metadata": dict(self.metadata),
         }

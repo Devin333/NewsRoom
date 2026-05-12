@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import time
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from datetime import UTC, datetime
 from typing import Any, Callable
 from uuid import uuid4
@@ -18,6 +20,8 @@ from core.framework.workflow.step_runner import (
     StepRunnerRegistry,
 )
 from storage.checkpoint import WorkflowCheckpoint
+
+_WORKFLOW_STEP_TIMEOUT_ERROR = "WorkflowStepTimeoutError"
 
 
 def _utc_now() -> str:
@@ -380,17 +384,19 @@ class WorkflowExecutor:
                 },
             )
             scoped_buffer = buffer.scope(step.read_keys, step.write_keys)
-            try:
-                runner = self._step_runner_registry.get(step.step_type)
-                outcome = runner.run(step, scoped_buffer)
-            except Exception as exc:  # pragma: no cover - concrete branches covered by tests
-                outcome = StepOutcome(
-                    status=StepStatus.FAILED,
-                    error_type=type(exc).__name__,
-                    error_message=str(exc),
-                    error_details={"attempt": attempt, "max_attempts": max_attempts},
+            outcome = self._run_step_attempt(step, scoped_buffer, attempt, max_attempts)
+            if outcome.status == StepStatus.TIMEOUT:
+                recorder.emit(
+                    "step_timeout",
+                    {
+                        "step_id": step.step_id,
+                        "attempt": attempt,
+                        "max_attempts": max_attempts,
+                        "timeout_seconds": step.timeout_policy.timeout_seconds,
+                        "on_timeout": step.timeout_policy.on_timeout,
+                    },
                 )
-            if outcome.status != StepStatus.FAILED:
+            if not _is_retryable_outcome(step, outcome):
                 return outcome
             if attempt >= max_attempts or not retry_policy.should_retry(
                 error_type=outcome.error_type
@@ -414,6 +420,65 @@ class WorkflowExecutor:
             if delay_seconds:
                 self._sleep_fn(delay_seconds)
             attempt += 1
+
+    def _run_step_attempt(
+        self,
+        step: StepSpec,
+        scoped_buffer: Any,
+        attempt: int,
+        max_attempts: int,
+    ) -> StepOutcome:
+        timeout_seconds = step.timeout_policy.timeout_seconds
+        if timeout_seconds is None:
+            return self._invoke_step_runner(step, scoped_buffer, attempt, max_attempts)
+
+        pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="news-workflow-step")
+        future = pool.submit(
+            self._invoke_step_runner,
+            step,
+            scoped_buffer,
+            attempt,
+            max_attempts,
+        )
+        timed_out = False
+        try:
+            return future.result(timeout=timeout_seconds)
+        except FutureTimeoutError:
+            timed_out = True
+            future.cancel()
+            return StepOutcome(
+                status=StepStatus.TIMEOUT,
+                error_type=_WORKFLOW_STEP_TIMEOUT_ERROR,
+                error_message=(
+                    f"step {step.step_id} exceeded timeout of {timeout_seconds:g} seconds"
+                ),
+                error_details={
+                    "attempt": attempt,
+                    "max_attempts": max_attempts,
+                    "timeout_seconds": timeout_seconds,
+                    "on_timeout": step.timeout_policy.on_timeout,
+                },
+            )
+        finally:
+            pool.shutdown(wait=not timed_out, cancel_futures=True)
+
+    def _invoke_step_runner(
+        self,
+        step: StepSpec,
+        scoped_buffer: Any,
+        attempt: int,
+        max_attempts: int,
+    ) -> StepOutcome:
+        try:
+            runner = self._step_runner_registry.get(step.step_type)
+            return runner.run(step, scoped_buffer)
+        except Exception as exc:  # pragma: no cover - concrete branches covered by tests
+            return StepOutcome(
+                status=StepStatus.FAILED,
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+                error_details={"attempt": attempt, "max_attempts": max_attempts},
+            )
 
     def _write_source_diagnostic_artifacts(
         self,
@@ -582,6 +647,14 @@ def _failure_fallback_step_id(workflow: WorkflowSpec, step: StepSpec) -> str | N
     if not edges:
         return None
     return edges[0].target_step_id
+
+
+def _is_retryable_outcome(step: StepSpec, outcome: StepOutcome) -> bool:
+    if outcome.status == StepStatus.FAILED:
+        return True
+    if outcome.status == StepStatus.TIMEOUT:
+        return step.timeout_policy.on_timeout == "retry"
+    return False
 
 
 def _checkpoint_id(step_id: str, event_offset: int) -> str:

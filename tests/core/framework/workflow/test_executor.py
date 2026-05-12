@@ -1,4 +1,5 @@
 import json
+import time
 from hashlib import sha256
 
 import pytest
@@ -12,6 +13,7 @@ from core.framework.specs import (
     StepStatus,
     StepSpec,
     StepType,
+    TimeoutPolicySpec,
     WorkflowSpec,
     WorkflowStatus,
 )
@@ -344,6 +346,120 @@ def test_workflow_executor_fails_after_retry_exhaustion(tmp_path) -> None:
         for line in (tmp_path / "run-exhausted" / "events.jsonl").read_text(encoding="utf-8").splitlines()
     ]
     assert events.count("step_retry_scheduled") == 2
+
+
+def test_workflow_executor_fails_step_on_timeout_without_retry(tmp_path) -> None:
+    calls = {"count": 0}
+    registry = FunctionStepRegistry()
+
+    def slow(buffer):
+        calls["count"] += 1
+        time.sleep(0.05)
+        raise RuntimeError("late failure")
+
+    registry.register("sample.slow", slow)
+    spec = WorkflowSpec(
+        workflow_id="timeout",
+        name="Timeout",
+        version="1.0",
+        start_step_id="slow",
+        steps=[
+            StepSpec(
+                step_id="slow",
+                implementation="sample.slow",
+                retry_policy=RetryPolicySpec(max_retries=1, retry_delay_seconds=[0]),
+                timeout_policy=TimeoutPolicySpec(timeout_seconds=0.01),
+            )
+        ],
+    )
+    executor = WorkflowExecutor(
+        function_step_runner=FunctionStepRunner(registry),
+        artifact_manager=ArtifactManager(tmp_path),
+    )
+
+    result = executor.execute(spec, {"topic": "ai"}, profile="test", run_id="run-timeout")
+
+    assert result.status == WorkflowStatus.FAILED
+    assert result.step_results["slow"].status == StepStatus.TIMEOUT
+    assert result.error is not None
+    assert result.error.error_type == "WorkflowStepTimeoutError"
+    assert result.error.details["timeout_seconds"] == 0.01
+    assert calls["count"] == 1
+    events = [
+        json.loads(line)["event_type"]
+        for line in (tmp_path / "run-timeout" / "events.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert "step_timeout" in events
+    assert "step_retry_scheduled" not in events
+
+
+def test_workflow_executor_retries_timeout_when_policy_allows(tmp_path) -> None:
+    calls = {"count": 0}
+    registry = FunctionStepRegistry()
+
+    def slow_then_recover(buffer):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            time.sleep(0.05)
+            raise RuntimeError("late failure")
+        return {"report": "recovered after timeout"}
+
+    registry.register("sample.slow_then_recover", slow_then_recover)
+    spec = WorkflowSpec(
+        workflow_id="timeout-retry",
+        name="Timeout Retry",
+        version="1.0",
+        start_step_id="slow",
+        steps=[
+            StepSpec(
+                step_id="slow",
+                implementation="sample.slow_then_recover",
+                write_keys=["report"],
+                required_output_keys=["report"],
+                retry_policy=RetryPolicySpec(
+                    max_retries=1,
+                    retry_delay_seconds=[0],
+                    retry_on_error_types=["WorkflowStepTimeoutError"],
+                ),
+                timeout_policy=TimeoutPolicySpec(timeout_seconds=0.01, on_timeout="retry"),
+            )
+        ],
+    )
+    executor = WorkflowExecutor(
+        function_step_runner=FunctionStepRunner(registry),
+        artifact_manager=ArtifactManager(tmp_path),
+    )
+
+    result = executor.execute(
+        spec,
+        {"topic": "ai"},
+        profile="test",
+        run_id="run-timeout-retry",
+    )
+
+    assert result.status == WorkflowStatus.SUCCEEDED
+    assert calls["count"] == 2
+    assert result.output["report"] == "recovered after timeout"
+    events = [
+        json.loads(line)["event_type"]
+        for line in (tmp_path / "run-timeout-retry" / "events.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert events == [
+        "workflow_started",
+        "step_started",
+        "step_timeout",
+        "step_retry_scheduled",
+        "step_started",
+        "step_succeeded",
+        "workflow_succeeded",
+    ]
+    workflow_spec = json.loads(
+        (tmp_path / "run-timeout-retry" / "workflow_spec.json").read_text(encoding="utf-8")
+    )
+    assert workflow_spec["steps"][0]["timeout_policy"] == {
+        "timeout_seconds": 0.01,
+        "on_timeout": "retry",
+    }
 
 
 def test_workflow_executor_routes_failed_step_to_policy_fallback(tmp_path) -> None:
