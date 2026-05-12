@@ -3,12 +3,19 @@ import json
 from core.framework.run_result import RunResult
 from core.framework.specs import WorkflowStatus
 from domain.reports import FinalReport
+from evidence import EvidenceBundle, EvidenceItem, VerifiedClaim, VerifiedFindings
 from quality import QualityGateMetrics, ReportQualitySummary
+from storage.records import ClaimRecord, EvidenceItemRecord, QualityResultRecord, SourceItemRecord
 from storage.repository import (
     LocalJsonPersistenceAdapter,
     ReportRecord,
     WorkflowRunRecord,
+    claim_records_from_result,
+    evidence_item_records_from_result,
+    persist_run_result,
+    quality_result_record_from_result,
     report_record_from_result,
+    source_item_records_from_result,
     workflow_run_record_from_result,
 )
 
@@ -126,3 +133,132 @@ def test_local_json_persistence_adapter_writes_records(tmp_path) -> None:
     report_payload = json.loads(report_path.read_text(encoding="utf-8"))
     assert report_payload["report_id"] == "run-1:final"
     assert report_payload["citation_coverage_score"] == 1.0
+
+
+def test_run_result_extracts_source_evidence_claim_and_quality_records() -> None:
+    result = _storage_run_result()
+
+    source_records = source_item_records_from_result(result)
+    evidence_records = evidence_item_records_from_result(result)
+    claim_records = claim_records_from_result(result)
+    quality_record = quality_result_record_from_result(result)
+
+    assert source_records[0].source_item_id == "raw-1"
+    assert evidence_records[0].evidence_id == "ev-1"
+    assert evidence_records[0].source_item_ids == ["raw-1"]
+    assert claim_records[0].status == "accepted"
+    assert claim_records[0].supporting_sources == ["https://example.com/a"]
+    assert quality_record is not None
+    assert quality_record.decision == "pass"
+    assert quality_record.claim_support_score == 1.0
+
+
+def test_local_json_persistence_adapter_writes_final_state_records(tmp_path) -> None:
+    repository = LocalJsonPersistenceAdapter(tmp_path)
+
+    persist_run_result(repository, _storage_run_result(), profile="live-offline")
+
+    assert repository.list_source_items("run-1")[0]["source_item_id"] == "raw-1"
+    assert repository.list_evidence_items("run-1")[0]["evidence_id"] == "ev-1"
+    assert repository.list_claims("run-1")[0]["claim_id"] == "claim-1"
+    assert repository.list_quality_results("run-1")[0]["quality_result_id"] == "run-1:quality"
+
+
+def test_local_json_persistence_adapter_writes_individual_final_state_records(tmp_path) -> None:
+    repository = LocalJsonPersistenceAdapter(tmp_path)
+
+    repository.save_source_item(
+        SourceItemRecord(
+            source_item_id="raw-1",
+            run_id="run-1",
+            source_id="source",
+            title="Title",
+            url="https://example.com/a",
+        )
+    )
+    repository.save_evidence_item(
+        EvidenceItemRecord(
+            evidence_id="ev-1",
+            run_id="run-1",
+            claim="Title",
+            summary="Summary",
+            source_urls=["https://example.com/a"],
+            source_item_ids=["raw-1"],
+            confidence=0.9,
+        )
+    )
+    repository.save_claim(
+        ClaimRecord(claim_id="claim-1", run_id="run-1", status="accepted", text="Title")
+    )
+    repository.save_quality_result(
+        QualityResultRecord(
+            quality_result_id="run-1:quality",
+            run_id="run-1",
+            decision="pass",
+            passed=True,
+            quality_score=1.0,
+        )
+    )
+
+    assert len(repository.list_source_items("run-1")) == 1
+    assert len(repository.list_evidence_items("run-1")) == 1
+    assert len(repository.list_claims("run-1")) == 1
+    assert len(repository.list_quality_results("run-1")) == 1
+
+
+def _storage_run_result() -> RunResult:
+    evidence_bundle = EvidenceBundle(
+        bundle_id="daily",
+        items=[
+            EvidenceItem(
+                evidence_id="ev-1",
+                source_url="https://example.com/a",
+                title="AI policy update",
+                summary="Policy summary.",
+                confidence=0.9,
+                source_id="source",
+                metadata={"source_lineage": {"source_item_id": "raw-1"}},
+            )
+        ],
+    )
+    return RunResult(
+        run_id="run-1",
+        workflow_id="daily",
+        workflow_version="1",
+        status=WorkflowStatus.SUCCEEDED,
+        output={
+            "raw_items": [
+                {
+                    "source_item_id": "raw-1",
+                    "source_id": "source",
+                    "title": "AI policy update",
+                    "url": "https://example.com/a",
+                    "fetched_at": "2026-05-11T00:00:00Z",
+                    "summary": "Policy summary.",
+                    "metadata": {"source_reliability": "high"},
+                }
+            ],
+            "evidence_bundle": evidence_bundle,
+            "verified_findings": VerifiedFindings(
+                accepted_claims=[
+                    VerifiedClaim(
+                        claim_id="claim-1",
+                        claim="AI policy update",
+                        status="accepted",
+                        confidence=0.9,
+                        supporting_evidence_ids=["ev-1"],
+                        supporting_sources=["https://example.com/a"],
+                    )
+                ]
+            ),
+            "report_quality_summary": ReportQualitySummary(
+                quality_score=1.0,
+                support_coverage=1.0,
+                citation_passed=True,
+                decision="pass",
+                claim_support_score=1.0,
+                evidence_alignment_score=1.0,
+            ),
+        },
+        manifest_path="runs/run-1/manifest.json",
+    )

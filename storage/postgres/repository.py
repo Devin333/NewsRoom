@@ -10,6 +10,7 @@ import psycopg
 from domain.sources import SourceError, SourceHealth
 from storage.local_json import ReportNotFoundError
 from storage.postgres.migrations import load_migration_sql
+from storage.records import ClaimRecord, EvidenceItemRecord, QualityResultRecord, SourceItemRecord
 from storage.repository import ReportRecord, WorkflowRunRecord
 
 
@@ -149,6 +150,111 @@ class PostgresRepository:
             record.manifest_path,
         )
         self._execute(sql, params)
+
+    def save_source_item(self, record: SourceItemRecord) -> None:
+        sql = """
+        INSERT INTO source_items (
+            source_item_id, run_id, source_id, title, url, payload
+        )
+        VALUES (%s, %s, %s, %s, %s, %s::jsonb)
+        ON CONFLICT (source_item_id) DO UPDATE SET
+            run_id = EXCLUDED.run_id,
+            source_id = EXCLUDED.source_id,
+            title = EXCLUDED.title,
+            url = EXCLUDED.url,
+            payload = EXCLUDED.payload
+        """
+        self._execute(
+            sql,
+            (
+                record.source_item_id,
+                record.run_id,
+                record.source_id,
+                record.title,
+                record.url,
+                _json(record.to_dict()),
+            ),
+        )
+
+    def save_evidence_item(self, record: EvidenceItemRecord) -> None:
+        sql = """
+        INSERT INTO evidence_items (
+            evidence_id, run_id, source_url, title, confidence, payload
+        )
+        VALUES (%s, %s, %s, %s, %s, %s::jsonb)
+        ON CONFLICT (evidence_id) DO UPDATE SET
+            run_id = EXCLUDED.run_id,
+            source_url = EXCLUDED.source_url,
+            title = EXCLUDED.title,
+            confidence = EXCLUDED.confidence,
+            payload = EXCLUDED.payload
+        """
+        self._execute(
+            sql,
+            (
+                record.evidence_id,
+                record.run_id,
+                record.source_urls[0] if record.source_urls else "",
+                record.claim,
+                record.confidence,
+                _json(record.to_dict()),
+            ),
+        )
+
+    def save_claim(self, record: ClaimRecord) -> None:
+        sql = """
+        INSERT INTO claims (
+            claim_id, run_id, status, text, payload
+        )
+        VALUES (%s, %s, %s, %s, %s::jsonb)
+        ON CONFLICT (claim_id) DO UPDATE SET
+            run_id = EXCLUDED.run_id,
+            status = EXCLUDED.status,
+            text = EXCLUDED.text,
+            payload = EXCLUDED.payload
+        """
+        self._execute(
+            sql,
+            (
+                record.claim_id,
+                record.run_id,
+                record.status,
+                record.text,
+                _json(record.to_dict()),
+            ),
+        )
+
+    def save_quality_result(self, record: QualityResultRecord) -> None:
+        sql = """
+        INSERT INTO quality_results (
+            quality_result_id, run_id, decision, passed, quality_score,
+            citation_coverage_score, claim_support_score, evidence_alignment_score, payload
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+        ON CONFLICT (quality_result_id) DO UPDATE SET
+            run_id = EXCLUDED.run_id,
+            decision = EXCLUDED.decision,
+            passed = EXCLUDED.passed,
+            quality_score = EXCLUDED.quality_score,
+            citation_coverage_score = EXCLUDED.citation_coverage_score,
+            claim_support_score = EXCLUDED.claim_support_score,
+            evidence_alignment_score = EXCLUDED.evidence_alignment_score,
+            payload = EXCLUDED.payload
+        """
+        self._execute(
+            sql,
+            (
+                record.quality_result_id,
+                record.run_id,
+                record.decision,
+                record.passed,
+                record.quality_score,
+                record.citation_coverage_score,
+                record.claim_support_score,
+                record.evidence_alignment_score,
+                _json(record.payload),
+            ),
+        )
 
     def update_source_health(self, health: SourceHealth) -> None:
         sql = """

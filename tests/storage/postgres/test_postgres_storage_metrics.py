@@ -35,7 +35,7 @@ class FakeConnection:
 
 
 def test_postgres_storage_metrics_collects_aggregate_counts() -> None:
-    connection = FakeConnection(row=(2, 1, 4, 128, 9, 3))
+    connection = FakeConnection(row=(2, 1, 4, 5, 6, 7, 8, 9, 128, 10, 3))
     collector = PostgresStorageMetricsCollector(
         "postgresql://example",
         connection_factory=lambda: connection,
@@ -46,13 +46,20 @@ def test_postgres_storage_metrics_collects_aggregate_counts() -> None:
     assert metrics.runs_count == 2
     assert metrics.reports_count == 1
     assert metrics.artifacts_count == 4
+    assert metrics.source_items_count == 5
+    assert metrics.evidence_items_count == 6
+    assert metrics.claims_count == 7
+    assert metrics.quality_results_count == 8
+    assert metrics.vector_documents_count == 9
     assert metrics.artifact_bytes_total == 128
-    assert metrics.events_count == 9
+    assert metrics.events_count == 10
     assert metrics.lineage_refs_count == 3
     assert metrics.metadata["source"] == "postgres"
     sql, params = connection.calls[0]
     assert "FROM workflow_runs" in sql
     assert "FROM artifact_index" in sql
+    assert "FROM quality_results" in sql
+    assert "FROM memory_documents" in sql
     assert "FROM workflow_events" in sql
     assert "FROM lineage_refs" in sql
     assert params == ()

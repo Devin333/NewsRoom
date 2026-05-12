@@ -18,6 +18,10 @@ class LocalStorageMetricsCollector:
             runs_count=len(manifests),
             reports_count=sum(1 for manifest in manifests if "report_json" in (manifest.get("artifacts") or {})),
             artifacts_count=len(artifact_refs),
+            source_items_count=self._json_record_count("source_items"),
+            evidence_items_count=self._json_record_count("evidence_items"),
+            claims_count=self._json_record_count("claims"),
+            quality_results_count=self._json_record_count("quality_results"),
             artifact_bytes_total=sum(ref.size_bytes or 0 for ref in artifact_refs),
             events_count=self._jsonl_line_count(self.artifact_root / "_records" / "events"),
             lineage_refs_count=self._jsonl_line_count(self.artifact_root / "_records" / "lineage"),
@@ -60,3 +64,9 @@ class LocalStorageMetricsCollector:
             except OSError:
                 continue
         return count
+
+    def _json_record_count(self, name: str) -> int:
+        root = self.artifact_root / "_records" / name
+        if not root.exists():
+            return 0
+        return sum(1 for path in root.rglob("*.json") if path.is_file())

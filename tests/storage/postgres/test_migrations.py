@@ -13,6 +13,9 @@ def test_postgres_migration_sql_contains_required_tables() -> None:
         "source_items",
         "evidence_items",
         "claims",
+        "quality_results",
+        "memory_documents",
+        "schema_versions",
         "report_sections",
         "source_health",
     ]:

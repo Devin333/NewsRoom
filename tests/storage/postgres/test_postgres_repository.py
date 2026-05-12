@@ -4,6 +4,7 @@ import pytest
 
 from domain.sources import SourceError, SourceHealth, SourceHealthStatus
 from storage.postgres import PostgresRepository
+from storage.records import ClaimRecord, EvidenceItemRecord, QualityResultRecord, SourceItemRecord
 from storage.repository import ReportRecord, WorkflowRunRecord
 
 
@@ -100,6 +101,64 @@ def test_postgres_repository_saves_report() -> None:
     assert params[0] == "report-1"
     assert params[4] == '{"title": "Report"}'
     assert params[7] == 0.8
+
+
+def test_postgres_repository_saves_source_evidence_claim_and_quality_records() -> None:
+    connection = FakeConnection()
+    repository = PostgresRepository("postgresql://example", connection_factory=lambda: connection)
+
+    repository.save_source_item(
+        SourceItemRecord(
+            source_item_id="raw-1",
+            run_id="run-1",
+            source_id="source",
+            title="Title",
+            url="https://example.com/a",
+        )
+    )
+    repository.save_evidence_item(
+        EvidenceItemRecord(
+            evidence_id="ev-1",
+            run_id="run-1",
+            claim="Title",
+            summary="Summary",
+            source_urls=["https://example.com/a"],
+            source_item_ids=["raw-1"],
+            confidence=0.9,
+        )
+    )
+    repository.save_claim(
+        ClaimRecord(
+            claim_id="claim-1",
+            run_id="run-1",
+            status="accepted",
+            text="Title",
+            supporting_sources=["https://example.com/a"],
+        )
+    )
+    repository.save_quality_result(
+        QualityResultRecord(
+            quality_result_id="run-1:quality",
+            run_id="run-1",
+            decision="pass",
+            passed=True,
+            quality_score=1.0,
+            citation_coverage_score=1.0,
+            claim_support_score=1.0,
+            evidence_alignment_score=1.0,
+        )
+    )
+
+    assert "INSERT INTO source_items" in connection.calls[0][0]
+    assert connection.calls[0][1][0] == "raw-1"
+    assert "INSERT INTO evidence_items" in connection.calls[1][0]
+    assert connection.calls[1][1][0] == "ev-1"
+    assert connection.calls[1][1][2] == "https://example.com/a"
+    assert "INSERT INTO claims" in connection.calls[2][0]
+    assert connection.calls[2][1][2] == "accepted"
+    assert "INSERT INTO quality_results" in connection.calls[3][0]
+    assert connection.calls[3][1][0] == "run-1:quality"
+    assert connection.calls[3][1][6] == 1.0
 
 
 def test_postgres_repository_updates_source_health() -> None:

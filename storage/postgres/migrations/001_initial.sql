@@ -130,6 +130,47 @@ CREATE TABLE IF NOT EXISTS claims (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS quality_results (
+    quality_result_id TEXT PRIMARY KEY,
+    run_id TEXT REFERENCES workflow_runs(run_id) ON DELETE CASCADE,
+    decision TEXT NOT NULL,
+    passed BOOLEAN NOT NULL DEFAULT FALSE,
+    quality_score DOUBLE PRECISION,
+    citation_coverage_score DOUBLE PRECISION,
+    claim_support_score DOUBLE PRECISION,
+    evidence_alignment_score DOUBLE PRECISION,
+    payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_quality_results_run
+    ON quality_results(run_id);
+
+CREATE TABLE IF NOT EXISTS memory_documents (
+    document_id TEXT PRIMARY KEY,
+    collection TEXT NOT NULL,
+    source_type TEXT NOT NULL,
+    run_id TEXT,
+    report_id TEXT,
+    evidence_id TEXT,
+    source_item_id TEXT,
+    payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_documents_collection
+    ON memory_documents(collection);
+
+CREATE INDEX IF NOT EXISTS idx_memory_documents_run
+    ON memory_documents(run_id);
+
+CREATE TABLE IF NOT EXISTS schema_versions (
+    schema_name TEXT PRIMARY KEY,
+    schema_version TEXT NOT NULL,
+    data JSONB NOT NULL DEFAULT '{}'::jsonb,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS report_sections (
     section_id TEXT PRIMARY KEY,
     report_id TEXT REFERENCES reports(report_id) ON DELETE CASCADE,
