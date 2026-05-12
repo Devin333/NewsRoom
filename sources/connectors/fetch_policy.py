@@ -16,6 +16,14 @@ T = TypeVar("T")
 DEFAULT_RETRY_ON_STATUS_CODES = (429, 500, 502, 503, 504)
 
 
+class UnsupportedContentTypeError(ValueError):
+    def __init__(self, content_type: str, supported_content_types: tuple[str, ...]) -> None:
+        self.content_type = content_type
+        self.supported_content_types = supported_content_types
+        supported = ", ".join(supported_content_types)
+        super().__init__(f"unsupported content type: {content_type}; supported: {supported}")
+
+
 @dataclass(frozen=True)
 class SourceFetchPolicy:
     timeout_seconds: float = 15.0
@@ -143,6 +151,18 @@ def is_retryable_fetch_exception(exc: Exception, policy: SourceFetchPolicy) -> b
 def fetch_attempts(exc: Exception) -> int | None:
     attempts = getattr(exc, "source_fetch_attempts", None)
     return attempts if isinstance(attempts, int) else None
+
+
+def ensure_supported_content_type(
+    content_type: str | None,
+    supported_content_types: tuple[str, ...],
+) -> None:
+    if not content_type:
+        return
+    normalized = content_type.split(";", 1)[0].strip().casefold()
+    supported = tuple(content_type.casefold() for content_type in supported_content_types)
+    if normalized not in supported:
+        raise UnsupportedContentTypeError(normalized, supported)
 
 
 def _set_attempts(exc: Exception, attempts: int) -> None:

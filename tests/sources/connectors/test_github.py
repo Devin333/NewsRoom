@@ -92,6 +92,43 @@ def test_github_connector_returns_invalid_repository_error() -> None:
     assert errors[0].metadata["phase"] == "fetch"
 
 
+def test_github_connector_default_fetch_rejects_unsupported_content_type(monkeypatch) -> None:
+    class Headers:
+        def get_content_type(self):
+            return "text/html"
+
+    class Response:
+        headers = Headers()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def read(self, size):
+            return GITHUB_RELEASES.encode("utf-8")
+
+    def fake_urlopen(request, timeout):
+        return Response()
+
+    monkeypatch.setattr("sources.connectors.github.urlopen", fake_urlopen)
+
+    items, errors = GithubConnector().fetch_releases(
+        _source(),
+        repository="owner/repo",
+        limit=1,
+    )
+
+    assert items == []
+    assert errors[0].error_type == "unsupported_content_type"
+    assert errors[0].metadata["phase"] == "fetch"
+    assert errors[0].metadata["content_type"] == "text/html"
+    assert errors[0].metadata["retryable"] is False
+    assert errors[0].metadata["source_health_affecting"] is False
+    assert "application/vnd.github+json" in errors[0].metadata["supported_content_types"]
+
+
 def _source() -> SourceDefinition:
     return SourceDefinition(
         source_id="github",

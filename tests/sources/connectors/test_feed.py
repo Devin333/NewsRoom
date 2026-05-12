@@ -248,6 +248,45 @@ def test_feed_connector_default_fetch_applies_policy(monkeypatch) -> None:
     }
 
 
+def test_feed_connector_default_fetch_rejects_unsupported_content_type(monkeypatch) -> None:
+    class Headers:
+        def get_content_type(self):
+            return "text/html; charset=utf-8"
+
+    class Response:
+        headers = Headers()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def read(self, size):
+            return RSS_FIXTURE.encode("utf-8")
+
+    def fake_urlopen(request, timeout):
+        return Response()
+
+    monkeypatch.setattr("sources.connectors.feed.urlopen", fake_urlopen)
+    source = SourceDefinition(
+        source_id="rss-source",
+        name="RSS Source",
+        source_type="rss",
+        url="https://example.com/rss.xml",
+    )
+
+    items, errors = FeedConnector().fetch(source)
+
+    assert items == []
+    assert errors[0].error_type == "unsupported_content_type"
+    assert errors[0].metadata["phase"] == "fetch"
+    assert errors[0].metadata["content_type"] == "text/html"
+    assert errors[0].metadata["retryable"] is False
+    assert errors[0].metadata["source_health_affecting"] is False
+    assert "application/rss+xml" in errors[0].metadata["supported_content_types"]
+
+
 def test_feed_connector_retries_transient_fetch_error() -> None:
     calls = []
     source = SourceDefinition(

@@ -13,6 +13,8 @@ from domain.sources import RawSourceItem, SourceDefinition, SourceError
 from sources.connectors.fetch_policy import (
     DomainRateLimiter,
     SourceFetchPolicy,
+    UnsupportedContentTypeError,
+    ensure_supported_content_type,
     fetch_attempts,
     rate_limited_source_error,
     run_with_fetch_retries,
@@ -23,6 +25,11 @@ from sources.connectors.metadata import source_item_metadata
 FetchText = Callable[[str], str]
 ARXIV_API_URL = "https://export.arxiv.org/api/query"
 ARXIV_NAMESPACE = "http://arxiv.org/schemas/atom"
+ARXIV_CONTENT_TYPES = (
+    "application/atom+xml",
+    "application/xml",
+    "text/xml",
+)
 
 
 @dataclass(frozen=True)
@@ -122,6 +129,9 @@ class ArxivConnector:
     def _default_fetch_text(self, url: str) -> str:
         request = Request(url, headers={"User-Agent": self.fetch_policy.user_agent})
         with urlopen(request, timeout=self.fetch_policy.timeout_seconds) as response:
+            headers = getattr(response, "headers", None)
+            content_type = headers.get_content_type() if headers is not None else None
+            ensure_supported_content_type(content_type, ARXIV_CONTENT_TYPES)
             body = response.read(self.fetch_policy.max_bytes + 1)
         if len(body) > self.fetch_policy.max_bytes:
             raise ValueError(f"source response exceeds max_bytes: {self.fetch_policy.max_bytes}")
@@ -236,6 +246,10 @@ def _exception_source_error(source: SourceDefinition, exc: Exception, *, phase: 
         "retryable": retryable,
         "source_health_affecting": phase == "fetch" or retryable,
     }
+    if isinstance(exc, UnsupportedContentTypeError):
+        metadata["content_type"] = exc.content_type
+        metadata["supported_content_types"] = list(exc.supported_content_types)
+        metadata["source_health_affecting"] = False
     if isinstance(exc, HTTPError):
         metadata["status_code"] = exc.code
     attempts = fetch_attempts(exc)
@@ -257,6 +271,8 @@ def _taxonomy_for_exception(exc: Exception, *, phase: str) -> tuple[str, bool]:
         return "fetch_connection_error", True
     if _is_timeout_exception(exc):
         return "fetch_timeout", True
+    if isinstance(exc, UnsupportedContentTypeError):
+        return "unsupported_content_type", False
     if isinstance(exc, ValueError) and "max_bytes" in str(exc):
         return "max_bytes_exceeded", False
     return "fetch_connection_error", True
