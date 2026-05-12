@@ -54,6 +54,11 @@ from core.framework.tools.source_tools import register_source_tools
 from core.framework.tools.telemetry import ToolEvent, ToolExecutionRecord, ToolMetrics
 from core.framework.tools.testing import ToolTestCase, ToolTestReport, ToolTestRunner
 from core.framework.tools.validation import validate_tool_arguments
+from core.framework.tools.web_search_tools import (
+    DuckDuckGoHtmlSearchProvider,
+    WebSearchResult,
+    register_web_search_tools,
+)
 
 __all__ = [
     "REDACTED_VALUE",
@@ -88,6 +93,8 @@ __all__ = [
     "ToolTestCase",
     "ToolTestReport",
     "ToolTestRunner",
+    "DuckDuckGoHtmlSearchProvider",
+    "WebSearchResult",
     "SecretProvider",
     "MappingSecretProvider",
     "EnvironmentSecretProvider",
@@ -105,5 +112,6 @@ __all__ = [
     "register_qdrant_tools",
     "register_report_tools",
     "register_source_tools",
+    "register_web_search_tools",
     "validate_tool_arguments",
 ]
