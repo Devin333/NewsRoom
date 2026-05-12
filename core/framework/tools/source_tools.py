@@ -10,7 +10,7 @@ from core.framework.tools.models import ToolDefinition
 from core.framework.tools.registry import ToolRegistry
 from domain.sources import RawSourceItem, SourceDefinition, SourceError, SourceType
 from sources import SourceRegistry
-from sources.connectors import FeedConnector, SourceFetchPolicy
+from sources.connectors import FeedConnector, SourceFetchPolicy, run_with_fetch_retries
 from sources.health import BasicSourceHealthManager
 from sources.processing.normalize import canonicalize_url
 
@@ -392,6 +392,9 @@ def _fetch_policy(args: dict[str, Any], default_policy: SourceFetchPolicy) -> So
         timeout_seconds=timeout_seconds,
         max_bytes=max_bytes,
         user_agent=str(args.get("user_agent") or default_policy.user_agent),
+        rate_limit_per_domain_per_minute=default_policy.rate_limit_per_domain_per_minute,
+        retry_times=default_policy.retry_times,
+        retry_on_status_codes=default_policy.retry_on_status_codes,
     )
 
 
@@ -401,7 +404,11 @@ def _fetch_text(
     fetch_text: FetchText | None,
 ) -> tuple[str, int | None, str | None]:
     if fetch_text is not None:
-        return fetch_text(url), None, None
+        return run_with_fetch_retries(lambda: (fetch_text(url), None, None), policy)
+    return run_with_fetch_retries(lambda: _default_fetch_text(url, policy), policy)
+
+
+def _default_fetch_text(url: str, policy: SourceFetchPolicy) -> tuple[str, int | None, str | None]:
     request = Request(url, headers={"User-Agent": policy.user_agent})
     with urlopen(request, timeout=policy.timeout_seconds) as response:
         body = response.read(policy.max_bytes + 1)

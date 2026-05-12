@@ -4,13 +4,16 @@ from collections import defaultdict, deque
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from math import ceil
-from typing import Callable
+from typing import Callable, TypeVar
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 
 from domain.sources import SourceDefinition, SourceError
 
 
 Now = Callable[[], datetime]
+T = TypeVar("T")
+DEFAULT_RETRY_ON_STATUS_CODES = (429, 500, 502, 503, 504)
 
 
 @dataclass(frozen=True)
@@ -19,6 +22,8 @@ class SourceFetchPolicy:
     max_bytes: int = 1_000_000
     user_agent: str = "NewsRoom/0.1"
     rate_limit_per_domain_per_minute: int | None = None
+    retry_times: int = 2
+    retry_on_status_codes: tuple[int, ...] = DEFAULT_RETRY_ON_STATUS_CODES
 
     def __post_init__(self) -> None:
         if self.timeout_seconds <= 0:
@@ -32,6 +37,13 @@ class SourceFetchPolicy:
             and self.rate_limit_per_domain_per_minute < 1
         ):
             raise ValueError("rate_limit_per_domain_per_minute must be at least 1")
+        if self.retry_times < 0:
+            raise ValueError("retry_times must be non-negative")
+        retry_on_status_codes = tuple(int(code) for code in self.retry_on_status_codes)
+        for status_code in retry_on_status_codes:
+            if status_code < 100 or status_code > 599:
+                raise ValueError("retry_on_status_codes must contain valid HTTP status codes")
+        object.__setattr__(self, "retry_on_status_codes", retry_on_status_codes)
 
 
 @dataclass(frozen=True)
@@ -102,6 +114,53 @@ def rate_limited_source_error(
             "retry_after_seconds": decision.retry_after_seconds,
         },
     )
+
+
+def run_with_fetch_retries(operation: Callable[[], T], policy: SourceFetchPolicy) -> T:
+    attempts = 0
+    while True:
+        attempts += 1
+        try:
+            return operation()
+        except Exception as exc:
+            _set_attempts(exc, attempts)
+            if attempts > policy.retry_times or not is_retryable_fetch_exception(exc, policy):
+                raise
+
+
+def is_retryable_fetch_exception(exc: Exception, policy: SourceFetchPolicy) -> bool:
+    if isinstance(exc, HTTPError):
+        return exc.code in policy.retry_on_status_codes
+    if _is_timeout_exception(exc):
+        return True
+    if isinstance(exc, URLError):
+        return True
+    if isinstance(exc, ValueError):
+        return False
+    return True
+
+
+def fetch_attempts(exc: Exception) -> int | None:
+    attempts = getattr(exc, "source_fetch_attempts", None)
+    return attempts if isinstance(attempts, int) else None
+
+
+def _set_attempts(exc: Exception, attempts: int) -> None:
+    try:
+        setattr(exc, "source_fetch_attempts", attempts)
+    except Exception:
+        pass
+
+
+def _is_timeout_exception(exc: Exception) -> bool:
+    if isinstance(exc, TimeoutError):
+        return True
+    if isinstance(exc, URLError):
+        reason = getattr(exc, "reason", None)
+        if isinstance(reason, TimeoutError):
+            return True
+        return "timed out" in str(reason).casefold() or "timeout" in str(reason).casefold()
+    return False
 
 
 def _domain_from_url(url: str) -> str:

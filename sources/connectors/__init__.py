@@ -2,7 +2,12 @@
 
 from sources.connectors.arxiv import ARXIV_API_URL, ArxivConnector, ArxivQuery
 from sources.connectors.feed import FeedConnector
-from sources.connectors.fetch_policy import DomainRateLimiter, RateLimitDecision, SourceFetchPolicy
+from sources.connectors.fetch_policy import (
+    DomainRateLimiter,
+    RateLimitDecision,
+    SourceFetchPolicy,
+    run_with_fetch_retries,
+)
 from sources.connectors.github import (
     GITHUB_API_URL,
     GithubConnector,
@@ -22,4 +27,5 @@ __all__ = [
     "GithubRepositorySearchResult",
     "RateLimitDecision",
     "SourceFetchPolicy",
+    "run_with_fetch_retries",
 ]

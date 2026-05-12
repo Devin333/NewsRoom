@@ -227,6 +227,90 @@ def test_feed_connector_default_fetch_applies_policy(monkeypatch) -> None:
     }
 
 
+def test_feed_connector_retries_transient_fetch_error() -> None:
+    calls = []
+    source = SourceDefinition(
+        source_id="rss-source",
+        name="RSS Source",
+        source_type="rss",
+        url="https://example.com/rss.xml",
+    )
+
+    def fetch_text(url: str) -> str:
+        calls.append(url)
+        if len(calls) == 1:
+            raise HTTPError(url, 503, "unavailable", hdrs=None, fp=BytesIO(b""))
+        return RSS_FIXTURE
+
+    connector = FeedConnector(
+        fetch_text=fetch_text,
+        fetch_policy=SourceFetchPolicy(retry_times=1),
+    )
+
+    items, errors = connector.fetch(source)
+
+    assert len(items) == 1
+    assert errors == []
+    assert calls == ["https://example.com/rss.xml", "https://example.com/rss.xml"]
+
+
+def test_feed_connector_does_not_retry_unconfigured_http_4xx() -> None:
+    calls = []
+    source = SourceDefinition(
+        source_id="rss-source",
+        name="RSS Source",
+        source_type="rss",
+        url="https://example.com/rss.xml",
+    )
+
+    def fetch_text(url: str) -> str:
+        calls.append(url)
+        raise HTTPError(url, 404, "missing", hdrs=None, fp=BytesIO(b""))
+
+    connector = FeedConnector(
+        fetch_text=fetch_text,
+        fetch_policy=SourceFetchPolicy(retry_times=2),
+    )
+
+    items, errors = connector.fetch(source)
+
+    assert items == []
+    assert errors[0].error_type == "fetch_http_4xx"
+    assert errors[0].metadata["attempts"] == 1
+    assert calls == ["https://example.com/rss.xml"]
+
+
+def test_feed_connector_reports_attempts_after_retry_exhaustion() -> None:
+    calls = []
+    source = SourceDefinition(
+        source_id="rss-source",
+        name="RSS Source",
+        source_type="rss",
+        url="https://example.com/rss.xml",
+    )
+
+    def fetch_text(url: str) -> str:
+        calls.append(url)
+        raise HTTPError(url, 503, "unavailable", hdrs=None, fp=BytesIO(b""))
+
+    connector = FeedConnector(
+        fetch_text=fetch_text,
+        fetch_policy=SourceFetchPolicy(retry_times=2),
+    )
+
+    items, errors = connector.fetch(source)
+
+    assert items == []
+    assert errors[0].error_type == "fetch_http_5xx"
+    assert errors[0].metadata["attempts"] == 3
+    assert errors[0].metadata["retryable"] is True
+    assert calls == [
+        "https://example.com/rss.xml",
+        "https://example.com/rss.xml",
+        "https://example.com/rss.xml",
+    ]
+
+
 def test_feed_connector_rate_limits_same_domain_before_fetch() -> None:
     calls = []
     source = SourceDefinition(
@@ -330,3 +414,7 @@ def test_source_fetch_policy_rejects_invalid_values() -> None:
         SourceFetchPolicy(user_agent="")
     with pytest.raises(ValueError, match="rate_limit_per_domain_per_minute"):
         SourceFetchPolicy(rate_limit_per_domain_per_minute=0)
+    with pytest.raises(ValueError, match="retry_times"):
+        SourceFetchPolicy(retry_times=-1)
+    with pytest.raises(ValueError, match="retry_on_status_codes"):
+        SourceFetchPolicy(retry_on_status_codes=(99,))

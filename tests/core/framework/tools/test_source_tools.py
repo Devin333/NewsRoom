@@ -81,6 +81,43 @@ def test_source_fetch_url_tool_fetches_configured_source_through_executor() -> N
     }
 
 
+def test_source_fetch_url_tool_retries_transient_fetch_error() -> None:
+    registry = ToolRegistry()
+    seen_urls: list[str] = []
+
+    def fetch_text(url: str) -> str:
+        seen_urls.append(url)
+        if len(seen_urls) == 1:
+            raise RuntimeError("temporary fetch failure")
+        return "source content"
+
+    register_source_tools(
+        registry,
+        fetch_text=fetch_text,
+        fetch_policy=SourceFetchPolicy(retry_times=1),
+    )
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="source.fetch_url",
+            arguments={
+                "source": {
+                    "source_id": "rss-example",
+                    "name": "Example RSS",
+                    "url": "https://example.com/feed.xml",
+                    "source_type": "rss",
+                }
+            },
+        ),
+        ToolPolicy(allowed_tools=["source.fetch_url"]),
+    )
+
+    assert observation.status == ToolStatus.SUCCEEDED
+    assert observation.result.output["content"] == "source content"
+    assert seen_urls == ["https://example.com/feed.xml", "https://example.com/feed.xml"]
+
+
 def test_source_fetch_url_tool_rejects_non_http_urls_before_fetch() -> None:
     registry = ToolRegistry()
     calls = {"count": 0}

@@ -12,7 +12,9 @@ from domain.sources import RawSourceItem, SourceDefinition, SourceError, SourceT
 from sources.connectors.fetch_policy import (
     DomainRateLimiter,
     SourceFetchPolicy,
+    fetch_attempts,
     rate_limited_source_error,
+    run_with_fetch_retries,
 )
 
 
@@ -40,7 +42,10 @@ class FeedConnector:
             return [], [rate_limited_source_error(source, rate_limit, url=source.url)]
 
         try:
-            xml_text = self._fetch_text(source.url)
+            xml_text = run_with_fetch_retries(
+                lambda: self._fetch_text(source.url),
+                self.fetch_policy,
+            )
         except Exception as exc:
             return [], [_exception_source_error(source, exc, phase="fetch")]
 
@@ -179,6 +184,9 @@ def _exception_source_error(source: SourceDefinition, exc: Exception, *, phase: 
     }
     if isinstance(exc, HTTPError):
         metadata["status_code"] = exc.code
+    attempts = fetch_attempts(exc)
+    if attempts is not None:
+        metadata["attempts"] = attempts
     return _source_error(source, error_type, str(exc), metadata=metadata)
 
 
