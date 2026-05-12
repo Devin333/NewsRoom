@@ -1,6 +1,7 @@
 """Tool Runtime primitives."""
 
 from core.framework.tools.approval import ToolApprovalRequest
+from core.framework.tools.arxiv_tools import register_arxiv_tools
 from core.framework.tools.artifact_tools import register_artifact_tools
 from core.framework.tools.batch import ToolBatchExecutor
 from core.framework.tools.control_tools import register_control_tools
@@ -80,6 +81,7 @@ __all__ = [
     "EnvironmentSecretProvider",
     "contains_redacted_value",
     "redact_sensitive_values",
+    "register_arxiv_tools",
     "register_artifact_tools",
     "register_control_tools",
     "register_memory_tools",
