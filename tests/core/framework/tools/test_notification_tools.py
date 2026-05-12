@@ -170,6 +170,175 @@ def test_notification_webhook_tool_rejects_secret_headers_before_send() -> None:
     assert "header is not allowed" in (observation.result.error_message or "")
 
 
+def test_notification_slack_tool_posts_json_to_configured_webhook_without_leaking_url() -> None:
+    received = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            length = int(self.headers["Content-Length"])
+            received.append(
+                {
+                    "path": self.path,
+                    "content_type": self.headers["Content-Type"],
+                    "body": self.rfile.read(length).decode("utf-8"),
+                }
+            )
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            self.wfile.write(b"ok")
+
+        def log_message(self, format, *args):
+            return
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        registry = ToolRegistry()
+        register_notification_tools(
+            registry,
+            allowed_slack_domains=["127.0.0.1"],
+            slack_webhook_url=(
+                f"http://127.0.0.1:{server.server_port}/services/T000/B000/SECRET"
+            ),
+        )
+        executor = ToolExecutor(registry)
+
+        observation = executor.execute(
+            ToolCall(
+                tool_name="notification.slack",
+                arguments={
+                    "text": "Daily report ready",
+                    "blocks": [
+                        {
+                            "type": "section",
+                            "text": {"type": "mrkdwn", "text": "*Daily report ready*"},
+                        }
+                    ],
+                    "timeout_seconds": 3,
+                },
+            ),
+            ToolPolicy(
+                allowed_tools=["notification.slack"],
+                require_approval_for_side_effects=False,
+            ),
+        )
+    finally:
+        server.shutdown()
+        thread.join(timeout=2)
+
+    output_text = json.dumps(observation.result.output, sort_keys=True)
+
+    assert observation.status == ToolStatus.SUCCEEDED
+    assert observation.result.output["sent"] is True
+    assert observation.result.output["host"] == "127.0.0.1"
+    assert observation.result.output["status_code"] == 200
+    assert observation.result.output["response_preview"] == "ok"
+    assert "SECRET" not in output_text
+    assert "/services/" not in output_text
+    assert received[0]["path"] == "/services/T000/B000/SECRET"
+    assert received[0]["content_type"] == "application/json"
+    assert json.loads(received[0]["body"]) == {
+        "blocks": [
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": "*Daily report ready*"},
+            }
+        ],
+        "text": "Daily report ready",
+    }
+
+
+def test_notification_slack_tool_requires_approval_by_default() -> None:
+    calls = {"count": 0}
+
+    def sender(url, body, headers, timeout_seconds):
+        calls["count"] += 1
+        return {"status_code": 200}
+
+    registry = ToolRegistry()
+    register_notification_tools(
+        registry,
+        slack_webhook_url="https://hooks.slack.com/services/T000/B000/SECRET",
+        slack_sender=sender,
+    )
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="notification.slack",
+            arguments={"text": "Daily report ready"},
+        ),
+        ToolPolicy(allowed_tools=["notification.slack"]),
+    )
+
+    assert observation.status == ToolStatus.APPROVAL_REQUIRED
+    assert calls["count"] == 0
+
+
+def test_notification_slack_tool_blocks_domains_outside_allowlist_before_send() -> None:
+    calls = {"count": 0}
+
+    def sender(url, body, headers, timeout_seconds):
+        calls["count"] += 1
+        return {"status_code": 200}
+
+    registry = ToolRegistry()
+    register_notification_tools(
+        registry,
+        allowed_slack_domains=["hooks.slack.com"],
+        slack_webhook_url="https://hooks.evil.test/services/T000/B000/SECRET",
+        slack_sender=sender,
+    )
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="notification.slack",
+            arguments={"text": "Daily report ready"},
+        ),
+        ToolPolicy(
+            allowed_tools=["notification.slack"],
+            require_approval_for_side_effects=False,
+        ),
+    )
+
+    assert observation.status == ToolStatus.FAILED
+    assert calls["count"] == 0
+    assert "host is not in allowed domains" in (observation.result.error_message or "")
+
+
+def test_notification_slack_tool_requires_message_content_before_send() -> None:
+    calls = {"count": 0}
+
+    def sender(url, body, headers, timeout_seconds):
+        calls["count"] += 1
+        return {"status_code": 200}
+
+    registry = ToolRegistry()
+    register_notification_tools(
+        registry,
+        slack_webhook_url="https://hooks.slack.com/services/T000/B000/SECRET",
+        slack_sender=sender,
+    )
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(tool_name="notification.slack", arguments={}),
+        ToolPolicy(
+            allowed_tools=["notification.slack"],
+            require_approval_for_side_effects=False,
+        ),
+    )
+
+    assert observation.status == ToolStatus.FAILED
+    assert calls["count"] == 0
+    assert "text, blocks, or attachments is required" in (
+        observation.result.error_message or ""
+    )
+
+
 def test_notification_email_tool_sends_mime_message_to_allowed_domain() -> None:
     sender = _CapturingEmailSender()
     registry = ToolRegistry()

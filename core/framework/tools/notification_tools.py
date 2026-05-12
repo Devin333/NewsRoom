@@ -26,6 +26,9 @@ def register_notification_tools(
     *,
     allowed_webhook_domains: list[str] | None = None,
     webhook_sender: WebhookSender | None = None,
+    allowed_slack_domains: list[str] | None = None,
+    slack_webhook_url: str | None = None,
+    slack_sender: WebhookSender | None = None,
     allowed_email_domains: list[str] | None = None,
     email_sender: EmailSender | None = None,
     email_from_address: str | None = None,
@@ -68,6 +71,37 @@ def register_notification_tools(
             sender=sender,
         ),
     )
+    if slack_webhook_url is not None:
+        slack_url = str(slack_webhook_url).strip()
+        slack_domain_tuple = _allowed_domains(allowed_slack_domains or ["hooks.slack.com"])
+        slack_sender_fn = slack_sender or webhook_sender or _default_webhook_sender
+        registry.register(
+            ToolDefinition(
+                name="notification.slack",
+                description="Send a Slack incoming webhook notification through the configured URL.",
+                input_schema={
+                    "required": [],
+                    "properties": {
+                        "text": {"type": "string"},
+                        "blocks": {"type": "array"},
+                        "attachments": {"type": "array"},
+                        "timeout_seconds": {"type": "number"},
+                    },
+                    "additionalProperties": False,
+                },
+                side_effect="writes_external_state",
+                requires_approval=True,
+                concurrency_safe=False,
+                max_result_bytes=100_000,
+                metadata={"notification_channel": "slack"},
+            ),
+            lambda args: _send_slack(
+                args,
+                webhook_url=slack_url,
+                allowed_domains=slack_domain_tuple,
+                sender=slack_sender_fn,
+            ),
+        )
     if email_sender is not None or smtp_host is not None or email_from_address is not None:
         from_address = _single_email_address(email_from_address, "email_from_address")
         sender_fn = email_sender or SmtpEmailSender(
@@ -207,6 +241,31 @@ def _send_webhook(
     return {
         "sent": True,
         "url": _url_without_query(url),
+        "status_code": response.get("status_code"),
+        "content_type": response.get("content_type"),
+        "response_preview": str(response.get("response_text") or "")[:500],
+        "payload_bytes": len(body),
+    }
+
+
+def _send_slack(
+    args: dict[str, Any],
+    *,
+    webhook_url: str,
+    allowed_domains: tuple[str, ...],
+    sender: WebhookSender,
+) -> dict[str, Any]:
+    webhook_url = webhook_url.strip()
+    if not webhook_url:
+        raise ValueError("slack_webhook_url is required")
+    _ensure_slack_url(webhook_url, allowed_domains)
+    payload = _slack_payload(args)
+    body = json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    response = sender(webhook_url, body, {}, _timeout(args.get("timeout_seconds")))
+    parsed = urlsplit(webhook_url)
+    return {
+        "sent": True,
+        "host": parsed.hostname,
         "status_code": response.get("status_code"),
         "content_type": response.get("content_type"),
         "response_preview": str(response.get("response_text") or "")[:500],
@@ -393,6 +452,22 @@ def _headers(value: Any) -> dict[str, str]:
     return headers
 
 
+def _slack_payload(args: dict[str, Any]) -> dict[str, Any]:
+    text = _optional_text(args.get("text"))
+    blocks = _optional_object_array(args.get("blocks"), "blocks")
+    attachments = _optional_object_array(args.get("attachments"), "attachments")
+    if text is None and not blocks and not attachments:
+        raise ValueError("text, blocks, or attachments is required")
+    payload: dict[str, Any] = {}
+    if text is not None:
+        payload["text"] = text
+    if blocks:
+        payload["blocks"] = blocks
+    if attachments:
+        payload["attachments"] = attachments
+    return payload
+
+
 def _email_message(
     *,
     from_address: str,
@@ -436,6 +511,19 @@ def _email_addresses(value: Any, field_name: str) -> list[str]:
     if len(addresses) != len(value):
         raise ValueError(f"{field_name} contains an invalid email address")
     return addresses
+
+
+def _optional_object_array(value: Any, field_name: str) -> list[dict[str, Any]]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError(f"{field_name} must be an array")
+    objects: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            raise ValueError(f"{field_name} items must be objects")
+        objects.append(dict(item))
+    return objects
 
 
 def _single_email_address(value: Any, field_name: str) -> str:
@@ -521,6 +609,21 @@ def _ensure_allowed_domain(url: str, allowed_domains: tuple[str, ...]) -> None:
     if any(host == domain or host.endswith(f".{domain}") for domain in allowed_domains):
         return
     raise ValueError(f"notification.webhook host is not in allowed domains: {host}")
+
+
+def _ensure_slack_url(url: str, allowed_domains: tuple[str, ...]) -> None:
+    parts = urlsplit(url)
+    scheme = parts.scheme.casefold()
+    host = (parts.hostname or "").casefold()
+    if scheme == "https":
+        pass
+    elif scheme == "http" and host in {"127.0.0.1", "localhost"}:
+        pass
+    else:
+        raise ValueError(f"notification.slack only supports https URLs: {url}")
+    if any(host == domain or host.endswith(f".{domain}") for domain in allowed_domains):
+        return
+    raise ValueError(f"notification.slack host is not in allowed domains: {host}")
 
 
 def _url_without_query(url: str) -> str:
