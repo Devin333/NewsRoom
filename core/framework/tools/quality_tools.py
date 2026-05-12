@@ -6,6 +6,7 @@ from core.framework.tools.models import ToolDefinition
 from core.framework.tools.registry import ToolRegistry
 from evidence.models import EvidenceBundle, EvidenceItem
 from quality import CitationChecker
+from sources.processing.normalize import canonicalize_url, normalize_text
 
 
 def register_quality_tools(registry: ToolRegistry) -> None:
@@ -26,6 +27,20 @@ def register_quality_tools(registry: ToolRegistry) -> None:
         ),
         _citation_check,
     )
+    registry.register(
+        ToolDefinition(
+            name="quality.duplicate_check",
+            description="Detect duplicate source or evidence items by canonical URL and title.",
+            input_schema={
+                "required": ["items"],
+                "properties": {"items": {"type": "array"}},
+                "additionalProperties": False,
+            },
+            side_effect="read_only",
+            concurrency_safe=True,
+        ),
+        _duplicate_check,
+    )
 
 
 def _citation_check(args: dict[str, Any]) -> dict[str, Any]:
@@ -33,6 +48,100 @@ def _citation_check(args: dict[str, Any]) -> dict[str, Any]:
         dict(args["report"]),
         _evidence_bundle(args["evidence_bundle"]),
     ).to_dict()
+
+
+def _duplicate_check(args: dict[str, Any]) -> dict[str, Any]:
+    items = args["items"]
+    if not isinstance(items, list):
+        raise ValueError("items must be a list")
+    duplicate_groups = _duplicate_groups([_item_payload(item) for item in items])
+    return {
+        "item_count": len(items),
+        "duplicate_group_count": len(duplicate_groups),
+        "duplicate_item_count": sum(
+            max(0, len(group["item_ids"]) - 1) for group in duplicate_groups
+        ),
+        "duplicate_groups": duplicate_groups,
+    }
+
+
+def _duplicate_groups(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    parent = list(range(len(items)))
+    signatures: dict[tuple[str, str], list[int]] = {}
+    for index, item in enumerate(items):
+        for reason, signature in _item_signatures(item):
+            signatures.setdefault((reason, signature), []).append(index)
+
+    def find(index: int) -> int:
+        while parent[index] != index:
+            parent[index] = parent[parent[index]]
+            index = parent[index]
+        return index
+
+    def union(left: int, right: int) -> None:
+        left_root = find(left)
+        right_root = find(right)
+        if left_root != right_root:
+            parent[right_root] = left_root
+
+    for indexes in signatures.values():
+        for index in indexes[1:]:
+            union(indexes[0], index)
+
+    component_indexes: dict[int, list[int]] = {}
+    component_reasons: dict[int, set[str]] = {}
+    for index in range(len(items)):
+        component_indexes.setdefault(find(index), []).append(index)
+    for (reason, _signature), indexes in signatures.items():
+        if len(indexes) < 2:
+            continue
+        root = find(indexes[0])
+        component_reasons.setdefault(root, set()).add(reason)
+
+    groups = []
+    for root, indexes in sorted(component_indexes.items(), key=lambda item: item[1][0]):
+        if len(indexes) < 2:
+            continue
+        groups.append(
+            {
+                "item_ids": [_item_id(items[index], index) for index in indexes],
+                "indexes": indexes,
+                "reasons": sorted(component_reasons.get(root, set())),
+            }
+        )
+    return groups
+
+
+def _item_payload(item: Any) -> dict[str, Any]:
+    if not isinstance(item, dict):
+        raise ValueError("each item must be an object")
+    return dict(item)
+
+
+def _item_signatures(item: dict[str, Any]) -> list[tuple[str, str]]:
+    signatures: list[tuple[str, str]] = []
+    url = str(item.get("url") or item.get("source_url") or "").strip()
+    title = str(item.get("title") or "").strip()
+    if url:
+        signatures.append(("canonical_url", canonicalize_url(url)))
+    if title:
+        signatures.append(("normalized_title", normalize_text(title)))
+    return signatures
+
+
+def _item_id(item: dict[str, Any], index: int) -> str:
+    for key in (
+        "item_id",
+        "source_item_id",
+        "evidence_id",
+        "url",
+        "source_url",
+        "title",
+    ):
+        value = item.get(key)
+        if value:
+            return str(value)
+    return str(index)
 
 
 def _evidence_bundle(payload: Any) -> EvidenceBundle:
