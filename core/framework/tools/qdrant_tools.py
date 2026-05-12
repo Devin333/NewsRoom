@@ -4,17 +4,22 @@ from typing import Any, Protocol
 
 from core.framework.tools.models import ToolDefinition
 from core.framework.tools.registry import ToolRegistry
-from storage.vector import VectorSearchQuery, VectorSearchResult
+from storage.vector import VectorDocument, VectorSearchQuery, VectorSearchResult
 
 
 class QdrantSearchStore(Protocol):
     def search(self, query: VectorSearchQuery) -> list[VectorSearchResult]: ...
 
 
+class QdrantDocumentStore(Protocol):
+    def upsert_documents(self, docs: list[VectorDocument]) -> None: ...
+
+
 def register_qdrant_tools(
     registry: ToolRegistry,
     *,
     vector_store: QdrantSearchStore,
+    document_store: QdrantDocumentStore | None = None,
 ) -> None:
     registry.register(
         ToolDefinition(
@@ -39,6 +44,26 @@ def register_qdrant_tools(
         ),
         lambda args: _search_qdrant(args, vector_store=vector_store),
     )
+    if document_store is not None:
+        registry.register(
+            ToolDefinition(
+                name="qdrant.upsert",
+                description="Upsert structured vector documents through the configured Qdrant store.",
+                input_schema={
+                    "required": ["documents"],
+                    "properties": {
+                        "collection": {"type": "string"},
+                        "documents": {"type": "array"},
+                    },
+                    "additionalProperties": False,
+                },
+                side_effect="writes_external_state",
+                concurrency_safe=False,
+                max_result_bytes=100_000,
+                metadata={"storage_backend": "qdrant", "writes_vector_memory": True},
+            ),
+            lambda args: _upsert_qdrant(args, document_store=document_store),
+        )
 
 
 def _search_qdrant(
@@ -81,6 +106,59 @@ def _search_qdrant(
     }
 
 
+def _upsert_qdrant(
+    args: dict[str, Any],
+    *,
+    document_store: QdrantDocumentStore,
+) -> dict[str, Any]:
+    default_collection = _optional_text(args.get("collection"))
+    documents = args["documents"]
+    if not isinstance(documents, list):
+        raise ValueError("documents must be an array")
+    if not documents:
+        raise ValueError("documents must not be empty")
+    if len(documents) > 100:
+        raise ValueError("documents must not contain more than 100 items")
+
+    vector_documents = [
+        _vector_document(document, default_collection=default_collection)
+        for document in documents
+    ]
+    document_store.upsert_documents(vector_documents)
+    return {
+        "documents_upserted": len(vector_documents),
+        "collections": sorted({document.collection for document in vector_documents}),
+        "document_ids": [document.document_id for document in vector_documents],
+    }
+
+
+def _vector_document(value: Any, *, default_collection: str | None) -> VectorDocument:
+    if not isinstance(value, dict):
+        raise ValueError("each document must be an object")
+    document_id = _required_text(value.get("document_id"), "document_id")
+    collection = _optional_text(value.get("collection")) or default_collection
+    if not collection:
+        raise ValueError("document collection is required")
+    text = _required_text(value.get("text"), "text")
+    source_type = _required_text(value.get("source_type"), "source_type")
+    payload = value.get("payload") or {}
+    if not isinstance(payload, dict):
+        raise ValueError("document payload must be an object")
+    vector = _optional_vector(value.get("vector"))
+    return VectorDocument(
+        document_id=document_id,
+        collection=collection,
+        text=text,
+        payload=dict(payload),
+        source_type=source_type,
+        vector=vector,
+        run_id=_optional_text(value.get("run_id")),
+        report_id=_optional_text(value.get("report_id")),
+        evidence_id=_optional_text(value.get("evidence_id")),
+        source_item_id=_optional_text(value.get("source_item_id")),
+    )
+
+
 def _optional_vector(value: Any) -> list[float] | None:
     if value is None:
         return None
@@ -90,6 +168,20 @@ def _optional_vector(value: Any) -> list[float] | None:
     if not vector:
         raise ValueError("vector must not be empty")
     return vector
+
+
+def _required_text(value: Any, field_name: str) -> str:
+    text = _optional_text(value)
+    if text is None:
+        raise ValueError(f"{field_name} is required")
+    return text
+
+
+def _optional_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 def _limit(value: Any) -> int:

@@ -106,6 +106,113 @@ def test_qdrant_search_tool_rejects_missing_query_and_vector() -> None:
     assert "query or vector is required" in (observation.result.error_message or "")
 
 
+def test_qdrant_upsert_tool_writes_searchable_documents_through_executor() -> None:
+    store = InMemoryVectorStore()
+    registry = ToolRegistry()
+    register_qdrant_tools(registry, vector_store=store, document_store=store)
+    executor = ToolExecutor(registry)
+
+    upsert_observation = executor.execute(
+        ToolCall(
+            tool_name="qdrant.upsert",
+            arguments={
+                "collection": "evidence_items",
+                "documents": [
+                    {
+                        "document_id": "ev-1",
+                        "text": "AI model release evidence",
+                        "source_type": "evidence_item",
+                        "payload": {"topic": "AI"},
+                        "run_id": "run-1",
+                        "evidence_id": "evidence-1",
+                    }
+                ],
+            },
+        ),
+        ToolPolicy(
+            allowed_tools=["qdrant.upsert"],
+            require_approval_for_side_effects=False,
+        ),
+    )
+    search_observation = executor.execute(
+        ToolCall(
+            tool_name="qdrant.search",
+            arguments={
+                "collection": "evidence_items",
+                "query": "model release",
+                "filters": {"topic": "AI"},
+            },
+        ),
+        ToolPolicy(allowed_tools=["qdrant.search"]),
+    )
+
+    assert upsert_observation.status == ToolStatus.SUCCEEDED
+    assert upsert_observation.result.output == {
+        "documents_upserted": 1,
+        "collections": ["evidence_items"],
+        "document_ids": ["ev-1"],
+    }
+    assert search_observation.status == ToolStatus.SUCCEEDED
+    assert search_observation.result.output["result_count"] == 1
+    assert search_observation.result.output["results"][0]["document_id"] == "ev-1"
+    assert search_observation.result.output["results"][0]["run_id"] == "run-1"
+
+
+def test_qdrant_upsert_tool_requires_side_effect_approval_by_default() -> None:
+    store = InMemoryVectorStore()
+    registry = ToolRegistry()
+    register_qdrant_tools(registry, vector_store=store, document_store=store)
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="qdrant.upsert",
+            arguments={
+                "collection": "evidence_items",
+                "documents": [
+                    {
+                        "document_id": "ev-1",
+                        "text": "AI model release evidence",
+                        "source_type": "evidence_item",
+                    }
+                ],
+            },
+        ),
+        ToolPolicy(allowed_tools=["qdrant.upsert"]),
+    )
+
+    assert observation.status == ToolStatus.APPROVAL_REQUIRED
+
+
+def test_qdrant_upsert_tool_rejects_documents_without_collection() -> None:
+    store = InMemoryVectorStore()
+    registry = ToolRegistry()
+    register_qdrant_tools(registry, vector_store=store, document_store=store)
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="qdrant.upsert",
+            arguments={
+                "documents": [
+                    {
+                        "document_id": "ev-1",
+                        "text": "AI model release evidence",
+                        "source_type": "evidence_item",
+                    }
+                ],
+            },
+        ),
+        ToolPolicy(
+            allowed_tools=["qdrant.upsert"],
+            require_approval_for_side_effects=False,
+        ),
+    )
+
+    assert observation.status == ToolStatus.FAILED
+    assert "document collection is required" in (observation.result.error_message or "")
+
+
 class _RecordingSearchStore:
     def __init__(self) -> None:
         self.queries = []
