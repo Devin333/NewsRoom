@@ -113,6 +113,24 @@ def test_source_pipeline_metrics_records_average_fetch_latency() -> None:
 
     metrics.record_fetch_latency(10)
     metrics.record_fetch_latency(20)
+    metrics.record_source_seen("rss", "high")
+    metrics.record_source_fetched(
+        source_id="rss-source",
+        source_type="rss",
+        reliability="high",
+        item_count=2,
+    )
+    metrics.record_source_failed("html")
+    metrics.record_source_skipped("github")
 
     assert metrics.avg_fetch_latency_ms == 15.0
-    assert metrics.to_dict()["avg_fetch_latency_ms"] == 15.0
+    payload = metrics.to_dict()
+    assert payload["avg_fetch_latency_ms"] == 15.0
+    assert payload["sources_by_type"] == {"rss": 1}
+    assert payload["sources_by_reliability"] == {"high": 1}
+    assert payload["fetched_by_type"] == {"rss": 1}
+    assert payload["failed_by_type"] == {"html": 1}
+    assert payload["skipped_by_type"] == {"github": 1}
+    assert payload["items_by_source"] == {"rss-source": 2}
+    assert payload["items_by_source_type"] == {"rss": 2}
+    assert payload["items_by_reliability"] == {"high": 2}

@@ -129,6 +129,11 @@ def test_daily_intelligence_runner_live_offline_writes_report_artifacts(tmp_path
 
     source_metrics = json.loads((run_dir / "source_pipeline_metrics.json").read_text(encoding="utf-8"))
     assert source_metrics["avg_fetch_latency_ms"] >= 0
+    assert source_metrics["sources_by_type"] == {"rss": 1}
+    assert source_metrics["sources_by_reliability"] == {"high": 1}
+    assert source_metrics["fetched_by_type"] == {"rss": 1}
+    assert source_metrics["items_by_source_type"] == {"rss": 2}
+    assert source_metrics["items_by_reliability"] == {"high": 2}
 
     source_artifacts = json.loads((run_dir / "source_artifacts" / "index.json").read_text())
     first_item = source_artifacts["entries"][0]
@@ -470,6 +475,12 @@ def test_daily_intelligence_runner_records_partial_source_failures(tmp_path) -> 
     assert metrics.sources_failed == 1
     assert metrics.sources_fetched == 1
     assert metrics.errors_by_type == {"fetch_connection_error": 1}
+    assert metrics.sources_by_type == {"rss": 2}
+    assert metrics.sources_by_reliability == {"high": 1, "medium": 1}
+    assert metrics.fetched_by_type == {"rss": 1}
+    assert metrics.failed_by_type == {"rss": 1}
+    assert metrics.items_by_source_type == {"rss": 1}
+    assert metrics.items_by_reliability == {"high": 1}
     assert result.output["failed_sources"][0]["source_id"] == "failing"
     assert result.output["failed_sources"][0]["source_name"] == "Failing"
     assert result.output["failed_sources"][0]["retryable"] is True
@@ -675,6 +686,7 @@ def test_daily_intelligence_runner_skips_cooling_source(tmp_path) -> None:
     assert result.output["skipped_sources"][0]["source_name"] == "Cooling"
     assert result.output["skipped_sources"][0]["url"] == "https://example.com/cooling.xml"
     assert result.output["source_pipeline_metrics"].sources_skipped == 1
+    assert result.output["source_pipeline_metrics"].skipped_by_type == {"rss": 1}
     skipped_result = next(
         fetch_result
         for fetch_result in result.output["source_fetch_results"]

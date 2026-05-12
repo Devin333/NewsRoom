@@ -139,9 +139,15 @@ class DailyIntelligenceRunner:
             )
             metrics.record_fetch_latency(fetch_latency_ms)
             metrics.sources_total = 1
+            metrics.record_source_seen(fixture_source.source_type, fixture_source.reliability)
             metrics.sources_fetched = 1
             metrics.raw_items_count = len(raw_items)
-            metrics.items_by_source = {fixture_source.source_id: len(raw_items)}
+            metrics.record_source_fetched(
+                source_id=fixture_source.source_id,
+                source_type=fixture_source.source_type,
+                reliability=fixture_source.reliability,
+                item_count=len(raw_items),
+            )
             source_events.append(
                 _source_event(
                     "source_fetch_succeeded",
@@ -178,6 +184,8 @@ class DailyIntelligenceRunner:
         raw_items = []
         enabled_sources = self.source_registry.select_sources(topic=request["topic"])
         metrics.sources_total = len(enabled_sources)
+        for source in enabled_sources:
+            metrics.record_source_seen(source.source_type, source.reliability)
         for source in enabled_sources:
             remaining = max(0, limit - len(raw_items))
             if remaining == 0:
@@ -235,6 +243,7 @@ class DailyIntelligenceRunner:
                     )
                 )
                 metrics.sources_skipped += 1
+                metrics.record_source_skipped(source.source_type)
                 continue
             is_probe = self.source_health_manager.should_probe(source.source_id)
             if is_probe:
@@ -276,7 +285,12 @@ class DailyIntelligenceRunner:
             raw_items.extend(items)
             if items:
                 metrics.sources_fetched += 1
-                metrics.items_by_source[source.source_id] = len(items)
+                metrics.record_source_fetched(
+                    source_id=source.source_id,
+                    source_type=source.source_type,
+                    reliability=source.reliability,
+                    item_count=len(items),
+                )
                 source_events.append(
                     _source_event(
                         "source_fetch_succeeded",
@@ -311,6 +325,7 @@ class DailyIntelligenceRunner:
                     )
             if errors:
                 metrics.sources_failed += 1
+                metrics.record_source_failed(source.source_type)
                 source_errors.extend(errors)
                 failed_sources.extend(error.to_dict() for error in errors)
                 if is_probe:

@@ -296,11 +296,41 @@ class SourcePipelineMetrics:
     avg_fetch_latency_ms: float | None = None
     errors_by_type: dict[str, int] = field(default_factory=dict)
     items_by_source: dict[str, int] = field(default_factory=dict)
+    sources_by_type: dict[str, int] = field(default_factory=dict)
+    sources_by_reliability: dict[str, int] = field(default_factory=dict)
+    fetched_by_type: dict[str, int] = field(default_factory=dict)
+    failed_by_type: dict[str, int] = field(default_factory=dict)
+    skipped_by_type: dict[str, int] = field(default_factory=dict)
+    items_by_source_type: dict[str, int] = field(default_factory=dict)
+    items_by_reliability: dict[str, int] = field(default_factory=dict)
     _fetch_latency_total_ms: float = field(default=0.0, init=False, repr=False)
     _fetch_latency_count: int = field(default=0, init=False, repr=False)
 
     def record_error(self, error: SourceError) -> None:
         self.errors_by_type[error.error_type] = self.errors_by_type.get(error.error_type, 0) + 1
+
+    def record_source_seen(self, source_type: Any, reliability: Any) -> None:
+        _increment(self.sources_by_type, _metric_key(source_type))
+        _increment(self.sources_by_reliability, _metric_key(reliability))
+
+    def record_source_fetched(
+        self,
+        *,
+        source_id: str,
+        source_type: Any,
+        reliability: Any,
+        item_count: int,
+    ) -> None:
+        _increment(self.fetched_by_type, _metric_key(source_type))
+        self.items_by_source[source_id] = item_count
+        _increment(self.items_by_source_type, _metric_key(source_type), item_count)
+        _increment(self.items_by_reliability, _metric_key(reliability), item_count)
+
+    def record_source_failed(self, source_type: Any) -> None:
+        _increment(self.failed_by_type, _metric_key(source_type))
+
+    def record_source_skipped(self, source_type: Any) -> None:
+        _increment(self.skipped_by_type, _metric_key(source_type))
 
     def record_fetch_latency(self, latency_ms: float) -> None:
         latency = max(0.0, float(latency_ms))
@@ -325,6 +355,13 @@ class SourcePipelineMetrics:
             "avg_fetch_latency_ms": self.avg_fetch_latency_ms,
             "errors_by_type": dict(self.errors_by_type),
             "items_by_source": dict(self.items_by_source),
+            "sources_by_type": dict(self.sources_by_type),
+            "sources_by_reliability": dict(self.sources_by_reliability),
+            "fetched_by_type": dict(self.fetched_by_type),
+            "failed_by_type": dict(self.failed_by_type),
+            "skipped_by_type": dict(self.skipped_by_type),
+            "items_by_source_type": dict(self.items_by_source_type),
+            "items_by_reliability": dict(self.items_by_reliability),
         }
 
 
@@ -344,3 +381,13 @@ def _artifact_ref(value: Any) -> Any:
     if hasattr(value, "to_dict"):
         return value.to_dict()
     return value
+
+
+def _metric_key(value: Any) -> str:
+    if hasattr(value, "value"):
+        return str(value.value)
+    return str(value)
+
+
+def _increment(metrics: dict[str, int], key: str, amount: int = 1) -> None:
+    metrics[key] = metrics.get(key, 0) + amount
