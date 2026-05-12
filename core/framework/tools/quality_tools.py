@@ -5,7 +5,7 @@ from typing import Any
 from core.framework.tools.models import ToolDefinition
 from core.framework.tools.registry import ToolRegistry
 from evidence.models import EvidenceBundle, EvidenceItem
-from quality import CitationChecker, SupportMatrixBuilder
+from quality import CitationChecker, EditorGate, QualityScorer, SupportMatrixBuilder
 from sources.processing.normalize import canonicalize_url, normalize_text
 
 
@@ -58,6 +58,23 @@ def register_quality_tools(registry: ToolRegistry) -> None:
         ),
         _claim_support_check,
     )
+    registry.register(
+        ToolDefinition(
+            name="quality.editor_score",
+            description="Run deterministic quality scoring and editor gate review.",
+            input_schema={
+                "required": ["report", "evidence_bundle"],
+                "properties": {
+                    "report": {"type": "object"},
+                    "evidence_bundle": {"type": "object"},
+                },
+                "additionalProperties": False,
+            },
+            side_effect="read_only",
+            concurrency_safe=True,
+        ),
+        _editor_score,
+    )
 
 
 def _citation_check(args: dict[str, Any]) -> dict[str, Any]:
@@ -94,6 +111,32 @@ def _claim_support_check(args: dict[str, Any]) -> dict[str, Any]:
         "section_count": len(support_matrix.sections),
         "supported_section_count": len(support_matrix.sections) - len(unsupported_sections),
         "unsupported_section_count": len(unsupported_sections),
+    }
+
+
+def _editor_score(args: dict[str, Any]) -> dict[str, Any]:
+    report = _report_payload(args["report"])
+    evidence_bundle = _evidence_bundle(args["evidence_bundle"])
+    citation_check = CitationChecker().check(report, evidence_bundle)
+    support_matrix = SupportMatrixBuilder().build(report, evidence_bundle)
+    quality_summary = QualityScorer().score(
+        report=report,
+        citation_check=citation_check,
+        support_matrix=support_matrix,
+    )
+    editor_review = EditorGate().review(
+        citation_check,
+        support_matrix,
+        quality_summary,
+    )
+    return {
+        "passed": editor_review.decision.value == "pass",
+        "decision": editor_review.decision.value,
+        "quality_score": quality_summary.quality_score,
+        "citation_check": citation_check.to_dict(),
+        "support_matrix": support_matrix.to_dict(),
+        "quality_summary": quality_summary.to_dict(),
+        "editor_review": editor_review.to_dict(),
     }
 
 

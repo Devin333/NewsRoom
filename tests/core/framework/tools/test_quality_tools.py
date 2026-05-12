@@ -119,6 +119,61 @@ def test_quality_claim_support_check_tool_marks_sections_without_sources_unsuppo
     assert observation.result.output["unsupported_sections"] == ["No Sources"]
 
 
+def test_quality_editor_score_tool_passes_fully_supported_report() -> None:
+    registry = ToolRegistry()
+    register_quality_tools(registry)
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="quality.editor_score",
+            arguments={
+                "report": _report("https://example.com/source"),
+                "evidence_bundle": _bundle(["https://example.com/source"]),
+            },
+        ),
+        ToolPolicy(allowed_tools=["quality.editor_score"]),
+    )
+
+    assert observation.status == ToolStatus.SUCCEEDED
+    assert observation.result.output["passed"] is True
+    assert observation.result.output["decision"] == "pass"
+    assert observation.result.output["quality_score"] == 1.0
+    assert observation.result.output["citation_check"]["passed"] is True
+    assert observation.result.output["support_matrix"]["coverage_ratio"] == 1.0
+    assert observation.result.output["editor_review"]["reasons"] == []
+
+
+def test_quality_editor_score_tool_blocks_unsupported_report() -> None:
+    registry = ToolRegistry()
+    register_quality_tools(registry)
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="quality.editor_score",
+            arguments={
+                "report": _report("https://example.com/missing"),
+                "evidence_bundle": _bundle(["https://example.com/source"]),
+            },
+        ),
+        ToolPolicy(allowed_tools=["quality.editor_score"]),
+    )
+
+    reasons = observation.result.output["editor_review"]["reasons"]
+
+    assert observation.status == ToolStatus.SUCCEEDED
+    assert observation.result.output["passed"] is False
+    assert observation.result.output["decision"] == "blocked"
+    assert observation.result.output["quality_score"] == 0.2
+    assert observation.result.output["citation_check"]["unknown_urls"] == [
+        "https://example.com/missing"
+    ]
+    assert observation.result.output["quality_summary"]["support_coverage"] == 0.0
+    assert "report cites URLs outside the evidence bundle" in reasons
+    assert "unsupported section: Summary" in reasons
+
+
 def test_quality_duplicate_check_tool_groups_by_canonical_url_and_title() -> None:
     registry = ToolRegistry()
     register_quality_tools(registry)
