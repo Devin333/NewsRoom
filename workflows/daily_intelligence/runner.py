@@ -578,9 +578,11 @@ class DailyIntelligenceRunner:
             return self.arxiv_connector.fetch(source, query=query, limit=limit)
         if source.source_type == SourceType.GITHUB:
             repository = source.metadata.get("repository")
-            return self.github_connector.fetch_releases(
+            query = source.metadata.get("query") or request.get("topic")
+            return self.github_connector.fetch(
                 source,
                 repository=str(repository) if repository is not None else None,
+                query=str(query) if query is not None else None,
                 limit=limit,
             )
         if source.source_type == SourceType.HACKERNEWS:

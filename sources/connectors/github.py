@@ -175,6 +175,153 @@ class GithubConnector:
             ]
         return items, []
 
+    def fetch(
+        self,
+        source: SourceDefinition,
+        *,
+        repository: str | GithubRepository | None = None,
+        query: str | None = None,
+        limit: int | None = None,
+    ) -> tuple[list[RawSourceItem], list[SourceError]]:
+        mode = _github_mode(source)
+        if mode == "releases":
+            return self.fetch_releases(source, repository=repository, limit=limit)
+        if mode == "commits":
+            return self.fetch_commits(source, repository=repository, limit=limit)
+        if mode == "issues":
+            return self.fetch_issues(source, repository=repository, limit=limit)
+        if mode in {"pull_requests", "pulls"}:
+            return self.fetch_pull_requests(source, repository=repository, limit=limit)
+        if mode in {"security_advisories", "advisories"}:
+            return self.fetch_security_advisories(source, repository=repository, limit=limit)
+        if mode in {"repository_search", "trending", "stars"}:
+            search_query = query or source.metadata.get("query")
+            return self.fetch_repository_search_items(
+                source,
+                query=str(search_query or ""),
+                limit=limit,
+                sort="stars" if mode in {"trending", "stars"} else None,
+                order="desc" if mode in {"trending", "stars"} else None,
+            )
+        return [], [
+            _source_error(
+                source,
+                "invalid_source_config",
+                f"unsupported github collection mode: {mode}",
+                metadata={
+                    "phase": "fetch",
+                    "retryable": False,
+                    "source_health_affecting": False,
+                    "operator_action_required": True,
+                },
+            )
+        ]
+
+    def fetch_commits(
+        self,
+        source: SourceDefinition,
+        *,
+        repository: str | GithubRepository | None = None,
+        limit: int | None = None,
+    ) -> tuple[list[RawSourceItem], list[SourceError]]:
+        return self._fetch_repo_items(
+            source,
+            repository=repository,
+            limit=limit,
+            url_builder=build_github_commits_url,
+            parser=self.parse_commits,
+            empty_error_type="empty_github_commits",
+            empty_error_message="GitHub repository returned no commits",
+        )
+
+    def fetch_issues(
+        self,
+        source: SourceDefinition,
+        *,
+        repository: str | GithubRepository | None = None,
+        limit: int | None = None,
+        state: str = "open",
+    ) -> tuple[list[RawSourceItem], list[SourceError]]:
+        return self._fetch_repo_items(
+            source,
+            repository=repository,
+            limit=limit,
+            url_builder=lambda base, repo, *, limit: build_github_issues_url(
+                base,
+                repo,
+                limit=limit,
+                state=state,
+            ),
+            parser=self.parse_issues,
+            empty_error_type="empty_github_issues",
+            empty_error_message="GitHub repository returned no issues",
+        )
+
+    def fetch_pull_requests(
+        self,
+        source: SourceDefinition,
+        *,
+        repository: str | GithubRepository | None = None,
+        limit: int | None = None,
+        state: str = "open",
+    ) -> tuple[list[RawSourceItem], list[SourceError]]:
+        return self._fetch_repo_items(
+            source,
+            repository=repository,
+            limit=limit,
+            url_builder=lambda base, repo, *, limit: build_github_pull_requests_url(
+                base,
+                repo,
+                limit=limit,
+                state=state,
+            ),
+            parser=self.parse_pull_requests,
+            empty_error_type="empty_github_pull_requests",
+            empty_error_message="GitHub repository returned no pull requests",
+        )
+
+    def fetch_security_advisories(
+        self,
+        source: SourceDefinition,
+        *,
+        repository: str | GithubRepository | None = None,
+        limit: int | None = None,
+    ) -> tuple[list[RawSourceItem], list[SourceError]]:
+        return self._fetch_repo_items(
+            source,
+            repository=repository,
+            limit=limit,
+            url_builder=build_github_security_advisories_url,
+            parser=self.parse_security_advisories,
+            empty_error_type="empty_github_security_advisories",
+            empty_error_message="GitHub returned no security advisories",
+        )
+
+    def fetch_repository_search_items(
+        self,
+        source: SourceDefinition,
+        *,
+        query: str,
+        limit: int | None = None,
+        sort: str | None = None,
+        order: str | None = None,
+    ) -> tuple[list[RawSourceItem], list[SourceError]]:
+        repositories, errors = self.search_repositories(
+            source,
+            query=query,
+            limit=limit,
+            sort=sort,
+            order=order,
+        )
+        if errors:
+            return [], errors
+        fetched_at = datetime.now(UTC)
+        items = [
+            _raw_item_from_repository_search(source, repository, fetched_at=fetched_at)
+            for repository in repositories
+        ]
+        return items, []
+
     def search_repositories(
         self,
         source: SourceDefinition,
@@ -258,6 +405,95 @@ class GithubConnector:
         items = [item for item in items if item is not None]
         return items[:limit] if limit else items
 
+    def parse_commits(
+        self,
+        source: SourceDefinition,
+        content: str,
+        *,
+        repository: str | GithubRepository | None = None,
+        limit: int | None = None,
+    ) -> list[RawSourceItem]:
+        payload = json.loads(content)
+        if not isinstance(payload, list):
+            raise ValueError("GitHub commits response must be a JSON array")
+        repo = _repository_from_source(source, repository=repository)
+        fetched_at = datetime.now(UTC)
+        items = [
+            _raw_item_from_commit(source=source, repository=repo, commit=item, fetched_at=fetched_at)
+            for item in payload
+            if isinstance(item, dict)
+        ]
+        items = [item for item in items if item is not None]
+        return items[:limit] if limit else items
+
+    def parse_issues(
+        self,
+        source: SourceDefinition,
+        content: str,
+        *,
+        repository: str | GithubRepository | None = None,
+        limit: int | None = None,
+    ) -> list[RawSourceItem]:
+        payload = json.loads(content)
+        if not isinstance(payload, list):
+            raise ValueError("GitHub issues response must be a JSON array")
+        repo = _repository_from_source(source, repository=repository)
+        fetched_at = datetime.now(UTC)
+        items = [
+            _raw_item_from_issue(source=source, repository=repo, issue=item, fetched_at=fetched_at)
+            for item in payload
+            if isinstance(item, dict) and "pull_request" not in item
+        ]
+        items = [item for item in items if item is not None]
+        return items[:limit] if limit else items
+
+    def parse_pull_requests(
+        self,
+        source: SourceDefinition,
+        content: str,
+        *,
+        repository: str | GithubRepository | None = None,
+        limit: int | None = None,
+    ) -> list[RawSourceItem]:
+        payload = json.loads(content)
+        if not isinstance(payload, list):
+            raise ValueError("GitHub pull requests response must be a JSON array")
+        repo = _repository_from_source(source, repository=repository)
+        fetched_at = datetime.now(UTC)
+        items = [
+            _raw_item_from_pull_request(source=source, repository=repo, pull=item, fetched_at=fetched_at)
+            for item in payload
+            if isinstance(item, dict)
+        ]
+        items = [item for item in items if item is not None]
+        return items[:limit] if limit else items
+
+    def parse_security_advisories(
+        self,
+        source: SourceDefinition,
+        content: str,
+        *,
+        repository: str | GithubRepository | None = None,
+        limit: int | None = None,
+    ) -> list[RawSourceItem]:
+        payload = json.loads(content)
+        if not isinstance(payload, list):
+            raise ValueError("GitHub security advisories response must be a JSON array")
+        repo = _repository_from_source(source, repository=repository)
+        fetched_at = datetime.now(UTC)
+        items = [
+            _raw_item_from_security_advisory(
+                source=source,
+                repository=repo,
+                advisory=item,
+                fetched_at=fetched_at,
+            )
+            for item in payload
+            if isinstance(item, dict)
+        ]
+        items = [item for item in items if item is not None]
+        return items[:limit] if limit else items
+
     def parse_repository_search(
         self,
         content: str,
@@ -300,11 +536,117 @@ class GithubConnector:
             ensure_robots_allowed(url, policy)
         return self._fetch_text(url)
 
+    def _fetch_repo_items(
+        self,
+        source: SourceDefinition,
+        *,
+        repository: str | GithubRepository | None,
+        limit: int | None,
+        url_builder,
+        parser,
+        empty_error_type: str,
+        empty_error_message: str,
+    ) -> tuple[list[RawSourceItem], list[SourceError]]:
+        policy = effective_fetch_policy(self.fetch_policy, source)
+        self._last_response_metadata = None
+        try:
+            repo = _repository_from_source(source, repository=repository)
+            api_url = url_builder(source.url or GITHUB_API_URL, repo, limit=limit or 10)
+            rate_limit = self._rate_limiter.reserve(
+                api_url,
+                limit_per_minute=self.fetch_policy.rate_limit_per_domain_per_minute,
+            )
+            if not rate_limit.allowed:
+                return [], [rate_limited_source_error(source, rate_limit, url=api_url)]
+            payload = run_with_fetch_retries(
+                lambda: self._fetch_source_text(api_url, policy),
+                policy,
+            )
+        except Exception as exc:
+            error = _exception_source_error(source, exc, phase="fetch")
+            return [], [attach_response_metadata_to_error(error, self._last_response_metadata)]
+        response_metadata = self._last_response_metadata
+
+        if not payload.strip():
+            return [], [
+                attach_response_metadata_to_error(
+                    _source_error(
+                        source,
+                        "empty_source_response",
+                        "GitHub API returned an empty response",
+                        metadata={"phase": "fetch", "retryable": True, "source_health_affecting": True},
+                    ),
+                    response_metadata,
+                )
+            ]
+
+        try:
+            items = parser(source, payload, repository=repo, limit=limit)
+        except Exception as exc:
+            error = _exception_source_error(source, exc, phase="parse")
+            return [], [attach_response_metadata_to_error(error, response_metadata)]
+        items = attach_response_metadata_to_items(items, response_metadata)
+
+        if not items:
+            return [], [
+                attach_response_metadata_to_error(
+                    _source_error(
+                        source,
+                        empty_error_type,
+                        empty_error_message,
+                        metadata={"phase": "parse", "retryable": False, "source_health_affecting": False},
+                    ),
+                    response_metadata,
+                )
+            ]
+        return items, []
+
 
 def build_github_releases_url(base_url: str, repository: GithubRepository, *, limit: int) -> str:
     base = base_url.rstrip("/")
     params = urlencode({"per_page": limit})
     return f"{base}/repos/{repository.owner}/{repository.name}/releases?{params}"
+
+
+def build_github_commits_url(base_url: str, repository: GithubRepository, *, limit: int) -> str:
+    base = base_url.rstrip("/")
+    params = urlencode({"per_page": limit})
+    return f"{base}/repos/{repository.owner}/{repository.name}/commits?{params}"
+
+
+def build_github_issues_url(
+    base_url: str,
+    repository: GithubRepository,
+    *,
+    limit: int,
+    state: str,
+) -> str:
+    base = base_url.rstrip("/")
+    params = urlencode({"state": state, "per_page": limit})
+    return f"{base}/repos/{repository.owner}/{repository.name}/issues?{params}"
+
+
+def build_github_pull_requests_url(
+    base_url: str,
+    repository: GithubRepository,
+    *,
+    limit: int,
+    state: str,
+) -> str:
+    base = base_url.rstrip("/")
+    params = urlencode({"state": state, "per_page": limit})
+    return f"{base}/repos/{repository.owner}/{repository.name}/pulls?{params}"
+
+
+def build_github_security_advisories_url(
+    base_url: str,
+    repository: GithubRepository,
+    *,
+    limit: int,
+) -> str:
+    base = base_url.rstrip("/")
+    params = urlencode({"affects": repository.slug(), "per_page": limit})
+    return f"{base}/advisories?{params}"
 
 
 def build_github_repository_search_url(
@@ -390,6 +732,210 @@ def _raw_item_from_release(
     )
 
 
+def _raw_item_from_commit(
+    *,
+    source: SourceDefinition,
+    repository: GithubRepository,
+    commit: dict[str, Any],
+    fetched_at: datetime,
+) -> RawSourceItem | None:
+    sha = _optional_text(commit.get("sha"))
+    html_url = _optional_text(commit.get("html_url"))
+    commit_payload = commit.get("commit") if isinstance(commit.get("commit"), dict) else {}
+    message = _optional_text(commit_payload.get("message"))
+    if not sha or not html_url or not message:
+        return None
+    author_payload = commit_payload.get("author") if isinstance(commit_payload.get("author"), dict) else {}
+    github_author = commit.get("author") if isinstance(commit.get("author"), dict) else {}
+    title = message.splitlines()[0].strip()
+    item_hash = sha256(f"{source.source_id}|{repository.slug()}|commit|{sha}".encode("utf-8")).hexdigest()
+    return RawSourceItem(
+        source_item_id=f"raw_{item_hash[:16]}",
+        source_id=source.source_id,
+        source_name=source.name,
+        source_type=source.source_type,
+        title=title,
+        url=html_url,
+        fetched_at=fetched_at,
+        published_at=_parse_datetime(author_payload.get("date") or commit_payload.get("committer", {}).get("date")),
+        summary=_normalize_text(message),
+        raw_content=json.dumps(commit, ensure_ascii=False, sort_keys=True),
+        authors=[_author for _author in [_optional_text(github_author.get("login")) or _optional_text(author_payload.get("name"))] if _author],
+        tags=["commit", sha[:7]],
+        language=source.language,
+        metadata=source_item_metadata(
+            source,
+            extra={
+                "repository": repository.slug(),
+                "github_surface": "commits",
+                "sha": sha,
+                "api_url": commit.get("url"),
+            },
+        ),
+    )
+
+
+def _raw_item_from_issue(
+    *,
+    source: SourceDefinition,
+    repository: GithubRepository,
+    issue: dict[str, Any],
+    fetched_at: datetime,
+) -> RawSourceItem | None:
+    return _raw_item_from_issue_like(
+        source=source,
+        repository=repository,
+        item=issue,
+        fetched_at=fetched_at,
+        surface="issues",
+        default_tag="issue",
+    )
+
+
+def _raw_item_from_pull_request(
+    *,
+    source: SourceDefinition,
+    repository: GithubRepository,
+    pull: dict[str, Any],
+    fetched_at: datetime,
+) -> RawSourceItem | None:
+    return _raw_item_from_issue_like(
+        source=source,
+        repository=repository,
+        item=pull,
+        fetched_at=fetched_at,
+        surface="pull_requests",
+        default_tag="pull_request",
+    )
+
+
+def _raw_item_from_issue_like(
+    *,
+    source: SourceDefinition,
+    repository: GithubRepository,
+    item: dict[str, Any],
+    fetched_at: datetime,
+    surface: str,
+    default_tag: str,
+) -> RawSourceItem | None:
+    url = _optional_text(item.get("html_url"))
+    title = _optional_text(item.get("title"))
+    number = item.get("number")
+    if not url or not title:
+        return None
+    user = item.get("user") if isinstance(item.get("user"), dict) else {}
+    labels = [
+        str(label.get("name"))
+        for label in item.get("labels") or []
+        if isinstance(label, dict) and label.get("name")
+    ]
+    item_hash = sha256(f"{source.source_id}|{repository.slug()}|{surface}|{url}".encode("utf-8")).hexdigest()
+    return RawSourceItem(
+        source_item_id=f"raw_{item_hash[:16]}",
+        source_id=source.source_id,
+        source_name=source.name,
+        source_type=source.source_type,
+        title=title,
+        url=url,
+        fetched_at=fetched_at,
+        published_at=_parse_datetime(item.get("created_at") or item.get("updated_at")),
+        summary=_normalize_text(item.get("body")),
+        raw_content=json.dumps(item, ensure_ascii=False, sort_keys=True),
+        authors=[str(user["login"])] if user.get("login") else [],
+        tags=[default_tag, *labels],
+        language=source.language,
+        metadata=source_item_metadata(
+            source,
+            extra={
+                "repository": repository.slug(),
+                "github_surface": surface,
+                "number": number,
+                "state": item.get("state"),
+                "api_url": item.get("url"),
+            },
+        ),
+    )
+
+
+def _raw_item_from_security_advisory(
+    *,
+    source: SourceDefinition,
+    repository: GithubRepository,
+    advisory: dict[str, Any],
+    fetched_at: datetime,
+) -> RawSourceItem | None:
+    ghsa_id = _optional_text(advisory.get("ghsa_id"))
+    title = _optional_text(advisory.get("summary") or advisory.get("title"))
+    url = _optional_text(advisory.get("html_url"))
+    if not url and ghsa_id:
+        url = f"https://github.com/advisories/{ghsa_id}"
+    if not title or not url:
+        return None
+    severity = _optional_text(advisory.get("severity"))
+    item_hash = sha256(f"{source.source_id}|{repository.slug()}|advisory|{url}".encode("utf-8")).hexdigest()
+    return RawSourceItem(
+        source_item_id=f"raw_{item_hash[:16]}",
+        source_id=source.source_id,
+        source_name=source.name,
+        source_type=source.source_type,
+        title=title,
+        url=url,
+        fetched_at=fetched_at,
+        published_at=_parse_datetime(advisory.get("published_at") or advisory.get("updated_at")),
+        summary=_normalize_text(advisory.get("description")),
+        raw_content=json.dumps(advisory, ensure_ascii=False, sort_keys=True),
+        tags=[tag for tag in ["security_advisory", severity] if tag],
+        language=source.language,
+        metadata=source_item_metadata(
+            source,
+            extra={
+                "repository": repository.slug(),
+                "github_surface": "security_advisories",
+                "ghsa_id": ghsa_id,
+                "severity": severity,
+                "api_url": advisory.get("url"),
+            },
+        ),
+    )
+
+
+def _raw_item_from_repository_search(
+    source: SourceDefinition,
+    repository: GithubRepositorySearchResult,
+    *,
+    fetched_at: datetime,
+) -> RawSourceItem:
+    item_hash = sha256(f"{source.source_id}|repository_search|{repository.full_name}".encode("utf-8")).hexdigest()
+    tags = ["repository_search", *repository.topics]
+    if repository.language:
+        tags.append(repository.language)
+    return RawSourceItem(
+        source_item_id=f"raw_{item_hash[:16]}",
+        source_id=source.source_id,
+        source_name=source.name,
+        source_type=source.source_type,
+        title=repository.full_name,
+        url=repository.html_url,
+        fetched_at=fetched_at,
+        published_at=repository.updated_at,
+        summary=repository.description,
+        raw_content=json.dumps(repository.to_dict(), ensure_ascii=False, sort_keys=True),
+        tags=tags,
+        language=source.language,
+        metadata=source_item_metadata(
+            source,
+            extra={
+                "github_surface": "repository_search",
+                "repository": repository.full_name,
+                "stargazers_count": repository.stargazers_count,
+                "forks_count": repository.forks_count,
+                "open_issues_count": repository.open_issues_count,
+                "archived": repository.archived,
+            },
+        ),
+    )
+
+
 def _repository_from_source(
     source: SourceDefinition,
     *,
@@ -403,6 +949,10 @@ def _repository_from_source(
     if isinstance(metadata_repository, str) and metadata_repository.strip():
         return GithubRepository.parse(metadata_repository)
     raise ValueError("github repository must use owner/repo format")
+
+
+def _github_mode(source: SourceDefinition) -> str:
+    return str(source.metadata.get("github_mode") or source.metadata.get("mode") or "releases").strip().casefold()
 
 
 def _source_error(

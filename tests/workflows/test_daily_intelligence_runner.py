@@ -4,7 +4,7 @@ from pathlib import Path
 
 from core.framework.llm import LLMResponse, TokenUsage
 from core.framework.specs import WorkflowStatus
-from domain.sources import SourceDefinition, SourceError
+from domain.sources import RawSourceItem, SourceDefinition, SourceError
 from sources import SourceRegistry
 from sources.connectors import (
     ARXIV_API_URL,
@@ -999,6 +999,41 @@ def test_daily_intelligence_runner_records_partial_source_failures(tmp_path) -> 
     assert any(section["title"] == "Source Notes" for section in report["sections"])
 
 
+def test_daily_intelligence_runner_dispatches_github_mode_metadata(tmp_path) -> None:
+    registry = SourceRegistry(
+        [
+            SourceDefinition(
+                source_id="github-commits",
+                name="GitHub Commits",
+                source_type="github",
+                url=GITHUB_API_URL,
+                reliability="high",
+                topics=["AI"],
+                metadata={"repository": "owner/repo", "mode": "commits"},
+            )
+        ]
+    )
+    github_connector = _FakeGithubModeConnector()
+
+    result = DailyIntelligenceRunner(
+        artifact_root=tmp_path,
+        source_registry=registry,
+        github_connector=github_connector,
+        llm_client=_FakeReportLLM(),
+    ).run(profile="live", topic="AI policy", source_limit=1, run_id="daily-github-mode")
+
+    assert result.status == WorkflowStatus.SUCCEEDED
+    assert github_connector.calls == [
+        {
+            "source_id": "github-commits",
+            "repository": "owner/repo",
+            "query": "AI policy",
+            "limit": 1,
+            "mode": "commits",
+        }
+    ]
+
+
 def test_daily_intelligence_runner_persists_source_duplicate_groups(tmp_path) -> None:
     duplicate_feed = """<?xml version="1.0"?>
 <rss version="2.0">
@@ -1393,6 +1428,40 @@ class _StructuredReportLLM:
                 ],
             },
         )
+
+
+class _FakeGithubModeConnector:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def fetch(self, source, *, repository, query, limit):
+        self.calls.append(
+            {
+                "source_id": source.source_id,
+                "repository": repository,
+                "query": query,
+                "limit": limit,
+                "mode": source.metadata.get("mode"),
+            }
+        )
+        return [
+            RawSourceItem(
+                source_item_id="raw-github-commit",
+                source_id=source.source_id,
+                source_name=source.name,
+                source_type=source.source_type,
+                title="Commit title",
+                url="https://github.com/owner/repo/commit/abcdef1",
+                fetched_at=datetime(2026, 5, 11, tzinfo=UTC),
+                published_at=datetime(2026, 5, 11, tzinfo=UTC),
+                summary="Commit summary",
+                raw_content="{}",
+                authors=["alice"],
+                tags=["commit"],
+                language="en",
+                metadata={"github_surface": "commits", "repository": repository},
+            )
+        ], []
 
 
 class _UncitedReportLLM:
