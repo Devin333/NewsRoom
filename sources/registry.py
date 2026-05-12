@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 from urllib.parse import urlsplit
 
 from domain.sources import SourceDefinition, SourceReliability, SourceType
@@ -19,6 +20,18 @@ FETCHABLE_SOURCE_TYPES = {
     SourceType.ARXIV,
     SourceType.GITHUB,
 }
+_SAFE_SOURCE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+_SENSITIVE_METADATA_KEY_PARTS = (
+    "authorization",
+    "cookie",
+    "api_key",
+    "apikey",
+    "access_token",
+    "refresh_token",
+    "token",
+    "secret",
+    "password",
+)
 
 
 @dataclass(frozen=True)
@@ -204,6 +217,15 @@ def _topic_match_score(source: SourceDefinition, requested_topic: str) -> int:
 
 def _validate_source(source: SourceDefinition) -> list[SourceRegistryValidationIssue]:
     issues: list[SourceRegistryValidationIssue] = []
+    if _SAFE_SOURCE_ID_RE.fullmatch(source.source_id) is None:
+        issues.append(
+            SourceRegistryValidationIssue(
+                severity="error",
+                source_id=source.source_id,
+                field="source_id",
+                message="source_id must be path-safe: letters, numbers, dot, underscore, and hyphen only",
+            )
+        )
     if source.authority_score < 0.0 or source.authority_score > 1.0:
         issues.append(
             SourceRegistryValidationIssue(
@@ -213,8 +235,17 @@ def _validate_source(source: SourceDefinition) -> list[SourceRegistryValidationI
                 message="authority_score must be between 0.0 and 1.0",
             )
         )
+    scheme = urlsplit(source.url).scheme.casefold()
+    if scheme == "fixture":
+        issues.append(
+            SourceRegistryValidationIssue(
+                severity="error",
+                source_id=source.source_id,
+                field="url",
+                message="fixture URLs are not allowed in registered sources",
+            )
+        )
     if source.source_type in FETCHABLE_SOURCE_TYPES:
-        scheme = urlsplit(source.url).scheme.casefold()
         if scheme not in {"http", "https"}:
             issues.append(
                 SourceRegistryValidationIssue(
@@ -224,6 +255,16 @@ def _validate_source(source: SourceDefinition) -> list[SourceRegistryValidationI
                     message="fetchable source URL must use http or https",
                 )
             )
+    sensitive_metadata_paths = _sensitive_metadata_paths(source.metadata)
+    for path in sensitive_metadata_paths:
+        issues.append(
+            SourceRegistryValidationIssue(
+                severity="error",
+                source_id=source.source_id,
+                field=f"metadata.{path}",
+                message="source metadata must not contain secrets or credentials",
+            )
+        )
     if not source.topics:
         issues.append(
             SourceRegistryValidationIssue(
@@ -234,6 +275,31 @@ def _validate_source(source: SourceDefinition) -> list[SourceRegistryValidationI
             )
         )
     return issues
+
+
+def _sensitive_metadata_paths(value: Any, *, prefix: str = "") -> list[str]:
+    if isinstance(value, dict):
+        paths: list[str] = []
+        for key, item in value.items():
+            key_text = str(key)
+            current_path = f"{prefix}.{key_text}" if prefix else key_text
+            if _is_sensitive_metadata_key(key_text):
+                paths.append(current_path)
+                continue
+            paths.extend(_sensitive_metadata_paths(item, prefix=current_path))
+        return paths
+    if isinstance(value, list):
+        paths = []
+        for index, item in enumerate(value):
+            current_path = f"{prefix}[{index}]" if prefix else f"[{index}]"
+            paths.extend(_sensitive_metadata_paths(item, prefix=current_path))
+        return paths
+    return []
+
+
+def _is_sensitive_metadata_key(key: str) -> bool:
+    normalized = key.replace("-", "_").casefold()
+    return any(part in normalized for part in _SENSITIVE_METADATA_KEY_PARTS)
 
 
 def _topic_terms(topic: str) -> set[str]:

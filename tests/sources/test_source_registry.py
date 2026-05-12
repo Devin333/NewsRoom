@@ -210,3 +210,32 @@ def test_source_registry_validate_reports_errors_and_warnings() -> None:
     assert ("invalid", "authority_score", "error") in issues
     assert ("invalid", "url", "error") in issues
     assert ("valid", "topics", "warning") in issues
+
+
+def test_source_registry_validate_reports_governance_errors() -> None:
+    fixture = SourceDefinition(
+        source_id="fixture-source",
+        name="Fixture Source",
+        source_type="rss",
+        url="fixture://feed",
+        topics=["ai"],
+        metadata={"headers": {"api_key": "hidden"}},
+    )
+    unsafe_id = SourceDefinition(
+        source_id="feed/source",
+        name="Unsafe ID",
+        source_type="manual",
+        url="manual://operator",
+        topics=["ai"],
+        metadata={"nested": [{"refresh_token": "hidden"}]},
+    )
+    registry = SourceRegistry([fixture, unsafe_id])
+
+    result = registry.validate()
+
+    assert result.is_valid is False
+    issues = {(issue.source_id, issue.field, issue.severity) for issue in result.issues}
+    assert ("fixture-source", "url", "error") in issues
+    assert ("fixture-source", "metadata.headers.api_key", "error") in issues
+    assert ("feed/source", "source_id", "error") in issues
+    assert ("feed/source", "metadata.nested[0].refresh_token", "error") in issues
