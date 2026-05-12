@@ -4,6 +4,7 @@ from core.framework.tools.approval import ToolApprovalRequest
 from core.framework.tools.artifact_tools import register_artifact_tools
 from core.framework.tools.batch import ToolBatchExecutor
 from core.framework.tools.executor import ToolExecutor
+from core.framework.tools.mcp_adapter import MCPServerConfig, MCPToolAdapter
 from core.framework.tools.models import (
     ArtifactRef,
     ToolCall,
@@ -30,6 +31,8 @@ from core.framework.tools.validation import validate_tool_arguments
 __all__ = [
     "REDACTED_VALUE",
     "ArtifactRef",
+    "MCPServerConfig",
+    "MCPToolAdapter",
     "RegisteredTool",
     "ToolCall",
     "ToolDefinition",
