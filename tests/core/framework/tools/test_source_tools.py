@@ -237,6 +237,7 @@ def test_source_check_health_tool_reads_health_manager_state() -> None:
         "rss-example",
         SourceError(
             source_id="rss-example",
+            source_name="Example RSS",
             error_type="TimeoutError",
             error_message="timed out",
             url="https://example.com/feed.xml",
@@ -257,9 +258,40 @@ def test_source_check_health_tool_reads_health_manager_state() -> None:
 
     assert observation.status == ToolStatus.SUCCEEDED
     assert health["source_id"] == "rss-example"
+    assert health["source_name"] == "Example RSS"
+    assert health["url"] == "https://example.com/feed.xml"
     assert health["status"] == "degraded"
     assert health["consecutive_failures"] == 1
     assert health["last_error"]["error_type"] == "TimeoutError"
+
+
+def test_source_check_health_tool_uses_source_argument_context() -> None:
+    registry = ToolRegistry()
+    health_manager = BasicSourceHealthManager()
+    register_source_tools(registry, health_manager=health_manager)
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="source.check_health",
+            arguments={
+                "source": {
+                    "source_id": "rss-example",
+                    "name": "Example RSS",
+                    "url": "https://example.com/feed.xml",
+                }
+            },
+        ),
+        ToolPolicy(allowed_tools=["source.check_health"]),
+    )
+
+    health = observation.result.output["health"]
+
+    assert observation.status == ToolStatus.SUCCEEDED
+    assert health["source_id"] == "rss-example"
+    assert health["source_name"] == "Example RSS"
+    assert health["url"] == "https://example.com/feed.xml"
+    assert health_manager.get("rss-example").source_name == "Example RSS"
 
 
 def test_source_probe_tool_records_success_without_returning_content() -> None:
@@ -294,6 +326,8 @@ def test_source_probe_tool_records_success_without_returning_content() -> None:
     assert observation.result.output["content_bytes"] == len("probe body")
     assert "content" not in observation.result.output
     assert observation.result.output["health"]["status"] == "healthy"
+    assert observation.result.output["health"]["source_name"] == "Example RSS"
+    assert observation.result.output["health"]["url"] == "https://example.com/feed.xml"
     assert health_manager.get("rss-example").last_success_at is not None
 
 
@@ -329,7 +363,10 @@ def test_source_probe_tool_records_fetch_failure_as_health_failure() -> None:
     assert observation.status == ToolStatus.SUCCEEDED
     assert observation.result.output["ok"] is False
     assert observation.result.output["error"]["error_type"] == "RuntimeError"
+    assert observation.result.output["error"]["source_name"] == "Example RSS"
     assert observation.result.output["health"]["status"] == "cooling_down"
+    assert observation.result.output["health"]["source_name"] == "Example RSS"
+    assert observation.result.output["health"]["url"] == "https://example.com/feed.xml"
     assert health_manager.get("rss-example").consecutive_failures == 1
 
 

@@ -256,6 +256,8 @@ class SourcePipelineEvent:
 @dataclass(frozen=True)
 class SourceHealth:
     source_id: str
+    source_name: str | None = None
+    url: str | None = None
     status: SourceHealthStatus = SourceHealthStatus.HEALTHY
     consecutive_failures: int = 0
     last_success_at: datetime | None = None
@@ -269,6 +271,8 @@ class SourceHealth:
     def to_dict(self) -> dict[str, Any]:
         return {
             "source_id": self.source_id,
+            "source_name": self.source_name,
+            "url": self.url,
             "status": self.status.value,
             "consecutive_failures": self.consecutive_failures,
             "last_success_at": _dt(self.last_success_at),

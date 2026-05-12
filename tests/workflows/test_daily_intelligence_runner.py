@@ -111,6 +111,8 @@ def test_daily_intelligence_runner_live_offline_writes_report_artifacts(tmp_path
     assert manifest["source_artifacts"]["item_count"] == 2
     assert manifest["source_artifacts"]["error_count"] == 0
     assert (run_dir / "report.md").exists()
+    assert result.output["source_health_updates"][0].source_name == "Fixture AI Feed"
+    assert result.output["source_health_updates"][0].url == "fixture://ai"
 
     source_events = json.loads((run_dir / "source_events.json").read_text())
     event_types = [event["event_type"] for event in source_events]
@@ -471,6 +473,11 @@ def test_daily_intelligence_runner_records_partial_source_failures(tmp_path) -> 
     assert result.output["failed_sources"][0]["source_id"] == "failing"
     assert result.output["failed_sources"][0]["source_name"] == "Failing"
     assert result.output["failed_sources"][0]["retryable"] is True
+    failing_health = next(
+        health for health in result.output["source_health_updates"] if health.source_id == "failing"
+    )
+    assert failing_health.source_name == "Failing"
+    assert failing_health.url == "https://example.com/failing.xml"
 
     run_dir = Path(result.artifact_dir)
     manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
@@ -665,6 +672,8 @@ def test_daily_intelligence_runner_skips_cooling_source(tmp_path) -> None:
 
     assert result.status == WorkflowStatus.SUCCEEDED
     assert result.output["skipped_sources"][0]["source_id"] == "cooling"
+    assert result.output["skipped_sources"][0]["source_name"] == "Cooling"
+    assert result.output["skipped_sources"][0]["url"] == "https://example.com/cooling.xml"
     assert result.output["source_pipeline_metrics"].sources_skipped == 1
     skipped_result = next(
         fetch_result

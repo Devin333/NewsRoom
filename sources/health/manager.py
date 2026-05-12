@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 from domain.sources import SourceError, SourceHealth, SourceHealthStatus
@@ -19,8 +20,18 @@ class BasicSourceHealthManager:
         self._now = now or (lambda: datetime.now(UTC))
         self._health: dict[str, SourceHealth] = {}
 
-    def get(self, source_id: str) -> SourceHealth:
-        return self._health.get(source_id, SourceHealth(source_id=source_id))
+    def get(
+        self,
+        source_id: str,
+        *,
+        source_name: str | None = None,
+        url: str | None = None,
+    ) -> SourceHealth:
+        health = self._health.get(source_id, SourceHealth(source_id=source_id))
+        health = _with_source_context(health, source_name=source_name, url=url)
+        if source_name is not None or url is not None:
+            self._health[source_id] = health
+        return health
 
     def should_skip(self, source_id: str) -> bool:
         health = self.get(source_id)
@@ -43,9 +54,18 @@ class BasicSourceHealthManager:
             and health.cooldown_until <= self._now()
         )
 
-    def record_success(self, source_id: str) -> SourceHealth:
+    def record_success(
+        self,
+        source_id: str,
+        *,
+        source_name: str | None = None,
+        url: str | None = None,
+    ) -> SourceHealth:
+        previous = self.get(source_id)
         health = SourceHealth(
             source_id=source_id,
+            source_name=source_name or previous.source_name,
+            url=url or previous.url,
             status=SourceHealthStatus.HEALTHY,
             consecutive_failures=0,
             last_success_at=self._now(),
@@ -53,15 +73,27 @@ class BasicSourceHealthManager:
         self._health[source_id] = health
         return health
 
-    def record_disabled(self, source_id: str, *, reason: str | None = None) -> SourceHealth:
+    def record_disabled(
+        self,
+        source_id: str,
+        *,
+        reason: str | None = None,
+        source_name: str | None = None,
+        url: str | None = None,
+    ) -> SourceHealth:
+        previous = self.get(source_id)
         error = SourceError(
             source_id=source_id,
+            source_name=source_name or previous.source_name,
             error_type="source_disabled",
             error_message=reason or "source is disabled",
+            url=url or previous.url,
             metadata={"retryable": False, "source_health_affecting": False},
         )
         health = SourceHealth(
             source_id=source_id,
+            source_name=source_name or previous.source_name,
+            url=url or previous.url,
             status=SourceHealthStatus.DISABLED,
             consecutive_failures=0,
             last_error=error,
@@ -69,7 +101,14 @@ class BasicSourceHealthManager:
         self._health[source_id] = health
         return health
 
-    def record_failure(self, source_id: str, error: SourceError) -> SourceHealth:
+    def record_failure(
+        self,
+        source_id: str,
+        error: SourceError,
+        *,
+        source_name: str | None = None,
+        url: str | None = None,
+    ) -> SourceHealth:
         previous = self.get(source_id)
         failures = previous.consecutive_failures + 1
         now = self._now()
@@ -81,6 +120,8 @@ class BasicSourceHealthManager:
             cooldown_until = None
         health = SourceHealth(
             source_id=source_id,
+            source_name=source_name or error.source_name or previous.source_name,
+            url=url or error.url or previous.url,
             status=status,
             consecutive_failures=failures,
             last_success_at=previous.last_success_at,
@@ -90,3 +131,18 @@ class BasicSourceHealthManager:
         )
         self._health[source_id] = health
         return health
+
+
+def _with_source_context(
+    health: SourceHealth,
+    *,
+    source_name: str | None,
+    url: str | None,
+) -> SourceHealth:
+    if source_name is None and url is None:
+        return health
+    return replace(
+        health,
+        source_name=source_name or health.source_name,
+        url=url or health.url,
+    )

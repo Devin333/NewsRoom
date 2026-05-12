@@ -145,7 +145,7 @@ def register_source_tools(
             side_effect="read_only",
             concurrency_safe=True,
         ),
-        lambda args: {"health": health_manager.get(_source_id(args)).to_dict()},
+        lambda args: {"health": _source_health(args, health_manager=health_manager).to_dict()},
     )
     registry.register(
         ToolDefinition(
@@ -427,12 +427,18 @@ def _probe_source(
     except Exception as exc:
         error = SourceError(
             source_id=source.source_id,
+            source_name=source.name,
             error_type=type(exc).__name__,
             error_message=str(exc),
             url=source.url,
             metadata={"tool": "source.probe"},
         )
-        health = health_manager.record_failure(source.source_id, error)
+        health = health_manager.record_failure(
+            source.source_id,
+            error,
+            source_name=source.name,
+            url=source.url,
+        )
         return {
             "ok": False,
             "source_id": source.source_id,
@@ -442,7 +448,11 @@ def _probe_source(
             "health": health.to_dict(),
         }
 
-    health = health_manager.record_success(source.source_id)
+    health = health_manager.record_success(
+        source.source_id,
+        source_name=source.name,
+        url=source.url,
+    )
     return {
         "ok": True,
         "source_id": source.source_id,
@@ -659,6 +669,13 @@ def _optional_bool(value: Any, default: bool) -> bool:
     return _truthy(value)
 
 
+def _optional_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
 def _source_definition(payload: Any, *, default_source_type: SourceType) -> SourceDefinition:
     if not isinstance(payload, dict):
         raise ValueError("source must be an object")
@@ -684,6 +701,20 @@ def _source_id(args: dict[str, Any]) -> str:
     if isinstance(source, dict) and source.get("source_id"):
         return str(source["source_id"])
     raise ValueError("source_id or source.source_id is required")
+
+
+def _source_health(args: dict[str, Any], *, health_manager: BasicSourceHealthManager):
+    source = args.get("source")
+    if isinstance(source, dict):
+        source_id = str(source.get("source_id") or "")
+        if not source_id:
+            raise ValueError("source.source_id is required")
+        return health_manager.get(
+            source_id,
+            source_name=_optional_text(source.get("name")),
+            url=_optional_text(source.get("url")),
+        )
+    return health_manager.get(_source_id(args))
 
 
 def _optional_limit(value: Any) -> int | None:

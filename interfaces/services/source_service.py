@@ -143,8 +143,14 @@ class SourceApplicationService:
             return self.health_manager.record_disabled(
                 source.source_id,
                 reason="source disabled by configuration",
+                source_name=source.name,
+                url=source.url,
             )
-        return self.health_manager.get(source.source_id)
+        return self.health_manager.get(
+            source.source_id,
+            source_name=source.name,
+            url=source.url,
+        )
 
     def fetch_arxiv(self, *, query: str, limit: int = 5) -> SourceFetchPreviewResult:
         if not query.strip():

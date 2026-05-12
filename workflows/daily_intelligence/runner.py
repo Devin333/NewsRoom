@@ -115,20 +115,21 @@ class DailyIntelligenceRunner:
         source_events: list[SourcePipelineEvent] = []
         metrics = SourcePipelineMetrics()
         if profile == PROFILE_LIVE_OFFLINE:
+            fixture_source = _fixture_source()
             source_events.append(
                 _source_event(
                     "source_fetch_started",
-                    "fixture-ai",
-                    source_type="rss",
-                    url="fixture://ai",
+                    fixture_source.source_id,
+                    source_type=fixture_source.source_type.value,
+                    url=fixture_source.url,
                 )
             )
             latency_start = perf_counter()
-            raw_items = FeedConnector().parse(_fixture_source(), _fixture_feed(), limit=limit)
+            raw_items = FeedConnector().parse(fixture_source, _fixture_feed(), limit=limit)
             fetch_latency_ms = _elapsed_ms(latency_start)
             source_fetch_results.append(
                 _source_fetch_result(
-                    _fixture_source(),
+                    fixture_source,
                     request_id="source-fetch-0001-fixture-ai",
                     success=True,
                     latency_ms=fetch_latency_ms,
@@ -140,21 +141,25 @@ class DailyIntelligenceRunner:
             metrics.sources_total = 1
             metrics.sources_fetched = 1
             metrics.raw_items_count = len(raw_items)
-            metrics.items_by_source = {"fixture-ai": len(raw_items)}
+            metrics.items_by_source = {fixture_source.source_id: len(raw_items)}
             source_events.append(
                 _source_event(
                     "source_fetch_succeeded",
-                    "fixture-ai",
+                    fixture_source.source_id,
                     item_count=len(raw_items),
                     fetch_latency_ms=fetch_latency_ms,
                 )
             )
-            source_health = self.source_health_manager.record_success("fixture-ai")
+            source_health = self.source_health_manager.record_success(
+                fixture_source.source_id,
+                source_name=fixture_source.name,
+                url=fixture_source.url,
+            )
             source_health_updates.append(source_health)
             source_events.append(
                 _source_event(
                     "source_health_updated",
-                    "fixture-ai",
+                    fixture_source.source_id,
                     status=source_health.status.value,
                     consecutive_failures=source_health.consecutive_failures,
                 )
@@ -178,10 +183,16 @@ class DailyIntelligenceRunner:
             if remaining == 0:
                 break
             if self.source_health_manager.should_skip(source.source_id):
-                health = self.source_health_manager.get(source.source_id)
+                health = self.source_health_manager.get(
+                    source.source_id,
+                    source_name=source.name,
+                    url=source.url,
+                )
                 skipped_sources.append(
                     {
                         "source_id": source.source_id,
+                        "source_name": source.name,
+                        "url": source.url,
                         "reason": "cooldown",
                         "cooldown_until": (
                             health.cooldown_until.isoformat().replace("+00:00", "Z")
@@ -227,7 +238,11 @@ class DailyIntelligenceRunner:
                 continue
             is_probe = self.source_health_manager.should_probe(source.source_id)
             if is_probe:
-                health = self.source_health_manager.get(source.source_id)
+                health = self.source_health_manager.get(
+                    source.source_id,
+                    source_name=source.name,
+                    url=source.url,
+                )
                 source_events.append(
                     _source_event(
                         "source_probe_started",
@@ -270,7 +285,11 @@ class DailyIntelligenceRunner:
                         fetch_latency_ms=fetch_latency_ms,
                     )
                 )
-                source_health = self.source_health_manager.record_success(source.source_id)
+                source_health = self.source_health_manager.record_success(
+                    source.source_id,
+                    source_name=source.name,
+                    url=source.url,
+                )
                 source_health_updates.append(source_health)
                 source_events.append(
                     _source_event(
@@ -323,7 +342,12 @@ class DailyIntelligenceRunner:
                     )
                     metrics.record_error(error)
                     if source_health_affecting:
-                        source_health = self.source_health_manager.record_failure(source.source_id, error)
+                        source_health = self.source_health_manager.record_failure(
+                            source.source_id,
+                            error,
+                            source_name=source.name,
+                            url=source.url,
+                        )
                         source_health_updates.append(source_health)
                         source_events.append(
                             _source_event(
