@@ -9,6 +9,7 @@ from domain.sources import (
     SourceFetchResult,
     SourcePipelineEvent,
     SourcePipelineMetrics,
+    RawSourceItem,
     SourceReliability,
     SourceType,
 )
@@ -59,6 +60,26 @@ def test_source_fetch_request_and_result_serialize() -> None:
     assert result.to_dict()["request_id"] == "fetch-1"
     assert result.to_dict()["success"] is False
     assert result.to_dict()["skip_reason"] == "robots"
+
+
+def test_raw_source_item_serializes_artifact_refs() -> None:
+    raw = RawSourceItem(
+        source_item_id="raw-1",
+        source_id="source-1",
+        source_name="Source 1",
+        source_type="rss",
+        title="Source title",
+        url="https://example.com/item",
+        fetched_at=datetime(2026, 5, 11, tzinfo=UTC),
+        raw_artifact_ref={"artifact_id": "raw-artifact"},
+        parse_artifact_ref={"artifact_id": "parse-artifact"},
+    )
+
+    payload = raw.to_dict()
+
+    assert payload["source_type"] == "rss"
+    assert payload["raw_artifact_ref"] == {"artifact_id": "raw-artifact"}
+    assert payload["parse_artifact_ref"] == {"artifact_id": "parse-artifact"}
 
 
 def test_source_error_exposes_top_level_policy_fields_from_legacy_metadata() -> None:

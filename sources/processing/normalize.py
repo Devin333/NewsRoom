@@ -32,7 +32,7 @@ def normalize_item(item: RawSourceItem) -> NormalizedSourceItem:
     published_at, time_metadata = _normalize_published_at(item.published_at, item.fetched_at)
     if time_metadata:
         metadata["time_normalization"] = time_metadata
-    metadata["lineage"] = {
+    lineage = {
         "source_id": item.source_id,
         "source_item_id": item.source_item_id,
         "raw_url": item.url,
@@ -40,6 +40,13 @@ def normalize_item(item: RawSourceItem) -> NormalizedSourceItem:
         "fetched_at": _dt(item.fetched_at),
         "published_at": _dt(published_at),
     }
+    raw_artifact_ref = _artifact_ref(item.raw_artifact_ref)
+    if raw_artifact_ref is not None:
+        lineage["raw_artifact_ref"] = raw_artifact_ref
+    parse_artifact_ref = _artifact_ref(item.parse_artifact_ref)
+    if parse_artifact_ref is not None:
+        lineage["parse_artifact_ref"] = parse_artifact_ref
+    metadata["lineage"] = lineage
     return NormalizedSourceItem(
         normalized_item_id=f"norm_{_hash(item.source_item_id + canonical_url)[:16]}",
         source_item_id=item.source_item_id,
@@ -134,3 +141,11 @@ def _hash(value: str) -> str:
 
 def _dt(value) -> str | None:
     return value.isoformat().replace("+00:00", "Z") if value else None
+
+
+def _artifact_ref(value):
+    if value is None:
+        return None
+    if hasattr(value, "to_dict"):
+        return value.to_dict()
+    return value

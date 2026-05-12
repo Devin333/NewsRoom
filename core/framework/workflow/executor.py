@@ -477,6 +477,7 @@ class WorkflowExecutor:
         source_artifacts = SourceArtifactWriter(self._artifact_manager).write_source_artifacts(
             run_id,
             raw_items=output.get("raw_items"),
+            source_fetch_results=output.get("source_fetch_results"),
             source_errors=output.get("source_errors"),
         )
         if source_artifacts:
@@ -484,6 +485,8 @@ class WorkflowExecutor:
             manifest["source_artifacts"] = {
                 "item_count": source_artifacts["item_count"],
                 "error_count": source_artifacts["error_count"],
+                "raw_content_count": source_artifacts["raw_content_count"],
+                "fetch_result_count": source_artifacts["fetch_result_count"],
                 "total_count": len(source_artifacts["entries"]),
             }
 

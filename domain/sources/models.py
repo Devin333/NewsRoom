@@ -155,6 +155,8 @@ class RawSourceItem:
     published_at: datetime | None = None
     summary: str | None = None
     raw_content: str | None = None
+    raw_artifact_ref: Any | None = None
+    parse_artifact_ref: Any | None = None
     authors: list[str] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
     language: str | None = None
@@ -162,6 +164,26 @@ class RawSourceItem:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "source_type", SourceType(self.source_type))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "source_item_id": self.source_item_id,
+            "source_id": self.source_id,
+            "source_name": self.source_name,
+            "source_type": self.source_type.value,
+            "title": self.title,
+            "url": self.url,
+            "fetched_at": _dt(self.fetched_at),
+            "published_at": _dt(self.published_at),
+            "summary": self.summary,
+            "raw_content": self.raw_content,
+            "raw_artifact_ref": _artifact_ref(self.raw_artifact_ref),
+            "parse_artifact_ref": _artifact_ref(self.parse_artifact_ref),
+            "authors": list(self.authors),
+            "tags": list(self.tags),
+            "language": self.language,
+            "metadata": dict(self.metadata),
+        }
 
 
 @dataclass(frozen=True)

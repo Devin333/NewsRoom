@@ -110,6 +110,8 @@ def test_daily_intelligence_runner_live_offline_writes_report_artifacts(tmp_path
     assert manifest["source_event_count"] == 6
     assert manifest["source_artifacts"]["item_count"] == 2
     assert manifest["source_artifacts"]["error_count"] == 0
+    assert manifest["source_artifacts"]["raw_content_count"] == 2
+    assert manifest["source_artifacts"]["fetch_result_count"] == 1
     assert (run_dir / "report.md").exists()
     assert result.output["source_health_updates"][0].source_name == "Fixture AI Feed"
     assert result.output["source_health_updates"][0].url == "fixture://ai"
@@ -138,7 +140,11 @@ def test_daily_intelligence_runner_live_offline_writes_report_artifacts(tmp_path
     source_artifacts = json.loads((run_dir / "source_artifacts" / "index.json").read_text())
     first_item = source_artifacts["entries"][0]
     assert first_item["artifact_type"] == "source_item"
+    assert first_item["raw_artifact_ref"]["artifact_type"] == "source_raw_content"
+    assert first_item["parse_artifact_ref"]["artifact_type"] == "source_item"
     assert (run_dir / first_item["path"]).exists()
+    first_raw = next(entry for entry in source_artifacts["entries"] if entry["artifact_type"] == "source_raw_content")
+    assert (run_dir / first_raw["path"]).exists()
 
     evidence_scores = json.loads((run_dir / "evidence_scores.json").read_text())
     evidence_source_map = json.loads((run_dir / "evidence_source_map.json").read_text())
@@ -505,7 +511,13 @@ def test_daily_intelligence_runner_records_partial_source_failures(tmp_path) -> 
     assert manifest["artifacts"]["source_pipeline_metrics"] == "source_pipeline_metrics.json"
     assert manifest["artifacts"]["source_artifacts"] == "source_artifacts/index.json"
     assert manifest["source_event_count"] == 9
-    assert manifest["source_artifacts"] == {"item_count": 1, "error_count": 1, "total_count": 2}
+    assert manifest["source_artifacts"] == {
+        "item_count": 1,
+        "error_count": 1,
+        "raw_content_count": 1,
+        "fetch_result_count": 2,
+        "total_count": 5,
+    }
 
     source_events = json.loads((run_dir / "source_events.json").read_text())
     assert any(
@@ -537,6 +549,10 @@ def test_daily_intelligence_runner_records_partial_source_failures(tmp_path) -> 
     assert source_fetch_results[0]["success"] is False
     assert source_fetch_results[0]["error_type"] == "fetch_connection_error"
     assert source_fetch_results[1]["success"] is True
+    fetch_result_artifacts = [
+        entry for entry in source_artifacts["entries"] if entry["artifact_type"] == "source_fetch_result"
+    ]
+    assert [entry["source_id"] for entry in fetch_result_artifacts] == ["failing", "working"]
     report = json.loads((run_dir / "report.json").read_text(encoding="utf-8"))
     assert any(section["title"] == "Source Notes" for section in report["sections"])
 
@@ -654,6 +670,7 @@ def test_daily_intelligence_runner_all_sources_failed_preserves_diagnostics(tmp_
     source_artifacts = json.loads((run_dir / "source_artifacts" / "index.json").read_text())
     assert source_artifacts["item_count"] == 0
     assert source_artifacts["error_count"] == 2
+    assert source_artifacts["fetch_result_count"] == 1
 
 
 def test_daily_intelligence_runner_skips_cooling_source(tmp_path) -> None:

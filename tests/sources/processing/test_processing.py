@@ -261,6 +261,28 @@ def test_normalize_item_preserves_existing_language() -> None:
     assert "language_normalization" not in normalized.metadata
 
 
+def test_normalize_item_preserves_artifact_refs_in_lineage() -> None:
+    raw = RawSourceItem(
+        source_item_id="raw-artifacted",
+        source_id="source",
+        source_name="Source",
+        source_type=SourceType.RSS,
+        title="Artifacted item",
+        url="https://example.com/artifacted",
+        fetched_at=datetime(2026, 5, 11, tzinfo=UTC),
+        summary="Summary",
+        raw_artifact_ref={"artifact_id": "raw-ref", "path": "sources/raw.txt"},
+        parse_artifact_ref={"artifact_id": "parse-ref", "path": "sources/item.json"},
+        metadata={"source_reliability": "high"},
+    )
+
+    normalized = normalize_items([raw])[0]
+
+    lineage = normalized.metadata["lineage"]
+    assert lineage["raw_artifact_ref"]["artifact_id"] == "raw-ref"
+    assert lineage["parse_artifact_ref"]["artifact_id"] == "parse-ref"
+
+
 def test_rank_items_prioritizes_topic_relevance_and_reliability() -> None:
     normalized = normalize_items(
         [

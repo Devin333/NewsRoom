@@ -2,7 +2,7 @@ import json
 from hashlib import sha256
 
 from core.framework.artifacts import ArtifactManager, SourceArtifactWriter
-from domain.sources import SourceError
+from domain.sources import SourceError, SourceFetchResult
 
 
 def test_source_artifact_writer_writes_items_errors_and_redacts(tmp_path) -> None:
@@ -22,6 +22,16 @@ def test_source_artifact_writer_writes_items_errors_and_redacts(tmp_path) -> Non
                 "metadata": {"api_key": "value"},
             }
         ],
+        source_fetch_results=[
+            SourceFetchResult(
+                request_id="fetch 1",
+                source_id="feed/source",
+                success=False,
+                error_type="fetch_timeout",
+                error_message="timeout",
+                metadata={"headers": {"Authorization": "Bearer hidden-token"}},
+            )
+        ],
         source_errors=[
             SourceError(
                 source_id="feed/source",
@@ -37,6 +47,8 @@ def test_source_artifact_writer_writes_items_errors_and_redacts(tmp_path) -> Non
     assert index is not None
     assert index["item_count"] == 1
     assert index["error_count"] == 1
+    assert index["raw_content_count"] == 1
+    assert index["fetch_result_count"] == 1
 
     run_dir = tmp_path / "source-run"
     persisted_index = json.loads((run_dir / "source_artifacts" / "index.json").read_text())
@@ -55,10 +67,33 @@ def test_source_artifact_writer_writes_items_errors_and_redacts(tmp_path) -> Non
     assert item_entry["artifact_ref"]["artifact_type"] == "source_item"
     assert item_entry["artifact_ref"]["path"] == item_entry["path"]
     assert item_entry["artifact_ref"]["checksum"] == item_entry["checksum"]
+    assert item_entry["parse_artifact_ref"]["artifact_id"] == item_entry["artifact_id"]
+    assert item_entry["raw_artifact_ref"]["artifact_type"] == "source_raw_content"
     assert item_entry["raw_content_bytes"] == len(raw_content.encode("utf-8"))
     assert item_entry["raw_content_sha256"] == sha256(raw_content.encode("utf-8")).hexdigest()
     assert item_payload["item"]["raw_content"] == "<item>Real source content</item>"
+    assert item_payload["raw_artifact_ref"]["artifact_type"] == "source_raw_content"
+    assert item_payload["parse_artifact_ref"]["artifact_id"] == item_entry["artifact_id"]
     assert item_payload["item"]["metadata"]["api_key"] == "[REDACTED]"
+
+    raw_content_entry = next(
+        entry for entry in index["entries"] if entry["artifact_type"] == "source_raw_content"
+    )
+    raw_content_path = run_dir / raw_content_entry["path"]
+    assert raw_content_path.exists()
+    assert raw_content_path.read_text(encoding="utf-8") == "<item>Real source content</item>"
+    assert raw_content_entry["content_type"] == "text/plain"
+    assert raw_content_entry["artifact_ref"]["artifact_type"] == "source_raw_content"
+    assert raw_content_entry["raw_content_sha256"] == sha256(raw_content.encode("utf-8")).hexdigest()
+
+    fetch_result_entry = next(
+        entry for entry in index["entries"] if entry["artifact_type"] == "source_fetch_result"
+    )
+    fetch_result_payload = json.loads((run_dir / fetch_result_entry["path"]).read_text())
+    assert fetch_result_entry["artifact_id"] == "source-fetch-result-feed_source-fetch_1"
+    assert fetch_result_payload["fetch_result"]["request_id"] == "fetch 1"
+    assert fetch_result_payload["fetch_result"]["metadata"]["headers"]["Authorization"] == "[REDACTED]"
+    assert "hidden-token" not in json.dumps(fetch_result_payload)
 
     error_entry = next(entry for entry in index["entries"] if entry["artifact_type"] == "source_error")
     error_payload = json.loads((run_dir / error_entry["path"]).read_text())
