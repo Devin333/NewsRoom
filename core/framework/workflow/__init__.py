@@ -22,6 +22,7 @@ from core.framework.workflow.step_runner import (
     StepExecutionError,
     StepRunner,
     StepRunnerRegistry,
+    ToolBatchStepRunner,
 )
 
 __all__ = [
@@ -40,6 +41,7 @@ __all__ = [
     "StepOutcome",
     "StepRunner",
     "StepRunnerRegistry",
+    "ToolBatchStepRunner",
     "RoutingDecision",
     "WorkflowError",
     "WorkflowExecutor",

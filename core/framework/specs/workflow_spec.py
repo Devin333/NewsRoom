@@ -12,6 +12,7 @@ class WorkflowSpecError(ValueError):
 class StepType(str, Enum):
     FUNCTION = "function"
     AGENT_LOOP = "agent_loop"
+    TOOL_BATCH = "tool_batch"
     ARTIFACT = "artifact"
     PERSIST = "persist"
     QUALITY_GATE = "quality_gate"
