@@ -79,6 +79,7 @@ class ToolDefinition:
 class ToolPolicy:
     allowed_tools: list[str] = field(default_factory=list)
     blocked_tools: list[str] = field(default_factory=list)
+    allow_mcp_tools: bool = False
     require_explicit_allowlist: bool = True
     allow_dangerous_tools: bool = False
     require_approval_for_side_effects: bool = True
@@ -90,6 +91,8 @@ class ToolPolicy:
     def allows(self, tool_name: str) -> bool:
         if tool_name in self.blocked_tools:
             return False
+        if _is_mcp_tool(tool_name) and not self.allow_mcp_tools:
+            return False
         if self.require_explicit_allowlist:
             return tool_name in self.allowed_tools
         return True
@@ -100,6 +103,10 @@ class ToolPolicy:
         if definition.is_dangerous and not self.allow_dangerous_tools:
             return False
         return True
+
+
+def _is_mcp_tool(tool_name: str) -> bool:
+    return tool_name.startswith("mcp.")
 
 
 @dataclass(frozen=True)

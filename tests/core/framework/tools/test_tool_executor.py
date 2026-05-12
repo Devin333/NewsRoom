@@ -110,6 +110,42 @@ def test_tool_executor_blocks_dangerous_tool_by_default() -> None:
     assert "dangerous tool is not allowed" in (observation.result.error_message or "")
 
 
+def test_tool_executor_blocks_mcp_tool_by_default_even_when_allowlisted() -> None:
+    calls = {"count": 0}
+    registry = ToolRegistry()
+    registry.register(
+        ToolDefinition(name="mcp.fixture.echo", input_schema={"required": ["message"]}),
+        lambda args: calls.__setitem__("count", calls["count"] + 1),
+    )
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(tool_name="mcp.fixture.echo", arguments={"message": "hello"}),
+        ToolPolicy(allowed_tools=["mcp.fixture.echo"]),
+    )
+
+    assert observation.status == ToolStatus.BLOCKED
+    assert observation.result.error_type == "ToolPermissionError"
+    assert calls["count"] == 0
+
+
+def test_tool_executor_runs_mcp_tool_when_policy_explicitly_allows_mcp() -> None:
+    registry = ToolRegistry()
+    registry.register(
+        ToolDefinition(name="mcp.fixture.echo", input_schema={"required": ["message"]}),
+        lambda args: {"echo": args["message"]},
+    )
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(tool_name="mcp.fixture.echo", arguments={"message": "hello"}),
+        ToolPolicy(allowed_tools=["mcp.fixture.echo"], allow_mcp_tools=True),
+    )
+
+    assert observation.status == ToolStatus.SUCCEEDED
+    assert observation.result.output == {"echo": "hello"}
+
+
 def test_tool_executor_requires_approval_for_side_effecting_tool() -> None:
     calls = {"count": 0}
     registry = ToolRegistry()

@@ -77,6 +77,35 @@ def test_tool_registry_exposes_dangerous_tools_when_policy_allows_it() -> None:
     assert [schema["name"] for schema in schemas] == ["memory.search", "system.command"]
 
 
+def test_tool_registry_hides_mcp_tools_from_schema_by_default() -> None:
+    registry = ToolRegistry()
+    registry.register(ToolDefinition(name="memory.search"), lambda args: args)
+    registry.register(ToolDefinition(name="mcp.fixture.echo"), lambda args: args)
+
+    schemas = registry.export_schema_for_llm(
+        "analyst",
+        ToolPolicy(allowed_tools=["memory.search", "mcp.fixture.echo"]),
+    )
+
+    assert [schema["name"] for schema in schemas] == ["memory.search"]
+
+
+def test_tool_registry_exposes_mcp_tools_when_policy_allows_it() -> None:
+    registry = ToolRegistry()
+    registry.register(ToolDefinition(name="memory.search"), lambda args: args)
+    registry.register(ToolDefinition(name="mcp.fixture.echo"), lambda args: args)
+
+    schemas = registry.export_schema_for_llm(
+        "analyst",
+        ToolPolicy(
+            allowed_tools=["memory.search", "mcp.fixture.echo"],
+            allow_mcp_tools=True,
+        ),
+    )
+
+    assert [schema["name"] for schema in schemas] == ["memory.search", "mcp.fixture.echo"]
+
+
 def test_tool_registry_preserves_legacy_schema_export_allowed_list() -> None:
     registry = ToolRegistry()
     registry.register(ToolDefinition(name="memory.search"), lambda args: args)

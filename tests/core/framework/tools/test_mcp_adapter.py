@@ -27,7 +27,7 @@ def test_mcp_adapter_registers_and_executes_remote_tool_through_executor() -> No
             tool_name="mcp.fixture_server.echo",
             arguments={"message": "hello"},
         ),
-        ToolPolicy(allowed_tools=["mcp.fixture_server.echo"]),
+        ToolPolicy(allowed_tools=["mcp.fixture_server.echo"], allow_mcp_tools=True),
     )
 
     assert [definition.name for definition in definitions] == ["mcp.fixture_server.echo"]
