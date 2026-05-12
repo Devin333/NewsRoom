@@ -55,6 +55,19 @@ def test_tool_executor_runs_allowed_tool_and_returns_observation() -> None:
     ]
     assert executor.metrics.to_dict()["succeeded_calls"] == 1
     assert executor.metrics.to_dict()["calls_by_tool"] == {"memory.search": 1}
+    record = executor.list_records()[0]
+    assert record.tool_call.call_id == "call-1"
+    assert record.tool_result.status == ToolStatus.SUCCEEDED
+    assert record.validation_passed is True
+    assert record.guardrails_passed is True
+    assert record.approval_required is False
+    assert record.to_dict()["events"] == [
+        "tool_call_requested",
+        "tool_args_validated",
+        "tool_started",
+        "tool_succeeded",
+        "tool_observation_created",
+    ]
 
 
 def test_tool_executor_blocks_disallowed_tool() -> None:
@@ -166,6 +179,11 @@ def test_tool_executor_stores_tool_approval_request_when_store_is_configured() -
     assert approval.requested_by == "publisher"
     assert approval.metadata["approval_type"] == "tool_execution"
     assert tool_approval["tool_call"]["arguments"]["authorization"] == REDACTED_VALUE
+    record = executor.list_records()[0]
+    assert record.approval_required is True
+    assert record.approval_id == approval.approval_id
+    assert record.validation_passed is True
+    assert "tool_approval_required" in record.events
 
 
 def test_tool_executor_validates_arguments_before_creating_tool_approval() -> None:

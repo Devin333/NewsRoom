@@ -4,7 +4,7 @@ import json
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import asdict, is_dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
@@ -24,7 +24,7 @@ from core.framework.tools.models import (
 )
 from core.framework.tools.redaction import redact_sensitive_values
 from core.framework.tools.registry import ToolRegistry
-from core.framework.tools.telemetry import ToolEvent, ToolMetrics
+from core.framework.tools.telemetry import ToolEvent, ToolExecutionRecord, ToolMetrics
 from core.framework.tools.validation import validate_tool_arguments
 from core.framework.workers.approval import ApprovalStore
 
@@ -44,6 +44,7 @@ class ToolExecutor:
         self._approval_store = approval_store
         self._events: list[ToolEvent] = []
         self._metrics = ToolMetrics()
+        self._records: list[ToolExecutionRecord] = []
 
     @property
     def metrics(self) -> ToolMetrics:
@@ -52,7 +53,12 @@ class ToolExecutor:
     def list_events(self) -> list[ToolEvent]:
         return list(self._events)
 
+    def list_records(self) -> list[ToolExecutionRecord]:
+        return list(self._records)
+
     def execute(self, call: ToolCall, policy: ToolPolicy) -> ToolObservation:
+        started_at = datetime.now(UTC)
+
         def invoke() -> ToolResult:
             registered = self._registry.get(call.tool_name)
 
@@ -110,6 +116,7 @@ class ToolExecutor:
 
         observation = ToolObservation(call=call, result=result, elapsed_ms=elapsed_ms)
         self._record_observation(observation)
+        self._records.append(_execution_record(observation, self._events, started_at))
         return observation
 
     def _tool_result(
@@ -225,6 +232,29 @@ def _result_event_payload(observation: ToolObservation) -> dict[str, Any]:
         "output_bytes": observation.result.output_bytes,
         "artifact_refs": [artifact_ref.to_dict() for artifact_ref in observation.result.artifact_refs],
     }
+
+
+def _execution_record(
+    observation: ToolObservation,
+    events: list[ToolEvent],
+    started_at: datetime,
+) -> ToolExecutionRecord:
+    call_events = [
+        event.event_type
+        for event in events
+        if event.tool_call_id == observation.call.call_id
+    ]
+    return ToolExecutionRecord(
+        tool_call=observation.call,
+        tool_result=observation.result,
+        validation_passed="tool_args_validated" in call_events,
+        guardrails_passed=observation.status != ToolStatus.BLOCKED,
+        approval_required=observation.status == ToolStatus.APPROVAL_REQUIRED,
+        approval_id=observation.result.approval_id,
+        started_at=started_at,
+        finished_at=datetime.now(UTC),
+        events=call_events,
+    )
 
 
 def _dangerous_gate(definition: Any, policy: ToolPolicy) -> ToolResult | None:

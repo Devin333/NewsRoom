@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
-from core.framework.tools.models import ToolObservation, ToolStatus
+from core.framework.tools.models import ToolCall, ToolObservation, ToolResult, ToolStatus
 from core.framework.tools.redaction import redact_sensitive_values
 
 
@@ -104,3 +104,29 @@ class ToolMetrics:
         self.failures_by_error_type[error_type] = (
             self.failures_by_error_type.get(error_type, 0) + 1
         )
+
+
+@dataclass(frozen=True)
+class ToolExecutionRecord:
+    tool_call: ToolCall
+    tool_result: ToolResult
+    validation_passed: bool
+    guardrails_passed: bool
+    approval_required: bool
+    approval_id: str | None
+    started_at: datetime
+    finished_at: datetime
+    events: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "tool_call": self.tool_call.to_dict(),
+            "tool_result": self.tool_result.to_dict(),
+            "validation_passed": self.validation_passed,
+            "guardrails_passed": self.guardrails_passed,
+            "approval_required": self.approval_required,
+            "approval_id": self.approval_id,
+            "started_at": self.started_at.isoformat().replace("+00:00", "Z"),
+            "finished_at": self.finished_at.isoformat().replace("+00:00", "Z"),
+            "events": list(self.events),
+        }
