@@ -59,6 +59,91 @@ class SourceDefinition:
 
 
 @dataclass(frozen=True)
+class SourceFetchRequest:
+    request_id: str
+    source_id: str
+    source_type: SourceType
+    url: str | None = None
+    query: str | None = None
+    timeout_seconds: int = 15
+    max_bytes: int = 1_000_000
+    user_agent: str | None = None
+    headers: dict[str, str] = field(default_factory=dict)
+    since: datetime | None = None
+    limit: int | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "source_type", SourceType(self.source_type))
+        if not self.request_id:
+            raise ValueError("request_id is required")
+        if not self.source_id:
+            raise ValueError("source_id is required")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "request_id": self.request_id,
+            "source_id": self.source_id,
+            "source_type": self.source_type.value,
+            "url": self.url,
+            "query": self.query,
+            "timeout_seconds": self.timeout_seconds,
+            "max_bytes": self.max_bytes,
+            "user_agent": self.user_agent,
+            "headers": dict(self.headers),
+            "since": _dt(self.since),
+            "limit": self.limit,
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class SourceFetchResult:
+    request_id: str
+    source_id: str
+    success: bool
+    status_code: int | None = None
+    content_type: str | None = None
+    content_bytes: int | None = None
+    latency_ms: int | None = None
+    raw_artifact_ref: Any | None = None
+    error_type: str | None = None
+    error_message: str | None = None
+    skipped: bool = False
+    skip_reason: str | None = None
+    fetched_at: datetime = field(default_factory=utc_now)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not self.request_id:
+            raise ValueError("request_id is required")
+        if not self.source_id:
+            raise ValueError("source_id is required")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "request_id": self.request_id,
+            "source_id": self.source_id,
+            "success": self.success,
+            "status_code": self.status_code,
+            "content_type": self.content_type,
+            "content_bytes": self.content_bytes,
+            "latency_ms": self.latency_ms,
+            "raw_artifact_ref": (
+                self.raw_artifact_ref.to_dict()
+                if hasattr(self.raw_artifact_ref, "to_dict")
+                else self.raw_artifact_ref
+            ),
+            "error_type": self.error_type,
+            "error_message": self.error_message,
+            "skipped": self.skipped,
+            "skip_reason": self.skip_reason,
+            "fetched_at": _dt(self.fetched_at),
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
 class RawSourceItem:
     source_item_id: str
     source_id: str

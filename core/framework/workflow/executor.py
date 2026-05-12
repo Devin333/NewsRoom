@@ -445,6 +445,13 @@ class WorkflowExecutor:
                 output["failed_sources"],
             )
             manifest["artifacts"]["failed_sources"] = "failed_sources.json"
+        if "source_fetch_results" in output:
+            self._artifact_manager.write_json(
+                run_id,
+                "source_fetch_results.json",
+                output["source_fetch_results"],
+            )
+            manifest["artifacts"]["source_fetch_results"] = "source_fetch_results.json"
         if "source_health_updates" in output:
             self._artifact_manager.write_json(
                 run_id,

@@ -13,6 +13,7 @@ from domain.reports import BlockedReport, FinalReport, render_markdown
 from domain.sources import (
     SourceDefinition,
     SourceError,
+    SourceFetchResult,
     SourcePipelineEvent,
     SourcePipelineMetrics,
     SourceType,
@@ -109,6 +110,7 @@ class DailyIntelligenceRunner:
         source_errors: list[SourceError] = []
         skipped_sources: list[dict[str, Any]] = []
         failed_sources: list[dict[str, Any]] = []
+        source_fetch_results: list[SourceFetchResult] = []
         source_health_updates = []
         source_events: list[SourcePipelineEvent] = []
         metrics = SourcePipelineMetrics()
@@ -124,6 +126,16 @@ class DailyIntelligenceRunner:
             latency_start = perf_counter()
             raw_items = FeedConnector().parse(_fixture_source(), _fixture_feed(), limit=limit)
             fetch_latency_ms = _elapsed_ms(latency_start)
+            source_fetch_results.append(
+                _source_fetch_result(
+                    _fixture_source(),
+                    request_id="source-fetch-0001-fixture-ai",
+                    success=True,
+                    latency_ms=fetch_latency_ms,
+                    items=raw_items,
+                    errors=[],
+                )
+            )
             metrics.record_fetch_latency(fetch_latency_ms)
             metrics.sources_total = 1
             metrics.sources_fetched = 1
@@ -152,6 +164,7 @@ class DailyIntelligenceRunner:
                 "source_errors": source_errors,
                 "skipped_sources": skipped_sources,
                 "failed_sources": failed_sources,
+                "source_fetch_results": source_fetch_results,
                 "source_health_updates": source_health_updates,
                 "source_events": source_events,
                 "source_pipeline_metrics": metrics,
@@ -176,6 +189,18 @@ class DailyIntelligenceRunner:
                             else None
                         ),
                     }
+                )
+                source_fetch_results.append(
+                    _source_fetch_result(
+                        source,
+                        request_id=_source_fetch_request_id(source_fetch_results, source),
+                        success=False,
+                        latency_ms=0,
+                        items=[],
+                        errors=[],
+                        skipped=True,
+                        skip_reason="cooldown",
+                    )
                 )
                 source_health_updates.append(health)
                 source_events.append(
@@ -222,6 +247,16 @@ class DailyIntelligenceRunner:
             latency_start = perf_counter()
             items, errors = self._fetch_source(source, request=request, limit=remaining)
             fetch_latency_ms = _elapsed_ms(latency_start)
+            source_fetch_results.append(
+                _source_fetch_result(
+                    source,
+                    request_id=_source_fetch_request_id(source_fetch_results, source),
+                    success=bool(items),
+                    latency_ms=fetch_latency_ms,
+                    items=items,
+                    errors=errors,
+                )
+            )
             metrics.record_fetch_latency(fetch_latency_ms)
             raw_items.extend(items)
             if items:
@@ -328,6 +363,7 @@ class DailyIntelligenceRunner:
             "source_errors": source_errors,
             "skipped_sources": skipped_sources,
             "failed_sources": failed_sources,
+            "source_fetch_results": source_fetch_results,
             "source_health_updates": source_health_updates,
             "source_events": source_events,
             "source_pipeline_metrics": metrics,
@@ -404,6 +440,7 @@ def build_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
                     "source_errors",
                     "skipped_sources",
                     "failed_sources",
+                    "source_fetch_results",
                     "source_health_updates",
                     "source_events",
                     "source_pipeline_metrics",
@@ -413,6 +450,7 @@ def build_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
                     "source_errors",
                     "skipped_sources",
                     "failed_sources",
+                    "source_fetch_results",
                     "source_health_updates",
                     "source_events",
                     "source_pipeline_metrics",
@@ -752,6 +790,53 @@ def _source_event(event_type: str, source_id: str | None = None, **metadata: Any
         source_id=source_id,
         metadata={key: value for key, value in metadata.items() if value is not None},
     )
+
+
+def _source_fetch_request_id(existing: list[SourceFetchResult], source: SourceDefinition) -> str:
+    return f"source-fetch-{len(existing) + 1:04d}-{source.source_id}"
+
+
+def _source_fetch_result(
+    source: SourceDefinition,
+    *,
+    request_id: str,
+    success: bool,
+    latency_ms: float,
+    items: list[Any],
+    errors: list[SourceError],
+    skipped: bool = False,
+    skip_reason: str | None = None,
+) -> SourceFetchResult:
+    first_error = errors[0] if errors else None
+    return SourceFetchResult(
+        request_id=request_id,
+        source_id=source.source_id,
+        success=success,
+        content_bytes=_raw_content_bytes(items),
+        latency_ms=round(max(0.0, latency_ms)),
+        error_type=first_error.error_type if first_error else None,
+        error_message=first_error.error_message if first_error else None,
+        skipped=skipped,
+        skip_reason=skip_reason,
+        metadata={
+            "source_type": source.source_type.value,
+            "url": source.url,
+            "item_count": len(items),
+            "error_count": len(errors),
+        },
+    )
+
+
+def _raw_content_bytes(items: list[Any]) -> int | None:
+    total = 0
+    found = False
+    for item in items:
+        raw_content = getattr(item, "raw_content", None)
+        if raw_content is None:
+            continue
+        found = True
+        total += len(str(raw_content).encode("utf-8"))
+    return total if found else None
 
 
 def _error_metadata_bool(error: SourceError, key: str, *, default: bool) -> bool:

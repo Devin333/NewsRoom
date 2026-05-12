@@ -474,6 +474,7 @@ def test_daily_intelligence_runner_records_partial_source_failures(tmp_path) -> 
     manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["artifacts"]["source_errors"] == "source_errors.json"
     assert manifest["artifacts"]["failed_sources"] == "failed_sources.json"
+    assert manifest["artifacts"]["source_fetch_results"] == "source_fetch_results.json"
     assert manifest["artifacts"]["source_events"] == "source_events.json"
     assert manifest["artifacts"]["source_pipeline_metrics"] == "source_pipeline_metrics.json"
     assert manifest["artifacts"]["source_artifacts"] == "source_artifacts/index.json"
@@ -502,6 +503,12 @@ def test_daily_intelligence_runner_records_partial_source_failures(tmp_path) -> 
     )
     error_payload = json.loads((run_dir / error_entry["path"]).read_text())
     assert error_payload["error"]["source_id"] == "failing"
+
+    source_fetch_results = json.loads((run_dir / "source_fetch_results.json").read_text())
+    assert [result["source_id"] for result in source_fetch_results] == ["failing", "working"]
+    assert source_fetch_results[0]["success"] is False
+    assert source_fetch_results[0]["error_type"] == "fetch_connection_error"
+    assert source_fetch_results[1]["success"] is True
 
 
 def test_daily_intelligence_runner_honors_non_health_affecting_source_errors(tmp_path) -> None:
@@ -650,6 +657,13 @@ def test_daily_intelligence_runner_skips_cooling_source(tmp_path) -> None:
     assert result.status == WorkflowStatus.SUCCEEDED
     assert result.output["skipped_sources"][0]["source_id"] == "cooling"
     assert result.output["source_pipeline_metrics"].sources_skipped == 1
+    skipped_result = next(
+        fetch_result
+        for fetch_result in result.output["source_fetch_results"]
+        if fetch_result.source_id == "cooling"
+    )
+    assert skipped_result.skipped is True
+    assert skipped_result.skip_reason == "cooldown"
     assert any(
         event.event_type == "source_fetch_skipped" and event.source_id == "cooling"
         for event in result.output["source_events"]
