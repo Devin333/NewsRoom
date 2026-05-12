@@ -178,6 +178,86 @@ def test_tool_executor_uses_policy_default_timeout_for_fast_tool() -> None:
     assert observation.result.output == {"query": "chips"}
 
 
+def test_tool_executor_retries_transient_invocation_failure() -> None:
+    calls = {"count": 0}
+
+    def flaky_tool(args: dict) -> dict:
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise RuntimeError("temporary connector failure")
+        return {"query": args["query"], "attempt": calls["count"]}
+
+    registry = ToolRegistry()
+    registry.register(
+        ToolDefinition(name="memory.flaky", input_schema={"required": ["query"]}),
+        flaky_tool,
+    )
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(tool_name="memory.flaky", arguments={"query": "chips"}),
+        ToolPolicy(allowed_tools=["memory.flaky"], max_attempts_default=2),
+    )
+
+    assert observation.status == ToolStatus.SUCCEEDED
+    assert calls["count"] == 2
+    assert observation.result.output == {"query": "chips", "attempt": 2}
+
+
+def test_tool_executor_does_not_retry_by_default() -> None:
+    calls = {"count": 0}
+
+    def failing_tool(args: dict) -> dict:
+        calls["count"] += 1
+        raise RuntimeError("permanent failure")
+
+    registry = ToolRegistry()
+    registry.register(
+        ToolDefinition(name="memory.failing", input_schema={"required": ["query"]}),
+        failing_tool,
+    )
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(tool_name="memory.failing", arguments={"query": "chips"}),
+        ToolPolicy(allowed_tools=["memory.failing"]),
+    )
+
+    assert observation.status == ToolStatus.FAILED
+    assert calls["count"] == 1
+    assert observation.result.error_type == "RuntimeError"
+
+
+def test_tool_executor_uses_tool_specific_max_attempts() -> None:
+    calls = {"count": 0}
+
+    def flaky_tool(args: dict) -> dict:
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise RuntimeError("temporary connector failure")
+        return {"ok": True}
+
+    registry = ToolRegistry()
+    registry.register(
+        ToolDefinition(
+            name="source.flaky",
+            input_schema={"required": ["url"]},
+            max_attempts=2,
+        ),
+        flaky_tool,
+    )
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(tool_name="source.flaky", arguments={"url": "https://example.com"}),
+        ToolPolicy(allowed_tools=["source.flaky"], max_attempts_default=1),
+    )
+
+    assert observation.status == ToolStatus.SUCCEEDED
+    assert calls["count"] == 2
+    assert observation.result.output == {"ok": True}
+
+
 def test_tool_executor_fails_missing_required_arguments() -> None:
     executor = ToolExecutor(_registry())
 

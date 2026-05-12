@@ -53,10 +53,11 @@ class ToolExecutor:
 
             validate_tool_arguments(registered.definition, call.arguments)
 
-            raw_output = _invoke_with_timeout(
+            raw_output = _invoke_with_retry(
                 registered.executor,
                 call.arguments,
                 _timeout_seconds(registered.definition, policy),
+                _max_attempts(registered.definition, policy),
                 call.tool_name,
             )
             safe_output = redact_sensitive_values(raw_output)
@@ -153,6 +154,29 @@ def _timeout_seconds(definition: Any, policy: ToolPolicy) -> float | None:
     if definition.timeout_seconds is not None:
         return definition.timeout_seconds
     return policy.timeout_seconds_default
+
+
+def _max_attempts(definition: Any, policy: ToolPolicy) -> int:
+    attempts = definition.max_attempts
+    if attempts is None:
+        attempts = policy.max_attempts_default
+    return max(1, int(attempts))
+
+
+def _invoke_with_retry(
+    executor: Any,
+    arguments: dict[str, Any],
+    timeout_seconds: float | None,
+    max_attempts: int,
+    tool_name: str,
+) -> Any:
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return _invoke_with_timeout(executor, arguments, timeout_seconds, tool_name)
+        except Exception:
+            if attempt == max_attempts:
+                raise
+    raise RuntimeError(f"tool {tool_name} retry loop exited unexpectedly")
 
 
 def _invoke_with_timeout(

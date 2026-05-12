@@ -43,6 +43,7 @@ class ToolDefinition:
     is_dangerous: bool = False
     requires_approval: bool = False
     timeout_seconds: float | None = None
+    max_attempts: int | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -67,6 +68,7 @@ class ToolDefinition:
             "is_dangerous": self.is_dangerous,
             "requires_approval": self.requires_approval,
             "timeout_seconds": self.timeout_seconds,
+            "max_attempts": self.max_attempts,
             "metadata": dict(self.metadata),
         }
 
@@ -81,6 +83,7 @@ class ToolPolicy:
     max_result_chars_inline: int = 8000
     spill_large_results_to_artifact: bool = True
     timeout_seconds_default: float | None = 30.0
+    max_attempts_default: int = 1
 
     def allows(self, tool_name: str) -> bool:
         if tool_name in self.blocked_tools:
