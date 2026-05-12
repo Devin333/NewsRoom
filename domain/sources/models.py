@@ -504,6 +504,32 @@ class SourceCoverageReport:
 
 
 @dataclass(frozen=True)
+class SourceConnectorDispatchReport:
+    total_dispatch_count: int
+    success_count: int
+    failed_count: int
+    skipped_count: int
+    connector_counts: dict[str, int] = field(default_factory=dict)
+    success_by_connector: dict[str, int] = field(default_factory=dict)
+    failed_by_connector: dict[str, int] = field(default_factory=dict)
+    skipped_by_connector: dict[str, int] = field(default_factory=dict)
+    rows: list[dict[str, Any]] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "total_dispatch_count": self.total_dispatch_count,
+            "success_count": self.success_count,
+            "failed_count": self.failed_count,
+            "skipped_count": self.skipped_count,
+            "connector_counts": dict(self.connector_counts),
+            "success_by_connector": dict(self.success_by_connector),
+            "failed_by_connector": dict(self.failed_by_connector),
+            "skipped_by_connector": dict(self.skipped_by_connector),
+            "rows": [dict(row) for row in self.rows],
+        }
+
+
+@dataclass(frozen=True)
 class SourceItemQualityScore:
     normalized_item_id: str
     source_item_id: str

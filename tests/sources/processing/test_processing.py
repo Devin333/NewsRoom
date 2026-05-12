@@ -1,8 +1,16 @@
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
-from domain.sources import RawSourceItem, SourceError, SourcePipelineMetrics, SourceType
+from domain.sources import (
+    RawSourceItem,
+    SourceError,
+    SourceFetchRequest,
+    SourceFetchResult,
+    SourcePipelineMetrics,
+    SourceType,
+)
 from sources.processing import (
+    build_source_connector_dispatch_report,
     build_source_coverage_report,
     build_source_freshness_report,
     build_source_governance_report,
@@ -136,6 +144,58 @@ def test_build_source_coverage_report_marks_no_source_run_empty() -> None:
     assert report.failed_source_ids == []
     assert report.fetch_success_ratio == 0.0
     assert report.partial_reasons == ["no_raw_items", "source_failures", "source_errors"]
+
+
+def test_build_source_connector_dispatch_report_joins_requests_and_results() -> None:
+    requests = [
+        SourceFetchRequest(
+            request_id="req-1",
+            source_id="feed",
+            source_type="rss",
+            metadata={"connector_name": "FeedConnector"},
+        ),
+        SourceFetchRequest(
+            request_id="req-2",
+            source_id="html",
+            source_type="web_page",
+            metadata={"connector_name": "HtmlConnector"},
+        ),
+        SourceFetchRequest(
+            request_id="req-3",
+            source_id="cooling",
+            source_type="rss",
+            metadata={"connector_name": "FeedConnector"},
+        ),
+    ]
+    results = [
+        SourceFetchResult(request_id="req-1", source_id="feed", success=True),
+        SourceFetchResult(
+            request_id="req-2",
+            source_id="html",
+            success=False,
+            error_type="fetch_timeout",
+        ),
+        SourceFetchResult(
+            request_id="req-3",
+            source_id="cooling",
+            success=False,
+            skipped=True,
+            skip_reason="cooldown",
+        ),
+    ]
+
+    report = build_source_connector_dispatch_report(requests, results)
+
+    assert report.total_dispatch_count == 3
+    assert report.success_count == 1
+    assert report.failed_count == 1
+    assert report.skipped_count == 1
+    assert report.connector_counts == {"FeedConnector": 2, "HtmlConnector": 1}
+    assert report.success_by_connector == {"FeedConnector": 1}
+    assert report.failed_by_connector == {"HtmlConnector": 1}
+    assert report.skipped_by_connector == {"FeedConnector": 1}
+    assert report.rows[1]["error_type"] == "fetch_timeout"
+    assert report.rows[2]["skip_reason"] == "cooldown"
 
 
 def test_build_source_governance_report_flags_policy_findings() -> None:

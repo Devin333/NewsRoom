@@ -150,6 +150,7 @@ def test_daily_intelligence_runner_live_offline_writes_report_artifacts(tmp_path
     assert manifest["artifacts"]["report_json"] == "report.json"
     assert manifest["artifacts"]["report_markdown"] == "report.md"
     assert manifest["artifacts"]["source_events"] == "source_events.json"
+    assert manifest["artifacts"]["source_connector_dispatch_report"] == "source_connector_dispatch_report.json"
     assert manifest["artifacts"]["source_selection_report"] == "source_selection_report.json"
     assert manifest["artifacts"]["source_coverage_report"] == "source_coverage_report.json"
     assert manifest["artifacts"]["source_quality_scores"] == "source_quality_scores.json"
@@ -193,6 +194,14 @@ def test_daily_intelligence_runner_live_offline_writes_report_artifacts(tmp_path
     assert source_metrics["fetched_by_type"] == {"rss": 1}
     assert source_metrics["items_by_source_type"] == {"rss": 2}
     assert source_metrics["items_by_reliability"] == {"high": 2}
+
+    dispatch_report = json.loads((run_dir / "source_connector_dispatch_report.json").read_text(encoding="utf-8"))
+    assert dispatch_report["total_dispatch_count"] == 1
+    assert dispatch_report["success_count"] == 1
+    assert dispatch_report["connector_counts"] == {"FeedConnector": 1}
+    assert dispatch_report["rows"][0]["connector_name"] == "FeedConnector"
+    assert dispatch_report["rows"][0]["success"] is True
+    assert result.output["source_connector_dispatch_report"].success_count == 1
 
     selection_report = json.loads((run_dir / "source_selection_report.json").read_text(encoding="utf-8"))
     assert selection_report["topic"] == "AI policy"

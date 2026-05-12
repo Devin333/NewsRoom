@@ -44,6 +44,7 @@ from sources.connectors import (
 from sources.connectors.diagnostics import response_metadata_from_observations
 from sources.health import BasicSourceHealthManager
 from sources.processing import (
+    build_source_connector_dispatch_report,
     build_source_coverage_report,
     build_source_freshness_report,
     build_source_governance_report,
@@ -214,6 +215,10 @@ class DailyIntelligenceRunner:
                 "source_health_updates": source_health_updates,
                 "source_events": source_events,
                 "source_pipeline_metrics": metrics,
+                "source_connector_dispatch_report": build_source_connector_dispatch_report(
+                    source_fetch_requests,
+                    source_fetch_results,
+                ),
                 "source_selection_report": self.source_registry.selection_report(
                     topic=request["topic"],
                     selected_sources=[fixture_source],
@@ -472,6 +477,10 @@ class DailyIntelligenceRunner:
             "source_health_updates": source_health_updates,
             "source_events": source_events,
             "source_pipeline_metrics": metrics,
+            "source_connector_dispatch_report": build_source_connector_dispatch_report(
+                source_fetch_requests,
+                source_fetch_results,
+            ),
             "source_selection_report": source_selection_report,
             "source_coverage_report": build_source_coverage_report(
                 metrics,
@@ -612,6 +621,7 @@ def build_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
                     "source_health_updates",
                     "source_events",
                     "source_pipeline_metrics",
+                    "source_connector_dispatch_report",
                     "source_selection_report",
                     "source_coverage_report",
                 ],
@@ -625,6 +635,7 @@ def build_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
                     "source_health_updates",
                     "source_events",
                     "source_pipeline_metrics",
+                    "source_connector_dispatch_report",
                     "source_selection_report",
                     "source_coverage_report",
                 ],
@@ -1127,8 +1138,29 @@ def _source_fetch_request(
             "source_name": source.name,
             "reliability": source.reliability.value,
             "authority_score": source.authority_score,
+            "connector_name": _source_connector_name(source),
         },
     )
+
+
+def _source_connector_name(source: SourceDefinition) -> str:
+    if source.source_type in {SourceType.RSS, SourceType.ATOM}:
+        return "FeedConnector"
+    if source.source_type == SourceType.OFFICIAL_BLOG:
+        return "OfficialBlogFeedHtmlFallback"
+    if source.source_type in {SourceType.HTML, SourceType.WEB_PAGE}:
+        return "HtmlConnector"
+    if source.source_type == SourceType.MANUAL:
+        return "ManualConnector"
+    if source.source_type == SourceType.ARXIV:
+        return "ArxivConnector"
+    if source.source_type == SourceType.GITHUB:
+        return "GithubConnector"
+    if source.source_type == SourceType.HACKERNEWS:
+        return "HackerNewsConnector"
+    if source.source_type == SourceType.REDDIT:
+        return "RedditConnector"
+    return "UnsupportedSourceConnector"
 
 
 def _source_fetch_result(
