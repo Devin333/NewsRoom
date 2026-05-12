@@ -12,6 +12,10 @@ from urllib.request import Request, urlopen
 from core.framework.llm.models import LLMRequest, LLMResponse, TokenUsage
 from core.framework.llm.redaction import redact_sensitive_values
 from core.framework.llm.streaming import LLMStreamEvent
+from core.framework.llm.structured_output import (
+    LLMStructuredOutputValidationError,
+    validate_structured_output,
+)
 from core.framework.llm.tool_adapters import (
     LLMToolCallParseError,
     LLMToolSchemaError,
@@ -367,7 +371,11 @@ class OpenAICompatibleClient:
             )
         structured_output = None
         if _expects_structured_output(request):
-            structured_output = self._parse_structured_output(content, attempts=attempts)
+            structured_output = self._parse_structured_output(
+                content,
+                request=request,
+                attempts=attempts,
+            )
 
         usage_payload = payload.get("usage") or {}
         if not isinstance(usage_payload, dict):
@@ -399,7 +407,13 @@ class OpenAICompatibleClient:
             tool_calls=tool_calls,
         )
 
-    def _parse_structured_output(self, content: str, *, attempts: int) -> dict[str, Any]:
+    def _parse_structured_output(
+        self,
+        content: str,
+        *,
+        request: LLMRequest,
+        attempts: int,
+    ) -> dict[str, Any]:
         try:
             structured_output = json.loads(content)
         except json.JSONDecodeError as exc:
@@ -418,6 +432,17 @@ class OpenAICompatibleClient:
                 retryable=False,
                 attempts=attempts,
             )
+        if request.output_schema is not None:
+            try:
+                validate_structured_output(structured_output, request.output_schema)
+            except LLMStructuredOutputValidationError as exc:
+                raise LLMProviderError(
+                    f"{self.config.provider} structured output failed schema validation: {exc}",
+                    provider=self.config.provider,
+                    error_type="structured_output_validation_error",
+                    retryable=False,
+                    attempts=attempts,
+                ) from exc
         return structured_output
 
     def _error_from_http(self, exc: HTTPError, *, attempts: int) -> LLMProviderError:

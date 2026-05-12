@@ -29,6 +29,10 @@ from core.framework.llm.openai_compatible import (
 from core.framework.llm.redaction import REDACTED_VALUE, redact_sensitive_values
 from core.framework.llm.router import LLMRouteError, LLMRouter, ModelDeployment, ModelRoute
 from core.framework.llm.streaming import LLMStreamAccumulator, LLMStreamEvent
+from core.framework.llm.structured_output import (
+    LLMStructuredOutputValidationError,
+    validate_structured_output,
+)
 from core.framework.llm.tool_adapters import LLMToolCallParseError, LLMToolSchemaError
 
 __all__ = [
@@ -56,6 +60,7 @@ __all__ = [
     "LLMRouter",
     "LLMStreamAccumulator",
     "LLMStreamEvent",
+    "LLMStructuredOutputValidationError",
     "LLMToolCall",
     "LLMToolCallParseError",
     "LLMToolSchemaError",
@@ -69,4 +74,5 @@ __all__ = [
     "TokenUsage",
     "estimate_request_tokens",
     "redact_sensitive_values",
+    "validate_structured_output",
 ]

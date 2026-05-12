@@ -360,6 +360,48 @@ def test_openai_compatible_client_sends_json_schema_response_format(monkeypatch)
     assert response.structured_output == {"title": "Report"}
 
 
+def test_openai_compatible_client_validates_structured_output_schema(monkeypatch) -> None:
+    monkeypatch.setenv("TEST_LLM_KEY", "redacted-test-key")
+    calls = 0
+    schema = {
+        "type": "object",
+        "required": ["title"],
+        "properties": {"title": {"type": "string"}},
+        "additionalProperties": False,
+    }
+
+    def transport(request: Request, timeout: float) -> bytes:
+        nonlocal calls
+        calls += 1
+        return _success_body(content="{\"sections\":[]}")
+
+    client = OpenAICompatibleClient(
+        OpenAICompatibleConfig(
+            provider="test",
+            base_url="https://llm.example/v1",
+            model="test-model",
+            api_key_env="TEST_LLM_KEY",
+        ),
+        transport=transport,
+        retry_policy=LLMRetryPolicy(max_attempts=3, retry_delay_seconds=(0,)),
+        sleep=lambda seconds: None,
+    )
+
+    with pytest.raises(LLMProviderError) as exc_info:
+        client.complete(
+            LLMRequest(
+                messages=[{"role": "user", "content": "hi"}],
+                output_schema=schema,
+                output_schema_name="report",
+            )
+        )
+
+    assert calls == 1
+    assert exc_info.value.retryable is False
+    assert exc_info.value.error_type == "structured_output_validation_error"
+    assert "missing required property: title" in str(exc_info.value)
+
+
 def test_openai_compatible_client_does_not_retry_invalid_structured_output(monkeypatch) -> None:
     monkeypatch.setenv("TEST_LLM_KEY", "redacted-test-key")
     calls = 0
