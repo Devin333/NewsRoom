@@ -9,6 +9,7 @@ from enum import Enum
 from typing import Any
 
 from core.framework.artifacts import ArtifactManager
+from core.framework.tools.approval import ToolApprovalRequest
 from core.framework.tools.models import (
     ArtifactRef,
     ToolCall,
@@ -25,6 +26,7 @@ from core.framework.tools.redaction import redact_sensitive_values
 from core.framework.tools.registry import ToolRegistry
 from core.framework.tools.telemetry import ToolEvent, ToolMetrics
 from core.framework.tools.validation import validate_tool_arguments
+from core.framework.workers.approval import ApprovalStore
 
 
 class ToolExecutor:
@@ -34,10 +36,12 @@ class ToolExecutor:
         *,
         artifact_manager: ArtifactManager | None = None,
         run_id: str | None = None,
+        approval_store: ApprovalStore | None = None,
     ) -> None:
         self._registry = registry
         self._artifact_manager = artifact_manager
         self._run_id = run_id
+        self._approval_store = approval_store
         self._events: list[ToolEvent] = []
         self._metrics = ToolMetrics()
 
@@ -57,12 +61,16 @@ class ToolExecutor:
                     f"agent {call.requested_by_agent_id} is not allowed to call {call.tool_name}"
                 )
 
-            safety_result = _safety_gate(registered.definition, policy)
-            if safety_result is not None:
-                return safety_result
+            dangerous_result = _dangerous_gate(registered.definition, policy)
+            if dangerous_result is not None:
+                return dangerous_result
 
             validate_tool_arguments(registered.definition, call.arguments)
             self._emit("tool_args_validated", call)
+
+            approval_result = self._approval_gate(call, registered.definition, policy)
+            if approval_result is not None:
+                return approval_result
 
             self._emit("tool_started", call)
             raw_output = _invoke_with_retry(
@@ -173,6 +181,40 @@ class ToolExecutor:
         self._events.append(event)
         return event
 
+    def _approval_gate(
+        self,
+        call: ToolCall,
+        definition: Any,
+        policy: ToolPolicy,
+    ) -> ToolResult | None:
+        if not (
+            policy.require_approval_for_side_effects
+            and (definition.requires_approval or _has_side_effects(definition.side_effect))
+        ):
+            return None
+
+        reason = f"Tool requires approval before execution: {definition.name}"
+        approval_id = None
+        if self._approval_store is not None:
+            request = ToolApprovalRequest(
+                tool_call=call,
+                tool_name=definition.name,
+                side_effect=definition.side_effect,
+                reason=reason,
+                risk_level=_risk_level(definition),
+                run_id=self._run_id,
+                agent_id=call.requested_by_agent_id or None,
+            )
+            approval_id = self._approval_store.upsert_approval(
+                request.to_worker_approval_request()
+            ).approval_id
+
+        return ToolResult(
+            status=ToolStatus.APPROVAL_REQUIRED,
+            output_summary=reason,
+            approval_id=approval_id,
+        )
+
 
 def _result_event_payload(observation: ToolObservation) -> dict[str, Any]:
     return {
@@ -185,26 +227,30 @@ def _result_event_payload(observation: ToolObservation) -> dict[str, Any]:
     }
 
 
-def _safety_gate(definition: Any, policy: ToolPolicy) -> ToolResult | None:
+def _dangerous_gate(definition: Any, policy: ToolPolicy) -> ToolResult | None:
     if definition.is_dangerous and not policy.allow_dangerous_tools:
         return ToolResult(
             status=ToolStatus.BLOCKED,
             error_type="ToolPermissionError",
             error_message=f"dangerous tool is not allowed: {definition.name}",
         )
-    if (
-        policy.require_approval_for_side_effects
-        and (definition.requires_approval or _has_side_effects(definition.side_effect))
-    ):
-        return ToolResult(
-            status=ToolStatus.APPROVAL_REQUIRED,
-            output_summary=f"Tool requires approval before execution: {definition.name}",
-        )
     return None
 
 
 def _has_side_effects(side_effect: str) -> bool:
     return side_effect not in {"", "none", "read_only"}
+
+
+def _risk_level(definition: Any) -> str:
+    if definition.is_dangerous or definition.side_effect == "destructive":
+        return "critical"
+    if definition.side_effect in {"publishing", "writes_external_state", "external_write"}:
+        return "high"
+    if definition.side_effect in {"writes_local_state", "local_write"}:
+        return "medium"
+    if definition.requires_approval:
+        return "medium"
+    return "low"
 
 
 def _timeout_seconds(definition: Any, policy: ToolPolicy) -> float | None:

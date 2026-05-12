@@ -1,5 +1,6 @@
 """Tool Runtime primitives."""
 
+from core.framework.tools.approval import ToolApprovalRequest
 from core.framework.tools.batch import ToolBatchExecutor
 from core.framework.tools.executor import ToolExecutor
 from core.framework.tools.models import (
@@ -29,6 +30,7 @@ __all__ = [
     "ToolCall",
     "ToolDefinition",
     "ToolDefinitionError",
+    "ToolApprovalRequest",
     "ToolBatchExecutor",
     "ToolExecutor",
     "ToolExecutorFn",

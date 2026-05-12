@@ -2,6 +2,7 @@ import json
 import time
 
 from core.framework.artifacts import ArtifactManager
+from core.framework.workers import InMemoryApprovalStore
 from core.framework.tools import (
     REDACTED_VALUE,
     ToolCall,
@@ -116,7 +117,80 @@ def test_tool_executor_requires_approval_for_side_effecting_tool() -> None:
 
     assert observation.status == ToolStatus.APPROVAL_REQUIRED
     assert calls["count"] == 0
+    assert observation.result.approval_id is None
     assert "requires approval" in (observation.result.output_summary or "")
+
+
+def test_tool_executor_stores_tool_approval_request_when_store_is_configured() -> None:
+    calls = {"count": 0}
+    registry = ToolRegistry()
+    registry.register(
+        ToolDefinition(
+            name="report.publish",
+            side_effect="publishing",
+            input_schema={
+                "required": ["report_id"],
+                "properties": {
+                    "report_id": {"type": "string"},
+                    "authorization": {"type": "string"},
+                },
+            },
+        ),
+        lambda args: calls.__setitem__("count", calls["count"] + 1),
+    )
+    approval_store = InMemoryApprovalStore()
+    executor = ToolExecutor(registry, run_id="run-approval", approval_store=approval_store)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="report.publish",
+            arguments={"report_id": "report-1", "authorization": "Bearer secret12345"},
+            requested_by_agent_id="publisher",
+            call_id="call-approval",
+        ),
+        ToolPolicy(allowed_tools=["report.publish"]),
+    )
+
+    approvals = approval_store.list_approvals()
+    approval = approvals[0]
+    tool_approval = approval.payload["tool_approval"]
+
+    assert observation.status == ToolStatus.APPROVAL_REQUIRED
+    assert calls["count"] == 0
+    assert len(approvals) == 1
+    assert observation.result.approval_id == approval.approval_id
+    assert approval.requested_action == "tool:report.publish"
+    assert approval.risk_level == "high"
+    assert approval.task_id == "call-approval"
+    assert approval.run_id == "run-approval"
+    assert approval.requested_by == "publisher"
+    assert approval.metadata["approval_type"] == "tool_execution"
+    assert tool_approval["tool_call"]["arguments"]["authorization"] == REDACTED_VALUE
+
+
+def test_tool_executor_validates_arguments_before_creating_tool_approval() -> None:
+    registry = ToolRegistry()
+    registry.register(
+        ToolDefinition(
+            name="report.publish",
+            side_effect="publishing",
+            input_schema={
+                "required": ["report_id"],
+                "properties": {"report_id": {"type": "string"}},
+            },
+        ),
+        lambda args: {"published": args["report_id"]},
+    )
+    approval_store = InMemoryApprovalStore()
+    executor = ToolExecutor(registry, approval_store=approval_store)
+
+    observation = executor.execute(
+        ToolCall(tool_name="report.publish", arguments={}),
+        ToolPolicy(allowed_tools=["report.publish"]),
+    )
+
+    assert observation.status == ToolStatus.FAILED
+    assert approval_store.list_approvals() == []
 
 
 def test_tool_executor_can_run_side_effecting_tool_when_approval_gate_is_disabled() -> None:

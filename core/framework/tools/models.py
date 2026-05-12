@@ -142,6 +142,7 @@ class ToolResult:
     artifact_refs: list[ArtifactRef] = field(default_factory=list)
     error_type: str | None = None
     error_message: str | None = None
+    approval_id: str | None = None
     redacted: bool = True
     output_bytes: int | None = None
 
@@ -153,6 +154,7 @@ class ToolResult:
             "artifact_refs": [artifact_ref.to_dict() for artifact_ref in self.artifact_refs],
             "error_type": self.error_type,
             "error_message": self.error_message,
+            "approval_id": self.approval_id,
             "redacted": self.redacted,
             "output_bytes": self.output_bytes,
         }
