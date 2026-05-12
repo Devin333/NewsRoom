@@ -46,12 +46,23 @@ class ToolDefinition:
     max_attempts: int | None = None
     concurrency_safe: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
+    version: str = "1.0.0"
 
     def __post_init__(self) -> None:
         if not self.name:
             raise ToolDefinitionError("tool name is required")
-        if "." not in self.name:
+        if "." not in self.name or any(not segment for segment in self.name.split(".")):
             raise ToolDefinitionError(f"tool name must be namespaced: {self.name}")
+        if not self.version:
+            raise ToolDefinitionError(f"tool version is required for {self.name}")
+
+    @property
+    def namespace(self) -> str:
+        return self.name.split(".", maxsplit=1)[0]
+
+    @property
+    def tool_id(self) -> str:
+        return f"{self.name}@{self.version}"
 
     @property
     def required_arguments(self) -> list[str]:
@@ -62,7 +73,10 @@ class ToolDefinition:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "tool_id": self.tool_id,
             "name": self.name,
+            "namespace": self.namespace,
+            "version": self.version,
             "description": self.description,
             "input_schema": dict(self.input_schema),
             "side_effect": self.side_effect,

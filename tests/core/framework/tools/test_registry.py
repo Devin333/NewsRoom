@@ -17,6 +17,18 @@ def test_tool_registry_registers_namespaced_tool() -> None:
     assert registry.export_schema_for_llm(["memory.search"])[0]["name"] == "memory.search"
 
 
+def test_tool_definition_exports_namespace_version_and_tool_id() -> None:
+    definition = ToolDefinition(name="memory.search", version="1.2.0")
+
+    payload = definition.to_dict()
+
+    assert definition.namespace == "memory"
+    assert definition.tool_id == "memory.search@1.2.0"
+    assert payload["namespace"] == "memory"
+    assert payload["version"] == "1.2.0"
+    assert payload["tool_id"] == "memory.search@1.2.0"
+
+
 def test_tool_registry_rejects_duplicate_tool_name() -> None:
     registry = ToolRegistry()
     definition = ToolDefinition(name="artifact.load")
@@ -29,6 +41,18 @@ def test_tool_registry_rejects_duplicate_tool_name() -> None:
 def test_tool_definition_requires_namespace() -> None:
     with pytest.raises(ToolDefinitionError, match="namespaced"):
         ToolDefinition(name="search")
+
+
+def test_tool_definition_rejects_empty_namespace_segments() -> None:
+    with pytest.raises(ToolDefinitionError, match="namespaced"):
+        ToolDefinition(name=".search")
+    with pytest.raises(ToolDefinitionError, match="namespaced"):
+        ToolDefinition(name="memory.")
+
+
+def test_tool_definition_requires_version() -> None:
+    with pytest.raises(ToolDefinitionError, match="version is required"):
+        ToolDefinition(name="memory.search", version="")
 
 
 def test_tool_registry_lists_tools_for_agent_using_policy() -> None:
