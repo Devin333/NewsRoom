@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
-from domain.sources import SourceDefinition, SourceReliability, SourceType
+from domain.sources import SourceDefinition, SourceReliability, SourceSelectionReport, SourceType
 
 
 _RELIABILITY_SCORE = {
@@ -162,6 +162,26 @@ class SourceRegistry:
         reliability: str | SourceReliability | None = None,
         fallback_to_enabled: bool = True,
     ) -> list[SourceDefinition]:
+        selected, _report = self.select_sources_with_report(
+            topic=topic,
+            enabled_only=enabled_only,
+            language=language,
+            region=region,
+            reliability=reliability,
+            fallback_to_enabled=fallback_to_enabled,
+        )
+        return selected
+
+    def select_sources_with_report(
+        self,
+        *,
+        topic: str,
+        enabled_only: bool = True,
+        language: str | None = None,
+        region: str | None = None,
+        reliability: str | SourceReliability | None = None,
+        fallback_to_enabled: bool = True,
+    ) -> tuple[list[SourceDefinition], SourceSelectionReport]:
         sources = self._filter_sources(
             enabled_only=enabled_only,
             language=language,
@@ -170,8 +190,48 @@ class SourceRegistry:
         )
         matched = [source for source in sources if _topic_match_score(source, topic) > 0]
         if matched or not fallback_to_enabled:
-            return self._sort_for_topic(matched, topic)
-        return sources
+            selected = self._sort_for_topic(matched, topic)
+            fallback_used = False
+        else:
+            selected = sources
+            fallback_used = bool(selected)
+        return selected, _selection_report(
+            topic=topic,
+            filters={
+                "enabled_only": enabled_only,
+                "language": language,
+                "region": region,
+                "reliability": (
+                    SourceReliability(reliability).value if reliability is not None else None
+                ),
+                "fallback_to_enabled": fallback_to_enabled,
+            },
+            matched_source_count=len(matched),
+            selected=selected,
+            fallback_used=fallback_used,
+            fallback_reason="no_topic_match" if fallback_used else None,
+        )
+
+    def selection_report(
+        self,
+        *,
+        topic: str,
+        selected_sources: list[SourceDefinition],
+        filters: dict[str, Any] | None = None,
+        matched_source_count: int | None = None,
+        fallback_used: bool = False,
+        fallback_reason: str | None = None,
+    ) -> SourceSelectionReport:
+        return _selection_report(
+            topic=topic,
+            filters=filters or {},
+            matched_source_count=(
+                len(selected_sources) if matched_source_count is None else matched_source_count
+            ),
+            selected=selected_sources,
+            fallback_used=fallback_used,
+            fallback_reason=fallback_reason,
+        )
 
     def _filter_sources(
         self,
@@ -217,6 +277,42 @@ def _topic_match_score(source: SourceDefinition, requested_topic: str) -> int:
         if topic_terms and topic_terms.intersection(request_terms):
             score += 1
     return score
+
+
+def _selection_report(
+    *,
+    topic: str,
+    filters: dict[str, Any],
+    matched_source_count: int,
+    selected: list[SourceDefinition],
+    fallback_used: bool,
+    fallback_reason: str | None,
+) -> SourceSelectionReport:
+    return SourceSelectionReport(
+        topic=topic,
+        selected_source_count=len(selected),
+        matched_source_count=matched_source_count,
+        fallback_used=fallback_used,
+        fallback_reason=fallback_reason,
+        selected_source_ids=[source.source_id for source in selected],
+        selected_sources=[_source_summary(source) for source in selected],
+        filters={key: value for key, value in filters.items() if value is not None},
+    )
+
+
+def _source_summary(source: SourceDefinition) -> dict[str, Any]:
+    return {
+        "source_id": source.source_id,
+        "source_name": source.name,
+        "source_type": source.source_type.value,
+        "url": source.url,
+        "reliability": source.reliability.value,
+        "authority_score": source.authority_score,
+        "enabled": source.enabled,
+        "topics": list(source.topics),
+        "language": source.language,
+        "region": source.region,
+    }
 
 
 def _validate_source(source: SourceDefinition) -> list[SourceRegistryValidationIssue]:

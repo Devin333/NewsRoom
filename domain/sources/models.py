@@ -534,6 +534,30 @@ class SourceItemQualityScore:
         }
 
 
+@dataclass(frozen=True)
+class SourceSelectionReport:
+    topic: str
+    selected_source_count: int
+    matched_source_count: int
+    fallback_used: bool
+    selected_source_ids: list[str] = field(default_factory=list)
+    selected_sources: list[dict[str, Any]] = field(default_factory=list)
+    filters: dict[str, Any] = field(default_factory=dict)
+    fallback_reason: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "topic": self.topic,
+            "selected_source_count": self.selected_source_count,
+            "matched_source_count": self.matched_source_count,
+            "fallback_used": self.fallback_used,
+            "fallback_reason": self.fallback_reason,
+            "selected_source_ids": list(self.selected_source_ids),
+            "selected_sources": [dict(source) for source in self.selected_sources],
+            "filters": dict(self.filters),
+        }
+
+
 def _dt(value: datetime | None) -> str | None:
     return value.isoformat().replace("+00:00", "Z") if value else None
 

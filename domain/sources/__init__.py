@@ -17,6 +17,7 @@ from domain.sources.models import (
     SourcePipelineEvent,
     SourcePipelineMetrics,
     SourceReliability,
+    SourceSelectionReport,
     SourceType,
 )
 
@@ -37,5 +38,6 @@ __all__ = [
     "SourcePipelineEvent",
     "SourcePipelineMetrics",
     "SourceReliability",
+    "SourceSelectionReport",
     "SourceType",
 ]

@@ -233,6 +233,54 @@ def test_source_registry_select_sources_falls_back_to_enabled_sources() -> None:
     assert registry.select_sources(topic="weather") == [better, enabled]
     assert registry.select_sources(topic="weather", fallback_to_enabled=False) == []
 
+    selected, report = registry.select_sources_with_report(topic="weather")
+
+    assert selected == [better, enabled]
+    assert report.topic == "weather"
+    assert report.matched_source_count == 0
+    assert report.selected_source_count == 2
+    assert report.fallback_used is True
+    assert report.fallback_reason == "no_topic_match"
+    assert report.selected_source_ids == ["better", "enabled"]
+    assert report.filters["fallback_to_enabled"] is True
+
+
+def test_source_registry_selection_report_records_topic_matches() -> None:
+    official = SourceDefinition(
+        source_id="official",
+        name="Official",
+        source_type="rss",
+        url="https://example.com/official.xml",
+        topics=["ai", "policy"],
+        language="en",
+        reliability="high",
+        authority_score=0.9,
+    )
+    unrelated = SourceDefinition(
+        source_id="unrelated",
+        name="Unrelated",
+        source_type="rss",
+        url="https://example.com/unrelated.xml",
+        topics=["sports"],
+        language="en",
+    )
+    registry = SourceRegistry([unrelated, official])
+
+    selected, report = registry.select_sources_with_report(topic="AI policy", language="en")
+    payload = report.to_dict()
+
+    assert selected == [official]
+    assert report.fallback_used is False
+    assert payload["matched_source_count"] == 1
+    assert payload["selected_source_ids"] == ["official"]
+    assert payload["selected_sources"][0]["source_type"] == "rss"
+    assert payload["selected_sources"][0]["reliability"] == "high"
+    assert payload["filters"] == {
+        "enabled_only": True,
+        "language": "en",
+        "fallback_to_enabled": True,
+    }
+
 
 def test_source_registry_validate_reports_errors_and_warnings() -> None:
     invalid = SourceDefinition(

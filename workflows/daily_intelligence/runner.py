@@ -205,6 +205,10 @@ class DailyIntelligenceRunner:
                 "source_health_updates": source_health_updates,
                 "source_events": source_events,
                 "source_pipeline_metrics": metrics,
+                "source_selection_report": self.source_registry.selection_report(
+                    topic=request["topic"],
+                    selected_sources=[fixture_source],
+                ),
                 "source_coverage_report": build_source_coverage_report(
                     metrics,
                     source_errors=source_errors,
@@ -214,7 +218,9 @@ class DailyIntelligenceRunner:
             }
 
         raw_items = []
-        enabled_sources = self.source_registry.select_sources(topic=request["topic"])
+        enabled_sources, source_selection_report = self.source_registry.select_sources_with_report(
+            topic=request["topic"]
+        )
         metrics.sources_total = len(enabled_sources)
         for source in enabled_sources:
             metrics.record_source_seen(source.source_type, source.reliability)
@@ -457,6 +463,7 @@ class DailyIntelligenceRunner:
             "source_health_updates": source_health_updates,
             "source_events": source_events,
             "source_pipeline_metrics": metrics,
+            "source_selection_report": source_selection_report,
             "source_coverage_report": build_source_coverage_report(
                 metrics,
                 source_errors=source_errors,
@@ -569,6 +576,7 @@ def build_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
                     "source_health_updates",
                     "source_events",
                     "source_pipeline_metrics",
+                    "source_selection_report",
                     "source_coverage_report",
                 ],
                 required_output_keys=[
@@ -581,6 +589,7 @@ def build_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
                     "source_health_updates",
                     "source_events",
                     "source_pipeline_metrics",
+                    "source_selection_report",
                     "source_coverage_report",
                 ],
             ),

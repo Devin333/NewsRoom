@@ -150,6 +150,7 @@ def test_daily_intelligence_runner_live_offline_writes_report_artifacts(tmp_path
     assert manifest["artifacts"]["report_json"] == "report.json"
     assert manifest["artifacts"]["report_markdown"] == "report.md"
     assert manifest["artifacts"]["source_events"] == "source_events.json"
+    assert manifest["artifacts"]["source_selection_report"] == "source_selection_report.json"
     assert manifest["artifacts"]["source_coverage_report"] == "source_coverage_report.json"
     assert manifest["artifacts"]["source_quality_scores"] == "source_quality_scores.json"
     assert manifest["source_quality_score_count"] == 2
@@ -187,6 +188,12 @@ def test_daily_intelligence_runner_live_offline_writes_report_artifacts(tmp_path
     assert source_metrics["fetched_by_type"] == {"rss": 1}
     assert source_metrics["items_by_source_type"] == {"rss": 2}
     assert source_metrics["items_by_reliability"] == {"high": 2}
+
+    selection_report = json.loads((run_dir / "source_selection_report.json").read_text(encoding="utf-8"))
+    assert selection_report["topic"] == "AI policy"
+    assert selection_report["fallback_used"] is False
+    assert selection_report["selected_source_ids"] == ["fixture-ai"]
+    assert selection_report["selected_sources"][0]["source_type"] == "rss"
 
     coverage_report = json.loads((run_dir / "source_coverage_report.json").read_text(encoding="utf-8"))
     assert coverage_report["coverage_status"] == "covered"
@@ -793,6 +800,7 @@ def test_daily_intelligence_runner_records_partial_source_failures(tmp_path) -> 
     assert manifest["artifacts"]["source_fetch_results"] == "source_fetch_results.json"
     assert manifest["artifacts"]["source_events"] == "source_events.json"
     assert manifest["artifacts"]["source_pipeline_metrics"] == "source_pipeline_metrics.json"
+    assert manifest["artifacts"]["source_selection_report"] == "source_selection_report.json"
     assert manifest["artifacts"]["source_coverage_report"] == "source_coverage_report.json"
     assert manifest["artifacts"]["source_artifacts"] == "source_artifacts/index.json"
     assert manifest["source_event_count"] == 9
@@ -1007,6 +1015,7 @@ def test_daily_intelligence_runner_all_sources_failed_preserves_diagnostics(tmp_
     assert manifest["artifacts"]["source_fetch_requests"] == "source_fetch_requests.json"
     assert manifest["artifacts"]["source_events"] == "source_events.json"
     assert manifest["artifacts"]["source_pipeline_metrics"] == "source_pipeline_metrics.json"
+    assert manifest["artifacts"]["source_selection_report"] == "source_selection_report.json"
     assert manifest["artifacts"]["source_coverage_report"] == "source_coverage_report.json"
     assert manifest["artifacts"]["source_artifacts"] == "source_artifacts/index.json"
     assert "report_json" not in manifest["artifacts"]
