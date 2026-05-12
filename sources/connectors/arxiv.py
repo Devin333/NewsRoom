@@ -243,6 +243,7 @@ def _source_error(
 ) -> SourceError:
     return SourceError(
         source_id=source.source_id,
+        source_name=source.name,
         error_type=error_type,
         error_message=error_message,
         url=source.url,

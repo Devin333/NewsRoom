@@ -105,7 +105,9 @@ def test_feed_connector_fetch_returns_structured_error() -> None:
 
     assert items == []
     assert errors[0].source_id == "rss-source"
+    assert errors[0].source_name == "RSS Source"
     assert errors[0].error_type == "fetch_connection_error"
+    assert errors[0].retryable is True
     assert errors[0].metadata["original_exception_type"] == "RuntimeError"
     assert errors[0].metadata["retryable"] is True
 
@@ -160,6 +162,7 @@ def test_feed_connector_fetch_maps_parse_error() -> None:
     assert errors[0].error_type == "parse_error"
     assert errors[0].metadata["phase"] == "parse"
     assert errors[0].metadata["retryable"] is False
+    assert errors[0].retryable is False
 
 
 def test_feed_connector_fetch_maps_timeout_error() -> None:
@@ -285,6 +288,7 @@ def test_feed_connector_default_fetch_rejects_unsupported_content_type(monkeypat
     assert errors[0].metadata["phase"] == "fetch"
     assert errors[0].metadata["content_type"] == "text/html"
     assert errors[0].metadata["retryable"] is False
+    assert errors[0].retryable is False
     assert errors[0].metadata["source_health_affecting"] is False
     assert "application/rss+xml" in errors[0].metadata["supported_content_types"]
 
@@ -512,6 +516,8 @@ def test_feed_connector_rate_limits_same_domain_before_fetch() -> None:
     assert second_items == []
     assert second_errors[0].error_type == "rate_limited"
     assert second_errors[0].url == "https://example.com/other.xml"
+    assert second_errors[0].source_name == "RSS Source 2"
+    assert second_errors[0].retryable is True
     assert second_errors[0].metadata["domain"] == "example.com"
     assert second_errors[0].metadata["retryable"] is True
     assert second_errors[0].metadata["source_health_affecting"] is False

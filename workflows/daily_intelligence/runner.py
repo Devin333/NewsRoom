@@ -337,9 +337,14 @@ class DailyIntelligenceRunner:
         if not raw_items:
             all_sources_error = SourceError(
                 source_id="source_pipeline",
+                source_name="Source Pipeline",
                 error_type="all_sources_failed",
                 error_message="all enabled sources failed or returned no valid items",
+                retryable=False,
                 metadata={
+                    "retryable": False,
+                    "source_health_affecting": False,
+                    "workflow_blocking": True,
                     "sources_total": metrics.sources_total,
                     "sources_failed": metrics.sources_failed,
                     "sources_skipped": metrics.sources_skipped,
@@ -395,9 +400,11 @@ class DailyIntelligenceRunner:
         return [], [
             SourceError(
                 source_id=source.source_id,
+                source_name=source.name,
                 error_type="unsupported_source_type",
                 error_message=f"unsupported source type: {source.source_type.value}",
                 url=source.url,
+                retryable=False,
                 metadata={
                     "retryable": False,
                     "source_health_affecting": False,
@@ -840,6 +847,8 @@ def _raw_content_bytes(items: list[Any]) -> int | None:
 
 
 def _error_metadata_bool(error: SourceError, key: str, *, default: bool) -> bool:
+    if key == "retryable" and error.retryable is not None:
+        return error.retryable
     value = error.metadata.get(key, default)
     if isinstance(value, bool):
         return value

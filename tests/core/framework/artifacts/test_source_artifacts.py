@@ -25,9 +25,11 @@ def test_source_artifact_writer_writes_items_errors_and_redacts(tmp_path) -> Non
         source_errors=[
             SourceError(
                 source_id="feed/source",
+                source_name="Feed Source",
                 error_type="fetch_timeout",
                 error_message="timeout",
                 url="https://example.com/feed?access_token=value&topic=ai",
+                retryable=True,
             )
         ],
     )
@@ -53,4 +55,6 @@ def test_source_artifact_writer_writes_items_errors_and_redacts(tmp_path) -> Non
     error_payload = json.loads((run_dir / error_entry["path"]).read_text())
     assert error_entry["size_bytes"] == (run_dir / error_entry["path"]).stat().st_size
     assert error_payload["error"]["error_type"] == "fetch_timeout"
+    assert error_payload["error"]["source_name"] == "Feed Source"
+    assert error_payload["error"]["retryable"] is True
     assert "value" not in json.dumps(error_payload)

@@ -206,16 +206,32 @@ class SourceError:
     source_id: str
     error_type: str
     error_message: str
+    source_name: str | None = None
     url: str | None = None
+    retryable: bool | None = None
+    request_ref: Any | None = None
+    response_ref: Any | None = None
     occurred_at: datetime = field(default_factory=utc_now)
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.retryable is None:
+            object.__setattr__(
+                self,
+                "retryable",
+                _metadata_bool(self.metadata.get("retryable"), default=True),
+            )
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "source_id": self.source_id,
+            "source_name": self.source_name,
             "error_type": self.error_type,
             "error_message": self.error_message,
             "url": self.url,
+            "retryable": self.retryable,
+            "request_ref": _artifact_ref(self.request_ref),
+            "response_ref": _artifact_ref(self.response_ref),
             "occurred_at": self.occurred_at.isoformat().replace("+00:00", "Z"),
             "metadata": dict(self.metadata),
         }
@@ -310,3 +326,17 @@ class SourcePipelineMetrics:
 
 def _dt(value: datetime | None) -> str | None:
     return value.isoformat().replace("+00:00", "Z") if value else None
+
+
+def _metadata_bool(value: Any, *, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().casefold() in {"1", "true", "yes", "on"}
+
+
+def _artifact_ref(value: Any) -> Any:
+    if hasattr(value, "to_dict"):
+        return value.to_dict()
+    return value

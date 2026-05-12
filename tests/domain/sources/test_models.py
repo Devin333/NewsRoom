@@ -4,6 +4,7 @@ import pytest
 
 from domain.sources import (
     SourceDefinition,
+    SourceError,
     SourceFetchRequest,
     SourceFetchResult,
     SourcePipelineEvent,
@@ -58,6 +59,37 @@ def test_source_fetch_request_and_result_serialize() -> None:
     assert result.to_dict()["request_id"] == "fetch-1"
     assert result.to_dict()["success"] is False
     assert result.to_dict()["skip_reason"] == "robots"
+
+
+def test_source_error_exposes_top_level_policy_fields_from_legacy_metadata() -> None:
+    error = SourceError(
+        source_id="rss-source",
+        source_name="RSS Source",
+        error_type="unsupported_content_type",
+        error_message="unsupported content type",
+        url="https://example.com/feed.xml",
+        metadata={"retryable": False, "source_health_affecting": False},
+    )
+
+    payload = error.to_dict()
+
+    assert error.retryable is False
+    assert payload["source_name"] == "RSS Source"
+    assert payload["retryable"] is False
+    assert payload["request_ref"] is None
+    assert payload["response_ref"] is None
+    assert payload["metadata"]["retryable"] is False
+
+
+def test_source_error_defaults_retryable_when_policy_metadata_is_absent() -> None:
+    error = SourceError(
+        source_id="rss-source",
+        error_type="fetch_connection_error",
+        error_message="connection failed",
+    )
+
+    assert error.retryable is True
+    assert error.to_dict()["retryable"] is True
 
 
 def test_source_pipeline_event_serializes() -> None:

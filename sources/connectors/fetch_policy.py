@@ -130,9 +130,11 @@ def rate_limited_source_error(
 ) -> SourceError:
     return SourceError(
         source_id=source.source_id,
+        source_name=source.name,
         error_type="rate_limited",
         error_message=f"source fetch rate limit reached for domain: {decision.domain}",
         url=url,
+        retryable=True,
         metadata={
             "phase": "fetch",
             "retryable": True,

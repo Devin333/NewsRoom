@@ -469,6 +469,8 @@ def test_daily_intelligence_runner_records_partial_source_failures(tmp_path) -> 
     assert metrics.sources_fetched == 1
     assert metrics.errors_by_type == {"fetch_connection_error": 1}
     assert result.output["failed_sources"][0]["source_id"] == "failing"
+    assert result.output["failed_sources"][0]["source_name"] == "Failing"
+    assert result.output["failed_sources"][0]["retryable"] is True
 
     run_dir = Path(result.artifact_dir)
     manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
@@ -503,6 +505,8 @@ def test_daily_intelligence_runner_records_partial_source_failures(tmp_path) -> 
     )
     error_payload = json.loads((run_dir / error_entry["path"]).read_text())
     assert error_payload["error"]["source_id"] == "failing"
+    assert error_payload["error"]["source_name"] == "Failing"
+    assert error_payload["error"]["retryable"] is True
 
     source_fetch_results = json.loads((run_dir / "source_fetch_results.json").read_text())
     assert [result["source_id"] for result in source_fetch_results] == ["failing", "working"]
@@ -604,6 +608,11 @@ def test_daily_intelligence_runner_all_sources_failed_preserves_diagnostics(tmp_
 
     source_errors = json.loads((run_dir / "source_errors.json").read_text(encoding="utf-8"))
     assert any(error["error_type"] == "all_sources_failed" for error in source_errors)
+    all_sources_error = next(
+        error for error in source_errors if error["error_type"] == "all_sources_failed"
+    )
+    assert all_sources_error["source_name"] == "Source Pipeline"
+    assert all_sources_error["retryable"] is False
 
     metrics = json.loads((run_dir / "source_pipeline_metrics.json").read_text(encoding="utf-8"))
     assert metrics["raw_items_count"] == 0
