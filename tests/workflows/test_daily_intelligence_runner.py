@@ -357,6 +357,33 @@ def test_daily_intelligence_runner_live_collects_html_source(tmp_path) -> None:
     )
 
 
+def test_daily_intelligence_runner_live_collects_official_blog_source(tmp_path) -> None:
+    registry = SourceRegistry(
+        [
+            SourceDefinition(
+                source_id="official-blog",
+                name="Official Blog",
+                source_type="official_blog",
+                url="https://example.com/blog",
+                reliability="high",
+                topics=["ai", "policy"],
+            )
+        ]
+    )
+
+    result = DailyIntelligenceRunner(
+        artifact_root=tmp_path,
+        source_registry=registry,
+        html_connector=HtmlConnector(fetch_text=lambda url: HTML_FIXTURE),
+        llm_client=_FakeReportLLM(),
+    ).run(profile="live", topic="AI policy", source_limit=1, run_id="daily-official-blog-source")
+
+    assert result.status == WorkflowStatus.SUCCEEDED
+    assert result.output["raw_items"][0].source_type.value == "official_blog"
+    assert result.output["raw_items"][0].metadata["official_blog"] is True
+    assert result.output["source_pipeline_metrics"].items_by_source_type == {"official_blog": 1}
+
+
 def test_daily_intelligence_runner_live_collects_manual_source(tmp_path) -> None:
     registry = SourceRegistry(
         [

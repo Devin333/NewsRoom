@@ -12,6 +12,8 @@ class SourceType(str, Enum):
     ARXIV = "arxiv"
     GITHUB = "github"
     HTML = "html"
+    OFFICIAL_BLOG = "official_blog"
+    WEB_PAGE = "web_page"
     MANUAL = "manual"
 
 

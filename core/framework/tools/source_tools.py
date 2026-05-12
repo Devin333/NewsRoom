@@ -299,7 +299,7 @@ def _parse_feed(args: dict[str, Any], *, default_source_type: SourceType) -> dic
 
 def _extract_items(args: dict[str, Any]) -> dict[str, Any]:
     source = _source_definition(args["source"], default_source_type=SourceType.RSS)
-    if source.source_type == SourceType.HTML:
+    if _is_html_backed_source_type(source.source_type):
         return _parse_html(
             {"source": args["source"], "html": args["content"], "limit": args.get("limit")}
         )
@@ -315,8 +315,8 @@ def _extract_items(args: dict[str, Any]) -> dict[str, Any]:
 
 def _parse_html(args: dict[str, Any]) -> dict[str, Any]:
     source = _source_definition(args["source"], default_source_type=SourceType.HTML)
-    if source.source_type != SourceType.HTML:
-        raise ValueError("source.extract_html requires source_type=html")
+    if not _is_html_backed_source_type(source.source_type):
+        raise ValueError("source.extract_html requires source_type=html, official_blog, or web_page")
     limit = args.get("limit")
     items = HtmlConnector().parse(
         source,
@@ -625,6 +625,8 @@ def _ensure_official_blog(source: SourceDefinition) -> None:
 
 
 def _is_official_blog(source: SourceDefinition) -> bool:
+    if source.source_type == SourceType.OFFICIAL_BLOG:
+        return True
     metadata = source.metadata
     if _truthy(metadata.get("official_blog")) or _truthy(metadata.get("official")):
         return True
@@ -636,8 +638,15 @@ def _is_official_blog(source: SourceDefinition) -> bool:
 
 
 def _ensure_official_blog_source_type(source: SourceDefinition) -> None:
-    if source.source_type not in {SourceType.RSS, SourceType.ATOM, SourceType.HTML}:
-        raise ValueError(f"official blog source must be rss, atom, or html: {source.source_id}")
+    if source.source_type not in {
+        SourceType.RSS,
+        SourceType.ATOM,
+        SourceType.HTML,
+        SourceType.OFFICIAL_BLOG,
+    }:
+        raise ValueError(
+            f"official blog source must be rss, atom, html, or official_blog: {source.source_id}"
+        )
 
 
 def _official_blog_connector(
@@ -646,7 +655,7 @@ def _official_blog_connector(
     fetch_text: FetchText | None,
     policy: SourceFetchPolicy,
 ) -> FeedConnector | HtmlConnector:
-    if source.source_type == SourceType.HTML:
+    if _is_html_backed_source_type(source.source_type):
         return HtmlConnector(
             fetch_text=_policy_fetch_text(fetch_text, policy),
             fetch_policy=policy,
@@ -661,6 +670,10 @@ def _truthy(value: Any) -> bool:
     if isinstance(value, bool):
         return value
     return str(value).strip().casefold() in {"1", "true", "yes", "on"}
+
+
+def _is_html_backed_source_type(source_type: SourceType) -> bool:
+    return source_type in {SourceType.HTML, SourceType.OFFICIAL_BLOG, SourceType.WEB_PAGE}
 
 
 def _optional_bool(value: Any, default: bool) -> bool:

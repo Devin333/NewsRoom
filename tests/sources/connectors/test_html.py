@@ -61,6 +61,23 @@ def test_html_connector_parses_html_into_raw_source_item() -> None:
     assert item.metadata["source_reliability"] == "high"
 
 
+def test_html_connector_preserves_official_blog_source_type_and_metadata() -> None:
+    source = SourceDefinition(
+        source_id="official-blog",
+        name="Official Blog",
+        source_type="official_blog",
+        url="https://example.com/blog/product-launch",
+        reliability="high",
+    )
+
+    items = HtmlConnector().parse(source, HTML_FIXTURE)
+
+    assert len(items) == 1
+    assert items[0].source_type.value == "official_blog"
+    assert items[0].metadata["official_blog"] is True
+    assert items[0].metadata["source_kind"] == "official_blog"
+
+
 def test_html_connector_falls_back_to_source_name_and_url_for_minimal_html() -> None:
     source = _source()
     html = "<html><body><p>Only visible body text is available here.</p></body></html>"

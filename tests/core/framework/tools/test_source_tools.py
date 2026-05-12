@@ -527,6 +527,41 @@ def test_source_fetch_official_blog_tool_fetches_marked_html_source() -> None:
     assert item["metadata"]["extractor_name"] == "stdlib_html_extractor"
 
 
+def test_source_fetch_official_blog_tool_accepts_official_blog_source_type() -> None:
+    registry = ToolRegistry()
+    source_registry = SourceRegistry(
+        [
+            SourceDefinition(
+                source_id="official-blog",
+                name="Official Blog",
+                source_type="official_blog",
+                url="https://example.com/blog/launch",
+                reliability="high",
+            )
+        ]
+    )
+    register_source_tools(
+        registry,
+        source_registry=source_registry,
+        fetch_text=lambda url: HTML_FIXTURE,
+    )
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="source.fetch_official_blog",
+            arguments={"source_id": "official-blog", "limit": 1},
+        ),
+        ToolPolicy(allowed_tools=["source.fetch_official_blog"]),
+    )
+
+    item = observation.result.output["items"][0]
+
+    assert observation.status == ToolStatus.SUCCEEDED
+    assert item["source_type"] == "official_blog"
+    assert item["metadata"]["official_blog"] is True
+
+
 def test_source_search_tool_selects_sources_by_topic_filters_and_limit() -> None:
     registry = ToolRegistry()
     source_registry = SourceRegistry(
@@ -1016,6 +1051,34 @@ def test_source_extract_html_tool_extracts_html_content() -> None:
     assert item["source_type"] == "html"
     assert item["title"] == "Official Launch Notes"
     assert item["metadata"]["extraction_confidence"] > 0
+
+
+def test_source_extract_html_tool_accepts_web_page_source_type() -> None:
+    registry = ToolRegistry()
+    register_source_tools(registry)
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="source.extract_html",
+            arguments={
+                "source": {
+                    "source_id": "web-page",
+                    "name": "Web Page",
+                    "url": "https://example.com/blog/launch",
+                    "source_type": "web_page",
+                },
+                "html": HTML_FIXTURE,
+            },
+        ),
+        ToolPolicy(allowed_tools=["source.extract_html"]),
+    )
+
+    item = observation.result.output["items"][0]
+
+    assert observation.status == ToolStatus.SUCCEEDED
+    assert item["source_type"] == "web_page"
+    assert item["metadata"]["source_kind"] == "web_page"
 
 
 def test_source_extract_items_tool_dispatches_html_content() -> None:

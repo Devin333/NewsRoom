@@ -50,6 +50,31 @@ def test_source_registry_lists_sources_by_type() -> None:
     assert registry.list_by_type("html", enabled_only=False) == [html, disabled_html]
 
 
+def test_source_registry_validates_html_backed_target_source_types() -> None:
+    official_blog = SourceDefinition(
+        source_id="official",
+        name="Official Blog",
+        source_type="official_blog",
+        url="https://example.com/blog",
+        topics=["ai"],
+    )
+    web_page = SourceDefinition(
+        source_id="web-page",
+        name="Web Page",
+        source_type="web_page",
+        url="ftp://example.com/page",
+        topics=["ai"],
+    )
+    registry = SourceRegistry([official_blog, web_page])
+
+    result = registry.validate()
+
+    assert result.is_valid is False
+    issues = {(issue.source_id, issue.field, issue.severity) for issue in result.issues}
+    assert ("official", "url", "error") not in issues
+    assert ("web-page", "url", "error") in issues
+
+
 def test_source_registry_lists_sources_by_reliability() -> None:
     high = SourceDefinition(
         source_id="high",

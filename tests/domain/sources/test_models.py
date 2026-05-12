@@ -20,12 +20,12 @@ def test_source_definition_normalizes_enums() -> None:
     source = SourceDefinition(
         source_id="openai",
         name="OpenAI",
-        source_type="rss",
+        source_type="official_blog",
         url="https://example.com/feed.xml",
         reliability="high",
     )
 
-    assert source.source_type == SourceType.RSS
+    assert source.source_type == SourceType.OFFICIAL_BLOG
     assert source.reliability == SourceReliability.HIGH
     assert source.respect_robots is True
 

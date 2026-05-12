@@ -425,7 +425,7 @@ class DailyIntelligenceRunner:
     ) -> tuple[list[Any], list[SourceError]]:
         if source.source_type in {SourceType.RSS, SourceType.ATOM}:
             return self.feed_connector.fetch(source, limit=limit)
-        if source.source_type == SourceType.HTML:
+        if source.source_type in {SourceType.HTML, SourceType.OFFICIAL_BLOG, SourceType.WEB_PAGE}:
             return self.html_connector.fetch(source, limit=limit)
         if source.source_type == SourceType.MANUAL:
             return self.manual_connector.fetch(source, limit=limit)

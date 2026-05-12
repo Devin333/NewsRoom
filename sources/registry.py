@@ -17,6 +17,8 @@ FETCHABLE_SOURCE_TYPES = {
     SourceType.RSS,
     SourceType.ATOM,
     SourceType.HTML,
+    SourceType.OFFICIAL_BLOG,
+    SourceType.WEB_PAGE,
     SourceType.ARXIV,
     SourceType.GITHUB,
 }
