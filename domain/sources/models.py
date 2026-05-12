@@ -11,6 +11,7 @@ class SourceType(str, Enum):
     ATOM = "atom"
     ARXIV = "arxiv"
     GITHUB = "github"
+    HTML = "html"
 
 
 class SourceReliability(str, Enum):
