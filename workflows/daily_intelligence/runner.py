@@ -46,6 +46,7 @@ from sources.health import BasicSourceHealthManager
 from sources.processing import (
     build_source_connector_dispatch_report,
     build_source_coverage_report,
+    build_source_fallback_report,
     build_source_freshness_report,
     build_source_governance_report,
     build_source_ranking_scores,
@@ -218,6 +219,14 @@ class DailyIntelligenceRunner:
                 "source_connector_dispatch_report": build_source_connector_dispatch_report(
                     source_fetch_requests,
                     source_fetch_results,
+                ),
+                "source_fallback_report": build_source_fallback_report(
+                    raw_items=raw_items,
+                    source_errors=source_errors,
+                    source_selection_report=self.source_registry.selection_report(
+                        topic=request["topic"],
+                        selected_sources=[fixture_source],
+                    ),
                 ),
                 "source_selection_report": self.source_registry.selection_report(
                     topic=request["topic"],
@@ -481,6 +490,11 @@ class DailyIntelligenceRunner:
                 source_fetch_requests,
                 source_fetch_results,
             ),
+            "source_fallback_report": build_source_fallback_report(
+                raw_items=raw_items,
+                source_errors=source_errors,
+                source_selection_report=source_selection_report,
+            ),
             "source_selection_report": source_selection_report,
             "source_coverage_report": build_source_coverage_report(
                 metrics,
@@ -622,6 +636,7 @@ def build_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
                     "source_events",
                     "source_pipeline_metrics",
                     "source_connector_dispatch_report",
+                    "source_fallback_report",
                     "source_selection_report",
                     "source_coverage_report",
                 ],
@@ -636,6 +651,7 @@ def build_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
                     "source_events",
                     "source_pipeline_metrics",
                     "source_connector_dispatch_report",
+                    "source_fallback_report",
                     "source_selection_report",
                     "source_coverage_report",
                 ],

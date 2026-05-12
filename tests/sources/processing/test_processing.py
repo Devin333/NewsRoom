@@ -12,6 +12,7 @@ from domain.sources import (
 from sources.processing import (
     build_source_connector_dispatch_report,
     build_source_coverage_report,
+    build_source_fallback_report,
     build_source_freshness_report,
     build_source_governance_report,
     build_source_ranking_scores,
@@ -196,6 +197,50 @@ def test_build_source_connector_dispatch_report_joins_requests_and_results() -> 
     assert report.skipped_by_connector == {"FeedConnector": 1}
     assert report.rows[1]["error_type"] == "fetch_timeout"
     assert report.rows[2]["skip_reason"] == "cooldown"
+
+
+def test_build_source_fallback_report_summarizes_selection_item_and_error_fallbacks() -> None:
+    raw_item = _raw_item(
+        "Official fallback",
+        "https://example.com/fallback",
+        metadata={
+            "official_blog_fetch_mode": "html_fallback",
+            "official_blog_fallback": {
+                "from": "feed",
+                "to": "html",
+                "feed_error_types": ["fetch_connection_error"],
+            },
+        },
+    )
+    error = SourceError(
+        source_id="official",
+        error_type="parse_error",
+        error_message="parse failed",
+        retryable=False,
+        metadata={"official_blog_fallback_stage": "html"},
+    )
+
+    report = build_source_fallback_report(
+        raw_items=[raw_item],
+        source_errors=[error],
+        source_selection_report={
+            "fallback_used": True,
+            "fallback_reason": "no_topic_match",
+            "selected_source_ids": ["official"],
+        },
+    )
+
+    assert report.total_fallback_count == 3
+    assert report.selection_fallback_used is True
+    assert report.selection_fallback_reason == "no_topic_match"
+    assert report.item_fallback_count == 1
+    assert report.error_fallback_count == 1
+    assert [row["fallback_type"] for row in report.rows] == [
+        "source_selection",
+        "official_blog_fetch",
+        "official_blog_failed_stage",
+    ]
+    assert report.rows[1]["feed_error_types"] == ["fetch_connection_error"]
 
 
 def test_build_source_governance_report_flags_policy_findings() -> None:

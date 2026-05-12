@@ -151,6 +151,7 @@ def test_daily_intelligence_runner_live_offline_writes_report_artifacts(tmp_path
     assert manifest["artifacts"]["report_markdown"] == "report.md"
     assert manifest["artifacts"]["source_events"] == "source_events.json"
     assert manifest["artifacts"]["source_connector_dispatch_report"] == "source_connector_dispatch_report.json"
+    assert manifest["artifacts"]["source_fallback_report"] == "source_fallback_report.json"
     assert manifest["artifacts"]["source_selection_report"] == "source_selection_report.json"
     assert manifest["artifacts"]["source_coverage_report"] == "source_coverage_report.json"
     assert manifest["artifacts"]["source_quality_scores"] == "source_quality_scores.json"
@@ -202,6 +203,12 @@ def test_daily_intelligence_runner_live_offline_writes_report_artifacts(tmp_path
     assert dispatch_report["rows"][0]["connector_name"] == "FeedConnector"
     assert dispatch_report["rows"][0]["success"] is True
     assert result.output["source_connector_dispatch_report"].success_count == 1
+
+    fallback_report = json.loads((run_dir / "source_fallback_report.json").read_text(encoding="utf-8"))
+    assert fallback_report["total_fallback_count"] == 0
+    assert fallback_report["selection_fallback_used"] is False
+    assert fallback_report["item_fallback_count"] == 0
+    assert result.output["source_fallback_report"].total_fallback_count == 0
 
     selection_report = json.loads((run_dir / "source_selection_report.json").read_text(encoding="utf-8"))
     assert selection_report["topic"] == "AI policy"
@@ -654,6 +661,11 @@ def test_daily_intelligence_runner_live_falls_back_official_blog_to_html(tmp_pat
         "feed_error_types": ["fetch_connection_error"],
     }
     assert result.output["source_pipeline_metrics"].items_by_source_type == {"official_blog": 1}
+    fallback_report = result.output["source_fallback_report"]
+    assert fallback_report.total_fallback_count == 1
+    assert fallback_report.item_fallback_count == 1
+    assert fallback_report.rows[0]["fallback_type"] == "official_blog_fetch"
+    assert fallback_report.rows[0]["feed_error_types"] == ["fetch_connection_error"]
 
 
 def test_daily_intelligence_runner_live_collects_manual_source(tmp_path) -> None:

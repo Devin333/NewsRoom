@@ -562,6 +562,13 @@ class WorkflowExecutor:
             manifest["artifacts"]["source_connector_dispatch_report"] = (
                 "source_connector_dispatch_report.json"
             )
+        if "source_fallback_report" in output:
+            self._artifact_manager.write_json(
+                run_id,
+                "source_fallback_report.json",
+                output["source_fallback_report"],
+            )
+            manifest["artifacts"]["source_fallback_report"] = "source_fallback_report.json"
         if "source_selection_report" in output:
             self._artifact_manager.write_json(
                 run_id,

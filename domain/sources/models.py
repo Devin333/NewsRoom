@@ -682,6 +682,26 @@ class SourceFreshnessReport:
 
 
 @dataclass(frozen=True)
+class SourceFallbackReport:
+    total_fallback_count: int
+    selection_fallback_used: bool
+    item_fallback_count: int
+    error_fallback_count: int
+    selection_fallback_reason: str | None = None
+    rows: list[dict[str, Any]] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "total_fallback_count": self.total_fallback_count,
+            "selection_fallback_used": self.selection_fallback_used,
+            "selection_fallback_reason": self.selection_fallback_reason,
+            "item_fallback_count": self.item_fallback_count,
+            "error_fallback_count": self.error_fallback_count,
+            "rows": [dict(row) for row in self.rows],
+        }
+
+
+@dataclass(frozen=True)
 class SourceTraceabilityIssue:
     ranked_item_id: str
     normalized_item_id: str
