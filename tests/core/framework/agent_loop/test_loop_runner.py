@@ -1,6 +1,12 @@
 from core.framework.agent_loop import AgentLoopStatus, AgentRunner, AgentSpec
 from core.framework.llm import FakeLLMClient
-from core.framework.tools import REDACTED_VALUE, ToolDefinition, ToolPolicy, ToolRegistry
+from core.framework.tools import (
+    REDACTED_VALUE,
+    ToolDefinition,
+    ToolPolicy,
+    ToolRegistry,
+    register_control_tools,
+)
 from storage.conversation import LocalJsonConversationStore
 
 
@@ -156,6 +162,48 @@ def test_agent_runner_blocks_tool_call_after_agent_budget_is_exhausted() -> None
         "blocked",
     ]
     assert "max_tool_calls_per_agent" in tool_observations[1]["summary"]
+
+
+def test_agent_runner_accepts_control_set_output_tool_result() -> None:
+    registry = ToolRegistry()
+    register_control_tools(registry)
+    llm = FakeLLMClient(
+        [
+            (
+                '{"action_type":"tool_call","tool_name":"control.set_output",'
+                '"tool_args":{"output":{"analysis_result":{"summary":"ok"}}}}'
+            )
+        ]
+    )
+    agent = AgentSpec(
+        agent_id="analyst",
+        name="Analyst",
+        role="Analyze",
+        goal="Produce analysis",
+        instructions="Return JSON actions only.",
+        input_keys=["request"],
+        output_key="analysis_result",
+        allowed_tools=["control.set_output"],
+    )
+
+    result = AgentRunner(llm_client=llm, tool_registry=registry).run(
+        agent,
+        {"request": {"topic": "chips"}},
+    )
+
+    assert result.success is True
+    assert result.status == AgentLoopStatus.ACCEPTED
+    assert result.output == {"analysis_result": {"summary": "ok"}}
+    assert result.metrics.llm_calls == 1
+    assert result.metrics.tool_calls == 1
+    assert [event["event_type"] for event in result.events] == [
+        "agent_started",
+        "llm_call",
+        "tool_call",
+        "tool_observation",
+        "final_output",
+    ]
+    assert result.events[-1]["via_tool"] == "control.set_output"
 
 
 def test_agent_runner_blocks_secret_like_final_output() -> None:

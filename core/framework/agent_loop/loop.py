@@ -4,6 +4,7 @@ from typing import Any
 
 from core.framework.agent_loop.judge import OutputJudge
 from core.framework.agent_loop.models import (
+    AgentAction,
     AgentLoopMetrics,
     AgentLoopResult,
     AgentLoopStatus,
@@ -116,6 +117,71 @@ class AgentLoop:
                         "observation": observation.to_dict(),
                     }
                 )
+                if observation.status == ToolStatus.SUCCEEDED and _is_control_set_output(
+                    observation
+                ):
+                    control_output = _control_output(observation)
+                    verdict = self._output_judge.judge(
+                        agent=agent,
+                        action=AgentAction(
+                            action_type="final_output",
+                            output=control_output,
+                        ),
+                        called_tools=called_tools,
+                    )
+                    last_verdict = verdict
+                    if verdict.decision == JudgeDecision.ACCEPT:
+                        events.append(
+                            {
+                                "event_type": "final_output",
+                                "agent_id": agent.agent_id,
+                                "output_keys": sorted(control_output.keys()),
+                                "via_tool": observation.call.tool_name,
+                            }
+                        )
+                        return AgentLoopResult(
+                            success=True,
+                            status=AgentLoopStatus.ACCEPTED,
+                            output=control_output,
+                            verdict=verdict,
+                            iterations=iteration,
+                            metrics=metrics,
+                            events=events,
+                        )
+
+                    if verdict.decision == JudgeDecision.BLOCK:
+                        events.append(
+                            {
+                                "event_type": "agent_blocked",
+                                "agent_id": agent.agent_id,
+                                "verdict": verdict.to_dict(),
+                                "via_tool": observation.call.tool_name,
+                            }
+                        )
+                        return AgentLoopResult(
+                            success=False,
+                            status=AgentLoopStatus.BLOCKED,
+                            verdict=verdict,
+                            iterations=iteration,
+                            metrics=metrics,
+                            events=events,
+                            error=verdict.feedback,
+                        )
+
+                    judge_retries += 1
+                    feedback = verdict.feedback or "output rejected by judge"
+                    events.append(
+                        {
+                            "event_type": "judge_retry",
+                            "agent_id": agent.agent_id,
+                            "feedback": feedback,
+                            "verdict": verdict.to_dict(),
+                            "via_tool": observation.call.tool_name,
+                        }
+                    )
+                    if judge_retries > agent.loop_policy.max_judge_retries:
+                        return self._retry_exhausted(metrics, events, verdict, iteration)
+                    continue
                 if observation.status == ToolStatus.BLOCKED:
                     feedback = observation.result.error_message or "tool call blocked"
                 elif observation.status == ToolStatus.FAILED:
@@ -228,3 +294,20 @@ def _blocked_tool_budget_observation(
         ),
         elapsed_ms=0.0,
     )
+
+
+def _is_control_set_output(observation: ToolObservation) -> bool:
+    output = observation.result.output
+    return (
+        observation.call.tool_name == "control.set_output"
+        and isinstance(output, dict)
+        and output.get("control_action") == "set_output"
+        and isinstance(output.get("output"), dict)
+    )
+
+
+def _control_output(observation: ToolObservation) -> dict[str, Any]:
+    output = observation.result.output
+    if isinstance(output, dict) and isinstance(output.get("output"), dict):
+        return dict(output["output"])
+    return {}

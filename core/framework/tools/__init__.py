@@ -3,6 +3,7 @@
 from core.framework.tools.approval import ToolApprovalRequest
 from core.framework.tools.artifact_tools import register_artifact_tools
 from core.framework.tools.batch import ToolBatchExecutor
+from core.framework.tools.control_tools import register_control_tools
 from core.framework.tools.executor import ToolExecutor
 from core.framework.tools.mcp_adapter import MCPServerConfig, MCPToolAdapter
 from core.framework.tools.models import (
@@ -79,6 +80,7 @@ __all__ = [
     "contains_redacted_value",
     "redact_sensitive_values",
     "register_artifact_tools",
+    "register_control_tools",
     "register_quality_tools",
     "register_report_tools",
     "register_source_tools",
