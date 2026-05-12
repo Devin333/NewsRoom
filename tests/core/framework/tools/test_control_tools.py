@@ -6,7 +6,7 @@ from core.framework.tools import (
     ToolStatus,
     register_control_tools,
 )
-from core.framework.workers import InMemoryApprovalStore
+from core.framework.workers import InMemoryApprovalStore, InMemoryTaskQueue, TaskStatus
 
 
 def test_control_set_output_tool_returns_final_output_payload() -> None:
@@ -213,3 +213,124 @@ def test_control_escalate_tool_rejects_secret_payload_keys_before_store() -> Non
     assert observation.status == ToolStatus.FAILED
     assert approval_store.list_approvals() == []
     assert "payload key is not allowed" in (observation.result.error_message or "")
+
+
+def test_control_delegate_to_subagent_tool_enqueues_real_task() -> None:
+    task_queue = InMemoryTaskQueue()
+    registry = ToolRegistry()
+    register_control_tools(registry, task_queue=task_queue, run_id="run-delegate")
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="control.delegate_to_subagent",
+            arguments={
+                "task_type": "daily_intelligence.run",
+                "payload": {"topic": "AI policy"},
+                "queue_name": "news:queue:delegated",
+                "task_id": "job-delegate-1",
+                "subagent_id": "researcher",
+                "max_attempts": 2,
+                "metadata": {"stage": "source_research"},
+            },
+        ),
+        ToolPolicy(
+            allowed_tools=["control.delegate_to_subagent"],
+            require_approval_for_side_effects=False,
+        ),
+    )
+
+    leased = task_queue.lease("worker-1", ["news:queue:delegated"])
+
+    assert observation.status == ToolStatus.SUCCEEDED
+    assert observation.result.output["control_action"] == "delegate_to_subagent"
+    assert observation.result.output["task_id"] == "job-delegate-1"
+    assert observation.result.output["message_id"] is None
+    assert observation.result.output["task"]["status"] == TaskStatus.QUEUED.value
+    assert leased is not None
+    assert leased.task_id == "job-delegate-1"
+    assert leased.task_type == "daily_intelligence.run"
+    assert leased.payload == {"topic": "AI policy"}
+    assert leased.queue_name == "news:queue:delegated"
+    assert leased.max_attempts == 2
+    assert leased.metadata == {
+        "stage": "source_research",
+        "control_tool": "control.delegate_to_subagent",
+        "run_id": "run-delegate",
+        "subagent_id": "researcher",
+    }
+
+
+def test_control_delegate_to_subagent_tool_requires_approval_by_default() -> None:
+    task_queue = InMemoryTaskQueue()
+    registry = ToolRegistry()
+    register_control_tools(registry, task_queue=task_queue)
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="control.delegate_to_subagent",
+            arguments={
+                "task_type": "daily_intelligence.run",
+                "payload": {"topic": "AI policy"},
+            },
+        ),
+        ToolPolicy(allowed_tools=["control.delegate_to_subagent"]),
+    )
+
+    assert observation.status == ToolStatus.APPROVAL_REQUIRED
+    assert task_queue.lease("worker-1", ["news:queue:daily"]) is None
+
+
+def test_control_delegate_to_subagent_tool_normalizes_queue_message_id() -> None:
+    task_queue = _BytesMessageTaskQueue()
+    registry = ToolRegistry()
+    register_control_tools(registry, task_queue=task_queue)
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="control.delegate_to_subagent",
+            arguments={"task_type": "daily_intelligence.run"},
+        ),
+        ToolPolicy(
+            allowed_tools=["control.delegate_to_subagent"],
+            require_approval_for_side_effects=False,
+        ),
+    )
+
+    assert observation.status == ToolStatus.SUCCEEDED
+    assert observation.result.output["message_id"] == "1-0"
+    assert len(task_queue.enqueued) == 1
+
+
+def test_control_delegate_to_subagent_tool_rejects_blank_task_type_before_enqueue() -> None:
+    task_queue = InMemoryTaskQueue()
+    registry = ToolRegistry()
+    register_control_tools(registry, task_queue=task_queue)
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="control.delegate_to_subagent",
+            arguments={"task_type": "   "},
+        ),
+        ToolPolicy(
+            allowed_tools=["control.delegate_to_subagent"],
+            require_approval_for_side_effects=False,
+        ),
+    )
+
+    assert observation.status == ToolStatus.FAILED
+    assert "task_type is required" in (observation.result.error_message or "")
+    assert task_queue.lease("worker-1", ["news:queue:daily"]) is None
+
+
+class _BytesMessageTaskQueue:
+    def __init__(self) -> None:
+        self.enqueued = []
+
+    def enqueue(self, task):
+        task.status = TaskStatus.QUEUED
+        self.enqueued.append(task)
+        return b"1-0"

@@ -1,16 +1,22 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Protocol
 
 from core.framework.tools.models import ToolDefinition
 from core.framework.tools.registry import ToolRegistry
 from core.framework.workers.approval import ApprovalRequest, ApprovalStore
+from core.framework.workers.models import Task
+
+
+class TaskQueueWriter(Protocol):
+    def enqueue(self, task: Task) -> Any: ...
 
 
 def register_control_tools(
     registry: ToolRegistry,
     *,
     approval_store: ApprovalStore | None = None,
+    task_queue: TaskQueueWriter | None = None,
     run_id: str | None = None,
 ) -> None:
     registry.register(
@@ -103,6 +109,35 @@ def register_control_tools(
             lambda args: _escalate(
                 args,
                 approval_store=approval_store,
+                run_id=run_id,
+            ),
+        )
+    if task_queue is not None:
+        registry.register(
+            ToolDefinition(
+                name="control.delegate_to_subagent",
+                description="Delegate work to a worker queue for subagent-style execution.",
+                input_schema={
+                    "required": ["task_type"],
+                    "properties": {
+                        "task_type": {"type": "string"},
+                        "payload": {"type": "object"},
+                        "queue_name": {"type": "string"},
+                        "task_id": {"type": "string"},
+                        "subagent_id": {"type": "string"},
+                        "max_attempts": {"type": "integer"},
+                        "metadata": {"type": "object"},
+                    },
+                    "additionalProperties": False,
+                },
+                side_effect="writes_external_state",
+                requires_approval=True,
+                concurrency_safe=False,
+                metadata={"writes_worker_task": True},
+            ),
+            lambda args: _delegate_to_subagent(
+                args,
+                task_queue=task_queue,
                 run_id=run_id,
             ),
         )
@@ -213,3 +248,79 @@ def _escalate(
         "approval_id": stored.approval_id,
         "approval": stored.to_dict(),
     }
+
+
+def _delegate_to_subagent(
+    args: dict[str, Any],
+    *,
+    task_queue: TaskQueueWriter,
+    run_id: str | None,
+) -> dict[str, Any]:
+    task_type = str(args["task_type"]).strip()
+    if not task_type:
+        raise ValueError("task_type is required")
+
+    payload = args.get("payload") or {}
+    metadata = args.get("metadata") or {}
+    if not isinstance(payload, dict):
+        raise ValueError("payload must be an object")
+    if not isinstance(metadata, dict):
+        raise ValueError("metadata must be an object")
+
+    queue_name = str(args.get("queue_name") or "news:queue:daily").strip()
+    if not queue_name:
+        raise ValueError("queue_name is required")
+
+    max_attempts = int(args.get("max_attempts") or 3)
+    if max_attempts < 1:
+        raise ValueError("max_attempts must be positive")
+
+    task_id = args.get("task_id")
+    if task_id is not None:
+        task_id = str(task_id).strip()
+        if not task_id:
+            raise ValueError("task_id must not be blank")
+
+    subagent_id = args.get("subagent_id")
+    if subagent_id is not None:
+        subagent_id = str(subagent_id).strip()
+        if not subagent_id:
+            raise ValueError("subagent_id must not be blank")
+
+    task_metadata = {
+        **dict(metadata),
+        "control_tool": "control.delegate_to_subagent",
+    }
+    if run_id is not None:
+        task_metadata["run_id"] = run_id
+    if subagent_id is not None:
+        task_metadata["subagent_id"] = subagent_id
+
+    task_kwargs: dict[str, Any] = {
+        "task_type": task_type,
+        "payload": dict(payload),
+        "queue_name": queue_name,
+        "max_attempts": max_attempts,
+        "metadata": task_metadata,
+    }
+    if task_id is not None:
+        task_kwargs["task_id"] = task_id
+    task = Task(**task_kwargs)
+    message_id = _normalize_message_id(task_queue.enqueue(task))
+
+    return {
+        "control_action": "delegate_to_subagent",
+        "task_id": task.task_id,
+        "task_type": task.task_type,
+        "queue_name": task.queue_name,
+        "message_id": message_id,
+        "task": task.to_dict(),
+    }
+
+
+def _normalize_message_id(message_id: Any) -> str | None:
+    if message_id is None:
+        return None
+    if isinstance(message_id, bytes):
+        return message_id.decode("utf-8")
+    return str(message_id)
