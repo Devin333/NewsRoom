@@ -18,6 +18,7 @@ from core.framework.tools.models import (
 from core.framework.tools.registry import RegisteredTool, ToolRegistry
 from core.framework.tools.redaction import REDACTED_VALUE, redact_sensitive_values
 from core.framework.tools.telemetry import ToolEvent, ToolMetrics
+from core.framework.tools.testing import ToolTestCase, ToolTestReport, ToolTestRunner
 from core.framework.tools.validation import validate_tool_arguments
 
 __all__ = [
@@ -39,6 +40,9 @@ __all__ = [
     "ToolRuntimeError",
     "ToolStatus",
     "ToolTimeoutError",
+    "ToolTestCase",
+    "ToolTestReport",
+    "ToolTestRunner",
     "redact_sensitive_values",
     "validate_tool_arguments",
 ]

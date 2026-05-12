@@ -1,0 +1,77 @@
+import json
+
+from core.framework.artifacts import ArtifactManager
+from core.framework.tools import (
+    REDACTED_VALUE,
+    ToolCall,
+    ToolDefinition,
+    ToolPolicy,
+    ToolRegistry,
+    ToolStatus,
+    ToolTestCase,
+    ToolTestRunner,
+)
+
+
+def test_tool_test_runner_uses_real_executor_and_artifact_spill(tmp_path) -> None:
+    registry = ToolRegistry()
+    registry.register(
+        ToolDefinition(name="memory.large", input_schema={"required": ["query"]}),
+        lambda args: {
+            "items": [{"title": args["query"], "body": "x" * 80}],
+            "token": "hidden-token",
+        },
+    )
+    artifact_manager = ArtifactManager(tmp_path)
+    artifact_manager.start_run("tool-test-run")
+    runner = ToolTestRunner(
+        registry,
+        artifact_manager=artifact_manager,
+        run_id="tool-test-run",
+    )
+
+    report = runner.run_case(
+        ToolTestCase(
+            name="large memory search spills",
+            call=ToolCall(
+                tool_name="memory.large",
+                arguments={"query": "chips"},
+                call_id="tool-test-call",
+            ),
+            policy=ToolPolicy(allowed_tools=["memory.large"], max_result_chars_inline=20),
+            expected_status=ToolStatus.SUCCEEDED,
+            require_artifact_refs=True,
+        )
+    )
+
+    payload = report.to_dict()
+    artifact_ref = payload["observation"]["result"]["artifact_refs"][0]
+    artifact_path = tmp_path / "tool-test-run" / artifact_ref["relative_path"]
+    artifact_payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+
+    assert report.passed is True
+    assert artifact_path.exists()
+    assert artifact_payload["output"]["token"] == REDACTED_VALUE
+    assert report.metrics.spilled_result_count == 1
+    assert "tool_result_spilled" in [event.event_type for event in report.events]
+    assert "hidden-token" not in str(payload)
+
+
+def test_tool_test_runner_reports_status_expectation_errors() -> None:
+    registry = ToolRegistry()
+    registry.register(ToolDefinition(name="memory.search"), lambda args: {"ok": True})
+    runner = ToolTestRunner(registry)
+
+    report = runner.run_case(
+        ToolTestCase(
+            name="blocked tool expected success",
+            call=ToolCall(tool_name="memory.search", arguments={}),
+            policy=ToolPolicy(allowed_tools=[]),
+            expected_status=ToolStatus.SUCCEEDED,
+        )
+    )
+
+    assert report.passed is False
+    assert report.observation.status == ToolStatus.BLOCKED
+    assert report.errors == ["expected status succeeded, got blocked"]
+    assert report.metrics.blocked_calls == 1
