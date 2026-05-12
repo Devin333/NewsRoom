@@ -22,11 +22,16 @@ class ToolPermissionError(ToolRuntimeError):
     """Raised when an agent is not allowed to call a tool."""
 
 
+class ToolTimeoutError(ToolRuntimeError):
+    """Raised when a tool exceeds its execution timeout."""
+
+
 class ToolStatus(str, Enum):
     SUCCEEDED = "succeeded"
     FAILED = "failed"
     BLOCKED = "blocked"
     APPROVAL_REQUIRED = "approval_required"
+    TIMEOUT = "timeout"
 
 
 @dataclass(frozen=True)
@@ -37,6 +42,7 @@ class ToolDefinition:
     side_effect: str = "none"
     is_dangerous: bool = False
     requires_approval: bool = False
+    timeout_seconds: float | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -60,6 +66,7 @@ class ToolDefinition:
             "side_effect": self.side_effect,
             "is_dangerous": self.is_dangerous,
             "requires_approval": self.requires_approval,
+            "timeout_seconds": self.timeout_seconds,
             "metadata": dict(self.metadata),
         }
 
@@ -73,6 +80,7 @@ class ToolPolicy:
     require_approval_for_side_effects: bool = True
     max_result_chars_inline: int = 8000
     spill_large_results_to_artifact: bool = True
+    timeout_seconds_default: float | None = 30.0
 
     def allows(self, tool_name: str) -> bool:
         if tool_name in self.blocked_tools:

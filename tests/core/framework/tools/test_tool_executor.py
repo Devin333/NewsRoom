@@ -1,4 +1,5 @@
 import json
+import time
 
 from core.framework.artifacts import ArtifactManager
 from core.framework.tools import (
@@ -133,6 +134,48 @@ def test_tool_executor_can_run_side_effecting_tool_when_approval_gate_is_disable
     assert observation.status == ToolStatus.SUCCEEDED
     assert calls["count"] == 1
     assert observation.result.output == {"sent": "ready"}
+
+
+def test_tool_executor_returns_timeout_for_slow_tool() -> None:
+    registry = ToolRegistry()
+    registry.register(
+        ToolDefinition(
+            name="source.slow",
+            input_schema={"required": ["url"]},
+            timeout_seconds=0.02,
+        ),
+        lambda args: time.sleep(0.2) or {"url": args["url"]},
+    )
+    executor = ToolExecutor(registry)
+
+    started_at = time.perf_counter()
+    observation = executor.execute(
+        ToolCall(tool_name="source.slow", arguments={"url": "https://example.com"}),
+        ToolPolicy(allowed_tools=["source.slow"]),
+    )
+    elapsed = time.perf_counter() - started_at
+
+    assert observation.status == ToolStatus.TIMEOUT
+    assert observation.result.error_type == "ToolTimeoutError"
+    assert "exceeded timeout" in (observation.result.error_message or "")
+    assert elapsed < 0.15
+
+
+def test_tool_executor_uses_policy_default_timeout_for_fast_tool() -> None:
+    registry = ToolRegistry()
+    registry.register(
+        ToolDefinition(name="memory.fast", input_schema={"required": ["query"]}),
+        lambda args: {"query": args["query"]},
+    )
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(tool_name="memory.fast", arguments={"query": "chips"}),
+        ToolPolicy(allowed_tools=["memory.fast"], timeout_seconds_default=0.5),
+    )
+
+    assert observation.status == ToolStatus.SUCCEEDED
+    assert observation.result.output == {"query": "chips"}
 
 
 def test_tool_executor_fails_missing_required_arguments() -> None:

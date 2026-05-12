@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import asdict, is_dataclass
 from datetime import datetime
 from enum import Enum
@@ -16,6 +18,7 @@ from core.framework.tools.models import (
     ToolResult,
     ToolRuntimeError,
     ToolStatus,
+    ToolTimeoutError,
     timed_tool_call,
 )
 from core.framework.tools.redaction import redact_sensitive_values
@@ -50,7 +53,12 @@ class ToolExecutor:
 
             validate_tool_arguments(registered.definition, call.arguments)
 
-            raw_output = registered.executor(call.arguments)
+            raw_output = _invoke_with_timeout(
+                registered.executor,
+                call.arguments,
+                _timeout_seconds(registered.definition, policy),
+                call.tool_name,
+            )
             safe_output = redact_sensitive_values(raw_output)
             return self._tool_result(call, safe_output, policy)
 
@@ -59,6 +67,13 @@ class ToolExecutor:
         except ToolPermissionError as exc:
             result = ToolResult(
                 status=ToolStatus.BLOCKED,
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+            )
+            elapsed_ms = 0.0
+        except ToolTimeoutError as exc:
+            result = ToolResult(
+                status=ToolStatus.TIMEOUT,
                 error_type=type(exc).__name__,
                 error_message=str(exc),
             )
@@ -132,6 +147,36 @@ def _safety_gate(definition: Any, policy: ToolPolicy) -> ToolResult | None:
 
 def _has_side_effects(side_effect: str) -> bool:
     return side_effect not in {"", "none", "read_only"}
+
+
+def _timeout_seconds(definition: Any, policy: ToolPolicy) -> float | None:
+    if definition.timeout_seconds is not None:
+        return definition.timeout_seconds
+    return policy.timeout_seconds_default
+
+
+def _invoke_with_timeout(
+    executor: Any,
+    arguments: dict[str, Any],
+    timeout_seconds: float | None,
+    tool_name: str,
+) -> Any:
+    if timeout_seconds is None or timeout_seconds <= 0:
+        return executor(arguments)
+
+    pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="news-tool")
+    future = pool.submit(executor, arguments)
+    timed_out = False
+    try:
+        return future.result(timeout=timeout_seconds)
+    except FutureTimeoutError as exc:
+        timed_out = True
+        future.cancel()
+        raise ToolTimeoutError(
+            f"tool {tool_name} exceeded timeout of {timeout_seconds:g} seconds"
+        ) from exc
+    finally:
+        pool.shutdown(wait=not timed_out, cancel_futures=True)
 
 
 def _json_size_bytes(value: Any) -> int:
