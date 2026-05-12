@@ -13,6 +13,7 @@ def _raw_item(
     days_old: int = 0,
     authority_score: float = 0.5,
     summary: str | None = None,
+    language: str | None = None,
 ) -> RawSourceItem:
     now = datetime(2026, 5, 11, tzinfo=UTC)
     return RawSourceItem(
@@ -25,6 +26,7 @@ def _raw_item(
         fetched_at=now,
         published_at=now - timedelta(days=days_old),
         summary=summary if summary is not None else f"Summary for {title}",
+        language=language,
         metadata={"source_reliability": reliability, "source_authority_score": authority_score},
     )
 
@@ -106,6 +108,27 @@ def test_normalize_item_preserves_valid_published_at() -> None:
 
     assert normalized.published_at == raw.published_at
     assert "time_normalization" not in normalized.metadata
+
+
+def test_normalize_item_falls_back_missing_language_to_unknown() -> None:
+    raw = _raw_item("No language", "https://example.com/no-language")
+
+    normalized = normalize_items([raw])[0]
+
+    assert normalized.language == "unknown"
+    assert normalized.metadata["language_normalization"] == {
+        "fallback_applied": True,
+        "language": "unknown",
+    }
+
+
+def test_normalize_item_preserves_existing_language() -> None:
+    raw = _raw_item("English", "https://example.com/en", language="en")
+
+    normalized = normalize_items([raw])[0]
+
+    assert normalized.language == "en"
+    assert "language_normalization" not in normalized.metadata
 
 
 def test_rank_items_prioritizes_topic_relevance_and_reliability() -> None:

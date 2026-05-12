@@ -23,6 +23,12 @@ def normalize_item(item: RawSourceItem) -> NormalizedSourceItem:
     normalized_summary = normalize_text(item.summary) if item.summary else None
     reliability = SourceReliability(item.metadata.get("source_reliability", "medium"))
     metadata = dict(item.metadata)
+    language = item.language or "unknown"
+    if item.language is None:
+        metadata["language_normalization"] = {
+            "fallback_applied": True,
+            "language": language,
+        }
     published_at, time_metadata = _normalize_published_at(item.published_at, item.fetched_at)
     if time_metadata:
         metadata["time_normalization"] = time_metadata
@@ -50,7 +56,7 @@ def normalize_item(item: RawSourceItem) -> NormalizedSourceItem:
         published_at=published_at,
         summary=item.summary,
         normalized_summary=normalized_summary,
-        language=item.language,
+        language=language,
         metadata=metadata,
     )
 
