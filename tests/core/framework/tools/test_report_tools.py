@@ -9,6 +9,7 @@ from core.framework.tools import (
     ToolStatus,
     register_report_tools,
 )
+from storage.repository import LocalJsonPersistenceAdapter
 
 
 def test_report_tools_render_markdown_and_json_through_executor() -> None:
@@ -143,3 +144,73 @@ def test_report_export_tool_writes_markdown_and_json_artifacts(tmp_path) -> None
     assert json.loads(json_path.read_text(encoding="utf-8"))["title"] == "Daily Report"
     assert json_observation.result.output["relative_path"] == "reports/daily-report.json"
     assert json_observation.result.output["content_type"] == "application/json"
+
+
+def test_report_publish_tool_saves_report_record(tmp_path) -> None:
+    repository = LocalJsonPersistenceAdapter(tmp_path)
+    registry = ToolRegistry()
+    register_report_tools(registry, persistence_repository=repository)
+    executor = ToolExecutor(registry)
+    report = {
+        "title": "Daily Report",
+        "sections": [{"title": "Summary", "content": "All systems nominal."}],
+        "source_urls": ["https://example.com/source"],
+    }
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="report.publish",
+            arguments={
+                "run_id": "run-1",
+                "report": report,
+                "quality_score": 0.91,
+                "citation_coverage_score": 1.0,
+            },
+        ),
+        ToolPolicy(
+            allowed_tools=["report.publish"],
+            require_approval_for_side_effects=False,
+        ),
+    )
+
+    record_path = tmp_path / "_records" / "reports" / "run-1_final.json"
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+
+    assert observation.status == ToolStatus.SUCCEEDED
+    assert observation.result.output == {
+        "published": True,
+        "report_id": "run-1:final",
+        "run_id": "run-1",
+        "status": "final",
+        "title": "Daily Report",
+        "repository": "LocalJsonPersistenceAdapter",
+    }
+    assert record["report_id"] == "run-1:final"
+    assert record["report_json"]["title"] == "Daily Report"
+    assert record["report_markdown"].startswith("# Daily Report")
+    assert record["quality_score"] == 0.91
+    assert record["citation_coverage_score"] == 1.0
+
+
+def test_report_publish_tool_requires_approval_by_default(tmp_path) -> None:
+    repository = LocalJsonPersistenceAdapter(tmp_path)
+    registry = ToolRegistry()
+    register_report_tools(registry, persistence_repository=repository)
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="report.publish",
+            arguments={
+                "run_id": "run-1",
+                "report": {
+                    "title": "Daily Report",
+                    "sections": [{"title": "Summary", "content": "Needs approval."}],
+                },
+            },
+        ),
+        ToolPolicy(allowed_tools=["report.publish"]),
+    )
+
+    assert observation.status == ToolStatus.APPROVAL_REQUIRED
+    assert not (tmp_path / "_records" / "reports" / "run-1_final.json").exists()

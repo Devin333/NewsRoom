@@ -7,6 +7,7 @@ from core.framework.artifacts import ArtifactManager
 from core.framework.tools.models import ToolDefinition
 from core.framework.tools.registry import ToolRegistry
 from domain.reports import FinalReport, render_markdown
+from storage.repository import ReportRecord
 
 
 def register_report_tools(
@@ -14,6 +15,7 @@ def register_report_tools(
     *,
     artifact_manager: ArtifactManager | None = None,
     run_id: str | None = None,
+    persistence_repository: Any | None = None,
 ) -> None:
     registry.register(
         ToolDefinition(
@@ -82,6 +84,36 @@ def register_report_tools(
                 run_id=run_id,
             ),
         )
+    if persistence_repository is not None:
+        registry.register(
+            ToolDefinition(
+                name="report.publish",
+                description="Publish a FinalReport payload to the configured persistence repository.",
+                input_schema={
+                    "required": ["run_id", "report"],
+                    "properties": {
+                        "run_id": {"type": "string"},
+                        "report": {"type": "object"},
+                        "report_id": {"type": "string"},
+                        "status": {"type": "string"},
+                        "report_markdown": {"type": "string"},
+                        "quality_score": {"type": "number"},
+                        "citation_coverage_score": {"type": "number"},
+                        "manifest_path": {"type": "string"},
+                    },
+                    "additionalProperties": False,
+                },
+                side_effect="publishing",
+                requires_approval=True,
+                concurrency_safe=False,
+                max_result_bytes=100_000,
+                metadata={"writes_report_repository": True},
+            ),
+            lambda args: _publish_report(
+                args,
+                persistence_repository=persistence_repository,
+            ),
+        )
 
 
 def _validate_report(payload: Any) -> dict[str, Any]:
@@ -128,6 +160,43 @@ def _export_report(
     }
 
 
+def _publish_report(
+    args: dict[str, Any],
+    *,
+    persistence_repository: Any,
+) -> dict[str, Any]:
+    run_id = _required_text(args.get("run_id"), "run_id")
+    report = _final_report(args["report"])
+    status = _optional_text(args.get("status")) or "final"
+    report_id = _optional_text(args.get("report_id")) or f"{run_id}:{status}"
+    report_markdown = args.get("report_markdown")
+    if report_markdown is None:
+        report_markdown = render_markdown(report)
+    record = ReportRecord(
+        report_id=report_id,
+        run_id=run_id,
+        status=status,
+        title=report.title,
+        report_json=report.to_dict(),
+        report_markdown=str(report_markdown),
+        quality_score=_optional_float(args.get("quality_score")),
+        citation_coverage_score=_optional_float(args.get("citation_coverage_score")),
+        manifest_path=_optional_text(args.get("manifest_path")),
+    )
+    migrate = getattr(persistence_repository, "migrate", None)
+    if callable(migrate):
+        migrate()
+    persistence_repository.save_report(record)
+    return {
+        "published": True,
+        "report_id": record.report_id,
+        "run_id": record.run_id,
+        "status": record.status,
+        "title": record.title,
+        "repository": type(persistence_repository).__name__,
+    }
+
+
 def _default_export_path(report: FinalReport, export_format: str) -> str:
     extension = "json" if export_format == "json" else "md"
     slug = re.sub(r"[^a-z0-9]+", "-", report.title.casefold()).strip("-")
@@ -157,3 +226,23 @@ def _final_report(payload: Any) -> FinalReport:
         source_urls=[str(url) for url in source_urls],
         metadata=dict(metadata),
     )
+
+
+def _required_text(value: Any, field_name: str) -> str:
+    text = _optional_text(value)
+    if text is None:
+        raise ValueError(f"{field_name} is required")
+    return text
+
+
+def _optional_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    return float(value)
