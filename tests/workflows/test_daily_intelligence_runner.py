@@ -549,7 +549,40 @@ def test_daily_intelligence_runner_live_collects_html_source(tmp_path) -> None:
     )
 
 
-def test_daily_intelligence_runner_live_collects_official_blog_source(tmp_path) -> None:
+def test_daily_intelligence_runner_live_collects_official_blog_source_from_feed(tmp_path) -> None:
+    registry = SourceRegistry(
+        [
+            SourceDefinition(
+                source_id="official-blog",
+                name="Official Blog",
+                source_type="official_blog",
+                url="https://example.com/blog/rss.xml",
+                reliability="high",
+                topics=["ai", "policy"],
+            )
+        ]
+    )
+
+    def fail_html(url: str) -> str:
+        raise AssertionError("html fallback should not run when feed succeeds")
+
+    result = DailyIntelligenceRunner(
+        artifact_root=tmp_path,
+        source_registry=registry,
+        feed_connector=FeedConnector(fetch_text=lambda url: RSS_FIXTURE),
+        html_connector=HtmlConnector(fetch_text=fail_html),
+        llm_client=_FakeReportLLM(),
+    ).run(profile="live", topic="AI policy", source_limit=1, run_id="daily-official-blog-feed")
+
+    assert result.status == WorkflowStatus.SUCCEEDED
+    assert result.output["raw_items"][0].source_type.value == "official_blog"
+    assert result.output["raw_items"][0].metadata["official_blog"] is True
+    assert result.output["raw_items"][0].metadata["official_blog_fetch_mode"] == "feed"
+    assert "official_blog_fallback" not in result.output["raw_items"][0].metadata
+    assert result.output["source_pipeline_metrics"].items_by_source_type == {"official_blog": 1}
+
+
+def test_daily_intelligence_runner_live_falls_back_official_blog_to_html(tmp_path) -> None:
     registry = SourceRegistry(
         [
             SourceDefinition(
@@ -566,13 +599,20 @@ def test_daily_intelligence_runner_live_collects_official_blog_source(tmp_path) 
     result = DailyIntelligenceRunner(
         artifact_root=tmp_path,
         source_registry=registry,
+        feed_connector=FeedConnector(fetch_text=lambda url: (_ for _ in ()).throw(RuntimeError("feed down"))),
         html_connector=HtmlConnector(fetch_text=lambda url: HTML_FIXTURE),
         llm_client=_FakeReportLLM(),
-    ).run(profile="live", topic="AI policy", source_limit=1, run_id="daily-official-blog-source")
+    ).run(profile="live", topic="AI policy", source_limit=1, run_id="daily-official-blog-html-fallback")
 
     assert result.status == WorkflowStatus.SUCCEEDED
     assert result.output["raw_items"][0].source_type.value == "official_blog"
     assert result.output["raw_items"][0].metadata["official_blog"] is True
+    assert result.output["raw_items"][0].metadata["official_blog_fetch_mode"] == "html_fallback"
+    assert result.output["raw_items"][0].metadata["official_blog_fallback"] == {
+        "from": "feed",
+        "to": "html",
+        "feed_error_types": ["fetch_connection_error"],
+    }
     assert result.output["source_pipeline_metrics"].items_by_source_type == {"official_blog": 1}
 
 
