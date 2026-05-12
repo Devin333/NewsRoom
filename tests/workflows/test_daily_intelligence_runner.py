@@ -1034,6 +1034,33 @@ def test_daily_intelligence_runner_dispatches_github_mode_metadata(tmp_path) -> 
     ]
 
 
+def test_daily_intelligence_runner_dispatches_devto_source(tmp_path) -> None:
+    registry = SourceRegistry(
+        [
+            SourceDefinition(
+                source_id="devto-ai",
+                name="dev.to AI",
+                source_type="devto",
+                url="https://dev.to/api",
+                reliability="medium",
+                topics=["AI"],
+                metadata={"tag": "ai"},
+            )
+        ]
+    )
+    devto_connector = _FakeCommunityConnector()
+
+    result = DailyIntelligenceRunner(
+        artifact_root=tmp_path,
+        source_registry=registry,
+        devto_connector=devto_connector,
+        llm_client=_FakeReportLLM(),
+    ).run(profile="live", topic="AI policy", source_limit=1, run_id="daily-devto")
+
+    assert result.status == WorkflowStatus.SUCCEEDED
+    assert devto_connector.calls == [{"source_id": "devto-ai", "tag": "ai", "limit": 1}]
+
+
 def test_daily_intelligence_runner_persists_source_duplicate_groups(tmp_path) -> None:
     duplicate_feed = """<?xml version="1.0"?>
 <rss version="2.0">
@@ -1460,6 +1487,32 @@ class _FakeGithubModeConnector:
                 tags=["commit"],
                 language="en",
                 metadata={"github_surface": "commits", "repository": repository},
+            )
+        ], []
+
+
+class _FakeCommunityConnector:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def fetch(self, source, *, tag, limit):
+        self.calls.append({"source_id": source.source_id, "tag": tag, "limit": limit})
+        return [
+            RawSourceItem(
+                source_item_id="raw-community",
+                source_id=source.source_id,
+                source_name=source.name,
+                source_type=source.source_type,
+                title="Community article",
+                url="https://dev.to/example/community-article",
+                fetched_at=datetime(2026, 5, 11, tzinfo=UTC),
+                published_at=datetime(2026, 5, 11, tzinfo=UTC),
+                summary="Community summary",
+                raw_content="{}",
+                authors=["alice"],
+                tags=["devto", "ai"],
+                language="en",
+                metadata={"community_surface": "devto"},
             )
         ], []
 

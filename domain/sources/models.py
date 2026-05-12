@@ -17,6 +17,10 @@ class SourceType(str, Enum):
     MANUAL = "manual"
     HACKERNEWS = "hackernews"
     REDDIT = "reddit"
+    LOBSTERS = "lobsters"
+    STACKOVERFLOW = "stackoverflow"
+    DEVTO = "devto"
+    MEDIUM = "medium"
 
 
 class SourceReliability(str, Enum):

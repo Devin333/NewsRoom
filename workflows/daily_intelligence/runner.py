@@ -39,8 +39,12 @@ from sources.connectors import (
     GithubConnector,
     HackerNewsConnector,
     HtmlConnector,
+    LobstersConnector,
     ManualConnector,
+    MediumConnector,
     RedditConnector,
+    StackOverflowConnector,
+    DevToConnector,
 )
 from sources.connectors.diagnostics import response_metadata_from_observations
 from sources.health import BasicSourceHealthManager
@@ -83,6 +87,10 @@ class DailyIntelligenceRunner:
         github_connector: GithubConnector | None = None,
         hackernews_connector: HackerNewsConnector | None = None,
         reddit_connector: RedditConnector | None = None,
+        lobsters_connector: LobstersConnector | None = None,
+        stackoverflow_connector: StackOverflowConnector | None = None,
+        devto_connector: DevToConnector | None = None,
+        medium_connector: MediumConnector | None = None,
         llm_client: LLMClient | None = None,
         source_health_manager: BasicSourceHealthManager | None = None,
         source_config_path: str | Path | None = None,
@@ -98,6 +106,10 @@ class DailyIntelligenceRunner:
         self.github_connector = github_connector or GithubConnector()
         self.hackernews_connector = hackernews_connector or HackerNewsConnector()
         self.reddit_connector = reddit_connector or RedditConnector()
+        self.lobsters_connector = lobsters_connector or LobstersConnector()
+        self.stackoverflow_connector = stackoverflow_connector or StackOverflowConnector()
+        self.devto_connector = devto_connector or DevToConnector()
+        self.medium_connector = medium_connector or MediumConnector()
         self.llm_client = llm_client
         self.source_health_manager = source_health_manager or BasicSourceHealthManager()
 
@@ -599,6 +611,36 @@ class DailyIntelligenceRunner:
                 source,
                 subreddit=str(subreddit) if subreddit is not None else None,
                 listing=str(listing) if listing is not None else None,
+                limit=limit,
+            )
+        if source.source_type == SourceType.LOBSTERS:
+            tag = source.metadata.get("tag")
+            return self.lobsters_connector.fetch(
+                source,
+                tag=str(tag) if tag is not None else None,
+                limit=limit,
+            )
+        if source.source_type == SourceType.STACKOVERFLOW:
+            tag = source.metadata.get("tagged") or source.metadata.get("tag")
+            site = source.metadata.get("site")
+            return self.stackoverflow_connector.fetch(
+                source,
+                tag=str(tag) if tag is not None else None,
+                site=str(site) if site is not None else None,
+                limit=limit,
+            )
+        if source.source_type == SourceType.DEVTO:
+            tag = source.metadata.get("tag")
+            return self.devto_connector.fetch(
+                source,
+                tag=str(tag) if tag is not None else None,
+                limit=limit,
+            )
+        if source.source_type == SourceType.MEDIUM:
+            tag = source.metadata.get("tag")
+            return self.medium_connector.fetch(
+                source,
+                tag=str(tag) if tag is not None else None,
                 limit=limit,
             )
         return [], [
@@ -1240,6 +1282,14 @@ def _source_connector_name(source: SourceDefinition) -> str:
         return "HackerNewsConnector"
     if source.source_type == SourceType.REDDIT:
         return "RedditConnector"
+    if source.source_type == SourceType.LOBSTERS:
+        return "LobstersConnector"
+    if source.source_type == SourceType.STACKOVERFLOW:
+        return "StackOverflowConnector"
+    if source.source_type == SourceType.DEVTO:
+        return "DevToConnector"
+    if source.source_type == SourceType.MEDIUM:
+        return "MediumConnector"
     return "UnsupportedSourceConnector"
 
 

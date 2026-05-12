@@ -100,6 +100,49 @@ def test_source_registry_validates_social_fetchable_source_types() -> None:
     assert ("reddit", "url", "error") in issues
 
 
+def test_source_registry_validates_developer_community_source_types() -> None:
+    registry = SourceRegistry(
+        [
+            SourceDefinition(
+                source_id="lobsters",
+                name="Lobsters",
+                source_type="lobsters",
+                url="https://lobste.rs",
+                topics=["ai"],
+            ),
+            SourceDefinition(
+                source_id="stackoverflow",
+                name="Stack Overflow",
+                source_type="stackoverflow",
+                url="https://api.stackexchange.com/2.3",
+                topics=["ai"],
+            ),
+            SourceDefinition(
+                source_id="devto",
+                name="dev.to",
+                source_type="devto",
+                url="https://dev.to/api",
+                topics=["ai"],
+            ),
+            SourceDefinition(
+                source_id="medium",
+                name="Medium",
+                source_type="medium",
+                url="ftp://medium.example/feed",
+                topics=["ai"],
+            ),
+        ]
+    )
+
+    result = registry.validate()
+
+    issues = {(issue.source_id, issue.field, issue.severity) for issue in result.issues}
+    assert ("lobsters", "url", "error") not in issues
+    assert ("stackoverflow", "url", "error") not in issues
+    assert ("devto", "url", "error") not in issues
+    assert ("medium", "url", "error") in issues
+
+
 def test_source_registry_lists_sources_by_reliability() -> None:
     high = SourceDefinition(
         source_id="high",
