@@ -39,6 +39,42 @@ class GithubRepository:
         return f"{self.owner}/{self.name}"
 
 
+@dataclass(frozen=True)
+class GithubRepositorySearchResult:
+    repository_id: int | None
+    full_name: str
+    html_url: str
+    description: str | None
+    language: str | None
+    stargazers_count: int
+    forks_count: int
+    open_issues_count: int
+    archived: bool
+    disabled: bool
+    visibility: str | None
+    topics: list[str]
+    updated_at: datetime | None
+    score: float | None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "repository_id": self.repository_id,
+            "full_name": self.full_name,
+            "html_url": self.html_url,
+            "description": self.description,
+            "language": self.language,
+            "stargazers_count": self.stargazers_count,
+            "forks_count": self.forks_count,
+            "open_issues_count": self.open_issues_count,
+            "archived": self.archived,
+            "disabled": self.disabled,
+            "visibility": self.visibility,
+            "topics": list(self.topics),
+            "updated_at": _dt(self.updated_at),
+            "score": self.score,
+        }
+
+
 class GithubConnector:
     def __init__(
         self,
@@ -89,6 +125,56 @@ class GithubConnector:
             ]
         return items, []
 
+    def search_repositories(
+        self,
+        source: SourceDefinition,
+        *,
+        query: str,
+        limit: int | None = None,
+        sort: str | None = None,
+        order: str | None = None,
+    ) -> tuple[list[GithubRepositorySearchResult], list[SourceError]]:
+        try:
+            query_text = query.strip()
+            if not query_text:
+                raise ValueError("github repository search query is required")
+            api_url = build_github_repository_search_url(
+                source.url or GITHUB_API_URL,
+                query_text,
+                limit=limit or 10,
+                sort=sort,
+                order=order,
+            )
+            payload = self._fetch_text(api_url)
+        except Exception as exc:
+            return [], [_exception_source_error(source, exc, phase="fetch")]
+
+        if not payload.strip():
+            return [], [
+                _source_error(
+                    source,
+                    "empty_source_response",
+                    "GitHub API returned an empty response",
+                    metadata={"phase": "fetch", "retryable": True, "source_health_affecting": True},
+                )
+            ]
+
+        try:
+            repositories = self.parse_repository_search(payload, limit=limit)
+        except Exception as exc:
+            return [], [_exception_source_error(source, exc, phase="parse")]
+
+        if not repositories:
+            return [], [
+                _source_error(
+                    source,
+                    "empty_github_repositories",
+                    "GitHub repository search returned no repositories",
+                    metadata={"phase": "parse", "retryable": False, "source_health_affecting": False},
+                )
+            ]
+        return repositories, []
+
     def parse_releases(
         self,
         source: SourceDefinition,
@@ -110,6 +196,26 @@ class GithubConnector:
         items = [item for item in items if item is not None]
         return items[:limit] if limit else items
 
+    def parse_repository_search(
+        self,
+        content: str,
+        *,
+        limit: int | None = None,
+    ) -> list[GithubRepositorySearchResult]:
+        payload = json.loads(content)
+        if not isinstance(payload, dict):
+            raise ValueError("GitHub repository search response must be a JSON object")
+        items = payload.get("items")
+        if not isinstance(items, list):
+            raise ValueError("GitHub repository search response items must be an array")
+        repositories = [
+            _repository_search_result(item)
+            for item in items
+            if isinstance(item, dict)
+        ]
+        repositories = [repository for repository in repositories if repository is not None]
+        return repositories[:limit] if limit else repositories
+
     def _default_fetch_text(self, url: str) -> str:
         request = Request(
             url,
@@ -130,6 +236,46 @@ def build_github_releases_url(base_url: str, repository: GithubRepository, *, li
     base = base_url.rstrip("/")
     params = urlencode({"per_page": limit})
     return f"{base}/repos/{repository.owner}/{repository.name}/releases?{params}"
+
+
+def build_github_repository_search_url(
+    base_url: str,
+    query: str,
+    *,
+    limit: int,
+    sort: str | None = None,
+    order: str | None = None,
+) -> str:
+    base = base_url.rstrip("/")
+    params: dict[str, Any] = {"q": query, "per_page": limit}
+    if sort:
+        params["sort"] = sort
+    if order:
+        params["order"] = order
+    return f"{base}/search/repositories?{urlencode(params)}"
+
+
+def _repository_search_result(item: dict[str, Any]) -> GithubRepositorySearchResult | None:
+    full_name = item.get("full_name")
+    html_url = item.get("html_url")
+    if not full_name or not html_url:
+        return None
+    return GithubRepositorySearchResult(
+        repository_id=_optional_int(item.get("id")),
+        full_name=str(full_name),
+        html_url=str(html_url),
+        description=_optional_text(item.get("description")),
+        language=_optional_text(item.get("language")),
+        stargazers_count=_int_or_zero(item.get("stargazers_count")),
+        forks_count=_int_or_zero(item.get("forks_count")),
+        open_issues_count=_int_or_zero(item.get("open_issues_count")),
+        archived=bool(item.get("archived", False)),
+        disabled=bool(item.get("disabled", False)),
+        visibility=_optional_text(item.get("visibility")),
+        topics=[str(topic) for topic in item.get("topics") or []],
+        updated_at=_parse_datetime(item.get("updated_at")),
+        score=_optional_float(item.get("score")),
+    )
 
 
 def _raw_item_from_release(
@@ -257,6 +403,35 @@ def _parse_datetime(value: Any) -> datetime | None:
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=UTC)
     return parsed.astimezone(UTC)
+
+
+def _dt(value: datetime | None) -> str | None:
+    return value.isoformat().replace("+00:00", "Z") if value else None
+
+
+def _optional_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    return int(value)
+
+
+def _int_or_zero(value: Any) -> int:
+    if value is None:
+        return 0
+    return int(value)
+
+
+def _optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    return float(value)
 
 
 def _normalize_text(value: Any) -> str | None:

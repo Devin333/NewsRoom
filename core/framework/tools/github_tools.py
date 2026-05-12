@@ -34,6 +34,30 @@ def register_github_tools(
         ),
         lambda args: _fetch_releases(args, connector=connector),
     )
+    registry.register(
+        ToolDefinition(
+            name="github.search_repositories",
+            description="Search GitHub repositories through the configured connector.",
+            input_schema={
+                "required": ["query"],
+                "properties": {
+                    "query": {"type": "string"},
+                    "limit": {"type": "integer"},
+                    "sort": {
+                        "type": "string",
+                        "enum": ["stars", "forks", "help-wanted-issues", "updated"],
+                    },
+                    "order": {"type": "string", "enum": ["asc", "desc"]},
+                    "source": {"type": "object"},
+                },
+                "additionalProperties": False,
+            },
+            side_effect="read_only",
+            concurrency_safe=True,
+            max_result_bytes=500_000,
+        ),
+        lambda args: _search_repositories(args, connector=connector),
+    )
 
 
 def _fetch_releases(args: dict[str, Any], *, connector: GithubConnector) -> dict[str, Any]:
@@ -48,6 +72,31 @@ def _fetch_releases(args: dict[str, Any], *, connector: GithubConnector) -> dict
         "limit": limit,
         "item_count": len(items),
         "items": [_raw_source_item_to_dict(item) for item in items],
+        "error_count": len(errors),
+        "errors": [error.to_dict() for error in errors],
+    }
+
+
+def _search_repositories(args: dict[str, Any], *, connector: GithubConnector) -> dict[str, Any]:
+    query = str(args["query"]).strip()
+    if not query:
+        raise ValueError("query is required")
+    limit = _limit(args.get("limit"))
+    sort = args.get("sort")
+    order = args.get("order")
+    source = _source_definition(args.get("source"))
+    repositories, errors = connector.search_repositories(
+        source,
+        query=query,
+        limit=limit,
+        sort=str(sort) if sort is not None else None,
+        order=str(order) if order is not None else None,
+    )
+    return {
+        "query": query,
+        "limit": limit,
+        "repository_count": len(repositories),
+        "repositories": [repository.to_dict() for repository in repositories],
         "error_count": len(errors),
         "errors": [error.to_dict() for error in errors],
     }
