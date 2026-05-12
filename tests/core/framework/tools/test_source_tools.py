@@ -6,7 +6,9 @@ from core.framework.tools import (
     ToolStatus,
     register_source_tools,
 )
+from domain.sources import SourceError
 from sources.connectors import SourceFetchPolicy
+from sources.health import BasicSourceHealthManager
 
 
 RSS_FIXTURE = """<?xml version="1.0"?>
@@ -164,6 +166,109 @@ def test_source_fetch_url_tool_rejects_domains_outside_allowlist_before_fetch() 
     assert observation.status == ToolStatus.FAILED
     assert calls["count"] == 0
     assert "allowed domains" in (observation.result.error_message or "")
+
+
+def test_source_check_health_tool_reads_health_manager_state() -> None:
+    registry = ToolRegistry()
+    health_manager = BasicSourceHealthManager()
+    health_manager.record_failure(
+        "rss-example",
+        SourceError(
+            source_id="rss-example",
+            error_type="TimeoutError",
+            error_message="timed out",
+            url="https://example.com/feed.xml",
+        ),
+    )
+    register_source_tools(registry, health_manager=health_manager)
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="source.check_health",
+            arguments={"source_id": "rss-example"},
+        ),
+        ToolPolicy(allowed_tools=["source.check_health"]),
+    )
+
+    health = observation.result.output["health"]
+
+    assert observation.status == ToolStatus.SUCCEEDED
+    assert health["source_id"] == "rss-example"
+    assert health["status"] == "degraded"
+    assert health["consecutive_failures"] == 1
+    assert health["last_error"]["error_type"] == "TimeoutError"
+
+
+def test_source_probe_tool_records_success_without_returning_content() -> None:
+    registry = ToolRegistry()
+    health_manager = BasicSourceHealthManager()
+    seen_urls: list[str] = []
+    register_source_tools(
+        registry,
+        fetch_text=lambda url: seen_urls.append(url) or "probe body",
+        health_manager=health_manager,
+    )
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="source.probe",
+            arguments={
+                "source": {
+                    "source_id": "rss-example",
+                    "name": "Example RSS",
+                    "url": "https://example.com/feed.xml",
+                    "source_type": "rss",
+                }
+            },
+        ),
+        ToolPolicy(allowed_tools=["source.probe"]),
+    )
+
+    assert observation.status == ToolStatus.SUCCEEDED
+    assert seen_urls == ["https://example.com/feed.xml"]
+    assert observation.result.output["ok"] is True
+    assert observation.result.output["content_bytes"] == len("probe body")
+    assert "content" not in observation.result.output
+    assert observation.result.output["health"]["status"] == "healthy"
+    assert health_manager.get("rss-example").last_success_at is not None
+
+
+def test_source_probe_tool_records_fetch_failure_as_health_failure() -> None:
+    registry = ToolRegistry()
+    health_manager = BasicSourceHealthManager(failure_threshold=1)
+
+    def failing_fetch(url: str) -> str:
+        raise RuntimeError(f"cannot reach {url}")
+
+    register_source_tools(
+        registry,
+        fetch_text=failing_fetch,
+        health_manager=health_manager,
+    )
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="source.probe",
+            arguments={
+                "source": {
+                    "source_id": "rss-example",
+                    "name": "Example RSS",
+                    "url": "https://example.com/feed.xml",
+                    "source_type": "rss",
+                }
+            },
+        ),
+        ToolPolicy(allowed_tools=["source.probe"]),
+    )
+
+    assert observation.status == ToolStatus.SUCCEEDED
+    assert observation.result.output["ok"] is False
+    assert observation.result.output["error"]["error_type"] == "RuntimeError"
+    assert observation.result.output["health"]["status"] == "cooling_down"
+    assert health_manager.get("rss-example").consecutive_failures == 1
 
 
 def test_source_fetch_url_tool_applies_max_bytes_to_injected_fetcher() -> None:

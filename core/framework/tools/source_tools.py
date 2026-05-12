@@ -8,8 +8,9 @@ from urllib.request import Request, urlopen
 
 from core.framework.tools.models import ToolDefinition
 from core.framework.tools.registry import ToolRegistry
-from domain.sources import RawSourceItem, SourceDefinition, SourceType
+from domain.sources import RawSourceItem, SourceDefinition, SourceError, SourceType
 from sources.connectors import FeedConnector, SourceFetchPolicy
+from sources.health import BasicSourceHealthManager
 from sources.processing.normalize import canonicalize_url
 
 
@@ -22,9 +23,11 @@ def register_source_tools(
     fetch_text: FetchText | None = None,
     fetch_policy: SourceFetchPolicy | None = None,
     allowed_domains: list[str] | None = None,
+    health_manager: BasicSourceHealthManager | None = None,
 ) -> None:
     fetch_policy = fetch_policy or SourceFetchPolicy()
     allowed_domain_tuple = _allowed_domains(allowed_domains)
+    health_manager = health_manager or BasicSourceHealthManager()
     registry.register(
         ToolDefinition(
             name="source.fetch_url",
@@ -78,6 +81,51 @@ def register_source_tools(
             concurrency_safe=True,
         ),
         _extract_items,
+    )
+    registry.register(
+        ToolDefinition(
+            name="source.check_health",
+            description="Read current source health for a source id.",
+            input_schema={
+                "required": [],
+                "properties": {
+                    "source_id": {"type": "string"},
+                    "source": {"type": "object"},
+                },
+                "additionalProperties": False,
+            },
+            side_effect="read_only",
+            concurrency_safe=True,
+        ),
+        lambda args: {"health": health_manager.get(_source_id(args)).to_dict()},
+    )
+    registry.register(
+        ToolDefinition(
+            name="source.probe",
+            description="Probe a source URL and update in-memory source health.",
+            input_schema={
+                "required": ["source"],
+                "properties": {
+                    "source": {"type": "object"},
+                    "timeout_seconds": {"type": "number"},
+                    "max_bytes": {"type": "integer"},
+                    "user_agent": {"type": "string"},
+                },
+                "additionalProperties": False,
+            },
+            side_effect="read_only",
+            concurrency_safe=False,
+            timeout_seconds=fetch_policy.timeout_seconds + 1.0,
+            max_result_bytes=100_000,
+            metadata={"updates_source_health": True},
+        ),
+        lambda args: _probe_source(
+            args,
+            default_policy=fetch_policy,
+            fetch_text=fetch_text,
+            allowed_domains=allowed_domain_tuple,
+            health_manager=health_manager,
+        ),
     )
     registry.register(
         ToolDefinition(
@@ -172,6 +220,51 @@ def _fetch_url(
     }
 
 
+def _probe_source(
+    args: dict[str, Any],
+    *,
+    default_policy: SourceFetchPolicy,
+    fetch_text: FetchText | None,
+    allowed_domains: tuple[str, ...],
+    health_manager: BasicSourceHealthManager,
+) -> dict[str, Any]:
+    source = _source_definition(args["source"], default_source_type=SourceType.RSS)
+    _ensure_http_url(source.url)
+    _ensure_allowed_domain(source.url, allowed_domains)
+    policy = _fetch_policy(args, default_policy)
+    try:
+        content, status_code, content_type = _fetch_text(source.url, policy, fetch_text)
+    except Exception as exc:
+        error = SourceError(
+            source_id=source.source_id,
+            error_type=type(exc).__name__,
+            error_message=str(exc),
+            url=source.url,
+            metadata={"tool": "source.probe"},
+        )
+        health = health_manager.record_failure(source.source_id, error)
+        return {
+            "ok": False,
+            "source_id": source.source_id,
+            "url": source.url,
+            "canonical_url": canonicalize_url(source.url),
+            "error": error.to_dict(),
+            "health": health.to_dict(),
+        }
+
+    health = health_manager.record_success(source.source_id)
+    return {
+        "ok": True,
+        "source_id": source.source_id,
+        "url": source.url,
+        "canonical_url": canonicalize_url(source.url),
+        "status_code": status_code,
+        "content_type": content_type,
+        "content_bytes": len(content.encode("utf-8")),
+        "health": health.to_dict(),
+    }
+
+
 def _fetch_policy(args: dict[str, Any], default_policy: SourceFetchPolicy) -> SourceFetchPolicy:
     timeout_seconds = float(args.get("timeout_seconds", default_policy.timeout_seconds))
     max_bytes = int(args.get("max_bytes", default_policy.max_bytes))
@@ -239,6 +332,16 @@ def _source_definition(payload: Any, *, default_source_type: SourceType) -> Sour
         region=payload.get("region"),
         metadata=dict(payload.get("metadata") or {}),
     )
+
+
+def _source_id(args: dict[str, Any]) -> str:
+    source_id = args.get("source_id")
+    if source_id:
+        return str(source_id)
+    source = args.get("source")
+    if isinstance(source, dict) and source.get("source_id"):
+        return str(source["source_id"])
+    raise ValueError("source_id or source.source_id is required")
 
 
 def _raw_source_item_to_dict(item: RawSourceItem) -> dict[str, Any]:
