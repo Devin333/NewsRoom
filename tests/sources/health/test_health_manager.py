@@ -33,6 +33,28 @@ def test_health_manager_opens_cooldown_after_failures() -> None:
     assert manager.should_skip("source") is True
 
 
+def test_health_manager_marks_expired_cooldown_as_probe_ready() -> None:
+    clock = {"now": datetime(2026, 5, 11, tzinfo=UTC)}
+    manager = BasicSourceHealthManager(
+        failure_threshold=1,
+        cooldown_seconds=60,
+        now=lambda: clock["now"],
+    )
+    error = SourceError(source_id="source", error_type="fetch_timeout", error_message="timeout")
+
+    manager.record_failure("source", error)
+
+    assert manager.should_skip("source") is True
+    assert manager.should_fetch("source") is False
+    assert manager.should_probe("source") is False
+
+    clock["now"] = clock["now"] + timedelta(seconds=61)
+
+    assert manager.should_skip("source") is False
+    assert manager.should_fetch("source") is True
+    assert manager.should_probe("source") is True
+
+
 def test_health_manager_records_disabled_source_as_skipped() -> None:
     manager = BasicSourceHealthManager()
 

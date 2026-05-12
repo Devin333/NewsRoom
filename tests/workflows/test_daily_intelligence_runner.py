@@ -1,4 +1,5 @@
 import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from core.framework.llm import LLMResponse, TokenUsage
@@ -435,6 +436,90 @@ def test_daily_intelligence_runner_skips_cooling_source(tmp_path) -> None:
         event.event_type == "source_fetch_skipped" and event.source_id == "cooling"
         for event in result.output["source_events"]
     )
+
+
+def test_daily_intelligence_runner_emits_probe_success_after_cooldown_expires(tmp_path) -> None:
+    clock = {"now": datetime(2026, 5, 11, tzinfo=UTC)}
+    health_manager = BasicSourceHealthManager(
+        failure_threshold=1,
+        cooldown_seconds=60,
+        now=lambda: clock["now"],
+    )
+    health_manager.record_failure(
+        "recovering",
+        SourceError(source_id="recovering", error_type="fetch_timeout", error_message="timeout"),
+    )
+    clock["now"] = clock["now"] + timedelta(seconds=61)
+    registry = SourceRegistry(
+        [
+            SourceDefinition(
+                source_id="recovering",
+                name="Recovering",
+                source_type="rss",
+                url="https://example.com/recovering.xml",
+                reliability="high",
+            )
+        ]
+    )
+
+    result = DailyIntelligenceRunner(
+        artifact_root=tmp_path,
+        source_registry=registry,
+        feed_connector=FeedConnector(fetch_text=lambda url: RSS_FIXTURE),
+        llm_client=_FakeReportLLM(),
+        source_health_manager=health_manager,
+    ).run(profile="live", topic="AI policy", source_limit=1, run_id="daily-probe-success")
+
+    assert result.status == WorkflowStatus.SUCCEEDED
+    event_types = [event.event_type for event in result.output["source_events"]]
+    assert "source_probe_started" in event_types
+    assert "source_probe_succeeded" in event_types
+    assert "source_fetch_skipped" not in event_types
+
+
+def test_daily_intelligence_runner_emits_probe_failure_after_cooldown_expires(tmp_path) -> None:
+    clock = {"now": datetime(2026, 5, 11, tzinfo=UTC)}
+    health_manager = BasicSourceHealthManager(
+        failure_threshold=1,
+        cooldown_seconds=60,
+        now=lambda: clock["now"],
+    )
+    health_manager.record_failure(
+        "recovering",
+        SourceError(source_id="recovering", error_type="fetch_timeout", error_message="timeout"),
+    )
+    clock["now"] = clock["now"] + timedelta(seconds=61)
+    registry = SourceRegistry(
+        [
+            SourceDefinition(
+                source_id="recovering",
+                name="Recovering",
+                source_type="rss",
+                url="https://example.com/recovering.xml",
+                reliability="high",
+            )
+        ]
+    )
+
+    def fetch_text(url: str) -> str:
+        raise RuntimeError("still failing")
+
+    result = DailyIntelligenceRunner(
+        artifact_root=tmp_path,
+        source_registry=registry,
+        feed_connector=FeedConnector(fetch_text=fetch_text),
+        llm_client=_FailIfCalledLLM(),
+        source_health_manager=health_manager,
+    ).run(profile="live", topic="AI policy", source_limit=1, run_id="daily-probe-failure")
+
+    assert result.status == WorkflowStatus.FAILED
+    event_types = [event.event_type for event in result.output["source_events"]]
+    assert "source_probe_started" in event_types
+    assert "source_probe_failed" in event_types
+    probe_failed = next(
+        event for event in result.output["source_events"] if event.event_type == "source_probe_failed"
+    )
+    assert probe_failed.metadata["error_type"] == "fetch_connection_error"
 
 
 class _FakeReportLLM:

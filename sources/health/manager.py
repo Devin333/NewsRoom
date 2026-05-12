@@ -32,6 +32,17 @@ class BasicSourceHealthManager:
             and health.cooldown_until > self._now()
         )
 
+    def should_fetch(self, source_id: str) -> bool:
+        return not self.should_skip(source_id)
+
+    def should_probe(self, source_id: str) -> bool:
+        health = self.get(source_id)
+        return (
+            health.status == SourceHealthStatus.COOLING_DOWN
+            and health.cooldown_until is not None
+            and health.cooldown_until <= self._now()
+        )
+
     def record_success(self, source_id: str) -> SourceHealth:
         health = SourceHealth(
             source_id=source_id,

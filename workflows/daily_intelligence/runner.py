@@ -180,6 +180,17 @@ class DailyIntelligenceRunner:
                 )
                 metrics.sources_skipped += 1
                 continue
+            is_probe = self.source_health_manager.should_probe(source.source_id)
+            if is_probe:
+                health = self.source_health_manager.get(source.source_id)
+                source_events.append(
+                    _source_event(
+                        "source_probe_started",
+                        source.source_id,
+                        cooldown_until=_dt(health.cooldown_until),
+                        consecutive_failures=health.consecutive_failures,
+                    )
+                )
             source_events.append(
                 _source_event(
                     "source_fetch_started",
@@ -214,10 +225,30 @@ class DailyIntelligenceRunner:
                         consecutive_failures=source_health.consecutive_failures,
                     )
                 )
+                if is_probe:
+                    source_events.append(
+                        _source_event(
+                            "source_probe_succeeded",
+                            source.source_id,
+                            item_count=len(items),
+                            fetch_latency_ms=fetch_latency_ms,
+                            status=source_health.status.value,
+                        )
+                    )
             if errors:
                 metrics.sources_failed += 1
                 source_errors.extend(errors)
                 failed_sources.extend(error.to_dict() for error in errors)
+                if is_probe:
+                    source_events.append(
+                        _source_event(
+                            "source_probe_failed",
+                            source.source_id,
+                            error_type=errors[0].error_type,
+                            error_count=len(errors),
+                            fetch_latency_ms=fetch_latency_ms,
+                        )
+                    )
                 for error in errors:
                     source_events.append(
                         _source_event(
@@ -644,6 +675,10 @@ def _validate_report_payload(payload: Any) -> dict[str, Any]:
 
 def _elapsed_ms(start: float) -> float:
     return round((perf_counter() - start) * 1000, 3)
+
+
+def _dt(value) -> str | None:
+    return value.isoformat().replace("+00:00", "Z") if value else None
 
 
 def _source_event(event_type: str, source_id: str | None = None, **metadata: Any) -> SourcePipelineEvent:
