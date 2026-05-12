@@ -9,6 +9,7 @@ from core.framework.tools import (
     ToolStatus,
     register_report_tools,
 )
+from interfaces.services.report_service import ReportApplicationService
 from storage.repository import LocalJsonPersistenceAdapter
 
 
@@ -93,6 +94,49 @@ def test_report_validate_tool_returns_structured_errors_for_invalid_report() -> 
     assert observation.status == ToolStatus.SUCCEEDED
     assert observation.result.output["valid"] is False
     assert observation.result.output["errors"] == ["report.title is required"]
+
+
+def test_report_search_tool_returns_persisted_report_summaries(tmp_path) -> None:
+    _write_report_run(tmp_path, "run-1", "2026-05-11T00:00:00Z", "AI Policy Report")
+    _write_report_run(tmp_path, "run-2", "2026-05-12T00:00:00Z", "Chip Supply Report")
+    registry = ToolRegistry()
+    register_report_tools(
+        registry,
+        report_service=ReportApplicationService(artifact_root=tmp_path),
+    )
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="report.search",
+            arguments={"query": "policy", "limit": 10},
+        ),
+        ToolPolicy(allowed_tools=["report.search"]),
+    )
+
+    report = observation.result.output["reports"][0]
+
+    assert observation.status == ToolStatus.SUCCEEDED
+    assert observation.result.output["query"] == "policy"
+    assert observation.result.output["report_count"] == 1
+    assert report["report_id"] == "run-1:final"
+    assert report["title"] == "AI Policy Report"
+    assert "report_json" not in report
+    assert "report_markdown" not in report
+
+
+def test_report_search_tool_rejects_blank_query() -> None:
+    registry = ToolRegistry()
+    register_report_tools(registry, report_service=_FailingReportService())
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(tool_name="report.search", arguments={"query": " "}),
+        ToolPolicy(allowed_tools=["report.search"]),
+    )
+
+    assert observation.status == ToolStatus.FAILED
+    assert "query is required" in (observation.result.error_message or "")
 
 
 def test_report_export_tool_writes_markdown_and_json_artifacts(tmp_path) -> None:
@@ -214,3 +258,30 @@ def test_report_publish_tool_requires_approval_by_default(tmp_path) -> None:
 
     assert observation.status == ToolStatus.APPROVAL_REQUIRED
     assert not (tmp_path / "_records" / "reports" / "run-1_final.json").exists()
+
+
+def _write_report_run(root, run_id: str, finished_at: str, title: str) -> None:
+    run_dir = root / run_id
+    run_dir.mkdir(parents=True)
+    (run_dir / "report.json").write_text(json.dumps({"title": title}), encoding="utf-8")
+    (run_dir / "report.md").write_text(f"# {title}\n", encoding="utf-8")
+    (run_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "run_id": run_id,
+                "status": "succeeded",
+                "finished_at": finished_at,
+                "quality_score": 0.9,
+                "artifacts": {
+                    "report_json": "report.json",
+                    "report_markdown": "report.md",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+class _FailingReportService:
+    def search_reports(self, *, query, limit):
+        raise AssertionError("report service should not be called")

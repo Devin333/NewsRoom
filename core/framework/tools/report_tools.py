@@ -16,6 +16,7 @@ def register_report_tools(
     artifact_manager: ArtifactManager | None = None,
     run_id: str | None = None,
     persistence_repository: Any | None = None,
+    report_service: Any | None = None,
 ) -> None:
     registry.register(
         ToolDefinition(
@@ -45,6 +46,25 @@ def register_report_tools(
         ),
         lambda args: {"report": _final_report(args["report"]).to_dict()},
     )
+    if report_service is not None:
+        registry.register(
+            ToolDefinition(
+                name="report.search",
+                description="Search persisted report summaries through the configured report service.",
+                input_schema={
+                    "required": ["query"],
+                    "properties": {
+                        "query": {"type": "string"},
+                        "limit": {"type": "integer"},
+                    },
+                    "additionalProperties": False,
+                },
+                side_effect="read_only",
+                concurrency_safe=True,
+                max_result_bytes=500_000,
+            ),
+            lambda args: _search_reports(args, report_service=report_service),
+        )
     registry.register(
         ToolDefinition(
             name="report.validate",
@@ -132,6 +152,16 @@ def _validate_report(payload: Any) -> dict[str, Any]:
         "section_count": len(report.sections),
         "source_url_count": len(report.source_urls),
     }
+
+
+def _search_reports(args: dict[str, Any], *, report_service: Any) -> dict[str, Any]:
+    query = str(args["query"]).strip()
+    if not query:
+        raise ValueError("query is required")
+    result = report_service.search_reports(query=query, limit=_limit(args.get("limit")))
+    if hasattr(result, "to_dict"):
+        return result.to_dict()
+    return dict(result)
 
 
 def _export_report(
@@ -246,3 +276,9 @@ def _optional_float(value: Any) -> float | None:
     if value is None:
         return None
     return float(value)
+
+
+def _limit(value: Any) -> int:
+    if value is None:
+        return 20
+    return max(1, min(int(value), 100))
