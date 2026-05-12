@@ -107,6 +107,65 @@ def test_source_fetch_url_tool_rejects_non_http_urls_before_fetch() -> None:
     assert "only supports http and https" in (observation.result.error_message or "")
 
 
+def test_source_fetch_url_tool_allows_configured_domain_and_subdomain() -> None:
+    registry = ToolRegistry()
+    seen_urls: list[str] = []
+    register_source_tools(
+        registry,
+        fetch_text=lambda url: seen_urls.append(url) or "source content",
+        allowed_domains=["example.com"],
+    )
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="source.fetch_url",
+            arguments={
+                "source": {
+                    "source_id": "rss-example",
+                    "name": "Example RSS",
+                    "url": "https://news.example.com/feed.xml",
+                    "source_type": "rss",
+                }
+            },
+        ),
+        ToolPolicy(allowed_tools=["source.fetch_url"]),
+    )
+
+    assert observation.status == ToolStatus.SUCCEEDED
+    assert seen_urls == ["https://news.example.com/feed.xml"]
+
+
+def test_source_fetch_url_tool_rejects_domains_outside_allowlist_before_fetch() -> None:
+    registry = ToolRegistry()
+    calls = {"count": 0}
+    register_source_tools(
+        registry,
+        fetch_text=lambda url: calls.__setitem__("count", calls["count"] + 1) or "content",
+        allowed_domains=["example.com"],
+    )
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="source.fetch_url",
+            arguments={
+                "source": {
+                    "source_id": "rss-evil",
+                    "name": "Evil RSS",
+                    "url": "https://evil.test/feed.xml",
+                    "source_type": "rss",
+                }
+            },
+        ),
+        ToolPolicy(allowed_tools=["source.fetch_url"]),
+    )
+
+    assert observation.status == ToolStatus.FAILED
+    assert calls["count"] == 0
+    assert "allowed domains" in (observation.result.error_message or "")
+
+
 def test_source_fetch_url_tool_applies_max_bytes_to_injected_fetcher() -> None:
     registry = ToolRegistry()
     register_source_tools(registry, fetch_text=lambda url: "abcdef")

@@ -21,8 +21,10 @@ def register_source_tools(
     *,
     fetch_text: FetchText | None = None,
     fetch_policy: SourceFetchPolicy | None = None,
+    allowed_domains: list[str] | None = None,
 ) -> None:
     fetch_policy = fetch_policy or SourceFetchPolicy()
+    allowed_domain_tuple = _allowed_domains(allowed_domains)
     registry.register(
         ToolDefinition(
             name="source.fetch_url",
@@ -42,7 +44,12 @@ def register_source_tools(
             timeout_seconds=fetch_policy.timeout_seconds + 1.0,
             max_result_bytes=1_100_000,
         ),
-        lambda args: _fetch_url(args, default_policy=fetch_policy, fetch_text=fetch_text),
+        lambda args: _fetch_url(
+            args,
+            default_policy=fetch_policy,
+            fetch_text=fetch_text,
+            allowed_domains=allowed_domain_tuple,
+        ),
     )
     registry.register(
         ToolDefinition(
@@ -136,9 +143,11 @@ def _fetch_url(
     *,
     default_policy: SourceFetchPolicy,
     fetch_text: FetchText | None,
+    allowed_domains: tuple[str, ...],
 ) -> dict[str, Any]:
     source = _source_definition(args["source"], default_source_type=SourceType.RSS)
     _ensure_http_url(source.url)
+    _ensure_allowed_domain(source.url, allowed_domains)
     policy = _fetch_policy(args, default_policy)
     content, status_code, content_type = _fetch_text(source.url, policy, fetch_text)
     content_bytes = len(content.encode("utf-8"))
@@ -197,6 +206,23 @@ def _ensure_http_url(url: str) -> None:
     scheme = urlsplit(url).scheme.casefold()
     if scheme not in {"http", "https"}:
         raise ValueError(f"source.fetch_url only supports http and https URLs: {url}")
+
+
+def _allowed_domains(allowed_domains: list[str] | None) -> tuple[str, ...]:
+    return tuple(
+        domain.strip().casefold().lstrip(".")
+        for domain in allowed_domains or []
+        if domain.strip()
+    )
+
+
+def _ensure_allowed_domain(url: str, allowed_domains: tuple[str, ...]) -> None:
+    if not allowed_domains:
+        return
+    host = (urlsplit(url).hostname or "").casefold()
+    if any(host == domain or host.endswith(f".{domain}") for domain in allowed_domains):
+        return
+    raise ValueError(f"source.fetch_url host is not in allowed domains: {host}")
 
 
 def _source_definition(payload: Any, *, default_source_type: SourceType) -> SourceDefinition:
