@@ -536,6 +536,160 @@ def test_openai_compatible_client_rejects_colliding_provider_tool_names(monkeypa
     assert exc_info.value.error_type == "invalid_request_schema"
 
 
+def test_openai_compatible_client_streams_text_deltas_and_usage(monkeypatch) -> None:
+    monkeypatch.setenv("TEST_LLM_KEY", "redacted-test-key")
+    captured: dict[str, object] = {}
+
+    def stream_transport(request: Request, timeout: float):
+        captured["url"] = request.full_url
+        captured["payload"] = json.loads(request.data.decode("utf-8"))
+        return [
+            _sse({"id": "chatcmpl-stream", "choices": [{"delta": {"role": "assistant"}}]}),
+            _sse({"id": "chatcmpl-stream", "choices": [{"delta": {"content": "hel"}}]}),
+            _sse({"id": "chatcmpl-stream", "choices": [{"delta": {"content": "lo"}}]}),
+            _sse({"id": "chatcmpl-stream", "choices": [], "usage": {"prompt_tokens": 3, "completion_tokens": 2}}),
+            _sse({"id": "chatcmpl-stream", "choices": [{"delta": {}, "finish_reason": "stop"}]}),
+            b"data: [DONE]\n\n",
+        ]
+
+    client = OpenAICompatibleClient(
+        OpenAICompatibleConfig(
+            provider="test",
+            base_url="https://llm.example/v1",
+            model="test-model",
+            api_key_env="TEST_LLM_KEY",
+        ),
+        stream_transport=stream_transport,
+    )
+
+    events = list(client.stream(LLMRequest(messages=[{"role": "user", "content": "hi"}])))
+
+    assert captured["url"] == "https://llm.example/v1/chat/completions"
+    assert captured["payload"]["stream"] is True
+    assert [event.event_type for event in events] == [
+        "message_start",
+        "text_delta",
+        "text_delta",
+        "usage_delta",
+        "message_complete",
+    ]
+    assert events[1].text_delta == "hel"
+    assert events[2].text_delta == "lo"
+    assert events[3].usage_delta.input_tokens == 3
+    assert events[3].usage_delta.output_tokens == 2
+    assert events[-1].metadata == {
+        "provider": "test",
+        "model": "test-model",
+        "response_id": "chatcmpl-stream",
+        "finish_reason": "stop",
+        "attempts": 1,
+        "retry_count": 0,
+    }
+
+
+def test_openai_compatible_client_streams_fragmented_tool_call(monkeypatch) -> None:
+    monkeypatch.setenv("TEST_LLM_KEY", "redacted-test-key")
+
+    def stream_transport(request: Request, timeout: float):
+        return [
+            _sse(
+                {
+                    "id": "chatcmpl-tools",
+                    "choices": [
+                        {
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "index": 0,
+                                        "id": "call_1",
+                                        "type": "function",
+                                        "function": {
+                                            "name": "memory_search",
+                                            "arguments": "{\"query\"",
+                                        },
+                                    }
+                                ]
+                            }
+                        }
+                    ],
+                }
+            ),
+            _sse(
+                {
+                    "id": "chatcmpl-tools",
+                    "choices": [
+                        {
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "index": 0,
+                                        "function": {"arguments": ": \"chips\"}"},
+                                    }
+                                ]
+                            },
+                            "finish_reason": "tool_calls",
+                        }
+                    ],
+                }
+            ),
+            b"data: [DONE]\n\n",
+        ]
+
+    client = OpenAICompatibleClient(
+        OpenAICompatibleConfig(
+            provider="test",
+            base_url="https://llm.example/v1",
+            model="test-model",
+            api_key_env="TEST_LLM_KEY",
+        ),
+        stream_transport=stream_transport,
+    )
+
+    events = list(
+        client.stream(
+            LLMRequest(
+                messages=[{"role": "user", "content": "hi"}],
+                tools=[{"name": "memory.search"}],
+            )
+        )
+    )
+
+    tool_event = events[1]
+
+    assert [event.event_type for event in events] == [
+        "message_start",
+        "tool_call_complete",
+        "message_complete",
+    ]
+    assert tool_event.tool_call.tool_name == "memory.search"
+    assert tool_event.tool_call.arguments == {"query": "chips"}
+    assert tool_event.tool_call.provider_tool_call_id == "call_1"
+    assert events[-1].metadata["finish_reason"] == "tool_calls"
+
+
+def test_openai_compatible_client_stream_rejects_invalid_chunk(monkeypatch) -> None:
+    monkeypatch.setenv("TEST_LLM_KEY", "redacted-test-key")
+
+    def stream_transport(request: Request, timeout: float):
+        return [b"data: not-json\n\n"]
+
+    client = OpenAICompatibleClient(
+        OpenAICompatibleConfig(
+            provider="test",
+            base_url="https://llm.example/v1",
+            model="test-model",
+            api_key_env="TEST_LLM_KEY",
+        ),
+        stream_transport=stream_transport,
+    )
+
+    with pytest.raises(LLMProviderError) as exc_info:
+        list(client.stream(LLMRequest(messages=[{"role": "user", "content": "hi"}])))
+
+    assert exc_info.value.retryable is False
+    assert exc_info.value.error_type == "provider_stream_chunk_invalid"
+
+
 def _success_body(*, response_id: str = "chatcmpl-test", content: str = "{\"ok\": true}") -> bytes:
     return json.dumps(
         {
@@ -544,3 +698,7 @@ def _success_body(*, response_id: str = "chatcmpl-test", content: str = "{\"ok\"
             "usage": {"prompt_tokens": 7, "completion_tokens": 5},
         }
     ).encode("utf-8")
+
+
+def _sse(payload: dict) -> bytes:
+    return f"data: {json.dumps(payload)}\n\n".encode("utf-8")

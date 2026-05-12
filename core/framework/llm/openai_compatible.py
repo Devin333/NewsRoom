@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
@@ -10,6 +11,7 @@ from urllib.request import Request, urlopen
 
 from core.framework.llm.models import LLMRequest, LLMResponse, TokenUsage
 from core.framework.llm.redaction import redact_sensitive_values
+from core.framework.llm.streaming import LLMStreamEvent
 from core.framework.llm.tool_adapters import (
     LLMToolCallParseError,
     LLMToolSchemaError,
@@ -57,6 +59,7 @@ class LLMProviderError(RuntimeError):
 
 
 Transport = Callable[[Request, float], bytes]
+StreamTransport = Callable[[Request, float], Iterable[bytes | str]]
 Sleep = Callable[[float], None]
 
 
@@ -114,11 +117,13 @@ class OpenAICompatibleClient:
         config: OpenAICompatibleConfig,
         *,
         transport: Transport | None = None,
+        stream_transport: StreamTransport | None = None,
         retry_policy: LLMRetryPolicy | None = None,
         sleep: Sleep | None = None,
     ) -> None:
         self.config = config
         self._transport = transport or _urlopen_transport
+        self._stream_transport = stream_transport or _urlopen_stream_transport
         self._retry_policy = retry_policy or LLMRetryPolicy()
         self._sleep = sleep or time.sleep
 
@@ -155,6 +160,96 @@ class OpenAICompatibleClient:
             f"{self.config.provider} request failed before sending",
             provider=self.config.provider,
             attempts=self._retry_policy.max_attempts,
+        )
+
+    def stream(self, request: LLMRequest) -> Iterator[LLMStreamEvent]:
+        api_key = self.config.resolve_api_key()
+        try:
+            payload = self._build_payload(request)
+        except LLMToolSchemaError as exc:
+            raise LLMProviderError(
+                f"{self.config.provider} request tool schema is invalid: {exc}",
+                provider=self.config.provider,
+                error_type="invalid_request_schema",
+                retryable=False,
+            ) from exc
+        payload["stream"] = True
+
+        http_request = self._build_http_request(api_key, payload)
+        try:
+            lines = self._stream_transport(http_request, self.config.timeout_seconds)
+        except HTTPError as exc:
+            raise self._error_from_http(exc, attempts=1) from exc
+        except (TimeoutError, URLError, OSError) as exc:
+            raise self._error_from_network(exc, attempts=1) from exc
+
+        yield LLMStreamEvent(
+            event_type="message_start",
+            metadata={"provider": self.config.provider, "model": self.config.model},
+        )
+        assembler = _OpenAIStreamToolCallAssembler(request.tools)
+        completed = False
+        last_finish_reason: str | None = None
+        response_id: str | None = None
+
+        try:
+            for raw_line in lines:
+                line = _stream_line_text(raw_line)
+                if not line or line.startswith(":"):
+                    continue
+                if not line.startswith("data:"):
+                    continue
+                data = line.removeprefix("data:").strip()
+                if data == "[DONE]":
+                    completed = True
+                    break
+                chunk = self._parse_stream_chunk(data)
+                response_id = response_id or _optional_str(chunk.get("id"))
+                usage = _usage_from_stream_chunk(chunk)
+                if usage is not None:
+                    yield LLMStreamEvent(event_type="usage_delta", usage_delta=usage)
+                for event in _events_from_stream_chunk(
+                    chunk,
+                    assembler=assembler,
+                    provider=self.config.provider,
+                    attempts=1,
+                ):
+                    if event.event_type == "message_complete":
+                        last_finish_reason = event.metadata.get("finish_reason")
+                        completed = True
+                        continue
+                    yield event
+        except LLMToolCallParseError as exc:
+            raise LLMProviderError(
+                f"{self.config.provider} streaming tool call parse failed: {exc}",
+                provider=self.config.provider,
+                error_type="stream_tool_call_parse_error",
+                retryable=False,
+                attempts=1,
+            ) from exc
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise LLMProviderError(
+                f"{self.config.provider} stream chunk is not valid JSON",
+                provider=self.config.provider,
+                error_type="provider_stream_chunk_invalid",
+                retryable=False,
+                attempts=1,
+            ) from exc
+        except (TimeoutError, URLError, OSError) as exc:
+            raise self._error_from_network(exc, attempts=1) from exc
+
+        if not completed:
+            last_finish_reason = last_finish_reason or "stream_ended"
+        yield LLMStreamEvent(
+            event_type="message_complete",
+            metadata={
+                "provider": self.config.provider,
+                "model": self.config.model,
+                "response_id": response_id,
+                "finish_reason": last_finish_reason or "stop",
+                "attempts": 1,
+                "retry_count": 0,
+            },
         )
 
     def _build_payload(self, request: LLMRequest) -> dict[str, Any]:
@@ -199,6 +294,18 @@ class OpenAICompatibleClient:
                 error_type="provider_response_shape_invalid",
                 retryable=False,
                 attempts=attempts,
+            )
+        return payload
+
+    def _parse_stream_chunk(self, data: str) -> dict[str, Any]:
+        payload = json.loads(data)
+        if not isinstance(payload, dict):
+            raise LLMProviderError(
+                f"{self.config.provider} stream chunk is not an object",
+                provider=self.config.provider,
+                error_type="provider_stream_chunk_invalid",
+                retryable=False,
+                attempts=1,
             )
         return payload
 
@@ -389,6 +496,139 @@ def _expects_structured_output(request: LLMRequest) -> bool:
     return False
 
 
+class _OpenAIStreamToolCallAssembler:
+    def __init__(self, tools: list[dict[str, Any]]) -> None:
+        self._tools = tools
+        self._calls: dict[int, dict[str, Any]] = {}
+
+    def add_deltas(self, raw_tool_calls: Any) -> None:
+        if raw_tool_calls in (None, []):
+            return
+        if not isinstance(raw_tool_calls, list):
+            raise LLMToolCallParseError("provider streaming tool_calls must be a list")
+        for raw_tool_call in raw_tool_calls:
+            if not isinstance(raw_tool_call, dict):
+                raise LLMToolCallParseError("provider streaming tool_call must be an object")
+            index = int(raw_tool_call.get("index", len(self._calls)))
+            current = self._calls.setdefault(
+                index,
+                {"id": None, "type": "function", "function": {"name": "", "arguments": ""}},
+            )
+            if raw_tool_call.get("id"):
+                current["id"] = str(raw_tool_call["id"])
+            if raw_tool_call.get("type"):
+                current["type"] = str(raw_tool_call["type"])
+            function = raw_tool_call.get("function") or {}
+            if function and not isinstance(function, dict):
+                raise LLMToolCallParseError("provider streaming tool_call function must be an object")
+            current_function = current["function"]
+            name_delta = function.get("name")
+            if name_delta:
+                current_function["name"] = f"{current_function.get('name', '')}{name_delta}"
+            args_delta = function.get("arguments")
+            if args_delta:
+                current_function["arguments"] = (
+                    f"{current_function.get('arguments', '')}{args_delta}"
+                )
+
+    def complete(self):
+        raw_calls = []
+        for index in sorted(self._calls):
+            raw_call = self._calls[index]
+            function = raw_call.get("function") or {}
+            raw_calls.append(
+                {
+                    "id": raw_call.get("id") or f"tool_call_{index + 1}",
+                    "type": raw_call.get("type") or "function",
+                    "function": {
+                        "name": function.get("name") or "",
+                        "arguments": function.get("arguments") or "{}",
+                    },
+                }
+            )
+        return parse_openai_tool_calls(raw_calls, self._tools)
+
+
+def _events_from_stream_chunk(
+    chunk: dict[str, Any],
+    *,
+    assembler: _OpenAIStreamToolCallAssembler,
+    provider: str,
+    attempts: int,
+) -> list[LLMStreamEvent]:
+    choices = chunk.get("choices") or []
+    if not isinstance(choices, list):
+        raise LLMProviderError(
+            f"{provider} stream chunk choices are invalid",
+            provider=provider,
+            error_type="provider_stream_chunk_invalid",
+            retryable=False,
+            attempts=attempts,
+        )
+    events: list[LLMStreamEvent] = []
+    for choice in choices:
+        if not isinstance(choice, dict):
+            raise LLMProviderError(
+                f"{provider} stream chunk choice is invalid",
+                provider=provider,
+                error_type="provider_stream_chunk_invalid",
+                retryable=False,
+                attempts=attempts,
+            )
+        delta = choice.get("delta") or {}
+        if not isinstance(delta, dict):
+            raise LLMProviderError(
+                f"{provider} stream chunk delta is invalid",
+                provider=provider,
+                error_type="provider_stream_chunk_invalid",
+                retryable=False,
+                attempts=attempts,
+            )
+        content = delta.get("content")
+        if isinstance(content, str) and content:
+            events.append(LLMStreamEvent(event_type="text_delta", text_delta=content))
+        assembler.add_deltas(delta.get("tool_calls"))
+        finish_reason = choice.get("finish_reason")
+        if finish_reason == "tool_calls":
+            for tool_call in assembler.complete():
+                events.append(LLMStreamEvent(event_type="tool_call_complete", tool_call=tool_call))
+        if finish_reason:
+            events.append(
+                LLMStreamEvent(
+                    event_type="message_complete",
+                    metadata={"finish_reason": str(finish_reason)},
+                )
+            )
+    return events
+
+
+def _usage_from_stream_chunk(chunk: dict[str, Any]) -> TokenUsage | None:
+    usage = chunk.get("usage")
+    if not isinstance(usage, dict):
+        return None
+    return TokenUsage(
+        input_tokens=int(usage.get("prompt_tokens", 0) or 0),
+        output_tokens=int(usage.get("completion_tokens", 0) or 0),
+    )
+
+
+def _stream_line_text(raw_line: bytes | str) -> str:
+    if isinstance(raw_line, bytes):
+        return raw_line.decode("utf-8").strip()
+    return str(raw_line).strip()
+
+
+def _optional_str(value: Any) -> str | None:
+    if value is None:
+        return None
+    return str(value)
+
+
 def _urlopen_transport(request: Request, timeout_seconds: float) -> bytes:
     with urlopen(request, timeout=timeout_seconds) as response:
         return response.read()
+
+
+def _urlopen_stream_transport(request: Request, timeout_seconds: float) -> Iterable[bytes]:
+    with urlopen(request, timeout=timeout_seconds) as response:
+        yield from response
