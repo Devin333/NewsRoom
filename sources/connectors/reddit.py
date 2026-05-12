@@ -30,6 +30,7 @@ from sources.connectors.fetch_policy import (
     run_with_fetch_retries,
 )
 from sources.connectors.metadata import source_item_metadata
+from sources.errors import classify_source_exception
 
 
 FetchText = Callable[[str], str]
@@ -341,13 +342,20 @@ def _source_error(
 
 
 def _exception_source_error(source: SourceDefinition, exc: Exception, *, phase: str) -> SourceError:
-    error_type, retryable = _taxonomy_for_exception(exc, phase=phase)
+    classification = classify_source_exception(
+        exc,
+        phase=phase,
+        invalid_config_keywords=("subreddit", "listing", "time range"),
+    )
+    error_type, retryable = classification.to_tuple()
     metadata: dict[str, object] = {
         "phase": phase,
         "original_exception_type": type(exc).__name__,
         "retryable": retryable,
-        "source_health_affecting": phase == "fetch" or retryable,
+        "source_health_affecting": classification.source_health_affecting,
     }
+    if classification.operator_action_required:
+        metadata["operator_action_required"] = True
     if isinstance(exc, UnsupportedContentTypeError):
         metadata["content_type"] = exc.content_type
         metadata["supported_content_types"] = list(exc.supported_content_types)
@@ -369,29 +377,11 @@ def _exception_source_error(source: SourceDefinition, exc: Exception, *, phase: 
 
 
 def _taxonomy_for_exception(exc: Exception, *, phase: str) -> tuple[str, bool]:
-    if phase == "parse":
-        return "parse_error", False
-    if isinstance(exc, UnsupportedContentTypeError):
-        return "unsupported_content_type", False
-    if isinstance(exc, TooManyRedirectsError):
-        return "too_many_redirects", False
-    if isinstance(exc, RobotsDisallowedError):
-        return "robots_disallowed", False
-    if isinstance(exc, ValueError) and (
-        "subreddit" in str(exc) or "listing" in str(exc) or "time range" in str(exc)
-    ):
-        return "invalid_source_config", False
-    if isinstance(exc, HTTPError):
-        if 400 <= exc.code < 500:
-            return "fetch_http_4xx", exc.code in {408, 409, 425, 429}
-        if exc.code >= 500:
-            return "fetch_http_5xx", True
-        return "fetch_connection_error", True
-    if _is_timeout_exception(exc):
-        return "fetch_timeout", True
-    if isinstance(exc, ValueError) and "max_bytes" in str(exc):
-        return "max_bytes_exceeded", False
-    return "fetch_connection_error", True
+    return classify_source_exception(
+        exc,
+        phase=phase,
+        invalid_config_keywords=("subreddit", "listing", "time range"),
+    ).to_tuple()
 
 
 def _is_timeout_exception(exc: Exception) -> bool:

@@ -28,6 +28,7 @@ from sources.connectors.fetch_policy import (
     open_request_with_fetch_policy,
     run_with_fetch_retries,
 )
+from sources.errors import classify_source_exception
 from sources.health.manager import BasicSourceHealthManager
 
 
@@ -382,25 +383,16 @@ def _exception_source_error(source: SourceDefinition, exc: Exception) -> SourceE
 
 
 def _classify_probe_exception(exc: Exception) -> tuple[str, bool, bool]:
-    if isinstance(exc, RobotsDisallowedError):
-        return "robots_disallowed", False, False
-    if isinstance(exc, TooManyRedirectsError):
-        return "too_many_redirects", False, False
-    if isinstance(exc, UnsupportedContentTypeError):
-        return "unsupported_content_type", False, False
-    if isinstance(exc, HTTPError):
-        if 400 <= exc.code < 500:
-            return "fetch_http_4xx", exc.code in {408, 409, 425, 429}, True
-        if exc.code >= 500:
-            return "fetch_http_5xx", True, True
-        return "fetch_connection_error", True, True
-    if _is_timeout_exception(exc):
-        return "fetch_timeout", True, True
-    if isinstance(exc, ValueError) and "max_bytes" in str(exc):
-        return "max_bytes_exceeded", False, False
-    if isinstance(exc, ValueError):
-        return "invalid_source_config", False, False
-    return "fetch_connection_error", True, True
+    classification = classify_source_exception(
+        exc,
+        phase="probe",
+        invalid_config_keywords=("source url",),
+    )
+    return (
+        classification.error_type,
+        classification.retryable,
+        classification.source_health_affecting,
+    )
 
 
 def _ensure_http_url(url: str) -> None:

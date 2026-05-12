@@ -166,7 +166,7 @@ def test_daily_intelligence_runner_live_offline_writes_report_artifacts(tmp_path
     assert manifest["source_ranking_score_count"] == 2
     assert manifest["artifacts"]["source_fetch_requests"] == "source_fetch_requests.json"
     assert manifest["artifacts"]["source_artifacts"] == "source_artifacts/index.json"
-    assert manifest["source_event_count"] == 6
+    assert manifest["source_event_count"] == 8
     assert manifest["source_artifacts"]["item_count"] == 2
     assert manifest["source_artifacts"]["error_count"] == 0
     assert manifest["source_artifacts"]["raw_content_count"] == 2
@@ -182,7 +182,9 @@ def test_daily_intelligence_runner_live_offline_writes_report_artifacts(tmp_path
     event_types = [event["event_type"] for event in source_events]
     assert event_types == [
         "source_fetch_started",
+        "source_parse_started",
         "source_fetch_succeeded",
+        "source_parse_succeeded",
         "source_health_updated",
         "source_normalized",
         "source_deduplicated",
@@ -920,7 +922,7 @@ def test_daily_intelligence_runner_records_partial_source_failures(tmp_path) -> 
     assert manifest["artifacts"]["source_selection_report"] == "source_selection_report.json"
     assert manifest["artifacts"]["source_coverage_report"] == "source_coverage_report.json"
     assert manifest["artifacts"]["source_artifacts"] == "source_artifacts/index.json"
-    assert manifest["source_event_count"] == 9
+    assert manifest["source_event_count"] == 12
     assert manifest["source_artifacts"] == {
         "item_count": 1,
         "error_count": 1,
@@ -943,6 +945,14 @@ def test_daily_intelligence_runner_records_partial_source_failures(tmp_path) -> 
     assert failed_event["metadata"]["fetch_latency_ms"] >= 0
     assert any(
         event["event_type"] == "source_fetch_succeeded" and event["source_id"] == "working"
+        for event in source_events
+    )
+    assert any(
+        event["event_type"] == "source_parse_started" and event["source_id"] == "failing"
+        for event in source_events
+    )
+    assert any(
+        event["event_type"] == "source_parse_succeeded" and event["source_id"] == "working"
         for event in source_events
     )
 
@@ -1315,6 +1325,7 @@ def test_daily_intelligence_runner_emits_probe_failure_after_cooldown_expires(tm
     event_types = [event.event_type for event in result.output["source_events"]]
     assert "source_probe_started" in event_types
     assert "source_probe_failed" in event_types
+    assert "source_cooldown_started" in event_types
     probe_failed = next(
         event for event in result.output["source_events"] if event.event_type == "source_probe_failed"
     )

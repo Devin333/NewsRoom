@@ -17,6 +17,7 @@ from domain.sources import (
     SourceError,
     SourceFetchRequest,
     SourceFetchResult,
+    SourceHealthStatus,
     SourcePipelineEvent,
     SourcePipelineMetrics,
     SourceType,
@@ -153,6 +154,13 @@ class DailyIntelligenceRunner:
                 )
             )
             latency_start = perf_counter()
+            source_events.append(
+                _source_event(
+                    "source_parse_started",
+                    fixture_source.source_id,
+                    source_type=fixture_source.source_type.value,
+                )
+            )
             raw_items = FeedConnector().parse(fixture_source, _fixture_feed(), limit=limit)
             fetch_latency_ms = _elapsed_ms(latency_start)
             request_id = "source-fetch-0001-fixture-ai"
@@ -192,6 +200,13 @@ class DailyIntelligenceRunner:
                     fixture_source.source_id,
                     item_count=len(raw_items),
                     fetch_latency_ms=fetch_latency_ms,
+                )
+            )
+            source_events.append(
+                _source_event(
+                    "source_parse_succeeded",
+                    fixture_source.source_id,
+                    item_count=len(raw_items),
                 )
             )
             source_health = self.source_health_manager.record_success(
@@ -344,6 +359,13 @@ class DailyIntelligenceRunner:
                     url=source.url,
                 )
             )
+            source_events.append(
+                _source_event(
+                    "source_parse_started",
+                    source.source_id,
+                    source_type=source.source_type.value,
+                )
+            )
             latency_start = perf_counter()
             items, errors = self._fetch_source(source, request=request, limit=remaining)
             errors = _with_error_request_id(errors, request_id)
@@ -374,6 +396,13 @@ class DailyIntelligenceRunner:
                         source.source_id,
                         item_count=len(items),
                         fetch_latency_ms=fetch_latency_ms,
+                    )
+                )
+                source_events.append(
+                    _source_event(
+                        "source_parse_succeeded",
+                        source.source_id,
+                        item_count=len(items),
                     )
                 )
                 source_health = self.source_health_manager.record_success(
@@ -433,6 +462,15 @@ class DailyIntelligenceRunner:
                             fetch_latency_ms=fetch_latency_ms,
                         )
                     )
+                    if _error_phase(error) == "parse":
+                        source_events.append(
+                            _source_event(
+                                "source_parse_failed",
+                                source.source_id,
+                                error_type=error.error_type,
+                                retryable=retryable,
+                            )
+                        )
                     metrics.record_error(error)
                     if source_health_affecting:
                         source_health = self.source_health_manager.record_failure(
@@ -451,6 +489,15 @@ class DailyIntelligenceRunner:
                                 consecutive_failures=source_health.consecutive_failures,
                             )
                         )
+                        if source_health.status == SourceHealthStatus.COOLING_DOWN:
+                            source_events.append(
+                                _source_event(
+                                    "source_cooldown_started",
+                                    source.source_id,
+                                    cooldown_until=_dt(source_health.cooldown_until),
+                                    consecutive_failures=source_health.consecutive_failures,
+                                )
+                            )
         metrics.raw_items_count = len(raw_items)
         if not raw_items:
             all_sources_error = SourceError(
@@ -1300,6 +1347,11 @@ def _error_metadata_bool(error: SourceError, key: str, *, default: bool) -> bool
     if value is None:
         return default
     return str(value).strip().casefold() in {"1", "true", "yes", "on"}
+
+
+def _error_phase(error: SourceError) -> str | None:
+    value = error.metadata.get("phase")
+    return str(value) if value is not None else None
 
 
 def _quality_event(event_type: str, **metadata: Any) -> QualityEvent:
