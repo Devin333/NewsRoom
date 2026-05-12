@@ -150,6 +150,7 @@ def test_daily_intelligence_runner_live_offline_writes_report_artifacts(tmp_path
     assert manifest["artifacts"]["report_json"] == "report.json"
     assert manifest["artifacts"]["report_markdown"] == "report.md"
     assert manifest["artifacts"]["source_events"] == "source_events.json"
+    assert manifest["artifacts"]["source_coverage_report"] == "source_coverage_report.json"
     assert manifest["artifacts"]["source_fetch_requests"] == "source_fetch_requests.json"
     assert manifest["artifacts"]["source_artifacts"] == "source_artifacts/index.json"
     assert manifest["source_event_count"] == 6
@@ -184,6 +185,19 @@ def test_daily_intelligence_runner_live_offline_writes_report_artifacts(tmp_path
     assert source_metrics["fetched_by_type"] == {"rss": 1}
     assert source_metrics["items_by_source_type"] == {"rss": 2}
     assert source_metrics["items_by_reliability"] == {"high": 2}
+
+    coverage_report = json.loads((run_dir / "source_coverage_report.json").read_text(encoding="utf-8"))
+    assert coverage_report["coverage_status"] == "covered"
+    assert coverage_report["selected_source_count"] == 1
+    assert coverage_report["attempted_source_count"] == 1
+    assert coverage_report["fetched_source_count"] == 1
+    assert coverage_report["raw_item_count"] == 2
+    assert coverage_report["normalized_item_count"] == 2
+    assert coverage_report["deduplicated_item_count"] == 2
+    assert coverage_report["ranked_item_count"] == 2
+    assert coverage_report["fetch_success_ratio"] == 1.0
+    assert coverage_report["sources_by_type"] == {"rss": 1}
+    assert result.output["source_coverage_report"].coverage_status == "covered"
 
     source_fetch_requests = json.loads((run_dir / "source_fetch_requests.json").read_text())
     assert source_fetch_requests[0]["request_id"] == result.output["source_fetch_results"][0].request_id
@@ -739,6 +753,12 @@ def test_daily_intelligence_runner_records_partial_source_failures(tmp_path) -> 
     assert metrics.failed_by_type == {"rss": 1}
     assert metrics.items_by_source_type == {"rss": 1}
     assert metrics.items_by_reliability == {"high": 1}
+    assert result.output["source_coverage_report"].coverage_status == "partial"
+    assert result.output["source_coverage_report"].selected_source_count == 2
+    assert result.output["source_coverage_report"].fetched_source_count == 1
+    assert result.output["source_coverage_report"].failed_source_count == 1
+    assert result.output["source_coverage_report"].fetch_success_ratio == 0.5
+    assert result.output["source_coverage_report"].failed_source_ids == ["failing"]
     assert result.output["failed_sources"][0]["source_id"] == "failing"
     assert result.output["failed_sources"][0]["source_name"] == "Failing"
     assert result.output["failed_sources"][0]["retryable"] is True
@@ -764,6 +784,7 @@ def test_daily_intelligence_runner_records_partial_source_failures(tmp_path) -> 
     assert manifest["artifacts"]["source_fetch_results"] == "source_fetch_results.json"
     assert manifest["artifacts"]["source_events"] == "source_events.json"
     assert manifest["artifacts"]["source_pipeline_metrics"] == "source_pipeline_metrics.json"
+    assert manifest["artifacts"]["source_coverage_report"] == "source_coverage_report.json"
     assert manifest["artifacts"]["source_artifacts"] == "source_artifacts/index.json"
     assert manifest["source_event_count"] == 9
     assert manifest["source_artifacts"] == {
@@ -818,6 +839,11 @@ def test_daily_intelligence_runner_records_partial_source_failures(tmp_path) -> 
     assert error_entry["response_ref"]["artifact_type"] == "source_fetch_result"
     assert error_entry["response_ref"]["artifact_id"] == "source-fetch-result-failing-source-fetch-0001-failing"
     assert error_payload["request_ref"] == error_entry["request_ref"]
+
+    coverage_report = json.loads((run_dir / "source_coverage_report.json").read_text(encoding="utf-8"))
+    assert coverage_report["coverage_status"] == "partial"
+    assert coverage_report["failed_source_ids"] == ["failing"]
+    assert coverage_report["errors_by_type"] == {"fetch_connection_error": 1}
     assert error_payload["response_ref"] == error_entry["response_ref"]
     assert error_payload["error"]["request_ref"] == error_entry["request_ref"]
     assert error_payload["error"]["response_ref"] == error_entry["response_ref"]
@@ -972,6 +998,7 @@ def test_daily_intelligence_runner_all_sources_failed_preserves_diagnostics(tmp_
     assert manifest["artifacts"]["source_fetch_requests"] == "source_fetch_requests.json"
     assert manifest["artifacts"]["source_events"] == "source_events.json"
     assert manifest["artifacts"]["source_pipeline_metrics"] == "source_pipeline_metrics.json"
+    assert manifest["artifacts"]["source_coverage_report"] == "source_coverage_report.json"
     assert manifest["artifacts"]["source_artifacts"] == "source_artifacts/index.json"
     assert "report_json" not in manifest["artifacts"]
 
@@ -986,6 +1013,12 @@ def test_daily_intelligence_runner_all_sources_failed_preserves_diagnostics(tmp_
     metrics = json.loads((run_dir / "source_pipeline_metrics.json").read_text(encoding="utf-8"))
     assert metrics["raw_items_count"] == 0
     assert metrics["errors_by_type"]["all_sources_failed"] == 1
+
+    coverage_report = json.loads((run_dir / "source_coverage_report.json").read_text(encoding="utf-8"))
+    assert coverage_report["coverage_status"] == "empty"
+    assert coverage_report["raw_item_count"] == 0
+    assert coverage_report["failed_source_count"] == 1
+    assert coverage_report["errors_by_type"]["all_sources_failed"] == 1
 
     source_events = json.loads((run_dir / "source_events.json").read_text(encoding="utf-8"))
     assert any(
@@ -1054,6 +1087,8 @@ def test_daily_intelligence_runner_skips_cooling_source(tmp_path) -> None:
     assert result.output["skipped_sources"][0]["url"] == "https://example.com/cooling.xml"
     assert result.output["source_pipeline_metrics"].sources_skipped == 1
     assert result.output["source_pipeline_metrics"].skipped_by_type == {"rss": 1}
+    assert result.output["source_coverage_report"].coverage_status == "partial"
+    assert result.output["source_coverage_report"].skipped_source_ids == ["cooling"]
     skipped_result = next(
         fetch_result
         for fetch_result in result.output["source_fetch_results"]

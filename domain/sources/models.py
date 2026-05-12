@@ -436,6 +436,72 @@ class SourcePipelineMetrics:
         }
 
 
+@dataclass(frozen=True)
+class SourceCoverageReport:
+    coverage_status: str
+    selected_source_count: int
+    attempted_source_count: int
+    fetched_source_count: int
+    failed_source_count: int
+    skipped_source_count: int
+    unattempted_source_count: int
+    raw_item_count: int
+    normalized_item_count: int
+    deduplicated_item_count: int
+    ranked_item_count: int
+    duplicate_item_count: int
+    error_count: int
+    fetch_success_ratio: float
+    attempted_source_ratio: float
+    item_yield_ratio: float
+    avg_fetch_latency_ms: float | None = None
+    sources_by_type: dict[str, int] = field(default_factory=dict)
+    sources_by_reliability: dict[str, int] = field(default_factory=dict)
+    fetched_by_type: dict[str, int] = field(default_factory=dict)
+    failed_by_type: dict[str, int] = field(default_factory=dict)
+    skipped_by_type: dict[str, int] = field(default_factory=dict)
+    items_by_source: dict[str, int] = field(default_factory=dict)
+    items_by_source_type: dict[str, int] = field(default_factory=dict)
+    items_by_reliability: dict[str, int] = field(default_factory=dict)
+    errors_by_type: dict[str, int] = field(default_factory=dict)
+    skipped_source_ids: list[str] = field(default_factory=list)
+    failed_source_ids: list[str] = field(default_factory=list)
+    partial_reasons: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "coverage_status": self.coverage_status,
+            "selected_source_count": self.selected_source_count,
+            "attempted_source_count": self.attempted_source_count,
+            "fetched_source_count": self.fetched_source_count,
+            "failed_source_count": self.failed_source_count,
+            "skipped_source_count": self.skipped_source_count,
+            "unattempted_source_count": self.unattempted_source_count,
+            "raw_item_count": self.raw_item_count,
+            "normalized_item_count": self.normalized_item_count,
+            "deduplicated_item_count": self.deduplicated_item_count,
+            "ranked_item_count": self.ranked_item_count,
+            "duplicate_item_count": self.duplicate_item_count,
+            "error_count": self.error_count,
+            "fetch_success_ratio": self.fetch_success_ratio,
+            "attempted_source_ratio": self.attempted_source_ratio,
+            "item_yield_ratio": self.item_yield_ratio,
+            "avg_fetch_latency_ms": self.avg_fetch_latency_ms,
+            "sources_by_type": dict(self.sources_by_type),
+            "sources_by_reliability": dict(self.sources_by_reliability),
+            "fetched_by_type": dict(self.fetched_by_type),
+            "failed_by_type": dict(self.failed_by_type),
+            "skipped_by_type": dict(self.skipped_by_type),
+            "items_by_source": dict(self.items_by_source),
+            "items_by_source_type": dict(self.items_by_source_type),
+            "items_by_reliability": dict(self.items_by_reliability),
+            "errors_by_type": dict(self.errors_by_type),
+            "skipped_source_ids": list(self.skipped_source_ids),
+            "failed_source_ids": list(self.failed_source_ids),
+            "partial_reasons": list(self.partial_reasons),
+        }
+
+
 def _dt(value: datetime | None) -> str | None:
     return value.isoformat().replace("+00:00", "Z") if value else None
 

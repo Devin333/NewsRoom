@@ -43,7 +43,7 @@ from sources.connectors import (
 )
 from sources.connectors.diagnostics import response_metadata_from_observations
 from sources.health import BasicSourceHealthManager
-from sources.processing import deduplicate_with_result, normalize_items, rank_items
+from sources.processing import build_source_coverage_report, deduplicate_with_result, normalize_items, rank_items
 
 PROFILE_LIVE = "live"
 PROFILE_LIVE_OFFLINE = "live-offline"
@@ -205,6 +205,12 @@ class DailyIntelligenceRunner:
                 "source_health_updates": source_health_updates,
                 "source_events": source_events,
                 "source_pipeline_metrics": metrics,
+                "source_coverage_report": build_source_coverage_report(
+                    metrics,
+                    source_errors=source_errors,
+                    skipped_sources=skipped_sources,
+                    failed_sources=failed_sources,
+                ),
             }
 
         raw_items = []
@@ -451,6 +457,12 @@ class DailyIntelligenceRunner:
             "source_health_updates": source_health_updates,
             "source_events": source_events,
             "source_pipeline_metrics": metrics,
+            "source_coverage_report": build_source_coverage_report(
+                metrics,
+                source_errors=source_errors,
+                skipped_sources=skipped_sources,
+                failed_sources=failed_sources,
+            ),
         }
 
     def _fetch_source(
@@ -557,6 +569,7 @@ def build_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
                     "source_health_updates",
                     "source_events",
                     "source_pipeline_metrics",
+                    "source_coverage_report",
                 ],
                 required_output_keys=[
                     "raw_items",
@@ -568,6 +581,7 @@ def build_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
                     "source_health_updates",
                     "source_events",
                     "source_pipeline_metrics",
+                    "source_coverage_report",
                 ],
             ),
             StepSpec(
@@ -604,9 +618,27 @@ def build_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
             StepSpec(
                 step_id="rank_sources",
                 implementation="daily.rank_sources",
-                read_keys=["deduplicated_items", "request", "source_events", "source_pipeline_metrics"],
-                write_keys=["ranked_items", "source_events", "source_pipeline_metrics"],
-                required_output_keys=["ranked_items", "source_events", "source_pipeline_metrics"],
+                read_keys=[
+                    "deduplicated_items",
+                    "request",
+                    "source_errors",
+                    "skipped_sources",
+                    "failed_sources",
+                    "source_events",
+                    "source_pipeline_metrics",
+                ],
+                write_keys=[
+                    "ranked_items",
+                    "source_events",
+                    "source_pipeline_metrics",
+                    "source_coverage_report",
+                ],
+                required_output_keys=[
+                    "ranked_items",
+                    "source_events",
+                    "source_pipeline_metrics",
+                    "source_coverage_report",
+                ],
             ),
             StepSpec(
                 step_id="build_evidence",
@@ -773,7 +805,17 @@ def _rank_sources(buffer: ScopedDataBuffer) -> dict[str, Any]:
     )
     metrics = buffer.read("source_pipeline_metrics")
     metrics.ranked_items_count = len(ranked_items)
-    return {"ranked_items": ranked_items, "source_events": source_events, "source_pipeline_metrics": metrics}
+    return {
+        "ranked_items": ranked_items,
+        "source_events": source_events,
+        "source_pipeline_metrics": metrics,
+        "source_coverage_report": build_source_coverage_report(
+            metrics,
+            source_errors=buffer.read("source_errors"),
+            skipped_sources=buffer.read("skipped_sources"),
+            failed_sources=buffer.read("failed_sources"),
+        ),
+    }
 
 
 def _build_evidence(buffer: ScopedDataBuffer) -> dict[str, Any]:

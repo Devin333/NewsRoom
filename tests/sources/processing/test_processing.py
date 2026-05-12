@@ -1,7 +1,13 @@
 from datetime import UTC, datetime, timedelta
 
-from domain.sources import RawSourceItem, SourceType
-from sources.processing import deduplicate_items, deduplicate_with_result, normalize_items, rank_items
+from domain.sources import RawSourceItem, SourceError, SourcePipelineMetrics, SourceType
+from sources.processing import (
+    build_source_coverage_report,
+    deduplicate_items,
+    deduplicate_with_result,
+    normalize_items,
+    rank_items,
+)
 from sources.processing.normalize import canonicalize_url, normalize_text
 
 
@@ -43,6 +49,86 @@ def test_normalize_text_and_canonical_url() -> None:
         canonicalize_url("HTTPS://Example.COM/post/?utm_source=x&b=2&a=1#section")
         == "https://example.com/post?a=1&b=2"
     )
+
+
+def test_build_source_coverage_report_summarizes_partial_outcomes() -> None:
+    metrics = SourcePipelineMetrics(
+        sources_total=3,
+        sources_fetched=1,
+        sources_failed=1,
+        sources_skipped=1,
+        raw_items_count=2,
+        normalized_items_count=2,
+        deduplicated_items_count=1,
+        ranked_items_count=1,
+        duplicate_count=1,
+        errors_by_type={"fetch_timeout": 1},
+        items_by_source={"official": 2},
+        sources_by_type={"rss": 2, "github": 1},
+        sources_by_reliability={"high": 1, "medium": 2},
+        fetched_by_type={"rss": 1},
+        failed_by_type={"rss": 1},
+        skipped_by_type={"github": 1},
+        items_by_source_type={"rss": 2},
+        items_by_reliability={"high": 2},
+    )
+    metrics.avg_fetch_latency_ms = 12.5
+
+    report = build_source_coverage_report(
+        metrics,
+        source_errors=[
+            SourceError(
+                source_id="failing",
+                error_type="fetch_timeout",
+                error_message="timeout",
+            )
+        ],
+        skipped_sources=[{"source_id": "cooling"}],
+        failed_sources=[{"source_id": "failing"}, {"source_id": "failing"}],
+    )
+
+    assert report.coverage_status == "partial"
+    assert report.selected_source_count == 3
+    assert report.attempted_source_count == 3
+    assert report.fetched_source_count == 1
+    assert report.failed_source_count == 1
+    assert report.skipped_source_count == 1
+    assert report.unattempted_source_count == 0
+    assert report.fetch_success_ratio == 0.3333
+    assert report.attempted_source_ratio == 1.0
+    assert report.item_yield_ratio == 0.6667
+    assert report.error_count == 1
+    assert report.failed_source_ids == ["failing"]
+    assert report.skipped_source_ids == ["cooling"]
+    assert report.partial_reasons == ["source_failures", "source_skips", "source_errors"]
+    assert report.to_dict()["items_by_reliability"] == {"high": 2}
+
+
+def test_build_source_coverage_report_marks_no_source_run_empty() -> None:
+    metrics = SourcePipelineMetrics(
+        sources_total=1,
+        sources_failed=1,
+        raw_items_count=0,
+        errors_by_type={"all_sources_failed": 1},
+        sources_by_type={"rss": 1},
+    )
+
+    report = build_source_coverage_report(
+        metrics,
+        source_errors=[
+            SourceError(
+                source_id="source_pipeline",
+                error_type="all_sources_failed",
+                error_message="all failed",
+            )
+        ],
+        failed_sources=[{"source_id": "source_pipeline"}],
+    )
+
+    assert report.coverage_status == "empty"
+    assert report.failed_source_ids == []
+    assert report.fetch_success_ratio == 0.0
+    assert report.partial_reasons == ["no_raw_items", "source_failures", "source_errors"]
 
 
 def test_canonicalize_url_removes_default_ports_and_preserves_custom_ports() -> None:
