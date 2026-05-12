@@ -26,6 +26,7 @@ from core.framework.tools.models import (
     ToolTimeoutError,
 )
 from core.framework.tools.notification_tools import RssFeedPublisher, register_notification_tools
+from core.framework.tools.postgres_tools import register_postgres_tools
 from core.framework.tools.registry import (
     DuplicateToolPolicy,
     RegisteredTool,
@@ -94,6 +95,7 @@ __all__ = [
     "register_local_json_tools",
     "register_memory_tools",
     "register_notification_tools",
+    "register_postgres_tools",
     "register_quality_tools",
     "register_qdrant_tools",
     "register_report_tools",
