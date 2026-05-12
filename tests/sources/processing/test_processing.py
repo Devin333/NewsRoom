@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 from domain.sources import RawSourceItem, SourceError, SourcePipelineMetrics, SourceType
 from sources.processing import (
     build_source_coverage_report,
+    build_source_freshness_report,
     build_source_governance_report,
     build_source_ranking_scores,
     build_source_traceability_report,
@@ -547,6 +548,51 @@ def test_build_source_traceability_report_flags_missing_and_mismatched_lineage()
         "missing_lineage_field",
     ]
     assert report.to_dict()["issues"][0]["expected"] == "source"
+
+
+def test_build_source_freshness_report_buckets_ranked_items() -> None:
+    current_time = datetime(2026, 5, 11, tzinfo=UTC)
+    ranked = rank_items(
+        normalize_items(
+            [
+                _raw_item("Current AI update", "https://example.com/current"),
+                _raw_item("Stale AI update", "https://example.com/stale", days_old=45),
+            ]
+        ),
+        topic="AI",
+        now=current_time,
+    )
+
+    report = build_source_freshness_report(ranked, now=current_time)
+
+    assert report.freshness_status == "mixed"
+    assert report.ranked_item_count == 2
+    assert report.fresh_item_count == 1
+    assert report.stale_item_count == 1
+    assert report.buckets["0_1_days"] == 1
+    assert report.buckets["over_30_days"] == 1
+    assert any(row["stale"] is True for row in report.rows)
+
+
+def test_build_source_freshness_report_tracks_missing_and_future_timestamps() -> None:
+    current_time = datetime(2026, 5, 11, tzinfo=UTC)
+    normalized = normalize_items(
+        [
+            _raw_item("Missing published date", "https://example.com/missing"),
+            _raw_item("Future published date", "https://example.com/future", days_old=-1),
+        ]
+    )
+    normalized[0] = replace(normalized[0], published_at=None)
+    ranked = rank_items(normalized, topic="AI", now=current_time)
+
+    report = build_source_freshness_report(ranked, now=current_time)
+
+    assert report.freshness_status == "mixed"
+    assert report.missing_published_at_count == 1
+    assert report.future_timestamp_count == 1
+    assert report.buckets["missing_published_at"] == 1
+    assert any(row["timestamp_basis"] == "fetched_at" for row in report.rows)
+    assert any(row["future_timestamp_detected"] is True for row in report.rows)
 
 
 def test_rank_items_uses_source_authority_score() -> None:

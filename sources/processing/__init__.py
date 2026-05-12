@@ -2,6 +2,7 @@
 
 from sources.processing.coverage import build_source_coverage_report
 from sources.processing.deduplicate import deduplicate_items, deduplicate_with_result
+from sources.processing.freshness import build_source_freshness_report
 from sources.processing.governance import build_source_governance_report
 from sources.processing.language import detect_language
 from sources.processing.normalize import normalize_items
@@ -12,6 +13,7 @@ from sources.processing.traceability import build_source_traceability_report
 
 __all__ = [
     "build_source_coverage_report",
+    "build_source_freshness_report",
     "build_source_governance_report",
     "deduplicate_items",
     "deduplicate_with_result",

@@ -632,6 +632,30 @@ class SourceRankingScore:
 
 
 @dataclass(frozen=True)
+class SourceFreshnessReport:
+    freshness_status: str
+    ranked_item_count: int
+    fresh_item_count: int
+    stale_item_count: int
+    missing_published_at_count: int
+    future_timestamp_count: int
+    buckets: dict[str, int] = field(default_factory=dict)
+    rows: list[dict[str, Any]] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "freshness_status": self.freshness_status,
+            "ranked_item_count": self.ranked_item_count,
+            "fresh_item_count": self.fresh_item_count,
+            "stale_item_count": self.stale_item_count,
+            "missing_published_at_count": self.missing_published_at_count,
+            "future_timestamp_count": self.future_timestamp_count,
+            "buckets": dict(self.buckets),
+            "rows": [dict(row) for row in self.rows],
+        }
+
+
+@dataclass(frozen=True)
 class SourceTraceabilityIssue:
     ranked_item_id: str
     normalized_item_id: str

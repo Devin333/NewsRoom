@@ -583,6 +583,13 @@ class WorkflowExecutor:
             )
             manifest["artifacts"]["source_ranking_scores"] = "source_ranking_scores.json"
             manifest["source_ranking_score_count"] = len(output["source_ranking_scores"])
+        if "source_freshness_report" in output:
+            self._artifact_manager.write_json(
+                run_id,
+                "source_freshness_report.json",
+                output["source_freshness_report"],
+            )
+            manifest["artifacts"]["source_freshness_report"] = "source_freshness_report.json"
         if "source_traceability_report" in output:
             self._artifact_manager.write_json(
                 run_id,
