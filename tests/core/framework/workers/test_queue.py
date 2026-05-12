@@ -1,6 +1,6 @@
 import json
 
-from core.framework.workers import InMemoryTaskQueue, RedisStreamTaskQueue, Task, TaskStatus
+from core.framework.workers import InMemoryTaskQueue, RedisStreamTaskQueue, Task, TaskError, TaskStatus
 
 
 def test_in_memory_queue_enqueue_lease_ack() -> None:
@@ -14,6 +14,39 @@ def test_in_memory_queue_enqueue_lease_ack() -> None:
     assert leased is task
     assert leased.status == TaskStatus.LEASED
     assert queue.lease("worker-1", ["news:queue:daily"]) is None
+
+
+def test_in_memory_queue_cancels_queued_task() -> None:
+    queue = InMemoryTaskQueue()
+    task = Task(task_type="daily_intelligence.run", payload={"topic": "AI"}, task_id="task-1")
+    queue.enqueue(task)
+
+    cancelled = queue.cancel("task-1", reason="operator")
+
+    assert cancelled is True
+    assert task.status == TaskStatus.CANCELLED
+    assert task.metadata["cancel_reason"] == "operator"
+    assert queue.lease("worker-1", ["news:queue:daily"]) is None
+
+
+def test_in_memory_queue_requeues_dead_letter_task() -> None:
+    queue = InMemoryTaskQueue()
+    task = Task(
+        task_type="daily_intelligence.run",
+        payload={"topic": "AI"},
+        task_id="task-1",
+        max_attempts=1,
+    )
+    queue.enqueue(task)
+    leased = queue.lease("worker-1", ["news:queue:daily"])
+    queue.fail(leased.task_id, "worker-1", TaskError("TaskFailed", "failed"))
+
+    requeued = queue.requeue_dead_letter("task-1", reason="operator_retry")
+    leased_again = queue.lease("worker-2", ["news:queue:daily"])
+
+    assert requeued is True
+    assert leased_again.task_id == "task-1"
+    assert leased_again.metadata["requeue_reason"] == "operator_retry"
 
 
 def test_redis_stream_queue_enqueue_uses_xadd() -> None:

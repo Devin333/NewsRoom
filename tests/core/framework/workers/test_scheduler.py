@@ -142,6 +142,46 @@ def test_interval_schedule_skip_advances_state_without_enqueue() -> None:
     assert queue.enqueued == []
 
 
+def test_cron_schedule_is_due_on_matching_minute() -> None:
+    scheduler = Scheduler(_FakeQueue())
+    schedule = ScheduleSpec(
+        schedule_id="cron-daily",
+        name="Cron daily",
+        trigger_type="cron",
+        task_type="daily_intelligence.run",
+        cron="15 9 * * *",
+    )
+
+    evaluation = scheduler.evaluate(schedule, now=_dt("2026-05-11T09:15:20Z"))
+
+    assert evaluation.due_times == (_dt("2026-05-11T09:15:00Z"),)
+    assert evaluation.next_run_at == _dt("2026-05-12T09:15:00Z")
+
+
+def test_cron_schedule_catches_up_with_cap() -> None:
+    scheduler = Scheduler(_FakeQueue())
+    schedule = ScheduleSpec(
+        schedule_id="cron-catchup",
+        name="Cron catchup",
+        trigger_type="cron",
+        task_type="daily_intelligence.run",
+        cron="*/10 * * * *",
+        misfire_policy="catch_up",
+        max_catchup_runs=2,
+    )
+
+    evaluation = scheduler.evaluate(
+        schedule,
+        now=_dt("2026-05-11T00:35:00Z"),
+        last_run_at=_dt("2026-05-11T00:00:00Z"),
+    )
+
+    assert evaluation.due_times == (
+        _dt("2026-05-11T00:20:00Z"),
+        _dt("2026-05-11T00:30:00Z"),
+    )
+
+
 def test_scheduler_enqueues_due_interval_task_with_metadata() -> None:
     queue = _FakeQueue()
     scheduler = Scheduler(queue)

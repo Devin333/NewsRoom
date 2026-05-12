@@ -183,6 +183,8 @@ class Scheduler:
             return self._evaluate_date(schedule, current, last)
         if schedule.trigger_type == ScheduleTriggerType.INTERVAL:
             return self._evaluate_interval(schedule, current, last)
+        if schedule.trigger_type == ScheduleTriggerType.CRON:
+            return self._evaluate_cron(schedule, current, last)
         return ScheduleEvaluation(
             schedule_id=schedule.schedule_id,
             trigger_type=schedule.trigger_type,
@@ -312,6 +314,76 @@ class Scheduler:
             state_update_at=due_times[-1],
         )
 
+    def _evaluate_cron(
+        self,
+        schedule: ScheduleSpec,
+        now: datetime,
+        last_run_at: datetime | None,
+    ) -> ScheduleEvaluation:
+        if not schedule.cron:
+            return ScheduleEvaluation(
+                schedule_id=schedule.schedule_id,
+                trigger_type=schedule.trigger_type,
+                reason="missing_cron",
+            )
+        current_minute = now.replace(second=0, microsecond=0)
+        if last_run_at is None:
+            if _cron_matches(schedule.cron, current_minute):
+                return ScheduleEvaluation(
+                    schedule_id=schedule.schedule_id,
+                    trigger_type=schedule.trigger_type,
+                    due_times=(current_minute,),
+                    state_update_at=current_minute,
+                    next_run_at=_next_cron_time(schedule.cron, current_minute),
+                )
+            return ScheduleEvaluation(
+                schedule_id=schedule.schedule_id,
+                trigger_type=schedule.trigger_type,
+                next_run_at=_next_cron_time(schedule.cron, current_minute),
+                reason="not_due",
+            )
+
+        start = last_run_at.replace(second=0, microsecond=0) + timedelta(minutes=1)
+        if start > current_minute:
+            return ScheduleEvaluation(
+                schedule_id=schedule.schedule_id,
+                trigger_type=schedule.trigger_type,
+                next_run_at=_next_cron_time(schedule.cron, current_minute),
+                reason="not_due",
+            )
+        due_times = [
+            moment
+            for moment in _minute_range(start, current_minute, max_minutes=1440)
+            if _cron_matches(schedule.cron, moment)
+        ]
+        if not due_times:
+            return ScheduleEvaluation(
+                schedule_id=schedule.schedule_id,
+                trigger_type=schedule.trigger_type,
+                next_run_at=_next_cron_time(schedule.cron, current_minute),
+                reason="not_due",
+            )
+        if len(due_times) > 1 and schedule.misfire_policy == MisfirePolicy.SKIP:
+            latest = due_times[-1]
+            return ScheduleEvaluation(
+                schedule_id=schedule.schedule_id,
+                trigger_type=schedule.trigger_type,
+                next_run_at=_next_cron_time(schedule.cron, latest),
+                state_update_at=latest,
+                reason="misfire_skipped",
+            )
+        if schedule.misfire_policy == MisfirePolicy.RUN_ONCE:
+            due_times = [due_times[-1]]
+        elif len(due_times) > schedule.max_catchup_runs:
+            due_times = due_times[-schedule.max_catchup_runs :]
+        return ScheduleEvaluation(
+            schedule_id=schedule.schedule_id,
+            trigger_type=schedule.trigger_type,
+            due_times=tuple(due_times),
+            state_update_at=due_times[-1],
+            next_run_at=_next_cron_time(schedule.cron, due_times[-1]),
+        )
+
     def _enqueue_schedule_task(self, schedule: ScheduleSpec, due_at: datetime) -> EnqueuedScheduleTask:
         task = Task(
             task_type=schedule.task_type,
@@ -352,6 +424,63 @@ def _interval_due_times(
         return (base_due_at + (due_count - 1) * interval,)
     count = min(due_count, max_catchup_runs)
     return tuple(base_due_at + index * interval for index in range(count))
+
+
+def _minute_range(start: datetime, end: datetime, *, max_minutes: int) -> tuple[datetime, ...]:
+    minutes = []
+    current = start
+    while current <= end and len(minutes) < max_minutes:
+        minutes.append(current)
+        current += timedelta(minutes=1)
+    return tuple(minutes)
+
+
+def _next_cron_time(expression: str, after: datetime) -> datetime | None:
+    current = after.replace(second=0, microsecond=0) + timedelta(minutes=1)
+    for _ in range(1440):
+        if _cron_matches(expression, current):
+            return current
+        current += timedelta(minutes=1)
+    return None
+
+
+def _cron_matches(expression: str, moment: datetime) -> bool:
+    fields = expression.split()
+    if len(fields) != 5:
+        raise ValueError("cron expression must have five fields")
+    minute, hour, day, month, day_of_week = fields
+    cron_weekday = (moment.weekday() + 1) % 7
+    return (
+        _field_matches(minute, moment.minute, 0, 59)
+        and _field_matches(hour, moment.hour, 0, 23)
+        and _field_matches(day, moment.day, 1, 31)
+        and _field_matches(month, moment.month, 1, 12)
+        and _field_matches(day_of_week, cron_weekday, 0, 7)
+    )
+
+
+def _field_matches(field: str, value: int, minimum: int, maximum: int) -> bool:
+    if field == "*":
+        return True
+    for part in field.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if part.startswith("*/"):
+            step = int(part[2:])
+            if step <= 0:
+                raise ValueError("cron step must be greater than zero")
+            if (value - minimum) % step == 0:
+                return True
+            continue
+        expected = int(part)
+        if expected == 7 and maximum == 7:
+            expected = 0
+        if expected < minimum or expected > maximum:
+            raise ValueError(f"cron field value out of range: {part}")
+        if value == expected:
+            return True
+    return False
 
 
 def _normalize_datetime(value: datetime | None) -> datetime | None:
