@@ -6,7 +6,8 @@ from core.framework.tools import (
     ToolStatus,
     register_source_tools,
 )
-from domain.sources import SourceError
+from domain.sources import SourceDefinition, SourceError
+from sources import SourceRegistry
 from sources.connectors import SourceFetchPolicy
 from sources.health import BasicSourceHealthManager
 
@@ -269,6 +270,101 @@ def test_source_probe_tool_records_fetch_failure_as_health_failure() -> None:
     assert observation.result.output["error"]["error_type"] == "RuntimeError"
     assert observation.result.output["health"]["status"] == "cooling_down"
     assert health_manager.get("rss-example").consecutive_failures == 1
+
+
+def test_source_search_tool_selects_sources_by_topic_filters_and_limit() -> None:
+    registry = ToolRegistry()
+    source_registry = SourceRegistry(
+        [
+            SourceDefinition(
+                source_id="ai-us",
+                name="AI US",
+                source_type="rss",
+                url="https://example.com/ai-us.xml",
+                topics=["ai", "policy"],
+                reliability="high",
+                authority_score=0.7,
+                language="en",
+                region="us",
+            ),
+            SourceDefinition(
+                source_id="ai-cn",
+                name="AI CN",
+                source_type="rss",
+                url="https://example.com/ai-cn.xml",
+                topics=["ai"],
+                language="zh",
+                region="cn",
+            ),
+            SourceDefinition(
+                source_id="disabled",
+                name="Disabled",
+                source_type="rss",
+                url="https://example.com/disabled.xml",
+                topics=["ai"],
+                enabled=False,
+            ),
+        ]
+    )
+    register_source_tools(registry, source_registry=source_registry)
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="source.search",
+            arguments={
+                "query": "AI policy",
+                "language": "en",
+                "region": "us",
+                "limit": 1,
+            },
+        ),
+        ToolPolicy(allowed_tools=["source.search"]),
+    )
+
+    assert observation.status == ToolStatus.SUCCEEDED
+    assert observation.result.output["query"] == "AI policy"
+    assert observation.result.output["source_count"] == 1
+    assert observation.result.output["sources"][0]["source_id"] == "ai-us"
+    assert observation.result.output["sources"][0]["reliability"] == "high"
+
+
+def test_source_search_tool_lists_configured_sources_when_query_is_omitted() -> None:
+    registry = ToolRegistry()
+    source_registry = SourceRegistry(
+        [
+            SourceDefinition(
+                source_id="enabled",
+                name="Enabled",
+                source_type="rss",
+                url="https://example.com/enabled.xml",
+            ),
+            SourceDefinition(
+                source_id="disabled",
+                name="Disabled",
+                source_type="rss",
+                url="https://example.com/disabled.xml",
+                enabled=False,
+            ),
+        ]
+    )
+    register_source_tools(registry, source_registry=source_registry)
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="source.search",
+            arguments={"enabled_only": False},
+        ),
+        ToolPolicy(allowed_tools=["source.search"]),
+    )
+
+    assert observation.status == ToolStatus.SUCCEEDED
+    assert observation.result.output["query"] is None
+    assert [source["source_id"] for source in observation.result.output["sources"]] == [
+        "disabled",
+        "enabled",
+    ]
 
 
 def test_source_fetch_url_tool_applies_max_bytes_to_injected_fetcher() -> None:

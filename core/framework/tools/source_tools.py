@@ -9,6 +9,7 @@ from urllib.request import Request, urlopen
 from core.framework.tools.models import ToolDefinition
 from core.framework.tools.registry import ToolRegistry
 from domain.sources import RawSourceItem, SourceDefinition, SourceError, SourceType
+from sources import SourceRegistry
 from sources.connectors import FeedConnector, SourceFetchPolicy
 from sources.health import BasicSourceHealthManager
 from sources.processing.normalize import canonicalize_url
@@ -24,6 +25,7 @@ def register_source_tools(
     fetch_policy: SourceFetchPolicy | None = None,
     allowed_domains: list[str] | None = None,
     health_manager: BasicSourceHealthManager | None = None,
+    source_registry: SourceRegistry | None = None,
 ) -> None:
     fetch_policy = fetch_policy or SourceFetchPolicy()
     allowed_domain_tuple = _allowed_domains(allowed_domains)
@@ -127,6 +129,28 @@ def register_source_tools(
             health_manager=health_manager,
         ),
     )
+    if source_registry is not None:
+        registry.register(
+            ToolDefinition(
+                name="source.search",
+                description="Search configured sources from SourceRegistry.",
+                input_schema={
+                    "required": [],
+                    "properties": {
+                        "query": {"type": "string"},
+                        "enabled_only": {"type": "boolean"},
+                        "language": {"type": "string"},
+                        "region": {"type": "string"},
+                        "fallback_to_enabled": {"type": "boolean"},
+                        "limit": {"type": "integer"},
+                    },
+                    "additionalProperties": False,
+                },
+                side_effect="read_only",
+                concurrency_safe=True,
+            ),
+            lambda args: _search_sources(args, source_registry=source_registry),
+        )
     registry.register(
         ToolDefinition(
             name="source.parse_atom",
@@ -265,6 +289,39 @@ def _probe_source(
     }
 
 
+def _search_sources(
+    args: dict[str, Any],
+    *,
+    source_registry: SourceRegistry,
+) -> dict[str, Any]:
+    enabled_only = bool(args.get("enabled_only", True))
+    language = args.get("language")
+    region = args.get("region")
+    limit = _optional_limit(args.get("limit"))
+    query = str(args.get("query") or "").strip()
+    if query:
+        sources = source_registry.select_sources(
+            topic=query,
+            enabled_only=enabled_only,
+            language=str(language) if language is not None else None,
+            region=str(region) if region is not None else None,
+            fallback_to_enabled=bool(args.get("fallback_to_enabled", True)),
+        )
+    else:
+        sources = source_registry.list_sources(enabled_only=enabled_only)
+        if language is not None:
+            sources = [source for source in sources if source.language == str(language)]
+        if region is not None:
+            sources = [source for source in sources if source.region == str(region)]
+    if limit is not None:
+        sources = sources[:limit]
+    return {
+        "query": query or None,
+        "source_count": len(sources),
+        "sources": [_source_definition_to_dict(source) for source in sources],
+    }
+
+
 def _fetch_policy(args: dict[str, Any], default_policy: SourceFetchPolicy) -> SourceFetchPolicy:
     timeout_seconds = float(args.get("timeout_seconds", default_policy.timeout_seconds))
     max_bytes = int(args.get("max_bytes", default_policy.max_bytes))
@@ -342,6 +399,28 @@ def _source_id(args: dict[str, Any]) -> str:
     if isinstance(source, dict) and source.get("source_id"):
         return str(source["source_id"])
     raise ValueError("source_id or source.source_id is required")
+
+
+def _optional_limit(value: Any) -> int | None:
+    if value is None:
+        return None
+    return max(1, min(int(value), 100))
+
+
+def _source_definition_to_dict(source: SourceDefinition) -> dict[str, Any]:
+    return {
+        "source_id": source.source_id,
+        "name": source.name,
+        "source_type": source.source_type.value,
+        "url": source.url,
+        "reliability": source.reliability.value,
+        "authority_score": source.authority_score,
+        "enabled": source.enabled,
+        "topics": list(source.topics),
+        "language": source.language,
+        "region": source.region,
+        "metadata": dict(source.metadata),
+    }
 
 
 def _raw_source_item_to_dict(item: RawSourceItem) -> dict[str, Any]:
