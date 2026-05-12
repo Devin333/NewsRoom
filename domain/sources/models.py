@@ -187,11 +187,23 @@ class SourcePipelineMetrics:
     deduplicated_items_count: int = 0
     ranked_items_count: int = 0
     duplicate_count: int = 0
+    avg_fetch_latency_ms: float | None = None
     errors_by_type: dict[str, int] = field(default_factory=dict)
     items_by_source: dict[str, int] = field(default_factory=dict)
+    _fetch_latency_total_ms: float = field(default=0.0, init=False, repr=False)
+    _fetch_latency_count: int = field(default=0, init=False, repr=False)
 
     def record_error(self, error: SourceError) -> None:
         self.errors_by_type[error.error_type] = self.errors_by_type.get(error.error_type, 0) + 1
+
+    def record_fetch_latency(self, latency_ms: float) -> None:
+        latency = max(0.0, float(latency_ms))
+        self._fetch_latency_total_ms += latency
+        self._fetch_latency_count += 1
+        self.avg_fetch_latency_ms = round(
+            self._fetch_latency_total_ms / self._fetch_latency_count,
+            3,
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -204,6 +216,7 @@ class SourcePipelineMetrics:
             "deduplicated_items_count": self.deduplicated_items_count,
             "ranked_items_count": self.ranked_items_count,
             "duplicate_count": self.duplicate_count,
+            "avg_fetch_latency_ms": self.avg_fetch_latency_ms,
             "errors_by_type": dict(self.errors_by_type),
             "items_by_source": dict(self.items_by_source),
         }

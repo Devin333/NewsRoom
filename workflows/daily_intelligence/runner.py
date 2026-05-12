@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
 from core.framework import RunResult, WorkflowRunner
@@ -100,12 +101,22 @@ class DailyIntelligenceRunner:
                     url="fixture://ai",
                 )
             )
+            latency_start = perf_counter()
             raw_items = FeedConnector().parse(_fixture_source(), _fixture_feed(), limit=limit)
+            fetch_latency_ms = _elapsed_ms(latency_start)
+            metrics.record_fetch_latency(fetch_latency_ms)
             metrics.sources_total = 1
             metrics.sources_fetched = 1
             metrics.raw_items_count = len(raw_items)
             metrics.items_by_source = {"fixture-ai": len(raw_items)}
-            source_events.append(_source_event("source_fetch_succeeded", "fixture-ai", item_count=len(raw_items)))
+            source_events.append(
+                _source_event(
+                    "source_fetch_succeeded",
+                    "fixture-ai",
+                    item_count=len(raw_items),
+                    fetch_latency_ms=fetch_latency_ms,
+                )
+            )
             source_health = self.source_health_manager.record_success("fixture-ai")
             source_health_updates.append(source_health)
             source_events.append(
@@ -177,13 +188,21 @@ class DailyIntelligenceRunner:
                     url=source.url,
                 )
             )
+            latency_start = perf_counter()
             items, errors = self.feed_connector.fetch(source, limit=remaining)
+            fetch_latency_ms = _elapsed_ms(latency_start)
+            metrics.record_fetch_latency(fetch_latency_ms)
             raw_items.extend(items)
             if items:
                 metrics.sources_fetched += 1
                 metrics.items_by_source[source.source_id] = len(items)
                 source_events.append(
-                    _source_event("source_fetch_succeeded", source.source_id, item_count=len(items))
+                    _source_event(
+                        "source_fetch_succeeded",
+                        source.source_id,
+                        item_count=len(items),
+                        fetch_latency_ms=fetch_latency_ms,
+                    )
                 )
                 source_health = self.source_health_manager.record_success(source.source_id)
                 source_health_updates.append(source_health)
@@ -206,6 +225,7 @@ class DailyIntelligenceRunner:
                             source.source_id,
                             error_type=error.error_type,
                             retryable=True,
+                            fetch_latency_ms=fetch_latency_ms,
                         )
                     )
                     metrics.record_error(error)
@@ -620,6 +640,10 @@ def _validate_report_payload(payload: Any) -> dict[str, Any]:
     if "title" not in payload or "sections" not in payload:
         raise ValueError("LLM report output must include title and sections")
     return payload
+
+
+def _elapsed_ms(start: float) -> float:
+    return round((perf_counter() - start) * 1000, 3)
 
 
 def _source_event(event_type: str, source_id: str | None = None, **metadata: Any) -> SourcePipelineEvent:

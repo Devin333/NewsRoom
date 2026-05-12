@@ -2,7 +2,13 @@ from datetime import UTC, datetime
 
 import pytest
 
-from domain.sources import SourceDefinition, SourcePipelineEvent, SourceReliability, SourceType
+from domain.sources import (
+    SourceDefinition,
+    SourcePipelineEvent,
+    SourcePipelineMetrics,
+    SourceReliability,
+    SourceType,
+)
 
 
 def test_source_definition_normalizes_enums() -> None:
@@ -37,3 +43,13 @@ def test_source_pipeline_event_serializes() -> None:
         "occurred_at": "2026-05-11T00:00:00Z",
         "metadata": {"item_count": 2},
     }
+
+
+def test_source_pipeline_metrics_records_average_fetch_latency() -> None:
+    metrics = SourcePipelineMetrics()
+
+    metrics.record_fetch_latency(10)
+    metrics.record_fetch_latency(20)
+
+    assert metrics.avg_fetch_latency_ms == 15.0
+    assert metrics.to_dict()["avg_fetch_latency_ms"] == 15.0

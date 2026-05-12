@@ -71,6 +71,11 @@ def test_daily_intelligence_runner_live_offline_writes_report_artifacts(tmp_path
         "source_deduplicated",
         "source_ranked",
     ]
+    success_event = next(event for event in source_events if event["event_type"] == "source_fetch_succeeded")
+    assert success_event["metadata"]["fetch_latency_ms"] >= 0
+
+    source_metrics = json.loads((run_dir / "source_pipeline_metrics.json").read_text(encoding="utf-8"))
+    assert source_metrics["avg_fetch_latency_ms"] >= 0
 
     source_artifacts = json.loads((run_dir / "source_artifacts" / "index.json").read_text())
     first_item = source_artifacts["entries"][0]
@@ -310,6 +315,12 @@ def test_daily_intelligence_runner_records_partial_source_failures(tmp_path) -> 
         event["event_type"] == "source_fetch_failed" and event["source_id"] == "failing"
         for event in source_events
     )
+    failed_event = next(
+        event
+        for event in source_events
+        if event["event_type"] == "source_fetch_failed" and event["source_id"] == "failing"
+    )
+    assert failed_event["metadata"]["fetch_latency_ms"] >= 0
     assert any(
         event["event_type"] == "source_fetch_succeeded" and event["source_id"] == "working"
         for event in source_events
