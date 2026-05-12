@@ -858,6 +858,72 @@ def test_source_extract_items_tool_dispatches_html_content() -> None:
     assert item["url"] == "https://example.com/blog/launch"
 
 
+def test_source_extract_manual_tool_extracts_curated_records() -> None:
+    registry = ToolRegistry()
+    register_source_tools(registry)
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="source.extract_manual",
+            arguments={
+                "source": {
+                    "source_id": "manual-example",
+                    "name": "Manual Example",
+                    "url": "manual://operator",
+                    "source_type": "manual",
+                    "reliability": "high",
+                },
+                "records": [
+                    {
+                        "title": "Curated article",
+                        "url": "https://example.com/curated",
+                        "summary": "Reviewed by an operator.",
+                        "submitted_by": "operator-1",
+                    }
+                ],
+            },
+        ),
+        ToolPolicy(allowed_tools=["source.extract_manual"]),
+    )
+
+    item = observation.result.output["items"][0]
+
+    assert observation.status == ToolStatus.SUCCEEDED
+    assert observation.result.output["item_count"] == 1
+    assert observation.result.output["error_count"] == 0
+    assert item["source_type"] == "manual"
+    assert item["metadata"]["submitted_by"] == "operator-1"
+
+
+def test_source_extract_items_tool_dispatches_manual_records() -> None:
+    registry = ToolRegistry()
+    register_source_tools(registry)
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="source.extract_items",
+            arguments={
+                "source": {
+                    "source_id": "manual-example",
+                    "name": "Manual Example",
+                    "url": "manual://operator",
+                    "source_type": "manual",
+                },
+                "content": [{"title": "Curated article", "url": "https://example.com/curated"}],
+            },
+        ),
+        ToolPolicy(allowed_tools=["source.extract_items"]),
+    )
+
+    item = observation.result.output["items"][0]
+
+    assert observation.status == ToolStatus.SUCCEEDED
+    assert observation.result.output["item_count"] == 1
+    assert item["source_type"] == "manual"
+
+
 def test_source_normalize_url_tool_removes_tracking_parameters() -> None:
     registry = ToolRegistry()
     register_source_tools(registry)

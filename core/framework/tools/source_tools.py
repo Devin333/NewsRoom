@@ -10,7 +10,13 @@ from core.framework.tools.models import ToolDefinition
 from core.framework.tools.registry import ToolRegistry
 from domain.sources import RawSourceItem, SourceDefinition, SourceError, SourceType
 from sources import SourceRegistry
-from sources.connectors import FeedConnector, HtmlConnector, SourceFetchPolicy, run_with_fetch_retries
+from sources.connectors import (
+    FeedConnector,
+    HtmlConnector,
+    ManualConnector,
+    SourceFetchPolicy,
+    run_with_fetch_retries,
+)
 from sources.health import BasicSourceHealthManager
 from sources.processing.normalize import canonicalize_url
 
@@ -74,7 +80,7 @@ def register_source_tools(
                 "required": ["source", "content"],
                 "properties": {
                     "source": {"type": "object"},
-                    "content": {"type": "string"},
+                    "content": {"type": ["string", "array"]},
                     "limit": {"type": "integer"},
                 },
                 "additionalProperties": False,
@@ -215,6 +221,24 @@ def register_source_tools(
     )
     registry.register(
         ToolDefinition(
+            name="source.extract_manual",
+            description="Extract raw source items from human-curated manual source records.",
+            input_schema={
+                "required": ["source", "records"],
+                "properties": {
+                    "source": {"type": "object"},
+                    "records": {"type": "array"},
+                    "limit": {"type": "integer"},
+                },
+                "additionalProperties": False,
+            },
+            side_effect="read_only",
+            concurrency_safe=True,
+        ),
+        _parse_manual,
+    )
+    registry.register(
+        ToolDefinition(
             name="source.normalize_url",
             description="Canonicalize a source URL and strip known tracking parameters.",
             input_schema={
@@ -269,6 +293,10 @@ def _extract_items(args: dict[str, Any]) -> dict[str, Any]:
         return _parse_html(
             {"source": args["source"], "html": args["content"], "limit": args.get("limit")}
         )
+    if source.source_type == SourceType.MANUAL:
+        return _parse_manual(
+            {"source": args["source"], "records": args["content"], "limit": args.get("limit")}
+        )
     return _parse_feed(
         {"source": args["source"], "xml": args["content"], "limit": args.get("limit")},
         default_source_type=SourceType.RSS,
@@ -288,6 +316,26 @@ def _parse_html(args: dict[str, Any]) -> dict[str, Any]:
     return {
         "item_count": len(items),
         "items": [_raw_source_item_to_dict(item) for item in items],
+    }
+
+
+def _parse_manual(args: dict[str, Any]) -> dict[str, Any]:
+    source = _source_definition(args["source"], default_source_type=SourceType.MANUAL)
+    if source.source_type != SourceType.MANUAL:
+        raise ValueError("source.extract_manual requires source_type=manual")
+    records = args["records"]
+    if not isinstance(records, list):
+        raise ValueError("source.extract_manual records must be an array")
+    items, errors = ManualConnector().fetch(
+        source,
+        records=records,
+        limit=_optional_limit(args.get("limit")),
+    )
+    return {
+        "item_count": len(items),
+        "error_count": len(errors),
+        "items": [_raw_source_item_to_dict(item) for item in items],
+        "errors": [error.to_dict() for error in errors],
     }
 
 
