@@ -10,7 +10,11 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from domain.sources import RawSourceItem, SourceDefinition, SourceError
-from sources.connectors.feed import SourceFetchPolicy
+from sources.connectors.fetch_policy import (
+    DomainRateLimiter,
+    SourceFetchPolicy,
+    rate_limited_source_error,
+)
 
 
 FetchText = Callable[[str], str]
@@ -81,8 +85,10 @@ class GithubConnector:
         fetch_text: FetchText | None = None,
         *,
         fetch_policy: SourceFetchPolicy | None = None,
+        rate_limiter: DomainRateLimiter | None = None,
     ) -> None:
         self.fetch_policy = fetch_policy or SourceFetchPolicy()
+        self._rate_limiter = rate_limiter or DomainRateLimiter()
         self._fetch_text = fetch_text or self._default_fetch_text
 
     def fetch_releases(
@@ -95,6 +101,12 @@ class GithubConnector:
         try:
             repo = _repository_from_source(source, repository=repository)
             api_url = build_github_releases_url(source.url or GITHUB_API_URL, repo, limit=limit or 10)
+            rate_limit = self._rate_limiter.reserve(
+                api_url,
+                limit_per_minute=self.fetch_policy.rate_limit_per_domain_per_minute,
+            )
+            if not rate_limit.allowed:
+                return [], [rate_limited_source_error(source, rate_limit, url=api_url)]
             payload = self._fetch_text(api_url)
         except Exception as exc:
             return [], [_exception_source_error(source, exc, phase="fetch")]
@@ -145,6 +157,12 @@ class GithubConnector:
                 sort=sort,
                 order=order,
             )
+            rate_limit = self._rate_limiter.reserve(
+                api_url,
+                limit_per_minute=self.fetch_policy.rate_limit_per_domain_per_minute,
+            )
+            if not rate_limit.allowed:
+                return [], [rate_limited_source_error(source, rate_limit, url=api_url)]
             payload = self._fetch_text(api_url)
         except Exception as exc:
             return [], [_exception_source_error(source, exc, phase="fetch")]

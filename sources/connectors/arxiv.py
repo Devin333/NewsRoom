@@ -10,7 +10,11 @@ from urllib.request import Request, urlopen
 from xml.etree import ElementTree
 
 from domain.sources import RawSourceItem, SourceDefinition, SourceError
-from sources.connectors.feed import SourceFetchPolicy
+from sources.connectors.fetch_policy import (
+    DomainRateLimiter,
+    SourceFetchPolicy,
+    rate_limited_source_error,
+)
 
 
 FetchText = Callable[[str], str]
@@ -41,8 +45,10 @@ class ArxivConnector:
         fetch_text: FetchText | None = None,
         *,
         fetch_policy: SourceFetchPolicy | None = None,
+        rate_limiter: DomainRateLimiter | None = None,
     ) -> None:
         self.fetch_policy = fetch_policy or SourceFetchPolicy()
+        self._rate_limiter = rate_limiter or DomainRateLimiter()
         self._fetch_text = fetch_text or self._default_fetch_text
 
     def fetch(
@@ -56,6 +62,12 @@ class ArxivConnector:
             actual_query = _query_from_source(source, query=query)
             request = ArxivQuery(query=actual_query, max_results=limit or 10)
             api_url = build_arxiv_query_url(source.url or ARXIV_API_URL, request)
+            rate_limit = self._rate_limiter.reserve(
+                api_url,
+                limit_per_minute=self.fetch_policy.rate_limit_per_domain_per_minute,
+            )
+            if not rate_limit.allowed:
+                return [], [rate_limited_source_error(source, rate_limit, url=api_url)]
             xml_text = self._fetch_text(api_url)
         except Exception as exc:
             return [], [_exception_source_error(source, exc, phase="fetch")]

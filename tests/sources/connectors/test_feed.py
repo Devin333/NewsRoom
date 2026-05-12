@@ -1,10 +1,11 @@
+from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from urllib.error import HTTPError, URLError
 
 import pytest
 
 from domain.sources import SourceDefinition
-from sources.connectors import FeedConnector, SourceFetchPolicy
+from sources.connectors import DomainRateLimiter, FeedConnector, SourceFetchPolicy
 
 
 RSS_FIXTURE = """<?xml version="1.0"?>
@@ -226,6 +227,100 @@ def test_feed_connector_default_fetch_applies_policy(monkeypatch) -> None:
     }
 
 
+def test_feed_connector_rate_limits_same_domain_before_fetch() -> None:
+    calls = []
+    source = SourceDefinition(
+        source_id="rss-source",
+        name="RSS Source",
+        source_type="rss",
+        url="https://example.com/rss.xml",
+    )
+    same_domain = SourceDefinition(
+        source_id="rss-source-2",
+        name="RSS Source 2",
+        source_type="rss",
+        url="https://example.com/other.xml",
+    )
+    connector = FeedConnector(
+        fetch_text=lambda url: calls.append(url) or RSS_FIXTURE,
+        fetch_policy=SourceFetchPolicy(rate_limit_per_domain_per_minute=1),
+        rate_limiter=DomainRateLimiter(now=lambda: datetime(2026, 5, 11, tzinfo=UTC)),
+    )
+
+    first_items, first_errors = connector.fetch(source)
+    second_items, second_errors = connector.fetch(same_domain)
+
+    assert len(first_items) == 1
+    assert first_errors == []
+    assert second_items == []
+    assert second_errors[0].error_type == "rate_limited"
+    assert second_errors[0].url == "https://example.com/other.xml"
+    assert second_errors[0].metadata["domain"] == "example.com"
+    assert second_errors[0].metadata["retryable"] is True
+    assert second_errors[0].metadata["source_health_affecting"] is False
+    assert calls == ["https://example.com/rss.xml"]
+
+
+def test_feed_connector_rate_limit_is_per_domain() -> None:
+    calls = []
+    now = datetime(2026, 5, 11, tzinfo=UTC)
+    connector = FeedConnector(
+        fetch_text=lambda url: calls.append(url) or RSS_FIXTURE,
+        fetch_policy=SourceFetchPolicy(rate_limit_per_domain_per_minute=1),
+        rate_limiter=DomainRateLimiter(now=lambda: now),
+    )
+    first = SourceDefinition(
+        source_id="rss-source",
+        name="RSS Source",
+        source_type="rss",
+        url="https://example.com/rss.xml",
+    )
+    other = SourceDefinition(
+        source_id="rss-other",
+        name="Other RSS",
+        source_type="rss",
+        url="https://other.example/rss.xml",
+    )
+
+    first_items, first_errors = connector.fetch(first)
+    other_items, other_errors = connector.fetch(other)
+
+    assert len(first_items) == 1
+    assert first_errors == []
+    assert len(other_items) == 1
+    assert other_errors == []
+    assert calls == ["https://example.com/rss.xml", "https://other.example/rss.xml"]
+
+
+def test_feed_connector_rate_limit_window_resets() -> None:
+    calls = []
+    clock = {"now": datetime(2026, 5, 11, tzinfo=UTC)}
+    source = SourceDefinition(
+        source_id="rss-source",
+        name="RSS Source",
+        source_type="rss",
+        url="https://example.com/rss.xml",
+    )
+    connector = FeedConnector(
+        fetch_text=lambda url: calls.append(url) or RSS_FIXTURE,
+        fetch_policy=SourceFetchPolicy(rate_limit_per_domain_per_minute=1),
+        rate_limiter=DomainRateLimiter(now=lambda: clock["now"]),
+    )
+
+    first_items, first_errors = connector.fetch(source)
+    blocked_items, blocked_errors = connector.fetch(source)
+    clock["now"] = clock["now"] + timedelta(seconds=61)
+    reset_items, reset_errors = connector.fetch(source)
+
+    assert len(first_items) == 1
+    assert first_errors == []
+    assert blocked_items == []
+    assert blocked_errors[0].error_type == "rate_limited"
+    assert len(reset_items) == 1
+    assert reset_errors == []
+    assert calls == ["https://example.com/rss.xml", "https://example.com/rss.xml"]
+
+
 def test_source_fetch_policy_rejects_invalid_values() -> None:
     with pytest.raises(ValueError, match="timeout_seconds"):
         SourceFetchPolicy(timeout_seconds=0)
@@ -233,3 +328,5 @@ def test_source_fetch_policy_rejects_invalid_values() -> None:
         SourceFetchPolicy(max_bytes=0)
     with pytest.raises(ValueError, match="user_agent"):
         SourceFetchPolicy(user_agent="")
+    with pytest.raises(ValueError, match="rate_limit_per_domain_per_minute"):
+        SourceFetchPolicy(rate_limit_per_domain_per_minute=0)

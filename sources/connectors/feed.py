@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from hashlib import sha256
@@ -10,24 +9,14 @@ from urllib.request import Request, urlopen
 from xml.etree import ElementTree
 
 from domain.sources import RawSourceItem, SourceDefinition, SourceError, SourceType
+from sources.connectors.fetch_policy import (
+    DomainRateLimiter,
+    SourceFetchPolicy,
+    rate_limited_source_error,
+)
 
 
 FetchText = Callable[[str], str]
-
-
-@dataclass(frozen=True)
-class SourceFetchPolicy:
-    timeout_seconds: float = 15.0
-    max_bytes: int = 1_000_000
-    user_agent: str = "NewsRoom/0.1"
-
-    def __post_init__(self) -> None:
-        if self.timeout_seconds <= 0:
-            raise ValueError("timeout_seconds must be positive")
-        if self.max_bytes < 1:
-            raise ValueError("max_bytes must be at least 1")
-        if not self.user_agent:
-            raise ValueError("user_agent is required")
 
 
 class FeedConnector:
@@ -36,11 +25,20 @@ class FeedConnector:
         fetch_text: FetchText | None = None,
         *,
         fetch_policy: SourceFetchPolicy | None = None,
+        rate_limiter: DomainRateLimiter | None = None,
     ) -> None:
         self.fetch_policy = fetch_policy or SourceFetchPolicy()
+        self._rate_limiter = rate_limiter or DomainRateLimiter()
         self._fetch_text = fetch_text or self._default_fetch_text
 
     def fetch(self, source: SourceDefinition, *, limit: int | None = None) -> tuple[list[RawSourceItem], list[SourceError]]:
+        rate_limit = self._rate_limiter.reserve(
+            source.url,
+            limit_per_minute=self.fetch_policy.rate_limit_per_domain_per_minute,
+        )
+        if not rate_limit.allowed:
+            return [], [rate_limited_source_error(source, rate_limit, url=source.url)]
+
         try:
             xml_text = self._fetch_text(source.url)
         except Exception as exc:
