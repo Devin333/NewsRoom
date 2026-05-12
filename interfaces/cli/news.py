@@ -849,6 +849,10 @@ def build_parser() -> argparse.ArgumentParser:
     sources_health_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     sources_health_parser.set_defaults(handler=_sources_health)
 
+    sources_validate_parser = sources_subparsers.add_parser("validate", help="Validate source registry")
+    sources_validate_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    sources_validate_parser.set_defaults(handler=_sources_validate)
+
     runs_parser = subparsers.add_parser("runs", help="Inspect workflow run history")
     runs_subparsers = runs_parser.add_subparsers(dest="runs_command", required=True)
 
@@ -2159,6 +2163,24 @@ def _sources_health(args: argparse.Namespace) -> int:
                 f"failures={item['consecutive_failures']}"
             )
     return 0
+
+
+def _sources_validate(args: argparse.Namespace) -> int:
+    result = SourceApplicationService().validate_sources()
+    payload = result.to_dict()
+
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        print(f"is_valid={str(payload['is_valid']).lower()}")
+        print(f"error_count={payload['error_count']}")
+        print(f"warning_count={payload['warning_count']}")
+        for issue in payload["issues"]:
+            print(
+                f"- {issue['severity']} {issue['source_id']}.{issue['field']}: "
+                f"{issue['message']}"
+            )
+    return 0 if payload["is_valid"] else 2
 
 
 def _runs_list(args: argparse.Namespace) -> int:

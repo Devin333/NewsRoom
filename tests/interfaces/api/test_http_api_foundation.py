@@ -377,6 +377,18 @@ def test_sources_health_returns_health() -> None:
     assert payload["data"]["health"][0]["status"] == "healthy"
 
 
+def test_sources_validation_returns_registry_validation() -> None:
+    client = TestClient(create_app(source_service_factory=lambda: _FakeSourceService()))
+
+    response = client.get("/api/v1/sources/validation")
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["success"] is True
+    assert payload["data"]["is_valid"] is True
+    assert payload["data"]["error_count"] == 0
+
+
 def test_source_arxiv_fetch_returns_items() -> None:
     client = TestClient(create_app(source_service_factory=lambda: _FakeSourceService()))
 
@@ -908,6 +920,16 @@ class _FakeSourceService:
                         "last_error": None,
                     }
                 ],
+            }
+        )
+
+    def validate_sources(self):
+        return _FakeResult(
+            {
+                "is_valid": True,
+                "error_count": 0,
+                "warning_count": 0,
+                "issues": [],
             }
         )
 

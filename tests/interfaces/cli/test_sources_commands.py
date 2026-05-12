@@ -28,6 +28,19 @@ def test_news_cli_sources_health_json(monkeypatch, capsys) -> None:
     assert payload["health"][0]["status"] == "healthy"
 
 
+def test_news_cli_sources_validate_json(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(news_cli, "SourceApplicationService", _FakeSourceService)
+
+    exit_code = news_cli.main(["sources", "validate", "--json"])
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert exit_code == 0
+    assert payload["is_valid"] is True
+    assert payload["error_count"] == 0
+
+
 def test_news_cli_sources_arxiv_json(monkeypatch, capsys) -> None:
     monkeypatch.setattr(news_cli, "SourceApplicationService", _FakeSourceService)
 
@@ -93,6 +106,16 @@ class _FakeSourceService:
                         "last_error": None,
                     }
                 ],
+            }
+        )
+
+    def validate_sources(self):
+        return _FakeResult(
+            {
+                "is_valid": True,
+                "error_count": 0,
+                "warning_count": 0,
+                "issues": [],
             }
         )
 

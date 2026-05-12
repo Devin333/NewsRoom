@@ -371,6 +371,10 @@ def create_app(
     def source_health(include_disabled: bool = False):
         return _success(source_service_factory().source_health(enabled_only=not include_disabled).to_dict())
 
+    @api.get("/api/v1/sources/validation")
+    def validate_sources():
+        return _success(source_service_factory().validate_sources().to_dict())
+
     @api.post("/api/v1/sources/arxiv/fetch")
     def fetch_arxiv_source(request: ArxivSourceFetchRequest):
         try:

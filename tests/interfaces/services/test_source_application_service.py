@@ -64,6 +64,28 @@ def test_source_service_filters_sources_by_reliability() -> None:
     assert result.to_dict()["sources"][0]["source_id"] == "high"
 
 
+def test_source_service_validates_registry() -> None:
+    service = SourceApplicationService(
+        source_registry=SourceRegistry(
+            [
+                SourceDefinition(
+                    source_id="bad/source",
+                    name="Bad",
+                    source_type="rss",
+                    url="fixture://bad",
+                    topics=["ai"],
+                )
+            ]
+        )
+    )
+
+    result = service.validate_sources()
+    payload = result.to_dict()
+
+    assert payload["is_valid"] is False
+    assert payload["error_count"] >= 2
+
+
 def test_source_service_returns_health_views() -> None:
     registry = SourceRegistry(
         [SourceDefinition(source_id="source-1", name="Source", source_type="rss", url="https://example.com/rss")]

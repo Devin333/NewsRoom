@@ -130,6 +130,9 @@ class SourceApplicationService:
             ]
         )
 
+    def validate_sources(self):
+        return self.source_registry.validate()
+
     def source_health(self, *, enabled_only: bool = True) -> SourceHealthResult:
         return SourceHealthResult(
             [
