@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Sequence
 
 from core.framework.specs import WorkflowStatus
+from core.framework.tools import ToolPolicy, build_builtin_tool_registry, build_tool_catalog
 from core.framework.workers import WorkerStatus
 from core.framework.workers.approval import ApprovalAlreadyDecidedError, ApprovalNotFoundError
 from core.framework.workers.schedule_store import ScheduleRecord
@@ -920,6 +921,23 @@ def build_parser() -> argparse.ArgumentParser:
     )
     artifacts_show_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     artifacts_show_parser.set_defaults(handler=_artifacts_show)
+
+    tools_parser = subparsers.add_parser("tools", help="Discover Tool Runtime tools")
+    tools_subparsers = tools_parser.add_subparsers(dest="tools_command", required=True)
+
+    tools_list_parser = tools_subparsers.add_parser("list", help="List built-in tool catalog")
+    _add_tool_policy_args(tools_list_parser)
+    tools_list_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    tools_list_parser.set_defaults(handler=_tools_list)
+
+    tools_schema_parser = tools_subparsers.add_parser(
+        "schema",
+        help="Export built-in tool schemas after applying a tool policy",
+    )
+    _add_tool_policy_args(tools_schema_parser)
+    tools_schema_parser.add_argument("--agent-id", default="cli", help="Agent id for policy export")
+    tools_schema_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    tools_schema_parser.set_defaults(handler=_tools_schema)
 
     mcp_parser = subparsers.add_parser("mcp", help="Inspect inbound MCP catalog and tools")
     mcp_subparsers = mcp_parser.add_subparsers(dest="mcp_command", required=True)
@@ -2304,6 +2322,83 @@ def _artifacts_show(args: argparse.Namespace) -> int:
     else:
         print(json.dumps(payload["content"], ensure_ascii=False, indent=2, sort_keys=True))
     return 0
+
+
+def _add_tool_policy_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--allowed",
+        dest="allowed_tools",
+        action="append",
+        default=None,
+        help="Allowed tool name; can be passed multiple times",
+    )
+    parser.add_argument(
+        "--blocked",
+        dest="blocked_tools",
+        action="append",
+        default=None,
+        help="Blocked tool name; can be passed multiple times",
+    )
+    parser.add_argument(
+        "--allow-mcp",
+        action="store_true",
+        help="Expose MCP tools if present in the registry",
+    )
+    parser.add_argument(
+        "--include-dangerous",
+        action="store_true",
+        help="Expose dangerous tools if present in the registry",
+    )
+
+
+def _tools_list(args: argparse.Namespace) -> int:
+    registry = build_builtin_tool_registry()
+    catalog = build_tool_catalog(
+        registry,
+        agent_id="cli",
+        policy=_tool_policy_from_args(args),
+    )
+    payload = catalog.to_dict()
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        print(f"tool_count={payload['tool_count']}")
+        print(f"namespace_count={payload['namespace_count']}")
+        for namespace in payload["namespaces"]:
+            print(f"- {namespace['namespace']} tools={namespace['tool_count']}")
+        for tool in payload["tools"]:
+            print(f"{tool['name']}@{tool['version']} side_effect={tool['side_effect']}")
+    return 0 if catalog.registry_valid else 1
+
+
+def _tools_schema(args: argparse.Namespace) -> int:
+    registry = build_builtin_tool_registry()
+    policy = _tool_policy_from_args(args)
+    tools = registry.export_schema_for_llm(args.agent_id, policy)
+    payload = {
+        "agent_id": args.agent_id,
+        "tool_count": len(tools),
+        "tools": tools,
+    }
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        print(f"agent_id={payload['agent_id']}")
+        print(f"tool_count={payload['tool_count']}")
+        for tool in payload["tools"]:
+            print(f"- {tool['name']}@{tool['version']}")
+    return 0
+
+
+def _tool_policy_from_args(args: argparse.Namespace) -> ToolPolicy:
+    allowed_tools = list(args.allowed_tools or [])
+    return ToolPolicy(
+        allowed_tools=allowed_tools,
+        blocked_tools=list(args.blocked_tools or []),
+        allow_mcp_tools=bool(args.allow_mcp),
+        allow_dangerous_tools=bool(args.include_dangerous),
+        require_explicit_allowlist=bool(allowed_tools),
+    )
 
 
 def _mcp_catalog(args: argparse.Namespace) -> int:

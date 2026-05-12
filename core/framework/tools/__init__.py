@@ -4,6 +4,12 @@ from core.framework.tools.approval import ToolApprovalRequest
 from core.framework.tools.arxiv_tools import register_arxiv_tools
 from core.framework.tools.artifact_tools import register_artifact_tools
 from core.framework.tools.batch import ToolBatchExecutor
+from core.framework.tools.catalog import (
+    ToolCatalog,
+    ToolCatalogNamespace,
+    build_builtin_tool_registry,
+    build_tool_catalog,
+)
 from core.framework.tools.control_tools import register_control_tools
 from core.framework.tools.executor import ToolExecutor
 from core.framework.tools.github_tools import register_github_tools
@@ -76,6 +82,8 @@ __all__ = [
     "ToolDefinitionError",
     "ToolApprovalRequest",
     "ToolBatchExecutor",
+    "ToolCatalog",
+    "ToolCatalogNamespace",
     "ToolExecutor",
     "ToolExecutorFn",
     "ToolEvent",
@@ -98,6 +106,8 @@ __all__ = [
     "SecretProvider",
     "MappingSecretProvider",
     "EnvironmentSecretProvider",
+    "build_builtin_tool_registry",
+    "build_tool_catalog",
     "contains_redacted_value",
     "redact_sensitive_values",
     "register_arxiv_tools",
