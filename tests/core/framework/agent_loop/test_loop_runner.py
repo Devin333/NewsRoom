@@ -1,6 +1,6 @@
 from core.framework.agent_loop import AgentLoopStatus, AgentRunner, AgentSpec
 from core.framework.llm import FakeLLMClient
-from core.framework.tools import REDACTED_VALUE, ToolDefinition, ToolRegistry
+from core.framework.tools import REDACTED_VALUE, ToolDefinition, ToolPolicy, ToolRegistry
 from storage.conversation import LocalJsonConversationStore
 
 
@@ -76,6 +76,37 @@ def test_agent_runner_returns_retry_exhausted_after_invalid_outputs() -> None:
     assert result.metrics.llm_calls == 3
     assert result.verdict is not None
     assert result.verdict.missing_output_keys == ["analysis_result"]
+
+
+def test_agent_runner_exports_tools_from_resolved_policy() -> None:
+    registry = ToolRegistry()
+    registry.register(ToolDefinition(name="memory.search"), lambda args: args)
+    registry.register(ToolDefinition(name="artifact.load"), lambda args: args)
+    llm = FakeLLMClient(
+        ['{"action_type":"final_output","output":{"analysis_result":{"summary":"ok"}}}']
+    )
+    agent = AgentSpec(
+        agent_id="analyst",
+        name="Analyst",
+        role="Analyze",
+        goal="Produce analysis",
+        instructions="Return JSON actions only.",
+        input_keys=["request"],
+        output_key="analysis_result",
+        allowed_tools=["memory.search", "artifact.load"],
+        tool_policy=ToolPolicy(
+            allowed_tools=["memory.search", "artifact.load"],
+            blocked_tools=["artifact.load"],
+        ),
+    )
+
+    result = AgentRunner(llm_client=llm, tool_registry=registry).run(
+        agent,
+        {"request": {"topic": "chips"}},
+    )
+
+    assert result.success is True
+    assert [tool["name"] for tool in llm.requests[0].tools] == ["memory.search"]
 
 
 def test_agent_runner_blocks_secret_like_final_output() -> None:

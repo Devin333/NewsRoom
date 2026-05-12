@@ -1,8 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
-from core.framework.tools.models import ToolDefinition, ToolDefinitionError, ToolExecutorFn
+from core.framework.tools.models import (
+    ToolDefinition,
+    ToolDefinitionError,
+    ToolExecutorFn,
+    ToolPolicy,
+)
 
 
 @dataclass(frozen=True)
@@ -32,9 +38,20 @@ class ToolRegistry:
     def list_tools(self) -> list[ToolDefinition]:
         return [registered.definition for registered in self._tools.values()]
 
-    def export_schema_for_llm(self, allowed_tools: list[str] | None = None) -> list[dict]:
-        allowed = set(allowed_tools or [])
+    def list_tools_for_agent(self, agent_id: str, policy: ToolPolicy) -> list[ToolDefinition]:
+        _ = agent_id
+        return [definition for definition in self.list_tools() if policy.exposes(definition)]
+
+    def export_schema_for_llm(
+        self,
+        agent_id: str | list[str] = "",
+        policy: ToolPolicy | None = None,
+    ) -> list[dict[str, Any]]:
+        if isinstance(agent_id, list):
+            policy = ToolPolicy(allowed_tools=list(agent_id), require_explicit_allowlist=True)
+            agent_id = ""
+
         definitions = self.list_tools()
-        if allowed_tools is not None:
-            definitions = [definition for definition in definitions if definition.name in allowed]
+        if policy is not None:
+            definitions = self.list_tools_for_agent(agent_id, policy)
         return [definition.to_dict() for definition in definitions]

@@ -81,6 +81,13 @@ class ToolPolicy:
             return tool_name in self.allowed_tools
         return True
 
+    def exposes(self, definition: ToolDefinition) -> bool:
+        if not self.allows(definition.name):
+            return False
+        if definition.is_dangerous and not self.allow_dangerous_tools:
+            return False
+        return True
+
 
 @dataclass(frozen=True)
 class ToolCall:

@@ -41,7 +41,10 @@ class AgentRunner:
                 metadata={"message_type": "agent_inputs"},
             ),
         )
-        tools = self._tool_registry.export_schema_for_llm(agent.allowed_tools)
+        tools = self._tool_registry.export_schema_for_llm(
+            agent.agent_id,
+            agent.resolved_tool_policy(),
+        )
         loop = AgentLoop(
             llm_client=self._llm_client,
             tool_executor=ToolExecutor(self._tool_registry),
