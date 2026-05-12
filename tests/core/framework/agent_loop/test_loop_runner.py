@@ -109,6 +109,55 @@ def test_agent_runner_exports_tools_from_resolved_policy() -> None:
     assert [tool["name"] for tool in llm.requests[0].tools] == ["memory.search"]
 
 
+def test_agent_runner_blocks_tool_call_after_agent_budget_is_exhausted() -> None:
+    calls = {"count": 0}
+    registry = ToolRegistry()
+    registry.register(
+        ToolDefinition(name="memory.search", input_schema={"required": ["query"]}),
+        lambda args: calls.__setitem__("count", calls["count"] + 1)
+        or {"matches": [{"title": args["query"]}]},
+    )
+    llm = FakeLLMClient(
+        [
+            '{"action_type":"tool_call","tool_name":"memory.search","tool_args":{"query":"a"}}',
+            '{"action_type":"tool_call","tool_name":"memory.search","tool_args":{"query":"b"}}',
+            '{"action_type":"final_output","output":{"analysis_result":{"summary":"ok"}}}',
+        ]
+    )
+    agent = AgentSpec(
+        agent_id="analyst",
+        name="Analyst",
+        role="Analyze",
+        goal="Produce analysis",
+        instructions="Return JSON actions only.",
+        input_keys=["request"],
+        output_key="analysis_result",
+        allowed_tools=["memory.search"],
+        tool_policy=ToolPolicy(
+            allowed_tools=["memory.search"],
+            max_tool_calls_per_agent=1,
+        ),
+    )
+
+    result = AgentRunner(llm_client=llm, tool_registry=registry).run(
+        agent,
+        {"request": {"topic": "chips"}},
+    )
+
+    tool_observations = [
+        event["observation"]
+        for event in result.events
+        if event["event_type"] == "tool_observation"
+    ]
+    assert result.success is True
+    assert calls["count"] == 1
+    assert [observation["status"] for observation in tool_observations] == [
+        "succeeded",
+        "blocked",
+    ]
+    assert "max_tool_calls_per_agent" in tool_observations[1]["summary"]
+
+
 def test_agent_runner_blocks_secret_like_final_output() -> None:
     fake_secret = "sk" + "-abcdef1234567890"
     llm = FakeLLMClient(

@@ -14,7 +14,14 @@ from core.framework.agent_loop.models import (
 from core.framework.agent_loop.parser import AgentActionParser
 from core.framework.agent_loop.prompt import PromptBuilder
 from core.framework.llm import LLMClient
-from core.framework.tools import ToolCall, ToolExecutor, ToolObservation, ToolStatus
+from core.framework.tools import (
+    ToolCall,
+    ToolExecutor,
+    ToolObservation,
+    ToolPolicy,
+    ToolResult,
+    ToolStatus,
+)
 
 
 class AgentLoop:
@@ -81,7 +88,16 @@ class AgentLoop:
                 continue
 
             if action.action_type == "tool_call":
-                observation = self._execute_tool(agent, action.tool_name or "", action.tool_args)
+                tool_policy = agent.resolved_tool_policy()
+                tool_call = ToolCall(
+                    tool_name=action.tool_name or "",
+                    arguments=action.tool_args,
+                    requested_by_agent_id=agent.agent_id,
+                )
+                if metrics.tool_calls >= _max_tool_calls_per_agent(tool_policy):
+                    observation = _blocked_tool_budget_observation(tool_call, tool_policy)
+                else:
+                    observation = self._execute_tool(tool_call, tool_policy)
                 tool_observations.append(observation)
                 called_tools.append(observation.call.tool_name)
                 metrics.tool_calls += 1
@@ -170,15 +186,8 @@ class AgentLoop:
             agent.loop_policy.max_iterations,
         )
 
-    def _execute_tool(self, agent: AgentSpec, tool_name: str, tool_args: dict[str, Any]) -> ToolObservation:
-        return self._tool_executor.execute(
-            ToolCall(
-                tool_name=tool_name,
-                arguments=tool_args,
-                requested_by_agent_id=agent.agent_id,
-            ),
-            agent.resolved_tool_policy(),
-        )
+    def _execute_tool(self, tool_call: ToolCall, tool_policy: ToolPolicy) -> ToolObservation:
+        return self._tool_executor.execute(tool_call, tool_policy)
 
     def _retry_exhausted(
         self,
@@ -197,3 +206,25 @@ class AgentLoop:
             events=events,
             error=verdict.feedback if verdict else "retry exhausted",
         )
+
+
+def _max_tool_calls_per_agent(policy: ToolPolicy) -> int:
+    return max(0, int(policy.max_tool_calls_per_agent))
+
+
+def _blocked_tool_budget_observation(
+    tool_call: ToolCall,
+    policy: ToolPolicy,
+) -> ToolObservation:
+    return ToolObservation(
+        call=tool_call,
+        result=ToolResult(
+            status=ToolStatus.BLOCKED,
+            error_type="ToolPermissionError",
+            error_message=(
+                "agent exceeded max_tool_calls_per_agent "
+                f"of {_max_tool_calls_per_agent(policy)}"
+            ),
+        ),
+        elapsed_ms=0.0,
+    )

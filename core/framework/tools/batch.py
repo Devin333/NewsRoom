@@ -9,6 +9,8 @@ from core.framework.tools.models import (
     ToolDefinitionError,
     ToolObservation,
     ToolPolicy,
+    ToolResult,
+    ToolStatus,
 )
 from core.framework.tools.registry import ToolRegistry
 from core.framework.tools.secrets import SecretProvider
@@ -36,6 +38,15 @@ class ToolBatchExecutor:
     def execute_batch(self, calls: list[ToolCall], policy: ToolPolicy) -> list[ToolObservation]:
         if not calls:
             return []
+        if len(calls) > _max_tool_calls_per_iteration(policy):
+            return [
+                _blocked_budget_observation(
+                    call,
+                    "tool batch exceeds max_tool_calls_per_iteration "
+                    f"of {_max_tool_calls_per_iteration(policy)}",
+                )
+                for call in calls
+            ]
         if self._can_execute_parallel(calls):
             return self._execute_parallel(calls, policy)
         return [self._execute_one(call, policy) for call in calls]
@@ -77,3 +88,19 @@ class ToolBatchExecutor:
             if definition.side_effect not in _READ_ONLY_SIDE_EFFECTS:
                 return False
         return True
+
+
+def _max_tool_calls_per_iteration(policy: ToolPolicy) -> int:
+    return max(0, int(policy.max_tool_calls_per_iteration))
+
+
+def _blocked_budget_observation(call: ToolCall, message: str) -> ToolObservation:
+    return ToolObservation(
+        call=call,
+        result=ToolResult(
+            status=ToolStatus.BLOCKED,
+            error_type="ToolPermissionError",
+            error_message=message,
+        ),
+        elapsed_ms=0.0,
+    )

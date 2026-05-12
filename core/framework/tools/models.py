@@ -102,6 +102,8 @@ class ToolPolicy:
     allowed_tools: list[str] = field(default_factory=list)
     blocked_tools: list[str] = field(default_factory=list)
     allow_mcp_tools: bool = False
+    max_tool_calls_per_iteration: int = 3
+    max_tool_calls_per_agent: int = 20
     require_explicit_allowlist: bool = True
     allow_dangerous_tools: bool = False
     require_approval_for_side_effects: bool = True

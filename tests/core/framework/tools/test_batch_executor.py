@@ -97,3 +97,28 @@ def test_tool_batch_executor_serializes_side_effecting_tools() -> None:
     ]
     assert [observation.result.output["id"] for observation in observations] == ["a", "b"]
     assert active["max"] == 1
+
+
+def test_tool_batch_executor_blocks_batches_over_iteration_budget() -> None:
+    calls = {"count": 0}
+    registry = ToolRegistry()
+    registry.register(
+        ToolDefinition(name="memory.search", input_schema={"required": ["query"]}),
+        lambda args: calls.__setitem__("count", calls["count"] + 1),
+    )
+    executor = ToolBatchExecutor(registry)
+
+    observations = executor.execute_batch(
+        [
+            ToolCall(tool_name="memory.search", arguments={"query": "a"}),
+            ToolCall(tool_name="memory.search", arguments={"query": "b"}),
+        ],
+        ToolPolicy(allowed_tools=["memory.search"], max_tool_calls_per_iteration=1),
+    )
+
+    assert [observation.status for observation in observations] == [
+        ToolStatus.BLOCKED,
+        ToolStatus.BLOCKED,
+    ]
+    assert calls["count"] == 0
+    assert "max_tool_calls_per_iteration" in (observations[0].result.error_message or "")
