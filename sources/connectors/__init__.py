@@ -6,6 +6,8 @@ from sources.connectors.fetch_policy import (
     DomainRateLimiter,
     RateLimitDecision,
     SourceFetchPolicy,
+    TooManyRedirectsError,
+    open_request_with_fetch_policy,
     run_with_fetch_retries,
 )
 from sources.connectors.github import (
@@ -32,6 +34,8 @@ __all__ = [
     "ManualConnector",
     "RateLimitDecision",
     "SourceFetchPolicy",
+    "TooManyRedirectsError",
     "extract_html",
+    "open_request_with_fetch_policy",
     "run_with_fetch_retries",
 ]

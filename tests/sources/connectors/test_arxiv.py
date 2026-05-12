@@ -106,10 +106,10 @@ def test_arxiv_connector_default_fetch_rejects_unsupported_content_type(monkeypa
         def read(self, size):
             return ARXIV_FIXTURE.encode("utf-8")
 
-    def fake_urlopen(request, timeout):
+    def fake_open_request(request, policy):
         return Response()
 
-    monkeypatch.setattr("sources.connectors.arxiv.urlopen", fake_urlopen)
+    monkeypatch.setattr("sources.connectors.arxiv.open_request_with_fetch_policy", fake_open_request)
 
     items, errors = ArxivConnector().fetch(_source(), query="cat:cs.AI", limit=1)
 

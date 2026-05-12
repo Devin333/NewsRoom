@@ -4,9 +4,10 @@ from collections import defaultdict, deque
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from math import ceil
-from typing import Callable, TypeVar
+from typing import Any, Callable, TypeVar
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from domain.sources import SourceDefinition, SourceError
 
@@ -24,10 +25,18 @@ class UnsupportedContentTypeError(ValueError):
         super().__init__(f"unsupported content type: {content_type}; supported: {supported}")
 
 
+class TooManyRedirectsError(ValueError):
+    def __init__(self, url: str, max_redirects: int) -> None:
+        self.url = url
+        self.max_redirects = max_redirects
+        super().__init__(f"source fetch exceeded max_redirects={max_redirects}: {url}")
+
+
 @dataclass(frozen=True)
 class SourceFetchPolicy:
     timeout_seconds: float = 15.0
     max_bytes: int = 1_000_000
+    max_redirects: int = 3
     user_agent: str = "NewsRoom/0.1"
     rate_limit_per_domain_per_minute: int | None = None
     retry_times: int = 2
@@ -38,6 +47,8 @@ class SourceFetchPolicy:
             raise ValueError("timeout_seconds must be positive")
         if self.max_bytes < 1:
             raise ValueError("max_bytes must be at least 1")
+        if self.max_redirects < 0:
+            raise ValueError("max_redirects must be non-negative")
         if not self.user_agent:
             raise ValueError("user_agent is required")
         if (
@@ -163,6 +174,24 @@ def ensure_supported_content_type(
     supported = tuple(content_type.casefold() for content_type in supported_content_types)
     if normalized not in supported:
         raise UnsupportedContentTypeError(normalized, supported)
+
+
+def open_request_with_fetch_policy(request: Request, policy: SourceFetchPolicy) -> Any:
+    opener = build_opener(_RedirectLimitHandler(policy.max_redirects))
+    return opener.open(request, timeout=policy.timeout_seconds)
+
+
+class _RedirectLimitHandler(HTTPRedirectHandler):
+    def __init__(self, max_redirects: int) -> None:
+        super().__init__()
+        self._max_redirects = max_redirects
+        self._redirect_count = 0
+
+    def redirect_request(self, req: Any, fp: Any, code: int, msg: str, headers: Any, newurl: str) -> Any:
+        self._redirect_count += 1
+        if self._redirect_count > self._max_redirects:
+            raise TooManyRedirectsError(newurl, self._max_redirects)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
 def _set_attempts(exc: Exception, attempts: int) -> None:

@@ -7,15 +7,17 @@ from hashlib import sha256
 from typing import Callable, Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
-from urllib.request import Request, urlopen
+from urllib.request import Request
 
 from domain.sources import RawSourceItem, SourceDefinition, SourceError
 from sources.connectors.fetch_policy import (
     DomainRateLimiter,
     SourceFetchPolicy,
+    TooManyRedirectsError,
     UnsupportedContentTypeError,
     ensure_supported_content_type,
     fetch_attempts,
+    open_request_with_fetch_policy,
     rate_limited_source_error,
     run_with_fetch_retries,
 )
@@ -258,7 +260,7 @@ class GithubConnector:
                 "X-GitHub-Api-Version": "2022-11-28",
             },
         )
-        with urlopen(request, timeout=self.fetch_policy.timeout_seconds) as response:
+        with open_request_with_fetch_policy(request, self.fetch_policy) as response:
             headers = getattr(response, "headers", None)
             content_type = headers.get_content_type() if headers is not None else None
             ensure_supported_content_type(content_type, GITHUB_CONTENT_TYPES)
@@ -400,6 +402,10 @@ def _exception_source_error(source: SourceDefinition, exc: Exception, *, phase: 
         metadata["content_type"] = exc.content_type
         metadata["supported_content_types"] = list(exc.supported_content_types)
         metadata["source_health_affecting"] = False
+    if isinstance(exc, TooManyRedirectsError):
+        metadata["redirect_url"] = exc.url
+        metadata["max_redirects"] = exc.max_redirects
+        metadata["source_health_affecting"] = False
     if isinstance(exc, HTTPError):
         metadata["status_code"] = exc.code
     attempts = fetch_attempts(exc)
@@ -423,6 +429,8 @@ def _taxonomy_for_exception(exc: Exception, *, phase: str) -> tuple[str, bool]:
         return "fetch_timeout", True
     if isinstance(exc, UnsupportedContentTypeError):
         return "unsupported_content_type", False
+    if isinstance(exc, TooManyRedirectsError):
+        return "too_many_redirects", False
     if isinstance(exc, ValueError) and "max_bytes" in str(exc):
         return "max_bytes_exceeded", False
     return "fetch_connection_error", True

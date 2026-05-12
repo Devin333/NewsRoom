@@ -4,7 +4,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlsplit
-from urllib.request import Request, urlopen
+from urllib.request import Request
 
 from core.framework.tools.models import ToolDefinition
 from core.framework.tools.registry import ToolRegistry
@@ -15,6 +15,7 @@ from sources.connectors import (
     HtmlConnector,
     ManualConnector,
     SourceFetchPolicy,
+    open_request_with_fetch_policy,
     run_with_fetch_retries,
 )
 from sources.health import BasicSourceHealthManager
@@ -46,6 +47,7 @@ def register_source_tools(
                     "source": {"type": "object"},
                     "timeout_seconds": {"type": "number"},
                     "max_bytes": {"type": "integer"},
+                    "max_redirects": {"type": "integer"},
                     "user_agent": {"type": "string"},
                 },
                 "additionalProperties": False,
@@ -105,6 +107,7 @@ def register_source_tools(
                     "limit": {"type": "integer"},
                     "timeout_seconds": {"type": "number"},
                     "max_bytes": {"type": "integer"},
+                    "max_redirects": {"type": "integer"},
                     "user_agent": {"type": "string"},
                 },
                 "additionalProperties": False,
@@ -150,6 +153,7 @@ def register_source_tools(
                     "source": {"type": "object"},
                     "timeout_seconds": {"type": "number"},
                     "max_bytes": {"type": "integer"},
+                    "max_redirects": {"type": "integer"},
                     "user_agent": {"type": "string"},
                 },
                 "additionalProperties": False,
@@ -394,6 +398,7 @@ def _fetch_url(
         "fetch_policy": {
             "timeout_seconds": policy.timeout_seconds,
             "max_bytes": policy.max_bytes,
+            "max_redirects": policy.max_redirects,
             "user_agent": policy.user_agent,
         },
     }
@@ -489,11 +494,13 @@ def _search_sources(
 def _fetch_policy(args: dict[str, Any], default_policy: SourceFetchPolicy) -> SourceFetchPolicy:
     timeout_seconds = float(args.get("timeout_seconds", default_policy.timeout_seconds))
     max_bytes = int(args.get("max_bytes", default_policy.max_bytes))
+    max_redirects = int(args.get("max_redirects", default_policy.max_redirects))
     if max_bytes > 1_000_000:
         raise ValueError("max_bytes must not exceed 1000000 for source.fetch_url")
     return SourceFetchPolicy(
         timeout_seconds=timeout_seconds,
         max_bytes=max_bytes,
+        max_redirects=max_redirects,
         user_agent=str(args.get("user_agent") or default_policy.user_agent),
         rate_limit_per_domain_per_minute=default_policy.rate_limit_per_domain_per_minute,
         retry_times=default_policy.retry_times,
@@ -513,7 +520,7 @@ def _fetch_text(
 
 def _default_fetch_text(url: str, policy: SourceFetchPolicy) -> tuple[str, int | None, str | None]:
     request = Request(url, headers={"User-Agent": policy.user_agent})
-    with urlopen(request, timeout=policy.timeout_seconds) as response:
+    with open_request_with_fetch_policy(request, policy) as response:
         body = response.read(policy.max_bytes + 1)
         status_code = getattr(response, "status", None)
         headers = getattr(response, "headers", None)

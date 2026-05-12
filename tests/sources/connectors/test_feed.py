@@ -5,7 +5,7 @@ from urllib.error import HTTPError, URLError
 import pytest
 
 from domain.sources import SourceDefinition
-from sources.connectors import DomainRateLimiter, FeedConnector, SourceFetchPolicy
+from sources.connectors import DomainRateLimiter, FeedConnector, SourceFetchPolicy, TooManyRedirectsError
 
 
 RSS_FIXTURE = """<?xml version="1.0"?>
@@ -220,12 +220,12 @@ def test_feed_connector_default_fetch_applies_policy(monkeypatch) -> None:
             captured["read_size"] = size
             return b"abcdef"
 
-    def fake_urlopen(request, timeout):
+    def fake_open_request(request, policy):
         captured["user_agent"] = request.headers["User-agent"]
-        captured["timeout"] = timeout
+        captured["timeout"] = policy.timeout_seconds
         return Response()
 
-    monkeypatch.setattr("sources.connectors.feed.urlopen", fake_urlopen)
+    monkeypatch.setattr("sources.connectors.feed.open_request_with_fetch_policy", fake_open_request)
     source = SourceDefinition(
         source_id="rss-source",
         name="RSS Source",
@@ -265,10 +265,10 @@ def test_feed_connector_default_fetch_rejects_unsupported_content_type(monkeypat
         def read(self, size):
             return RSS_FIXTURE.encode("utf-8")
 
-    def fake_urlopen(request, timeout):
+    def fake_open_request(request, policy):
         return Response()
 
-    monkeypatch.setattr("sources.connectors.feed.urlopen", fake_urlopen)
+    monkeypatch.setattr("sources.connectors.feed.open_request_with_fetch_policy", fake_open_request)
     source = SourceDefinition(
         source_id="rss-source",
         name="RSS Source",
@@ -285,6 +285,30 @@ def test_feed_connector_default_fetch_rejects_unsupported_content_type(monkeypat
     assert errors[0].metadata["retryable"] is False
     assert errors[0].metadata["source_health_affecting"] is False
     assert "application/rss+xml" in errors[0].metadata["supported_content_types"]
+
+
+def test_feed_connector_fetch_maps_redirect_limit_error() -> None:
+    source = SourceDefinition(
+        source_id="rss-source",
+        name="RSS Source",
+        source_type="rss",
+        url="https://example.com/rss.xml",
+    )
+    connector = FeedConnector(
+        fetch_text=lambda url: (_ for _ in ()).throw(
+            TooManyRedirectsError("https://example.com/loop", max_redirects=1)
+        )
+    )
+
+    items, errors = connector.fetch(source)
+
+    assert items == []
+    assert errors[0].error_type == "too_many_redirects"
+    assert errors[0].metadata["phase"] == "fetch"
+    assert errors[0].metadata["redirect_url"] == "https://example.com/loop"
+    assert errors[0].metadata["max_redirects"] == 1
+    assert errors[0].metadata["retryable"] is False
+    assert errors[0].metadata["source_health_affecting"] is False
 
 
 def test_feed_connector_retries_transient_fetch_error() -> None:
@@ -470,6 +494,8 @@ def test_source_fetch_policy_rejects_invalid_values() -> None:
         SourceFetchPolicy(timeout_seconds=0)
     with pytest.raises(ValueError, match="max_bytes"):
         SourceFetchPolicy(max_bytes=0)
+    with pytest.raises(ValueError, match="max_redirects"):
+        SourceFetchPolicy(max_redirects=-1)
     with pytest.raises(ValueError, match="user_agent"):
         SourceFetchPolicy(user_agent="")
     with pytest.raises(ValueError, match="rate_limit_per_domain_per_minute"):

@@ -109,10 +109,10 @@ def test_github_connector_default_fetch_rejects_unsupported_content_type(monkeyp
         def read(self, size):
             return GITHUB_RELEASES.encode("utf-8")
 
-    def fake_urlopen(request, timeout):
+    def fake_open_request(request, policy):
         return Response()
 
-    monkeypatch.setattr("sources.connectors.github.urlopen", fake_urlopen)
+    monkeypatch.setattr("sources.connectors.github.open_request_with_fetch_policy", fake_open_request)
 
     items, errors = GithubConnector().fetch_releases(
         _source(),

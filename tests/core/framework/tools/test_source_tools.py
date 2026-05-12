@@ -1,3 +1,6 @@
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
 from core.framework.tools import (
     ToolCall,
     ToolExecutor,
@@ -96,6 +99,7 @@ def test_source_fetch_url_tool_fetches_configured_source_through_executor() -> N
     assert observation.result.output["fetch_policy"] == {
         "timeout_seconds": 2.0,
         "max_bytes": 100,
+        "max_redirects": 3,
         "user_agent": "NewsRoomTest/1.0",
     }
 
@@ -699,18 +703,20 @@ def test_source_fetch_url_tool_default_fetch_uses_source_fetch_policy(monkeypatc
             captured["read_size"] = size
             return b"abc"
 
-    def fake_urlopen(request, timeout):
+    def fake_open_request(request, policy):
         captured["user_agent"] = request.headers["User-agent"]
-        captured["timeout"] = timeout
+        captured["timeout"] = policy.timeout_seconds
+        captured["max_redirects"] = policy.max_redirects
         return Response()
 
-    monkeypatch.setattr("core.framework.tools.source_tools.urlopen", fake_urlopen)
+    monkeypatch.setattr("core.framework.tools.source_tools.open_request_with_fetch_policy", fake_open_request)
     registry = ToolRegistry()
     register_source_tools(
         registry,
         fetch_policy=SourceFetchPolicy(
             timeout_seconds=3,
             max_bytes=5,
+            max_redirects=2,
             user_agent="NewsRoomTest/1.0",
         ),
     )
@@ -738,8 +744,64 @@ def test_source_fetch_url_tool_default_fetch_uses_source_fetch_policy(monkeypatc
     assert captured == {
         "user_agent": "NewsRoomTest/1.0",
         "timeout": 3,
+        "max_redirects": 2,
         "read_size": 6,
     }
+
+
+def test_source_fetch_url_tool_enforces_redirect_limit() -> None:
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path == "/start":
+                self.send_response(302)
+                self.send_header("Location", "/one")
+                self.end_headers()
+                return
+            if self.path == "/one":
+                self.send_response(302)
+                self.send_header("Location", "/done")
+                self.end_headers()
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            self.wfile.write(b"done")
+
+        def log_message(self, format, *args):
+            return
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        registry = ToolRegistry()
+        register_source_tools(
+            registry,
+            fetch_policy=SourceFetchPolicy(max_redirects=1),
+        )
+        executor = ToolExecutor(registry)
+        url = f"http://127.0.0.1:{server.server_port}/start"
+
+        observation = executor.execute(
+            ToolCall(
+                tool_name="source.fetch_url",
+                arguments={
+                    "source": {
+                        "source_id": "rss-example",
+                        "name": "Example RSS",
+                        "url": url,
+                        "source_type": "rss",
+                    }
+                },
+            ),
+            ToolPolicy(allowed_tools=["source.fetch_url"]),
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    assert observation.status == ToolStatus.FAILED
+    assert "max_redirects=1" in (observation.result.error_message or "")
 
 
 def test_source_parse_rss_tool_uses_feed_connector_through_executor() -> None:
