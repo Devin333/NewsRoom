@@ -36,6 +36,38 @@ def register_report_tools(registry: ToolRegistry) -> None:
         ),
         lambda args: {"report": _final_report(args["report"]).to_dict()},
     )
+    registry.register(
+        ToolDefinition(
+            name="report.validate",
+            description="Validate a FinalReport payload without rendering it.",
+            input_schema={
+                "required": ["report"],
+                "properties": {"report": {"type": "object"}},
+                "additionalProperties": False,
+            },
+            side_effect="read_only",
+            concurrency_safe=True,
+        ),
+        lambda args: _validate_report(args["report"]),
+    )
+
+
+def _validate_report(payload: Any) -> dict[str, Any]:
+    try:
+        report = _final_report(payload)
+    except Exception as exc:
+        return {
+            "valid": False,
+            "errors": [str(exc)],
+            "section_count": 0,
+            "source_url_count": 0,
+        }
+    return {
+        "valid": True,
+        "errors": [],
+        "section_count": len(report.sections),
+        "source_url_count": len(report.source_urls),
+    }
 
 
 def _final_report(payload: Any) -> FinalReport:
