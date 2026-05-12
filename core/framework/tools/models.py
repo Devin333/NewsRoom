@@ -44,6 +44,7 @@ class ToolDefinition:
     requires_approval: bool = False
     timeout_seconds: float | None = None
     max_attempts: int | None = None
+    concurrency_safe: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -69,6 +70,7 @@ class ToolDefinition:
             "requires_approval": self.requires_approval,
             "timeout_seconds": self.timeout_seconds,
             "max_attempts": self.max_attempts,
+            "concurrency_safe": self.concurrency_safe,
             "metadata": dict(self.metadata),
         }
 

@@ -1,5 +1,6 @@
 """Tool Runtime primitives."""
 
+from core.framework.tools.batch import ToolBatchExecutor
 from core.framework.tools.executor import ToolExecutor
 from core.framework.tools.models import (
     ArtifactRef,
@@ -28,6 +29,7 @@ __all__ = [
     "ToolCall",
     "ToolDefinition",
     "ToolDefinitionError",
+    "ToolBatchExecutor",
     "ToolExecutor",
     "ToolExecutorFn",
     "ToolEvent",
