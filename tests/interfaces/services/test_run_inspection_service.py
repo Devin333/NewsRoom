@@ -128,6 +128,66 @@ def test_run_inspection_replay_reads_real_artifacts_and_redacts(tmp_path) -> Non
     assert "hidden-key" not in json.dumps(payload)
 
 
+def test_run_inspection_replay_expands_source_artifacts(tmp_path) -> None:
+    run_dir = tmp_path / "run-1"
+    item_dir = run_dir / "sources" / "items" / "feed"
+    error_dir = run_dir / "sources" / "errors" / "feed"
+    item_dir.mkdir(parents=True)
+    error_dir.mkdir(parents=True)
+    (run_dir / "source_artifacts").mkdir()
+    manifest = {
+        "run_id": "run-1",
+        "status": "succeeded",
+        "artifacts": {
+            "source_artifacts": "source_artifacts/index.json",
+        },
+    }
+    source_index = {
+        "entries": [
+            {
+                "artifact_type": "source_item",
+                "source_id": "feed/source",
+                "object_id": "item-1",
+                "path": "sources/items/feed/item-1.json",
+            },
+            {
+                "artifact_type": "source_error",
+                "source_id": "feed/source",
+                "object_id": "error-1",
+                "path": "sources/errors/feed/error-1.json",
+            },
+        ],
+        "item_count": 1,
+        "error_count": 1,
+    }
+    (run_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    (run_dir / "source_artifacts" / "index.json").write_text(
+        json.dumps(source_index),
+        encoding="utf-8",
+    )
+    (item_dir / "item-1.json").write_text(
+        json.dumps({"item": {"title": "Item", "metadata": {"api_key": "hidden-key"}}}),
+        encoding="utf-8",
+    )
+    (error_dir / "error-1.json").write_text(
+        json.dumps({"error": {"error_type": "fetch_timeout", "url": "https://example.com"}}),
+        encoding="utf-8",
+    )
+
+    result = RunInspectionService(tmp_path).replay_run("run-1")
+
+    payload = result.to_dict()
+    artifacts = {artifact["artifact_key"]: artifact for artifact in payload["artifacts"]}
+    item_key = "source_artifact.source_item.feed_source.item-1"
+    error_key = "source_artifact.source_error.feed_source.error-1"
+    assert item_key in artifacts
+    assert error_key in artifacts
+    assert artifacts[item_key]["relative_path"] == "sources/items/feed/item-1.json"
+    assert artifacts[item_key]["content"]["item"]["metadata"]["api_key"] == "[redacted]"
+    assert artifacts[error_key]["content"]["error"]["error_type"] == "fetch_timeout"
+    assert "hidden-key" not in json.dumps(payload)
+
+
 def test_run_inspection_rejects_path_traversal(tmp_path) -> None:
     with pytest.raises(ValueError):
         RunInspectionService(tmp_path).get_run("../secret")

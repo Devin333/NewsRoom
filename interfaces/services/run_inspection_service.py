@@ -178,6 +178,7 @@ class RunInspectionService:
             _read_replay_artifact(self.artifact_root, run_id, key, str(relative_path))
             for key, relative_path in sorted(artifact_paths.items())
         ]
+        artifacts.extend(_read_source_replay_artifacts(self.artifact_root, run_id, artifact_paths))
         return RunReplayResult(
             run_id=detail.run_id,
             manifest=detail.manifest,
@@ -279,6 +280,56 @@ def _read_replay_artifact_content(path: Path, content_type: str) -> Any:
     if content_type == "application/x-ndjson":
         return [_redact_sensitive_keys(value) for value in _read_jsonl_values(path)]
     return path.read_text(encoding="utf-8")
+
+
+def _read_source_replay_artifacts(
+    artifact_root: Path,
+    run_id: str,
+    artifact_paths: dict[str, Any],
+) -> list[RunReplayArtifact]:
+    source_index_path = artifact_paths.get("source_artifacts")
+    if not isinstance(source_index_path, str):
+        return []
+    try:
+        index_path = _artifact_path(artifact_root, run_id, source_index_path)
+        index_payload = _read_json_value(index_path)
+    except (OSError, UnicodeDecodeError, ValueError, json.JSONDecodeError):
+        return []
+    if not isinstance(index_payload, dict):
+        return []
+    entries = index_payload.get("entries")
+    if not isinstance(entries, list):
+        return []
+    replay_artifacts: list[RunReplayArtifact] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        relative_path = entry.get("path")
+        if not isinstance(relative_path, str):
+            continue
+        replay_artifacts.append(
+            _read_replay_artifact(
+                artifact_root,
+                run_id,
+                _source_artifact_key(entry),
+                relative_path,
+            )
+        )
+    return replay_artifacts
+
+
+def _source_artifact_key(entry: dict[str, Any]) -> str:
+    parts = [
+        "source_artifact",
+        str(entry.get("artifact_type") or "unknown"),
+        str(entry.get("source_id") or "unknown-source"),
+        str(entry.get("object_id") or "unknown-object"),
+    ]
+    return ".".join(_artifact_key_segment(part) for part in parts)
+
+
+def _artifact_key_segment(value: str) -> str:
+    return "".join(ch if ch.isalnum() or ch in {"_", "-"} else "_" for ch in value).strip("_") or "unknown"
 
 
 def _artifact_path(artifact_root: Path, run_id: str, relative_path: str) -> Path:
