@@ -41,6 +41,7 @@ class SourceDefinition:
     reliability: SourceReliability = SourceReliability.MEDIUM
     authority_score: float = 0.5
     enabled: bool = True
+    respect_robots: bool = True
     topics: list[str] = field(default_factory=list)
     language: str | None = None
     region: str | None = None

@@ -14,9 +14,12 @@ from urllib.request import Request
 from domain.sources import RawSourceItem, SourceDefinition, SourceError
 from sources.connectors.fetch_policy import (
     DomainRateLimiter,
+    RobotsDisallowedError,
     SourceFetchPolicy,
     TooManyRedirectsError,
     UnsupportedContentTypeError,
+    effective_fetch_policy,
+    ensure_robots_allowed,
     ensure_supported_content_type,
     fetch_attempts,
     open_request_with_fetch_policy,
@@ -81,6 +84,7 @@ class HtmlConnector:
     ) -> None:
         self.fetch_policy = fetch_policy or SourceFetchPolicy()
         self._rate_limiter = rate_limiter or DomainRateLimiter()
+        self._uses_default_fetch = fetch_text is None
         self._fetch_text = fetch_text or self._default_fetch_text
 
     def fetch(
@@ -89,6 +93,7 @@ class HtmlConnector:
         *,
         limit: int | None = None,
     ) -> tuple[list[RawSourceItem], list[SourceError]]:
+        policy = effective_fetch_policy(self.fetch_policy, source)
         rate_limit = self._rate_limiter.reserve(
             source.url,
             limit_per_minute=self.fetch_policy.rate_limit_per_domain_per_minute,
@@ -98,8 +103,8 @@ class HtmlConnector:
 
         try:
             html_text = run_with_fetch_retries(
-                lambda: self._fetch_text(source.url),
-                self.fetch_policy,
+                lambda: self._fetch_source_text(source.url, policy),
+                policy,
             )
         except Exception as exc:
             return [], [_exception_source_error(source, exc, phase="fetch")]
@@ -180,6 +185,11 @@ class HtmlConnector:
         if len(body) > self.fetch_policy.max_bytes:
             raise ValueError(f"source response exceeds max_bytes: {self.fetch_policy.max_bytes}")
         return body.decode("utf-8", errors="replace")
+
+    def _fetch_source_text(self, url: str, policy: SourceFetchPolicy) -> str:
+        if self._uses_default_fetch:
+            ensure_robots_allowed(url, policy)
+        return self._fetch_text(url)
 
 
 def extract_html(html_text: str) -> HtmlExtractionResult:
@@ -311,6 +321,10 @@ def _exception_source_error(source: SourceDefinition, exc: Exception, *, phase: 
         metadata["redirect_url"] = exc.url
         metadata["max_redirects"] = exc.max_redirects
         metadata["source_health_affecting"] = False
+    if isinstance(exc, RobotsDisallowedError):
+        metadata["robots_url"] = exc.robots_url
+        metadata["user_agent"] = exc.user_agent
+        metadata["source_health_affecting"] = False
     if isinstance(exc, HTTPError):
         metadata["status_code"] = exc.code
     attempts = fetch_attempts(exc)
@@ -334,6 +348,8 @@ def _taxonomy_for_exception(exc: Exception, *, phase: str) -> tuple[str, bool]:
         return "unsupported_content_type", False
     if isinstance(exc, TooManyRedirectsError):
         return "too_many_redirects", False
+    if isinstance(exc, RobotsDisallowedError):
+        return "robots_disallowed", False
     if isinstance(exc, ValueError) and "max_bytes" in str(exc):
         return "max_bytes_exceeded", False
     return "fetch_connection_error", True

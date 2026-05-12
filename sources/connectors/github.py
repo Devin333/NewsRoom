@@ -12,9 +12,12 @@ from urllib.request import Request
 from domain.sources import RawSourceItem, SourceDefinition, SourceError
 from sources.connectors.fetch_policy import (
     DomainRateLimiter,
+    RobotsDisallowedError,
     SourceFetchPolicy,
     TooManyRedirectsError,
     UnsupportedContentTypeError,
+    effective_fetch_policy,
+    ensure_robots_allowed,
     ensure_supported_content_type,
     fetch_attempts,
     open_request_with_fetch_policy,
@@ -100,6 +103,7 @@ class GithubConnector:
     ) -> None:
         self.fetch_policy = fetch_policy or SourceFetchPolicy()
         self._rate_limiter = rate_limiter or DomainRateLimiter()
+        self._uses_default_fetch = fetch_text is None
         self._fetch_text = fetch_text or self._default_fetch_text
 
     def fetch_releases(
@@ -109,6 +113,7 @@ class GithubConnector:
         repository: str | GithubRepository | None = None,
         limit: int | None = None,
     ) -> tuple[list[RawSourceItem], list[SourceError]]:
+        policy = effective_fetch_policy(self.fetch_policy, source)
         try:
             repo = _repository_from_source(source, repository=repository)
             api_url = build_github_releases_url(source.url or GITHUB_API_URL, repo, limit=limit or 10)
@@ -119,8 +124,8 @@ class GithubConnector:
             if not rate_limit.allowed:
                 return [], [rate_limited_source_error(source, rate_limit, url=api_url)]
             payload = run_with_fetch_retries(
-                lambda: self._fetch_text(api_url),
-                self.fetch_policy,
+                lambda: self._fetch_source_text(api_url, policy),
+                policy,
             )
         except Exception as exc:
             return [], [_exception_source_error(source, exc, phase="fetch")]
@@ -160,6 +165,7 @@ class GithubConnector:
         sort: str | None = None,
         order: str | None = None,
     ) -> tuple[list[GithubRepositorySearchResult], list[SourceError]]:
+        policy = effective_fetch_policy(self.fetch_policy, source)
         try:
             query_text = query.strip()
             if not query_text:
@@ -178,8 +184,8 @@ class GithubConnector:
             if not rate_limit.allowed:
                 return [], [rate_limited_source_error(source, rate_limit, url=api_url)]
             payload = run_with_fetch_retries(
-                lambda: self._fetch_text(api_url),
-                self.fetch_policy,
+                lambda: self._fetch_source_text(api_url, policy),
+                policy,
             )
         except Exception as exc:
             return [], [_exception_source_error(source, exc, phase="fetch")]
@@ -268,6 +274,11 @@ class GithubConnector:
         if len(body) > self.fetch_policy.max_bytes:
             raise ValueError(f"source response exceeds max_bytes: {self.fetch_policy.max_bytes}")
         return body.decode("utf-8", errors="replace")
+
+    def _fetch_source_text(self, url: str, policy: SourceFetchPolicy) -> str:
+        if self._uses_default_fetch:
+            ensure_robots_allowed(url, policy)
+        return self._fetch_text(url)
 
 
 def build_github_releases_url(base_url: str, repository: GithubRepository, *, limit: int) -> str:
@@ -406,6 +417,10 @@ def _exception_source_error(source: SourceDefinition, exc: Exception, *, phase: 
         metadata["redirect_url"] = exc.url
         metadata["max_redirects"] = exc.max_redirects
         metadata["source_health_affecting"] = False
+    if isinstance(exc, RobotsDisallowedError):
+        metadata["robots_url"] = exc.robots_url
+        metadata["user_agent"] = exc.user_agent
+        metadata["source_health_affecting"] = False
     if isinstance(exc, HTTPError):
         metadata["status_code"] = exc.code
     attempts = fetch_attempts(exc)
@@ -417,6 +432,12 @@ def _exception_source_error(source: SourceDefinition, exc: Exception, *, phase: 
 def _taxonomy_for_exception(exc: Exception, *, phase: str) -> tuple[str, bool]:
     if phase == "parse":
         return "parse_error", False
+    if isinstance(exc, UnsupportedContentTypeError):
+        return "unsupported_content_type", False
+    if isinstance(exc, TooManyRedirectsError):
+        return "too_many_redirects", False
+    if isinstance(exc, RobotsDisallowedError):
+        return "robots_disallowed", False
     if isinstance(exc, ValueError) and "repository" in str(exc):
         return "invalid_source_config", False
     if isinstance(exc, HTTPError):
@@ -427,10 +448,6 @@ def _taxonomy_for_exception(exc: Exception, *, phase: str) -> tuple[str, bool]:
         return "fetch_connection_error", True
     if _is_timeout_exception(exc):
         return "fetch_timeout", True
-    if isinstance(exc, UnsupportedContentTypeError):
-        return "unsupported_content_type", False
-    if isinstance(exc, TooManyRedirectsError):
-        return "too_many_redirects", False
     if isinstance(exc, ValueError) and "max_bytes" in str(exc):
         return "max_bytes_exceeded", False
     return "fetch_connection_error", True

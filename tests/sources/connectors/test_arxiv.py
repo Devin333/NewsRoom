@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 
 from domain.sources import SourceDefinition
-from sources.connectors import ARXIV_API_URL, ArxivConnector
+from sources.connectors import ARXIV_API_URL, ArxivConnector, SourceFetchPolicy
 
 
 ARXIV_FIXTURE = """<?xml version="1.0" encoding="UTF-8"?>
@@ -111,7 +111,11 @@ def test_arxiv_connector_default_fetch_rejects_unsupported_content_type(monkeypa
 
     monkeypatch.setattr("sources.connectors.arxiv.open_request_with_fetch_policy", fake_open_request)
 
-    items, errors = ArxivConnector().fetch(_source(), query="cat:cs.AI", limit=1)
+    items, errors = ArxivConnector(fetch_policy=SourceFetchPolicy(respect_robots=False)).fetch(
+        _source(),
+        query="cat:cs.AI",
+        limit=1,
+    )
 
     assert items == []
     assert errors[0].error_type == "unsupported_content_type"

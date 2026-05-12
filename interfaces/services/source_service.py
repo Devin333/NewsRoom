@@ -19,6 +19,7 @@ class SourceSummary:
     reliability: str
     authority_score: float
     enabled: bool
+    respect_robots: bool
     topics: list[str]
     language: str | None = None
     region: str | None = None
@@ -32,6 +33,7 @@ class SourceSummary:
             "reliability": self.reliability,
             "authority_score": self.authority_score,
             "enabled": self.enabled,
+            "respect_robots": self.respect_robots,
             "topics": list(self.topics),
             "language": self.language,
             "region": self.region,
@@ -119,6 +121,7 @@ class SourceApplicationService:
                     reliability=source.reliability.value,
                     authority_score=source.authority_score,
                     enabled=source.enabled,
+                    respect_robots=source.respect_robots,
                     topics=list(source.topics),
                     language=source.language,
                     region=source.region,

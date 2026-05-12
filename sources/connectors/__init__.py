@@ -5,8 +5,11 @@ from sources.connectors.feed import FeedConnector
 from sources.connectors.fetch_policy import (
     DomainRateLimiter,
     RateLimitDecision,
+    RobotsDisallowedError,
     SourceFetchPolicy,
     TooManyRedirectsError,
+    effective_fetch_policy,
+    ensure_robots_allowed,
     open_request_with_fetch_policy,
     run_with_fetch_retries,
 )
@@ -33,8 +36,11 @@ __all__ = [
     "HtmlExtractionResult",
     "ManualConnector",
     "RateLimitDecision",
+    "RobotsDisallowedError",
     "SourceFetchPolicy",
     "TooManyRedirectsError",
+    "effective_fetch_policy",
+    "ensure_robots_allowed",
     "extract_html",
     "open_request_with_fetch_policy",
     "run_with_fetch_retries",

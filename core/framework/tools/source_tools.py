@@ -15,6 +15,8 @@ from sources.connectors import (
     HtmlConnector,
     ManualConnector,
     SourceFetchPolicy,
+    effective_fetch_policy,
+    ensure_robots_allowed,
     open_request_with_fetch_policy,
     run_with_fetch_retries,
 )
@@ -48,6 +50,7 @@ def register_source_tools(
                     "timeout_seconds": {"type": "number"},
                     "max_bytes": {"type": "integer"},
                     "max_redirects": {"type": "integer"},
+                    "respect_robots": {"type": "boolean"},
                     "user_agent": {"type": "string"},
                 },
                 "additionalProperties": False,
@@ -108,6 +111,7 @@ def register_source_tools(
                     "timeout_seconds": {"type": "number"},
                     "max_bytes": {"type": "integer"},
                     "max_redirects": {"type": "integer"},
+                    "respect_robots": {"type": "boolean"},
                     "user_agent": {"type": "string"},
                 },
                 "additionalProperties": False,
@@ -154,6 +158,7 @@ def register_source_tools(
                     "timeout_seconds": {"type": "number"},
                     "max_bytes": {"type": "integer"},
                     "max_redirects": {"type": "integer"},
+                    "respect_robots": {"type": "boolean"},
                     "user_agent": {"type": "string"},
                 },
                 "additionalProperties": False,
@@ -357,7 +362,7 @@ def _fetch_official_blog(
     _ensure_official_blog_source_type(source)
     _ensure_http_url(source.url)
     _ensure_allowed_domain(source.url, allowed_domains)
-    policy = _fetch_policy(args, default_policy)
+    policy = effective_fetch_policy(_fetch_policy(args, default_policy), source)
     connector = _official_blog_connector(source, fetch_text=fetch_text, policy=policy)
     items, errors = connector.fetch(source, limit=_optional_limit(args.get("limit")))
     return {
@@ -379,7 +384,7 @@ def _fetch_url(
     source = _source_definition(args["source"], default_source_type=SourceType.RSS)
     _ensure_http_url(source.url)
     _ensure_allowed_domain(source.url, allowed_domains)
-    policy = _fetch_policy(args, default_policy)
+    policy = effective_fetch_policy(_fetch_policy(args, default_policy), source)
     content, status_code, content_type = _fetch_text(source.url, policy, fetch_text)
     content_bytes = len(content.encode("utf-8"))
     if content_bytes > policy.max_bytes:
@@ -399,6 +404,7 @@ def _fetch_url(
             "timeout_seconds": policy.timeout_seconds,
             "max_bytes": policy.max_bytes,
             "max_redirects": policy.max_redirects,
+            "respect_robots": policy.respect_robots,
             "user_agent": policy.user_agent,
         },
     }
@@ -415,7 +421,7 @@ def _probe_source(
     source = _source_definition(args["source"], default_source_type=SourceType.RSS)
     _ensure_http_url(source.url)
     _ensure_allowed_domain(source.url, allowed_domains)
-    policy = _fetch_policy(args, default_policy)
+    policy = effective_fetch_policy(_fetch_policy(args, default_policy), source)
     try:
         content, status_code, content_type = _fetch_text(source.url, policy, fetch_text)
     except Exception as exc:
@@ -495,12 +501,14 @@ def _fetch_policy(args: dict[str, Any], default_policy: SourceFetchPolicy) -> So
     timeout_seconds = float(args.get("timeout_seconds", default_policy.timeout_seconds))
     max_bytes = int(args.get("max_bytes", default_policy.max_bytes))
     max_redirects = int(args.get("max_redirects", default_policy.max_redirects))
+    respect_robots = _optional_bool(args.get("respect_robots"), default_policy.respect_robots)
     if max_bytes > 1_000_000:
         raise ValueError("max_bytes must not exceed 1000000 for source.fetch_url")
     return SourceFetchPolicy(
         timeout_seconds=timeout_seconds,
         max_bytes=max_bytes,
         max_redirects=max_redirects,
+        respect_robots=respect_robots,
         user_agent=str(args.get("user_agent") or default_policy.user_agent),
         rate_limit_per_domain_per_minute=default_policy.rate_limit_per_domain_per_minute,
         retry_times=default_policy.retry_times,
@@ -519,6 +527,7 @@ def _fetch_text(
 
 
 def _default_fetch_text(url: str, policy: SourceFetchPolicy) -> tuple[str, int | None, str | None]:
+    ensure_robots_allowed(url, policy)
     request = Request(url, headers={"User-Agent": policy.user_agent})
     with open_request_with_fetch_policy(request, policy) as response:
         body = response.read(policy.max_bytes + 1)
@@ -644,6 +653,12 @@ def _truthy(value: Any) -> bool:
     return str(value).strip().casefold() in {"1", "true", "yes", "on"}
 
 
+def _optional_bool(value: Any, default: bool) -> bool:
+    if value is None:
+        return default
+    return _truthy(value)
+
+
 def _source_definition(payload: Any, *, default_source_type: SourceType) -> SourceDefinition:
     if not isinstance(payload, dict):
         raise ValueError("source must be an object")
@@ -654,6 +669,7 @@ def _source_definition(payload: Any, *, default_source_type: SourceType) -> Sour
         url=str(payload.get("url") or ""),
         reliability=str(payload.get("reliability") or "medium"),
         authority_score=float(payload.get("authority_score", 0.5)),
+        respect_robots=_optional_bool(payload.get("respect_robots"), True),
         language=payload.get("language"),
         region=payload.get("region"),
         metadata=dict(payload.get("metadata") or {}),
@@ -685,6 +701,7 @@ def _source_definition_to_dict(source: SourceDefinition) -> dict[str, Any]:
         "reliability": source.reliability.value,
         "authority_score": source.authority_score,
         "enabled": source.enabled,
+        "respect_robots": source.respect_robots,
         "topics": list(source.topics),
         "language": source.language,
         "region": source.region,

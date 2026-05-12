@@ -22,6 +22,7 @@ def test_source_definition_normalizes_enums() -> None:
 
     assert source.source_type == SourceType.RSS
     assert source.reliability == SourceReliability.HIGH
+    assert source.respect_robots is True
 
 
 def test_source_definition_requires_url() -> None:

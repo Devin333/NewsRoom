@@ -1,4 +1,6 @@
 from datetime import UTC, datetime, timedelta
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from io import BytesIO
 from urllib.error import HTTPError, URLError
 
@@ -309,6 +311,93 @@ def test_feed_connector_fetch_maps_redirect_limit_error() -> None:
     assert errors[0].metadata["max_redirects"] == 1
     assert errors[0].metadata["retryable"] is False
     assert errors[0].metadata["source_health_affecting"] is False
+
+
+def test_feed_connector_default_fetch_respects_robots_txt() -> None:
+    requests = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            requests.append(self.path)
+            if self.path == "/robots.txt":
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain")
+                self.end_headers()
+                self.wfile.write(b"User-agent: *\nDisallow: /blocked\n")
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "application/rss+xml")
+            self.end_headers()
+            self.wfile.write(RSS_FIXTURE.encode("utf-8"))
+
+        def log_message(self, format, *args):
+            return
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        source = SourceDefinition(
+            source_id="rss-source",
+            name="RSS Source",
+            source_type="rss",
+            url=f"http://127.0.0.1:{server.server_port}/blocked/rss.xml",
+        )
+
+        items, errors = FeedConnector().fetch(source)
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    assert items == []
+    assert errors[0].error_type == "robots_disallowed"
+    assert errors[0].metadata["phase"] == "fetch"
+    assert errors[0].metadata["robots_url"].endswith("/robots.txt")
+    assert errors[0].metadata["retryable"] is False
+    assert errors[0].metadata["source_health_affecting"] is False
+    assert requests == ["/robots.txt"]
+
+
+def test_feed_connector_skips_robots_when_source_disables_it() -> None:
+    requests = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            requests.append(self.path)
+            if self.path == "/robots.txt":
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain")
+                self.end_headers()
+                self.wfile.write(b"User-agent: *\nDisallow: /blocked\n")
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "application/rss+xml")
+            self.end_headers()
+            self.wfile.write(RSS_FIXTURE.encode("utf-8"))
+
+        def log_message(self, format, *args):
+            return
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        source = SourceDefinition(
+            source_id="rss-source",
+            name="RSS Source",
+            source_type="rss",
+            url=f"http://127.0.0.1:{server.server_port}/blocked/rss.xml",
+            respect_robots=False,
+        )
+
+        items, errors = FeedConnector().fetch(source)
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    assert len(items) == 1
+    assert errors == []
+    assert requests == ["/blocked/rss.xml"]
 
 
 def test_feed_connector_retries_transient_fetch_error() -> None:

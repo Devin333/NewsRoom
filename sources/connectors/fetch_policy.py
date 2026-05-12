@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from collections import defaultdict, deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from math import ceil
 from typing import Any, Callable, TypeVar
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
+from urllib.robotparser import RobotFileParser
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from domain.sources import SourceDefinition, SourceError
@@ -32,12 +33,21 @@ class TooManyRedirectsError(ValueError):
         super().__init__(f"source fetch exceeded max_redirects={max_redirects}: {url}")
 
 
+class RobotsDisallowedError(ValueError):
+    def __init__(self, url: str, robots_url: str, user_agent: str) -> None:
+        self.url = url
+        self.robots_url = robots_url
+        self.user_agent = user_agent
+        super().__init__(f"robots.txt disallows fetching {url} for user-agent {user_agent}")
+
+
 @dataclass(frozen=True)
 class SourceFetchPolicy:
     timeout_seconds: float = 15.0
     max_bytes: int = 1_000_000
     max_redirects: int = 3
     user_agent: str = "NewsRoom/0.1"
+    respect_robots: bool = True
     rate_limit_per_domain_per_minute: int | None = None
     retry_times: int = 2
     retry_on_status_codes: tuple[int, ...] = DEFAULT_RETRY_ON_STATUS_CODES
@@ -181,6 +191,37 @@ def open_request_with_fetch_policy(request: Request, policy: SourceFetchPolicy) 
     return opener.open(request, timeout=policy.timeout_seconds)
 
 
+def effective_fetch_policy(policy: SourceFetchPolicy, source: SourceDefinition) -> SourceFetchPolicy:
+    return replace(policy, respect_robots=policy.respect_robots and source.respect_robots)
+
+
+def ensure_robots_allowed(url: str, policy: SourceFetchPolicy) -> None:
+    if not policy.respect_robots:
+        return
+    robots_url = _robots_url_for(url)
+    if robots_url is None:
+        return
+
+    parser = RobotFileParser(robots_url)
+    try:
+        request = Request(robots_url, headers={"User-Agent": policy.user_agent})
+        robots_policy = replace(policy, respect_robots=False, max_bytes=min(policy.max_bytes, 128_000))
+        with open_request_with_fetch_policy(request, robots_policy) as response:
+            body = response.read(robots_policy.max_bytes + 1)
+    except HTTPError as exc:
+        if exc.code in {401, 403}:
+            raise RobotsDisallowedError(url, robots_url, policy.user_agent) from exc
+        if 400 <= exc.code < 500:
+            return
+        raise
+
+    if len(body) > robots_policy.max_bytes:
+        raise ValueError(f"robots.txt response exceeds max_bytes: {robots_policy.max_bytes}")
+    parser.parse(body.decode("utf-8", errors="replace").splitlines())
+    if not parser.can_fetch(policy.user_agent, url):
+        raise RobotsDisallowedError(url, robots_url, policy.user_agent)
+
+
 class _RedirectLimitHandler(HTTPRedirectHandler):
     def __init__(self, max_redirects: int) -> None:
         super().__init__()
@@ -215,3 +256,10 @@ def _is_timeout_exception(exc: Exception) -> bool:
 def _domain_from_url(url: str) -> str:
     parsed = urlsplit(url)
     return (parsed.hostname or parsed.netloc or url).casefold()
+
+
+def _robots_url_for(url: str) -> str | None:
+    parsed = urlsplit(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return None
+    return urlunsplit((parsed.scheme, parsed.netloc, "/robots.txt", "", ""))
