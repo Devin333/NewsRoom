@@ -103,9 +103,83 @@ def test_postgres_save_report_tool_requires_approval_by_default() -> None:
     assert repository.records == []
 
 
+def test_postgres_update_source_health_tool_writes_typed_health_record() -> None:
+    repository = _RecordingReportRepository()
+    registry = ToolRegistry()
+    register_postgres_tools(
+        registry,
+        repository=repository,
+        source_health_repository=repository,
+    )
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="postgres.update_source_health",
+            arguments={
+                "source_id": "rss-example",
+                "status": "degraded",
+                "consecutive_failures": 1,
+                "last_failure_at": "2026-05-12T00:00:00Z",
+                "last_error": {
+                    "error_type": "fetch_timeout",
+                    "error_message": "timed out",
+                    "url": "https://example.com/feed.xml",
+                    "metadata": {"phase": "fetch"},
+                },
+            },
+        ),
+        ToolPolicy(
+            allowed_tools=["postgres.update_source_health"],
+            require_approval_for_side_effects=False,
+        ),
+    )
+
+    health = repository.health_records[0]
+
+    assert observation.status == ToolStatus.SUCCEEDED
+    assert observation.result.output == {
+        "updated": True,
+        "source_id": "rss-example",
+        "status": "degraded",
+        "consecutive_failures": 1,
+        "has_last_error": True,
+    }
+    assert health.source_id == "rss-example"
+    assert health.status.value == "degraded"
+    assert health.last_error.error_type == "fetch_timeout"
+    assert health.last_error.metadata == {"phase": "fetch"}
+
+
+def test_postgres_update_source_health_tool_requires_approval_by_default() -> None:
+    repository = _RecordingReportRepository()
+    registry = ToolRegistry()
+    register_postgres_tools(
+        registry,
+        repository=repository,
+        source_health_repository=repository,
+    )
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="postgres.update_source_health",
+            arguments={"source_id": "rss-example", "status": "healthy"},
+        ),
+        ToolPolicy(allowed_tools=["postgres.update_source_health"]),
+    )
+
+    assert observation.status == ToolStatus.APPROVAL_REQUIRED
+    assert repository.health_records == []
+
+
 class _RecordingReportRepository:
     def __init__(self) -> None:
         self.records = []
+        self.health_records = []
 
     def save_report(self, record):
         self.records.append(record)
+
+    def update_source_health(self, health):
+        self.health_records.append(health)

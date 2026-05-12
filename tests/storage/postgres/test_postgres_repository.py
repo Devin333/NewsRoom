@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from domain.sources import SourceError, SourceHealth
 from storage.postgres import PostgresRepository
 from storage.repository import ReportRecord, WorkflowRunRecord
 
@@ -99,6 +100,33 @@ def test_postgres_repository_saves_report() -> None:
     assert params[0] == "report-1"
     assert params[4] == '{"title": "Report"}'
     assert params[7] == 0.8
+
+
+def test_postgres_repository_updates_source_health() -> None:
+    connection = FakeConnection()
+    repository = PostgresRepository("postgresql://example", connection_factory=lambda: connection)
+
+    repository.update_source_health(
+        SourceHealth(
+            source_id="rss-example",
+            status="degraded",
+            consecutive_failures=1,
+            last_error=SourceError(
+                source_id="rss-example",
+                error_type="fetch_timeout",
+                error_message="timed out",
+                url="https://example.com/feed.xml",
+            ),
+        )
+    )
+
+    sql, params = connection.calls[0]
+    assert "INSERT INTO source_health" in sql
+    assert "ON CONFLICT (source_id)" in sql
+    assert params[0] == "rss-example"
+    assert params[1] == "degraded"
+    assert params[2] == 1
+    assert '"error_type": "fetch_timeout"' in params[6]
 
 
 def test_postgres_repository_reads_latest_report() -> None:

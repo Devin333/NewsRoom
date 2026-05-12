@@ -7,6 +7,7 @@ from typing import Any, Callable
 
 import psycopg
 
+from domain.sources import SourceHealth
 from storage.local_json import ReportNotFoundError
 from storage.postgres.migrations import load_migration_sql
 from storage.repository import ReportRecord, WorkflowRunRecord
@@ -149,6 +150,33 @@ class PostgresRepository:
         )
         self._execute(sql, params)
 
+    def update_source_health(self, health: SourceHealth) -> None:
+        sql = """
+        INSERT INTO source_health (
+            source_id, status, consecutive_failures, last_success_at,
+            last_failure_at, cooldown_until, last_error
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb)
+        ON CONFLICT (source_id) DO UPDATE SET
+            status = EXCLUDED.status,
+            consecutive_failures = EXCLUDED.consecutive_failures,
+            last_success_at = EXCLUDED.last_success_at,
+            last_failure_at = EXCLUDED.last_failure_at,
+            cooldown_until = EXCLUDED.cooldown_until,
+            last_error = EXCLUDED.last_error,
+            updated_at = now()
+        """
+        params = (
+            health.source_id,
+            health.status.value,
+            health.consecutive_failures,
+            health.last_success_at,
+            health.last_failure_at,
+            health.cooldown_until,
+            _json_or_none(health.last_error.to_dict() if health.last_error else None),
+        )
+        self._execute(sql, params)
+
     def latest_report(self) -> PostgresReportDetailRecord:
         sql = """
         SELECT
@@ -245,6 +273,12 @@ class PostgresRepository:
 
 def _json(value: Any) -> str:
     return json.dumps(value or {}, ensure_ascii=False, sort_keys=True)
+
+
+def _json_or_none(value: Any) -> str | None:
+    if value is None:
+        return None
+    return json.dumps(value, ensure_ascii=False, sort_keys=True)
 
 
 def _detail_from_row(row: tuple[Any, ...]) -> PostgresReportDetailRecord:

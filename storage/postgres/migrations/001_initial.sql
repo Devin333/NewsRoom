@@ -140,5 +140,19 @@ CREATE TABLE IF NOT EXISTS report_sections (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS source_health (
+    source_id TEXT PRIMARY KEY,
+    status TEXT NOT NULL,
+    consecutive_failures INTEGER NOT NULL DEFAULT 0,
+    last_success_at TIMESTAMPTZ,
+    last_failure_at TIMESTAMPTZ,
+    cooldown_until TIMESTAMPTZ,
+    last_error JSONB,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_source_health_status
+    ON source_health(status);
+
 CREATE INDEX IF NOT EXISTS idx_workflow_runs_finished ON workflow_runs(updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_reports_run_id ON reports(run_id);
