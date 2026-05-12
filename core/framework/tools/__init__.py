@@ -4,6 +4,11 @@ from core.framework.tools.approval import ToolApprovalRequest
 from core.framework.tools.arxiv_tools import register_arxiv_tools
 from core.framework.tools.artifact_tools import register_artifact_tools
 from core.framework.tools.batch import ToolBatchExecutor
+from core.framework.tools.boundary import (
+    AgentToolBoundaryFinding,
+    AgentToolBoundaryReport,
+    audit_agent_tool_boundary,
+)
 from core.framework.tools.catalog import (
     ToolCatalog,
     ToolCatalogNamespace,
@@ -69,6 +74,8 @@ from core.framework.tools.web_search_tools import (
 __all__ = [
     "REDACTED_VALUE",
     "ArtifactRef",
+    "AgentToolBoundaryFinding",
+    "AgentToolBoundaryReport",
     "MCPServerConfig",
     "MCPToolAdapter",
     "RegisteredTool",
@@ -108,6 +115,7 @@ __all__ = [
     "EnvironmentSecretProvider",
     "build_builtin_tool_registry",
     "build_tool_catalog",
+    "audit_agent_tool_boundary",
     "contains_redacted_value",
     "redact_sensitive_values",
     "register_arxiv_tools",

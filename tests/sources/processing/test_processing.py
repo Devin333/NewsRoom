@@ -29,6 +29,7 @@ from sources.processing import (
     rank_items,
     score_source_item,
 )
+from sources.processing.governance import SourceGovernancePolicy
 from sources.processing.normalize import canonicalize_url, normalize_text
 
 
@@ -355,6 +356,42 @@ def test_build_source_governance_report_flags_policy_findings() -> None:
         "community_source_requires_verification",
     ]
     assert report.to_dict()["findings"][1]["severity"] == "blocking"
+
+
+def test_source_governance_report_uses_configurable_policy() -> None:
+    report = build_source_governance_report(
+        source_quality_scores=[
+            {
+                "source_id": "medium",
+                "quality_score": 0.72,
+                "reliability_score": 0.45,
+                "traceability_score": 0.9,
+            }
+        ],
+        source_selection_report={
+            "selected_sources": [
+                {
+                    "source_id": "medium",
+                    "source_type": "medium",
+                    "category": "developer-community",
+                    "authority_score": 0.7,
+                }
+            ]
+        },
+        policy=SourceGovernancePolicy(
+            low_reliability_threshold=0.5,
+            low_quality_threshold=0.7,
+            minimum_traceability_score=0.95,
+            require_traceability_for_final_report=False,
+        ),
+    )
+
+    finding_types = [finding.finding_type for finding in report.findings]
+    assert "low_reliability_source" in finding_types
+    assert "weak_traceability" in finding_types
+    assert "community_source_requires_verification" in finding_types
+    assert report.blocking_finding_count == 0
+    assert report.requires_strict_verification_source_ids == ["medium"]
 
 
 def test_score_source_item_summarizes_source_side_quality_signals() -> None:

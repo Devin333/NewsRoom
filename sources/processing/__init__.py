@@ -6,7 +6,7 @@ from sources.processing.dispatch import build_source_connector_dispatch_report
 from sources.processing.error_policy import build_source_error_policy_report
 from sources.processing.fallback import build_source_fallback_report
 from sources.processing.freshness import build_source_freshness_report
-from sources.processing.governance import build_source_governance_report
+from sources.processing.governance import SourceGovernancePolicy, build_source_governance_report
 from sources.processing.health_report import build_source_health_report
 from sources.processing.language import detect_language
 from sources.processing.normalize import normalize_items
@@ -34,4 +34,5 @@ __all__ = [
     "build_source_traceability_report",
     "score_source_item",
     "score_source_items",
+    "SourceGovernancePolicy",
 ]
