@@ -106,11 +106,13 @@ def test_daily_intelligence_runner_live_offline_writes_report_artifacts(tmp_path
     assert manifest["artifacts"]["report_json"] == "report.json"
     assert manifest["artifacts"]["report_markdown"] == "report.md"
     assert manifest["artifacts"]["source_events"] == "source_events.json"
+    assert manifest["artifacts"]["source_fetch_requests"] == "source_fetch_requests.json"
     assert manifest["artifacts"]["source_artifacts"] == "source_artifacts/index.json"
     assert manifest["source_event_count"] == 6
     assert manifest["source_artifacts"]["item_count"] == 2
     assert manifest["source_artifacts"]["error_count"] == 0
     assert manifest["source_artifacts"]["raw_content_count"] == 2
+    assert manifest["source_artifacts"]["fetch_request_count"] == 1
     assert manifest["source_artifacts"]["fetch_result_count"] == 1
     assert (run_dir / "report.md").exists()
     assert result.output["source_health_updates"][0].source_name == "Fixture AI Feed"
@@ -138,6 +140,10 @@ def test_daily_intelligence_runner_live_offline_writes_report_artifacts(tmp_path
     assert source_metrics["fetched_by_type"] == {"rss": 1}
     assert source_metrics["items_by_source_type"] == {"rss": 2}
     assert source_metrics["items_by_reliability"] == {"high": 2}
+
+    source_fetch_requests = json.loads((run_dir / "source_fetch_requests.json").read_text())
+    assert source_fetch_requests[0]["request_id"] == result.output["source_fetch_results"][0].request_id
+    assert source_fetch_requests[0]["metadata"]["profile"] == "live-offline"
 
     source_artifacts = json.loads((run_dir / "source_artifacts" / "index.json").read_text())
     first_item = source_artifacts["entries"][0]
@@ -537,6 +543,7 @@ def test_daily_intelligence_runner_records_partial_source_failures(tmp_path) -> 
     manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["artifacts"]["source_errors"] == "source_errors.json"
     assert manifest["artifacts"]["failed_sources"] == "failed_sources.json"
+    assert manifest["artifacts"]["source_fetch_requests"] == "source_fetch_requests.json"
     assert manifest["artifacts"]["source_fetch_results"] == "source_fetch_results.json"
     assert manifest["artifacts"]["source_events"] == "source_events.json"
     assert manifest["artifacts"]["source_pipeline_metrics"] == "source_pipeline_metrics.json"
@@ -546,8 +553,9 @@ def test_daily_intelligence_runner_records_partial_source_failures(tmp_path) -> 
         "item_count": 1,
         "error_count": 1,
         "raw_content_count": 1,
+        "fetch_request_count": 2,
         "fetch_result_count": 2,
-        "total_count": 5,
+        "total_count": 7,
     }
 
     source_events = json.loads((run_dir / "source_events.json").read_text())
@@ -576,6 +584,11 @@ def test_daily_intelligence_runner_records_partial_source_failures(tmp_path) -> 
     assert error_payload["error"]["retryable"] is True
 
     source_fetch_results = json.loads((run_dir / "source_fetch_results.json").read_text())
+    source_fetch_requests = json.loads((run_dir / "source_fetch_requests.json").read_text())
+    assert [request["source_id"] for request in source_fetch_requests] == ["failing", "working"]
+    assert [request["request_id"] for request in source_fetch_requests] == [
+        result["request_id"] for result in source_fetch_results
+    ]
     assert [result["source_id"] for result in source_fetch_results] == ["failing", "working"]
     assert source_fetch_results[0]["success"] is False
     assert source_fetch_results[0]["error_type"] == "fetch_connection_error"
@@ -728,6 +741,7 @@ def test_daily_intelligence_runner_all_sources_failed_preserves_diagnostics(tmp_
     assert manifest["path"] == ["collect_sources", "require_sources"]
     assert manifest["artifacts"]["error"] == "error.json"
     assert manifest["artifacts"]["source_errors"] == "source_errors.json"
+    assert manifest["artifacts"]["source_fetch_requests"] == "source_fetch_requests.json"
     assert manifest["artifacts"]["source_events"] == "source_events.json"
     assert manifest["artifacts"]["source_pipeline_metrics"] == "source_pipeline_metrics.json"
     assert manifest["artifacts"]["source_artifacts"] == "source_artifacts/index.json"
@@ -755,6 +769,7 @@ def test_daily_intelligence_runner_all_sources_failed_preserves_diagnostics(tmp_
     source_artifacts = json.loads((run_dir / "source_artifacts" / "index.json").read_text())
     assert source_artifacts["item_count"] == 0
     assert source_artifacts["error_count"] == 2
+    assert source_artifacts["fetch_request_count"] == 1
     assert source_artifacts["fetch_result_count"] == 1
 
 

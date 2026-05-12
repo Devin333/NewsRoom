@@ -2,7 +2,7 @@ import json
 from hashlib import sha256
 
 from core.framework.artifacts import ArtifactManager, SourceArtifactWriter
-from domain.sources import SourceError, SourceFetchResult
+from domain.sources import SourceError, SourceFetchRequest, SourceFetchResult
 
 
 def test_source_artifact_writer_writes_items_errors_and_redacts(tmp_path) -> None:
@@ -21,6 +21,16 @@ def test_source_artifact_writer_writes_items_errors_and_redacts(tmp_path) -> Non
                 "raw_content": "<item>Real source content</item>",
                 "metadata": {"api_key": "value"},
             }
+        ],
+        source_fetch_requests=[
+            SourceFetchRequest(
+                request_id="fetch 1",
+                source_id="feed/source",
+                source_type="rss",
+                url="https://example.com/feed?token=value",
+                limit=1,
+                metadata={"headers": {"Authorization": "Bearer hidden-token"}},
+            )
         ],
         source_fetch_results=[
             SourceFetchResult(
@@ -48,6 +58,7 @@ def test_source_artifact_writer_writes_items_errors_and_redacts(tmp_path) -> Non
     assert index["item_count"] == 1
     assert index["error_count"] == 1
     assert index["raw_content_count"] == 1
+    assert index["fetch_request_count"] == 1
     assert index["fetch_result_count"] == 1
 
     run_dir = tmp_path / "source-run"
@@ -94,6 +105,15 @@ def test_source_artifact_writer_writes_items_errors_and_redacts(tmp_path) -> Non
     assert fetch_result_payload["fetch_result"]["request_id"] == "fetch 1"
     assert fetch_result_payload["fetch_result"]["metadata"]["headers"]["Authorization"] == "[REDACTED]"
     assert "hidden-token" not in json.dumps(fetch_result_payload)
+
+    fetch_request_entry = next(
+        entry for entry in index["entries"] if entry["artifact_type"] == "source_fetch_request"
+    )
+    fetch_request_payload = json.loads((run_dir / fetch_request_entry["path"]).read_text())
+    assert fetch_request_entry["artifact_id"] == "source-fetch-request-feed_source-fetch_1"
+    assert fetch_request_payload["fetch_request"]["request_id"] == "fetch 1"
+    assert fetch_request_payload["fetch_request"]["url"] == "https://example.com/feed?token=%5BREDACTED%5D"
+    assert fetch_request_payload["fetch_request"]["metadata"]["headers"]["Authorization"] == "[REDACTED]"
 
     error_entry = next(entry for entry in index["entries"] if entry["artifact_type"] == "source_error")
     error_payload = json.loads((run_dir / error_entry["path"]).read_text())

@@ -13,6 +13,7 @@ from domain.reports import BlockedReport, FinalReport, render_markdown
 from domain.sources import (
     SourceDefinition,
     SourceError,
+    SourceFetchRequest,
     SourceFetchResult,
     SourcePipelineEvent,
     SourcePipelineMetrics,
@@ -110,6 +111,7 @@ class DailyIntelligenceRunner:
         source_errors: list[SourceError] = []
         skipped_sources: list[dict[str, Any]] = []
         failed_sources: list[dict[str, Any]] = []
+        source_fetch_requests: list[SourceFetchRequest] = []
         source_fetch_results: list[SourceFetchResult] = []
         source_health_updates = []
         source_events: list[SourcePipelineEvent] = []
@@ -127,10 +129,20 @@ class DailyIntelligenceRunner:
             latency_start = perf_counter()
             raw_items = FeedConnector().parse(fixture_source, _fixture_feed(), limit=limit)
             fetch_latency_ms = _elapsed_ms(latency_start)
+            request_id = "source-fetch-0001-fixture-ai"
+            source_fetch_requests.append(
+                _source_fetch_request(
+                    fixture_source,
+                    request_id=request_id,
+                    request=request,
+                    limit=limit,
+                    profile=profile,
+                )
+            )
             source_fetch_results.append(
                 _source_fetch_result(
                     fixture_source,
-                    request_id="source-fetch-0001-fixture-ai",
+                    request_id=request_id,
                     success=True,
                     latency_ms=fetch_latency_ms,
                     items=raw_items,
@@ -176,6 +188,7 @@ class DailyIntelligenceRunner:
                 "source_errors": source_errors,
                 "skipped_sources": skipped_sources,
                 "failed_sources": failed_sources,
+                "source_fetch_requests": source_fetch_requests,
                 "source_fetch_results": source_fetch_results,
                 "source_health_updates": source_health_updates,
                 "source_events": source_events,
@@ -191,6 +204,16 @@ class DailyIntelligenceRunner:
             remaining = max(0, limit - len(raw_items))
             if remaining == 0:
                 break
+            request_id = _source_fetch_request_id(source_fetch_requests, source)
+            source_fetch_requests.append(
+                _source_fetch_request(
+                    source,
+                    request_id=request_id,
+                    request=request,
+                    limit=remaining,
+                    profile=profile,
+                )
+            )
             if self.source_health_manager.should_skip(source.source_id):
                 health = self.source_health_manager.get(
                     source.source_id,
@@ -213,7 +236,7 @@ class DailyIntelligenceRunner:
                 source_fetch_results.append(
                     _source_fetch_result(
                         source,
-                        request_id=_source_fetch_request_id(source_fetch_results, source),
+                        request_id=request_id,
                         success=False,
                         latency_ms=0,
                         items=[],
@@ -275,7 +298,7 @@ class DailyIntelligenceRunner:
             source_fetch_results.append(
                 _source_fetch_result(
                     source,
-                    request_id=_source_fetch_request_id(source_fetch_results, source),
+                    request_id=request_id,
                     success=bool(items),
                     latency_ms=fetch_latency_ms,
                     items=items,
@@ -410,6 +433,7 @@ class DailyIntelligenceRunner:
             "source_errors": source_errors,
             "skipped_sources": skipped_sources,
             "failed_sources": failed_sources,
+            "source_fetch_requests": source_fetch_requests,
             "source_fetch_results": source_fetch_results,
             "source_health_updates": source_health_updates,
             "source_events": source_events,
@@ -499,6 +523,7 @@ def build_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
                     "source_errors",
                     "skipped_sources",
                     "failed_sources",
+                    "source_fetch_requests",
                     "source_fetch_results",
                     "source_health_updates",
                     "source_events",
@@ -509,6 +534,7 @@ def build_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
                     "source_errors",
                     "skipped_sources",
                     "failed_sources",
+                    "source_fetch_requests",
                     "source_fetch_results",
                     "source_health_updates",
                     "source_events",
@@ -911,8 +937,36 @@ def _source_event(event_type: str, source_id: str | None = None, **metadata: Any
     )
 
 
-def _source_fetch_request_id(existing: list[SourceFetchResult], source: SourceDefinition) -> str:
+def _source_fetch_request_id(existing: list[SourceFetchRequest], source: SourceDefinition) -> str:
     return f"source-fetch-{len(existing) + 1:04d}-{source.source_id}"
+
+
+def _source_fetch_request(
+    source: SourceDefinition,
+    *,
+    request_id: str,
+    request: dict[str, Any],
+    limit: int,
+    profile: str,
+) -> SourceFetchRequest:
+    query = None
+    if source.source_type == SourceType.ARXIV:
+        query = str(source.metadata.get("query") or request.get("topic") or "")
+    return SourceFetchRequest(
+        request_id=request_id,
+        source_id=source.source_id,
+        source_type=source.source_type,
+        url=source.url,
+        query=query,
+        limit=limit,
+        metadata={
+            "profile": profile,
+            "topic": request.get("topic"),
+            "source_name": source.name,
+            "reliability": source.reliability.value,
+            "authority_score": source.authority_score,
+        },
+    )
 
 
 def _source_fetch_result(

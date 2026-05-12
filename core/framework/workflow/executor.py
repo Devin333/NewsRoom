@@ -445,6 +445,13 @@ class WorkflowExecutor:
                 output["failed_sources"],
             )
             manifest["artifacts"]["failed_sources"] = "failed_sources.json"
+        if "source_fetch_requests" in output:
+            self._artifact_manager.write_json(
+                run_id,
+                "source_fetch_requests.json",
+                output["source_fetch_requests"],
+            )
+            manifest["artifacts"]["source_fetch_requests"] = "source_fetch_requests.json"
         if "source_fetch_results" in output:
             self._artifact_manager.write_json(
                 run_id,
@@ -484,6 +491,7 @@ class WorkflowExecutor:
         source_artifacts = SourceArtifactWriter(self._artifact_manager).write_source_artifacts(
             run_id,
             raw_items=output.get("raw_items"),
+            source_fetch_requests=output.get("source_fetch_requests"),
             source_fetch_results=output.get("source_fetch_results"),
             source_errors=output.get("source_errors"),
         )
@@ -493,6 +501,7 @@ class WorkflowExecutor:
                 "item_count": source_artifacts["item_count"],
                 "error_count": source_artifacts["error_count"],
                 "raw_content_count": source_artifacts["raw_content_count"],
+                "fetch_request_count": source_artifacts["fetch_request_count"],
                 "fetch_result_count": source_artifacts["fetch_result_count"],
                 "total_count": len(source_artifacts["entries"]),
             }

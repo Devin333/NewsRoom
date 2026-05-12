@@ -37,6 +37,7 @@ class SourceArtifactWriter:
         run_id: str,
         *,
         raw_items: list[Any] | None = None,
+        source_fetch_requests: list[Any] | None = None,
         source_fetch_results: list[Any] | None = None,
         source_errors: list[Any] | None = None,
     ) -> dict[str, Any] | None:
@@ -96,6 +97,37 @@ class SourceArtifactWriter:
             entries.append(entry)
             if raw_content_entry is not None:
                 entries.append(raw_content_entry)
+
+        for fetch_request in source_fetch_requests or []:
+            source_id = _string_value(fetch_request, "source_id", default="unknown-source")
+            object_id = _string_value(fetch_request, "request_id", default=_stable_id(fetch_request))
+            path = f"sources/fetch_requests/{_path_segment(source_id)}/{_path_segment(object_id)}.json"
+            artifact_path = self._artifact_manager.write_json(
+                run_id,
+                path,
+                {
+                    "artifact_type": "source_fetch_request",
+                    "source_id": source_id,
+                    "request_id": object_id,
+                    "fetch_request": _redact(_to_json_safe(fetch_request)),
+                },
+            )
+            artifact_ref = _artifact_ref(
+                run_id=run_id,
+                artifact_type="source_fetch_request",
+                source_id=source_id,
+                object_id=object_id,
+                path=path,
+                artifact_path=artifact_path,
+            )
+            entries.append(
+                _entry_from_ref(
+                    artifact_ref=artifact_ref,
+                    source_id=source_id,
+                    object_id=object_id,
+                    artifact_path=artifact_path,
+                )
+            )
 
         for fetch_result in source_fetch_results or []:
             source_id = _string_value(fetch_result, "source_id", default="unknown-source")
@@ -168,6 +200,9 @@ class SourceArtifactWriter:
             "error_count": sum(1 for entry in entries if entry["artifact_type"] == "source_error"),
             "raw_content_count": sum(
                 1 for entry in entries if entry["artifact_type"] == "source_raw_content"
+            ),
+            "fetch_request_count": sum(
+                1 for entry in entries if entry["artifact_type"] == "source_fetch_request"
             ),
             "fetch_result_count": sum(
                 1 for entry in entries if entry["artifact_type"] == "source_fetch_result"
