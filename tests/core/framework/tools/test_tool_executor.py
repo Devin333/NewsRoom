@@ -46,6 +46,16 @@ def test_tool_executor_runs_allowed_tool_and_returns_observation() -> None:
     assert observation.call.call_id == "call-1"
     assert observation.result.output["matches"][0]["title"] == "chip exports"
     assert observation.elapsed_ms >= 0
+    payload = observation.to_dict()
+    assert payload["tool_call_id"] == "call-1"
+    assert payload["tool_name"] == "memory.search"
+    assert payload["status"] == "succeeded"
+    assert payload["summary"] == "Tool memory.search succeeded"
+    assert payload["highlights"] == ["matches: 1 item(s)"]
+    assert payload["artifact_refs"] == []
+    assert payload["safe_for_llm"] is True
+    assert payload["call"]["call_id"] == "call-1"
+    assert payload["result"]["status"] == "succeeded"
     assert [event.event_type for event in executor.list_events()] == [
         "tool_call_requested",
         "tool_args_validated",
@@ -637,6 +647,9 @@ def test_tool_executor_spills_large_redacted_result_to_artifact(tmp_path) -> Non
     assert artifact_ref["artifact_id"] == "tool_result:call-large"
     assert artifact_ref["content_type"] == "application/json"
     assert artifact_path.exists()
+    assert payload["summary"] == "Tool result spilled to artifact: tool_results/call-large.json"
+    assert payload["artifact_refs"] == [artifact_ref]
+    assert payload["highlights"] == []
     assert artifact_payload["call"]["call_id"] == "call-large"
     assert artifact_payload["output"]["token"] == REDACTED_VALUE
     assert "hidden-token" not in artifact_path.read_text(encoding="utf-8")

@@ -199,8 +199,31 @@ class ToolObservation:
     def status(self) -> ToolStatus:
         return self.result.status
 
+    @property
+    def summary(self) -> str:
+        if self.result.output_summary:
+            return self.result.output_summary
+        if self.result.error_message:
+            return f"Tool {self.call.tool_name} {self.status.value}: {self.result.error_message}"
+        return f"Tool {self.call.tool_name} {self.status.value}"
+
+    @property
+    def highlights(self) -> list[str]:
+        return _observation_highlights(self.result.output)
+
+    @property
+    def safe_for_llm(self) -> bool:
+        return self.result.redacted
+
     def to_dict(self) -> dict[str, Any]:
         return {
+            "tool_call_id": self.call.call_id,
+            "tool_name": self.call.tool_name,
+            "status": self.status.value,
+            "summary": self.summary,
+            "highlights": self.highlights,
+            "artifact_refs": [artifact_ref.to_dict() for artifact_ref in self.result.artifact_refs],
+            "safe_for_llm": self.safe_for_llm,
             "call": self.call.to_dict(),
             "result": self.result.to_dict(),
             "elapsed_ms": self.elapsed_ms,
@@ -214,3 +237,28 @@ def timed_tool_call(function: Callable[[], ToolResult]) -> tuple[ToolResult, flo
     start = perf_counter()
     result = function()
     return result, (perf_counter() - start) * 1000
+
+
+def _observation_highlights(output: Any) -> list[str]:
+    safe_output = redact_sensitive_values(output)
+    if safe_output is None:
+        return []
+    if isinstance(safe_output, dict):
+        return [
+            f"{key}: {_preview_highlight_value(value)}"
+            for key, value in list(safe_output.items())[:3]
+        ]
+    if isinstance(safe_output, list):
+        return [f"{len(safe_output)} item(s)"]
+    return [_preview_highlight_value(safe_output)]
+
+
+def _preview_highlight_value(value: Any) -> str:
+    if isinstance(value, dict):
+        return f"{len(value)} field(s)"
+    if isinstance(value, list):
+        return f"{len(value)} item(s)"
+    text = str(value)
+    if len(text) > 120:
+        return f"{text[:117]}..."
+    return text
