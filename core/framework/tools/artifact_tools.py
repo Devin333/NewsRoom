@@ -57,6 +57,24 @@ def register_artifact_tools(
         ),
         lambda args: _load_artifact(artifact_manager, run_id, args),
     )
+    registry.register(
+        ToolDefinition(
+            name="artifact.search",
+            description="Search artifact paths and text previews in the current run directory.",
+            input_schema={
+                "required": [],
+                "properties": {
+                    "query": {"type": "string"},
+                    "path_prefix": {"type": "string"},
+                    "max_results": {"type": "integer"},
+                },
+                "additionalProperties": False,
+            },
+            side_effect="read_only",
+            concurrency_safe=True,
+        ),
+        lambda args: _search_artifacts(artifact_manager, run_id, args),
+    )
 
 
 def _write_artifact(
@@ -89,11 +107,68 @@ def _load_artifact(
     return payload
 
 
+def _search_artifacts(
+    artifact_manager: ArtifactManager,
+    run_id: str,
+    args: dict[str, Any],
+) -> dict[str, Any]:
+    run_dir = artifact_manager.run_dir(run_id)
+    prefix = _safe_relative_prefix(str(args.get("path_prefix") or ""))
+    root = run_dir / prefix
+    query = str(args.get("query") or "").casefold()
+    max_results = max(1, min(int(args.get("max_results") or 20), 100))
+    matches = []
+    if not root.exists():
+        return {"match_count": 0, "artifacts": []}
+
+    paths = [root] if root.is_file() else sorted(path for path in root.rglob("*") if path.is_file())
+    for path in paths:
+        relative_path = path.relative_to(run_dir).as_posix()
+        matched_on = _artifact_match_reason(path, relative_path, query)
+        if matched_on is None:
+            continue
+        matches.append(
+            {
+                **_artifact_payload(
+                    relative_path,
+                    _content_type_for_path(path),
+                    path,
+                ),
+                "matched_on": matched_on,
+            }
+        )
+        if len(matches) >= max_results:
+            break
+    return {"match_count": len(matches), "artifacts": matches}
+
+
 def _artifact_path(artifact_manager: ArtifactManager, run_id: str, relative_path: str) -> Path:
     relative = Path(relative_path)
     if relative.is_absolute() or ".." in relative.parts:
         raise ValueError(f"artifact path must be relative to the run directory: {relative_path}")
     return artifact_manager.run_dir(run_id) / relative
+
+
+def _safe_relative_prefix(path_prefix: str) -> Path:
+    relative = Path(path_prefix)
+    if relative.is_absolute() or ".." in relative.parts:
+        raise ValueError(f"artifact path must be relative to the run directory: {path_prefix}")
+    return relative
+
+
+def _artifact_match_reason(path: Path, relative_path: str, query: str) -> str | None:
+    if not query:
+        return "all"
+    if query in relative_path.casefold():
+        return "path"
+    if not _is_text_artifact(path):
+        return None
+    text = path.read_text(encoding="utf-8", errors="replace")[:200_000]
+    return "content" if query in text.casefold() else None
+
+
+def _is_text_artifact(path: Path) -> bool:
+    return path.suffix.lower() in {"", ".json", ".jsonl", ".md", ".txt", ".csv", ".xml"}
 
 
 def _artifact_payload(relative_path: str, content_type: str, target: Path) -> dict[str, Any]:
