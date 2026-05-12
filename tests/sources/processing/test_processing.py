@@ -5,6 +5,7 @@ from sources.processing import (
     build_source_coverage_report,
     deduplicate_items,
     deduplicate_with_result,
+    detect_language,
     normalize_items,
     rank_items,
     score_source_item,
@@ -388,6 +389,34 @@ def test_normalize_item_falls_back_missing_language_to_unknown() -> None:
         "fallback_applied": True,
         "language": "unknown",
     }
+
+
+def test_normalize_item_detects_clear_content_language() -> None:
+    raw = _raw_item(
+        "人工智能政策更新",
+        "https://example.com/zh",
+        summary="中国发布人工智能治理政策，强调模型安全和透明度。",
+        language=None,
+    )
+
+    normalized = normalize_items([raw])[0]
+
+    assert normalized.language == "zh"
+    assert normalized.metadata["language_normalization"] == {
+        "fallback_applied": False,
+        "detection_applied": True,
+        "language": "zh",
+    }
+
+
+def test_detect_language_identifies_long_english_content() -> None:
+    assert (
+        detect_language(
+            "The policy update from the agency focuses on model safety and "
+            "coordination with industry."
+        )
+        == "en"
+    )
 
 
 def test_normalize_item_preserves_existing_language() -> None:

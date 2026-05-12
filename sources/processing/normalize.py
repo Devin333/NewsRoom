@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
 from domain.sources import NormalizedSourceItem, RawSourceItem, SourceReliability
+from sources.processing.language import detect_language
 
 
 TRACKING_PREFIXES = ("utm_",)
@@ -23,12 +24,20 @@ def normalize_item(item: RawSourceItem) -> NormalizedSourceItem:
     normalized_summary = normalize_text(item.summary) if item.summary else None
     reliability = SourceReliability(item.metadata.get("source_reliability", "medium"))
     metadata = dict(item.metadata)
-    language = item.language or "unknown"
+    detected_language = None if item.language else detect_language(_language_detection_text(item))
+    language = item.language or detected_language or "unknown"
     if item.language is None:
-        metadata["language_normalization"] = {
-            "fallback_applied": True,
-            "language": language,
-        }
+        if detected_language is None:
+            metadata["language_normalization"] = {
+                "fallback_applied": True,
+                "language": language,
+            }
+        else:
+            metadata["language_normalization"] = {
+                "fallback_applied": False,
+                "detection_applied": True,
+                "language": language,
+            }
     published_at, time_metadata = _normalize_published_at(item.published_at, item.fetched_at)
     if time_metadata:
         metadata["time_normalization"] = time_metadata
@@ -83,6 +92,14 @@ def _normalize_published_at(
         "original_published_at": _dt(published_at_utc),
         "published_at_normalized_to": "fetched_at",
     }
+
+
+def _language_detection_text(item: RawSourceItem) -> str:
+    return " ".join(
+        part
+        for part in [item.title, item.summary or "", item.raw_content or ""]
+        if part
+    )
 
 
 def _as_utc(value: datetime) -> datetime:
