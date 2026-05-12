@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
 from domain.sources import NormalizedSourceItem, RawSourceItem, SourceReliability
@@ -9,6 +10,7 @@ from domain.sources import NormalizedSourceItem, RawSourceItem, SourceReliabilit
 
 TRACKING_PREFIXES = ("utm_",)
 TRACKING_KEYS = {"fbclid", "gclid"}
+FUTURE_PUBLISHED_AT_TOLERANCE = timedelta(minutes=5)
 
 
 def normalize_items(items: list[RawSourceItem]) -> list[NormalizedSourceItem]:
@@ -21,13 +23,16 @@ def normalize_item(item: RawSourceItem) -> NormalizedSourceItem:
     normalized_summary = normalize_text(item.summary) if item.summary else None
     reliability = SourceReliability(item.metadata.get("source_reliability", "medium"))
     metadata = dict(item.metadata)
+    published_at, time_metadata = _normalize_published_at(item.published_at, item.fetched_at)
+    if time_metadata:
+        metadata["time_normalization"] = time_metadata
     metadata["lineage"] = {
         "source_id": item.source_id,
         "source_item_id": item.source_item_id,
         "raw_url": item.url,
         "canonical_url": canonical_url,
         "fetched_at": _dt(item.fetched_at),
-        "published_at": _dt(item.published_at),
+        "published_at": _dt(published_at),
     }
     return NormalizedSourceItem(
         normalized_item_id=f"norm_{_hash(item.source_item_id + canonical_url)[:16]}",
@@ -42,12 +47,35 @@ def normalize_item(item: RawSourceItem) -> NormalizedSourceItem:
         content_hash=_hash((normalized_title or "") + "\n" + (normalized_summary or "")),
         source_reliability=reliability,
         fetched_at=item.fetched_at,
-        published_at=item.published_at,
+        published_at=published_at,
         summary=item.summary,
         normalized_summary=normalized_summary,
         language=item.language,
         metadata=metadata,
     )
+
+
+def _normalize_published_at(
+    published_at: datetime | None,
+    fetched_at: datetime,
+) -> tuple[datetime | None, dict[str, object]]:
+    if published_at is None:
+        return None, {}
+    published_at_utc = _as_utc(published_at)
+    fetched_at_utc = _as_utc(fetched_at)
+    if published_at_utc <= fetched_at_utc + FUTURE_PUBLISHED_AT_TOLERANCE:
+        return published_at_utc, {}
+    return fetched_at_utc, {
+        "future_timestamp_detected": True,
+        "original_published_at": _dt(published_at_utc),
+        "published_at_normalized_to": "fetched_at",
+    }
+
+
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 def normalize_text(value: str) -> str:

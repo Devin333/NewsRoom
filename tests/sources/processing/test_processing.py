@@ -69,6 +69,29 @@ def test_deduplicate_items_removes_duplicate_canonical_urls() -> None:
     assert unique[0].metadata["lineage"]["source_item_id"].startswith("raw-")
 
 
+def test_normalize_item_detects_future_published_at() -> None:
+    raw = _raw_item("Future dated", "https://example.com/future", days_old=-1)
+
+    normalized = normalize_items([raw])[0]
+
+    assert normalized.published_at == raw.fetched_at
+    assert normalized.metadata["lineage"]["published_at"] == raw.fetched_at.isoformat().replace("+00:00", "Z")
+    assert normalized.metadata["time_normalization"] == {
+        "future_timestamp_detected": True,
+        "original_published_at": raw.published_at.isoformat().replace("+00:00", "Z"),
+        "published_at_normalized_to": "fetched_at",
+    }
+
+
+def test_normalize_item_preserves_valid_published_at() -> None:
+    raw = _raw_item("Valid date", "https://example.com/valid", days_old=1)
+
+    normalized = normalize_items([raw])[0]
+
+    assert normalized.published_at == raw.published_at
+    assert "time_normalization" not in normalized.metadata
+
+
 def test_rank_items_prioritizes_topic_relevance_and_reliability() -> None:
     normalized = normalize_items(
         [
