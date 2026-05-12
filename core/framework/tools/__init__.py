@@ -24,6 +24,7 @@ from core.framework.tools.models import (
     ToolStatus,
     ToolTimeoutError,
 )
+from core.framework.tools.notification_tools import register_notification_tools
 from core.framework.tools.registry import (
     DuplicateToolPolicy,
     RegisteredTool,
@@ -88,6 +89,7 @@ __all__ = [
     "register_control_tools",
     "register_github_tools",
     "register_memory_tools",
+    "register_notification_tools",
     "register_quality_tools",
     "register_qdrant_tools",
     "register_report_tools",
