@@ -1,6 +1,7 @@
 """Tool Runtime primitives."""
 
 from core.framework.tools.approval import ToolApprovalRequest
+from core.framework.tools.artifact_tools import register_artifact_tools
 from core.framework.tools.batch import ToolBatchExecutor
 from core.framework.tools.executor import ToolExecutor
 from core.framework.tools.models import (
@@ -48,5 +49,6 @@ __all__ = [
     "ToolTestReport",
     "ToolTestRunner",
     "redact_sensitive_values",
+    "register_artifact_tools",
     "validate_tool_arguments",
 ]
