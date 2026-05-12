@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 
 from domain.sources import NormalizedSourceItem, SourceReliability
@@ -9,6 +10,21 @@ RELIABILITY_PRIORITY = {
     SourceReliability.HIGH: 3,
     SourceReliability.MEDIUM: 2,
     SourceReliability.LOW: 1,
+}
+NEAR_DUPLICATE_TITLE_THRESHOLD = 0.8
+NEAR_DUPLICATE_MIN_TITLE_TERMS = 4
+TITLE_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "for",
+    "in",
+    "new",
+    "of",
+    "on",
+    "the",
+    "to",
+    "with",
 }
 
 
@@ -38,7 +54,30 @@ def _is_duplicate(left: NormalizedSourceItem, right: NormalizedSourceItem) -> bo
         left.canonical_url_hash == right.canonical_url_hash
         or left.title_hash == right.title_hash
         or left.content_hash == right.content_hash
+        or _near_duplicate_title(left.normalized_title, right.normalized_title)
     )
+
+
+def _near_duplicate_title(left_title: str, right_title: str) -> bool:
+    left_terms = _title_terms(left_title)
+    right_terms = _title_terms(right_title)
+    if (
+        len(left_terms) < NEAR_DUPLICATE_MIN_TITLE_TERMS
+        or len(right_terms) < NEAR_DUPLICATE_MIN_TITLE_TERMS
+    ):
+        return False
+    intersection = left_terms.intersection(right_terms)
+    union = left_terms.union(right_terms)
+    if not union:
+        return False
+    jaccard = len(intersection) / len(union)
+    containment = len(intersection) / min(len(left_terms), len(right_terms))
+    return jaccard >= NEAR_DUPLICATE_TITLE_THRESHOLD and containment >= NEAR_DUPLICATE_TITLE_THRESHOLD
+
+
+def _title_terms(title: str) -> set[str]:
+    terms = set(re.findall(r"[a-z0-9]+", title.casefold()))
+    return {term for term in terms if len(term) > 1 and term not in TITLE_STOPWORDS}
 
 
 def _retention_priority(item: NormalizedSourceItem) -> tuple[int, float, int, int, int]:

@@ -93,6 +93,44 @@ def test_deduplicate_items_removes_duplicate_content_hashes() -> None:
     assert normalized[0].content_hash == normalized[1].content_hash
 
 
+def test_deduplicate_items_merges_near_duplicate_titles() -> None:
+    normalized = normalize_items(
+        [
+            _raw_item(
+                "OpenAI releases GPT-5 model for developers",
+                "https://example.com/openai-release",
+                reliability="medium",
+                summary="Official release summary.",
+            ),
+            _raw_item(
+                "OpenAI releases new GPT 5 model for developers",
+                "https://other.example/openai-release-analysis",
+                reliability="high",
+                summary="Analysis summary.",
+            ),
+        ]
+    )
+
+    unique = deduplicate_items(normalized)
+
+    assert len(unique) == 1
+    assert unique[0].title == "OpenAI releases new GPT 5 model for developers"
+    assert unique[0].source_reliability.value == "high"
+
+
+def test_deduplicate_items_keeps_low_signal_title_overlap_separate() -> None:
+    normalized = normalize_items(
+        [
+            _raw_item("OpenAI releases model update", "https://example.com/model"),
+            _raw_item("OpenAI releases security update", "https://example.com/security"),
+        ]
+    )
+
+    unique = deduplicate_items(normalized)
+
+    assert len(unique) == 2
+
+
 def test_deduplicate_items_retains_higher_reliability_duplicate() -> None:
     normalized = normalize_items(
         [
