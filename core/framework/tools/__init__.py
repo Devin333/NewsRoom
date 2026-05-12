@@ -5,6 +5,7 @@ from core.framework.tools.artifact_tools import register_artifact_tools
 from core.framework.tools.batch import ToolBatchExecutor
 from core.framework.tools.control_tools import register_control_tools
 from core.framework.tools.executor import ToolExecutor
+from core.framework.tools.memory_tools import register_memory_tools
 from core.framework.tools.mcp_adapter import MCPServerConfig, MCPToolAdapter
 from core.framework.tools.models import (
     ArtifactRef,
@@ -81,6 +82,7 @@ __all__ = [
     "redact_sensitive_values",
     "register_artifact_tools",
     "register_control_tools",
+    "register_memory_tools",
     "register_quality_tools",
     "register_report_tools",
     "register_source_tools",
