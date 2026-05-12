@@ -114,6 +114,31 @@ GITHUB_SEARCH = json.dumps(
     }
 )
 
+GITHUB_DISCUSSIONS = json.dumps(
+    {
+        "data": {
+            "repository": {
+                "discussions": {
+                    "nodes": [
+                        {
+                            "id": "D_kwDO",
+                            "number": 12,
+                            "title": "Runtime architecture discussion",
+                            "url": "https://github.com/owner/repo/discussions/12",
+                            "bodyText": "Discussion body",
+                            "createdAt": "2026-05-10T10:00:00Z",
+                            "updatedAt": "2026-05-11T10:00:00Z",
+                            "author": {"login": "maintainer"},
+                            "category": {"name": "Ideas"},
+                            "comments": {"totalCount": 3},
+                        }
+                    ]
+                }
+            }
+        }
+    }
+)
+
 
 def test_github_repository_parses_owner_repo() -> None:
     repository = GithubRepository.parse("owner/repo")
@@ -250,6 +275,53 @@ def test_github_connector_fetches_repository_search_items_for_trending_mode() ->
     assert items[0].title == "owner/repo"
     assert items[0].metadata["github_surface"] == "repository_search"
     assert items[0].metadata["stargazers_count"] == 123
+
+
+def test_github_connector_fetches_discussions_with_graphql_fetcher() -> None:
+    captured = {}
+    source = SourceDefinition(
+        source_id="github-discussions",
+        name="GitHub Discussions",
+        source_type="github",
+        url=GITHUB_API_URL,
+        reliability="high",
+        metadata={"mode": "discussions", "repository": "owner/repo"},
+    )
+
+    def fetch_graphql(url: str, payload: dict) -> str:
+        captured["url"] = url
+        captured["variables"] = payload["variables"]
+        return GITHUB_DISCUSSIONS
+
+    items, errors = GithubConnector(fetch_graphql=fetch_graphql).fetch(source, limit=1)
+
+    assert errors == []
+    assert captured["url"] == f"{GITHUB_API_URL}/graphql"
+    assert captured["variables"] == {"owner": "owner", "name": "repo", "first": 1}
+    assert items[0].title == "Runtime architecture discussion"
+    assert items[0].url == "https://github.com/owner/repo/discussions/12"
+    assert items[0].authors == ["maintainer"]
+    assert items[0].tags == ["discussion", "Ideas"]
+    assert items[0].metadata["github_surface"] == "discussions"
+    assert items[0].metadata["comment_count"] == 3
+
+
+def test_github_discussions_default_fetch_requires_auth_token(monkeypatch) -> None:
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    source = SourceDefinition(
+        source_id="github-discussions",
+        name="GitHub Discussions",
+        source_type="github",
+        url=GITHUB_API_URL,
+        reliability="high",
+        metadata={"mode": "discussions", "repository": "owner/repo"},
+    )
+
+    items, errors = GithubConnector().fetch(source, limit=1)
+
+    assert items == []
+    assert errors[0].error_type == "invalid_source_config"
+    assert errors[0].metadata["operator_action_required"] is True
 
 
 def test_github_connector_returns_empty_release_error() -> None:

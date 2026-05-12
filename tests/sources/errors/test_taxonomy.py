@@ -4,11 +4,27 @@ from sources.errors import classify_source_exception
 
 
 def test_source_error_taxonomy_classifies_parse_errors_as_non_health_affecting() -> None:
-    classification = classify_source_exception(ValueError("bad feed"), phase="parse")
+    classification = classify_source_exception(ValueError("bad payload"), phase="parse")
 
     assert classification.error_type == "parse_error"
     assert classification.retryable is False
     assert classification.source_health_affecting is False
+
+
+def test_source_error_taxonomy_classifies_final_source_parse_branches() -> None:
+    invalid_feed = classify_source_exception(ValueError("unsupported feed root"), phase="parse")
+    invalid_date = classify_source_exception(ValueError("invalid published date"), phase="parse")
+
+    assert invalid_feed.error_type == "invalid_feed"
+    assert invalid_feed.retryable is False
+    assert invalid_date.error_type == "invalid_published_at"
+    assert invalid_date.source_health_affecting is False
+
+
+def test_source_error_taxonomy_classifies_processing_phases() -> None:
+    assert classify_source_exception(RuntimeError("bad normalize"), phase="normalize").error_type == "normalization_error"
+    assert classify_source_exception(RuntimeError("bad dedup"), phase="dedup").error_type == "dedup_error"
+    assert classify_source_exception(RuntimeError("bad rank"), phase="rank").error_type == "ranking_error"
 
 
 def test_source_error_taxonomy_classifies_timeout_as_retryable_fetch_timeout() -> None:

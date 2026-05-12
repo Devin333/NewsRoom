@@ -41,6 +41,7 @@ HTML_CONTENT_TYPES = ("text/html", "application/xhtml+xml")
 
 
 EXTRACTOR_NAME = "stdlib_html_extractor"
+TRAFILATURA_EXTRACTOR_NAME = "trafilatura_extractor"
 SKIP_TEXT_TAGS = {"script", "style", "noscript", "svg"}
 LOW_VALUE_TEXT_TAGS = {"nav", "header", "footer", "aside", "form"}
 PUBLISHED_META_KEYS = {
@@ -66,6 +67,7 @@ class HtmlExtractionResult:
     language: str | None
     confidence: float
     extractor_name: str = EXTRACTOR_NAME
+    attempted_extractors: tuple[str, ...] = (EXTRACTOR_NAME,)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -78,6 +80,7 @@ class HtmlExtractionResult:
             "language": self.language,
             "confidence": self.confidence,
             "extractor_name": self.extractor_name,
+            "attempted_extractors": list(self.attempted_extractors),
         }
 
 
@@ -185,6 +188,7 @@ class HtmlConnector:
                 source,
                 extra={
                     "extractor_name": extraction.extractor_name,
+                    "attempted_extractors": list(extraction.attempted_extractors),
                     "extraction_confidence": extraction.confidence,
                     "canonical_url": url,
                     "raw_html_bytes": len(html_text.encode("utf-8")),
@@ -211,6 +215,22 @@ class HtmlConnector:
 
 
 def extract_html(html_text: str) -> HtmlExtractionResult:
+    return extract_html_with_fallbacks(html_text)
+
+
+def extract_html_with_fallbacks(html_text: str) -> HtmlExtractionResult:
+    stdlib_result = _extract_html_stdlib(html_text)
+    attempted = [EXTRACTOR_NAME]
+    if stdlib_result.confidence >= 0.85:
+        return _with_attempted_extractors(stdlib_result, attempted)
+    trafilatura_result = _extract_html_trafilatura(html_text)
+    attempted.append(TRAFILATURA_EXTRACTOR_NAME)
+    if trafilatura_result is not None and trafilatura_result.confidence > stdlib_result.confidence:
+        return _with_attempted_extractors(trafilatura_result, attempted)
+    return _with_attempted_extractors(stdlib_result, attempted)
+
+
+def _extract_html_stdlib(html_text: str) -> HtmlExtractionResult:
     parser = _SourceHtmlParser()
     parser.feed(html_text)
     parser.close()
@@ -241,6 +261,75 @@ def extract_html(html_text: str) -> HtmlExtractionResult:
         canonical_url=canonical_url,
         language=parser.language,
         confidence=confidence,
+        attempted_extractors=(EXTRACTOR_NAME,),
+    )
+
+
+def _extract_html_trafilatura(html_text: str) -> HtmlExtractionResult | None:
+    try:
+        import trafilatura  # type: ignore
+    except Exception:
+        return None
+    try:
+        extracted = trafilatura.extract(
+            html_text,
+            output_format="json",
+            include_comments=False,
+            include_tables=False,
+        )
+    except Exception:
+        return None
+    if not extracted:
+        return None
+    try:
+        import json
+
+        payload = json.loads(extracted)
+    except Exception:
+        return None
+    text = _normalize_text(str(payload.get("text") or ""))
+    title = _first_text(payload.get("title"))
+    summary = _first_text(payload.get("description")) or (_truncate(text, 240) if text else None)
+    published_at = _parse_datetime(_first_text(payload.get("date")))
+    author_text = _first_text(payload.get("author"))
+    authors = [author.strip() for author in (author_text or "").split(";") if author.strip()]
+    confidence = _confidence(
+        title=title,
+        text=text,
+        summary=summary,
+        published_at=published_at,
+        authors=authors,
+        canonical_url=_first_text(payload.get("url")),
+    )
+    return HtmlExtractionResult(
+        title=title,
+        text=text or None,
+        summary=summary,
+        published_at=published_at,
+        authors=authors,
+        canonical_url=_first_text(payload.get("url")),
+        language=_first_text(payload.get("language")),
+        confidence=confidence,
+        extractor_name=TRAFILATURA_EXTRACTOR_NAME,
+        attempted_extractors=(TRAFILATURA_EXTRACTOR_NAME,),
+    )
+
+
+def _with_attempted_extractors(
+    result: HtmlExtractionResult,
+    attempted_extractors: list[str],
+) -> HtmlExtractionResult:
+    return HtmlExtractionResult(
+        title=result.title,
+        text=result.text,
+        summary=result.summary,
+        published_at=result.published_at,
+        authors=list(result.authors),
+        canonical_url=result.canonical_url,
+        language=result.language,
+        confidence=result.confidence,
+        extractor_name=result.extractor_name,
+        attempted_extractors=tuple(dict.fromkeys(attempted_extractors)),
     )
 
 

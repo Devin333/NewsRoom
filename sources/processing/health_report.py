@@ -8,15 +8,19 @@ from domain.sources import SourceHealthReport
 def build_source_health_report(source_health_updates: list[Any]) -> SourceHealthReport:
     rows: list[dict[str, Any]] = []
     status_counts: dict[str, int] = {}
+    down_source_ids: list[str] = []
     cooling_down_source_ids: list[str] = []
     degraded_source_ids: list[str] = []
     disabled_source_ids: list[str] = []
 
     for health in source_health_updates:
         status = _status_value(_value(health, "status"))
+        if status == "cooling_down":
+            status = "down"
         source_id = str(_value(health, "source_id") or "")
         status_counts[status] = status_counts.get(status, 0) + 1
-        if status == "cooling_down" and source_id:
+        if status == "down" and source_id:
+            down_source_ids.append(source_id)
             cooling_down_source_ids.append(source_id)
         elif status == "degraded" and source_id:
             degraded_source_ids.append(source_id)
@@ -41,6 +45,7 @@ def build_source_health_report(source_health_updates: list[Any]) -> SourceHealth
     return SourceHealthReport(
         health_update_count=len(rows),
         status_counts=status_counts,
+        down_source_ids=sorted(set(down_source_ids)),
         cooling_down_source_ids=sorted(set(cooling_down_source_ids)),
         degraded_source_ids=sorted(set(degraded_source_ids)),
         disabled_source_ids=sorted(set(disabled_source_ids)),

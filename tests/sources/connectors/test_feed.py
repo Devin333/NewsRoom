@@ -206,7 +206,7 @@ def test_feed_connector_fetch_maps_parse_error() -> None:
     items, errors = connector.fetch(source)
 
     assert items == []
-    assert errors[0].error_type == "parse_error"
+    assert errors[0].error_type == "invalid_feed"
     assert errors[0].metadata["phase"] == "parse"
     assert errors[0].metadata["retryable"] is False
     assert errors[0].retryable is False

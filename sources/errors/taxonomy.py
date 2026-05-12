@@ -1,7 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from xml.etree.ElementTree import ParseError
 from urllib.error import HTTPError, URLError
+
+
+FINAL_SOURCE_ERROR_TYPES = {
+    "invalid_feed",
+    "invalid_published_at",
+    "normalization_error",
+    "dedup_error",
+    "ranking_error",
+}
 
 
 @dataclass(frozen=True)
@@ -23,8 +33,39 @@ def classify_source_exception(
     invalid_config_keywords: tuple[str, ...] = (),
 ) -> SourceErrorClassification:
     if phase == "parse":
+        message = str(exc).casefold()
+        if isinstance(exc, ParseError) or "feed" in message or "rss" in message or "atom" in message:
+            return SourceErrorClassification(
+                error_type="invalid_feed",
+                retryable=False,
+                source_health_affecting=False,
+            )
+        if "published" in message or "pubdate" in message or "date" in message:
+            return SourceErrorClassification(
+                error_type="invalid_published_at",
+                retryable=False,
+                source_health_affecting=False,
+            )
         return SourceErrorClassification(
             error_type="parse_error",
+            retryable=False,
+            source_health_affecting=False,
+        )
+    if phase == "normalize":
+        return SourceErrorClassification(
+            error_type="normalization_error",
+            retryable=False,
+            source_health_affecting=False,
+        )
+    if phase == "dedup":
+        return SourceErrorClassification(
+            error_type="dedup_error",
+            retryable=False,
+            source_health_affecting=False,
+        )
+    if phase == "rank":
+        return SourceErrorClassification(
+            error_type="ranking_error",
             retryable=False,
             source_health_affecting=False,
         )

@@ -297,7 +297,7 @@ def test_build_source_health_report_summarizes_statuses() -> None:
             SourceHealth(
                 source_id="cooling",
                 source_name="Cooling",
-                status=SourceHealthStatus.COOLING_DOWN,
+                status=SourceHealthStatus.DOWN,
                 consecutive_failures=2,
                 failure_count_24h=2,
                 cooldown_until=now,
@@ -317,7 +317,8 @@ def test_build_source_health_report_summarizes_statuses() -> None:
     )
 
     assert report.health_update_count == 3
-    assert report.status_counts == {"healthy": 1, "cooling_down": 1, "degraded": 1}
+    assert report.status_counts == {"healthy": 1, "down": 1, "degraded": 1}
+    assert report.down_source_ids == ["cooling"]
     assert report.cooling_down_source_ids == ["cooling"]
     assert report.degraded_source_ids == ["degraded"]
     assert report.max_consecutive_failures == 2
@@ -763,7 +764,9 @@ def test_rank_items_prioritizes_topic_relevance_and_reliability() -> None:
     assert lineage["authority_score"] == 0.5
     assert lineage["source_quality_score"] == ranked[0].metadata["source_quality"]["quality_score"]
     assert ranked[0].metadata["source_quality"]["traceability_score"] == 1.0
-
+    assert ranked[0].duplicate_cluster_score == 0.5
+    assert ranked[0].historical_importance_score == 0.5
+    assert ranked[0].subscription_match_score > 0
     ranking_scores = build_source_ranking_scores(ranked)
     assert ranking_scores[0].ranked_item_id == ranked[0].ranked_item_id
     assert ranking_scores[0].source_id == "source"
@@ -776,6 +779,32 @@ def test_rank_items_prioritizes_topic_relevance_and_reliability() -> None:
     assert traceability_report.traceable_item_count == 2
     assert traceability_report.issue_count == 0
     assert traceability_report.rows[0]["ranked_item_id"] == ranked[0].ranked_item_id
+
+
+def test_deduplicate_marks_same_event_cluster_for_ranking() -> None:
+    normalized = normalize_items(
+        [
+            _raw_item("AI runtime update", "https://example.com/a", reliability="high"),
+            _raw_item("AI runtime update", "https://mirror.example.com/a", reliability="medium"),
+        ]
+    )
+
+    dedup_result = deduplicate_with_result(normalized)
+
+    assert len(dedup_result.kept_items) == 1
+    cluster = dedup_result.kept_items[0].metadata["duplicate_cluster"]
+    assert cluster["cluster_size"] == 2
+    assert cluster["same_event_cluster"] is True
+    ranked = rank_items(
+        dedup_result.kept_items,
+        topic="AI runtime",
+        subscription_topics=["runtime update"],
+        now=datetime(2026, 5, 11, tzinfo=UTC),
+    )
+    ranking_scores = build_source_ranking_scores(ranked)
+    assert ranked[0].duplicate_cluster_score > 0.5
+    assert ranking_scores[0].duplicate_cluster_score == ranked[0].duplicate_cluster_score
+    assert ranking_scores[0].subscription_match_score > 0
 
 
 def test_build_source_traceability_report_flags_missing_and_mismatched_lineage() -> None:

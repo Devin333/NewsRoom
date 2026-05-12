@@ -5,7 +5,7 @@ import re
 from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
-from domain.sources import NormalizedSourceItem, RawSourceItem, SourceReliability
+from domain.sources import Lineage, NormalizedSourceItem, RawSourceItem, SourceReliability
 from sources.processing.language import detect_language
 
 
@@ -24,6 +24,8 @@ def normalize_item(item: RawSourceItem) -> NormalizedSourceItem:
     normalized_summary = normalize_text(item.summary) if item.summary else None
     reliability = SourceReliability(item.metadata.get("source_reliability", "medium"))
     metadata = dict(item.metadata)
+    if item.tags:
+        metadata["tags"] = list(item.tags)
     detected_language = None if item.language else detect_language(_language_detection_text(item))
     language = item.language or detected_language or "unknown"
     if item.language is None:
@@ -56,6 +58,7 @@ def normalize_item(item: RawSourceItem) -> NormalizedSourceItem:
     if parse_artifact_ref is not None:
         lineage["parse_artifact_ref"] = parse_artifact_ref
     metadata["lineage"] = lineage
+    lineage_obj = Lineage.from_dict(lineage)
     return NormalizedSourceItem(
         normalized_item_id=f"norm_{_hash(item.source_item_id + canonical_url)[:16]}",
         source_item_id=item.source_item_id,
@@ -73,6 +76,7 @@ def normalize_item(item: RawSourceItem) -> NormalizedSourceItem:
         summary=item.summary,
         normalized_summary=normalized_summary,
         language=language,
+        lineage=lineage_obj,
         metadata=metadata,
     )
 

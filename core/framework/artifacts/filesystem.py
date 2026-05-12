@@ -50,6 +50,12 @@ class ArtifactManager:
         target.write_text(text, encoding="utf-8")
         return target
 
+    def write_bytes(self, run_id: str, name: str, data: bytes) -> Path:
+        target = self._target(run_id, name)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+        return target
+
     def _target(self, run_id: str, name: str) -> Path:
         relative = Path(name)
         if relative.is_absolute() or ".." in relative.parts:

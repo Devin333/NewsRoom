@@ -291,11 +291,12 @@ class SourceArtifactWriter:
         raw_content = _raw_content(raw_item)
         if raw_content is None:
             return None, None
-        path = f"sources/raw_content/{_path_segment(source_id)}/{_path_segment(object_id)}.txt"
-        artifact_path = self._artifact_manager.write_text(
+        path = f"sources/{_path_segment(source_id)}/{_path_segment(object_id)}/raw_content.bin"
+        redacted_content = _redact_string(str(raw_content)).encode("utf-8")
+        artifact_path = self._artifact_manager.write_bytes(
             run_id,
             path,
-            _redact_string(str(raw_content)),
+            redacted_content,
         )
         artifact_ref = _artifact_ref(
             run_id=run_id,
@@ -304,7 +305,7 @@ class SourceArtifactWriter:
             object_id=object_id,
             path=path,
             artifact_path=artifact_path,
-            content_type="text/plain",
+            content_type="application/octet-stream",
         )
         entry = _entry_from_ref(
             artifact_ref=artifact_ref,

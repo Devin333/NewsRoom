@@ -179,7 +179,7 @@ def test_postgres_repository_reads_source_health_by_id() -> None:
     assert health.source_id == "rss-example"
     assert health.source_name == "Example RSS"
     assert health.url == "https://example.com/feed.xml"
-    assert health.status == SourceHealthStatus.COOLING_DOWN
+    assert health.status == SourceHealthStatus.DOWN
     assert health.consecutive_failures == 3
     assert health.success_count_24h == 4
     assert health.failure_count_24h == 2

@@ -3,6 +3,7 @@
 from domain.sources.models import (
     DedupResult,
     DuplicateGroup,
+    Lineage,
     NormalizedSourceItem,
     RankedSourceItem,
     RawSourceItem,
@@ -36,6 +37,7 @@ __all__ = [
     "NormalizedSourceItem",
     "DedupResult",
     "DuplicateGroup",
+    "Lineage",
     "RankedSourceItem",
     "RawSourceItem",
     "SourceDefinition",

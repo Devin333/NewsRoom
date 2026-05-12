@@ -102,8 +102,9 @@ def test_source_artifact_writer_writes_items_errors_and_redacts(tmp_path) -> Non
     )
     raw_content_path = run_dir / raw_content_entry["path"]
     assert raw_content_path.exists()
+    assert raw_content_entry["path"].endswith("/raw_content.bin")
     assert raw_content_path.read_text(encoding="utf-8") == "<item>Real source content</item>"
-    assert raw_content_entry["content_type"] == "text/plain"
+    assert raw_content_entry["content_type"] == "application/octet-stream"
     assert raw_content_entry["artifact_ref"]["artifact_type"] == "source_raw_content"
     assert raw_content_entry["raw_content_sha256"] == sha256(raw_content.encode("utf-8")).hexdigest()
 

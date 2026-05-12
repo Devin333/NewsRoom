@@ -21,6 +21,10 @@ def build_source_ranking_scores(ranked_items: list[RankedSourceItem]) -> list[So
                 reliability_score=ranked.reliability_score,
                 authority_score=round(authority_score, 4),
                 novelty_score=ranked.novelty_score,
+                duplicate_cluster_score=ranked.duplicate_cluster_score,
+                historical_importance_score=ranked.historical_importance_score,
+                subscription_match_score=ranked.subscription_match_score,
+                source_quality_score=ranked.source_quality_score,
                 final_score=ranked.final_score,
                 rank_reason=ranked.rank_reason,
             )

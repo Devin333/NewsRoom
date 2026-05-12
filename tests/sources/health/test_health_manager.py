@@ -67,7 +67,7 @@ def test_health_manager_opens_cooldown_after_failures() -> None:
 
     assert first.status == SourceHealthStatus.DEGRADED
     assert first.failure_count_24h == 1
-    assert second.status == SourceHealthStatus.COOLING_DOWN
+    assert second.status == SourceHealthStatus.DOWN
     assert second.failure_count_24h == 2
     assert second.cooldown_until == now + timedelta(seconds=60)
     assert manager.should_skip("source") is True
@@ -173,7 +173,7 @@ def test_health_manager_hydrates_from_store_before_skip_decision() -> None:
 
     health = manager.get("source")
 
-    assert health.status == SourceHealthStatus.COOLING_DOWN
+    assert health.status == SourceHealthStatus.DOWN
     assert health.source_name == "Stored Source"
     assert manager.should_skip("source") is True
 

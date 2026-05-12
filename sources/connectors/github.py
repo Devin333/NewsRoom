@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -35,11 +36,38 @@ from sources.errors import classify_source_exception
 
 
 FetchText = Callable[[str], str]
+FetchGraphQL = Callable[[str, dict[str, Any]], str]
 GITHUB_API_URL = "https://api.github.com"
 GITHUB_CONTENT_TYPES = (
     "application/json",
     "application/vnd.github+json",
 )
+GITHUB_DISCUSSIONS_QUERY = """
+query RepositoryDiscussions($owner: String!, $name: String!, $first: Int!) {
+  repository(owner: $owner, name: $name) {
+    discussions(first: $first, orderBy: {field: UPDATED_AT, direction: DESC}) {
+      nodes {
+        id
+        number
+        title
+        url
+        bodyText
+        createdAt
+        updatedAt
+        author {
+          login
+        }
+        category {
+          name
+        }
+        comments {
+          totalCount
+        }
+      }
+    }
+  }
+}
+"""
 
 
 @dataclass(frozen=True)
@@ -105,6 +133,7 @@ class GithubConnector:
         self,
         fetch_text: FetchText | None = None,
         *,
+        fetch_graphql: FetchGraphQL | None = None,
         fetch_policy: SourceFetchPolicy | None = None,
         rate_limiter: DomainRateLimiter | None = None,
     ) -> None:
@@ -112,6 +141,7 @@ class GithubConnector:
         self._rate_limiter = rate_limiter or DomainRateLimiter()
         self._uses_default_fetch = fetch_text is None
         self._fetch_text = fetch_text or self._default_fetch_text
+        self._fetch_graphql = fetch_graphql
         self._last_response_metadata: SourceFetchResponseMetadata | None = None
 
     def fetch_releases(
@@ -194,6 +224,8 @@ class GithubConnector:
             return self.fetch_pull_requests(source, repository=repository, limit=limit)
         if mode in {"security_advisories", "advisories"}:
             return self.fetch_security_advisories(source, repository=repository, limit=limit)
+        if mode in {"discussions", "discussion"}:
+            return self.fetch_discussions(source, repository=repository, limit=limit)
         if mode in {"repository_search", "trending", "stars"}:
             search_query = query or source.metadata.get("query")
             return self.fetch_repository_search_items(
@@ -320,6 +352,87 @@ class GithubConnector:
             _raw_item_from_repository_search(source, repository, fetched_at=fetched_at)
             for repository in repositories
         ]
+        return items, []
+
+    def fetch_discussions(
+        self,
+        source: SourceDefinition,
+        *,
+        repository: str | GithubRepository | None = None,
+        limit: int | None = None,
+        category: str | None = None,
+    ) -> tuple[list[RawSourceItem], list[SourceError]]:
+        policy = effective_fetch_policy(self.fetch_policy, source)
+        self._last_response_metadata = None
+        try:
+            repo = _repository_from_source(source, repository=repository)
+            endpoint = build_github_graphql_url(source.url or GITHUB_API_URL)
+            rate_limit = self._rate_limiter.reserve(
+                endpoint,
+                limit_per_minute=self.fetch_policy.rate_limit_per_domain_per_minute,
+            )
+            if not rate_limit.allowed:
+                return [], [rate_limited_source_error(source, rate_limit, url=endpoint)]
+            variables = {
+                "owner": repo.owner,
+                "name": repo.name,
+                "first": limit or 10,
+            }
+            payload = run_with_fetch_retries(
+                lambda: self._fetch_graphql_source_text(
+                    source,
+                    endpoint,
+                    {
+                        "query": GITHUB_DISCUSSIONS_QUERY,
+                        "variables": variables,
+                    },
+                    policy,
+                ),
+                policy,
+            )
+        except Exception as exc:
+            error = _exception_source_error(source, exc, phase="fetch")
+            return [], [attach_response_metadata_to_error(error, self._last_response_metadata)]
+        response_metadata = self._last_response_metadata
+
+        if not payload.strip():
+            return [], [
+                attach_response_metadata_to_error(
+                    _source_error(
+                        source,
+                        "empty_source_response",
+                        "GitHub GraphQL returned an empty response",
+                        metadata={"phase": "fetch", "retryable": True, "source_health_affecting": True},
+                    ),
+                    response_metadata,
+                )
+            ]
+
+        try:
+            items = self.parse_discussions(
+                source,
+                payload,
+                repository=repo,
+                limit=limit,
+                category=category or _optional_text(source.metadata.get("discussion_category")),
+            )
+        except Exception as exc:
+            error = _exception_source_error(source, exc, phase="parse")
+            return [], [attach_response_metadata_to_error(error, response_metadata)]
+        items = attach_response_metadata_to_items(items, response_metadata)
+
+        if not items:
+            return [], [
+                attach_response_metadata_to_error(
+                    _source_error(
+                        source,
+                        "empty_github_discussions",
+                        "GitHub repository returned no discussions",
+                        metadata={"phase": "parse", "retryable": False, "source_health_affecting": False},
+                    ),
+                    response_metadata,
+                )
+            ]
         return items, []
 
     def search_repositories(
@@ -514,6 +627,40 @@ class GithubConnector:
         repositories = [repository for repository in repositories if repository is not None]
         return repositories[:limit] if limit else repositories
 
+    def parse_discussions(
+        self,
+        source: SourceDefinition,
+        content: str,
+        *,
+        repository: str | GithubRepository | None = None,
+        limit: int | None = None,
+        category: str | None = None,
+    ) -> list[RawSourceItem]:
+        payload = json.loads(content)
+        if not isinstance(payload, dict):
+            raise ValueError("GitHub discussions response must be a JSON object")
+        if payload.get("errors"):
+            raise ValueError("GitHub discussions response contains GraphQL errors")
+        repo = _repository_from_source(source, repository=repository)
+        discussions = (
+            payload.get("data", {})
+            .get("repository", {})
+            .get("discussions", {})
+            .get("nodes")
+        )
+        if not isinstance(discussions, list):
+            raise ValueError("GitHub discussions response nodes must be an array")
+        fetched_at = datetime.now(UTC)
+        expected_category = category.casefold() if category else None
+        items = [
+            _raw_item_from_discussion(source=source, repository=repo, discussion=discussion, fetched_at=fetched_at)
+            for discussion in discussions
+            if isinstance(discussion, dict)
+            and _discussion_category_matches(discussion, expected_category)
+        ]
+        items = [item for item in items if item is not None]
+        return items[:limit] if limit else items
+
     def _default_fetch_text(self, url: str) -> str:
         request = Request(
             url,
@@ -535,6 +682,39 @@ class GithubConnector:
         if self._uses_default_fetch:
             ensure_robots_allowed(url, policy)
         return self._fetch_text(url)
+
+    def _fetch_graphql_source_text(
+        self,
+        source: SourceDefinition,
+        url: str,
+        payload: dict[str, Any],
+        policy: SourceFetchPolicy,
+    ) -> str:
+        if self._fetch_graphql is not None:
+            return self._fetch_graphql(url, payload)
+        token_env = str(source.metadata.get("token_env") or "GITHUB_TOKEN")
+        token = os.getenv(token_env)
+        if not token:
+            raise ValueError(f"github discussions require token env {token_env}")
+        request = Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Accept": "application/vnd.github+json",
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {token}",
+                "User-Agent": self.fetch_policy.user_agent,
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+            method="POST",
+        )
+        with open_request_with_fetch_policy(request, policy) as response:
+            self._last_response_metadata = response_metadata_from_http_response(response, url=url)
+            ensure_supported_content_type(self._last_response_metadata.content_type, GITHUB_CONTENT_TYPES)
+            body = response.read(policy.max_bytes + 1)
+        if len(body) > policy.max_bytes:
+            raise ValueError(f"source response exceeds max_bytes: {policy.max_bytes}")
+        return body.decode("utf-8", errors="replace")
 
     def _fetch_repo_items(
         self,
@@ -664,6 +844,15 @@ def build_github_repository_search_url(
     if order:
         params["order"] = order
     return f"{base}/search/repositories?{urlencode(params)}"
+
+
+def build_github_graphql_url(base_url: str) -> str:
+    base = base_url.rstrip("/")
+    if base.endswith("/graphql"):
+        return base
+    if base.endswith("/api/v3"):
+        return f"{base[:-7]}/api/graphql"
+    return f"{base}/graphql"
 
 
 def _repository_search_result(item: dict[str, Any]) -> GithubRepositorySearchResult | None:
@@ -936,6 +1125,59 @@ def _raw_item_from_repository_search(
     )
 
 
+def _raw_item_from_discussion(
+    *,
+    source: SourceDefinition,
+    repository: GithubRepository,
+    discussion: dict[str, Any],
+    fetched_at: datetime,
+) -> RawSourceItem | None:
+    discussion_id = _optional_text(discussion.get("id"))
+    title = _optional_text(discussion.get("title"))
+    url = _optional_text(discussion.get("url"))
+    if not title or not url:
+        return None
+    author = discussion.get("author") if isinstance(discussion.get("author"), dict) else {}
+    category = discussion.get("category") if isinstance(discussion.get("category"), dict) else {}
+    category_name = _optional_text(category.get("name"))
+    comments = discussion.get("comments") if isinstance(discussion.get("comments"), dict) else {}
+    item_hash = sha256(f"{source.source_id}|{repository.slug()}|discussion|{discussion_id or url}".encode("utf-8")).hexdigest()
+    tags = [tag for tag in ["discussion", category_name] if tag]
+    return RawSourceItem(
+        source_item_id=f"raw_{item_hash[:16]}",
+        source_id=source.source_id,
+        source_name=source.name,
+        source_type=source.source_type,
+        title=title,
+        url=url,
+        fetched_at=fetched_at,
+        published_at=_parse_datetime(discussion.get("updatedAt") or discussion.get("createdAt")),
+        summary=_normalize_text(discussion.get("bodyText")),
+        raw_content=json.dumps(discussion, ensure_ascii=False, sort_keys=True),
+        authors=[str(author["login"])] if author.get("login") else [],
+        tags=tags,
+        language=source.language,
+        metadata=source_item_metadata(
+            source,
+            extra={
+                "repository": repository.slug(),
+                "github_surface": "discussions",
+                "discussion_id": discussion_id,
+                "number": discussion.get("number"),
+                "category": category_name,
+                "comment_count": _int_or_zero(comments.get("totalCount")),
+            },
+        ),
+    )
+
+
+def _discussion_category_matches(discussion: dict[str, Any], expected_category: str | None) -> bool:
+    if expected_category is None:
+        return True
+    category = discussion.get("category") if isinstance(discussion.get("category"), dict) else {}
+    return str(category.get("name") or "").casefold() == expected_category
+
+
 def _repository_from_source(
     source: SourceDefinition,
     *,
@@ -976,7 +1218,7 @@ def _exception_source_error(source: SourceDefinition, exc: Exception, *, phase: 
     classification = classify_source_exception(
         exc,
         phase=phase,
-        invalid_config_keywords=("repository",),
+        invalid_config_keywords=("repository", "token"),
     )
     error_type, retryable = classification.to_tuple()
     metadata: dict[str, object] = {
@@ -1011,7 +1253,7 @@ def _taxonomy_for_exception(exc: Exception, *, phase: str) -> tuple[str, bool]:
     return classify_source_exception(
         exc,
         phase=phase,
-        invalid_config_keywords=("repository",),
+        invalid_config_keywords=("repository", "token"),
     ).to_tuple()
 
 

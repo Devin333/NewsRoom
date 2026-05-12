@@ -74,7 +74,7 @@ class BasicSourceHealthManager:
         if health.status == SourceHealthStatus.DISABLED:
             return True
         return (
-            health.status == SourceHealthStatus.COOLING_DOWN
+            health.status == SourceHealthStatus.DOWN
             and health.cooldown_until is not None
             and health.cooldown_until > self._now()
         )
@@ -85,7 +85,7 @@ class BasicSourceHealthManager:
     def should_probe(self, source_id: str) -> bool:
         health = self.get(source_id)
         return (
-            health.status == SourceHealthStatus.COOLING_DOWN
+            health.status == SourceHealthStatus.DOWN
             and health.cooldown_until is not None
             and health.cooldown_until <= self._now()
         )
@@ -169,7 +169,7 @@ class BasicSourceHealthManager:
         if not had_events:
             stats = _merge_persisted_stats(previous, stats, now=now)
         if failures >= self.failure_threshold:
-            status = SourceHealthStatus.COOLING_DOWN
+            status = SourceHealthStatus.DOWN
             cooldown_until = now + timedelta(seconds=self.cooldown_seconds)
         else:
             status = SourceHealthStatus.DEGRADED

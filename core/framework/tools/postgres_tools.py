@@ -54,7 +54,7 @@ def register_postgres_tools(
                         "source_id": {"type": "string"},
                         "status": {
                             "type": "string",
-                            "enum": ["healthy", "degraded", "cooling_down", "disabled"],
+                            "enum": ["healthy", "degraded", "down", "cooling_down", "disabled"],
                         },
                         "consecutive_failures": {"type": "integer"},
                         "success_count_24h": {"type": "integer"},

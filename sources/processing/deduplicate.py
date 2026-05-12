@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 from datetime import UTC, datetime
 from hashlib import sha256
 
@@ -55,11 +56,12 @@ def deduplicate_with_result(items: list[NormalizedSourceItem]) -> DedupResult:
     dropped_items: list[NormalizedSourceItem] = []
     duplicate_groups: list[DuplicateGroup] = []
     for group in groups:
-        kept_item = max(group, key=_retention_priority)
+        original_kept_item = max(group, key=_retention_priority)
+        dropped = [item for item in group if item is not original_kept_item]
+        kept_item = _with_duplicate_cluster_metadata(original_kept_item, group, dropped)
         kept_items.append(kept_item)
         if len(group) <= 1:
             continue
-        dropped = [item for item in group if item is not kept_item]
         dropped_items.extend(dropped)
         duplicate_groups.append(_duplicate_group(group, kept_item, dropped))
     return DedupResult(
@@ -117,6 +119,45 @@ def _duplicate_group(
             "source_item_ids": [item.source_item_id for item in group],
             "dropped_source_item_ids": [item.source_item_id for item in dropped_items],
         },
+    )
+
+
+def _with_duplicate_cluster_metadata(
+    kept_item: NormalizedSourceItem,
+    group: list[NormalizedSourceItem],
+    dropped_items: list[NormalizedSourceItem],
+) -> NormalizedSourceItem:
+    if len(group) <= 1:
+        metadata = dict(kept_item.metadata)
+        metadata.setdefault(
+            "duplicate_cluster",
+            {
+                "cluster_id": None,
+                "cluster_size": 1,
+                "duplicate_item_ids": [],
+                "same_event_cluster": False,
+            },
+        )
+        return replace(kept_item, metadata=metadata)
+    duplicate_group = _duplicate_group(group, kept_item, dropped_items)
+    metadata = dict(kept_item.metadata)
+    metadata["duplicate_cluster"] = {
+        "cluster_id": duplicate_group.group_id,
+        "cluster_size": len(group),
+        "duplicate_item_ids": list(duplicate_group.duplicate_item_ids),
+        "reasons": list(duplicate_group.reasons),
+        "canonical_urls": list(duplicate_group.canonical_urls),
+        "same_event_cluster": _is_same_event_cluster(duplicate_group),
+    }
+    return replace(kept_item, metadata=metadata)
+
+
+def _is_same_event_cluster(group: DuplicateGroup) -> bool:
+    if len(group.canonical_urls) <= 1:
+        return False
+    return any(
+        reason in {"title_hash", "content_hash", "near_duplicate_title"}
+        for reason in group.reasons
     )
 
 

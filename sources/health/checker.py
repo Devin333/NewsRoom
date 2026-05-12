@@ -214,7 +214,7 @@ class SourceHealthChecker:
                     latency_ms=latency_ms,
                 )
             )
-            if health.status == SourceHealthStatus.COOLING_DOWN:
+            if health.status == SourceHealthStatus.DOWN:
                 events.append(
                     _event(
                         "source_cooldown_started",

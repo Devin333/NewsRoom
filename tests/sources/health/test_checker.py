@@ -52,7 +52,7 @@ def test_source_health_checker_records_failure_and_cooldown_event() -> None:
     assert entry.error is not None
     assert entry.error.error_type == "fetch_timeout"
     assert entry.health is not None
-    assert entry.health.status == SourceHealthStatus.COOLING_DOWN
+    assert entry.health.status == SourceHealthStatus.DOWN
     assert any(event.event_type == "source_cooldown_started" for event in result.events)
 
 

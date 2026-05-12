@@ -9,7 +9,7 @@ from sources.processing.freshness import build_source_freshness_report
 from sources.processing.governance import SourceGovernancePolicy, build_source_governance_report
 from sources.processing.health_report import build_source_health_report
 from sources.processing.language import detect_language
-from sources.processing.normalize import normalize_items
+from sources.processing.normalize import normalize_item, normalize_items
 from sources.processing.quality import score_source_item, score_source_items
 from sources.processing.quality_summary import build_source_quality_summary_report
 from sources.processing.rank import rank_items
@@ -27,6 +27,7 @@ __all__ = [
     "deduplicate_items",
     "deduplicate_with_result",
     "detect_language",
+    "normalize_item",
     "normalize_items",
     "rank_items",
     "build_source_quality_summary_report",

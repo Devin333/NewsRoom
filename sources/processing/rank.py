@@ -17,10 +17,20 @@ def rank_items(
     items: list[NormalizedSourceItem],
     *,
     topic: str,
+    subscription_topics: list[str] | None = None,
     now: datetime | None = None,
 ) -> list[RankedSourceItem]:
     current_time = now or datetime.now(UTC)
-    ranked = [_rank_item(item, topic=topic, now=current_time, index=index) for index, item in enumerate(items)]
+    ranked = [
+        _rank_item(
+            item,
+            topic=topic,
+            subscription_topics=subscription_topics or [topic],
+            now=current_time,
+            index=index,
+        )
+        for index, item in enumerate(items)
+    ]
     return sorted(ranked, key=lambda item: item.final_score, reverse=True)
 
 
@@ -28,6 +38,7 @@ def _rank_item(
     item: NormalizedSourceItem,
     *,
     topic: str,
+    subscription_topics: list[str],
     now: datetime,
     index: int,
 ) -> RankedSourceItem:
@@ -36,9 +47,19 @@ def _rank_item(
     recency = _recency(item, now)
     reliability = RELIABILITY_SCORE[item.source_reliability]
     authority = _authority(item)
+    duplicate_cluster = _duplicate_cluster_score(item)
+    historical_importance = _historical_importance(item)
+    subscription_match = _subscription_match(item, subscription_topics)
     novelty = max(0.5, 1.0 - index * 0.05)
     final_score = round(
-        relevance * 0.4 + recency * 0.2 + reliability * 0.2 + authority * 0.1 + novelty * 0.1,
+        relevance * 0.28
+        + recency * 0.14
+        + reliability * 0.14
+        + authority * 0.12
+        + novelty * 0.08
+        + duplicate_cluster * 0.08
+        + historical_importance * 0.08
+        + subscription_match * 0.08,
         4,
     )
     ranked_item_id = f"rank_{item.normalized_item_id.removeprefix('norm_')}"
@@ -52,6 +73,9 @@ def _rank_item(
             "reliability_score": round(reliability, 4),
             "authority_score": round(authority, 4),
             "novelty_score": round(novelty, 4),
+            "duplicate_cluster_score": round(duplicate_cluster, 4),
+            "historical_importance_score": round(historical_importance, 4),
+            "subscription_match_score": round(subscription_match, 4),
             "source_quality_score": quality_score.quality_score,
             "final_score": final_score,
         }
@@ -64,10 +88,18 @@ def _rank_item(
         reliability_score=round(reliability, 4),
         novelty_score=round(novelty, 4),
         final_score=final_score,
+        authority_score=round(authority, 4),
+        duplicate_cluster_score=round(duplicate_cluster, 4),
+        historical_importance_score=round(historical_importance, 4),
+        subscription_match_score=round(subscription_match, 4),
+        source_quality_score=quality_score.quality_score,
         rank_reason=(
             f"topic={topic}; relevance={relevance:.2f}; "
-            f"reliability={reliability:.2f}; authority={authority:.2f}"
+            f"reliability={reliability:.2f}; authority={authority:.2f}; "
+            f"cluster={duplicate_cluster:.2f}; historical={historical_importance:.2f}; "
+            f"subscription={subscription_match:.2f}"
         ),
+        lineage=lineage_from_item(item, ranked_item_id=ranked_item_id),
         metadata={"lineage": lineage, "source_quality": quality_score.to_dict()},
     )
 
@@ -97,3 +129,71 @@ def _authority(item: NormalizedSourceItem) -> float:
     except (TypeError, ValueError):
         authority = 0.5
     return min(1.0, max(0.0, authority))
+
+
+def _duplicate_cluster_score(item: NormalizedSourceItem) -> float:
+    cluster = item.metadata.get("duplicate_cluster")
+    if not isinstance(cluster, dict):
+        return 0.5
+    try:
+        cluster_size = int(cluster.get("cluster_size") or 1)
+    except (TypeError, ValueError):
+        cluster_size = 1
+    if cluster_size <= 1:
+        return 0.5
+    if bool(cluster.get("same_event_cluster")):
+        return min(1.0, 0.55 + min(cluster_size, 6) * 0.075)
+    return min(1.0, 0.5 + min(cluster_size, 5) * 0.08)
+
+
+def _historical_importance(item: NormalizedSourceItem) -> float:
+    for key in (
+        "historical_importance_score",
+        "historical_accuracy_score",
+        "source_historical_importance",
+    ):
+        if key in item.metadata:
+            try:
+                return min(1.0, max(0.0, float(item.metadata[key])))
+            except (TypeError, ValueError):
+                return 0.5
+    return 0.5
+
+
+def _subscription_match(item: NormalizedSourceItem, subscription_topics: list[str]) -> float:
+    terms = {
+        term
+        for topic in subscription_topics
+        for term in str(topic).casefold().replace("-", " ").replace("_", " ").split()
+        if term
+    }
+    if not terms:
+        return 0.5
+    haystack = f"{item.normalized_title} {item.normalized_summary or ''} {' '.join(_item_tags(item))}"
+    matches = sum(1 for term in terms if term in haystack)
+    return min(1.0, matches / len(terms)) if matches else 0.0
+
+
+def _item_tags(item: NormalizedSourceItem) -> list[str]:
+    tags = item.metadata.get("tags") or item.metadata.get("source_tags") or []
+    if not isinstance(tags, list):
+        return []
+    return [str(tag).casefold() for tag in tags]
+
+
+def lineage_from_item(item: NormalizedSourceItem, *, ranked_item_id: str):
+    from domain.sources import Lineage
+
+    lineage = item.lineage
+    return Lineage(
+        source_id=item.source_id,
+        source_item_id=item.source_item_id,
+        normalized_item_id=item.normalized_item_id,
+        ranked_item_id=ranked_item_id,
+        raw_url=item.url,
+        canonical_url=item.canonical_url,
+        fetched_at=item.fetched_at,
+        published_at=item.published_at,
+        raw_artifact_ref=(lineage.raw_artifact_ref if lineage else None),
+        parse_artifact_ref=(lineage.parse_artifact_ref if lineage else None),
+    )

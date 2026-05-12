@@ -32,6 +32,7 @@ from sources.connectors.github import (
     GithubConnector,
     GithubRepository,
     GithubRepositorySearchResult,
+    build_github_graphql_url,
 )
 from sources.connectors.hackernews import (
     HACKERNEWS_API_URL,
@@ -39,8 +40,9 @@ from sources.connectors.hackernews import (
     build_hackernews_item_url,
     build_hackernews_story_list_url,
 )
-from sources.connectors.html import HtmlConnector, HtmlExtractionResult, extract_html
+from sources.connectors.html import HtmlConnector, HtmlExtractionResult, extract_html, extract_html_with_fallbacks
 from sources.connectors.manual import ManualConnector
+from sources.connectors.protocol import SourceConnector, SourceFetchContext, SyncSourceConnectorAdapter
 from sources.connectors.reddit import REDDIT_BASE_URL, RedditConnector, build_reddit_listing_url
 
 __all__ = [
@@ -55,6 +57,7 @@ __all__ = [
     "GithubConnector",
     "GithubRepository",
     "GithubRepositorySearchResult",
+    "build_github_graphql_url",
     "HACKERNEWS_API_URL",
     "HackerNewsConnector",
     "HtmlConnector",
@@ -70,7 +73,10 @@ __all__ = [
     "RobotsDisallowedError",
     "STACKOVERFLOW_API_URL",
     "SourceFetchPolicy",
+    "SourceConnector",
+    "SourceFetchContext",
     "StackOverflowConnector",
+    "SyncSourceConnectorAdapter",
     "TooManyRedirectsError",
     "build_devto_articles_url",
     "build_hackernews_item_url",
@@ -82,6 +88,7 @@ __all__ = [
     "effective_fetch_policy",
     "ensure_robots_allowed",
     "extract_html",
+    "extract_html_with_fallbacks",
     "open_request_with_fetch_policy",
     "run_with_fetch_retries",
 ]

@@ -48,6 +48,7 @@ from sources.connectors import (
 )
 from sources.connectors.diagnostics import response_metadata_from_observations
 from sources.health import BasicSourceHealthManager
+from sources.errors import classify_source_exception
 from sources.processing import (
     build_source_connector_dispatch_report,
     build_source_coverage_report,
@@ -60,7 +61,7 @@ from sources.processing import (
     build_source_ranking_scores,
     build_source_traceability_report,
     deduplicate_with_result,
-    normalize_items,
+    normalize_item,
     rank_items,
 )
 
@@ -501,7 +502,7 @@ class DailyIntelligenceRunner:
                                 consecutive_failures=source_health.consecutive_failures,
                             )
                         )
-                        if source_health.status == SourceHealthStatus.COOLING_DOWN:
+                        if source_health.status == SourceHealthStatus.DOWN:
                             source_events.append(
                                 _source_event(
                                     "source_cooldown_started",
@@ -768,22 +769,24 @@ def build_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
             StepSpec(
                 step_id="normalize_sources",
                 implementation="daily.normalize_sources",
-                read_keys=["raw_items", "source_events", "source_pipeline_metrics"],
-                write_keys=["normalized_items", "source_events", "source_pipeline_metrics"],
-                required_output_keys=["normalized_items", "source_events", "source_pipeline_metrics"],
+                read_keys=["raw_items", "source_errors", "source_events", "source_pipeline_metrics"],
+                write_keys=["normalized_items", "source_errors", "source_events", "source_pipeline_metrics"],
+                required_output_keys=["normalized_items", "source_errors", "source_events", "source_pipeline_metrics"],
             ),
             StepSpec(
                 step_id="deduplicate_sources",
                 implementation="daily.deduplicate_sources",
-                read_keys=["normalized_items", "source_events", "source_pipeline_metrics"],
+                read_keys=["normalized_items", "source_errors", "source_events", "source_pipeline_metrics"],
                 write_keys=[
                     "deduplicated_items",
+                    "source_errors",
                     "source_duplicate_groups",
                     "source_events",
                     "source_pipeline_metrics",
                 ],
                 required_output_keys=[
                     "deduplicated_items",
+                    "source_errors",
                     "source_duplicate_groups",
                     "source_events",
                     "source_pipeline_metrics",
@@ -804,6 +807,7 @@ def build_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
                 ],
                 write_keys=[
                     "ranked_items",
+                    "source_errors",
                     "source_events",
                     "source_pipeline_metrics",
                     "source_coverage_report",
@@ -816,6 +820,7 @@ def build_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
                 ],
                 required_output_keys=[
                     "ranked_items",
+                    "source_errors",
                     "source_events",
                     "source_pipeline_metrics",
                     "source_coverage_report",
@@ -941,25 +946,63 @@ def _require_sources(buffer: ScopedDataBuffer) -> dict[str, Any]:
 
 def _normalize_sources(buffer: ScopedDataBuffer) -> dict[str, Any]:
     raw_items = buffer.read("raw_items")
-    normalized_items = normalize_items(raw_items)
+    source_errors = list(buffer.read("source_errors"))
+    normalized_items = []
+    normalization_errors: list[SourceError] = []
+    for raw_item in raw_items:
+        try:
+            normalized_items.append(normalize_item(raw_item))
+        except Exception as exc:
+            error = _processing_source_error(raw_item, exc, phase="normalize")
+            normalization_errors.append(error)
+            source_errors.append(error)
     source_events = list(buffer.read("source_events"))
     source_events.append(
         _source_event("source_normalized", input_count=len(raw_items), output_count=len(normalized_items))
     )
+    for error in normalization_errors:
+        source_events.append(
+            _source_event(
+                "source_normalization_failed",
+                error.source_id,
+                error_type=error.error_type,
+                retryable=False,
+            )
+        )
     metrics = buffer.read("source_pipeline_metrics")
     metrics.normalized_items_count = len(normalized_items)
-    return {"normalized_items": normalized_items, "source_events": source_events, "source_pipeline_metrics": metrics}
+    for error in normalization_errors:
+        metrics.record_error(error)
+    return {
+        "normalized_items": normalized_items,
+        "source_errors": source_errors,
+        "source_events": source_events,
+        "source_pipeline_metrics": metrics,
+    }
 
 
 def _deduplicate_sources(buffer: ScopedDataBuffer) -> dict[str, Any]:
     normalized_items = buffer.read("normalized_items")
-    dedup_result = deduplicate_with_result(normalized_items)
-    deduplicated_items = dedup_result.kept_items
-    source_duplicate_groups = [group.to_dict() for group in dedup_result.duplicate_groups]
+    source_errors = list(buffer.read("source_errors"))
+    try:
+        dedup_result = deduplicate_with_result(normalized_items)
+        deduplicated_items = dedup_result.kept_items
+        source_duplicate_groups = [group.to_dict() for group in dedup_result.duplicate_groups]
+        duplicate_count = len(dedup_result.dropped_items)
+        dedup_errors: list[SourceError] = []
+    except Exception as exc:
+        error = _pipeline_processing_error(exc, phase="dedup")
+        dedup_errors = [error]
+        source_errors.append(error)
+        deduplicated_items = []
+        source_duplicate_groups = []
+        duplicate_count = 0
     source_events = list(buffer.read("source_events"))
     metrics = buffer.read("source_pipeline_metrics")
     metrics.deduplicated_items_count = len(deduplicated_items)
-    metrics.duplicate_count = len(dedup_result.dropped_items)
+    metrics.duplicate_count = duplicate_count
+    for error in dedup_errors:
+        metrics.record_error(error)
     source_events.append(
         _source_event(
             "source_deduplicated",
@@ -969,8 +1012,11 @@ def _deduplicate_sources(buffer: ScopedDataBuffer) -> dict[str, Any]:
             duplicate_group_count=len(source_duplicate_groups),
         )
     )
+    for error in dedup_errors:
+        source_events.append(_source_event("source_dedup_failed", error_type=error.error_type, retryable=False))
     return {
         "deduplicated_items": deduplicated_items,
+        "source_errors": source_errors,
         "source_duplicate_groups": source_duplicate_groups,
         "source_events": source_events,
         "source_pipeline_metrics": metrics,
@@ -980,7 +1026,15 @@ def _deduplicate_sources(buffer: ScopedDataBuffer) -> dict[str, Any]:
 def _rank_sources(buffer: ScopedDataBuffer) -> dict[str, Any]:
     request = buffer.read("request")
     deduplicated_items = buffer.read("deduplicated_items")
-    ranked_items = rank_items(deduplicated_items, topic=request["topic"])
+    source_errors = list(buffer.read("source_errors"))
+    try:
+        ranked_items = rank_items(deduplicated_items, topic=request["topic"])
+        ranking_errors: list[SourceError] = []
+    except Exception as exc:
+        error = _pipeline_processing_error(exc, phase="rank")
+        source_errors.append(error)
+        ranking_errors = [error]
+        ranked_items = []
     source_events = list(buffer.read("source_events"))
     source_events.append(
         _source_event(
@@ -990,8 +1044,12 @@ def _rank_sources(buffer: ScopedDataBuffer) -> dict[str, Any]:
             topic=request["topic"],
         )
     )
+    for error in ranking_errors:
+        source_events.append(_source_event("source_ranking_failed", error_type=error.error_type, retryable=False))
     metrics = buffer.read("source_pipeline_metrics")
     metrics.ranked_items_count = len(ranked_items)
+    for error in ranking_errors:
+        metrics.record_error(error)
     source_quality_scores = [
         ranked.metadata["source_quality"]
         for ranked in ranked_items
@@ -1003,11 +1061,12 @@ def _rank_sources(buffer: ScopedDataBuffer) -> dict[str, Any]:
     source_quality_summary_report = build_source_quality_summary_report(source_quality_scores)
     return {
         "ranked_items": ranked_items,
+        "source_errors": source_errors,
         "source_events": source_events,
         "source_pipeline_metrics": metrics,
         "source_coverage_report": build_source_coverage_report(
             metrics,
-            source_errors=buffer.read("source_errors"),
+            source_errors=source_errors,
             skipped_sources=buffer.read("skipped_sources"),
             failed_sources=buffer.read("failed_sources"),
         ),
@@ -1404,6 +1463,45 @@ def _error_metadata_bool(error: SourceError, key: str, *, default: bool) -> bool
 def _error_phase(error: SourceError) -> str | None:
     value = error.metadata.get("phase")
     return str(value) if value is not None else None
+
+
+def _processing_source_error(raw_item: Any, exc: Exception, *, phase: str) -> SourceError:
+    classification = classify_source_exception(exc, phase=phase)
+    source_id = str(getattr(raw_item, "source_id", "source_pipeline") or "source_pipeline")
+    return SourceError(
+        source_id=source_id,
+        source_name=getattr(raw_item, "source_name", None),
+        error_type=classification.error_type,
+        error_message=str(exc),
+        url=getattr(raw_item, "url", None),
+        retryable=classification.retryable,
+        metadata={
+            "phase": phase,
+            "source_item_id": getattr(raw_item, "source_item_id", None),
+            "retryable": classification.retryable,
+            "source_health_affecting": classification.source_health_affecting,
+            "workflow_blocking": classification.workflow_blocking,
+            "original_exception_type": type(exc).__name__,
+        },
+    )
+
+
+def _pipeline_processing_error(exc: Exception, *, phase: str) -> SourceError:
+    classification = classify_source_exception(exc, phase=phase)
+    return SourceError(
+        source_id="source_pipeline",
+        source_name="Source Pipeline",
+        error_type=classification.error_type,
+        error_message=str(exc),
+        retryable=classification.retryable,
+        metadata={
+            "phase": phase,
+            "retryable": classification.retryable,
+            "source_health_affecting": classification.source_health_affecting,
+            "workflow_blocking": classification.workflow_blocking,
+            "original_exception_type": type(exc).__name__,
+        },
+    )
 
 
 def _quality_event(event_type: str, **metadata: Any) -> QualityEvent:

@@ -40,6 +40,7 @@ def test_extract_html_returns_metadata_and_visible_text() -> None:
     assert "production workflow" in (result.text or "")
     assert "Ignore navigation" not in (result.text or "")
     assert result.confidence >= 0.9
+    assert result.attempted_extractors == ("stdlib_html_extractor",)
 
 
 def test_html_connector_parses_html_into_raw_source_item() -> None:
@@ -57,6 +58,7 @@ def test_html_connector_parses_html_into_raw_source_item() -> None:
     assert item.language == "en"
     assert "canonical URLs" in (item.raw_content or "")
     assert item.metadata["extractor_name"] == "stdlib_html_extractor"
+    assert item.metadata["attempted_extractors"] == ["stdlib_html_extractor"]
     assert item.metadata["extraction_confidence"] >= 0.9
     assert item.metadata["source_reliability"] == "high"
 

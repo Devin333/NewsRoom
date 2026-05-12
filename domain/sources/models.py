@@ -32,12 +32,60 @@ class SourceReliability(str, Enum):
 class SourceHealthStatus(str, Enum):
     HEALTHY = "healthy"
     DEGRADED = "degraded"
+    DOWN = "down"
     COOLING_DOWN = "cooling_down"
     DISABLED = "disabled"
 
 
 def utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+@dataclass(frozen=True)
+class Lineage:
+    source_id: str
+    source_item_id: str | None = None
+    normalized_item_id: str | None = None
+    ranked_item_id: str | None = None
+    raw_url: str | None = None
+    canonical_url: str | None = None
+    fetched_at: datetime | None = None
+    published_at: datetime | None = None
+    raw_artifact_ref: Any | None = None
+    parse_artifact_ref: Any | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = {
+            "source_id": self.source_id,
+            "source_item_id": self.source_item_id,
+            "normalized_item_id": self.normalized_item_id,
+            "ranked_item_id": self.ranked_item_id,
+            "raw_url": self.raw_url,
+            "canonical_url": self.canonical_url,
+            "fetched_at": _dt(self.fetched_at),
+            "published_at": _dt(self.published_at),
+            "raw_artifact_ref": _artifact_ref(self.raw_artifact_ref),
+            "parse_artifact_ref": _artifact_ref(self.parse_artifact_ref),
+            "metadata": dict(self.metadata),
+        }
+        return {key: value for key, value in payload.items() if value not in (None, {}, [])}
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> Lineage:
+        return cls(
+            source_id=str(payload["source_id"]),
+            source_item_id=_optional_str(payload.get("source_item_id")),
+            normalized_item_id=_optional_str(payload.get("normalized_item_id")),
+            ranked_item_id=_optional_str(payload.get("ranked_item_id")),
+            raw_url=_optional_str(payload.get("raw_url")),
+            canonical_url=_optional_str(payload.get("canonical_url")),
+            fetched_at=_parse_datetime_optional(payload.get("fetched_at")),
+            published_at=_parse_datetime_optional(payload.get("published_at")),
+            raw_artifact_ref=payload.get("raw_artifact_ref"),
+            parse_artifact_ref=payload.get("parse_artifact_ref"),
+            metadata=dict(payload.get("metadata") or {}),
+        )
 
 
 @dataclass(frozen=True)
@@ -169,10 +217,25 @@ class RawSourceItem:
     authors: list[str] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
     language: str | None = None
+    lineage: Lineage | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "source_type", SourceType(self.source_type))
+        if self.lineage is None:
+            object.__setattr__(
+                self,
+                "lineage",
+                Lineage(
+                    source_id=self.source_id,
+                    source_item_id=self.source_item_id,
+                    raw_url=self.url,
+                    fetched_at=self.fetched_at,
+                    published_at=self.published_at,
+                    raw_artifact_ref=self.raw_artifact_ref,
+                    parse_artifact_ref=self.parse_artifact_ref,
+                ),
+            )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -191,6 +254,7 @@ class RawSourceItem:
             "authors": list(self.authors),
             "tags": list(self.tags),
             "language": self.language,
+            "lineage": self.lineage.to_dict() if self.lineage else None,
             "metadata": dict(self.metadata),
         }
 
@@ -213,10 +277,29 @@ class NormalizedSourceItem:
     summary: str | None = None
     normalized_summary: str | None = None
     language: str | None = None
+    lineage: Lineage | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "source_reliability", SourceReliability(self.source_reliability))
+        if self.lineage is None:
+            metadata_lineage = self.metadata.get("lineage") if isinstance(self.metadata.get("lineage"), dict) else None
+            if metadata_lineage is not None:
+                object.__setattr__(self, "lineage", Lineage.from_dict(metadata_lineage))
+            else:
+                object.__setattr__(
+                    self,
+                    "lineage",
+                    Lineage(
+                        source_id=self.source_id,
+                        source_item_id=self.source_item_id,
+                        normalized_item_id=self.normalized_item_id,
+                        raw_url=self.url,
+                        canonical_url=self.canonical_url,
+                        fetched_at=self.fetched_at,
+                        published_at=self.published_at,
+                    ),
+                )
 
 
 @dataclass(frozen=True)
@@ -228,8 +311,38 @@ class RankedSourceItem:
     reliability_score: float
     novelty_score: float
     final_score: float
+    authority_score: float = 0.0
+    duplicate_cluster_score: float = 0.0
+    historical_importance_score: float = 0.0
+    subscription_match_score: float = 0.0
+    source_quality_score: float | None = None
     rank_reason: str = ""
+    lineage: Lineage | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.lineage is None:
+            metadata_lineage = self.metadata.get("lineage") if isinstance(self.metadata.get("lineage"), dict) else None
+            if metadata_lineage is not None:
+                object.__setattr__(self, "lineage", Lineage.from_dict(metadata_lineage))
+            else:
+                item_lineage = self.item.lineage
+                object.__setattr__(
+                    self,
+                    "lineage",
+                    Lineage(
+                        source_id=self.item.source_id,
+                        source_item_id=self.item.source_item_id,
+                        normalized_item_id=self.item.normalized_item_id,
+                        ranked_item_id=self.ranked_item_id,
+                        raw_url=self.item.url,
+                        canonical_url=self.item.canonical_url,
+                        fetched_at=self.item.fetched_at,
+                        published_at=self.item.published_at,
+                        raw_artifact_ref=(item_lineage.raw_artifact_ref if item_lineage else None),
+                        parse_artifact_ref=(item_lineage.parse_artifact_ref if item_lineage else None),
+                    ),
+                )
 
 
 @dataclass(frozen=True)
@@ -339,7 +452,10 @@ class SourceHealth:
     last_error: SourceError | None = None
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "status", SourceHealthStatus(self.status))
+        status = SourceHealthStatus(self.status)
+        if status == SourceHealthStatus.COOLING_DOWN:
+            status = SourceHealthStatus.DOWN
+        object.__setattr__(self, "status", status)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -641,6 +757,10 @@ class SourceRankingScore:
     authority_score: float
     novelty_score: float
     final_score: float
+    duplicate_cluster_score: float = 0.0
+    historical_importance_score: float = 0.0
+    subscription_match_score: float = 0.0
+    source_quality_score: float | None = None
     rank_reason: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -656,6 +776,10 @@ class SourceRankingScore:
             "reliability_score": self.reliability_score,
             "authority_score": self.authority_score,
             "novelty_score": self.novelty_score,
+            "duplicate_cluster_score": self.duplicate_cluster_score,
+            "historical_importance_score": self.historical_importance_score,
+            "subscription_match_score": self.subscription_match_score,
+            "source_quality_score": self.source_quality_score,
             "final_score": self.final_score,
             "rank_reason": self.rank_reason,
         }
@@ -733,6 +857,7 @@ class SourceErrorPolicyReport:
 class SourceHealthReport:
     health_update_count: int
     status_counts: dict[str, int] = field(default_factory=dict)
+    down_source_ids: list[str] = field(default_factory=list)
     cooling_down_source_ids: list[str] = field(default_factory=list)
     degraded_source_ids: list[str] = field(default_factory=list)
     disabled_source_ids: list[str] = field(default_factory=list)
@@ -743,6 +868,7 @@ class SourceHealthReport:
         return {
             "health_update_count": self.health_update_count,
             "status_counts": dict(self.status_counts),
+            "down_source_ids": list(self.down_source_ids),
             "cooling_down_source_ids": list(self.cooling_down_source_ids),
             "degraded_source_ids": list(self.degraded_source_ids),
             "disabled_source_ids": list(self.disabled_source_ids),
@@ -847,3 +973,21 @@ def _metric_key(value: Any) -> str:
 
 def _increment(metrics: dict[str, int], key: str, amount: int = 1) -> None:
     metrics[key] = metrics.get(key, 0) + amount
+
+
+def _optional_str(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _parse_datetime_optional(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.astimezone(UTC) if value.tzinfo else value.replace(tzinfo=UTC)
+    text = str(value).strip()
+    if not text:
+        return None
+    return datetime.fromisoformat(text.replace("Z", "+00:00")).astimezone(UTC)

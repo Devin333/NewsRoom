@@ -5,6 +5,7 @@ import pytest
 from domain.sources import (
     DedupResult,
     DuplicateGroup,
+    Lineage,
     SourceDefinition,
     SourceError,
     SourceFetchRequest,
@@ -83,6 +84,28 @@ def test_raw_source_item_serializes_artifact_refs() -> None:
     assert payload["source_type"] == "rss"
     assert payload["raw_artifact_ref"] == {"artifact_id": "raw-artifact"}
     assert payload["parse_artifact_ref"] == {"artifact_id": "parse-artifact"}
+    assert payload["lineage"]["source_item_id"] == "raw-1"
+    assert payload["lineage"]["raw_url"] == "https://example.com/item"
+
+
+def test_lineage_round_trips_target_state_payload() -> None:
+    lineage = Lineage(
+        source_id="source-1",
+        source_item_id="raw-1",
+        normalized_item_id="norm-1",
+        ranked_item_id="rank-1",
+        raw_url="https://example.com/raw",
+        canonical_url="https://example.com/raw",
+        fetched_at=datetime(2026, 5, 11, tzinfo=UTC),
+        raw_artifact_ref={"artifact_id": "raw"},
+    )
+
+    payload = lineage.to_dict()
+    restored = Lineage.from_dict(payload)
+
+    assert payload["fetched_at"] == "2026-05-11T00:00:00Z"
+    assert restored.source_id == "source-1"
+    assert restored.raw_artifact_ref == {"artifact_id": "raw"}
 
 
 def test_source_error_exposes_top_level_policy_fields_from_legacy_metadata() -> None:

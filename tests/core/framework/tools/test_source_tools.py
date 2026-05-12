@@ -382,7 +382,7 @@ def test_source_probe_tool_records_fetch_failure_as_health_failure() -> None:
     assert observation.result.output["ok"] is False
     assert observation.result.output["error"]["error_type"] == "RuntimeError"
     assert observation.result.output["error"]["source_name"] == "Example RSS"
-    assert observation.result.output["health"]["status"] == "cooling_down"
+    assert observation.result.output["health"]["status"] == "down"
     assert observation.result.output["health"]["source_name"] == "Example RSS"
     assert observation.result.output["health"]["url"] == "https://example.com/feed.xml"
     assert health_manager.get("rss-example").consecutive_failures == 1
