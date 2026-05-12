@@ -10,6 +10,12 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request
 
 from domain.sources import RawSourceItem, SourceDefinition, SourceError
+from sources.connectors.diagnostics import (
+    SourceFetchResponseMetadata,
+    attach_response_metadata_to_error,
+    attach_response_metadata_to_items,
+    response_metadata_from_http_response,
+)
 from sources.connectors.fetch_policy import (
     DomainRateLimiter,
     RobotsDisallowedError,
@@ -53,6 +59,7 @@ class HackerNewsConnector:
         self._rate_limiter = rate_limiter or DomainRateLimiter()
         self._uses_default_fetch = fetch_text is None
         self._fetch_text = fetch_text or self._default_fetch_text
+        self._last_response_metadata: SourceFetchResponseMetadata | None = None
 
     def fetch(
         self,
@@ -62,6 +69,7 @@ class HackerNewsConnector:
         limit: int | None = None,
     ) -> tuple[list[RawSourceItem], list[SourceError]]:
         policy = effective_fetch_policy(self.fetch_policy, source)
+        self._last_response_metadata = None
         try:
             actual_story_list = _story_list_from_source(source, story_list=story_list)
             story_url = build_hackernews_story_list_url(source.url or HACKERNEWS_API_URL, actual_story_list)
@@ -76,30 +84,39 @@ class HackerNewsConnector:
                 policy,
             )
         except Exception as exc:
-            return [], [_exception_source_error(source, exc, phase="fetch")]
+            error = _exception_source_error(source, exc, phase="fetch")
+            return [], [attach_response_metadata_to_error(error, self._last_response_metadata)]
+        story_response_metadata = self._last_response_metadata
 
         if not story_payload.strip():
             return [], [
-                _source_error(
-                    source,
-                    "empty_source_response",
-                    "Hacker News API returned an empty story list response",
-                    metadata={"phase": "fetch", "retryable": True, "source_health_affecting": True},
+                attach_response_metadata_to_error(
+                    _source_error(
+                        source,
+                        "empty_source_response",
+                        "Hacker News API returned an empty story list response",
+                        metadata={"phase": "fetch", "retryable": True, "source_health_affecting": True},
+                    ),
+                    story_response_metadata,
                 )
             ]
 
         try:
             story_ids = parse_hackernews_story_ids(story_payload, limit=_candidate_limit(limit))
         except Exception as exc:
-            return [], [_exception_source_error(source, exc, phase="parse")]
+            error = _exception_source_error(source, exc, phase="parse")
+            return [], [attach_response_metadata_to_error(error, story_response_metadata)]
 
         if not story_ids:
             return [], [
-                _source_error(
-                    source,
-                    "empty_hackernews_story_ids",
-                    "Hacker News story list contained no story ids",
-                    metadata={"phase": "parse", "retryable": False, "source_health_affecting": False},
+                attach_response_metadata_to_error(
+                    _source_error(
+                        source,
+                        "empty_hackernews_story_ids",
+                        "Hacker News story list contained no story ids",
+                        metadata={"phase": "parse", "retryable": False, "source_health_affecting": False},
+                    ),
+                    story_response_metadata,
                 )
             ]
 
@@ -114,7 +131,9 @@ class HackerNewsConnector:
                     policy,
                 )
             except Exception as exc:
-                return [], [_exception_source_error(source, exc, phase="fetch")]
+                error = _exception_source_error(source, exc, phase="fetch")
+                return [], [attach_response_metadata_to_error(error, self._last_response_metadata)]
+            item_response_metadata = self._last_response_metadata
             try:
                 item = self.parse_item(
                     source,
@@ -123,17 +142,21 @@ class HackerNewsConnector:
                     story_list=actual_story_list,
                 )
             except Exception as exc:
-                return [], [_exception_source_error(source, exc, phase="parse")]
+                error = _exception_source_error(source, exc, phase="parse")
+                return [], [attach_response_metadata_to_error(error, item_response_metadata)]
             if item is not None:
-                items.append(item)
+                items.extend(attach_response_metadata_to_items([item], item_response_metadata))
 
         if not items:
             return [], [
-                _source_error(
-                    source,
-                    "empty_hackernews_items",
-                    "Hacker News story ids produced no valid items",
-                    metadata={"phase": "parse", "retryable": False, "source_health_affecting": False},
+                attach_response_metadata_to_error(
+                    _source_error(
+                        source,
+                        "empty_hackernews_items",
+                        "Hacker News story ids produced no valid items",
+                        metadata={"phase": "parse", "retryable": False, "source_health_affecting": False},
+                    ),
+                    story_response_metadata,
                 )
             ]
         return items, []
@@ -193,9 +216,8 @@ class HackerNewsConnector:
     def _default_fetch_text(self, url: str) -> str:
         request = Request(url, headers={"User-Agent": self.fetch_policy.user_agent})
         with open_request_with_fetch_policy(request, self.fetch_policy) as response:
-            headers = getattr(response, "headers", None)
-            content_type = headers.get_content_type() if headers is not None else None
-            ensure_supported_content_type(content_type, HACKERNEWS_CONTENT_TYPES)
+            self._last_response_metadata = response_metadata_from_http_response(response, url=url)
+            ensure_supported_content_type(self._last_response_metadata.content_type, HACKERNEWS_CONTENT_TYPES)
             body = response.read(self.fetch_policy.max_bytes + 1)
         if len(body) > self.fetch_policy.max_bytes:
             raise ValueError(f"source response exceeds max_bytes: {self.fetch_policy.max_bytes}")

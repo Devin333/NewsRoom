@@ -415,6 +415,80 @@ def test_daily_intelligence_runner_loads_source_config_path(tmp_path) -> None:
     assert result.output["raw_items"][0].source_id == "configured-feed"
 
 
+def test_daily_intelligence_runner_persists_response_headers_from_default_fetch(tmp_path, monkeypatch) -> None:
+    class Headers:
+        def get_content_type(self):
+            return "application/rss+xml"
+
+        def items(self):
+            return [
+                ("Content-Type", "application/rss+xml"),
+                ("Cache-Control", "max-age=60"),
+            ]
+
+    class Response:
+        status = 200
+        headers = Headers()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def geturl(self):
+            return "https://example.com/ai.xml"
+
+        def read(self, size):
+            return RSS_FIXTURE.encode("utf-8")
+
+    def fake_open_request(request, policy):
+        return Response()
+
+    monkeypatch.setattr("sources.connectors.feed.open_request_with_fetch_policy", fake_open_request)
+    registry = SourceRegistry(
+        [
+            SourceDefinition(
+                source_id="ai",
+                name="AI",
+                source_type="rss",
+                url="https://example.com/ai.xml",
+                reliability="high",
+                respect_robots=False,
+                topics=["ai", "policy"],
+            )
+        ]
+    )
+
+    result = DailyIntelligenceRunner(
+        artifact_root=tmp_path,
+        source_registry=registry,
+        llm_client=_FakeReportLLM(),
+    ).run(profile="live", topic="AI policy", source_limit=1, run_id="daily-response-headers")
+
+    assert result.status == WorkflowStatus.SUCCEEDED
+    fetch_result = result.output["source_fetch_results"][0]
+    assert fetch_result.status_code == 200
+    assert fetch_result.content_type == "application/rss+xml"
+    assert fetch_result.metadata["response_headers"]["Content-Type"] == "application/rss+xml"
+
+    run_dir = Path(result.artifact_dir)
+    manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["source_artifacts"]["response_headers_count"] == 1
+    source_artifacts = json.loads((run_dir / "source_artifacts" / "index.json").read_text())
+    response_headers_entry = next(
+        entry for entry in source_artifacts["entries"] if entry["artifact_type"] == "source_response_headers"
+    )
+    response_headers_payload = json.loads((run_dir / response_headers_entry["path"]).read_text())
+    assert response_headers_payload["headers"]["Content-Type"] == "application/rss+xml"
+    assert response_headers_payload["headers"]["Cache-Control"] == "max-age=60"
+    fetch_result_artifact = next(
+        entry for entry in source_artifacts["entries"] if entry["artifact_type"] == "source_fetch_result"
+    )
+    fetch_result_payload = json.loads((run_dir / fetch_result_artifact["path"]).read_text())
+    assert fetch_result_payload["response_headers_ref"] == response_headers_entry["artifact_ref"]
+
+
 def test_daily_intelligence_runner_live_collects_html_source(tmp_path) -> None:
     registry = SourceRegistry(
         [

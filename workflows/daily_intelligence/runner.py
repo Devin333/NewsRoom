@@ -41,6 +41,7 @@ from sources.connectors import (
     ManualConnector,
     RedditConnector,
 )
+from sources.connectors.diagnostics import response_metadata_from_observations
 from sources.health import BasicSourceHealthManager
 from sources.processing import deduplicate_with_result, normalize_items, rank_items
 
@@ -1028,22 +1029,38 @@ def _source_fetch_result(
     skip_reason: str | None = None,
 ) -> SourceFetchResult:
     first_error = errors[0] if errors else None
+    response_metadata = response_metadata_from_observations(items=items, errors=errors)
+    metadata: dict[str, Any] = {
+        "source_type": source.source_type.value,
+        "url": source.url,
+        "item_count": len(items),
+        "error_count": len(errors),
+    }
+    if response_metadata is not None:
+        metadata["response_url"] = response_metadata.get("url")
+        metadata["response_headers"] = response_metadata.get("headers", {})
+        metadata["fetch_response"] = response_metadata
     return SourceFetchResult(
         request_id=request_id,
         source_id=source.source_id,
         success=success,
+        status_code=(
+            response_metadata.get("status_code")
+            if response_metadata is not None
+            else None
+        ),
+        content_type=(
+            response_metadata.get("content_type")
+            if response_metadata is not None
+            else None
+        ),
         content_bytes=_raw_content_bytes(items),
         latency_ms=round(max(0.0, latency_ms)),
         error_type=first_error.error_type if first_error else None,
         error_message=first_error.error_message if first_error else None,
         skipped=skipped,
         skip_reason=skip_reason,
-        metadata={
-            "source_type": source.source_type.value,
-            "url": source.url,
-            "item_count": len(items),
-            "error_count": len(errors),
-        },
+        metadata=metadata,
     )
 
 

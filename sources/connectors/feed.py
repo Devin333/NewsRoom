@@ -11,6 +11,12 @@ from urllib.request import Request
 from xml.etree import ElementTree
 
 from domain.sources import RawSourceItem, SourceDefinition, SourceError, SourceType
+from sources.connectors.diagnostics import (
+    SourceFetchResponseMetadata,
+    attach_response_metadata_to_error,
+    attach_response_metadata_to_items,
+    response_metadata_from_http_response,
+)
 from sources.connectors.fetch_policy import (
     DomainRateLimiter,
     RobotsDisallowedError,
@@ -52,9 +58,11 @@ class FeedConnector:
         self._rate_limiter = rate_limiter or DomainRateLimiter()
         self._uses_default_fetch = fetch_text is None
         self._fetch_text = fetch_text or self._default_fetch_text
+        self._last_response_metadata: SourceFetchResponseMetadata | None = None
 
     def fetch(self, source: SourceDefinition, *, limit: int | None = None) -> tuple[list[RawSourceItem], list[SourceError]]:
         policy = effective_fetch_policy(self.fetch_policy, source)
+        self._last_response_metadata = None
         rate_limit = self._rate_limiter.reserve(
             source.url,
             limit_per_minute=self.fetch_policy.rate_limit_per_domain_per_minute,
@@ -68,38 +76,48 @@ class FeedConnector:
                 policy,
             )
         except Exception as exc:
-            return [], [_exception_source_error(source, exc, phase="fetch")]
+            error = _exception_source_error(source, exc, phase="fetch")
+            return [], [attach_response_metadata_to_error(error, self._last_response_metadata)]
+        response_metadata = self._last_response_metadata
 
         if not xml_text.strip():
             return [], [
-                _source_error(
-                    source,
-                    "empty_source_response",
-                    "source returned an empty response",
-                    metadata={
-                        "phase": "fetch",
-                        "retryable": True,
-                        "source_health_affecting": True,
-                    },
+                attach_response_metadata_to_error(
+                    _source_error(
+                        source,
+                        "empty_source_response",
+                        "source returned an empty response",
+                        metadata={
+                            "phase": "fetch",
+                            "retryable": True,
+                            "source_health_affecting": True,
+                        },
+                    ),
+                    response_metadata,
                 )
             ]
 
         try:
             items = self.parse(source, xml_text, limit=limit)
         except Exception as exc:
-            return [], [_exception_source_error(source, exc, phase="parse")]
+            error = _exception_source_error(source, exc, phase="parse")
+            return [], [attach_response_metadata_to_error(error, response_metadata)]
+        items = attach_response_metadata_to_items(items, response_metadata)
 
         if not items:
             return [], [
-                _source_error(
-                    source,
-                    "empty_feed",
-                    "feed contained no valid items",
-                    metadata={
-                        "phase": "parse",
-                        "retryable": False,
-                        "source_health_affecting": False,
-                    },
+                attach_response_metadata_to_error(
+                    _source_error(
+                        source,
+                        "empty_feed",
+                        "feed contained no valid items",
+                        metadata={
+                            "phase": "parse",
+                            "retryable": False,
+                            "source_health_affecting": False,
+                        },
+                    ),
+                    response_metadata,
                 )
             ]
         return items, []
@@ -205,9 +223,8 @@ class FeedConnector:
     def _default_fetch_text(self, url: str) -> str:
         request = Request(url, headers={"User-Agent": self.fetch_policy.user_agent})
         with open_request_with_fetch_policy(request, self.fetch_policy) as response:
-            headers = getattr(response, "headers", None)
-            content_type = headers.get_content_type() if headers is not None else None
-            ensure_supported_content_type(content_type, FEED_CONTENT_TYPES)
+            self._last_response_metadata = response_metadata_from_http_response(response, url=url)
+            ensure_supported_content_type(self._last_response_metadata.content_type, FEED_CONTENT_TYPES)
             body = response.read(self.fetch_policy.max_bytes + 1)
         if len(body) > self.fetch_policy.max_bytes:
             raise ValueError(f"source response exceeds max_bytes: {self.fetch_policy.max_bytes}")

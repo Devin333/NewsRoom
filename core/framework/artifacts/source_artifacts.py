@@ -143,7 +143,17 @@ class SourceArtifactWriter:
         for fetch_result in source_fetch_results or []:
             source_id = _string_value(fetch_result, "source_id", default="unknown-source")
             object_id = _string_value(fetch_result, "request_id", default=_stable_id(fetch_result))
+            response_headers_entry, response_headers_ref = self._write_response_headers_artifact(
+                run_id,
+                fetch_result=fetch_result,
+                source_id=source_id,
+                object_id=object_id,
+            )
             path = f"sources/fetch_results/{_path_segment(source_id)}/{_path_segment(object_id)}.json"
+            fetch_result_payload = _redact(_to_json_safe(fetch_result))
+            response_headers_ref_payload = _ref_payload(response_headers_ref)
+            if isinstance(fetch_result_payload, dict) and response_headers_ref_payload is not None:
+                fetch_result_payload["response_headers_ref"] = response_headers_ref_payload
             artifact_path = self._artifact_manager.write_json(
                 run_id,
                 path,
@@ -151,7 +161,8 @@ class SourceArtifactWriter:
                     "artifact_type": "source_fetch_result",
                     "source_id": source_id,
                     "request_id": object_id,
-                    "fetch_result": _redact(_to_json_safe(fetch_result)),
+                    "fetch_result": fetch_result_payload,
+                    "response_headers_ref": response_headers_ref_payload,
                 },
             )
             artifact_ref = _artifact_ref(
@@ -177,6 +188,8 @@ class SourceArtifactWriter:
                     artifact_path=artifact_path,
                 )
             )
+            if response_headers_entry is not None:
+                entries.append(response_headers_entry)
 
         for index, source_error in enumerate(source_errors or [], start=1):
             source_id = _string_value(source_error, "source_id", default="unknown-source")
@@ -260,6 +273,9 @@ class SourceArtifactWriter:
             "fetch_result_count": sum(
                 1 for entry in entries if entry["artifact_type"] == "source_fetch_result"
             ),
+            "response_headers_count": sum(
+                1 for entry in entries if entry["artifact_type"] == "source_response_headers"
+            ),
         }
         self._artifact_manager.write_json(run_id, "source_artifacts/index.json", source_artifacts)
         return source_artifacts
@@ -297,6 +313,49 @@ class SourceArtifactWriter:
             artifact_path=artifact_path,
         )
         entry.update(_raw_content_fingerprint(raw_item))
+        return entry, artifact_ref
+
+    def _write_response_headers_artifact(
+        self,
+        run_id: str,
+        *,
+        fetch_result: Any,
+        source_id: str,
+        object_id: str,
+    ) -> tuple[dict[str, Any] | None, ArtifactRef | None]:
+        response_headers = _response_headers(fetch_result)
+        if not response_headers:
+            return None, None
+        path = f"sources/response_headers/{_path_segment(source_id)}/{_path_segment(object_id)}.json"
+        artifact_path = self._artifact_manager.write_json(
+            run_id,
+            path,
+            {
+                "artifact_type": "source_response_headers",
+                "source_id": source_id,
+                "request_id": object_id,
+                "status_code": _optional_int_value(fetch_result, "status_code"),
+                "content_type": _optional_value(fetch_result, "content_type"),
+                "response_url": _redact(_metadata_value(fetch_result, "response_url")),
+                "headers": _redact(response_headers),
+            },
+        )
+        artifact_ref = _artifact_ref(
+            run_id=run_id,
+            artifact_type="source_response_headers",
+            source_id=source_id,
+            object_id=object_id,
+            path=path,
+            artifact_path=artifact_path,
+        )
+        entry = _entry_from_ref(
+            artifact_ref=artifact_ref,
+            source_id=source_id,
+            object_id=object_id,
+            artifact_path=artifact_path,
+        )
+        entry["status_code"] = _optional_int_value(fetch_result, "status_code")
+        entry["content_type"] = _optional_value(fetch_result, "content_type")
         return entry, artifact_ref
 
 
@@ -421,6 +480,29 @@ def _metadata_value(value: Any, name: str) -> Any:
     if not isinstance(metadata, dict):
         return None
     return metadata.get(name)
+
+
+def _response_headers(fetch_result: Any) -> dict[str, Any]:
+    value = _metadata_value(fetch_result, "response_headers")
+    if isinstance(value, dict):
+        return value
+    fetch_response = _metadata_value(fetch_result, "fetch_response")
+    if isinstance(fetch_response, dict) and isinstance(fetch_response.get("headers"), dict):
+        return dict(fetch_response["headers"])
+    return {}
+
+
+def _optional_value(value: Any, name: str) -> Any:
+    if isinstance(value, dict):
+        return value.get(name)
+    return getattr(value, name, None)
+
+
+def _optional_int_value(value: Any, name: str) -> int | None:
+    candidate = _optional_value(value, name)
+    if candidate is None:
+        return None
+    return int(candidate)
 
 
 def _optional_string(value: Any) -> str | None:

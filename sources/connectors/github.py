@@ -10,6 +10,12 @@ from urllib.parse import urlencode
 from urllib.request import Request
 
 from domain.sources import RawSourceItem, SourceDefinition, SourceError
+from sources.connectors.diagnostics import (
+    SourceFetchResponseMetadata,
+    attach_response_metadata_to_error,
+    attach_response_metadata_to_items,
+    response_metadata_from_http_response,
+)
 from sources.connectors.fetch_policy import (
     DomainRateLimiter,
     RobotsDisallowedError,
@@ -105,6 +111,7 @@ class GithubConnector:
         self._rate_limiter = rate_limiter or DomainRateLimiter()
         self._uses_default_fetch = fetch_text is None
         self._fetch_text = fetch_text or self._default_fetch_text
+        self._last_response_metadata: SourceFetchResponseMetadata | None = None
 
     def fetch_releases(
         self,
@@ -114,6 +121,7 @@ class GithubConnector:
         limit: int | None = None,
     ) -> tuple[list[RawSourceItem], list[SourceError]]:
         policy = effective_fetch_policy(self.fetch_policy, source)
+        self._last_response_metadata = None
         try:
             repo = _repository_from_source(source, repository=repository)
             api_url = build_github_releases_url(source.url or GITHUB_API_URL, repo, limit=limit or 10)
@@ -128,30 +136,40 @@ class GithubConnector:
                 policy,
             )
         except Exception as exc:
-            return [], [_exception_source_error(source, exc, phase="fetch")]
+            error = _exception_source_error(source, exc, phase="fetch")
+            return [], [attach_response_metadata_to_error(error, self._last_response_metadata)]
+        response_metadata = self._last_response_metadata
 
         if not payload.strip():
             return [], [
-                _source_error(
-                    source,
-                    "empty_source_response",
-                    "GitHub API returned an empty response",
-                    metadata={"phase": "fetch", "retryable": True, "source_health_affecting": True},
+                attach_response_metadata_to_error(
+                    _source_error(
+                        source,
+                        "empty_source_response",
+                        "GitHub API returned an empty response",
+                        metadata={"phase": "fetch", "retryable": True, "source_health_affecting": True},
+                    ),
+                    response_metadata,
                 )
             ]
 
         try:
             items = self.parse_releases(source, payload, repository=repo, limit=limit)
         except Exception as exc:
-            return [], [_exception_source_error(source, exc, phase="parse")]
+            error = _exception_source_error(source, exc, phase="parse")
+            return [], [attach_response_metadata_to_error(error, response_metadata)]
+        items = attach_response_metadata_to_items(items, response_metadata)
 
         if not items:
             return [], [
-                _source_error(
-                    source,
-                    "empty_github_releases",
-                    "GitHub repository returned no releases",
-                    metadata={"phase": "parse", "retryable": False, "source_health_affecting": False},
+                attach_response_metadata_to_error(
+                    _source_error(
+                        source,
+                        "empty_github_releases",
+                        "GitHub repository returned no releases",
+                        metadata={"phase": "parse", "retryable": False, "source_health_affecting": False},
+                    ),
+                    response_metadata,
                 )
             ]
         return items, []
@@ -166,6 +184,7 @@ class GithubConnector:
         order: str | None = None,
     ) -> tuple[list[GithubRepositorySearchResult], list[SourceError]]:
         policy = effective_fetch_policy(self.fetch_policy, source)
+        self._last_response_metadata = None
         try:
             query_text = query.strip()
             if not query_text:
@@ -188,7 +207,8 @@ class GithubConnector:
                 policy,
             )
         except Exception as exc:
-            return [], [_exception_source_error(source, exc, phase="fetch")]
+            error = _exception_source_error(source, exc, phase="fetch")
+            return [], [attach_response_metadata_to_error(error, self._last_response_metadata)]
 
         if not payload.strip():
             return [], [
@@ -267,9 +287,8 @@ class GithubConnector:
             },
         )
         with open_request_with_fetch_policy(request, self.fetch_policy) as response:
-            headers = getattr(response, "headers", None)
-            content_type = headers.get_content_type() if headers is not None else None
-            ensure_supported_content_type(content_type, GITHUB_CONTENT_TYPES)
+            self._last_response_metadata = response_metadata_from_http_response(response, url=url)
+            ensure_supported_content_type(self._last_response_metadata.content_type, GITHUB_CONTENT_TYPES)
             body = response.read(self.fetch_policy.max_bytes + 1)
         if len(body) > self.fetch_policy.max_bytes:
             raise ValueError(f"source response exceeds max_bytes: {self.fetch_policy.max_bytes}")

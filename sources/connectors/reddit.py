@@ -9,6 +9,12 @@ from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import Request
 
 from domain.sources import RawSourceItem, SourceDefinition, SourceError
+from sources.connectors.diagnostics import (
+    SourceFetchResponseMetadata,
+    attach_response_metadata_to_error,
+    attach_response_metadata_to_items,
+    response_metadata_from_http_response,
+)
 from sources.connectors.fetch_policy import (
     DomainRateLimiter,
     RobotsDisallowedError,
@@ -45,6 +51,7 @@ class RedditConnector:
         self._rate_limiter = rate_limiter or DomainRateLimiter()
         self._uses_default_fetch = fetch_text is None
         self._fetch_text = fetch_text or self._default_fetch_text
+        self._last_response_metadata: SourceFetchResponseMetadata | None = None
 
     def fetch(
         self,
@@ -55,6 +62,7 @@ class RedditConnector:
         limit: int | None = None,
     ) -> tuple[list[RawSourceItem], list[SourceError]]:
         policy = effective_fetch_policy(self.fetch_policy, source)
+        self._last_response_metadata = None
         try:
             actual_subreddit = _subreddit_from_source(source, subreddit=subreddit)
             actual_listing = _listing_from_source(source, listing=listing)
@@ -77,15 +85,20 @@ class RedditConnector:
                 policy,
             )
         except Exception as exc:
-            return [], [_exception_source_error(source, exc, phase="fetch")]
+            error = _exception_source_error(source, exc, phase="fetch")
+            return [], [attach_response_metadata_to_error(error, self._last_response_metadata)]
+        response_metadata = self._last_response_metadata
 
         if not payload.strip():
             return [], [
-                _source_error(
-                    source,
-                    "empty_source_response",
-                    "Reddit API returned an empty listing response",
-                    metadata={"phase": "fetch", "retryable": True, "source_health_affecting": True},
+                attach_response_metadata_to_error(
+                    _source_error(
+                        source,
+                        "empty_source_response",
+                        "Reddit API returned an empty listing response",
+                        metadata={"phase": "fetch", "retryable": True, "source_health_affecting": True},
+                    ),
+                    response_metadata,
                 )
             ]
 
@@ -98,15 +111,20 @@ class RedditConnector:
                 limit=limit,
             )
         except Exception as exc:
-            return [], [_exception_source_error(source, exc, phase="parse")]
+            error = _exception_source_error(source, exc, phase="parse")
+            return [], [attach_response_metadata_to_error(error, response_metadata)]
+        items = attach_response_metadata_to_items(items, response_metadata)
 
         if not items:
             return [], [
-                _source_error(
-                    source,
-                    "empty_reddit_posts",
-                    "Reddit listing contained no valid posts",
-                    metadata={"phase": "parse", "retryable": False, "source_health_affecting": False},
+                attach_response_metadata_to_error(
+                    _source_error(
+                        source,
+                        "empty_reddit_posts",
+                        "Reddit listing contained no valid posts",
+                        metadata={"phase": "parse", "retryable": False, "source_health_affecting": False},
+                    ),
+                    response_metadata,
                 )
             ]
         return items, []
@@ -153,9 +171,8 @@ class RedditConnector:
             },
         )
         with open_request_with_fetch_policy(request, self.fetch_policy) as response:
-            headers = getattr(response, "headers", None)
-            content_type = headers.get_content_type() if headers is not None else None
-            ensure_supported_content_type(content_type, REDDIT_CONTENT_TYPES)
+            self._last_response_metadata = response_metadata_from_http_response(response, url=url)
+            ensure_supported_content_type(self._last_response_metadata.content_type, REDDIT_CONTENT_TYPES)
             body = response.read(self.fetch_policy.max_bytes + 1)
         if len(body) > self.fetch_policy.max_bytes:
             raise ValueError(f"source response exceeds max_bytes: {self.fetch_policy.max_bytes}")

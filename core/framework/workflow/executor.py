@@ -505,6 +505,10 @@ class WorkflowExecutor:
                 "fetch_result_count": source_artifacts["fetch_result_count"],
                 "total_count": len(source_artifacts["entries"]),
             }
+            if source_artifacts.get("response_headers_count"):
+                manifest["source_artifacts"]["response_headers_count"] = source_artifacts[
+                    "response_headers_count"
+                ]
 
     def _write_checkpoint(
         self,

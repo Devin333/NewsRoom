@@ -37,9 +37,18 @@ def test_source_artifact_writer_writes_items_errors_and_redacts(tmp_path) -> Non
                 request_id="fetch 1",
                 source_id="feed/source",
                 success=False,
+                status_code=200,
+                content_type="application/rss+xml",
                 error_type="fetch_timeout",
                 error_message="timeout",
-                metadata={"headers": {"Authorization": "Bearer hidden-token"}},
+                metadata={
+                    "headers": {"Authorization": "Bearer hidden-token"},
+                    "response_headers": {
+                        "Content-Type": "application/rss+xml",
+                        "Set-Cookie": "session=hidden-cookie",
+                    },
+                    "response_url": "https://example.com/feed?token=value",
+                },
             )
         ],
         source_errors=[
@@ -60,6 +69,7 @@ def test_source_artifact_writer_writes_items_errors_and_redacts(tmp_path) -> Non
     assert index["raw_content_count"] == 1
     assert index["fetch_request_count"] == 1
     assert index["fetch_result_count"] == 1
+    assert index["response_headers_count"] == 1
 
     run_dir = tmp_path / "source-run"
     persisted_index = json.loads((run_dir / "source_artifacts" / "index.json").read_text())
@@ -104,7 +114,24 @@ def test_source_artifact_writer_writes_items_errors_and_redacts(tmp_path) -> Non
     assert fetch_result_entry["artifact_id"] == "source-fetch-result-feed_source-fetch_1"
     assert fetch_result_payload["fetch_result"]["request_id"] == "fetch 1"
     assert fetch_result_payload["fetch_result"]["metadata"]["headers"]["Authorization"] == "[REDACTED]"
+    assert fetch_result_payload["fetch_result"]["response_headers_ref"]["artifact_type"] == (
+        "source_response_headers"
+    )
     assert "hidden-token" not in json.dumps(fetch_result_payload)
+
+    response_headers_entry = next(
+        entry for entry in index["entries"] if entry["artifact_type"] == "source_response_headers"
+    )
+    response_headers_payload = json.loads((run_dir / response_headers_entry["path"]).read_text())
+    assert response_headers_entry["artifact_id"] == "source-response-headers-feed_source-fetch_1"
+    assert response_headers_entry["status_code"] == 200
+    assert response_headers_entry["content_type"] == "application/rss+xml"
+    assert response_headers_payload["headers"]["Content-Type"] == "application/rss+xml"
+    assert response_headers_payload["headers"]["Set-Cookie"] == "[REDACTED]"
+    assert response_headers_payload["response_url"] == "https://example.com/feed?token=%5BREDACTED%5D"
+    assert fetch_result_payload["response_headers_ref"] == response_headers_entry["artifact_ref"]
+    assert fetch_result_payload["fetch_result"]["response_headers_ref"] == response_headers_entry["artifact_ref"]
+    assert "hidden-cookie" not in json.dumps(response_headers_payload)
 
     fetch_request_entry = next(
         entry for entry in index["entries"] if entry["artifact_type"] == "source_fetch_request"

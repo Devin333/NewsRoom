@@ -298,6 +298,57 @@ def test_feed_connector_default_fetch_applies_policy(monkeypatch) -> None:
     }
 
 
+def test_feed_connector_default_fetch_attaches_response_metadata(monkeypatch) -> None:
+    class Headers:
+        def get_content_type(self):
+            return "application/rss+xml"
+
+        def items(self):
+            return [
+                ("Content-Type", "application/rss+xml"),
+                ("Cache-Control", "max-age=60"),
+            ]
+
+    class Response:
+        status = 200
+        headers = Headers()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def geturl(self):
+            return "https://example.com/rss.xml"
+
+        def read(self, size):
+            return RSS_FIXTURE.encode("utf-8")
+
+    def fake_open_request(request, policy):
+        return Response()
+
+    monkeypatch.setattr("sources.connectors.feed.open_request_with_fetch_policy", fake_open_request)
+    source = SourceDefinition(
+        source_id="rss-source",
+        name="RSS Source",
+        source_type="rss",
+        url="https://example.com/rss.xml",
+        respect_robots=False,
+    )
+
+    items, errors = FeedConnector().fetch(source, limit=1)
+
+    assert errors == []
+    assert len(items) == 1
+    response = items[0].metadata["fetch_response"]
+    assert response["status_code"] == 200
+    assert response["content_type"] == "application/rss+xml"
+    assert response["url"] == "https://example.com/rss.xml"
+    assert response["headers"]["Content-Type"] == "application/rss+xml"
+    assert response["headers"]["Cache-Control"] == "max-age=60"
+
+
 def test_feed_connector_default_fetch_rejects_unsupported_content_type(monkeypatch) -> None:
     class Headers:
         def get_content_type(self):
