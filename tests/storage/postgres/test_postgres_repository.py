@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from domain.sources import SourceError, SourceHealth
+from domain.sources import SourceError, SourceHealth, SourceHealthStatus
 from storage.postgres import PostgresRepository
 from storage.repository import ReportRecord, WorkflowRunRecord
 
@@ -125,14 +125,99 @@ def test_postgres_repository_updates_source_health() -> None:
 
     sql, params = connection.calls[0]
     assert "INSERT INTO source_health" in sql
+    assert "source_name" in sql
+    assert "url" in sql
     assert "ON CONFLICT (source_id)" in sql
     assert params[0] == "rss-example"
-    assert params[1] == "degraded"
-    assert params[2] == 1
-    assert '"error_type": "fetch_timeout"' in params[6]
-    assert params[7] == 2
-    assert params[8] == 1
-    assert params[9] == 123.5
+    assert params[1] is None
+    assert params[2] is None
+    assert params[3] == "degraded"
+    assert params[4] == 1
+    assert '"error_type": "fetch_timeout"' in params[8]
+    assert params[9] == 2
+    assert params[10] == 1
+    assert params[11] == 123.5
+
+
+def test_postgres_repository_reads_source_health_by_id() -> None:
+    connection = FakeConnection(
+        rows=[
+            (
+                "rss-example",
+                "Example RSS",
+                "https://example.com/feed.xml",
+                "cooling_down",
+                3,
+                datetime(2026, 5, 11, 1, 0, tzinfo=UTC),
+                datetime(2026, 5, 11, 2, 0, tzinfo=UTC),
+                datetime(2026, 5, 11, 2, 5, tzinfo=UTC),
+                {
+                    "source_id": "rss-example",
+                    "source_name": "Example RSS",
+                    "error_type": "fetch_timeout",
+                    "error_message": "timed out",
+                    "url": "https://example.com/feed.xml",
+                    "retryable": True,
+                    "occurred_at": "2026-05-11T02:00:00Z",
+                    "metadata": {"phase": "fetch"},
+                },
+                4,
+                2,
+                250.5,
+            )
+        ]
+    )
+    repository = PostgresRepository("postgresql://example", connection_factory=lambda: connection)
+
+    health = repository.get_source_health("rss-example")
+
+    sql, params = connection.calls[0]
+    assert "FROM source_health" in sql
+    assert "WHERE source_id = %s" in sql
+    assert params == ("rss-example",)
+    assert health is not None
+    assert health.source_id == "rss-example"
+    assert health.source_name == "Example RSS"
+    assert health.url == "https://example.com/feed.xml"
+    assert health.status == SourceHealthStatus.COOLING_DOWN
+    assert health.consecutive_failures == 3
+    assert health.success_count_24h == 4
+    assert health.failure_count_24h == 2
+    assert health.avg_latency_ms_24h == 250.5
+    assert health.last_error is not None
+    assert health.last_error.error_type == "fetch_timeout"
+    assert health.last_error.metadata == {"phase": "fetch"}
+
+
+def test_postgres_repository_lists_source_health_with_status_filter() -> None:
+    connection = FakeConnection(
+        rows=[
+            (
+                "rss-example",
+                "Example RSS",
+                "https://example.com/feed.xml",
+                "degraded",
+                1,
+                None,
+                None,
+                None,
+                None,
+                0,
+                1,
+                None,
+            )
+        ]
+    )
+    repository = PostgresRepository("postgresql://example", connection_factory=lambda: connection)
+
+    records = repository.list_source_health(status="degraded")
+
+    sql, params = connection.calls[0]
+    assert "WHERE status = %s" in sql
+    assert "ORDER BY source_id" in sql
+    assert params == ("degraded",)
+    assert records[0].source_id == "rss-example"
+    assert records[0].status == SourceHealthStatus.DEGRADED
 
 
 def test_postgres_repository_reads_latest_report() -> None:

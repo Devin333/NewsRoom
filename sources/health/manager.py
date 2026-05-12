@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
+from typing import Protocol
 
 from domain.sources import SourceError, SourceHealth, SourceHealthStatus
 
@@ -21,6 +22,13 @@ class _HealthWindowStats:
     success_count_24h: int = 0
     failure_count_24h: int = 0
     avg_latency_ms_24h: float | None = None
+    latency_count_24h: int = 0
+
+
+class SourceHealthStore(Protocol):
+    def get_source_health(self, source_id: str) -> SourceHealth | None: ...
+
+    def update_source_health(self, health: SourceHealth) -> None: ...
 
 
 class BasicSourceHealthManager:
@@ -30,10 +38,12 @@ class BasicSourceHealthManager:
         failure_threshold: int = 2,
         cooldown_seconds: int = 300,
         now: Callable[[], datetime] | None = None,
+        health_store: SourceHealthStore | None = None,
     ) -> None:
         self.failure_threshold = failure_threshold
         self.cooldown_seconds = cooldown_seconds
         self._now = now or (lambda: datetime.now(UTC))
+        self._health_store = health_store
         self._health: dict[str, SourceHealth] = {}
         self._events: dict[str, list[_HealthEvent]] = {}
 
@@ -44,10 +54,18 @@ class BasicSourceHealthManager:
         source_name: str | None = None,
         url: str | None = None,
     ) -> SourceHealth:
-        health = self._health.get(source_id, SourceHealth(source_id=source_id))
-        health = _with_window_stats(health, self._window_stats(source_id, now=self._now()))
+        health = self._health.get(source_id)
+        if health is None and self._health_store is not None:
+            health = self._health_store.get_source_health(source_id)
+        health = health or SourceHealth(source_id=source_id)
+        stats = self._window_stats(source_id, now=self._now())
+        if stats is not None:
+            health = _with_window_stats(health, stats)
         health = _with_source_context(health, source_name=source_name, url=url)
         if source_name is not None or url is not None:
+            self._health[source_id] = health
+            self._persist_health(health)
+        else:
             self._health[source_id] = health
         return health
 
@@ -82,7 +100,10 @@ class BasicSourceHealthManager:
     ) -> SourceHealth:
         previous = self.get(source_id)
         now = self._now()
+        had_events = bool(self._events.get(source_id))
         stats = self._record_event(source_id, succeeded=True, latency_ms=latency_ms, now=now)
+        if not had_events:
+            stats = _merge_persisted_stats(previous, stats, now=now)
         health = SourceHealth(
             source_id=source_id,
             source_name=source_name or previous.source_name,
@@ -96,6 +117,7 @@ class BasicSourceHealthManager:
             last_failure_at=previous.last_failure_at,
         )
         self._health[source_id] = health
+        self._persist_health(health)
         return health
 
     def record_disabled(
@@ -127,6 +149,7 @@ class BasicSourceHealthManager:
             last_error=error,
         )
         self._health[source_id] = health
+        self._persist_health(health)
         return health
 
     def record_failure(
@@ -141,7 +164,10 @@ class BasicSourceHealthManager:
         previous = self.get(source_id)
         failures = previous.consecutive_failures + 1
         now = self._now()
+        had_events = bool(self._events.get(source_id))
         stats = self._record_event(source_id, succeeded=False, latency_ms=latency_ms, now=now)
+        if not had_events:
+            stats = _merge_persisted_stats(previous, stats, now=now)
         if failures >= self.failure_threshold:
             status = SourceHealthStatus.COOLING_DOWN
             cooldown_until = now + timedelta(seconds=self.cooldown_seconds)
@@ -163,6 +189,7 @@ class BasicSourceHealthManager:
             last_error=error,
         )
         self._health[source_id] = health
+        self._persist_health(health)
         return health
 
     def _record_event(
@@ -183,10 +210,10 @@ class BasicSourceHealthManager:
         )
         return self._window_stats(source_id, now=now)
 
-    def _window_stats(self, source_id: str, *, now: datetime) -> _HealthWindowStats:
+    def _window_stats(self, source_id: str, *, now: datetime) -> _HealthWindowStats | None:
         events = self._events.get(source_id)
         if not events:
-            return _HealthWindowStats()
+            return None
         cutoff = _as_utc(now) - HEALTH_WINDOW
         retained = [event for event in events if _as_utc(event.occurred_at) >= cutoff]
         self._events[source_id] = retained
@@ -197,7 +224,12 @@ class BasicSourceHealthManager:
             avg_latency_ms_24h=(
                 round(sum(latencies) / len(latencies), 3) if latencies else None
             ),
+            latency_count_24h=len(latencies),
         )
+
+    def _persist_health(self, health: SourceHealth) -> None:
+        if self._health_store is not None:
+            self._health_store.update_source_health(health)
 
 
 def _with_source_context(
@@ -221,6 +253,43 @@ def _with_window_stats(health: SourceHealth, stats: _HealthWindowStats) -> Sourc
         success_count_24h=stats.success_count_24h,
         failure_count_24h=stats.failure_count_24h,
         avg_latency_ms_24h=stats.avg_latency_ms_24h,
+    )
+
+
+def _merge_persisted_stats(
+    previous: SourceHealth,
+    current: _HealthWindowStats,
+    *,
+    now: datetime,
+) -> _HealthWindowStats:
+    cutoff = _as_utc(now) - HEALTH_WINDOW
+    previous_success_count = (
+        previous.success_count_24h
+        if previous.last_success_at is not None and _as_utc(previous.last_success_at) >= cutoff
+        else 0
+    )
+    previous_failure_count = (
+        previous.failure_count_24h
+        if previous.last_failure_at is not None and _as_utc(previous.last_failure_at) >= cutoff
+        else 0
+    )
+    previous_latency_count = (
+        previous_success_count + previous_failure_count
+        if previous.avg_latency_ms_24h is not None
+        else 0
+    )
+    total_latency_count = previous_latency_count + current.latency_count_24h
+    if total_latency_count:
+        current_total = (current.avg_latency_ms_24h or 0.0) * current.latency_count_24h
+        previous_total = (previous.avg_latency_ms_24h or 0.0) * previous_latency_count
+        avg_latency = round((previous_total + current_total) / total_latency_count, 3)
+    else:
+        avg_latency = None
+    return _HealthWindowStats(
+        success_count_24h=previous_success_count + current.success_count_24h,
+        failure_count_24h=previous_failure_count + current.failure_count_24h,
+        avg_latency_ms_24h=avg_latency,
+        latency_count_24h=total_latency_count,
     )
 
 

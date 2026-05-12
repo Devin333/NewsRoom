@@ -1,7 +1,20 @@
 from datetime import UTC, datetime, timedelta
 
-from domain.sources import SourceError, SourceHealthStatus
+from domain.sources import SourceError, SourceHealth, SourceHealthStatus
 from sources.health import BasicSourceHealthManager
+
+
+class FakeHealthStore:
+    def __init__(self, records: dict[str, SourceHealth] | None = None) -> None:
+        self.records = dict(records or {})
+        self.saved: list[SourceHealth] = []
+
+    def get_source_health(self, source_id: str) -> SourceHealth | None:
+        return self.records.get(source_id)
+
+    def update_source_health(self, health: SourceHealth) -> None:
+        self.records[health.source_id] = health
+        self.saved.append(health)
 
 
 def test_health_manager_records_success() -> None:
@@ -140,3 +153,68 @@ def test_health_manager_records_disabled_source_as_skipped() -> None:
     assert health.last_error.error_type == "source_disabled"
     assert health.last_error.error_message == "manual disable"
     assert manager.should_skip("source") is True
+
+
+def test_health_manager_hydrates_from_store_before_skip_decision() -> None:
+    now = datetime(2026, 5, 11, tzinfo=UTC)
+    store = FakeHealthStore(
+        {
+            "source": SourceHealth(
+                source_id="source",
+                status=SourceHealthStatus.COOLING_DOWN,
+                consecutive_failures=2,
+                cooldown_until=now + timedelta(minutes=5),
+                source_name="Stored Source",
+                url="https://example.com/rss",
+            )
+        }
+    )
+    manager = BasicSourceHealthManager(now=lambda: now, health_store=store)
+
+    health = manager.get("source")
+
+    assert health.status == SourceHealthStatus.COOLING_DOWN
+    assert health.source_name == "Stored Source"
+    assert manager.should_skip("source") is True
+
+
+def test_health_manager_persists_mutated_health_to_store() -> None:
+    now = datetime(2026, 5, 11, tzinfo=UTC)
+    store = FakeHealthStore()
+    manager = BasicSourceHealthManager(now=lambda: now, health_store=store)
+
+    health = manager.record_success(
+        "source",
+        latency_ms=25,
+        source_name="Source Name",
+        url="https://example.com/rss",
+    )
+
+    assert store.saved == [health]
+    assert store.records["source"].status == SourceHealthStatus.HEALTHY
+    assert store.records["source"].source_name == "Source Name"
+
+
+def test_health_manager_merges_persisted_window_counts_on_first_event() -> None:
+    now = datetime(2026, 5, 11, tzinfo=UTC)
+    store = FakeHealthStore(
+        {
+            "source": SourceHealth(
+                source_id="source",
+                status=SourceHealthStatus.DEGRADED,
+                consecutive_failures=1,
+                success_count_24h=2,
+                failure_count_24h=1,
+                avg_latency_ms_24h=30,
+                last_success_at=now - timedelta(hours=1),
+                last_failure_at=now - timedelta(minutes=30),
+            )
+        }
+    )
+    manager = BasicSourceHealthManager(now=lambda: now, health_store=store)
+
+    health = manager.record_success("source", latency_ms=60)
+
+    assert health.success_count_24h == 3
+    assert health.failure_count_24h == 1
+    assert health.avg_latency_ms_24h == 37.5

@@ -7,7 +7,7 @@ from typing import Any, Callable
 
 import psycopg
 
-from domain.sources import SourceHealth
+from domain.sources import SourceError, SourceHealth
 from storage.local_json import ReportNotFoundError
 from storage.postgres.migrations import load_migration_sql
 from storage.repository import ReportRecord, WorkflowRunRecord
@@ -153,12 +153,14 @@ class PostgresRepository:
     def update_source_health(self, health: SourceHealth) -> None:
         sql = """
         INSERT INTO source_health (
-            source_id, status, consecutive_failures, last_success_at,
-            last_failure_at, cooldown_until, last_error, success_count_24h,
-            failure_count_24h, avg_latency_ms_24h
+            source_id, source_name, url, status, consecutive_failures,
+            last_success_at, last_failure_at, cooldown_until, last_error,
+            success_count_24h, failure_count_24h, avg_latency_ms_24h
         )
-        VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s)
         ON CONFLICT (source_id) DO UPDATE SET
+            source_name = EXCLUDED.source_name,
+            url = EXCLUDED.url,
             status = EXCLUDED.status,
             consecutive_failures = EXCLUDED.consecutive_failures,
             last_success_at = EXCLUDED.last_success_at,
@@ -172,6 +174,8 @@ class PostgresRepository:
         """
         params = (
             health.source_id,
+            health.source_name,
+            health.url,
             health.status.value,
             health.consecutive_failures,
             health.last_success_at,
@@ -183,6 +187,35 @@ class PostgresRepository:
             health.avg_latency_ms_24h,
         )
         self._execute(sql, params)
+
+    def get_source_health(self, source_id: str) -> SourceHealth | None:
+        sql = """
+        SELECT
+            source_id, source_name, url, status, consecutive_failures,
+            last_success_at, last_failure_at, cooldown_until, last_error,
+            success_count_24h, failure_count_24h, avg_latency_ms_24h
+        FROM source_health
+        WHERE source_id = %s
+        """
+        row = self._fetch_one(sql, (source_id,))
+        return _source_health_from_row(row) if row is not None else None
+
+    def list_source_health(self, *, status: str | None = None) -> list[SourceHealth]:
+        where = ""
+        params: tuple[Any, ...] = ()
+        if status is not None:
+            where = "WHERE status = %s"
+            params = (status,)
+        sql = f"""
+        SELECT
+            source_id, source_name, url, status, consecutive_failures,
+            last_success_at, last_failure_at, cooldown_until, last_error,
+            success_count_24h, failure_count_24h, avg_latency_ms_24h
+        FROM source_health
+        {where}
+        ORDER BY source_id
+        """
+        return [_source_health_from_row(row) for row in self._fetch_all(sql, params)]
 
     def latest_report(self) -> PostgresReportDetailRecord:
         sql = """
@@ -330,6 +363,44 @@ def _list_record_from_row(row: tuple[Any, ...]) -> PostgresReportSearchRecord:
     )
 
 
+def _source_health_from_row(row: tuple[Any, ...]) -> SourceHealth:
+    return SourceHealth(
+        source_id=str(row[0]),
+        source_name=row[1],
+        url=row[2],
+        status=str(row[3]),
+        consecutive_failures=int(row[4] or 0),
+        last_success_at=_datetime_or_none(row[5]),
+        last_failure_at=_datetime_or_none(row[6]),
+        cooldown_until=_datetime_or_none(row[7]),
+        last_error=_source_error_from_payload(row[8]),
+        success_count_24h=int(row[9] or 0),
+        failure_count_24h=int(row[10] or 0),
+        avg_latency_ms_24h=(float(row[11]) if row[11] is not None else None),
+    )
+
+
+def _source_error_from_payload(value: Any) -> SourceError | None:
+    payload = _dict_or_none(value)
+    if not payload:
+        return None
+    occurred_at = _datetime_or_none(payload.get("occurred_at"))
+    kwargs: dict[str, Any] = {
+        "source_id": str(payload.get("source_id") or ""),
+        "source_name": payload.get("source_name"),
+        "error_type": str(payload.get("error_type") or "unknown"),
+        "error_message": str(payload.get("error_message") or ""),
+        "url": payload.get("url"),
+        "retryable": payload.get("retryable"),
+        "request_ref": payload.get("request_ref"),
+        "response_ref": payload.get("response_ref"),
+        "metadata": _dict_or_empty(payload.get("metadata")),
+    }
+    if occurred_at is not None:
+        kwargs["occurred_at"] = occurred_at
+    return SourceError(**kwargs)
+
+
 def _dict_or_none(value: Any) -> dict[str, Any] | None:
     if value is None:
         return None
@@ -339,6 +410,22 @@ def _dict_or_none(value: Any) -> dict[str, Any] | None:
         payload = json.loads(value)
         return payload if isinstance(payload, dict) else None
     return dict(value)
+
+
+def _dict_or_empty(value: Any) -> dict[str, Any]:
+    parsed = _dict_or_none(value)
+    return parsed if parsed is not None else {}
+
+
+def _datetime_or_none(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.astimezone(UTC) if value.tzinfo else value.replace(tzinfo=UTC)
+    text = str(value).strip()
+    if not text:
+        return None
+    return datetime.fromisoformat(text.replace("Z", "+00:00")).astimezone(UTC)
 
 
 def _timestamp(value: Any) -> str:

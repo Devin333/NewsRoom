@@ -142,6 +142,8 @@ CREATE TABLE IF NOT EXISTS report_sections (
 
 CREATE TABLE IF NOT EXISTS source_health (
     source_id TEXT PRIMARY KEY,
+    source_name TEXT,
+    url TEXT,
     status TEXT NOT NULL,
     consecutive_failures INTEGER NOT NULL DEFAULT 0,
     last_success_at TIMESTAMPTZ,
@@ -153,6 +155,12 @@ CREATE TABLE IF NOT EXISTS source_health (
     avg_latency_ms_24h DOUBLE PRECISION,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+ALTER TABLE source_health
+    ADD COLUMN IF NOT EXISTS source_name TEXT;
+
+ALTER TABLE source_health
+    ADD COLUMN IF NOT EXISTS url TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_source_health_status
     ON source_health(status);
