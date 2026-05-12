@@ -14,5 +14,10 @@ def test_postgres_migration_sql_contains_required_tables() -> None:
         "evidence_items",
         "claims",
         "report_sections",
+        "source_health",
     ]:
         assert f"CREATE TABLE IF NOT EXISTS {table}" in sql
+
+    assert "success_count_24h INTEGER" in sql
+    assert "failure_count_24h INTEGER" in sql
+    assert "avg_latency_ms_24h DOUBLE PRECISION" in sql

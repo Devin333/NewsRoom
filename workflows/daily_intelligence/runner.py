@@ -158,6 +158,7 @@ class DailyIntelligenceRunner:
             )
             source_health = self.source_health_manager.record_success(
                 fixture_source.source_id,
+                latency_ms=fetch_latency_ms,
                 source_name=fixture_source.name,
                 url=fixture_source.url,
             )
@@ -301,6 +302,7 @@ class DailyIntelligenceRunner:
                 )
                 source_health = self.source_health_manager.record_success(
                     source.source_id,
+                    latency_ms=fetch_latency_ms,
                     source_name=source.name,
                     url=source.url,
                 )
@@ -360,6 +362,7 @@ class DailyIntelligenceRunner:
                         source_health = self.source_health_manager.record_failure(
                             source.source_id,
                             error,
+                            latency_ms=fetch_latency_ms,
                             source_name=source.name,
                             url=source.url,
                         )

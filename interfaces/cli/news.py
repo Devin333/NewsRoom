@@ -2160,7 +2160,10 @@ def _sources_health(args: argparse.Namespace) -> int:
         for item in payload["health"]:
             print(
                 f"- {item['source_id']} status={item['status']} "
-                f"failures={item['consecutive_failures']}"
+                f"failures={item['consecutive_failures']} "
+                f"success_24h={item.get('success_count_24h', 0)} "
+                f"failure_24h={item.get('failure_count_24h', 0)} "
+                f"avg_latency_ms_24h={item.get('avg_latency_ms_24h')}"
             )
     return 0
 

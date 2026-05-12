@@ -54,9 +54,12 @@ def register_postgres_tools(
                         "source_id": {"type": "string"},
                         "status": {
                             "type": "string",
-                            "enum": ["healthy", "degraded", "cooling_down"],
+                            "enum": ["healthy", "degraded", "cooling_down", "disabled"],
                         },
                         "consecutive_failures": {"type": "integer"},
+                        "success_count_24h": {"type": "integer"},
+                        "failure_count_24h": {"type": "integer"},
+                        "avg_latency_ms_24h": {"type": "number"},
                         "last_success_at": {"type": "string"},
                         "last_failure_at": {"type": "string"},
                         "cooldown_until": {"type": "string"},
@@ -140,6 +143,9 @@ def _update_source_health(
         source_id=source_id,
         status=_required_text(args.get("status"), "status"),
         consecutive_failures=max(0, int(args.get("consecutive_failures") or 0)),
+        success_count_24h=max(0, int(args.get("success_count_24h") or 0)),
+        failure_count_24h=max(0, int(args.get("failure_count_24h") or 0)),
+        avg_latency_ms_24h=_optional_float(args.get("avg_latency_ms_24h")),
         last_success_at=_optional_datetime(args.get("last_success_at")),
         last_failure_at=_optional_datetime(args.get("last_failure_at")),
         cooldown_until=_optional_datetime(args.get("cooldown_until")),
@@ -151,6 +157,9 @@ def _update_source_health(
         "source_id": health.source_id,
         "status": health.status.value,
         "consecutive_failures": health.consecutive_failures,
+        "success_count_24h": health.success_count_24h,
+        "failure_count_24h": health.failure_count_24h,
+        "avg_latency_ms_24h": health.avg_latency_ms_24h,
         "has_last_error": health.last_error is not None,
     }
 

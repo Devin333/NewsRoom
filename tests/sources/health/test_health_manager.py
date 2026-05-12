@@ -12,6 +12,9 @@ def test_health_manager_records_success() -> None:
 
     assert health.status == SourceHealthStatus.HEALTHY
     assert health.consecutive_failures == 0
+    assert health.success_count_24h == 1
+    assert health.failure_count_24h == 0
+    assert health.avg_latency_ms_24h is None
     assert health.last_success_at == now
 
 
@@ -33,6 +36,7 @@ def test_health_manager_records_and_updates_source_context() -> None:
     assert health.url == "https://example.com/rss"
     assert contextual.source_name == "Updated Source Name"
     assert contextual.url == "https://example.com/updated"
+    assert contextual.success_count_24h == 1
     assert manager.get("source").source_name == "Updated Source Name"
 
 
@@ -49,9 +53,34 @@ def test_health_manager_opens_cooldown_after_failures() -> None:
     second = manager.record_failure("source", error)
 
     assert first.status == SourceHealthStatus.DEGRADED
+    assert first.failure_count_24h == 1
     assert second.status == SourceHealthStatus.COOLING_DOWN
+    assert second.failure_count_24h == 2
     assert second.cooldown_until == now + timedelta(seconds=60)
     assert manager.should_skip("source") is True
+
+
+def test_health_manager_computes_rolling_24h_counts_and_latency() -> None:
+    clock = {"now": datetime(2026, 5, 11, tzinfo=UTC)}
+    manager = BasicSourceHealthManager(now=lambda: clock["now"])
+    error = SourceError(source_id="source", error_type="fetch_timeout", error_message="timeout")
+
+    success = manager.record_success("source", latency_ms=10)
+    clock["now"] = clock["now"] + timedelta(hours=1)
+    failure = manager.record_failure("source", error, latency_ms=30)
+
+    assert success.success_count_24h == 1
+    assert success.avg_latency_ms_24h == 10.0
+    assert failure.success_count_24h == 1
+    assert failure.failure_count_24h == 1
+    assert failure.avg_latency_ms_24h == 20.0
+
+    clock["now"] = clock["now"] + timedelta(hours=25)
+    refreshed = manager.get("source")
+
+    assert refreshed.success_count_24h == 0
+    assert refreshed.failure_count_24h == 0
+    assert refreshed.avg_latency_ms_24h is None
 
 
 def test_health_manager_marks_expired_cooldown_as_probe_ready() -> None:

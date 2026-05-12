@@ -154,9 +154,10 @@ class PostgresRepository:
         sql = """
         INSERT INTO source_health (
             source_id, status, consecutive_failures, last_success_at,
-            last_failure_at, cooldown_until, last_error
+            last_failure_at, cooldown_until, last_error, success_count_24h,
+            failure_count_24h, avg_latency_ms_24h
         )
-        VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb)
+        VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s)
         ON CONFLICT (source_id) DO UPDATE SET
             status = EXCLUDED.status,
             consecutive_failures = EXCLUDED.consecutive_failures,
@@ -164,6 +165,9 @@ class PostgresRepository:
             last_failure_at = EXCLUDED.last_failure_at,
             cooldown_until = EXCLUDED.cooldown_until,
             last_error = EXCLUDED.last_error,
+            success_count_24h = EXCLUDED.success_count_24h,
+            failure_count_24h = EXCLUDED.failure_count_24h,
+            avg_latency_ms_24h = EXCLUDED.avg_latency_ms_24h,
             updated_at = now()
         """
         params = (
@@ -174,6 +178,9 @@ class PostgresRepository:
             health.last_failure_at,
             health.cooldown_until,
             _json_or_none(health.last_error.to_dict() if health.last_error else None),
+            health.success_count_24h,
+            health.failure_count_24h,
+            health.avg_latency_ms_24h,
         )
         self._execute(sql, params)
 

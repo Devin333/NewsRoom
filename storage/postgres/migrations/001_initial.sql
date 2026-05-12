@@ -148,6 +148,9 @@ CREATE TABLE IF NOT EXISTS source_health (
     last_failure_at TIMESTAMPTZ,
     cooldown_until TIMESTAMPTZ,
     last_error JSONB,
+    success_count_24h INTEGER NOT NULL DEFAULT 0,
+    failure_count_24h INTEGER NOT NULL DEFAULT 0,
+    avg_latency_ms_24h DOUBLE PRECISION,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

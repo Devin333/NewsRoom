@@ -115,6 +115,8 @@ def test_daily_intelligence_runner_live_offline_writes_report_artifacts(tmp_path
     assert (run_dir / "report.md").exists()
     assert result.output["source_health_updates"][0].source_name == "Fixture AI Feed"
     assert result.output["source_health_updates"][0].url == "fixture://ai"
+    assert result.output["source_health_updates"][0].success_count_24h == 1
+    assert result.output["source_health_updates"][0].avg_latency_ms_24h >= 0
 
     source_events = json.loads((run_dir / "source_events.json").read_text())
     event_types = [event["event_type"] for event in source_events]
@@ -495,6 +497,8 @@ def test_daily_intelligence_runner_records_partial_source_failures(tmp_path) -> 
     )
     assert failing_health.source_name == "Failing"
     assert failing_health.url == "https://example.com/failing.xml"
+    assert failing_health.failure_count_24h == 1
+    assert failing_health.avg_latency_ms_24h >= 0
     source_notes = next(
         section for section in result.output["final_report"].sections if section["title"] == "Source Notes"
     )

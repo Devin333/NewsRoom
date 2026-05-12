@@ -11,6 +11,7 @@ from domain.sources import (
     SourcePipelineMetrics,
     RawSourceItem,
     SourceReliability,
+    SourceHealth,
     SourceType,
 )
 
@@ -111,6 +112,23 @@ def test_source_error_defaults_retryable_when_policy_metadata_is_absent() -> Non
 
     assert error.retryable is True
     assert error.to_dict()["retryable"] is True
+
+
+def test_source_health_serializes_window_metrics() -> None:
+    health = SourceHealth(
+        source_id="rss-source",
+        status="healthy",
+        consecutive_failures=0,
+        success_count_24h=3,
+        failure_count_24h=1,
+        avg_latency_ms_24h=42.5,
+    )
+
+    payload = health.to_dict()
+
+    assert payload["success_count_24h"] == 3
+    assert payload["failure_count_24h"] == 1
+    assert payload["avg_latency_ms_24h"] == 42.5
 
 
 def test_source_pipeline_event_serializes() -> None:

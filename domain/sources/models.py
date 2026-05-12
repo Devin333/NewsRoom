@@ -282,6 +282,9 @@ class SourceHealth:
     url: str | None = None
     status: SourceHealthStatus = SourceHealthStatus.HEALTHY
     consecutive_failures: int = 0
+    success_count_24h: int = 0
+    failure_count_24h: int = 0
+    avg_latency_ms_24h: float | None = None
     last_success_at: datetime | None = None
     last_failure_at: datetime | None = None
     cooldown_until: datetime | None = None
@@ -297,6 +300,9 @@ class SourceHealth:
             "url": self.url,
             "status": self.status.value,
             "consecutive_failures": self.consecutive_failures,
+            "success_count_24h": self.success_count_24h,
+            "failure_count_24h": self.failure_count_24h,
+            "avg_latency_ms_24h": self.avg_latency_ms_24h,
             "last_success_at": _dt(self.last_success_at),
             "last_failure_at": _dt(self.last_failure_at),
             "cooldown_until": _dt(self.cooldown_until),

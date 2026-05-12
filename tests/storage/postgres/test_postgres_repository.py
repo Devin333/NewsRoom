@@ -111,6 +111,9 @@ def test_postgres_repository_updates_source_health() -> None:
             source_id="rss-example",
             status="degraded",
             consecutive_failures=1,
+            success_count_24h=2,
+            failure_count_24h=1,
+            avg_latency_ms_24h=123.5,
             last_error=SourceError(
                 source_id="rss-example",
                 error_type="fetch_timeout",
@@ -127,6 +130,9 @@ def test_postgres_repository_updates_source_health() -> None:
     assert params[1] == "degraded"
     assert params[2] == 1
     assert '"error_type": "fetch_timeout"' in params[6]
+    assert params[7] == 2
+    assert params[8] == 1
+    assert params[9] == 123.5
 
 
 def test_postgres_repository_reads_latest_report() -> None:

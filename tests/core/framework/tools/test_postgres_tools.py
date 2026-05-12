@@ -120,6 +120,9 @@ def test_postgres_update_source_health_tool_writes_typed_health_record() -> None
                 "source_id": "rss-example",
                 "status": "degraded",
                 "consecutive_failures": 1,
+                "success_count_24h": 2,
+                "failure_count_24h": 1,
+                "avg_latency_ms_24h": 123.5,
                 "last_failure_at": "2026-05-12T00:00:00Z",
                 "last_error": {
                     "error_type": "fetch_timeout",
@@ -143,10 +146,16 @@ def test_postgres_update_source_health_tool_writes_typed_health_record() -> None
         "source_id": "rss-example",
         "status": "degraded",
         "consecutive_failures": 1,
+        "success_count_24h": 2,
+        "failure_count_24h": 1,
+        "avg_latency_ms_24h": 123.5,
         "has_last_error": True,
     }
     assert health.source_id == "rss-example"
     assert health.status.value == "degraded"
+    assert health.success_count_24h == 2
+    assert health.failure_count_24h == 1
+    assert health.avg_latency_ms_24h == 123.5
     assert health.last_error.error_type == "fetch_timeout"
     assert health.last_error.metadata == {"phase": "fetch"}
 
