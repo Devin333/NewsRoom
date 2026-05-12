@@ -38,6 +38,27 @@ ATOM_FIXTURE = """<?xml version="1.0"?>
 """
 
 
+JSON_FEED_FIXTURE = """{
+  "version": "https://jsonfeed.org/version/1.1",
+  "title": "Example JSON Feed",
+  "home_page_url": "https://example.com/",
+  "feed_url": "https://example.com/feed.json",
+  "language": "en",
+  "items": [
+    {
+      "id": "json-item-1",
+      "url": "https://example.com/json-feed-item?utm_source=x",
+      "title": "JSON feed item",
+      "summary": "JSON feed summary.",
+      "date_published": "2026-05-11T02:00:00Z",
+      "authors": [{"name": "Alice Example"}],
+      "tags": ["ai", "release"]
+    }
+  ]
+}
+"""
+
+
 def test_feed_connector_parses_rss_fixture() -> None:
     source = SourceDefinition(
         source_id="rss-source",
@@ -90,6 +111,30 @@ def test_feed_connector_parses_atom_fixture() -> None:
     assert len(items) == 1
     assert items[0].title == "Model release notes"
     assert items[0].url == "https://example.com/releases/model"
+
+
+def test_feed_connector_parses_json_feed_fixture() -> None:
+    source = SourceDefinition(
+        source_id="json-feed",
+        name="JSON Feed",
+        source_type="rss",
+        url="https://example.com/feed.json",
+        reliability="high",
+    )
+
+    items = FeedConnector().parse(source, JSON_FEED_FIXTURE)
+
+    assert len(items) == 1
+    item = items[0]
+    assert item.title == "JSON feed item"
+    assert item.url == "https://example.com/json-feed-item?utm_source=x"
+    assert item.published_at == datetime(2026, 5, 11, 2, 0, tzinfo=UTC)
+    assert item.summary == "JSON feed summary."
+    assert item.authors == ["Alice Example"]
+    assert item.tags == ["ai", "release"]
+    assert item.language == "en"
+    assert item.metadata["feed_format"] == "json_feed"
+    assert item.metadata["json_feed_item_id"] == "json-item-1"
 
 
 def test_feed_connector_fetch_returns_structured_error() -> None:

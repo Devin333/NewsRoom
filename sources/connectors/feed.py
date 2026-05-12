@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from hashlib import sha256
+from html import unescape
 from typing import Callable
 from urllib.error import HTTPError, URLError
 from urllib.request import Request
@@ -30,6 +32,8 @@ FetchText = Callable[[str], str]
 FEED_CONTENT_TYPES = (
     "application/rss+xml",
     "application/atom+xml",
+    "application/feed+json",
+    "application/json",
     "application/xml",
     "application/rdf+xml",
     "text/xml",
@@ -101,6 +105,10 @@ class FeedConnector:
         return items, []
 
     def parse(self, source: SourceDefinition, xml_text: str, *, limit: int | None = None) -> list[RawSourceItem]:
+        stripped = xml_text.strip()
+        if stripped.startswith("{"):
+            items = self._parse_json_feed(source, stripped, datetime.now(UTC))
+            return items[:limit] if limit else items
         root = ElementTree.fromstring(xml_text)
         fetched_at = datetime.now(UTC)
         if _local_name(root.tag) == "rss":
@@ -137,6 +145,34 @@ class FeedConnector:
                     raw_content=ElementTree.tostring(item, encoding="unicode"),
                 )
             )
+        return raw_items
+
+    def _parse_json_feed(
+        self,
+        source: SourceDefinition,
+        json_text: str,
+        fetched_at: datetime,
+    ) -> list[RawSourceItem]:
+        payload = json.loads(json_text)
+        if not isinstance(payload, dict):
+            raise ValueError("json feed root must be an object")
+        entries = payload.get("items")
+        if not isinstance(entries, list):
+            raise ValueError("json feed items must be an array")
+        feed_language = _json_text(payload.get("language"))
+        raw_items = []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            item = _json_feed_item(
+                source=source,
+                feed=payload,
+                entry=entry,
+                fetched_at=fetched_at,
+                feed_language=feed_language,
+            )
+            if item is not None:
+                raw_items.append(item)
         return raw_items
 
     def _parse_atom(
@@ -286,6 +322,98 @@ def _raw_item(
         language=source.language,
         metadata=source_item_metadata(source),
     )
+
+
+def _json_feed_item(
+    *,
+    source: SourceDefinition,
+    feed: dict[str, object],
+    entry: dict[str, object],
+    fetched_at: datetime,
+    feed_language: str | None,
+) -> RawSourceItem | None:
+    url = _json_text(entry.get("url")) or _json_text(entry.get("external_url")) or _json_text(entry.get("id"))
+    summary = (
+        _json_text(entry.get("summary"))
+        or _json_text(entry.get("content_text"))
+        or _plain_text(_json_text(entry.get("content_html")))
+    )
+    title = _json_text(entry.get("title")) or _title_from_summary(summary)
+    if not title or not url:
+        return None
+    item_id = _json_text(entry.get("id")) or url
+    item_hash = sha256(f"{source.source_id}|{item_id}".encode("utf-8")).hexdigest()
+    return RawSourceItem(
+        source_item_id=f"raw_{item_hash[:16]}",
+        source_id=source.source_id,
+        source_name=source.name,
+        source_type=source.source_type,
+        title=title,
+        url=url,
+        fetched_at=fetched_at,
+        published_at=_parse_datetime(
+            _json_text(entry.get("date_published")) or _json_text(entry.get("date_modified"))
+        ),
+        summary=summary,
+        raw_content=json.dumps(entry, ensure_ascii=False, sort_keys=True),
+        authors=_json_feed_authors(entry),
+        tags=_json_string_list(entry.get("tags")),
+        language=_json_text(entry.get("language")) or source.language or feed_language,
+        metadata=source_item_metadata(
+            source,
+            extra={
+                "feed_format": "json_feed",
+                "json_feed_version": _json_text(feed.get("version")),
+                "json_feed_item_id": item_id,
+                "feed_home_page_url": _json_text(feed.get("home_page_url")),
+                "feed_url": _json_text(feed.get("feed_url")),
+            },
+        ),
+    )
+
+
+def _json_feed_authors(entry: dict[str, object]) -> list[str]:
+    authors = []
+    authors.extend(_json_author_names(entry.get("authors")))
+    authors.extend(_json_author_names(entry.get("author")))
+    return list(dict.fromkeys(authors))
+
+
+def _json_author_names(value: object) -> list[str]:
+    if isinstance(value, dict):
+        name = _json_text(value.get("name")) or _json_text(value.get("url"))
+        return [name] if name else []
+    if isinstance(value, list):
+        names = []
+        for item in value:
+            names.extend(_json_author_names(item))
+        return names
+    return []
+
+
+def _json_string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _json_text(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _title_from_summary(summary: str | None) -> str | None:
+    if not summary:
+        return None
+    return summary[:117].rstrip() + "..." if len(summary) > 120 else summary
+
+
+def _plain_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    return " ".join(unescape(value).split())
 
 
 def _text(parent: ElementTree.Element, tag: str) -> str | None:

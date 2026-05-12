@@ -43,6 +43,24 @@ ATOM_FIXTURE = """<?xml version="1.0"?>
 """
 
 
+JSON_FEED_FIXTURE = """{
+  "version": "https://jsonfeed.org/version/1.1",
+  "title": "Example JSON Feed",
+  "items": [
+    {
+      "id": "json-item-1",
+      "url": "https://example.com/json-feed-item",
+      "title": "JSON feed item",
+      "summary": "JSON feed summary.",
+      "date_published": "2026-05-11T02:00:00Z",
+      "authors": [{"name": "Alice Example"}],
+      "tags": ["ai"]
+    }
+  ]
+}
+"""
+
+
 HTML_FIXTURE = """<!doctype html>
 <html lang="en">
   <head>
@@ -1108,6 +1126,34 @@ def test_source_extract_items_tool_dispatches_html_content() -> None:
     assert observation.result.output["item_count"] == 1
     assert item["source_type"] == "html"
     assert item["url"] == "https://example.com/blog/launch"
+
+
+def test_source_extract_items_tool_parses_json_feed_content() -> None:
+    registry = ToolRegistry()
+    register_source_tools(registry)
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="source.extract_items",
+            arguments={
+                "source": {
+                    "source_id": "json-feed",
+                    "name": "JSON Feed",
+                    "url": "https://example.com/feed.json",
+                    "source_type": "rss",
+                },
+                "content": JSON_FEED_FIXTURE,
+            },
+        ),
+        ToolPolicy(allowed_tools=["source.extract_items"]),
+    )
+
+    item = observation.result.output["items"][0]
+
+    assert observation.status == ToolStatus.SUCCEEDED
+    assert item["title"] == "JSON feed item"
+    assert item["metadata"]["feed_format"] == "json_feed"
 
 
 def test_source_extract_manual_tool_extracts_curated_records() -> None:
