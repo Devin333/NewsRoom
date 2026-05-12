@@ -1,6 +1,7 @@
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from xml.etree import ElementTree
 
 from core.framework.tools import (
     ToolCall,
@@ -167,3 +168,66 @@ def test_notification_webhook_tool_rejects_secret_headers_before_send() -> None:
     assert observation.status == ToolStatus.FAILED
     assert calls["count"] == 0
     assert "header is not allowed" in (observation.result.error_message or "")
+
+
+def test_notification_rss_publish_tool_writes_configured_feed_item(tmp_path) -> None:
+    feed_path = tmp_path / "feeds" / "news.xml"
+    registry = ToolRegistry()
+    register_notification_tools(
+        registry,
+        rss_feed_path=feed_path,
+        rss_feed_title="NewsRoom Feed",
+        rss_feed_link="https://example.com/feed",
+    )
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="notification.rss_publish",
+            arguments={
+                "title": "Daily report ready",
+                "link": "https://example.com/reports/run-1",
+                "description": "A report was published.",
+                "guid": "run-1:final",
+                "published_at": "2026-05-12T00:00:00Z",
+            },
+        ),
+        ToolPolicy(
+            allowed_tools=["notification.rss_publish"],
+            require_approval_for_side_effects=False,
+        ),
+    )
+
+    root = ElementTree.parse(feed_path).getroot()
+    channel = root.find("channel")
+    item = channel.find("item")
+
+    assert observation.status == ToolStatus.SUCCEEDED
+    assert observation.result.output["published"] is True
+    assert observation.result.output["item_count"] == 1
+    assert channel.findtext("title") == "NewsRoom Feed"
+    assert item.findtext("title") == "Daily report ready"
+    assert item.findtext("link") == "https://example.com/reports/run-1"
+    assert item.findtext("guid") == "run-1:final"
+    assert item.findtext("pubDate") == "Tue, 12 May 2026 00:00:00 GMT"
+
+
+def test_notification_rss_publish_tool_requires_approval_by_default(tmp_path) -> None:
+    feed_path = tmp_path / "feeds" / "news.xml"
+    registry = ToolRegistry()
+    register_notification_tools(registry, rss_feed_path=feed_path)
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="notification.rss_publish",
+            arguments={
+                "title": "Daily report ready",
+                "link": "https://example.com/reports/run-1",
+            },
+        ),
+        ToolPolicy(allowed_tools=["notification.rss_publish"]),
+    )
+
+    assert observation.status == ToolStatus.APPROVAL_REQUIRED
+    assert not feed_path.exists()
