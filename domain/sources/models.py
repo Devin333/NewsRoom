@@ -597,6 +597,40 @@ class SourceGovernanceReport:
         }
 
 
+@dataclass(frozen=True)
+class SourceRankingScore:
+    ranked_item_id: str
+    normalized_item_id: str
+    source_item_id: str
+    source_id: str
+    title: str
+    url: str
+    relevance_score: float
+    recency_score: float
+    reliability_score: float
+    authority_score: float
+    novelty_score: float
+    final_score: float
+    rank_reason: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "ranked_item_id": self.ranked_item_id,
+            "normalized_item_id": self.normalized_item_id,
+            "source_item_id": self.source_item_id,
+            "source_id": self.source_id,
+            "title": self.title,
+            "url": self.url,
+            "relevance_score": self.relevance_score,
+            "recency_score": self.recency_score,
+            "reliability_score": self.reliability_score,
+            "authority_score": self.authority_score,
+            "novelty_score": self.novelty_score,
+            "final_score": self.final_score,
+            "rank_reason": self.rank_reason,
+        }
+
+
 def _dt(value: datetime | None) -> str | None:
     return value.isoformat().replace("+00:00", "Z") if value else None
 

@@ -4,6 +4,7 @@ from domain.sources import RawSourceItem, SourceError, SourcePipelineMetrics, So
 from sources.processing import (
     build_source_coverage_report,
     build_source_governance_report,
+    build_source_ranking_scores,
     deduplicate_items,
     deduplicate_with_result,
     detect_language,
@@ -505,6 +506,13 @@ def test_rank_items_prioritizes_topic_relevance_and_reliability() -> None:
     assert lineage["authority_score"] == 0.5
     assert lineage["source_quality_score"] == ranked[0].metadata["source_quality"]["quality_score"]
     assert ranked[0].metadata["source_quality"]["traceability_score"] == 1.0
+
+    ranking_scores = build_source_ranking_scores(ranked)
+    assert ranking_scores[0].ranked_item_id == ranked[0].ranked_item_id
+    assert ranking_scores[0].source_id == "source"
+    assert ranking_scores[0].authority_score == 0.5
+    assert ranking_scores[0].final_score == ranked[0].final_score
+    assert ranking_scores[0].to_dict()["url"] == ranked[0].item.canonical_url
 
 
 def test_rank_items_uses_source_authority_score() -> None:

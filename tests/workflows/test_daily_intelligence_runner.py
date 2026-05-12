@@ -153,8 +153,10 @@ def test_daily_intelligence_runner_live_offline_writes_report_artifacts(tmp_path
     assert manifest["artifacts"]["source_selection_report"] == "source_selection_report.json"
     assert manifest["artifacts"]["source_coverage_report"] == "source_coverage_report.json"
     assert manifest["artifacts"]["source_quality_scores"] == "source_quality_scores.json"
+    assert manifest["artifacts"]["source_ranking_scores"] == "source_ranking_scores.json"
     assert manifest["artifacts"]["source_governance_report"] == "source_governance_report.json"
     assert manifest["source_quality_score_count"] == 2
+    assert manifest["source_ranking_score_count"] == 2
     assert manifest["artifacts"]["source_fetch_requests"] == "source_fetch_requests.json"
     assert manifest["artifacts"]["source_artifacts"] == "source_artifacts/index.json"
     assert manifest["source_event_count"] == 6
@@ -215,6 +217,12 @@ def test_daily_intelligence_runner_live_offline_writes_report_artifacts(tmp_path
     assert source_quality_scores[0]["quality_score"] > 0.8
     assert source_quality_scores[0]["traceability_score"] == 1.0
     assert result.output["source_quality_scores"] == source_quality_scores
+
+    source_ranking_scores = json.loads((run_dir / "source_ranking_scores.json").read_text(encoding="utf-8"))
+    assert len(source_ranking_scores) == 2
+    assert source_ranking_scores[0]["source_id"] == "fixture-ai"
+    assert source_ranking_scores[0]["final_score"] == result.output["ranked_items"][0].final_score
+    assert "authority_score" in source_ranking_scores[0]
 
     governance_report = json.loads((run_dir / "source_governance_report.json").read_text(encoding="utf-8"))
     assert governance_report["finding_count"] == 0

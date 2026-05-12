@@ -7,6 +7,7 @@ from sources.processing.language import detect_language
 from sources.processing.normalize import normalize_items
 from sources.processing.quality import score_source_item, score_source_items
 from sources.processing.rank import rank_items
+from sources.processing.ranking_report import build_source_ranking_scores
 
 __all__ = [
     "build_source_coverage_report",
@@ -16,6 +17,7 @@ __all__ = [
     "detect_language",
     "normalize_items",
     "rank_items",
+    "build_source_ranking_scores",
     "score_source_item",
     "score_source_items",
 ]

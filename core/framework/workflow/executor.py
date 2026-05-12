@@ -575,6 +575,14 @@ class WorkflowExecutor:
             )
             manifest["artifacts"]["source_quality_scores"] = "source_quality_scores.json"
             manifest["source_quality_score_count"] = len(output["source_quality_scores"])
+        if "source_ranking_scores" in output:
+            self._artifact_manager.write_json(
+                run_id,
+                "source_ranking_scores.json",
+                output["source_ranking_scores"],
+            )
+            manifest["artifacts"]["source_ranking_scores"] = "source_ranking_scores.json"
+            manifest["source_ranking_score_count"] = len(output["source_ranking_scores"])
         if "source_governance_report" in output:
             self._artifact_manager.write_json(
                 run_id,
