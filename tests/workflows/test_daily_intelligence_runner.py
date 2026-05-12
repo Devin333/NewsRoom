@@ -9,10 +9,14 @@ from sources import SourceRegistry
 from sources.connectors import (
     ARXIV_API_URL,
     GITHUB_API_URL,
+    HACKERNEWS_API_URL,
+    REDDIT_BASE_URL,
     ArxivConnector,
     FeedConnector,
     GithubConnector,
+    HackerNewsConnector,
     HtmlConnector,
+    RedditConnector,
     TooManyRedirectsError,
 )
 from sources.health import BasicSourceHealthManager
@@ -74,6 +78,46 @@ GITHUB_RELEASES = json.dumps(
             "author": {"login": "maintainer"},
         }
     ]
+)
+
+HACKERNEWS_STORY_IDS = "[123]"
+HACKERNEWS_ITEM = json.dumps(
+    {
+        "id": 123,
+        "type": "story",
+        "by": "pg",
+        "time": 1778490000,
+        "title": "AI policy update",
+        "url": "https://example.com/hackernews-ai-policy",
+        "text": "<p>Policy summary from Hacker News.</p>",
+        "score": 42,
+        "descendants": 5,
+    }
+)
+
+REDDIT_LISTING = json.dumps(
+    {
+        "data": {
+            "children": [
+                {
+                    "kind": "t3",
+                    "data": {
+                        "id": "abc123",
+                        "subreddit": "MachineLearning",
+                        "title": "AI policy update",
+                        "permalink": "/r/MachineLearning/comments/abc123/ai_policy_update/",
+                        "url_overridden_by_dest": "https://example.com/reddit-ai-policy",
+                        "selftext": "Policy summary from Reddit.",
+                        "author": "researcher",
+                        "created_utc": 1778490000,
+                        "score": 100,
+                        "num_comments": 12,
+                        "link_flair_text": "Discussion",
+                    },
+                }
+            ]
+        }
+    }
 )
 
 
@@ -477,6 +521,67 @@ def test_daily_intelligence_runner_live_collects_github_source(tmp_path) -> None
     assert result.status == WorkflowStatus.SUCCEEDED
     assert result.output["raw_items"][0].source_type.value == "github"
     assert result.output["raw_items"][0].metadata["repository"] == "owner/repo"
+
+
+def test_daily_intelligence_runner_live_collects_hackernews_source(tmp_path) -> None:
+    registry = SourceRegistry(
+        [
+            SourceDefinition(
+                source_id="hackernews",
+                name="Hacker News",
+                source_type="hackernews",
+                url=HACKERNEWS_API_URL,
+                reliability="medium",
+                topics=["ai", "technology"],
+                metadata={"story_list": "topstories"},
+            )
+        ]
+    )
+
+    def fetch_text(url: str) -> str:
+        if url.endswith("/topstories.json"):
+            return HACKERNEWS_STORY_IDS
+        return HACKERNEWS_ITEM
+
+    result = DailyIntelligenceRunner(
+        artifact_root=tmp_path,
+        source_registry=registry,
+        hackernews_connector=HackerNewsConnector(fetch_text=fetch_text),
+        llm_client=_CitedReportLLM("https://example.com/hackernews-ai-policy"),
+    ).run(profile="live", topic="AI policy", source_limit=1, run_id="daily-hackernews-source")
+
+    assert result.status == WorkflowStatus.SUCCEEDED
+    assert result.output["raw_items"][0].source_type.value == "hackernews"
+    assert result.output["raw_items"][0].metadata["hackernews_item_id"] == 123
+    assert result.output["source_pipeline_metrics"].items_by_source_type == {"hackernews": 1}
+
+
+def test_daily_intelligence_runner_live_collects_reddit_source(tmp_path) -> None:
+    registry = SourceRegistry(
+        [
+            SourceDefinition(
+                source_id="reddit",
+                name="Reddit MachineLearning",
+                source_type="reddit",
+                url=REDDIT_BASE_URL,
+                reliability="medium",
+                topics=["ai", "machine learning"],
+                metadata={"subreddit": "MachineLearning", "listing": "new"},
+            )
+        ]
+    )
+
+    result = DailyIntelligenceRunner(
+        artifact_root=tmp_path,
+        source_registry=registry,
+        reddit_connector=RedditConnector(fetch_text=lambda url: REDDIT_LISTING),
+        llm_client=_CitedReportLLM("https://example.com/reddit-ai-policy"),
+    ).run(profile="live", topic="AI policy", source_limit=1, run_id="daily-reddit-source")
+
+    assert result.status == WorkflowStatus.SUCCEEDED
+    assert result.output["raw_items"][0].source_type.value == "reddit"
+    assert result.output["raw_items"][0].metadata["subreddit"] == "MachineLearning"
+    assert result.output["source_pipeline_metrics"].items_by_source_type == {"reddit": 1}
 
 
 def test_daily_intelligence_runner_records_partial_source_failures(tmp_path) -> None:

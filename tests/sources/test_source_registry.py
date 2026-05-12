@@ -75,6 +75,31 @@ def test_source_registry_validates_html_backed_target_source_types() -> None:
     assert ("web-page", "url", "error") in issues
 
 
+def test_source_registry_validates_social_fetchable_source_types() -> None:
+    hackernews = SourceDefinition(
+        source_id="hn",
+        name="Hacker News",
+        source_type="hackernews",
+        url="https://hacker-news.firebaseio.com/v0",
+        topics=["ai"],
+    )
+    reddit = SourceDefinition(
+        source_id="reddit",
+        name="Reddit",
+        source_type="reddit",
+        url="ftp://reddit.example/r/MachineLearning",
+        topics=["ai"],
+    )
+    registry = SourceRegistry([hackernews, reddit])
+
+    result = registry.validate()
+
+    assert result.is_valid is False
+    issues = {(issue.source_id, issue.field, issue.severity) for issue in result.issues}
+    assert ("hn", "url", "error") not in issues
+    assert ("reddit", "url", "error") in issues
+
+
 def test_source_registry_lists_sources_by_reliability() -> None:
     high = SourceDefinition(
         source_id="high",

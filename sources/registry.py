@@ -21,6 +21,8 @@ FETCHABLE_SOURCE_TYPES = {
     SourceType.WEB_PAGE,
     SourceType.ARXIV,
     SourceType.GITHUB,
+    SourceType.HACKERNEWS,
+    SourceType.REDDIT,
 }
 _SAFE_SOURCE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 _SENSITIVE_METADATA_KEY_PARTS = (

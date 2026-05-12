@@ -15,6 +15,8 @@ class SourceType(str, Enum):
     OFFICIAL_BLOG = "official_blog"
     WEB_PAGE = "web_page"
     MANUAL = "manual"
+    HACKERNEWS = "hackernews"
+    REDDIT = "reddit"
 
 
 class SourceReliability(str, Enum):

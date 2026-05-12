@@ -35,8 +35,10 @@ from sources.connectors import (
     ArxivConnector,
     FeedConnector,
     GithubConnector,
+    HackerNewsConnector,
     HtmlConnector,
     ManualConnector,
+    RedditConnector,
 )
 from sources.health import BasicSourceHealthManager
 from sources.processing import deduplicate_with_result, normalize_items, rank_items
@@ -62,6 +64,8 @@ class DailyIntelligenceRunner:
         manual_connector: ManualConnector | None = None,
         arxiv_connector: ArxivConnector | None = None,
         github_connector: GithubConnector | None = None,
+        hackernews_connector: HackerNewsConnector | None = None,
+        reddit_connector: RedditConnector | None = None,
         llm_client: LLMClient | None = None,
         source_health_manager: BasicSourceHealthManager | None = None,
     ) -> None:
@@ -72,6 +76,8 @@ class DailyIntelligenceRunner:
         self.manual_connector = manual_connector or ManualConnector()
         self.arxiv_connector = arxiv_connector or ArxivConnector()
         self.github_connector = github_connector or GithubConnector()
+        self.hackernews_connector = hackernews_connector or HackerNewsConnector()
+        self.reddit_connector = reddit_connector or RedditConnector()
         self.llm_client = llm_client
         self.source_health_manager = source_health_manager or BasicSourceHealthManager()
 
@@ -463,6 +469,22 @@ class DailyIntelligenceRunner:
             return self.github_connector.fetch_releases(
                 source,
                 repository=str(repository) if repository is not None else None,
+                limit=limit,
+            )
+        if source.source_type == SourceType.HACKERNEWS:
+            story_list = source.metadata.get("story_list")
+            return self.hackernews_connector.fetch(
+                source,
+                story_list=str(story_list) if story_list is not None else None,
+                limit=limit,
+            )
+        if source.source_type == SourceType.REDDIT:
+            subreddit = source.metadata.get("subreddit")
+            listing = source.metadata.get("listing")
+            return self.reddit_connector.fetch(
+                source,
+                subreddit=str(subreddit) if subreddit is not None else None,
+                listing=str(listing) if listing is not None else None,
                 limit=limit,
             )
         return [], [

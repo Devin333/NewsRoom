@@ -19,8 +19,15 @@ from sources.connectors.github import (
     GithubRepository,
     GithubRepositorySearchResult,
 )
+from sources.connectors.hackernews import (
+    HACKERNEWS_API_URL,
+    HackerNewsConnector,
+    build_hackernews_item_url,
+    build_hackernews_story_list_url,
+)
 from sources.connectors.html import HtmlConnector, HtmlExtractionResult, extract_html
 from sources.connectors.manual import ManualConnector
+from sources.connectors.reddit import REDDIT_BASE_URL, RedditConnector, build_reddit_listing_url
 
 __all__ = [
     "ARXIV_API_URL",
@@ -32,13 +39,20 @@ __all__ = [
     "GithubConnector",
     "GithubRepository",
     "GithubRepositorySearchResult",
+    "HACKERNEWS_API_URL",
+    "HackerNewsConnector",
     "HtmlConnector",
     "HtmlExtractionResult",
     "ManualConnector",
     "RateLimitDecision",
+    "REDDIT_BASE_URL",
+    "RedditConnector",
     "RobotsDisallowedError",
     "SourceFetchPolicy",
     "TooManyRedirectsError",
+    "build_hackernews_item_url",
+    "build_hackernews_story_list_url",
+    "build_reddit_listing_url",
     "effective_fetch_policy",
     "ensure_robots_allowed",
     "extract_html",
