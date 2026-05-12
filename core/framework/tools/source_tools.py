@@ -56,6 +56,24 @@ def register_source_tools(
     )
     registry.register(
         ToolDefinition(
+            name="source.extract_items",
+            description="Extract raw source items from fetched RSS or Atom content.",
+            input_schema={
+                "required": ["source", "content"],
+                "properties": {
+                    "source": {"type": "object"},
+                    "content": {"type": "string"},
+                    "limit": {"type": "integer"},
+                },
+                "additionalProperties": False,
+            },
+            side_effect="read_only",
+            concurrency_safe=True,
+        ),
+        _extract_items,
+    )
+    registry.register(
+        ToolDefinition(
             name="source.parse_atom",
             description="Parse Atom XML into raw source items.",
             input_schema=_parse_feed_schema(),
@@ -104,6 +122,13 @@ def _parse_feed(args: dict[str, Any], *, default_source_type: SourceType) -> dic
         "item_count": len(items),
         "items": [_raw_source_item_to_dict(item) for item in items],
     }
+
+
+def _extract_items(args: dict[str, Any]) -> dict[str, Any]:
+    return _parse_feed(
+        {"source": args["source"], "xml": args["content"], "limit": args.get("limit")},
+        default_source_type=SourceType.RSS,
+    )
 
 
 def _fetch_url(

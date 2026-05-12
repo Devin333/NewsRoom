@@ -24,6 +24,19 @@ RSS_FIXTURE = """<?xml version="1.0"?>
 """
 
 
+ATOM_FIXTURE = """<?xml version="1.0"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Example Atom</title>
+  <entry>
+    <title>Model Release Notes</title>
+    <link href="https://example.com/releases/model?utm_source=x" />
+    <summary>Release summary.</summary>
+    <updated>2026-05-11T02:00:00Z</updated>
+  </entry>
+</feed>
+"""
+
+
 def test_source_fetch_url_tool_fetches_configured_source_through_executor() -> None:
     registry = ToolRegistry()
     seen_urls: list[str] = []
@@ -215,6 +228,66 @@ def test_source_parse_rss_tool_uses_feed_connector_through_executor() -> None:
     assert item["title"] == "Chip Export Update"
     assert item["source_id"] == "rss-example"
     assert item["metadata"]["source_reliability"] == "high"
+
+
+def test_source_extract_items_tool_extracts_rss_content() -> None:
+    registry = ToolRegistry()
+    register_source_tools(registry)
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="source.extract_items",
+            arguments={
+                "source": {
+                    "source_id": "rss-example",
+                    "name": "Example RSS",
+                    "url": "https://example.com/feed.xml",
+                    "source_type": "rss",
+                    "reliability": "high",
+                },
+                "content": RSS_FIXTURE,
+                "limit": 1,
+            },
+        ),
+        ToolPolicy(allowed_tools=["source.extract_items"]),
+    )
+
+    item = observation.result.output["items"][0]
+
+    assert observation.status == ToolStatus.SUCCEEDED
+    assert observation.result.output["item_count"] == 1
+    assert item["title"] == "Chip Export Update"
+    assert item["source_id"] == "rss-example"
+
+
+def test_source_extract_items_tool_extracts_atom_content() -> None:
+    registry = ToolRegistry()
+    register_source_tools(registry)
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="source.extract_items",
+            arguments={
+                "source": {
+                    "source_id": "atom-example",
+                    "name": "Example Atom",
+                    "url": "https://example.com/atom.xml",
+                    "source_type": "atom",
+                },
+                "content": ATOM_FIXTURE,
+            },
+        ),
+        ToolPolicy(allowed_tools=["source.extract_items"]),
+    )
+
+    item = observation.result.output["items"][0]
+
+    assert observation.status == ToolStatus.SUCCEEDED
+    assert observation.result.output["item_count"] == 1
+    assert item["title"] == "Model Release Notes"
+    assert item["source_type"] == "atom"
 
 
 def test_source_normalize_url_tool_removes_tracking_parameters() -> None:
