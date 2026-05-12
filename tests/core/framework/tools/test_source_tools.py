@@ -838,3 +838,23 @@ def test_source_normalize_url_tool_removes_tracking_parameters() -> None:
 
     assert observation.status == ToolStatus.SUCCEEDED
     assert observation.result.output["canonical_url"] == "https://example.com/News?a=1&b=2"
+
+
+def test_source_normalize_url_tool_resolves_relative_url_with_base_url() -> None:
+    registry = ToolRegistry()
+    register_source_tools(registry)
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="source.normalize_url",
+            arguments={
+                "url": "../News/?utm_source=x&b=2&a=1#g",
+                "base_url": "https://Example.com/blog/index.html",
+            },
+        ),
+        ToolPolicy(allowed_tools=["source.normalize_url"]),
+    )
+
+    assert observation.status == ToolStatus.SUCCEEDED
+    assert observation.result.output["canonical_url"] == "https://example.com/News?a=1&b=2"

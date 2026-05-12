@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
 from domain.sources import NormalizedSourceItem, RawSourceItem, SourceReliability
 
@@ -54,8 +54,11 @@ def normalize_text(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip().casefold()
 
 
-def canonicalize_url(url: str) -> str:
-    parts = urlsplit(url.strip())
+def canonicalize_url(url: str, *, base_url: str | None = None) -> str:
+    raw_url = url.strip()
+    if base_url:
+        raw_url = urljoin(base_url.strip(), raw_url)
+    parts = urlsplit(raw_url)
     query = [
         (key, value)
         for key, value in parse_qsl(parts.query, keep_blank_values=True)

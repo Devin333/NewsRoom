@@ -218,13 +218,21 @@ def register_source_tools(
             description="Canonicalize a source URL and strip known tracking parameters.",
             input_schema={
                 "required": ["url"],
-                "properties": {"url": {"type": "string"}},
+                "properties": {
+                    "url": {"type": "string"},
+                    "base_url": {"type": "string"},
+                },
                 "additionalProperties": False,
             },
             side_effect="read_only",
             concurrency_safe=True,
         ),
-        lambda args: {"canonical_url": canonicalize_url(str(args["url"]))},
+        lambda args: {
+            "canonical_url": canonicalize_url(
+                str(args["url"]),
+                base_url=str(args["base_url"]) if args.get("base_url") is not None else None,
+            )
+        },
     )
 
 

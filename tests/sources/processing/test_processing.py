@@ -42,6 +42,17 @@ def test_canonicalize_url_removes_default_ports_and_preserves_custom_ports() -> 
     assert canonicalize_url("https://Example.COM:8443/post") == "https://example.com:8443/post"
 
 
+def test_canonicalize_url_resolves_relative_urls_with_base_url() -> None:
+    assert (
+        canonicalize_url("/post?utm_source=x", base_url="https://Example.COM/blog/index.html")
+        == "https://example.com/post"
+    )
+    assert (
+        canonicalize_url("post?b=2&a=1", base_url="https://example.com/blog/")
+        == "https://example.com/blog/post?a=1&b=2"
+    )
+
+
 def test_deduplicate_items_removes_duplicate_canonical_urls() -> None:
     normalized = normalize_items(
         [
