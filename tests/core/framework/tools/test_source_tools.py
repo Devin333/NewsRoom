@@ -272,6 +272,123 @@ def test_source_probe_tool_records_fetch_failure_as_health_failure() -> None:
     assert health_manager.get("rss-example").consecutive_failures == 1
 
 
+def test_source_fetch_official_blog_tool_fetches_marked_feed() -> None:
+    registry = ToolRegistry()
+    seen_urls: list[str] = []
+    register_source_tools(
+        registry,
+        fetch_text=lambda url: seen_urls.append(url) or RSS_FIXTURE,
+        allowed_domains=["example.com"],
+    )
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="source.fetch_official_blog",
+            arguments={
+                "source": {
+                    "source_id": "official-blog",
+                    "name": "Official Blog",
+                    "url": "https://example.com/blog.xml",
+                    "source_type": "rss",
+                    "reliability": "high",
+                    "metadata": {"official_blog": True},
+                },
+                "limit": 1,
+            },
+        ),
+        ToolPolicy(allowed_tools=["source.fetch_official_blog"]),
+    )
+
+    item = observation.result.output["items"][0]
+
+    assert observation.status == ToolStatus.SUCCEEDED
+    assert seen_urls == ["https://example.com/blog.xml"]
+    assert observation.result.output["source"]["source_id"] == "official-blog"
+    assert observation.result.output["item_count"] == 1
+    assert observation.result.output["error_count"] == 0
+    assert item["title"] == "Chip Export Update"
+
+
+def test_source_fetch_official_blog_tool_selects_registry_source_by_topic() -> None:
+    registry = ToolRegistry()
+    source_registry = SourceRegistry(
+        [
+            SourceDefinition(
+                source_id="community",
+                name="Community Feed",
+                source_type="rss",
+                url="https://example.com/community.xml",
+                topics=["ai"],
+                authority_score=0.9,
+            ),
+            SourceDefinition(
+                source_id="official-ai",
+                name="Official AI Blog",
+                source_type="atom",
+                url="https://example.com/ai.atom",
+                topics=["ai", "policy"],
+                reliability="high",
+                authority_score=0.8,
+                metadata={"source_kind": "official_blog"},
+            ),
+        ]
+    )
+    seen_urls: list[str] = []
+    register_source_tools(
+        registry,
+        fetch_text=lambda url: seen_urls.append(url) or ATOM_FIXTURE,
+        allowed_domains=["example.com"],
+        source_registry=source_registry,
+    )
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="source.fetch_official_blog",
+            arguments={"topic": "AI policy", "limit": 1},
+        ),
+        ToolPolicy(allowed_tools=["source.fetch_official_blog"]),
+    )
+
+    item = observation.result.output["items"][0]
+
+    assert observation.status == ToolStatus.SUCCEEDED
+    assert seen_urls == ["https://example.com/ai.atom"]
+    assert observation.result.output["source"]["source_id"] == "official-ai"
+    assert item["title"] == "Model Release Notes"
+    assert item["source_type"] == "atom"
+
+
+def test_source_fetch_official_blog_tool_rejects_unmarked_source_before_fetch() -> None:
+    registry = ToolRegistry()
+    calls = {"count": 0}
+    register_source_tools(
+        registry,
+        fetch_text=lambda url: calls.__setitem__("count", calls["count"] + 1) or RSS_FIXTURE,
+    )
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="source.fetch_official_blog",
+            arguments={
+                "source": {
+                    "source_id": "community",
+                    "name": "Community Feed",
+                    "url": "https://example.com/community.xml",
+                    "source_type": "rss",
+                }
+            },
+        ),
+        ToolPolicy(allowed_tools=["source.fetch_official_blog"]),
+    )
+
+    assert observation.status == ToolStatus.FAILED
+    assert calls["count"] == 0
+    assert "official blog" in (observation.result.error_message or "")
+
+
 def test_source_search_tool_selects_sources_by_topic_filters_and_limit() -> None:
     registry = ToolRegistry()
     source_registry = SourceRegistry(

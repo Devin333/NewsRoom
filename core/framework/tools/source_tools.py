@@ -86,6 +86,39 @@ def register_source_tools(
     )
     registry.register(
         ToolDefinition(
+            name="source.fetch_official_blog",
+            description="Fetch and parse a marked official blog RSS or Atom source.",
+            input_schema={
+                "required": [],
+                "properties": {
+                    "source": {"type": "object"},
+                    "source_id": {"type": "string"},
+                    "topic": {"type": "string"},
+                    "language": {"type": "string"},
+                    "region": {"type": "string"},
+                    "limit": {"type": "integer"},
+                    "timeout_seconds": {"type": "number"},
+                    "max_bytes": {"type": "integer"},
+                    "user_agent": {"type": "string"},
+                },
+                "additionalProperties": False,
+            },
+            side_effect="read_only",
+            concurrency_safe=True,
+            timeout_seconds=fetch_policy.timeout_seconds + 1.0,
+            max_result_bytes=1_000_000,
+            metadata={"source_kind": "official_blog"},
+        ),
+        lambda args: _fetch_official_blog(
+            args,
+            source_registry=source_registry,
+            default_policy=fetch_policy,
+            fetch_text=fetch_text,
+            allowed_domains=allowed_domain_tuple,
+        ),
+    )
+    registry.register(
+        ToolDefinition(
             name="source.check_health",
             description="Read current source health for a source id.",
             input_schema={
@@ -208,6 +241,34 @@ def _extract_items(args: dict[str, Any]) -> dict[str, Any]:
         {"source": args["source"], "xml": args["content"], "limit": args.get("limit")},
         default_source_type=SourceType.RSS,
     )
+
+
+def _fetch_official_blog(
+    args: dict[str, Any],
+    *,
+    source_registry: SourceRegistry | None,
+    default_policy: SourceFetchPolicy,
+    fetch_text: FetchText | None,
+    allowed_domains: tuple[str, ...],
+) -> dict[str, Any]:
+    source = _official_blog_source(args, source_registry=source_registry)
+    _ensure_official_blog(source)
+    _ensure_feed_source(source)
+    _ensure_http_url(source.url)
+    _ensure_allowed_domain(source.url, allowed_domains)
+    policy = _fetch_policy(args, default_policy)
+    connector = FeedConnector(
+        fetch_text=_policy_fetch_text(fetch_text, policy),
+        fetch_policy=policy,
+    )
+    items, errors = connector.fetch(source, limit=_optional_limit(args.get("limit")))
+    return {
+        "source": _source_definition_to_dict(source),
+        "item_count": len(items),
+        "items": [_raw_source_item_to_dict(item) for item in items],
+        "error_count": len(errors),
+        "errors": [error.to_dict() for error in errors],
+    }
 
 
 def _fetch_url(
@@ -352,6 +413,22 @@ def _fetch_text(
     return body.decode("utf-8", errors="replace"), status_code, content_type
 
 
+def _policy_fetch_text(
+    fetch_text: FetchText | None,
+    policy: SourceFetchPolicy,
+) -> FetchText | None:
+    if fetch_text is None:
+        return None
+
+    def wrapped(url: str) -> str:
+        content = fetch_text(url)
+        if len(content.encode("utf-8")) > policy.max_bytes:
+            raise ValueError(f"source response exceeds max_bytes: {policy.max_bytes}")
+        return content
+
+    return wrapped
+
+
 def _ensure_http_url(url: str) -> None:
     scheme = urlsplit(url).scheme.casefold()
     if scheme not in {"http", "https"}:
@@ -373,6 +450,64 @@ def _ensure_allowed_domain(url: str, allowed_domains: tuple[str, ...]) -> None:
     if any(host == domain or host.endswith(f".{domain}") for domain in allowed_domains):
         return
     raise ValueError(f"source.fetch_url host is not in allowed domains: {host}")
+
+
+def _official_blog_source(
+    args: dict[str, Any],
+    *,
+    source_registry: SourceRegistry | None,
+) -> SourceDefinition:
+    source_payload = args.get("source")
+    if source_payload is not None:
+        return _source_definition(source_payload, default_source_type=SourceType.RSS)
+    source_id = args.get("source_id")
+    if source_id:
+        if source_registry is None:
+            raise ValueError("source_registry is required to resolve source_id")
+        return source_registry.get(str(source_id))
+    topic = str(args.get("topic") or "").strip()
+    if topic:
+        if source_registry is None:
+            raise ValueError("source_registry is required to resolve topic")
+        sources = source_registry.select_sources(
+            topic=topic,
+            enabled_only=True,
+            language=str(args["language"]) if args.get("language") is not None else None,
+            region=str(args["region"]) if args.get("region") is not None else None,
+            fallback_to_enabled=True,
+        )
+        for source in sources:
+            if _is_official_blog(source):
+                return source
+        raise ValueError(f"no official blog source matched topic: {topic}")
+    raise ValueError("source, source_id, or topic is required")
+
+
+def _ensure_official_blog(source: SourceDefinition) -> None:
+    if not _is_official_blog(source):
+        raise ValueError(f"source is not marked as an official blog: {source.source_id}")
+
+
+def _is_official_blog(source: SourceDefinition) -> bool:
+    metadata = source.metadata
+    if _truthy(metadata.get("official_blog")) or _truthy(metadata.get("official")):
+        return True
+    for key in ["source_kind", "kind", "category"]:
+        marker = str(metadata.get(key) or "").casefold().replace("-", "_").replace(" ", "_")
+        if marker == "official_blog":
+            return True
+    return False
+
+
+def _ensure_feed_source(source: SourceDefinition) -> None:
+    if source.source_type not in {SourceType.RSS, SourceType.ATOM}:
+        raise ValueError(f"official blog source must be rss or atom: {source.source_id}")
+
+
+def _truthy(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().casefold() in {"1", "true", "yes", "on"}
 
 
 def _source_definition(payload: Any, *, default_source_type: SourceType) -> SourceDefinition:
