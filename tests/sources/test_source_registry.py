@@ -150,3 +150,31 @@ def test_source_registry_select_sources_falls_back_to_enabled_sources() -> None:
 
     assert registry.select_sources(topic="weather") == [better, enabled]
     assert registry.select_sources(topic="weather", fallback_to_enabled=False) == []
+
+
+def test_source_registry_validate_reports_errors_and_warnings() -> None:
+    invalid = SourceDefinition(
+        source_id="invalid",
+        name="Invalid",
+        source_type="rss",
+        url="ftp://example.com/feed.xml",
+        authority_score=1.5,
+    )
+    valid_without_topics = SourceDefinition(
+        source_id="valid",
+        name="Valid",
+        source_type="manual",
+        url="manual://operator",
+    )
+    registry = SourceRegistry([valid_without_topics, invalid])
+
+    result = registry.validate()
+    payload = result.to_dict()
+
+    assert result.is_valid is False
+    assert payload["error_count"] == 2
+    assert payload["warning_count"] == 2
+    issues = {(issue.source_id, issue.field, issue.severity) for issue in result.issues}
+    assert ("invalid", "authority_score", "error") in issues
+    assert ("invalid", "url", "error") in issues
+    assert ("valid", "topics", "warning") in issues

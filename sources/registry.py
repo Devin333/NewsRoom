@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import Literal
+from urllib.parse import urlsplit
+
 from domain.sources import SourceDefinition, SourceReliability, SourceType
 
 
@@ -8,6 +12,54 @@ _RELIABILITY_SCORE = {
     SourceReliability.MEDIUM: 2,
     SourceReliability.LOW: 1,
 }
+FETCHABLE_SOURCE_TYPES = {
+    SourceType.RSS,
+    SourceType.ATOM,
+    SourceType.HTML,
+    SourceType.ARXIV,
+    SourceType.GITHUB,
+}
+
+
+@dataclass(frozen=True)
+class SourceRegistryValidationIssue:
+    severity: Literal["error", "warning"]
+    source_id: str
+    field: str
+    message: str
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "severity": self.severity,
+            "source_id": self.source_id,
+            "field": self.field,
+            "message": self.message,
+        }
+
+
+@dataclass(frozen=True)
+class SourceRegistryValidationResult:
+    issues: list[SourceRegistryValidationIssue]
+
+    @property
+    def is_valid(self) -> bool:
+        return not any(issue.severity == "error" for issue in self.issues)
+
+    @property
+    def errors(self) -> list[SourceRegistryValidationIssue]:
+        return [issue for issue in self.issues if issue.severity == "error"]
+
+    @property
+    def warnings(self) -> list[SourceRegistryValidationIssue]:
+        return [issue for issue in self.issues if issue.severity == "warning"]
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "is_valid": self.is_valid,
+            "error_count": len(self.errors),
+            "warning_count": len(self.warnings),
+            "issues": [issue.to_dict() for issue in self.issues],
+        }
 
 
 class SourceRegistry:
@@ -45,6 +97,12 @@ class SourceRegistry:
             for source in self.list_sources(enabled_only=enabled_only)
             if source.source_type == expected_type
         ]
+
+    def validate(self) -> SourceRegistryValidationResult:
+        issues: list[SourceRegistryValidationIssue] = []
+        for source in self.list_sources(enabled_only=False):
+            issues.extend(_validate_source(source))
+        return SourceRegistryValidationResult(issues=issues)
 
     def list_by_topic(
         self,
@@ -121,6 +179,40 @@ def _topic_match_score(source: SourceDefinition, requested_topic: str) -> int:
         if topic_terms and topic_terms.intersection(request_terms):
             score += 1
     return score
+
+
+def _validate_source(source: SourceDefinition) -> list[SourceRegistryValidationIssue]:
+    issues: list[SourceRegistryValidationIssue] = []
+    if source.authority_score < 0.0 or source.authority_score > 1.0:
+        issues.append(
+            SourceRegistryValidationIssue(
+                severity="error",
+                source_id=source.source_id,
+                field="authority_score",
+                message="authority_score must be between 0.0 and 1.0",
+            )
+        )
+    if source.source_type in FETCHABLE_SOURCE_TYPES:
+        scheme = urlsplit(source.url).scheme.casefold()
+        if scheme not in {"http", "https"}:
+            issues.append(
+                SourceRegistryValidationIssue(
+                    severity="error",
+                    source_id=source.source_id,
+                    field="url",
+                    message="fetchable source URL must use http or https",
+                )
+            )
+    if not source.topics:
+        issues.append(
+            SourceRegistryValidationIssue(
+                severity="warning",
+                source_id=source.source_id,
+                field="topics",
+                message="source has no topic metadata",
+            )
+        )
+    return issues
 
 
 def _topic_terms(topic: str) -> set[str]:

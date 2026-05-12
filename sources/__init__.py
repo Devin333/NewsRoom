@@ -1,5 +1,5 @@
 """Source pipeline package."""
 
-from sources.registry import SourceRegistry
+from sources.registry import SourceRegistry, SourceRegistryValidationIssue, SourceRegistryValidationResult
 
-__all__ = ["SourceRegistry"]
+__all__ = ["SourceRegistry", "SourceRegistryValidationIssue", "SourceRegistryValidationResult"]
