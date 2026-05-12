@@ -10,7 +10,7 @@ from core.framework.tools.models import ToolDefinition
 from core.framework.tools.registry import ToolRegistry
 from domain.sources import RawSourceItem, SourceDefinition, SourceError, SourceType
 from sources import SourceRegistry
-from sources.connectors import FeedConnector, SourceFetchPolicy, run_with_fetch_retries
+from sources.connectors import FeedConnector, HtmlConnector, SourceFetchPolicy, run_with_fetch_retries
 from sources.health import BasicSourceHealthManager
 from sources.processing.normalize import canonicalize_url
 
@@ -69,7 +69,7 @@ def register_source_tools(
     registry.register(
         ToolDefinition(
             name="source.extract_items",
-            description="Extract raw source items from fetched RSS or Atom content.",
+            description="Extract raw source items from fetched RSS, Atom, or HTML content.",
             input_schema={
                 "required": ["source", "content"],
                 "properties": {
@@ -87,7 +87,7 @@ def register_source_tools(
     registry.register(
         ToolDefinition(
             name="source.fetch_official_blog",
-            description="Fetch and parse a marked official blog RSS or Atom source.",
+            description="Fetch and parse a marked official blog RSS, Atom, or HTML source.",
             input_schema={
                 "required": [],
                 "properties": {
@@ -196,6 +196,24 @@ def register_source_tools(
     )
     registry.register(
         ToolDefinition(
+            name="source.extract_html",
+            description="Extract visible text and metadata from fetched HTML content.",
+            input_schema={
+                "required": ["source", "html"],
+                "properties": {
+                    "source": {"type": "object"},
+                    "html": {"type": "string"},
+                    "limit": {"type": "integer"},
+                },
+                "additionalProperties": False,
+            },
+            side_effect="read_only",
+            concurrency_safe=True,
+        ),
+        _parse_html,
+    )
+    registry.register(
+        ToolDefinition(
             name="source.normalize_url",
             description="Canonicalize a source URL and strip known tracking parameters.",
             input_schema={
@@ -237,10 +255,31 @@ def _parse_feed(args: dict[str, Any], *, default_source_type: SourceType) -> dic
 
 
 def _extract_items(args: dict[str, Any]) -> dict[str, Any]:
+    source = _source_definition(args["source"], default_source_type=SourceType.RSS)
+    if source.source_type == SourceType.HTML:
+        return _parse_html(
+            {"source": args["source"], "html": args["content"], "limit": args.get("limit")}
+        )
     return _parse_feed(
         {"source": args["source"], "xml": args["content"], "limit": args.get("limit")},
         default_source_type=SourceType.RSS,
     )
+
+
+def _parse_html(args: dict[str, Any]) -> dict[str, Any]:
+    source = _source_definition(args["source"], default_source_type=SourceType.HTML)
+    if source.source_type != SourceType.HTML:
+        raise ValueError("source.extract_html requires source_type=html")
+    limit = args.get("limit")
+    items = HtmlConnector().parse(
+        source,
+        str(args["html"]),
+        limit=int(limit) if limit is not None else None,
+    )
+    return {
+        "item_count": len(items),
+        "items": [_raw_source_item_to_dict(item) for item in items],
+    }
 
 
 def _fetch_official_blog(
@@ -253,14 +292,11 @@ def _fetch_official_blog(
 ) -> dict[str, Any]:
     source = _official_blog_source(args, source_registry=source_registry)
     _ensure_official_blog(source)
-    _ensure_feed_source(source)
+    _ensure_official_blog_source_type(source)
     _ensure_http_url(source.url)
     _ensure_allowed_domain(source.url, allowed_domains)
     policy = _fetch_policy(args, default_policy)
-    connector = FeedConnector(
-        fetch_text=_policy_fetch_text(fetch_text, policy),
-        fetch_policy=policy,
-    )
+    connector = _official_blog_connector(source, fetch_text=fetch_text, policy=policy)
     items, errors = connector.fetch(source, limit=_optional_limit(args.get("limit")))
     return {
         "source": _source_definition_to_dict(source),
@@ -506,9 +542,26 @@ def _is_official_blog(source: SourceDefinition) -> bool:
     return False
 
 
-def _ensure_feed_source(source: SourceDefinition) -> None:
-    if source.source_type not in {SourceType.RSS, SourceType.ATOM}:
-        raise ValueError(f"official blog source must be rss or atom: {source.source_id}")
+def _ensure_official_blog_source_type(source: SourceDefinition) -> None:
+    if source.source_type not in {SourceType.RSS, SourceType.ATOM, SourceType.HTML}:
+        raise ValueError(f"official blog source must be rss, atom, or html: {source.source_id}")
+
+
+def _official_blog_connector(
+    source: SourceDefinition,
+    *,
+    fetch_text: FetchText | None,
+    policy: SourceFetchPolicy,
+) -> FeedConnector | HtmlConnector:
+    if source.source_type == SourceType.HTML:
+        return HtmlConnector(
+            fetch_text=_policy_fetch_text(fetch_text, policy),
+            fetch_policy=policy,
+        )
+    return FeedConnector(
+        fetch_text=_policy_fetch_text(fetch_text, policy),
+        fetch_policy=policy,
+    )
 
 
 def _truthy(value: Any) -> bool:

@@ -40,6 +40,25 @@ ATOM_FIXTURE = """<?xml version="1.0"?>
 """
 
 
+HTML_FIXTURE = """<!doctype html>
+<html lang="en">
+  <head>
+    <title>Official Launch Notes</title>
+    <link rel="canonical" href="https://example.com/blog/launch" />
+    <meta name="description" content="Official launch summary." />
+    <meta property="article:published_time" content="2026-05-11T10:30:00Z" />
+    <meta name="author" content="Alice Example" />
+  </head>
+  <body>
+    <article>
+      <h1>Official Launch Notes</h1>
+      <p>The official blog describes the source pipeline HTML fallback.</p>
+    </article>
+  </body>
+</html>
+"""
+
+
 def test_source_fetch_url_tool_fetches_configured_source_through_executor() -> None:
     registry = ToolRegistry()
     seen_urls: list[str] = []
@@ -426,6 +445,46 @@ def test_source_fetch_official_blog_tool_rejects_unmarked_source_before_fetch() 
     assert "official blog" in (observation.result.error_message or "")
 
 
+def test_source_fetch_official_blog_tool_fetches_marked_html_source() -> None:
+    registry = ToolRegistry()
+    source_registry = SourceRegistry(
+        [
+            SourceDefinition(
+                source_id="official-html",
+                name="Official HTML Blog",
+                source_type="html",
+                url="https://example.com/blog/launch",
+                reliability="high",
+                metadata={"official_blog": True},
+            )
+        ]
+    )
+    seen_urls: list[str] = []
+    register_source_tools(
+        registry,
+        source_registry=source_registry,
+        fetch_text=lambda url: seen_urls.append(url) or HTML_FIXTURE,
+    )
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="source.fetch_official_blog",
+            arguments={"source_id": "official-html", "limit": 1},
+        ),
+        ToolPolicy(allowed_tools=["source.fetch_official_blog"]),
+    )
+
+    item = observation.result.output["items"][0]
+
+    assert observation.status == ToolStatus.SUCCEEDED
+    assert seen_urls == ["https://example.com/blog/launch"]
+    assert observation.result.output["item_count"] == 1
+    assert item["source_type"] == "html"
+    assert item["title"] == "Official Launch Notes"
+    assert item["metadata"]["extractor_name"] == "stdlib_html_extractor"
+
+
 def test_source_search_tool_selects_sources_by_topic_filters_and_limit() -> None:
     registry = ToolRegistry()
     source_registry = SourceRegistry(
@@ -702,6 +761,66 @@ def test_source_extract_items_tool_extracts_atom_content() -> None:
     assert observation.result.output["item_count"] == 1
     assert item["title"] == "Model Release Notes"
     assert item["source_type"] == "atom"
+
+
+def test_source_extract_html_tool_extracts_html_content() -> None:
+    registry = ToolRegistry()
+    register_source_tools(registry)
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="source.extract_html",
+            arguments={
+                "source": {
+                    "source_id": "html-example",
+                    "name": "HTML Example",
+                    "url": "https://example.com/blog/launch",
+                    "source_type": "html",
+                    "reliability": "high",
+                },
+                "html": HTML_FIXTURE,
+            },
+        ),
+        ToolPolicy(allowed_tools=["source.extract_html"]),
+    )
+
+    item = observation.result.output["items"][0]
+
+    assert observation.status == ToolStatus.SUCCEEDED
+    assert observation.result.output["item_count"] == 1
+    assert item["source_type"] == "html"
+    assert item["title"] == "Official Launch Notes"
+    assert item["metadata"]["extraction_confidence"] > 0
+
+
+def test_source_extract_items_tool_dispatches_html_content() -> None:
+    registry = ToolRegistry()
+    register_source_tools(registry)
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="source.extract_items",
+            arguments={
+                "source": {
+                    "source_id": "html-example",
+                    "name": "HTML Example",
+                    "url": "https://example.com/blog/launch",
+                    "source_type": "html",
+                },
+                "content": HTML_FIXTURE,
+            },
+        ),
+        ToolPolicy(allowed_tools=["source.extract_items"]),
+    )
+
+    item = observation.result.output["items"][0]
+
+    assert observation.status == ToolStatus.SUCCEEDED
+    assert observation.result.output["item_count"] == 1
+    assert item["source_type"] == "html"
+    assert item["url"] == "https://example.com/blog/launch"
 
 
 def test_source_normalize_url_tool_removes_tracking_parameters() -> None:
