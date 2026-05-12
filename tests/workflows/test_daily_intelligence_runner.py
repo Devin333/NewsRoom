@@ -13,6 +13,7 @@ from sources.connectors import (
     FeedConnector,
     GithubConnector,
     HtmlConnector,
+    TooManyRedirectsError,
 )
 from sources.health import BasicSourceHealthManager
 from storage.lineage import LocalJsonLineageStore
@@ -501,6 +502,55 @@ def test_daily_intelligence_runner_records_partial_source_failures(tmp_path) -> 
     )
     error_payload = json.loads((run_dir / error_entry["path"]).read_text())
     assert error_payload["error"]["source_id"] == "failing"
+
+
+def test_daily_intelligence_runner_honors_non_health_affecting_source_errors(tmp_path) -> None:
+    registry = SourceRegistry(
+        [
+            SourceDefinition(
+                source_id="blocked",
+                name="Blocked",
+                source_type="rss",
+                url="https://example.com/blocked.xml",
+                reliability="medium",
+            ),
+            SourceDefinition(
+                source_id="working",
+                name="Working",
+                source_type="rss",
+                url="https://example.com/working.xml",
+                reliability="high",
+            ),
+        ]
+    )
+    health_manager = BasicSourceHealthManager(failure_threshold=1, cooldown_seconds=300)
+
+    def fetch_text(url: str) -> str:
+        if "blocked" in url:
+            raise TooManyRedirectsError("https://example.com/loop", max_redirects=1)
+        return RSS_FIXTURE
+
+    result = DailyIntelligenceRunner(
+        artifact_root=tmp_path,
+        source_registry=registry,
+        feed_connector=FeedConnector(fetch_text=fetch_text),
+        llm_client=_FakeReportLLM(),
+        source_health_manager=health_manager,
+    ).run(profile="live", topic="AI policy", source_limit=1, run_id="daily-non-health-error")
+
+    assert result.status == WorkflowStatus.SUCCEEDED
+    assert health_manager.get("blocked").status.value == "healthy"
+    failed_event = next(
+        event
+        for event in result.output["source_events"]
+        if event.event_type == "source_fetch_failed" and event.source_id == "blocked"
+    )
+    assert failed_event.metadata["retryable"] is False
+    assert failed_event.metadata["source_health_affecting"] is False
+    assert not any(
+        event.event_type == "source_health_updated" and event.source_id == "blocked"
+        for event in result.output["source_events"]
+    )
 
 
 def test_daily_intelligence_runner_all_sources_failed_preserves_diagnostics(tmp_path) -> None:

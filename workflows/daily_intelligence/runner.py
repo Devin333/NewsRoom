@@ -270,26 +270,34 @@ class DailyIntelligenceRunner:
                         )
                     )
                 for error in errors:
+                    retryable = _error_metadata_bool(error, "retryable", default=True)
+                    source_health_affecting = _error_metadata_bool(
+                        error,
+                        "source_health_affecting",
+                        default=True,
+                    )
                     source_events.append(
                         _source_event(
                             "source_fetch_failed",
                             source.source_id,
                             error_type=error.error_type,
-                            retryable=True,
+                            retryable=retryable,
+                            source_health_affecting=source_health_affecting,
                             fetch_latency_ms=fetch_latency_ms,
                         )
                     )
                     metrics.record_error(error)
-                    source_health = self.source_health_manager.record_failure(source.source_id, error)
-                    source_health_updates.append(source_health)
-                    source_events.append(
-                        _source_event(
-                            "source_health_updated",
-                            source.source_id,
-                            status=source_health.status.value,
-                            consecutive_failures=source_health.consecutive_failures,
+                    if source_health_affecting:
+                        source_health = self.source_health_manager.record_failure(source.source_id, error)
+                        source_health_updates.append(source_health)
+                        source_events.append(
+                            _source_event(
+                                "source_health_updated",
+                                source.source_id,
+                                status=source_health.status.value,
+                                consecutive_failures=source_health.consecutive_failures,
+                            )
                         )
-                    )
         metrics.raw_items_count = len(raw_items)
         if not raw_items:
             all_sources_error = SourceError(
@@ -744,6 +752,15 @@ def _source_event(event_type: str, source_id: str | None = None, **metadata: Any
         source_id=source_id,
         metadata={key: value for key, value in metadata.items() if value is not None},
     )
+
+
+def _error_metadata_bool(error: SourceError, key: str, *, default: bool) -> bool:
+    value = error.metadata.get(key, default)
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    return str(value).strip().casefold() in {"1", "true", "yes", "on"}
 
 
 def _quality_event(event_type: str, **metadata: Any) -> QualityEvent:
