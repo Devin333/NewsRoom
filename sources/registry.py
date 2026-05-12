@@ -84,10 +84,18 @@ class SourceRegistryValidationResult:
 
 
 class SourceRegistry:
-    def __init__(self, sources: list[SourceDefinition] | None = None) -> None:
+    def __init__(
+        self,
+        sources: list[SourceDefinition] | None = None,
+        *,
+        connectors: dict[str | SourceType, Any] | None = None,
+    ) -> None:
         self._sources: dict[str, SourceDefinition] = {}
+        self._connectors: dict[SourceType, Any] = {}
         for source in sources or []:
             self.register(source)
+        for source_type, connector in (connectors or {}).items():
+            self.register_connector(source_type, connector)
 
     def register(self, source: SourceDefinition) -> None:
         if source.source_id in self._sources:
@@ -99,6 +107,19 @@ class SourceRegistry:
             return self._sources[source_id]
         except KeyError as exc:
             raise KeyError(f"source is not registered: {source_id}") from exc
+
+    def register_connector(self, source_type: str | SourceType, connector: Any) -> None:
+        expected_type = SourceType(source_type)
+        if connector is None:
+            raise ValueError("connector is required")
+        self._connectors[expected_type] = connector
+
+    def get_connector(self, source_type: str | SourceType) -> Any:
+        expected_type = SourceType(source_type)
+        try:
+            return self._connectors[expected_type]
+        except KeyError as exc:
+            raise KeyError(f"connector is not registered for source_type: {expected_type.value}") from exc
 
     def list_sources(self, *, enabled_only: bool = True) -> list[SourceDefinition]:
         sources = list(self._sources.values())

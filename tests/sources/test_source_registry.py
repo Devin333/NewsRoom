@@ -50,6 +50,18 @@ def test_source_registry_lists_sources_by_type() -> None:
     assert registry.list_by_type("html", enabled_only=False) == [html, disabled_html]
 
 
+def test_source_registry_registers_and_finds_connector_by_source_type() -> None:
+    connector = object()
+    registry = SourceRegistry(connectors={"rss": connector})
+
+    assert registry.get_connector("rss") is connector
+
+    html_connector = object()
+    registry.register_connector("html", html_connector)
+
+    assert registry.get_connector("html") is html_connector
+
+
 def test_source_registry_validates_html_backed_target_source_types() -> None:
     official_blog = SourceDefinition(
         source_id="official",
