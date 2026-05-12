@@ -654,7 +654,44 @@ def test_tool_executor_spills_large_redacted_result_to_artifact(tmp_path) -> Non
     assert artifact_payload["output"]["token"] == REDACTED_VALUE
     assert "hidden-token" not in artifact_path.read_text(encoding="utf-8")
     assert "tool_result_spilled" in [event.event_type for event in executor.list_events()]
+    assert "tool_output_guardrail_failed" not in [
+        event.event_type for event in executor.list_events()
+    ]
     assert executor.metrics.to_dict()["spilled_result_count"] == 1
+
+
+def test_tool_executor_fails_output_that_exceeds_tool_max_result_bytes() -> None:
+    registry = ToolRegistry()
+    registry.register(
+        ToolDefinition(
+            name="memory.large",
+            input_schema={"required": ["query"]},
+            max_result_bytes=20,
+        ),
+        lambda args: {"items": [{"title": args["query"], "body": "x" * 80}]},
+    )
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(tool_name="memory.large", arguments={"query": "chips"}),
+        ToolPolicy(allowed_tools=["memory.large"]),
+    )
+
+    guardrail_events = [
+        event
+        for event in executor.list_events()
+        if event.event_type == "tool_output_guardrail_failed"
+    ]
+    assert observation.status == ToolStatus.FAILED
+    assert observation.result.error_type == "ToolRuntimeError"
+    assert "max_result_bytes" in (observation.result.error_message or "")
+    assert observation.result.output is None
+    assert observation.result.output_bytes is not None
+    assert observation.result.output_bytes > 20
+    assert len(guardrail_events) == 1
+    assert guardrail_events[0].payload["reason"] == "max_result_bytes_exceeded"
+    assert guardrail_events[0].payload["max_result_bytes"] == 20
+    assert "x" * 20 not in str(guardrail_events[0].to_dict())
 
 
 def test_tool_executor_keeps_large_result_inline_without_artifact_context() -> None:

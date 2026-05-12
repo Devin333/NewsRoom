@@ -48,6 +48,7 @@ class ToolDefinition:
     requires_approval: bool = False
     timeout_seconds: float | None = None
     max_attempts: int | None = None
+    max_result_bytes: int | None = 1_000_000
     concurrency_safe: bool = False
     required_secret_names: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -60,6 +61,13 @@ class ToolDefinition:
             raise ToolDefinitionError(f"tool name must be namespaced: {self.name}")
         if not self.version:
             raise ToolDefinitionError(f"tool version is required for {self.name}")
+        if (
+            self.max_result_bytes is not None
+            and (not isinstance(self.max_result_bytes, int) or self.max_result_bytes < 0)
+        ):
+            raise ToolDefinitionError(
+                f"max_result_bytes must be a non-negative integer for {self.name}"
+            )
         if any(not isinstance(name, str) or not name for name in self.required_secret_names):
             raise ToolDefinitionError(f"required secret names must be non-empty strings for {self.name}")
 
@@ -91,6 +99,7 @@ class ToolDefinition:
             "requires_approval": self.requires_approval,
             "timeout_seconds": self.timeout_seconds,
             "max_attempts": self.max_attempts,
+            "max_result_bytes": self.max_result_bytes,
             "concurrency_safe": self.concurrency_safe,
             "required_secret_names": list(self.required_secret_names),
             "metadata": dict(self.metadata),

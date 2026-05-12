@@ -86,6 +86,7 @@ class MCPToolAdapter:
             is_dangerous=bool(remote_tool.get("is_dangerous", False)),
             requires_approval=bool(remote_tool.get("requires_approval", False)),
             timeout_seconds=server.timeout_seconds,
+            max_result_bytes=remote_tool.get("max_result_bytes", 1_000_000),
             concurrency_safe=bool(remote_tool.get("concurrency_safe", False)),
             required_secret_names=_string_list(
                 remote_tool.get("required_secret_names", []),

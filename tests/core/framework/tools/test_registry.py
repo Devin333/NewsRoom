@@ -101,6 +101,11 @@ def test_tool_definition_requires_version() -> None:
         ToolDefinition(name="memory.search", version="")
 
 
+def test_tool_definition_rejects_invalid_max_result_bytes() -> None:
+    with pytest.raises(ToolDefinitionError, match="max_result_bytes"):
+        ToolDefinition(name="memory.search", max_result_bytes=-1)
+
+
 def test_tool_registry_lists_tools_for_agent_using_policy() -> None:
     registry = ToolRegistry()
     registry.register(ToolDefinition(name="memory.search"), lambda args: args)

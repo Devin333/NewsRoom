@@ -107,7 +107,15 @@ class ToolExecutor:
             safe_output = redact_sensitive_values(raw_output)
             if contains_redacted_value(safe_output):
                 self._emit("tool_result_redacted", call, {"redacted": True})
-            return self._tool_result(call, safe_output, policy)
+            output_bytes = _json_size_bytes(safe_output)
+            output_guardrail_result = self._output_size_guard(
+                call,
+                registered.definition,
+                output_bytes,
+            )
+            if output_guardrail_result is not None:
+                return output_guardrail_result
+            return self._tool_result(call, safe_output, policy, output_bytes)
 
         self._emit("tool_call_requested", call, {"call": call.to_dict()})
         try:
@@ -144,8 +152,11 @@ class ToolExecutor:
         call: ToolCall,
         safe_output: Any,
         policy: ToolPolicy,
+        output_bytes: int | None = None,
     ) -> ToolResult:
-        output_bytes = _json_size_bytes(safe_output)
+        output_bytes = (
+            output_bytes if output_bytes is not None else _json_size_bytes(safe_output)
+        )
         if (
             policy.spill_large_results_to_artifact
             and output_bytes > policy.max_result_chars_inline
@@ -174,6 +185,31 @@ class ToolExecutor:
         return ToolResult(
             status=ToolStatus.SUCCEEDED,
             output=safe_output,
+            output_bytes=output_bytes,
+        )
+
+    def _output_size_guard(
+        self,
+        call: ToolCall,
+        definition: Any,
+        output_bytes: int,
+    ) -> ToolResult | None:
+        max_result_bytes = getattr(definition, "max_result_bytes", None)
+        if max_result_bytes is None or output_bytes <= max_result_bytes:
+            return None
+        payload = {
+            "reason": "max_result_bytes_exceeded",
+            "output_bytes": output_bytes,
+            "max_result_bytes": max_result_bytes,
+        }
+        self._emit("tool_output_guardrail_failed", call, payload)
+        return ToolResult(
+            status=ToolStatus.FAILED,
+            error_type="ToolRuntimeError",
+            error_message=(
+                f"tool output exceeded max_result_bytes for {definition.name}: "
+                f"{output_bytes} > {max_result_bytes}"
+            ),
             output_bytes=output_bytes,
         )
 
