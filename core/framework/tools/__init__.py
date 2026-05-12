@@ -20,7 +20,12 @@ from core.framework.tools.models import (
     ToolStatus,
     ToolTimeoutError,
 )
-from core.framework.tools.registry import DuplicateToolPolicy, RegisteredTool, ToolRegistry
+from core.framework.tools.registry import (
+    DuplicateToolPolicy,
+    RegisteredTool,
+    ToolRegistry,
+    ToolRegistryValidationResult,
+)
 from core.framework.tools.redaction import (
     REDACTED_VALUE,
     contains_redacted_value,
@@ -45,6 +50,7 @@ __all__ = [
     "MCPToolAdapter",
     "RegisteredTool",
     "DuplicateToolPolicy",
+    "ToolRegistryValidationResult",
     "ToolCall",
     "ToolDefinition",
     "ToolDefinitionError",

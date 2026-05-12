@@ -1,6 +1,15 @@
+from typing import cast
+
 import pytest
 
-from core.framework.tools import ToolDefinition, ToolDefinitionError, ToolPolicy, ToolRegistry
+from core.framework.tools import (
+    RegisteredTool,
+    ToolDefinition,
+    ToolDefinitionError,
+    ToolPolicy,
+    ToolRegistry,
+)
+from core.framework.tools.models import ToolExecutorFn
 
 
 def test_tool_registry_registers_namespaced_tool() -> None:
@@ -82,6 +91,35 @@ def test_tool_registry_rejects_unknown_duplicate_policy() -> None:
             lambda args: args,
             duplicate_policy="replace",
         )
+
+
+def test_tool_registry_validate_no_conflicts_returns_ok_result() -> None:
+    registry = ToolRegistry()
+    registry.register(ToolDefinition(name="memory.search"), lambda args: args)
+    registry.register(ToolDefinition(name="artifact.load"), lambda args: args)
+
+    result = registry.validate_no_conflicts()
+
+    assert result.ok is True
+    assert result.errors == ()
+    assert result.tool_count == 2
+    assert result.to_dict() == {"ok": True, "errors": [], "tool_count": 2}
+
+
+def test_tool_registry_validate_no_conflicts_reports_inconsistent_state() -> None:
+    registry = ToolRegistry()
+    registry.register(ToolDefinition(name="memory.search"), lambda args: args)
+    registry._tools["artifact.load"] = RegisteredTool(
+        definition=ToolDefinition(name="memory.search"),
+        executor=cast(ToolExecutorFn, None),
+    )
+
+    result = registry.validate_no_conflicts()
+
+    assert result.ok is False
+    assert result.tool_count == 2
+    assert any("does not match definition name" in error for error in result.errors)
+    assert any("executor is not callable" in error for error in result.errors)
 
 
 def test_tool_definition_requires_namespace() -> None:
