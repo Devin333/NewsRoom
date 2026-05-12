@@ -1,6 +1,10 @@
+from datetime import UTC, datetime, timedelta
+
 import pytest
 
 from core.framework.llm import (
+    InMemoryLLMCooldownTracker,
+    LLMCooldownPolicy,
     LLMProviderError,
     LLMRequest,
     LLMResponse,
@@ -303,6 +307,113 @@ def test_llm_router_does_not_fallback_after_non_retryable_provider_error() -> No
     assert exc_info.value.error_type == "provider_error"
     assert exc_info.value.retryable is False
     assert exc_info.value.attempted_deployments == ("primary",)
+
+
+def test_llm_router_skips_static_cooldown_primary_and_uses_fallback() -> None:
+    now = datetime(2026, 5, 12, tzinfo=UTC)
+    primary = StaticClient(LLMResponse(content="primary"))
+    fallback = StaticClient(LLMResponse(content="fallback"))
+    router = LLMRouter(
+        routes=[
+            ModelRoute(
+                route_id="writer",
+                primary_deployment_id="primary",
+                fallback_deployment_ids=("fallback",),
+            )
+        ],
+        deployments=[
+            ModelDeployment(
+                "primary",
+                "test",
+                "model-a",
+                primary,
+                cooldown_until=now + timedelta(seconds=60),
+            ),
+            ModelDeployment("fallback", "test", "model-b", fallback),
+        ],
+        now_fn=lambda: now,
+    )
+
+    response = router.complete("writer", LLMRequest(messages=[{"role": "user", "content": "hi"}]))
+
+    assert primary.call_count == 0
+    assert fallback.call_count == 1
+    assert response.content == "fallback"
+    assert response.metadata["llm_attempted_deployments"] == ["primary", "fallback"]
+    assert response.metadata["llm_fallback_used"] is True
+
+
+def test_llm_router_records_dynamic_cooldown_after_retryable_failure() -> None:
+    now = datetime(2026, 5, 12, tzinfo=UTC)
+    clock = {"now": now}
+    tracker = InMemoryLLMCooldownTracker(
+        LLMCooldownPolicy(
+            cooldown_on_rate_limit_seconds=120,
+            cooldown_on_server_error_seconds=30,
+            failure_count_threshold=1,
+        ),
+        now_fn=lambda: clock["now"],
+    )
+    primary = FailingClient(
+        LLMProviderError(
+            "rate limited",
+            provider="primary",
+            error_type="rate_limited",
+            retryable=True,
+            status_code=429,
+        )
+    )
+    fallback = StaticClient(LLMResponse(content="fallback"))
+    router = LLMRouter(
+        routes=[
+            ModelRoute(
+                route_id="writer",
+                primary_deployment_id="primary",
+                fallback_deployment_ids=("fallback",),
+            )
+        ],
+        deployments=[
+            ModelDeployment("primary", "test", "model-a", primary),
+            ModelDeployment("fallback", "test", "model-b", fallback),
+        ],
+        cooldown_tracker=tracker,
+        now_fn=lambda: clock["now"],
+    )
+
+    first = router.complete("writer", LLMRequest(messages=[{"role": "user", "content": "hi"}]))
+    second = router.complete("writer", LLMRequest(messages=[{"role": "user", "content": "hi"}]))
+
+    state = tracker.state("primary")
+
+    assert first.content == "fallback"
+    assert second.content == "fallback"
+    assert primary.call_count == 1
+    assert fallback.call_count == 2
+    assert state is not None
+    assert state.consecutive_failures == 1
+    assert state.cooldown_until == now + timedelta(seconds=120)
+    assert second.metadata["llm_attempted_deployments"] == ["primary", "fallback"]
+
+
+def test_llm_cooldown_tracker_resets_failures_on_success() -> None:
+    now = datetime(2026, 5, 12, tzinfo=UTC)
+    tracker = InMemoryLLMCooldownTracker(
+        LLMCooldownPolicy(failure_count_threshold=1),
+        now_fn=lambda: now,
+    )
+    tracker.record_failure(
+        "primary",
+        LLMProviderError(
+            "temporary",
+            error_type="provider_server_error",
+            retryable=True,
+            status_code=503,
+        ),
+    )
+
+    tracker.record_success("primary")
+
+    assert tracker.state("primary") is None
 
 
 def test_llm_router_raises_when_fallback_chain_exhausted() -> None:
