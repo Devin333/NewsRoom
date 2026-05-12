@@ -559,6 +559,44 @@ class SourceSelectionReport:
         }
 
 
+@dataclass(frozen=True)
+class SourceGovernanceFinding:
+    finding_type: str
+    severity: str
+    source_id: str
+    message: str
+    action: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "finding_type": self.finding_type,
+            "severity": self.severity,
+            "source_id": self.source_id,
+            "message": self.message,
+            "action": self.action,
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class SourceGovernanceReport:
+    finding_count: int
+    blocking_finding_count: int
+    requires_strict_verification_source_ids: list[str] = field(default_factory=list)
+    findings: list[SourceGovernanceFinding] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "finding_count": self.finding_count,
+            "blocking_finding_count": self.blocking_finding_count,
+            "requires_strict_verification_source_ids": list(
+                self.requires_strict_verification_source_ids
+            ),
+            "findings": [finding.to_dict() for finding in self.findings],
+        }
+
+
 def _dt(value: datetime | None) -> str | None:
     return value.isoformat().replace("+00:00", "Z") if value else None
 

@@ -153,6 +153,7 @@ def test_daily_intelligence_runner_live_offline_writes_report_artifacts(tmp_path
     assert manifest["artifacts"]["source_selection_report"] == "source_selection_report.json"
     assert manifest["artifacts"]["source_coverage_report"] == "source_coverage_report.json"
     assert manifest["artifacts"]["source_quality_scores"] == "source_quality_scores.json"
+    assert manifest["artifacts"]["source_governance_report"] == "source_governance_report.json"
     assert manifest["source_quality_score_count"] == 2
     assert manifest["artifacts"]["source_fetch_requests"] == "source_fetch_requests.json"
     assert manifest["artifacts"]["source_artifacts"] == "source_artifacts/index.json"
@@ -214,6 +215,10 @@ def test_daily_intelligence_runner_live_offline_writes_report_artifacts(tmp_path
     assert source_quality_scores[0]["quality_score"] > 0.8
     assert source_quality_scores[0]["traceability_score"] == 1.0
     assert result.output["source_quality_scores"] == source_quality_scores
+
+    governance_report = json.loads((run_dir / "source_governance_report.json").read_text(encoding="utf-8"))
+    assert governance_report["finding_count"] == 0
+    assert governance_report["blocking_finding_count"] == 0
 
     source_fetch_requests = json.loads((run_dir / "source_fetch_requests.json").read_text())
     assert source_fetch_requests[0]["request_id"] == result.output["source_fetch_results"][0].request_id

@@ -3,6 +3,7 @@ from datetime import UTC, datetime, timedelta
 from domain.sources import RawSourceItem, SourceError, SourcePipelineMetrics, SourceType
 from sources.processing import (
     build_source_coverage_report,
+    build_source_governance_report,
     deduplicate_items,
     deduplicate_with_result,
     detect_language,
@@ -131,6 +132,40 @@ def test_build_source_coverage_report_marks_no_source_run_empty() -> None:
     assert report.failed_source_ids == []
     assert report.fetch_success_ratio == 0.0
     assert report.partial_reasons == ["no_raw_items", "source_failures", "source_errors"]
+
+
+def test_build_source_governance_report_flags_policy_findings() -> None:
+    report = build_source_governance_report(
+        source_quality_scores=[
+            {
+                "source_id": "community-low",
+                "quality_score": 0.6,
+                "reliability_score": 0.4,
+                "traceability_score": 0.8,
+            }
+        ],
+        source_selection_report={
+            "selected_sources": [
+                {
+                    "source_id": "community-low",
+                    "source_type": "reddit",
+                    "category": "community",
+                }
+            ]
+        },
+    )
+
+    finding_types = [finding.finding_type for finding in report.findings]
+    assert report.finding_count == 4
+    assert report.blocking_finding_count == 1
+    assert report.requires_strict_verification_source_ids == ["community-low"]
+    assert finding_types == [
+        "low_reliability_source",
+        "weak_traceability",
+        "low_source_quality",
+        "community_source_requires_verification",
+    ]
+    assert report.to_dict()["findings"][1]["severity"] == "blocking"
 
 
 def test_score_source_item_summarizes_source_side_quality_signals() -> None:
