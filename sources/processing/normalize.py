@@ -44,7 +44,7 @@ def normalize_item(item: RawSourceItem) -> NormalizedSourceItem:
         canonical_url=canonical_url,
         canonical_url_hash=_hash(canonical_url),
         title_hash=_hash(normalized_title),
-        content_hash=_hash((normalized_title or "") + "\n" + (normalized_summary or "")),
+        content_hash=_content_hash(normalized_title, normalized_summary),
         source_reliability=reliability,
         fetched_at=item.fetched_at,
         published_at=published_at,
@@ -76,6 +76,10 @@ def _as_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC)
     return value.astimezone(UTC)
+
+
+def _content_hash(normalized_title: str, normalized_summary: str | None) -> str:
+    return _hash(normalized_summary or normalized_title)
 
 
 def normalize_text(value: str) -> str:

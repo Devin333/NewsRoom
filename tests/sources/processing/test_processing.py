@@ -12,6 +12,7 @@ def _raw_item(
     reliability: str = "medium",
     days_old: int = 0,
     authority_score: float = 0.5,
+    summary: str | None = None,
 ) -> RawSourceItem:
     now = datetime(2026, 5, 11, tzinfo=UTC)
     return RawSourceItem(
@@ -23,7 +24,7 @@ def _raw_item(
         url=url,
         fetched_at=now,
         published_at=now - timedelta(days=days_old),
-        summary=f"Summary for {title}",
+        summary=summary if summary is not None else f"Summary for {title}",
         metadata={"source_reliability": reliability, "source_authority_score": authority_score},
     )
 
@@ -67,6 +68,21 @@ def test_deduplicate_items_removes_duplicate_canonical_urls() -> None:
     assert unique[0].canonical_url == "https://example.com/post"
     assert unique[0].metadata["lineage"]["canonical_url"] == "https://example.com/post"
     assert unique[0].metadata["lineage"]["source_item_id"].startswith("raw-")
+
+
+def test_deduplicate_items_removes_duplicate_content_hashes() -> None:
+    normalized = normalize_items(
+        [
+            _raw_item("First headline", "https://example.com/first", summary="Same article body"),
+            _raw_item("Second headline", "https://other.example/second", summary="Same article body"),
+        ]
+    )
+
+    unique = deduplicate_items(normalized)
+
+    assert len(unique) == 1
+    assert unique[0].title == "First headline"
+    assert normalized[0].content_hash == normalized[1].content_hash
 
 
 def test_normalize_item_detects_future_published_at() -> None:
