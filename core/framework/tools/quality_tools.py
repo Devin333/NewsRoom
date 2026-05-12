@@ -5,7 +5,7 @@ from typing import Any
 from core.framework.tools.models import ToolDefinition
 from core.framework.tools.registry import ToolRegistry
 from evidence.models import EvidenceBundle, EvidenceItem
-from quality import CitationChecker
+from quality import CitationChecker, SupportMatrixBuilder
 from sources.processing.normalize import canonicalize_url, normalize_text
 
 
@@ -41,6 +41,23 @@ def register_quality_tools(registry: ToolRegistry) -> None:
         ),
         _duplicate_check,
     )
+    registry.register(
+        ToolDefinition(
+            name="quality.claim_support_check",
+            description="Check report section support against an evidence bundle.",
+            input_schema={
+                "required": ["report", "evidence_bundle"],
+                "properties": {
+                    "report": {"type": "object"},
+                    "evidence_bundle": {"type": "object"},
+                },
+                "additionalProperties": False,
+            },
+            side_effect="read_only",
+            concurrency_safe=True,
+        ),
+        _claim_support_check,
+    )
 
 
 def _citation_check(args: dict[str, Any]) -> dict[str, Any]:
@@ -62,6 +79,21 @@ def _duplicate_check(args: dict[str, Any]) -> dict[str, Any]:
             max(0, len(group["item_ids"]) - 1) for group in duplicate_groups
         ),
         "duplicate_groups": duplicate_groups,
+    }
+
+
+def _claim_support_check(args: dict[str, Any]) -> dict[str, Any]:
+    report = _report_payload(args["report"])
+    support_matrix = SupportMatrixBuilder().build(
+        report,
+        _evidence_bundle(args["evidence_bundle"]),
+    )
+    unsupported_sections = support_matrix.unsupported_sections
+    return {
+        **support_matrix.to_dict(),
+        "section_count": len(support_matrix.sections),
+        "supported_section_count": len(support_matrix.sections) - len(unsupported_sections),
+        "unsupported_section_count": len(unsupported_sections),
     }
 
 
@@ -142,6 +174,15 @@ def _item_id(item: dict[str, Any], index: int) -> str:
         if value:
             return str(value)
     return str(index)
+
+
+def _report_payload(payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise ValueError("report must be an object")
+    sections = payload.get("sections") or []
+    if not isinstance(sections, list):
+        raise ValueError("report.sections must be a list")
+    return dict(payload)
 
 
 def _evidence_bundle(payload: Any) -> EvidenceBundle:

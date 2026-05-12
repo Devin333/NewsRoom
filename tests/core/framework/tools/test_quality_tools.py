@@ -50,6 +50,75 @@ def test_quality_citation_check_tool_fails_unknown_urls() -> None:
     assert observation.result.output["unknown_urls"] == ["https://example.com/missing"]
 
 
+def test_quality_claim_support_check_tool_maps_sections_to_evidence() -> None:
+    registry = ToolRegistry()
+    register_quality_tools(registry)
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="quality.claim_support_check",
+            arguments={
+                "report": {
+                    "title": "Report",
+                    "sections": [
+                        {
+                            "title": "Supported",
+                            "content": "Supported claim.",
+                            "sources": ["https://example.com/source"],
+                        },
+                        {
+                            "title": "Unsupported",
+                            "content": "Missing support.",
+                            "sources": ["https://example.com/missing"],
+                        },
+                    ],
+                },
+                "evidence_bundle": _bundle(["https://example.com/source"]),
+            },
+        ),
+        ToolPolicy(allowed_tools=["quality.claim_support_check"]),
+    )
+
+    sections = observation.result.output["sections"]
+
+    assert observation.status == ToolStatus.SUCCEEDED
+    assert observation.result.output["section_count"] == 2
+    assert observation.result.output["supported_section_count"] == 1
+    assert observation.result.output["unsupported_section_count"] == 1
+    assert observation.result.output["coverage_ratio"] == 0.5
+    assert sections[0]["supported"] is True
+    assert sections[0]["matched_evidence_ids"] == ["ev-0"]
+    assert sections[1]["supported"] is False
+    assert observation.result.output["unsupported_sections"] == ["Unsupported"]
+
+
+def test_quality_claim_support_check_tool_marks_sections_without_sources_unsupported() -> None:
+    registry = ToolRegistry()
+    register_quality_tools(registry)
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="quality.claim_support_check",
+            arguments={
+                "report": {
+                    "title": "Report",
+                    "sections": [{"title": "No Sources", "content": "Uncited claim."}],
+                },
+                "evidence_bundle": _bundle(["https://example.com/source"]),
+            },
+        ),
+        ToolPolicy(allowed_tools=["quality.claim_support_check"]),
+    )
+
+    assert observation.status == ToolStatus.SUCCEEDED
+    assert observation.result.output["section_count"] == 1
+    assert observation.result.output["supported_section_count"] == 0
+    assert observation.result.output["unsupported_section_count"] == 1
+    assert observation.result.output["unsupported_sections"] == ["No Sources"]
+
+
 def test_quality_duplicate_check_tool_groups_by_canonical_url_and_title() -> None:
     registry = ToolRegistry()
     register_quality_tools(registry)
