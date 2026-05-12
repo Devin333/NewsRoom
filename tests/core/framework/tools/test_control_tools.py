@@ -143,3 +143,73 @@ def test_control_request_human_review_tool_rejects_secret_payload_keys_before_st
     assert observation.status == ToolStatus.FAILED
     assert approval_store.list_approvals() == []
     assert "payload key is not allowed" in (observation.result.error_message or "")
+
+
+def test_control_escalate_tool_persists_escalation_request() -> None:
+    approval_store = InMemoryApprovalStore()
+    registry = ToolRegistry()
+    register_control_tools(
+        registry,
+        approval_store=approval_store,
+        run_id="run-escalation",
+    )
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="control.escalate",
+            arguments={
+                "escalation_type": "source_outage",
+                "reason": "all official sources failed",
+                "severity": "critical",
+                "payload": {"source_ids": ["official-ai"]},
+                "task_id": "task-2",
+                "requested_by": "collector",
+                "metadata": {"stage": "source_collection"},
+            },
+        ),
+        ToolPolicy(allowed_tools=["control.escalate"]),
+    )
+
+    approvals = approval_store.list_approvals()
+    stored = approvals[0]
+
+    assert observation.status == ToolStatus.SUCCEEDED
+    assert len(approvals) == 1
+    assert observation.result.output["control_action"] == "escalate"
+    assert observation.result.output["approval_id"] == stored.approval_id
+    assert stored.requested_action == "escalate:source_outage"
+    assert stored.reason == "all official sources failed"
+    assert stored.risk_level == "critical"
+    assert stored.payload == {"source_ids": ["official-ai"]}
+    assert stored.task_id == "task-2"
+    assert stored.run_id == "run-escalation"
+    assert stored.requested_by == "collector"
+    assert stored.metadata == {
+        "stage": "source_collection",
+        "control_tool": "control.escalate",
+        "escalation_type": "source_outage",
+    }
+
+
+def test_control_escalate_tool_rejects_secret_payload_keys_before_store() -> None:
+    approval_store = InMemoryApprovalStore()
+    registry = ToolRegistry()
+    register_control_tools(registry, approval_store=approval_store)
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="control.escalate",
+            arguments={
+                "escalation_type": "publish_blocked",
+                "reason": "operator token required",
+                "payload": {"token": "hidden"},
+            },
+        ),
+        ToolPolicy(allowed_tools=["control.escalate"]),
+    )
+
+    assert observation.status == ToolStatus.FAILED
+    assert approval_store.list_approvals() == []
+    assert "payload key is not allowed" in (observation.result.error_message or "")
