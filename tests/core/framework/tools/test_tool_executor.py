@@ -75,6 +75,117 @@ def test_tool_executor_fails_missing_required_arguments() -> None:
     assert "missing required arguments" in (observation.result.error_message or "")
 
 
+def test_tool_executor_rejects_invalid_argument_type_before_invocation() -> None:
+    calls = {"count": 0}
+    registry = ToolRegistry()
+    registry.register(
+        ToolDefinition(
+            name="source.fetch",
+            input_schema={
+                "required": ["url"],
+                "properties": {"url": {"type": "string"}},
+            },
+        ),
+        lambda args: calls.__setitem__("count", calls["count"] + 1),
+    )
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(tool_name="source.fetch", arguments={"url": 123}),
+        ToolPolicy(allowed_tools=["source.fetch"]),
+    )
+
+    assert observation.status == ToolStatus.FAILED
+    assert calls["count"] == 0
+    assert observation.result.error_type == "ToolRuntimeError"
+    assert "must be string" in (observation.result.error_message or "")
+
+
+def test_tool_executor_rejects_unexpected_argument_when_schema_is_closed() -> None:
+    calls = {"count": 0}
+    registry = ToolRegistry()
+    registry.register(
+        ToolDefinition(
+            name="artifact.load",
+            input_schema={
+                "required": ["artifact_key"],
+                "properties": {"artifact_key": {"type": "string"}},
+                "additionalProperties": False,
+            },
+        ),
+        lambda args: calls.__setitem__("count", calls["count"] + 1),
+    )
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="artifact.load",
+            arguments={"artifact_key": "output", "extra": "not allowed"},
+        ),
+        ToolPolicy(allowed_tools=["artifact.load"]),
+    )
+
+    assert observation.status == ToolStatus.FAILED
+    assert calls["count"] == 0
+    assert "unexpected arguments" in (observation.result.error_message or "")
+
+
+def test_tool_executor_rejects_enum_violation_before_invocation() -> None:
+    calls = {"count": 0}
+    registry = ToolRegistry()
+    registry.register(
+        ToolDefinition(
+            name="report.render",
+            input_schema={
+                "required": ["format"],
+                "properties": {"format": {"type": "string", "enum": ["markdown", "json"]}},
+            },
+        ),
+        lambda args: calls.__setitem__("count", calls["count"] + 1),
+    )
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(tool_name="report.render", arguments={"format": "pdf"}),
+        ToolPolicy(allowed_tools=["report.render"]),
+    )
+
+    assert observation.status == ToolStatus.FAILED
+    assert calls["count"] == 0
+    assert "must be one of" in (observation.result.error_message or "")
+
+
+def test_tool_executor_runs_schema_valid_arguments() -> None:
+    registry = ToolRegistry()
+    registry.register(
+        ToolDefinition(
+            name="source.limit",
+            input_schema={
+                "required": ["limit", "include_archived"],
+                "properties": {
+                    "limit": {"type": "integer"},
+                    "include_archived": {"type": "boolean"},
+                    "topics": {"type": ["array", "null"]},
+                },
+                "additionalProperties": False,
+            },
+        ),
+        lambda args: {"accepted": args},
+    )
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="source.limit",
+            arguments={"limit": 2, "include_archived": False, "topics": None},
+        ),
+        ToolPolicy(allowed_tools=["source.limit"]),
+    )
+
+    assert observation.status == ToolStatus.SUCCEEDED
+    assert observation.result.output["accepted"]["limit"] == 2
+
+
 def test_tool_executor_redacts_sensitive_output_and_serialized_arguments() -> None:
     registry = ToolRegistry()
     registry.register(

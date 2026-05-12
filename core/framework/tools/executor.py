@@ -20,6 +20,7 @@ from core.framework.tools.models import (
 )
 from core.framework.tools.redaction import redact_sensitive_values
 from core.framework.tools.registry import ToolRegistry
+from core.framework.tools.validation import validate_tool_arguments
 
 
 class ToolExecutor:
@@ -43,15 +44,7 @@ class ToolExecutor:
                     f"agent {call.requested_by_agent_id} is not allowed to call {call.tool_name}"
                 )
 
-            missing = [
-                argument
-                for argument in registered.definition.required_arguments
-                if argument not in call.arguments
-            ]
-            if missing:
-                raise ToolRuntimeError(
-                    f"missing required arguments for {call.tool_name}: {', '.join(missing)}"
-                )
+            validate_tool_arguments(registered.definition, call.arguments)
 
             raw_output = registered.executor(call.arguments)
             safe_output = redact_sensitive_values(raw_output)
