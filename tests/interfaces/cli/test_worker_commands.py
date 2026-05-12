@@ -57,6 +57,31 @@ def test_news_cli_worker_enqueue_memory_reindex_json(monkeypatch, capsys) -> Non
     assert payload["topic"] == "AI policy"
 
 
+def test_news_cli_worker_enqueue_source_health_json(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(news_cli, "WorkerApplicationService", _FakeWorkerService)
+
+    exit_code = news_cli.main(
+        [
+            "worker",
+            "enqueue-source-health",
+            "--source-id",
+            "source-1",
+            "--limit",
+            "1",
+            "--force",
+            "--json",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert exit_code == 0
+    assert payload["task_id"] == "task-1"
+    assert payload["task_type"] == "source_health_check"
+    assert payload["queue_name"] == "news:queue:sources"
+
+
 def test_news_cli_worker_run_once_json(monkeypatch, capsys) -> None:
     _FakeWorkerService.run_once_calls = []
     monkeypatch.setattr(news_cli, "WorkerApplicationService", _FakeWorkerService)
@@ -245,6 +270,21 @@ class _FakeWorkerService:
                 "topic": kwargs["topic"],
                 "source_limit": None,
                 "run_id": kwargs["run_id"],
+            }
+        )
+
+    def enqueue_source_health_check(self, **kwargs):
+        return _FakeResult(
+            {
+                "message_id": "1-0",
+                "task_id": "task-1",
+                "task_type": "source_health_check",
+                "queue_name": kwargs["queue_name"],
+                "status": "queued",
+                "profile": None,
+                "topic": None,
+                "source_limit": kwargs["limit"],
+                "run_id": None,
             }
         )
 

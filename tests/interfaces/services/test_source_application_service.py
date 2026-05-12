@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 from domain.sources import RawSourceItem, SourceDefinition, SourceError
 from interfaces.services.source_service import SourceApplicationService
 from sources import SourceRegistry
-from sources.health import BasicSourceHealthManager
+from sources.health import BasicSourceHealthManager, ProbeObservation
 
 
 def test_source_service_lists_enabled_sources() -> None:
@@ -127,6 +127,36 @@ def test_source_service_reports_disabled_sources_as_disabled() -> None:
     assert health["url"] == "https://example.com/rss"
     assert health["status"] == "disabled"
     assert health["last_error"]["error_type"] == "source_disabled"
+
+
+def test_source_service_checks_source_health_with_real_checker_path() -> None:
+    registry = SourceRegistry(
+        [
+            SourceDefinition(
+                source_id="source-1",
+                name="Source",
+                source_type="rss",
+                url="https://example.com/rss",
+                topics=["AI"],
+            )
+        ]
+    )
+    service = SourceApplicationService(
+        source_registry=registry,
+        health_probe_fetcher=lambda source, policy: ProbeObservation(
+            status_code=200,
+            content_type="application/rss+xml",
+            content_bytes=42,
+            final_url=source.url,
+        ),
+    )
+
+    payload = service.check_source_health(source_id="source-1").to_dict()
+
+    assert payload["checked_count"] == 1
+    assert payload["succeeded_count"] == 1
+    assert payload["entries"][0]["source_id"] == "source-1"
+    assert payload["entries"][0]["health"]["status"] == "healthy"
 
 
 def test_source_service_fetches_arxiv_preview() -> None:

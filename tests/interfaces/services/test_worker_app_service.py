@@ -1,8 +1,17 @@
-from core.framework.workers import RedisQueueStatus, LeasedTask, Task, TaskResult, TaskStatus, WorkerStatus
+from core.framework.workers import (
+    RedisQueueStatus,
+    LeasedTask,
+    SourceHealthCheckTaskHandler,
+    Task,
+    TaskResult,
+    TaskStatus,
+    WorkerStatus,
+)
 from interfaces.services.worker_service import (
     DEFAULT_DAILY_QUEUE,
     DEFAULT_DEAD_LETTER_QUEUE,
     DEFAULT_MEMORY_QUEUE,
+    DEFAULT_SOURCE_QUEUE,
     WorkerApplicationService,
 )
 
@@ -39,6 +48,28 @@ def test_worker_service_enqueue_memory_reindex_uses_memory_queue() -> None:
     assert result.task.task_type == "memory.reindex"
     assert result.task.queue_name == DEFAULT_MEMORY_QUEUE
     assert result.task.payload == {"run_id": "run-1", "topic": "AI policy"}
+    assert result.message_id == "1-0"
+    assert queue.enqueued[0] is result.task
+
+
+def test_worker_service_enqueue_source_health_uses_source_queue() -> None:
+    queue = _FakeQueue()
+    service = WorkerApplicationService(queue=queue, handlers={})
+
+    result = service.enqueue_source_health_check(
+        source_id="source-1",
+        limit=1,
+        force=True,
+    )
+
+    assert result.task.task_type == "source_health_check"
+    assert result.task.queue_name == DEFAULT_SOURCE_QUEUE
+    assert result.task.payload == {
+        "include_disabled": False,
+        "force": True,
+        "source_id": "source-1",
+        "limit": 1,
+    }
     assert result.message_id == "1-0"
     assert queue.enqueued[0] is result.task
 
@@ -172,9 +203,27 @@ def test_worker_service_queue_status_uses_default_queues() -> None:
     result = service.queue_status()
 
     payload = result.to_dict()
-    assert queue.status_calls == [[DEFAULT_DAILY_QUEUE, DEFAULT_MEMORY_QUEUE, DEFAULT_DEAD_LETTER_QUEUE]]
-    assert payload["queue_count"] == 3
+    assert queue.status_calls == [
+        [DEFAULT_DAILY_QUEUE, DEFAULT_MEMORY_QUEUE, DEFAULT_SOURCE_QUEUE, DEFAULT_DEAD_LETTER_QUEUE]
+    ]
+    assert payload["queue_count"] == 4
     assert payload["total_stream_length"] == 0
+
+
+def test_source_health_check_task_handler_calls_source_service() -> None:
+    handler = SourceHealthCheckTaskHandler(_FakeSourceService())
+    task = Task(
+        task_type="source_health_check",
+        payload={"source_id": "source-1", "limit": 1, "force": True},
+        task_id="task-1",
+    )
+
+    result = handler.handle(task)
+
+    assert result.success is True
+    assert result.status == TaskStatus.SUCCEEDED
+    assert result.output["checked_count"] == 1
+    assert result.output["entries"][0]["source_id"] == "source-1"
 
 
 def test_worker_service_run_loop_stops_after_max_tasks() -> None:
@@ -290,6 +339,29 @@ class _FakeHandler:
             error_type=None if self.success else "FakeFailure",
             error_message=None if self.success else "failed",
         )
+
+
+class _FakeSourceService:
+    def check_source_health(self, **kwargs):
+        assert kwargs == {
+            "source_id": "source-1",
+            "enabled_only": True,
+            "limit": 1,
+            "force": True,
+        }
+        return _FakeSourceHealthResult()
+
+
+class _FakeSourceHealthResult:
+    def to_dict(self):
+        return {
+            "checked_count": 1,
+            "succeeded_count": 1,
+            "failed_count": 0,
+            "skipped_count": 0,
+            "entries": [{"source_id": "source-1", "ok": True, "status": "healthy"}],
+            "events": [],
+        }
 
 
 def _dt(value: str):

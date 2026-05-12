@@ -28,6 +28,21 @@ def test_news_cli_sources_health_json(monkeypatch, capsys) -> None:
     assert payload["health"][0]["status"] == "healthy"
 
 
+def test_news_cli_sources_check_health_json(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(news_cli, "SourceApplicationService", _FakeSourceService)
+
+    exit_code = news_cli.main(
+        ["sources", "check-health", "--source-id", "source-1", "--limit", "1", "--json"]
+    )
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert exit_code == 0
+    assert payload["checked_count"] == 1
+    assert payload["entries"][0]["source_id"] == "source-1"
+
+
 def test_news_cli_sources_validate_json(monkeypatch, capsys) -> None:
     monkeypatch.setattr(news_cli, "SourceApplicationService", _FakeSourceService)
 
@@ -116,6 +131,18 @@ class _FakeSourceService:
                 "error_count": 0,
                 "warning_count": 0,
                 "issues": [],
+            }
+        )
+
+    def check_source_health(self, *, source_id, enabled_only, limit, force):
+        return _FakeResult(
+            {
+                "checked_count": 1,
+                "succeeded_count": 1,
+                "failed_count": 0,
+                "skipped_count": 0,
+                "entries": [{"source_id": source_id, "ok": True, "status": "healthy"}],
+                "events": [],
             }
         )
 

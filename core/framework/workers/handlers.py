@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from interfaces.services.memory_service import MemoryApplicationService
 from interfaces.services.run_service import RunApplicationService
+from interfaces.services.source_service import SourceApplicationService
 from core.framework.workers.models import Task, TaskResult, TaskStatus
 
 
@@ -50,3 +51,30 @@ class MemoryReindexTaskHandler:
             workflow_run_id=run_id,
             output=result.to_dict(),
         )
+
+
+class SourceHealthCheckTaskHandler:
+    task_type = "source_health_check"
+
+    def __init__(self, source_service: SourceApplicationService | None = None) -> None:
+        self.source_service = source_service or SourceApplicationService()
+
+    def handle(self, task: Task) -> TaskResult:
+        result = self.source_service.check_source_health(
+            source_id=task.payload.get("source_id"),
+            enabled_only=not bool(task.payload.get("include_disabled", False)),
+            limit=_optional_int(task.payload.get("limit")),
+            force=bool(task.payload.get("force", False)),
+        )
+        return TaskResult(
+            task_id=task.task_id,
+            success=True,
+            status=TaskStatus.SUCCEEDED,
+            output=result.to_dict(),
+        )
+
+
+def _optional_int(value) -> int | None:
+    if value is None or value == "":
+        return None
+    return int(value)

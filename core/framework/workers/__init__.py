@@ -34,6 +34,7 @@ _EXPORT_MODULES = {
     "ScheduleTriggerType": "core.framework.workers.scheduler",
     "Scheduler": "core.framework.workers.scheduler",
     "SchedulerTickResult": "core.framework.workers.scheduler",
+    "SourceHealthCheckTaskHandler": "core.framework.workers.handlers",
     "Task": "core.framework.workers.models",
     "TaskError": "core.framework.workers.models",
     "TaskResult": "core.framework.workers.models",

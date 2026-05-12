@@ -41,6 +41,7 @@ from interfaces.services.worker_service import (
     DEFAULT_DAILY_QUEUE,
     DEFAULT_DEAD_LETTER_QUEUE,
     DEFAULT_MEMORY_QUEUE,
+    DEFAULT_SOURCE_QUEUE,
     WorkerApplicationService,
 )
 from storage.lifecycle import RetentionPolicy
@@ -318,6 +319,19 @@ def build_parser() -> argparse.ArgumentParser:
     enqueue_memory_parser.add_argument("--redis-url", default=None, help="Redis URL; defaults to NEWS_REDIS_URL")
     enqueue_memory_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     enqueue_memory_parser.set_defaults(handler=_worker_enqueue_memory_reindex)
+
+    enqueue_source_health_parser = worker_subparsers.add_parser(
+        "enqueue-source-health",
+        help="Enqueue a source health check task",
+    )
+    enqueue_source_health_parser.add_argument("--source-id", default=None, help="Optional source id to check")
+    enqueue_source_health_parser.add_argument("--include-disabled", action="store_true", help="Include disabled sources")
+    enqueue_source_health_parser.add_argument("--limit", type=int, default=None, help="Maximum sources to check")
+    enqueue_source_health_parser.add_argument("--force", action="store_true", help="Probe even during cooldown")
+    enqueue_source_health_parser.add_argument("--queue-name", default=DEFAULT_SOURCE_QUEUE, help="Redis stream queue name")
+    enqueue_source_health_parser.add_argument("--redis-url", default=None, help="Redis URL; defaults to NEWS_REDIS_URL")
+    enqueue_source_health_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    enqueue_source_health_parser.set_defaults(handler=_worker_enqueue_source_health)
 
     run_once_parser = worker_subparsers.add_parser(
         "run-once",
@@ -849,6 +863,17 @@ def build_parser() -> argparse.ArgumentParser:
     sources_health_parser.add_argument("--include-disabled", action="store_true", help="Include disabled sources")
     sources_health_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     sources_health_parser.set_defaults(handler=_sources_health)
+
+    sources_check_health_parser = sources_subparsers.add_parser(
+        "check-health",
+        help="Probe configured sources and update source health",
+    )
+    sources_check_health_parser.add_argument("--source-id", default=None, help="Optional source id to check")
+    sources_check_health_parser.add_argument("--include-disabled", action="store_true", help="Include disabled sources")
+    sources_check_health_parser.add_argument("--limit", type=int, default=None, help="Maximum sources to check")
+    sources_check_health_parser.add_argument("--force", action="store_true", help="Probe even during cooldown")
+    sources_check_health_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    sources_check_health_parser.set_defaults(handler=_sources_check_health)
 
     sources_validate_parser = sources_subparsers.add_parser("validate", help="Validate source registry")
     sources_validate_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
@@ -1426,6 +1451,31 @@ def _worker_enqueue_memory_reindex(args: argparse.Namespace) -> int:
         print(f"run_id={payload['run_id']}")
         if payload["topic"]:
             print(f"topic={payload['topic']}")
+    return 0
+
+
+def _worker_enqueue_source_health(args: argparse.Namespace) -> int:
+    service = WorkerApplicationService(redis_url=args.redis_url)
+    try:
+        result = service.enqueue_source_health_check(
+            source_id=args.source_id,
+            include_disabled=args.include_disabled,
+            limit=args.limit,
+            force=args.force,
+            queue_name=args.queue_name,
+        )
+    except ValueError as exc:
+        print(str(exc))
+        return 1
+    payload = result.to_dict()
+
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        print(f"task_id={payload['task_id']}")
+        print(f"task_type={payload['task_type']}")
+        print(f"queue_name={payload['queue_name']}")
+        print(f"message_id={payload['message_id']}")
     return 0
 
 
@@ -2184,6 +2234,34 @@ def _sources_health(args: argparse.Namespace) -> int:
                 f"avg_latency_ms_24h={item.get('avg_latency_ms_24h')}"
             )
     return 0
+
+
+def _sources_check_health(args: argparse.Namespace) -> int:
+    try:
+        result = SourceApplicationService().check_source_health(
+            source_id=args.source_id,
+            enabled_only=not args.include_disabled,
+            limit=args.limit,
+            force=args.force,
+        )
+    except (KeyError, ValueError) as exc:
+        print(str(exc))
+        return 1
+    payload = result.to_dict()
+
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        print(f"checked_count={payload['checked_count']}")
+        print(f"succeeded_count={payload['succeeded_count']}")
+        print(f"failed_count={payload['failed_count']}")
+        print(f"skipped_count={payload['skipped_count']}")
+        for entry in payload["entries"]:
+            print(
+                f"- {entry['source_id']} ok={str(entry['ok']).lower()} "
+                f"status={entry['status']} skipped={str(entry['skipped']).lower()}"
+            )
+    return 0 if payload["failed_count"] == 0 else 1
 
 
 def _sources_validate(args: argparse.Namespace) -> int:

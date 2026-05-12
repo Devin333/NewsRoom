@@ -13,6 +13,7 @@ from core.framework.workers import (
     RedisQueueStatus,
     RedisStreamTaskQueue,
     RedisWorkerRegistry,
+    SourceHealthCheckTaskHandler,
     Task,
     TaskResult,
     TaskStatus,
@@ -27,6 +28,7 @@ from interfaces.services.run_service import RunApplicationService
 DEFAULT_REDIS_URL = "redis://127.0.0.1:6379/0"
 DEFAULT_DAILY_QUEUE = "news:queue:daily"
 DEFAULT_MEMORY_QUEUE = "news:queue:memory"
+DEFAULT_SOURCE_QUEUE = "news:queue:sources"
 DEFAULT_DEAD_LETTER_QUEUE = "news:queue:dead-letter"
 
 
@@ -168,6 +170,7 @@ class WorkerApplicationService:
                     RunApplicationService(artifact_root=self.artifact_root)
                 ),
                 MemoryReindexTaskHandler.task_type: MemoryReindexTaskHandler(),
+                SourceHealthCheckTaskHandler.task_type: SourceHealthCheckTaskHandler(),
             }
         self.handlers = handlers
 
@@ -209,6 +212,34 @@ class WorkerApplicationService:
         _reject_secret_payload_keys(payload)
         task = Task(
             task_type=MemoryReindexTaskHandler.task_type,
+            queue_name=queue_name,
+            payload=payload,
+        )
+        message_id = self.queue.enqueue(task)
+        return EnqueuedTaskResult(task=task, message_id=str(message_id))
+
+    def enqueue_source_health_check(
+        self,
+        *,
+        source_id: str | None = None,
+        include_disabled: bool = False,
+        limit: int | None = None,
+        force: bool = False,
+        queue_name: str = DEFAULT_SOURCE_QUEUE,
+    ) -> EnqueuedTaskResult:
+        payload: dict[str, Any] = {
+            "include_disabled": include_disabled,
+            "force": force,
+        }
+        if source_id:
+            payload["source_id"] = source_id
+        if limit is not None:
+            if limit <= 0:
+                raise ValueError("limit must be greater than zero")
+            payload["limit"] = limit
+        _reject_secret_payload_keys(payload)
+        task = Task(
+            task_type=SourceHealthCheckTaskHandler.task_type,
             queue_name=queue_name,
             payload=payload,
         )
@@ -337,7 +368,8 @@ class WorkerApplicationService:
 
     def queue_status(self, *, queue_names: list[str] | None = None) -> WorkerQueueStatusResult:
         queues = _unique_queue_names(
-            queue_names or [DEFAULT_DAILY_QUEUE, DEFAULT_MEMORY_QUEUE, DEFAULT_DEAD_LETTER_QUEUE]
+            queue_names
+            or [DEFAULT_DAILY_QUEUE, DEFAULT_MEMORY_QUEUE, DEFAULT_SOURCE_QUEUE, DEFAULT_DEAD_LETTER_QUEUE]
         )
         return WorkerQueueStatusResult(queues=self.queue.status(queues))
 

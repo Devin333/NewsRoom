@@ -7,7 +7,12 @@ from typing import Any
 from domain.sources import RawSourceItem, SourceDefinition, SourceError, SourceHealth
 from sources import SourceRegistry
 from sources.connectors import ARXIV_API_URL, GITHUB_API_URL, ArxivConnector, GithubConnector
-from sources.health import BasicSourceHealthManager
+from sources.health import (
+    BasicSourceHealthManager,
+    SourceHealthChecker,
+    SourceHealthCheckResult,
+    SourceHealthStore,
+)
 
 
 @dataclass(frozen=True)
@@ -88,6 +93,8 @@ class SourceApplicationService:
         *,
         source_registry: SourceRegistry | None = None,
         health_manager: BasicSourceHealthManager | None = None,
+        source_health_store: SourceHealthStore | None = None,
+        health_probe_fetcher=None,
         arxiv_connector: ArxivConnector | None = None,
         github_connector: GithubConnector | None = None,
     ) -> None:
@@ -96,7 +103,11 @@ class SourceApplicationService:
 
             source_registry = build_default_source_registry()
         self.source_registry = source_registry
-        self.health_manager = health_manager or BasicSourceHealthManager()
+        self.source_health_store = source_health_store or _source_health_store_from_env()
+        self.health_manager = health_manager or BasicSourceHealthManager(
+            health_store=self.source_health_store
+        )
+        self.health_probe_fetcher = health_probe_fetcher
         self.arxiv_connector = arxiv_connector or ArxivConnector()
         self.github_connector = github_connector or GithubConnector()
 
@@ -139,6 +150,26 @@ class SourceApplicationService:
                 self._health_for_source(source).to_dict()
                 for source in self.source_registry.list_sources(enabled_only=enabled_only)
             ]
+        )
+
+    def check_source_health(
+        self,
+        *,
+        source_id: str | None = None,
+        enabled_only: bool = True,
+        limit: int | None = None,
+        force: bool = False,
+    ) -> SourceHealthCheckResult:
+        checker = SourceHealthChecker(
+            self.source_registry,
+            self.health_manager,
+            probe_fetcher=self.health_probe_fetcher,
+        )
+        return checker.run(
+            source_id=source_id,
+            enabled_only=enabled_only,
+            limit=limit,
+            force=force,
         )
 
     def _health_for_source(self, source: SourceDefinition) -> SourceHealth:
@@ -231,3 +262,16 @@ def _raw_item_to_dict(item: RawSourceItem) -> dict[str, Any]:
 
 def _dt(value: datetime | None) -> str | None:
     return value.isoformat().replace("+00:00", "Z") if value else None
+
+
+def _source_health_store_from_env() -> SourceHealthStore | None:
+    import os
+
+    dsn = os.environ.get("NEWS_DATABASE_DSN")
+    if not dsn:
+        return None
+    from storage.postgres import PostgresRepository
+
+    repository = PostgresRepository(dsn)
+    repository.migrate()
+    return repository
