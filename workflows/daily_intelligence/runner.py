@@ -47,6 +47,7 @@ from sources.processing import (
     build_source_coverage_report,
     build_source_governance_report,
     build_source_ranking_scores,
+    build_source_traceability_report,
     deduplicate_with_result,
     normalize_items,
     rank_items,
@@ -678,6 +679,7 @@ def build_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
                     "source_coverage_report",
                     "source_quality_scores",
                     "source_ranking_scores",
+                    "source_traceability_report",
                     "source_governance_report",
                 ],
                 required_output_keys=[
@@ -687,6 +689,7 @@ def build_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
                     "source_coverage_report",
                     "source_quality_scores",
                     "source_ranking_scores",
+                    "source_traceability_report",
                     "source_governance_report",
                 ],
             ),
@@ -861,6 +864,7 @@ def _rank_sources(buffer: ScopedDataBuffer) -> dict[str, Any]:
         if "source_quality" in ranked.metadata
     ]
     source_ranking_scores = build_source_ranking_scores(ranked_items)
+    source_traceability_report = build_source_traceability_report(ranked_items)
     return {
         "ranked_items": ranked_items,
         "source_events": source_events,
@@ -873,6 +877,7 @@ def _rank_sources(buffer: ScopedDataBuffer) -> dict[str, Any]:
         ),
         "source_quality_scores": source_quality_scores,
         "source_ranking_scores": source_ranking_scores,
+        "source_traceability_report": source_traceability_report,
         "source_governance_report": build_source_governance_report(
             source_quality_scores=source_quality_scores,
             source_selection_report=buffer.read("source_selection_report"),

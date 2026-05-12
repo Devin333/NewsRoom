@@ -154,6 +154,7 @@ def test_daily_intelligence_runner_live_offline_writes_report_artifacts(tmp_path
     assert manifest["artifacts"]["source_coverage_report"] == "source_coverage_report.json"
     assert manifest["artifacts"]["source_quality_scores"] == "source_quality_scores.json"
     assert manifest["artifacts"]["source_ranking_scores"] == "source_ranking_scores.json"
+    assert manifest["artifacts"]["source_traceability_report"] == "source_traceability_report.json"
     assert manifest["artifacts"]["source_governance_report"] == "source_governance_report.json"
     assert manifest["source_quality_score_count"] == 2
     assert manifest["source_ranking_score_count"] == 2
@@ -223,6 +224,14 @@ def test_daily_intelligence_runner_live_offline_writes_report_artifacts(tmp_path
     assert source_ranking_scores[0]["source_id"] == "fixture-ai"
     assert source_ranking_scores[0]["final_score"] == result.output["ranked_items"][0].final_score
     assert "authority_score" in source_ranking_scores[0]
+
+    traceability_report = json.loads((run_dir / "source_traceability_report.json").read_text(encoding="utf-8"))
+    assert traceability_report["traceability_status"] == "complete"
+    assert traceability_report["ranked_item_count"] == 2
+    assert traceability_report["traceable_item_count"] == 2
+    assert traceability_report["issue_count"] == 0
+    assert traceability_report["rows"][0]["source_id"] == "fixture-ai"
+    assert result.output["source_traceability_report"].traceability_status == "complete"
 
     governance_report = json.loads((run_dir / "source_governance_report.json").read_text(encoding="utf-8"))
     assert governance_report["finding_count"] == 0

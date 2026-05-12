@@ -8,6 +8,7 @@ from sources.processing.normalize import normalize_items
 from sources.processing.quality import score_source_item, score_source_items
 from sources.processing.rank import rank_items
 from sources.processing.ranking_report import build_source_ranking_scores
+from sources.processing.traceability import build_source_traceability_report
 
 __all__ = [
     "build_source_coverage_report",
@@ -18,6 +19,7 @@ __all__ = [
     "normalize_items",
     "rank_items",
     "build_source_ranking_scores",
+    "build_source_traceability_report",
     "score_source_item",
     "score_source_items",
 ]

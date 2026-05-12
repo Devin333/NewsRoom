@@ -21,6 +21,8 @@ from domain.sources.models import (
     SourceRankingScore,
     SourceReliability,
     SourceSelectionReport,
+    SourceTraceabilityIssue,
+    SourceTraceabilityReport,
     SourceType,
 )
 
@@ -45,5 +47,7 @@ __all__ = [
     "SourceRankingScore",
     "SourceReliability",
     "SourceSelectionReport",
+    "SourceTraceabilityIssue",
+    "SourceTraceabilityReport",
     "SourceType",
 ]

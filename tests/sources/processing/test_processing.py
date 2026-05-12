@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 from domain.sources import RawSourceItem, SourceError, SourcePipelineMetrics, SourceType
@@ -5,6 +6,7 @@ from sources.processing import (
     build_source_coverage_report,
     build_source_governance_report,
     build_source_ranking_scores,
+    build_source_traceability_report,
     deduplicate_items,
     deduplicate_with_result,
     detect_language,
@@ -513,6 +515,38 @@ def test_rank_items_prioritizes_topic_relevance_and_reliability() -> None:
     assert ranking_scores[0].authority_score == 0.5
     assert ranking_scores[0].final_score == ranked[0].final_score
     assert ranking_scores[0].to_dict()["url"] == ranked[0].item.canonical_url
+
+    traceability_report = build_source_traceability_report(ranked)
+    assert traceability_report.traceability_status == "complete"
+    assert traceability_report.traceable_item_count == 2
+    assert traceability_report.issue_count == 0
+    assert traceability_report.rows[0]["ranked_item_id"] == ranked[0].ranked_item_id
+
+
+def test_build_source_traceability_report_flags_missing_and_mismatched_lineage() -> None:
+    ranked = rank_items(
+        normalize_items([_raw_item("AI chip export update", "https://example.com/chips")]),
+        topic="AI chip",
+        now=datetime(2026, 5, 11, tzinfo=UTC),
+    )
+    broken_lineage = dict(ranked[0].metadata["lineage"])
+    broken_lineage.pop("canonical_url")
+    broken_lineage["source_id"] = "other-source"
+    broken_ranked = replace(ranked[0], metadata={"lineage": broken_lineage})
+
+    report = build_source_traceability_report([broken_ranked])
+
+    assert report.traceability_status == "partial"
+    assert report.traceable_item_count == 0
+    assert report.untraceable_item_count == 1
+    assert report.issue_count == 2
+    assert report.rows[0]["missing_fields"] == ["canonical_url"]
+    assert report.rows[0]["mismatched_fields"] == ["source_id"]
+    assert [issue.issue_type for issue in report.issues] == [
+        "mismatched_lineage_field",
+        "missing_lineage_field",
+    ]
+    assert report.to_dict()["issues"][0]["expected"] == "source"
 
 
 def test_rank_items_uses_source_authority_score() -> None:

@@ -631,6 +631,52 @@ class SourceRankingScore:
         }
 
 
+@dataclass(frozen=True)
+class SourceTraceabilityIssue:
+    ranked_item_id: str
+    normalized_item_id: str
+    source_item_id: str
+    source_id: str
+    issue_type: str
+    field: str
+    expected: str | None = None
+    actual: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "ranked_item_id": self.ranked_item_id,
+            "normalized_item_id": self.normalized_item_id,
+            "source_item_id": self.source_item_id,
+            "source_id": self.source_id,
+            "issue_type": self.issue_type,
+            "field": self.field,
+            "expected": self.expected,
+            "actual": self.actual,
+        }
+
+
+@dataclass(frozen=True)
+class SourceTraceabilityReport:
+    traceability_status: str
+    ranked_item_count: int
+    traceable_item_count: int
+    untraceable_item_count: int
+    issue_count: int
+    rows: list[dict[str, Any]] = field(default_factory=list)
+    issues: list[SourceTraceabilityIssue] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "traceability_status": self.traceability_status,
+            "ranked_item_count": self.ranked_item_count,
+            "traceable_item_count": self.traceable_item_count,
+            "untraceable_item_count": self.untraceable_item_count,
+            "issue_count": self.issue_count,
+            "rows": [dict(row) for row in self.rows],
+            "issues": [issue.to_dict() for issue in self.issues],
+        }
+
+
 def _dt(value: datetime | None) -> str | None:
     return value.isoformat().replace("+00:00", "Z") if value else None
 
