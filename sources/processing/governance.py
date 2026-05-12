@@ -15,7 +15,7 @@ COMMUNITY_SOURCE_TYPES = {
     "medium",
 }
 COMMUNITY_CATEGORIES = {"community", "developer_community", "social"}
-OFFICIAL_SOURCE_TYPES = {"rss", "atom", "official_blog", "github", "arxiv", "web_page"}
+OFFICIAL_SOURCE_TYPES = {"official_blog", "github", "arxiv"}
 OFFICIAL_CATEGORIES = {"official", "primary", "vendor", "research_lab"}
 
 
