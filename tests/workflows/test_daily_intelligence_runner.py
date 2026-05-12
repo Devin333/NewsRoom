@@ -377,6 +377,44 @@ def test_daily_intelligence_runner_live_uses_topic_source_selection(tmp_path) ->
     assert fetched_urls == ["https://example.com/ai.xml"]
 
 
+def test_daily_intelligence_runner_loads_source_config_path(tmp_path) -> None:
+    config_path = tmp_path / "sources.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "sources": [
+                    {
+                        "source_id": "configured-feed",
+                        "name": "Configured Feed",
+                        "source_type": "rss",
+                        "url": "https://example.com/configured.xml",
+                        "reliability": "high",
+                        "topics": ["ai", "policy"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    fetched_urls = []
+
+    def fetch_text(url: str) -> str:
+        fetched_urls.append(url)
+        return RSS_FIXTURE
+
+    result = DailyIntelligenceRunner(
+        artifact_root=tmp_path,
+        source_config_path=config_path,
+        feed_connector=FeedConnector(fetch_text=fetch_text),
+        llm_client=_FakeReportLLM(),
+    ).run(profile="live", topic="AI policy", source_limit=1, run_id="daily-configured-source")
+
+    assert result.status == WorkflowStatus.SUCCEEDED
+    assert fetched_urls == ["https://example.com/configured.xml"]
+    assert result.output["raw_items"][0].source_id == "configured-feed"
+
+
 def test_daily_intelligence_runner_live_collects_html_source(tmp_path) -> None:
     registry = SourceRegistry(
         [
