@@ -702,6 +702,30 @@ class SourceFallbackReport:
 
 
 @dataclass(frozen=True)
+class SourceErrorPolicyReport:
+    total_error_count: int
+    retryable_error_count: int
+    non_retryable_error_count: int
+    health_affecting_error_count: int
+    workflow_blocking_error_count: int
+    operator_action_required_count: int
+    errors_by_type: dict[str, int] = field(default_factory=dict)
+    rows: list[dict[str, Any]] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "total_error_count": self.total_error_count,
+            "retryable_error_count": self.retryable_error_count,
+            "non_retryable_error_count": self.non_retryable_error_count,
+            "health_affecting_error_count": self.health_affecting_error_count,
+            "workflow_blocking_error_count": self.workflow_blocking_error_count,
+            "operator_action_required_count": self.operator_action_required_count,
+            "errors_by_type": dict(self.errors_by_type),
+            "rows": [dict(row) for row in self.rows],
+        }
+
+
+@dataclass(frozen=True)
 class SourceTraceabilityIssue:
     ranked_item_id: str
     normalized_item_id: str

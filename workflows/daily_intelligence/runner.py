@@ -46,6 +46,7 @@ from sources.health import BasicSourceHealthManager
 from sources.processing import (
     build_source_connector_dispatch_report,
     build_source_coverage_report,
+    build_source_error_policy_report,
     build_source_fallback_report,
     build_source_freshness_report,
     build_source_governance_report,
@@ -220,6 +221,7 @@ class DailyIntelligenceRunner:
                     source_fetch_requests,
                     source_fetch_results,
                 ),
+                "source_error_policy_report": build_source_error_policy_report(source_errors),
                 "source_fallback_report": build_source_fallback_report(
                     raw_items=raw_items,
                     source_errors=source_errors,
@@ -490,6 +492,7 @@ class DailyIntelligenceRunner:
                 source_fetch_requests,
                 source_fetch_results,
             ),
+            "source_error_policy_report": build_source_error_policy_report(source_errors),
             "source_fallback_report": build_source_fallback_report(
                 raw_items=raw_items,
                 source_errors=source_errors,
@@ -636,6 +639,7 @@ def build_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
                     "source_events",
                     "source_pipeline_metrics",
                     "source_connector_dispatch_report",
+                    "source_error_policy_report",
                     "source_fallback_report",
                     "source_selection_report",
                     "source_coverage_report",
@@ -651,6 +655,7 @@ def build_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
                     "source_events",
                     "source_pipeline_metrics",
                     "source_connector_dispatch_report",
+                    "source_error_policy_report",
                     "source_fallback_report",
                     "source_selection_report",
                     "source_coverage_report",

@@ -12,6 +12,7 @@ from domain.sources import (
 from sources.processing import (
     build_source_connector_dispatch_report,
     build_source_coverage_report,
+    build_source_error_policy_report,
     build_source_fallback_report,
     build_source_freshness_report,
     build_source_governance_report,
@@ -241,6 +242,40 @@ def test_build_source_fallback_report_summarizes_selection_item_and_error_fallba
         "official_blog_failed_stage",
     ]
     assert report.rows[1]["feed_error_types"] == ["fetch_connection_error"]
+
+
+def test_build_source_error_policy_report_counts_policy_fields() -> None:
+    errors = [
+        SourceError(
+            source_id="feed",
+            error_type="fetch_timeout",
+            error_message="timeout",
+            retryable=True,
+            metadata={"source_health_affecting": True},
+        ),
+        SourceError(
+            source_id="pipeline",
+            error_type="all_sources_failed",
+            error_message="blocked",
+            retryable=False,
+            metadata={
+                "source_health_affecting": False,
+                "workflow_blocking": True,
+                "operator_action_required": True,
+            },
+        ),
+    ]
+
+    report = build_source_error_policy_report(errors)
+
+    assert report.total_error_count == 2
+    assert report.retryable_error_count == 1
+    assert report.non_retryable_error_count == 1
+    assert report.health_affecting_error_count == 1
+    assert report.workflow_blocking_error_count == 1
+    assert report.operator_action_required_count == 1
+    assert report.errors_by_type == {"fetch_timeout": 1, "all_sources_failed": 1}
+    assert report.rows[1]["workflow_blocking"] is True
 
 
 def test_build_source_governance_report_flags_policy_findings() -> None:
