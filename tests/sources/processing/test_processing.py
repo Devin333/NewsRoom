@@ -36,6 +36,12 @@ def test_normalize_text_and_canonical_url() -> None:
     )
 
 
+def test_canonicalize_url_removes_default_ports_and_preserves_custom_ports() -> None:
+    assert canonicalize_url("https://Example.COM:443/post") == "https://example.com/post"
+    assert canonicalize_url("http://Example.COM:80/post") == "http://example.com/post"
+    assert canonicalize_url("https://Example.COM:8443/post") == "https://example.com:8443/post"
+
+
 def test_deduplicate_items_removes_duplicate_canonical_urls() -> None:
     normalized = normalize_items(
         [

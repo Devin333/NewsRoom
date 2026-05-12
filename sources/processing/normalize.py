@@ -65,12 +65,26 @@ def canonicalize_url(url: str) -> str:
     return urlunsplit(
         (
             parts.scheme.lower(),
-            parts.netloc.lower(),
+            _canonical_netloc(parts),
             normalized_path,
             urlencode(sorted(query)),
             "",
         )
     )
+
+
+def _canonical_netloc(parts) -> str:
+    scheme = parts.scheme.lower()
+    host = (parts.hostname or parts.netloc).lower()
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    try:
+        port = parts.port
+    except ValueError:
+        port = None
+    if port is None or (scheme == "http" and port == 80) or (scheme == "https" and port == 443):
+        return host
+    return f"{host}:{port}"
 
 
 def _hash(value: str) -> str:
