@@ -33,6 +33,22 @@ class DailyRunRequest(BaseModel):
     queue_name: str = "news:queue:daily"
 
 
+class RunRequest(BaseModel):
+    workflow_id: str
+    profile: Literal["live", "live-offline"] = "live-offline"
+    topic: str | None = None
+    language: Literal["en"] = "en"
+    source_limit: int | None = Field(default=None, ge=1)
+    max_items: int | None = Field(default=None, ge=1)
+    model_route: str | None = None
+    budget_limit_usd: float | None = Field(default=None, ge=0)
+    dry_run: bool = False
+    async_run: bool = True
+    run_id: str | None = None
+    queue_name: str = "news:queue:daily"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class WeeklyRunRequest(BaseModel):
     language: Literal["en"] = "en"
     topic: str | None = None
@@ -64,6 +80,12 @@ class ReportDetail(BaseModel):
     manifest_path: str | None = None
 
 
+class ReportActionRequest(BaseModel):
+    requested_by: str | None = None
+    reason: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class MemorySearchRequest(BaseModel):
     query: str
     collection: str = "report_sections"
@@ -74,6 +96,12 @@ class MemorySearchRequest(BaseModel):
 class MemoryReindexRequest(BaseModel):
     run_id: str
     topic: str | None = None
+
+
+class SourceProbeRequest(BaseModel):
+    include_disabled: bool = False
+    limit: int | None = Field(default=None, ge=1)
+    force: bool = False
 
 
 class ArxivSourceFetchRequest(BaseModel):

@@ -39,6 +39,10 @@ RUN_LINEAGE_DOWNSTREAM_RESOURCE_TEMPLATE = (
 RUN_LINEAGE_DOWNSTREAM_RESOURCE_MARKER = "/lineage/downstream/"
 RUN_ARTIFACT_RESOURCE_TEMPLATE = "news://runs/{run_id}/artifacts/{artifact_key}"
 RUN_ARTIFACT_RESOURCE_SEPARATOR = "/artifacts/"
+ARTIFACT_RESOURCE_TEMPLATE = "news://artifacts/{artifact_id}"
+ARTIFACT_RESOURCE_PREFIX = "news://artifacts/"
+MEMORY_RESOURCE_TEMPLATE = "news://memory/{document_id}"
+MEMORY_RESOURCE_PREFIX = "news://memory/"
 STORAGE_METRICS_RESOURCE_URI = "news://storage/metrics"
 STORAGE_RETENTION_PLAN_RESOURCE_URI = "news://storage/retention/plan"
 SOURCE_HEALTH_RESOURCE_URI = "news://sources/health"
@@ -133,6 +137,13 @@ class MCPApplicationService:
             if artifact_resource is not None:
                 run_id, artifact_key = artifact_resource
                 return self._read_run_artifact_resource(uri, run_id, artifact_key)
+            artifact_resource = _artifact_resource_ids(uri)
+            if artifact_resource is not None:
+                run_id, artifact_key = artifact_resource
+                return self._read_run_artifact_resource(uri, run_id, artifact_key)
+            memory_resource = _memory_resource_args(uri)
+            if memory_resource is not None:
+                return self._read_memory_resource(uri, memory_resource)
             run_id = _run_manifest_resource_run_id(uri)
             if run_id is not None:
                 return self._read_run_manifest_resource(uri, run_id)
@@ -190,6 +201,8 @@ class MCPApplicationService:
         try:
             if tool_name == "news.daily.run":
                 return self._daily_run(args)
+            if tool_name == "news.topic.run":
+                return self._topic_run(args)
             if tool_name == "news.weekly.run":
                 return self._weekly_run(args)
             if tool_name == "news.daily.enqueue":
@@ -202,6 +215,10 @@ class MCPApplicationService:
                 return self._report_get(args)
             if tool_name == "news.report.search":
                 return self._report_search(args)
+            if tool_name == "news.report.request_review":
+                return self._report_request_review(args)
+            if tool_name == "news.report.publish":
+                return self._report_publish(args)
             if tool_name == "news.source.health":
                 return self._source_health(args)
             if tool_name == "news.source.arxiv.fetch":
@@ -270,6 +287,8 @@ class MCPApplicationService:
                 return self._approval_reject(args)
             if tool_name == "news.approval.modify":
                 return self._approval_modify(args)
+            if tool_name == "news.approval.submit_decision":
+                return self._approval_submit_decision(args)
             return MCPToolCallResult(
                 tool_name=tool_name,
                 success=False,
@@ -293,6 +312,19 @@ class MCPApplicationService:
         )
         return MCPToolCallResult(
             tool_name="news.daily.run",
+            success=True,
+            data=result.to_dict(),
+        )
+
+    def _topic_run(self, args: dict[str, Any]) -> MCPToolCallResult:
+        result = self.run_service_factory().run_daily(
+            profile=str(args.get("profile") or "live-offline"),
+            topic=_required_arg(args, "topic"),
+            source_limit=_optional_int_arg(args, "source_limit", default=3),
+            run_id=_optional_arg(args, "run_id"),
+        )
+        return MCPToolCallResult(
+            tool_name="news.topic.run",
             success=True,
             data=result.to_dict(),
         )
@@ -363,6 +395,52 @@ class MCPApplicationService:
             tool_name="news.report.search",
             success=True,
             data=result.to_dict(),
+        )
+
+    def _report_request_review(self, args: dict[str, Any]) -> MCPToolCallResult:
+        report_id = _required_arg(args, "report_id")
+        action = self.report_service_factory().request_review(
+            report_id,
+            requested_by=_optional_arg(args, "requested_by"),
+            reason=_optional_arg(args, "reason"),
+            metadata=dict(args.get("metadata") or {}),
+        )
+        approval = self.approval_service_factory().submit_request(
+            requested_action="review_report",
+            risk_level="low",
+            reason=args.get("reason"),
+            payload={"report_id": report_id, **dict(args.get("metadata") or {})},
+            requested_by=args.get("requested_by"),
+        )
+        data = action.to_dict()
+        data["approval"] = approval.to_dict()
+        return MCPToolCallResult(
+            tool_name="news.report.request_review",
+            success=True,
+            data=data,
+        )
+
+    def _report_publish(self, args: dict[str, Any]) -> MCPToolCallResult:
+        report_id = _required_arg(args, "report_id")
+        action = self.report_service_factory().publish_report(
+            report_id,
+            requested_by=_optional_arg(args, "requested_by"),
+            reason=_optional_arg(args, "reason"),
+            metadata=dict(args.get("metadata") or {}),
+        )
+        approval = self.approval_service_factory().submit_request(
+            requested_action="publish_report",
+            risk_level="high",
+            reason=args.get("reason"),
+            payload={"report_id": report_id, **dict(args.get("metadata") or {})},
+            requested_by=args.get("requested_by"),
+        )
+        data = action.to_dict()
+        data["approval"] = approval.to_dict()
+        return MCPToolCallResult(
+            tool_name="news.report.publish",
+            success=True,
+            data=data,
         )
 
     def _source_health(self, args: dict[str, Any]) -> MCPToolCallResult:
@@ -758,6 +836,35 @@ class MCPApplicationService:
             data=result.to_dict(),
         )
 
+    def _approval_submit_decision(self, args: dict[str, Any]) -> MCPToolCallResult:
+        decision = str(args.get("decision") or "").strip().lower()
+        if decision == "approve":
+            result = self.approval_service_factory().approve(
+                _approval_id(args),
+                decided_by=_decided_by(args),
+                reason=args.get("reason"),
+            )
+        elif decision == "reject":
+            result = self.approval_service_factory().reject(
+                _approval_id(args),
+                decided_by=_decided_by(args),
+                reason=args.get("reason"),
+            )
+        elif decision == "modify":
+            result = self.approval_service_factory().modify(
+                _approval_id(args),
+                decided_by=_decided_by(args),
+                modifications=dict(args.get("modifications") or {}),
+                reason=args.get("reason"),
+            )
+        else:
+            raise ValueError("decision must be approve, reject, or modify")
+        return MCPToolCallResult(
+            tool_name="news.approval.submit_decision",
+            success=True,
+            data=result.to_dict(),
+        )
+
     def _read_latest_report_resource(self) -> MCPResourceReadResult:
         record = self.report_service_factory().latest_report()
         return MCPResourceReadResult(
@@ -887,6 +994,21 @@ class MCPApplicationService:
             data=result.to_dict(),
         )
 
+    def _read_memory_resource(
+        self,
+        uri: str,
+        args: dict[str, Any],
+    ) -> MCPResourceReadResult:
+        result = self.memory_service_factory().get_document(
+            _required_arg(args, "document_id"),
+            collection=str(args.get("collection") or DEFAULT_MEMORY_COLLECTION),
+        )
+        return MCPResourceReadResult(
+            uri=uri,
+            success=True,
+            data=result.to_dict(),
+        )
+
     def _read_worker_status_resource(
         self,
         uri: str,
@@ -938,6 +1060,21 @@ def _tools() -> list[MCPTool]:
             description="Run daily intelligence directly through RunApplicationService.",
             input_schema={
                 "type": "object",
+                "properties": {
+                    "profile": {"type": "string", "enum": ["live", "live-offline"]},
+                    "topic": {"type": "string"},
+                    "source_limit": {"type": "integer", "minimum": 1},
+                    "run_id": {"type": "string"},
+                },
+            },
+        ),
+        MCPTool(
+            name="news.topic.run",
+            title="Run topic intelligence",
+            description="Run a topic-focused daily intelligence workflow through RunApplicationService.",
+            input_schema={
+                "type": "object",
+                "required": ["topic"],
                 "properties": {
                     "profile": {"type": "string", "enum": ["live", "live-offline"]},
                     "topic": {"type": "string"},
@@ -1000,6 +1137,36 @@ def _tools() -> list[MCPTool]:
                 "properties": {
                     "query": {"type": "string"},
                     "limit": {"type": "integer", "minimum": 1},
+                },
+            },
+        ),
+        MCPTool(
+            name="news.report.request_review",
+            title="Request report review",
+            description="Request human review for a persisted report through application services.",
+            input_schema={
+                "type": "object",
+                "required": ["report_id"],
+                "properties": {
+                    "report_id": {"type": "string"},
+                    "requested_by": {"type": "string"},
+                    "reason": {"type": "string"},
+                    "metadata": {"type": "object"},
+                },
+            },
+        ),
+        MCPTool(
+            name="news.report.publish",
+            title="Request report publish",
+            description="Create an approval-gated publish request for a persisted report.",
+            input_schema={
+                "type": "object",
+                "required": ["report_id"],
+                "properties": {
+                    "report_id": {"type": "string"},
+                    "requested_by": {"type": "string"},
+                    "reason": {"type": "string"},
+                    "metadata": {"type": "object"},
                 },
             },
         ),
@@ -1433,6 +1600,25 @@ def _tools() -> list[MCPTool]:
                 },
             },
         ),
+        MCPTool(
+            name="news.approval.submit_decision",
+            title="Submit approval decision",
+            description="Submit an approve, reject, or modify decision for a pending approval request.",
+            input_schema={
+                "type": "object",
+                "required": ["approval_id", "decision", "decided_by"],
+                "properties": {
+                    "approval_id": {"type": "string"},
+                    "decision": {
+                        "type": "string",
+                        "enum": ["approve", "reject", "modify"],
+                    },
+                    "decided_by": {"type": "string"},
+                    "modifications": {"type": "object"},
+                    "reason": {"type": "string"},
+                },
+            },
+        ),
     ]
 
 
@@ -1482,6 +1668,16 @@ def _resources() -> list[MCPResource]:
             uri=RUN_ARTIFACT_RESOURCE_TEMPLATE,
             name="Run Artifact",
             description="Manifest-listed workflow artifact by run id and artifact key.",
+        ),
+        MCPResource(
+            uri=ARTIFACT_RESOURCE_TEMPLATE,
+            name="Artifact",
+            description="Manifest-listed artifact using run_id:artifact_key or run_id query.",
+        ),
+        MCPResource(
+            uri=MEMORY_RESOURCE_TEMPLATE,
+            name="Memory Document",
+            description="Vector memory document by document id.",
         ),
         MCPResource(
             uri=STORAGE_METRICS_RESOURCE_URI,
@@ -1623,6 +1819,10 @@ def _prompt_placeholder_names(template: str) -> set[str]:
 def _to_dict(value: Any) -> dict[str, Any]:
     if hasattr(value, "to_dict"):
         return value.to_dict()
+    if hasattr(value, "model_dump"):
+        return value.model_dump()
+    if hasattr(value, "dict"):
+        return value.dict()
     if is_dataclass(value):
         return asdict(value)
     if isinstance(value, dict):
@@ -1776,6 +1976,37 @@ def _run_artifact_resource_ids(uri: str) -> tuple[str, str] | None:
     if not run_id or not artifact_key:
         return None
     return run_id, artifact_key
+
+
+def _artifact_resource_ids(uri: str) -> tuple[str, str] | None:
+    parsed = urlsplit(uri)
+    if parsed.scheme != "news" or parsed.netloc != "artifacts":
+        return None
+    artifact_id = unquote(parsed.path.strip("/"))
+    if not artifact_id:
+        return None
+    query = parse_qs(parsed.query)
+    run_id = (query.get("run_id") or [None])[-1]
+    if run_id:
+        return str(run_id), artifact_id
+    if ":" not in artifact_id:
+        return None
+    resolved_run_id, artifact_key = artifact_id.split(":", 1)
+    if not resolved_run_id or not artifact_key:
+        return None
+    return resolved_run_id, artifact_key
+
+
+def _memory_resource_args(uri: str) -> dict[str, Any] | None:
+    parsed = urlsplit(uri)
+    if parsed.scheme != "news" or parsed.netloc != "memory":
+        return None
+    document_id = unquote(parsed.path.strip("/"))
+    if not document_id:
+        return None
+    args = {key: values[-1] for key, values in parse_qs(parsed.query).items() if values}
+    args["document_id"] = document_id
+    return args
 
 
 def _storage_retention_plan_resource_args(uri: str) -> dict[str, Any] | None:

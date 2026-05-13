@@ -22,6 +22,8 @@ DEFAULT_BOOTSTRAP_COLLECTIONS = ("report_sections", "evidence_items")
 class VectorSearchStore(Protocol):
     def search(self, query: VectorSearchQuery) -> list[VectorSearchResult]: ...
 
+    def get_document(self, collection: str, document_id: str) -> VectorSearchResult | None: ...
+
 
 class VectorMemoryStore(VectorSearchStore, Protocol):
     def upsert_documents(self, docs: list[VectorDocument]) -> None: ...
@@ -45,6 +47,20 @@ class MemorySearchResultSet:
             "limit": self.limit,
             "result_count": len(self.results),
             "results": [result.to_dict() for result in self.results],
+        }
+
+
+@dataclass(frozen=True)
+class MemoryDocumentResult:
+    collection: str
+    document_id: str
+    document: VectorSearchResult
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "collection": self.collection,
+            "document_id": self.document_id,
+            "document": self.document.to_dict(),
         }
 
 
@@ -114,6 +130,23 @@ class MemoryApplicationService:
             filters=filters or {},
             limit=limit,
             results=self.vector_store.search(query),
+        )
+
+    def get_document(
+        self,
+        document_id: str,
+        *,
+        collection: str = DEFAULT_MEMORY_COLLECTION,
+    ) -> MemoryDocumentResult:
+        if not document_id:
+            raise ValueError("document_id is required")
+        document = self.vector_store.get_document(collection, document_id)
+        if document is None:
+            raise FileNotFoundError(f"memory document not found: {document_id}")
+        return MemoryDocumentResult(
+            collection=collection,
+            document_id=document_id,
+            document=document,
         )
 
     def bootstrap_collections(

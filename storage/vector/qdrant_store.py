@@ -70,6 +70,19 @@ class QdrantVectorStore:
             for point in points
         ]
 
+    def get_document(self, collection: str, document_id: str) -> VectorSearchResult | None:
+        response = self.client.scroll(
+            collection_name=collection,
+            scroll_filter=_qdrant_filter({"document_id": document_id}),
+            limit=1,
+            with_payload=True,
+            with_vectors=False,
+        )
+        points = response[0] if isinstance(response, tuple) else getattr(response, "points", response)
+        if not points:
+            return None
+        return VectorSearchResult.from_payload(score=1.0, payload=dict(points[0].payload or {}))
+
     def ensure_collections(self, collections: list[str]) -> list[VectorCollectionStatus]:
         statuses = []
         for collection in collections:

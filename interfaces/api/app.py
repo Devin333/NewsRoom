@@ -30,13 +30,18 @@ from interfaces.api.models import (
     ManualScheduleTriggerRequest,
     MemorySearchRequest,
     MemoryReindexRequest,
+    ReportActionRequest,
     ReportDetail,
+    RunRequest,
     RunResponse,
     ScheduleTickRequest,
+    SourceProbeRequest,
     TopicSubscriptionCreateRequest,
     WeeklyRunRequest,
 )
 from interfaces.api.rate_limit import Clock, InMemoryRateLimiter
+from interfaces.events import AuditEmitter, audit_emitter_from_env
+from interfaces.models import actor_context_from_headers
 from interfaces.services.approval_service import ApprovalApplicationService
 from interfaces.services.diagnose_service import DiagnosticApplicationService
 from interfaces.services.entity_service import EntityTrackingApplicationService
@@ -68,6 +73,7 @@ ArtifactInspectionServiceFactory = Callable[[], ArtifactInspectionService]
 StorageServiceFactory = Callable[[], StorageApplicationService]
 ScheduleServiceFactory = Callable[[], ScheduleApplicationService]
 ApprovalServiceFactory = Callable[[], ApprovalApplicationService]
+AuditEmitterFactory = Callable[[], AuditEmitter | None]
 REQUEST_ID_HEADER = "X-Request-ID"
 _REQUEST_ID_CONTEXT: ContextVar[str | None] = ContextVar("news_api_request_id", default=None)
 _REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
@@ -89,6 +95,7 @@ def create_app(
     storage_service_factory: StorageServiceFactory = StorageApplicationService,
     schedule_service_factory: ScheduleServiceFactory = ScheduleApplicationService,
     approval_service_factory: ApprovalServiceFactory = ApprovalApplicationService,
+    audit_emitter_factory: AuditEmitterFactory | None = audit_emitter_from_env,
     api_token: str | None = None,
     api_rate_limit_per_minute: int | None = None,
     rate_limit_clock: Clock | None = None,
@@ -96,6 +103,7 @@ def create_app(
     api = FastAPI(title="NewsRoom API", version="0.1.0")
     resolved_api_token = _normalize_api_token(api_token)
     rate_limiter = _build_rate_limiter(api_rate_limit_per_minute, clock=rate_limit_clock)
+    audit_emitter = audit_emitter_factory() if audit_emitter_factory else None
 
     if rate_limiter is not None:
 
@@ -146,6 +154,30 @@ def create_app(
         response.headers[REQUEST_ID_HEADER] = request_id
         return response
 
+    @api.middleware("http")
+    async def audit_middleware(request: Request, call_next):
+        try:
+            response = await call_next(request)
+        except Exception:
+            _emit_api_audit(
+                audit_emitter,
+                request,
+                request_id=_request_id_from_header(request.headers.get(REQUEST_ID_HEADER))
+                or _request_id(),
+                status_code=500,
+                result="failed",
+            )
+            raise
+        request_id = response.headers.get(REQUEST_ID_HEADER) or _request_id()
+        _emit_api_audit(
+            audit_emitter,
+            request,
+            request_id=request_id,
+            status_code=response.status_code,
+            result=_audit_result(response.status_code),
+        )
+        return response
+
     @api.exception_handler(RequestValidationError)
     async def validation_exception_handler(request: Request, exc: RequestValidationError):
         return _error(
@@ -168,6 +200,64 @@ def create_app(
     @api.get("/health")
     def health() -> dict:
         return _success({"status": "ok", "service": "newsroom-api"})
+
+    @api.get("/health/live")
+    def live_health() -> dict:
+        return _success({"status": "ok", "service": "newsroom-api", "live": True})
+
+    @api.get("/health/ready")
+    def ready_health() -> dict:
+        return _success({"status": "ok", "service": "newsroom-api", "ready": True})
+
+    @api.get("/health/dependencies")
+    def dependency_health() -> dict:
+        return _success(diagnostic_service_factory().run().to_dict())
+
+    @api.post("/api/v1/runs")
+    def submit_run(request: RunRequest):
+        workflow_id = request.workflow_id.strip().lower()
+        try:
+            if workflow_id in {"daily", "daily-intelligence", "daily_intelligence"}:
+                source_limit = request.source_limit or request.max_items or 3
+                if request.async_run:
+                    result = worker_service_factory().enqueue_daily(
+                        profile=request.profile,
+                        topic=request.topic or "AI",
+                        source_limit=source_limit,
+                        run_id=request.run_id,
+                        queue_name=request.queue_name,
+                    )
+                    data = RunResponse(
+                        run_id=request.run_id,
+                        task_id=result.task.task_id,
+                        status="queued",
+                        task_status=result.task.status.value,
+                        message=f"queued as {result.message_id}",
+                    )
+                    return _success(_model_to_dict(data))
+                result = run_service_factory().run_daily(
+                    profile=request.profile,
+                    topic=request.topic or "AI",
+                    source_limit=source_limit,
+                    run_id=request.run_id,
+                )
+                return _success(_run_result_response(result))
+            if workflow_id in {"weekly", "weekly-intelligence", "weekly_intelligence"}:
+                result = run_service_factory().run_weekly(
+                    language=request.language,
+                    topic=request.topic,
+                    source_limit=request.source_limit or request.max_items or 20,
+                    run_id=request.run_id,
+                )
+                return _success(_run_result_response(result))
+        except ValueError as exc:
+            return _error(status_code=400, code="invalid_run_request", message=str(exc))
+        return _error(
+            status_code=404,
+            code="workflow_not_found",
+            message=f"unknown workflow_id: {request.workflow_id}",
+            user_action_required=True,
+        )
 
     @api.post("/api/v1/runs/daily")
     def submit_daily_run(request: DailyRunRequest):
@@ -287,6 +377,86 @@ def create_app(
         )
         return _success(_model_to_dict(data))
 
+    @api.get("/api/v1/reports/{report_id}/markdown")
+    def get_report_markdown(report_id: str):
+        try:
+            result = report_service_factory().report_markdown(report_id)
+        except FileNotFoundError as exc:
+            return _error(
+                status_code=404,
+                code="report_not_found",
+                message=str(exc),
+                user_action_required=True,
+            )
+        except ValueError as exc:
+            return _error(status_code=400, code="invalid_report_id", message=str(exc))
+        return _success(result.to_dict())
+
+    @api.get("/api/v1/reports/{report_id}/quality")
+    def get_report_quality(report_id: str):
+        try:
+            result = report_service_factory().report_quality(report_id)
+        except FileNotFoundError as exc:
+            return _error(
+                status_code=404,
+                code="report_not_found",
+                message=str(exc),
+                user_action_required=True,
+            )
+        except ValueError as exc:
+            return _error(status_code=400, code="invalid_report_id", message=str(exc))
+        return _success(result.to_dict())
+
+    @api.post("/api/v1/reports/{report_id}/request-review")
+    def request_report_review(report_id: str, request: ReportActionRequest | None = None):
+        actual_request = request or ReportActionRequest()
+        try:
+            action = report_service_factory().request_review(
+                report_id,
+                requested_by=actual_request.requested_by,
+                reason=actual_request.reason,
+                metadata=actual_request.metadata,
+            )
+            approval = approval_service_factory().submit_request(
+                requested_action="review_report",
+                risk_level="low",
+                reason=actual_request.reason,
+                payload={"report_id": report_id, **actual_request.metadata},
+                requested_by=actual_request.requested_by,
+            )
+        except FileNotFoundError as exc:
+            return _error(status_code=404, code="report_not_found", message=str(exc))
+        except ValueError as exc:
+            return _error(status_code=400, code="invalid_report_action", message=str(exc))
+        data = action.to_dict()
+        data["approval"] = approval.to_dict()
+        return _success(data)
+
+    @api.post("/api/v1/reports/{report_id}/publish")
+    def publish_report(report_id: str, request: ReportActionRequest | None = None):
+        actual_request = request or ReportActionRequest()
+        try:
+            action = report_service_factory().publish_report(
+                report_id,
+                requested_by=actual_request.requested_by,
+                reason=actual_request.reason,
+                metadata=actual_request.metadata,
+            )
+            approval = approval_service_factory().submit_request(
+                requested_action="publish_report",
+                risk_level="high",
+                reason=actual_request.reason,
+                payload={"report_id": report_id, **actual_request.metadata},
+                requested_by=actual_request.requested_by,
+            )
+        except FileNotFoundError as exc:
+            return _error(status_code=404, code="report_not_found", message=str(exc))
+        except ValueError as exc:
+            return _error(status_code=400, code="invalid_report_action", message=str(exc))
+        data = action.to_dict()
+        data["approval"] = approval.to_dict()
+        return _success(data)
+
     @api.get("/api/v1/search/reports")
     def search_reports(q: str, limit: int = 20):
         try:
@@ -318,6 +488,21 @@ def create_app(
             )
         except ValueError as exc:
             return _error(status_code=400, code="invalid_memory_reindex_request", message=str(exc))
+        return _success(result.to_dict())
+
+    @api.get("/api/v1/memory/{document_id}")
+    def memory_document(document_id: str, collection: str = "report_sections"):
+        try:
+            result = memory_service_factory().get_document(document_id, collection=collection)
+        except FileNotFoundError as exc:
+            return _error(
+                status_code=404,
+                code="memory_document_not_found",
+                message=str(exc),
+                user_action_required=True,
+            )
+        except ValueError as exc:
+            return _error(status_code=400, code="invalid_memory_document_request", message=str(exc))
         return _success(result.to_dict())
 
     @api.get("/api/v1/admin/diagnose")
@@ -374,6 +559,42 @@ def create_app(
     @api.get("/api/v1/sources/validation")
     def validate_sources():
         return _success(source_service_factory().validate_sources().to_dict())
+
+    @api.get("/api/v1/sources/{source_id}")
+    def get_source(source_id: str):
+        try:
+            result = source_service_factory().get_source(source_id)
+        except KeyError as exc:
+            return _error(
+                status_code=404,
+                code="source_not_found",
+                message=str(exc),
+                user_action_required=True,
+            )
+        except ValueError as exc:
+            return _error(status_code=400, code="invalid_source_request", message=str(exc))
+        return _success(result.to_dict())
+
+    @api.post("/api/v1/sources/{source_id}/probe")
+    def probe_source(source_id: str, request: SourceProbeRequest | None = None):
+        actual_request = request or SourceProbeRequest()
+        try:
+            result = source_service_factory().check_source_health(
+                source_id=source_id,
+                enabled_only=not actual_request.include_disabled,
+                limit=actual_request.limit,
+                force=actual_request.force,
+            )
+        except KeyError as exc:
+            return _error(
+                status_code=404,
+                code="source_not_found",
+                message=str(exc),
+                user_action_required=True,
+            )
+        except ValueError as exc:
+            return _error(status_code=400, code="invalid_source_probe", message=str(exc))
+        return _success(result.to_dict())
 
     @api.post("/api/v1/sources/arxiv/fetch")
     def fetch_arxiv_source(request: ArxivSourceFetchRequest):
@@ -543,6 +764,10 @@ def create_app(
             return _error(status_code=400, code="invalid_run_id", message=str(exc))
         return _success(result.to_dict())
 
+    @api.get("/api/v1/runs/{run_id}/manifest")
+    def get_run_manifest(run_id: str):
+        return get_run(run_id)
+
     @api.get("/api/v1/runs/{run_id}/events")
     def get_run_events(run_id: str, limit: int | None = None):
         try:
@@ -623,6 +848,21 @@ def create_app(
             return _error(status_code=404, code="artifact_not_found", message=str(exc))
         except ValueError as exc:
             return _error(status_code=400, code="invalid_artifact_path", message=str(exc))
+        return _success(result.to_dict())
+
+    @api.get("/api/v1/artifacts")
+    def list_artifacts_by_run(run_id: str):
+        return list_artifacts(run_id)
+
+    @api.get("/api/v1/artifacts/{artifact_id}")
+    def get_artifact_by_id(artifact_id: str, run_id: str | None = None):
+        try:
+            resolved_run_id, artifact_key = _artifact_lookup_ids(artifact_id, run_id)
+            result = artifact_service_factory().get_artifact(resolved_run_id, artifact_key)
+        except FileNotFoundError as exc:
+            return _error(status_code=404, code="artifact_not_found", message=str(exc))
+        except ValueError as exc:
+            return _error(status_code=400, code="invalid_artifact_id", message=str(exc))
         return _success(result.to_dict())
 
     @api.get("/api/v1/schedules")
@@ -746,6 +986,54 @@ def create_app(
     return api
 
 
+def _run_result_response(result) -> dict[str, Any]:
+    payload = result.to_dict()
+    run_status = str(payload.get("status") or "")
+    payload["interface"] = _model_to_dict(
+        RunResponse(
+            run_id=payload.get("run_id"),
+            status=_interface_status(run_status),
+            run_status=run_status or None,
+            report_id=_report_id_from_run_output(payload.get("output")),
+            message=payload.get("error", {}).get("message") if isinstance(payload.get("error"), dict) else None,
+        )
+    )
+    return payload
+
+
+def _interface_status(run_status: str) -> str:
+    normalized = run_status.strip().lower()
+    if normalized in {"succeeded", "failed", "blocked", "cancelled"}:
+        return normalized
+    if normalized in {"running", "created", "pending"}:
+        return "running"
+    return "accepted"
+
+
+def _report_id_from_run_output(output: Any) -> str | None:
+    if not isinstance(output, dict):
+        return None
+    for key in ("report_id", "final_report_id"):
+        value = output.get(key)
+        if value:
+            return str(value)
+    return None
+
+
+def _artifact_lookup_ids(artifact_id: str, run_id: str | None) -> tuple[str, str]:
+    artifact = artifact_id.strip()
+    if not artifact:
+        raise ValueError("artifact_id is required")
+    if run_id:
+        return run_id, artifact
+    if ":" not in artifact:
+        raise ValueError("run_id is required unless artifact_id uses run_id:artifact_key")
+    resolved_run_id, artifact_key = artifact.split(":", 1)
+    if not resolved_run_id or not artifact_key:
+        raise ValueError("artifact_id must use run_id:artifact_key")
+    return resolved_run_id, artifact_key
+
+
 def _approval_decision_response(call):
     try:
         result = call()
@@ -851,6 +1139,73 @@ def _client_rate_limit_key(request: Request) -> str:
     if request.client is None:
         return "unknown"
     return request.client.host or "unknown"
+
+
+def _emit_api_audit(
+    audit_emitter: AuditEmitter | None,
+    request: Request,
+    *,
+    request_id: str,
+    status_code: int,
+    result: str,
+) -> None:
+    if audit_emitter is None:
+        return
+    path = request.url.path
+    audit_emitter.emit(
+        actor=actor_context_from_headers(
+            request.headers,
+            request_id=request_id,
+            ip_address=request.client.host if request.client else None,
+        ),
+        action=_api_audit_action(request.method, path),
+        resource_type=_api_resource_type(path),
+        resource_id=_api_resource_id(path),
+        result=result,  # type: ignore[arg-type]
+        metadata={
+            "method": request.method,
+            "path": path,
+            "status_code": status_code,
+            "query": dict(request.query_params),
+        },
+    )
+
+
+def _audit_result(status_code: int) -> str:
+    if status_code in {401, 403, 429}:
+        return "blocked"
+    if status_code >= 400:
+        return "failed"
+    return "succeeded"
+
+
+def _api_audit_action(method: str, path: str) -> str:
+    prefix = "api_request"
+    if path.startswith("/api/v1/approvals") and method == "POST":
+        return "approval_decision_submitted" if any(
+            path.endswith(suffix) for suffix in ("/approve", "/reject", "/modify")
+        ) else "api_request_received"
+    if path.startswith("/api/v1/artifacts"):
+        return "artifact_read"
+    if path.startswith("/api/v1/reports") and method == "GET":
+        return "report_downloaded"
+    return f"{prefix}_{method.lower()}"
+
+
+def _api_resource_type(path: str) -> str:
+    parts = [part for part in path.split("/") if part]
+    if len(parts) >= 3 and parts[0] == "api":
+        return parts[2]
+    if parts:
+        return parts[0]
+    return "api"
+
+
+def _api_resource_id(path: str) -> str | None:
+    parts = [part for part in path.split("/") if part]
+    if len(parts) >= 4 and parts[0] == "api":
+        return parts[3]
+    return None
 
 
 def _optional_positive_int_env(name: str) -> int | None:

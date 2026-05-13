@@ -51,6 +51,12 @@ class InMemoryVectorStore:
         scored.sort(key=lambda result: result.score, reverse=True)
         return scored[: query.limit]
 
+    def get_document(self, collection: str, document_id: str) -> VectorSearchResult | None:
+        doc = self._collections.get(collection, {}).get(document_id)
+        if doc is None:
+            return None
+        return VectorSearchResult.from_payload(score=1.0, payload=doc.to_payload())
+
     def delete_by_filter(self, collection: str, filters: dict[str, Any]) -> int:
         docs = self._collections.get(collection, {})
         matching_ids = [

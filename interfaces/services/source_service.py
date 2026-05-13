@@ -57,6 +57,15 @@ class SourceListResult:
 
 
 @dataclass(frozen=True)
+class SourceDetailResult:
+    source: SourceSummary
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = self.source.to_dict()
+        return {"source_id": self.source.source_id, "source": payload, **payload}
+
+
+@dataclass(frozen=True)
 class SourceHealthResult:
     health: list[dict[str, Any]]
 
@@ -140,6 +149,15 @@ class SourceApplicationService:
                 for source in sources
             ]
         )
+
+    def get_source(self, source_id: str) -> SourceDetailResult:
+        if not source_id:
+            raise ValueError("source_id is required")
+        try:
+            source = self.source_registry.get(source_id)
+        except KeyError as exc:
+            raise KeyError(f"source not found: {source_id}") from exc
+        return SourceDetailResult(_source_summary_model(source))
 
     def validate_sources(self):
         return self.source_registry.validate()
@@ -262,6 +280,22 @@ def _raw_item_to_dict(item: RawSourceItem) -> dict[str, Any]:
 
 def _dt(value: datetime | None) -> str | None:
     return value.isoformat().replace("+00:00", "Z") if value else None
+
+
+def _source_summary_model(source: SourceDefinition) -> SourceSummary:
+    return SourceSummary(
+        source_id=source.source_id,
+        name=source.name,
+        source_type=source.source_type.value,
+        url=source.url,
+        reliability=source.reliability.value,
+        authority_score=source.authority_score,
+        enabled=source.enabled,
+        respect_robots=source.respect_robots,
+        topics=list(source.topics),
+        language=source.language,
+        region=source.region,
+    )
 
 
 def _source_health_store_from_env() -> SourceHealthStore | None:
