@@ -2366,3 +2366,58 @@ resolve_run_dir() 约束 run_id 不能使用 absolute path 或 .. path traversal
 ```
 
 这一步为后续 Interface / Worker 做 run history、latest run、run diff 提供稳定内核入口，同时保持 Workflow Runtime 的职责仍是流程运行与 artifact 可回放能力。
+
+### N.7 Replay content reader and interface reuse
+
+本轮继续把 replay artifact 内容读取能力收口到 `core/framework/workflow/inspection.py`，并让 Interface 的 `RunInspectionService` 复用该能力，避免 Interface 层维护第二套 path 校验、events.jsonl 读取、artifact 读取和 source artifact 展开逻辑。
+
+新增对象：
+
+```text
+WorkflowArtifactContentRecord
+  表示单个 artifact 的可读内容。
+  包含 artifact_key、relative_path、content_type、size_bytes、content、read_error、truncated、metadata。
+  失败读取不会抛出到 replay bundle，而是记录 read_error，便于 partial replay。
+
+WorkflowReplayContentBundle
+  表示可直接用于 replay/debug UI 或服务返回的内容视图。
+  包含 manifest、events、events_path、events_error、artifact content records。
+  支持 artifact_by_key()。
+```
+
+新增入口：
+
+```text
+WorkflowRunInspector.build_replay_content_bundle()
+WorkflowRunner.build_replay_content_bundle()
+build_workflow_replay_content_bundle()
+read_workflow_artifact_content()
+read_source_artifact_content_records()
+redact_sensitive_values()
+```
+
+行为边界：
+
+```text
+replay content reader 只读取 run artifact directory 中 manifest 声明的 artifact。
+artifact path 继续使用 resolve_artifact_path()，禁止 absolute path 和 .. traversal。
+run_id 继续使用 resolve_run_dir()，禁止逃逸 artifact root。
+JSON / JSONL artifact 默认脱敏敏感 key。
+大 artifact 可通过 max_artifact_bytes 返回 preview，并标记 truncated。
+source artifact 展开只读取 source_artifacts/index.json 中记录的文件，不执行 source connector。
+缺失 artifact 记录 read_error，不影响其他 artifact replay。
+```
+
+Interface 层当前状态：
+
+```text
+interfaces/services/run_inspection_service.py
+  保留 RunSummary / RunDetail / RunEventsResult / RunReplayResult DTO。
+  list_runs() 改用 WorkflowRunInspector.list_runs(include_invalid=True)。
+  get_run() 改用 WorkflowRunInspector.load_manifest()。
+  get_run_events() 改用 WorkflowRunInspector.read_events()。
+  replay_run() 改用 WorkflowRunInspector.build_replay_content_bundle()。
+  Interface 仍然不调用 WorkflowExecutor。
+```
+
+这一步让 replay/debug/audit 的底层读取能力归 Workflow Runtime，Interface 只做应用服务形状适配。

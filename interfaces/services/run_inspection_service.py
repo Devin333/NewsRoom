@@ -1,9 +1,18 @@
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from core.framework.workflow.inspection import (
+    WorkflowArtifactContentRecord,
+    WorkflowReplayContentBundle,
+    WorkflowRunInspectionError,
+    WorkflowRunInspector,
+    WorkflowRunListItem,
+    redact_sensitive_values,
+    resolve_run_dir,
+)
 
 
 @dataclass(frozen=True)
@@ -120,24 +129,26 @@ class RunReplayResult:
 class RunInspectionService:
     def __init__(self, artifact_root: str | Path = ".newsroom/runs") -> None:
         self.artifact_root = Path(artifact_root)
+        self._inspector = WorkflowRunInspector(self.artifact_root)
 
     def list_runs(self, *, limit: int = 20) -> RunListResult:
-        summaries = []
-        for manifest_path in self.artifact_root.glob("*/manifest.json"):
-            try:
-                manifest = _read_json(manifest_path)
-                summaries.append(_summary_from_manifest(manifest, manifest_path))
-            except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError):
-                continue
-        summaries.sort(key=lambda run: run.started_at or "", reverse=True)
-        return RunListResult(summaries[:limit])
+        if limit <= 0:
+            raise ValueError("limit must be greater than zero")
+        catalog = self._inspector.list_runs(limit=limit, include_invalid=True)
+        return RunListResult(
+            [
+                _summary_from_run_item(item)
+                for item in catalog.runs
+                if not _is_unreadable_manifest(item)
+            ]
+        )
 
     def get_run(self, run_id: str) -> RunDetail:
-        _validate_run_id(run_id)
-        manifest_path = self.artifact_root / run_id / "manifest.json"
+        run_dir = _resolve_run_dir_for_service(self.artifact_root, run_id)
+        manifest_path = run_dir / "manifest.json"
         if not manifest_path.exists():
             raise FileNotFoundError(f"run not found: {run_id}")
-        manifest = _read_json(manifest_path)
+        manifest = self._inspector.load_manifest(run_dir)
         return RunDetail(
             run_id=str(manifest.get("run_id") or run_id),
             manifest=manifest,
@@ -151,237 +162,84 @@ class RunInspectionService:
         artifacts = detail.manifest.get("artifacts") or {}
         if "events" not in artifacts:
             raise FileNotFoundError(f"events artifact not found for run: {run_id}")
-        events_path = _artifact_path(self.artifact_root, run_id, str(artifacts["events"]))
-        events = _read_jsonl_events(events_path)
+        run_dir = _resolve_run_dir_for_service(self.artifact_root, run_id)
+        try:
+            event_records = self._inspector.read_events(run_dir, manifest=detail.manifest)
+            events = [redact_sensitive_values(event.to_dict()) for event in event_records]
+            events_path = self._inspector.artifact_path(
+                run_dir,
+                "events",
+                manifest=detail.manifest,
+            )
+        except WorkflowRunInspectionError as exc:
+            if "not found" in str(exc):
+                raise FileNotFoundError(str(exc)) from exc
+            raise ValueError(str(exc)) from exc
         if limit is not None:
             events = events[:limit]
         return RunEventsResult(
             run_id=detail.run_id,
-            events=[_redact_sensitive_keys(event) for event in events],
+            events=events,
             events_path=str(events_path),
         )
 
     def replay_run(self, run_id: str) -> RunReplayResult:
-        detail = self.get_run(run_id)
-        artifact_paths = detail.manifest.get("artifacts") or {}
-        events: list[dict[str, Any]] = []
-        events_path = None
-        events_error = None
-        if "events" in artifact_paths:
-            try:
-                events_result = self.get_run_events(run_id)
-                events = events_result.events
-                events_path = events_result.events_path
-            except (FileNotFoundError, ValueError, json.JSONDecodeError) as exc:
-                events_error = str(exc)
-        artifacts = [
-            _read_replay_artifact(self.artifact_root, run_id, key, str(relative_path))
-            for key, relative_path in sorted(artifact_paths.items())
-        ]
-        artifacts.extend(_read_source_replay_artifacts(self.artifact_root, run_id, artifact_paths))
-        return RunReplayResult(
-            run_id=detail.run_id,
-            manifest=detail.manifest,
-            manifest_path=detail.manifest_path,
-            events=events,
-            events_path=events_path,
-            events_error=events_error,
-            artifacts=artifacts,
-        )
+        run_dir = _resolve_run_dir_for_service(self.artifact_root, run_id)
+        if not (run_dir / "manifest.json").exists():
+            raise FileNotFoundError(f"run not found: {run_id}")
+        bundle = self._inspector.build_replay_content_bundle(run_dir=run_dir, redact=True)
+        return _replay_result_from_content_bundle(bundle)
 
 
-def _summary_from_manifest(manifest: dict[str, Any], manifest_path: Path) -> RunSummary:
+def _summary_from_run_item(item: WorkflowRunListItem) -> RunSummary:
     return RunSummary(
-        run_id=str(manifest["run_id"]),
-        status=str(manifest.get("status") or "unknown"),
-        workflow_id=manifest.get("workflow_id"),
-        workflow_version=manifest.get("workflow_version"),
-        profile=manifest.get("profile"),
-        started_at=manifest.get("started_at"),
-        finished_at=manifest.get("finished_at"),
-        quality_score=manifest.get("quality_score"),
-        step_count=manifest.get("step_count"),
-        event_count=manifest.get("event_count"),
-        manifest_path=str(manifest_path),
+        run_id=item.run_id,
+        status=str(item.status or "unknown"),
+        workflow_id=item.workflow_id,
+        workflow_version=item.workflow_version,
+        profile=item.profile,
+        started_at=item.started_at,
+        finished_at=item.finished_at,
+        step_count=item.step_count,
+        event_count=item.event_count,
+        manifest_path=item.manifest_path,
     )
 
 
-def _read_json(path: Path) -> dict[str, Any]:
-    with path.open("r", encoding="utf-8") as handle:
-        payload = json.load(handle)
-    if not isinstance(payload, dict):
-        raise ValueError("manifest must be a JSON object")
-    return payload
+def _is_unreadable_manifest(item: WorkflowRunListItem) -> bool:
+    return bool(item.invalid_reason and "invalid JSON artifact" in item.invalid_reason)
 
 
-def _read_json_value(path: Path) -> Any:
-    with path.open("r", encoding="utf-8") as handle:
-        return json.load(handle)
+def _replay_result_from_content_bundle(bundle: WorkflowReplayContentBundle) -> RunReplayResult:
+    return RunReplayResult(
+        run_id=str(bundle.run_id or "unknown"),
+        manifest=dict(bundle.manifest),
+        manifest_path=bundle.manifest_path,
+        events=[dict(event) for event in bundle.events],
+        events_path=bundle.events_path,
+        events_error=bundle.events_error,
+        artifacts=[
+            _replay_artifact_from_content_record(artifact)
+            for artifact in bundle.artifacts
+        ],
+    )
 
 
-def _read_jsonl_events(path: Path) -> list[dict[str, Any]]:
-    events: list[dict[str, Any]] = []
-    with path.open("r", encoding="utf-8") as handle:
-        for line_number, line in enumerate(handle, start=1):
-            line = line.strip()
-            if not line:
-                continue
-            payload = json.loads(line)
-            if not isinstance(payload, dict):
-                raise ValueError(f"event line must be a JSON object: {line_number}")
-            events.append(payload)
-    return events
-
-
-def _read_jsonl_values(path: Path) -> list[Any]:
-    values: list[Any] = []
-    with path.open("r", encoding="utf-8") as handle:
-        for line_number, line in enumerate(handle, start=1):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                values.append(json.loads(line))
-            except json.JSONDecodeError as exc:
-                raise ValueError(f"jsonl line is invalid: {line_number}") from exc
-    return values
-
-
-def _read_replay_artifact(
-    artifact_root: Path,
-    run_id: str,
-    artifact_key: str,
-    relative_path: str,
+def _replay_artifact_from_content_record(
+    artifact: WorkflowArtifactContentRecord,
 ) -> RunReplayArtifact:
-    content_type = _content_type(Path(relative_path))
-    try:
-        path = _artifact_path(artifact_root, run_id, relative_path)
-        content = _read_replay_artifact_content(path, content_type)
-        return RunReplayArtifact(
-            artifact_key=artifact_key,
-            relative_path=relative_path,
-            content_type=content_type,
-            size_bytes=path.stat().st_size,
-            content=content,
-        )
-    except (OSError, UnicodeDecodeError, ValueError, json.JSONDecodeError) as exc:
-        return RunReplayArtifact(
-            artifact_key=artifact_key,
-            relative_path=relative_path,
-            content_type=content_type,
-            size_bytes=None,
-            read_error=str(exc),
-        )
-
-
-def _read_replay_artifact_content(path: Path, content_type: str) -> Any:
-    if content_type == "application/json":
-        return _redact_sensitive_keys(_read_json_value(path))
-    if content_type == "application/x-ndjson":
-        return [_redact_sensitive_keys(value) for value in _read_jsonl_values(path)]
-    return path.read_text(encoding="utf-8")
-
-
-def _read_source_replay_artifacts(
-    artifact_root: Path,
-    run_id: str,
-    artifact_paths: dict[str, Any],
-) -> list[RunReplayArtifact]:
-    source_index_path = artifact_paths.get("source_artifacts")
-    if not isinstance(source_index_path, str):
-        return []
-    try:
-        index_path = _artifact_path(artifact_root, run_id, source_index_path)
-        index_payload = _read_json_value(index_path)
-    except (OSError, UnicodeDecodeError, ValueError, json.JSONDecodeError):
-        return []
-    if not isinstance(index_payload, dict):
-        return []
-    entries = index_payload.get("entries")
-    if not isinstance(entries, list):
-        return []
-    replay_artifacts: list[RunReplayArtifact] = []
-    for entry in entries:
-        if not isinstance(entry, dict):
-            continue
-        relative_path = entry.get("path")
-        if not isinstance(relative_path, str):
-            continue
-        replay_artifacts.append(
-            _read_replay_artifact(
-                artifact_root,
-                run_id,
-                _source_artifact_key(entry),
-                relative_path,
-            )
-        )
-    return replay_artifacts
-
-
-def _source_artifact_key(entry: dict[str, Any]) -> str:
-    parts = [
-        "source_artifact",
-        str(entry.get("artifact_type") or "unknown"),
-        str(entry.get("source_id") or "unknown-source"),
-        str(entry.get("object_id") or "unknown-object"),
-    ]
-    return ".".join(_artifact_key_segment(part) for part in parts)
-
-
-def _artifact_key_segment(value: str) -> str:
-    return "".join(ch if ch.isalnum() or ch in {"_", "-"} else "_" for ch in value).strip("_") or "unknown"
-
-
-def _artifact_path(artifact_root: Path, run_id: str, relative_path: str) -> Path:
-    relative = Path(relative_path)
-    if relative.is_absolute() or ".." in relative.parts:
-        raise ValueError(f"invalid artifact path: {relative_path}")
-    path = artifact_root / run_id / relative
-    if not path.exists():
-        raise FileNotFoundError(f"artifact file not found: {relative_path}")
-    return path
-
-
-def _content_type(path: Path) -> str:
-    suffix = path.suffix.lower()
-    if suffix == ".json":
-        return "application/json"
-    if suffix == ".jsonl":
-        return "application/x-ndjson"
-    if suffix == ".md":
-        return "text/markdown"
-    return "text/plain"
-
-
-def _redact_sensitive_keys(value: Any) -> Any:
-    if isinstance(value, dict):
-        redacted = {}
-        for key, item in value.items():
-            if _is_sensitive_key(key):
-                redacted[key] = "[redacted]"
-            else:
-                redacted[key] = _redact_sensitive_keys(item)
-        return redacted
-    if isinstance(value, list):
-        return [_redact_sensitive_keys(item) for item in value]
-    return value
-
-
-def _is_sensitive_key(key: Any) -> bool:
-    normalized = str(key).lower().replace("-", "_")
-    sensitive_fragments = (
-        "api_key",
-        "apikey",
-        "authorization",
-        "cookie",
-        "password",
-        "secret",
-        "token",
+    return RunReplayArtifact(
+        artifact_key=artifact.artifact_key,
+        relative_path=artifact.relative_path,
+        content_type=artifact.content_type,
+        size_bytes=artifact.size_bytes,
+        content=artifact.content,
+        read_error=artifact.read_error,
     )
-    return any(fragment in normalized for fragment in sensitive_fragments)
 
 
-def _validate_run_id(run_id: str) -> None:
-    relative = Path(run_id)
-    if relative.is_absolute() or ".." in relative.parts or len(relative.parts) != 1:
-        raise ValueError(f"invalid run id: {run_id}")
+def _resolve_run_dir_for_service(artifact_root: Path, run_id: str) -> Path:
+    try:
+        return resolve_run_dir(artifact_root, run_id)
+    except WorkflowRunInspectionError as exc:
+        raise ValueError(f"invalid run id: {run_id}") from exc

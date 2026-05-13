@@ -531,6 +531,75 @@ class WorkflowReplayBundle:
 
 
 @dataclass(frozen=True)
+class WorkflowArtifactContentRecord:
+    artifact_key: str
+    relative_path: str
+    content_type: str
+    size_bytes: int | None
+    absolute_path: str | None = None
+    content: Any = None
+    read_error: str | None = None
+    truncated: bool = False
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def readable(self) -> bool:
+        return self.read_error is None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "artifact_key": self.artifact_key,
+            "relative_path": self.relative_path,
+            "content_type": self.content_type,
+            "size_bytes": self.size_bytes,
+            "absolute_path": self.absolute_path,
+            "content": to_json_safe(self.content),
+            "read_error": self.read_error,
+            "truncated": self.truncated,
+            "metadata": to_json_safe(self.metadata),
+            "readable": self.readable,
+        }
+
+
+@dataclass(frozen=True)
+class WorkflowReplayContentBundle:
+    run_id: str | None
+    manifest: dict[str, Any]
+    manifest_path: str
+    events: list[dict[str, Any]]
+    artifacts: list[WorkflowArtifactContentRecord]
+    events_path: str | None = None
+    events_error: str | None = None
+
+    @property
+    def artifact_count(self) -> int:
+        return len(self.artifacts)
+
+    @property
+    def event_count(self) -> int:
+        return len(self.events)
+
+    def artifact_by_key(self, artifact_key: str) -> WorkflowArtifactContentRecord | None:
+        for artifact in self.artifacts:
+            if artifact.artifact_key == artifact_key:
+                return artifact
+        return None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "run_id": self.run_id,
+            "manifest": to_json_safe(self.manifest),
+            "manifest_path": self.manifest_path,
+            "event_count": self.event_count,
+            "events": to_json_safe(self.events),
+            "events_path": self.events_path,
+            "events_error": self.events_error,
+            "artifact_count": self.artifact_count,
+            "artifacts": [artifact.to_dict() for artifact in self.artifacts],
+        }
+
+
+@dataclass(frozen=True)
 class WorkflowRunDiagnostics:
     inspection: WorkflowRunInspection
     timeline: list[WorkflowTimelineItem] = field(default_factory=list)
@@ -1201,6 +1270,66 @@ class WorkflowRunInspector:
             ),
         )
 
+    def build_replay_content_bundle(
+        self,
+        run_id: str | None = None,
+        *,
+        run_dir: str | Path | None = None,
+        redact: bool = True,
+        expand_source_artifacts: bool = True,
+        max_artifact_bytes: int | None = None,
+    ) -> WorkflowReplayContentBundle:
+        actual_run_dir = self._resolve_run_dir(run_id=run_id, run_dir=run_dir)
+        manifest = self.load_manifest(actual_run_dir)
+        artifact_paths = _manifest_artifact_map(manifest)
+        events: list[dict[str, Any]] = []
+        events_path = None
+        events_error = None
+        if "events" in artifact_paths:
+            try:
+                event_records = self.read_events(actual_run_dir, manifest=manifest)
+                events = [
+                    _redact_if_needed(event.to_dict(), redact=redact)
+                    for event in event_records
+                ]
+                events_path_obj = self.artifact_path(
+                    actual_run_dir,
+                    "events",
+                    manifest=manifest,
+                    missing_ok=True,
+                )
+                events_path = str(events_path_obj) if events_path_obj is not None else None
+            except WorkflowRunInspectionError as exc:
+                events_error = str(exc)
+        artifacts = [
+            read_workflow_artifact_content(
+                actual_run_dir,
+                artifact_key,
+                relative_path,
+                redact=redact,
+                max_bytes=max_artifact_bytes,
+            )
+            for artifact_key, relative_path in sorted(artifact_paths.items())
+        ]
+        if expand_source_artifacts:
+            artifacts.extend(
+                read_source_artifact_content_records(
+                    actual_run_dir,
+                    artifact_paths,
+                    redact=redact,
+                    max_bytes=max_artifact_bytes,
+                )
+            )
+        return WorkflowReplayContentBundle(
+            run_id=_optional_string(manifest.get("run_id")) or actual_run_dir.name,
+            manifest=_redact_if_needed(manifest, redact=redact),
+            manifest_path=str(actual_run_dir / "manifest.json"),
+            events=events,
+            events_path=events_path,
+            events_error=events_error,
+            artifacts=artifacts,
+        )
+
     def build_diagnostics(
         self,
         run_id: str | None = None,
@@ -1499,6 +1628,21 @@ def build_workflow_replay_bundle(
     )
 
 
+def build_workflow_replay_content_bundle(
+    run_dir: str | Path,
+    *,
+    redact: bool = True,
+    expand_source_artifacts: bool = True,
+    max_artifact_bytes: int | None = None,
+) -> WorkflowReplayContentBundle:
+    return WorkflowRunInspector().build_replay_content_bundle(
+        run_dir=run_dir,
+        redact=redact,
+        expand_source_artifacts=expand_source_artifacts,
+        max_artifact_bytes=max_artifact_bytes,
+    )
+
+
 def list_workflow_runs(
     artifact_root: str | Path,
     *,
@@ -1635,6 +1779,113 @@ def content_type_for_path(path: str | Path) -> str:
     if suffix == ".csv":
         return "text/csv"
     return "application/octet-stream"
+
+
+def read_workflow_artifact_content(
+    run_dir: str | Path,
+    artifact_key: str,
+    relative_path: str,
+    *,
+    redact: bool = True,
+    max_bytes: int | None = None,
+) -> WorkflowArtifactContentRecord:
+    content_type = content_type_for_path(relative_path)
+    try:
+        path = _artifact_content_path(Path(run_dir), relative_path)
+        content, truncated = _read_artifact_content(
+            path,
+            content_type,
+            max_bytes=max_bytes,
+        )
+        return WorkflowArtifactContentRecord(
+            artifact_key=artifact_key,
+            relative_path=_posix_artifact_path(relative_path),
+            absolute_path=str(path),
+            content_type=content_type,
+            size_bytes=path.stat().st_size,
+            content=_redact_if_needed(content, redact=redact),
+            truncated=truncated,
+        )
+    except (
+        OSError,
+        UnicodeDecodeError,
+        ValueError,
+        json.JSONDecodeError,
+        WorkflowRunInspectionError,
+    ) as exc:
+        return WorkflowArtifactContentRecord(
+            artifact_key=artifact_key,
+            relative_path=_posix_artifact_path(relative_path),
+            absolute_path=None,
+            content_type=content_type,
+            size_bytes=None,
+            read_error=str(exc),
+        )
+
+
+def read_source_artifact_content_records(
+    run_dir: str | Path,
+    artifact_paths: dict[str, str],
+    *,
+    redact: bool = True,
+    max_bytes: int | None = None,
+) -> list[WorkflowArtifactContentRecord]:
+    source_index_path = artifact_paths.get("source_artifacts")
+    if not isinstance(source_index_path, str):
+        return []
+    try:
+        index_path = _artifact_content_path(Path(run_dir), source_index_path)
+        index_payload = _read_json_file(index_path)
+    except (OSError, ValueError, WorkflowRunInspectionError):
+        return []
+    if not isinstance(index_payload, dict):
+        return []
+    entries = index_payload.get("entries")
+    if not isinstance(entries, list):
+        return []
+    records: list[WorkflowArtifactContentRecord] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        relative_path = entry.get("path")
+        if not isinstance(relative_path, str):
+            continue
+        record = read_workflow_artifact_content(
+            run_dir,
+            _source_artifact_key(entry),
+            relative_path,
+            redact=redact,
+            max_bytes=max_bytes,
+        )
+        records.append(
+            replace(
+                record,
+                metadata={
+                    **dict(record.metadata),
+                    "source_artifact": True,
+                    "source_id": entry.get("source_id"),
+                    "artifact_type": entry.get("artifact_type"),
+                    "object_id": entry.get("object_id"),
+                },
+            )
+        )
+    return records
+
+
+def redact_sensitive_values(value: Any) -> Any:
+    if isinstance(value, dict):
+        redacted: dict[Any, Any] = {}
+        for key, item in value.items():
+            if _looks_sensitive_buffer_key(str(key)):
+                redacted[key] = "[redacted]"
+            else:
+                redacted[key] = redact_sensitive_values(item)
+        return redacted
+    if isinstance(value, list):
+        return [redact_sensitive_values(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(redact_sensitive_values(item) for item in value)
+    return value
 
 
 def terminal_artifact_key(manifest: dict[str, Any]) -> str | None:
@@ -2384,6 +2635,78 @@ def _run_list_item_from_dir(run_dir: Path) -> WorkflowRunListItem | None:
     )
 
 
+def _artifact_content_path(run_dir: Path, relative_path: str) -> Path:
+    try:
+        path = resolve_artifact_path(run_dir, relative_path)
+    except WorkflowRunInspectionError as exc:
+        raise ValueError(str(exc)) from exc
+    if not path.exists():
+        raise FileNotFoundError(f"artifact file not found: {relative_path}")
+    return path
+
+
+def _read_artifact_content(
+    path: Path,
+    content_type: str,
+    *,
+    max_bytes: int | None,
+) -> tuple[Any, bool]:
+    if max_bytes is not None and max_bytes < 0:
+        raise ValueError("max_bytes must be non-negative")
+    size_bytes = path.stat().st_size
+    truncated = max_bytes is not None and size_bytes > max_bytes
+    if content_type == "application/json":
+        if truncated:
+            return _read_text_preview(path, max_bytes=max_bytes), True
+        return _read_json_file(path), False
+    if content_type == "application/x-ndjson":
+        if truncated:
+            return _read_text_preview(path, max_bytes=max_bytes), True
+        return _read_jsonl_file_values(path), False
+    if content_type.startswith("text/"):
+        return _read_text_preview(path, max_bytes=max_bytes), truncated
+    return _read_binary_preview(path, max_bytes=max_bytes), truncated
+
+
+def _read_text_preview(path: Path, *, max_bytes: int | None) -> str:
+    if max_bytes is None:
+        return path.read_text(encoding="utf-8")
+    with path.open("rb") as handle:
+        data = handle.read(max_bytes)
+    return data.decode("utf-8", errors="replace")
+
+
+def _read_binary_preview(path: Path, *, max_bytes: int | None) -> dict[str, Any]:
+    with path.open("rb") as handle:
+        data = handle.read(max_bytes if max_bytes is not None else 256)
+    return {
+        "encoding": "hex",
+        "bytes_preview": data.hex(),
+        "preview_size_bytes": len(data),
+    }
+
+
+def _redact_if_needed(value: Any, *, redact: bool) -> Any:
+    return redact_sensitive_values(value) if redact else value
+
+
+def _source_artifact_key(entry: dict[str, Any]) -> str:
+    parts = [
+        "source_artifact",
+        str(entry.get("artifact_type") or "unknown"),
+        str(entry.get("source_id") or "unknown-source"),
+        str(entry.get("object_id") or "unknown-object"),
+    ]
+    return ".".join(_artifact_key_segment(part) for part in parts)
+
+
+def _artifact_key_segment(value: str) -> str:
+    return "".join(
+        character if character.isalnum() or character in {"_", "-"} else "_"
+        for character in value
+    ).strip("_") or "unknown"
+
+
 def _run_list_item_matches(
     item: WorkflowRunListItem,
     *,
@@ -2977,6 +3300,25 @@ def _read_event_jsonl(path: Path) -> Iterator[WorkflowEventRecord]:
                 yield _event_from_payload(payload, line_number=line_number)
     except OSError as exc:
         raise WorkflowRunInspectionError(f"failed to read events artifact: {path}") from exc
+
+
+def _read_jsonl_file_values(path: Path) -> list[Any]:
+    values: list[Any] = []
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            for line_number, line in enumerate(handle, start=1):
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                try:
+                    values.append(json.loads(stripped))
+                except json.JSONDecodeError as exc:
+                    raise WorkflowRunInspectionError(
+                        f"invalid JSONL artifact at {path}:{line_number}"
+                    ) from exc
+    except OSError as exc:
+        raise WorkflowRunInspectionError(f"failed to read JSONL artifact: {path}") from exc
+    return values
 
 
 def _event_from_payload(payload: dict[str, Any], *, line_number: int) -> WorkflowEventRecord:

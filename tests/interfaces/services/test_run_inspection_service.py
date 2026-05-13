@@ -25,6 +25,21 @@ def test_run_inspection_lists_runs_sorted_by_started_at(tmp_path) -> None:
     assert payload["runs"][0]["status"] == "failed"
 
 
+def test_run_inspection_list_skips_unreadable_manifest(tmp_path) -> None:
+    _write_manifest(
+        tmp_path,
+        "run-1",
+        {"run_id": "run-1", "status": "succeeded", "started_at": "2026-05-10T01:00:00Z"},
+    )
+    bad_run_dir = tmp_path / "bad-run"
+    bad_run_dir.mkdir()
+    (bad_run_dir / "manifest.json").write_text("{not-json", encoding="utf-8")
+
+    result = RunInspectionService(tmp_path).list_runs()
+
+    assert [run.run_id for run in result.runs] == ["run-1"]
+
+
 def test_run_inspection_get_run_reads_manifest(tmp_path) -> None:
     _write_manifest(
         tmp_path,
@@ -70,6 +85,17 @@ def test_run_inspection_limits_events(tmp_path) -> None:
 
     assert result.to_dict()["event_count"] == 1
     assert result.to_dict()["events"][0]["event_type"] == "event-1"
+
+
+def test_run_inspection_missing_events_file_raises_not_found(tmp_path) -> None:
+    _write_manifest(
+        tmp_path,
+        "run-1",
+        {"run_id": "run-1", "status": "succeeded", "artifacts": {"events": "events.jsonl"}},
+    )
+
+    with pytest.raises(FileNotFoundError):
+        RunInspectionService(tmp_path).get_run_events("run-1")
 
 
 def test_run_inspection_redacts_sensitive_event_keys(tmp_path) -> None:

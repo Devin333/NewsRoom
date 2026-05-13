@@ -15,6 +15,7 @@ from core.framework.specs import WorkflowSpec
 from core.framework.workflow.executor import WorkflowExecutor
 from core.framework.workflow.inspection import (
     WorkflowReplayBundle,
+    WorkflowReplayContentBundle,
     WorkflowRunCatalog,
     WorkflowRunCatalogHealth,
     WorkflowRunComparison,
@@ -162,6 +163,21 @@ class WorkflowRunner:
             run_id,
             verify_checksums=verify_checksums,
             strict=strict,
+        )
+
+    def build_replay_content_bundle(
+        self,
+        run_id: str,
+        *,
+        redact: bool = True,
+        expand_source_artifacts: bool = True,
+        max_artifact_bytes: int | None = None,
+    ) -> WorkflowReplayContentBundle:
+        return self._run_inspector.build_replay_content_bundle(
+            run_id,
+            redact=redact,
+            expand_source_artifacts=expand_source_artifacts,
+            max_artifact_bytes=max_artifact_bytes,
         )
 
     def inspect_run_diagnostics(
