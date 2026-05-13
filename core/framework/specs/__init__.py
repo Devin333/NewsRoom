@@ -19,6 +19,7 @@ from core.framework.specs.workflow_spec import (
     WorkflowPolicySpec,
     WorkflowSpec,
     WorkflowSpecError,
+    WorkflowSpecRegistry,
     WorkflowStatus,
     WorkflowTriggerSpec,
 )
@@ -42,6 +43,7 @@ __all__ = [
     "WorkflowPolicySpec",
     "WorkflowSpec",
     "WorkflowSpecError",
+    "WorkflowSpecRegistry",
     "WorkflowStatus",
     "WorkflowTriggerSpec",
 ]

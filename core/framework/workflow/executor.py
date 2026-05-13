@@ -85,9 +85,15 @@ class WorkflowExecutor:
         buffer = DataBuffer(initial_buffer_values)
         initial_buffer_snapshot = buffer.snapshot()
         started_at = _utc_now()
+        started_monotonic = time.perf_counter()
 
         self._artifact_manager.write_json(actual_run_id, "request.json", request)
         self._artifact_manager.write_json(actual_run_id, "workflow_spec.json", workflow)
+        self._artifact_manager.write_json(
+            actual_run_id,
+            "workflow_version.json",
+            _workflow_version_payload(workflow),
+        )
         self._artifact_manager.write_json(
             actual_run_id,
             "data_buffer.initial.json",
@@ -107,12 +113,16 @@ class WorkflowExecutor:
             "artifacts": {
                 "request": "request.json",
                 "workflow_spec": "workflow_spec.json",
+                "workflow_version": "workflow_version.json",
                 "events": "events.jsonl",
                 "manifest": "manifest.json",
                 "data_buffer_snapshot": "data_buffer_snapshot.json",
                 "data_buffer_initial": "data_buffer.initial.json",
                 "data_buffer_final": "data_buffer.final.json",
                 "data_buffer_diff": "data_buffer.diff.json",
+                "step_results": "step_results.json",
+                "metrics": "metrics.json",
+                "redaction_report": "redaction_report.json",
             },
         }
         if _resumed_checkpoint_id is not None:
@@ -498,6 +508,27 @@ class WorkflowExecutor:
             "data_buffer.diff.json",
             buffer_diff.to_dict(),
         )
+        step_results_payload = {
+            step_id: outcome.to_dict()
+            for step_id, outcome in step_results.items()
+        }
+        metrics_payload = _workflow_metrics_payload(
+            started_monotonic=started_monotonic,
+            status=status,
+            path=path,
+            step_results=step_results,
+            checkpoint_count=len(checkpoint_ids),
+            artifact_count=len(manifest.get("artifacts") or {}),
+            event_count=len(recorder.list_events()),
+            output=output,
+        )
+        redaction_report = _redaction_report(output)
+        self._artifact_manager.write_json(actual_run_id, "step_results.json", step_results_payload)
+        self._artifact_manager.write_json(actual_run_id, "metrics.json", metrics_payload)
+        self._artifact_manager.write_json(actual_run_id, "redaction_report.json", redaction_report)
+        manifest["event_count"] = metrics_payload["event_count"]
+        manifest["metrics"] = metrics_payload
+        manifest["redaction_report"] = redaction_report
         manifest_path = self._artifact_manager.write_json(actual_run_id, "manifest.json", manifest)
         events_path = recorder.write_jsonl(run_dir / "events.jsonl")
 
@@ -1040,6 +1071,82 @@ def _record_step_artifacts(manifest: dict[str, Any], outcome: StepOutcome) -> No
 def _step_artifact_key(artifact_ref: Any) -> str:
     step_id = artifact_ref.step_id or "workflow"
     return f"step.{step_id}.{artifact_ref.artifact_type}.{artifact_ref.artifact_id}"
+
+
+def _workflow_version_payload(workflow: WorkflowSpec) -> dict[str, Any]:
+    return {
+        "workflow_id": workflow.workflow_id,
+        "workflow_version": workflow.version,
+        "name": workflow.name,
+        "description": workflow.description,
+        "trigger": workflow.trigger.to_dict() if workflow.trigger else None,
+        "metadata": dict(workflow.metadata),
+    }
+
+
+def _workflow_metrics_payload(
+    *,
+    started_monotonic: float,
+    status: WorkflowStatus,
+    path: list[str],
+    step_results: dict[str, StepOutcome],
+    checkpoint_count: int,
+    artifact_count: int,
+    event_count: int,
+    output: dict[str, Any],
+) -> dict[str, Any]:
+    failed_steps = [
+        step_id
+        for step_id, outcome in step_results.items()
+        if outcome.status in {StepStatus.FAILED, StepStatus.TIMEOUT, StepStatus.BLOCKED}
+    ]
+    retry_count = sum(
+        int((outcome.error_details or {}).get("attempt", 1)) - 1
+        for outcome in step_results.values()
+        if isinstance((outcome.error_details or {}).get("attempt", 1), int)
+    )
+    metrics = {
+        "run_duration_ms": round((time.perf_counter() - started_monotonic) * 1000, 3),
+        "status": status.value,
+        "step_count": len(step_results),
+        "path_length": len(path),
+        "failed_step_count": len(failed_steps),
+        "failed_steps": failed_steps,
+        "retry_count": retry_count,
+        "checkpoint_count": checkpoint_count,
+        "artifact_count": artifact_count,
+        "event_count": event_count,
+    }
+    if "agent_loop_metrics" in output:
+        agent_metrics = output["agent_loop_metrics"]
+        if isinstance(agent_metrics, dict):
+            metrics["llm_calls"] = agent_metrics.get("llm_calls", 0)
+            metrics["tool_calls"] = agent_metrics.get("tool_calls", 0)
+            metrics["token_usage"] = agent_metrics.get("token_usage", {})
+    if "source_pipeline_metrics" in output:
+        source_metrics = output["source_pipeline_metrics"]
+        if hasattr(source_metrics, "to_dict"):
+            source_metrics = source_metrics.to_dict()
+        if isinstance(source_metrics, dict):
+            metrics["source_success_count"] = source_metrics.get("success_count")
+            metrics["source_failure_count"] = source_metrics.get("failure_count")
+    if "quality_gate_metrics" in output:
+        quality_metrics = output["quality_gate_metrics"]
+        if hasattr(quality_metrics, "to_dict"):
+            quality_metrics = quality_metrics.to_dict()
+        if isinstance(quality_metrics, dict):
+            metrics["citation_coverage"] = quality_metrics.get("citation_coverage_score")
+            metrics["editor_score"] = quality_metrics.get("editor_score")
+    return metrics
+
+
+def _redaction_report(output: dict[str, Any]) -> dict[str, Any]:
+    redacted_keys = sorted(key for key in output if _sensitive_key(str(key)))
+    return {
+        "redacted": bool(redacted_keys),
+        "redacted_keys": redacted_keys,
+        "rules": ["sensitive_top_level_buffer_key"],
+    }
 
 
 def _write_step_policy_input_artifact(

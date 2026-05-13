@@ -14,6 +14,7 @@ from core.framework.specs import (
     WorkflowPolicySpec,
     WorkflowSpec,
     WorkflowSpecError,
+    WorkflowSpecRegistry,
     WorkflowTriggerSpec,
 )
 
@@ -166,6 +167,33 @@ def test_workflow_validation_result_reports_errors_and_warnings() -> None:
     assert result.errors[0].step_id == "review"
     assert result.warnings[0].code == "secret_like_spec_field"
     assert result.warnings[0].step_id == "review"
+
+
+def test_workflow_spec_registry_pins_versions_and_latest_active() -> None:
+    registry = WorkflowSpecRegistry()
+    v1 = WorkflowSpec(
+        workflow_id="daily",
+        name="Daily",
+        version="1.0",
+        start_step_id="start",
+        steps=[StepSpec(step_id="start", implementation="daily.start")],
+    )
+    v2 = WorkflowSpec(
+        workflow_id="daily",
+        name="Daily",
+        version="2.0",
+        start_step_id="start",
+        steps=[StepSpec(step_id="start", implementation="daily.start")],
+    )
+
+    registry.register(v1)
+    registry.register(v2)
+    registry.deprecate("daily", "1.0")
+
+    assert registry.get("daily", "1.0") is v1
+    assert registry.latest("daily") is v2
+    assert registry.list_versions("daily") == ["1.0", "2.0"]
+    assert registry.is_deprecated("daily", "1.0") is True
 
 
 def test_retry_policy_rejects_negative_values() -> None:

@@ -85,6 +85,10 @@ def test_workflow_executor_runs_function_steps_and_writes_artifacts(tmp_path) ->
     assert (run_dir / "data_buffer.initial.json").exists()
     assert (run_dir / "data_buffer.final.json").exists()
     assert (run_dir / "data_buffer.diff.json").exists()
+    assert (run_dir / "workflow_version.json").exists()
+    assert (run_dir / "step_results.json").exists()
+    assert (run_dir / "metrics.json").exists()
+    assert (run_dir / "redaction_report.json").exists()
     assert (run_dir / "output.json").exists()
 
     manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
@@ -96,10 +100,20 @@ def test_workflow_executor_runs_function_steps_and_writes_artifacts(tmp_path) ->
     assert manifest["artifacts"]["data_buffer_initial"] == "data_buffer.initial.json"
     assert manifest["artifacts"]["data_buffer_final"] == "data_buffer.final.json"
     assert manifest["artifacts"]["data_buffer_diff"] == "data_buffer.diff.json"
+    assert manifest["artifacts"]["workflow_version"] == "workflow_version.json"
+    assert manifest["artifacts"]["step_results"] == "step_results.json"
+    assert manifest["artifacts"]["metrics"] == "metrics.json"
+    assert manifest["artifacts"]["redaction_report"] == "redaction_report.json"
+    assert manifest["metrics"]["status"] == "succeeded"
+    assert manifest["metrics"]["step_count"] == 2
 
     initial_buffer = json.loads((run_dir / "data_buffer.initial.json").read_text(encoding="utf-8"))
     final_buffer = json.loads((run_dir / "data_buffer.final.json").read_text(encoding="utf-8"))
     buffer_diff = json.loads((run_dir / "data_buffer.diff.json").read_text(encoding="utf-8"))
+    workflow_version = json.loads((run_dir / "workflow_version.json").read_text(encoding="utf-8"))
+    step_results = json.loads((run_dir / "step_results.json").read_text(encoding="utf-8"))
+    metrics = json.loads((run_dir / "metrics.json").read_text(encoding="utf-8"))
+    redaction_report = json.loads((run_dir / "redaction_report.json").read_text(encoding="utf-8"))
     assert initial_buffer == {"request": {"topic": "ai"}}
     assert final_buffer["report"] == "Report: ai"
     assert buffer_diff == {
@@ -109,6 +123,16 @@ def test_workflow_executor_runs_function_steps_and_writes_artifacts(tmp_path) ->
         },
         "changed": {},
         "removed": {},
+    }
+    assert workflow_version["workflow_id"] == "sample"
+    assert workflow_version["workflow_version"] == "1.0"
+    assert set(step_results) == {"plan", "write"}
+    assert metrics["status"] == "succeeded"
+    assert metrics["step_count"] == 2
+    assert redaction_report == {
+        "redacted": False,
+        "redacted_keys": [],
+        "rules": ["sensitive_top_level_buffer_key"],
     }
 
     events = [

@@ -743,6 +743,49 @@ class WorkflowSpec:
         }
 
 
+class WorkflowSpecRegistry:
+    def __init__(self) -> None:
+        self._specs: dict[tuple[str, str], WorkflowSpec] = {}
+        self._active_versions: dict[str, str] = {}
+        self._deprecated_versions: set[tuple[str, str]] = set()
+
+    def register(self, workflow: WorkflowSpec, *, active: bool = True) -> None:
+        workflow.validate()
+        key = (workflow.workflow_id, workflow.version)
+        if key in self._specs:
+            raise WorkflowSpecError(
+                f"workflow version is already registered: {workflow.workflow_id}@{workflow.version}"
+            )
+        self._specs[key] = workflow
+        if active:
+            self._active_versions[workflow.workflow_id] = workflow.version
+
+    def get(self, workflow_id: str, version: str | None = None) -> WorkflowSpec:
+        actual_version = version or self._active_versions.get(workflow_id)
+        if actual_version is None:
+            raise WorkflowSpecError(f"workflow is not registered: {workflow_id}")
+        key = (workflow_id, actual_version)
+        try:
+            return self._specs[key]
+        except KeyError as exc:
+            raise WorkflowSpecError(
+                f"workflow version is not registered: {workflow_id}@{actual_version}"
+            ) from exc
+
+    def latest(self, workflow_id: str) -> WorkflowSpec:
+        return self.get(workflow_id)
+
+    def list_versions(self, workflow_id: str) -> list[str]:
+        return sorted(version for registered_id, version in self._specs if registered_id == workflow_id)
+
+    def deprecate(self, workflow_id: str, version: str) -> None:
+        self.get(workflow_id, version)
+        self._deprecated_versions.add((workflow_id, version))
+
+    def is_deprecated(self, workflow_id: str, version: str) -> bool:
+        return (workflow_id, version) in self._deprecated_versions
+
+
 def _coerce_policy(owner: Any, field_name: str, model: type) -> None:
     value = getattr(owner, field_name)
     if not isinstance(value, model):
