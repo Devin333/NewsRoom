@@ -1,7 +1,9 @@
 import json
 
 from core.framework.artifacts import ArtifactManager
+from core.framework.agent_loop import AgentRunner, AgentSpec
 from core.framework.events import EventBus
+from core.framework.llm import FakeLLMClient
 from core.framework.specs import (
     ArtifactPolicySpec,
     EdgeSpec,
@@ -12,8 +14,9 @@ from core.framework.specs import (
     WorkflowSpec,
     WorkflowStatus,
 )
-from core.framework.tools import build_builtin_tool_registry
+from core.framework.tools import ToolDefinition, ToolRegistry, build_builtin_tool_registry
 from core.framework.workflow import (
+    AgentLoopStepRunner,
     ArtifactStepRunner,
     DataBuffer,
     FunctionStepRegistry,
@@ -73,6 +76,82 @@ def test_tool_call_step_runner_executes_real_tool(tmp_path) -> None:
     assert result.status == WorkflowStatus.SUCCEEDED
     assert result.output["validate_tool_result"]["status"] == "succeeded"
     assert result.output["validate_tool_result"]["output"]["valid"] is True
+
+
+def test_agent_loop_step_runner_executes_registered_agent(tmp_path) -> None:
+    tool_registry = ToolRegistry()
+    tool_registry.register(
+        ToolDefinition(name="memory.search", input_schema={"required": ["query"]}),
+        lambda args: {"matches": [{"title": args["query"], "source": "fixture"}]},
+    )
+    agent = AgentSpec(
+        agent_id="analyst",
+        name="Analyst",
+        role="Analyze",
+        goal="Produce analysis",
+        instructions="Return JSON actions only.",
+        input_keys=["request"],
+        output_key="analysis_result",
+        allowed_tools=["memory.search"],
+    )
+    runner = AgentLoopStepRunner(
+        AgentRunner(
+            llm_client=FakeLLMClient(
+                [
+                    (
+                        '{"action_type":"tool_call","tool_name":"memory.search",'
+                        '"tool_args":{"query":"chips"}}'
+                    ),
+                    (
+                        '{"action_type":"final_output",'
+                        '"output":{"analysis_result":{"summary":"ok"}}}'
+                    ),
+                ]
+            ),
+            tool_registry=tool_registry,
+        ),
+        {"analyst": agent},
+    )
+    registry = StepRunnerRegistry()
+    registry.register(StepType.AGENT_LOOP, runner)
+    spec = WorkflowSpec(
+        workflow_id="agent-loop-step",
+        name="Agent Loop Step",
+        version="1.0",
+        start_step_id="agent",
+        steps=[
+            StepSpec(
+                step_id="agent",
+                implementation="analyst",
+                step_type=StepType.AGENT_LOOP,
+                read_keys=["request"],
+                write_keys=[
+                    "analysis_result",
+                    "agent_loop_result",
+                    "agent_loop_events",
+                    "agent_loop_metrics",
+                ],
+                required_output_keys=[
+                    "analysis_result",
+                    "agent_loop_result",
+                    "agent_loop_events",
+                    "agent_loop_metrics",
+                ],
+            )
+        ],
+    )
+    executor = WorkflowExecutor(
+        function_step_runner=None,
+        step_runner_registry=registry,
+        artifact_manager=ArtifactManager(tmp_path),
+    )
+
+    result = executor.execute(spec, {"topic": "chips"}, profile="test", run_id="run-agent-step")
+
+    assert result.status == WorkflowStatus.SUCCEEDED
+    assert result.output["analysis_result"]["summary"] == "ok"
+    assert result.output["agent_loop_metrics"]["llm_calls"] == 2
+    assert result.output["agent_loop_metrics"]["tool_calls"] == 1
 
 
 def test_artifact_step_runner_writes_real_artifact(tmp_path) -> None:

@@ -16,6 +16,7 @@ from core.framework.workflow.routing import (
     RoutingEngine,
 )
 from core.framework.workflow.step_runner import (
+    AgentLoopStepRunner,
     ArtifactStepRunner,
     FunctionStep,
     FunctionStepRegistry,
@@ -34,6 +35,7 @@ from core.framework.workflow.step_runner import (
 )
 
 __all__ = [
+    "AgentLoopStepRunner",
     "ArtifactStepRunner",
     "DataBuffer",
     "DataBufferDiff",

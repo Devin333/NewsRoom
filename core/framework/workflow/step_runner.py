@@ -186,6 +186,78 @@ class ToolBatchStepRunner:
         return StepOutcome(status=StepStatus.SUCCEEDED, outputs=outputs)
 
 
+class AgentLoopStepRunner:
+    def __init__(
+        self,
+        agent_runner: Any,
+        agent_registry: dict[str, Any],
+    ) -> None:
+        self._agent_runner = agent_runner
+        self._agent_registry = dict(agent_registry)
+
+    def run(self, step: StepSpec, buffer: ScopedDataBuffer) -> StepOutcome:
+        if step.step_type != StepType.AGENT_LOOP:
+            raise StepExecutionError(f"unsupported step type for AgentLoopStepRunner: {step.step_type}")
+
+        agent_id = str(step.metadata.get("agent_id") or step.implementation)
+        try:
+            agent = self._agent_registry[agent_id]
+        except KeyError as exc:
+            raise StepExecutionError(f"agent is not registered: {agent_id}") from exc
+
+        inputs = {
+            key: buffer.read(key)
+            for key in step.read_keys
+            if buffer.exists(key)
+        }
+        conversation_id = step.metadata.get("conversation_id")
+        if "conversation_id_key" in step.metadata:
+            conversation_id = buffer.read(str(step.metadata["conversation_id_key"]))
+
+        result = self._agent_runner.run(
+            agent,
+            inputs,
+            conversation_id=str(conversation_id) if conversation_id else None,
+        )
+        result_payload = result.to_dict()
+        outputs: dict[str, Any] = {}
+        if result.success:
+            outputs.update(result.output)
+        result_key = str(step.metadata.get("result_key") or "agent_loop_result")
+        events_key = str(step.metadata.get("events_key") or "agent_loop_events")
+        metrics_key = str(step.metadata.get("metrics_key") or "agent_loop_metrics")
+        outputs[result_key] = result_payload
+        outputs[events_key] = result.events
+        outputs[metrics_key] = result.metrics.to_dict()
+
+        for key, value in outputs.items():
+            if key in buffer.list_allowed_writes():
+                buffer.write(key, value, lineage={"step_id": step.step_id, "agent_id": agent_id})
+
+        status_value = str(result.status.value)
+        if result.success:
+            return StepOutcome(
+                status=StepStatus.SUCCEEDED,
+                outputs=outputs,
+                metrics=result.metrics.to_dict(),
+            )
+        if status_value == "blocked":
+            return StepOutcome(
+                status=StepStatus.BLOCKED,
+                outputs=outputs,
+                error_type="AgentLoopBlocked",
+                error_message=result.error or f"agent loop blocked: {agent_id}",
+                metrics=result.metrics.to_dict(),
+            )
+        return StepOutcome(
+            status=StepStatus.FAILED,
+            outputs=outputs,
+            error_type="AgentLoopFailed",
+            error_message=result.error or f"agent loop failed: {agent_id}",
+            metrics=result.metrics.to_dict(),
+        )
+
+
 class ToolCallStepRunner:
     def __init__(
         self,
