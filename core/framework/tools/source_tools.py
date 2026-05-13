@@ -11,6 +11,7 @@ from core.framework.tools.registry import ToolRegistry
 from domain.sources import RawSourceItem, SourceDefinition, SourceError, SourceReliability, SourceType
 from sources import SourceRegistry
 from sources.connectors import (
+    DomainRateLimiter,
     FeedConnector,
     HtmlConnector,
     ManualConnector,
@@ -20,6 +21,7 @@ from sources.connectors import (
     open_request_with_fetch_policy,
     run_with_fetch_retries,
 )
+from sources.connectors.fetch_policy import rate_limited_source_error
 from sources.health import BasicSourceHealthManager
 from sources.processing.normalize import canonicalize_url
 
@@ -35,10 +37,12 @@ def register_source_tools(
     allowed_domains: list[str] | None = None,
     health_manager: BasicSourceHealthManager | None = None,
     source_registry: SourceRegistry | None = None,
+    rate_limiter: DomainRateLimiter | None = None,
 ) -> None:
     fetch_policy = fetch_policy or SourceFetchPolicy()
     allowed_domain_tuple = _allowed_domains(allowed_domains)
     health_manager = health_manager or BasicSourceHealthManager()
+    rate_limiter = rate_limiter or DomainRateLimiter()
     registry.register(
         ToolDefinition(
             name="source.fetch_url",
@@ -65,6 +69,8 @@ def register_source_tools(
             default_policy=fetch_policy,
             fetch_text=fetch_text,
             allowed_domains=allowed_domain_tuple,
+            health_manager=health_manager,
+            rate_limiter=rate_limiter,
         ),
     )
     registry.register(
@@ -128,6 +134,8 @@ def register_source_tools(
             default_policy=fetch_policy,
             fetch_text=fetch_text,
             allowed_domains=allowed_domain_tuple,
+            health_manager=health_manager,
+            rate_limiter=rate_limiter,
         ),
     )
     registry.register(
@@ -175,6 +183,7 @@ def register_source_tools(
             fetch_text=fetch_text,
             allowed_domains=allowed_domain_tuple,
             health_manager=health_manager,
+            rate_limiter=rate_limiter,
         ),
     )
     if source_registry is not None:
@@ -356,14 +365,22 @@ def _fetch_official_blog(
     default_policy: SourceFetchPolicy,
     fetch_text: FetchText | None,
     allowed_domains: tuple[str, ...],
+    health_manager: BasicSourceHealthManager,
+    rate_limiter: DomainRateLimiter,
 ) -> dict[str, Any]:
     source = _official_blog_source(args, source_registry=source_registry)
     _ensure_official_blog(source)
     _ensure_official_blog_source_type(source)
     _ensure_http_url(source.url)
     _ensure_allowed_domain(source.url, allowed_domains)
+    _ensure_source_health_allows_fetch(source, health_manager, respect_interval=True)
     policy = effective_fetch_policy(_fetch_policy(args, default_policy), source)
-    connector = _official_blog_connector(source, fetch_text=fetch_text, policy=policy)
+    connector = _official_blog_connector(
+        source,
+        fetch_text=fetch_text,
+        policy=policy,
+        rate_limiter=rate_limiter,
+    )
     items, errors = connector.fetch(source, limit=_optional_limit(args.get("limit")))
     return {
         "source": _source_definition_to_dict(source),
@@ -380,11 +397,15 @@ def _fetch_url(
     default_policy: SourceFetchPolicy,
     fetch_text: FetchText | None,
     allowed_domains: tuple[str, ...],
+    health_manager: BasicSourceHealthManager,
+    rate_limiter: DomainRateLimiter,
 ) -> dict[str, Any]:
     source = _source_definition(args["source"], default_source_type=SourceType.RSS)
     _ensure_http_url(source.url)
     _ensure_allowed_domain(source.url, allowed_domains)
+    _ensure_source_health_allows_fetch(source, health_manager, respect_interval=True)
     policy = effective_fetch_policy(_fetch_policy(args, default_policy), source)
+    _ensure_source_rate_limit_allows_fetch(source, policy, rate_limiter)
     content, status_code, content_type = _fetch_text(source.url, policy, fetch_text)
     content_bytes = len(content.encode("utf-8"))
     if content_bytes > policy.max_bytes:
@@ -417,11 +438,33 @@ def _probe_source(
     fetch_text: FetchText | None,
     allowed_domains: tuple[str, ...],
     health_manager: BasicSourceHealthManager,
+    rate_limiter: DomainRateLimiter,
 ) -> dict[str, Any]:
     source = _source_definition(args["source"], default_source_type=SourceType.RSS)
     _ensure_http_url(source.url)
     _ensure_allowed_domain(source.url, allowed_domains)
     policy = effective_fetch_policy(_fetch_policy(args, default_policy), source)
+    blocked = _source_health_blocked_result(
+        source,
+        health_manager,
+        respect_interval=False,
+    )
+    if blocked is not None:
+        return blocked
+    rate_limit_error = _source_rate_limit_error(source, policy, rate_limiter)
+    if rate_limit_error is not None:
+        return {
+            "ok": False,
+            "source_id": source.source_id,
+            "url": source.url,
+            "canonical_url": canonicalize_url(source.url),
+            "error": rate_limit_error.to_dict(),
+            "health": health_manager.get(
+                source.source_id,
+                source_name=source.name,
+                url=source.url,
+            ).to_dict(),
+        }
     try:
         content, status_code, content_type = _fetch_text(source.url, policy, fetch_text)
     except Exception as exc:
@@ -524,6 +567,121 @@ def _fetch_policy(args: dict[str, Any], default_policy: SourceFetchPolicy) -> So
         retry_times=default_policy.retry_times,
         retry_on_status_codes=default_policy.retry_on_status_codes,
     )
+
+
+def _ensure_source_health_allows_fetch(
+    source: SourceDefinition,
+    health_manager: BasicSourceHealthManager,
+    *,
+    respect_interval: bool,
+) -> None:
+    if not source.enabled:
+        raise ValueError(f"source fetch skipped: disabled for source {source.source_id}")
+    decision = health_manager.fetch_decision(
+        source.source_id,
+        source_name=source.name,
+        url=source.url,
+        min_interval_seconds=source.fetch_interval_seconds if respect_interval else None,
+    )
+    if decision.should_fetch:
+        return
+    reason = decision.skip_reason or "skipped"
+    raise ValueError(f"source fetch skipped: {reason} for source {source.source_id}")
+
+
+def _source_health_blocked_result(
+    source: SourceDefinition,
+    health_manager: BasicSourceHealthManager,
+    *,
+    respect_interval: bool,
+) -> dict[str, Any] | None:
+    if not source.enabled:
+        health = health_manager.get(source.source_id, source_name=source.name, url=source.url)
+        return _probe_blocked_result(
+            source,
+            error_type="source_fetch_skipped",
+            error_message=f"source fetch skipped: disabled for source {source.source_id}",
+            health=health,
+            metadata={"skip_reason": "disabled", "source_health_affecting": False},
+        )
+    decision = health_manager.fetch_decision(
+        source.source_id,
+        source_name=source.name,
+        url=source.url,
+        min_interval_seconds=source.fetch_interval_seconds if respect_interval else None,
+    )
+    if decision.should_fetch:
+        return None
+    reason = decision.skip_reason or "skipped"
+    metadata: dict[str, Any] = {
+        "skip_reason": reason,
+        "source_health_affecting": False,
+    }
+    if decision.cooldown_until is not None:
+        metadata["cooldown_until"] = _dt(decision.cooldown_until)
+    if decision.next_fetch_at is not None:
+        metadata["next_fetch_at"] = _dt(decision.next_fetch_at)
+    return _probe_blocked_result(
+        source,
+        error_type="source_fetch_skipped",
+        error_message=f"source fetch skipped: {reason} for source {source.source_id}",
+        health=decision.health,
+        metadata=metadata,
+    )
+
+
+def _probe_blocked_result(
+    source: SourceDefinition,
+    *,
+    error_type: str,
+    error_message: str,
+    health,
+    metadata: dict[str, Any],
+) -> dict[str, Any]:
+    error = SourceError(
+        source_id=source.source_id,
+        source_name=source.name,
+        error_type=error_type,
+        error_message=error_message,
+        url=source.url,
+        retryable=True,
+        metadata={"tool": "source.probe", **metadata},
+    )
+    return {
+        "ok": False,
+        "source_id": source.source_id,
+        "url": source.url,
+        "canonical_url": canonicalize_url(source.url),
+        "error": error.to_dict(),
+        "health": health.to_dict(),
+    }
+
+
+def _ensure_source_rate_limit_allows_fetch(
+    source: SourceDefinition,
+    policy: SourceFetchPolicy,
+    rate_limiter: DomainRateLimiter,
+) -> None:
+    error = _source_rate_limit_error(source, policy, rate_limiter)
+    if error is None:
+        return
+    retry_after = error.metadata.get("retry_after_seconds")
+    suffix = f"; retry_after_seconds={retry_after}" if retry_after is not None else ""
+    raise ValueError(f"{error.error_type}: {error.error_message}{suffix}")
+
+
+def _source_rate_limit_error(
+    source: SourceDefinition,
+    policy: SourceFetchPolicy,
+    rate_limiter: DomainRateLimiter,
+) -> SourceError | None:
+    decision = rate_limiter.reserve(
+        source.url,
+        limit_per_minute=policy.rate_limit_per_domain_per_minute,
+    )
+    if decision.allowed:
+        return None
+    return rate_limited_source_error(source, decision, url=source.url)
 
 
 def _fetch_text(
@@ -654,15 +812,18 @@ def _official_blog_connector(
     *,
     fetch_text: FetchText | None,
     policy: SourceFetchPolicy,
+    rate_limiter: DomainRateLimiter,
 ) -> FeedConnector | HtmlConnector:
     if _is_html_backed_source_type(source.source_type):
         return HtmlConnector(
             fetch_text=_policy_fetch_text(fetch_text, policy),
             fetch_policy=policy,
+            rate_limiter=rate_limiter,
         )
     return FeedConnector(
         fetch_text=_policy_fetch_text(fetch_text, policy),
         fetch_policy=policy,
+        rate_limiter=rate_limiter,
     )
 
 
@@ -699,7 +860,14 @@ def _source_definition(payload: Any, *, default_source_type: SourceType) -> Sour
         url=str(payload.get("url") or ""),
         reliability=str(payload.get("reliability") or "medium"),
         authority_score=float(payload.get("authority_score", 0.5)),
+        enabled=_optional_bool(payload.get("enabled"), True),
+        fetch_interval_seconds=int(payload.get("fetch_interval_seconds") or 3600),
         respect_robots=_optional_bool(payload.get("respect_robots"), True),
+        user_agent=_optional_text(payload.get("user_agent")),
+        topics=[str(topic) for topic in payload.get("topics", []) if str(topic).strip()]
+        if isinstance(payload.get("topics"), list)
+        else [],
+        category=_optional_text(payload.get("category")),
         language=payload.get("language"),
         region=payload.get("region"),
         metadata=dict(payload.get("metadata") or {}),
@@ -745,8 +913,11 @@ def _source_definition_to_dict(source: SourceDefinition) -> dict[str, Any]:
         "reliability": source.reliability.value,
         "authority_score": source.authority_score,
         "enabled": source.enabled,
+        "fetch_interval_seconds": source.fetch_interval_seconds,
         "respect_robots": source.respect_robots,
+        "user_agent": source.user_agent,
         "topics": list(source.topics),
+        "category": source.category,
         "language": source.language,
         "region": source.region,
         "metadata": dict(source.metadata),
@@ -765,11 +936,22 @@ def _raw_source_item_to_dict(item: RawSourceItem) -> dict[str, Any]:
         "published_at": _dt(item.published_at),
         "summary": item.summary,
         "raw_content": item.raw_content,
+        "raw_artifact_ref": _artifact_ref(item.raw_artifact_ref),
+        "parse_artifact_ref": _artifact_ref(item.parse_artifact_ref),
         "authors": list(item.authors),
         "tags": list(item.tags),
         "language": item.language,
+        "lineage": item.lineage.to_dict() if item.lineage else None,
         "metadata": dict(item.metadata),
     }
+
+
+def _artifact_ref(value):
+    if value is None:
+        return None
+    if hasattr(value, "to_dict"):
+        return value.to_dict()
+    return value
 
 
 def _dt(value: datetime | None) -> str | None:

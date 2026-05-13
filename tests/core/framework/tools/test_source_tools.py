@@ -248,6 +248,86 @@ def test_source_fetch_url_tool_rejects_domains_outside_allowlist_before_fetch() 
     assert "allowed domains" in (observation.result.error_message or "")
 
 
+def test_source_fetch_url_tool_rate_limits_shared_domain_before_fetch() -> None:
+    registry = ToolRegistry()
+    seen_urls: list[str] = []
+    register_source_tools(
+        registry,
+        fetch_text=lambda url: seen_urls.append(url) or "source content",
+        fetch_policy=SourceFetchPolicy(rate_limit_per_domain_per_minute=1),
+    )
+    executor = ToolExecutor(registry)
+
+    first = executor.execute(
+        ToolCall(
+            tool_name="source.fetch_url",
+            arguments={
+                "source": {
+                    "source_id": "first",
+                    "name": "First",
+                    "url": "https://example.com/first.xml",
+                    "source_type": "rss",
+                }
+            },
+        ),
+        ToolPolicy(allowed_tools=["source.fetch_url"]),
+    )
+    second = executor.execute(
+        ToolCall(
+            tool_name="source.fetch_url",
+            arguments={
+                "source": {
+                    "source_id": "second",
+                    "name": "Second",
+                    "url": "https://example.com/second.xml",
+                    "source_type": "rss",
+                }
+            },
+        ),
+        ToolPolicy(allowed_tools=["source.fetch_url"]),
+    )
+
+    assert first.status == ToolStatus.SUCCEEDED
+    assert second.status == ToolStatus.FAILED
+    assert seen_urls == ["https://example.com/first.xml"]
+    assert "rate_limited" in (second.result.error_message or "")
+
+
+def test_source_fetch_url_tool_skips_cooling_source_before_fetch() -> None:
+    registry = ToolRegistry()
+    health_manager = BasicSourceHealthManager(failure_threshold=1, cooldown_seconds=300)
+    health_manager.record_failure(
+        "cooling",
+        SourceError(source_id="cooling", error_type="fetch_timeout", error_message="timeout"),
+    )
+    calls = {"count": 0}
+    register_source_tools(
+        registry,
+        fetch_text=lambda url: calls.__setitem__("count", calls["count"] + 1) or "content",
+        health_manager=health_manager,
+    )
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="source.fetch_url",
+            arguments={
+                "source": {
+                    "source_id": "cooling",
+                    "name": "Cooling",
+                    "url": "https://example.com/cooling.xml",
+                    "source_type": "rss",
+                }
+            },
+        ),
+        ToolPolicy(allowed_tools=["source.fetch_url"]),
+    )
+
+    assert observation.status == ToolStatus.FAILED
+    assert calls["count"] == 0
+    assert "cooldown" in (observation.result.error_message or "")
+
+
 def test_source_check_health_tool_reads_health_manager_state() -> None:
     registry = ToolRegistry()
     health_manager = BasicSourceHealthManager()
@@ -388,6 +468,52 @@ def test_source_probe_tool_records_fetch_failure_as_health_failure() -> None:
     assert health_manager.get("rss-example").consecutive_failures == 1
 
 
+def test_source_probe_tool_returns_rate_limit_error_without_fetching() -> None:
+    registry = ToolRegistry()
+    seen_urls: list[str] = []
+    register_source_tools(
+        registry,
+        fetch_text=lambda url: seen_urls.append(url) or "content",
+        fetch_policy=SourceFetchPolicy(rate_limit_per_domain_per_minute=1),
+    )
+    executor = ToolExecutor(registry)
+
+    first = executor.execute(
+        ToolCall(
+            tool_name="source.fetch_url",
+            arguments={
+                "source": {
+                    "source_id": "first",
+                    "name": "First",
+                    "url": "https://example.com/first.xml",
+                    "source_type": "rss",
+                }
+            },
+        ),
+        ToolPolicy(allowed_tools=["source.fetch_url"]),
+    )
+    probe = executor.execute(
+        ToolCall(
+            tool_name="source.probe",
+            arguments={
+                "source": {
+                    "source_id": "probe",
+                    "name": "Probe",
+                    "url": "https://example.com/probe.xml",
+                    "source_type": "rss",
+                }
+            },
+        ),
+        ToolPolicy(allowed_tools=["source.probe"]),
+    )
+
+    assert first.status == ToolStatus.SUCCEEDED
+    assert probe.status == ToolStatus.SUCCEEDED
+    assert seen_urls == ["https://example.com/first.xml"]
+    assert probe.result.output["ok"] is False
+    assert probe.result.output["error"]["error_type"] == "rate_limited"
+
+
 def test_source_fetch_official_blog_tool_fetches_marked_feed() -> None:
     registry = ToolRegistry()
     seen_urls: list[str] = []
@@ -424,6 +550,57 @@ def test_source_fetch_official_blog_tool_fetches_marked_feed() -> None:
     assert observation.result.output["item_count"] == 1
     assert observation.result.output["error_count"] == 0
     assert item["title"] == "Chip Export Update"
+
+
+def test_source_fetch_official_blog_tool_uses_shared_rate_limiter() -> None:
+    registry = ToolRegistry()
+    seen_urls: list[str] = []
+    register_source_tools(
+        registry,
+        fetch_text=lambda url: seen_urls.append(url) or RSS_FIXTURE,
+        fetch_policy=SourceFetchPolicy(rate_limit_per_domain_per_minute=1),
+    )
+    executor = ToolExecutor(registry)
+
+    first = executor.execute(
+        ToolCall(
+            tool_name="source.fetch_official_blog",
+            arguments={
+                "source": {
+                    "source_id": "official-one",
+                    "name": "Official One",
+                    "url": "https://example.com/one.xml",
+                    "source_type": "rss",
+                    "metadata": {"official_blog": True},
+                },
+                "limit": 1,
+            },
+        ),
+        ToolPolicy(allowed_tools=["source.fetch_official_blog"]),
+    )
+    second = executor.execute(
+        ToolCall(
+            tool_name="source.fetch_official_blog",
+            arguments={
+                "source": {
+                    "source_id": "official-two",
+                    "name": "Official Two",
+                    "url": "https://example.com/two.xml",
+                    "source_type": "rss",
+                    "metadata": {"official_blog": True},
+                },
+                "limit": 1,
+            },
+        ),
+        ToolPolicy(allowed_tools=["source.fetch_official_blog"]),
+    )
+
+    assert first.status == ToolStatus.SUCCEEDED
+    assert first.result.output["item_count"] == 1
+    assert second.status == ToolStatus.SUCCEEDED
+    assert second.result.output["item_count"] == 0
+    assert second.result.output["errors"][0]["error_type"] == "rate_limited"
+    assert seen_urls == ["https://example.com/one.xml"]
 
 
 def test_source_fetch_official_blog_tool_selects_registry_source_by_topic() -> None:
@@ -977,6 +1154,9 @@ def test_source_parse_rss_tool_uses_feed_connector_through_executor() -> None:
     assert observation.result.output["item_count"] == 1
     assert item["title"] == "Chip Export Update"
     assert item["source_id"] == "rss-example"
+    assert item["lineage"]["source_id"] == "rss-example"
+    assert item["lineage"]["source_item_id"] == item["source_item_id"]
+    assert item["lineage"]["raw_url"] == item["url"]
     assert item["metadata"]["source_reliability"] == "high"
 
 
