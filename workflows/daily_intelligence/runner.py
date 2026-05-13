@@ -39,6 +39,7 @@ from quality import (
 from sources import SourceConfigError, SourceRegistry, load_source_fetch_policy, load_source_registry
 from sources.connectors import (
     ArxivConnector,
+    DomainRateLimiter,
     FeedConnector,
     GithubConnector,
     HackerNewsConnector,
@@ -102,6 +103,7 @@ class DailyIntelligenceRunner:
         llm_client: LLMClient | None = None,
         source_health_manager: BasicSourceHealthManager | None = None,
         source_config_path: str | Path | None = None,
+        source_rate_limiter: DomainRateLimiter | None = None,
     ) -> None:
         self.artifact_root = Path(artifact_root)
         self.source_registry = source_registry or build_default_source_registry(
@@ -110,24 +112,49 @@ class DailyIntelligenceRunner:
         default_fetch_policy = build_default_source_fetch_policy(
             source_config_path=source_config_path
         )
-        self.feed_connector = feed_connector or FeedConnector(fetch_policy=default_fetch_policy)
-        self.html_connector = html_connector or HtmlConnector(fetch_policy=default_fetch_policy)
-        self.manual_connector = manual_connector or ManualConnector()
-        self.arxiv_connector = arxiv_connector or ArxivConnector(fetch_policy=default_fetch_policy)
-        self.github_connector = github_connector or GithubConnector(fetch_policy=default_fetch_policy)
-        self.hackernews_connector = hackernews_connector or HackerNewsConnector(
-            fetch_policy=default_fetch_policy
+        default_rate_limiter = source_rate_limiter or DomainRateLimiter()
+        self.feed_connector = feed_connector or FeedConnector(
+            fetch_policy=default_fetch_policy,
+            rate_limiter=default_rate_limiter,
         )
-        self.reddit_connector = reddit_connector or RedditConnector(fetch_policy=default_fetch_policy)
+        self.html_connector = html_connector or HtmlConnector(
+            fetch_policy=default_fetch_policy,
+            rate_limiter=default_rate_limiter,
+        )
+        self.manual_connector = manual_connector or ManualConnector()
+        self.arxiv_connector = arxiv_connector or ArxivConnector(
+            fetch_policy=default_fetch_policy,
+            rate_limiter=default_rate_limiter,
+        )
+        self.github_connector = github_connector or GithubConnector(
+            fetch_policy=default_fetch_policy,
+            rate_limiter=default_rate_limiter,
+        )
+        self.hackernews_connector = hackernews_connector or HackerNewsConnector(
+            fetch_policy=default_fetch_policy,
+            rate_limiter=default_rate_limiter,
+        )
+        self.reddit_connector = reddit_connector or RedditConnector(
+            fetch_policy=default_fetch_policy,
+            rate_limiter=default_rate_limiter,
+        )
         self.lobsters_connector = lobsters_connector or LobstersConnector(
-            fetch_policy=default_fetch_policy
+            fetch_policy=default_fetch_policy,
+            rate_limiter=default_rate_limiter,
         )
         self.stackoverflow_connector = stackoverflow_connector or StackOverflowConnector(
-            fetch_policy=default_fetch_policy
+            fetch_policy=default_fetch_policy,
+            rate_limiter=default_rate_limiter,
         )
-        self.devto_connector = devto_connector or DevToConnector(fetch_policy=default_fetch_policy)
+        self.devto_connector = devto_connector or DevToConnector(
+            fetch_policy=default_fetch_policy,
+            rate_limiter=default_rate_limiter,
+        )
         self.medium_connector = medium_connector or MediumConnector(
-            feed_connector=FeedConnector(fetch_policy=default_fetch_policy)
+            feed_connector=FeedConnector(
+                fetch_policy=default_fetch_policy,
+                rate_limiter=default_rate_limiter,
+            )
         )
         self.llm_client = llm_client
         self.source_health_manager = source_health_manager or BasicSourceHealthManager()

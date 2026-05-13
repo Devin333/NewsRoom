@@ -11,6 +11,7 @@ from sources.connectors import (
     ARXIV_API_URL,
     GITHUB_API_URL,
     ArxivConnector,
+    DomainRateLimiter,
     GithubConnector,
     SourceFetchPolicy,
 )
@@ -119,6 +120,7 @@ class SourceApplicationService:
         health_probe_fetcher=None,
         source_config_path: str | Path | None = None,
         fetch_policy: SourceFetchPolicy | None = None,
+        rate_limiter: DomainRateLimiter | None = None,
         arxiv_connector: ArxivConnector | None = None,
         github_connector: GithubConnector | None = None,
     ) -> None:
@@ -132,13 +134,20 @@ class SourceApplicationService:
             fetch_policy = build_default_source_fetch_policy(source_config_path=source_config_path)
         self.source_registry = source_registry
         self.fetch_policy = fetch_policy
+        self.rate_limiter = rate_limiter or DomainRateLimiter()
         self.source_health_store = source_health_store or _source_health_store_from_env()
         self.health_manager = health_manager or BasicSourceHealthManager(
             health_store=self.source_health_store
         )
         self.health_probe_fetcher = health_probe_fetcher
-        self.arxiv_connector = arxiv_connector or ArxivConnector(fetch_policy=self.fetch_policy)
-        self.github_connector = github_connector or GithubConnector(fetch_policy=self.fetch_policy)
+        self.arxiv_connector = arxiv_connector or ArxivConnector(
+            fetch_policy=self.fetch_policy,
+            rate_limiter=self.rate_limiter,
+        )
+        self.github_connector = github_connector or GithubConnector(
+            fetch_policy=self.fetch_policy,
+            rate_limiter=self.rate_limiter,
+        )
 
     def list_sources(
         self,

@@ -660,6 +660,89 @@ rss_feeds:
     assert fetch_request.metadata["retry_on_status_codes"] == [429, 503]
 
 
+def test_daily_intelligence_runner_shares_rate_limiter_across_default_connectors(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    config_path = tmp_path / "sources.yaml"
+    config_path.write_text(
+        """
+fetch:
+  rate_limit_per_domain_per_minute: 1
+  respect_robots: false
+rss_feeds:
+  - source_id: a-feed
+    name: Feed
+    url: https://example.com/feed.xml
+    reliability: high
+    topics: [ai, policy]
+web_pages:
+  - source_id: b-page
+    name: Page
+    url: https://example.com/page
+    reliability: high
+    topics: [ai, policy]
+""".strip(),
+        encoding="utf-8",
+    )
+    opened_urls = []
+
+    class Headers:
+        def get_content_type(self):
+            return "application/rss+xml"
+
+        def items(self):
+            return [("Content-Type", "application/rss+xml")]
+
+    class Response:
+        status = 200
+        headers = Headers()
+
+        def __init__(self, url):
+            self.url = url
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def geturl(self):
+            return self.url
+
+        def read(self, size):
+            return RSS_FIXTURE.encode("utf-8")
+
+    def fake_feed_open_request(request, policy):
+        opened_urls.append(request.full_url)
+        return Response(request.full_url)
+
+    def fail_html_open_request(request, policy):
+        raise AssertionError("HTML source should be rate-limited before fetch")
+
+    monkeypatch.setattr(
+        "sources.connectors.feed.open_request_with_fetch_policy",
+        fake_feed_open_request,
+    )
+    monkeypatch.setattr(
+        "sources.connectors.html.open_request_with_fetch_policy",
+        fail_html_open_request,
+    )
+
+    result = DailyIntelligenceRunner(
+        artifact_root=tmp_path,
+        source_config_path=config_path,
+        llm_client=_FakeReportLLM(),
+    ).run(profile="live", topic="AI policy", source_limit=2, run_id="daily-shared-rate-limit")
+
+    assert result.status == WorkflowStatus.SUCCEEDED
+    assert opened_urls == ["https://example.com/feed.xml"]
+    rate_limited = next(error for error in result.output["source_errors"] if error.error_type == "rate_limited")
+    assert rate_limited.source_id == "b-page"
+    assert rate_limited.metadata["domain"] == "example.com"
+    assert rate_limited.metadata["source_health_affecting"] is False
+
+
 def test_daily_intelligence_runner_dispatches_registered_sync_connector(tmp_path) -> None:
     connector = _RegistrySyncConnector()
     source_url = "https://example.com/registry-sync"
