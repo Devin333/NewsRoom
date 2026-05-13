@@ -5,7 +5,7 @@ from pathlib import Path
 from core.framework.llm import LLMResponse, TokenUsage
 from core.framework.specs import WorkflowStatus
 from domain.sources import RawSourceItem, SourceDefinition, SourceError
-from sources import SourceRegistry
+from sources import SourceConfigError, SourceRegistry
 from sources.connectors import (
     ARXIV_API_URL,
     GITHUB_API_URL,
@@ -1303,6 +1303,33 @@ def test_daily_intelligence_runner_all_sources_failed_preserves_diagnostics(tmp_
     )
     assert "request_ref" not in aggregate_error_entry
     assert "response_ref" not in aggregate_error_entry
+
+
+def test_daily_intelligence_runner_live_rejects_fixture_source_registry(tmp_path) -> None:
+    registry = SourceRegistry(
+        [
+            SourceDefinition(
+                source_id="fixture",
+                name="Fixture",
+                source_type="rss",
+                url="fixture://ai",
+                reliability="high",
+                topics=["ai"],
+            )
+        ]
+    )
+
+    result = DailyIntelligenceRunner(
+        artifact_root=tmp_path,
+        source_registry=registry,
+        llm_client=_FailIfCalledLLM(),
+    ).run(profile="live", topic="AI policy", source_limit=1, run_id="live-fixture-rejected")
+
+    assert result.status == WorkflowStatus.FAILED
+    assert result.error is not None
+    assert result.error["error_type"] == SourceConfigError.__name__
+    assert "fixture URLs are not allowed" in result.error["message"]
+    assert (Path(result.artifact_dir) / "error.json").exists()
 
 
 def test_daily_intelligence_runner_skips_cooling_source(tmp_path) -> None:

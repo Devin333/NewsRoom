@@ -276,6 +276,7 @@ class DailyIntelligenceRunner:
             }
 
         raw_items = []
+        _ensure_live_source_registry(self.source_registry)
         enabled_sources, source_selection_report = self.source_registry.select_sources_with_report(
             topic=request["topic"]
         )
@@ -946,6 +947,17 @@ def _default_source_config_path(path: str | Path | None) -> tuple[Path | None, b
     if default_path.exists():
         return default_path, False
     return None, False
+
+
+def _ensure_live_source_registry(source_registry: SourceRegistry) -> None:
+    validation = source_registry.validate()
+    if validation.is_valid:
+        return
+    issues = "; ".join(
+        f"{issue.source_id}.{issue.field}: {issue.message}"
+        for issue in validation.errors
+    )
+    raise SourceConfigError(f"live source registry validation failed: {issues}")
 
 
 def _require_sources(buffer: ScopedDataBuffer) -> dict[str, Any]:
