@@ -3,12 +3,11 @@ from __future__ import annotations
 import json
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
-from dataclasses import asdict, is_dataclass
 from datetime import UTC, datetime
-from enum import Enum
 from typing import Any
 
 from core.framework.artifacts import ArtifactManager
+from core.framework.serialization import to_json_safe
 from core.framework.tools.approval import ToolApprovalRequest
 from core.framework.tools.models import (
     ArtifactRef,
@@ -423,22 +422,4 @@ def _invoke_with_timeout(
 
 
 def _json_size_bytes(value: Any) -> int:
-    return len(json.dumps(_json_safe(value), ensure_ascii=False, sort_keys=True).encode("utf-8"))
-
-
-def _json_safe(value: Any) -> Any:
-    if isinstance(value, Enum):
-        return value.value
-    if hasattr(value, "to_dict"):
-        return value.to_dict()
-    if is_dataclass(value):
-        return _json_safe(asdict(value))
-    if isinstance(value, datetime):
-        return value.isoformat().replace("+00:00", "Z")
-    if isinstance(value, dict):
-        return {key: _json_safe(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_json_safe(item) for item in value]
-    if isinstance(value, tuple):
-        return [_json_safe(item) for item in value]
-    return value
+    return len(json.dumps(to_json_safe(value), ensure_ascii=False, sort_keys=True).encode("utf-8"))

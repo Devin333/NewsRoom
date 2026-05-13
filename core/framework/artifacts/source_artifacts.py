@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 import re
-from dataclasses import asdict, is_dataclass
-from datetime import datetime
-from enum import Enum
 from hashlib import sha256
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from core.framework.artifacts.filesystem import ArtifactManager
+from core.framework.serialization import to_json_safe as _to_json_safe
 from storage.artifacts import ArtifactRef
 
 
@@ -699,22 +697,6 @@ def _existing_artifact_ref(value: Any, name: str) -> Any:
 def _path_segment(value: str) -> str:
     segment = _SAFE_SEGMENT_RE.sub("_", value.strip())
     return segment.strip("._") or "unknown"
-
-
-def _to_json_safe(value: Any) -> Any:
-    if isinstance(value, Enum):
-        return value.value
-    if hasattr(value, "to_dict"):
-        return _to_json_safe(value.to_dict())
-    if is_dataclass(value):
-        return _to_json_safe(asdict(value))
-    if isinstance(value, datetime):
-        return value.isoformat().replace("+00:00", "Z")
-    if isinstance(value, dict):
-        return {str(key): _to_json_safe(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_to_json_safe(item) for item in value]
-    return value
 
 
 def _redact(value: Any) -> Any:
