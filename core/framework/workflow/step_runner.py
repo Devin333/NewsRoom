@@ -76,10 +76,16 @@ class FunctionStepRegistry:
         except KeyError as exc:
             raise StepExecutionError(f"function step is not registered: {implementation}") from exc
 
+    def is_registered(self, implementation: str) -> bool:
+        return implementation in self._functions
+
 
 class FunctionStepRunner:
     def __init__(self, registry: FunctionStepRegistry) -> None:
         self._registry = registry
+
+    def can_resolve(self, step: StepSpec) -> bool:
+        return self._registry.is_registered(step.implementation)
 
     def run(self, step: StepSpec, buffer: ScopedDataBuffer) -> StepOutcome:
         if step.step_type != StepType.FUNCTION:
@@ -194,6 +200,10 @@ class AgentLoopStepRunner:
     ) -> None:
         self._agent_runner = agent_runner
         self._agent_registry = dict(agent_registry)
+
+    def can_resolve(self, step: StepSpec) -> bool:
+        agent_id = str(step.metadata.get("agent_id") or step.implementation)
+        return agent_id in self._agent_registry
 
     def run(self, step: StepSpec, buffer: ScopedDataBuffer) -> StepOutcome:
         if step.step_type != StepType.AGENT_LOOP:
@@ -406,6 +416,10 @@ class SubworkflowStepRunner:
     ) -> None:
         self._artifact_manager = artifact_manager
         self._run_id = run_id
+
+    def can_resolve(self, step: StepSpec) -> bool:
+        workflow_id = str(step.metadata.get("workflow_id") or step.implementation)
+        return workflow_id in self._workflow_registry
 
     def run(self, step: StepSpec, buffer: ScopedDataBuffer) -> StepOutcome:
         if step.step_type != StepType.SUBWORKFLOW:

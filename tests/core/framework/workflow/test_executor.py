@@ -1012,6 +1012,25 @@ def test_workflow_executor_rejects_missing_runner_before_run_creation(tmp_path) 
     assert not (tmp_path / "run-missing-runner").exists()
 
 
+def test_workflow_executor_rejects_missing_function_before_run_creation(tmp_path) -> None:
+    spec = WorkflowSpec(
+        workflow_id="missing-function",
+        name="Missing Function",
+        version="1.0",
+        start_step_id="missing",
+        steps=[StepSpec(step_id="missing", implementation="sample.missing")],
+    )
+    executor = WorkflowExecutor(
+        function_step_runner=FunctionStepRunner(FunctionStepRegistry()),
+        artifact_manager=ArtifactManager(tmp_path),
+    )
+
+    with pytest.raises(StepExecutionError, match="implementation is not registered"):
+        executor.execute(spec, {"topic": "ai"}, profile="test", run_id="run-missing-function")
+
+    assert not (tmp_path / "run-missing-function").exists()
+
+
 class _ArtifactMarkerRunner:
     def run(self, step: StepSpec, buffer) -> StepOutcome:
         output = {

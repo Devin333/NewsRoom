@@ -1232,6 +1232,16 @@ def _validate_step_runners(workflow: WorkflowSpec, registry: StepRunnerRegistry)
     if missing:
         labels = ", ".join(step_type.value for step_type in missing)
         raise StepExecutionError(f"step runner is not registered: {labels}")
+    unresolved = []
+    for step in workflow.steps:
+        runner = registry.get(step.step_type)
+        can_resolve = getattr(runner, "can_resolve", None)
+        if callable(can_resolve) and not can_resolve(step):
+            unresolved.append(f"{step.step_id}:{step.implementation}")
+    if unresolved:
+        raise StepExecutionError(
+            "step implementation is not registered: " + ", ".join(sorted(unresolved))
+        )
 
 
 def _configure_step_runners(
