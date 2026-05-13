@@ -13,6 +13,11 @@ from core.framework.events import EventBus
 from core.framework.run_result import RunResult
 from core.framework.specs import WorkflowSpec
 from core.framework.workflow.executor import WorkflowExecutor
+from core.framework.workflow.inspection import (
+    WorkflowReplayBundle,
+    WorkflowRunInspection,
+    WorkflowRunInspector,
+)
 from core.framework.workflow.manifest import manifest_schema_version
 from core.framework.workflow.result import WorkflowResult
 from core.framework.workflow.step_runner import (
@@ -77,6 +82,7 @@ class WorkflowRunner:
         )
         self._checkpoint_store = checkpoint_store
         self._event_bus = event_bus
+        self._run_inspector = WorkflowRunInspector(self._artifact_root)
 
     def run(
         self,
@@ -125,6 +131,32 @@ class WorkflowRunner:
 
     def _persist_storage_indexes(self, result: WorkflowResult) -> None:
         self._indexer.index(result)
+
+    def inspect_run(
+        self,
+        run_id: str,
+        *,
+        verify_checksums: bool = False,
+        strict: bool = False,
+    ) -> WorkflowRunInspection:
+        return self._run_inspector.inspect_run(
+            run_id,
+            verify_checksums=verify_checksums,
+            strict=strict,
+        )
+
+    def build_replay_bundle(
+        self,
+        run_id: str,
+        *,
+        verify_checksums: bool = False,
+        strict: bool = False,
+    ) -> WorkflowReplayBundle:
+        return self._run_inspector.build_replay_bundle(
+            run_id,
+            verify_checksums=verify_checksums,
+            strict=strict,
+        )
 
 
 class WorkflowRunIndexer:

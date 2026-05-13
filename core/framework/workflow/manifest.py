@@ -142,7 +142,7 @@ def validate_run_manifest(
 
 
 def _normalize_manifest_artifact_path(relative_path: str) -> str:
-    path = Path(str(relative_path))
+    path = Path(str(relative_path).replace("\\", "/"))
     if path.is_absolute() or ".." in path.parts:
         raise RunManifestError(
             f"manifest artifact path must be relative to the run directory: {relative_path}"

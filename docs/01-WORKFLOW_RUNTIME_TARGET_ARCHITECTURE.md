@@ -2149,3 +2149,68 @@ validate_run_manifest()
 ```
 
 这一步保持 manifest 输出格式不变，只把“manifest 必须是可 replay/debug/audit 的有效结构”变成代码约束。
+
+### N.4 Workflow run inspection / replay support
+
+本轮新增 `core/framework/workflow/inspection.py`，作为基于 run artifact directory 的 replay/debug/audit 读取层：
+
+```text
+WorkflowRunInspector
+  inspect_run()
+  build_replay_bundle()
+  load_manifest()
+  validate_run_dir()
+  list_artifacts()
+  read_json_artifact()
+  read_text_artifact()
+  read_events()
+  artifact_path()
+  iter_artifacts()
+
+WorkflowRunInspection
+  run metadata
+  manifest schema version
+  integrity report
+  artifact records
+  step summaries
+  event summary
+  metrics / redaction report
+
+WorkflowReplayBundle
+  request
+  workflow_spec
+  workflow_version
+  data_buffer initial/final/diff
+  step_results
+  metrics
+  redaction_report
+  output / error / pause
+  events
+  artifact records
+
+WorkflowManifestIntegrityReport
+  manifest validation errors
+  missing required artifact keys
+  missing artifact files
+  unexpected files
+  artifact count / file count / total size
+```
+
+`WorkflowRunner` 现在提供轻量入口：
+
+```text
+WorkflowRunner.inspect_run(run_id)
+WorkflowRunner.build_replay_bundle(run_id)
+```
+
+边界约束：
+
+```text
+inspection 只读取 Workflow Runtime 产生的 artifact。
+inspection 不执行 workflow。
+inspection 不调用 CLI/API/MCP。
+inspection 不重新定义 Storage canonical model。
+inspection 不做业务 source/evidence/report 逻辑。
+```
+
+这一步把前文目标态中的 replay/debug/audit 能力落到代码层，供后续 Interface、Worker 或开发调试通过应用层间接使用。
