@@ -14,6 +14,7 @@ from storage.artifacts import ArtifactRef
 
 _SAFE_SEGMENT_RE = re.compile(r"[^A-Za-z0-9_.-]+")
 _BEARER_RE = re.compile(r"(?i)(bearer\s+)[^\s,;]+")
+_BASIC_RE = re.compile(r"(?i)(basic\s+)[A-Za-z0-9+/=_-]+")
 _SECRET_RE = re.compile(r"(?i)(sk-[A-Za-z0-9_-]{8,})")
 _SENSITIVE_KEY_PARTS = (
     "authorization",
@@ -601,6 +602,7 @@ def _is_sensitive_key(key: str) -> bool:
 
 def _redact_string(value: str) -> str:
     redacted = _BEARER_RE.sub(r"\1[REDACTED]", value)
+    redacted = _BASIC_RE.sub(r"\1[REDACTED]", redacted)
     redacted = _SECRET_RE.sub("[REDACTED]", redacted)
     return _redact_url(redacted)
 
@@ -610,16 +612,30 @@ def _redact_url(value: str) -> str:
         parsed = urlsplit(value)
     except ValueError:
         return value
-    if not parsed.scheme or not parsed.netloc or not parsed.query:
+    if not parsed.scheme or not parsed.netloc:
         return value
+    netloc = _redacted_netloc(parsed)
     query = []
     changed = False
-    for key, item in parse_qsl(parsed.query, keep_blank_values=True):
-        if _is_sensitive_key(key):
-            query.append((key, "[REDACTED]"))
-            changed = True
-        else:
-            query.append((key, item))
+    if parsed.query:
+        for key, item in parse_qsl(parsed.query, keep_blank_values=True):
+            if _is_sensitive_key(key):
+                query.append((key, "[REDACTED]"))
+                changed = True
+            else:
+                query.append((key, item))
+    if netloc != parsed.netloc:
+        changed = True
     if not changed:
         return value
-    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, urlencode(query), parsed.fragment))
+    return urlunsplit((parsed.scheme, netloc, parsed.path, urlencode(query), parsed.fragment))
+
+
+def _redacted_netloc(parsed: Any) -> str:
+    if parsed.username is None and parsed.password is None and "@" not in parsed.netloc:
+        return parsed.netloc
+    host = parsed.hostname or parsed.netloc.rsplit("@", 1)[-1]
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    port = f":{parsed.port}" if parsed.port is not None else ""
+    return f"[REDACTED]@{host}{port}"

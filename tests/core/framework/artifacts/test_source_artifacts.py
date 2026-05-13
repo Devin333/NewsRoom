@@ -163,3 +163,73 @@ def test_source_artifact_writer_writes_items_errors_and_redacts(tmp_path) -> Non
     assert error_entry["request_ref"] == fetch_request_entry["artifact_ref"]
     assert error_entry["response_ref"] == fetch_result_entry["artifact_ref"]
     assert "value" not in json.dumps(error_payload)
+
+
+def test_source_artifact_writer_redacts_url_userinfo_and_basic_auth(tmp_path) -> None:
+    manager = ArtifactManager(tmp_path)
+    manager.start_run("source-run")
+    writer = SourceArtifactWriter(manager)
+
+    index = writer.write_source_artifacts(
+        "source-run",
+        raw_items=[
+            {
+                "source_id": "feed",
+                "source_item_id": "item",
+                "title": "Private item",
+                "url": "https://reader:password@example.com/item",
+                "raw_content": "Authorization: Basic hiddenbasicvalue",
+            }
+        ],
+        source_fetch_requests=[
+            SourceFetchRequest(
+                request_id="fetch",
+                source_id="feed",
+                source_type="rss",
+                url="https://reader:password@example.com/feed?api_key=value&topic=ai",
+            )
+        ],
+        source_fetch_results=[
+            SourceFetchResult(
+                request_id="fetch",
+                source_id="feed",
+                success=True,
+                metadata={
+                    "response_url": "https://reader:password@example.com/feed?token=value",
+                    "response_headers": {"Content-Type": "application/rss+xml"},
+                },
+            )
+        ],
+    )
+
+    run_dir = tmp_path / "source-run"
+    serialized_index = json.dumps(index)
+    assert "reader" not in serialized_index
+    assert "password" not in serialized_index
+    assert "hiddenbasicvalue" not in serialized_index
+
+    item_entry = next(entry for entry in index["entries"] if entry["artifact_type"] == "source_item")
+    item_payload = json.loads((run_dir / item_entry["path"]).read_text())
+    assert item_payload["item"]["url"] == "https://[REDACTED]@example.com/item"
+
+    raw_content_entry = next(
+        entry for entry in index["entries"] if entry["artifact_type"] == "source_raw_content"
+    )
+    raw_content = (run_dir / raw_content_entry["path"]).read_text(encoding="utf-8")
+    assert raw_content == "Authorization: Basic [REDACTED]"
+
+    request_entry = next(
+        entry for entry in index["entries"] if entry["artifact_type"] == "source_fetch_request"
+    )
+    request_payload = json.loads((run_dir / request_entry["path"]).read_text())
+    assert request_payload["fetch_request"]["url"] == (
+        "https://[REDACTED]@example.com/feed?api_key=%5BREDACTED%5D&topic=ai"
+    )
+
+    headers_entry = next(
+        entry for entry in index["entries"] if entry["artifact_type"] == "source_response_headers"
+    )
+    headers_payload = json.loads((run_dir / headers_entry["path"]).read_text())
+    assert headers_payload["response_url"] == (
+        "https://[REDACTED]@example.com/feed?token=%5BREDACTED%5D"
+    )
