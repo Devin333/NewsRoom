@@ -32,6 +32,7 @@ from core.framework.workflow.step_runner import (
     SubworkflowStepRunner,
     ToolBatchStepRunner,
     ToolCallStepRunner,
+    build_default_step_runner_registry,
 )
 
 __all__ = [
@@ -60,6 +61,7 @@ __all__ = [
     "SubworkflowStepRunner",
     "ToolBatchStepRunner",
     "ToolCallStepRunner",
+    "build_default_step_runner_registry",
     "RoutingDecision",
     "WorkflowError",
     "WorkflowExecutor",

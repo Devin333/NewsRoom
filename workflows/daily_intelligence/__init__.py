@@ -14,6 +14,8 @@ from workflows.daily_intelligence.test_agent_loop import (
 )
 from workflows.daily_intelligence.runner import (
     DailyIntelligenceRunner,
+)
+from workflows.daily_intelligence.spec import (
     build_daily_intelligence_workflow,
 )
 

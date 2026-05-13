@@ -1,6 +1,7 @@
 import pytest
 
-from core.framework.specs import StepSpec, StepStatus, StepType
+from core.framework.specs import StepSpec, StepStatus, StepType, WorkflowSpec
+from core.framework.tools import ToolRegistry
 from core.framework.workflow import (
     DataBuffer,
     FunctionStepRegistry,
@@ -8,6 +9,7 @@ from core.framework.workflow import (
     StepExecutionError,
     StepOutcome,
     StepRunnerRegistry,
+    build_default_step_runner_registry,
 )
 
 
@@ -87,6 +89,62 @@ def test_step_runner_registry_rejects_missing_runner() -> None:
 
     with pytest.raises(StepExecutionError, match="not registered: artifact"):
         registry.get(StepType.ARTIFACT)
+
+
+def test_build_default_step_runner_registry_registers_core_and_optional_runners() -> None:
+    functions = FunctionStepRegistry()
+    tool_registry = ToolRegistry()
+    child_workflow = WorkflowSpec(
+        workflow_id="child",
+        name="Child",
+        version="1.0",
+        start_step_id="noop",
+        steps=[
+            StepSpec(
+                step_id="noop",
+                implementation="child.noop",
+                read_keys=[],
+                write_keys=[],
+            )
+        ],
+    )
+
+    registry = build_default_step_runner_registry(
+        functions,
+        tool_registry=tool_registry,
+        agent_runner=object(),
+        agent_registry={"analyst": object()},
+        workflow_registry={"child": child_workflow},
+    )
+
+    assert set(registry.registered_step_types()) == {
+        StepType.AGENT_LOOP,
+        StepType.ARTIFACT,
+        StepType.FUNCTION,
+        StepType.HUMAN_REVIEW,
+        StepType.JOIN,
+        StepType.MEMORY_INDEX,
+        StepType.NOTIFICATION,
+        StepType.PARALLEL_GROUP,
+        StepType.PERSIST,
+        StepType.QUALITY_GATE,
+        StepType.ROUTER,
+        StepType.SUBWORKFLOW,
+        StepType.TOOL_BATCH,
+        StepType.TOOL_CALL,
+    }
+
+
+def test_build_default_step_runner_registry_skips_dependency_bound_runners_without_dependencies() -> None:
+    registry = build_default_step_runner_registry(FunctionStepRegistry())
+
+    assert registry.is_registered(StepType.FUNCTION)
+    assert registry.is_registered(StepType.PARALLEL_GROUP)
+    assert registry.is_registered(StepType.ARTIFACT)
+    assert registry.is_registered(StepType.ROUTER)
+    assert not registry.is_registered(StepType.TOOL_CALL)
+    assert not registry.is_registered(StepType.AGENT_LOOP)
+    assert not registry.is_registered(StepType.SUBWORKFLOW)
 
 
 class _CustomRunner:

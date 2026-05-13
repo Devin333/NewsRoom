@@ -123,6 +123,19 @@ REDDIT_LISTING = json.dumps(
 )
 
 
+def test_daily_intelligence_runner_workflow_runner_smoke(tmp_path) -> None:
+    result = DailyIntelligenceRunner(artifact_root=tmp_path).run(
+        profile="live-offline",
+        topic="AI policy",
+        source_limit=1,
+        run_id="daily-workflow-runner-smoke",
+    )
+
+    assert result.status == WorkflowStatus.SUCCEEDED
+    assert result.workflow_id == "daily-intelligence-live"
+    assert result.output["final_report"].title == "Daily Intelligence: AI policy"
+
+
 def test_daily_intelligence_runner_live_offline_writes_report_artifacts(tmp_path) -> None:
     result = DailyIntelligenceRunner(artifact_root=tmp_path).run(
         profile="live-offline",

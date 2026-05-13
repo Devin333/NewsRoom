@@ -1,7 +1,9 @@
 import json
 
+import pytest
+
 from core.framework.artifacts import ArtifactManager
-from core.framework.agent_loop import AgentRunner, AgentSpec
+from core.framework.agent_loop import AgentLoopResult, AgentLoopStatus, AgentRunner, AgentSpec
 from core.framework.events import EventBus
 from core.framework.llm import FakeLLMClient
 from core.framework.specs import (
@@ -10,6 +12,7 @@ from core.framework.specs import (
     QualityPolicySpec,
     ResourcePolicySpec,
     StepSpec,
+    StepStatus,
     StepType,
     WorkflowSpec,
     WorkflowStatus,
@@ -26,10 +29,12 @@ from core.framework.workflow import (
     ParallelGroupStepRunner,
     QualityGateStepRunner,
     RouterStepRunner,
+    StepExecutionError,
     StepRunnerRegistry,
     SubworkflowStepRunner,
     ToolCallStepRunner,
     WorkflowExecutor,
+    build_default_step_runner_registry,
 )
 
 
@@ -344,6 +349,73 @@ def test_parallel_group_step_runner_merges_real_branch_outputs(tmp_path) -> None
     assert sorted(result.output["items"]) == ["ai", "left", "right"]
 
 
+def test_parallel_group_step_runner_reports_output_conflicts() -> None:
+    functions = FunctionStepRegistry()
+    functions.register("branch.left", lambda buffer: {"item": "left"})
+    functions.register("branch.right", lambda buffer: {"item": "right"})
+    runner = ParallelGroupStepRunner(functions, max_workers=2)
+    buffer = DataBuffer()
+    step = StepSpec(
+        step_id="parallel",
+        implementation="parallel.conflict",
+        step_type=StepType.PARALLEL_GROUP,
+        write_keys=["item"],
+        metadata={
+            "branches": [
+                {"branch_id": "left", "implementation": "branch.left", "write_keys": ["item"]},
+                {"branch_id": "right", "implementation": "branch.right", "write_keys": ["item"]},
+            ],
+        },
+    )
+
+    with pytest.raises(StepExecutionError, match="output conflict"):
+        runner.run(step, buffer.scope(read_keys=[], write_keys=["item"]))
+
+
+def test_parallel_group_step_runner_merges_dict_outputs_and_branch_results() -> None:
+    functions = FunctionStepRegistry()
+    functions.register("branch.left", lambda buffer: {"items": {"left": 1}})
+    functions.register("branch.right", lambda buffer: {"items": {"right": 2}})
+    runner = ParallelGroupStepRunner(functions, max_workers=2)
+    buffer = DataBuffer()
+
+    outcome = runner.run(
+        StepSpec(
+            step_id="parallel",
+            implementation="parallel.merge",
+            step_type=StepType.PARALLEL_GROUP,
+            write_keys=["items", "branch_results"],
+            required_output_keys=["items"],
+            metadata={
+                "conflict_strategy": "merge_dict",
+                "branch_results_key": "branch_results",
+                "branches": [
+                    {
+                        "branch_id": "left",
+                        "implementation": "branch.left",
+                        "write_keys": ["items"],
+                        "required_output_keys": ["items"],
+                    },
+                    {
+                        "branch_id": "right",
+                        "implementation": "branch.right",
+                        "write_keys": ["items"],
+                        "required_output_keys": ["items"],
+                    },
+                ],
+            },
+        ),
+        buffer.scope(read_keys=[], write_keys=["items", "branch_results"]),
+    )
+
+    assert outcome.status == StepStatus.SUCCEEDED
+    assert buffer.read("items") == {"left": 1, "right": 2}
+    assert {result["branch_id"] for result in buffer.read("branch_results")} == {
+        "left",
+        "right",
+    }
+
+
 def test_subworkflow_step_runner_executes_child_workflow(tmp_path) -> None:
     functions = FunctionStepRegistry()
     functions.register("child.echo", lambda buffer: {"echo": buffer.read("request")["topic"]})
@@ -397,6 +469,210 @@ def test_subworkflow_step_runner_executes_child_workflow(tmp_path) -> None:
     assert (tmp_path / "run-parent.child.child" / "manifest.json").exists()
 
 
+def test_subworkflow_step_runner_returns_failed_outcome_when_child_fails(tmp_path) -> None:
+    functions = FunctionStepRegistry()
+    functions.register(
+        "child.fail",
+        lambda buffer: (_ for _ in ()).throw(RuntimeError("child failed")),
+    )
+    registry = StepRunnerRegistry.with_function_runner(FunctionStepRunner(functions))
+    child = WorkflowSpec(
+        workflow_id="child",
+        name="Child",
+        version="1.0",
+        start_step_id="fail",
+        steps=[
+            StepSpec(
+                step_id="fail",
+                implementation="child.fail",
+                write_keys=["echo"],
+            )
+        ],
+    )
+    registry.register(StepType.SUBWORKFLOW, SubworkflowStepRunner({"child": child}, registry))
+    parent = WorkflowSpec(
+        workflow_id="parent",
+        name="Parent",
+        version="1.0",
+        start_step_id="child",
+        steps=[
+            StepSpec(
+                step_id="child",
+                implementation="child",
+                step_type=StepType.SUBWORKFLOW,
+                write_keys=["subworkflow_result"],
+                metadata={"workflow_id": "child", "request": {}},
+            )
+        ],
+    )
+    executor = WorkflowExecutor(
+        function_step_runner=None,
+        step_runner_registry=registry,
+        artifact_manager=ArtifactManager(tmp_path),
+    )
+
+    result = executor.execute(parent, {}, profile="test", run_id="run-parent-failed")
+
+    assert result.status == WorkflowStatus.FAILED
+    assert result.step_results["child"].error_type == "RuntimeError"
+    assert result.output["subworkflow_result"]["status"] == "failed"
+
+
+def test_tool_call_and_tool_batch_steps_route_to_next_steps(tmp_path) -> None:
+    functions = FunctionStepRegistry()
+    functions.register(
+        "route.after_call",
+        lambda buffer: {"call_routed": buffer.read("validate_tool_result")["output"]["valid"]},
+    )
+    functions.register(
+        "route.after_batch",
+        lambda buffer: {"batch_routed": len(buffer.read("tool_results"))},
+    )
+    registry = build_default_step_runner_registry(
+        functions,
+        tool_registry=build_builtin_tool_registry(include_network_tools=False),
+    )
+    spec = WorkflowSpec(
+        workflow_id="tool-routing",
+        name="Tool Routing",
+        version="1.0",
+        start_step_id="validate",
+        steps=[
+            StepSpec(
+                step_id="validate",
+                implementation="tools.call",
+                step_type=StepType.TOOL_CALL,
+                write_keys=["validate_tool_observation", "validate_tool_result"],
+                required_output_keys=["validate_tool_observation", "validate_tool_result"],
+                metadata={
+                    "tool_name": "report.validate",
+                    "arguments": {
+                        "report": {
+                            "title": "Daily Brief",
+                            "sections": [{"content": "Supported update"}],
+                            "source_urls": ["https://example.com/source"],
+                        }
+                    },
+                    "tool_policy": {"allowed_tools": ["report.validate"]},
+                },
+            ),
+            StepSpec(
+                step_id="after_call",
+                implementation="route.after_call",
+                read_keys=["validate_tool_result"],
+                write_keys=["call_routed"],
+                required_output_keys=["call_routed"],
+            ),
+            StepSpec(
+                step_id="tools",
+                implementation="tools.batch",
+                step_type=StepType.TOOL_BATCH,
+                write_keys=["tool_observations", "tool_results"],
+                required_output_keys=["tool_observations", "tool_results"],
+                metadata={
+                    "tool_policy": {"allowed_tools": ["quality.duplicate_check"]},
+                    "tool_calls": [
+                        {
+                            "tool_name": "quality.duplicate_check",
+                            "call_id": "dedup-items",
+                            "arguments": {
+                                "items": [
+                                    {"title": "Same", "url": "https://example.com/a"},
+                                    {"title": "Same", "url": "https://example.com/a"},
+                                ]
+                            },
+                        }
+                    ],
+                },
+            ),
+            StepSpec(
+                step_id="after_batch",
+                implementation="route.after_batch",
+                read_keys=["tool_results"],
+                write_keys=["batch_routed"],
+                required_output_keys=["batch_routed"],
+            ),
+        ],
+        edges=[
+            EdgeSpec("validate-to-after-call", "validate", "after_call"),
+            EdgeSpec("after-call-to-tools", "after_call", "tools"),
+            EdgeSpec("tools-to-after-batch", "tools", "after_batch"),
+        ],
+    )
+    executor = WorkflowExecutor(
+        function_step_runner=None,
+        step_runner_registry=registry,
+        artifact_manager=ArtifactManager(tmp_path),
+    )
+
+    result = executor.execute(spec, {}, profile="test", run_id="run-tool-routing")
+
+    assert result.status == WorkflowStatus.SUCCEEDED
+    assert result.path == ["validate", "after_call", "tools", "after_batch"]
+    assert result.output["call_routed"] is True
+    assert result.output["batch_routed"] == 1
+
+
+def test_agent_loop_step_runner_maps_fake_runner_statuses() -> None:
+    cases = [
+        (
+            AgentLoopResult(
+                success=True,
+                status=AgentLoopStatus.ACCEPTED,
+                output={"analysis": {"summary": "ok"}},
+            ),
+            StepStatus.SUCCEEDED,
+            None,
+        ),
+        (
+            AgentLoopResult(
+                success=False,
+                status=AgentLoopStatus.BLOCKED,
+                error="policy blocked",
+            ),
+            StepStatus.BLOCKED,
+            "AgentLoopBlocked",
+        ),
+        (
+            AgentLoopResult(
+                success=False,
+                status=AgentLoopStatus.FAILED,
+                error="loop failed",
+            ),
+            StepStatus.FAILED,
+            "AgentLoopFailed",
+        ),
+    ]
+    step = StepSpec(
+        step_id="agent",
+        implementation="analyst",
+        step_type=StepType.AGENT_LOOP,
+        read_keys=["request"],
+        write_keys=["analysis", "agent_loop_result", "agent_loop_events", "agent_loop_metrics"],
+    )
+
+    for agent_result, expected_status, expected_error_type in cases:
+        buffer = DataBuffer({"request": {"topic": "ai"}})
+        runner = AgentLoopStepRunner(_FakeAgentRunner(agent_result), {"analyst": object()})
+
+        outcome = runner.run(
+            step,
+            buffer.scope(
+                read_keys=["request"],
+                write_keys=[
+                    "analysis",
+                    "agent_loop_result",
+                    "agent_loop_events",
+                    "agent_loop_metrics",
+                ],
+            ),
+        )
+
+        assert outcome.status == expected_status
+        assert outcome.error_type == expected_error_type
+        assert buffer.read("agent_loop_result")["status"] == agent_result.status.value
+
+
 def test_executor_publishes_event_bus_blocks_resource_and_writes_policy_artifacts(tmp_path) -> None:
     events = []
     event_bus = EventBus()
@@ -446,3 +722,12 @@ def test_executor_publishes_event_bus_blocks_resource_and_writes_policy_artifact
     run_dir = tmp_path / "run-policy-artifacts"
     assert (run_dir / "steps" / "count" / "input.json").exists()
     assert (run_dir / "steps" / "count" / "error.json").exists()
+
+
+class _FakeAgentRunner:
+    def __init__(self, result: AgentLoopResult) -> None:
+        self._result = result
+
+    def run(self, agent, inputs, *, conversation_id=None):
+        _ = agent, inputs, conversation_id
+        return self._result

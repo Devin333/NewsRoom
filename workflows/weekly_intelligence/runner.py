@@ -10,7 +10,7 @@ from core.framework.specs import EdgeSpec, StepSpec, WorkflowSpec
 from core.framework.workflow import FunctionStepRegistry, ScopedDataBuffer
 from domain.reports import FinalReport, render_markdown
 from storage.local_json import LocalJsonRepository
-from workflows.daily_intelligence.runner import WORKFLOW_ID as DAILY_WORKFLOW_ID
+from workflows.daily_intelligence.spec import WORKFLOW_ID as DAILY_WORKFLOW_ID
 
 PROFILE_WEEKLY = "weekly"
 WORKFLOW_ID = "weekly-intelligence"

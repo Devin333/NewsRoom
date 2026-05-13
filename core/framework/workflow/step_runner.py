@@ -61,6 +61,75 @@ class StepRunnerRegistry:
         return sorted(self._runners, key=lambda step_type: step_type.value)
 
 
+def build_default_step_runner_registry(
+    function_registry: FunctionStepRegistry | None = None,
+    *,
+    tool_registry: Any | None = None,
+    agent_runner: Any | None = None,
+    agent_registry: dict[str, Any] | None = None,
+    workflow_registry: dict[str, Any] | None = None,
+    artifact_manager: ArtifactManager | None = None,
+    run_id: str | None = None,
+    approval_store: Any | None = None,
+    secret_provider: Any | None = None,
+    max_parallel_workers: int = 4,
+    max_tool_batch_workers: int = 4,
+) -> StepRunnerRegistry:
+    """Build the standard runtime registry from explicitly injected dependencies."""
+
+    registry = StepRunnerRegistry()
+
+    if function_registry is not None:
+        registry.register(StepType.FUNCTION, FunctionStepRunner(function_registry))
+        registry.register(
+            StepType.PARALLEL_GROUP,
+            ParallelGroupStepRunner(function_registry, max_workers=max_parallel_workers),
+        )
+
+    if tool_registry is not None:
+        tool_call_runner = ToolCallStepRunner(
+            tool_registry,
+            artifact_manager=artifact_manager,
+            run_id=run_id,
+            approval_store=approval_store,
+            secret_provider=secret_provider,
+        )
+        for step_type in _TOOL_CALL_STEP_TYPES:
+            registry.register(step_type, tool_call_runner)
+        registry.register(
+            StepType.TOOL_BATCH,
+            ToolBatchStepRunner(
+                tool_registry,
+                artifact_manager=artifact_manager,
+                run_id=run_id,
+                secret_provider=secret_provider,
+                max_workers=max_tool_batch_workers,
+            ),
+        )
+
+    if agent_runner is not None and agent_registry:
+        registry.register(StepType.AGENT_LOOP, AgentLoopStepRunner(agent_runner, agent_registry))
+
+    registry.register(StepType.ROUTER, RouterStepRunner())
+    registry.register(StepType.JOIN, JoinStepRunner())
+    registry.register(StepType.QUALITY_GATE, QualityGateStepRunner())
+    registry.register(StepType.HUMAN_REVIEW, HumanReviewStepRunner())
+    registry.register(StepType.ARTIFACT, ArtifactStepRunner(artifact_manager, run_id=run_id))
+
+    if workflow_registry is not None:
+        registry.register(
+            StepType.SUBWORKFLOW,
+            SubworkflowStepRunner(
+                workflow_registry,
+                registry,
+                artifact_manager=artifact_manager,
+                run_id=run_id,
+            ),
+        )
+
+    return registry
+
+
 class FunctionStepRegistry:
     def __init__(self) -> None:
         self._functions: dict[str, FunctionStep] = {}

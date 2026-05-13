@@ -14,7 +14,11 @@ from core.framework.run_result import RunResult
 from core.framework.specs import WorkflowSpec
 from core.framework.workflow.executor import WorkflowExecutor
 from core.framework.workflow.result import WorkflowResult
-from core.framework.workflow.step_runner import FunctionStepRegistry, FunctionStepRunner
+from core.framework.workflow.step_runner import (
+    FunctionStepRegistry,
+    StepRunnerRegistry,
+    build_default_step_runner_registry,
+)
 from storage.artifacts import ArtifactRef, artifact_index_store_from_env
 from storage.checkpoint import WorkflowCheckpoint
 from storage.events import EventRecord as StorageEventRecord
@@ -28,7 +32,16 @@ class WorkflowRunner:
         self,
         *,
         artifact_root: str | Path,
-        function_registry: FunctionStepRegistry,
+        function_registry: FunctionStepRegistry | None = None,
+        step_runner_registry: StepRunnerRegistry | None = None,
+        tool_registry: Any | None = None,
+        agent_runner: Any | None = None,
+        agent_registry: dict[str, Any] | None = None,
+        workflow_registry: dict[str, WorkflowSpec] | None = None,
+        approval_store: Any | None = None,
+        secret_provider: Any | None = None,
+        max_parallel_workers: int = 4,
+        max_tool_batch_workers: int = 4,
         artifact_index_store: Any | None = None,
         event_store: Any | None = None,
         lineage_store: Any | None = None,
@@ -38,17 +51,31 @@ class WorkflowRunner:
     ) -> None:
         self._artifact_root = Path(artifact_root)
         self._artifact_manager = ArtifactManager(self._artifact_root)
-        self._function_step_runner = FunctionStepRunner(function_registry)
-        self._artifact_index_store = artifact_index_store or artifact_index_store_from_env(
-            artifact_root=self._artifact_root
-        )
-        self._event_store = event_store or event_store_from_env(artifact_root=self._artifact_root)
-        self._lineage_store = lineage_store or lineage_store_from_env(
-            artifact_root=self._artifact_root
+        if step_runner_registry is None:
+            if function_registry is None:
+                raise ValueError("function_registry is required without step_runner_registry")
+            step_runner_registry = build_default_step_runner_registry(
+                function_registry,
+                tool_registry=tool_registry,
+                agent_runner=agent_runner,
+                agent_registry=agent_registry,
+                workflow_registry=workflow_registry,
+                artifact_manager=self._artifact_manager,
+                approval_store=approval_store,
+                secret_provider=secret_provider,
+                max_parallel_workers=max_parallel_workers,
+                max_tool_batch_workers=max_tool_batch_workers,
+            )
+        self._step_runner_registry = step_runner_registry
+        self._indexer = WorkflowRunIndexer(
+            artifact_index_store=artifact_index_store
+            or artifact_index_store_from_env(artifact_root=self._artifact_root),
+            event_store=event_store or event_store_from_env(artifact_root=self._artifact_root),
+            lineage_store=lineage_store or lineage_store_from_env(artifact_root=self._artifact_root),
+            redactor=redactor or StorageRedactor(),
         )
         self._checkpoint_store = checkpoint_store
         self._event_bus = event_bus
-        self._redactor = redactor or StorageRedactor()
 
     def run(
         self,
@@ -59,7 +86,8 @@ class WorkflowRunner:
         run_id: str | None = None,
     ) -> RunResult:
         executor = WorkflowExecutor(
-            function_step_runner=self._function_step_runner,
+            function_step_runner=None,
+            step_runner_registry=self._step_runner_registry,
             artifact_manager=self._artifact_manager,
             checkpoint_store=self._checkpoint_store,
             event_bus=self._event_bus,
@@ -78,7 +106,8 @@ class WorkflowRunner:
         buffer_updates: dict[str, Any] | None = None,
     ) -> RunResult:
         executor = WorkflowExecutor(
-            function_step_runner=self._function_step_runner,
+            function_step_runner=None,
+            step_runner_registry=self._step_runner_registry,
             artifact_manager=self._artifact_manager,
             checkpoint_store=self._checkpoint_store,
             event_bus=self._event_bus,
@@ -94,6 +123,24 @@ class WorkflowRunner:
         return RunResult.from_workflow_result(result)
 
     def _persist_storage_indexes(self, result: WorkflowResult) -> None:
+        self._indexer.index(result)
+
+
+class WorkflowRunIndexer:
+    def __init__(
+        self,
+        *,
+        artifact_index_store: Any,
+        event_store: Any,
+        lineage_store: Any,
+        redactor: StorageRedactor,
+    ) -> None:
+        self._artifact_index_store = artifact_index_store
+        self._event_store = event_store
+        self._lineage_store = lineage_store
+        self._redactor = redactor
+
+    def index(self, result: WorkflowResult) -> None:
         self._index_artifacts(result)
         self._index_events(result)
         self._index_lineage(result)

@@ -11,9 +11,7 @@ from typing import Any
 
 from core.framework import RunResult, WorkflowRunner
 from core.framework.llm import LLMClient, LLMRequest, build_openai_compatible_client_from_config
-from core.framework.specs import EdgeSpec, StepSpec, WorkflowSpec
 from core.framework.workflow import FunctionStepRegistry, ScopedDataBuffer
-from domain.reports import BlockedReport, FinalReport, render_markdown
 from domain.sources import (
     SourceDefinition,
     SourceError,
@@ -24,18 +22,7 @@ from domain.sources import (
     SourcePipelineMetrics,
     SourceType,
 )
-from evidence import EvidenceBuilder, EvidenceBundle, VerifiedFindings
-from quality import (
-    CitationChecker,
-    EditorDecision,
-    EditorGate,
-    HumanReviewRequest,
-    QualityEvent,
-    QualityGateMetrics,
-    QualityScorer,
-    RewritePolicy,
-    SupportMatrixBuilder,
-)
+from evidence import EvidenceBundle
 from sources import SourceConfigError, SourceRegistry, load_source_fetch_policy, load_source_registry
 from sources.connectors import (
     ArxivConnector,
@@ -62,25 +49,38 @@ from sources.processing import (
     build_source_coverage_report,
     build_source_error_policy_report,
     build_source_fallback_report,
-    build_source_freshness_report,
-    build_source_governance_report,
     build_source_health_report,
-    build_source_quality_summary_report,
-    build_source_ranking_scores,
-    build_source_traceability_report,
-    deduplicate_with_result,
-    normalize_item,
-    rank_items,
+)
+from workflows.daily_intelligence.spec import (
+    PROFILE_LIVE,
+    PROFILE_LIVE_OFFLINE,
+    WORKFLOW_ID,
+    WORKFLOW_VERSION,
+    build_daily_intelligence_workflow,
+)
+from workflows.daily_intelligence.steps import (
+    AllSourcesFailedError,
+    build_evidence,
+    deduplicate_sources,
+    normalize_sources,
+    quality_gate,
+    rank_sources,
+    require_sources,
+    source_event as _source_event,
 )
 
-PROFILE_LIVE = "live"
-PROFILE_LIVE_OFFLINE = "live-offline"
-WORKFLOW_ID = "daily-intelligence-live"
-WORKFLOW_VERSION = "0.1.0"
 
-
-class AllSourcesFailedError(RuntimeError):
-    pass
+__all__ = [
+    "AllSourcesFailedError",
+    "DailyIntelligenceRunner",
+    "PROFILE_LIVE",
+    "PROFILE_LIVE_OFFLINE",
+    "WORKFLOW_ID",
+    "WORKFLOW_VERSION",
+    "build_daily_intelligence_workflow",
+    "build_default_source_fetch_policy",
+    "build_default_source_registry",
+]
 
 
 class DailyIntelligenceRunner:
@@ -181,13 +181,13 @@ class DailyIntelligenceRunner:
     def _function_registry(self, profile: str) -> FunctionStepRegistry:
         registry = FunctionStepRegistry()
         registry.register("daily.collect_sources", lambda buffer: self._collect_sources(buffer, profile))
-        registry.register("daily.require_sources", _require_sources)
-        registry.register("daily.normalize_sources", _normalize_sources)
-        registry.register("daily.deduplicate_sources", _deduplicate_sources)
-        registry.register("daily.rank_sources", _rank_sources)
-        registry.register("daily.build_evidence", _build_evidence)
+        registry.register("daily.require_sources", require_sources)
+        registry.register("daily.normalize_sources", normalize_sources)
+        registry.register("daily.deduplicate_sources", deduplicate_sources)
+        registry.register("daily.rank_sources", rank_sources)
+        registry.register("daily.build_evidence", build_evidence)
         registry.register("daily.draft_report", lambda buffer: self._draft_report(buffer, profile))
-        registry.register("daily.quality_gate", _quality_gate)
+        registry.register("daily.quality_gate", quality_gate)
         return registry
 
     def _collect_sources(self, buffer: ScopedDataBuffer, profile: str) -> dict[str, Any]:
@@ -875,195 +875,6 @@ class DailyIntelligenceRunner:
         return {"report_draft": report_draft}
 
 
-def build_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
-    return WorkflowSpec(
-        workflow_id=WORKFLOW_ID,
-        name="Daily Intelligence Live",
-        version=WORKFLOW_VERSION,
-        description="Daily intelligence workflow for live and live-offline profiles.",
-        start_step_id="collect_sources",
-        terminal_step_ids=["quality_gate"],
-        steps=[
-            StepSpec(
-                step_id="collect_sources",
-                implementation="daily.collect_sources",
-                read_keys=["request"],
-                write_keys=[
-                    "raw_items",
-                    "source_errors",
-                    "skipped_sources",
-                    "failed_sources",
-                    "source_fetch_requests",
-                    "source_fetch_results",
-                    "source_health_updates",
-                    "source_health_report",
-                    "source_events",
-                    "source_pipeline_metrics",
-                    "source_connector_dispatch_report",
-                    "source_error_policy_report",
-                    "source_fallback_report",
-                    "source_selection_report",
-                    "source_coverage_report",
-                ],
-                required_output_keys=[
-                    "raw_items",
-                    "source_errors",
-                    "skipped_sources",
-                    "failed_sources",
-                    "source_fetch_requests",
-                    "source_fetch_results",
-                    "source_health_updates",
-                    "source_health_report",
-                    "source_events",
-                    "source_pipeline_metrics",
-                    "source_connector_dispatch_report",
-                    "source_error_policy_report",
-                    "source_fallback_report",
-                    "source_selection_report",
-                    "source_coverage_report",
-                ],
-            ),
-            StepSpec(
-                step_id="require_sources",
-                implementation="daily.require_sources",
-                read_keys=["raw_items", "source_errors"],
-                write_keys=["source_collection_status"],
-                required_output_keys=["source_collection_status"],
-            ),
-            StepSpec(
-                step_id="normalize_sources",
-                implementation="daily.normalize_sources",
-                read_keys=["raw_items", "source_errors", "source_events", "source_pipeline_metrics"],
-                write_keys=["normalized_items", "source_errors", "source_events", "source_pipeline_metrics"],
-                required_output_keys=["normalized_items", "source_errors", "source_events", "source_pipeline_metrics"],
-            ),
-            StepSpec(
-                step_id="deduplicate_sources",
-                implementation="daily.deduplicate_sources",
-                read_keys=["normalized_items", "source_errors", "source_events", "source_pipeline_metrics"],
-                write_keys=[
-                    "deduplicated_items",
-                    "source_errors",
-                    "source_duplicate_groups",
-                    "source_events",
-                    "source_pipeline_metrics",
-                ],
-                required_output_keys=[
-                    "deduplicated_items",
-                    "source_errors",
-                    "source_duplicate_groups",
-                    "source_events",
-                    "source_pipeline_metrics",
-                ],
-            ),
-            StepSpec(
-                step_id="rank_sources",
-                implementation="daily.rank_sources",
-                read_keys=[
-                    "deduplicated_items",
-                    "request",
-                    "source_errors",
-                    "skipped_sources",
-                    "failed_sources",
-                    "source_selection_report",
-                    "source_events",
-                    "source_pipeline_metrics",
-                ],
-                write_keys=[
-                    "ranked_items",
-                    "source_errors",
-                    "source_events",
-                    "source_pipeline_metrics",
-                    "source_coverage_report",
-                    "source_quality_scores",
-                    "source_quality_summary_report",
-                    "source_ranking_scores",
-                    "source_freshness_report",
-                    "source_traceability_report",
-                    "source_governance_report",
-                ],
-                required_output_keys=[
-                    "ranked_items",
-                    "source_errors",
-                    "source_events",
-                    "source_pipeline_metrics",
-                    "source_coverage_report",
-                    "source_quality_scores",
-                    "source_quality_summary_report",
-                    "source_ranking_scores",
-                    "source_freshness_report",
-                    "source_traceability_report",
-                    "source_governance_report",
-                ],
-            ),
-            StepSpec(
-                step_id="build_evidence",
-                implementation="daily.build_evidence",
-                read_keys=["ranked_items"],
-                write_keys=[
-                    "evidence_bundle",
-                    "evidence_scores",
-                    "candidate_claims",
-                    "verified_findings",
-                    "quality_events",
-                ],
-                required_output_keys=[
-                    "evidence_bundle",
-                    "evidence_scores",
-                    "candidate_claims",
-                    "verified_findings",
-                    "quality_events",
-                ],
-            ),
-            StepSpec(
-                step_id="draft_report",
-                implementation="daily.draft_report",
-                read_keys=["request", "evidence_bundle", "source_errors", "source_pipeline_metrics"],
-                write_keys=["report_draft"],
-                required_output_keys=["report_draft"],
-            ),
-            StepSpec(
-                step_id="quality_gate",
-                implementation="daily.quality_gate",
-                read_keys=["report_draft", "evidence_bundle", "verified_findings", "quality_events"],
-                write_keys=[
-                    "citation_check_result",
-                    "editor_review",
-                    "support_matrix",
-                    "report_quality_summary",
-                    "quality_events",
-                    "quality_gate_metrics",
-                    "rewrite_policy",
-                    "rewrite_instructions",
-                    "rewritten_report_draft",
-                    "human_review_request",
-                    "final_report",
-                    "report_markdown",
-                    "blocked_report",
-                ],
-                required_output_keys=[
-                    "citation_check_result",
-                    "editor_review",
-                    "support_matrix",
-                    "report_quality_summary",
-                    "quality_events",
-                    "quality_gate_metrics",
-                ],
-            ),
-        ],
-        edges=[
-            EdgeSpec("collect-to-require", "collect_sources", "require_sources"),
-            EdgeSpec("require-to-normalize", "require_sources", "normalize_sources"),
-            EdgeSpec("normalize-to-dedupe", "normalize_sources", "deduplicate_sources"),
-            EdgeSpec("dedupe-to-rank", "deduplicate_sources", "rank_sources"),
-            EdgeSpec("rank-to-evidence", "rank_sources", "build_evidence"),
-            EdgeSpec("evidence-to-draft", "build_evidence", "draft_report"),
-            EdgeSpec("draft-to-quality", "draft_report", "quality_gate"),
-        ],
-        metadata={"profile": profile, "product_path": profile == PROFILE_LIVE},
-    )
-
-
 def build_default_source_registry(*, source_config_path: str | Path | None = None) -> SourceRegistry:
     configured_path, required = _default_source_config_path(source_config_path)
     if configured_path is not None:
@@ -1131,575 +942,6 @@ def _ensure_live_source_registry(source_registry: SourceRegistry) -> None:
         for issue in validation.errors
     )
     raise SourceConfigError(f"live source registry validation failed: {issues}")
-
-
-def _require_sources(buffer: ScopedDataBuffer) -> dict[str, Any]:
-    raw_items = buffer.read("raw_items")
-    if raw_items:
-        return {"source_collection_status": "ready"}
-
-    source_errors = buffer.read("source_errors")
-    error_types = [
-        error.error_type if hasattr(error, "error_type") else error.get("error_type", "unknown")
-        for error in source_errors
-    ]
-    raise AllSourcesFailedError(
-        "all_sources_failed: no source items collected from enabled sources "
-        f"(errors: {', '.join(error_types)})"
-    )
-
-
-def _normalize_sources(buffer: ScopedDataBuffer) -> dict[str, Any]:
-    raw_items = buffer.read("raw_items")
-    source_errors = list(buffer.read("source_errors"))
-    normalized_items = []
-    normalization_errors: list[SourceError] = []
-    for raw_item in raw_items:
-        try:
-            normalized_items.append(normalize_item(raw_item))
-        except Exception as exc:
-            error = _processing_source_error(raw_item, exc, phase="normalize")
-            normalization_errors.append(error)
-            source_errors.append(error)
-    source_events = list(buffer.read("source_events"))
-    source_events.append(
-        _source_event("source_normalized", input_count=len(raw_items), output_count=len(normalized_items))
-    )
-    for error in normalization_errors:
-        source_events.append(
-            _source_event(
-                "source_normalization_failed",
-                error.source_id,
-                error_type=error.error_type,
-                retryable=False,
-            )
-        )
-    metrics = buffer.read("source_pipeline_metrics")
-    metrics.normalized_items_count = len(normalized_items)
-    for error in normalization_errors:
-        metrics.record_error(error)
-    return {
-        "normalized_items": normalized_items,
-        "source_errors": source_errors,
-        "source_events": source_events,
-        "source_pipeline_metrics": metrics,
-    }
-
-
-def _deduplicate_sources(buffer: ScopedDataBuffer) -> dict[str, Any]:
-    normalized_items = buffer.read("normalized_items")
-    source_errors = list(buffer.read("source_errors"))
-    try:
-        dedup_result = deduplicate_with_result(normalized_items)
-        deduplicated_items = dedup_result.kept_items
-        source_duplicate_groups = [group.to_dict() for group in dedup_result.duplicate_groups]
-        duplicate_count = len(dedup_result.dropped_items)
-        dedup_errors: list[SourceError] = []
-    except Exception as exc:
-        error = _pipeline_processing_error(exc, phase="dedup")
-        dedup_errors = [error]
-        source_errors.append(error)
-        deduplicated_items = []
-        source_duplicate_groups = []
-        duplicate_count = 0
-    source_events = list(buffer.read("source_events"))
-    metrics = buffer.read("source_pipeline_metrics")
-    metrics.deduplicated_items_count = len(deduplicated_items)
-    metrics.duplicate_count = duplicate_count
-    for error in dedup_errors:
-        metrics.record_error(error)
-    source_events.append(
-        _source_event(
-            "source_deduplicated",
-            input_count=len(normalized_items),
-            output_count=len(deduplicated_items),
-            duplicate_count=metrics.duplicate_count,
-            duplicate_group_count=len(source_duplicate_groups),
-        )
-    )
-    for error in dedup_errors:
-        source_events.append(_source_event("source_dedup_failed", error_type=error.error_type, retryable=False))
-    return {
-        "deduplicated_items": deduplicated_items,
-        "source_errors": source_errors,
-        "source_duplicate_groups": source_duplicate_groups,
-        "source_events": source_events,
-        "source_pipeline_metrics": metrics,
-    }
-
-
-def _rank_sources(buffer: ScopedDataBuffer) -> dict[str, Any]:
-    request = buffer.read("request")
-    deduplicated_items = buffer.read("deduplicated_items")
-    source_errors = list(buffer.read("source_errors"))
-    try:
-        ranked_items = rank_items(deduplicated_items, topic=request["topic"])
-        ranking_errors: list[SourceError] = []
-    except Exception as exc:
-        error = _pipeline_processing_error(exc, phase="rank")
-        source_errors.append(error)
-        ranking_errors = [error]
-        ranked_items = []
-    source_events = list(buffer.read("source_events"))
-    source_events.append(
-        _source_event(
-            "source_ranked",
-            input_count=len(deduplicated_items),
-            output_count=len(ranked_items),
-            topic=request["topic"],
-        )
-    )
-    for error in ranking_errors:
-        source_events.append(_source_event("source_ranking_failed", error_type=error.error_type, retryable=False))
-    metrics = buffer.read("source_pipeline_metrics")
-    metrics.ranked_items_count = len(ranked_items)
-    for error in ranking_errors:
-        metrics.record_error(error)
-    source_quality_scores = [
-        ranked.metadata["source_quality"]
-        for ranked in ranked_items
-        if "source_quality" in ranked.metadata
-    ]
-    source_ranking_scores = build_source_ranking_scores(ranked_items)
-    source_freshness_report = build_source_freshness_report(ranked_items)
-    source_traceability_report = build_source_traceability_report(ranked_items)
-    source_quality_summary_report = build_source_quality_summary_report(source_quality_scores)
-    return {
-        "ranked_items": ranked_items,
-        "source_errors": source_errors,
-        "source_events": source_events,
-        "source_pipeline_metrics": metrics,
-        "source_coverage_report": build_source_coverage_report(
-            metrics,
-            source_errors=source_errors,
-            skipped_sources=buffer.read("skipped_sources"),
-            failed_sources=buffer.read("failed_sources"),
-        ),
-        "source_quality_scores": source_quality_scores,
-        "source_quality_summary_report": source_quality_summary_report,
-        "source_ranking_scores": source_ranking_scores,
-        "source_freshness_report": source_freshness_report,
-        "source_traceability_report": source_traceability_report,
-        "source_governance_report": build_source_governance_report(
-            source_quality_scores=source_quality_scores,
-            source_selection_report=buffer.read("source_selection_report"),
-        ),
-    }
-
-
-def _build_evidence(buffer: ScopedDataBuffer) -> dict[str, Any]:
-    build_result = EvidenceBuilder().build_with_scores(buffer.read("ranked_items"), bundle_id="daily")
-    bundle = build_result.bundle
-    if not bundle.items:
-        raise RuntimeError("no valid evidence built from ranked sources")
-    return {
-        "evidence_bundle": bundle,
-        "evidence_scores": build_result.evidence_scores,
-        "candidate_claims": build_result.candidate_claims,
-        "verified_findings": build_result.verified_findings,
-        "quality_events": [
-            _quality_event(
-                "evidence_build_succeeded",
-                evidence_items_count=len(bundle.items),
-                evidence_scores_count=len(build_result.evidence_scores),
-                candidate_claims_count=len(build_result.candidate_claims),
-            ),
-            _quality_event(
-                "claim_verification_succeeded",
-                accepted_claims_count=(
-                    len(build_result.verified_findings.accepted_claims)
-                    if build_result.verified_findings
-                    else 0
-                ),
-                rejected_claims_count=(
-                    len(build_result.verified_findings.rejected_claims)
-                    if build_result.verified_findings
-                    else 0
-                ),
-                uncertain_claims_count=(
-                    len(build_result.verified_findings.uncertain_claims)
-                    if build_result.verified_findings
-                    else 0
-                ),
-            ),
-        ],
-    }
-
-
-def _quality_gate(buffer: ScopedDataBuffer) -> dict[str, Any]:
-    report_draft = buffer.read("report_draft")
-    evidence_bundle = buffer.read("evidence_bundle")
-    verified_findings = buffer.read("verified_findings")
-    quality_events = list(buffer.read("quality_events"))
-    rewrite_policy = RewritePolicy()
-    evaluation = _evaluate_report_quality(
-        report_draft,
-        evidence_bundle,
-        verified_findings,
-        quality_events=quality_events,
-        rewrite_policy=rewrite_policy,
-        rewrite_attempts=0,
-    )
-    citation_check = evaluation["citation_check"]
-    support_matrix = evaluation["support_matrix"]
-    quality_summary = evaluation["quality_summary"]
-    review = evaluation["review"]
-    final_report_draft = report_draft
-    rewritten_report_draft = None
-    rewrite_attempts = 0
-
-    if review.decision == EditorDecision.REWRITE_REQUIRED:
-        quality_events.append(
-            _quality_event(
-                "rewrite_started",
-                rewrite_attempt=1,
-                instruction_count=len(review.rewrite_instructions),
-            )
-        )
-        rewritten_report_draft = _rewrite_report_draft(
-            report_draft,
-            evidence_bundle,
-            review,
-        )
-        rewrite_attempts = 1
-        evaluation = _evaluate_report_quality(
-            rewritten_report_draft,
-            evidence_bundle,
-            verified_findings,
-            quality_events=quality_events,
-            rewrite_policy=rewrite_policy,
-            rewrite_attempts=rewrite_attempts,
-        )
-        citation_check = evaluation["citation_check"]
-        support_matrix = evaluation["support_matrix"]
-        quality_summary = evaluation["quality_summary"]
-        review = evaluation["review"]
-        if review.decision == EditorDecision.PASS:
-            quality_events.append(
-                _quality_event(
-                    "rewrite_succeeded",
-                    rewrite_attempt=rewrite_attempts,
-                    quality_score=quality_summary.quality_score,
-                )
-            )
-            final_report_draft = rewritten_report_draft
-        else:
-            quality_events.append(
-                _quality_event(
-                    "rewrite_failed",
-                    rewrite_attempt=rewrite_attempts,
-                    decision=review.decision.value,
-                    reason_count=len(review.reasons),
-                )
-            )
-
-    human_review_request = _human_review_request(
-        evidence_bundle=evidence_bundle,
-        review=review,
-        quality_summary=quality_summary,
-    )
-    human_review_required = human_review_request is not None
-    if human_review_request:
-        quality_events.append(
-            _quality_event(
-                "human_review_requested",
-                risk_level=human_review_request.risk_level,
-                reason=human_review_request.reason,
-            )
-        )
-
-    quality_gate_metrics = _quality_gate_metrics(
-        evidence_bundle=evidence_bundle,
-        verified_findings=verified_findings,
-        citation_check=citation_check,
-        support_matrix=support_matrix,
-        quality_summary=quality_summary,
-        review=review,
-        rewrite_attempts=rewrite_attempts,
-        human_review_required=human_review_required,
-    )
-    outputs: dict[str, Any] = {
-        "citation_check_result": citation_check,
-        "editor_review": review,
-        "support_matrix": support_matrix,
-        "report_quality_summary": quality_summary,
-        "quality_events": quality_events,
-        "quality_gate_metrics": quality_gate_metrics,
-        "rewrite_policy": rewrite_policy,
-        "rewrite_instructions": review.rewrite_instructions,
-    }
-    if rewritten_report_draft is not None:
-        outputs["rewritten_report_draft"] = rewritten_report_draft
-    if human_review_request is not None:
-        outputs["human_review_request"] = human_review_request
-    if review.decision == EditorDecision.PASS:
-        final_report = FinalReport(
-            title=final_report_draft["title"],
-            sections=final_report_draft["sections"],
-            source_urls=sorted(evidence_bundle.source_urls),
-            metadata={
-                "evidence_bundle_id": evidence_bundle.bundle_id,
-                "quality_score": quality_summary.quality_score,
-                "accepted_claims_count": len(verified_findings.accepted_claims),
-                "rejected_claims_count": len(verified_findings.rejected_claims),
-                "uncertain_claims_count": len(verified_findings.uncertain_claims),
-                "rewrite_attempts": rewrite_attempts,
-            },
-        )
-        outputs["final_report"] = final_report
-        outputs["report_markdown"] = render_markdown(final_report)
-    else:
-        outputs["blocked_report"] = BlockedReport(
-            title=final_report_draft.get("title", "Blocked Daily Intelligence Report"),
-            reasons=review.reasons,
-            draft=final_report_draft,
-            metadata={
-                "citation_check_result": citation_check.to_dict(),
-                "editor_review": review.to_dict(),
-                "quality_score": quality_summary.quality_score,
-                "rewrite_attempts": rewrite_attempts,
-                "human_review_required": human_review_required,
-            },
-        )
-    return outputs
-
-
-def _evaluate_report_quality(
-    report_draft: dict[str, Any],
-    evidence_bundle: EvidenceBundle,
-    verified_findings: VerifiedFindings,
-    *,
-    quality_events: list[QualityEvent],
-    rewrite_policy: RewritePolicy,
-    rewrite_attempts: int,
-) -> dict[str, Any]:
-    quality_events.append(
-        _quality_event(
-            "citation_check_started",
-            evidence_items_count=len(evidence_bundle.items),
-            rewrite_attempt=rewrite_attempts,
-        )
-    )
-    citation_check = CitationChecker().check(report_draft, evidence_bundle, verified_findings)
-    quality_events.append(
-        _quality_event(
-            "citation_check_succeeded" if citation_check.passed else "citation_check_failed",
-            unsupported_urls_count=len(citation_check.unsupported_urls),
-            unknown_urls_count=len(citation_check.unknown_urls),
-            missing_section_sources_count=len(citation_check.missing_section_sources),
-            unsupported_claims_count=len(citation_check.unsupported_claims),
-            rejected_claim_usage_count=len(citation_check.rejected_claim_usage),
-            citation_coverage_score=citation_check.citation_coverage_score,
-            claim_support_score=citation_check.claim_support_score,
-            rewrite_attempt=rewrite_attempts,
-        )
-    )
-    support_matrix = SupportMatrixBuilder().build(report_draft, evidence_bundle)
-    quality_summary = QualityScorer().score(
-        report=report_draft,
-        citation_check=citation_check,
-        support_matrix=support_matrix,
-    )
-    quality_events.append(
-        _quality_event(
-            "editor_gate_started",
-            quality_score=quality_summary.quality_score,
-            rewrite_attempt=rewrite_attempts,
-        )
-    )
-    review = EditorGate().review(
-        citation_check,
-        support_matrix,
-        quality_summary,
-        rewrite_policy=rewrite_policy,
-        rewrite_attempts=rewrite_attempts,
-    )
-    quality_events.append(
-        _quality_event(
-            _editor_event_type(review.decision),
-            decision=review.decision.value,
-            quality_score=quality_summary.quality_score,
-            reason_count=len(review.reasons),
-            rewrite_attempt=rewrite_attempts,
-        )
-    )
-    return {
-        "citation_check": citation_check,
-        "support_matrix": support_matrix,
-        "quality_summary": quality_summary,
-        "review": review,
-    }
-
-
-def _editor_event_type(decision: EditorDecision) -> str:
-    if decision == EditorDecision.PASS:
-        return "editor_gate_passed"
-    if decision == EditorDecision.REWRITE_REQUIRED:
-        return "editor_gate_rewrite_required"
-    return "editor_gate_blocked"
-
-
-def _rewrite_report_draft(
-    report_draft: dict[str, Any],
-    evidence_bundle: EvidenceBundle,
-    review: Any,
-) -> dict[str, Any]:
-    sections = [dict(section) for section in report_draft.get("sections", [])]
-    sections = _drop_duplicate_sections(sections)
-    unsupported_claims = _unsupported_claim_texts(review.unsupported_claims)
-    if unsupported_claims:
-        sections = [
-            rewritten
-            for section in sections
-            if (rewritten := _remove_unsupported_claims(section, unsupported_claims)) is not None
-        ]
-    evidence_by_url = {item.source_url: item for item in evidence_bundle.items}
-    for section in sections:
-        sources = section.get("sources") or section.get("source_urls") or []
-        if sources:
-            continue
-        matched_urls = _matching_source_urls(str(section.get("content", "")), evidence_by_url)
-        if matched_urls:
-            section["sources"] = matched_urls
-    rewritten = dict(report_draft)
-    rewritten["sections"] = sections
-    metadata = dict(rewritten.get("metadata") or {})
-    metadata["rewrite"] = {
-        "method": "rule",
-        "instructions": list(review.rewrite_instructions),
-        "preserve_evidence_boundary": True,
-    }
-    rewritten["metadata"] = metadata
-    return rewritten
-
-
-def _drop_duplicate_sections(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    seen = set()
-    deduplicated = []
-    for section in sections:
-        key = " ".join(str(section.get("content", "")).split()).casefold()
-        if key and key in seen:
-            continue
-        if key:
-            seen.add(key)
-        deduplicated.append(section)
-    return deduplicated
-
-
-def _unsupported_claim_texts(unsupported_claims: list[str]) -> list[str]:
-    texts = []
-    for claim in unsupported_claims:
-        if ": " in claim:
-            texts.append(claim.split(": ", 1)[1])
-        else:
-            texts.append(claim)
-    return texts
-
-
-def _remove_unsupported_claims(
-    section: dict[str, Any],
-    unsupported_claims: list[str],
-) -> dict[str, Any] | None:
-    content = str(section.get("content", ""))
-    for claim in unsupported_claims:
-        content = content.replace(claim, "").strip()
-    content = " ".join(content.split())
-    if not content:
-        return None
-    updated = dict(section)
-    updated["content"] = content
-    return updated
-
-
-def _matching_source_urls(content: str, evidence_by_url: dict[str, Any]) -> list[str]:
-    matches = []
-    for url, item in evidence_by_url.items():
-        if _token_overlap(content, f"{item.title} {item.summary}") >= 0.25:
-            matches.append(url)
-    return sorted(matches)
-
-
-def _token_overlap(left: str, right: str) -> float:
-    import re
-
-    left_tokens = {
-        token
-        for token in re.findall(r"[a-z0-9]+", left.casefold())
-        if len(token) > 2
-    }
-    if not left_tokens:
-        return 0.0
-    right_tokens = {
-        token
-        for token in re.findall(r"[a-z0-9]+", right.casefold())
-        if len(token) > 2
-    }
-    if not right_tokens:
-        return 0.0
-    return len(left_tokens & right_tokens) / len(left_tokens)
-
-
-def _human_review_request(
-    *,
-    evidence_bundle: EvidenceBundle,
-    review: Any,
-    quality_summary: Any,
-) -> HumanReviewRequest | None:
-    if review.decision == EditorDecision.PASS and quality_summary.quality_score >= 0.8:
-        return None
-    risk_level = "critical" if review.decision == EditorDecision.BLOCKED else "medium"
-    reason = "quality gate blocked" if review.decision == EditorDecision.BLOCKED else "quality gate rewrite required"
-    return HumanReviewRequest(
-        review_id=f"review-{evidence_bundle.bundle_id}",
-        run_id=evidence_bundle.bundle_id,
-        draft_id=f"draft-{evidence_bundle.bundle_id}",
-        reason=reason,
-        risk_level=risk_level,
-        quality_artifact_refs={
-            "citation_check_result": "citation_check_result.json",
-            "editor_review": "editor_review.json",
-            "report_quality_summary": "report_quality_summary.json",
-        },
-        metadata={
-            "decision": review.decision.value,
-            "quality_score": quality_summary.quality_score,
-            "reason_count": len(review.reasons),
-        },
-    )
-
-
-def _quality_gate_metrics(
-    *,
-    evidence_bundle: EvidenceBundle,
-    verified_findings: VerifiedFindings,
-    citation_check: Any,
-    support_matrix: Any,
-    quality_summary: Any,
-    review: Any,
-    rewrite_attempts: int,
-    human_review_required: bool,
-) -> QualityGateMetrics:
-    return QualityGateMetrics(
-        evidence_items_count=len(evidence_bundle.items),
-        unsupported_urls_count=len(citation_check.unsupported_urls),
-        missing_section_sources_count=len(citation_check.missing_section_sources),
-        unsupported_sections_count=len(support_matrix.unsupported_sections),
-        blocked=review.decision != EditorDecision.PASS,
-        decision=review.decision.value,
-        citation_coverage_score=citation_check.citation_coverage_score,
-        support_coverage=quality_summary.support_coverage,
-        quality_score=quality_summary.quality_score,
-        accepted_claims_count=len(verified_findings.accepted_claims),
-        rejected_claims_count=len(verified_findings.rejected_claims),
-        uncertain_claims_count=len(verified_findings.uncertain_claims),
-        unsupported_claims_count=len(citation_check.unsupported_claims),
-        rejected_claim_usage_count=len(citation_check.rejected_claim_usage),
-        claim_support_score=citation_check.claim_support_score,
-        section_source_coverage_score=citation_check.section_source_coverage_score,
-        rewrite_attempts=rewrite_attempts,
-        rewrite_required=review.decision == EditorDecision.REWRITE_REQUIRED,
-        human_review_required=human_review_required,
-    )
 
 
 def _deterministic_report(topic: str, evidence_bundle: EvidenceBundle) -> dict[str, Any]:
@@ -1809,14 +1051,6 @@ def _elapsed_ms(start: float) -> float:
 
 def _dt(value) -> str | None:
     return value.isoformat().replace("+00:00", "Z") if value else None
-
-
-def _source_event(event_type: str, source_id: str | None = None, **metadata: Any) -> SourcePipelineEvent:
-    return SourcePipelineEvent(
-        event_type=event_type,
-        source_id=source_id,
-        metadata={key: value for key, value in metadata.items() if value is not None},
-    )
 
 
 def _source_fetch_request_id(existing: list[SourceFetchRequest], source: SourceDefinition) -> str:
@@ -2250,52 +1484,6 @@ def _error_metadata_bool(error: SourceError, key: str, *, default: bool) -> bool
 def _error_phase(error: SourceError) -> str | None:
     value = error.metadata.get("phase")
     return str(value) if value is not None else None
-
-
-def _processing_source_error(raw_item: Any, exc: Exception, *, phase: str) -> SourceError:
-    classification = classify_source_exception(exc, phase=phase)
-    source_id = str(getattr(raw_item, "source_id", "source_pipeline") or "source_pipeline")
-    return SourceError(
-        source_id=source_id,
-        source_name=getattr(raw_item, "source_name", None),
-        error_type=classification.error_type,
-        error_message=str(exc),
-        url=getattr(raw_item, "url", None),
-        retryable=classification.retryable,
-        metadata={
-            "phase": phase,
-            "source_item_id": getattr(raw_item, "source_item_id", None),
-            "retryable": classification.retryable,
-            "source_health_affecting": classification.source_health_affecting,
-            "workflow_blocking": classification.workflow_blocking,
-            "original_exception_type": type(exc).__name__,
-        },
-    )
-
-
-def _pipeline_processing_error(exc: Exception, *, phase: str) -> SourceError:
-    classification = classify_source_exception(exc, phase=phase)
-    return SourceError(
-        source_id="source_pipeline",
-        source_name="Source Pipeline",
-        error_type=classification.error_type,
-        error_message=str(exc),
-        retryable=classification.retryable,
-        metadata={
-            "phase": phase,
-            "retryable": classification.retryable,
-            "source_health_affecting": classification.source_health_affecting,
-            "workflow_blocking": classification.workflow_blocking,
-            "original_exception_type": type(exc).__name__,
-        },
-    )
-
-
-def _quality_event(event_type: str, **metadata: Any) -> QualityEvent:
-    return QualityEvent(
-        event_type=event_type,
-        metadata={key: value for key, value in metadata.items() if value is not None},
-    )
 
 
 def _fixture_source() -> SourceDefinition:

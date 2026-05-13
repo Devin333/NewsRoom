@@ -1,7 +1,9 @@
+import pytest
+
 import core.framework.runner as runner_module
 from core.framework import WorkflowRunner
-from core.framework.specs import StepSpec, WorkflowSpec, WorkflowStatus
-from core.framework.workflow import FunctionStepRegistry
+from core.framework.specs import StepSpec, StepType, WorkflowSpec, WorkflowStatus
+from core.framework.workflow import FunctionStepRegistry, build_default_step_runner_registry
 from domain.sources import SourceError
 from storage.artifacts import LocalJsonArtifactIndexStore
 from storage.checkpoint import LocalJsonCheckpointStore
@@ -156,6 +158,78 @@ def test_workflow_runner_can_persist_checkpoints_when_injected(tmp_path) -> None
         "checkpoint_created",
         "workflow_succeeded",
     ]
+
+
+def test_workflow_runner_accepts_prebuilt_step_runner_registry(tmp_path) -> None:
+    functions = FunctionStepRegistry()
+    functions.register("sample.echo", lambda buffer: {"echo": buffer.read("request")})
+    runner = WorkflowRunner(
+        artifact_root=tmp_path,
+        step_runner_registry=build_default_step_runner_registry(functions),
+    )
+    spec = WorkflowSpec(
+        workflow_id="prebuilt-registry",
+        name="Prebuilt Registry",
+        version="1.0",
+        start_step_id="echo",
+        steps=[
+            StepSpec(
+                step_id="echo",
+                implementation="sample.echo",
+                read_keys=["request"],
+                write_keys=["echo"],
+                required_output_keys=["echo"],
+            )
+        ],
+    )
+
+    result = runner.run(spec, {"topic": "ai"}, profile="test", run_id="runner-prebuilt-registry")
+
+    assert result.status == WorkflowStatus.SUCCEEDED
+    assert result.output["echo"] == {"topic": "ai"}
+
+
+def test_workflow_runner_requires_registry_or_function_registry(tmp_path) -> None:
+    with pytest.raises(ValueError, match="function_registry is required"):
+        WorkflowRunner(artifact_root=tmp_path)
+
+
+def test_workflow_runner_default_registry_executes_artifact_step(tmp_path) -> None:
+    runner = WorkflowRunner(artifact_root=tmp_path, function_registry=FunctionStepRegistry())
+    spec = WorkflowSpec(
+        workflow_id="artifact-step-default",
+        name="Artifact Step Default",
+        version="1.0",
+        start_step_id="artifact",
+        steps=[
+            StepSpec(
+                step_id="artifact",
+                implementation="artifact.write",
+                step_type=StepType.ARTIFACT,
+                write_keys=["artifact_ref"],
+                required_output_keys=["artifact_ref"],
+                metadata={
+                    "content": {"status": "ready"},
+                    "relative_path": "steps/artifact/output.json",
+                    "artifact_id": "artifact-output",
+                },
+            )
+        ],
+    )
+
+    result = runner.run(spec, {}, profile="test", run_id="runner-default-artifact")
+
+    assert result.status == WorkflowStatus.SUCCEEDED
+    assert result.output["artifact_ref"]["artifact_id"] == "artifact-output"
+    assert (tmp_path / "runner-default-artifact" / "steps" / "artifact" / "output.json").exists()
+    artifact_refs = LocalJsonArtifactIndexStore(tmp_path / "_records" / "artifact_index").list_by_run(
+        "runner-default-artifact"
+    )
+    assert any(
+        ref.artifact_id == "step.artifact.step_output.artifact-output"
+        and ref.path == "steps/artifact/output.json"
+        for ref in artifact_refs
+    )
 
 
 def test_workflow_runner_uses_event_store_factory_by_default(tmp_path, monkeypatch) -> None:
