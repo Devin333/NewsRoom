@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from core.framework.specs import WorkflowSpec, WorkflowStatus
@@ -21,6 +22,10 @@ REQUIRED_RUN_ARTIFACTS: dict[str, str] = {
     "metrics": "metrics.json",
     "redaction_report": "redaction_report.json",
 }
+
+
+class RunManifestError(ValueError):
+    """Raised when a workflow run manifest would become invalid."""
 
 
 def build_run_manifest(
@@ -45,8 +50,68 @@ def build_run_manifest(
     }
 
 
+def register_manifest_artifact(
+    manifest: dict[str, Any],
+    artifact_key: str,
+    relative_path: str,
+) -> str:
+    key = str(artifact_key).strip()
+    if not key:
+        raise RunManifestError("manifest artifact key is required")
+    normalized_path = _normalize_manifest_artifact_path(relative_path)
+    artifacts = manifest.setdefault("artifacts", {})
+    if not isinstance(artifacts, dict):
+        raise RunManifestError("manifest artifacts must be an object")
+    artifacts[key] = normalized_path
+    return normalized_path
+
+
+def register_manifest_step_artifact(manifest: dict[str, Any], artifact_ref: Any) -> str:
+    step_artifacts = manifest.setdefault("step_artifacts", [])
+    if not isinstance(step_artifacts, list):
+        raise RunManifestError("manifest step_artifacts must be a list")
+    payload = artifact_ref.to_dict() if hasattr(artifact_ref, "to_dict") else dict(artifact_ref)
+    path = _artifact_ref_value(artifact_ref, "path")
+    if path is None:
+        raise RunManifestError("manifest step artifact path is required")
+    artifact_path = register_manifest_artifact(
+        manifest,
+        manifest_step_artifact_key(artifact_ref),
+        str(path),
+    )
+    step_artifacts.append(payload)
+    return artifact_path
+
+
+def manifest_step_artifact_key(artifact_ref: Any) -> str:
+    step_id = _artifact_ref_value(artifact_ref, "step_id") or "workflow"
+    artifact_type = _artifact_ref_value(artifact_ref, "artifact_type")
+    artifact_id = _artifact_ref_value(artifact_ref, "artifact_id")
+    if artifact_type is None or artifact_id is None:
+        raise RunManifestError("manifest step artifact requires artifact_type and artifact_id")
+    return f"step.{step_id}.{artifact_type}.{artifact_id}"
+
+
 def manifest_schema_version(manifest: dict[str, Any]) -> str | None:
     value = manifest.get("schema_version")
     if value is None:
         return None
     return str(value)
+
+
+def _normalize_manifest_artifact_path(relative_path: str) -> str:
+    path = Path(str(relative_path))
+    if path.is_absolute() or ".." in path.parts:
+        raise RunManifestError(
+            f"manifest artifact path must be relative to the run directory: {relative_path}"
+        )
+    normalized = path.as_posix()
+    if not normalized or normalized == ".":
+        raise RunManifestError("manifest artifact path is required")
+    return normalized
+
+
+def _artifact_ref_value(artifact_ref: Any, name: str) -> Any:
+    if isinstance(artifact_ref, dict):
+        return artifact_ref.get(name)
+    return getattr(artifact_ref, name, None)

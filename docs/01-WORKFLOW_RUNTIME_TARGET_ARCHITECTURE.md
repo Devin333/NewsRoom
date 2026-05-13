@@ -2112,3 +2112,23 @@ SubworkflowStepRunner
 ```
 
 这些 metrics 只用于 manifest / step_results / debug / audit，不改变 routing、quality、human approval、publish 等强治理决策。LLM route hint 仍然只能作为 hint 使用。
+
+### N.2 Manifest artifact registration
+
+本轮把 run manifest 的 artifact 注册收口到 `core/framework/workflow/manifest.py`：
+
+```text
+register_manifest_artifact()
+  统一校验 artifact key 和相对路径。
+  禁止 absolute path 和 .. path traversal。
+  将 Windows 路径分隔符规范化为 manifest 中的 POSIX 风格路径。
+
+register_manifest_step_artifact()
+  统一记录 StepOutcome.artifacts 到 step_artifacts。
+  同时注册 step.<step_id>.<artifact_type>.<artifact_id> artifact key。
+
+manifest_step_artifact_key()
+  保持 step artifact key 生成逻辑集中，避免 executor 内继续散落字符串拼接。
+```
+
+`WorkflowExecutor` 仍然负责决定哪些 artifact 要写，但不再直接散写 `manifest["artifacts"][...] = ...`。这一步不改变 manifest schema，只增强 manifest 写入边界和路径安全。

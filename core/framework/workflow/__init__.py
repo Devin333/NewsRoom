@@ -11,8 +11,12 @@ from core.framework.workflow.executor import WorkflowExecutor
 from core.framework.workflow.manifest import (
     REQUIRED_RUN_ARTIFACTS,
     RUN_MANIFEST_SCHEMA_VERSION,
+    RunManifestError,
     build_run_manifest,
     manifest_schema_version,
+    manifest_step_artifact_key,
+    register_manifest_artifact,
+    register_manifest_step_artifact,
 )
 from core.framework.workflow.result import StepOutcome, WorkflowError, WorkflowResult
 from core.framework.workflow.routing import (
@@ -58,6 +62,7 @@ __all__ = [
     "QualityGateStepRunner",
     "REQUIRED_RUN_ARTIFACTS",
     "RUN_MANIFEST_SCHEMA_VERSION",
+    "RunManifestError",
     "RouterStepRunner",
     "ConditionalExpressionError",
     "RoutingEngine",
@@ -76,4 +81,7 @@ __all__ = [
     "WorkflowResult",
     "build_run_manifest",
     "manifest_schema_version",
+    "manifest_step_artifact_key",
+    "register_manifest_artifact",
+    "register_manifest_step_artifact",
 ]
