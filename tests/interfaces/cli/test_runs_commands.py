@@ -90,6 +90,55 @@ def test_news_cli_runs_replay_text_reads_real_files(tmp_path, capsys) -> None:
     assert "- report_json path=report.json" in captured.out
 
 
+def test_news_cli_runs_diagnostics_json(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(news_cli, "RunInspectionService", _FakeRunInspectionService)
+
+    exit_code = news_cli.main(["runs", "diagnostics", "run-1", "--json"])
+
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["run_id"] == "run-1"
+    assert payload["diagnostics"]["healthy"] is True
+
+
+def test_news_cli_runs_health_text(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(news_cli, "RunInspectionService", _FakeRunInspectionService)
+
+    exit_code = news_cli.main(["runs", "health", "run-1"])
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "severity=ok" in captured.out
+    assert "healthy=true" in captured.out
+
+
+def test_news_cli_runs_catalog_health_json(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(news_cli, "RunInspectionService", _FakeRunInspectionService)
+
+    exit_code = news_cli.main(["runs", "catalog-health", "--json"])
+
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["health"]["severity"] == "ok"
+    assert payload["health"]["run_count"] == 1
+
+
+def test_news_cli_runs_compare_json(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(news_cli, "RunInspectionService", _FakeRunInspectionService)
+
+    exit_code = news_cli.main(["runs", "compare", "run-1", "run-2", "--json"])
+
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["base_run_id"] == "run-1"
+    assert payload["target_run_id"] == "run-2"
+    assert payload["comparison"]["same_workflow"] is True
+
+
 class _FakeRunInspectionService:
     def __init__(self, artifact_root=".newsroom/runs") -> None:
         self.artifact_root = artifact_root
@@ -148,6 +197,86 @@ class _FakeRunInspectionService:
                 "event_count": len(events),
                 "events": events,
                 "events_path": f".newsroom/runs/{run_id}/events.jsonl",
+            }
+        )
+
+    def replay_run(self, run_id):
+        return _FakeResult(
+            {
+                "run_id": run_id,
+                "manifest": {"run_id": run_id, "status": "succeeded"},
+                "manifest_path": f".newsroom/runs/{run_id}/manifest.json",
+                "event_count": 1,
+                "events": [{"event_type": "workflow_started", "payload": {}}],
+                "events_path": f".newsroom/runs/{run_id}/events.jsonl",
+                "events_error": None,
+                "artifact_count": 1,
+                "artifacts": [
+                    {
+                        "artifact_key": "report_json",
+                        "relative_path": "report.json",
+                        "content_type": "application/json",
+                        "size_bytes": 14,
+                        "content": {"title": "Report"},
+                        "read_error": None,
+                    }
+                ],
+            }
+        )
+
+    def get_run_diagnostics(self, run_id):
+        return _FakeResult(
+            {
+                "run_id": run_id,
+                "diagnostics": {
+                    "healthy": True,
+                    "health_report": {"severity": "ok"},
+                    "timeline_summary": {"event_count": 2},
+                    "artifact_inventory": {"artifact_count": 12, "missing_count": 0},
+                },
+            }
+        )
+
+    def get_run_health(self, run_id):
+        return _FakeResult(
+            {
+                "run_id": run_id,
+                "health": {
+                    "severity": "ok",
+                    "healthy": True,
+                    "summary": "run completed",
+                    "failed_steps": [],
+                    "warnings": [],
+                },
+            }
+        )
+
+    def get_catalog_health(self):
+        return _FakeResult(
+            {
+                "health": {
+                    "severity": "ok",
+                    "healthy": True,
+                    "run_count": 1,
+                    "failed_count": 0,
+                    "paused_count": 0,
+                    "latest_run_id": "run-1",
+                    "warnings": [],
+                }
+            }
+        )
+
+    def compare_runs(self, base_run_id, target_run_id):
+        return _FakeResult(
+            {
+                "base_run_id": base_run_id,
+                "target_run_id": target_run_id,
+                "comparison": {
+                    "same_workflow": True,
+                    "status_changed": False,
+                    "workflow_version_changed": True,
+                    "has_behavioral_change": True,
+                },
             }
         )
 

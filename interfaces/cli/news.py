@@ -923,6 +923,52 @@ def build_parser() -> argparse.ArgumentParser:
     runs_replay_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     runs_replay_parser.set_defaults(handler=_runs_replay)
 
+    runs_diagnostics_parser = runs_subparsers.add_parser(
+        "diagnostics",
+        help="Inspect run diagnostics",
+    )
+    runs_diagnostics_parser.add_argument("run_id", help="Run id")
+    runs_diagnostics_parser.add_argument(
+        "--artifact-root",
+        default=".newsroom/runs",
+        help="Directory where run artifacts are stored",
+    )
+    runs_diagnostics_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    runs_diagnostics_parser.set_defaults(handler=_runs_diagnostics)
+
+    runs_health_parser = runs_subparsers.add_parser("health", help="Inspect run health")
+    runs_health_parser.add_argument("run_id", help="Run id")
+    runs_health_parser.add_argument(
+        "--artifact-root",
+        default=".newsroom/runs",
+        help="Directory where run artifacts are stored",
+    )
+    runs_health_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    runs_health_parser.set_defaults(handler=_runs_health)
+
+    runs_catalog_health_parser = runs_subparsers.add_parser(
+        "catalog-health",
+        help="Inspect run catalog health",
+    )
+    runs_catalog_health_parser.add_argument(
+        "--artifact-root",
+        default=".newsroom/runs",
+        help="Directory where run artifacts are stored",
+    )
+    runs_catalog_health_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    runs_catalog_health_parser.set_defaults(handler=_runs_catalog_health)
+
+    runs_compare_parser = runs_subparsers.add_parser("compare", help="Compare two workflow runs")
+    runs_compare_parser.add_argument("base_run_id", help="Base run id")
+    runs_compare_parser.add_argument("target_run_id", help="Target run id")
+    runs_compare_parser.add_argument(
+        "--artifact-root",
+        default=".newsroom/runs",
+        help="Directory where run artifacts are stored",
+    )
+    runs_compare_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    runs_compare_parser.set_defaults(handler=_runs_compare)
+
     artifacts_parser = subparsers.add_parser("artifacts", help="Inspect run artifacts")
     artifacts_subparsers = artifacts_parser.add_subparsers(dest="artifacts_command", required=True)
 
@@ -2404,6 +2450,99 @@ def _runs_replay(args: argparse.Namespace) -> int:
             if artifact["read_error"]:
                 line = f"{line} error={artifact['read_error']}"
             print(line)
+    return 0
+
+
+def _runs_diagnostics(args: argparse.Namespace) -> int:
+    try:
+        result = RunInspectionService(artifact_root=args.artifact_root).get_run_diagnostics(
+            args.run_id
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        print(str(exc))
+        return 1
+    payload = result.to_dict()
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        diagnostics = payload["diagnostics"]
+        health = diagnostics.get("health_report") or {}
+        timeline_summary = diagnostics.get("timeline_summary") or {}
+        artifact_inventory = diagnostics.get("artifact_inventory") or {}
+        print(f"run_id={payload['run_id']}")
+        print(f"healthy={str(diagnostics.get('healthy')).lower()}")
+        print(f"health_severity={health.get('severity')}")
+        print(f"event_count={timeline_summary.get('event_count')}")
+        print(f"artifact_count={artifact_inventory.get('artifact_count')}")
+        print(f"missing_artifacts={artifact_inventory.get('missing_count')}")
+    return 0
+
+
+def _runs_health(args: argparse.Namespace) -> int:
+    try:
+        result = RunInspectionService(artifact_root=args.artifact_root).get_run_health(args.run_id)
+    except (FileNotFoundError, ValueError) as exc:
+        print(str(exc))
+        return 1
+    payload = result.to_dict()
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        health = payload["health"]
+        print(f"run_id={payload['run_id']}")
+        print(f"severity={health.get('severity')}")
+        print(f"healthy={str(health.get('healthy')).lower()}")
+        print(f"summary={health.get('summary')}")
+        print(f"failed_steps={','.join(health.get('failed_steps') or [])}")
+        for warning in health.get("warnings") or []:
+            print(f"warning={warning}")
+    return 0
+
+
+def _runs_catalog_health(args: argparse.Namespace) -> int:
+    result = RunInspectionService(artifact_root=args.artifact_root).get_catalog_health()
+    payload = result.to_dict()
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        health = payload["health"]
+        print(f"severity={health.get('severity')}")
+        print(f"healthy={str(health.get('healthy')).lower()}")
+        print(f"run_count={health.get('run_count')}")
+        print(f"failed_count={health.get('failed_count')}")
+        print(f"paused_count={health.get('paused_count')}")
+        print(f"latest_run_id={health.get('latest_run_id')}")
+        for warning in health.get("warnings") or []:
+            print(f"warning={warning}")
+    return 0
+
+
+def _runs_compare(args: argparse.Namespace) -> int:
+    try:
+        result = RunInspectionService(artifact_root=args.artifact_root).compare_runs(
+            args.base_run_id,
+            args.target_run_id,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        print(str(exc))
+        return 1
+    payload = result.to_dict()
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        comparison = payload["comparison"]
+        print(f"base_run_id={payload['base_run_id']}")
+        print(f"target_run_id={payload['target_run_id']}")
+        print(f"same_workflow={str(comparison.get('same_workflow')).lower()}")
+        print(f"status_changed={str(comparison.get('status_changed')).lower()}")
+        print(
+            "workflow_version_changed="
+            f"{str(comparison.get('workflow_version_changed')).lower()}"
+        )
+        print(
+            "has_behavioral_change="
+            f"{str(comparison.get('has_behavioral_change')).lower()}"
+        )
     return 0
 
 

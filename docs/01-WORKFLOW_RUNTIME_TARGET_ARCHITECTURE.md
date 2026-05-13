@@ -2476,3 +2476,42 @@ HTTP / MCP / CLI
       -> WorkflowRunInspector
           -> run artifact directory
 ```
+
+### N.9 CLI run diagnostics exposure
+
+本轮继续把 `RunInspectionService` 已有的 diagnostics / health / catalog health / compare 能力接入 CLI 的 `runs` 子命令。CLI 仍然只调用 Interface service，不直接调用 `WorkflowExecutor` 或 `WorkflowRunInspector`。
+
+CLI 新增：
+
+```text
+news runs diagnostics <run_id>
+news runs health <run_id>
+news runs catalog-health
+news runs compare <base_run_id> <target_run_id>
+```
+
+每个命令都支持：
+
+```text
+--artifact-root
+--json
+```
+
+边界说明：
+
+```text
+CLI 只负责参数解析和输出格式。
+CLI 不执行 workflow。
+CLI 不解析业务 Source / Evidence / Report 质量语义。
+CLI 不绕过 RunInspectionService。
+文本输出只展示 summary / severity / count 类信息。
+JSON 输出透传 RunInspectionService DTO，供脚本或调试工具消费。
+```
+
+至此 replay/debug/audit 读取路径已经形成一致入口：
+
+```text
+CLI / HTTP API / MCP
+  -> RunInspectionService
+      -> WorkflowRunInspector
+```
