@@ -2421,3 +2421,58 @@ interfaces/services/run_inspection_service.py
 ```
 
 这一步让 replay/debug/audit 的底层读取能力归 Workflow Runtime，Interface 只做应用服务形状适配。
+
+### N.8 Interface diagnostics/catalog exposure
+
+本轮继续把已经落地的 Workflow Runtime inspection 能力暴露到 Interface application service、HTTP API 和 MCP tool 层。它不是让 Interface 直接调用 `WorkflowExecutor`，而是让 Interface 继续通过 `RunInspectionService` 间接使用只读 inspection 能力。
+
+`interfaces/services/run_inspection_service.py` 新增：
+
+```text
+RunDiagnosticsResult
+RunHealthResult
+RunCatalogHealthResult
+RunComparisonResult
+
+RunInspectionService.get_run_diagnostics(run_id)
+RunInspectionService.get_run_health(run_id)
+RunInspectionService.get_catalog_health()
+RunInspectionService.compare_runs(base_run_id, target_run_id)
+```
+
+HTTP API 新增：
+
+```text
+GET /api/v1/runs/catalog/health
+GET /api/v1/runs/compare?base_run_id=...&target_run_id=...
+GET /api/v1/runs/{run_id}/diagnostics
+GET /api/v1/runs/{run_id}/health
+```
+
+MCP tools 新增：
+
+```text
+news.run.diagnostics
+news.run.health
+news.run.catalog_health
+news.run.compare
+```
+
+边界说明：
+
+```text
+Interface 只做 DTO / HTTP / MCP 适配。
+Interface 不直接创建 WorkflowExecutor。
+Interface 不执行 workflow。
+Interface 不解析业务 Source / Evidence / Report 质量语义。
+diagnostics / health / catalog / compare 均来自 WorkflowRunInspector 和 RunInspectionService。
+```
+
+这一步让 replay/debug/audit 能力从 core runtime 进入应用入口，但仍保持调用链分层：
+
+```text
+HTTP / MCP / CLI
+  -> RunInspectionService
+      -> WorkflowRunInspector
+          -> run artifact directory
+```

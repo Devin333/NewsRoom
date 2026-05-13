@@ -261,6 +261,14 @@ class MCPApplicationService:
                 return self._run_events(args)
             if tool_name == "news.run.replay":
                 return self._run_replay(args)
+            if tool_name == "news.run.diagnostics":
+                return self._run_diagnostics(args)
+            if tool_name == "news.run.health":
+                return self._run_health(args)
+            if tool_name == "news.run.catalog_health":
+                return self._run_catalog_health()
+            if tool_name == "news.run.compare":
+                return self._run_compare(args)
             if tool_name == "news.run.lineage":
                 return self._run_lineage(args)
             if tool_name == "news.run.lineage.upstream":
@@ -684,6 +692,53 @@ class MCPApplicationService:
         result = self.run_inspection_service_factory().replay_run(run_id)
         return MCPToolCallResult(
             tool_name="news.run.replay",
+            success=True,
+            data=result.to_dict(),
+        )
+
+    def _run_diagnostics(self, args: dict[str, Any]) -> MCPToolCallResult:
+        run_id = str(args.get("run_id") or "")
+        if not run_id:
+            raise ValueError("run_id is required")
+        result = self.run_inspection_service_factory().get_run_diagnostics(run_id)
+        return MCPToolCallResult(
+            tool_name="news.run.diagnostics",
+            success=True,
+            data=result.to_dict(),
+        )
+
+    def _run_health(self, args: dict[str, Any]) -> MCPToolCallResult:
+        run_id = str(args.get("run_id") or "")
+        if not run_id:
+            raise ValueError("run_id is required")
+        result = self.run_inspection_service_factory().get_run_health(run_id)
+        return MCPToolCallResult(
+            tool_name="news.run.health",
+            success=True,
+            data=result.to_dict(),
+        )
+
+    def _run_catalog_health(self) -> MCPToolCallResult:
+        result = self.run_inspection_service_factory().get_catalog_health()
+        return MCPToolCallResult(
+            tool_name="news.run.catalog_health",
+            success=True,
+            data=result.to_dict(),
+        )
+
+    def _run_compare(self, args: dict[str, Any]) -> MCPToolCallResult:
+        base_run_id = str(args.get("base_run_id") or "")
+        target_run_id = str(args.get("target_run_id") or "")
+        if not base_run_id:
+            raise ValueError("base_run_id is required")
+        if not target_run_id:
+            raise ValueError("target_run_id is required")
+        result = self.run_inspection_service_factory().compare_runs(
+            base_run_id,
+            target_run_id,
+        )
+        return MCPToolCallResult(
+            tool_name="news.run.compare",
             success=True,
             data=result.to_dict(),
         )
@@ -1424,6 +1479,45 @@ def _tools() -> list[MCPTool]:
                 "type": "object",
                 "required": ["run_id"],
                 "properties": {"run_id": {"type": "string"}},
+            },
+        ),
+        MCPTool(
+            name="news.run.diagnostics",
+            title="Inspect run diagnostics",
+            description="Read workflow run diagnostics through RunInspectionService.",
+            input_schema={
+                "type": "object",
+                "required": ["run_id"],
+                "properties": {"run_id": {"type": "string"}},
+            },
+        ),
+        MCPTool(
+            name="news.run.health",
+            title="Inspect run health",
+            description="Read workflow run health through RunInspectionService.",
+            input_schema={
+                "type": "object",
+                "required": ["run_id"],
+                "properties": {"run_id": {"type": "string"}},
+            },
+        ),
+        MCPTool(
+            name="news.run.catalog_health",
+            title="Inspect run catalog health",
+            description="Read workflow run catalog health through RunInspectionService.",
+            input_schema={"type": "object", "properties": {}},
+        ),
+        MCPTool(
+            name="news.run.compare",
+            title="Compare workflow runs",
+            description="Compare two workflow runs through RunInspectionService.",
+            input_schema={
+                "type": "object",
+                "required": ["base_run_id", "target_run_id"],
+                "properties": {
+                    "base_run_id": {"type": "string"},
+                    "target_run_id": {"type": "string"},
+                },
             },
         ),
         MCPTool(

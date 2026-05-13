@@ -568,6 +568,28 @@ def test_runs_list_returns_runs() -> None:
     assert payload["data"]["runs"][0]["run_id"] == "run-1"
 
 
+def test_run_catalog_health_returns_health() -> None:
+    client = TestClient(create_app(run_inspection_service_factory=lambda: _FakeRunInspectionService()))
+
+    response = client.get("/api/v1/runs/catalog/health")
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["success"] is True
+    assert payload["data"]["health"]["severity"] == "ok"
+
+
+def test_run_compare_returns_comparison() -> None:
+    client = TestClient(create_app(run_inspection_service_factory=lambda: _FakeRunInspectionService()))
+
+    response = client.get("/api/v1/runs/compare?base_run_id=run-1&target_run_id=run-2")
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["success"] is True
+    assert payload["data"]["comparison"]["same_workflow"] is True
+
+
 def test_run_detail_missing_uses_unified_error() -> None:
     client = TestClient(create_app(run_inspection_service_factory=lambda: _MissingRunInspectionService()))
 
@@ -634,6 +656,28 @@ def test_run_replay_invalid_uses_unified_error() -> None:
     assert response.status_code == 400
     assert payload["success"] is False
     assert payload["error"]["code"] == "invalid_run_replay_request"
+
+
+def test_run_diagnostics_returns_diagnostics() -> None:
+    client = TestClient(create_app(run_inspection_service_factory=lambda: _FakeRunInspectionService()))
+
+    response = client.get("/api/v1/runs/run-1/diagnostics")
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["success"] is True
+    assert payload["data"]["diagnostics"]["healthy"] is True
+
+
+def test_run_health_returns_health() -> None:
+    client = TestClient(create_app(run_inspection_service_factory=lambda: _FakeRunInspectionService()))
+
+    response = client.get("/api/v1/runs/run-1/health")
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["success"] is True
+    assert payload["data"]["health"]["severity"] == "ok"
 
 
 def test_run_replay_api_reads_real_files_and_redacts(tmp_path) -> None:
@@ -1274,6 +1318,50 @@ class _FakeRunInspectionService:
             }
         )
 
+    def get_run_diagnostics(self, run_id):
+        return _FakeResult(
+            {
+                "run_id": run_id,
+                "diagnostics": {
+                    "healthy": True,
+                    "health_report": {"severity": "ok"},
+                    "timeline_summary": {"event_count": 2},
+                },
+            }
+        )
+
+    def get_run_health(self, run_id):
+        return _FakeResult(
+            {
+                "run_id": run_id,
+                "health": {"severity": "ok", "healthy": True},
+            }
+        )
+
+    def get_catalog_health(self):
+        return _FakeResult(
+            {
+                "health": {
+                    "severity": "ok",
+                    "run_count": 1,
+                    "latest_run_id": "run-1",
+                }
+            }
+        )
+
+    def compare_runs(self, base_run_id, target_run_id):
+        return _FakeResult(
+            {
+                "base_run_id": base_run_id,
+                "target_run_id": target_run_id,
+                "comparison": {
+                    "same_workflow": True,
+                    "status_changed": False,
+                    "has_behavioral_change": False,
+                },
+            }
+        )
+
 
 class _MissingRunInspectionService:
     def get_run(self, run_id):
@@ -1282,8 +1370,20 @@ class _MissingRunInspectionService:
     def replay_run(self, run_id):
         raise FileNotFoundError(f"run not found: {run_id}")
 
+    def get_run_diagnostics(self, run_id):
+        raise FileNotFoundError(f"run not found: {run_id}")
+
+    def get_run_health(self, run_id):
+        raise FileNotFoundError(f"run not found: {run_id}")
+
+    def compare_runs(self, base_run_id, target_run_id):
+        raise FileNotFoundError(f"run not found: {base_run_id}")
+
     def list_runs(self, *, limit):
         return _FakeResult({"run_count": 0, "runs": []})
+
+    def get_catalog_health(self):
+        return _FakeResult({"health": {"severity": "unknown", "run_count": 0}})
 
 
 class _InvalidReplayInspectionService:

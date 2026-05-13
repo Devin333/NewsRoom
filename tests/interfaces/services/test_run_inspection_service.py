@@ -214,6 +214,51 @@ def test_run_inspection_replay_expands_source_artifacts(tmp_path) -> None:
     assert "hidden-key" not in json.dumps(payload)
 
 
+def test_run_inspection_diagnostics_and_health_read_real_run(tmp_path) -> None:
+    _write_complete_inspection_run(tmp_path, "run-1")
+
+    service = RunInspectionService(tmp_path)
+    diagnostics = service.get_run_diagnostics("run-1")
+    health = service.get_run_health("run-1")
+
+    diagnostics_payload = diagnostics.to_dict()
+    health_payload = health.to_dict()
+    assert diagnostics_payload["run_id"] == "run-1"
+    assert diagnostics_payload["diagnostics"]["healthy"] is True
+    assert diagnostics_payload["diagnostics"]["timeline_summary"]["event_count"] == 2
+    assert health_payload["run_id"] == "run-1"
+    assert health_payload["health"]["severity"] == "ok"
+
+
+def test_run_inspection_catalog_health_reports_failed_run(tmp_path) -> None:
+    _write_complete_inspection_run(tmp_path, "run-ok")
+    _write_complete_inspection_run(tmp_path, "run-failed", status="failed", terminal_key="error")
+
+    result = RunInspectionService(tmp_path).get_catalog_health()
+
+    payload = result.to_dict()
+    assert payload["health"]["run_count"] == 2
+    assert payload["health"]["failed_count"] == 1
+    assert payload["health"]["latest_failed_run_id"] == "run-failed"
+
+
+def test_run_inspection_compare_runs_reports_version_change(tmp_path) -> None:
+    _write_complete_inspection_run(tmp_path, "run-v1", workflow_version="1.0")
+    _write_complete_inspection_run(tmp_path, "run-v2", workflow_version="2.0")
+
+    result = RunInspectionService(tmp_path).compare_runs("run-v1", "run-v2")
+
+    payload = result.to_dict()
+    assert payload["base_run_id"] == "run-v1"
+    assert payload["target_run_id"] == "run-v2"
+    assert payload["comparison"]["workflow_version_changed"] is True
+
+
+def test_run_inspection_diagnostics_rejects_missing_run(tmp_path) -> None:
+    with pytest.raises(FileNotFoundError):
+        RunInspectionService(tmp_path).get_run_diagnostics("missing")
+
+
 def test_run_inspection_rejects_path_traversal(tmp_path) -> None:
     with pytest.raises(ValueError):
         RunInspectionService(tmp_path).get_run("../secret")
@@ -241,5 +286,74 @@ def _write_run_with_events(root, run_id, events) -> None:
     (run_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     (run_dir / "events.jsonl").write_text(
         "\n".join(json.dumps(event) for event in events) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _write_complete_inspection_run(
+    root,
+    run_id,
+    *,
+    status="succeeded",
+    workflow_version="1.0",
+    terminal_key="output",
+) -> None:
+    run_dir = root / run_id
+    run_dir.mkdir()
+    artifacts = {
+        "request": "request.json",
+        "workflow_spec": "workflow_spec.json",
+        "workflow_version": "workflow_version.json",
+        "events": "events.jsonl",
+        "manifest": "manifest.json",
+        "data_buffer_snapshot": "data_buffer_snapshot.json",
+        "data_buffer_initial": "data_buffer.initial.json",
+        "data_buffer_final": "data_buffer.final.json",
+        "data_buffer_diff": "data_buffer.diff.json",
+        "step_results": "step_results.json",
+        "metrics": "metrics.json",
+        "redaction_report": "redaction_report.json",
+        terminal_key: f"{terminal_key}.json",
+    }
+    manifest = {
+        "schema_version": "newsroom.workflow_run_manifest.v1",
+        "run_id": run_id,
+        "workflow_id": "daily",
+        "workflow_version": workflow_version,
+        "profile": "test",
+        "status": status,
+        "started_at": "2026-05-14T01:00:00Z",
+        "finished_at": "2026-05-14T01:00:01Z",
+        "path": ["step"],
+        "steps": {"step": {"status": "succeeded", "outputs": {"report": "ok"}}},
+        "artifacts": artifacts,
+        "step_count": 1,
+        "event_count": 2,
+        "checkpoint_count": 0,
+    }
+    payloads = {
+        "request.json": {"topic": "ai"},
+        "workflow_spec.json": {"workflow_id": "daily"},
+        "workflow_version.json": {"workflow_version": workflow_version},
+        "data_buffer_snapshot.json": {"request": {"topic": "ai"}, "report": "ok"},
+        "data_buffer.initial.json": {"request": {"topic": "ai"}},
+        "data_buffer.final.json": {"request": {"topic": "ai"}, "report": "ok"},
+        "data_buffer.diff.json": {"added": {"report": "ok"}, "changed": {}, "removed": {}},
+        "step_results.json": {"step": {"status": "succeeded", "outputs": {"report": "ok"}}},
+        "metrics.json": {"status": status, "step_count": 1},
+        "redaction_report.json": {"redacted": False},
+        f"{terminal_key}.json": {"report": "ok"} if terminal_key == "output" else {"message": "failed"},
+    }
+    (run_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    for relative_path, payload in payloads.items():
+        (run_dir / relative_path).write_text(json.dumps(payload), encoding="utf-8")
+    (run_dir / "events.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps({"event_type": "workflow_started", "run_id": run_id, "payload": {}}),
+                json.dumps({"event_type": f"workflow_{status}", "run_id": run_id, "payload": {}}),
+            ]
+        )
+        + "\n",
         encoding="utf-8",
     )

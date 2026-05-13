@@ -45,6 +45,10 @@ def test_mcp_catalog_lists_tools_without_calling_factories() -> None:
     assert "news.run.show" in tool_names
     assert "news.run.events" in tool_names
     assert "news.run.replay" in tool_names
+    assert "news.run.diagnostics" in tool_names
+    assert "news.run.health" in tool_names
+    assert "news.run.catalog_health" in tool_names
+    assert "news.run.compare" in tool_names
     assert "news.run.lineage" in tool_names
     assert "news.run.lineage.upstream" in tool_names
     assert "news.run.lineage.downstream" in tool_names
@@ -739,6 +743,40 @@ def test_mcp_run_replay_reads_real_local_replay_bundle(tmp_path) -> None:
     assert artifacts["report_json"]["content"]["api_key"] == "[redacted]"
 
 
+def test_mcp_run_diagnostics_and_health_read_real_local_run(tmp_path) -> None:
+    _write_complete_inspection_run(tmp_path, "run-diagnostics")
+    service = MCPApplicationService(
+        run_inspection_service_factory=lambda: RunInspectionService(artifact_root=tmp_path)
+    )
+
+    diagnostics = service.call_tool("news.run.diagnostics", {"run_id": "run-diagnostics"})
+    health = service.call_tool("news.run.health", {"run_id": "run-diagnostics"})
+
+    assert diagnostics.success is True
+    assert diagnostics.data["diagnostics"]["healthy"] is True
+    assert health.success is True
+    assert health.data["health"]["severity"] == "ok"
+
+
+def test_mcp_run_catalog_health_and_compare_read_real_local_runs(tmp_path) -> None:
+    _write_complete_inspection_run(tmp_path, "run-v1", workflow_version="1.0")
+    _write_complete_inspection_run(tmp_path, "run-v2", workflow_version="2.0")
+    service = MCPApplicationService(
+        run_inspection_service_factory=lambda: RunInspectionService(artifact_root=tmp_path)
+    )
+
+    catalog_health = service.call_tool("news.run.catalog_health", {})
+    comparison = service.call_tool(
+        "news.run.compare",
+        {"base_run_id": "run-v1", "target_run_id": "run-v2"},
+    )
+
+    assert catalog_health.success is True
+    assert catalog_health.data["health"]["run_count"] == 2
+    assert comparison.success is True
+    assert comparison.data["comparison"]["workflow_version_changed"] is True
+
+
 def test_mcp_reads_run_events_resource_from_local_events(tmp_path) -> None:
     _write_run_with_events(
         tmp_path,
@@ -1277,6 +1315,68 @@ def _write_run_with_replay_artifacts(root, run_id) -> None:
         encoding="utf-8",
     )
     (run_dir / "report.md").write_text("# Replay\n", encoding="utf-8")
+
+
+def _write_complete_inspection_run(root, run_id, *, workflow_version="1.0") -> None:
+    run_dir = root / run_id
+    run_dir.mkdir()
+    artifacts = {
+        "request": "request.json",
+        "workflow_spec": "workflow_spec.json",
+        "workflow_version": "workflow_version.json",
+        "events": "events.jsonl",
+        "manifest": "manifest.json",
+        "data_buffer_snapshot": "data_buffer_snapshot.json",
+        "data_buffer_initial": "data_buffer.initial.json",
+        "data_buffer_final": "data_buffer.final.json",
+        "data_buffer_diff": "data_buffer.diff.json",
+        "step_results": "step_results.json",
+        "metrics": "metrics.json",
+        "redaction_report": "redaction_report.json",
+        "output": "output.json",
+    }
+    manifest = {
+        "schema_version": "newsroom.workflow_run_manifest.v1",
+        "run_id": run_id,
+        "workflow_id": "daily",
+        "workflow_version": workflow_version,
+        "profile": "test",
+        "status": "succeeded",
+        "started_at": "2026-05-14T01:00:00Z",
+        "finished_at": "2026-05-14T01:00:01Z",
+        "path": ["step"],
+        "steps": {"step": {"status": "succeeded", "outputs": {"report": "ok"}}},
+        "artifacts": artifacts,
+        "step_count": 1,
+        "event_count": 2,
+        "checkpoint_count": 0,
+    }
+    payloads = {
+        "request.json": {"topic": "ai"},
+        "workflow_spec.json": {"workflow_id": "daily"},
+        "workflow_version.json": {"workflow_version": workflow_version},
+        "data_buffer_snapshot.json": {"request": {"topic": "ai"}, "report": "ok"},
+        "data_buffer.initial.json": {"request": {"topic": "ai"}},
+        "data_buffer.final.json": {"request": {"topic": "ai"}, "report": "ok"},
+        "data_buffer.diff.json": {"added": {"report": "ok"}, "changed": {}, "removed": {}},
+        "step_results.json": {"step": {"status": "succeeded", "outputs": {"report": "ok"}}},
+        "metrics.json": {"status": "succeeded", "step_count": 1},
+        "redaction_report.json": {"redacted": False},
+        "output.json": {"report": "ok"},
+    }
+    (run_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    for relative_path, payload in payloads.items():
+        (run_dir / relative_path).write_text(json.dumps(payload), encoding="utf-8")
+    (run_dir / "events.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps({"event_type": "workflow_started", "run_id": run_id, "payload": {}}),
+                json.dumps({"event_type": "workflow_succeeded", "run_id": run_id, "payload": {}}),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
 
 def _write_lineage_refs(root) -> None:

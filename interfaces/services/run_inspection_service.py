@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from core.framework.serialization import to_json_safe
 from core.framework.workflow.inspection import (
     WorkflowArtifactContentRecord,
     WorkflowReplayContentBundle,
@@ -126,6 +127,52 @@ class RunReplayResult:
         }
 
 
+@dataclass(frozen=True)
+class RunDiagnosticsResult:
+    run_id: str
+    diagnostics: dict[str, Any]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "run_id": self.run_id,
+            "diagnostics": to_json_safe(self.diagnostics),
+        }
+
+
+@dataclass(frozen=True)
+class RunHealthResult:
+    run_id: str
+    health: dict[str, Any]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "run_id": self.run_id,
+            "health": to_json_safe(self.health),
+        }
+
+
+@dataclass(frozen=True)
+class RunCatalogHealthResult:
+    health: dict[str, Any]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"health": to_json_safe(self.health)}
+
+
+@dataclass(frozen=True)
+class RunComparisonResult:
+    base_run_id: str
+    target_run_id: str
+    comparison: dict[str, Any]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "base_run_id": self.base_run_id,
+            "target_run_id": self.target_run_id,
+            "comparison": to_json_safe(self.comparison),
+        }
+
+
 class RunInspectionService:
     def __init__(self, artifact_root: str | Path = ".newsroom/runs") -> None:
         self.artifact_root = Path(artifact_root)
@@ -190,6 +237,44 @@ class RunInspectionService:
         bundle = self._inspector.build_replay_content_bundle(run_dir=run_dir, redact=True)
         return _replay_result_from_content_bundle(bundle)
 
+    def get_run_diagnostics(self, run_id: str) -> RunDiagnosticsResult:
+        run_dir = _existing_run_dir(self.artifact_root, run_id)
+        try:
+            diagnostics = self._inspector.build_diagnostics(run_dir=run_dir)
+        except WorkflowRunInspectionError as exc:
+            raise ValueError(str(exc)) from exc
+        return RunDiagnosticsResult(
+            run_id=str(diagnostics.inspection.run_id or run_id),
+            diagnostics=diagnostics.to_dict(),
+        )
+
+    def get_run_health(self, run_id: str) -> RunHealthResult:
+        run_dir = _existing_run_dir(self.artifact_root, run_id)
+        try:
+            health = self._inspector.build_health_report(run_dir=run_dir)
+        except WorkflowRunInspectionError as exc:
+            raise ValueError(str(exc)) from exc
+        return RunHealthResult(
+            run_id=str(health.run_id or run_id),
+            health=health.to_dict(),
+        )
+
+    def get_catalog_health(self) -> RunCatalogHealthResult:
+        return RunCatalogHealthResult(self._inspector.catalog_health().to_dict())
+
+    def compare_runs(self, base_run_id: str, target_run_id: str) -> RunComparisonResult:
+        _existing_run_dir(self.artifact_root, base_run_id)
+        _existing_run_dir(self.artifact_root, target_run_id)
+        try:
+            comparison = self._inspector.compare_runs(base_run_id, target_run_id)
+        except WorkflowRunInspectionError as exc:
+            raise ValueError(str(exc)) from exc
+        return RunComparisonResult(
+            base_run_id=base_run_id,
+            target_run_id=target_run_id,
+            comparison=comparison.to_dict(),
+        )
+
 
 def _summary_from_run_item(item: WorkflowRunListItem) -> RunSummary:
     return RunSummary(
@@ -243,3 +328,10 @@ def _resolve_run_dir_for_service(artifact_root: Path, run_id: str) -> Path:
         return resolve_run_dir(artifact_root, run_id)
     except WorkflowRunInspectionError as exc:
         raise ValueError(f"invalid run id: {run_id}") from exc
+
+
+def _existing_run_dir(artifact_root: Path, run_id: str) -> Path:
+    run_dir = _resolve_run_dir_for_service(artifact_root, run_id)
+    if not (run_dir / "manifest.json").exists():
+        raise FileNotFoundError(f"run not found: {run_id}")
+    return run_dir

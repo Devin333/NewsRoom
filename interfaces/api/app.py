@@ -749,6 +749,25 @@ def create_app(
     def list_runs(limit: int = 20):
         return _success(run_inspection_service_factory().list_runs(limit=limit).to_dict())
 
+    @api.get("/api/v1/runs/catalog/health")
+    def get_run_catalog_health():
+        return _success(run_inspection_service_factory().get_catalog_health().to_dict())
+
+    @api.get("/api/v1/runs/compare")
+    def compare_runs(base_run_id: str, target_run_id: str):
+        try:
+            result = run_inspection_service_factory().compare_runs(base_run_id, target_run_id)
+        except FileNotFoundError as exc:
+            return _error(
+                status_code=404,
+                code="run_not_found",
+                message=str(exc),
+                user_action_required=True,
+            )
+        except ValueError as exc:
+            return _error(status_code=400, code="invalid_run_compare_request", message=str(exc))
+        return _success(result.to_dict())
+
     @api.get("/api/v1/runs/{run_id}")
     def get_run(run_id: str):
         try:
@@ -796,6 +815,36 @@ def create_app(
             )
         except ValueError as exc:
             return _error(status_code=400, code="invalid_run_replay_request", message=str(exc))
+        return _success(result.to_dict())
+
+    @api.get("/api/v1/runs/{run_id}/diagnostics")
+    def get_run_diagnostics(run_id: str):
+        try:
+            result = run_inspection_service_factory().get_run_diagnostics(run_id)
+        except FileNotFoundError as exc:
+            return _error(
+                status_code=404,
+                code="run_not_found",
+                message=str(exc),
+                user_action_required=True,
+            )
+        except ValueError as exc:
+            return _error(status_code=400, code="invalid_run_diagnostics_request", message=str(exc))
+        return _success(result.to_dict())
+
+    @api.get("/api/v1/runs/{run_id}/health")
+    def get_run_health(run_id: str):
+        try:
+            result = run_inspection_service_factory().get_run_health(run_id)
+        except FileNotFoundError as exc:
+            return _error(
+                status_code=404,
+                code="run_not_found",
+                message=str(exc),
+                user_action_required=True,
+            )
+        except ValueError as exc:
+            return _error(status_code=400, code="invalid_run_health_request", message=str(exc))
         return _success(result.to_dict())
 
     @api.get("/api/v1/runs/{run_id}/lineage")
