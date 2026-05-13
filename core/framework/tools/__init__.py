@@ -18,6 +18,21 @@ from core.framework.tools.catalog import (
 from core.framework.tools.control_tools import register_control_tools
 from core.framework.tools.executor import ToolExecutor
 from core.framework.tools.github_tools import register_github_tools
+from core.framework.tools.inspection import (
+    ToolDefinitionInspection,
+    ToolExecutorInspection,
+    ToolInspectionFinding,
+    ToolNamespaceSummary,
+    ToolPolicyInspection,
+    ToolRegistryInspection,
+    ToolRiskSummary,
+    ToolRuntimeInspectionReport,
+    classify_tool_risk,
+    inspect_tool_executor,
+    inspect_tool_policy,
+    inspect_tool_registry,
+    inspect_tool_runtime,
+)
 from core.framework.tools.local_json_tools import LocalJsonToolStore, register_local_json_tools
 from core.framework.tools.memory_tools import register_memory_tools
 from core.framework.tools.mcp_adapter import MCPServerConfig, MCPToolAdapter
@@ -87,6 +102,9 @@ __all__ = [
     "ToolCall",
     "ToolDefinition",
     "ToolDefinitionError",
+    "ToolDefinitionInspection",
+    "ToolExecutorInspection",
+    "ToolInspectionFinding",
     "ToolApprovalRequest",
     "ToolBatchExecutor",
     "ToolCatalog",
@@ -96,12 +114,17 @@ __all__ = [
     "ToolEvent",
     "ToolExecutionRecord",
     "ToolMetrics",
+    "ToolNamespaceSummary",
     "ToolObservation",
     "ToolPermissionError",
+    "ToolPolicyInspection",
     "ToolPolicy",
+    "ToolRegistryInspection",
     "ToolRegistry",
     "ToolResult",
+    "ToolRiskSummary",
     "ToolRuntimeError",
+    "ToolRuntimeInspectionReport",
     "ToolSecretError",
     "ToolStatus",
     "ToolTimeoutError",
@@ -116,7 +139,12 @@ __all__ = [
     "build_builtin_tool_registry",
     "build_tool_catalog",
     "audit_agent_tool_boundary",
+    "classify_tool_risk",
     "contains_redacted_value",
+    "inspect_tool_executor",
+    "inspect_tool_policy",
+    "inspect_tool_registry",
+    "inspect_tool_runtime",
     "redact_sensitive_values",
     "register_arxiv_tools",
     "register_artifact_tools",
