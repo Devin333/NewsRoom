@@ -147,13 +147,24 @@ def test_source_health_serializes_window_metrics() -> None:
         success_count_24h=3,
         failure_count_24h=1,
         avg_latency_ms_24h=42.5,
+        last_error=SourceError(
+            source_id="rss-source",
+            error_type="fetch_timeout",
+            error_message="timed out",
+        ),
+        metadata={"owner": "source-pipeline"},
     )
 
     payload = health.to_dict()
 
+    assert payload["health_status"] == "healthy"
+    assert payload["consecutive_failure_count"] == 0
     assert payload["success_count_24h"] == 3
     assert payload["failure_count_24h"] == 1
     assert payload["avg_latency_ms_24h"] == 42.5
+    assert payload["last_error_type"] == "fetch_timeout"
+    assert payload["last_error_message"] == "timed out"
+    assert payload["metadata"] == {"owner": "source-pipeline"}
 
 
 def test_dedup_result_serializes_duplicate_groups() -> None:

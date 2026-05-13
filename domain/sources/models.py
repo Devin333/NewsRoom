@@ -459,6 +459,7 @@ class SourceHealth:
     last_failure_at: datetime | None = None
     cooldown_until: datetime | None = None
     last_error: SourceError | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         status = SourceHealthStatus(self.status)
@@ -472,14 +473,19 @@ class SourceHealth:
             "source_name": self.source_name,
             "url": self.url,
             "status": self.status.value,
+            "health_status": self.status.value,
             "consecutive_failures": self.consecutive_failures,
+            "consecutive_failure_count": self.consecutive_failures,
             "success_count_24h": self.success_count_24h,
             "failure_count_24h": self.failure_count_24h,
             "avg_latency_ms_24h": self.avg_latency_ms_24h,
             "last_success_at": _dt(self.last_success_at),
             "last_failure_at": _dt(self.last_failure_at),
             "cooldown_until": _dt(self.cooldown_until),
+            "last_error_type": self.last_error.error_type if self.last_error else None,
+            "last_error_message": self.last_error.error_message if self.last_error else None,
             "last_error": self.last_error.to_dict() if self.last_error else None,
+            "metadata": dict(self.metadata),
         }
 
 

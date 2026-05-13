@@ -208,6 +208,7 @@ def test_health_manager_merges_persisted_window_counts_on_first_event() -> None:
                 avg_latency_ms_24h=30,
                 last_success_at=now - timedelta(hours=1),
                 last_failure_at=now - timedelta(minutes=30),
+                metadata={"owner": "ops"},
             )
         }
     )
@@ -218,3 +219,4 @@ def test_health_manager_merges_persisted_window_counts_on_first_event() -> None:
     assert health.success_count_24h == 3
     assert health.failure_count_24h == 1
     assert health.avg_latency_ms_24h == 37.5
+    assert health.metadata == {"owner": "ops"}

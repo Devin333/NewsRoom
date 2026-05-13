@@ -306,6 +306,7 @@ def test_build_source_health_report_summarizes_statuses() -> None:
                     error_type="fetch_timeout",
                     error_message="timeout",
                 ),
+                metadata={"health_policy": "cooldown"},
             ),
             SourceHealth(
                 source_id="degraded",
@@ -322,7 +323,11 @@ def test_build_source_health_report_summarizes_statuses() -> None:
     assert report.cooling_down_source_ids == ["cooling"]
     assert report.degraded_source_ids == ["degraded"]
     assert report.max_consecutive_failures == 2
+    assert report.rows[1]["health_status"] == "down"
+    assert report.rows[1]["consecutive_failure_count"] == 2
     assert report.rows[1]["last_error_type"] == "fetch_timeout"
+    assert report.rows[1]["last_error_message"] == "timeout"
+    assert report.rows[1]["metadata"] == {"health_policy": "cooldown"}
 
 
 def test_build_source_governance_report_flags_policy_findings() -> None:

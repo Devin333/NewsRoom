@@ -115,6 +115,7 @@ class BasicSourceHealthManager:
             avg_latency_ms_24h=stats.avg_latency_ms_24h,
             last_success_at=now,
             last_failure_at=previous.last_failure_at,
+            metadata=dict(previous.metadata),
         )
         self._health[source_id] = health
         self._persist_health(health)
@@ -147,6 +148,7 @@ class BasicSourceHealthManager:
             failure_count_24h=previous.failure_count_24h,
             avg_latency_ms_24h=previous.avg_latency_ms_24h,
             last_error=error,
+            metadata={**previous.metadata, "disabled_reason": reason or "source is disabled"},
         )
         self._health[source_id] = health
         self._persist_health(health)
@@ -187,6 +189,7 @@ class BasicSourceHealthManager:
             last_failure_at=now,
             cooldown_until=cooldown_until,
             last_error=error,
+            metadata=dict(previous.metadata),
         )
         self._health[source_id] = health
         self._persist_health(health)

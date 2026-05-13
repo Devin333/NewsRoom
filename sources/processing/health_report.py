@@ -27,18 +27,30 @@ def build_source_health_report(source_health_updates: list[Any]) -> SourceHealth
         elif status == "disabled" and source_id:
             disabled_source_ids.append(source_id)
         last_error = _value(health, "last_error")
+        consecutive_failures = int(
+            _value(health, "consecutive_failures")
+            or _value(health, "consecutive_failure_count")
+            or 0
+        )
+        metadata = _value(health, "metadata")
         rows.append(
             {
                 "source_id": source_id,
                 "source_name": _value(health, "source_name"),
                 "url": _value(health, "url"),
                 "status": status,
-                "consecutive_failures": int(_value(health, "consecutive_failures") or 0),
+                "health_status": status,
+                "consecutive_failures": consecutive_failures,
+                "consecutive_failure_count": consecutive_failures,
                 "success_count_24h": int(_value(health, "success_count_24h") or 0),
                 "failure_count_24h": int(_value(health, "failure_count_24h") or 0),
                 "avg_latency_ms_24h": _value(health, "avg_latency_ms_24h"),
                 "cooldown_until": _dt(_value(health, "cooldown_until")),
                 "last_error_type": _value(last_error, "error_type") if last_error is not None else None,
+                "last_error_message": (
+                    _value(last_error, "error_message") if last_error is not None else None
+                ),
+                "metadata": dict(metadata) if isinstance(metadata, dict) else {},
             }
         )
 
