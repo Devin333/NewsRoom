@@ -103,7 +103,7 @@ def test_source_service_returns_health_views() -> None:
     assert result.to_dict()["health"][0]["source_id"] == "source-1"
     assert result.to_dict()["health"][0]["source_name"] == "Source"
     assert result.to_dict()["health"][0]["url"] == "https://example.com/rss"
-    assert result.to_dict()["health"][0]["status"] == "degraded"
+    assert result.to_dict()["health"][0]["status"] == "healthy"
 
 
 def test_source_service_reports_disabled_sources_as_disabled() -> None:

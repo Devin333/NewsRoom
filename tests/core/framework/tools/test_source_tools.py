@@ -278,7 +278,7 @@ def test_source_check_health_tool_reads_health_manager_state() -> None:
     assert health["source_id"] == "rss-example"
     assert health["source_name"] == "Example RSS"
     assert health["url"] == "https://example.com/feed.xml"
-    assert health["status"] == "degraded"
+    assert health["status"] == "healthy"
     assert health["consecutive_failures"] == 1
     assert health["last_error"]["error_type"] == "TimeoutError"
 

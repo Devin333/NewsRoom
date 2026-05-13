@@ -35,12 +35,18 @@ class BasicSourceHealthManager:
     def __init__(
         self,
         *,
-        failure_threshold: int = 2,
+        failure_threshold: int = 4,
+        degraded_threshold: int = 2,
         cooldown_seconds: int = 300,
         now: Callable[[], datetime] | None = None,
         health_store: SourceHealthStore | None = None,
     ) -> None:
+        if failure_threshold < 1:
+            raise ValueError("failure_threshold must be at least 1")
+        if degraded_threshold < 1:
+            raise ValueError("degraded_threshold must be at least 1")
         self.failure_threshold = failure_threshold
+        self.degraded_threshold = degraded_threshold
         self.cooldown_seconds = cooldown_seconds
         self._now = now or (lambda: datetime.now(UTC))
         self._health_store = health_store
@@ -173,8 +179,11 @@ class BasicSourceHealthManager:
         if failures >= self.failure_threshold:
             status = SourceHealthStatus.DOWN
             cooldown_until = now + timedelta(seconds=self.cooldown_seconds)
-        else:
+        elif failures >= self.degraded_threshold:
             status = SourceHealthStatus.DEGRADED
+            cooldown_until = None
+        else:
+            status = SourceHealthStatus.HEALTHY
             cooldown_until = None
         health = SourceHealth(
             source_id=source_id,
