@@ -238,7 +238,8 @@ class SourceApplicationService:
         )
 
     def fetch_arxiv(self, *, query: str, limit: int = 5) -> SourceFetchPreviewResult:
-        if not query.strip():
+        query = query.strip()
+        if not query:
             raise ValueError("query is required")
         if limit <= 0:
             raise ValueError("limit must be greater than zero")
@@ -251,19 +252,24 @@ class SourceApplicationService:
             authority_score=0.95,
             topics=["papers", "research"],
             language="en",
-            metadata={"query": query.strip()},
+            metadata={"query": query},
         )
+        blocked_result = self._blocked_preview_result(source, query=query)
+        if blocked_result is not None:
+            return blocked_result
         items, errors = self.arxiv_connector.fetch(source, query=query, limit=limit)
+        self._record_preview_health(source, items=items, errors=errors)
         return SourceFetchPreviewResult(
             source_id=source.source_id,
             source_type=source.source_type.value,
-            query=query.strip(),
+            query=query,
             items=items,
             errors=errors,
         )
 
     def fetch_github_releases(self, *, repository: str, limit: int = 5) -> SourceFetchPreviewResult:
-        if not repository.strip():
+        repository = repository.strip()
+        if not repository:
             raise ValueError("repository is required")
         if limit <= 0:
             raise ValueError("limit must be greater than zero")
@@ -276,20 +282,104 @@ class SourceApplicationService:
             authority_score=0.9,
             topics=["github", "release", "software"],
             language="en",
-            metadata={"repository": repository.strip()},
+            metadata={"repository": repository},
         )
+        blocked_result = self._blocked_preview_result(source, query=repository)
+        if blocked_result is not None:
+            return blocked_result
         items, errors = self.github_connector.fetch_releases(
             source,
             repository=repository,
             limit=limit,
         )
+        self._record_preview_health(source, items=items, errors=errors)
         return SourceFetchPreviewResult(
             source_id=source.source_id,
             source_type=source.source_type.value,
-            query=repository.strip(),
+            query=repository,
             items=items,
             errors=errors,
         )
+
+    def _blocked_preview_result(
+        self,
+        source: SourceDefinition,
+        *,
+        query: str,
+    ) -> SourceFetchPreviewResult | None:
+        if not source.enabled:
+            health = self.health_manager.record_disabled(
+                source.source_id,
+                reason="source disabled by configuration",
+                source_name=source.name,
+                url=source.url,
+            )
+            error = _preview_skip_error(
+                source,
+                skip_reason="disabled",
+                health=health.to_dict(),
+                retryable=False,
+            )
+            return SourceFetchPreviewResult(
+                source_id=source.source_id,
+                source_type=source.source_type.value,
+                query=query,
+                items=[],
+                errors=[error],
+            )
+        decision = self.health_manager.fetch_decision(
+            source.source_id,
+            source_name=source.name,
+            url=source.url,
+            min_interval_seconds=source.fetch_interval_seconds,
+        )
+        if decision.should_fetch:
+            return None
+        error = _preview_skip_error(
+            source,
+            skip_reason=decision.skip_reason or "skipped",
+            health=decision.health.to_dict(),
+            retryable=decision.skip_reason != "disabled",
+            cooldown_until=_dt(decision.cooldown_until),
+            next_fetch_at=_dt(decision.next_fetch_at),
+        )
+        return SourceFetchPreviewResult(
+            source_id=source.source_id,
+            source_type=source.source_type.value,
+            query=query,
+            items=[],
+            errors=[error],
+        )
+
+    def _record_preview_health(
+        self,
+        source: SourceDefinition,
+        *,
+        items: list[RawSourceItem],
+        errors: list[SourceError],
+    ) -> None:
+        if items:
+            self.health_manager.record_success(
+                source.source_id,
+                source_name=source.name,
+                url=source.url,
+            )
+            return
+        health_error = next(
+            (
+                error
+                for error in errors
+                if _metadata_bool(error.metadata.get("source_health_affecting"), default=True)
+            ),
+            None,
+        )
+        if health_error is not None:
+            self.health_manager.record_failure(
+                source.source_id,
+                health_error,
+                source_name=source.name,
+                url=source.url,
+            )
 
 
 def _raw_item_to_dict(item: RawSourceItem) -> dict[str, Any]:
@@ -304,11 +394,61 @@ def _raw_item_to_dict(item: RawSourceItem) -> dict[str, Any]:
         "published_at": _dt(item.published_at),
         "summary": item.summary,
         "raw_content": item.raw_content,
+        "raw_artifact_ref": _artifact_ref(item.raw_artifact_ref),
+        "parse_artifact_ref": _artifact_ref(item.parse_artifact_ref),
         "authors": list(item.authors),
         "tags": list(item.tags),
         "language": item.language,
+        "lineage": item.lineage.to_dict() if item.lineage else None,
         "metadata": dict(item.metadata),
     }
+
+
+def _preview_skip_error(
+    source: SourceDefinition,
+    *,
+    skip_reason: str,
+    health: dict[str, Any],
+    retryable: bool,
+    cooldown_until: str | None = None,
+    next_fetch_at: str | None = None,
+) -> SourceError:
+    metadata = {
+        "phase": "fetch",
+        "retryable": retryable,
+        "source_health_affecting": False,
+        "skip_reason": skip_reason,
+        "health": health,
+    }
+    if cooldown_until is not None:
+        metadata["cooldown_until"] = cooldown_until
+    if next_fetch_at is not None:
+        metadata["next_fetch_at"] = next_fetch_at
+    return SourceError(
+        source_id=source.source_id,
+        source_name=source.name,
+        error_type="source_fetch_skipped",
+        error_message=f"source preview fetch skipped: {skip_reason}",
+        url=source.url,
+        retryable=retryable,
+        metadata=metadata,
+    )
+
+
+def _metadata_bool(value: Any, *, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    return str(value).strip().casefold() in {"1", "true", "yes", "on"}
+
+
+def _artifact_ref(value):
+    if value is None:
+        return None
+    if hasattr(value, "to_dict"):
+        return value.to_dict()
+    return value
 
 
 def _dt(value: datetime | None) -> str | None:

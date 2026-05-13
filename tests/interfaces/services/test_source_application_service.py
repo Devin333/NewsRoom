@@ -272,39 +272,97 @@ rss_feeds:
 
 
 def test_source_service_fetches_arxiv_preview() -> None:
+    connector = _FakeArxivConnector()
     service = SourceApplicationService(
         source_registry=SourceRegistry([]),
-        arxiv_connector=_FakeArxivConnector(),
+        arxiv_connector=connector,
     )
 
     result = service.fetch_arxiv(query="cat:cs.AI", limit=1)
     payload = result.to_dict()
 
+    assert connector.calls == [("cat:cs.AI", 1)]
     assert payload["source_type"] == "arxiv"
     assert payload["query"] == "cat:cs.AI"
     assert payload["item_count"] == 1
     assert payload["items"][0]["title"] == "Agent Runtime Evaluation"
+    assert payload["items"][0]["lineage"]["source_id"] == "arxiv"
+    assert payload["items"][0]["lineage"]["source_item_id"] == "raw-arxiv"
     assert payload["items"][0]["metadata"]["arxiv_id"] == "2605.00001v1"
 
 
-def test_source_service_fetches_github_release_preview() -> None:
+def test_source_service_skips_arxiv_preview_inside_cooldown() -> None:
+    connector = _FakeArxivConnector()
+    health_manager = BasicSourceHealthManager(failure_threshold=1, cooldown_seconds=300)
+    health_manager.record_failure(
+        "arxiv",
+        SourceError(source_id="arxiv", error_type="fetch_timeout", error_message="timeout"),
+    )
     service = SourceApplicationService(
         source_registry=SourceRegistry([]),
-        github_connector=_FakeGithubConnector(),
+        health_manager=health_manager,
+        arxiv_connector=connector,
+    )
+
+    payload = service.fetch_arxiv(query="cat:cs.AI", limit=1).to_dict()
+
+    assert connector.calls == []
+    assert payload["item_count"] == 0
+    assert payload["error_count"] == 1
+    assert payload["errors"][0]["error_type"] == "source_fetch_skipped"
+    assert payload["errors"][0]["metadata"]["skip_reason"] == "cooldown"
+    assert payload["errors"][0]["metadata"]["source_health_affecting"] is False
+
+
+def test_source_service_fetches_github_release_preview() -> None:
+    connector = _FakeGithubConnector()
+    service = SourceApplicationService(
+        source_registry=SourceRegistry([]),
+        github_connector=connector,
     )
 
     result = service.fetch_github_releases(repository="owner/repo", limit=1)
     payload = result.to_dict()
 
+    assert connector.calls == [("owner/repo", 1)]
     assert payload["source_type"] == "github"
     assert payload["query"] == "owner/repo"
     assert payload["item_count"] == 1
     assert payload["items"][0]["title"] == "Version 1.0.0"
+    assert payload["items"][0]["lineage"]["source_id"] == "github"
+    assert payload["items"][0]["lineage"]["source_item_id"] == "raw-github"
     assert payload["items"][0]["metadata"]["repository"] == "owner/repo"
 
 
+def test_source_service_skips_github_preview_inside_fetch_interval() -> None:
+    connector = _FakeGithubConnector()
+    health_manager = BasicSourceHealthManager(now=lambda: datetime(2026, 5, 11, tzinfo=UTC))
+    health_manager.record_success(
+        "github",
+        source_name="GitHub",
+        url="https://api.github.com",
+    )
+    service = SourceApplicationService(
+        source_registry=SourceRegistry([]),
+        health_manager=health_manager,
+        github_connector=connector,
+    )
+
+    payload = service.fetch_github_releases(repository="owner/repo", limit=1).to_dict()
+
+    assert connector.calls == []
+    assert payload["item_count"] == 0
+    assert payload["errors"][0]["error_type"] == "source_fetch_skipped"
+    assert payload["errors"][0]["metadata"]["skip_reason"] == "fetch_interval"
+    assert payload["errors"][0]["metadata"]["next_fetch_at"] == "2026-05-11T01:00:00Z"
+
+
 class _FakeArxivConnector:
+    def __init__(self):
+        self.calls = []
+
     def fetch(self, source, *, query, limit):
+        self.calls.append((query, limit))
         return [
             RawSourceItem(
                 source_item_id="raw-arxiv",
@@ -325,7 +383,11 @@ class _FakeArxivConnector:
 
 
 class _FakeGithubConnector:
+    def __init__(self):
+        self.calls = []
+
     def fetch_releases(self, source, *, repository, limit):
+        self.calls.append((repository, limit))
         return [
             RawSourceItem(
                 source_item_id="raw-github",
