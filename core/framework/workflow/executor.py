@@ -23,6 +23,7 @@ from core.framework.workflow.manifest import (
     build_run_manifest,
     register_manifest_artifact,
     register_manifest_step_artifact,
+    validate_run_manifest,
 )
 from core.framework.workflow.result import StepOutcome, WorkflowError, WorkflowResult
 from core.framework.workflow.routing import RoutingDecision, RoutingEngine
@@ -555,6 +556,7 @@ class WorkflowExecutor:
         manifest["event_count"] = metrics_payload["event_count"]
         manifest["metrics"] = metrics_payload
         manifest["redaction_report"] = redaction_report
+        validate_run_manifest(manifest, require_terminal_artifact=True)
         manifest_path = self._artifact_manager.write_json(actual_run_id, "manifest.json", manifest)
         events_path = recorder.write_jsonl(run_dir / "events.jsonl")
 

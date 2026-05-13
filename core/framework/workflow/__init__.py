@@ -17,6 +17,7 @@ from core.framework.workflow.manifest import (
     manifest_step_artifact_key,
     register_manifest_artifact,
     register_manifest_step_artifact,
+    validate_run_manifest,
 )
 from core.framework.workflow.result import StepOutcome, WorkflowError, WorkflowResult
 from core.framework.workflow.routing import (
@@ -84,4 +85,5 @@ __all__ = [
     "manifest_step_artifact_key",
     "register_manifest_artifact",
     "register_manifest_step_artifact",
+    "validate_run_manifest",
 ]

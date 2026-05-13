@@ -2132,3 +2132,20 @@ manifest_step_artifact_key()
 ```
 
 `WorkflowExecutor` 仍然负责决定哪些 artifact 要写，但不再直接散写 `manifest["artifacts"][...] = ...`。这一步不改变 manifest schema，只增强 manifest 写入边界和路径安全。
+
+### N.3 Run manifest validation
+
+本轮增加 `validate_run_manifest()`，并在 `WorkflowExecutor` 写 `manifest.json` 前执行：
+
+```text
+validate_run_manifest()
+  校验 schema_version 是否为当前支持版本。
+  校验 run_id / workflow_id / workflow_version / profile / status / started_at 等基础字段。
+  校验 path / steps / artifacts 的结构。
+  校验 REQUIRED_RUN_ARTIFACTS 中定义的必需 artifact 是否存在。
+  校验 artifact path 仍然满足相对路径和无 path traversal 约束。
+  在终态 manifest 中校验 succeeded -> output、paused/waiting_for_human -> pause、failed/blocked/cancelled/budget_exceeded -> error。
+  校验 step_artifacts 中的 artifact 是否同步存在于 artifacts map。
+```
+
+这一步保持 manifest 输出格式不变，只把“manifest 必须是可 replay/debug/audit 的有效结构”变成代码约束。
