@@ -2214,3 +2214,75 @@ inspection 不做业务 source/evidence/report 逻辑。
 ```
 
 这一步把前文目标态中的 replay/debug/audit 能力落到代码层，供后续 Interface、Worker 或开发调试通过应用层间接使用。
+
+### N.5 Workflow run diagnostics
+
+本轮继续在 `core/framework/workflow/inspection.py` 上补齐只读诊断层。它仍然只读取 workflow run artifact directory，不执行 workflow，不调用 CLI/API/MCP，不重新定义 Storage canonical model。
+
+新增诊断对象：
+
+```text
+WorkflowTimelineItem
+  将 events.jsonl 中的事件整理成可展示的 timeline item。
+  记录 sequence、event_type、phase、severity、step_id、edge_id、source_step_id、target_step_id、status、message。
+
+WorkflowTimelineSummary
+  汇总 event_count、phase_counts、severity_counts、event_type_counts、step_event_counts。
+  记录 traversed_edges / rejected_edges、retry_count、timeout_count、checkpoint_count、terminal_event_type。
+
+WorkflowArtifactInventory
+  汇总 artifact_count、existing_count、missing_count、required_count、step_artifact_count。
+  记录 content_type_counts、category_counts、missing_artifact_keys、largest_artifacts、terminal_artifact_exists。
+
+WorkflowDataBufferDiffSummary
+  汇总 data_buffer.diff.json 的 added / changed / removed keys。
+  只暴露 key、type、collection size、sensitive key 标记，不把敏感值复制到诊断报告。
+
+WorkflowRunHealthReport
+  根据 manifest integrity、timeline、artifact inventory、step summary 生成 run health。
+  输出 severity、summary、issues、warnings、suggested_actions、failed_steps、blocked_steps、paused_steps。
+
+WorkflowRunDiagnostics
+  聚合 WorkflowRunInspection、timeline、artifact inventory、data buffer diff summary、health report。
+```
+
+新增入口：
+
+```text
+WorkflowRunInspector.build_diagnostics()
+WorkflowRunInspector.build_timeline()
+WorkflowRunInspector.build_artifact_inventory()
+WorkflowRunInspector.summarize_data_buffer_diff()
+WorkflowRunInspector.build_health_report()
+
+WorkflowRunner.inspect_run_diagnostics(run_id)
+WorkflowRunner.inspect_run_health(run_id)
+
+inspect_workflow_run_diagnostics(run_dir)
+```
+
+新增 helper：
+
+```text
+build_workflow_timeline()
+summarize_workflow_timeline()
+build_artifact_inventory()
+summarize_data_buffer_diff()
+build_run_health_report()
+timeline_items_by_step()
+timeline_items_by_event_type()
+timeline_items_by_phase()
+unhealthy_timeline_items()
+health_report_summary()
+```
+
+边界说明：
+
+```text
+diagnostics 只做 replay/debug/audit 读取和聚合。
+diagnostics 不改变 WorkflowExecutor 的执行语义。
+diagnostics 不改变 run manifest schema。
+diagnostics 不把 LLM_DECIDE 提升为强治理决策。
+diagnostics 不执行业务 Source / Evidence / Report 逻辑。
+diagnostics 的 suggested_actions 只指向 artifact / event / checkpoint 级别的排查动作。
+```

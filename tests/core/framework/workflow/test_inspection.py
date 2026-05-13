@@ -6,20 +6,32 @@ from core.framework import WorkflowRunner
 from core.framework.artifacts import ArtifactManager
 from core.framework.specs import EdgeSpec, StepSpec, WorkflowSpec, WorkflowStatus
 from core.framework.workflow import (
+    WorkflowDataBufferChange,
     FunctionStepRegistry,
     FunctionStepRunner,
     WorkflowExecutor,
     WorkflowRunInspectionError,
     WorkflowRunInspector,
+    build_artifact_inventory,
+    build_run_health_report,
+    build_workflow_timeline,
     event_records_by_step,
     failed_step_summaries,
     filter_artifacts_by_prefix,
+    health_report_summary,
     inspect_workflow_run,
+    inspect_workflow_run_diagnostics,
     replay_bundle_summary,
     required_artifact_records,
     resolve_artifact_path,
     step_artifact_records,
+    summarize_data_buffer_diff,
+    summarize_workflow_timeline,
     terminal_artifact_record,
+    timeline_items_by_event_type,
+    timeline_items_by_phase,
+    timeline_items_by_step,
+    unhealthy_timeline_items,
     workflow_run_inspection_summary,
 )
 
@@ -48,6 +60,13 @@ def test_workflow_run_inspector_builds_summary_and_replay_bundle(tmp_path) -> No
     assert inspection.paused is False
     assert inspection.event_summary.event_count == 8
     assert inspection.event_summary.terminal_event_type == "workflow_succeeded"
+    assert inspection.timeline_summary.event_count == 8
+    assert inspection.timeline_summary.routing_event_count == 2
+    assert inspection.timeline_summary.traversed_edges[0]["edge_id"] == "plan-to-write"
+    assert inspection.artifact_inventory.complete is True
+    assert inspection.artifact_inventory.terminal_artifact_exists is True
+    assert inspection.data_buffer_diff_summary.added_keys == ["plan", "report"]
+    assert inspection.health_report.severity == "ok"
     assert inspection.step_by_id("write").output_keys == ["report"]
     assert terminal_artifact_record(inspection).artifact_key == "output"
     assert {artifact.artifact_key for artifact in required_artifact_records(inspection)}.issuperset(
@@ -56,6 +75,7 @@ def test_workflow_run_inspector_builds_summary_and_replay_bundle(tmp_path) -> No
     assert step_artifact_records(inspection) == []
     assert filter_artifacts_by_prefix(inspection.artifacts, "data_buffer")
     assert workflow_run_inspection_summary(inspection)["event_count"] == 8
+    assert workflow_run_inspection_summary(inspection)["health_severity"] == "ok"
 
     assert replay_bundle.request == {"topic": "ai"}
     assert replay_bundle.output["report"] == "Report: ai"
@@ -157,6 +177,127 @@ def test_workflow_run_inspector_summarizes_failed_steps(tmp_path) -> None:
     ]
 
 
+def test_workflow_run_inspector_builds_timeline_helpers(tmp_path) -> None:
+    executor = _sample_executor(tmp_path)
+    executor.execute(_sample_spec(), {"topic": "ai"}, profile="test", run_id="timeline-run")
+    inspector = WorkflowRunInspector()
+    manifest = inspector.load_manifest(tmp_path / "timeline-run")
+    events = inspector.read_events(tmp_path / "timeline-run", manifest=manifest)
+
+    timeline = build_workflow_timeline(events)
+    summary = summarize_workflow_timeline(timeline)
+
+    assert [item.event_type for item in timeline[:3]] == [
+        "workflow_started",
+        "step_started",
+        "step_succeeded",
+    ]
+    assert summary.event_count == 8
+    assert summary.phase_counts["workflow"] == 2
+    assert summary.phase_counts["step"] == 4
+    assert summary.phase_counts["routing"] == 2
+    assert summary.terminal_event_type == "workflow_succeeded"
+    assert timeline_items_by_step(timeline, "plan")[0].event_type == "step_started"
+    assert timeline_items_by_event_type(timeline, "edge_traversed")[0].edge_id == "plan-to-write"
+    assert timeline_items_by_phase(timeline, "routing")[1].event_type == "edge_traversed"
+    assert unhealthy_timeline_items(timeline) == []
+
+
+def test_workflow_run_inspector_builds_artifact_inventory(tmp_path) -> None:
+    executor = _sample_executor(tmp_path)
+    executor.execute(_sample_spec(), {"topic": "ai"}, profile="test", run_id="inventory-run")
+
+    inspection = inspect_workflow_run(tmp_path / "inventory-run", strict=True)
+    inventory = build_artifact_inventory(
+        inspection.artifacts,
+        terminal_artifact_key=inspection.terminal_artifact_key,
+    )
+
+    assert inventory.complete is True
+    assert inventory.artifact_count == len(inspection.artifacts)
+    assert inventory.existing_count == inventory.artifact_count
+    assert inventory.missing_count == 0
+    assert inventory.required_count >= 10
+    assert inventory.terminal_artifact_key == "output"
+    assert inventory.terminal_artifact_exists is True
+    assert inventory.content_type_counts["application/json"] >= 10
+    assert inventory.category_counts["required"] >= 10
+    assert inventory.total_size_bytes > 0
+    assert inventory.largest_artifacts
+
+
+def test_data_buffer_diff_summary_uses_shapes_not_values() -> None:
+    summary = summarize_data_buffer_diff(
+        {
+            "added": {
+                "report": {"title": "AI", "items": [1, 2]},
+                "api_token": "secret-value",
+            },
+            "changed": {
+                "ranked_items": {
+                    "previous": ["old"],
+                    "current": ["new", "newer"],
+                },
+                "score": {
+                    "previous": 1,
+                    "current": "1",
+                },
+            },
+            "removed": {
+                "temporary": [1, 2, 3],
+            },
+        }
+    )
+
+    assert summary.added_count == 2
+    assert summary.changed_count == 2
+    assert summary.removed_count == 1
+    assert summary.total_change_count == 5
+    assert summary.sensitive_keys == ["api_token"]
+    assert summary.type_changed_keys == ["score"]
+    assert summary.has_sensitive_changes is True
+    assert WorkflowDataBufferChange(
+        key="sample",
+        change_type="changed",
+        sensitive_key=False,
+        previous_type="str",
+        current_type="dict",
+    ).type_changed is True
+    report_change = next(change for change in summary.changes if change.key == "report")
+    assert report_change.current_type == "dict"
+    assert report_change.current_size == 2
+
+
+def test_workflow_run_health_report_flags_missing_artifacts(tmp_path) -> None:
+    executor = _sample_executor(tmp_path)
+    executor.execute(_sample_spec(), {"topic": "ai"}, profile="test", run_id="health-missing-run")
+    (tmp_path / "health-missing-run" / "output.json").unlink()
+
+    inspection = inspect_workflow_run(tmp_path / "health-missing-run")
+    health = build_run_health_report(inspection)
+
+    assert health.severity == "error"
+    assert health.healthy is False
+    assert "output" in health.missing_artifact_keys
+    assert "output" in " ".join(health.issues)
+    assert health_report_summary(health)["issue_count"] >= 1
+
+
+def test_workflow_run_diagnostics_aggregate_matches_inspection(tmp_path) -> None:
+    executor = _sample_executor(tmp_path)
+    executor.execute(_sample_spec(), {"topic": "ai"}, profile="test", run_id="diagnostics-run")
+
+    diagnostics = inspect_workflow_run_diagnostics(tmp_path / "diagnostics-run", strict=True)
+
+    assert diagnostics.healthy is True
+    assert diagnostics.inspection.run_id == "diagnostics-run"
+    assert diagnostics.timeline_summary.event_count == 8
+    assert diagnostics.artifact_inventory.complete is True
+    assert diagnostics.data_buffer_diff_summary.added_keys == ["plan", "report"]
+    assert diagnostics.health_report.summary == "run diagnostics-run completed successfully"
+    assert diagnostics.to_dict()["health_report"]["severity"] == "ok"
+
+
 def test_workflow_runner_exposes_inspection_and_replay_bundle(tmp_path) -> None:
     registry = FunctionStepRegistry()
     registry.register("sample.plan", lambda buffer: {"plan": buffer.read("request")["topic"]})
@@ -167,11 +308,15 @@ def test_workflow_runner_exposes_inspection_and_replay_bundle(tmp_path) -> None:
 
     inspection = runner.inspect_run("runner-inspect", strict=True)
     replay_bundle = runner.build_replay_bundle("runner-inspect", strict=True)
+    diagnostics = runner.inspect_run_diagnostics("runner-inspect", strict=True)
+    health = runner.inspect_run_health("runner-inspect", strict=True)
 
     assert result.status == WorkflowStatus.SUCCEEDED
     assert inspection.run_id == "runner-inspect"
     assert inspection.step_by_id("write").succeeded is True
     assert replay_bundle.output["report"] == "Report: ai"
+    assert diagnostics.healthy is True
+    assert health.severity == "ok"
 
 
 def _sample_spec() -> WorkflowSpec:

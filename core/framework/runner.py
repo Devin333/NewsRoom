@@ -15,6 +15,8 @@ from core.framework.specs import WorkflowSpec
 from core.framework.workflow.executor import WorkflowExecutor
 from core.framework.workflow.inspection import (
     WorkflowReplayBundle,
+    WorkflowRunDiagnostics,
+    WorkflowRunHealthReport,
     WorkflowRunInspection,
     WorkflowRunInspector,
 )
@@ -153,6 +155,32 @@ class WorkflowRunner:
         strict: bool = False,
     ) -> WorkflowReplayBundle:
         return self._run_inspector.build_replay_bundle(
+            run_id,
+            verify_checksums=verify_checksums,
+            strict=strict,
+        )
+
+    def inspect_run_diagnostics(
+        self,
+        run_id: str,
+        *,
+        verify_checksums: bool = False,
+        strict: bool = False,
+    ) -> WorkflowRunDiagnostics:
+        return self._run_inspector.build_diagnostics(
+            run_id,
+            verify_checksums=verify_checksums,
+            strict=strict,
+        )
+
+    def inspect_run_health(
+        self,
+        run_id: str,
+        *,
+        verify_checksums: bool = False,
+        strict: bool = False,
+    ) -> WorkflowRunHealthReport:
+        return self._run_inspector.build_health_report(
             run_id,
             verify_checksums=verify_checksums,
             strict=strict,
