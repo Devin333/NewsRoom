@@ -1029,6 +1029,26 @@ def build_parser() -> argparse.ArgumentParser:
     agent_loop_parser.add_argument("--run-id", default=None, help="Optional deterministic run id")
     agent_loop_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     agent_loop_parser.set_defaults(handler=_run_test_agent_loop)
+
+    live_smoke_parser = dev_subparsers.add_parser(
+        "run-live-smoke",
+        help="Run real live workflow smoke when live credentials are configured",
+    )
+    live_smoke_parser.add_argument("--topic", default="AI", help="Topic for the live smoke report")
+    live_smoke_parser.add_argument("--source-limit", type=int, default=3, help="Maximum source items")
+    live_smoke_parser.add_argument(
+        "--artifact-root",
+        default=".newsroom/runs",
+        help="Directory where run artifacts are written",
+    )
+    live_smoke_parser.add_argument("--run-id", default=None, help="Optional deterministic run id")
+    live_smoke_parser.add_argument(
+        "--fail-if-unready",
+        action="store_true",
+        help="Return failure instead of skipped when live readiness checks are not configured",
+    )
+    live_smoke_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    live_smoke_parser.set_defaults(handler=_run_live_smoke)
     return parser
 
 
@@ -1071,6 +1091,30 @@ def _run_test_agent_loop(args: argparse.Namespace) -> int:
         print(f"tool_calls={metrics.get('tool_calls', 0)}")
 
     return 0 if result.status == WorkflowStatus.SUCCEEDED else 1
+
+
+def _run_live_smoke(args: argparse.Namespace) -> int:
+    service = RunApplicationService(artifact_root=args.artifact_root)
+    result = service.run_live_smoke(
+        topic=args.topic,
+        source_limit=args.source_limit,
+        run_id=args.run_id,
+        skip_if_unready=not args.fail_if_unready,
+    )
+
+    if args.json:
+        print(json.dumps(result.to_dict(), ensure_ascii=False, sort_keys=True))
+    else:
+        print(f"status={result.status}")
+        print("profile=live")
+        print(f"topic={args.topic}")
+        print(f"source_limit={args.source_limit}")
+        print(f"message={result.message}")
+        if result.run_result:
+            print(f"run_id={result.run_result.run_id}")
+            print(f"artifact_dir={result.run_result.artifact_dir}")
+
+    return 0 if result.status in {"succeeded", "skipped"} else 1
 
 
 def _run_daily(args: argparse.Namespace) -> int:

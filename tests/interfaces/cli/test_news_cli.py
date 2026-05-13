@@ -1,6 +1,8 @@
 import json
 
 from interfaces.cli.news import main
+from interfaces.services.diagnose_service import DiagnoseCheck, DiagnoseResult
+from interfaces.services.run_service import LiveSmokeResult
 
 
 def test_news_cli_run_test_no_llm_json_output(tmp_path, capsys) -> None:
@@ -118,6 +120,91 @@ def test_news_cli_run_daily_live_offline_json_output(tmp_path, capsys) -> None:
     assert payload["status"] == "succeeded"
     assert payload["run_id"] == "cli-daily-offline"
     assert payload["output"]["final_report"]["title"] == "Daily Intelligence: AI policy"
+
+
+def test_news_cli_run_live_smoke_json_output(monkeypatch, tmp_path, capsys) -> None:
+    import interfaces.cli.news as news_cli
+
+    class FakeRunApplicationService:
+        def __init__(self, artifact_root):
+            self.artifact_root = artifact_root
+
+        def run_live_smoke(self, **kwargs):
+            assert self.artifact_root == str(tmp_path)
+            assert kwargs == {
+                "topic": "AI",
+                "source_limit": 3,
+                "run_id": "live-smoke",
+                "skip_if_unready": True,
+            }
+            return LiveSmokeResult(
+                status="skipped",
+                message="live smoke readiness checks are not ready: model_config",
+                diagnostics=DiagnoseResult.from_checks(
+                    [DiagnoseCheck("model_config", "Live model config", "warning", "missing key")]
+                ),
+                topic="AI",
+                source_limit=3,
+            )
+
+    monkeypatch.setattr(news_cli, "RunApplicationService", FakeRunApplicationService)
+
+    exit_code = main(
+        [
+            "dev",
+            "run-live-smoke",
+            "--artifact-root",
+            str(tmp_path),
+            "--run-id",
+            "live-smoke",
+            "--json",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert exit_code == 0
+    assert payload["status"] == "skipped"
+    assert payload["source_limit"] == 3
+    assert payload["profile"] == "live"
+
+
+def test_news_cli_run_live_smoke_fail_if_unready_returns_failure(monkeypatch, tmp_path, capsys) -> None:
+    import interfaces.cli.news as news_cli
+
+    class FakeRunApplicationService:
+        def __init__(self, artifact_root):
+            self.artifact_root = artifact_root
+
+        def run_live_smoke(self, **kwargs):
+            assert kwargs["skip_if_unready"] is False
+            return LiveSmokeResult(
+                status="failed",
+                message="live smoke readiness checks are not ready: dashscope_api_key",
+                diagnostics=DiagnoseResult.from_checks(
+                    [DiagnoseCheck("dashscope_api_key", "DashScope API key", "warning", "missing")]
+                ),
+                topic=kwargs["topic"],
+                source_limit=kwargs["source_limit"],
+            )
+
+    monkeypatch.setattr(news_cli, "RunApplicationService", FakeRunApplicationService)
+
+    exit_code = main(
+        [
+            "dev",
+            "run-live-smoke",
+            "--artifact-root",
+            str(tmp_path),
+            "--fail-if-unready",
+        ]
+    )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "status=failed" in captured.out
 
 
 def test_run_service_persists_daily_result(tmp_path, monkeypatch) -> None:

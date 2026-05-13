@@ -1,7 +1,7 @@
 """Application service package."""
 
 from interfaces.services.approval_service import ApprovalApplicationService
-from interfaces.services.run_service import RunApplicationService
+from interfaces.services.run_service import LiveSmokeResult, RunApplicationService
 from interfaces.services.artifact_service import ArtifactInspectionService
 from interfaces.services.diagnose_service import DiagnosticApplicationService
 from interfaces.services.entity_service import EntityTrackingApplicationService
@@ -24,6 +24,7 @@ __all__ = [
     "ReportApplicationService",
     "RunInspectionService",
     "RunApplicationService",
+    "LiveSmokeResult",
     "ScheduleApplicationService",
     "SourceApplicationService",
     "StorageApplicationService",
