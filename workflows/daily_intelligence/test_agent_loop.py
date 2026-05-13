@@ -35,12 +35,16 @@ def build_test_agent_loop_workflow() -> WorkflowSpec:
                     "agent_loop_result",
                     "agent_loop_events",
                     "agent_loop_metrics",
+                    "agent_loop_diagnostics",
+                    "agent_loop_trace",
                 ],
                 required_output_keys=[
                     "analysis_result",
                     "agent_loop_result",
                     "agent_loop_events",
                     "agent_loop_metrics",
+                    "agent_loop_diagnostics",
+                    "agent_loop_trace",
                 ],
             )
         ],
@@ -98,6 +102,8 @@ def _run_agent_step(buffer: ScopedDataBuffer) -> dict[str, Any]:
         "agent_loop_result": result.to_dict(),
         "agent_loop_events": result.events,
         "agent_loop_metrics": result.metrics.to_dict(),
+        "agent_loop_diagnostics": result.diagnostics.to_dict() if result.diagnostics else None,
+        "agent_loop_trace": result.trace,
     }
 
 

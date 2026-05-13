@@ -12,6 +12,8 @@ class AgentLoopStatus(str, Enum):
     ACCEPTED = "accepted"
     RETRY_EXHAUSTED = "retry_exhausted"
     BLOCKED = "blocked"
+    WAITING_FOR_APPROVAL = "waiting_for_approval"
+    STALLED = "stalled"
     FAILED = "failed"
 
 
@@ -21,11 +23,76 @@ class JudgeDecision(str, Enum):
     BLOCK = "block"
 
 
+class AgentLoopStopReason(str, Enum):
+    FINAL_OUTPUT_ACCEPTED = "final_output_accepted"
+    CONTROL_OUTPUT_ACCEPTED = "control_output_accepted"
+    JUDGE_BLOCKED = "judge_blocked"
+    SECRET_BLOCKED = "secret_blocked"
+    TOOL_APPROVAL_REQUIRED = "tool_approval_required"
+    TOOL_BUDGET_EXCEEDED = "tool_budget_exceeded"
+    REPEATED_TOOL_CALL_STALLED = "repeated_tool_call_stalled"
+    PARSER_RETRY_EXHAUSTED = "parser_retry_exhausted"
+    JUDGE_RETRY_EXHAUSTED = "judge_retry_exhausted"
+    MAX_ITERATIONS_EXCEEDED = "max_iterations_exceeded"
+    LLM_FAILED = "llm_failed"
+    TOOL_FAILED = "tool_failed"
+    UNKNOWN_FAILED = "unknown_failed"
+
+
+class AgentLoopEventType(str, Enum):
+    AGENT_STARTED = "agent_started"
+    ITERATION_STARTED = "iteration_started"
+    LLM_CALL = "llm_call"
+    LLM_CALL_FAILED = "llm_call_failed"
+    ACTION_PARSED = "action_parsed"
+    PARSER_ERROR = "parser_error"
+    TOOL_CALL = "tool_call"
+    TOOL_OBSERVATION = "tool_observation"
+    TOOL_BUDGET_BLOCKED = "tool_budget_blocked"
+    TOOL_APPROVAL_REQUIRED = "tool_approval_required"
+    REPEATED_TOOL_CALL_DETECTED = "repeated_tool_call_detected"
+    JUDGE_ACCEPT = "judge_accept"
+    JUDGE_RETRY = "judge_retry"
+    JUDGE_BLOCK = "judge_block"
+    FINAL_OUTPUT = "final_output"
+    AGENT_WAITING_FOR_APPROVAL = "agent_waiting_for_approval"
+    AGENT_BLOCKED = "agent_blocked"
+    AGENT_STALLED = "agent_stalled"
+    AGENT_RETRY_EXHAUSTED = "agent_retry_exhausted"
+    AGENT_FAILED = "agent_failed"
+    AGENT_COMPLETED = "agent_completed"
+
+
+class AgentLoopDiagnosticSeverity(str, Enum):
+    OK = "ok"
+    INFO = "info"
+    WARNING = "warning"
+    ERROR = "error"
+    BLOCKED = "blocked"
+
+
 @dataclass(frozen=True)
 class AgentLoopPolicy:
     max_iterations: int = 5
     max_judge_retries: int = 2
+    max_parser_errors: int = 2
+    max_repeated_tool_calls: int = 2
+    max_consecutive_tool_failures: int = 3
     stop_on_first_valid_output: bool = True
+    stall_detection_enabled: bool = True
+    trace_enabled: bool = True
+    max_trace_preview_chars: int = 500
+
+    def __post_init__(self) -> None:
+        _validate_non_negative("max_iterations", self.max_iterations, minimum=1)
+        _validate_non_negative("max_judge_retries", self.max_judge_retries)
+        _validate_non_negative("max_parser_errors", self.max_parser_errors)
+        _validate_non_negative("max_repeated_tool_calls", self.max_repeated_tool_calls)
+        _validate_non_negative(
+            "max_consecutive_tool_failures",
+            self.max_consecutive_tool_failures,
+        )
+        _validate_non_negative("max_trace_preview_chars", self.max_trace_preview_chars)
 
 
 @dataclass(frozen=True)
@@ -89,10 +156,88 @@ class JudgeVerdict:
         }
 
 
-@dataclass
-class AgentLoopMetrics:
+@dataclass(frozen=True)
+class AgentLoopIssue:
+    code: str
+    message: str
+    severity: AgentLoopDiagnosticSeverity = AgentLoopDiagnosticSeverity.INFO
+    iteration: int | None = None
+    tool_name: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "code": self.code,
+            "message": self.message,
+            "severity": self.severity.value,
+            "iteration": self.iteration,
+            "tool_name": self.tool_name,
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class AgentLoopDiagnostics:
+    agent_id: str
+    status: AgentLoopStatus
+    stop_reason: AgentLoopStopReason
+    summary: str
+    healthy: bool
+    severity: AgentLoopDiagnosticSeverity
+    iterations: int = 0
     llm_calls: int = 0
     tool_calls: int = 0
+    parser_errors: int = 0
+    judge_retries: int = 0
+    tool_failures: int = 0
+    tool_blocks: int = 0
+    approval_requests: int = 0
+    repeated_tool_calls: int = 0
+    issues: list[AgentLoopIssue] = field(default_factory=list)
+    suggestions: list[str] = field(default_factory=list)
+    trace_summary: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "agent_id": self.agent_id,
+            "status": self.status.value,
+            "stop_reason": self.stop_reason.value,
+            "summary": self.summary,
+            "healthy": self.healthy,
+            "severity": self.severity.value,
+            "iterations": self.iterations,
+            "llm_calls": self.llm_calls,
+            "tool_calls": self.tool_calls,
+            "parser_errors": self.parser_errors,
+            "judge_retries": self.judge_retries,
+            "tool_failures": self.tool_failures,
+            "tool_blocks": self.tool_blocks,
+            "approval_requests": self.approval_requests,
+            "repeated_tool_calls": self.repeated_tool_calls,
+            "issues": [issue.to_dict() for issue in self.issues],
+            "suggestions": list(self.suggestions),
+            "trace_summary": dict(self.trace_summary),
+        }
+
+
+@dataclass
+class AgentLoopMetrics:
+    iterations: int = 0
+    llm_calls: int = 0
+    tool_calls: int = 0
+    parser_errors: int = 0
+    judge_retries: int = 0
+    judge_accepts: int = 0
+    judge_blocks: int = 0
+    tool_successes: int = 0
+    tool_failures: int = 0
+    tool_blocks: int = 0
+    tool_timeouts: int = 0
+    tool_approval_requests: int = 0
+    repeated_tool_calls: int = 0
+    stalled_iterations: int = 0
+    llm_error_count: int = 0
+    total_tool_elapsed_ms: float = 0.0
     token_usage: TokenUsage = field(default_factory=TokenUsage)
 
     def add_usage(self, usage: TokenUsage) -> None:
@@ -101,10 +246,38 @@ class AgentLoopMetrics:
             output_tokens=self.token_usage.output_tokens + usage.output_tokens,
         )
 
+    def record_tool_status(self, status: Any, *, elapsed_ms: float = 0.0) -> None:
+        status_value = getattr(status, "value", str(status))
+        if status_value == "succeeded":
+            self.tool_successes += 1
+        elif status_value == "failed":
+            self.tool_failures += 1
+        elif status_value == "blocked":
+            self.tool_blocks += 1
+        elif status_value == "timeout":
+            self.tool_timeouts += 1
+        elif status_value == "approval_required":
+            self.tool_approval_requests += 1
+        self.total_tool_elapsed_ms += elapsed_ms
+
     def to_dict(self) -> dict[str, Any]:
         return {
+            "iterations": self.iterations,
             "llm_calls": self.llm_calls,
             "tool_calls": self.tool_calls,
+            "parser_errors": self.parser_errors,
+            "judge_retries": self.judge_retries,
+            "judge_accepts": self.judge_accepts,
+            "judge_blocks": self.judge_blocks,
+            "tool_successes": self.tool_successes,
+            "tool_failures": self.tool_failures,
+            "tool_blocks": self.tool_blocks,
+            "tool_timeouts": self.tool_timeouts,
+            "tool_approval_requests": self.tool_approval_requests,
+            "repeated_tool_calls": self.repeated_tool_calls,
+            "stalled_iterations": self.stalled_iterations,
+            "llm_error_count": self.llm_error_count,
+            "total_tool_elapsed_ms": self.total_tool_elapsed_ms,
             "token_usage": self.token_usage.to_dict(),
         }
 
@@ -118,6 +291,8 @@ class AgentLoopResult:
     iterations: int = 0
     metrics: AgentLoopMetrics = field(default_factory=AgentLoopMetrics)
     events: list[dict[str, Any]] = field(default_factory=list)
+    trace: dict[str, Any] = field(default_factory=dict)
+    diagnostics: AgentLoopDiagnostics | None = None
     error: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -129,5 +304,16 @@ class AgentLoopResult:
             "iterations": self.iterations,
             "metrics": self.metrics.to_dict(),
             "events": [dict(event) for event in self.events],
+            "trace": dict(self.trace),
+            "diagnostics": self.diagnostics.to_dict() if self.diagnostics else None,
             "error": self.error,
         }
+
+
+def _validate_non_negative(name: str, value: int, *, minimum: int = 0) -> None:
+    if not isinstance(value, int):
+        raise TypeError(f"{name} must be an integer")
+    if value < minimum:
+        if minimum == 0:
+            raise ValueError(f"{name} must be non-negative")
+        raise ValueError(f"{name} must be at least {minimum}")

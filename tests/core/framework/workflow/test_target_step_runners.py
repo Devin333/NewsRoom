@@ -653,6 +653,24 @@ def test_agent_loop_step_runner_maps_fake_runner_statuses() -> None:
         (
             AgentLoopResult(
                 success=False,
+                status=AgentLoopStatus.WAITING_FOR_APPROVAL,
+                error="approval required",
+            ),
+            StepStatus.PAUSED,
+            "AgentLoopWaitingForApproval",
+        ),
+        (
+            AgentLoopResult(
+                success=False,
+                status=AgentLoopStatus.STALLED,
+                error="repeated tool call",
+            ),
+            StepStatus.BLOCKED,
+            "AgentLoopStalled",
+        ),
+        (
+            AgentLoopResult(
+                success=False,
                 status=AgentLoopStatus.FAILED,
                 error="loop failed",
             ),

@@ -54,6 +54,7 @@ class AgentRunner:
         )
         result = loop.run(agent, inputs, tools)
         self._append_conversation_events(conversation_id, agent, result.events)
+        self._append_conversation_diagnostics(conversation_id, agent, result)
         self._append_conversation_message(
             conversation_id,
             AgentMessageRecord(
@@ -73,7 +74,8 @@ class AgentRunner:
                 conversation_id,
                 (
                     f"agent_id={agent.agent_id} status={result.status.value} "
-                    f"iterations={result.iterations}"
+                    f"iterations={result.iterations} "
+                    f"stop_reason={_result_stop_reason(result)}"
                 ),
             )
         return result
@@ -100,15 +102,53 @@ class AgentRunner:
             if message is not None:
                 self._conversation_store.append_message(conversation_id, message)
 
+    def _append_conversation_diagnostics(
+        self,
+        conversation_id: str | None,
+        agent: AgentSpec,
+        result: AgentLoopResult,
+    ) -> None:
+        if self._conversation_store is None or not conversation_id:
+            return
+        if result.diagnostics is None:
+            return
+        diagnostics = result.diagnostics.to_dict()
+        trace_summary = diagnostics.get("trace_summary") or {}
+        self._conversation_store.append_message(
+            conversation_id,
+            AgentMessageRecord(
+                conversation_id=conversation_id,
+                role="diagnostic",
+                content={
+                    "diagnostics": diagnostics,
+                    "trace_summary": trace_summary,
+                },
+                agent_id=agent.agent_id,
+                metadata={
+                    "message_type": "agent_loop_diagnostics",
+                    "status": result.status.value,
+                    "stop_reason": diagnostics.get("stop_reason"),
+                    "healthy": diagnostics.get("healthy"),
+                    "severity": diagnostics.get("severity"),
+                },
+            ),
+        )
+
 
 def _conversation_result_payload(result: AgentLoopResult) -> dict[str, Any]:
     if result.success:
-        return {"success": True, "status": result.status.value, "output": result.output}
+        return {
+            "success": True,
+            "status": result.status.value,
+            "output": result.output,
+            "diagnostics": result.diagnostics.to_dict() if result.diagnostics else None,
+        }
     return {
         "success": False,
         "status": result.status.value,
         "error": result.error,
         "verdict": result.verdict.to_dict() if result.verdict else None,
+        "diagnostics": result.diagnostics.to_dict() if result.diagnostics else None,
     }
 
 
@@ -151,4 +191,28 @@ def _conversation_message_from_event(
                 "status": "retry",
             },
         )
+    if event_type in {
+        "agent_stalled",
+        "agent_retry_exhausted",
+        "agent_waiting_for_approval",
+        "agent_blocked",
+        "agent_failed",
+    }:
+        return AgentMessageRecord(
+            conversation_id=conversation_id,
+            role="diagnostic",
+            content=dict(event),
+            agent_id=agent.agent_id,
+            metadata={
+                "message_type": "agent_loop_stop_event",
+                "event_type": event_type,
+                "status": event_type.removeprefix("agent_"),
+            },
+        )
     return None
+
+
+def _result_stop_reason(result: AgentLoopResult) -> str:
+    if result.diagnostics is None:
+        return "unknown"
+    return result.diagnostics.stop_reason.value

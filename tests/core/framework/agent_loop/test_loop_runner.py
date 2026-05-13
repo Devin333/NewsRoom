@@ -1,4 +1,10 @@
-from core.framework.agent_loop import AgentLoopStatus, AgentRunner, AgentSpec
+from core.framework.agent_loop import (
+    AgentLoopPolicy,
+    AgentLoopStatus,
+    AgentLoopStopReason,
+    AgentRunner,
+    AgentSpec,
+)
 from core.framework.llm import FakeLLMClient
 from core.framework.tools import (
     REDACTED_VALUE,
@@ -51,15 +57,26 @@ def test_agent_runner_handles_tool_call_judge_retry_and_final_output() -> None:
     assert result.metrics.llm_calls == 3
     assert result.metrics.tool_calls == 1
     assert result.metrics.token_usage.total_tokens == 60
+    assert result.diagnostics is not None
+    assert result.diagnostics.stop_reason == AgentLoopStopReason.FINAL_OUTPUT_ACCEPTED
+    assert result.trace["summary"]["judge_retry_count"] == 1
     assert [event["event_type"] for event in result.events] == [
         "agent_started",
+        "iteration_started",
         "llm_call",
+        "action_parsed",
         "tool_call",
         "tool_observation",
+        "iteration_started",
         "llm_call",
+        "action_parsed",
         "judge_retry",
+        "iteration_started",
         "llm_call",
+        "action_parsed",
+        "judge_accept",
         "final_output",
+        "agent_completed",
     ]
 
 
@@ -82,6 +99,10 @@ def test_agent_runner_returns_retry_exhausted_after_invalid_outputs() -> None:
     assert result.metrics.llm_calls == 3
     assert result.verdict is not None
     assert result.verdict.missing_output_keys == ["analysis_result"]
+    assert result.diagnostics is not None
+    assert result.diagnostics.stop_reason == AgentLoopStopReason.JUDGE_RETRY_EXHAUSTED
+    assert result.diagnostics.healthy is False
+    assert result.diagnostics.issues[0].code == "judge_retry_exhausted"
 
 
 def test_agent_runner_exports_tools_from_resolved_policy() -> None:
@@ -157,11 +178,14 @@ def test_agent_runner_blocks_tool_call_after_agent_budget_is_exhausted() -> None
     ]
     assert result.success is True
     assert calls["count"] == 1
+    assert result.metrics.tool_blocks == 1
     assert [observation["status"] for observation in tool_observations] == [
         "succeeded",
         "blocked",
     ]
     assert "max_tool_calls_per_agent" in tool_observations[1]["summary"]
+    assert result.diagnostics is not None
+    assert result.diagnostics.trace_summary["tool_status_counts"]["blocked"] == 1
 
 
 def test_agent_runner_accepts_control_set_output_tool_result() -> None:
@@ -196,14 +220,23 @@ def test_agent_runner_accepts_control_set_output_tool_result() -> None:
     assert result.output == {"analysis_result": {"summary": "ok"}}
     assert result.metrics.llm_calls == 1
     assert result.metrics.tool_calls == 1
+    assert result.diagnostics is not None
+    assert result.diagnostics.stop_reason == AgentLoopStopReason.CONTROL_OUTPUT_ACCEPTED
     assert [event["event_type"] for event in result.events] == [
         "agent_started",
+        "iteration_started",
         "llm_call",
+        "action_parsed",
         "tool_call",
         "tool_observation",
+        "judge_accept",
         "final_output",
+        "agent_completed",
     ]
-    assert result.events[-1]["via_tool"] == "control.set_output"
+    final_output_events = [
+        event for event in result.events if event["event_type"] == "final_output"
+    ]
+    assert final_output_events[-1]["via_tool"] == "control.set_output"
 
 
 def test_agent_runner_blocks_secret_like_final_output() -> None:
@@ -226,6 +259,9 @@ def test_agent_runner_blocks_secret_like_final_output() -> None:
     assert result.success is False
     assert result.status == AgentLoopStatus.BLOCKED
     assert result.error == "output contains secret-like content"
+    assert result.diagnostics is not None
+    assert result.diagnostics.stop_reason == AgentLoopStopReason.SECRET_BLOCKED
+    assert result.diagnostics.severity.value == "blocked"
 
 
 def test_agent_runner_redacts_tool_observations_before_next_prompt() -> None:
@@ -253,6 +289,106 @@ def test_agent_runner_redacts_tool_observations_before_next_prompt() -> None:
     assert REDACTED_VALUE in second_prompt
 
 
+def test_agent_runner_reports_parser_retry_diagnostics() -> None:
+    llm = FakeLLMClient(["not-json", "still-not-json"])
+    agent = AgentSpec(
+        agent_id="analyst",
+        name="Analyst",
+        role="Analyze",
+        goal="Produce analysis",
+        instructions="Return JSON actions only.",
+        input_keys=["request"],
+        output_key="analysis_result",
+        loop_policy=AgentLoopPolicy(max_iterations=4, max_parser_errors=1),
+    )
+
+    result = AgentRunner(llm_client=llm, tool_registry=_registry()).run(
+        agent,
+        {"request": {"topic": "chips"}},
+    )
+
+    assert result.success is False
+    assert result.status == AgentLoopStatus.RETRY_EXHAUSTED
+    assert result.metrics.parser_errors == 2
+    assert result.diagnostics is not None
+    assert result.diagnostics.stop_reason == AgentLoopStopReason.PARSER_RETRY_EXHAUSTED
+    assert result.diagnostics.issues[0].code == "parser_retry_exhausted"
+    assert result.trace["summary"]["parser_error_count"] == 2
+
+
+def test_agent_runner_stalls_on_repeated_tool_call_signature() -> None:
+    registry = _registry()
+    llm = FakeLLMClient(
+        [
+            '{"action_type":"tool_call","tool_name":"memory.search","tool_args":{"query":"chips"}}',
+            '{"action_type":"tool_call","tool_name":"memory.search","tool_args":{"query":"chips"}}',
+            '{"action_type":"tool_call","tool_name":"memory.search","tool_args":{"query":"chips"}}',
+        ]
+    )
+    agent = AgentSpec(
+        agent_id="analyst",
+        name="Analyst",
+        role="Analyze",
+        goal="Produce analysis",
+        instructions="Return JSON actions only.",
+        input_keys=["request"],
+        output_key="analysis_result",
+        allowed_tools=["memory.search"],
+        loop_policy=AgentLoopPolicy(max_iterations=5, max_repeated_tool_calls=2),
+    )
+
+    result = AgentRunner(llm_client=llm, tool_registry=registry).run(
+        agent,
+        {"request": {"topic": "chips"}},
+    )
+
+    assert result.success is False
+    assert result.status == AgentLoopStatus.STALLED
+    assert result.metrics.repeated_tool_calls == 2
+    assert result.diagnostics is not None
+    assert result.diagnostics.stop_reason == AgentLoopStopReason.REPEATED_TOOL_CALL_STALLED
+    assert result.diagnostics.repeated_tool_calls == 1
+    assert result.diagnostics.issues[0].code == "repeated_tool_call"
+
+
+def test_agent_runner_waits_for_tool_approval_with_diagnostics() -> None:
+    registry = ToolRegistry()
+    registry.register(
+        ToolDefinition(
+            name="report.publish",
+            side_effect="publishing",
+            requires_approval=True,
+        ),
+        lambda args: {"published": True},
+    )
+    llm = FakeLLMClient(
+        ['{"action_type":"tool_call","tool_name":"report.publish","tool_args":{"report_id":"r1"}}']
+    )
+    agent = AgentSpec(
+        agent_id="publisher",
+        name="Publisher",
+        role="Publish",
+        goal="Publish report",
+        instructions="Return JSON actions only.",
+        input_keys=["request"],
+        output_key="publish_result",
+        allowed_tools=["report.publish"],
+    )
+
+    result = AgentRunner(llm_client=llm, tool_registry=registry).run(
+        agent,
+        {"request": {"report_id": "r1"}},
+    )
+
+    assert result.success is False
+    assert result.status == AgentLoopStatus.WAITING_FOR_APPROVAL
+    assert result.metrics.tool_approval_requests == 1
+    assert result.diagnostics is not None
+    assert result.diagnostics.stop_reason == AgentLoopStopReason.TOOL_APPROVAL_REQUIRED
+    assert result.diagnostics.issues[0].tool_name == "report.publish"
+    assert result.events[-1]["event_type"] == "agent_waiting_for_approval"
+
+
 def test_agent_runner_persists_conversation_when_store_is_provided(tmp_path) -> None:
     llm = FakeLLMClient(
         ['{"action_type":"final_output","output":{"analysis_result":{"summary":"ok"}}}']
@@ -271,11 +407,16 @@ def test_agent_runner_persists_conversation_when_store_is_provided(tmp_path) -> 
     messages = store.read_messages("conversation-1")
 
     assert result.success is True
-    assert [message.role for message in messages] == ["user", "assistant"]
+    assert [message.role for message in messages] == ["user", "diagnostic", "assistant"]
     assert messages[0].content == {"request": {"topic": "chips"}}
-    assert messages[1].content["output"] == {"analysis_result": {"summary": "ok"}}
-    assert messages[1].metadata["status"] == "accepted"
-    assert store.get_summary("conversation-1") == "agent_id=analyst status=accepted iterations=1"
+    assert messages[1].metadata["message_type"] == "agent_loop_diagnostics"
+    assert messages[1].content["diagnostics"]["stop_reason"] == "final_output_accepted"
+    assert messages[2].content["output"] == {"analysis_result": {"summary": "ok"}}
+    assert messages[2].metadata["status"] == "accepted"
+    assert store.get_summary("conversation-1") == (
+        "agent_id=analyst status=accepted iterations=1 "
+        "stop_reason=final_output_accepted"
+    )
 
 
 def test_agent_runner_persists_tool_and_judge_events_to_conversation(tmp_path) -> None:
@@ -301,7 +442,13 @@ def test_agent_runner_persists_tool_and_judge_events_to_conversation(tmp_path) -
     messages = store.read_messages("conversation-events")
 
     assert result.success is True
-    assert [message.role for message in messages] == ["user", "tool", "judge", "assistant"]
+    assert [message.role for message in messages] == [
+        "user",
+        "tool",
+        "judge",
+        "diagnostic",
+        "assistant",
+    ]
     assert messages[1].metadata == {
         "message_type": "agent_tool_observation",
         "event_type": "tool_observation",
@@ -314,4 +461,6 @@ def test_agent_runner_persists_tool_and_judge_events_to_conversation(tmp_path) -
     assert messages[2].role == "judge"
     assert messages[2].content["feedback"] == "missing output keys: analysis_result"
     assert messages[2].content["verdict"]["decision"] == "retry"
-    assert messages[3].content["output"] == {"analysis_result": {"summary": "ok"}}
+    assert messages[3].metadata["message_type"] == "agent_loop_diagnostics"
+    assert messages[3].content["trace_summary"]["judge_retry_count"] == 1
+    assert messages[4].content["output"] == {"analysis_result": {"summary": "ok"}}

@@ -322,12 +322,31 @@ class AgentLoopStepRunner:
                 outputs=outputs,
                 metrics=result.metrics.to_dict(),
             )
+        if status_value == "waiting_for_approval":
+            return StepOutcome(
+                status=StepStatus.PAUSED,
+                outputs=outputs,
+                error_type="AgentLoopWaitingForApproval",
+                error_message=result.error or f"agent loop waiting for approval: {agent_id}",
+                error_details=_agent_loop_error_details(result_payload),
+                metrics=result.metrics.to_dict(),
+            )
+        if status_value == "stalled":
+            return StepOutcome(
+                status=StepStatus.BLOCKED,
+                outputs=outputs,
+                error_type="AgentLoopStalled",
+                error_message=result.error or f"agent loop stalled: {agent_id}",
+                error_details=_agent_loop_error_details(result_payload),
+                metrics=result.metrics.to_dict(),
+            )
         if status_value == "blocked":
             return StepOutcome(
                 status=StepStatus.BLOCKED,
                 outputs=outputs,
                 error_type="AgentLoopBlocked",
                 error_message=result.error or f"agent loop blocked: {agent_id}",
+                error_details=_agent_loop_error_details(result_payload),
                 metrics=result.metrics.to_dict(),
             )
         return StepOutcome(
@@ -335,6 +354,7 @@ class AgentLoopStepRunner:
             outputs=outputs,
             error_type="AgentLoopFailed",
             error_message=result.error or f"agent loop failed: {agent_id}",
+            error_details=_agent_loop_error_details(result_payload),
             metrics=result.metrics.to_dict(),
         )
 
@@ -1057,6 +1077,21 @@ def _tool_policy_from_step(step: StepSpec) -> ToolPolicy:
         timeout_seconds_default=payload.get("timeout_seconds_default", 30.0),
         max_attempts_default=int(payload.get("max_attempts_default", 1)),
     )
+
+
+def _agent_loop_error_details(result_payload: dict[str, Any]) -> dict[str, Any]:
+    diagnostics = result_payload.get("diagnostics")
+    if isinstance(diagnostics, dict):
+        return {
+            "agent_loop_status": result_payload.get("status"),
+            "stop_reason": diagnostics.get("stop_reason"),
+            "severity": diagnostics.get("severity"),
+            "healthy": diagnostics.get("healthy"),
+            "summary": diagnostics.get("summary"),
+            "issues": diagnostics.get("issues") or [],
+            "suggestions": diagnostics.get("suggestions") or [],
+        }
+    return {"agent_loop_status": result_payload.get("status")}
 
 
 def _observations_key(step: StepSpec) -> str:

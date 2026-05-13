@@ -320,6 +320,24 @@ class WorkflowExecutor:
                     output["agent_loop_events"],
                 )
                 register_manifest_artifact(manifest, "agent_loop_events", "agent_loop_events.json")
+            if "agent_loop_diagnostics" in output:
+                self._artifact_manager.write_json(
+                    actual_run_id,
+                    "agent_loop_diagnostics.json",
+                    output["agent_loop_diagnostics"],
+                )
+                register_manifest_artifact(
+                    manifest,
+                    "agent_loop_diagnostics",
+                    "agent_loop_diagnostics.json",
+                )
+            if "agent_loop_trace" in output:
+                self._artifact_manager.write_json(
+                    actual_run_id,
+                    "agent_loop_trace.json",
+                    output["agent_loop_trace"],
+                )
+                register_manifest_artifact(manifest, "agent_loop_trace", "agent_loop_trace.json")
             self._write_source_diagnostic_artifacts(actual_run_id, manifest, output)
             if "evidence_bundle" in output:
                 self._artifact_manager.write_json(
