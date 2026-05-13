@@ -2,11 +2,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from domain.sources import RawSourceItem, SourceDefinition, SourceError, SourceHealth
 from sources import SourceRegistry
-from sources.connectors import ARXIV_API_URL, GITHUB_API_URL, ArxivConnector, GithubConnector
+from sources.connectors import (
+    ARXIV_API_URL,
+    GITHUB_API_URL,
+    ArxivConnector,
+    GithubConnector,
+    SourceFetchPolicy,
+)
 from sources.health import (
     BasicSourceHealthManager,
     SourceHealthChecker,
@@ -104,21 +111,28 @@ class SourceApplicationService:
         health_manager: BasicSourceHealthManager | None = None,
         source_health_store: SourceHealthStore | None = None,
         health_probe_fetcher=None,
+        source_config_path: str | Path | None = None,
+        fetch_policy: SourceFetchPolicy | None = None,
         arxiv_connector: ArxivConnector | None = None,
         github_connector: GithubConnector | None = None,
     ) -> None:
         if source_registry is None:
             from workflows.daily_intelligence.runner import build_default_source_registry
 
-            source_registry = build_default_source_registry()
+            source_registry = build_default_source_registry(source_config_path=source_config_path)
+        if fetch_policy is None:
+            from workflows.daily_intelligence.runner import build_default_source_fetch_policy
+
+            fetch_policy = build_default_source_fetch_policy(source_config_path=source_config_path)
         self.source_registry = source_registry
+        self.fetch_policy = fetch_policy
         self.source_health_store = source_health_store or _source_health_store_from_env()
         self.health_manager = health_manager or BasicSourceHealthManager(
             health_store=self.source_health_store
         )
         self.health_probe_fetcher = health_probe_fetcher
-        self.arxiv_connector = arxiv_connector or ArxivConnector()
-        self.github_connector = github_connector or GithubConnector()
+        self.arxiv_connector = arxiv_connector or ArxivConnector(fetch_policy=self.fetch_policy)
+        self.github_connector = github_connector or GithubConnector(fetch_policy=self.fetch_policy)
 
     def list_sources(
         self,
@@ -181,6 +195,7 @@ class SourceApplicationService:
         checker = SourceHealthChecker(
             self.source_registry,
             self.health_manager,
+            fetch_policy=self.fetch_policy,
             probe_fetcher=self.health_probe_fetcher,
         )
         return checker.run(

@@ -159,6 +159,81 @@ def test_source_service_checks_source_health_with_real_checker_path() -> None:
     assert payload["entries"][0]["health"]["status"] == "healthy"
 
 
+def test_source_service_health_check_uses_configured_fetch_policy(tmp_path) -> None:
+    config_path = tmp_path / "sources.yaml"
+    config_path.write_text(
+        """
+fetch:
+  timeout_seconds: 6
+  max_bytes: 4096
+  max_redirects: 4
+  user_agent: NewsRoomSourceService/1.0
+  respect_robots: false
+rss_feeds:
+  - source_id: source-1
+    name: Source
+    url: https://example.com/rss
+    topics: [ai]
+""".strip(),
+        encoding="utf-8",
+    )
+    captured = {}
+
+    def probe(source, policy):
+        captured["source_id"] = source.source_id
+        captured["timeout_seconds"] = policy.timeout_seconds
+        captured["max_bytes"] = policy.max_bytes
+        captured["max_redirects"] = policy.max_redirects
+        captured["user_agent"] = policy.user_agent
+        captured["respect_robots"] = policy.respect_robots
+        return ProbeObservation(status_code=200, content_type="application/rss+xml", content_bytes=10)
+
+    service = SourceApplicationService(
+        source_config_path=config_path,
+        health_probe_fetcher=probe,
+    )
+
+    result = service.check_source_health(source_id="source-1")
+
+    assert result.succeeded_count == 1
+    assert captured == {
+        "source_id": "source-1",
+        "timeout_seconds": 6.0,
+        "max_bytes": 4096,
+        "max_redirects": 4,
+        "user_agent": "NewsRoomSourceService/1.0",
+        "respect_robots": False,
+    }
+
+
+def test_source_service_default_preview_connectors_use_configured_fetch_policy(tmp_path) -> None:
+    config_path = tmp_path / "sources.yaml"
+    config_path.write_text(
+        """
+fetch:
+  timeout_seconds: 8
+  max_bytes: 8192
+  user_agent: NewsRoomPreview/1.0
+  respect_robots: false
+rss_feeds:
+  - source_id: source-1
+    name: Source
+    url: https://example.com/rss
+    topics: [ai]
+""".strip(),
+        encoding="utf-8",
+    )
+
+    service = SourceApplicationService(source_config_path=config_path)
+
+    assert service.arxiv_connector.fetch_policy.timeout_seconds == 8.0
+    assert service.arxiv_connector.fetch_policy.max_bytes == 8192
+    assert service.arxiv_connector.fetch_policy.user_agent == "NewsRoomPreview/1.0"
+    assert service.github_connector.fetch_policy.timeout_seconds == 8.0
+    assert service.github_connector.fetch_policy.max_bytes == 8192
+    assert service.github_connector.fetch_policy.user_agent == "NewsRoomPreview/1.0"
+
+
 def test_source_service_fetches_arxiv_preview() -> None:
     service = SourceApplicationService(
         source_registry=SourceRegistry([]),
