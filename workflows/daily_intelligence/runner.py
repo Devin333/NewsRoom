@@ -34,7 +34,7 @@ from quality import (
     RewritePolicy,
     SupportMatrixBuilder,
 )
-from sources import SourceConfigError, SourceRegistry, load_source_registry
+from sources import SourceConfigError, SourceRegistry, load_source_fetch_policy, load_source_registry
 from sources.connectors import (
     ArxivConnector,
     FeedConnector,
@@ -45,8 +45,10 @@ from sources.connectors import (
     ManualConnector,
     MediumConnector,
     RedditConnector,
+    SourceFetchPolicy,
     StackOverflowConnector,
     DevToConnector,
+    effective_fetch_policy,
 )
 from sources.connectors.diagnostics import response_metadata_from_observations
 from sources.health import BasicSourceHealthManager
@@ -102,17 +104,28 @@ class DailyIntelligenceRunner:
         self.source_registry = source_registry or build_default_source_registry(
             source_config_path=source_config_path
         )
-        self.feed_connector = feed_connector or FeedConnector()
-        self.html_connector = html_connector or HtmlConnector()
+        default_fetch_policy = build_default_source_fetch_policy(
+            source_config_path=source_config_path
+        )
+        self.feed_connector = feed_connector or FeedConnector(fetch_policy=default_fetch_policy)
+        self.html_connector = html_connector or HtmlConnector(fetch_policy=default_fetch_policy)
         self.manual_connector = manual_connector or ManualConnector()
-        self.arxiv_connector = arxiv_connector or ArxivConnector()
-        self.github_connector = github_connector or GithubConnector()
-        self.hackernews_connector = hackernews_connector or HackerNewsConnector()
-        self.reddit_connector = reddit_connector or RedditConnector()
-        self.lobsters_connector = lobsters_connector or LobstersConnector()
-        self.stackoverflow_connector = stackoverflow_connector or StackOverflowConnector()
-        self.devto_connector = devto_connector or DevToConnector()
-        self.medium_connector = medium_connector or MediumConnector()
+        self.arxiv_connector = arxiv_connector or ArxivConnector(fetch_policy=default_fetch_policy)
+        self.github_connector = github_connector or GithubConnector(fetch_policy=default_fetch_policy)
+        self.hackernews_connector = hackernews_connector or HackerNewsConnector(
+            fetch_policy=default_fetch_policy
+        )
+        self.reddit_connector = reddit_connector or RedditConnector(fetch_policy=default_fetch_policy)
+        self.lobsters_connector = lobsters_connector or LobstersConnector(
+            fetch_policy=default_fetch_policy
+        )
+        self.stackoverflow_connector = stackoverflow_connector or StackOverflowConnector(
+            fetch_policy=default_fetch_policy
+        )
+        self.devto_connector = devto_connector or DevToConnector(fetch_policy=default_fetch_policy)
+        self.medium_connector = medium_connector or MediumConnector(
+            feed_connector=FeedConnector(fetch_policy=default_fetch_policy)
+        )
         self.llm_client = llm_client
         self.source_health_manager = source_health_manager or BasicSourceHealthManager()
 
@@ -295,6 +308,7 @@ class DailyIntelligenceRunner:
                     request=request,
                     limit=remaining,
                     profile=profile,
+                    fetch_policy=self._fetch_policy_for_source(source),
                 )
             )
             if self.source_health_manager.should_skip(source.source_id):
@@ -688,6 +702,41 @@ class DailyIntelligenceRunner:
             *_with_fallback_stage(html_errors, "html"),
         ]
 
+    def _fetch_policy_for_source(self, source: SourceDefinition) -> SourceFetchPolicy | None:
+        connector = self._connector_for_source(source)
+        policy = getattr(connector, "fetch_policy", None)
+        if policy is None and source.source_type == SourceType.MEDIUM:
+            feed_connector = getattr(connector, "feed_connector", None)
+            policy = getattr(feed_connector, "fetch_policy", None)
+        if isinstance(policy, SourceFetchPolicy):
+            return effective_fetch_policy(policy, source)
+        return None
+
+    def _connector_for_source(self, source: SourceDefinition) -> Any:
+        if source.source_type in {SourceType.RSS, SourceType.ATOM, SourceType.OFFICIAL_BLOG}:
+            return self.feed_connector
+        if source.source_type in {SourceType.HTML, SourceType.WEB_PAGE}:
+            return self.html_connector
+        if source.source_type == SourceType.MANUAL:
+            return self.manual_connector
+        if source.source_type == SourceType.ARXIV:
+            return self.arxiv_connector
+        if source.source_type == SourceType.GITHUB:
+            return self.github_connector
+        if source.source_type == SourceType.HACKERNEWS:
+            return self.hackernews_connector
+        if source.source_type == SourceType.REDDIT:
+            return self.reddit_connector
+        if source.source_type == SourceType.LOBSTERS:
+            return self.lobsters_connector
+        if source.source_type == SourceType.STACKOVERFLOW:
+            return self.stackoverflow_connector
+        if source.source_type == SourceType.DEVTO:
+            return self.devto_connector
+        if source.source_type == SourceType.MEDIUM:
+            return self.medium_connector
+        return None
+
     def _draft_report(self, buffer: ScopedDataBuffer, profile: str) -> dict[str, Any]:
         request = buffer.read("request")
         evidence_bundle = buffer.read("evidence_bundle")
@@ -935,6 +984,20 @@ def build_default_source_registry(*, source_config_path: str | Path | None = Non
             ),
         ]
     )
+
+
+def build_default_source_fetch_policy(
+    *,
+    source_config_path: str | Path | None = None,
+) -> SourceFetchPolicy:
+    configured_path, required = _default_source_config_path(source_config_path)
+    if configured_path is not None:
+        if not configured_path.exists():
+            if required:
+                raise SourceConfigError(f"source config file does not exist: {configured_path}")
+        else:
+            return load_source_fetch_policy(configured_path)
+    return SourceFetchPolicy()
 
 
 def _default_source_config_path(path: str | Path | None) -> tuple[Path | None, bool]:
@@ -1657,17 +1720,22 @@ def _source_fetch_request(
     request: dict[str, Any],
     limit: int,
     profile: str,
+    fetch_policy: SourceFetchPolicy | None = None,
 ) -> SourceFetchRequest:
     query = None
     if source.source_type == SourceType.ARXIV:
         query = str(source.metadata.get("query") or request.get("topic") or "")
+    user_agent = fetch_policy.user_agent if fetch_policy is not None else source.user_agent
     return SourceFetchRequest(
         request_id=request_id,
         source_id=source.source_id,
         source_type=source.source_type,
         url=source.url,
         query=query,
-        user_agent=source.user_agent,
+        timeout_seconds=fetch_policy.timeout_seconds if fetch_policy is not None else 15,
+        max_bytes=fetch_policy.max_bytes if fetch_policy is not None else 1_000_000,
+        user_agent=user_agent,
+        headers={"User-Agent": user_agent} if user_agent else {},
         limit=limit,
         metadata={
             "profile": profile,
@@ -1678,8 +1746,21 @@ def _source_fetch_request(
             "fetch_interval_seconds": source.fetch_interval_seconds,
             "respect_robots": source.respect_robots,
             "connector_name": _source_connector_name(source),
+            **(_fetch_policy_metadata(fetch_policy) if fetch_policy is not None else {}),
         },
     )
+
+
+def _fetch_policy_metadata(fetch_policy: SourceFetchPolicy) -> dict[str, Any]:
+    return {
+        "fetch_timeout_seconds": fetch_policy.timeout_seconds,
+        "fetch_max_bytes": fetch_policy.max_bytes,
+        "max_redirects": fetch_policy.max_redirects,
+        "robots_policy": fetch_policy.respect_robots,
+        "rate_limit_per_domain_per_minute": fetch_policy.rate_limit_per_domain_per_minute,
+        "retry_times": fetch_policy.retry_times,
+        "retry_on_status_codes": list(fetch_policy.retry_on_status_codes),
+    }
 
 
 def _source_connector_name(source: SourceDefinition) -> str:

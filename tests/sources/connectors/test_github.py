@@ -370,7 +370,7 @@ def test_github_connector_default_fetch_rejects_unsupported_content_type(monkeyp
     monkeypatch.setattr("sources.connectors.github.open_request_with_fetch_policy", fake_open_request)
 
     items, errors = GithubConnector().fetch_releases(
-        _source(),
+        _source(respect_robots=False),
         repository="owner/repo",
         limit=1,
     )
@@ -384,7 +384,7 @@ def test_github_connector_default_fetch_rejects_unsupported_content_type(monkeyp
     assert "application/vnd.github+json" in errors[0].metadata["supported_content_types"]
 
 
-def _source() -> SourceDefinition:
+def _source(*, respect_robots: bool = True) -> SourceDefinition:
     return SourceDefinition(
         source_id="github",
         name="GitHub",
@@ -393,4 +393,5 @@ def _source() -> SourceDefinition:
         reliability="high",
         authority_score=0.9,
         language="en",
+        respect_robots=respect_robots,
     )

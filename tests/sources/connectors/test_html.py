@@ -164,7 +164,7 @@ def test_html_connector_default_fetch_rejects_unsupported_content_type(monkeypat
 
     monkeypatch.setattr("sources.connectors.html.open_request_with_fetch_policy", fake_open_request)
 
-    items, errors = HtmlConnector().fetch(_source())
+    items, errors = HtmlConnector().fetch(_source(respect_robots=False))
 
     assert items == []
     assert errors[0].error_type == "unsupported_content_type"
@@ -175,7 +175,7 @@ def test_html_connector_default_fetch_rejects_unsupported_content_type(monkeypat
     assert "text/html" in errors[0].metadata["supported_content_types"]
 
 
-def _source() -> SourceDefinition:
+def _source(*, respect_robots: bool = True) -> SourceDefinition:
     return SourceDefinition(
         source_id="blog",
         name="Example Blog",
@@ -183,4 +183,5 @@ def _source() -> SourceDefinition:
         url="https://example.com/blog/product-launch",
         reliability="high",
         authority_score=0.8,
+        respect_robots=respect_robots,
     )

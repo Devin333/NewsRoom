@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from domain.sources import SourceDefinition
+from sources.connectors.fetch_policy import SourceFetchPolicy
 from sources.registry import SourceRegistry
 
 
@@ -46,6 +47,16 @@ _SOURCE_DEFINITION_FIELDS = {
     "region",
     "metadata",
 }
+_FETCH_POLICY_FIELDS = {
+    "timeout_seconds",
+    "max_bytes",
+    "max_redirects",
+    "user_agent",
+    "respect_robots",
+    "rate_limit_per_domain_per_minute",
+    "retry_times",
+    "retry_on_status_codes",
+}
 
 
 def load_source_definitions(path: str | Path) -> list[SourceDefinition]:
@@ -72,6 +83,20 @@ def load_source_registry(path: str | Path, *, validate: bool = True) -> SourceRe
             )
             raise SourceConfigError(f"source config validation failed: {issues}")
     return registry
+
+
+def load_source_fetch_policy(path: str | Path) -> SourceFetchPolicy:
+    payload = _load_payload(Path(path))
+    if isinstance(payload, list):
+        return SourceFetchPolicy()
+    if not isinstance(payload, dict):
+        raise SourceConfigError("source config must be a list or an object")
+    fetch_payload = payload.get("fetch")
+    if fetch_payload is None:
+        return SourceFetchPolicy()
+    if not isinstance(fetch_payload, dict):
+        raise SourceConfigError("source fetch config must be an object")
+    return _source_fetch_policy(fetch_payload)
 
 
 def _load_payload(path: Path) -> Any:
@@ -187,6 +212,55 @@ def _source_definition(payload: dict[str, Any]) -> SourceDefinition:
     )
 
 
+def _source_fetch_policy(payload: dict[str, Any]) -> SourceFetchPolicy:
+    unknown_fields = sorted(set(payload) - _FETCH_POLICY_FIELDS)
+    if unknown_fields:
+        joined = ", ".join(unknown_fields)
+        raise SourceConfigError(f"unsupported source fetch config field(s): {joined}")
+
+    values: dict[str, Any] = {}
+    if "timeout_seconds" in payload:
+        values["timeout_seconds"] = _float_value(
+            payload["timeout_seconds"],
+            field_name="fetch.timeout_seconds",
+        )
+    if "max_bytes" in payload:
+        values["max_bytes"] = _int_value(payload["max_bytes"], field_name="fetch.max_bytes")
+    if "max_redirects" in payload:
+        values["max_redirects"] = _int_value(
+            payload["max_redirects"],
+            field_name="fetch.max_redirects",
+        )
+    if "user_agent" in payload:
+        values["user_agent"] = _required_text_value(
+            payload["user_agent"],
+            field_name="fetch.user_agent",
+        )
+    if "respect_robots" in payload:
+        values["respect_robots"] = _strict_bool_value(
+            payload["respect_robots"],
+            field_name="fetch.respect_robots",
+        )
+    if "rate_limit_per_domain_per_minute" in payload:
+        rate_limit = payload["rate_limit_per_domain_per_minute"]
+        values["rate_limit_per_domain_per_minute"] = (
+            None
+            if rate_limit is None
+            else _int_value(rate_limit, field_name="fetch.rate_limit_per_domain_per_minute")
+        )
+    if "retry_times" in payload:
+        values["retry_times"] = _int_value(payload["retry_times"], field_name="fetch.retry_times")
+    if "retry_on_status_codes" in payload:
+        values["retry_on_status_codes"] = _int_tuple_value(
+            payload["retry_on_status_codes"],
+            field_name="fetch.retry_on_status_codes",
+        )
+    try:
+        return SourceFetchPolicy(**values)
+    except ValueError as exc:
+        raise SourceConfigError(f"invalid source fetch config: {exc}") from exc
+
+
 def _string_list(value: Any) -> list[str]:
     if value is None:
         return []
@@ -216,6 +290,46 @@ def _bool_value(value: Any, *, default: bool) -> bool:
     if isinstance(value, bool):
         return value
     return str(value).strip().casefold() in {"1", "true", "yes", "on"}
+
+
+def _strict_bool_value(value: Any, *, field_name: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    normalized = str(value).strip().casefold()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise SourceConfigError(f"{field_name} must be a boolean")
+
+
+def _required_text_value(value: Any, *, field_name: str) -> str:
+    if value is None:
+        raise SourceConfigError(f"{field_name} is required")
+    text = str(value).strip()
+    if not text:
+        raise SourceConfigError(f"{field_name} is required")
+    return text
+
+
+def _float_value(value: Any, *, field_name: str) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        raise SourceConfigError(f"{field_name} must be a number") from exc
+
+
+def _int_value(value: Any, *, field_name: str) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError) as exc:
+        raise SourceConfigError(f"{field_name} must be an integer") from exc
+
+
+def _int_tuple_value(value: Any, *, field_name: str) -> tuple[int, ...]:
+    if not isinstance(value, list | tuple):
+        raise SourceConfigError(f"{field_name} must be a list")
+    return tuple(_int_value(item, field_name=field_name) for item in value)
 
 
 def _positive_int_value(value: Any, *, default: int, field_name: str) -> int:

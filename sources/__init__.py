@@ -1,6 +1,11 @@
 """Source pipeline package."""
 
-from sources.config import SourceConfigError, load_source_definitions, load_source_registry
+from sources.config import (
+    SourceConfigError,
+    load_source_definitions,
+    load_source_fetch_policy,
+    load_source_registry,
+)
 from sources.registry import SourceRegistry, SourceRegistryValidationIssue, SourceRegistryValidationResult
 
 __all__ = [
@@ -9,5 +14,6 @@ __all__ = [
     "SourceRegistryValidationIssue",
     "SourceRegistryValidationResult",
     "load_source_definitions",
+    "load_source_fetch_policy",
     "load_source_registry",
 ]

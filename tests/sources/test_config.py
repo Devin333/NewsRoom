@@ -3,7 +3,12 @@ from pathlib import Path
 
 import pytest
 
-from sources import SourceConfigError, load_source_definitions, load_source_registry
+from sources import (
+    SourceConfigError,
+    load_source_definitions,
+    load_source_fetch_policy,
+    load_source_registry,
+)
 
 
 def test_load_source_registry_reads_json_sources_payload(tmp_path) -> None:
@@ -50,6 +55,69 @@ def test_load_source_registry_reads_json_sources_payload(tmp_path) -> None:
     assert openai.user_agent == "NewsRoomTest/1.0"
     assert openai.category == "official"
     assert openai.metadata["source_kind"] == "official_blog"
+
+
+def test_load_source_fetch_policy_reads_top_level_fetch_config(tmp_path) -> None:
+    config_path = tmp_path / "sources.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "fetch": {
+                    "timeout_seconds": 9.5,
+                    "max_bytes": 2048,
+                    "max_redirects": 4,
+                    "user_agent": "NewsRoomFetchTest/1.0",
+                    "respect_robots": False,
+                    "rate_limit_per_domain_per_minute": 12,
+                    "retry_times": 3,
+                    "retry_on_status_codes": [429, 503],
+                },
+                "sources": [
+                    {
+                        "source_id": "openai",
+                        "name": "OpenAI News",
+                        "source_type": "rss",
+                        "url": "https://openai.com/news/rss.xml",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    policy = load_source_fetch_policy(config_path)
+
+    assert policy.timeout_seconds == 9.5
+    assert policy.max_bytes == 2048
+    assert policy.max_redirects == 4
+    assert policy.user_agent == "NewsRoomFetchTest/1.0"
+    assert policy.respect_robots is False
+    assert policy.rate_limit_per_domain_per_minute == 12
+    assert policy.retry_times == 3
+    assert policy.retry_on_status_codes == (429, 503)
+
+
+def test_load_source_fetch_policy_rejects_invalid_fetch_config(tmp_path) -> None:
+    config_path = tmp_path / "sources.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "fetch": "fast",
+                "sources": [
+                    {
+                        "source_id": "openai",
+                        "name": "OpenAI News",
+                        "source_type": "rss",
+                        "url": "https://openai.com/news/rss.xml",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SourceConfigError, match="source fetch config"):
+        load_source_fetch_policy(config_path)
 
 
 def test_load_source_definitions_reads_top_level_toml_sources(tmp_path) -> None:

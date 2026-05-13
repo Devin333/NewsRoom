@@ -576,6 +576,88 @@ def test_daily_intelligence_runner_loads_source_config_path(tmp_path) -> None:
     assert result.output["raw_items"][0].source_id == "configured-feed"
 
 
+def test_daily_intelligence_runner_applies_configured_fetch_policy_to_default_connectors(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    config_path = tmp_path / "sources.yaml"
+    config_path.write_text(
+        """
+fetch:
+  timeout_seconds: 7.5
+  max_bytes: 5000
+  max_redirects: 5
+  user_agent: NewsRoomConfiguredPolicy/1.0
+  respect_robots: false
+  rate_limit_per_domain_per_minute: 20
+  retry_times: 1
+  retry_on_status_codes: [429, 503]
+rss_feeds:
+  - source_id: configured-feed
+    name: Configured Feed
+    url: https://example.com/configured.xml
+    reliability: high
+    topics: [ai, policy]
+""".strip(),
+        encoding="utf-8",
+    )
+    captured = {}
+
+    class Headers:
+        def get_content_type(self):
+            return "application/rss+xml"
+
+        def items(self):
+            return [("Content-Type", "application/rss+xml")]
+
+    class Response:
+        status = 200
+        headers = Headers()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def geturl(self):
+            return "https://example.com/configured.xml"
+
+        def read(self, size):
+            captured["read_size"] = size
+            return RSS_FIXTURE.encode("utf-8")
+
+    def fake_open_request(request, policy):
+        captured["user_agent"] = request.headers["User-agent"]
+        captured["timeout_seconds"] = policy.timeout_seconds
+        captured["max_redirects"] = policy.max_redirects
+        return Response()
+
+    monkeypatch.setattr("sources.connectors.feed.open_request_with_fetch_policy", fake_open_request)
+
+    result = DailyIntelligenceRunner(
+        artifact_root=tmp_path,
+        source_config_path=config_path,
+        llm_client=_FakeReportLLM(),
+    ).run(profile="live", topic="AI policy", source_limit=1, run_id="daily-configured-policy")
+
+    assert result.status == WorkflowStatus.SUCCEEDED
+    assert captured == {
+        "user_agent": "NewsRoomConfiguredPolicy/1.0",
+        "timeout_seconds": 7.5,
+        "max_redirects": 5,
+        "read_size": 5001,
+    }
+    fetch_request = result.output["source_fetch_requests"][0]
+    assert fetch_request.timeout_seconds == 7.5
+    assert fetch_request.max_bytes == 5000
+    assert fetch_request.user_agent == "NewsRoomConfiguredPolicy/1.0"
+    assert fetch_request.headers == {"User-Agent": "NewsRoomConfiguredPolicy/1.0"}
+    assert fetch_request.metadata["robots_policy"] is False
+    assert fetch_request.metadata["rate_limit_per_domain_per_minute"] == 20
+    assert fetch_request.metadata["retry_on_status_codes"] == [429, 503]
+
+
 def test_daily_intelligence_runner_persists_response_headers_from_default_fetch(tmp_path, monkeypatch) -> None:
     class Headers:
         def get_content_type(self):
