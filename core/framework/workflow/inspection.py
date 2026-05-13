@@ -658,9 +658,381 @@ class WorkflowRunInspection:
         }
 
 
+@dataclass(frozen=True)
+class WorkflowRunListItem:
+    run_id: str
+    run_dir: str
+    manifest_path: str
+    status: str | None = None
+    workflow_id: str | None = None
+    workflow_version: str | None = None
+    profile: str | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
+    manifest_schema_version: str | None = None
+    step_count: int | None = None
+    event_count: int | None = None
+    checkpoint_count: int | None = None
+    artifact_count: int | None = None
+    terminal_artifact_key: str | None = None
+    valid_manifest: bool = True
+    invalid_reason: str | None = None
+
+    @property
+    def completed(self) -> bool:
+        return self.finished_at is not None
+
+    @property
+    def succeeded(self) -> bool:
+        return self.status == WorkflowStatus.SUCCEEDED.value
+
+    @property
+    def failed(self) -> bool:
+        return self.status in {
+            WorkflowStatus.FAILED.value,
+            WorkflowStatus.BLOCKED.value,
+            WorkflowStatus.BUDGET_EXCEEDED.value,
+            WorkflowStatus.CANCELLED.value,
+        }
+
+    @property
+    def paused(self) -> bool:
+        return self.status in {
+            WorkflowStatus.PAUSED.value,
+            WorkflowStatus.WAITING_FOR_HUMAN.value,
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "run_id": self.run_id,
+            "run_dir": self.run_dir,
+            "manifest_path": self.manifest_path,
+            "status": self.status,
+            "workflow_id": self.workflow_id,
+            "workflow_version": self.workflow_version,
+            "profile": self.profile,
+            "started_at": self.started_at,
+            "finished_at": self.finished_at,
+            "manifest_schema_version": self.manifest_schema_version,
+            "step_count": self.step_count,
+            "event_count": self.event_count,
+            "checkpoint_count": self.checkpoint_count,
+            "artifact_count": self.artifact_count,
+            "terminal_artifact_key": self.terminal_artifact_key,
+            "valid_manifest": self.valid_manifest,
+            "invalid_reason": self.invalid_reason,
+            "completed": self.completed,
+            "succeeded": self.succeeded,
+            "failed": self.failed,
+            "paused": self.paused,
+        }
+
+
+@dataclass(frozen=True)
+class WorkflowRunCatalog:
+    artifact_root: str
+    runs: list[WorkflowRunListItem] = field(default_factory=list)
+    invalid_run_dirs: list[str] = field(default_factory=list)
+    total_run_count: int = 0
+    returned_run_count: int = 0
+    status_counts: dict[str, int] = field(default_factory=dict)
+    workflow_counts: dict[str, int] = field(default_factory=dict)
+    profile_counts: dict[str, int] = field(default_factory=dict)
+    latest_started_at: str | None = None
+    oldest_started_at: str | None = None
+    filters: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def empty(self) -> bool:
+        return not self.runs
+
+    def latest(self) -> WorkflowRunListItem | None:
+        return self.runs[0] if self.runs else None
+
+    def by_run_id(self, run_id: str) -> WorkflowRunListItem | None:
+        for run in self.runs:
+            if run.run_id == run_id:
+                return run
+        return None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "artifact_root": self.artifact_root,
+            "run_count": len(self.runs),
+            "total_run_count": self.total_run_count,
+            "returned_run_count": self.returned_run_count,
+            "invalid_run_dirs": list(self.invalid_run_dirs),
+            "status_counts": dict(self.status_counts),
+            "workflow_counts": dict(self.workflow_counts),
+            "profile_counts": dict(self.profile_counts),
+            "latest_started_at": self.latest_started_at,
+            "oldest_started_at": self.oldest_started_at,
+            "filters": to_json_safe(self.filters),
+            "runs": [run.to_dict() for run in self.runs],
+        }
+
+
+@dataclass(frozen=True)
+class WorkflowRunCatalogHealth:
+    artifact_root: str
+    severity: str
+    summary: str
+    run_count: int
+    valid_run_count: int
+    invalid_run_count: int
+    succeeded_count: int = 0
+    failed_count: int = 0
+    paused_count: int = 0
+    running_count: int = 0
+    latest_run_id: str | None = None
+    latest_status: str | None = None
+    latest_successful_run_id: str | None = None
+    latest_failed_run_id: str | None = None
+    latest_paused_run_id: str | None = None
+    failed_run_ids: list[str] = field(default_factory=list)
+    paused_run_ids: list[str] = field(default_factory=list)
+    running_run_ids: list[str] = field(default_factory=list)
+    invalid_run_dirs: list[str] = field(default_factory=list)
+    status_counts: dict[str, int] = field(default_factory=dict)
+    workflow_counts: dict[str, int] = field(default_factory=dict)
+    profile_counts: dict[str, int] = field(default_factory=dict)
+    warnings: list[str] = field(default_factory=list)
+    suggested_actions: list[str] = field(default_factory=list)
+
+    @property
+    def healthy(self) -> bool:
+        return self.severity == "ok"
+
+    @property
+    def has_open_runs(self) -> bool:
+        return bool(self.paused_run_ids or self.running_run_ids)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "artifact_root": self.artifact_root,
+            "severity": self.severity,
+            "healthy": self.healthy,
+            "summary": self.summary,
+            "run_count": self.run_count,
+            "valid_run_count": self.valid_run_count,
+            "invalid_run_count": self.invalid_run_count,
+            "succeeded_count": self.succeeded_count,
+            "failed_count": self.failed_count,
+            "paused_count": self.paused_count,
+            "running_count": self.running_count,
+            "latest_run_id": self.latest_run_id,
+            "latest_status": self.latest_status,
+            "latest_successful_run_id": self.latest_successful_run_id,
+            "latest_failed_run_id": self.latest_failed_run_id,
+            "latest_paused_run_id": self.latest_paused_run_id,
+            "failed_run_ids": list(self.failed_run_ids),
+            "paused_run_ids": list(self.paused_run_ids),
+            "running_run_ids": list(self.running_run_ids),
+            "invalid_run_dirs": list(self.invalid_run_dirs),
+            "status_counts": dict(self.status_counts),
+            "workflow_counts": dict(self.workflow_counts),
+            "profile_counts": dict(self.profile_counts),
+            "warnings": list(self.warnings),
+            "suggested_actions": list(self.suggested_actions),
+            "has_open_runs": self.has_open_runs,
+        }
+
+
+@dataclass(frozen=True)
+class WorkflowRunComparison:
+    base_run_id: str | None
+    target_run_id: str | None
+    base_status: str | None
+    target_status: str | None
+    base_workflow_version: str | None
+    target_workflow_version: str | None
+    same_workflow: bool
+    status_changed: bool
+    workflow_version_changed: bool
+    step_count_delta: int
+    event_count_delta: int
+    artifact_count_delta: int
+    duration_ms_delta: float | None = None
+    added_steps: list[str] = field(default_factory=list)
+    removed_steps: list[str] = field(default_factory=list)
+    changed_step_statuses: dict[str, dict[str, str | None]] = field(default_factory=dict)
+    added_artifacts: list[str] = field(default_factory=list)
+    removed_artifacts: list[str] = field(default_factory=list)
+    added_output_keys: dict[str, list[str]] = field(default_factory=dict)
+    removed_output_keys: dict[str, list[str]] = field(default_factory=dict)
+    health_severity_changed: bool = False
+    base_health_severity: str | None = None
+    target_health_severity: str | None = None
+
+    @property
+    def has_behavioral_change(self) -> bool:
+        return bool(
+            self.status_changed
+            or self.workflow_version_changed
+            or self.added_steps
+            or self.removed_steps
+            or self.changed_step_statuses
+            or self.added_output_keys
+            or self.removed_output_keys
+            or self.health_severity_changed
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "base_run_id": self.base_run_id,
+            "target_run_id": self.target_run_id,
+            "base_status": self.base_status,
+            "target_status": self.target_status,
+            "base_workflow_version": self.base_workflow_version,
+            "target_workflow_version": self.target_workflow_version,
+            "same_workflow": self.same_workflow,
+            "status_changed": self.status_changed,
+            "workflow_version_changed": self.workflow_version_changed,
+            "step_count_delta": self.step_count_delta,
+            "event_count_delta": self.event_count_delta,
+            "artifact_count_delta": self.artifact_count_delta,
+            "duration_ms_delta": self.duration_ms_delta,
+            "added_steps": list(self.added_steps),
+            "removed_steps": list(self.removed_steps),
+            "changed_step_statuses": to_json_safe(self.changed_step_statuses),
+            "added_artifacts": list(self.added_artifacts),
+            "removed_artifacts": list(self.removed_artifacts),
+            "added_output_keys": to_json_safe(self.added_output_keys),
+            "removed_output_keys": to_json_safe(self.removed_output_keys),
+            "health_severity_changed": self.health_severity_changed,
+            "base_health_severity": self.base_health_severity,
+            "target_health_severity": self.target_health_severity,
+            "has_behavioral_change": self.has_behavioral_change,
+        }
+
+
 class WorkflowRunInspector:
     def __init__(self, artifact_root: str | Path | None = None) -> None:
         self._artifact_root = Path(artifact_root) if artifact_root is not None else None
+
+    def list_runs(
+        self,
+        *,
+        limit: int | None = 50,
+        offset: int = 0,
+        workflow_id: str | None = None,
+        workflow_version: str | None = None,
+        status: str | WorkflowStatus | None = None,
+        profile: str | None = None,
+        include_invalid: bool = False,
+    ) -> WorkflowRunCatalog:
+        artifact_root = self._require_artifact_root()
+        if limit is not None and limit < 0:
+            raise WorkflowRunInspectionError("limit must be non-negative")
+        if offset < 0:
+            raise WorkflowRunInspectionError("offset must be non-negative")
+        requested_status = _status_value(status)
+        filters = {
+            "workflow_id": workflow_id,
+            "workflow_version": workflow_version,
+            "status": requested_status,
+            "profile": profile,
+            "include_invalid": include_invalid,
+            "limit": limit,
+            "offset": offset,
+        }
+        all_items: list[WorkflowRunListItem] = []
+        invalid_run_dirs: list[str] = []
+        if artifact_root.exists():
+            for run_dir in sorted(path for path in artifact_root.iterdir() if path.is_dir()):
+                item = _run_list_item_from_dir(run_dir)
+                if item is None:
+                    continue
+                if not item.valid_manifest:
+                    invalid_run_dirs.append(item.run_dir)
+                    if not include_invalid:
+                        continue
+                all_items.append(item)
+        filtered_items = [
+            item
+            for item in all_items
+            if _run_list_item_matches(
+                item,
+                workflow_id=workflow_id,
+                workflow_version=workflow_version,
+                status=requested_status,
+                profile=profile,
+            )
+        ]
+        sorted_items = sorted(filtered_items, key=_run_list_sort_key, reverse=True)
+        if offset:
+            sorted_items = sorted_items[offset:]
+        if limit is not None:
+            sorted_items = sorted_items[:limit]
+        return WorkflowRunCatalog(
+            artifact_root=str(artifact_root),
+            runs=sorted_items,
+            invalid_run_dirs=sorted(invalid_run_dirs),
+            total_run_count=len(filtered_items),
+            returned_run_count=len(sorted_items),
+            status_counts=_catalog_counts(filtered_items, "status"),
+            workflow_counts=_catalog_counts(filtered_items, "workflow_id"),
+            profile_counts=_catalog_counts(filtered_items, "profile"),
+            latest_started_at=_latest_started_at(filtered_items),
+            oldest_started_at=_oldest_started_at(filtered_items),
+            filters={key: value for key, value in filters.items() if value is not None},
+        )
+
+    def latest_run(
+        self,
+        *,
+        workflow_id: str | None = None,
+        workflow_version: str | None = None,
+        status: str | WorkflowStatus | None = None,
+        profile: str | None = None,
+        include_invalid: bool = False,
+    ) -> WorkflowRunListItem | None:
+        catalog = self.list_runs(
+            limit=1,
+            workflow_id=workflow_id,
+            workflow_version=workflow_version,
+            status=status,
+            profile=profile,
+            include_invalid=include_invalid,
+        )
+        return catalog.latest()
+
+    def catalog_health(
+        self,
+        *,
+        workflow_id: str | None = None,
+        workflow_version: str | None = None,
+        profile: str | None = None,
+        include_invalid: bool = True,
+    ) -> WorkflowRunCatalogHealth:
+        catalog = self.list_runs(
+            limit=None,
+            workflow_id=workflow_id,
+            workflow_version=workflow_version,
+            profile=profile,
+            include_invalid=include_invalid,
+        )
+        return build_run_catalog_health(catalog)
+
+    def compare_runs(
+        self,
+        base_run_id: str,
+        target_run_id: str,
+        *,
+        verify_checksums: bool = False,
+        strict: bool = False,
+    ) -> WorkflowRunComparison:
+        base = self.inspect_run(
+            base_run_id,
+            verify_checksums=verify_checksums,
+            strict=strict,
+        )
+        target = self.inspect_run(
+            target_run_id,
+            verify_checksums=verify_checksums,
+            strict=strict,
+        )
+        return compare_workflow_run_inspections(base, target)
 
     def inspect_run(
         self,
@@ -1092,9 +1464,13 @@ class WorkflowRunInspector:
             return Path(run_dir)
         if run_id is None:
             raise WorkflowRunInspectionError("run_id or run_dir is required")
+        artifact_root = self._require_artifact_root()
+        return resolve_run_dir(artifact_root, run_id)
+
+    def _require_artifact_root(self) -> Path:
         if self._artifact_root is None:
-            raise WorkflowRunInspectionError("artifact_root is required when inspecting by run_id")
-        return self._artifact_root / run_id
+            raise WorkflowRunInspectionError("artifact_root is required")
+        return self._artifact_root
 
 
 def inspect_workflow_run(
@@ -1118,6 +1494,78 @@ def build_workflow_replay_bundle(
 ) -> WorkflowReplayBundle:
     return WorkflowRunInspector().build_replay_bundle(
         run_dir=run_dir,
+        verify_checksums=verify_checksums,
+        strict=strict,
+    )
+
+
+def list_workflow_runs(
+    artifact_root: str | Path,
+    *,
+    limit: int | None = 50,
+    offset: int = 0,
+    workflow_id: str | None = None,
+    workflow_version: str | None = None,
+    status: str | WorkflowStatus | None = None,
+    profile: str | None = None,
+    include_invalid: bool = False,
+) -> WorkflowRunCatalog:
+    return WorkflowRunInspector(artifact_root).list_runs(
+        limit=limit,
+        offset=offset,
+        workflow_id=workflow_id,
+        workflow_version=workflow_version,
+        status=status,
+        profile=profile,
+        include_invalid=include_invalid,
+    )
+
+
+def latest_workflow_run(
+    artifact_root: str | Path,
+    *,
+    workflow_id: str | None = None,
+    workflow_version: str | None = None,
+    status: str | WorkflowStatus | None = None,
+    profile: str | None = None,
+    include_invalid: bool = False,
+) -> WorkflowRunListItem | None:
+    return WorkflowRunInspector(artifact_root).latest_run(
+        workflow_id=workflow_id,
+        workflow_version=workflow_version,
+        status=status,
+        profile=profile,
+        include_invalid=include_invalid,
+    )
+
+
+def workflow_run_catalog_health(
+    artifact_root: str | Path,
+    *,
+    workflow_id: str | None = None,
+    workflow_version: str | None = None,
+    profile: str | None = None,
+    include_invalid: bool = True,
+) -> WorkflowRunCatalogHealth:
+    return WorkflowRunInspector(artifact_root).catalog_health(
+        workflow_id=workflow_id,
+        workflow_version=workflow_version,
+        profile=profile,
+        include_invalid=include_invalid,
+    )
+
+
+def compare_workflow_runs(
+    artifact_root: str | Path,
+    base_run_id: str,
+    target_run_id: str,
+    *,
+    verify_checksums: bool = False,
+    strict: bool = False,
+) -> WorkflowRunComparison:
+    return WorkflowRunInspector(artifact_root).compare_runs(
+        base_run_id,
+        target_run_id,
         verify_checksums=verify_checksums,
         strict=strict,
     )
@@ -1149,6 +1597,25 @@ def resolve_artifact_path(run_dir: str | Path, relative_path: str) -> Path:
     except ValueError as exc:
         raise WorkflowRunInspectionError(
             f"artifact path must stay within the run directory: {relative_path}"
+        ) from exc
+    return path
+
+
+def resolve_run_dir(artifact_root: str | Path, run_id: str) -> Path:
+    root = Path(artifact_root).resolve()
+    relative = Path(str(run_id).replace("\\", "/"))
+    if not str(run_id).strip():
+        raise WorkflowRunInspectionError("run_id is required")
+    if relative.is_absolute() or ".." in relative.parts:
+        raise WorkflowRunInspectionError(
+            f"run_id must stay within the artifact root: {run_id}"
+        )
+    path = (root / relative).resolve()
+    try:
+        path.relative_to(root)
+    except ValueError as exc:
+        raise WorkflowRunInspectionError(
+            f"run_id must stay within the artifact root: {run_id}"
         ) from exc
     return path
 
@@ -1570,6 +2037,251 @@ def health_report_summary(report: WorkflowRunHealthReport) -> dict[str, Any]:
     }
 
 
+def compare_workflow_run_inspections(
+    base: WorkflowRunInspection,
+    target: WorkflowRunInspection,
+) -> WorkflowRunComparison:
+    base_steps = {step.step_id: step for step in base.steps}
+    target_steps = {step.step_id: step for step in target.steps}
+    base_step_ids = set(base_steps)
+    target_step_ids = set(target_steps)
+    shared_step_ids = sorted(base_step_ids & target_step_ids)
+    changed_step_statuses = {
+        step_id: {
+            "base": base_steps[step_id].status,
+            "target": target_steps[step_id].status,
+        }
+        for step_id in shared_step_ids
+        if base_steps[step_id].status != target_steps[step_id].status
+    }
+    added_output_keys: dict[str, list[str]] = {}
+    removed_output_keys: dict[str, list[str]] = {}
+    for step_id in shared_step_ids:
+        base_outputs = set(base_steps[step_id].output_keys)
+        target_outputs = set(target_steps[step_id].output_keys)
+        added = sorted(target_outputs - base_outputs)
+        removed = sorted(base_outputs - target_outputs)
+        if added:
+            added_output_keys[step_id] = added
+        if removed:
+            removed_output_keys[step_id] = removed
+
+    base_artifacts = {artifact.artifact_key for artifact in base.artifacts}
+    target_artifacts = {artifact.artifact_key for artifact in target.artifacts}
+    base_event_count = base.event_summary.event_count if base.event_summary else 0
+    target_event_count = target.event_summary.event_count if target.event_summary else 0
+    base_duration_ms = (
+        base.timeline_summary.duration_ms if base.timeline_summary else None
+    )
+    target_duration_ms = (
+        target.timeline_summary.duration_ms if target.timeline_summary else None
+    )
+    base_health = base.health_report.severity if base.health_report else None
+    target_health = target.health_report.severity if target.health_report else None
+    return WorkflowRunComparison(
+        base_run_id=base.run_id,
+        target_run_id=target.run_id,
+        base_status=base.status,
+        target_status=target.status,
+        base_workflow_version=base.workflow_version,
+        target_workflow_version=target.workflow_version,
+        same_workflow=base.workflow_id == target.workflow_id,
+        status_changed=base.status != target.status,
+        workflow_version_changed=base.workflow_version != target.workflow_version,
+        step_count_delta=len(target.steps) - len(base.steps),
+        event_count_delta=target_event_count - base_event_count,
+        artifact_count_delta=len(target.artifacts) - len(base.artifacts),
+        duration_ms_delta=_delta_or_none(base_duration_ms, target_duration_ms),
+        added_steps=sorted(target_step_ids - base_step_ids),
+        removed_steps=sorted(base_step_ids - target_step_ids),
+        changed_step_statuses=changed_step_statuses,
+        added_artifacts=sorted(target_artifacts - base_artifacts),
+        removed_artifacts=sorted(base_artifacts - target_artifacts),
+        added_output_keys=added_output_keys,
+        removed_output_keys=removed_output_keys,
+        health_severity_changed=base_health != target_health,
+        base_health_severity=base_health,
+        target_health_severity=target_health,
+    )
+
+
+def workflow_run_catalog_summary(catalog: WorkflowRunCatalog) -> dict[str, Any]:
+    latest = catalog.latest()
+    return {
+        "artifact_root": catalog.artifact_root,
+        "run_count": len(catalog.runs),
+        "total_run_count": catalog.total_run_count,
+        "returned_run_count": catalog.returned_run_count,
+        "invalid_run_dir_count": len(catalog.invalid_run_dirs),
+        "status_counts": dict(catalog.status_counts),
+        "workflow_counts": dict(catalog.workflow_counts),
+        "profile_counts": dict(catalog.profile_counts),
+        "latest_started_at": catalog.latest_started_at,
+        "oldest_started_at": catalog.oldest_started_at,
+        "latest_run_id": latest.run_id if latest else None,
+    }
+
+
+def build_run_catalog_health(catalog: WorkflowRunCatalog) -> WorkflowRunCatalogHealth:
+    runs = list(catalog.runs)
+    valid_runs = [run for run in runs if run.valid_manifest]
+    invalid_runs = [run for run in runs if not run.valid_manifest]
+    failed_runs = [run for run in valid_runs if run.failed]
+    paused_runs = [run for run in valid_runs if run.paused]
+    running_runs = [
+        run
+        for run in valid_runs
+        if run.status in {
+            WorkflowStatus.CREATED.value,
+            WorkflowStatus.RUNNING.value,
+            WorkflowStatus.RETRYING.value,
+        }
+    ]
+    invalid_dirs = _dedupe_preserve_order(
+        [run.run_dir for run in invalid_runs] + list(catalog.invalid_run_dirs)
+    )
+    succeeded_runs = [run for run in valid_runs if run.succeeded]
+    latest = catalog.latest()
+    latest_success = _first_run_with_status(valid_runs, WorkflowStatus.SUCCEEDED.value)
+    latest_failed = _first_failed_run(valid_runs)
+    latest_paused = _first_paused_run(valid_runs)
+    warnings: list[str] = []
+    actions: list[str] = []
+    if invalid_runs or catalog.invalid_run_dirs:
+        warnings.append("catalog contains invalid run manifests")
+        actions.append("inspect invalid run directories and restore or remove bad manifests")
+    if latest and latest.failed:
+        warnings.append(f"latest run ended with status {latest.status}")
+        actions.append("inspect latest failed run diagnostics before promoting downstream output")
+    if paused_runs:
+        warnings.append("catalog contains paused runs")
+        actions.append("resume or cancel paused runs through the application layer")
+    if running_runs:
+        warnings.append("catalog contains non-terminal runs")
+        actions.append("confirm worker/checkpoint state for non-terminal runs")
+    severity = _catalog_health_severity(
+        latest=latest,
+        invalid_count=len(invalid_dirs),
+        failed_count=len(failed_runs),
+        paused_count=len(paused_runs),
+        running_count=len(running_runs),
+    )
+    return WorkflowRunCatalogHealth(
+        artifact_root=catalog.artifact_root,
+        severity=severity,
+        summary=_catalog_health_summary(
+            latest=latest,
+            severity=severity,
+            run_count=len(runs),
+            invalid_count=len(invalid_dirs),
+        ),
+        run_count=len(runs),
+        valid_run_count=len(valid_runs),
+        invalid_run_count=len(invalid_dirs),
+        succeeded_count=len(succeeded_runs),
+        failed_count=len(failed_runs),
+        paused_count=len(paused_runs),
+        running_count=len(running_runs),
+        latest_run_id=latest.run_id if latest else None,
+        latest_status=latest.status if latest else None,
+        latest_successful_run_id=latest_success.run_id if latest_success else None,
+        latest_failed_run_id=latest_failed.run_id if latest_failed else None,
+        latest_paused_run_id=latest_paused.run_id if latest_paused else None,
+        failed_run_ids=[run.run_id for run in failed_runs],
+        paused_run_ids=[run.run_id for run in paused_runs],
+        running_run_ids=[run.run_id for run in running_runs],
+        invalid_run_dirs=invalid_dirs,
+        status_counts=dict(catalog.status_counts),
+        workflow_counts=dict(catalog.workflow_counts),
+        profile_counts=dict(catalog.profile_counts),
+        warnings=_dedupe_preserve_order(warnings),
+        suggested_actions=_dedupe_preserve_order(actions),
+    )
+
+
+def workflow_run_catalog_health_summary(
+    health: WorkflowRunCatalogHealth,
+) -> dict[str, Any]:
+    return {
+        "artifact_root": health.artifact_root,
+        "severity": health.severity,
+        "healthy": health.healthy,
+        "run_count": health.run_count,
+        "valid_run_count": health.valid_run_count,
+        "invalid_run_count": health.invalid_run_count,
+        "latest_run_id": health.latest_run_id,
+        "latest_status": health.latest_status,
+        "latest_successful_run_id": health.latest_successful_run_id,
+        "latest_failed_run_id": health.latest_failed_run_id,
+        "failed_count": health.failed_count,
+        "paused_count": health.paused_count,
+        "running_count": health.running_count,
+        "warning_count": len(health.warnings),
+    }
+
+
+def catalog_runs_by_status(
+    catalog: WorkflowRunCatalog,
+    status: str | WorkflowStatus,
+) -> list[WorkflowRunListItem]:
+    requested_status = _status_value(status)
+    return [run for run in catalog.runs if run.status == requested_status]
+
+
+def catalog_runs_by_workflow(
+    catalog: WorkflowRunCatalog,
+    workflow_id: str,
+) -> list[WorkflowRunListItem]:
+    return [run for run in catalog.runs if run.workflow_id == workflow_id]
+
+
+def catalog_runs_by_profile(
+    catalog: WorkflowRunCatalog,
+    profile: str,
+) -> list[WorkflowRunListItem]:
+    return [run for run in catalog.runs if run.profile == profile]
+
+
+def failed_run_items(catalog: WorkflowRunCatalog) -> list[WorkflowRunListItem]:
+    return [run for run in catalog.runs if run.failed]
+
+
+def paused_run_items(catalog: WorkflowRunCatalog) -> list[WorkflowRunListItem]:
+    return [run for run in catalog.runs if run.paused]
+
+
+def invalid_run_items(catalog: WorkflowRunCatalog) -> list[WorkflowRunListItem]:
+    return [run for run in catalog.runs if not run.valid_manifest]
+
+
+def unhealthy_run_items(catalog: WorkflowRunCatalog) -> list[WorkflowRunListItem]:
+    return [
+        run
+        for run in catalog.runs
+        if run.failed or run.paused or not run.valid_manifest
+    ]
+
+
+def workflow_run_comparison_summary(comparison: WorkflowRunComparison) -> dict[str, Any]:
+    return {
+        "base_run_id": comparison.base_run_id,
+        "target_run_id": comparison.target_run_id,
+        "same_workflow": comparison.same_workflow,
+        "status_changed": comparison.status_changed,
+        "workflow_version_changed": comparison.workflow_version_changed,
+        "health_severity_changed": comparison.health_severity_changed,
+        "has_behavioral_change": comparison.has_behavioral_change,
+        "added_steps": list(comparison.added_steps),
+        "removed_steps": list(comparison.removed_steps),
+        "changed_step_status_count": len(comparison.changed_step_statuses),
+        "added_artifact_count": len(comparison.added_artifacts),
+        "removed_artifact_count": len(comparison.removed_artifacts),
+        "step_count_delta": comparison.step_count_delta,
+        "event_count_delta": comparison.event_count_delta,
+        "artifact_count_delta": comparison.artifact_count_delta,
+    }
+
+
 def _timeline_item_from_event(
     event: WorkflowEventRecord,
     *,
@@ -1619,6 +2331,213 @@ def _timeline_item_from_event(
         payload_excerpt=_payload_excerpt(payload),
         terminal=_is_terminal_event(event.event_type),
     )
+
+
+def _run_list_item_from_dir(run_dir: Path) -> WorkflowRunListItem | None:
+    manifest_path = run_dir / "manifest.json"
+    if not manifest_path.exists():
+        return None
+    try:
+        manifest = _read_json_file(manifest_path)
+    except WorkflowRunInspectionError as exc:
+        return WorkflowRunListItem(
+            run_id=run_dir.name,
+            run_dir=str(run_dir),
+            manifest_path=str(manifest_path),
+            valid_manifest=False,
+            invalid_reason=str(exc),
+        )
+    if not isinstance(manifest, dict):
+        return WorkflowRunListItem(
+            run_id=run_dir.name,
+            run_dir=str(run_dir),
+            manifest_path=str(manifest_path),
+            valid_manifest=False,
+            invalid_reason="manifest must be an object",
+        )
+    invalid_reason = None
+    try:
+        validate_run_manifest(manifest, require_terminal_artifact=False)
+    except RunManifestError as exc:
+        invalid_reason = str(exc)
+    artifacts = _manifest_artifact_map(manifest)
+    run_id = _optional_string(manifest.get("run_id")) or run_dir.name
+    status = _optional_string(manifest.get("status"))
+    return WorkflowRunListItem(
+        run_id=run_id,
+        run_dir=str(run_dir),
+        manifest_path=str(manifest_path),
+        status=status,
+        workflow_id=_optional_string(manifest.get("workflow_id")),
+        workflow_version=_optional_string(manifest.get("workflow_version")),
+        profile=_optional_string(manifest.get("profile")),
+        started_at=_optional_string(manifest.get("started_at")),
+        finished_at=_optional_string(manifest.get("finished_at")),
+        manifest_schema_version=manifest_schema_version(manifest),
+        step_count=_optional_int(manifest.get("step_count")),
+        event_count=_optional_int(manifest.get("event_count")),
+        checkpoint_count=_optional_int(manifest.get("checkpoint_count")),
+        artifact_count=len(artifacts),
+        terminal_artifact_key=terminal_artifact_key(manifest),
+        valid_manifest=invalid_reason is None,
+        invalid_reason=invalid_reason,
+    )
+
+
+def _run_list_item_matches(
+    item: WorkflowRunListItem,
+    *,
+    workflow_id: str | None,
+    workflow_version: str | None,
+    status: str | None,
+    profile: str | None,
+) -> bool:
+    if workflow_id is not None and item.workflow_id != workflow_id:
+        return False
+    if workflow_version is not None and item.workflow_version != workflow_version:
+        return False
+    if status is not None and item.status != status:
+        return False
+    if profile is not None and item.profile != profile:
+        return False
+    return True
+
+
+def _run_list_sort_key(item: WorkflowRunListItem) -> tuple[str, str, str]:
+    started_at = item.started_at or item.finished_at or ""
+    return (started_at, item.finished_at or "", item.run_id)
+
+
+def _catalog_counts(
+    items: Iterable[WorkflowRunListItem],
+    field_name: str,
+) -> dict[str, int]:
+    counts = Counter(
+        str(value)
+        for value in (_run_list_field(item, field_name) for item in items)
+        if value is not None
+    )
+    return dict(sorted(counts.items()))
+
+
+def _run_list_field(item: WorkflowRunListItem, field_name: str) -> Any:
+    if field_name == "status":
+        return item.status
+    if field_name == "workflow_id":
+        return item.workflow_id
+    if field_name == "profile":
+        return item.profile
+    raise ValueError(f"unsupported run catalog field: {field_name}")
+
+
+def _latest_started_at(items: Iterable[WorkflowRunListItem]) -> str | None:
+    values = sorted(item.started_at for item in items if item.started_at)
+    return values[-1] if values else None
+
+
+def _oldest_started_at(items: Iterable[WorkflowRunListItem]) -> str | None:
+    values = sorted(item.started_at for item in items if item.started_at)
+    return values[0] if values else None
+
+
+def _status_value(status: str | WorkflowStatus | None) -> str | None:
+    if isinstance(status, WorkflowStatus):
+        return status.value
+    if status is None:
+        return None
+    return str(status)
+
+
+def _optional_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    return None
+
+
+def _delta_or_none(
+    base_value: float | None,
+    target_value: float | None,
+) -> float | None:
+    if base_value is None or target_value is None:
+        return None
+    return round(target_value - base_value, 3)
+
+
+def _first_run_with_status(
+    runs: Iterable[WorkflowRunListItem],
+    status: str,
+) -> WorkflowRunListItem | None:
+    for run in runs:
+        if run.status == status:
+            return run
+    return None
+
+
+def _first_failed_run(
+    runs: Iterable[WorkflowRunListItem],
+) -> WorkflowRunListItem | None:
+    for run in runs:
+        if run.failed:
+            return run
+    return None
+
+
+def _first_paused_run(
+    runs: Iterable[WorkflowRunListItem],
+) -> WorkflowRunListItem | None:
+    for run in runs:
+        if run.paused:
+            return run
+    return None
+
+
+def _catalog_health_severity(
+    *,
+    latest: WorkflowRunListItem | None,
+    invalid_count: int,
+    failed_count: int,
+    paused_count: int,
+    running_count: int,
+) -> str:
+    if invalid_count:
+        return "error"
+    if latest is not None and latest.failed:
+        return "error"
+    if failed_count:
+        return "warning"
+    if paused_count:
+        return "paused"
+    if running_count:
+        return "warning"
+    if latest is None:
+        return "unknown"
+    if latest.succeeded:
+        return "ok"
+    return "warning"
+
+
+def _catalog_health_summary(
+    *,
+    latest: WorkflowRunListItem | None,
+    severity: str,
+    run_count: int,
+    invalid_count: int,
+) -> str:
+    if latest is None:
+        return "no workflow runs found"
+    if severity == "ok":
+        return f"latest run {latest.run_id} completed successfully"
+    if severity == "error" and invalid_count:
+        return f"catalog has {invalid_count} invalid run manifest(s)"
+    if severity == "error":
+        return f"latest run {latest.run_id} ended with status {latest.status}"
+    if severity == "paused":
+        return "catalog contains paused runs"
+    if severity == "warning":
+        return f"catalog has warnings across {run_count} run(s)"
+    return f"catalog status is {severity}"
 
 
 def _event_phase(event_type: str) -> str:

@@ -2286,3 +2286,83 @@ diagnostics 不把 LLM_DECIDE 提升为强治理决策。
 diagnostics 不执行业务 Source / Evidence / Report 逻辑。
 diagnostics 的 suggested_actions 只指向 artifact / event / checkpoint 级别的排查动作。
 ```
+
+### N.6 Workflow run catalog / comparison
+
+本轮继续扩展 `core/framework/workflow/inspection.py`，补齐基于 artifact root 的只读运行历史能力。它仍然属于 Workflow Runtime 的 replay/debug/audit 读取层，不替代 Storage RunStore，也不要求 Interface 直接访问 executor。
+
+新增对象：
+
+```text
+WorkflowRunListItem
+  从单个 run manifest 提取轻量摘要。
+  包含 run_id、run_dir、manifest_path、status、workflow_id、workflow_version、profile、started_at、finished_at。
+  包含 step_count、event_count、checkpoint_count、artifact_count、terminal_artifact_key。
+  包含 valid_manifest / invalid_reason，便于 catalog 扫描时隔离坏 manifest。
+
+WorkflowRunCatalog
+  表示 artifact_root 下的一组 run summary。
+  包含 runs、invalid_run_dirs、status_counts、workflow_counts、profile_counts、latest_started_at、oldest_started_at。
+  支持 latest() / by_run_id() 辅助查询。
+
+WorkflowRunCatalogHealth
+  对 catalog 做只读健康汇总。
+  记录 latest_run_id / latest_status / latest_successful_run_id / latest_failed_run_id / latest_paused_run_id。
+  汇总 succeeded_count / failed_count / paused_count / running_count / invalid_run_count。
+  生成 severity、summary、warnings、suggested_actions。
+
+WorkflowRunComparison
+  对比两个已完成 inspection 的 run。
+  比较 workflow_id / workflow_version / status。
+  比较 step count、event count、artifact count、duration delta。
+  比较 added_steps / removed_steps / changed_step_statuses。
+  比较 added_artifacts / removed_artifacts。
+  比较 step output key 增减和 health severity 变化。
+```
+
+新增入口：
+
+```text
+WorkflowRunInspector.list_runs()
+WorkflowRunInspector.latest_run()
+WorkflowRunInspector.catalog_health()
+WorkflowRunInspector.compare_runs()
+
+WorkflowRunner.list_runs()
+WorkflowRunner.latest_run()
+WorkflowRunner.catalog_health()
+WorkflowRunner.compare_runs()
+
+list_workflow_runs()
+latest_workflow_run()
+workflow_run_catalog_health()
+compare_workflow_runs()
+compare_workflow_run_inspections()
+build_run_catalog_health()
+workflow_run_catalog_summary()
+workflow_run_catalog_health_summary()
+workflow_run_comparison_summary()
+catalog_runs_by_status()
+catalog_runs_by_workflow()
+catalog_runs_by_profile()
+failed_run_items()
+paused_run_items()
+invalid_run_items()
+unhealthy_run_items()
+resolve_run_dir()
+```
+
+边界说明：
+
+```text
+catalog 只扫描 artifact_root/*/manifest.json。
+catalog 默认跳过 invalid manifest，但保留 invalid_run_dirs 供诊断。
+catalog 忽略 artifact_root 下没有 manifest.json 的普通目录，避免把 index/cache 目录误认为 workflow run。
+catalog 不读取大 artifact，不做业务字段解释。
+catalog health 只描述 run history 的运行健康状态，不做发布、质量、安全决策。
+compare 复用 inspect_run()，因此只比较 runtime 可见的 artifact / event / step summary。
+compare 不判断业务内容好坏，不执行 quality gate，不调用 LLM，也不重新跑 workflow。
+resolve_run_dir() 约束 run_id 不能使用 absolute path 或 .. path traversal。
+```
+
+这一步为后续 Interface / Worker 做 run history、latest run、run diff 提供稳定内核入口，同时保持 Workflow Runtime 的职责仍是流程运行与 artifact 可回放能力。

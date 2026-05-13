@@ -15,9 +15,13 @@ from core.framework.specs import WorkflowSpec
 from core.framework.workflow.executor import WorkflowExecutor
 from core.framework.workflow.inspection import (
     WorkflowReplayBundle,
+    WorkflowRunCatalog,
+    WorkflowRunCatalogHealth,
+    WorkflowRunComparison,
     WorkflowRunDiagnostics,
     WorkflowRunHealthReport,
     WorkflowRunInspection,
+    WorkflowRunListItem,
     WorkflowRunInspector,
 )
 from core.framework.workflow.manifest import manifest_schema_version
@@ -182,6 +186,74 @@ class WorkflowRunner:
     ) -> WorkflowRunHealthReport:
         return self._run_inspector.build_health_report(
             run_id,
+            verify_checksums=verify_checksums,
+            strict=strict,
+        )
+
+    def list_runs(
+        self,
+        *,
+        limit: int | None = 50,
+        offset: int = 0,
+        workflow_id: str | None = None,
+        workflow_version: str | None = None,
+        status: str | None = None,
+        profile: str | None = None,
+        include_invalid: bool = False,
+    ) -> WorkflowRunCatalog:
+        return self._run_inspector.list_runs(
+            limit=limit,
+            offset=offset,
+            workflow_id=workflow_id,
+            workflow_version=workflow_version,
+            status=status,
+            profile=profile,
+            include_invalid=include_invalid,
+        )
+
+    def latest_run(
+        self,
+        *,
+        workflow_id: str | None = None,
+        workflow_version: str | None = None,
+        status: str | None = None,
+        profile: str | None = None,
+        include_invalid: bool = False,
+    ) -> WorkflowRunListItem | None:
+        return self._run_inspector.latest_run(
+            workflow_id=workflow_id,
+            workflow_version=workflow_version,
+            status=status,
+            profile=profile,
+            include_invalid=include_invalid,
+        )
+
+    def catalog_health(
+        self,
+        *,
+        workflow_id: str | None = None,
+        workflow_version: str | None = None,
+        profile: str | None = None,
+        include_invalid: bool = True,
+    ) -> WorkflowRunCatalogHealth:
+        return self._run_inspector.catalog_health(
+            workflow_id=workflow_id,
+            workflow_version=workflow_version,
+            profile=profile,
+            include_invalid=include_invalid,
+        )
+
+    def compare_runs(
+        self,
+        base_run_id: str,
+        target_run_id: str,
+        *,
+        verify_checksums: bool = False,
+        strict: bool = False,
+    ) -> WorkflowRunComparison:
+        return self._run_inspector.compare_runs(
+            base_run_id,
+            target_run_id,
             verify_checksums=verify_checksums,
             strict=strict,
         )

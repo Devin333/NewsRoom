@@ -13,16 +13,27 @@ from core.framework.workflow import (
     WorkflowRunInspectionError,
     WorkflowRunInspector,
     build_artifact_inventory,
+    build_run_catalog_health,
     build_run_health_report,
     build_workflow_timeline,
+    catalog_runs_by_status,
+    catalog_runs_by_workflow,
+    compare_workflow_run_inspections,
+    compare_workflow_runs,
     event_records_by_step,
+    failed_run_items,
     failed_step_summaries,
     filter_artifacts_by_prefix,
     health_report_summary,
     inspect_workflow_run,
     inspect_workflow_run_diagnostics,
+    invalid_run_items,
+    latest_workflow_run,
+    list_workflow_runs,
+    paused_run_items,
     replay_bundle_summary,
     required_artifact_records,
+    resolve_run_dir,
     resolve_artifact_path,
     step_artifact_records,
     summarize_data_buffer_diff,
@@ -32,6 +43,11 @@ from core.framework.workflow import (
     timeline_items_by_phase,
     timeline_items_by_step,
     unhealthy_timeline_items,
+    unhealthy_run_items,
+    workflow_run_catalog_health,
+    workflow_run_catalog_health_summary,
+    workflow_run_catalog_summary,
+    workflow_run_comparison_summary,
     workflow_run_inspection_summary,
 )
 
@@ -298,6 +314,199 @@ def test_workflow_run_diagnostics_aggregate_matches_inspection(tmp_path) -> None
     assert diagnostics.to_dict()["health_report"]["severity"] == "ok"
 
 
+def test_workflow_run_catalog_lists_filters_and_finds_latest(tmp_path) -> None:
+    executor = _sample_executor(tmp_path)
+    executor.execute(_sample_spec(), {"topic": "ai"}, profile="test", run_id="catalog-success")
+
+    functions = FunctionStepRegistry()
+    functions.register(
+        "sample.fail",
+        lambda buffer: (_ for _ in ()).throw(RuntimeError("step failed")),
+    )
+    failing_executor = WorkflowExecutor(
+        function_step_runner=FunctionStepRunner(functions),
+        artifact_manager=ArtifactManager(tmp_path),
+    )
+    failing_executor.execute(
+        WorkflowSpec(
+            workflow_id="catalog-failed",
+            name="Catalog Failed",
+            version="1.0",
+            start_step_id="fail",
+            steps=[
+                StepSpec(
+                    step_id="fail",
+                    implementation="sample.fail",
+                    write_keys=["report"],
+                )
+            ],
+        ),
+        {},
+        profile="test",
+        run_id="catalog-failed",
+    )
+    invalid_dir = tmp_path / "invalid-run"
+    invalid_dir.mkdir()
+    (invalid_dir / "manifest.json").write_text("{not-json", encoding="utf-8")
+
+    catalog = list_workflow_runs(tmp_path)
+    latest = latest_workflow_run(tmp_path)
+    failed_only = WorkflowRunInspector(tmp_path).list_runs(status=WorkflowStatus.FAILED)
+    with_invalid = WorkflowRunInspector(tmp_path).list_runs(include_invalid=True, limit=None)
+
+    assert {run.run_id for run in catalog.runs} == {"catalog-success", "catalog-failed"}
+    assert catalog.status_counts == {"failed": 1, "succeeded": 1}
+    assert catalog.workflow_counts == {"catalog-failed": 1, "inspect-sample": 1}
+    assert "invalid-run" in " ".join(catalog.invalid_run_dirs)
+    assert latest.run_id in {"catalog-success", "catalog-failed"}
+    assert [run.run_id for run in failed_only.runs] == ["catalog-failed"]
+    assert with_invalid.by_run_id("invalid-run").valid_manifest is False
+    assert workflow_run_catalog_summary(catalog)["run_count"] == 2
+
+
+def test_workflow_run_catalog_health_groups_unhealthy_runs(tmp_path) -> None:
+    executor = _sample_executor(tmp_path)
+    executor.execute(_sample_spec(), {"topic": "ai"}, profile="test", run_id="health-success")
+
+    functions = FunctionStepRegistry()
+    functions.register(
+        "sample.fail",
+        lambda buffer: (_ for _ in ()).throw(RuntimeError("step failed")),
+    )
+    failing_executor = WorkflowExecutor(
+        function_step_runner=FunctionStepRunner(functions),
+        artifact_manager=ArtifactManager(tmp_path),
+    )
+    failing_executor.execute(
+        WorkflowSpec(
+            workflow_id="health-failed",
+            name="Health Failed",
+            version="1.0",
+            start_step_id="fail",
+            steps=[
+                StepSpec(
+                    step_id="fail",
+                    implementation="sample.fail",
+                    write_keys=["report"],
+                )
+            ],
+        ),
+        {},
+        profile="test",
+        run_id="health-failed",
+    )
+    invalid_dir = tmp_path / "health-invalid"
+    invalid_dir.mkdir()
+    (invalid_dir / "manifest.json").write_text("{not-json", encoding="utf-8")
+
+    catalog = list_workflow_runs(tmp_path, include_invalid=True, limit=None)
+    health = build_run_catalog_health(catalog)
+    direct_health = workflow_run_catalog_health(tmp_path)
+
+    assert health.severity == "error"
+    assert health.healthy is False
+    assert health.invalid_run_count == 1
+    assert health.failed_count == 1
+    assert health.latest_successful_run_id in {"health-success", None}
+    assert failed_run_items(catalog)[0].run_id == "health-failed"
+    assert invalid_run_items(catalog)[0].run_id == "health-invalid"
+    assert unhealthy_run_items(catalog)
+    assert catalog_runs_by_status(catalog, WorkflowStatus.SUCCEEDED)[0].run_id == "health-success"
+    assert catalog_runs_by_workflow(catalog, "inspect-sample")[0].run_id == "health-success"
+    assert paused_run_items(catalog) == []
+    assert workflow_run_catalog_health_summary(health)["invalid_run_count"] == 1
+    assert direct_health.invalid_run_count == 1
+
+
+def test_workflow_run_catalog_respects_offset_and_limit(tmp_path) -> None:
+    executor = _sample_executor(tmp_path)
+    executor.execute(_sample_spec(), {"topic": "one"}, profile="test", run_id="catalog-one")
+    executor.execute(_sample_spec(), {"topic": "two"}, profile="test", run_id="catalog-two")
+    executor.execute(_sample_spec(), {"topic": "three"}, profile="test", run_id="catalog-three")
+
+    catalog = WorkflowRunInspector(tmp_path).list_runs(limit=1, offset=1)
+
+    assert catalog.total_run_count == 3
+    assert catalog.returned_run_count == 1
+    assert len(catalog.runs) == 1
+    assert catalog.filters["limit"] == 1
+    assert catalog.filters["offset"] == 1
+
+
+def test_workflow_run_comparison_reports_step_and_output_changes(tmp_path) -> None:
+    functions = FunctionStepRegistry()
+    functions.register("sample.plan", lambda buffer: {"plan": buffer.read("request")["topic"]})
+    functions.register("sample.write", lambda buffer: {"report": f"Report: {buffer.read('plan')}"})
+    functions.register(
+        "sample.write.v2",
+        lambda buffer: {
+            "report": f"Report: {buffer.read('plan')}",
+            "summary": f"Summary: {buffer.read('plan')}",
+        },
+    )
+    executor = WorkflowExecutor(
+        function_step_runner=FunctionStepRunner(functions),
+        artifact_manager=ArtifactManager(tmp_path),
+    )
+    executor.execute(_sample_spec(), {"topic": "ai"}, profile="test", run_id="compare-base")
+    executor.execute(
+        _sample_spec(
+            version="2.0",
+            write_implementation="sample.write.v2",
+            write_keys=["report", "summary"],
+            write_required_output_keys=["report", "summary"],
+        ),
+        {"topic": "ai"},
+        profile="test",
+        run_id="compare-target",
+    )
+
+    comparison = compare_workflow_runs(tmp_path, "compare-base", "compare-target", strict=True)
+    direct_comparison = compare_workflow_run_inspections(
+        inspect_workflow_run(tmp_path / "compare-base", strict=True),
+        inspect_workflow_run(tmp_path / "compare-target", strict=True),
+    )
+
+    assert comparison.same_workflow is True
+    assert comparison.status_changed is False
+    assert comparison.workflow_version_changed is True
+    assert comparison.added_output_keys == {"write": ["summary"]}
+    assert comparison.has_behavioral_change is True
+    assert comparison.to_dict()["target_workflow_version"] == "2.0"
+    assert workflow_run_comparison_summary(comparison)["has_behavioral_change"] is True
+    assert direct_comparison.added_output_keys == comparison.added_output_keys
+
+
+def test_workflow_runner_exposes_run_catalog_and_compare(tmp_path) -> None:
+    registry = FunctionStepRegistry()
+    registry.register("sample.plan", lambda buffer: {"plan": buffer.read("request")["topic"]})
+    registry.register("sample.write", lambda buffer: {"report": f"Report: {buffer.read('plan')}"})
+    runner = WorkflowRunner(artifact_root=tmp_path, function_registry=registry)
+
+    runner.run(_sample_spec(), {"topic": "ai"}, profile="test", run_id="runner-catalog-a")
+    runner.run(_sample_spec(), {"topic": "ml"}, profile="test", run_id="runner-catalog-b")
+
+    catalog = runner.list_runs(workflow_id="inspect-sample")
+    latest = runner.latest_run(workflow_id="inspect-sample")
+    health = runner.catalog_health(workflow_id="inspect-sample")
+    comparison = runner.compare_runs("runner-catalog-a", "runner-catalog-b", strict=True)
+
+    assert catalog.total_run_count == 2
+    assert latest.run_id in {"runner-catalog-a", "runner-catalog-b"}
+    assert health.severity == "ok"
+    assert comparison.same_workflow is True
+    assert comparison.status_changed is False
+
+
+def test_workflow_run_inspector_rejects_run_id_path_traversal(tmp_path) -> None:
+    inspector = WorkflowRunInspector(tmp_path)
+
+    with pytest.raises(WorkflowRunInspectionError, match="artifact root"):
+        inspector.inspect_run("../outside")
+    with pytest.raises(WorkflowRunInspectionError, match="artifact root"):
+        resolve_run_dir(tmp_path, "../outside")
+
+
 def test_workflow_runner_exposes_inspection_and_replay_bundle(tmp_path) -> None:
     registry = FunctionStepRegistry()
     registry.register("sample.plan", lambda buffer: {"plan": buffer.read("request")["topic"]})
@@ -319,11 +528,19 @@ def test_workflow_runner_exposes_inspection_and_replay_bundle(tmp_path) -> None:
     assert health.severity == "ok"
 
 
-def _sample_spec() -> WorkflowSpec:
+def _sample_spec(
+    *,
+    version: str = "1.0",
+    write_implementation: str = "sample.write",
+    write_keys: list[str] | None = None,
+    write_required_output_keys: list[str] | None = None,
+) -> WorkflowSpec:
+    write_keys = write_keys or ["report"]
+    write_required_output_keys = write_required_output_keys or ["report"]
     return WorkflowSpec(
         workflow_id="inspect-sample",
         name="Inspect Sample",
-        version="1.0",
+        version=version,
         start_step_id="plan",
         steps=[
             StepSpec(
@@ -335,10 +552,10 @@ def _sample_spec() -> WorkflowSpec:
             ),
             StepSpec(
                 step_id="write",
-                implementation="sample.write",
+                implementation=write_implementation,
                 read_keys=["plan"],
-                write_keys=["report"],
-                required_output_keys=["report"],
+                write_keys=write_keys,
+                required_output_keys=write_required_output_keys,
             ),
         ],
         edges=[
