@@ -13,6 +13,7 @@ from core.framework.events import EventBus
 from core.framework.run_result import RunResult
 from core.framework.specs import WorkflowSpec
 from core.framework.workflow.executor import WorkflowExecutor
+from core.framework.workflow.manifest import manifest_schema_version
 from core.framework.workflow.result import WorkflowResult
 from core.framework.workflow.step_runner import (
     FunctionStepRegistry,
@@ -170,6 +171,7 @@ class WorkflowRunIndexer:
                         "artifact_key": str(artifact_key),
                         "workflow_id": result.workflow_id,
                         "workflow_version": result.workflow_version,
+                        "manifest_schema_version": manifest_schema_version(result.manifest),
                     },
                 )
             )

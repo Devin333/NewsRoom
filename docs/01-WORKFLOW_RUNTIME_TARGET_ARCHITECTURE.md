@@ -1891,6 +1891,13 @@ core/framework/workflow/buffer.py
   DataBufferSnapshot / DataBufferDiff
   read_keys/write_keys 权限控制
 
+core/framework/workflow/manifest.py
+  RUN_MANIFEST_SCHEMA_VERSION = newsroom.workflow_run_manifest.v1
+  build_run_manifest()
+  REQUIRED_RUN_ARTIFACTS
+  manifest_schema_version()
+  run manifest 已显式版本化，后续 replay/debug/audit schema 演进应优先从这里收口
+
 core/framework/workflow/executor.py
   WorkflowExecutor
   workflow validate

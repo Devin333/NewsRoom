@@ -19,6 +19,7 @@ from core.framework.specs import (
     WorkflowStatus,
 )
 from core.framework.workflow.buffer import DataBuffer
+from core.framework.workflow.manifest import build_run_manifest
 from core.framework.workflow.result import StepOutcome, WorkflowError, WorkflowResult
 from core.framework.workflow.routing import RoutingDecision, RoutingEngine
 from core.framework.workflow.step_runner import (
@@ -100,31 +101,12 @@ class WorkflowExecutor:
             initial_buffer_snapshot.to_dict(),
         )
 
-        manifest: dict[str, Any] = {
-            "run_id": actual_run_id,
-            "workflow_id": workflow.workflow_id,
-            "workflow_version": workflow.version,
-            "profile": profile,
-            "status": WorkflowStatus.RUNNING.value,
-            "started_at": started_at,
-            "finished_at": None,
-            "path": [],
-            "steps": {},
-            "artifacts": {
-                "request": "request.json",
-                "workflow_spec": "workflow_spec.json",
-                "workflow_version": "workflow_version.json",
-                "events": "events.jsonl",
-                "manifest": "manifest.json",
-                "data_buffer_snapshot": "data_buffer_snapshot.json",
-                "data_buffer_initial": "data_buffer.initial.json",
-                "data_buffer_final": "data_buffer.final.json",
-                "data_buffer_diff": "data_buffer.diff.json",
-                "step_results": "step_results.json",
-                "metrics": "metrics.json",
-                "redaction_report": "redaction_report.json",
-            },
-        }
+        manifest = build_run_manifest(
+            run_id=actual_run_id,
+            workflow=workflow,
+            profile=profile,
+            started_at=started_at,
+        )
         if _resumed_checkpoint_id is not None:
             manifest["resumed_from_checkpoint_id"] = _resumed_checkpoint_id
 

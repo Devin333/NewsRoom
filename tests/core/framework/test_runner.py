@@ -3,7 +3,11 @@ import pytest
 import core.framework.runner as runner_module
 from core.framework import WorkflowRunner
 from core.framework.specs import StepSpec, StepType, WorkflowSpec, WorkflowStatus
-from core.framework.workflow import FunctionStepRegistry, build_default_step_runner_registry
+from core.framework.workflow import (
+    FunctionStepRegistry,
+    RUN_MANIFEST_SCHEMA_VERSION,
+    build_default_step_runner_registry,
+)
 from domain.sources import SourceError
 from storage.artifacts import LocalJsonArtifactIndexStore
 from storage.checkpoint import LocalJsonCheckpointStore
@@ -309,6 +313,8 @@ def test_workflow_runner_uses_artifact_index_factory_by_default(tmp_path, monkey
         "output",
     }.issubset(artifact_types)
     assert all(ref.run_id == "artifact-factory-run" for ref in fake_index.refs)
+    manifest_ref = next(ref for ref in fake_index.refs if ref.artifact_type == "manifest")
+    assert manifest_ref.metadata["manifest_schema_version"] == RUN_MANIFEST_SCHEMA_VERSION
 
 
 def test_workflow_runner_indexes_expanded_source_artifact_refs(tmp_path) -> None:

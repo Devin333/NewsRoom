@@ -8,6 +8,12 @@ from core.framework.workflow.buffer import (
     ScopedDataBuffer,
 )
 from core.framework.workflow.executor import WorkflowExecutor
+from core.framework.workflow.manifest import (
+    REQUIRED_RUN_ARTIFACTS,
+    RUN_MANIFEST_SCHEMA_VERSION,
+    build_run_manifest,
+    manifest_schema_version,
+)
 from core.framework.workflow.result import StepOutcome, WorkflowError, WorkflowResult
 from core.framework.workflow.routing import (
     ConditionalExpressionError,
@@ -50,6 +56,8 @@ __all__ = [
     "JoinStepRunner",
     "ParallelGroupStepRunner",
     "QualityGateStepRunner",
+    "REQUIRED_RUN_ARTIFACTS",
+    "RUN_MANIFEST_SCHEMA_VERSION",
     "RouterStepRunner",
     "ConditionalExpressionError",
     "RoutingEngine",
@@ -66,4 +74,6 @@ __all__ = [
     "WorkflowError",
     "WorkflowExecutor",
     "WorkflowResult",
+    "build_run_manifest",
+    "manifest_schema_version",
 ]

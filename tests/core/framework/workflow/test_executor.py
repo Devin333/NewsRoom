@@ -21,6 +21,7 @@ from core.framework.workflow import (
     FunctionStepRegistry,
     FunctionStepRunner,
     HumanReviewStepRunner,
+    RUN_MANIFEST_SCHEMA_VERSION,
     StepExecutionError,
     StepOutcome,
     StepRunnerRegistry,
@@ -92,6 +93,7 @@ def test_workflow_executor_runs_function_steps_and_writes_artifacts(tmp_path) ->
     assert (run_dir / "output.json").exists()
 
     manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["schema_version"] == RUN_MANIFEST_SCHEMA_VERSION
     assert manifest["status"] == "succeeded"
     assert manifest["profile"] == "test"
     assert manifest["path"] == ["plan", "write"]
