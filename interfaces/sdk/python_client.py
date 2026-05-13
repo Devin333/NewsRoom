@@ -165,10 +165,40 @@ class RunsClient:
         )
 
     def get(self, run_id: str) -> dict[str, Any]:
-        return self.client.get(f"/api/v1/runs/{urllib.parse.quote(run_id)}")
+        return self.client.get(f"/api/v1/runs/{_quote_path_segment(run_id)}")
 
     def list(self, *, limit: int = 20) -> dict[str, Any]:
         return self.client.get("/api/v1/runs", params={"limit": limit})
+
+    def manifest(self, run_id: str) -> dict[str, Any]:
+        return self.client.get(f"/api/v1/runs/{_quote_path_segment(run_id)}/manifest")
+
+    def events(self, run_id: str, *, limit: int | None = None) -> dict[str, Any]:
+        return self.client.get(
+            f"/api/v1/runs/{_quote_path_segment(run_id)}/events",
+            params={"limit": limit},
+        )
+
+    def replay(self, run_id: str) -> dict[str, Any]:
+        return self.client.get(f"/api/v1/runs/{_quote_path_segment(run_id)}/replay")
+
+    def diagnostics(self, run_id: str) -> dict[str, Any]:
+        return self.client.get(f"/api/v1/runs/{_quote_path_segment(run_id)}/diagnostics")
+
+    def health(self, run_id: str) -> dict[str, Any]:
+        return self.client.get(f"/api/v1/runs/{_quote_path_segment(run_id)}/health")
+
+    def catalog_health(self) -> dict[str, Any]:
+        return self.client.get("/api/v1/runs/catalog/health")
+
+    def compare(self, base_run_id: str, target_run_id: str) -> dict[str, Any]:
+        return self.client.get(
+            "/api/v1/runs/compare",
+            params={
+                "base_run_id": base_run_id,
+                "target_run_id": target_run_id,
+            },
+        )
 
 
 class ReportsClient:
@@ -218,6 +248,10 @@ def _url(base_url: str, path: str, *, params: dict[str, Any] | None) -> str:
     if not query:
         return f"{base_url}{suffix}"
     return f"{base_url}{suffix}?{urllib.parse.urlencode(query, doseq=True)}"
+
+
+def _quote_path_segment(value: str) -> str:
+    return urllib.parse.quote(value, safe="")
 
 
 def _json_bytes(payload: dict[str, Any] | None) -> bytes:

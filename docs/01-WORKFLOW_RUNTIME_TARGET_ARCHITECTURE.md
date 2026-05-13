@@ -2515,3 +2515,31 @@ CLI / HTTP API / MCP
   -> RunInspectionService
       -> WorkflowRunInspector
 ```
+
+### N.10 SDK run inspection client exposure
+
+本轮继续把 HTTP API 已有的 run inspection 能力补到 Python SDK，并同步 TypeScript SDK contract 文档。SDK 的职责是调用 `/api/v1/runs/...` HTTP contract，不直接读取 `.newsroom/runs`，也不直接接触 `WorkflowExecutor` 或 `WorkflowRunInspector`。
+
+Python SDK 新增：
+
+```text
+client.runs.manifest(run_id)
+client.runs.events(run_id, limit=...)
+client.runs.replay(run_id)
+client.runs.diagnostics(run_id)
+client.runs.health(run_id)
+client.runs.catalog_health()
+client.runs.compare(base_run_id, target_run_id)
+```
+
+同时收紧 `run_id` path segment 编码：
+
+```text
+run/1 -> run%2F1
+```
+
+这样 SDK 不会把带 `/` 的 run id 拼成多级 URL path。后续 TypeScript / 其他语言 SDK 也应保持同样规则：
+
+```text
+SDK -> HTTP API -> RunInspectionService -> WorkflowRunInspector
+```

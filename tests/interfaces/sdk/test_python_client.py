@@ -23,6 +23,38 @@ def test_news_client_posts_daily_run_with_api_envelope() -> None:
     assert json.loads(opener.requests[0].data.decode("utf-8"))["topic"] == "AI policy"
 
 
+def test_news_client_reads_run_inspection_endpoints() -> None:
+    opener = _FakeOpener(
+        {
+            "success": True,
+            "data": {"ok": True},
+            "request_id": "req-1",
+            "schema_version": "1.0",
+        }
+    )
+    client = NewsClient("https://news.example", opener=opener)
+
+    assert client.runs.get("run/1") == {"ok": True}
+    assert client.runs.manifest("run/1") == {"ok": True}
+    assert client.runs.events("run/1", limit=2) == {"ok": True}
+    assert client.runs.replay("run/1") == {"ok": True}
+    assert client.runs.diagnostics("run/1") == {"ok": True}
+    assert client.runs.health("run/1") == {"ok": True}
+    assert client.runs.catalog_health() == {"ok": True}
+    assert client.runs.compare("run/1", "run 2") == {"ok": True}
+
+    assert [request.full_url for request in opener.requests] == [
+        "https://news.example/api/v1/runs/run%2F1",
+        "https://news.example/api/v1/runs/run%2F1/manifest",
+        "https://news.example/api/v1/runs/run%2F1/events?limit=2",
+        "https://news.example/api/v1/runs/run%2F1/replay",
+        "https://news.example/api/v1/runs/run%2F1/diagnostics",
+        "https://news.example/api/v1/runs/run%2F1/health",
+        "https://news.example/api/v1/runs/catalog/health",
+        "https://news.example/api/v1/runs/compare?base_run_id=run%2F1&target_run_id=run+2",
+    ]
+
+
 def test_news_client_raises_typed_api_error() -> None:
     client = NewsClient(
         "https://news.example",
