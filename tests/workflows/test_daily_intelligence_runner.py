@@ -379,6 +379,8 @@ def test_daily_intelligence_runner_live_with_injected_llm_succeeds(tmp_path) -> 
                 source_type="rss",
                 url="https://example.com/rss.xml",
                 reliability="high",
+                fetch_interval_seconds=1800,
+                user_agent="NewsRoomLiveTest/1.0",
             )
         ]
     )
@@ -393,7 +395,12 @@ def test_daily_intelligence_runner_live_with_injected_llm_succeeds(tmp_path) -> 
     assert result.status == WorkflowStatus.SUCCEEDED
     assert result.output["final_report"].title == "Injected Live Report"
     assert llm.requests[0].response_format == "json_object"
-    assert (Path(result.artifact_dir) / "report.json").exists()
+    run_dir = Path(result.artifact_dir)
+    assert (run_dir / "report.json").exists()
+    source_fetch_requests = json.loads((run_dir / "source_fetch_requests.json").read_text())
+    assert source_fetch_requests[0]["user_agent"] == "NewsRoomLiveTest/1.0"
+    assert source_fetch_requests[0]["metadata"]["fetch_interval_seconds"] == 1800
+    assert source_fetch_requests[0]["metadata"]["respect_robots"] is True
 
 
 def test_daily_intelligence_runner_rewrites_duplicate_supported_report(tmp_path) -> None:

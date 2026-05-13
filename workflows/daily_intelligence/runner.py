@@ -1667,6 +1667,7 @@ def _source_fetch_request(
         source_type=source.source_type,
         url=source.url,
         query=query,
+        user_agent=source.user_agent,
         limit=limit,
         metadata={
             "profile": profile,
@@ -1674,6 +1675,8 @@ def _source_fetch_request(
             "source_name": source.name,
             "reliability": source.reliability.value,
             "authority_score": source.authority_score,
+            "fetch_interval_seconds": source.fetch_interval_seconds,
+            "respect_robots": source.respect_robots,
             "connector_name": _source_connector_name(source),
         },
     )

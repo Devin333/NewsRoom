@@ -4,9 +4,11 @@ from urllib.request import Request
 
 import pytest
 
+from domain.sources import SourceDefinition
 from sources.connectors.fetch_policy import (
     SourceFetchPolicy,
     TooManyRedirectsError,
+    effective_fetch_policy,
     open_request_with_fetch_policy,
 )
 
@@ -52,3 +54,19 @@ def test_open_request_with_fetch_policy_enforces_redirect_limit() -> None:
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_effective_fetch_policy_applies_source_user_agent_and_robots_policy() -> None:
+    source = SourceDefinition(
+        source_id="source",
+        name="Source",
+        source_type="rss",
+        url="https://example.com/rss.xml",
+        respect_robots=False,
+        user_agent="SourceAgent/1.0",
+    )
+
+    policy = effective_fetch_policy(SourceFetchPolicy(user_agent="DefaultAgent/1.0"), source)
+
+    assert policy.user_agent == "SourceAgent/1.0"
+    assert policy.respect_robots is False

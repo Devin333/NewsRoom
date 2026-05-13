@@ -362,6 +362,9 @@ def _source_summary(source: SourceDefinition) -> dict[str, Any]:
         "reliability": source.reliability.value,
         "authority_score": source.authority_score,
         "enabled": source.enabled,
+        "fetch_interval_seconds": source.fetch_interval_seconds,
+        "respect_robots": source.respect_robots,
+        "user_agent": source.user_agent,
         "topics": list(source.topics),
         "category": source.category,
         "language": source.language,
@@ -387,6 +390,24 @@ def _validate_source(source: SourceDefinition) -> list[SourceRegistryValidationI
                 source_id=source.source_id,
                 field="authority_score",
                 message="authority_score must be between 0.0 and 1.0",
+            )
+        )
+    if source.fetch_interval_seconds < 1:
+        issues.append(
+            SourceRegistryValidationIssue(
+                severity="error",
+                source_id=source.source_id,
+                field="fetch_interval_seconds",
+                message="fetch_interval_seconds must be at least 1",
+            )
+        )
+    if source.user_agent is not None and not str(source.user_agent).strip():
+        issues.append(
+            SourceRegistryValidationIssue(
+                severity="error",
+                source_id=source.source_id,
+                field="user_agent",
+                message="user_agent must not be blank",
             )
         )
     scheme = urlsplit(source.url).scheme.casefold()

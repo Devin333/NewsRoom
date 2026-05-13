@@ -19,6 +19,8 @@ def test_load_source_registry_reads_json_sources_payload(tmp_path) -> None:
                         "url": "https://openai.com/news/rss.xml",
                         "reliability": "high",
                         "authority_score": 0.9,
+                        "fetch_interval_seconds": 1800,
+                        "user_agent": "NewsRoomTest/1.0",
                         "topics": ["ai", "models"],
                         "category": "official",
                         "language": "en",
@@ -44,6 +46,8 @@ def test_load_source_registry_reads_json_sources_payload(tmp_path) -> None:
     openai = registry.get("openai")
     assert openai.reliability.value == "high"
     assert openai.authority_score == 0.9
+    assert openai.fetch_interval_seconds == 1800
+    assert openai.user_agent == "NewsRoomTest/1.0"
     assert openai.category == "official"
     assert openai.metadata["source_kind"] == "official_blog"
 
@@ -97,6 +101,30 @@ def test_load_source_registry_rejects_invalid_validated_config(tmp_path) -> None
         load_source_registry(config_path)
 
 
+def test_load_source_registry_rejects_invalid_fetch_interval(tmp_path) -> None:
+    config_path = tmp_path / "sources.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "sources": [
+                    {
+                        "source_id": "bad",
+                        "name": "Bad",
+                        "source_type": "rss",
+                        "url": "https://example.com/rss.xml",
+                        "topics": ["ai"],
+                        "fetch_interval_seconds": 0,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SourceConfigError, match="fetch_interval_seconds"):
+        load_source_registry(config_path)
+
+
 def test_load_source_registry_requires_supported_file_type(tmp_path) -> None:
     config_path = tmp_path / "sources.txt"
     config_path.write_text("sources = []", encoding="utf-8")
@@ -116,6 +144,8 @@ rss_feeds:
     name: OpenAI News
     url: https://openai.com/news/rss.xml
     reliability: high
+    fetch_interval_seconds: 1200
+    user_agent: NewsRoomSource/1.0
     topics: [ai]
 official_blogs:
   - source_id: google-ai
@@ -141,6 +171,8 @@ github_lists: []
         "openai",
     ]
     assert registry.get("openai").source_type.value == "rss"
+    assert registry.get("openai").fetch_interval_seconds == 1200
+    assert registry.get("openai").user_agent == "NewsRoomSource/1.0"
     assert registry.get("google-ai").source_type.value == "official_blog"
     assert registry.get("arxiv-ai").metadata["query"] == "cat:cs.AI"
     assert registry.get("arxiv-ai").metadata["config_section"] == "arxiv_categories"

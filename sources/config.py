@@ -29,7 +29,9 @@ _SOURCE_DEFINITION_FIELDS = {
     "reliability",
     "authority_score",
     "enabled",
+    "fetch_interval_seconds",
     "respect_robots",
+    "user_agent",
     "topics",
     "category",
     "language",
@@ -162,7 +164,13 @@ def _source_definition(payload: dict[str, Any]) -> SourceDefinition:
         reliability=str(payload.get("reliability") or "medium"),
         authority_score=float(payload.get("authority_score", 0.5)),
         enabled=_bool_value(payload.get("enabled"), default=True),
+        fetch_interval_seconds=_positive_int_value(
+            payload.get("fetch_interval_seconds"),
+            default=3600,
+            field_name="fetch_interval_seconds",
+        ),
         respect_robots=_bool_value(payload.get("respect_robots"), default=True),
+        user_agent=_optional_text(payload.get("user_agent")),
         topics=_string_list(payload.get("topics")),
         category=_optional_text(payload.get("category")),
         language=_optional_text(payload.get("language")),
@@ -200,3 +208,15 @@ def _bool_value(value: Any, *, default: bool) -> bool:
     if isinstance(value, bool):
         return value
     return str(value).strip().casefold() in {"1", "true", "yes", "on"}
+
+
+def _positive_int_value(value: Any, *, default: int, field_name: str) -> int:
+    if value is None:
+        return default
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise SourceConfigError(f"{field_name} must be an integer") from exc
+    if parsed < 1:
+        raise SourceConfigError(f"{field_name} must be at least 1")
+    return parsed

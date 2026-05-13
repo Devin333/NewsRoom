@@ -194,7 +194,12 @@ def open_request_with_fetch_policy(request: Request, policy: SourceFetchPolicy) 
 
 
 def effective_fetch_policy(policy: SourceFetchPolicy, source: SourceDefinition) -> SourceFetchPolicy:
-    return replace(policy, respect_robots=policy.respect_robots and source.respect_robots)
+    user_agent = source.user_agent or policy.user_agent
+    return replace(
+        policy,
+        respect_robots=policy.respect_robots and source.respect_robots,
+        user_agent=user_agent,
+    )
 
 
 def ensure_robots_allowed(url: str, policy: SourceFetchPolicy) -> None:

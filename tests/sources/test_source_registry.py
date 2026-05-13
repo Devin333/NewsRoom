@@ -334,6 +334,8 @@ def test_source_registry_selection_report_records_topic_matches() -> None:
         language="en",
         reliability="high",
         authority_score=0.9,
+        fetch_interval_seconds=900,
+        user_agent="NewsRoomSource/1.0",
     )
     unrelated = SourceDefinition(
         source_id="unrelated",
@@ -354,11 +356,42 @@ def test_source_registry_selection_report_records_topic_matches() -> None:
     assert payload["selected_source_ids"] == ["official"]
     assert payload["selected_sources"][0]["source_type"] == "rss"
     assert payload["selected_sources"][0]["reliability"] == "high"
+    assert payload["selected_sources"][0]["fetch_interval_seconds"] == 900
+    assert payload["selected_sources"][0]["respect_robots"] is True
+    assert payload["selected_sources"][0]["user_agent"] == "NewsRoomSource/1.0"
     assert payload["filters"] == {
         "enabled_only": True,
         "language": "en",
         "fallback_to_enabled": True,
     }
+
+
+def test_source_definition_validates_fetch_policy_fields() -> None:
+    try:
+        SourceDefinition(
+            source_id="bad-interval",
+            name="Bad Interval",
+            source_type="rss",
+            url="https://example.com/rss.xml",
+            fetch_interval_seconds=0,
+        )
+    except ValueError as exc:
+        assert "fetch_interval_seconds" in str(exc)
+    else:
+        raise AssertionError("expected fetch_interval_seconds validation failure")
+
+    try:
+        SourceDefinition(
+            source_id="bad-user-agent",
+            name="Bad User Agent",
+            source_type="rss",
+            url="https://example.com/rss.xml",
+            user_agent=" ",
+        )
+    except ValueError as exc:
+        assert "user_agent" in str(exc)
+    else:
+        raise AssertionError("expected user_agent validation failure")
 
 
 def test_source_registry_validate_reports_errors_and_warnings() -> None:

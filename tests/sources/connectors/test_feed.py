@@ -283,6 +283,7 @@ def test_feed_connector_default_fetch_applies_policy(monkeypatch) -> None:
         name="RSS Source",
         source_type="rss",
         url="https://example.com/rss.xml",
+        user_agent="SourceAgent/1.0",
     )
     connector = FeedConnector(
         fetch_policy=SourceFetchPolicy(timeout_seconds=3, max_bytes=5, user_agent="NewsRoomTest/1.0")
@@ -294,7 +295,7 @@ def test_feed_connector_default_fetch_applies_policy(monkeypatch) -> None:
     assert errors[0].error_type == "max_bytes_exceeded"
     assert "max_bytes" in errors[0].error_message
     assert captured == {
-        "user_agent": "NewsRoomTest/1.0",
+        "user_agent": "SourceAgent/1.0",
         "timeout": 3,
         "read_size": 6,
     }

@@ -97,7 +97,9 @@ class SourceDefinition:
     reliability: SourceReliability = SourceReliability.MEDIUM
     authority_score: float = 0.5
     enabled: bool = True
+    fetch_interval_seconds: int = 3600
     respect_robots: bool = True
+    user_agent: str | None = None
     topics: list[str] = field(default_factory=list)
     category: str | None = None
     language: str | None = None
@@ -113,6 +115,13 @@ class SourceDefinition:
             raise ValueError("source name is required")
         if not self.url:
             raise ValueError("source url is required")
+        if self.fetch_interval_seconds < 1:
+            raise ValueError("fetch_interval_seconds must be at least 1")
+        if self.user_agent is not None:
+            user_agent = str(self.user_agent).strip()
+            if not user_agent:
+                raise ValueError("user_agent must not be blank")
+            object.__setattr__(self, "user_agent", user_agent)
 
 
 @dataclass(frozen=True)

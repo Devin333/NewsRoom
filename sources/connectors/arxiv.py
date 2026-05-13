@@ -152,19 +152,21 @@ class ArxivConnector:
         items = [item for item in items if item is not None]
         return items[:limit] if limit else items
 
-    def _default_fetch_text(self, url: str) -> str:
-        request = Request(url, headers={"User-Agent": self.fetch_policy.user_agent})
-        with open_request_with_fetch_policy(request, self.fetch_policy) as response:
+    def _default_fetch_text(self, url: str, policy: SourceFetchPolicy | None = None) -> str:
+        policy = policy or self.fetch_policy
+        request = Request(url, headers={"User-Agent": policy.user_agent})
+        with open_request_with_fetch_policy(request, policy) as response:
             self._last_response_metadata = response_metadata_from_http_response(response, url=url)
             ensure_supported_content_type(self._last_response_metadata.content_type, ARXIV_CONTENT_TYPES)
-            body = response.read(self.fetch_policy.max_bytes + 1)
-        if len(body) > self.fetch_policy.max_bytes:
-            raise ValueError(f"source response exceeds max_bytes: {self.fetch_policy.max_bytes}")
+            body = response.read(policy.max_bytes + 1)
+        if len(body) > policy.max_bytes:
+            raise ValueError(f"source response exceeds max_bytes: {policy.max_bytes}")
         return body.decode("utf-8", errors="replace")
 
     def _fetch_source_text(self, url: str, policy: SourceFetchPolicy) -> str:
         if self._uses_default_fetch:
             ensure_robots_allowed(url, policy)
+            return self._default_fetch_text(url, policy)
         return self._fetch_text(url)
 
 
