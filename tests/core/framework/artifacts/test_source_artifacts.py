@@ -93,6 +93,13 @@ def test_source_artifact_writer_writes_items_errors_and_redacts(tmp_path) -> Non
     assert item_entry["raw_content_bytes"] == len(raw_content.encode("utf-8"))
     assert item_entry["raw_content_sha256"] == sha256(raw_content.encode("utf-8")).hexdigest()
     assert item_payload["item"]["raw_content"] == "<item>Real source content</item>"
+    assert item_payload["item"]["raw_artifact_ref"]["artifact_type"] == "source_raw_content"
+    assert item_payload["item"]["parse_artifact_ref"]["artifact_type"] == "source_item"
+    assert item_payload["item"]["lineage"]["source_id"] == "feed/source"
+    assert item_payload["item"]["lineage"]["source_item_id"] == "item 1"
+    assert item_payload["item"]["lineage"]["raw_url"] == "https://example.com/item?token=%5BREDACTED%5D&topic=ai"
+    assert item_payload["item"]["lineage"]["raw_artifact_ref"]["artifact_type"] == "source_raw_content"
+    assert item_payload["item"]["lineage"]["parse_artifact_ref"]["artifact_type"] == "source_item"
     assert item_payload["raw_artifact_ref"]["artifact_type"] == "source_raw_content"
     assert item_payload["parse_artifact_ref"]["artifact_id"] == item_entry["artifact_id"]
     assert item_payload["item"]["metadata"]["api_key"] == "[REDACTED]"

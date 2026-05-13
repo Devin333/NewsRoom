@@ -69,6 +69,13 @@ class SourceArtifactWriter:
                 path=path,
                 content_type="application/json",
             )
+            item_payload = _source_item_payload(
+                raw_item,
+                source_id=source_id,
+                object_id=object_id,
+                raw_artifact_ref=raw_ref,
+                parse_artifact_ref=parse_ref_payload,
+            )
             artifact_path = self._artifact_manager.write_json(
                 run_id,
                 path,
@@ -76,7 +83,7 @@ class SourceArtifactWriter:
                     "artifact_type": "source_item",
                     "source_id": source_id,
                     "source_item_id": object_id,
-                    "item": _redact(_to_json_safe(raw_item)),
+                    "item": item_payload,
                     "raw_artifact_ref": _to_json_safe(raw_ref) if raw_ref is not None else None,
                     "parse_artifact_ref": _to_json_safe(parse_ref_payload),
                 },
@@ -399,6 +406,37 @@ def _artifact_ref(
 def _artifact_id(artifact_type: str, source_id: str, object_id: str) -> str:
     prefix = artifact_type.replace("_", "-")
     return f"{prefix}-{_path_segment(source_id)}-{_path_segment(object_id)}"
+
+
+def _source_item_payload(
+    raw_item: Any,
+    *,
+    source_id: str,
+    object_id: str,
+    raw_artifact_ref: Any,
+    parse_artifact_ref: Any,
+) -> Any:
+    payload = _redact(_to_json_safe(raw_item))
+    if not isinstance(payload, dict):
+        return payload
+    raw_ref_payload = _to_json_safe(raw_artifact_ref) if raw_artifact_ref is not None else None
+    parse_ref_payload = _to_json_safe(parse_artifact_ref)
+    if raw_ref_payload is not None:
+        payload["raw_artifact_ref"] = raw_ref_payload
+    payload["parse_artifact_ref"] = parse_ref_payload
+    lineage = payload.get("lineage")
+    if not isinstance(lineage, dict):
+        lineage = {}
+        payload["lineage"] = lineage
+    lineage.setdefault("source_id", source_id)
+    lineage.setdefault("source_item_id", object_id)
+    raw_url = payload.get("url")
+    if raw_url is not None:
+        lineage.setdefault("raw_url", raw_url)
+    if raw_ref_payload is not None:
+        lineage["raw_artifact_ref"] = raw_ref_payload
+    lineage["parse_artifact_ref"] = parse_ref_payload
+    return payload
 
 
 def _planned_artifact_ref(
