@@ -2,6 +2,7 @@ from datetime import UTC, datetime, timedelta
 
 from domain.sources import SourceDefinition, SourceError, SourceHealthStatus
 from sources import SourceRegistry
+from sources.connectors import SourceFetchPolicy
 from sources.health import BasicSourceHealthManager, ProbeObservation, SourceHealthChecker
 
 
@@ -81,12 +82,61 @@ def test_source_health_checker_skips_active_cooldown_without_force() -> None:
     assert result.entries[0].health.cooldown_until == now + timedelta(seconds=300)
 
 
-def _source() -> SourceDefinition:
+def test_source_health_checker_rate_limits_same_domain_before_probe() -> None:
+    registry = SourceRegistry(
+        [
+            _source(source_id="first", url="https://example.com/first.xml"),
+            _source(source_id="second", url="https://example.com/second.xml"),
+        ]
+    )
+    manager = BasicSourceHealthManager(now=lambda: datetime(2026, 5, 11, tzinfo=UTC))
+    probed_urls = []
+
+    def probe(source, policy):
+        probed_urls.append(source.url)
+        return ProbeObservation(
+            status_code=200,
+            content_type="application/rss+xml",
+            content_bytes=64,
+            final_url=source.url,
+        )
+
+    result = SourceHealthChecker(
+        registry,
+        manager,
+        fetch_policy=SourceFetchPolicy(rate_limit_per_domain_per_minute=1),
+        probe_fetcher=probe,
+    ).run()
+
+    assert result.checked_count == 2
+    assert result.succeeded_count == 1
+    assert result.skipped_count == 1
+    assert probed_urls == ["https://example.com/first.xml"]
+    skipped = result.entries[1]
+    assert skipped.source_id == "second"
+    assert skipped.skip_reason == "rate_limited"
+    assert skipped.error is not None
+    assert skipped.error.error_type == "rate_limited"
+    assert skipped.error.metadata["source_health_affecting"] is False
+    assert manager.get("second").consecutive_failures == 0
+    assert any(
+        event.event_type == "source_fetch_skipped"
+        and event.source_id == "second"
+        and event.metadata["reason"] == "rate_limited"
+        for event in result.events
+    )
+
+
+def _source(
+    *,
+    source_id: str = "rss-example",
+    url: str = "https://example.com/rss.xml",
+) -> SourceDefinition:
     return SourceDefinition(
-        source_id="rss-example",
+        source_id=source_id,
         name="Example RSS",
         source_type="rss",
-        url="https://example.com/rss.xml",
+        url=url,
         reliability="high",
         topics=["AI"],
     )

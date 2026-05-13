@@ -215,6 +215,7 @@ class SourceApplicationService:
             self.health_manager,
             fetch_policy=self.fetch_policy,
             probe_fetcher=self.health_probe_fetcher,
+            rate_limiter=self.rate_limiter,
         )
         return checker.run(
             source_id=source_id,

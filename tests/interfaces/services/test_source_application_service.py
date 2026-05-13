@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 from domain.sources import RawSourceItem, SourceDefinition, SourceError
 from interfaces.services.source_service import SourceApplicationService
 from sources import SourceRegistry
+from sources.connectors import SourceFetchPolicy
 from sources.health import BasicSourceHealthManager, ProbeObservation
 
 
@@ -241,6 +242,45 @@ rss_feeds:
         "user_agent": "NewsRoomSourceService/1.0",
         "respect_robots": False,
     }
+
+
+def test_source_service_health_check_uses_shared_rate_limiter() -> None:
+    registry = SourceRegistry(
+        [
+            SourceDefinition(
+                source_id="first",
+                name="First",
+                source_type="rss",
+                url="https://example.com/first.xml",
+                topics=["ai"],
+            ),
+            SourceDefinition(
+                source_id="second",
+                name="Second",
+                source_type="rss",
+                url="https://example.com/second.xml",
+                topics=["ai"],
+            ),
+        ]
+    )
+    probed_urls = []
+
+    def probe(source, policy):
+        probed_urls.append(source.url)
+        return ProbeObservation(status_code=200, content_type="application/rss+xml", content_bytes=10)
+
+    service = SourceApplicationService(
+        source_registry=registry,
+        fetch_policy=SourceFetchPolicy(rate_limit_per_domain_per_minute=1),
+        health_probe_fetcher=probe,
+    )
+
+    result = service.check_source_health()
+
+    assert result.succeeded_count == 1
+    assert result.skipped_count == 1
+    assert probed_urls == ["https://example.com/first.xml"]
+    assert result.entries[1].skip_reason == "rate_limited"
 
 
 def test_source_service_default_preview_connectors_use_configured_fetch_policy(tmp_path) -> None:

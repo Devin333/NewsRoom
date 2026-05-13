@@ -18,6 +18,7 @@ from domain.sources import (
 )
 from sources import SourceRegistry
 from sources.connectors.fetch_policy import (
+    DomainRateLimiter,
     RobotsDisallowedError,
     SourceFetchPolicy,
     TooManyRedirectsError,
@@ -26,6 +27,7 @@ from sources.connectors.fetch_policy import (
     ensure_robots_allowed,
     fetch_attempts,
     open_request_with_fetch_policy,
+    rate_limited_source_error,
     run_with_fetch_retries,
 )
 from sources.errors import classify_source_exception
@@ -109,11 +111,13 @@ class SourceHealthChecker:
         *,
         fetch_policy: SourceFetchPolicy | None = None,
         probe_fetcher: ProbeFetcher | None = None,
+        rate_limiter: DomainRateLimiter | None = None,
     ) -> None:
         self.source_registry = source_registry
         self.health_manager = health_manager
         self.fetch_policy = fetch_policy or SourceFetchPolicy(max_bytes=128_000)
         self.probe_fetcher = probe_fetcher or _default_probe_fetcher
+        self.rate_limiter = rate_limiter or DomainRateLimiter()
 
     def run(
         self,
@@ -191,10 +195,46 @@ class SourceHealthChecker:
                 ],
             )
 
+        policy = effective_fetch_policy(self.fetch_policy, source)
+        rate_limit_error = _rate_limit_error(source, policy, self.rate_limiter)
+        if rate_limit_error is not None:
+            health = self.health_manager.get(
+                source.source_id,
+                source_name=source.name,
+                url=source.url,
+            )
+            return (
+                _entry(
+                    source,
+                    status=health.status.value,
+                    ok=False,
+                    skipped=True,
+                    skip_reason="rate_limited",
+                    health=health,
+                    error=rate_limit_error,
+                ),
+                [
+                    _event(
+                        "source_fetch_skipped",
+                        source,
+                        reason="rate_limited",
+                        domain=rate_limit_error.metadata.get("domain"),
+                        retry_after_seconds=rate_limit_error.metadata.get(
+                            "retry_after_seconds"
+                        ),
+                    ),
+                    _event(
+                        "source_health_updated",
+                        source,
+                        status=health.status.value,
+                        consecutive_failures=health.consecutive_failures,
+                    ),
+                ],
+            )
+
         events.append(_event("source_probe_started", source, force=force))
         latency_start = perf_counter()
         try:
-            policy = effective_fetch_policy(self.fetch_policy, source)
             observation = self.probe_fetcher(source, policy)
         except Exception as exc:
             latency_ms = _elapsed_ms(latency_start)
@@ -380,6 +420,20 @@ def _exception_source_error(source: SourceDefinition, exc: Exception) -> SourceE
         retryable=retryable,
         metadata=metadata,
     )
+
+
+def _rate_limit_error(
+    source: SourceDefinition,
+    policy: SourceFetchPolicy,
+    rate_limiter: DomainRateLimiter,
+) -> SourceError | None:
+    decision = rate_limiter.reserve(
+        source.url,
+        limit_per_minute=policy.rate_limit_per_domain_per_minute,
+    )
+    if decision.allowed:
+        return None
+    return rate_limited_source_error(source, decision, url=source.url)
 
 
 def _classify_probe_exception(exc: Exception) -> tuple[str, bool, bool]:
