@@ -32,9 +32,12 @@ class SourceSummary:
     authority_score: float
     enabled: bool
     respect_robots: bool
+    fetch_interval_seconds: int
     topics: list[str]
+    category: str | None = None
     language: str | None = None
     region: str | None = None
+    user_agent: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -46,9 +49,12 @@ class SourceSummary:
             "authority_score": self.authority_score,
             "enabled": self.enabled,
             "respect_robots": self.respect_robots,
+            "fetch_interval_seconds": self.fetch_interval_seconds,
             "topics": list(self.topics),
+            "category": self.category,
             "language": self.language,
             "region": self.region,
+            "user_agent": self.user_agent,
         }
 
 
@@ -156,9 +162,12 @@ class SourceApplicationService:
                     authority_score=source.authority_score,
                     enabled=source.enabled,
                     respect_robots=source.respect_robots,
+                    fetch_interval_seconds=source.fetch_interval_seconds,
                     topics=list(source.topics),
+                    category=source.category,
                     language=source.language,
                     region=source.region,
+                    user_agent=source.user_agent,
                 )
                 for source in sources
             ]
@@ -307,9 +316,12 @@ def _source_summary_model(source: SourceDefinition) -> SourceSummary:
         authority_score=source.authority_score,
         enabled=source.enabled,
         respect_robots=source.respect_robots,
+        fetch_interval_seconds=source.fetch_interval_seconds,
         topics=list(source.topics),
+        category=source.category,
         language=source.language,
         region=source.region,
+        user_agent=source.user_agent,
     )
 
 

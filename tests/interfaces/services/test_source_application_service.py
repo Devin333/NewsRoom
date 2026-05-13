@@ -16,7 +16,10 @@ def test_source_service_lists_enabled_sources() -> None:
                     source_type="rss",
                     url="https://example.com/rss",
                     reliability="high",
+                    fetch_interval_seconds=1800,
+                    user_agent="NewsRoomSummary/1.0",
                     topics=["AI"],
+                    category="official",
                 ),
                 SourceDefinition(
                     source_id="disabled",
@@ -34,6 +37,40 @@ def test_source_service_lists_enabled_sources() -> None:
     assert result.to_dict()["source_count"] == 1
     assert result.to_dict()["sources"][0]["source_id"] == "enabled"
     assert result.to_dict()["sources"][0]["reliability"] == "high"
+    assert result.to_dict()["sources"][0]["category"] == "official"
+    assert result.to_dict()["sources"][0]["fetch_interval_seconds"] == 1800
+    assert result.to_dict()["sources"][0]["user_agent"] == "NewsRoomSummary/1.0"
+
+
+def test_source_service_get_source_returns_target_summary_fields() -> None:
+    service = SourceApplicationService(
+        source_registry=SourceRegistry(
+            [
+                SourceDefinition(
+                    source_id="source-1",
+                    name="Source",
+                    source_type="rss",
+                    url="https://example.com/rss",
+                    reliability="high",
+                    fetch_interval_seconds=900,
+                    user_agent="NewsRoomDetail/1.0",
+                    topics=["AI"],
+                    category="research",
+                    language="en",
+                    region="global",
+                )
+            ]
+        )
+    )
+
+    payload = service.get_source("source-1").to_dict()
+
+    assert payload["source_id"] == "source-1"
+    assert payload["category"] == "research"
+    assert payload["fetch_interval_seconds"] == 900
+    assert payload["user_agent"] == "NewsRoomDetail/1.0"
+    assert payload["language"] == "en"
+    assert payload["region"] == "global"
 
 
 def test_source_service_filters_sources_by_reliability() -> None:
