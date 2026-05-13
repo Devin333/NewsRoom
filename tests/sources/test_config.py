@@ -178,6 +178,81 @@ github_lists: []
     assert registry.get("arxiv-ai").metadata["config_section"] == "arxiv_categories"
 
 
+def test_load_source_registry_reads_target_source_sections(tmp_path) -> None:
+    config_path = tmp_path / "sources.yaml"
+    config_path.write_text(
+        """
+web_pages:
+  - source_id: model-card
+    name: Model Card
+    url: https://example.com/model-card
+    topics: [ai]
+manual_sources:
+  - source_id: operator-list
+    name: Operator List
+    url: manual://operator
+    topics: [ai]
+    records:
+      - title: Manual item
+        url: https://example.com/manual
+hackernews_sources:
+  - source_id: hn-top
+    name: HN Top
+    url: https://hacker-news.firebaseio.com/v0
+    topics: [technology]
+    story_list: topstories
+reddit_sources:
+  - source_id: reddit-ml
+    name: Reddit ML
+    url: https://www.reddit.com
+    topics: [ai]
+    subreddit: MachineLearning
+lobsters_sources:
+  - source_id: lobsters-ai
+    name: Lobsters AI
+    url: https://lobste.rs
+    topics: [ai]
+    tag: ai
+stackoverflow_tags:
+  - source_id: stackoverflow-ai
+    name: Stack Overflow AI
+    url: https://api.stackexchange.com/2.3
+    topics: [ai]
+    tag: artificial-intelligence
+devto_tags:
+  - source_id: devto-ai
+    name: dev.to AI
+    url: https://dev.to/api
+    topics: [ai]
+    tag: ai
+medium_feeds:
+  - source_id: medium-ai
+    name: Medium AI
+    url: https://medium.com/feed/tag/artificial-intelligence
+    topics: [ai]
+""".strip(),
+        encoding="utf-8",
+    )
+
+    registry = load_source_registry(config_path)
+
+    assert registry.get("model-card").source_type.value == "web_page"
+    assert registry.get("operator-list").source_type.value == "manual"
+    assert registry.get("operator-list").metadata["records"][0]["title"] == "Manual item"
+    assert registry.get("hn-top").source_type.value == "hackernews"
+    assert registry.get("hn-top").metadata["story_list"] == "topstories"
+    assert registry.get("reddit-ml").source_type.value == "reddit"
+    assert registry.get("reddit-ml").metadata["subreddit"] == "MachineLearning"
+    assert registry.get("lobsters-ai").source_type.value == "lobsters"
+    assert registry.get("lobsters-ai").metadata["tag"] == "ai"
+    assert registry.get("stackoverflow-ai").source_type.value == "stackoverflow"
+    assert registry.get("stackoverflow-ai").metadata["tag"] == "artificial-intelligence"
+    assert registry.get("devto-ai").source_type.value == "devto"
+    assert registry.get("devto-ai").metadata["tag"] == "ai"
+    assert registry.get("medium-ai").source_type.value == "medium"
+    assert registry.get("medium-ai").metadata["config_section"] == "medium_feeds"
+
+
 def test_tracked_sources_config_uses_real_live_urls() -> None:
     registry = load_source_registry(Path("configs/sources.yaml"))
     sources = registry.list_sources(enabled_only=False)

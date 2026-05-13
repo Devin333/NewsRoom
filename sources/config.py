@@ -19,6 +19,14 @@ _PRD_SOURCE_SECTIONS = {
     "official_blogs": "official_blog",
     "github_lists": "github",
     "arxiv_categories": "arxiv",
+    "hackernews_sources": "hackernews",
+    "reddit_sources": "reddit",
+    "lobsters_sources": "lobsters",
+    "stackoverflow_tags": "stackoverflow",
+    "devto_tags": "devto",
+    "medium_feeds": "medium",
+    "web_pages": "web_page",
+    "manual_sources": "manual",
 }
 _SOURCE_DEFINITION_FIELDS = {
     "source_id",
