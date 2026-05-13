@@ -283,6 +283,7 @@ def test_feed_connector_default_fetch_applies_policy(monkeypatch) -> None:
         name="RSS Source",
         source_type="rss",
         url="https://example.com/rss.xml",
+        respect_robots=False,
         user_agent="SourceAgent/1.0",
     )
     connector = FeedConnector(
@@ -378,6 +379,7 @@ def test_feed_connector_default_fetch_rejects_unsupported_content_type(monkeypat
         name="RSS Source",
         source_type="rss",
         url="https://example.com/rss.xml",
+        respect_robots=False,
     )
 
     items, errors = FeedConnector().fetch(source)
