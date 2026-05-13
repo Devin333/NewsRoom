@@ -178,6 +178,7 @@ def test_daily_intelligence_runner_live_offline_writes_report_artifacts(tmp_path
     assert manifest["source_artifacts"]["raw_content_count"] == 2
     assert manifest["source_artifacts"]["fetch_request_count"] == 1
     assert manifest["source_artifacts"]["fetch_result_count"] == 1
+    assert manifest["source_artifacts"]["parsed_items_count"] == 1
     assert (run_dir / "report.md").exists()
     assert result.output["source_health_updates"][0].source_name == "Fixture AI Feed"
     assert result.output["source_health_updates"][0].url == "fixture://ai"
@@ -1224,7 +1225,8 @@ def test_daily_intelligence_runner_records_partial_source_failures(tmp_path) -> 
         "raw_content_count": 1,
         "fetch_request_count": 2,
         "fetch_result_count": 2,
-        "total_count": 7,
+        "total_count": 8,
+        "parsed_items_count": 1,
     }
 
     source_events = json.loads((run_dir / "source_events.json").read_text())

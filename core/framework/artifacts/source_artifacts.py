@@ -47,6 +47,7 @@ class SourceArtifactWriter:
         request_refs_by_source_id: dict[str, list[ArtifactRef]] = {}
         response_refs_by_request_id: dict[str, ArtifactRef] = {}
         response_refs_by_source_id: dict[str, list[ArtifactRef]] = {}
+        parsed_items_by_source: dict[str, list[dict[str, Any]]] = {}
 
         for raw_item in raw_items or []:
             source_id = _string_value(raw_item, "source_id", default="unknown-source")
@@ -107,8 +108,47 @@ class SourceArtifactWriter:
             entry["parse_artifact_ref"] = artifact_ref.to_dict()
             entry.update(_raw_content_fingerprint(raw_item))
             entries.append(entry)
+            parsed_items_by_source.setdefault(source_id, []).append(
+                _parsed_item_entry(
+                    item_payload,
+                    item_artifact_ref=artifact_ref,
+                    raw_artifact_ref=raw_ref,
+                )
+            )
             if raw_content_entry is not None:
                 entries.append(raw_content_entry)
+
+        for source_id, parsed_items in sorted(parsed_items_by_source.items()):
+            path = f"sources/{_path_segment(source_id)}/parsed_items.json"
+            artifact_path = self._artifact_manager.write_json(
+                run_id,
+                path,
+                {
+                    "artifact_type": "source_parsed_items",
+                    "source_id": source_id,
+                    "item_count": len(parsed_items),
+                    "items": parsed_items,
+                },
+            )
+            artifact_ref = _artifact_ref(
+                run_id=run_id,
+                artifact_type="source_parsed_items",
+                source_id=source_id,
+                object_id="parsed_items",
+                path=path,
+                artifact_path=artifact_path,
+            )
+            entry = _entry_from_ref(
+                artifact_ref=artifact_ref,
+                source_id=source_id,
+                object_id="parsed_items",
+                artifact_path=artifact_path,
+            )
+            entry["item_count"] = len(parsed_items)
+            entry["item_artifact_refs"] = [
+                parsed_item["item_artifact_ref"] for parsed_item in parsed_items
+            ]
+            entries.append(entry)
 
         for fetch_request in source_fetch_requests or []:
             source_id = _string_value(fetch_request, "source_id", default="unknown-source")
@@ -281,6 +321,9 @@ class SourceArtifactWriter:
             "fetch_result_count": sum(
                 1 for entry in entries if entry["artifact_type"] == "source_fetch_result"
             ),
+            "parsed_items_count": sum(
+                1 for entry in entries if entry["artifact_type"] == "source_parsed_items"
+            ),
             "response_headers_count": sum(
                 1 for entry in entries if entry["artifact_type"] == "source_response_headers"
             ),
@@ -437,6 +480,63 @@ def _source_item_payload(
         lineage["raw_artifact_ref"] = raw_ref_payload
     lineage["parse_artifact_ref"] = parse_ref_payload
     return payload
+
+
+def _parsed_item_entry(
+    item_payload: Any,
+    *,
+    item_artifact_ref: ArtifactRef,
+    raw_artifact_ref: Any,
+) -> dict[str, Any]:
+    summary = _parsed_item_summary(item_payload)
+    item_ref_payload = item_artifact_ref.to_dict()
+    raw_ref_payload = _to_json_safe(raw_artifact_ref) if raw_artifact_ref is not None else None
+    summary["parse_artifact_ref"] = item_ref_payload
+    if raw_ref_payload is not None:
+        summary["raw_artifact_ref"] = raw_ref_payload
+    lineage = summary.get("lineage")
+    if isinstance(lineage, dict):
+        lineage["parse_artifact_ref"] = item_ref_payload
+        if raw_ref_payload is not None:
+            lineage["raw_artifact_ref"] = raw_ref_payload
+    return {
+        "source_item_id": str(
+            summary.get("source_item_id")
+            or item_artifact_ref.metadata.get("object_id")
+            or item_artifact_ref.artifact_id
+        ),
+        "item_artifact_ref": item_ref_payload,
+        "raw_artifact_ref": raw_ref_payload,
+        "item": summary,
+    }
+
+
+def _parsed_item_summary(item_payload: Any) -> dict[str, Any]:
+    if not isinstance(item_payload, dict):
+        return {"value": _redact(_to_json_safe(item_payload))}
+    summary_keys = [
+        "source_item_id",
+        "source_id",
+        "source_name",
+        "source_type",
+        "title",
+        "url",
+        "fetched_at",
+        "published_at",
+        "summary",
+        "authors",
+        "tags",
+        "language",
+        "raw_artifact_ref",
+        "parse_artifact_ref",
+        "lineage",
+        "metadata",
+    ]
+    return {
+        key: _redact(_to_json_safe(item_payload[key]))
+        for key in summary_keys
+        if key in item_payload and item_payload[key] is not None
+    }
 
 
 def _planned_artifact_ref(

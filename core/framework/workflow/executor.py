@@ -722,6 +722,10 @@ class WorkflowExecutor:
                 manifest["source_artifacts"]["response_headers_count"] = source_artifacts[
                     "response_headers_count"
                 ]
+            if source_artifacts.get("parsed_items_count"):
+                manifest["source_artifacts"]["parsed_items_count"] = source_artifacts[
+                    "parsed_items_count"
+                ]
 
     def _write_checkpoint(
         self,

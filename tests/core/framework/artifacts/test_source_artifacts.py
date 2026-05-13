@@ -69,6 +69,7 @@ def test_source_artifact_writer_writes_items_errors_and_redacts(tmp_path) -> Non
     assert index["raw_content_count"] == 1
     assert index["fetch_request_count"] == 1
     assert index["fetch_result_count"] == 1
+    assert index["parsed_items_count"] == 1
     assert index["response_headers_count"] == 1
 
     run_dir = tmp_path / "source-run"
@@ -114,6 +115,21 @@ def test_source_artifact_writer_writes_items_errors_and_redacts(tmp_path) -> Non
     assert raw_content_entry["content_type"] == "application/octet-stream"
     assert raw_content_entry["artifact_ref"]["artifact_type"] == "source_raw_content"
     assert raw_content_entry["raw_content_sha256"] == sha256(raw_content.encode("utf-8")).hexdigest()
+
+    parsed_items_entry = next(
+        entry for entry in index["entries"] if entry["artifact_type"] == "source_parsed_items"
+    )
+    parsed_items_payload = json.loads((run_dir / parsed_items_entry["path"]).read_text())
+    assert parsed_items_entry["path"] == "sources/feed_source/parsed_items.json"
+    assert parsed_items_entry["artifact_id"] == "source-parsed-items-feed_source-parsed_items"
+    assert parsed_items_entry["item_count"] == 1
+    assert parsed_items_entry["item_artifact_refs"] == [item_entry["artifact_ref"]]
+    assert parsed_items_payload["item_count"] == 1
+    assert parsed_items_payload["items"][0]["item"]["title"] == "Real source item"
+    assert "raw_content" not in parsed_items_payload["items"][0]["item"]
+    assert parsed_items_payload["items"][0]["item"]["metadata"]["api_key"] == "[REDACTED]"
+    assert parsed_items_payload["items"][0]["item_artifact_ref"] == item_entry["artifact_ref"]
+    assert parsed_items_payload["items"][0]["item"]["lineage"]["parse_artifact_ref"] == item_entry["artifact_ref"]
 
     fetch_result_entry = next(
         entry for entry in index["entries"] if entry["artifact_type"] == "source_fetch_result"
