@@ -224,6 +224,7 @@ class ToolBatchStepRunner:
         observations = executor.execute_batch(tool_calls, policy)
         observation_payloads = [observation.to_dict() for observation in observations]
         result_payloads = [observation.result.to_dict() for observation in observations]
+        metrics = _tool_batch_metrics(observations, max_workers=self._max_workers)
         outputs = {
             _observations_key(step): observation_payloads,
             _results_key(step): result_payloads,
@@ -257,8 +258,9 @@ class ToolBatchStepRunner:
                     ],
                     "tool_call_count": len(observations),
                 },
+                metrics=metrics,
             )
-        return StepOutcome(status=StepStatus.SUCCEEDED, outputs=outputs)
+        return StepOutcome(status=StepStatus.SUCCEEDED, outputs=outputs, metrics=metrics)
 
 
 class AgentLoopStepRunner:
@@ -378,6 +380,7 @@ class ToolCallStepRunner:
             secret_provider=self._secret_provider,
         )
         observation = executor.execute(call, policy)
+        metrics = _tool_call_metrics(observation)
         outputs = {
             _observation_key(step): observation.to_dict(),
             _result_key(step): observation.result.to_dict(),
@@ -387,7 +390,7 @@ class ToolCallStepRunner:
                 buffer.write(key, value)
 
         if observation.status == ToolStatus.SUCCEEDED:
-            return StepOutcome(status=StepStatus.SUCCEEDED, outputs=outputs)
+            return StepOutcome(status=StepStatus.SUCCEEDED, outputs=outputs, metrics=metrics)
         if observation.status == ToolStatus.APPROVAL_REQUIRED:
             return StepOutcome(
                 status=StepStatus.PAUSED,
@@ -395,6 +398,7 @@ class ToolCallStepRunner:
                 error_type=observation.result.error_type,
                 error_message=observation.result.error_message,
                 error_details={"approval_id": observation.result.approval_id},
+                metrics=metrics,
                 next_hint="approval_required",
             )
         if observation.status == ToolStatus.BLOCKED:
@@ -403,12 +407,14 @@ class ToolCallStepRunner:
                 outputs=outputs,
                 error_type=observation.result.error_type,
                 error_message=observation.result.error_message,
+                metrics=metrics,
             )
         return StepOutcome(
             status=StepStatus.FAILED,
             outputs=outputs,
             error_type=observation.result.error_type,
             error_message=observation.result.error_message,
+            metrics=metrics,
         )
 
 
@@ -460,7 +466,17 @@ class ParallelGroupStepRunner:
         if result_key and result_key in buffer.list_allowed_writes():
             buffer.write(result_key, branch_results)
             outputs[result_key] = branch_results
-        return StepOutcome(status=StepStatus.SUCCEEDED, outputs=outputs)
+        return StepOutcome(
+            status=StepStatus.SUCCEEDED,
+            outputs=outputs,
+            metrics=_parallel_group_metrics(
+                branches=branches,
+                branch_results=branch_results,
+                conflict_strategy=conflict_strategy,
+                max_workers=self._max_workers,
+                output_keys=list(outputs),
+            ),
+        )
 
 
 class SubworkflowStepRunner:
@@ -528,6 +544,12 @@ class SubworkflowStepRunner:
             profile=str(step.metadata.get("profile") or "subworkflow"),
             run_id=child_run_id,
         )
+        metrics = _subworkflow_metrics(
+            child_run_id=child_run_id,
+            workflow_id=workflow.workflow_id,
+            workflow_version=workflow.version,
+            result=result,
+        )
         output_key = str(step.metadata.get("output_key") or "subworkflow_result")
         outputs = {
             output_key: result.to_dict(),
@@ -535,12 +557,13 @@ class SubworkflowStepRunner:
         if output_key in buffer.list_allowed_writes():
             buffer.write(output_key, result.to_dict(), lineage={"step_id": step.step_id})
         if result.status.value == "succeeded":
-            return StepOutcome(status=StepStatus.SUCCEEDED, outputs=outputs)
+            return StepOutcome(status=StepStatus.SUCCEEDED, outputs=outputs, metrics=metrics)
         return StepOutcome(
             status=StepStatus.FAILED,
             outputs=outputs,
             error_type=result.error.error_type if result.error else "SubworkflowFailed",
             error_message=result.error.message if result.error else f"subworkflow failed: {workflow_id}",
+            metrics=metrics,
         )
 
 
@@ -830,6 +853,87 @@ def _single_tool_call_from_step(step: StepSpec, buffer: ScopedDataBuffer) -> Too
                 "requested_by_agent_id": step.metadata.get("requested_by_agent_id"),
             }
     return _tool_call_from_payload(step, buffer, raw_call)
+
+
+def _tool_call_metrics(observation: Any) -> dict[str, Any]:
+    return {
+        "tool_name": observation.call.tool_name,
+        "tool_call_id": observation.call.call_id,
+        "tool_status": observation.status.value,
+        "elapsed_ms": observation.elapsed_ms,
+        "output_bytes": observation.result.output_bytes,
+        "artifact_ref_count": len(observation.result.artifact_refs),
+        "approval_required": observation.status.value == "approval_required",
+    }
+
+
+def _tool_batch_metrics(observations: list[Any], *, max_workers: int) -> dict[str, Any]:
+    status_counts: dict[str, int] = {}
+    artifact_ref_count = 0
+    output_bytes = 0
+    for observation in observations:
+        status = observation.status.value
+        status_counts[status] = status_counts.get(status, 0) + 1
+        artifact_ref_count += len(observation.result.artifact_refs)
+        if observation.result.output_bytes is not None:
+            output_bytes += int(observation.result.output_bytes)
+    return {
+        "tool_call_count": len(observations),
+        "succeeded_count": status_counts.get("succeeded", 0),
+        "failed_count": len(observations) - status_counts.get("succeeded", 0),
+        "blocked_count": status_counts.get("blocked", 0),
+        "approval_required_count": status_counts.get("approval_required", 0),
+        "timeout_count": status_counts.get("timeout", 0),
+        "status_counts": status_counts,
+        "artifact_ref_count": artifact_ref_count,
+        "output_bytes": output_bytes,
+        "max_workers": max_workers,
+    }
+
+
+def _parallel_group_metrics(
+    *,
+    branches: list[Any],
+    branch_results: list[dict[str, Any]],
+    conflict_strategy: str,
+    max_workers: int,
+    output_keys: list[str],
+) -> dict[str, Any]:
+    return {
+        "branch_count": len(branches),
+        "succeeded_branch_count": len(branch_results),
+        "conflict_strategy": conflict_strategy,
+        "max_workers": min(max_workers, len(branches)),
+        "branch_ids": sorted(str(result.get("branch_id") or "") for result in branch_results),
+        "output_keys": sorted(output_keys),
+        "output_key_count": len(output_keys),
+    }
+
+
+def _subworkflow_metrics(
+    *,
+    child_run_id: str,
+    workflow_id: str,
+    workflow_version: str,
+    result: Any,
+) -> dict[str, Any]:
+    manifest = result.manifest or {}
+    workflow_metrics = manifest.get("metrics") or {}
+    return {
+        "child_run_id": child_run_id,
+        "child_workflow_id": workflow_id,
+        "child_workflow_version": workflow_version,
+        "child_status": result.status.value,
+        "child_step_count": int(manifest.get("step_count") or len(result.step_results)),
+        "child_artifact_count": int(
+            workflow_metrics.get("artifact_count") or len(manifest.get("artifacts") or {})
+        ),
+        "child_event_count": int(
+            workflow_metrics.get("event_count") or manifest.get("event_count") or 0
+        ),
+        "child_manifest_path": result.manifest_path,
+        "child_events_path": result.events_path,
+    }
 
 
 def _observation_key(step: StepSpec) -> str:

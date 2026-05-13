@@ -81,6 +81,9 @@ def test_tool_call_step_runner_executes_real_tool(tmp_path) -> None:
     assert result.status == WorkflowStatus.SUCCEEDED
     assert result.output["validate_tool_result"]["status"] == "succeeded"
     assert result.output["validate_tool_result"]["output"]["valid"] is True
+    assert result.step_results["validate"].metrics["tool_name"] == "report.validate"
+    assert result.step_results["validate"].metrics["tool_status"] == "succeeded"
+    assert result.step_results["validate"].metrics["approval_required"] is False
 
 
 def test_agent_loop_step_runner_executes_registered_agent(tmp_path) -> None:
@@ -347,6 +350,9 @@ def test_parallel_group_step_runner_merges_real_branch_outputs(tmp_path) -> None
 
     assert result.status == WorkflowStatus.SUCCEEDED
     assert sorted(result.output["items"]) == ["ai", "left", "right"]
+    assert result.step_results["parallel"].metrics["branch_count"] == 2
+    assert result.step_results["parallel"].metrics["conflict_strategy"] == "merge_list"
+    assert result.step_results["parallel"].metrics["output_keys"] == ["items"]
 
 
 def test_parallel_group_step_runner_reports_output_conflicts() -> None:
@@ -414,6 +420,8 @@ def test_parallel_group_step_runner_merges_dict_outputs_and_branch_results() -> 
         "left",
         "right",
     }
+    assert outcome.metrics["branch_count"] == 2
+    assert outcome.metrics["output_key_count"] == 2
 
 
 def test_subworkflow_step_runner_executes_child_workflow(tmp_path) -> None:
@@ -467,6 +475,10 @@ def test_subworkflow_step_runner_executes_child_workflow(tmp_path) -> None:
     assert result.status == WorkflowStatus.SUCCEEDED
     assert result.output["subworkflow_result"]["output"]["echo"] == "ai"
     assert (tmp_path / "run-parent.child.child" / "manifest.json").exists()
+    assert result.step_results["child"].metrics["child_run_id"] == "run-parent.child.child"
+    assert result.step_results["child"].metrics["child_workflow_id"] == "child"
+    assert result.step_results["child"].metrics["child_status"] == "succeeded"
+    assert result.step_results["child"].metrics["child_step_count"] == 1
 
 
 def test_subworkflow_step_runner_returns_failed_outcome_when_child_fails(tmp_path) -> None:
@@ -516,6 +528,8 @@ def test_subworkflow_step_runner_returns_failed_outcome_when_child_fails(tmp_pat
     assert result.status == WorkflowStatus.FAILED
     assert result.step_results["child"].error_type == "RuntimeError"
     assert result.output["subworkflow_result"]["status"] == "failed"
+    assert result.step_results["child"].metrics["child_status"] == "failed"
+    assert result.step_results["child"].metrics["child_workflow_id"] == "child"
 
 
 def test_tool_call_and_tool_batch_steps_route_to_next_steps(tmp_path) -> None:
@@ -611,6 +625,9 @@ def test_tool_call_and_tool_batch_steps_route_to_next_steps(tmp_path) -> None:
     assert result.path == ["validate", "after_call", "tools", "after_batch"]
     assert result.output["call_routed"] is True
     assert result.output["batch_routed"] == 1
+    assert result.step_results["validate"].metrics["tool_status"] == "succeeded"
+    assert result.step_results["tools"].metrics["tool_call_count"] == 1
+    assert result.step_results["tools"].metrics["succeeded_count"] == 1
 
 
 def test_agent_loop_step_runner_maps_fake_runner_statuses() -> None:

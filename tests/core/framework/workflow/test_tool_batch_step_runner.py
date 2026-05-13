@@ -98,8 +98,12 @@ def test_tool_batch_step_runner_executes_real_builtin_tools(tmp_path) -> None:
     ]
     assert result.output["tool_results"][0]["output"]["valid"] is True
     assert result.output["tool_results"][1]["output"]["duplicate_group_count"] == 1
+    assert result.step_results["tools"].metrics["tool_call_count"] == 2
+    assert result.step_results["tools"].metrics["succeeded_count"] == 2
+    assert result.step_results["tools"].metrics["failed_count"] == 0
     manifest = json.loads((tmp_path / "run-tool-batch" / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["steps"]["tools"]["outputs"]["tool_results"][0]["status"] == "succeeded"
+    assert manifest["steps"]["tools"]["metrics"]["tool_call_count"] == 2
 
 
 def test_tool_batch_step_runner_fails_when_tool_is_blocked(tmp_path) -> None:
@@ -150,6 +154,9 @@ def test_tool_batch_step_runner_fails_when_tool_is_blocked(tmp_path) -> None:
     assert result.error.error_type == "ToolBatchStepFailed"
     assert result.error.details["failed_tool_calls"][0]["status"] == "blocked"
     assert result.output["tool_observations"][0]["status"] == "blocked"
+    assert result.step_results["tools"].metrics["tool_call_count"] == 1
+    assert result.step_results["tools"].metrics["blocked_count"] == 1
+    assert result.step_results["tools"].metrics["failed_count"] == 1
 
 
 def test_tool_batch_step_missing_runner_fails_before_run_creation(tmp_path) -> None:

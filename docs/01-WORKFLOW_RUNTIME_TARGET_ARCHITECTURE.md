@@ -2090,3 +2090,25 @@ WorkflowRunner prebuilt StepRunnerRegistry / default artifact runner assembly
 Daily workflow spec / stateless steps focused tests
 WorkflowExecutor 原有 retry / timeout / fallback / fan-out / pause/resume / blocked / routing failure
 ```
+
+## N. 当前增量记录（2026-05-13）
+
+### N.1 Advanced StepRunner metrics
+
+本轮在不改变执行语义的前提下，补齐 advanced runner 的 `StepOutcome.metrics`：
+
+```text
+ToolCallStepRunner
+  记录 tool_name、tool_call_id、tool_status、elapsed_ms、output_bytes、artifact_ref_count、approval_required
+
+ToolBatchStepRunner
+  记录 tool_call_count、succeeded_count、failed_count、blocked_count、approval_required_count、timeout_count、status_counts、artifact_ref_count、output_bytes、max_workers
+
+ParallelGroupStepRunner
+  记录 branch_count、succeeded_branch_count、conflict_strategy、max_workers、branch_ids、output_keys、output_key_count
+
+SubworkflowStepRunner
+  记录 child_run_id、child_workflow_id、child_workflow_version、child_status、child_step_count、child_artifact_count、child_event_count、child_manifest_path、child_events_path
+```
+
+这些 metrics 只用于 manifest / step_results / debug / audit，不改变 routing、quality、human approval、publish 等强治理决策。LLM route hint 仍然只能作为 hint 使用。
