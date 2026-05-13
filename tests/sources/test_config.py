@@ -193,6 +193,29 @@ def test_load_source_registry_rejects_invalid_fetch_interval(tmp_path) -> None:
         load_source_registry(config_path)
 
 
+def test_load_source_registry_rejects_source_url_credentials(tmp_path) -> None:
+    config_path = tmp_path / "sources.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "sources": [
+                    {
+                        "source_id": "bad",
+                        "name": "Bad",
+                        "source_type": "rss",
+                        "url": "https://example.com/rss.xml?api_key=hidden",
+                        "topics": ["ai"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SourceConfigError, match=r"url\.query\.api_key"):
+        load_source_registry(config_path)
+
+
 def test_load_source_registry_requires_supported_file_type(tmp_path) -> None:
     config_path = tmp_path / "sources.txt"
     config_path.write_text("sources = []", encoding="utf-8")

@@ -449,3 +449,29 @@ def test_source_registry_validate_reports_governance_errors() -> None:
     assert ("fixture-source", "metadata.headers.api_key", "error") in issues
     assert ("feed/source", "source_id", "error") in issues
     assert ("feed/source", "metadata.nested[0].refresh_token", "error") in issues
+
+
+def test_source_registry_validate_rejects_url_embedded_credentials() -> None:
+    source = SourceDefinition(
+        source_id="credential-url",
+        name="Credential URL",
+        source_type="rss",
+        url=(
+            "https://user:hidden-password@example.com/feed.xml"
+            "?access_token=hidden-token&X-Amz-Signature=hidden-signature"
+        ),
+        topics=["ai"],
+    )
+    registry = SourceRegistry([source])
+
+    result = registry.validate()
+
+    assert result.is_valid is False
+    issues = {(issue.source_id, issue.field, issue.severity) for issue in result.issues}
+    assert ("credential-url", "url.userinfo", "error") in issues
+    assert ("credential-url", "url.query.access_token", "error") in issues
+    assert ("credential-url", "url.query.X-Amz-Signature", "error") in issues
+    messages = " ".join(issue.message for issue in result.issues)
+    assert "hidden-token" not in messages
+    assert "hidden-signature" not in messages
+    assert "hidden-password" not in messages

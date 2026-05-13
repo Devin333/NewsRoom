@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from typing import Any, Literal
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlsplit
 
 from domain.sources import SourceDefinition, SourceReliability, SourceSelectionReport, SourceType
 
@@ -38,6 +38,7 @@ _SENSITIVE_METADATA_KEY_PARTS = (
     "refresh_token",
     "token",
     "secret",
+    "signature",
     "password",
 )
 
@@ -440,6 +441,7 @@ def _validate_source(source: SourceDefinition) -> list[SourceRegistryValidationI
                 message="source metadata must not contain secrets or credentials",
             )
         )
+    issues.extend(_validate_url_is_secret_free(source))
     if not source.topics:
         issues.append(
             SourceRegistryValidationIssue(
@@ -449,6 +451,31 @@ def _validate_source(source: SourceDefinition) -> list[SourceRegistryValidationI
                 message="source has no topic metadata",
             )
         )
+    return issues
+
+
+def _validate_url_is_secret_free(source: SourceDefinition) -> list[SourceRegistryValidationIssue]:
+    issues: list[SourceRegistryValidationIssue] = []
+    parsed = urlsplit(source.url)
+    if "@" in parsed.netloc or parsed.username is not None or parsed.password is not None:
+        issues.append(
+            SourceRegistryValidationIssue(
+                severity="error",
+                source_id=source.source_id,
+                field="url.userinfo",
+                message="source URL must not contain credentials",
+            )
+        )
+    for key, _value in parse_qsl(parsed.query, keep_blank_values=True):
+        if _is_sensitive_metadata_key(key):
+            issues.append(
+                SourceRegistryValidationIssue(
+                    severity="error",
+                    source_id=source.source_id,
+                    field=f"url.query.{key}",
+                    message="source URL query parameters must not contain secrets or credentials",
+                )
+            )
     return issues
 
 
