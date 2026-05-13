@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import inspect
 import json
 import os
 from dataclasses import replace
@@ -45,6 +47,7 @@ from sources.connectors import (
     ManualConnector,
     MediumConnector,
     RedditConnector,
+    SourceFetchContext,
     SourceFetchPolicy,
     StackOverflowConnector,
     DevToConnector,
@@ -301,16 +304,16 @@ class DailyIntelligenceRunner:
             if remaining == 0:
                 break
             request_id = _source_fetch_request_id(source_fetch_requests, source)
-            source_fetch_requests.append(
-                _source_fetch_request(
-                    source,
-                    request_id=request_id,
-                    request=request,
-                    limit=remaining,
-                    profile=profile,
-                    fetch_policy=self._fetch_policy_for_source(source),
-                )
+            fetch_request = _source_fetch_request(
+                source,
+                request_id=request_id,
+                request=request,
+                limit=remaining,
+                profile=profile,
+                fetch_policy=self._fetch_policy_for_source(source),
+                connector_name=self._connector_name_for_source(source),
             )
+            source_fetch_requests.append(fetch_request)
             if self.source_health_manager.should_skip(source.source_id):
                 health = self.source_health_manager.get(
                     source.source_id,
@@ -397,13 +400,20 @@ class DailyIntelligenceRunner:
                 )
             )
             latency_start = perf_counter()
-            items, errors = self._fetch_source(source, request=request, limit=remaining)
+            items, errors, connector_fetch_result = self._fetch_source(
+                source,
+                request=request,
+                fetch_request=fetch_request,
+                profile=profile,
+                limit=remaining,
+            )
             errors = _with_error_request_id(errors, request_id)
             fetch_latency_ms = _elapsed_ms(latency_start)
             source_fetch_results.append(
-                _source_fetch_result(
-                    source,
+                _final_source_fetch_result(
+                    source=source,
                     request_id=request_id,
+                    connector_fetch_result=connector_fetch_result,
                     success=bool(items),
                     latency_ms=fetch_latency_ms,
                     items=items,
@@ -593,89 +603,163 @@ class DailyIntelligenceRunner:
         source: SourceDefinition,
         *,
         request: dict[str, Any],
+        fetch_request: SourceFetchRequest,
+        profile: str,
         limit: int,
-    ) -> tuple[list[Any], list[SourceError]]:
+    ) -> tuple[list[Any], list[SourceError], SourceFetchResult | None]:
+        registered_result = self._fetch_with_registered_connector(
+            source,
+            request=request,
+            fetch_request=fetch_request,
+            profile=profile,
+        )
+        if registered_result is not None:
+            return registered_result
         if source.source_type in {SourceType.RSS, SourceType.ATOM}:
-            return self.feed_connector.fetch(source, limit=limit)
+            items, errors = self.feed_connector.fetch(source, limit=limit)
+            return items, errors, None
         if source.source_type == SourceType.OFFICIAL_BLOG:
-            return self._fetch_official_blog(source, limit=limit)
+            items, errors = self._fetch_official_blog(source, limit=limit)
+            return items, errors, None
         if source.source_type in {SourceType.HTML, SourceType.WEB_PAGE}:
-            return self.html_connector.fetch(source, limit=limit)
+            items, errors = self.html_connector.fetch(source, limit=limit)
+            return items, errors, None
         if source.source_type == SourceType.MANUAL:
-            return self.manual_connector.fetch(source, limit=limit)
+            items, errors = self.manual_connector.fetch(source, limit=limit)
+            return items, errors, None
         if source.source_type == SourceType.ARXIV:
             query = str(source.metadata.get("query") or request["topic"])
-            return self.arxiv_connector.fetch(source, query=query, limit=limit)
+            items, errors = self.arxiv_connector.fetch(source, query=query, limit=limit)
+            return items, errors, None
         if source.source_type == SourceType.GITHUB:
             repository = source.metadata.get("repository")
             query = source.metadata.get("query") or request.get("topic")
-            return self.github_connector.fetch(
+            items, errors = self.github_connector.fetch(
                 source,
                 repository=str(repository) if repository is not None else None,
                 query=str(query) if query is not None else None,
                 limit=limit,
             )
+            return items, errors, None
         if source.source_type == SourceType.HACKERNEWS:
             story_list = source.metadata.get("story_list")
-            return self.hackernews_connector.fetch(
+            items, errors = self.hackernews_connector.fetch(
                 source,
                 story_list=str(story_list) if story_list is not None else None,
                 limit=limit,
             )
+            return items, errors, None
         if source.source_type == SourceType.REDDIT:
             subreddit = source.metadata.get("subreddit")
             listing = source.metadata.get("listing")
-            return self.reddit_connector.fetch(
+            items, errors = self.reddit_connector.fetch(
                 source,
                 subreddit=str(subreddit) if subreddit is not None else None,
                 listing=str(listing) if listing is not None else None,
                 limit=limit,
             )
+            return items, errors, None
         if source.source_type == SourceType.LOBSTERS:
             tag = source.metadata.get("tag")
-            return self.lobsters_connector.fetch(
+            items, errors = self.lobsters_connector.fetch(
                 source,
                 tag=str(tag) if tag is not None else None,
                 limit=limit,
             )
+            return items, errors, None
         if source.source_type == SourceType.STACKOVERFLOW:
             tag = source.metadata.get("tagged") or source.metadata.get("tag")
             site = source.metadata.get("site")
-            return self.stackoverflow_connector.fetch(
+            items, errors = self.stackoverflow_connector.fetch(
                 source,
                 tag=str(tag) if tag is not None else None,
                 site=str(site) if site is not None else None,
                 limit=limit,
             )
+            return items, errors, None
         if source.source_type == SourceType.DEVTO:
             tag = source.metadata.get("tag")
-            return self.devto_connector.fetch(
+            items, errors = self.devto_connector.fetch(
                 source,
                 tag=str(tag) if tag is not None else None,
                 limit=limit,
             )
+            return items, errors, None
         if source.source_type == SourceType.MEDIUM:
             tag = source.metadata.get("tag")
-            return self.medium_connector.fetch(
+            items, errors = self.medium_connector.fetch(
                 source,
                 tag=str(tag) if tag is not None else None,
                 limit=limit,
             )
-        return [], [
-            SourceError(
-                source_id=source.source_id,
-                source_name=source.name,
-                error_type="unsupported_source_type",
-                error_message=f"unsupported source type: {source.source_type.value}",
-                url=source.url,
-                retryable=False,
-                metadata={
-                    "retryable": False,
-                    "source_health_affecting": False,
-                    "workflow_blocking": False,
-                },
+            return items, errors, None
+        return (
+            [],
+            [
+                SourceError(
+                    source_id=source.source_id,
+                    source_name=source.name,
+                    error_type="unsupported_source_type",
+                    error_message=f"unsupported source type: {source.source_type.value}",
+                    url=source.url,
+                    retryable=False,
+                    metadata={
+                        "retryable": False,
+                        "source_health_affecting": False,
+                        "workflow_blocking": False,
+                    },
+                )
+            ],
+            None,
+        )
+
+    def _fetch_with_registered_connector(
+        self,
+        source: SourceDefinition,
+        *,
+        request: dict[str, Any],
+        fetch_request: SourceFetchRequest,
+        profile: str,
+    ) -> tuple[list[Any], list[SourceError], SourceFetchResult | None] | None:
+        connector = self._registered_connector_for_source(source)
+        if connector is None:
+            return None
+        context = SourceFetchContext(
+            profile=profile,
+            topic=str(request.get("topic") or ""),
+            metadata={
+                "source_id": source.source_id,
+                "limit": fetch_request.limit,
+            },
+        )
+        try:
+            if _is_protocol_connector(connector):
+                return _invoke_protocol_connector(
+                    connector,
+                    source=source,
+                    fetch_request=fetch_request,
+                    context=context,
+                )
+            return _invoke_sync_connector(
+                connector,
+                source=source,
+                fetch_request=fetch_request,
+                context=context,
             )
-        ]
+        except Exception as exc:
+            return [], [_registered_connector_error(source, exc)], None
+
+    def _registered_connector_for_source(self, source: SourceDefinition) -> Any | None:
+        try:
+            return self.source_registry.get_connector(source.source_type)
+        except KeyError:
+            return None
+
+    def _connector_name_for_source(self, source: SourceDefinition) -> str:
+        connector = self._registered_connector_for_source(source)
+        if connector is not None:
+            return _connector_display_name(connector)
+        return _source_connector_name(source)
 
     def _fetch_official_blog(
         self,
@@ -713,6 +797,9 @@ class DailyIntelligenceRunner:
         return None
 
     def _connector_for_source(self, source: SourceDefinition) -> Any:
+        registered_connector = self._registered_connector_for_source(source)
+        if registered_connector is not None:
+            return registered_connector
         if source.source_type in {SourceType.RSS, SourceType.ATOM, SourceType.OFFICIAL_BLOG}:
             return self.feed_connector
         if source.source_type in {SourceType.HTML, SourceType.WEB_PAGE}:
@@ -1721,6 +1808,7 @@ def _source_fetch_request(
     limit: int,
     profile: str,
     fetch_policy: SourceFetchPolicy | None = None,
+    connector_name: str | None = None,
 ) -> SourceFetchRequest:
     query = None
     if source.source_type == SourceType.ARXIV:
@@ -1745,7 +1833,7 @@ def _source_fetch_request(
             "authority_score": source.authority_score,
             "fetch_interval_seconds": source.fetch_interval_seconds,
             "respect_robots": source.respect_robots,
-            "connector_name": _source_connector_name(source),
+            "connector_name": connector_name or _source_connector_name(source),
             **(_fetch_policy_metadata(fetch_policy) if fetch_policy is not None else {}),
         },
     )
@@ -1789,6 +1877,218 @@ def _source_connector_name(source: SourceDefinition) -> str:
     if source.source_type == SourceType.MEDIUM:
         return "MediumConnector"
     return "UnsupportedSourceConnector"
+
+
+def _is_protocol_connector(connector: Any) -> bool:
+    fetch = getattr(connector, "fetch", None)
+    parse = getattr(connector, "parse", None)
+    if not callable(fetch) or not callable(parse):
+        return False
+    parameters = _callable_parameters(fetch)
+    return "request" in parameters and "context" in parameters
+
+
+def _invoke_protocol_connector(
+    connector: Any,
+    *,
+    source: SourceDefinition,
+    fetch_request: SourceFetchRequest,
+    context: SourceFetchContext,
+) -> tuple[list[Any], list[SourceError], SourceFetchResult]:
+    fetch_result = _run_maybe_awaitable(connector.fetch(source, fetch_request, context))
+    if not isinstance(fetch_result, SourceFetchResult):
+        raise TypeError("registered source connector fetch must return SourceFetchResult")
+    parsed_items = _run_maybe_awaitable(connector.parse(source, fetch_result, context))
+    items = list(parsed_items or [])
+    errors = _connector_errors(
+        connector,
+        source=source,
+        fetch_request=fetch_request,
+        fetch_result=fetch_result,
+    )
+    return items, errors, fetch_result
+
+
+def _invoke_sync_connector(
+    connector: Any,
+    *,
+    source: SourceDefinition,
+    fetch_request: SourceFetchRequest,
+    context: SourceFetchContext,
+) -> tuple[list[Any], list[SourceError], SourceFetchResult | None]:
+    fetch = getattr(connector, "fetch", None)
+    if not callable(fetch):
+        raise TypeError("registered source connector must expose a fetch method")
+    kwargs = _registered_fetch_kwargs(fetch, fetch_request=fetch_request, context=context)
+    result = _run_maybe_awaitable(fetch(source, **kwargs))
+    if isinstance(result, SourceFetchResult):
+        parse = getattr(connector, "parse", None)
+        if not callable(parse):
+            errors = _connector_errors(
+                connector,
+                source=source,
+                fetch_request=fetch_request,
+                fetch_result=result,
+            )
+            return [], errors, result
+        parsed_items = _run_maybe_awaitable(parse(source, result, context))
+        items = list(parsed_items or [])
+        errors = _connector_errors(
+            connector,
+            source=source,
+            fetch_request=fetch_request,
+            fetch_result=result,
+        )
+        return items, errors, result
+    try:
+        items, errors = result
+    except (TypeError, ValueError) as exc:
+        raise TypeError("registered source connector fetch must return (items, errors)") from exc
+    return list(items or []), list(errors or []), None
+
+
+def _registered_fetch_kwargs(
+    fetch: Any,
+    *,
+    fetch_request: SourceFetchRequest,
+    context: SourceFetchContext,
+) -> dict[str, Any]:
+    parameters = _callable_parameters(fetch)
+    kwargs: dict[str, Any] = {}
+    if "limit" in parameters and fetch_request.limit is not None:
+        kwargs["limit"] = fetch_request.limit
+    if "query" in parameters and fetch_request.query is not None:
+        kwargs["query"] = fetch_request.query
+    if "request" in parameters:
+        kwargs["request"] = fetch_request
+    if "context" in parameters:
+        kwargs["context"] = context
+    return kwargs
+
+
+def _connector_errors(
+    connector: Any,
+    *,
+    source: SourceDefinition,
+    fetch_request: SourceFetchRequest,
+    fetch_result: SourceFetchResult,
+) -> list[SourceError]:
+    errors_for = getattr(connector, "errors_for", None)
+    if callable(errors_for):
+        errors = _run_maybe_awaitable(errors_for(fetch_request.request_id))
+        return list(errors or [])
+    if fetch_result.error_type is None:
+        return []
+    return [
+        SourceError(
+            source_id=source.source_id,
+            source_name=source.name,
+            error_type=fetch_result.error_type,
+            error_message=fetch_result.error_message or fetch_result.error_type,
+            url=source.url,
+            metadata={
+                "phase": "fetch",
+                "request_id": fetch_request.request_id,
+                "connector_name": _connector_display_name(connector),
+            },
+        )
+    ]
+
+
+def _run_maybe_awaitable(value: Any) -> Any:
+    if not inspect.isawaitable(value):
+        return value
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(value)
+    raise RuntimeError(
+        "registered source connector returned an awaitable while an event loop is running"
+    )
+
+
+def _callable_parameters(value: Any) -> set[str]:
+    try:
+        return set(inspect.signature(value).parameters)
+    except (TypeError, ValueError):
+        return set()
+
+
+def _connector_display_name(connector: Any) -> str:
+    wrapped_connector = getattr(connector, "connector", None)
+    if wrapped_connector is not None:
+        return type(wrapped_connector).__name__
+    return type(connector).__name__
+
+
+def _registered_connector_error(source: SourceDefinition, exc: Exception) -> SourceError:
+    classification = classify_source_exception(exc, phase="fetch")
+    return SourceError(
+        source_id=source.source_id,
+        source_name=source.name,
+        error_type=classification.error_type,
+        error_message=str(exc),
+        url=source.url,
+        retryable=classification.retryable,
+        metadata={
+            "phase": "fetch",
+            "retryable": classification.retryable,
+            "source_health_affecting": classification.source_health_affecting,
+            "workflow_blocking": classification.workflow_blocking,
+            "registered_connector": True,
+            "original_exception_type": type(exc).__name__,
+        },
+    )
+
+
+def _final_source_fetch_result(
+    *,
+    source: SourceDefinition,
+    request_id: str,
+    connector_fetch_result: SourceFetchResult | None,
+    success: bool,
+    latency_ms: float,
+    items: list[Any],
+    errors: list[SourceError],
+) -> SourceFetchResult:
+    fallback = _source_fetch_result(
+        source,
+        request_id=request_id,
+        success=success,
+        latency_ms=latency_ms,
+        items=items,
+        errors=errors,
+    )
+    if connector_fetch_result is None:
+        return fallback
+    metadata = dict(fallback.metadata)
+    metadata.update(dict(connector_fetch_result.metadata))
+    metadata["item_count"] = len(items)
+    metadata["error_count"] = len(errors)
+    first_error = errors[0] if errors else None
+    return replace(
+        connector_fetch_result,
+        request_id=request_id,
+        source_id=source.source_id,
+        success=success,
+        status_code=connector_fetch_result.status_code or fallback.status_code,
+        content_type=connector_fetch_result.content_type or fallback.content_type,
+        content_bytes=(
+            connector_fetch_result.content_bytes
+            if connector_fetch_result.content_bytes is not None
+            else fallback.content_bytes
+        ),
+        latency_ms=(
+            connector_fetch_result.latency_ms
+            if connector_fetch_result.latency_ms is not None
+            else fallback.latency_ms
+        ),
+        error_type=connector_fetch_result.error_type
+        or (first_error.error_type if first_error else None),
+        error_message=connector_fetch_result.error_message
+        or (first_error.error_message if first_error else None),
+        metadata=metadata,
+    )
 
 
 def _source_fetch_result(

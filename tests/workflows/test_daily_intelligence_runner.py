@@ -17,6 +17,7 @@ from sources.connectors import (
     HackerNewsConnector,
     HtmlConnector,
     RedditConnector,
+    SyncSourceConnectorAdapter,
     TooManyRedirectsError,
 )
 from sources.health import BasicSourceHealthManager
@@ -656,6 +657,77 @@ rss_feeds:
     assert fetch_request.metadata["robots_policy"] is False
     assert fetch_request.metadata["rate_limit_per_domain_per_minute"] == 20
     assert fetch_request.metadata["retry_on_status_codes"] == [429, 503]
+
+
+def test_daily_intelligence_runner_dispatches_registered_sync_connector(tmp_path) -> None:
+    connector = _RegistrySyncConnector()
+    source_url = "https://example.com/registry-sync"
+    registry = SourceRegistry(
+        [
+            SourceDefinition(
+                source_id="registry-rss",
+                name="Registry RSS",
+                source_type="rss",
+                url="https://example.com/registry.xml",
+                reliability="high",
+                topics=["ai", "policy"],
+            )
+        ],
+        connectors={"rss": connector},
+    )
+
+    result = DailyIntelligenceRunner(
+        artifact_root=tmp_path,
+        source_registry=registry,
+        feed_connector=FeedConnector(
+            fetch_text=lambda url: (_ for _ in ()).throw(
+                AssertionError("built-in feed called")
+            )
+        ),
+        llm_client=_CitedReportLLM(source_url),
+    ).run(profile="live", topic="AI policy", source_limit=1, run_id="daily-registry-sync")
+
+    assert result.status == WorkflowStatus.SUCCEEDED
+    assert connector.calls == [{"source_id": "registry-rss", "limit": 1}]
+    assert result.output["raw_items"][0].url == source_url
+    assert result.output["source_fetch_requests"][0].metadata["connector_name"] == "_RegistrySyncConnector"
+    assert result.output["source_connector_dispatch_report"].connector_counts == {
+        "_RegistrySyncConnector": 1
+    }
+
+
+def test_daily_intelligence_runner_dispatches_registered_protocol_connector(tmp_path) -> None:
+    connector = _ProtocolBackedSyncConnector()
+    adapter = SyncSourceConnectorAdapter(connector, source_type="rss")
+    source_url = "https://example.com/registry-protocol"
+    registry = SourceRegistry(
+        [
+            SourceDefinition(
+                source_id="protocol-rss",
+                name="Protocol RSS",
+                source_type="rss",
+                url="https://example.com/protocol.xml",
+                reliability="high",
+                topics=["ai", "policy"],
+            )
+        ],
+        connectors={"rss": adapter},
+    )
+
+    result = DailyIntelligenceRunner(
+        artifact_root=tmp_path,
+        source_registry=registry,
+        llm_client=_CitedReportLLM(source_url),
+    ).run(profile="live", topic="AI policy", source_limit=1, run_id="daily-registry-protocol")
+
+    assert result.status == WorkflowStatus.SUCCEEDED
+    assert connector.calls == [{"source_id": "protocol-rss", "limit": 1}]
+    fetch_request = result.output["source_fetch_requests"][0]
+    fetch_result = result.output["source_fetch_results"][0]
+    assert fetch_request.metadata["connector_name"] == "_ProtocolBackedSyncConnector"
+    assert fetch_result.metadata["connector_name"] == "_ProtocolBackedSyncConnector"
+    assert fetch_result.metadata["context"]["profile"] == "live"
+    assert fetch_result.metadata["context"]["topic"] == "AI policy"
 
 
 def test_daily_intelligence_runner_persists_response_headers_from_default_fetch(tmp_path, monkeypatch) -> None:
@@ -1581,6 +1653,48 @@ class _FakeReportLLM:
             ),
             usage=TokenUsage(input_tokens=3, output_tokens=4),
         )
+
+
+class _RegistrySyncConnector:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def fetch(self, source, *, limit=None):
+        self.calls.append({"source_id": source.source_id, "limit": limit})
+        return [
+            RawSourceItem(
+                source_item_id="raw-registry-sync",
+                source_id=source.source_id,
+                source_name=source.name,
+                source_type=source.source_type,
+                title="Registry connector AI policy update",
+                url="https://example.com/registry-sync",
+                fetched_at=datetime(2026, 5, 11, tzinfo=UTC),
+                summary="Source-grounded summary.",
+                raw_content="Source-grounded summary.",
+            )
+        ], []
+
+
+class _ProtocolBackedSyncConnector:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def fetch(self, source, *, limit=None):
+        self.calls.append({"source_id": source.source_id, "limit": limit})
+        return [
+            RawSourceItem(
+                source_item_id="raw-registry-protocol",
+                source_id=source.source_id,
+                source_name=source.name,
+                source_type=source.source_type,
+                title="Protocol connector AI policy update",
+                url="https://example.com/registry-protocol",
+                fetched_at=datetime(2026, 5, 11, tzinfo=UTC),
+                summary="Source-grounded summary.",
+                raw_content="Source-grounded summary.",
+            )
+        ], []
 
 
 class _DuplicateReportLLM:
