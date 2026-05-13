@@ -54,6 +54,91 @@ def test_routing_engine_returns_decision_metadata() -> None:
     assert decision.traversed_edge().edge_id == "fallback-hold"
 
 
+def test_routing_engine_returns_multiple_next_steps_for_fan_out() -> None:
+    workflow = WorkflowSpec(
+        workflow_id="fan-out",
+        name="Fan Out",
+        version="1.0",
+        start_step_id="start",
+        steps=[
+            StepSpec(step_id="start", implementation="sample.start"),
+            StepSpec(step_id="left", implementation="sample.left"),
+            StepSpec(step_id="right", implementation="sample.right"),
+        ],
+        edges=[
+            EdgeSpec("start-left", "start", "left", condition=EdgeCondition.ALWAYS),
+            EdgeSpec("start-right", "start", "right", condition=EdgeCondition.ALWAYS),
+        ],
+    )
+
+    next_steps = RoutingEngine().next_steps(
+        workflow,
+        workflow.step_by_id("start"),
+        StepOutcome(status=StepStatus.SUCCEEDED),
+        buffer=DataBuffer(),
+    )
+
+    assert next_steps == ["left", "right"]
+
+
+def test_routing_engine_supports_quality_human_and_budget_conditions() -> None:
+    workflow = WorkflowSpec(
+        workflow_id="target-conditions",
+        name="Target Conditions",
+        version="1.0",
+        start_step_id="gate",
+        steps=[
+            StepSpec(
+                step_id="gate",
+                implementation="sample.gate",
+                write_keys=["quality_gate_metrics"],
+            ),
+            StepSpec(step_id="rewrite", implementation="sample.rewrite"),
+            StepSpec(step_id="approved", implementation="sample.approved"),
+            StepSpec(step_id="budget", implementation="sample.budget"),
+        ],
+        edges=[
+            EdgeSpec(
+                "gate-rewrite",
+                "gate",
+                "rewrite",
+                condition=EdgeCondition.QUALITY_REWRITE_REQUIRED,
+                priority=0,
+            ),
+            EdgeSpec(
+                "gate-approved",
+                "gate",
+                "approved",
+                condition=EdgeCondition.HUMAN_APPROVED,
+                priority=1,
+            ),
+            EdgeSpec(
+                "gate-budget",
+                "gate",
+                "budget",
+                condition=EdgeCondition.BUDGET_EXCEEDED,
+                priority=2,
+            ),
+        ],
+    )
+    buffer = DataBuffer(
+        {
+            "quality_gate_metrics": {"decision": "rewrite_required"},
+            "human_review_decision": {"decision": "approved"},
+            "budget_exceeded": True,
+        }
+    )
+
+    next_steps = RoutingEngine().next_steps(
+        workflow,
+        workflow.step_by_id("gate"),
+        StepOutcome(status=StepStatus.SUCCEEDED),
+        buffer=buffer,
+    )
+
+    assert next_steps == ["rewrite", "approved", "budget"]
+
+
 def test_routing_engine_blocks_unsafe_function_calls() -> None:
     workflow = _routing_workflow(condition_expr='__import__("os").system("echo unsafe")')
 

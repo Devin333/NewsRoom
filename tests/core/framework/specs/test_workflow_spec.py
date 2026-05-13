@@ -1,14 +1,20 @@
 import pytest
 from core.framework.specs import (
+    ArtifactPolicySpec,
     EdgeCondition,
     EdgeSpec,
     FailurePolicySpec,
+    LineagePolicySpec,
+    QualityPolicySpec,
+    ResourcePolicySpec,
     RetryPolicySpec,
     StepSpec,
     StepType,
     TimeoutPolicySpec,
+    WorkflowPolicySpec,
     WorkflowSpec,
     WorkflowSpecError,
+    WorkflowTriggerSpec,
 )
 
 
@@ -89,6 +95,77 @@ def test_step_spec_serializes_failure_policy() -> None:
         "mark_as_blocked": False,
         "allow_partial_success": True,
     }
+
+
+def test_target_state_step_and_workflow_spec_fields_serialize() -> None:
+    step = StepSpec(
+        step_id="review",
+        implementation="human.review",
+        step_type=StepType.HUMAN_REVIEW,
+        read_keys=["draft_report"],
+        write_keys=["human_review_decision"],
+        input_schema={"type": "object"},
+        output_schema={"type": "object"},
+        resource_policy=ResourcePolicySpec(max_cost_usd=0.25, max_parallelism=2),
+        quality_policy=QualityPolicySpec(min_editor_score=0.8, allow_rewrite_count=2),
+        artifact_policy=ArtifactPolicySpec(write_step_output=True),
+        lineage_policy=LineagePolicySpec(input_keys=["draft_report"]),
+        idempotent=False,
+        client_facing=True,
+    )
+    spec = WorkflowSpec(
+        workflow_id="target-state",
+        name="Target State",
+        version="1.0",
+        trigger=WorkflowTriggerSpec(trigger_type="scheduled", schedule="0 8 * * *"),
+        start_step_id="review",
+        terminal_step_ids=["review"],
+        input_schema={"type": "object"},
+        output_schema={"type": "object"},
+        policies=WorkflowPolicySpec(
+            resource_policy=ResourcePolicySpec(max_cost_usd=1.0),
+            quality_policy=QualityPolicySpec(min_citation_coverage=0.9),
+        ),
+        steps=[step],
+    )
+
+    payload = spec.to_dict()
+
+    assert payload["trigger"]["trigger_type"] == "scheduled"
+    assert payload["policies"]["quality_policy"]["min_citation_coverage"] == 0.9
+    assert payload["steps"][0]["step_type"] == "human_review"
+    assert payload["steps"][0]["input_schema"] == {"type": "object"}
+    assert payload["steps"][0]["resource_policy"]["max_parallelism"] == 2
+    assert payload["steps"][0]["quality_policy"]["min_editor_score"] == 0.8
+    assert payload["steps"][0]["artifact_policy"]["write_step_output"] is True
+    assert payload["steps"][0]["lineage_policy"]["input_keys"] == ["draft_report"]
+    assert payload["steps"][0]["idempotent"] is False
+    assert payload["steps"][0]["client_facing"] is True
+
+
+def test_workflow_validation_result_reports_errors_and_warnings() -> None:
+    spec = WorkflowSpec(
+        workflow_id="validation",
+        name="Validation",
+        version="1.0",
+        start_step_id="review",
+        steps=[
+            StepSpec(
+                step_id="review",
+                implementation="human.review",
+                step_type=StepType.HUMAN_REVIEW,
+                metadata={"api_key": "do-not-store"},
+            )
+        ],
+    )
+
+    result = spec.validation_result(registered_step_types=[StepType.FUNCTION])
+
+    assert result.passed is False
+    assert result.errors[0].code == "step_runner_missing"
+    assert result.errors[0].step_id == "review"
+    assert result.warnings[0].code == "secret_like_spec_field"
+    assert result.warnings[0].step_id == "review"
 
 
 def test_retry_policy_rejects_negative_values() -> None:

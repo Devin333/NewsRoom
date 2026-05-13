@@ -48,7 +48,10 @@ class StepOutcome:
     error_type: str | None = None
     error_message: str | None = None
     error_details: dict[str, Any] = field(default_factory=dict)
+    metrics: dict[str, Any] = field(default_factory=dict)
     artifacts: list[ArtifactRef] = field(default_factory=list)
+    lineage: list[dict[str, Any]] = field(default_factory=list)
+    next_hint: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -57,7 +60,10 @@ class StepOutcome:
             "error_type": self.error_type,
             "error_message": self.error_message,
             "error_details": _json_safe(self.error_details),
+            "metrics": _json_safe(self.metrics),
             "artifacts": _json_safe(self.artifacts),
+            "lineage": _json_safe(self.lineage),
+            "next_hint": self.next_hint,
         }
 
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import ast
 import operator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from core.framework.specs import EdgeCondition, EdgeSpec, StepSpec, StepStatus, WorkflowSpec
@@ -38,6 +38,11 @@ class EdgeEvaluation:
 class RoutingDecision:
     target_step_id: str | None
     evaluations: list[EdgeEvaluation]
+    target_step_ids: list[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if not self.target_step_ids and self.target_step_id is not None:
+            object.__setattr__(self, "target_step_ids", [self.target_step_id])
 
     def traversed_edge(self) -> EdgeEvaluation | None:
         for evaluation in self.evaluations:
@@ -48,6 +53,7 @@ class RoutingDecision:
     def to_dict(self) -> dict[str, Any]:
         return {
             "target_step_id": self.target_step_id,
+            "target_step_ids": list(self.target_step_ids),
             "evaluations": [evaluation.to_dict() for evaluation in self.evaluations],
         }
 
@@ -60,6 +66,40 @@ class RoutingEngine:
         outcome: StepOutcome,
         *,
         buffer: DataBuffer | None = None,
+        fan_out: bool = False,
+    ) -> RoutingDecision:
+        return self._decide(
+            workflow,
+            current_step,
+            outcome,
+            buffer=buffer,
+            fan_out=fan_out,
+        )
+
+    def next_steps(
+        self,
+        workflow: WorkflowSpec,
+        current_step: StepSpec,
+        outcome: StepOutcome,
+        *,
+        buffer: DataBuffer | None = None,
+    ) -> list[str]:
+        return self._decide(
+            workflow,
+            current_step,
+            outcome,
+            buffer=buffer,
+            fan_out=True,
+        ).target_step_ids
+
+    def _decide(
+        self,
+        workflow: WorkflowSpec,
+        current_step: StepSpec,
+        outcome: StepOutcome,
+        *,
+        buffer: DataBuffer | None,
+        fan_out: bool,
     ) -> RoutingDecision:
         if current_step.step_id in workflow.terminal_step_ids:
             return RoutingDecision(target_step_id=None, evaluations=[])
@@ -70,6 +110,7 @@ class RoutingEngine:
         edges.sort(key=lambda edge: (edge.priority, edge.edge_id))
 
         evaluations: list[EdgeEvaluation] = []
+        target_step_ids: list[str] = []
         for edge in edges:
             matched = _edge_matches(edge, outcome=outcome, buffer=buffer)
             evaluation = EdgeEvaluation(
@@ -82,11 +123,18 @@ class RoutingEngine:
             )
             evaluations.append(evaluation)
             if matched:
-                return RoutingDecision(
-                    target_step_id=edge.target_step_id,
-                    evaluations=evaluations,
-                )
-        return RoutingDecision(target_step_id=None, evaluations=evaluations)
+                target_step_ids.append(edge.target_step_id)
+                if not fan_out:
+                    return RoutingDecision(
+                        target_step_id=edge.target_step_id,
+                        evaluations=evaluations,
+                        target_step_ids=target_step_ids,
+                    )
+        return RoutingDecision(
+            target_step_id=target_step_ids[0] if target_step_ids else None,
+            evaluations=evaluations,
+            target_step_ids=target_step_ids,
+        )
 
     def next_step(
         self,
@@ -122,6 +170,25 @@ def _edge_matches(
             outcome=outcome,
             buffer=buffer,
         )
+    if edge.condition == EdgeCondition.QUALITY_PASS:
+        return _quality_decision(outcome, buffer) == "pass"
+    if edge.condition == EdgeCondition.QUALITY_REWRITE_REQUIRED:
+        return _quality_decision(outcome, buffer) == "rewrite_required"
+    if edge.condition == EdgeCondition.QUALITY_BLOCKED:
+        return _quality_decision(outcome, buffer) == "blocked"
+    if edge.condition == EdgeCondition.HUMAN_APPROVED:
+        return _human_decision(outcome, buffer) == "approved"
+    if edge.condition == EdgeCondition.HUMAN_REJECTED:
+        return _human_decision(outcome, buffer) == "rejected"
+    if edge.condition == EdgeCondition.BUDGET_EXCEEDED:
+        return bool(_lookup(outcome.outputs, "budget_exceeded") or _lookup_buffer(buffer, "budget_exceeded"))
+    if edge.condition == EdgeCondition.SOURCE_UNAVAILABLE:
+        return bool(
+            _lookup(outcome.outputs, "source_unavailable")
+            or _lookup_buffer(buffer, "source_unavailable")
+        )
+    if edge.condition == EdgeCondition.LLM_DECIDE:
+        return _llm_route_hint(edge, outcome, buffer)
     return False
 
 
@@ -150,6 +217,78 @@ def _evaluate_condition(
         "null": None,
     }
     return bool(_eval_node(tree.body, context))
+
+
+def _quality_decision(outcome: StepOutcome, buffer: DataBuffer | None) -> str | None:
+    for source in (
+        outcome.outputs.get("quality_gate_metrics"),
+        outcome.outputs.get("editor_review"),
+        outcome.outputs.get("report_quality_summary"),
+        _lookup_buffer(buffer, "quality_gate_metrics"),
+        _lookup_buffer(buffer, "editor_review"),
+        _lookup_buffer(buffer, "report_quality_summary"),
+    ):
+        decision = _lookup(source, "decision")
+        if decision is not None:
+            return str(decision)
+        if _lookup(source, "blocked") is True:
+            return "blocked"
+        rewrite_attempted = _lookup(source, "rewrite_attempted")
+        rewrite_attempts = _lookup(source, "rewrite_attempts")
+        if rewrite_attempted is True or (isinstance(rewrite_attempts, int) and rewrite_attempts > 0):
+            return "rewrite_required"
+        passed = _lookup(source, "passed")
+        if passed is True:
+            return "pass"
+    if outcome.next_hint in {"quality_pass", "quality_rewrite_required", "quality_blocked"}:
+        return outcome.next_hint.removeprefix("quality_")
+    return None
+
+
+def _human_decision(outcome: StepOutcome, buffer: DataBuffer | None) -> str | None:
+    for source in (
+        outcome.outputs.get("human_review_decision"),
+        outcome.outputs.get("human_decision"),
+        _lookup_buffer(buffer, "human_review_decision"),
+        _lookup_buffer(buffer, "human_decision"),
+    ):
+        decision = _lookup(source, "decision")
+        if decision is not None:
+            return str(decision)
+        status = _lookup(source, "status")
+        if status is not None:
+            return str(status)
+    if outcome.next_hint in {"human_approved", "human_rejected"}:
+        return outcome.next_hint.removeprefix("human_")
+    return None
+
+
+def _llm_route_hint(edge: EdgeSpec, outcome: StepOutcome, buffer: DataBuffer | None) -> bool:
+    allowed_hint = edge.metadata.get("route_hint")
+    if allowed_hint is None:
+        allowed_hint = edge.target_step_id
+    hints = [
+        outcome.next_hint,
+        _lookup(outcome.outputs, "next_step_id"),
+        _lookup(outcome.outputs, "route"),
+        _lookup_buffer(buffer, "next_step_id"),
+        _lookup_buffer(buffer, "route"),
+    ]
+    return any(hint is not None and str(hint) == str(allowed_hint) for hint in hints)
+
+
+def _lookup_buffer(buffer: DataBuffer | None, key: str) -> Any:
+    if buffer is None or not buffer.exists(key):
+        return None
+    return buffer.read(key)
+
+
+def _lookup(value: Any, key: str) -> Any:
+    if isinstance(value, dict):
+        return value.get(key)
+    if hasattr(value, key):
+        return getattr(value, key)
+    return None
 
 
 def _eval_node(node: ast.AST, context: dict[str, Any]) -> Any:

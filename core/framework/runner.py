@@ -15,6 +15,7 @@ from core.framework.workflow.executor import WorkflowExecutor
 from core.framework.workflow.result import WorkflowResult
 from core.framework.workflow.step_runner import FunctionStepRegistry, FunctionStepRunner
 from storage.artifacts import ArtifactRef, artifact_index_store_from_env
+from storage.checkpoint import WorkflowCheckpoint
 from storage.events import EventRecord as StorageEventRecord
 from storage.events import event_store_from_env
 from storage.lineage import lineage_refs_from_evidence_bundle, lineage_store_from_env
@@ -60,6 +61,30 @@ class WorkflowRunner:
             checkpoint_store=self._checkpoint_store,
         )
         result = executor.execute(workflow, request, profile=profile, run_id=run_id)
+        self._persist_storage_indexes(result)
+        return RunResult.from_workflow_result(result)
+
+    def resume_from_checkpoint(
+        self,
+        workflow: WorkflowSpec,
+        checkpoint: WorkflowCheckpoint,
+        *,
+        profile: str,
+        run_id: str | None = None,
+        buffer_updates: dict[str, Any] | None = None,
+    ) -> RunResult:
+        executor = WorkflowExecutor(
+            function_step_runner=self._function_step_runner,
+            artifact_manager=self._artifact_manager,
+            checkpoint_store=self._checkpoint_store,
+        )
+        result = executor.resume_from_checkpoint(
+            workflow,
+            checkpoint,
+            profile=profile,
+            run_id=run_id,
+            buffer_updates=buffer_updates,
+        )
         self._persist_storage_indexes(result)
         return RunResult.from_workflow_result(result)
 

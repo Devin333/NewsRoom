@@ -70,3 +70,15 @@ def test_buffer_diff_reports_added_changed_and_removed_keys() -> None:
         },
         "removed": {"removed": "old"},
     }
+
+
+def test_buffer_tracks_lineage_and_redacts_sensitive_keys() -> None:
+    buffer = DataBuffer({"api_key": "secret", "request": {"topic": "ai"}})
+    scoped = buffer.scope(read_keys=["request"], write_keys=["report"])
+
+    scoped.write("report", "done", lineage={"step_id": "write_report", "source_key": "request"})
+
+    assert buffer.lineage("report") == [{"step_id": "write_report", "source_key": "request"}]
+    assert buffer.snapshot().lineage_to_dict()["report"][0]["step_id"] == "write_report"
+    assert buffer.redact()["api_key"] == "[REDACTED]"
+    assert buffer.redact()["report"] == "done"

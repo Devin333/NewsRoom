@@ -10,7 +10,14 @@ from uuid import uuid4
 from core.framework.artifacts.filesystem import ArtifactManager
 from core.framework.artifacts.source_artifacts import SourceArtifactWriter
 from core.framework.events.recorder import EventRecorder
-from core.framework.specs import EdgeCondition, StepSpec, StepStatus, WorkflowSpec, WorkflowStatus
+from core.framework.specs import (
+    EdgeCondition,
+    StepSpec,
+    StepStatus,
+    StepType,
+    WorkflowSpec,
+    WorkflowStatus,
+)
 from core.framework.workflow.buffer import DataBuffer
 from core.framework.workflow.result import StepOutcome, WorkflowError, WorkflowResult
 from core.framework.workflow.routing import RoutingDecision, RoutingEngine
@@ -55,14 +62,25 @@ class WorkflowExecutor:
         *,
         profile: str,
         run_id: str | None = None,
+        _initial_buffer_values: dict[str, Any] | None = None,
+        _current_step_ids: list[str] | None = None,
+        _initial_path: list[str] | None = None,
+        _initial_step_results: dict[str, StepOutcome] | None = None,
+        _resumed_checkpoint_id: str | None = None,
     ) -> WorkflowResult:
-        workflow.validate()
+        initial_buffer_values = _initial_buffer_values or {"request": request}
+        workflow.validate(request_keys=list(initial_buffer_values))
         _validate_step_runners(workflow, self._step_runner_registry)
 
         actual_run_id = run_id or uuid4().hex
         run_dir = self._artifact_manager.start_run(actual_run_id)
+        _configure_step_runners(
+            self._step_runner_registry,
+            artifact_manager=self._artifact_manager,
+            run_id=actual_run_id,
+        )
         recorder = EventRecorder(actual_run_id)
-        buffer = DataBuffer({"request": request})
+        buffer = DataBuffer(initial_buffer_values)
         initial_buffer_snapshot = buffer.snapshot()
         started_at = _utc_now()
 
@@ -95,25 +113,40 @@ class WorkflowExecutor:
                 "data_buffer_diff": "data_buffer.diff.json",
             },
         }
+        if _resumed_checkpoint_id is not None:
+            manifest["resumed_from_checkpoint_id"] = _resumed_checkpoint_id
 
-        recorder.emit(
-            "workflow_started",
-            {
-                "workflow_id": workflow.workflow_id,
-                "workflow_version": workflow.version,
-                "profile": profile,
-            },
-        )
+        if _resumed_checkpoint_id is None:
+            recorder.emit(
+                "workflow_started",
+                {
+                    "workflow_id": workflow.workflow_id,
+                    "workflow_version": workflow.version,
+                    "profile": profile,
+                },
+            )
+        else:
+            recorder.emit(
+                "workflow_resumed",
+                {
+                    "workflow_id": workflow.workflow_id,
+                    "workflow_version": workflow.version,
+                    "profile": profile,
+                    "checkpoint_id": _resumed_checkpoint_id,
+                },
+            )
+            recorder.emit("checkpoint_restored", {"checkpoint_id": _resumed_checkpoint_id})
 
         status = WorkflowStatus.RUNNING
         error: WorkflowError | None = None
-        path: list[str] = []
-        step_results: dict[str, StepOutcome] = {}
+        path: list[str] = list(_initial_path or [])
+        step_results: dict[str, StepOutcome] = dict(_initial_step_results or {})
         checkpoint_ids: list[str] = []
         step_visit_counts: dict[str, int] = {}
-        current_step_id: str | None = workflow.start_step_id
+        current_step_ids: list[str] = list(_current_step_ids or [workflow.start_step_id])
 
-        while current_step_id:
+        while current_step_ids:
+            current_step_id = current_step_ids.pop(0)
             visit_count = step_visit_counts.get(current_step_id, 0) + 1
             step_visit_counts[current_step_id] = visit_count
             if visit_count > workflow.max_step_visits:
@@ -138,12 +171,13 @@ class WorkflowExecutor:
                         "visit_count": visit_count,
                     },
                 )
-                current_step_id = None
+                current_step_ids = []
                 break
 
             step = workflow.step_by_id(current_step_id)
             path.append(step.step_id)
             outcome = self._run_step_with_retries(step, buffer, recorder)
+            stop_after_checkpoint = False
 
             step_results[step.step_id] = outcome
             manifest["steps"][step.step_id] = outcome.to_dict()
@@ -161,6 +195,7 @@ class WorkflowExecutor:
                         step,
                         outcome,
                         buffer=buffer,
+                        fan_out=True,
                     )
                 except Exception as exc:
                     status = WorkflowStatus.FAILED
@@ -170,12 +205,43 @@ class WorkflowExecutor:
                         step_id=step.step_id,
                         details={"phase": "routing"},
                     )
-                    current_step_id = None
+                    current_step_ids = []
                 else:
                     _emit_routing_events(recorder, routing_decision)
-                    current_step_id = routing_decision.target_step_id
-                    if current_step_id is None:
+                    current_step_ids = _prepend_new_steps(
+                        routing_decision.target_step_ids,
+                        current_step_ids,
+                    )
+                    if not current_step_ids:
                         status = WorkflowStatus.SUCCEEDED
+            elif outcome.status == StepStatus.PAUSED:
+                current_step_ids = [step.step_id, *current_step_ids]
+                status = (
+                    WorkflowStatus.WAITING_FOR_HUMAN
+                    if step.step_type == StepType.HUMAN_REVIEW
+                    else WorkflowStatus.PAUSED
+                )
+                recorder.emit("step_paused", {"step_id": step.step_id, "outcome": outcome})
+                if step.step_type == StepType.HUMAN_REVIEW:
+                    recorder.emit(
+                        "human_review_requested",
+                        {"step_id": step.step_id, "outcome": outcome},
+                    )
+                    recorder.emit(
+                        "workflow_paused",
+                        {"reason": "human_review", "step_id": step.step_id},
+                    )
+                stop_after_checkpoint = True
+            elif outcome.status == StepStatus.BLOCKED:
+                recorder.emit("step_blocked", {"step_id": step.step_id, "outcome": outcome})
+                status = WorkflowStatus.BLOCKED
+                error = WorkflowError(
+                    error_type=outcome.error_type or "StepBlocked",
+                    message=outcome.error_message or f"step blocked: {step.step_id}",
+                    step_id=step.step_id,
+                    details=outcome.error_details,
+                )
+                current_step_ids = []
             else:
                 recorder.emit("step_failed", {"step_id": step.step_id, "outcome": outcome})
                 step_error = WorkflowError(
@@ -188,20 +254,20 @@ class WorkflowExecutor:
                     recorder.emit("step_blocked", {"step_id": step.step_id, "outcome": outcome})
                     status = WorkflowStatus.BLOCKED
                     error = step_error
-                    current_step_id = None
+                    current_step_ids = []
                 else:
                     fallback_step_id = _failure_fallback_step_id(workflow, step)
                     if fallback_step_id is not None:
-                        current_step_id = fallback_step_id
+                        current_step_ids = _prepend_new_steps([fallback_step_id], current_step_ids)
                     else:
                         status = WorkflowStatus.FAILED
                         error = step_error
-                        current_step_id = None
+                        current_step_ids = []
             checkpoint_id = self._write_checkpoint(
                 run_id=actual_run_id,
                 workflow=workflow,
                 profile=profile,
-                current_step_id=current_step_id,
+                current_step_ids=current_step_ids,
                 buffer=buffer,
                 step_results=step_results,
                 path=path,
@@ -209,6 +275,8 @@ class WorkflowExecutor:
             )
             if checkpoint_id is not None:
                 checkpoint_ids.append(checkpoint_id)
+            if stop_after_checkpoint:
+                break
 
         final_buffer_snapshot = buffer.snapshot()
         output = final_buffer_snapshot.to_dict()
@@ -217,6 +285,7 @@ class WorkflowExecutor:
         manifest["finished_at"] = _utc_now()
         manifest["event_count"] = len(recorder.list_events()) + 1
         manifest["step_count"] = len(step_results)
+        manifest["current_step_ids"] = list(current_step_ids)
         manifest["checkpoint_count"] = len(checkpoint_ids)
         if checkpoint_ids:
             manifest["latest_checkpoint_id"] = checkpoint_ids[-1]
@@ -380,6 +449,15 @@ class WorkflowExecutor:
                     output["blocked_report"],
                 )
                 manifest["artifacts"]["blocked_report"] = "blocked_report.json"
+        elif status in {WorkflowStatus.PAUSED, WorkflowStatus.WAITING_FOR_HUMAN}:
+            pause_payload = {
+                "status": status.value,
+                "path": path,
+                "current_step_ids": list(current_step_ids),
+                "latest_checkpoint_id": checkpoint_ids[-1] if checkpoint_ids else None,
+            }
+            self._artifact_manager.write_json(actual_run_id, "pause.json", pause_payload)
+            manifest["artifacts"]["pause"] = "pause.json"
         else:
             terminal_event = (
                 "workflow_blocked" if status == WorkflowStatus.BLOCKED else "workflow_failed"
@@ -420,6 +498,46 @@ class WorkflowExecutor:
             artifact_dir=str(run_dir),
             manifest_path=str(manifest_path),
             events_path=str(events_path),
+        )
+
+    def resume_from_checkpoint(
+        self,
+        workflow: WorkflowSpec,
+        checkpoint: WorkflowCheckpoint,
+        *,
+        profile: str,
+        run_id: str | None = None,
+        buffer_updates: dict[str, Any] | None = None,
+    ) -> WorkflowResult:
+        if checkpoint.workflow_id != workflow.workflow_id:
+            raise StepExecutionError(
+                "checkpoint workflow_id does not match workflow: "
+                f"{checkpoint.workflow_id} != {workflow.workflow_id}"
+            )
+        if checkpoint.workflow_version != workflow.version:
+            raise StepExecutionError(
+                "checkpoint workflow_version does not match workflow: "
+                f"{checkpoint.workflow_version} != {workflow.version}"
+            )
+
+        initial_values = dict(checkpoint.data_buffer_snapshot)
+        if buffer_updates:
+            initial_values.update(buffer_updates)
+        request = initial_values.get("request")
+        if not isinstance(request, dict):
+            request = {}
+        resume_run_id = run_id or f"{checkpoint.run_id}-resume-{checkpoint.checkpoint_id}"
+        current_step_ids = list(checkpoint.current_step_ids or [workflow.start_step_id])
+        return self.execute(
+            workflow,
+            request,
+            profile=profile,
+            run_id=resume_run_id,
+            _initial_buffer_values=initial_values,
+            _current_step_ids=current_step_ids,
+            _initial_path=list(checkpoint.path),
+            _initial_step_results=_step_outcomes_from_checkpoint(checkpoint.step_results),
+            _resumed_checkpoint_id=checkpoint.checkpoint_id,
         )
 
     def _run_step_with_retries(
@@ -733,7 +851,7 @@ class WorkflowExecutor:
         run_id: str,
         workflow: WorkflowSpec,
         profile: str,
-        current_step_id: str | None,
+        current_step_ids: list[str],
         buffer: DataBuffer,
         step_results: dict[str, StepOutcome],
         path: list[str],
@@ -742,7 +860,6 @@ class WorkflowExecutor:
         if self._checkpoint_store is None:
             return None
 
-        current_step_ids = [current_step_id] if current_step_id is not None else []
         event_offset = len(recorder.list_events())
         checkpoint_id = _checkpoint_id(path[-1] if path else "start", event_offset)
         checkpoint = WorkflowCheckpoint(
@@ -809,6 +926,33 @@ def _is_retryable_outcome(step: StepSpec, outcome: StepOutcome) -> bool:
     return False
 
 
+def _prepend_new_steps(new_step_ids: list[str], existing_step_ids: list[str]) -> list[str]:
+    queued = list(existing_step_ids)
+    for step_id in reversed(new_step_ids):
+        if step_id not in queued:
+            queued.insert(0, step_id)
+    return queued
+
+
+def _step_outcomes_from_checkpoint(payload: dict[str, Any]) -> dict[str, StepOutcome]:
+    outcomes: dict[str, StepOutcome] = {}
+    for step_id, raw_outcome in payload.items():
+        if not isinstance(raw_outcome, dict):
+            continue
+        outcomes[str(step_id)] = StepOutcome(
+            status=StepStatus(str(raw_outcome.get("status", StepStatus.SUCCEEDED.value))),
+            outputs=dict(raw_outcome.get("outputs") or {}),
+            error_type=raw_outcome.get("error_type"),
+            error_message=raw_outcome.get("error_message"),
+            error_details=dict(raw_outcome.get("error_details") or {}),
+            metrics=dict(raw_outcome.get("metrics") or {}),
+            artifacts=list(raw_outcome.get("artifacts") or []),
+            lineage=list(raw_outcome.get("lineage") or []),
+            next_hint=raw_outcome.get("next_hint"),
+        )
+    return outcomes
+
+
 def _checkpoint_id(step_id: str, event_offset: int) -> str:
     safe_step_id = "".join(
         character if character.isalnum() or character in "._-" else "_"
@@ -854,3 +998,16 @@ def _validate_step_runners(workflow: WorkflowSpec, registry: StepRunnerRegistry)
     if missing:
         labels = ", ".join(step_type.value for step_type in missing)
         raise StepExecutionError(f"step runner is not registered: {labels}")
+
+
+def _configure_step_runners(
+    registry: StepRunnerRegistry,
+    *,
+    artifact_manager: ArtifactManager,
+    run_id: str,
+) -> None:
+    for step_type in registry.registered_step_types():
+        runner = registry.get(step_type)
+        configure = getattr(runner, "configure_run_context", None)
+        if callable(configure):
+            configure(artifact_manager=artifact_manager, run_id=run_id)

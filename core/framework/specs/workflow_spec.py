@@ -12,10 +12,18 @@ class WorkflowSpecError(ValueError):
 class StepType(str, Enum):
     FUNCTION = "function"
     AGENT_LOOP = "agent_loop"
+    TOOL_CALL = "tool_call"
     TOOL_BATCH = "tool_batch"
+    PARALLEL_GROUP = "parallel_group"
+    JOIN = "join"
+    SUBWORKFLOW = "subworkflow"
+    HUMAN_REVIEW = "human_review"
     ARTIFACT = "artifact"
     PERSIST = "persist"
+    MEMORY_INDEX = "memory_index"
+    ROUTER = "router"
     QUALITY_GATE = "quality_gate"
+    NOTIFICATION = "notification"
 
 
 class EdgeCondition(str, Enum):
@@ -23,6 +31,14 @@ class EdgeCondition(str, Enum):
     ON_SUCCESS = "on_success"
     ON_FAILURE = "on_failure"
     CONDITIONAL = "conditional"
+    LLM_DECIDE = "llm_decide"
+    QUALITY_PASS = "quality_pass"
+    QUALITY_REWRITE_REQUIRED = "quality_rewrite_required"
+    QUALITY_BLOCKED = "quality_blocked"
+    HUMAN_APPROVED = "human_approved"
+    HUMAN_REJECTED = "human_rejected"
+    BUDGET_EXCEEDED = "budget_exceeded"
+    SOURCE_UNAVAILABLE = "source_unavailable"
 
 
 class StepStatus(str, Enum):
@@ -32,14 +48,73 @@ class StepStatus(str, Enum):
     FAILED = "failed"
     SKIPPED = "skipped"
     RETRYING = "retrying"
+    BLOCKED = "blocked"
+    PAUSED = "paused"
+    CANCELLED = "cancelled"
     TIMEOUT = "timeout"
 
 
 class WorkflowStatus(str, Enum):
+    CREATED = "created"
     RUNNING = "running"
+    PAUSED = "paused"
+    WAITING_FOR_HUMAN = "waiting_for_human"
+    RETRYING = "retrying"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
     BLOCKED = "blocked"
+    CANCELLED = "cancelled"
+    BUDGET_EXCEEDED = "budget_exceeded"
+
+
+@dataclass(frozen=True)
+class ValidationErrorItem:
+    code: str
+    message: str
+    step_id: str | None = None
+    edge_id: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "code": self.code,
+            "message": self.message,
+            "step_id": self.step_id,
+            "edge_id": self.edge_id,
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class ValidationWarningItem:
+    code: str
+    message: str
+    step_id: str | None = None
+    edge_id: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "code": self.code,
+            "message": self.message,
+            "step_id": self.step_id,
+            "edge_id": self.edge_id,
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class ValidationResult:
+    passed: bool
+    errors: list[ValidationErrorItem] = field(default_factory=list)
+    warnings: list[ValidationWarningItem] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "passed": self.passed,
+            "errors": [error.to_dict() for error in self.errors],
+            "warnings": [warning.to_dict() for warning in self.warnings],
+        }
 
 
 @dataclass(frozen=True)
@@ -120,6 +195,151 @@ class TimeoutPolicySpec:
 
 
 @dataclass(frozen=True)
+class ResourcePolicySpec:
+    max_input_tokens: int | None = None
+    max_output_tokens: int | None = None
+    max_cost_usd: float | None = None
+    max_items: int | None = None
+    max_parallelism: int | None = None
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "max_input_tokens",
+            "max_output_tokens",
+            "max_items",
+            "max_parallelism",
+        ):
+            value = getattr(self, field_name)
+            if value is not None and value < 0:
+                raise WorkflowSpecError(f"{field_name} must be non-negative when set")
+        if self.max_cost_usd is not None and self.max_cost_usd < 0:
+            raise WorkflowSpecError("max_cost_usd must be non-negative when set")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "max_input_tokens": self.max_input_tokens,
+            "max_output_tokens": self.max_output_tokens,
+            "max_cost_usd": self.max_cost_usd,
+            "max_items": self.max_items,
+            "max_parallelism": self.max_parallelism,
+        }
+
+
+@dataclass(frozen=True)
+class QualityPolicySpec:
+    min_citation_coverage: float | None = None
+    min_editor_score: float | None = None
+    block_on_unsupported_claims: bool = True
+    allow_rewrite_count: int = 1
+
+    def __post_init__(self) -> None:
+        for field_name in ("min_citation_coverage", "min_editor_score"):
+            value = getattr(self, field_name)
+            if value is not None and not 0 <= value <= 1:
+                raise WorkflowSpecError(f"{field_name} must be between 0 and 1 when set")
+        if self.allow_rewrite_count < 0:
+            raise WorkflowSpecError("allow_rewrite_count must be non-negative")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "min_citation_coverage": self.min_citation_coverage,
+            "min_editor_score": self.min_editor_score,
+            "block_on_unsupported_claims": self.block_on_unsupported_claims,
+            "allow_rewrite_count": self.allow_rewrite_count,
+        }
+
+
+@dataclass(frozen=True)
+class ArtifactPolicySpec:
+    write_step_input: bool = False
+    write_step_output: bool = False
+    write_step_error: bool = True
+    redacted: bool = True
+    artifact_types: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "write_step_input": self.write_step_input,
+            "write_step_output": self.write_step_output,
+            "write_step_error": self.write_step_error,
+            "redacted": self.redacted,
+            "artifact_types": list(self.artifact_types),
+        }
+
+
+@dataclass(frozen=True)
+class LineagePolicySpec:
+    enabled: bool = True
+    input_keys: list[str] = field(default_factory=list)
+    output_keys: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "enabled": self.enabled,
+            "input_keys": list(self.input_keys),
+            "output_keys": list(self.output_keys),
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class WorkflowTriggerSpec:
+    trigger_type: str = "manual"
+    schedule: str | None = None
+    event_type: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not self.trigger_type:
+            raise WorkflowSpecError("trigger_type is required")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "trigger_type": self.trigger_type,
+            "schedule": self.schedule,
+            "event_type": self.event_type,
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class WorkflowPolicySpec:
+    retry_policy: RetryPolicySpec = field(default_factory=RetryPolicySpec)
+    timeout_policy: TimeoutPolicySpec = field(default_factory=TimeoutPolicySpec)
+    failure_policy: FailurePolicySpec = field(default_factory=FailurePolicySpec)
+    resource_policy: ResourcePolicySpec = field(default_factory=ResourcePolicySpec)
+    quality_policy: QualityPolicySpec | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        _coerce_policy(self, "retry_policy", RetryPolicySpec)
+        _coerce_policy(self, "timeout_policy", TimeoutPolicySpec)
+        _coerce_policy(self, "failure_policy", FailurePolicySpec)
+        _coerce_policy(self, "resource_policy", ResourcePolicySpec)
+        if self.quality_policy is not None and not isinstance(
+            self.quality_policy, QualityPolicySpec
+        ):
+            object.__setattr__(
+                self,
+                "quality_policy",
+                QualityPolicySpec(**self.quality_policy),
+            )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "retry_policy": self.retry_policy.to_dict(),
+            "timeout_policy": self.timeout_policy.to_dict(),
+            "failure_policy": self.failure_policy.to_dict(),
+            "resource_policy": self.resource_policy.to_dict(),
+            "quality_policy": (
+                self.quality_policy.to_dict() if self.quality_policy is not None else None
+            ),
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
 class StepSpec:
     step_id: str
     implementation: str
@@ -130,23 +350,58 @@ class StepSpec:
     write_keys: list[str] = field(default_factory=list)
     required_output_keys: list[str] = field(default_factory=list)
     nullable_output_keys: list[str] = field(default_factory=list)
+    input_schema: dict[str, Any] = field(default_factory=dict)
+    output_schema: dict[str, Any] = field(default_factory=dict)
     retry_policy: RetryPolicySpec = field(default_factory=RetryPolicySpec)
     timeout_policy: TimeoutPolicySpec = field(default_factory=TimeoutPolicySpec)
     failure_policy: FailurePolicySpec = field(default_factory=FailurePolicySpec)
+    resource_policy: ResourcePolicySpec = field(default_factory=ResourcePolicySpec)
+    quality_policy: QualityPolicySpec | None = None
+    artifact_policy: ArtifactPolicySpec | None = None
+    lineage_policy: LineagePolicySpec | None = None
+    idempotent: bool = True
+    cacheable: bool = False
+    client_facing: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "step_type", StepType(self.step_type))
-        if not isinstance(self.retry_policy, RetryPolicySpec):
-            object.__setattr__(self, "retry_policy", RetryPolicySpec(**self.retry_policy))
-        if not isinstance(self.timeout_policy, TimeoutPolicySpec):
-            object.__setattr__(self, "timeout_policy", TimeoutPolicySpec(**self.timeout_policy))
-        if not isinstance(self.failure_policy, FailurePolicySpec):
-            object.__setattr__(self, "failure_policy", FailurePolicySpec(**self.failure_policy))
+        _coerce_policy(self, "retry_policy", RetryPolicySpec)
+        _coerce_policy(self, "timeout_policy", TimeoutPolicySpec)
+        _coerce_policy(self, "failure_policy", FailurePolicySpec)
+        _coerce_policy(self, "resource_policy", ResourcePolicySpec)
+        if self.quality_policy is not None and not isinstance(
+            self.quality_policy, QualityPolicySpec
+        ):
+            object.__setattr__(
+                self,
+                "quality_policy",
+                QualityPolicySpec(**self.quality_policy),
+            )
+        if self.artifact_policy is not None and not isinstance(
+            self.artifact_policy, ArtifactPolicySpec
+        ):
+            object.__setattr__(
+                self,
+                "artifact_policy",
+                ArtifactPolicySpec(**self.artifact_policy),
+            )
+        if self.lineage_policy is not None and not isinstance(
+            self.lineage_policy, LineagePolicySpec
+        ):
+            object.__setattr__(
+                self,
+                "lineage_policy",
+                LineagePolicySpec(**self.lineage_policy),
+            )
         if not self.step_id:
             raise WorkflowSpecError("step_id is required")
         if not self.implementation:
             raise WorkflowSpecError(f"implementation is required for step {self.step_id}")
+        if not isinstance(self.input_schema, dict):
+            raise WorkflowSpecError(f"input_schema must be an object for step {self.step_id}")
+        if not isinstance(self.output_schema, dict):
+            raise WorkflowSpecError(f"output_schema must be an object for step {self.step_id}")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -159,9 +414,24 @@ class StepSpec:
             "write_keys": list(self.write_keys),
             "required_output_keys": list(self.required_output_keys),
             "nullable_output_keys": list(self.nullable_output_keys),
+            "input_schema": dict(self.input_schema),
+            "output_schema": dict(self.output_schema),
             "retry_policy": self.retry_policy.to_dict(),
             "timeout_policy": self.timeout_policy.to_dict(),
             "failure_policy": self.failure_policy.to_dict(),
+            "resource_policy": self.resource_policy.to_dict(),
+            "quality_policy": (
+                self.quality_policy.to_dict() if self.quality_policy is not None else None
+            ),
+            "artifact_policy": (
+                self.artifact_policy.to_dict() if self.artifact_policy is not None else None
+            ),
+            "lineage_policy": (
+                self.lineage_policy.to_dict() if self.lineage_policy is not None else None
+            ),
+            "idempotent": self.idempotent,
+            "cacheable": self.cacheable,
+            "client_facing": self.client_facing,
             "metadata": dict(self.metadata),
         }
 
@@ -173,6 +443,8 @@ class EdgeSpec:
     target_step_id: str
     condition: EdgeCondition = EdgeCondition.ON_SUCCESS
     condition_expr: str | None = None
+    input_mapping: dict[str, str] = field(default_factory=dict)
+    output_mapping: dict[str, str] = field(default_factory=dict)
     priority: int = 0
     description: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -185,6 +457,10 @@ class EdgeSpec:
             raise WorkflowSpecError(f"source_step_id is required for edge {self.edge_id}")
         if not self.target_step_id:
             raise WorkflowSpecError(f"target_step_id is required for edge {self.edge_id}")
+        if not isinstance(self.input_mapping, dict):
+            raise WorkflowSpecError(f"input_mapping must be an object for edge {self.edge_id}")
+        if not isinstance(self.output_mapping, dict):
+            raise WorkflowSpecError(f"output_mapping must be an object for edge {self.edge_id}")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -193,6 +469,8 @@ class EdgeSpec:
             "target_step_id": self.target_step_id,
             "condition": self.condition.value,
             "condition_expr": self.condition_expr,
+            "input_mapping": dict(self.input_mapping),
+            "output_mapping": dict(self.output_mapping),
             "priority": self.priority,
             "description": self.description,
             "metadata": dict(self.metadata),
@@ -208,88 +486,237 @@ class WorkflowSpec:
     steps: list[StepSpec]
     edges: list[EdgeSpec] = field(default_factory=list)
     description: str = ""
+    trigger: WorkflowTriggerSpec | None = None
     terminal_step_ids: list[str] = field(default_factory=list)
     input_schema: dict[str, Any] = field(default_factory=dict)
     output_schema: dict[str, Any] = field(default_factory=dict)
+    policies: WorkflowPolicySpec = field(default_factory=WorkflowPolicySpec)
     max_step_visits: int = 100
     metadata: dict[str, Any] = field(default_factory=dict)
 
-    def validate(self) -> None:
+    def __post_init__(self) -> None:
+        if self.trigger is not None and not isinstance(self.trigger, WorkflowTriggerSpec):
+            object.__setattr__(self, "trigger", WorkflowTriggerSpec(**self.trigger))
+        if not isinstance(self.policies, WorkflowPolicySpec):
+            object.__setattr__(self, "policies", WorkflowPolicySpec(**self.policies))
+        object.__setattr__(
+            self,
+            "steps",
+            [step if isinstance(step, StepSpec) else StepSpec(**step) for step in self.steps],
+        )
+        object.__setattr__(
+            self,
+            "edges",
+            [edge if isinstance(edge, EdgeSpec) else EdgeSpec(**edge) for edge in self.edges],
+        )
+        if not isinstance(self.input_schema, dict):
+            raise WorkflowSpecError(f"input_schema must be an object for workflow {self.workflow_id}")
+        if not isinstance(self.output_schema, dict):
+            raise WorkflowSpecError(f"output_schema must be an object for workflow {self.workflow_id}")
+
+    def validate(self, *, request_keys: list[str] | None = None) -> None:
+        result = self.validation_result(request_keys=request_keys)
+        if not result.passed:
+            raise WorkflowSpecError(result.errors[0].message)
+
+    def validation_result(
+        self,
+        *,
+        request_keys: list[str] | None = None,
+        registered_step_types: list[StepType | str] | None = None,
+    ) -> ValidationResult:
+        errors: list[ValidationErrorItem] = []
+        warnings: list[ValidationWarningItem] = []
+
+        def add_error(
+            code: str,
+            message: str,
+            *,
+            step_id: str | None = None,
+            edge_id: str | None = None,
+            metadata: dict[str, Any] | None = None,
+        ) -> None:
+            errors.append(
+                ValidationErrorItem(
+                    code=code,
+                    message=message,
+                    step_id=step_id,
+                    edge_id=edge_id,
+                    metadata=metadata or {},
+                )
+            )
+
+        def add_warning(
+            code: str,
+            message: str,
+            *,
+            step_id: str | None = None,
+            edge_id: str | None = None,
+            metadata: dict[str, Any] | None = None,
+        ) -> None:
+            warnings.append(
+                ValidationWarningItem(
+                    code=code,
+                    message=message,
+                    step_id=step_id,
+                    edge_id=edge_id,
+                    metadata=metadata or {},
+                )
+            )
+
         if not self.workflow_id:
-            raise WorkflowSpecError("workflow_id is required")
+            add_error("workflow_id_required", "workflow_id is required")
         if not self.version:
-            raise WorkflowSpecError(f"version is required for workflow {self.workflow_id}")
+            add_error(
+                "version_required",
+                f"version is required for workflow {self.workflow_id}",
+            )
         if not self.steps:
-            raise WorkflowSpecError(f"workflow {self.workflow_id} must define at least one step")
+            add_error(
+                "steps_required",
+                f"workflow {self.workflow_id} must define at least one step",
+            )
         if self.max_step_visits <= 0:
-            raise WorkflowSpecError("max_step_visits must be positive")
+            add_error("max_step_visits_invalid", "max_step_visits must be positive")
 
         step_ids = [step.step_id for step in self.steps]
         duplicate_ids = sorted({step_id for step_id in step_ids if step_ids.count(step_id) > 1})
         if duplicate_ids:
-            raise WorkflowSpecError(f"duplicate step ids: {', '.join(duplicate_ids)}")
+            add_error("duplicate_step_ids", f"duplicate step ids: {', '.join(duplicate_ids)}")
 
         step_id_set = set(step_ids)
         step_by_id = {step.step_id: step for step in self.steps}
-        if self.start_step_id not in step_id_set:
-            raise WorkflowSpecError(f"start step does not exist: {self.start_step_id}")
+        if step_id_set and self.start_step_id not in step_id_set:
+            add_error(
+                "start_step_missing",
+                f"start step does not exist: {self.start_step_id}",
+                step_id=self.start_step_id,
+            )
 
         for terminal_step_id in self.terminal_step_ids:
             if terminal_step_id not in step_id_set:
-                raise WorkflowSpecError(f"terminal step does not exist: {terminal_step_id}")
+                add_error(
+                    "terminal_step_missing",
+                    f"terminal step does not exist: {terminal_step_id}",
+                    step_id=terminal_step_id,
+                )
 
         for step in self.steps:
             undeclared_outputs = sorted(set(step.required_output_keys) - set(step.write_keys))
             if undeclared_outputs:
-                raise WorkflowSpecError(
+                add_error(
+                    "required_outputs_undeclared",
                     f"required_output_keys must be declared in write_keys for step "
-                    f"{step.step_id}: {', '.join(undeclared_outputs)}"
+                    f"{step.step_id}: {', '.join(undeclared_outputs)}",
+                    step_id=step.step_id,
                 )
             fallback_step_id = step.failure_policy.fallback_step_id
             if fallback_step_id is not None and fallback_step_id not in step_id_set:
-                raise WorkflowSpecError(
-                    f"fallback step does not exist for {step.step_id}: {fallback_step_id}"
+                add_error(
+                    "fallback_step_missing",
+                    f"fallback step does not exist for {step.step_id}: {fallback_step_id}",
+                    step_id=step.step_id,
                 )
+            for secret_path in _secret_paths(step.to_dict()):
+                add_warning(
+                    "secret_like_spec_field",
+                    f"secret-like field appears in step spec: {secret_path}",
+                    step_id=step.step_id,
+                    metadata={"path": secret_path},
+                )
+
+        if registered_step_types is not None:
+            available = {StepType(step_type) for step_type in registered_step_types}
+            for step in self.steps:
+                if step.step_type not in available:
+                    add_error(
+                        "step_runner_missing",
+                        f"step runner is not registered: {step.step_type.value}",
+                        step_id=step.step_id,
+                    )
 
         edge_ids = [edge.edge_id for edge in self.edges]
         duplicate_edge_ids = sorted({edge_id for edge_id in edge_ids if edge_ids.count(edge_id) > 1})
         if duplicate_edge_ids:
-            raise WorkflowSpecError(f"duplicate edge ids: {', '.join(duplicate_edge_ids)}")
+            add_error(
+                "duplicate_edge_ids",
+                f"duplicate edge ids: {', '.join(duplicate_edge_ids)}",
+            )
 
         for edge in self.edges:
             if edge.source_step_id not in step_id_set:
-                raise WorkflowSpecError(
-                    f"edge {edge.edge_id} references missing source step {edge.source_step_id}"
+                add_error(
+                    "edge_source_missing",
+                    f"edge {edge.edge_id} references missing source step {edge.source_step_id}",
+                    edge_id=edge.edge_id,
                 )
             if edge.target_step_id not in step_id_set:
-                raise WorkflowSpecError(
-                    f"edge {edge.edge_id} references missing target step {edge.target_step_id}"
+                add_error(
+                    "edge_target_missing",
+                    f"edge {edge.edge_id} references missing target step {edge.target_step_id}",
+                    edge_id=edge.edge_id,
                 )
             if edge.condition == EdgeCondition.CONDITIONAL and not edge.condition_expr:
-                raise WorkflowSpecError(
-                    f"conditional edge {edge.edge_id} requires condition_expr"
+                add_error(
+                    "conditional_expression_missing",
+                    f"conditional edge {edge.edge_id} requires condition_expr",
+                    edge_id=edge.edge_id,
                 )
+            for secret_path in _secret_paths(edge.to_dict()):
+                add_warning(
+                    "secret_like_spec_field",
+                    f"secret-like field appears in edge spec: {secret_path}",
+                    edge_id=edge.edge_id,
+                    metadata={"path": secret_path},
+                )
+
+        for secret_path in _secret_paths({"metadata": self.metadata}):
+            add_warning(
+                "secret_like_spec_field",
+                f"secret-like field appears in workflow spec: {secret_path}",
+                metadata={"path": secret_path},
+            )
+
+        if errors:
+            return ValidationResult(passed=False, errors=errors, warnings=warnings)
 
         adjacency = _workflow_adjacency(self)
         reachable_step_ids = _reachable_step_ids(self.start_step_id, adjacency)
         for terminal_step_id in self.terminal_step_ids:
             if terminal_step_id not in reachable_step_ids:
-                raise WorkflowSpecError(f"terminal step is not reachable: {terminal_step_id}")
+                add_error(
+                    "terminal_step_unreachable",
+                    f"terminal step is not reachable: {terminal_step_id}",
+                    step_id=terminal_step_id,
+                )
 
         reverse_adjacency = _reverse_adjacency(adjacency)
+        initial_keys = set(request_keys or ["request"])
+        input_properties = self.input_schema.get("properties")
+        if isinstance(input_properties, dict):
+            initial_keys.update(str(key) for key in input_properties)
+        initial_keys.update(str(key) for key in self.metadata.get("initial_keys", []))
         for step in self.steps:
             if step.step_id not in reachable_step_ids:
+                add_warning(
+                    "step_unreachable",
+                    f"step is not reachable from start step: {step.step_id}",
+                    step_id=step.step_id,
+                )
                 continue
             upstream_step_ids = _reachable_step_ids(step.step_id, reverse_adjacency) - {step.step_id}
-            available_keys = {"request"}
+            available_keys = set(initial_keys)
             for upstream_step_id in upstream_step_ids:
                 available_keys.update(step_by_id[upstream_step_id].write_keys)
             missing_reads = sorted(set(step.read_keys) - available_keys)
             if missing_reads:
-                raise WorkflowSpecError(
+                add_error(
+                    "read_keys_unavailable",
                     f"read_keys are not produced by upstream steps for step "
-                    f"{step.step_id}: {', '.join(missing_reads)}"
+                    f"{step.step_id}: {', '.join(missing_reads)}",
+                    step_id=step.step_id,
                 )
+        return ValidationResult(passed=not errors, errors=errors, warnings=warnings)
 
     def step_by_id(self, step_id: str) -> StepSpec:
         for step in self.steps:
@@ -303,15 +730,50 @@ class WorkflowSpec:
             "name": self.name,
             "description": self.description,
             "version": self.version,
+            "trigger": self.trigger.to_dict() if self.trigger is not None else None,
             "start_step_id": self.start_step_id,
             "terminal_step_ids": list(self.terminal_step_ids),
             "steps": [step.to_dict() for step in self.steps],
             "edges": [edge.to_dict() for edge in self.edges],
             "input_schema": dict(self.input_schema),
             "output_schema": dict(self.output_schema),
+            "policies": self.policies.to_dict(),
             "max_step_visits": self.max_step_visits,
             "metadata": dict(self.metadata),
         }
+
+
+def _coerce_policy(owner: Any, field_name: str, model: type) -> None:
+    value = getattr(owner, field_name)
+    if not isinstance(value, model):
+        object.__setattr__(owner, field_name, model(**value))
+
+
+_SECRET_FIELD_TOKENS = (
+    "api_key",
+    "apikey",
+    "authorization",
+    "bearer",
+    "client_secret",
+    "password",
+    "secret",
+    "token",
+)
+
+
+def _secret_paths(value: Any, path: str = "$") -> list[str]:
+    matches: list[str] = []
+    if isinstance(value, dict):
+        for key, item in value.items():
+            key_text = str(key)
+            child_path = f"{path}.{key_text}"
+            if any(token in key_text.casefold() for token in _SECRET_FIELD_TOKENS):
+                matches.append(child_path)
+            matches.extend(_secret_paths(item, child_path))
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            matches.extend(_secret_paths(item, f"{path}[{index}]"))
+    return matches
 
 
 def _workflow_adjacency(workflow: WorkflowSpec) -> dict[str, set[str]]:

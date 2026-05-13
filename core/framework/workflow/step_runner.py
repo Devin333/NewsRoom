@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from hashlib import sha256
 from typing import Any, Protocol
 
+from core.framework.artifacts import ArtifactManager
 from core.framework.specs import StepSpec, StepStatus, StepType
 from core.framework.workflow.buffer import ScopedDataBuffer
 from core.framework.workflow.result import StepOutcome
+from storage.artifacts import ArtifactRef
 
 FunctionStep = Callable[[ScopedDataBuffer], dict[str, Any] | None]
 
@@ -107,10 +110,25 @@ class ToolBatchStepRunner:
         self,
         registry: Any,
         *,
+        artifact_manager: ArtifactManager | None = None,
+        run_id: str | None = None,
+        secret_provider: Any | None = None,
         max_workers: int = 4,
     ) -> None:
         self._registry = registry
+        self._artifact_manager = artifact_manager
+        self._run_id = run_id
+        self._secret_provider = secret_provider
         self._max_workers = max_workers
+
+    def configure_run_context(
+        self,
+        *,
+        artifact_manager: ArtifactManager,
+        run_id: str,
+    ) -> None:
+        self._artifact_manager = artifact_manager
+        self._run_id = run_id
 
     def run(self, step: StepSpec, buffer: ScopedDataBuffer) -> StepOutcome:
         if step.step_type != StepType.TOOL_BATCH:
@@ -120,7 +138,13 @@ class ToolBatchStepRunner:
         policy = _tool_policy_from_step(step)
         from core.framework.tools import ToolBatchExecutor
 
-        executor = ToolBatchExecutor(self._registry, max_workers=self._max_workers)
+        executor = ToolBatchExecutor(
+            self._registry,
+            artifact_manager=self._artifact_manager,
+            run_id=self._run_id,
+            secret_provider=self._secret_provider,
+            max_workers=self._max_workers,
+        )
         observations = executor.execute_batch(tool_calls, policy)
         observation_payloads = [observation.to_dict() for observation in observations]
         result_payloads = [observation.result.to_dict() for observation in observations]
@@ -159,6 +183,344 @@ class ToolBatchStepRunner:
                 },
             )
         return StepOutcome(status=StepStatus.SUCCEEDED, outputs=outputs)
+
+
+class ToolCallStepRunner:
+    def __init__(
+        self,
+        registry: Any,
+        *,
+        artifact_manager: ArtifactManager | None = None,
+        run_id: str | None = None,
+        approval_store: Any | None = None,
+        secret_provider: Any | None = None,
+    ) -> None:
+        self._registry = registry
+        self._artifact_manager = artifact_manager
+        self._run_id = run_id
+        self._approval_store = approval_store
+        self._secret_provider = secret_provider
+
+    def configure_run_context(
+        self,
+        *,
+        artifact_manager: ArtifactManager,
+        run_id: str,
+    ) -> None:
+        self._artifact_manager = artifact_manager
+        self._run_id = run_id
+
+    def run(self, step: StepSpec, buffer: ScopedDataBuffer) -> StepOutcome:
+        if step.step_type not in _TOOL_CALL_STEP_TYPES:
+            raise StepExecutionError(f"unsupported step type for ToolCallStepRunner: {step.step_type}")
+
+        from core.framework.tools import ToolExecutor, ToolStatus
+
+        call = _single_tool_call_from_step(step, buffer)
+        policy = _tool_policy_from_step(step)
+        executor = ToolExecutor(
+            self._registry,
+            artifact_manager=self._artifact_manager,
+            run_id=self._run_id,
+            approval_store=self._approval_store,
+            secret_provider=self._secret_provider,
+        )
+        observation = executor.execute(call, policy)
+        outputs = {
+            _observation_key(step): observation.to_dict(),
+            _result_key(step): observation.result.to_dict(),
+        }
+        for key, value in outputs.items():
+            if key in buffer.list_allowed_writes():
+                buffer.write(key, value)
+
+        if observation.status == ToolStatus.SUCCEEDED:
+            return StepOutcome(status=StepStatus.SUCCEEDED, outputs=outputs)
+        if observation.status == ToolStatus.APPROVAL_REQUIRED:
+            return StepOutcome(
+                status=StepStatus.PAUSED,
+                outputs=outputs,
+                error_type=observation.result.error_type,
+                error_message=observation.result.error_message,
+                error_details={"approval_id": observation.result.approval_id},
+                next_hint="approval_required",
+            )
+        if observation.status == ToolStatus.BLOCKED:
+            return StepOutcome(
+                status=StepStatus.BLOCKED,
+                outputs=outputs,
+                error_type=observation.result.error_type,
+                error_message=observation.result.error_message,
+            )
+        return StepOutcome(
+            status=StepStatus.FAILED,
+            outputs=outputs,
+            error_type=observation.result.error_type,
+            error_message=observation.result.error_message,
+        )
+
+
+class RouterStepRunner:
+    def run(self, step: StepSpec, buffer: ScopedDataBuffer) -> StepOutcome:
+        if step.step_type != StepType.ROUTER:
+            raise StepExecutionError(f"unsupported step type for RouterStepRunner: {step.step_type}")
+
+        route = step.metadata.get("route")
+        if route is None:
+            route_key = str(step.metadata.get("route_key") or "route")
+            route = buffer.read(route_key)
+        route = str(route)
+        output_key = str(step.metadata.get("output_key") or "route")
+        outputs = {output_key: route}
+        if output_key in buffer.list_allowed_writes():
+            buffer.write(output_key, route)
+        return StepOutcome(status=StepStatus.SUCCEEDED, outputs=outputs, next_hint=route)
+
+
+class JoinStepRunner:
+    def run(self, step: StepSpec, buffer: ScopedDataBuffer) -> StepOutcome:
+        if step.step_type != StepType.JOIN:
+            raise StepExecutionError(f"unsupported step type for JoinStepRunner: {step.step_type}")
+
+        output_key = str(step.metadata.get("output_key") or "join_result")
+        inputs = {
+            key: buffer.read(key)
+            for key in buffer.list_allowed_reads()
+            if buffer.exists(key)
+        }
+        outputs = {output_key: {"joined_keys": sorted(inputs), "inputs": inputs}}
+        if output_key in buffer.list_allowed_writes():
+            buffer.write(output_key, outputs[output_key])
+        return StepOutcome(status=StepStatus.SUCCEEDED, outputs=outputs)
+
+
+class QualityGateStepRunner:
+    def run(self, step: StepSpec, buffer: ScopedDataBuffer) -> StepOutcome:
+        if step.step_type != StepType.QUALITY_GATE:
+            raise StepExecutionError(f"unsupported step type for QualityGateStepRunner: {step.step_type}")
+
+        policy = step.quality_policy
+        min_citation_coverage = _metadata_float(
+            step,
+            "min_citation_coverage",
+            policy.min_citation_coverage if policy else None,
+        )
+        min_editor_score = _metadata_float(
+            step,
+            "min_editor_score",
+            policy.min_editor_score if policy else None,
+        )
+        citation_coverage = _buffer_metric(buffer, step, "citation_coverage", "citation_coverage_score")
+        editor_score = _buffer_metric(buffer, step, "editor_score", "editor_score")
+        unsupported_claims = _buffer_value(buffer, step.metadata.get("unsupported_claims_key"), [])
+
+        blocked_reasons: list[str] = []
+        rewrite_reasons: list[str] = []
+        if min_citation_coverage is not None and (
+            citation_coverage is None or citation_coverage < min_citation_coverage
+        ):
+            rewrite_reasons.append("citation_coverage_below_threshold")
+        if min_editor_score is not None and (
+            editor_score is None or editor_score < min_editor_score
+        ):
+            rewrite_reasons.append("editor_score_below_threshold")
+        if policy is not None and policy.block_on_unsupported_claims and unsupported_claims:
+            blocked_reasons.append("unsupported_claims")
+
+        if blocked_reasons:
+            decision = "blocked"
+        elif rewrite_reasons:
+            decision = "rewrite_required"
+        else:
+            decision = "pass"
+
+        output_key = str(step.metadata.get("output_key") or "quality_gate_metrics")
+        metrics = {
+            "decision": decision,
+            "citation_coverage": citation_coverage,
+            "editor_score": editor_score,
+            "blocked_reasons": blocked_reasons,
+            "rewrite_reasons": rewrite_reasons,
+        }
+        outputs = {output_key: metrics}
+        if output_key in buffer.list_allowed_writes():
+            buffer.write(output_key, metrics)
+        return StepOutcome(status=StepStatus.SUCCEEDED, outputs=outputs, next_hint=decision)
+
+
+class HumanReviewStepRunner:
+    def run(self, step: StepSpec, buffer: ScopedDataBuffer) -> StepOutcome:
+        if step.step_type != StepType.HUMAN_REVIEW:
+            raise StepExecutionError(f"unsupported step type for HumanReviewStepRunner: {step.step_type}")
+
+        decision_key = str(step.metadata.get("decision_key") or "human_review_decision")
+        if decision_key in buffer.list_allowed_reads() and buffer.exists(decision_key):
+            decision = buffer.read(decision_key)
+            outputs = {decision_key: decision}
+            return StepOutcome(
+                status=StepStatus.SUCCEEDED,
+                outputs=outputs,
+                next_hint=_human_next_hint(decision),
+            )
+
+        request_key = str(step.metadata.get("request_key") or "human_review_request")
+        request = {
+            "step_id": step.step_id,
+            "implementation": step.implementation,
+            "review_type": step.metadata.get("review_type", "human_review"),
+            "inputs": {
+                key: buffer.read(key)
+                for key in buffer.list_allowed_reads()
+                if key != decision_key and buffer.exists(key)
+            },
+            "metadata": dict(step.metadata.get("request_metadata") or {}),
+        }
+        outputs = {request_key: request}
+        if request_key in buffer.list_allowed_writes():
+            buffer.write(request_key, request)
+        return StepOutcome(status=StepStatus.PAUSED, outputs=outputs, next_hint="human_review")
+
+
+class ArtifactStepRunner:
+    def __init__(
+        self,
+        artifact_manager: ArtifactManager | None = None,
+        *,
+        run_id: str | None = None,
+    ) -> None:
+        self._artifact_manager = artifact_manager
+        self._run_id = run_id
+
+    def configure_run_context(
+        self,
+        *,
+        artifact_manager: ArtifactManager,
+        run_id: str,
+    ) -> None:
+        self._artifact_manager = artifact_manager
+        self._run_id = run_id
+
+    def run(self, step: StepSpec, buffer: ScopedDataBuffer) -> StepOutcome:
+        if step.step_type != StepType.ARTIFACT:
+            raise StepExecutionError(f"unsupported step type for ArtifactStepRunner: {step.step_type}")
+        if self._artifact_manager is None or self._run_id is None:
+            raise StepExecutionError("ArtifactStepRunner requires run context")
+
+        content = step.metadata.get("content")
+        content_key = step.metadata.get("content_key")
+        if content_key is not None:
+            content = buffer.read(str(content_key))
+        relative_path = str(step.metadata.get("relative_path") or f"steps/{step.step_id}/output.json")
+        content_type = str(step.metadata.get("content_type") or "application/json")
+        artifact_type = str(step.metadata.get("artifact_type") or "step_output")
+        artifact_id = str(step.metadata.get("artifact_id") or f"{step.step_id}:{artifact_type}")
+
+        if content_type == "text/plain" or relative_path.endswith((".md", ".txt")):
+            path = self._artifact_manager.write_text(self._run_id, relative_path, str(content))
+            data = path.read_bytes()
+        else:
+            path = self._artifact_manager.write_json(self._run_id, relative_path, content)
+            data = path.read_bytes()
+
+        artifact_ref = ArtifactRef(
+            artifact_id=artifact_id,
+            run_id=self._run_id,
+            step_id=step.step_id,
+            artifact_type=artifact_type,
+            path=relative_path,
+            content_type=content_type,
+            size_bytes=len(data),
+            checksum=sha256(data).hexdigest(),
+            redacted=bool(step.metadata.get("redacted", True)),
+            metadata=dict(step.metadata.get("artifact_metadata") or {}),
+        )
+        output_key = str(step.metadata.get("output_key") or "artifact_ref")
+        outputs = {output_key: artifact_ref.to_dict()}
+        if output_key in buffer.list_allowed_writes():
+            buffer.write(output_key, artifact_ref.to_dict())
+        return StepOutcome(
+            status=StepStatus.SUCCEEDED,
+            outputs=outputs,
+            artifacts=[artifact_ref],
+        )
+
+
+_TOOL_CALL_STEP_TYPES = {
+    StepType.TOOL_CALL,
+    StepType.NOTIFICATION,
+    StepType.MEMORY_INDEX,
+    StepType.PERSIST,
+}
+
+
+def _single_tool_call_from_step(step: StepSpec, buffer: ScopedDataBuffer) -> ToolCall:
+    raw_call = step.metadata.get("tool_call")
+    if raw_call is None:
+        tool_name = step.metadata.get("tool_name")
+        if tool_name is None:
+            raw_call = buffer.read(str(step.metadata.get("tool_call_key") or "tool_call"))
+        else:
+            arguments = step.metadata.get("arguments")
+            if "arguments_key" in step.metadata:
+                arguments = buffer.read(str(step.metadata["arguments_key"]))
+            raw_call = {
+                "tool_name": tool_name,
+                "arguments": arguments or {},
+                "call_id": step.metadata.get("call_id"),
+                "requested_by_agent_id": step.metadata.get("requested_by_agent_id"),
+            }
+    return _tool_call_from_payload(step, buffer, raw_call)
+
+
+def _observation_key(step: StepSpec) -> str:
+    return str(step.metadata.get("observation_key") or f"{step.step_id}_tool_observation")
+
+
+def _result_key(step: StepSpec) -> str:
+    return str(step.metadata.get("result_key") or f"{step.step_id}_tool_result")
+
+
+def _metadata_float(step: StepSpec, key: str, default: float | None) -> float | None:
+    value = step.metadata.get(key, default)
+    if value is None:
+        return None
+    return float(value)
+
+
+def _buffer_metric(
+    buffer: ScopedDataBuffer,
+    step: StepSpec,
+    metadata_key: str,
+    default_key: str,
+) -> float | None:
+    value = _buffer_value(buffer, step.metadata.get(f"{metadata_key}_key"), None)
+    if value is None:
+        value = _buffer_value(buffer, default_key, None)
+    if value is None:
+        return None
+    return float(value)
+
+
+def _buffer_value(buffer: ScopedDataBuffer, key: Any, default: Any) -> Any:
+    if key is None:
+        return default
+    key = str(key)
+    if key not in buffer.list_allowed_reads() or not buffer.exists(key):
+        return default
+    return buffer.read(key)
+
+
+def _human_next_hint(decision: Any) -> str | None:
+    if isinstance(decision, dict):
+        value = decision.get("decision") or decision.get("status")
+    else:
+        value = decision
+    if value is None:
+        return None
+    value = str(value)
+    if value in {"approved", "rejected"}:
+        return f"human_{value}"
+    return value
 
 
 def _tool_calls_from_step(step: StepSpec, buffer: ScopedDataBuffer) -> list[ToolCall]:

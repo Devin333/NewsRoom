@@ -20,6 +20,7 @@ from core.framework.specs import (
 from core.framework.workflow import (
     FunctionStepRegistry,
     FunctionStepRunner,
+    HumanReviewStepRunner,
     StepExecutionError,
     StepOutcome,
     StepRunnerRegistry,
@@ -550,6 +551,195 @@ def test_workflow_executor_routes_failed_step_to_on_failure_edge(tmp_path) -> No
     assert result.output["report"] == "edge recovered"
 
 
+def test_workflow_executor_executes_fan_out_edges(tmp_path) -> None:
+    registry = FunctionStepRegistry()
+    registry.register("sample.start", lambda buffer: {"root": buffer.read("request")["topic"]})
+    registry.register("sample.left", lambda buffer: {"left": f"left:{buffer.read('root')}"})
+    registry.register("sample.right", lambda buffer: {"right": f"right:{buffer.read('root')}"})
+    spec = WorkflowSpec(
+        workflow_id="fan-out",
+        name="Fan Out",
+        version="1.0",
+        start_step_id="start",
+        steps=[
+            StepSpec(
+                step_id="start",
+                implementation="sample.start",
+                read_keys=["request"],
+                write_keys=["root"],
+                required_output_keys=["root"],
+            ),
+            StepSpec(
+                step_id="left",
+                implementation="sample.left",
+                read_keys=["root"],
+                write_keys=["left"],
+                required_output_keys=["left"],
+            ),
+            StepSpec(
+                step_id="right",
+                implementation="sample.right",
+                read_keys=["root"],
+                write_keys=["right"],
+                required_output_keys=["right"],
+            ),
+        ],
+        edges=[
+            EdgeSpec(
+                "start-to-left",
+                "start",
+                "left",
+                condition=EdgeCondition.ALWAYS,
+                priority=0,
+            ),
+            EdgeSpec(
+                "start-to-right",
+                "start",
+                "right",
+                condition=EdgeCondition.ALWAYS,
+                priority=1,
+            ),
+        ],
+    )
+    executor = WorkflowExecutor(
+        function_step_runner=FunctionStepRunner(registry),
+        artifact_manager=ArtifactManager(tmp_path),
+    )
+
+    result = executor.execute(spec, {"topic": "ai"}, profile="test", run_id="run-fan-out")
+
+    assert result.status == WorkflowStatus.SUCCEEDED
+    assert result.path == ["start", "left", "right"]
+    assert result.output["left"] == "left:ai"
+    assert result.output["right"] == "right:ai"
+    events = [
+        json.loads(line)["event_type"]
+        for line in (tmp_path / "run-fan-out" / "events.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert events.count("edge_traversed") == 2
+
+
+def test_workflow_executor_pauses_human_review_and_checkpoints(tmp_path) -> None:
+    runner_registry = StepRunnerRegistry()
+    runner_registry.register(StepType.HUMAN_REVIEW, _PausingHumanReviewRunner())
+    checkpoint_store = LocalJsonCheckpointStore(tmp_path / "checkpoints")
+    spec = WorkflowSpec(
+        workflow_id="human-review",
+        name="Human Review",
+        version="1.0",
+        start_step_id="review",
+        steps=[
+            StepSpec(
+                step_id="review",
+                implementation="human.review",
+                step_type=StepType.HUMAN_REVIEW,
+                read_keys=["request"],
+                write_keys=["human_review_request"],
+                required_output_keys=["human_review_request"],
+            )
+        ],
+    )
+    executor = WorkflowExecutor(
+        function_step_runner=None,
+        step_runner_registry=runner_registry,
+        artifact_manager=ArtifactManager(tmp_path / "runs"),
+        checkpoint_store=checkpoint_store,
+    )
+
+    result = executor.execute(spec, {"topic": "ai"}, profile="test", run_id="run-human-pause")
+
+    assert result.status == WorkflowStatus.WAITING_FOR_HUMAN
+    assert result.error is None
+    assert result.output["human_review_request"]["topic"] == "ai"
+    checkpoint = checkpoint_store.get_latest_checkpoint("run-human-pause")
+    assert checkpoint is not None
+    assert checkpoint.current_step_ids == ["review"]
+    assert checkpoint.data_buffer_snapshot["human_review_request"]["topic"] == "ai"
+    manifest = json.loads(
+        (tmp_path / "runs" / "run-human-pause" / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["status"] == "waiting_for_human"
+    assert manifest["current_step_ids"] == ["review"]
+    assert manifest["artifacts"]["pause"] == "pause.json"
+
+
+def test_workflow_executor_resumes_from_human_review_checkpoint(tmp_path) -> None:
+    function_registry = FunctionStepRegistry()
+    function_registry.register(
+        "sample.finalize",
+        lambda buffer: {
+            "report": (
+                f"approved:{buffer.read('request')['topic']}:"
+                f"{buffer.read('human_review_decision')['decision']}"
+            )
+        },
+    )
+    runner_registry = StepRunnerRegistry.with_function_runner(
+        FunctionStepRunner(function_registry)
+    )
+    runner_registry.register(StepType.HUMAN_REVIEW, HumanReviewStepRunner())
+    checkpoint_store = LocalJsonCheckpointStore(tmp_path / "checkpoints")
+    spec = WorkflowSpec(
+        workflow_id="human-resume",
+        name="Human Resume",
+        version="1.0",
+        start_step_id="review",
+        input_schema={"properties": {"human_review_decision": {"type": "object"}}},
+        steps=[
+            StepSpec(
+                step_id="review",
+                implementation="human.review",
+                step_type=StepType.HUMAN_REVIEW,
+                read_keys=["request", "human_review_decision"],
+                write_keys=["human_review_request"],
+            ),
+            StepSpec(
+                step_id="finalize",
+                implementation="sample.finalize",
+                read_keys=["request", "human_review_decision"],
+                write_keys=["report"],
+                required_output_keys=["report"],
+            ),
+        ],
+        edges=[
+            EdgeSpec(
+                "review-approved",
+                "review",
+                "finalize",
+                condition=EdgeCondition.HUMAN_APPROVED,
+            )
+        ],
+    )
+    executor = WorkflowExecutor(
+        function_step_runner=None,
+        step_runner_registry=runner_registry,
+        artifact_manager=ArtifactManager(tmp_path / "runs"),
+        checkpoint_store=checkpoint_store,
+    )
+    paused = executor.execute(spec, {"topic": "ai"}, profile="test", run_id="run-resume-source")
+    checkpoint = checkpoint_store.get_latest_checkpoint("run-resume-source")
+
+    assert paused.status == WorkflowStatus.WAITING_FOR_HUMAN
+    assert checkpoint is not None
+
+    resumed = executor.resume_from_checkpoint(
+        spec,
+        checkpoint,
+        profile="test",
+        run_id="run-resumed",
+        buffer_updates={"human_review_decision": {"decision": "approved"}},
+    )
+
+    assert resumed.status == WorkflowStatus.SUCCEEDED
+    assert resumed.path == ["review", "review", "finalize"]
+    assert resumed.output["report"] == "approved:ai:approved"
+    events = [
+        json.loads(line)["event_type"]
+        for line in (tmp_path / "runs" / "run-resumed" / "events.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert events[:2] == ["workflow_resumed", "checkpoint_restored"]
+
+
 def test_workflow_executor_marks_failed_step_as_blocked(tmp_path) -> None:
     registry = FunctionStepRegistry()
     registry.register("sample.bad", lambda buffer: (_ for _ in ()).throw(RuntimeError("needs review")))
@@ -838,4 +1028,15 @@ class _StepArtifactRunner:
                     metadata={"source": "custom_runner"},
                 )
             ],
+        )
+
+
+class _PausingHumanReviewRunner:
+    def run(self, step: StepSpec, buffer) -> StepOutcome:
+        request = {"topic": buffer.read("request")["topic"], "step_id": step.step_id}
+        buffer.write("human_review_request", request)
+        return StepOutcome(
+            status=StepStatus.PAUSED,
+            outputs={"human_review_request": request},
+            next_hint="human_review",
         )
