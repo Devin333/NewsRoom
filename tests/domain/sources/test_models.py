@@ -44,6 +44,7 @@ def test_source_fetch_request_and_result_serialize() -> None:
         source_id="source-1",
         source_type="rss",
         url="https://example.com/feed.xml",
+        max_redirects=2,
         limit=5,
         since=datetime(2026, 5, 11, tzinfo=UTC),
     )
@@ -61,9 +62,34 @@ def test_source_fetch_request_and_result_serialize() -> None:
 
     assert request.to_dict()["source_type"] == "rss"
     assert request.to_dict()["since"] == "2026-05-11T00:00:00Z"
+    assert request.to_dict()["max_redirects"] == 2
     assert result.to_dict()["request_id"] == "fetch-1"
     assert result.to_dict()["success"] is False
     assert result.to_dict()["skip_reason"] == "robots"
+
+
+def test_source_fetch_request_validates_fetch_policy_bounds() -> None:
+    with pytest.raises(ValueError, match="timeout_seconds"):
+        SourceFetchRequest(
+            request_id="fetch-1",
+            source_id="source-1",
+            source_type="rss",
+            timeout_seconds=0,
+        )
+    with pytest.raises(ValueError, match="max_bytes"):
+        SourceFetchRequest(
+            request_id="fetch-1",
+            source_id="source-1",
+            source_type="rss",
+            max_bytes=0,
+        )
+    with pytest.raises(ValueError, match="max_redirects"):
+        SourceFetchRequest(
+            request_id="fetch-1",
+            source_id="source-1",
+            source_type="rss",
+            max_redirects=-1,
+        )
 
 
 def test_raw_source_item_serializes_artifact_refs() -> None:

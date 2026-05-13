@@ -136,6 +136,28 @@ def test_health_manager_marks_expired_cooldown_as_probe_ready() -> None:
     assert manager.should_probe("source") is True
 
 
+def test_health_manager_skips_source_inside_fetch_interval() -> None:
+    now = datetime(2026, 5, 11, tzinfo=UTC)
+    manager = BasicSourceHealthManager(now=lambda: now)
+    manager.record_success("source", source_name="Source", url="https://example.com/rss")
+
+    decision = manager.fetch_decision(
+        "source",
+        min_interval_seconds=3600,
+        now=now + timedelta(minutes=30),
+    )
+    expired = manager.fetch_decision(
+        "source",
+        min_interval_seconds=3600,
+        now=now + timedelta(hours=2),
+    )
+
+    assert decision.should_fetch is False
+    assert decision.skip_reason == "fetch_interval"
+    assert decision.next_fetch_at == now + timedelta(hours=1)
+    assert expired.should_fetch is True
+
+
 def test_health_manager_uses_error_context_on_failure() -> None:
     manager = BasicSourceHealthManager()
     error = SourceError(

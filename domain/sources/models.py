@@ -133,6 +133,7 @@ class SourceFetchRequest:
     query: str | None = None
     timeout_seconds: int = 15
     max_bytes: int = 1_000_000
+    max_redirects: int = 3
     user_agent: str | None = None
     headers: dict[str, str] = field(default_factory=dict)
     since: datetime | None = None
@@ -145,6 +146,12 @@ class SourceFetchRequest:
             raise ValueError("request_id is required")
         if not self.source_id:
             raise ValueError("source_id is required")
+        if self.timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be positive")
+        if self.max_bytes < 1:
+            raise ValueError("max_bytes must be at least 1")
+        if self.max_redirects < 0:
+            raise ValueError("max_redirects must be non-negative")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -155,6 +162,7 @@ class SourceFetchRequest:
             "query": self.query,
             "timeout_seconds": self.timeout_seconds,
             "max_bytes": self.max_bytes,
+            "max_redirects": self.max_redirects,
             "user_agent": self.user_agent,
             "headers": dict(self.headers),
             "since": _dt(self.since),

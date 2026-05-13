@@ -25,6 +25,15 @@ class _HealthWindowStats:
     latency_count_24h: int = 0
 
 
+@dataclass(frozen=True)
+class SourceFetchDecision:
+    should_fetch: bool
+    health: SourceHealth
+    skip_reason: str | None = None
+    cooldown_until: datetime | None = None
+    next_fetch_at: datetime | None = None
+
+
 class SourceHealthStore(Protocol):
     def get_source_health(self, source_id: str) -> SourceHealth | None: ...
 
@@ -75,18 +84,68 @@ class BasicSourceHealthManager:
             self._health[source_id] = health
         return health
 
-    def should_skip(self, source_id: str) -> bool:
-        health = self.get(source_id)
+    def fetch_decision(
+        self,
+        source_id: str,
+        *,
+        source_name: str | None = None,
+        url: str | None = None,
+        min_interval_seconds: int | None = None,
+        now: datetime | None = None,
+    ) -> SourceFetchDecision:
+        health = self.get(source_id, source_name=source_name, url=url)
+        current_time = _as_utc(now or self._now())
         if health.status == SourceHealthStatus.DISABLED:
-            return True
-        return (
+            return SourceFetchDecision(
+                should_fetch=False,
+                health=health,
+                skip_reason="disabled",
+            )
+        if (
             health.status == SourceHealthStatus.DOWN
             and health.cooldown_until is not None
-            and health.cooldown_until > self._now()
-        )
+            and _as_utc(health.cooldown_until) > current_time
+        ):
+            return SourceFetchDecision(
+                should_fetch=False,
+                health=health,
+                skip_reason="cooldown",
+                cooldown_until=health.cooldown_until,
+            )
+        if min_interval_seconds is not None and min_interval_seconds > 0 and health.last_success_at:
+            next_fetch_at = _as_utc(health.last_success_at) + timedelta(
+                seconds=min_interval_seconds
+            )
+            if next_fetch_at > current_time:
+                return SourceFetchDecision(
+                    should_fetch=False,
+                    health=health,
+                    skip_reason="fetch_interval",
+                    next_fetch_at=next_fetch_at,
+                )
+        return SourceFetchDecision(should_fetch=True, health=health)
 
-    def should_fetch(self, source_id: str) -> bool:
-        return not self.should_skip(source_id)
+    def should_skip(
+        self,
+        source_id: str,
+        *,
+        min_interval_seconds: int | None = None,
+    ) -> bool:
+        return not self.fetch_decision(
+            source_id,
+            min_interval_seconds=min_interval_seconds,
+        ).should_fetch
+
+    def should_fetch(
+        self,
+        source_id: str,
+        *,
+        min_interval_seconds: int | None = None,
+    ) -> bool:
+        return self.fetch_decision(
+            source_id,
+            min_interval_seconds=min_interval_seconds,
+        ).should_fetch
 
     def should_probe(self, source_id: str) -> bool:
         health = self.get(source_id)

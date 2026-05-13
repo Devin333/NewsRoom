@@ -46,7 +46,7 @@ class SourceFetchPolicy:
     timeout_seconds: float = 15.0
     max_bytes: int = 1_000_000
     max_redirects: int = 3
-    user_agent: str = "NewsRoom/0.1"
+    user_agent: str = "news-intelligence-system"
     respect_robots: bool = True
     rate_limit_per_domain_per_minute: int | None = None
     retry_times: int = 2

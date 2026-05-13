@@ -652,6 +652,7 @@ rss_feeds:
     fetch_request = result.output["source_fetch_requests"][0]
     assert fetch_request.timeout_seconds == 7.5
     assert fetch_request.max_bytes == 5000
+    assert fetch_request.max_redirects == 5
     assert fetch_request.user_agent == "NewsRoomConfiguredPolicy/1.0"
     assert fetch_request.headers == {"User-Agent": "NewsRoomConfiguredPolicy/1.0"}
     assert fetch_request.metadata["robots_policy"] is False
@@ -1545,6 +1546,67 @@ def test_daily_intelligence_runner_skips_cooling_source(tmp_path) -> None:
         event.event_type == "source_fetch_skipped" and event.source_id == "cooling"
         for event in result.output["source_events"]
     )
+
+
+def test_daily_intelligence_runner_skips_source_inside_fetch_interval(tmp_path) -> None:
+    clock = {"now": datetime(2026, 5, 11, tzinfo=UTC)}
+    health_manager = BasicSourceHealthManager(now=lambda: clock["now"])
+    registry = SourceRegistry(
+        [
+            SourceDefinition(
+                source_id="fresh",
+                name="Fresh",
+                source_type="rss",
+                url="https://example.com/fresh.xml",
+                reliability="high",
+                fetch_interval_seconds=3600,
+                topics=["ai", "policy"],
+            ),
+            SourceDefinition(
+                source_id="working",
+                name="Working",
+                source_type="rss",
+                url="https://example.com/working.xml",
+                reliability="high",
+                topics=["ai", "policy"],
+            ),
+        ]
+    )
+    health_manager.record_success(
+        "fresh",
+        source_name="Fresh",
+        url="https://example.com/fresh.xml",
+    )
+    clock["now"] = clock["now"] + timedelta(minutes=30)
+    fetched_urls = []
+
+    result = DailyIntelligenceRunner(
+        artifact_root=tmp_path,
+        source_registry=registry,
+        feed_connector=FeedConnector(fetch_text=lambda url: fetched_urls.append(url) or RSS_FIXTURE),
+        llm_client=_FakeReportLLM(),
+        source_health_manager=health_manager,
+    ).run(profile="live", topic="AI policy", source_limit=1, run_id="daily-fetch-interval")
+
+    assert result.status == WorkflowStatus.SUCCEEDED
+    assert fetched_urls == ["https://example.com/working.xml"]
+    assert result.output["skipped_sources"][0]["source_id"] == "fresh"
+    assert result.output["skipped_sources"][0]["reason"] == "fetch_interval"
+    assert result.output["skipped_sources"][0]["next_fetch_at"] == "2026-05-11T01:00:00Z"
+    skipped_result = next(
+        fetch_result
+        for fetch_result in result.output["source_fetch_results"]
+        if fetch_result.source_id == "fresh"
+    )
+    assert skipped_result.skipped is True
+    assert skipped_result.skip_reason == "fetch_interval"
+    assert skipped_result.metadata["skip"]["next_fetch_at"] == "2026-05-11T01:00:00Z"
+    skipped_event = next(
+        event
+        for event in result.output["source_events"]
+        if event.event_type == "source_fetch_skipped" and event.source_id == "fresh"
+    )
+    assert skipped_event.metadata["reason"] == "fetch_interval"
 
 
 def test_daily_intelligence_runner_emits_probe_success_after_cooldown_expires(tmp_path) -> None:

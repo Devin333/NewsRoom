@@ -314,35 +314,33 @@ class DailyIntelligenceRunner:
                 connector_name=self._connector_name_for_source(source),
             )
             source_fetch_requests.append(fetch_request)
-            if self.source_health_manager.should_skip(source.source_id):
-                health = self.source_health_manager.get(
-                    source.source_id,
-                    source_name=source.name,
-                    url=source.url,
-                )
+            fetch_decision = self.source_health_manager.fetch_decision(
+                source.source_id,
+                source_name=source.name,
+                url=source.url,
+                min_interval_seconds=source.fetch_interval_seconds,
+            )
+            if not fetch_decision.should_fetch:
+                health = fetch_decision.health
+                skip_reason = fetch_decision.skip_reason or "skipped"
+                skip_metadata = {
+                    "source_id": source.source_id,
+                    "source_name": source.name,
+                    "url": source.url,
+                    "reason": skip_reason,
+                    "cooldown_until": _dt(fetch_decision.cooldown_until),
+                    "next_fetch_at": _dt(fetch_decision.next_fetch_at),
+                    "last_success_at": _dt(health.last_success_at),
+                }
                 skipped_sources.append(
-                    {
-                        "source_id": source.source_id,
-                        "source_name": source.name,
-                        "url": source.url,
-                        "reason": "cooldown",
-                        "cooldown_until": (
-                            health.cooldown_until.isoformat().replace("+00:00", "Z")
-                            if health.cooldown_until
-                            else None
-                        ),
-                    }
+                    {key: value for key, value in skip_metadata.items() if value is not None}
                 )
                 source_fetch_results.append(
-                    _source_fetch_result(
+                    _skipped_source_fetch_result(
                         source,
                         request_id=request_id,
-                        success=False,
-                        latency_ms=0,
-                        items=[],
-                        errors=[],
-                        skipped=True,
-                        skip_reason="cooldown",
+                        skip_reason=skip_reason,
+                        metadata=skip_metadata,
                     )
                 )
                 source_health_updates.append(health)
@@ -350,12 +348,10 @@ class DailyIntelligenceRunner:
                     _source_event(
                         "source_fetch_skipped",
                         source.source_id,
-                        reason="cooldown",
-                        cooldown_until=(
-                            health.cooldown_until.isoformat().replace("+00:00", "Z")
-                            if health.cooldown_until
-                            else None
-                        ),
+                        reason=skip_reason,
+                        cooldown_until=_dt(fetch_decision.cooldown_until),
+                        next_fetch_at=_dt(fetch_decision.next_fetch_at),
+                        last_success_at=_dt(health.last_success_at),
                     )
                 )
                 source_events.append(
@@ -1822,6 +1818,7 @@ def _source_fetch_request(
         query=query,
         timeout_seconds=fetch_policy.timeout_seconds if fetch_policy is not None else 15,
         max_bytes=fetch_policy.max_bytes if fetch_policy is not None else 1_000_000,
+        max_redirects=fetch_policy.max_redirects if fetch_policy is not None else 3,
         user_agent=user_agent,
         headers={"User-Agent": user_agent} if user_agent else {},
         limit=limit,
@@ -2136,6 +2133,30 @@ def _source_fetch_result(
         skip_reason=skip_reason,
         metadata=metadata,
     )
+
+
+def _skipped_source_fetch_result(
+    source: SourceDefinition,
+    *,
+    request_id: str,
+    skip_reason: str,
+    metadata: dict[str, Any],
+) -> SourceFetchResult:
+    result = _source_fetch_result(
+        source,
+        request_id=request_id,
+        success=False,
+        latency_ms=0,
+        items=[],
+        errors=[],
+        skipped=True,
+        skip_reason=skip_reason,
+    )
+    result_metadata = dict(result.metadata)
+    result_metadata["skip"] = {
+        key: value for key, value in metadata.items() if value is not None
+    }
+    return replace(result, metadata=result_metadata)
 
 
 def _with_error_request_id(errors: list[SourceError], request_id: str) -> list[SourceError]:
