@@ -30,7 +30,12 @@ class EvidenceBuilder:
                 if hasattr(source_lineage, "to_dict")
                 else dict(ranked.metadata.get("lineage") or item.metadata.get("lineage") or {})
             )
-            evidence_score = _evidence_score(ranked, evidence_id=evidence_id)
+            extraction_signal = _source_extraction_confidence(ranked)
+            evidence_score = _evidence_score(
+                ranked,
+                evidence_id=evidence_id,
+                extraction_signal=extraction_signal,
+            )
             evidence_items.append(
                 EvidenceItem(
                     evidence_id=evidence_id,
@@ -45,6 +50,8 @@ class EvidenceBuilder:
                         "final_score": ranked.final_score,
                         "rank_reason": ranked.rank_reason,
                         "source_lineage": source_lineage_payload,
+                        "source_extraction_confidence_score": extraction_signal["score"],
+                        "source_extraction_confidence_basis": extraction_signal["basis"],
                     },
                 )
             )
@@ -70,7 +77,12 @@ class EvidenceBuilder:
         )
 
 
-def _evidence_score(ranked: RankedSourceItem, *, evidence_id: str) -> EvidenceScore:
+def _evidence_score(
+    ranked: RankedSourceItem,
+    *,
+    evidence_id: str,
+    extraction_signal: dict[str, float | str],
+) -> EvidenceScore:
     item = ranked.item
     final_confidence = round(min(1.0, max(0.1, ranked.final_score)), 4)
     specificity_score = _specificity_score(item.title, item.summary)
@@ -80,13 +92,25 @@ def _evidence_score(ranked: RankedSourceItem, *, evidence_id: str) -> EvidenceSc
         freshness_score=round(ranked.recency_score, 4),
         specificity_score=specificity_score,
         corroboration_score=0.5,
-        extraction_confidence_score=round(ranked.relevance_score, 4),
+        extraction_confidence_score=float(extraction_signal["score"]),
         final_confidence=final_confidence,
         score_reason=(
             "final confidence follows ranked source score; component scores preserve "
-            "reliability, freshness, specificity, corroboration, and extraction signals"
+            "reliability, freshness, specificity, corroboration, and source-derived "
+            f"extraction signals; extraction_basis={extraction_signal['basis']}"
         ),
     )
+
+
+def _source_extraction_confidence(ranked: RankedSourceItem) -> dict[str, float | str]:
+    metadata = ranked.item.metadata
+    for key in ("extraction_confidence", "source_extraction_confidence"):
+        if key in metadata:
+            return {"score": _clamp_score(metadata[key]), "basis": key}
+    nested = metadata.get("extraction")
+    if isinstance(nested, dict) and "confidence" in nested:
+        return {"score": _clamp_score(nested["confidence"]), "basis": "extraction.confidence"}
+    return {"score": 0.5, "basis": "default_unknown"}
 
 
 def _specificity_score(title: str, summary: str | None) -> float:
@@ -96,3 +120,11 @@ def _specificity_score(title: str, summary: str | None) -> float:
     if len(text) >= 60:
         return 0.8
     return 0.6
+
+
+def _clamp_score(value: object) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return 0.5
+    return round(min(1.0, max(0.0, number)), 4)
