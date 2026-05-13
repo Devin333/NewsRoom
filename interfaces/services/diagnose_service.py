@@ -3,7 +3,12 @@ from __future__ import annotations
 import os
 import urllib.request
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable, Literal
+
+from core.framework.llm import DEFAULT_MODELS_CONFIG_PATH, load_openai_compatible_deployment
+from core.framework.llm.openai_compatible import LLMConfigurationError
+from sources import SourceConfigError, load_source_registry
 
 
 CheckStatus = Literal["ok", "warning", "error", "skipped"]
@@ -70,6 +75,8 @@ class DiagnosticApplicationService:
     ) -> None:
         self.env = env if env is not None else os.environ
         self.checks = checks or [
+            self._check_source_config,
+            self._check_model_config,
             self._check_dashscope_key,
             self._check_redis,
             self._check_qdrant,
@@ -109,6 +116,81 @@ class DiagnosticApplicationService:
             message="DashScope API key is not configured.",
             details={"provider": "dashscope", "configured": False},
             remediation="Set DASHSCOPE_API_KEY before using the live LLM profile.",
+        )
+
+    def _check_source_config(self) -> DiagnoseCheck:
+        configured = bool(self.env.get("NEWS_SOURCES_CONFIG"))
+        path = Path(self.env.get("NEWS_SOURCES_CONFIG") or "configs/sources.yaml")
+        try:
+            registry = load_source_registry(path)
+        except SourceConfigError as exc:
+            return DiagnoseCheck(
+                check_id="source_config",
+                name="Live source config",
+                status="error",
+                message=str(exc),
+                details={"path": str(path), "configured": configured},
+                remediation="Fix NEWS_SOURCES_CONFIG or configs/sources.yaml before using the live profile.",
+            )
+        return DiagnoseCheck(
+            check_id="source_config",
+            name="Live source config",
+            status="ok",
+            message="Live source config is valid.",
+            details={
+                "path": str(path),
+                "configured": configured,
+                "source_count": len(registry.list_sources(enabled_only=False)),
+            },
+        )
+
+    def _check_model_config(self) -> DiagnoseCheck:
+        configured = bool(self.env.get("NEWS_MODELS_CONFIG"))
+        path = Path(self.env.get("NEWS_MODELS_CONFIG") or DEFAULT_MODELS_CONFIG_PATH)
+        try:
+            deployment = load_openai_compatible_deployment(
+                path,
+                route_id="daily-intelligence-writer",
+            )
+        except LLMConfigurationError as exc:
+            return DiagnoseCheck(
+                check_id="model_config",
+                name="Live model config",
+                status="error",
+                message=str(exc),
+                details={"path": str(path), "configured": configured},
+                remediation="Fix NEWS_MODELS_CONFIG or configs/models.yaml before using the live profile.",
+            )
+        api_key_env = deployment.config.api_key_env
+        if not self.env.get(api_key_env):
+            return DiagnoseCheck(
+                check_id="model_config",
+                name="Live model config",
+                status="warning",
+                message=f"Live model config is valid, but {api_key_env} is not configured.",
+                details={
+                    "path": str(path),
+                    "configured": configured,
+                    "deployment_id": deployment.deployment_id,
+                    "provider": deployment.config.provider,
+                    "model": deployment.config.model,
+                    "api_key_env": api_key_env,
+                },
+                remediation=f"Set {api_key_env} before using the live LLM profile.",
+            )
+        return DiagnoseCheck(
+            check_id="model_config",
+            name="Live model config",
+            status="ok",
+            message="Live model config is valid.",
+            details={
+                "path": str(path),
+                "configured": configured,
+                "deployment_id": deployment.deployment_id,
+                "provider": deployment.config.provider,
+                "model": deployment.config.model,
+                "api_key_env": api_key_env,
+            },
         )
 
     def _check_redis(self) -> DiagnoseCheck:

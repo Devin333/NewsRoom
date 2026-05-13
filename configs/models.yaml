@@ -1,0 +1,20 @@
+model_groups:
+  writer-primary:
+    deployments:
+      - deployment_id: dashscope-deepseek-v4-flash
+        provider: openai-compatible
+        provider_name: dashscope
+        model: deepseek-v4-flash
+        api_base: https://dashscope.aliyuncs.com/compatible-mode/v1
+        api_key: ${DASHSCOPE_API_KEY}
+        timeout_seconds: 90
+        max_retries: 2
+
+routes:
+  daily-intelligence-writer:
+    model_group: writer-primary
+  writer-primary:
+    model_group: writer-primary
+
+embeddings: {}
+pricing: {}

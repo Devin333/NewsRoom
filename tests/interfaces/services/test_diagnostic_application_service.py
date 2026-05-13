@@ -39,3 +39,31 @@ def test_dashscope_key_check_does_not_expose_secret() -> None:
 
     assert check.status == "ok"
     assert "secret-value" not in str(check.to_dict())
+
+
+def test_diagnostic_service_validates_tracked_source_config() -> None:
+    service = DiagnosticApplicationService(env={}, checks=[])
+
+    check = service._check_source_config()
+
+    assert check.status == "ok"
+    assert check.details["source_count"] >= 3
+
+
+def test_diagnostic_service_warns_for_missing_model_env_without_exposing_secret() -> None:
+    service = DiagnosticApplicationService(env={}, checks=[])
+
+    check = service._check_model_config()
+
+    assert check.status == "warning"
+    assert "DASHSCOPE_API_KEY" in check.message
+    assert "sk-" not in str(check.to_dict())
+
+
+def test_diagnostic_service_model_config_does_not_expose_secret() -> None:
+    service = DiagnosticApplicationService(env={"DASHSCOPE_API_KEY": "secret-value"}, checks=[])
+
+    check = service._check_model_config()
+
+    assert check.status == "ok"
+    assert "secret-value" not in str(check.to_dict())

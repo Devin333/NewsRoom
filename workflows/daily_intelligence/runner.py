@@ -8,7 +8,7 @@ from time import perf_counter
 from typing import Any
 
 from core.framework import RunResult, WorkflowRunner
-from core.framework.llm import LLMClient, LLMRequest, OpenAICompatibleClient, OpenAICompatibleConfig
+from core.framework.llm import LLMClient, LLMRequest, build_openai_compatible_client_from_config
 from core.framework.specs import EdgeSpec, StepSpec, WorkflowSpec
 from core.framework.workflow import FunctionStepRegistry, ScopedDataBuffer
 from domain.reports import BlockedReport, FinalReport, render_markdown
@@ -702,7 +702,9 @@ class DailyIntelligenceRunner:
                 )
             }
 
-        llm_client = self.llm_client or OpenAICompatibleClient(OpenAICompatibleConfig.dashscope_defaults())
+        llm_client = self.llm_client or build_openai_compatible_client_from_config(
+            route_id="daily-intelligence-writer"
+        )
         response = llm_client.complete(_report_request(request["topic"], evidence_bundle))
         report_draft = (
             _validate_report_payload(response.structured_output)

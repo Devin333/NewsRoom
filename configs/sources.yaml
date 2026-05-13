@@ -1,0 +1,80 @@
+fetch:
+  timeout_seconds: 15
+  max_bytes: 1000000
+  respect_robots: true
+
+official_blogs:
+  - source_id: openai-news
+    name: OpenAI News
+    url: https://openai.com/news/rss.xml
+    reliability: high
+    authority_score: 0.9
+    topics: [ai, models, product, research]
+    category: official
+    language: en
+    region: global
+
+  - source_id: google-ai-blog
+    name: Google AI Blog
+    url: https://blog.google/technology/ai/rss/
+    reliability: high
+    authority_score: 0.85
+    topics: [ai, research, models, product]
+    category: official
+    language: en
+    region: global
+
+rss_feeds:
+  - source_id: huggingface-blog
+    name: Hugging Face Blog
+    url: https://huggingface.co/blog/feed.xml
+    reliability: high
+    authority_score: 0.82
+    topics: [ai, open source, models, research]
+    category: community
+    language: en
+    region: global
+
+  - source_id: verge-ai
+    name: The Verge AI
+    url: https://www.theverge.com/rss/ai-artificial-intelligence/index.xml
+    reliability: medium
+    authority_score: 0.72
+    topics: [ai, industry, policy, product]
+    category: industry_news
+    language: en
+    region: us
+
+  - source_id: hn-ai
+    name: Hacker News AI RSS
+    url: https://hnrss.org/newest?q=AI
+    reliability: medium
+    authority_score: 0.62
+    topics: [ai, engineering, open source]
+    category: community
+    language: en
+    region: global
+
+  - source_id: lobsters-ai
+    name: Lobsters AI RSS
+    url: https://lobste.rs/t/ai.rss
+    reliability: medium
+    authority_score: 0.6
+    topics: [ai, engineering, open source]
+    category: community
+    language: en
+    region: global
+
+arxiv_categories:
+  - source_id: arxiv-cs-ai
+    name: arXiv cs.AI
+    url: https://export.arxiv.org/api/query
+    reliability: high
+    authority_score: 0.88
+    topics: [ai, research, papers]
+    category: research
+    language: en
+    region: global
+    query: cat:cs.AI
+
+github_lists: []

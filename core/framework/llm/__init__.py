@@ -10,6 +10,13 @@ from core.framework.llm.cost import (
     LLMBudgetPolicy,
     ModelPricing,
 )
+from core.framework.llm.config import (
+    DEFAULT_MODEL_ROUTE_ID,
+    DEFAULT_MODELS_CONFIG_PATH,
+    OpenAICompatibleDeploymentConfig,
+    build_openai_compatible_client_from_config,
+    load_openai_compatible_deployment,
+)
 from core.framework.llm.cache import CachedLLMClient, InMemoryLLMCache, LLMCacheKey, LLMCachePolicy
 from core.framework.llm.context import (
     ContextPolicy,
@@ -49,6 +56,8 @@ __all__ = [
     "CostEstimator",
     "CachedLLMClient",
     "ContextPolicy",
+    "DEFAULT_MODEL_ROUTE_ID",
+    "DEFAULT_MODELS_CONFIG_PATH",
     "InMemoryLLMCache",
     "LLMCacheKey",
     "LLMCachePolicy",
@@ -81,11 +90,14 @@ __all__ = [
     "ModelDeployment",
     "ModelPricing",
     "ModelRoute",
+    "OpenAICompatibleDeploymentConfig",
     "OpenAICompatibleClient",
     "OpenAICompatibleConfig",
     "REDACTED_VALUE",
     "TokenUsage",
+    "build_openai_compatible_client_from_config",
     "estimate_request_tokens",
+    "load_openai_compatible_deployment",
     "redact_sensitive_values",
     "validate_structured_output",
 ]

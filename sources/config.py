@@ -13,6 +13,31 @@ class SourceConfigError(ValueError):
     pass
 
 
+_PRD_SOURCE_SECTIONS = {
+    "rss_feeds": "rss",
+    "atom_feeds": "atom",
+    "official_blogs": "official_blog",
+    "github_lists": "github",
+    "arxiv_categories": "arxiv",
+}
+_SOURCE_DEFINITION_FIELDS = {
+    "source_id",
+    "id",
+    "name",
+    "source_type",
+    "url",
+    "reliability",
+    "authority_score",
+    "enabled",
+    "respect_robots",
+    "topics",
+    "category",
+    "language",
+    "region",
+    "metadata",
+}
+
+
 def load_source_definitions(path: str | Path) -> list[SourceDefinition]:
     config_path = Path(path)
     payload = _load_payload(config_path)
@@ -66,15 +91,66 @@ def _source_payloads(payload: Any) -> list[dict[str, Any]]:
     if isinstance(payload, list):
         values = payload
     elif isinstance(payload, dict) and isinstance(payload.get("sources"), list):
-        values = payload["sources"]
+        values = [
+            *_object_list(payload["sources"], field="sources"),
+            *_prd_section_payloads(payload),
+        ]
+    elif isinstance(payload, dict):
+        values = _prd_section_payloads(payload)
     else:
         raise SourceConfigError("source config must be a list or an object with a sources list")
+    if not values:
+        raise SourceConfigError("source config must define at least one source")
     source_payloads = []
     for index, value in enumerate(values):
         if not isinstance(value, dict):
             raise SourceConfigError(f"source config entry at index {index} must be an object")
         source_payloads.append(value)
     return source_payloads
+
+
+def _object_list(value: Any, *, field: str) -> list[dict[str, Any]]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise SourceConfigError(f"{field} must be a list")
+    objects = []
+    for index, item in enumerate(value):
+        if not isinstance(item, dict):
+            raise SourceConfigError(f"{field}[{index}] must be an object")
+        objects.append(dict(item))
+    return objects
+
+
+def _prd_section_payloads(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    source_payloads: list[dict[str, Any]] = []
+    for section, source_type in _PRD_SOURCE_SECTIONS.items():
+        for entry in _object_list(payload.get(section), field=section):
+            source_payloads.append(_normalize_section_payload(entry, section=section, source_type=source_type))
+    return source_payloads
+
+
+def _normalize_section_payload(
+    payload: dict[str, Any],
+    *,
+    section: str,
+    source_type: str,
+) -> dict[str, Any]:
+    normalized = dict(payload)
+    normalized.setdefault("source_type", source_type)
+    if "source_id" not in normalized and "id" in normalized:
+        normalized["source_id"] = normalized["id"]
+    metadata = _dict_value(normalized.get("metadata"))
+    for key, value in payload.items():
+        if key not in _SOURCE_DEFINITION_FIELDS and value is not None:
+            metadata[key] = value
+    metadata["config_section"] = section
+    if section == "arxiv_categories" and "query" not in metadata:
+        arxiv_category = payload.get("arxiv_category") or payload.get("category")
+        if arxiv_category:
+            metadata["query"] = f"cat:{arxiv_category}"
+    normalized["metadata"] = metadata
+    return normalized
 
 
 def _source_definition(payload: dict[str, Any]) -> SourceDefinition:

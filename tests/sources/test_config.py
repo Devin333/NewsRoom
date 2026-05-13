@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import pytest
 
@@ -102,3 +103,54 @@ def test_load_source_registry_requires_supported_file_type(tmp_path) -> None:
 
     with pytest.raises(SourceConfigError, match="unsupported"):
         load_source_registry(config_path)
+
+
+def test_load_source_registry_reads_prd_section_config(tmp_path) -> None:
+    config_path = tmp_path / "sources.yaml"
+    config_path.write_text(
+        """
+fetch:
+  timeout_seconds: 15
+rss_feeds:
+  - source_id: openai
+    name: OpenAI News
+    url: https://openai.com/news/rss.xml
+    reliability: high
+    topics: [ai]
+official_blogs:
+  - source_id: google-ai
+    name: Google AI Blog
+    url: https://blog.google/technology/ai/rss/
+    topics: [ai, research]
+arxiv_categories:
+  - source_id: arxiv-ai
+    name: arXiv AI
+    url: https://export.arxiv.org/api/query
+    topics: [ai, papers]
+    query: cat:cs.AI
+github_lists: []
+""".strip(),
+        encoding="utf-8",
+    )
+
+    registry = load_source_registry(config_path)
+
+    assert [source.source_id for source in registry.list_sources()] == [
+        "arxiv-ai",
+        "google-ai",
+        "openai",
+    ]
+    assert registry.get("openai").source_type.value == "rss"
+    assert registry.get("google-ai").source_type.value == "official_blog"
+    assert registry.get("arxiv-ai").metadata["query"] == "cat:cs.AI"
+    assert registry.get("arxiv-ai").metadata["config_section"] == "arxiv_categories"
+
+
+def test_tracked_sources_config_uses_real_live_urls() -> None:
+    registry = load_source_registry(Path("configs/sources.yaml"))
+    sources = registry.list_sources(enabled_only=False)
+
+    assert len(sources) >= 3
+    assert all(not source.url.startswith("fixture://") for source in sources)
+    assert {source.source_type.value for source in sources} >= {"rss", "official_blog", "arxiv"}
+    assert registry.get("arxiv-cs-ai").metadata["query"] == "cat:cs.AI"

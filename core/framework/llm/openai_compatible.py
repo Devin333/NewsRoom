@@ -100,9 +100,10 @@ class OpenAICompatibleConfig:
     def dashscope_defaults(cls) -> OpenAICompatibleConfig:
         return cls(
             provider="dashscope",
-            base_url=os.environ.get(
-                "DASHSCOPE_BASE_URL",
-                "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            base_url=(
+                os.environ.get("NEWS_LLM_BASE_URL")
+                or os.environ.get("DASHSCOPE_BASE_URL")
+                or "https://dashscope.aliyuncs.com/compatible-mode/v1"
             ),
             model=os.environ.get("NEWS_LLM_MODEL", "deepseek-v4-flash"),
             api_key_env="DASHSCOPE_API_KEY",
