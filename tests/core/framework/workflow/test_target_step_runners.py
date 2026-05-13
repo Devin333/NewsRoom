@@ -1,9 +1,12 @@
 import json
 
 from core.framework.artifacts import ArtifactManager
+from core.framework.events import EventBus
 from core.framework.specs import (
+    ArtifactPolicySpec,
     EdgeSpec,
     QualityPolicySpec,
+    ResourcePolicySpec,
     StepSpec,
     StepType,
     WorkflowSpec,
@@ -13,11 +16,15 @@ from core.framework.tools import build_builtin_tool_registry
 from core.framework.workflow import (
     ArtifactStepRunner,
     DataBuffer,
+    FunctionStepRegistry,
+    FunctionStepRunner,
     HumanReviewStepRunner,
     JoinStepRunner,
+    ParallelGroupStepRunner,
     QualityGateStepRunner,
     RouterStepRunner,
     StepRunnerRegistry,
+    SubworkflowStepRunner,
     ToolCallStepRunner,
     WorkflowExecutor,
 )
@@ -203,3 +210,160 @@ def test_human_review_runner_pauses_workflow(tmp_path) -> None:
 
     assert pause_result.status == WorkflowStatus.WAITING_FOR_HUMAN
     assert pause_result.output["human_review_request"]["inputs"]["request"]["topic"] == "ai"
+
+
+def test_parallel_group_step_runner_merges_real_branch_outputs(tmp_path) -> None:
+    functions = FunctionStepRegistry()
+    functions.register("branch.left", lambda buffer: {"items": ["left", buffer.read("request")["topic"]]})
+    functions.register("branch.right", lambda buffer: {"items": ["right"]})
+    registry = StepRunnerRegistry()
+    registry.register(StepType.PARALLEL_GROUP, ParallelGroupStepRunner(functions))
+    spec = WorkflowSpec(
+        workflow_id="parallel-group",
+        name="Parallel Group",
+        version="1.0",
+        start_step_id="parallel",
+        steps=[
+            StepSpec(
+                step_id="parallel",
+                implementation="parallel.sources",
+                step_type=StepType.PARALLEL_GROUP,
+                read_keys=["request"],
+                write_keys=["items"],
+                required_output_keys=["items"],
+                metadata={
+                    "conflict_strategy": "merge_list",
+                    "branches": [
+                        {
+                            "branch_id": "left",
+                            "implementation": "branch.left",
+                            "read_keys": ["request"],
+                            "write_keys": ["items"],
+                            "required_output_keys": ["items"],
+                        },
+                        {
+                            "branch_id": "right",
+                            "implementation": "branch.right",
+                            "read_keys": ["request"],
+                            "write_keys": ["items"],
+                            "required_output_keys": ["items"],
+                        },
+                    ],
+                },
+            )
+        ],
+    )
+    executor = WorkflowExecutor(
+        function_step_runner=None,
+        step_runner_registry=registry,
+        artifact_manager=ArtifactManager(tmp_path),
+    )
+
+    result = executor.execute(spec, {"topic": "ai"}, profile="test", run_id="run-parallel")
+
+    assert result.status == WorkflowStatus.SUCCEEDED
+    assert sorted(result.output["items"]) == ["ai", "left", "right"]
+
+
+def test_subworkflow_step_runner_executes_child_workflow(tmp_path) -> None:
+    functions = FunctionStepRegistry()
+    functions.register("child.echo", lambda buffer: {"echo": buffer.read("request")["topic"]})
+    registry = StepRunnerRegistry.with_function_runner(FunctionStepRunner(functions))
+    child = WorkflowSpec(
+        workflow_id="child",
+        name="Child",
+        version="1.0",
+        start_step_id="echo",
+        steps=[
+            StepSpec(
+                step_id="echo",
+                implementation="child.echo",
+                read_keys=["request"],
+                write_keys=["echo"],
+                required_output_keys=["echo"],
+            )
+        ],
+    )
+    registry.register(
+        StepType.SUBWORKFLOW,
+        SubworkflowStepRunner({"child": child}, registry),
+    )
+    parent = WorkflowSpec(
+        workflow_id="parent",
+        name="Parent",
+        version="1.0",
+        start_step_id="child",
+        steps=[
+            StepSpec(
+                step_id="child",
+                implementation="child",
+                step_type=StepType.SUBWORKFLOW,
+                read_keys=["request"],
+                write_keys=["subworkflow_result"],
+                required_output_keys=["subworkflow_result"],
+                metadata={"workflow_id": "child", "request_key": "request"},
+            )
+        ],
+    )
+    executor = WorkflowExecutor(
+        function_step_runner=None,
+        step_runner_registry=registry,
+        artifact_manager=ArtifactManager(tmp_path),
+    )
+
+    result = executor.execute(parent, {"topic": "ai"}, profile="test", run_id="run-parent")
+
+    assert result.status == WorkflowStatus.SUCCEEDED
+    assert result.output["subworkflow_result"]["output"]["echo"] == "ai"
+    assert (tmp_path / "run-parent.child.child" / "manifest.json").exists()
+
+
+def test_executor_publishes_event_bus_blocks_resource_and_writes_policy_artifacts(tmp_path) -> None:
+    events = []
+    event_bus = EventBus()
+    event_bus.subscribe(events.append)
+    functions = FunctionStepRegistry()
+    functions.register("sample.count", lambda buffer: {"count": len(buffer.read("request")["items"])})
+    registry = StepRunnerRegistry.with_function_runner(FunctionStepRunner(functions))
+    spec = WorkflowSpec(
+        workflow_id="policy-artifacts",
+        name="Policy Artifacts",
+        version="1.0",
+        start_step_id="count",
+        steps=[
+            StepSpec(
+                step_id="count",
+                implementation="sample.count",
+                read_keys=["request"],
+                write_keys=["count"],
+                required_output_keys=["count"],
+                resource_policy=ResourcePolicySpec(max_items=1),
+                artifact_policy=ArtifactPolicySpec(
+                    write_step_input=True,
+                    write_step_output=True,
+                    write_step_error=True,
+                ),
+            )
+        ],
+    )
+    executor = WorkflowExecutor(
+        function_step_runner=None,
+        step_runner_registry=registry,
+        artifact_manager=ArtifactManager(tmp_path),
+        event_bus=event_bus,
+    )
+
+    result = executor.execute(
+        spec,
+        {"items": ["a", "b"]},
+        profile="test",
+        run_id="run-policy-artifacts",
+    )
+
+    assert result.status == WorkflowStatus.BLOCKED
+    assert result.error.error_type == "WorkflowResourcePolicyViolation"
+    assert [event.event_type for event in events][:2] == ["workflow_started", "step_started"]
+    assert "policy_violation" in [event.event_type for event in events]
+    run_dir = tmp_path / "run-policy-artifacts"
+    assert (run_dir / "steps" / "count" / "input.json").exists()
+    assert (run_dir / "steps" / "count" / "error.json").exists()

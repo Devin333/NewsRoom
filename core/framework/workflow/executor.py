@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from core.framework.artifacts.filesystem import ArtifactManager
 from core.framework.artifacts.source_artifacts import SourceArtifactWriter
-from core.framework.events.recorder import EventRecorder
+from core.framework.events.recorder import EventBus, EventRecorder
 from core.framework.specs import (
     EdgeCondition,
     StepSpec,
@@ -44,6 +44,7 @@ class WorkflowExecutor:
         sleep_fn: Callable[[float], None] | None = None,
         step_runner_registry: StepRunnerRegistry | None = None,
         checkpoint_store: Any | None = None,
+        event_bus: EventBus | None = None,
     ) -> None:
         if step_runner_registry is None:
             if function_step_runner is None:
@@ -54,6 +55,7 @@ class WorkflowExecutor:
         self._routing_engine = routing_engine or RoutingEngine()
         self._sleep_fn = sleep_fn or time.sleep
         self._checkpoint_store = checkpoint_store
+        self._event_bus = event_bus
 
     def execute(
         self,
@@ -79,7 +81,7 @@ class WorkflowExecutor:
             artifact_manager=self._artifact_manager,
             run_id=actual_run_id,
         )
-        recorder = EventRecorder(actual_run_id)
+        recorder = EventRecorder(actual_run_id, event_bus=self._event_bus)
         buffer = DataBuffer(initial_buffer_values)
         initial_buffer_snapshot = buffer.snapshot()
         started_at = _utc_now()
@@ -176,7 +178,21 @@ class WorkflowExecutor:
 
             step = workflow.step_by_id(current_step_id)
             path.append(step.step_id)
+            _write_step_policy_input_artifact(
+                self._artifact_manager,
+                actual_run_id,
+                step,
+                buffer,
+                manifest,
+            )
             outcome = self._run_step_with_retries(step, buffer, recorder)
+            _write_step_policy_terminal_artifact(
+                self._artifact_manager,
+                actual_run_id,
+                step,
+                outcome,
+                manifest,
+            )
             stop_after_checkpoint = False
 
             step_results[step.step_id] = outcome
@@ -559,6 +575,15 @@ class WorkflowExecutor:
                     "max_attempts": max_attempts,
                 },
             )
+            resource_violation = _resource_policy_violation(step, buffer)
+            if resource_violation is not None:
+                recorder.emit("policy_violation", resource_violation)
+                return StepOutcome(
+                    status=StepStatus.BLOCKED,
+                    error_type="WorkflowResourcePolicyViolation",
+                    error_message=resource_violation["message"],
+                    error_details=resource_violation,
+                )
             scoped_buffer = buffer.scope(step.read_keys, step.write_keys)
             outcome = self._run_step_attempt(step, scoped_buffer, attempt, max_attempts)
             if outcome.status == StepStatus.TIMEOUT:
@@ -953,6 +978,38 @@ def _step_outcomes_from_checkpoint(payload: dict[str, Any]) -> dict[str, StepOut
     return outcomes
 
 
+def _resource_policy_violation(step: StepSpec, buffer: DataBuffer) -> dict[str, Any] | None:
+    max_items = step.resource_policy.max_items
+    if max_items is None:
+        return None
+    for key in step.read_keys:
+        if not buffer.exists(key):
+            continue
+        value = buffer.read(key)
+        item_count = _item_count(value)
+        if item_count is not None and item_count > max_items:
+            return {
+                "step_id": step.step_id,
+                "policy": "resource.max_items",
+                "key": key,
+                "item_count": item_count,
+                "max_items": max_items,
+                "message": (
+                    f"step {step.step_id} read key {key} has {item_count} items, "
+                    f"exceeding max_items {max_items}"
+                ),
+            }
+    return None
+
+
+def _item_count(value: Any) -> int | None:
+    if isinstance(value, dict) and isinstance(value.get("items"), list):
+        return len(value["items"])
+    if isinstance(value, (list, tuple, set, dict)):
+        return len(value)
+    return None
+
+
 def _checkpoint_id(step_id: str, event_offset: int) -> str:
     safe_step_id = "".join(
         character if character.isalnum() or character in "._-" else "_"
@@ -983,6 +1040,76 @@ def _record_step_artifacts(manifest: dict[str, Any], outcome: StepOutcome) -> No
 def _step_artifact_key(artifact_ref: Any) -> str:
     step_id = artifact_ref.step_id or "workflow"
     return f"step.{step_id}.{artifact_ref.artifact_type}.{artifact_ref.artifact_id}"
+
+
+def _write_step_policy_input_artifact(
+    artifact_manager: ArtifactManager,
+    run_id: str,
+    step: StepSpec,
+    buffer: DataBuffer,
+    manifest: dict[str, Any],
+) -> None:
+    policy = step.artifact_policy
+    if policy is None or not policy.write_step_input:
+        return
+    payload = {
+        key: buffer.read(key)
+        for key in step.read_keys
+        if buffer.exists(key)
+    }
+    if policy.redacted:
+        payload = {
+            key: "[REDACTED]" if _sensitive_key(key) else value
+            for key, value in payload.items()
+        }
+    relative_path = f"steps/{step.step_id}/input.json"
+    artifact_manager.write_json(run_id, relative_path, payload)
+    manifest["artifacts"][f"step.{step.step_id}.input"] = relative_path
+
+
+def _write_step_policy_terminal_artifact(
+    artifact_manager: ArtifactManager,
+    run_id: str,
+    step: StepSpec,
+    outcome: StepOutcome,
+    manifest: dict[str, Any],
+) -> None:
+    policy = step.artifact_policy
+    if policy is None:
+        return
+    if policy.write_step_output:
+        relative_path = f"steps/{step.step_id}/output.json"
+        artifact_manager.write_json(run_id, relative_path, outcome.outputs)
+        manifest["artifacts"][f"step.{step.step_id}.output"] = relative_path
+    if policy.write_step_error and outcome.status not in {StepStatus.SUCCEEDED, StepStatus.PAUSED}:
+        relative_path = f"steps/{step.step_id}/error.json"
+        artifact_manager.write_json(
+            run_id,
+            relative_path,
+            {
+                "status": outcome.status.value,
+                "error_type": outcome.error_type,
+                "error_message": outcome.error_message,
+                "error_details": outcome.error_details,
+            },
+        )
+        manifest["artifacts"][f"step.{step.step_id}.error"] = relative_path
+
+
+def _sensitive_key(key: str) -> bool:
+    key_lower = key.casefold()
+    return any(
+        token in key_lower
+        for token in (
+            "api_key",
+            "apikey",
+            "authorization",
+            "client_secret",
+            "password",
+            "secret",
+            "token",
+        )
+    )
 
 
 def _field_value(value: Any, field_name: str) -> Any:

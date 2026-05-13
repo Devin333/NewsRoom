@@ -41,14 +41,31 @@ class EventRecord:
         }
 
 
+class EventBus:
+    def __init__(self) -> None:
+        self._subscribers: list[Any] = []
+
+    def subscribe(self, subscriber: Any) -> None:
+        if not callable(subscriber):
+            raise TypeError("event subscriber must be callable")
+        self._subscribers.append(subscriber)
+
+    def publish(self, event: EventRecord) -> None:
+        for subscriber in list(self._subscribers):
+            subscriber(event)
+
+
 class EventRecorder:
-    def __init__(self, run_id: str) -> None:
+    def __init__(self, run_id: str, event_bus: EventBus | None = None) -> None:
         self.run_id = run_id
+        self._event_bus = event_bus
         self._events: list[EventRecord] = []
 
     def emit(self, event_type: str, payload: dict[str, Any] | None = None) -> EventRecord:
         event = EventRecord(run_id=self.run_id, event_type=event_type, payload=payload or {})
         self._events.append(event)
+        if self._event_bus is not None:
+            self._event_bus.publish(event)
         return event
 
     def list_events(self) -> list[EventRecord]:

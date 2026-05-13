@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from hashlib import sha256
 from typing import Any, Protocol
 
 from core.framework.artifacts import ArtifactManager
 from core.framework.specs import StepSpec, StepStatus, StepType
-from core.framework.workflow.buffer import ScopedDataBuffer
+from core.framework.workflow.buffer import DataBuffer, ScopedDataBuffer
 from core.framework.workflow.result import StepOutcome
 from storage.artifacts import ArtifactRef
 
@@ -260,6 +261,134 @@ class ToolCallStepRunner:
         )
 
 
+class ParallelGroupStepRunner:
+    def __init__(
+        self,
+        function_registry: FunctionStepRegistry,
+        *,
+        max_workers: int = 4,
+    ) -> None:
+        self._function_registry = function_registry
+        self._max_workers = max(1, max_workers)
+
+    def run(self, step: StepSpec, buffer: ScopedDataBuffer) -> StepOutcome:
+        if step.step_type != StepType.PARALLEL_GROUP:
+            raise StepExecutionError(
+                f"unsupported step type for ParallelGroupStepRunner: {step.step_type}"
+            )
+        branches = step.metadata.get("branches")
+        if not isinstance(branches, list) or not branches:
+            raise StepExecutionError(f"parallel_group step {step.step_id} requires branches")
+
+        branch_results: list[dict[str, Any]] = []
+        outputs: dict[str, Any] = {}
+        conflict_strategy = str(step.metadata.get("conflict_strategy") or "error")
+        with ThreadPoolExecutor(
+            max_workers=min(self._max_workers, len(branches)),
+            thread_name_prefix="news-workflow-parallel",
+        ) as pool:
+            futures = [
+                pool.submit(_run_parallel_branch, self._function_registry, branch, buffer)
+                for branch in branches
+            ]
+            for future in as_completed(futures):
+                branch_result = future.result()
+                branch_results.append(branch_result)
+                _merge_parallel_outputs(
+                    outputs,
+                    branch_result["outputs"],
+                    conflict_strategy=conflict_strategy,
+                    step_id=step.step_id,
+                )
+
+        for key, value in outputs.items():
+            if key in buffer.list_allowed_writes():
+                buffer.write(key, value, lineage={"step_id": step.step_id, "parallel_group": True})
+
+        result_key = str(step.metadata.get("branch_results_key") or "")
+        if result_key and result_key in buffer.list_allowed_writes():
+            buffer.write(result_key, branch_results)
+            outputs[result_key] = branch_results
+        return StepOutcome(status=StepStatus.SUCCEEDED, outputs=outputs)
+
+
+class SubworkflowStepRunner:
+    def __init__(
+        self,
+        workflow_registry: dict[str, Any],
+        step_runner_registry: StepRunnerRegistry,
+        *,
+        artifact_manager: ArtifactManager | None = None,
+        run_id: str | None = None,
+    ) -> None:
+        self._workflow_registry = dict(workflow_registry)
+        self._step_runner_registry = step_runner_registry
+        self._artifact_manager = artifact_manager
+        self._run_id = run_id
+
+    def configure_run_context(
+        self,
+        *,
+        artifact_manager: ArtifactManager,
+        run_id: str,
+    ) -> None:
+        self._artifact_manager = artifact_manager
+        self._run_id = run_id
+
+    def run(self, step: StepSpec, buffer: ScopedDataBuffer) -> StepOutcome:
+        if step.step_type != StepType.SUBWORKFLOW:
+            raise StepExecutionError(f"unsupported step type for SubworkflowStepRunner: {step.step_type}")
+        if self._artifact_manager is None or self._run_id is None:
+            raise StepExecutionError("SubworkflowStepRunner requires run context")
+
+        workflow_id = str(step.metadata.get("workflow_id") or step.implementation)
+        try:
+            workflow = self._workflow_registry[workflow_id]
+        except KeyError as exc:
+            raise StepExecutionError(f"subworkflow is not registered: {workflow_id}") from exc
+
+        request = step.metadata.get("request")
+        request_key = step.metadata.get("request_key")
+        if request_key is not None:
+            request = buffer.read(str(request_key))
+        if request is None:
+            request = {}
+        if not isinstance(request, dict):
+            raise StepExecutionError(f"subworkflow step {step.step_id} request must be an object")
+
+        from core.framework.workflow.executor import WorkflowExecutor
+
+        child_run_id = str(
+            step.metadata.get("child_run_id")
+            or f"{self._run_id}.{step.step_id}.{workflow.workflow_id}"
+        )
+        executor = WorkflowExecutor(
+            function_step_runner=None,
+            step_runner_registry=self._step_runner_registry,
+            artifact_manager=self._artifact_manager,
+        )
+        result = executor.execute(
+            workflow,
+            request,
+            profile=str(step.metadata.get("profile") or "subworkflow"),
+            run_id=child_run_id,
+        )
+        output_key = str(step.metadata.get("output_key") or "subworkflow_result")
+        outputs = {
+            output_key: result.to_dict(),
+        }
+        if output_key in buffer.list_allowed_writes():
+            buffer.write(output_key, result.to_dict(), lineage={"step_id": step.step_id})
+        if result.status.value == "succeeded":
+            return StepOutcome(status=StepStatus.SUCCEEDED, outputs=outputs)
+        return StepOutcome(
+            status=StepStatus.FAILED,
+            outputs=outputs,
+            error_type=result.error.error_type if result.error else "SubworkflowFailed",
+            error_message=result.error.message if result.error else f"subworkflow failed: {workflow_id}",
+        )
+
+
 class RouterStepRunner:
     def run(self, step: StepSpec, buffer: ScopedDataBuffer) -> StepOutcome:
         if step.step_type != StepType.ROUTER:
@@ -451,6 +580,82 @@ _TOOL_CALL_STEP_TYPES = {
     StepType.MEMORY_INDEX,
     StepType.PERSIST,
 }
+
+
+def _run_parallel_branch(
+    registry: FunctionStepRegistry,
+    branch: Any,
+    parent_buffer: ScopedDataBuffer,
+) -> dict[str, Any]:
+    if not isinstance(branch, dict):
+        raise StepExecutionError("parallel_group branch must be an object")
+    branch_id = str(branch.get("branch_id") or branch.get("implementation") or "")
+    implementation = str(branch.get("implementation") or "")
+    if not implementation:
+        raise StepExecutionError("parallel_group branch implementation is required")
+    read_keys = [str(key) for key in branch.get("read_keys", [])]
+    write_keys = [str(key) for key in branch.get("write_keys", [])]
+    required_output_keys = [str(key) for key in branch.get("required_output_keys", [])]
+
+    local_values = {
+        key: parent_buffer.read(key)
+        for key in read_keys
+        if key in parent_buffer.list_allowed_reads() and parent_buffer.exists(key)
+    }
+    local_buffer = DataBuffer(local_values)
+    scoped = local_buffer.scope(read_keys=read_keys, write_keys=write_keys)
+    raw_outputs = registry.get(implementation)(scoped) or {}
+    if not isinstance(raw_outputs, dict):
+        raise StepExecutionError(
+            f"parallel_group branch {branch_id or implementation} returned "
+            f"{type(raw_outputs).__name__}, expected dict"
+        )
+    missing = sorted(set(required_output_keys) - set(raw_outputs))
+    if missing:
+        raise StepExecutionError(
+            f"parallel_group branch {branch_id or implementation} missing required outputs: "
+            f"{', '.join(missing)}"
+        )
+    return {
+        "branch_id": branch_id or implementation,
+        "implementation": implementation,
+        "outputs": raw_outputs,
+    }
+
+
+def _merge_parallel_outputs(
+    merged: dict[str, Any],
+    outputs: dict[str, Any],
+    *,
+    conflict_strategy: str,
+    step_id: str,
+) -> None:
+    for key, value in outputs.items():
+        if key not in merged:
+            merged[key] = value
+            continue
+        if conflict_strategy == "error":
+            raise StepExecutionError(
+                f"parallel_group step {step_id} output conflict for key {key}"
+            )
+        if conflict_strategy == "first_wins":
+            continue
+        if conflict_strategy == "last_wins":
+            merged[key] = value
+            continue
+        if conflict_strategy == "merge_list":
+            existing = merged[key] if isinstance(merged[key], list) else [merged[key]]
+            addition = value if isinstance(value, list) else [value]
+            merged[key] = [*existing, *addition]
+            continue
+        if conflict_strategy == "merge_dict":
+            if not isinstance(merged[key], dict) or not isinstance(value, dict):
+                raise StepExecutionError(
+                    f"parallel_group step {step_id} cannot merge non-dict output for {key}"
+                )
+            merged[key] = {**merged[key], **value}
+            continue
+        raise StepExecutionError(f"unsupported parallel conflict strategy: {conflict_strategy}")
 
 
 def _single_tool_call_from_step(step: StepSpec, buffer: ScopedDataBuffer) -> ToolCall:

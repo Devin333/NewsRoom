@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from core.framework.artifacts.filesystem import ArtifactManager
+from core.framework.events import EventBus
 from core.framework.run_result import RunResult
 from core.framework.specs import WorkflowSpec
 from core.framework.workflow.executor import WorkflowExecutor
@@ -32,6 +33,7 @@ class WorkflowRunner:
         event_store: Any | None = None,
         lineage_store: Any | None = None,
         checkpoint_store: Any | None = None,
+        event_bus: EventBus | None = None,
         redactor: StorageRedactor | None = None,
     ) -> None:
         self._artifact_root = Path(artifact_root)
@@ -45,6 +47,7 @@ class WorkflowRunner:
             artifact_root=self._artifact_root
         )
         self._checkpoint_store = checkpoint_store
+        self._event_bus = event_bus
         self._redactor = redactor or StorageRedactor()
 
     def run(
@@ -59,6 +62,7 @@ class WorkflowRunner:
             function_step_runner=self._function_step_runner,
             artifact_manager=self._artifact_manager,
             checkpoint_store=self._checkpoint_store,
+            event_bus=self._event_bus,
         )
         result = executor.execute(workflow, request, profile=profile, run_id=run_id)
         self._persist_storage_indexes(result)
@@ -77,6 +81,7 @@ class WorkflowRunner:
             function_step_runner=self._function_step_runner,
             artifact_manager=self._artifact_manager,
             checkpoint_store=self._checkpoint_store,
+            event_bus=self._event_bus,
         )
         result = executor.resume_from_checkpoint(
             workflow,
