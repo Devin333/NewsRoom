@@ -1,6 +1,7 @@
 from typing import Any
 
 from core.framework.tools import (
+    MappingSecretProvider,
     MCPServerConfig,
     MCPToolAdapter,
     ToolCall,
@@ -49,6 +50,41 @@ def test_mcp_adapter_honors_disabled_server() -> None:
     assert adapter.list_tools(server) == []
 
 
+def test_mcp_adapter_uses_executor_secret_provider_instead_of_environment(monkeypatch) -> None:
+    monkeypatch.setenv("MCP_TOKEN", "env-secret-should-not-be-used")
+    client = _SecretAwareMCPClient()
+    adapter = MCPToolAdapter(client)
+    server = MCPServerConfig(
+        server_id="secret-server",
+        name="Secret MCP",
+        transport="in_memory",
+    )
+    registry = ToolRegistry()
+
+    definitions = adapter.register_tools(registry, server)
+    observation = ToolExecutor(
+        registry,
+        secret_provider=MappingSecretProvider({"MCP_TOKEN": "mapping-secret"}),
+    ).execute(
+        ToolCall(
+            tool_name="mcp.secret_server.secure_echo",
+            arguments={"message": "hello"},
+        ),
+        ToolPolicy(allowed_tools=["mcp.secret_server.secure_echo"], allow_mcp_tools=True),
+    )
+
+    assert definitions[0].required_secret_names == ["MCP_TOKEN"]
+    assert observation.status == ToolStatus.SUCCEEDED
+    assert observation.result.output == {"echo": "hello", "origin": "provider"}
+    assert client.calls == [
+        (
+            "secret-server",
+            "secure_echo",
+            {"message": "hello", "_secrets": {"MCP_TOKEN": "mapping-secret"}},
+        )
+    ]
+
+
 class _InMemoryMCPClient:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, dict[str, Any]]] = []
@@ -75,3 +111,40 @@ class _InMemoryMCPClient:
     ) -> dict[str, Any]:
         self.calls.append((server.server_id, remote_tool_name, dict(arguments)))
         return {"echo": arguments["message"], "server_id": server.server_id}
+
+
+class _SecretAwareMCPClient:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, dict[str, Any]]] = []
+
+    def list_tools(self, server: MCPServerConfig) -> list[dict[str, Any]]:
+        return [
+            {
+                "name": "secure_echo",
+                "description": "Echo with a runtime-injected secret.",
+                "input_schema": {
+                    "required": ["message"],
+                    "properties": {"message": {"type": "string"}},
+                    "additionalProperties": False,
+                },
+                "required_secret_names": ["MCP_TOKEN"],
+            }
+        ]
+
+    def call_tool(
+        self,
+        server: MCPServerConfig,
+        remote_tool_name: str,
+        arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        captured = {
+            key: dict(value) if isinstance(value, dict) else value
+            for key, value in arguments.items()
+        }
+        self.calls.append((server.server_id, remote_tool_name, captured))
+        origin = (
+            "provider"
+            if arguments.get("_secrets", {}).get("MCP_TOKEN") == "mapping-secret"
+            else "unexpected"
+        )
+        return {"echo": arguments["message"], "origin": origin}

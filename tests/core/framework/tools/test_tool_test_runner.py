@@ -10,6 +10,8 @@ from core.framework.tools import (
     ToolStatus,
     ToolTestCase,
     ToolTestRunner,
+    build_builtin_dangerous_tool_registry,
+    build_builtin_safe_tool_registry,
 )
 
 
@@ -116,3 +118,69 @@ def test_tool_test_runner_dry_run_enforces_restricted_agent_boundary() -> None:
 
     assert report.passed is True
     assert "restricted agent" in (report.observation.result.error_message or "")
+
+
+def test_tool_test_runner_runs_minimal_safe_registry_contract() -> None:
+    registry = build_builtin_safe_tool_registry()
+    runner = ToolTestRunner(registry)
+
+    reports = runner.run_cases(
+        [
+            ToolTestCase(
+                name="safe report validate",
+                tool_name="report.validate",
+                args={
+                    "report": {
+                        "title": "Daily Brief",
+                        "sections": [{"title": "Summary", "body": "Supported update"}],
+                        "source_urls": ["https://example.com/source"],
+                    }
+                },
+                policy=ToolPolicy(allowed_tools=["report.validate"]),
+                expected_status=ToolStatus.SUCCEEDED,
+                expected_output_keys=[
+                    "valid",
+                    "errors",
+                    "section_count",
+                    "source_url_count",
+                ],
+            )
+        ]
+    )
+
+    assert [report.passed for report in reports] == [True]
+    assert reports[0].observation.result.output["valid"] is True
+
+
+def test_tool_test_runner_runs_minimal_dangerous_registry_default_deny_contract(
+    tmp_path,
+) -> None:
+    artifact_manager = ArtifactManager(tmp_path)
+    artifact_manager.start_run("dangerous-registry-test")
+    registry = build_builtin_dangerous_tool_registry(
+        artifact_manager=artifact_manager,
+        run_id="dangerous-registry-test",
+        notification_options={"allowed_webhook_domains": ["example.com"]},
+    )
+    runner = ToolTestRunner(registry)
+
+    reports = runner.run_cases(
+        [
+            ToolTestCase(
+                name="dangerous webhook default deny",
+                tool_name="notification.webhook",
+                args={
+                    "url": "https://example.com/hook",
+                    "payload": {"ok": True},
+                },
+                policy=ToolPolicy(allowed_tools=["notification.webhook"]),
+                expected_status=ToolStatus.BLOCKED,
+                expected_error_type="ToolPermissionError",
+            )
+        ]
+    )
+
+    assert [report.passed for report in reports] == [True]
+    assert reports[0].observation.result.error_message == (
+        "dangerous tool is not allowed: notification.webhook"
+    )
