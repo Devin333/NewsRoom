@@ -447,6 +447,24 @@ class AgentLoop:
                 llm_call_artifacts=llm_call_artifacts,
             )
 
+        if observation.status == ToolStatus.SUCCEEDED and _is_control_approval_request(observation):
+            control_metadata = _control_approval_metadata(observation)
+            metrics.tool_approval_requests += 1
+            return self._waiting_for_approval_result(
+                agent=agent,
+                metrics=metrics,
+                events=events,
+                trace=trace,
+                diagnostics=diagnostics,
+                iterations=iteration,
+                tool_name=observation.call.tool_name,
+                approval_id=str(control_metadata["approval_id"]),
+                approval_kind=str(control_metadata["approval_kind"]),
+                control_action=str(control_metadata["control_action"]),
+                escalation_type=control_metadata.get("escalation_type"),
+                llm_call_artifacts=llm_call_artifacts,
+            )
+
         if observation.status == ToolStatus.SUCCEEDED and _is_control_set_output(observation):
             control_output = _control_output(observation)
             verdict = self._output_judge.judge(
@@ -777,17 +795,27 @@ class AgentLoop:
         tool_name: str,
         approval_id: str | None,
         llm_call_artifacts: list[LLMCallArtifact],
+        approval_kind: str = "tool_approval",
+        control_action: str | None = None,
+        escalation_type: str | None = None,
     ) -> AgentLoopResult:
         result_diagnostics = diagnostics.waiting_for_approval(
             metrics=metrics,
             iterations=iterations,
             tool_name=tool_name,
             approval_id=approval_id,
+            approval_kind=approval_kind,
+            control_action=control_action,
+            escalation_type=escalation_type,
         )
         events.waiting_for_approval(
             iteration=iterations,
             stop_reason=AgentLoopStopReason.TOOL_APPROVAL_REQUIRED.value,
             approval_id=approval_id,
+            approval_kind=approval_kind,
+            tool_name=tool_name,
+            control_action=control_action,
+            escalation_type=escalation_type,
         )
         return AgentLoopResult(
             success=False,
@@ -987,6 +1015,34 @@ def _control_output(observation: ToolObservation) -> dict[str, Any]:
     if isinstance(output, dict) and isinstance(output.get("output"), dict):
         return dict(output["output"])
     return {}
+
+
+def _is_control_approval_request(observation: ToolObservation) -> bool:
+    output = observation.result.output
+    if not isinstance(output, dict):
+        return False
+    return (
+        observation.call.tool_name in {"control.request_human_review", "control.escalate"}
+        and output.get("control_action") in {"request_human_review", "escalate"}
+        and isinstance(output.get("approval_id"), str)
+        and bool(str(output.get("approval_id")).strip())
+    )
+
+
+def _control_approval_metadata(observation: ToolObservation) -> dict[str, Any]:
+    output = observation.result.output if isinstance(observation.result.output, dict) else {}
+    control_action = str(output.get("control_action") or "")
+    payload: dict[str, Any] = {
+        "approval_id": str(output["approval_id"]),
+        "control_action": control_action,
+        "approval_kind": (
+            "escalation" if control_action == "escalate" else "human_review"
+        ),
+    }
+    escalation_type = output.get("escalation_type")
+    if isinstance(escalation_type, str) and escalation_type:
+        payload["escalation_type"] = escalation_type
+    return payload
 
 
 def _blocked_stop_reason(verdict: JudgeVerdict) -> AgentLoopStopReason:

@@ -223,8 +223,24 @@ class AgentLoopDiagnosticsBuilder:
         iterations: int,
         tool_name: str,
         approval_id: str | None,
+        approval_kind: str = "tool_approval",
+        control_action: str | None = None,
+        escalation_type: str | None = None,
     ) -> AgentLoopDiagnostics:
-        summary = f"tool approval required for {tool_name}"
+        summary = _approval_summary(
+            tool_name,
+            approval_kind=approval_kind,
+            control_action=control_action,
+            escalation_type=escalation_type,
+        )
+        metadata: dict[str, Any] = {
+            "approval_id": approval_id,
+            "approval_kind": approval_kind,
+        }
+        if control_action:
+            metadata["control_action"] = control_action
+        if escalation_type:
+            metadata["escalation_type"] = escalation_type
         return self._build(
             status=AgentLoopStatus.WAITING_FOR_APPROVAL,
             stop_reason=AgentLoopStopReason.TOOL_APPROVAL_REQUIRED,
@@ -240,10 +256,10 @@ class AgentLoopDiagnosticsBuilder:
                     severity=AgentLoopDiagnosticSeverity.WARNING,
                     iteration=iterations,
                     tool_name=tool_name,
-                    metadata={"approval_id": approval_id},
+                    metadata=metadata,
                 )
             ],
-            suggestions=["resume after the required tool approval is recorded"],
+            suggestions=[_approval_suggestion(approval_kind)],
         )
 
     def retry_exhausted(
@@ -430,3 +446,27 @@ def _issues_from_verdict(verdict: JudgeVerdict, iteration: int) -> list[AgentLoo
             )
         )
     return issues
+
+
+def _approval_summary(
+    tool_name: str,
+    *,
+    approval_kind: str,
+    control_action: str | None,
+    escalation_type: str | None,
+) -> str:
+    if approval_kind == "human_review":
+        return f"human review requested by {tool_name}"
+    if approval_kind == "escalation":
+        if escalation_type:
+            return f"human escalation requested by {tool_name}: {escalation_type}"
+        return f"human escalation requested by {tool_name}"
+    if control_action:
+        return f"{control_action} approval required for {tool_name}"
+    return f"tool approval required for {tool_name}"
+
+
+def _approval_suggestion(approval_kind: str) -> str:
+    if approval_kind in {"human_review", "escalation"}:
+        return "resume after the required human approval decision is recorded"
+    return "resume after the required tool approval is recorded"

@@ -21,6 +21,7 @@ from core.framework.tools import (
     ToolRegistry,
     register_control_tools,
 )
+from core.framework.workers import InMemoryApprovalStore
 from storage.conversation import ConversationCursor, LocalJsonConversationStore
 
 
@@ -634,6 +635,115 @@ def test_agent_runner_waits_for_tool_approval_with_diagnostics() -> None:
     assert result.diagnostics.stop_reason == AgentLoopStopReason.TOOL_APPROVAL_REQUIRED
     assert result.diagnostics.issues[0].tool_name == "report.publish"
     assert result.events[-1]["event_type"] == "agent_waiting_for_approval"
+
+
+def test_agent_runner_waits_for_human_review_control_approval() -> None:
+    approval_store = InMemoryApprovalStore()
+    registry = ToolRegistry()
+    register_control_tools(registry, approval_store=approval_store, run_id="run-review")
+    llm = FakeLLMClient(
+        [
+            (
+                '{"action_type":"tool_call",'
+                '"tool_name":"control.request_human_review",'
+                '"tool_args":{'
+                '"requested_action":"review:analysis",'
+                '"reason":"editor review required",'
+                '"risk_level":"high",'
+                '"payload":{"draft_id":"draft-1"},'
+                '"task_id":"task-review",'
+                '"requested_by":"analyst"}}'
+            )
+        ]
+    )
+    agent = AgentSpec(
+        agent_id="analyst",
+        name="Analyst",
+        role="Analyze",
+        goal="Produce analysis",
+        instructions="Return JSON actions only.",
+        input_keys=["request"],
+        output_key="analysis_result",
+        allowed_tools=["control.request_human_review"],
+    )
+
+    result = AgentRunner(llm_client=llm, tool_registry=registry).run(
+        agent,
+        {"request": {"topic": "chips"}},
+    )
+    approval = approval_store.list_approvals()[0]
+    waiting_event = result.events[-1]
+    issue_metadata = result.diagnostics.issues[0].metadata if result.diagnostics else {}
+
+    assert result.success is False
+    assert result.status == AgentLoopStatus.WAITING_FOR_APPROVAL
+    assert result.metrics.tool_approval_requests == 1
+    assert result.diagnostics is not None
+    assert result.diagnostics.summary == "human review requested by control.request_human_review"
+    assert issue_metadata["approval_id"] == approval.approval_id
+    assert issue_metadata["approval_kind"] == "human_review"
+    assert issue_metadata["control_action"] == "request_human_review"
+    assert waiting_event["event_type"] == "agent_waiting_for_approval"
+    assert waiting_event["approval_id"] == approval.approval_id
+    assert waiting_event["approval_kind"] == "human_review"
+    assert waiting_event["control_action"] == "request_human_review"
+    assert approval.run_id == "run-review"
+    assert approval.requested_action == "review:analysis"
+
+
+def test_agent_runner_waits_for_escalation_control_approval() -> None:
+    approval_store = InMemoryApprovalStore()
+    registry = ToolRegistry()
+    register_control_tools(registry, approval_store=approval_store, run_id="run-escalate")
+    llm = FakeLLMClient(
+        [
+            (
+                '{"action_type":"tool_call",'
+                '"tool_name":"control.escalate",'
+                '"tool_args":{'
+                '"escalation_type":"source_outage",'
+                '"reason":"official source unavailable",'
+                '"severity":"critical",'
+                '"payload":{"source_id":"official-ai"},'
+                '"task_id":"task-escalate",'
+                '"requested_by":"collector"}}'
+            )
+        ]
+    )
+    agent = AgentSpec(
+        agent_id="collector",
+        name="Collector",
+        role="Collect",
+        goal="Collect sources",
+        instructions="Return JSON actions only.",
+        input_keys=["request"],
+        output_key="collection_result",
+        allowed_tools=["control.escalate"],
+    )
+
+    result = AgentRunner(llm_client=llm, tool_registry=registry).run(
+        agent,
+        {"request": {"topic": "chips"}},
+    )
+    approval = approval_store.list_approvals()[0]
+    waiting_event = result.events[-1]
+    issue_metadata = result.diagnostics.issues[0].metadata if result.diagnostics else {}
+
+    assert result.success is False
+    assert result.status == AgentLoopStatus.WAITING_FOR_APPROVAL
+    assert result.diagnostics is not None
+    assert result.diagnostics.summary == (
+        "human escalation requested by control.escalate: source_outage"
+    )
+    assert issue_metadata["approval_id"] == approval.approval_id
+    assert issue_metadata["approval_kind"] == "escalation"
+    assert issue_metadata["control_action"] == "escalate"
+    assert issue_metadata["escalation_type"] == "source_outage"
+    assert waiting_event["approval_id"] == approval.approval_id
+    assert waiting_event["approval_kind"] == "escalation"
+    assert waiting_event["control_action"] == "escalate"
+    assert waiting_event["escalation_type"] == "source_outage"
+    assert approval.requested_action == "escalate:source_outage"
 
 
 def test_agent_runner_persists_conversation_when_store_is_provided(tmp_path) -> None:

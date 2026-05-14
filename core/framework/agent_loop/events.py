@@ -304,11 +304,26 @@ class AgentLoopEventRecorder:
         iteration: int,
         stop_reason: str,
         approval_id: str | None,
+        approval_kind: str = "tool_approval",
+        tool_name: str | None = None,
+        control_action: str | None = None,
+        escalation_type: str | None = None,
     ) -> None:
+        payload: dict[str, Any] = {
+            "stop_reason": stop_reason,
+            "approval_id": approval_id,
+            "approval_kind": approval_kind,
+        }
+        if tool_name:
+            payload["tool_name"] = tool_name
+        if control_action:
+            payload["control_action"] = control_action
+        if escalation_type:
+            payload["escalation_type"] = escalation_type
         self.emit(
             AgentLoopEventType.AGENT_WAITING_FOR_APPROVAL,
             iteration=iteration,
-            payload={"stop_reason": stop_reason, "approval_id": approval_id},
+            payload=payload,
         )
 
     def blocked(self, *, iteration: int, stop_reason: str, verdict: dict[str, Any] | None) -> None:

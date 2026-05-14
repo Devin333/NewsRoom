@@ -2224,6 +2224,7 @@ token_usage
 | judge retry diagnostics | 已实现 | retry exhausted 有 stop_reason/issue/suggestion |
 | repeated tool-call stall | 已实现 | 相同 tool+args hash 超限后 STALLED |
 | tool approval wait | 已实现 | approval_required 映射为 AgentLoopStatus.WAITING_FOR_APPROVAL |
+| human escalation wait | 已实现基础版 | `control.request_human_review` / `control.escalate` 写入 approval store 后，AgentLoop 进入 WAITING_FOR_APPROVAL 并暴露 approval_id / approval_kind |
 | Workflow pause mapping | 已实现 | AgentLoopStepRunner 将 waiting_for_approval 映射为 StepStatus.PAUSED |
 | Workflow stalled mapping | 已实现 | AgentLoopStepRunner 将 stalled 映射为 StepStatus.BLOCKED |
 | conversation diagnostics | 已实现 | conversation 中写入 diagnostic message，assistant result 仍保持最后 |
@@ -2262,7 +2263,7 @@ WorkflowExecutor
 下一阶段应优先做：
 
 ```text
-1. Human escalation 与 approval service 对齐，并补 approval replay。
+1. Approval replay：approval decision 记录后恢复 paused AgentLoop/Workflow。
 2. AgentLoop mid-iteration replay 与 Workflow checkpoint 的更深绑定。
 3. SubAgent delegation，但默认关闭。
 4. 更完整的 JSON Schema keyword 覆盖和 schema registry 复用。
