@@ -141,12 +141,13 @@ class LocalArtifactRetentionExecutor:
     def __init__(self, artifact_root: str) -> None:
         self.artifact_store = FilesystemArtifactStore(artifact_root)
 
-    def delete_expired(self, plan: RetentionPlan) -> list[ArtifactRef]:
-        deleted = []
+    def delete_expired(self, plan: RetentionPlan, *, dry_run: bool = False) -> list[ArtifactRef]:
+        selected = []
         for decision in plan.delete_decisions:
-            self.artifact_store.delete(decision.artifact_ref)
-            deleted.append(decision.artifact_ref)
-        return deleted
+            if not dry_run:
+                self.artifact_store.delete(decision.artifact_ref)
+            selected.append(decision.artifact_ref)
+        return selected
 
 
 def _optional_int(value: Any) -> int | None:

@@ -99,3 +99,26 @@ def test_local_artifact_retention_executor_deletes_only_expired_files(tmp_path) 
     assert deleted == [old_raw]
     assert store.exists(old_raw) is False
     assert store.exists(old_report) is True
+
+
+def test_local_artifact_retention_executor_can_dry_run_expired_files(tmp_path) -> None:
+    store = FilesystemArtifactStore(tmp_path)
+    old_raw = store.write(
+        ArtifactWriteRequest(
+            run_id="run-1",
+            artifact_id="raw-old",
+            artifact_type="source_item",
+            content=b"raw",
+            content_type="text/plain",
+            created_at=datetime(2026, 4, 1, tzinfo=UTC),
+        )
+    )
+    plan = ArtifactRetentionPlanner().plan(
+        [old_raw],
+        now=datetime(2026, 5, 11, tzinfo=UTC),
+    )
+
+    selected = LocalArtifactRetentionExecutor(tmp_path).delete_expired(plan, dry_run=True)
+
+    assert selected == [old_raw]
+    assert store.exists(old_raw) is True
