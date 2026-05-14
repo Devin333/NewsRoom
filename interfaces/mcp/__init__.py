@@ -2,6 +2,8 @@
 
 from interfaces.mcp.models import (
     MCPCatalog,
+    MCPCapability,
+    MCPCapabilityManifest,
     MCPPrompt,
     MCPPromptGetResult,
     MCPResource,
@@ -12,6 +14,8 @@ from interfaces.mcp.models import (
 
 __all__ = [
     "MCPCatalog",
+    "MCPCapability",
+    "MCPCapabilityManifest",
     "MCPPrompt",
     "MCPPromptGetResult",
     "MCPResource",

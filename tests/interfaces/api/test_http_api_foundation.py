@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 from core.framework.workers import Task, TaskStatus
 from interfaces.api import create_app
+from interfaces.events import AuditEmitter, InMemoryAuditSink
 from interfaces.services.run_inspection_service import RunInspectionService
 from interfaces.services.worker_service import EnqueuedTaskResult
 from storage.repository import ReportRecord
@@ -112,6 +113,130 @@ def test_api_token_auth_allows_valid_bearer_token() -> None:
     assert response.status_code == 200
     assert payload["success"] is True
     assert payload["data"]["report_id"] == "report-1"
+
+
+def test_api_key_readonly_role_allows_read_and_blocks_write() -> None:
+    fake_worker = _FakeWorkerService()
+    client = TestClient(
+        create_app(
+            api_keys={"read-token": "read-only"},
+            report_service_factory=lambda: _FakeReportService(),
+            worker_service_factory=lambda: fake_worker,
+        )
+    )
+
+    read_response = client.get(
+        "/api/v1/reports/latest",
+        headers={"Authorization": "Bearer read-token"},
+    )
+    write_response = client.post(
+        "/api/v1/runs/daily",
+        json={"topic": "AI policy", "source_limit": 2},
+        headers={"Authorization": "Bearer read-token"},
+    )
+
+    assert read_response.status_code == 200
+    assert write_response.status_code == 403
+    assert write_response.json()["error"]["code"] == "forbidden"
+    assert write_response.json()["error"]["details"]["required_permission"] == "runs:create"
+    assert fake_worker.enqueue_calls == []
+
+
+def test_api_key_operator_role_allows_run_write() -> None:
+    fake_worker = _FakeWorkerService()
+    client = TestClient(
+        create_app(
+            api_keys={"operator-token": ["operator"]},
+            worker_service_factory=lambda: fake_worker,
+        )
+    )
+
+    response = client.post(
+        "/api/v1/runs/daily",
+        json={"topic": "AI policy", "source_limit": 2, "run_id": "rbac-run"},
+        headers={"Authorization": "Bearer operator-token"},
+    )
+
+    assert response.status_code == 200
+    assert fake_worker.enqueue_calls[0]["run_id"] == "rbac-run"
+
+
+def test_api_key_mcp_client_role_allows_mcp_catalog_only() -> None:
+    fake_worker = _FakeWorkerService()
+    client = TestClient(
+        create_app(
+            api_keys={"mcp-token": "mcp_client"},
+            worker_service_factory=lambda: fake_worker,
+        )
+    )
+
+    catalog = client.get(
+        "/api/v1/mcp/catalog",
+        headers={"Authorization": "Bearer mcp-token", "X-API-Client-ID": "mcp-client-1"},
+    )
+    run = client.post(
+        "/api/v1/runs/daily",
+        json={"topic": "AI policy", "source_limit": 2},
+        headers={"Authorization": "Bearer mcp-token", "X-API-Client-ID": "mcp-client-1"},
+    )
+
+    assert catalog.status_code == 200
+    assert run.status_code == 403
+    assert run.json()["error"]["details"]["required_permission"] == "runs:create"
+
+
+def test_api_key_roles_can_be_loaded_from_env(monkeypatch) -> None:
+    monkeypatch.setenv("NEWS_API_KEYS", "env-read=read-only")
+    client = TestClient(
+        create_app(
+            report_service_factory=lambda: _FakeReportService(),
+        )
+    )
+
+    response = client.get(
+        "/api/v1/reports/latest",
+        headers={"Authorization": "Bearer env-read"},
+    )
+
+    assert response.status_code == 200
+
+
+def test_api_key_role_lists_can_be_loaded_from_json_env(monkeypatch) -> None:
+    monkeypatch.setenv("NEWS_API_KEYS", json.dumps({"env-operator": ["operator"]}))
+    fake_worker = _FakeWorkerService()
+    client = TestClient(create_app(worker_service_factory=lambda: fake_worker))
+
+    response = client.post(
+        "/api/v1/runs/daily",
+        json={"topic": "AI policy", "source_limit": 2, "run_id": "env-rbac-run"},
+        headers={"Authorization": "Bearer env-operator"},
+    )
+
+    assert response.status_code == 200
+    assert fake_worker.enqueue_calls[0]["run_id"] == "env-rbac-run"
+
+
+def test_api_key_actor_is_used_for_audit_records() -> None:
+    sink = InMemoryAuditSink()
+    client = TestClient(
+        create_app(
+            api_keys={"read-token": "read-only"},
+            report_service_factory=lambda: _FakeReportService(),
+            audit_emitter_factory=lambda: AuditEmitter(sink),
+        )
+    )
+
+    response = client.get(
+        "/api/v1/reports/latest",
+        headers={
+            "Authorization": "Bearer read-token",
+            "X-API-Client-ID": "readonly-client",
+        },
+    )
+
+    assert response.status_code == 200
+    assert sink.records[0].actor.actor_id == "readonly-client"
+    assert sink.records[0].actor.roles == ["read-only"]
 
 
 def test_api_validation_errors_use_common_envelope() -> None:
@@ -556,6 +681,22 @@ def test_mcp_catalog_returns_catalog() -> None:
     assert payload["data"]["tools"][0]["name"] == "news.source.health"
 
 
+def test_mcp_capabilities_returns_manifest() -> None:
+    client = TestClient(create_app(mcp_service_factory=lambda: _FakeMCPService()))
+
+    response = client.get("/api/v1/mcp/capabilities")
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["success"] is True
+    assert payload["data"]["schema_version"] == "newsroom.mcp_capability_manifest.v1"
+    assert payload["data"]["boundary"] == "inbound_mcp_server"
+    assert payload["data"]["version"] == "1.0"
+    assert payload["data"]["capabilities"][0]["name"] == "news.source.health"
+    assert payload["data"]["capabilities"][0]["permission"] == "sources:read"
+    assert payload["data"]["capabilities"][0]["category"] == "sources"
+
+
 def test_runs_list_returns_runs() -> None:
     client = TestClient(create_app(run_inspection_service_factory=lambda: _FakeRunInspectionService()))
 
@@ -622,6 +763,61 @@ def test_run_events_invalid_limit_uses_unified_error() -> None:
     assert response.status_code == 400
     assert payload["success"] is False
     assert payload["error"]["code"] == "invalid_run_events_request"
+
+
+def test_run_progress_streams_redacted_sse_frames() -> None:
+    client = TestClient(create_app(run_inspection_service_factory=lambda: _FakeRunInspectionService()))
+
+    response = client.get("/api/v1/runs/run-1/progress")
+    body = response.text
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert "event: run.progress\n" in body
+    assert "event: run.progress.done\n" in body
+    assert '"run_id": "run-1"' in body
+    assert "[redacted]" in body
+    assert "hidden-token" not in body
+
+
+def test_run_events_stream_uses_event_types_and_done_frame() -> None:
+    client = TestClient(create_app(run_inspection_service_factory=lambda: _FakeRunInspectionService()))
+
+    response = client.get("/api/v1/runs/run-1/events/stream?limit=1")
+    body = response.text
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert "event: workflow_started\n" in body
+    assert "event: run.events.done\n" in body
+    assert '"sequence": 0' in body
+    assert '"event_count": 1' in body
+    assert "[redacted]" in body
+    assert "hidden-token" not in body
+
+
+def test_run_progress_invalid_limit_uses_unified_error() -> None:
+    client = TestClient(create_app(run_inspection_service_factory=lambda: _FakeRunInspectionService()))
+
+    response = client.get("/api/v1/runs/run-1/progress?limit=0")
+    payload = response.json()
+
+    assert response.status_code == 400
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "invalid_run_progress_request"
+
+
+def test_run_progress_missing_events_uses_unified_error() -> None:
+    client = TestClient(
+        create_app(run_inspection_service_factory=lambda: _MissingRunInspectionService())
+    )
+
+    response = client.get("/api/v1/runs/missing/progress")
+    payload = response.json()
+
+    assert response.status_code == 404
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "run_progress_not_found"
 
 
 def test_run_replay_returns_bundle() -> None:
@@ -1235,6 +1431,38 @@ class _FakeMCPService:
             }
         )
 
+    def capability_manifest(self):
+        return _FakeResult(
+            {
+                "version": "1.0",
+                "server_name": "NewsRoom",
+                "transport": "stdio/http",
+                "auth_required": True,
+                "default_permission": "mcp:read",
+                "schema_version": "newsroom.mcp_capability_manifest.v1",
+                "boundary": "inbound_mcp_server",
+                "capability_count": 1,
+                "capabilities": [
+                    {
+                        "name": "news.source.health",
+                        "kind": "tool",
+                        "title": "Read source health",
+                        "description": "Read source health.",
+                        "permission": "sources:read",
+                        "read_only": True,
+                        "category": "sources",
+                        "boundary": "inbound_mcp_server",
+                        "risk_level": "low",
+                        "requires_approval": False,
+                        "uri_template": None,
+                        "input_schema": {},
+                        "output_mime_type": None,
+                        "metadata": {},
+                    }
+                ],
+            }
+        )
+
 
 class _FakeRunInspectionService:
     def list_runs(self, *, limit):
@@ -1275,7 +1503,7 @@ class _FakeRunInspectionService:
             {
                 "event_type": "workflow_started",
                 "occurred_at": "2026-05-11T01:00:00Z",
-                "payload": {"profile": "live-offline"},
+                "payload": {"profile": "live-offline", "token": "hidden-token"},
             },
             {
                 "event_type": "workflow_succeeded",

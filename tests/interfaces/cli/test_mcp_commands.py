@@ -15,6 +15,24 @@ def test_news_cli_mcp_catalog_json(monkeypatch, capsys) -> None:
     assert payload["tools"][0]["name"] == "news.source.health"
 
 
+def test_news_cli_mcp_capabilities_json(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(news_cli, "MCPApplicationService", _FakeMCPService)
+
+    exit_code = news_cli.main(["mcp", "capabilities", "--json"])
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert exit_code == 0
+    assert payload["schema_version"] == "newsroom.mcp_capability_manifest.v1"
+    assert payload["boundary"] == "inbound_mcp_server"
+    assert payload["version"] == "1.0"
+    assert payload["capability_count"] == 1
+    assert payload["capabilities"][0]["name"] == "news.source.health"
+    assert payload["capabilities"][0]["permission"] == "sources:read"
+    assert payload["capabilities"][0]["category"] == "sources"
+
+
 def test_news_cli_mcp_call_json(monkeypatch, capsys) -> None:
     monkeypatch.setattr(news_cli, "MCPApplicationService", _FakeMCPService)
 
@@ -96,6 +114,38 @@ class _FakeMCPService:
                 ],
                 "resources": [],
                 "prompts": [],
+            }
+        )
+
+    def capability_manifest(self):
+        return _FakeResult(
+            {
+                "version": "1.0",
+                "server_name": "NewsRoom",
+                "transport": "stdio/http",
+                "auth_required": True,
+                "default_permission": "mcp:read",
+                "schema_version": "newsroom.mcp_capability_manifest.v1",
+                "boundary": "inbound_mcp_server",
+                "capability_count": 1,
+                "capabilities": [
+                    {
+                        "name": "news.source.health",
+                        "kind": "tool",
+                        "title": "Read source health",
+                        "description": "Read source health.",
+                        "permission": "sources:read",
+                        "read_only": True,
+                        "category": "sources",
+                        "boundary": "inbound_mcp_server",
+                        "risk_level": "low",
+                        "requires_approval": False,
+                        "uri_template": None,
+                        "input_schema": {},
+                        "output_mime_type": None,
+                        "metadata": {},
+                    }
+                ],
             }
         )
 

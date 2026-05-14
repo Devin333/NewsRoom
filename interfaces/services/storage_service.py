@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import datetime
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
@@ -119,6 +121,34 @@ class StorageMigrationResult:
         }
 
 
+@dataclass(frozen=True)
+class ArtifactIndexConsistencyResult:
+    artifact_root: Path
+    run_id: str
+    manifest_path: Path
+    valid: bool
+    manifest_artifact_count: int
+    index_artifact_count: int
+    missing_index_artifacts: list[str]
+    missing_artifact_files: list[str]
+    checksum_mismatches: list[str]
+    orphan_index_artifacts: list[str]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "artifact_root": str(self.artifact_root),
+            "run_id": self.run_id,
+            "manifest_path": str(self.manifest_path),
+            "valid": self.valid,
+            "manifest_artifact_count": self.manifest_artifact_count,
+            "index_artifact_count": self.index_artifact_count,
+            "missing_index_artifacts": list(self.missing_index_artifacts),
+            "missing_artifact_files": list(self.missing_artifact_files),
+            "checksum_mismatches": list(self.checksum_mismatches),
+            "orphan_index_artifacts": list(self.orphan_index_artifacts),
+        }
+
+
 class StorageApplicationService:
     def __init__(
         self,
@@ -152,6 +182,58 @@ class StorageApplicationService:
             backend=backend,
             postgres_required=require_postgres,
             migrated=True,
+        )
+
+    def diagnose_artifact_index(self, run_id: str) -> ArtifactIndexConsistencyResult:
+        run_dir = self.artifact_root / run_id
+        manifest_path = run_dir / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest_artifacts = _manifest_artifact_paths(manifest)
+        indexed_refs = self.artifact_index.list_by_run(run_id)
+        indexed_by_type_path = {
+            (ref.artifact_type, Path(ref.path).as_posix()): ref for ref in indexed_refs
+        }
+        expected_type_paths = set(_expected_index_type_paths(run_dir, manifest_artifacts))
+
+        missing_index_artifacts: list[str] = []
+        missing_artifact_files: list[str] = []
+        checksum_mismatches: list[str] = []
+        for artifact_key, relative_path in manifest_artifacts.items():
+            normalized_path = Path(relative_path).as_posix()
+            artifact_path = _safe_artifact_path(run_dir, normalized_path)
+            ref = indexed_by_type_path.get((artifact_key, normalized_path))
+            if ref is None:
+                missing_index_artifacts.append(artifact_key)
+            if not artifact_path.exists():
+                missing_artifact_files.append(artifact_key)
+                continue
+            if ref is not None and ref.checksum:
+                actual_checksum = sha256(artifact_path.read_bytes()).hexdigest()
+                if actual_checksum != ref.checksum:
+                    checksum_mismatches.append(artifact_key)
+
+        orphan_index_artifacts = [
+            ref.artifact_id
+            for ref in indexed_refs
+            if (ref.artifact_type, Path(ref.path).as_posix()) not in expected_type_paths
+        ]
+        valid = not (
+            missing_index_artifacts
+            or missing_artifact_files
+            or checksum_mismatches
+            or orphan_index_artifacts
+        )
+        return ArtifactIndexConsistencyResult(
+            artifact_root=self.artifact_root,
+            run_id=run_id,
+            manifest_path=manifest_path,
+            valid=valid,
+            manifest_artifact_count=len(manifest_artifacts),
+            index_artifact_count=len(indexed_refs),
+            missing_index_artifacts=missing_index_artifacts,
+            missing_artifact_files=missing_artifact_files,
+            checksum_mismatches=checksum_mismatches,
+            orphan_index_artifacts=orphan_index_artifacts,
         )
 
     def create_backup(
@@ -260,3 +342,52 @@ class StorageApplicationService:
 
 def _is_postgres_repository(repository: Any) -> bool:
     return "Postgres" in repository.__class__.__name__
+
+
+def _manifest_artifact_paths(manifest: dict[str, Any]) -> dict[str, str]:
+    artifacts = manifest.get("artifacts") or {}
+    if not isinstance(artifacts, dict):
+        return {}
+    return {
+        str(artifact_key): str(relative_path)
+        for artifact_key, relative_path in artifacts.items()
+        if isinstance(relative_path, str)
+    }
+
+
+def _expected_index_type_paths(
+    run_dir: Path,
+    manifest_artifacts: dict[str, str],
+) -> list[tuple[str, str]]:
+    expected = [
+        (artifact_key, Path(relative_path).as_posix())
+        for artifact_key, relative_path in manifest_artifacts.items()
+    ]
+    source_index_path = manifest_artifacts.get("source_artifacts")
+    if source_index_path is None:
+        return expected
+    try:
+        payload = json.loads(_safe_artifact_path(run_dir, source_index_path).read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return expected
+    entries = payload.get("entries") if isinstance(payload, dict) else None
+    if not isinstance(entries, list):
+        return expected
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        ref_payload = entry.get("artifact_ref")
+        if not isinstance(ref_payload, dict):
+            continue
+        artifact_type = ref_payload.get("artifact_type")
+        path = ref_payload.get("path")
+        if isinstance(artifact_type, str) and isinstance(path, str):
+            expected.append((artifact_type, Path(path).as_posix()))
+    return expected
+
+
+def _safe_artifact_path(run_dir: Path, relative_path: str) -> Path:
+    relative = Path(relative_path)
+    if not relative_path or relative.is_absolute() or ".." in relative.parts:
+        raise ValueError(f"invalid artifact path: {relative_path}")
+    return run_dir / relative

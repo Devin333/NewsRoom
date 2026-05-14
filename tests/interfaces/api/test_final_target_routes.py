@@ -1,5 +1,7 @@
 from fastapi.testclient import TestClient
 
+from core.framework.run_result import RunResult
+from core.framework.specs import WorkflowStatus
 from core.framework.workers import Task, TaskStatus
 from interfaces.api import create_app
 from interfaces.events import AuditEmitter, InMemoryAuditSink
@@ -26,7 +28,98 @@ def test_generic_run_api_enqueues_daily_task() -> None:
     assert worker.enqueue_calls[0]["topic"] == "AI policy"
     assert payload["data"]["status"] == "queued"
     assert payload["data"]["task_status"] == "queued"
+    assert payload["data"]["run_status"] is None
+    assert payload["data"]["report_status"] is None
     assert payload["data"]["run_id"] == "run-api"
+
+
+def test_generic_run_api_sync_daily_returns_runtime_status_fields() -> None:
+    run_service = _FakeRunService(
+        RunResult(
+            run_id="run-sync",
+            workflow_id="daily-intelligence-live",
+            workflow_version="1.0",
+            status=WorkflowStatus.BLOCKED,
+            output={
+                "blocked_report": {"title": "Blocked", "reasons": ["quality"]},
+                "report_markdown": "# Blocked\n",
+            },
+            error={"error_type": "QualityGateBlocked", "message": "quality gate blocked"},
+        )
+    )
+    worker = _FakeWorkerService()
+    client = TestClient(
+        create_app(
+            run_service_factory=lambda: run_service,
+            worker_service_factory=lambda: worker,
+            audit_emitter_factory=None,
+        )
+    )
+
+    response = client.post(
+        "/api/v1/runs",
+        json={
+            "workflow_id": "daily",
+            "topic": "AI policy",
+            "source_limit": 2,
+            "run_id": "run-sync",
+            "async_run": False,
+        },
+    )
+
+    payload = response.json()
+    assert response.status_code == 200
+    assert worker.enqueue_calls == []
+    assert run_service.daily_calls[0]["run_id"] == "run-sync"
+    assert payload["data"]["status"] == "blocked"
+    assert payload["data"]["task_status"] is None
+    assert payload["data"]["run_status"] == "blocked"
+    assert payload["data"]["report_status"] == "blocked"
+    assert payload["data"]["report_id"] == "run-sync:blocked"
+    assert payload["data"]["interface"]["status"] == "blocked"
+    assert payload["data"]["interface"]["run_status"] == "blocked"
+
+
+def test_generic_run_api_weekly_uses_run_service_and_status_contract() -> None:
+    run_service = _FakeRunService(
+        weekly_result=RunResult(
+            run_id="run-weekly",
+            workflow_id="weekly-intelligence",
+            workflow_version="1.0",
+            status=WorkflowStatus.SUCCEEDED,
+            output={"final_report": {"title": "Weekly"}, "report_markdown": "# Weekly\n"},
+        )
+    )
+    worker = _FakeWorkerService()
+    client = TestClient(
+        create_app(
+            run_service_factory=lambda: run_service,
+            worker_service_factory=lambda: worker,
+            audit_emitter_factory=None,
+        )
+    )
+
+    response = client.post(
+        "/api/v1/runs",
+        json={
+            "workflow_id": "weekly",
+            "topic": "AI policy",
+            "source_limit": 5,
+            "run_id": "run-weekly",
+            "async_run": False,
+        },
+    )
+
+    payload = response.json()
+    assert response.status_code == 200
+    assert worker.enqueue_calls == []
+    assert run_service.weekly_calls[0]["run_id"] == "run-weekly"
+    assert payload["data"]["status"] == "succeeded"
+    assert payload["data"]["task_status"] is None
+    assert payload["data"]["run_status"] == "succeeded"
+    assert payload["data"]["report_status"] == "final"
+    assert payload["data"]["report_id"] == "run-weekly:final"
+    assert payload["data"]["interface"]["status"] == "succeeded"
 
 
 def test_health_ready_and_dependencies_routes_use_common_envelope() -> None:
@@ -113,6 +206,33 @@ def test_api_audit_emits_redacted_record_for_request() -> None:
     assert sink.records[0].metadata["query"]["api_key"] == "[redacted]"
 
 
+def test_api_audit_emits_write_record_for_run_request() -> None:
+    sink = InMemoryAuditSink()
+    worker = _FakeWorkerService()
+    client = TestClient(
+        create_app(
+            worker_service_factory=lambda: worker,
+            audit_emitter_factory=lambda: AuditEmitter(sink),
+        )
+    )
+
+    response = client.post(
+        "/api/v1/runs/daily?api_key=hidden",
+        json={"topic": "AI policy", "source_limit": 2, "run_id": "run-audit"},
+        headers={"X-Request-ID": "write-audit", "X-News-Actor": "operator-1"},
+    )
+
+    assert response.status_code == 200
+    assert sink.records[0].action == "api_request_post"
+    assert sink.records[0].actor.actor_id == "operator-1"
+    assert sink.records[0].actor.request_id == "write-audit"
+    assert sink.records[0].resource_type == "runs"
+    assert sink.records[0].resource_id == "daily"
+    assert sink.records[0].result == "succeeded"
+    assert sink.records[0].metadata["method"] == "POST"
+    assert sink.records[0].metadata["query"]["api_key"] == "[redacted]"
+
+
 class _FakeWorkerService:
     def __init__(self) -> None:
         self.enqueue_calls = []
@@ -131,6 +251,26 @@ class _FakeWorkerService:
             },
         )
         return EnqueuedTaskResult(task=task, message_id="msg-1")
+
+
+class _FakeRunService:
+    def __init__(self, result=None, *, weekly_result=None) -> None:
+        self.result = result
+        self.weekly_result = weekly_result
+        self.daily_calls = []
+        self.weekly_calls = []
+
+    def run_daily(self, **kwargs):
+        if self.result is None:
+            raise AssertionError("daily run should not be called")
+        self.daily_calls.append(kwargs)
+        return self.result
+
+    def run_weekly(self, **kwargs):
+        if self.weekly_result is None:
+            raise AssertionError("weekly run should not be called")
+        self.weekly_calls.append(kwargs)
+        return self.weekly_result
 
 
 class _FakeDiagnosticService:

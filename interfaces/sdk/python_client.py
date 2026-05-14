@@ -19,12 +19,18 @@ class NewsApiError(RuntimeError):
         message: str,
         status_code: int | None = None,
         details: dict[str, Any] | None = None,
+        retryable: bool = False,
+        user_action_required: bool = False,
+        request_id: str | None = None,
     ) -> None:
         super().__init__(f"{code}: {message}")
         self.code = code
         self.message = message
         self.status_code = status_code
         self.details = details or {}
+        self.retryable = retryable
+        self.user_action_required = user_action_required
+        self.request_id = request_id
 
 
 @dataclass(frozen=True)
@@ -97,6 +103,9 @@ class NewsClient:
                 message=str(error.get("message") or "API request failed"),
                 status_code=response.status_code,
                 details=dict(error.get("details") or {}),
+                retryable=bool(error.get("retryable")),
+                user_action_required=bool(error.get("user_action_required")),
+                request_id=_optional_str(error.get("request_id") or payload.get("request_id")),
             )
         return dict(payload.get("data") or {})
 
@@ -256,6 +265,10 @@ def _quote_path_segment(value: str) -> str:
 
 def _json_bytes(payload: dict[str, Any] | None) -> bytes:
     return json.dumps(payload or {}, ensure_ascii=False).encode("utf-8")
+
+
+def _optional_str(value: Any) -> str | None:
+    return str(value) if value is not None else None
 
 
 def _default_opener(request: urllib.request.Request, timeout: int | None):

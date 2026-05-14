@@ -126,6 +126,7 @@ def test_run_inspection_replay_reads_real_artifacts_and_redacts(tmp_path) -> Non
         "status": "succeeded",
         "artifacts": {
             "events": "events.jsonl",
+            "step_results": "step_results.json",
             "report_json": "report.json",
             "report_markdown": "report.md",
             "missing": "missing.json",
@@ -141,12 +142,20 @@ def test_run_inspection_replay_reads_real_artifacts_and_redacts(tmp_path) -> Non
         encoding="utf-8",
     )
     (run_dir / "report.md").write_text("# Report\n", encoding="utf-8")
+    (run_dir / "step_results.json").write_text(
+        json.dumps({"write": {"status": "succeeded", "outputs": {"report": "ok"}}}),
+        encoding="utf-8",
+    )
 
     result = RunInspectionService(tmp_path).replay_run("run-1")
 
     payload = result.to_dict()
     artifacts = {artifact["artifact_key"]: artifact for artifact in payload["artifacts"]}
     assert payload["event_count"] == 1
+    assert payload["step_result_count"] == 1
+    assert payload["step_results"]["write"]["status"] == "succeeded"
+    assert payload["integrity"]["valid"] is False
+    assert "missing" in payload["integrity"]["missing_artifact_files"]
     assert payload["events"][0]["payload"]["token"] == "[redacted]"
     assert artifacts["report_json"]["content"]["api_key"] == "[redacted]"
     assert artifacts["report_markdown"]["content"] == "# Report\n"

@@ -1,6 +1,8 @@
 import json
 from datetime import UTC, datetime
 
+from core.framework.run_result import RunResult
+from core.framework.specs import WorkflowStatus
 from interfaces.services.approval_service import ApprovalApplicationService
 from interfaces.services.artifact_service import ArtifactInspectionService
 from interfaces.services.entity_service import EntityTrackingApplicationService
@@ -86,6 +88,52 @@ def test_mcp_catalog_lists_tools_without_calling_factories() -> None:
     assert "news.trend_analysis_prompt" in prompt_names
 
 
+def test_mcp_capability_manifest_describes_tools_resources_and_prompts() -> None:
+    service = MCPApplicationService(
+        worker_service_factory=_raising_factory,
+        run_service_factory=_raising_factory,
+        report_service_factory=_raising_factory,
+        source_service_factory=_raising_factory,
+        entity_service_factory=_raising_factory,
+        subscription_service_factory=_raising_factory,
+        memory_service_factory=_raising_factory,
+        diagnostic_service_factory=_raising_factory,
+        approval_service_factory=_raising_factory,
+        run_inspection_service_factory=_raising_factory,
+        artifact_service_factory=_raising_factory,
+        storage_service_factory=_raising_factory,
+    )
+
+    manifest = service.capability_manifest().to_dict()
+    capabilities = {capability["name"]: capability for capability in manifest["capabilities"]}
+
+    assert manifest["version"] == "1.0"
+    assert manifest["schema_version"] == "newsroom.mcp_capability_manifest.v1"
+    assert manifest["server_name"] == "NewsRoom"
+    assert manifest["boundary"] == "inbound_mcp_server"
+    assert manifest["capability_count"] == len(manifest["capabilities"])
+    assert all(capability["boundary"] == "inbound_mcp_server" for capability in capabilities.values())
+    assert all(capability["category"] for capability in capabilities.values())
+    assert all(capability["permission"] for capability in capabilities.values())
+    assert capabilities["news.report.latest"]["kind"] == "tool"
+    assert capabilities["news.report.latest"]["read_only"] is True
+    assert capabilities["news.report.latest"]["permission"] == "reports:read"
+    assert capabilities["news.report.latest"]["category"] == "reports"
+    assert capabilities["news.daily.run"]["read_only"] is False
+    assert capabilities["news.daily.run"]["permission"] == "runs:create"
+    assert capabilities["news.daily.run"]["category"] == "runs"
+    assert capabilities["news.report.publish"]["requires_approval"] is True
+    assert capabilities["news.report.publish"]["risk_level"] == "high"
+    assert capabilities["news://runs/{run_id}/manifest"]["kind"] == "resource"
+    assert capabilities["news://runs/{run_id}/manifest"]["read_only"] is True
+    assert capabilities["news://runs/{run_id}/manifest"]["permission"] == "runs:read"
+    assert capabilities["news://storage/metrics"]["permission"] == "storage:read"
+    assert capabilities["news://reports/latest"]["permission"] == "reports:read"
+    assert capabilities["news://runs/{run_id}/manifest"]["metadata"]["redacted"] is True
+    assert capabilities["news.evidence_audit"]["kind"] == "prompt"
+    assert capabilities["news.evidence_audit"]["permission"] == "mcp:read"
+
+
 def test_mcp_source_health_tool_calls_source_service() -> None:
     service = MCPApplicationService(source_service_factory=lambda: _FakeSourceService())
 
@@ -128,6 +176,62 @@ def test_mcp_source_arxiv_fetch_requires_query() -> None:
     assert result.success is False
     assert result.error_type == "ValueError"
     assert "query is required" in result.error_message
+
+
+def test_mcp_source_github_releases_requires_repository() -> None:
+    service = MCPApplicationService(source_service_factory=lambda: _FakeSourceService())
+
+    result = service.call_tool("news.source.github.releases", {})
+
+    assert result.success is False
+    assert result.error_type == "ValueError"
+    assert "repository is required" in result.error_message
+
+
+def test_mcp_run_tools_use_configured_run_service_factory() -> None:
+    run_service = _FakeRunService()
+    worker_service = _FakeWorkerService()
+    service = MCPApplicationService(
+        run_service_factory=lambda: run_service,
+        worker_service_factory=lambda: worker_service,
+    )
+
+    daily = service.call_tool(
+        "news.daily.run",
+        {
+            "profile": "live-offline",
+            "topic": "AI policy",
+            "source_limit": 2,
+            "run_id": "daily-run",
+        },
+    )
+    topic = service.call_tool(
+        "news.topic.run",
+        {"topic": "Runtime", "source_limit": 1, "run_id": "topic-run"},
+    )
+    weekly = service.call_tool(
+        "news.weekly.run",
+        {"topic": "AI policy", "source_limit": 5, "run_id": "weekly-run"},
+    )
+    queued = service.call_tool(
+        "news.daily.enqueue",
+        {"topic": "AI policy", "source_limit": 3, "run_id": "queued-run"},
+    )
+
+    assert daily.success is True
+    assert topic.success is True
+    assert weekly.success is True
+    assert queued.success is True
+    assert [call["kind"] for call in run_service.calls] == ["daily", "daily", "weekly"]
+    assert run_service.calls[0]["topic"] == "AI policy"
+    assert run_service.calls[1]["topic"] == "Runtime"
+    assert run_service.calls[2]["run_id"] == "weekly-run"
+    assert worker_service.enqueue_calls[0]["run_id"] == "queued-run"
+    assert queued.data["task"]["status"] == "queued"
+    assert queued.data["task"]["queue_name"] == "news:queue:daily"
+    assert daily.data["run_id"] == "daily-run"
+    assert weekly.data["workflow_id"] == "weekly-intelligence"
+    assert queued.data["task"]["task_id"] == "task-1"
 
 
 def test_mcp_daily_and_weekly_run_use_real_runners(tmp_path, monkeypatch) -> None:
@@ -1040,6 +1144,31 @@ def _raising_factory():
     raise AssertionError("factory should not be called")
 
 
+class _FakeRunService:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def run_daily(self, **kwargs):
+        self.calls.append({"kind": "daily", **kwargs})
+        return RunResult(
+            run_id=kwargs.get("run_id") or "daily-run",
+            workflow_id="daily-intelligence-live",
+            workflow_version="1.0",
+            status=WorkflowStatus.SUCCEEDED,
+            output={"topic": kwargs.get("topic")},
+        )
+
+    def run_weekly(self, **kwargs):
+        self.calls.append({"kind": "weekly", **kwargs})
+        return RunResult(
+            run_id=kwargs.get("run_id") or "weekly-run",
+            workflow_id="weekly-intelligence",
+            workflow_version="1.0",
+            status=WorkflowStatus.SUCCEEDED,
+            output={"topic": kwargs.get("topic")},
+        )
+
+
 class _FakeSourceService:
     def source_health(self, *, enabled_only):
         return _FakeResult(
@@ -1129,6 +1258,26 @@ class _FakeWorkerService:
     def __init__(self) -> None:
         self.calls = []
         self.queue_calls = []
+        self.enqueue_calls = []
+
+    def enqueue_daily(self, **kwargs):
+        self.enqueue_calls.append(kwargs)
+        return _FakeResult(
+            {
+                "message_id": "msg-1",
+                "task": {
+                    "task_id": "task-1",
+                    "task_type": "daily_intelligence.run",
+                    "queue_name": kwargs["queue_name"],
+                    "status": "queued",
+                    "payload": {
+                        "topic": kwargs["topic"],
+                        "source_limit": kwargs["source_limit"],
+                        "run_id": kwargs["run_id"],
+                    },
+                },
+            }
+        )
 
     def list_worker_status(self, *, worker_id=None, stale_after_seconds=60):
         self.calls.append(

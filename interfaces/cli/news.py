@@ -4,7 +4,7 @@ import argparse
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Sequence
 
 from core.framework.specs import WorkflowStatus
 from core.framework.tools import ToolPolicy, build_builtin_tool_registry, build_tool_catalog
@@ -911,6 +911,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     runs_events_parser.add_argument("--limit", type=int, default=None, help="Maximum events")
     runs_events_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    runs_events_parser.add_argument("--sse", action="store_true", help="Print Server-Sent Events frames")
     runs_events_parser.set_defaults(handler=_runs_events)
 
     runs_replay_parser = runs_subparsers.add_parser("replay", help="Build a run replay bundle")
@@ -1016,6 +1017,17 @@ def build_parser() -> argparse.ArgumentParser:
     mcp_catalog_parser = mcp_subparsers.add_parser("catalog", help="Show MCP tools/resources/prompts")
     mcp_catalog_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     mcp_catalog_parser.set_defaults(handler=_mcp_catalog)
+
+    mcp_capabilities_parser = mcp_subparsers.add_parser(
+        "capabilities",
+        help="Show MCP capability summary",
+    )
+    mcp_capabilities_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print machine-readable JSON",
+    )
+    mcp_capabilities_parser.set_defaults(handler=_mcp_capabilities)
 
     mcp_call_parser = mcp_subparsers.add_parser("call", help="Call an MCP tool locally")
     mcp_call_parser.add_argument("tool_name", help="MCP tool name")
@@ -2416,12 +2428,45 @@ def _runs_events(args: argparse.Namespace) -> int:
     payload = result.to_dict()
     if args.json:
         print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    elif args.sse:
+        for frame in _run_events_sse_frames(payload):
+            print(frame, end="")
     else:
         print(f"run_id={payload['run_id']}")
         print(f"event_count={payload['event_count']}")
         for event in payload["events"]:
             print(f"- {event.get('event_type')} at {event.get('occurred_at')}")
     return 0
+
+
+def _run_events_sse_frames(payload: dict[str, Any]):
+    run_id = str(payload.get("run_id") or "")
+    for index, event in enumerate(payload.get("events") or []):
+        event_payload = event if isinstance(event, dict) else {}
+        event_type = str(event_payload.get("event_type") or "run.event")
+        yield _sse_frame(
+            event_type,
+            {
+                "run_id": run_id,
+                "sequence": index,
+                "event": event_payload,
+            },
+        )
+    yield _sse_frame(
+        "run.events.done",
+        {
+            "run_id": run_id,
+            "event_count": int(payload.get("event_count") or 0),
+            "events_path": payload.get("events_path"),
+        },
+    )
+
+
+def _sse_frame(event_name: str, data: dict[str, Any]) -> str:
+    return (
+        f"event: {event_name}\n"
+        f"data: {json.dumps(data, ensure_ascii=False, sort_keys=True)}\n\n"
+    )
 
 
 def _runs_replay(args: argparse.Namespace) -> int:
@@ -2613,7 +2658,7 @@ def _add_tool_policy_args(parser: argparse.ArgumentParser) -> None:
 
 
 def _tools_list(args: argparse.Namespace) -> int:
-    registry = build_builtin_tool_registry()
+    registry = build_builtin_tool_registry(include_dangerous_tools=bool(args.include_dangerous))
     catalog = build_tool_catalog(
         registry,
         agent_id="cli",
@@ -2633,7 +2678,7 @@ def _tools_list(args: argparse.Namespace) -> int:
 
 
 def _tools_schema(args: argparse.Namespace) -> int:
-    registry = build_builtin_tool_registry()
+    registry = build_builtin_tool_registry(include_dangerous_tools=bool(args.include_dangerous))
     policy = _tool_policy_from_args(args)
     tools = registry.export_schema_for_llm(args.agent_id, policy)
     payload = {
@@ -2676,6 +2721,21 @@ def _mcp_catalog(args: argparse.Namespace) -> int:
         print(f"prompts={len(catalog['prompts'])}")
         for prompt in catalog["prompts"]:
             print(f"- {prompt['name']}: {prompt['description']}")
+    return 0
+
+
+def _mcp_capabilities(args: argparse.Namespace) -> int:
+    manifest = MCPApplicationService().capability_manifest().to_dict()
+    if args.json:
+        print(json.dumps(manifest, ensure_ascii=False, sort_keys=True))
+    else:
+        print(f"version={manifest['version']}")
+        print(f"capabilities={manifest['capability_count']}")
+        for capability in manifest["capabilities"]:
+            print(
+                f"- {capability['kind']} {capability['name']} "
+                f"permission={capability['permission']} read_only={str(capability['read_only']).lower()}"
+            )
     return 0
 
 

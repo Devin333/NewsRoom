@@ -28,12 +28,22 @@ def handle_jsonrpc_request(
                 request_id,
                 {
                     "serverInfo": {"name": "NewsRoom", "version": "0.1.0"},
-                    "capabilities": {"tools": {}, "resources": {}, "prompts": {}},
+                    "capabilities": {
+                        "tools": {},
+                        "resources": {},
+                        "prompts": {},
+                        "capabilityManifest": {
+                            "version": "1.0",
+                            "method": "capabilities/list",
+                        },
+                    },
                 },
             )
         if method == "tools/list":
             catalog = service.catalog().to_dict()
             return _success(request_id, {"tools": catalog["tools"]})
+        if method == "capabilities/list":
+            return _success(request_id, service.capability_manifest().to_dict())
         if method == "resources/list":
             catalog = service.catalog().to_dict()
             return _success(request_id, {"resources": catalog["resources"]})

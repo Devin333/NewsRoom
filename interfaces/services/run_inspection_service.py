@@ -111,6 +111,8 @@ class RunReplayResult:
     events: list[dict[str, Any]]
     events_path: str | None
     artifacts: list[RunReplayArtifact]
+    step_results: dict[str, Any]
+    integrity: dict[str, Any]
     events_error: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -124,6 +126,9 @@ class RunReplayResult:
             "events_error": self.events_error,
             "artifact_count": len(self.artifacts),
             "artifacts": [artifact.to_dict() for artifact in self.artifacts],
+            "step_result_count": len(self.step_results),
+            "step_results": to_json_safe(self.step_results),
+            "integrity": to_json_safe(self.integrity),
         }
 
 
@@ -307,6 +312,8 @@ def _replay_result_from_content_bundle(bundle: WorkflowReplayContentBundle) -> R
             _replay_artifact_from_content_record(artifact)
             for artifact in bundle.artifacts
         ],
+        step_results=dict(bundle.step_results),
+        integrity=dict(bundle.integrity),
     )
 
 

@@ -1,4 +1,6 @@
+import json
 from datetime import UTC, datetime
+from hashlib import sha256
 
 import pytest
 
@@ -177,6 +179,48 @@ def test_storage_service_uses_artifact_index_factory_by_default(tmp_path, monkey
 
     assert result.to_dict()["delete_count"] == 1
     assert fake_index.list_all_called is True
+
+
+def test_storage_service_diagnoses_manifest_artifact_index_consistency(tmp_path) -> None:
+    run_dir = tmp_path / "run-1"
+    run_dir.mkdir()
+    (run_dir / "output.json").write_text('{"ok": true}', encoding="utf-8")
+    (run_dir / "metrics.json").write_text('{"count": 1}', encoding="utf-8")
+    (run_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "run_id": "run-1",
+                "artifacts": {
+                    "output": "output.json",
+                    "metrics": "metrics.json",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    artifact_index = LocalJsonArtifactIndexStore(tmp_path / "_records" / "artifact_index")
+    artifact_index.index_artifact(
+        ArtifactRef(
+            artifact_id="output",
+            run_id="run-1",
+            artifact_type="output",
+            path="output.json",
+            content_type="application/json",
+            size_bytes=12,
+            checksum=sha256(b"different").hexdigest(),
+            created_at=datetime(2026, 5, 11, tzinfo=UTC),
+        )
+    )
+
+    result = StorageApplicationService(tmp_path).diagnose_artifact_index("run-1")
+    payload = result.to_dict()
+
+    assert payload["valid"] is False
+    assert payload["manifest_artifact_count"] == 2
+    assert payload["index_artifact_count"] == 1
+    assert payload["missing_index_artifacts"] == ["metrics"]
+    assert payload["missing_artifact_files"] == []
+    assert payload["checksum_mismatches"] == ["output"]
 
 
 def test_storage_service_uses_metrics_collector_factory_by_default(tmp_path, monkeypatch) -> None:

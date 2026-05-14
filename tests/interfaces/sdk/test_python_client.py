@@ -8,7 +8,14 @@ def test_news_client_posts_daily_run_with_api_envelope() -> None:
     opener = _FakeOpener(
         {
             "success": True,
-            "data": {"run_id": "run-1", "status": "queued"},
+            "data": {
+                "run_id": "run-1",
+                "task_id": "task-1",
+                "status": "queued",
+                "task_status": "queued",
+                "run_status": None,
+                "report_status": None,
+            },
             "request_id": "req-1",
             "schema_version": "1.0",
         }
@@ -18,6 +25,9 @@ def test_news_client_posts_daily_run_with_api_envelope() -> None:
     result = client.runs.create_daily(topic="AI policy", source_limit=2)
 
     assert result["status"] == "queued"
+    assert result["task_status"] == "queued"
+    assert result["run_status"] is None
+    assert result["report_status"] is None
     assert opener.requests[0].full_url == "https://news.example/api/v1/runs"
     assert opener.requests[0].headers["Authorization"] == "Bearer token"
     assert json.loads(opener.requests[0].data.decode("utf-8"))["topic"] == "AI policy"
@@ -65,6 +75,9 @@ def test_news_client_raises_typed_api_error() -> None:
                     "code": "report_not_found",
                     "message": "missing",
                     "details": {"report_id": "missing"},
+                    "retryable": False,
+                    "user_action_required": True,
+                    "request_id": "req-error",
                 },
                 "request_id": "req-1",
                 "schema_version": "1.0",
@@ -79,6 +92,41 @@ def test_news_client_raises_typed_api_error() -> None:
         assert exc.code == "report_not_found"
         assert exc.status_code == 404
         assert exc.details == {"report_id": "missing"}
+        assert exc.retryable is False
+        assert exc.user_action_required is True
+        assert exc.request_id == "req-error"
+    else:
+        raise AssertionError("NewsApiError was not raised")
+
+
+def test_news_client_raises_error_from_success_false_envelope() -> None:
+    client = NewsClient(
+        "https://news.example",
+        opener=_FakeOpener(
+            {
+                "success": False,
+                "error": {
+                    "code": "invalid_request",
+                    "message": "invalid source_limit",
+                    "details": {"field": "source_limit"},
+                    "retryable": True,
+                    "user_action_required": False,
+                },
+                "request_id": "req-envelope",
+                "schema_version": "1.0",
+            }
+        ),
+    )
+
+    try:
+        client.runs.create_daily(source_limit=0)
+    except NewsApiError as exc:
+        assert exc.code == "invalid_request"
+        assert exc.status_code == 200
+        assert exc.details == {"field": "source_limit"}
+        assert exc.retryable is True
+        assert exc.user_action_required is False
+        assert exc.request_id == "req-envelope"
     else:
         raise AssertionError("NewsApiError was not raised")
 

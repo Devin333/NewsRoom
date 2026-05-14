@@ -15,6 +15,26 @@ def test_stdio_handles_tools_list() -> None:
     assert "news.queue.status" in tool_names
 
 
+def test_stdio_handles_capabilities_list() -> None:
+    response = handle_jsonrpc_request(
+        {"jsonrpc": "2.0", "id": "cap-1", "method": "capabilities/list"}
+    )
+
+    assert response["id"] == "cap-1"
+    assert response["result"]["version"] == "1.0"
+    assert response["result"]["schema_version"] == "newsroom.mcp_capability_manifest.v1"
+    assert response["result"]["boundary"] == "inbound_mcp_server"
+    capabilities = {capability["name"]: capability for capability in response["result"]["capabilities"]}
+    assert capabilities["news.report.latest"]["permission"] == "reports:read"
+    assert capabilities["news.report.latest"]["read_only"] is True
+    assert capabilities["news.report.latest"]["category"] == "reports"
+    assert capabilities["news.report.latest"]["boundary"] == "inbound_mcp_server"
+    assert capabilities["news.report.publish"]["requires_approval"] is True
+    assert capabilities["news://reports/latest"]["kind"] == "resource"
+    assert capabilities["news://reports/latest"]["permission"] == "reports:read"
+    assert capabilities["news.evidence_audit"]["kind"] == "prompt"
+
+
 def test_stdio_handles_tool_call() -> None:
     service = _FakeMCPService()
 

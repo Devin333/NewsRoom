@@ -7,6 +7,9 @@ from core.framework.workers import (
     TaskStatus,
     WorkerStatus,
 )
+from core.framework import WorkflowRunner
+from core.framework.specs import StepSpec, WorkflowSpec, WorkflowStatus
+from core.framework.workflow import FunctionStepRegistry, WorkflowRunInspector
 from interfaces.services.worker_service import (
     DEFAULT_DAILY_QUEUE,
     DEFAULT_DEAD_LETTER_QUEUE,
@@ -196,6 +199,40 @@ def test_worker_service_run_once_reclaims_stale_task_when_no_new_task() -> None:
     assert queue.acked == [(DEFAULT_DAILY_QUEUE, "1-0")]
 
 
+def test_worker_service_reclaims_stale_workflow_task_and_persists_valid_run(tmp_path) -> None:
+    task = Task(
+        task_type="daily_intelligence.run",
+        payload={"topic": "AI", "run_id": "worker-reclaimed-run"},
+        task_id="task-reclaimed",
+    )
+    queue = _FakeQueue(reclaimed=LeasedTask(DEFAULT_DAILY_QUEUE, "9-0", task))
+    handler = _WorkflowRunHandler(tmp_path)
+    service = WorkerApplicationService(queue=queue, handlers={handler.task_type: handler})
+
+    result = service.run_once(
+        worker_id="worker-reclaimer",
+        block_ms=10,
+        reclaim_stale_ms=60_000,
+    )
+
+    inspection = WorkflowRunInspector(tmp_path).inspect_run("worker-reclaimed-run", strict=True)
+    replay = WorkflowRunInspector(tmp_path).build_replay_bundle(
+        "worker-reclaimed-run",
+        strict=True,
+    )
+    assert result.processed is True
+    assert result.reclaimed is True
+    assert result.success is True
+    assert result.workflow_run_id == "worker-reclaimed-run"
+    assert handler.calls == [task.task_id]
+    assert queue.reclaim_calls == [("worker-reclaimer", [DEFAULT_DAILY_QUEUE], 60_000)]
+    assert queue.acked == [(DEFAULT_DAILY_QUEUE, "9-0")]
+    assert inspection.status == "succeeded"
+    assert inspection.integrity.valid is True
+    assert replay.integrity["valid"] is True
+    assert replay.output["report"] == "Reclaimed: AI"
+
+
 def test_worker_service_queue_status_uses_default_queues() -> None:
     queue = _FakeQueue()
     service = WorkerApplicationService(queue=queue, handlers={})
@@ -338,6 +375,56 @@ class _FakeHandler:
             workflow_run_id="workflow-1" if self.success else None,
             error_type=None if self.success else "FakeFailure",
             error_message=None if self.success else "failed",
+        )
+
+
+class _WorkflowRunHandler:
+    task_type = "daily_intelligence.run"
+
+    def __init__(self, artifact_root) -> None:
+        self.artifact_root = artifact_root
+        self.calls = []
+
+    def handle(self, task):
+        self.calls.append(task.task_id)
+        registry = FunctionStepRegistry()
+        registry.register(
+            "worker.write",
+            lambda buffer: {"report": f"Reclaimed: {buffer.read('request')['topic']}"},
+        )
+        runner = WorkflowRunner(artifact_root=self.artifact_root, function_registry=registry)
+        result = runner.run(
+            WorkflowSpec(
+                workflow_id="worker-reclaimed",
+                name="Worker Reclaimed",
+                version="1.0",
+                start_step_id="write",
+                steps=[
+                    StepSpec(
+                        step_id="write",
+                        implementation="worker.write",
+                        read_keys=["request"],
+                        write_keys=["report"],
+                        required_output_keys=["report"],
+                    )
+                ],
+            ),
+            {"topic": task.payload["topic"]},
+            profile="test",
+            run_id=task.payload["run_id"],
+        )
+        return TaskResult(
+            task_id=task.task_id,
+            success=result.status == WorkflowStatus.SUCCEEDED,
+            status=(
+                TaskStatus.SUCCEEDED
+                if result.status == WorkflowStatus.SUCCEEDED
+                else TaskStatus.FAILED
+            ),
+            workflow_run_id=result.run_id,
+            output={"status": result.status.value},
+            error_type=result.error["error_type"] if result.error else None,
+            error_message=result.error["message"] if result.error else None,
         )
 
 

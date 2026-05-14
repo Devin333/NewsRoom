@@ -43,6 +43,20 @@ def test_news_cli_runs_events_json(monkeypatch, capsys) -> None:
     assert payload["events"][0]["event_type"] == "workflow_started"
 
 
+def test_news_cli_runs_events_sse(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(news_cli, "RunInspectionService", _FakeRunInspectionService)
+
+    exit_code = news_cli.main(["runs", "events", "run-1", "--limit", "1", "--sse"])
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "event: workflow_started\n" in captured.out
+    assert "event: run.events.done\n" in captured.out
+    assert '"sequence": 0' in captured.out
+    assert '"event_count": 1' in captured.out
+
+
 def test_news_cli_runs_events_invalid_limit_returns_error(monkeypatch, capsys) -> None:
     monkeypatch.setattr(news_cli, "RunInspectionService", _FakeRunInspectionService)
 
@@ -74,6 +88,9 @@ def test_news_cli_runs_replay_json_reads_real_files(tmp_path, capsys) -> None:
     assert exit_code == 0
     assert payload["run_id"] == "run-1"
     assert payload["event_count"] == 1
+    assert payload["step_result_count"] == 1
+    assert payload["step_results"]["write"]["status"] == "succeeded"
+    assert payload["integrity"]["valid"] is False
     assert artifacts["report_json"]["content"]["password"] == "[redacted]"
 
 
@@ -86,7 +103,7 @@ def test_news_cli_runs_replay_text_reads_real_files(tmp_path, capsys) -> None:
 
     assert exit_code == 0
     assert "run_id=run-1" in captured.out
-    assert "artifact_count=3" in captured.out
+    assert "artifact_count=4" in captured.out
     assert "- report_json path=report.json" in captured.out
 
 
@@ -297,6 +314,7 @@ def _write_replay_run(root) -> None:
         "status": "succeeded",
         "artifacts": {
             "events": "events.jsonl",
+            "step_results": "step_results.json",
             "report_json": "report.json",
             "report_markdown": "report.md",
         },
@@ -308,6 +326,10 @@ def _write_replay_run(root) -> None:
     )
     (run_dir / "report.json").write_text(
         json.dumps({"title": "Report", "password": "hidden"}),
+        encoding="utf-8",
+    )
+    (run_dir / "step_results.json").write_text(
+        json.dumps({"write": {"status": "succeeded", "outputs": {"report": "ok"}}}),
         encoding="utf-8",
     )
     (run_dir / "report.md").write_text("# Report\n", encoding="utf-8")

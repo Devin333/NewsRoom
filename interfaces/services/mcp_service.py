@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
 from datetime import UTC, datetime
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from interfaces.mcp.models import (
     MCPCatalog,
+    MCPCapability,
+    MCPCapabilityManifest,
     MCPPrompt,
     MCPPromptGetResult,
     MCPResource,
@@ -19,6 +21,7 @@ from storage.lifecycle import RetentionPolicy
 
 DEFAULT_DAILY_QUEUE = "news:queue:daily"
 DEFAULT_MEMORY_COLLECTION = "report_sections"
+MCP_CAPABILITY_MANIFEST_VERSION = "1.0"
 LATEST_REPORT_RESOURCE_URI = "news://reports/latest"
 REPORT_RESOURCE_TEMPLATE = "news://reports/{report_id}"
 REPORT_RESOURCE_PREFIX = "news://reports/"
@@ -95,6 +98,13 @@ class MCPApplicationService:
 
     def catalog(self) -> MCPCatalog:
         return MCPCatalog(tools=_tools(), resources=_resources(), prompts=_prompts())
+
+    def capability_manifest(self) -> MCPCapabilityManifest:
+        catalog = self.catalog()
+        return MCPCapabilityManifest(
+            version=MCP_CAPABILITY_MANIFEST_VERSION,
+            capabilities=_capabilities_from_catalog(catalog),
+        )
 
     def get_prompt(self, name: str, arguments: dict[str, Any] | None = None) -> MCPPromptGetResult:
         args = arguments or {}
@@ -1804,6 +1814,172 @@ def _resources() -> list[MCPResource]:
             description="Current Redis worker queue status.",
         ),
     ]
+
+
+def _capabilities_from_catalog(catalog: MCPCatalog) -> list[MCPCapability]:
+    capabilities: list[MCPCapability] = []
+    capabilities.extend(_tool_capability(tool) for tool in catalog.tools)
+    capabilities.extend(_resource_capability(resource) for resource in catalog.resources)
+    capabilities.extend(_prompt_capability(prompt) for prompt in catalog.prompts)
+    return capabilities
+
+
+def _tool_capability(tool: MCPTool) -> MCPCapability:
+    read_only = _tool_is_read_only(tool.name)
+    return MCPCapability(
+        name=tool.name,
+        kind="tool",
+        title=tool.title,
+        description=tool.description,
+        permission=_tool_permission(tool.name),
+        read_only=read_only,
+        category=_mcp_category(tool.name),
+        risk_level=_tool_risk_level(tool.name),
+        requires_approval=_tool_requires_approval(tool.name),
+        input_schema=tool.input_schema,
+        metadata={"side_effect": "none" if read_only else "application_service_write"},
+    )
+
+
+def _resource_capability(resource: MCPResource) -> MCPCapability:
+    return MCPCapability(
+        name=resource.uri,
+        kind="resource",
+        title=resource.name,
+        description=resource.description,
+        permission=_resource_permission(resource.uri),
+        read_only=True,
+        category=_mcp_category(resource.uri),
+        risk_level="low",
+        uri_template=resource.uri,
+        output_mime_type=resource.mime_type,
+        metadata={"redacted": True},
+    )
+
+
+def _prompt_capability(prompt: MCPPrompt) -> MCPCapability:
+    return MCPCapability(
+        name=prompt.name,
+        kind="prompt",
+        title=prompt.name,
+        description=prompt.description,
+        permission="mcp:read",
+        read_only=True,
+        category=_mcp_category(prompt.name),
+        risk_level="low",
+        input_schema=prompt.arguments_schema,
+        metadata={"side_effect": "none"},
+    )
+
+
+def _tool_permission(tool_name: str) -> str:
+    if tool_name.startswith("news.report.") and tool_name.endswith(".publish"):
+        return "reports:publish"
+    if tool_name in {"news.report.request_review"}:
+        return "approvals:decide"
+    if tool_name.startswith("news.approval."):
+        return "approvals:decide" if not tool_name.endswith((".list", ".get")) else "approvals:read"
+    if tool_name.startswith("news.daily.") or tool_name.startswith("news.topic.") or tool_name.startswith(
+        "news.weekly."
+    ):
+        return "runs:create" if not tool_name.endswith(".enqueue") else "runs:create"
+    if tool_name.startswith("news.run."):
+        return "runs:read"
+    if tool_name.startswith("news.report."):
+        return "reports:read"
+    if tool_name.startswith("news.source."):
+        return "sources:read"
+    if tool_name.startswith("news.memory."):
+        return "memory:search"
+    if tool_name.startswith("news.entity."):
+        return "entities:read" if _tool_is_read_only(tool_name) else "entities:write"
+    if tool_name.startswith("news.subscription."):
+        return "subscriptions:read" if _tool_is_read_only(tool_name) else "subscriptions:write"
+    if tool_name.startswith("news.storage."):
+        return "storage:read"
+    if tool_name.startswith("news.worker.") or tool_name.startswith("news.queue."):
+        return "workers:read"
+    if tool_name == "news.diagnose":
+        return "admin:diagnose"
+    return "mcp:read"
+
+
+def _resource_permission(uri: str) -> str:
+    if uri.startswith("news://reports/"):
+        return "reports:read"
+    if uri.startswith("news://runs/") or uri.startswith("news://artifacts/"):
+        return "runs:read"
+    if uri.startswith("news://memory/"):
+        return "memory:search"
+    if uri.startswith("news://storage/"):
+        return "storage:read"
+    if uri.startswith("news://sources/"):
+        return "sources:read"
+    if uri.startswith("news://workers") or uri.startswith("news://queues"):
+        return "workers:read"
+    return "mcp:read"
+
+
+def _mcp_category(name: str) -> str:
+    value = name.removeprefix("news.").removeprefix("news://")
+    if value.startswith("daily.") or value.startswith("weekly.") or value.startswith("topic."):
+        return "runs"
+    if value.startswith("run.") or value.startswith("runs/") or value.startswith("artifacts/"):
+        return "runs"
+    if value.startswith("report.") or value.startswith("reports/"):
+        return "reports"
+    if value.startswith("source.") or value.startswith("sources/"):
+        return "sources"
+    if value.startswith("memory.") or value.startswith("memory/"):
+        return "memory"
+    if value.startswith("storage.") or value.startswith("storage/"):
+        return "storage"
+    if value.startswith("worker.") or value.startswith("workers"):
+        return "workers"
+    if value.startswith("queue.") or value.startswith("queues"):
+        return "workers"
+    if value.startswith("approval."):
+        return "approvals"
+    if value.startswith("entity."):
+        return "entities"
+    if value.startswith("subscription."):
+        return "subscriptions"
+    if value.startswith("diagnose"):
+        return "diagnostics"
+    return "mcp"
+
+
+def _tool_is_read_only(tool_name: str) -> bool:
+    write_markers = (
+        ".enqueue",
+        ".run",
+        ".create",
+        ".enable",
+        ".disable",
+        ".delete",
+        ".reindex",
+        ".bootstrap",
+        ".request_review",
+        ".publish",
+        ".submit",
+        ".approve",
+        ".reject",
+        ".modify",
+        ".submit_decision",
+    )
+    return not any(tool_name.endswith(marker) for marker in write_markers)
+
+
+def _tool_requires_approval(tool_name: str) -> bool:
+    return tool_name in {"news.report.publish", "news.report.request_review"}
+
+
+def _tool_risk_level(tool_name: str) -> Literal["low", "medium", "high"]:
+    if _tool_requires_approval(tool_name):
+        return "high"
+    if _tool_is_read_only(tool_name):
+        return "low"
+    return "medium"
 
 
 def _prompts() -> list[MCPPrompt]:

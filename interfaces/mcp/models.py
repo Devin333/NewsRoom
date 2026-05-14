@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
+
+
+MCP_CAPABILITY_MANIFEST_SCHEMA_VERSION = "newsroom.mcp_capability_manifest.v1"
+INBOUND_MCP_BOUNDARY = "inbound_mcp_server"
 
 
 @dataclass(frozen=True)
@@ -47,6 +51,67 @@ class MCPPrompt:
             "name": self.name,
             "description": self.description,
             "arguments_schema": dict(self.arguments_schema),
+        }
+
+
+@dataclass(frozen=True)
+class MCPCapability:
+    name: str
+    kind: Literal["tool", "resource", "prompt"]
+    title: str
+    description: str
+    permission: str
+    read_only: bool
+    category: str = "mcp"
+    boundary: Literal["inbound_mcp_server"] = INBOUND_MCP_BOUNDARY
+    risk_level: Literal["low", "medium", "high"] = "low"
+    requires_approval: bool = False
+    uri_template: str | None = None
+    input_schema: dict[str, Any] = field(default_factory=dict)
+    output_mime_type: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "kind": self.kind,
+            "title": self.title,
+            "description": self.description,
+            "permission": self.permission,
+            "read_only": self.read_only,
+            "category": self.category,
+            "boundary": self.boundary,
+            "risk_level": self.risk_level,
+            "requires_approval": self.requires_approval,
+            "uri_template": self.uri_template,
+            "input_schema": dict(self.input_schema),
+            "output_mime_type": self.output_mime_type,
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class MCPCapabilityManifest:
+    version: str
+    capabilities: list[MCPCapability]
+    server_name: str = "NewsRoom"
+    transport: str = "stdio/http"
+    auth_required: bool = True
+    default_permission: str = "mcp:read"
+    schema_version: str = MCP_CAPABILITY_MANIFEST_SCHEMA_VERSION
+    boundary: Literal["inbound_mcp_server"] = INBOUND_MCP_BOUNDARY
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "version": self.version,
+            "server_name": self.server_name,
+            "transport": self.transport,
+            "auth_required": self.auth_required,
+            "default_permission": self.default_permission,
+            "boundary": self.boundary,
+            "capability_count": len(self.capabilities),
+            "capabilities": [capability.to_dict() for capability in self.capabilities],
         }
 
 

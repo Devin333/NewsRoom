@@ -35,6 +35,14 @@ def test_weekly_run_api_aggregates_real_daily_artifact(tmp_path, monkeypatch) ->
     assert payload["data"]["run_id"] == "api-weekly-run"
     assert payload["data"]["workflow_id"] == "weekly-intelligence"
     assert payload["data"]["status"] == "succeeded"
+    assert payload["data"]["task_status"] is None
+    assert payload["data"]["run_status"] == "succeeded"
+    assert payload["data"]["report_status"] == "final"
+    assert payload["data"]["report_id"] == "api-weekly-run:final"
+    assert payload["data"]["manifest_ref"]["artifact_id"] == "manifest"
+    assert payload["data"]["manifest_ref"]["run_id"] == "api-weekly-run"
+    artifact_ids = {artifact["artifact_id"] for artifact in payload["data"]["artifact_refs"]}
+    assert {"manifest", "report_json", "report_markdown"}.issubset(artifact_ids)
     assert payload["data"]["output"]["weekly_metrics"]["source_report_count"] == 1
 
 
