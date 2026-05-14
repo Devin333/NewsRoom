@@ -114,6 +114,11 @@ def test_postgres_repository_saves_source_evidence_claim_and_quality_records() -
             source_id="source",
             title="Title",
             url="https://example.com/a",
+            canonical_url="https://example.com/canonical",
+            published_at=datetime(2026, 5, 11, 1, 0, tzinfo=UTC),
+            fetched_at=datetime(2026, 5, 11, 1, 5, tzinfo=UTC),
+            raw_artifact_id="artifact-raw-1",
+            metadata={"topic": "ai"},
         )
     )
     repository.save_evidence_item(
@@ -125,6 +130,10 @@ def test_postgres_repository_saves_source_evidence_claim_and_quality_records() -
             source_urls=["https://example.com/a"],
             source_item_ids=["raw-1"],
             confidence=0.9,
+            category="policy",
+            published_at=datetime(2026, 5, 11, 1, 0, tzinfo=UTC),
+            lineage_json={"source_item_id": "raw-1"},
+            metadata={"topic": "ai"},
         )
     )
     repository.save_claim(
@@ -152,11 +161,24 @@ def test_postgres_repository_saves_source_evidence_claim_and_quality_records() -
     )
 
     assert "INSERT INTO source_items" in connection.calls[0][0]
+    assert "canonical_url" in connection.calls[0][0]
+    assert "metadata_json" in connection.calls[0][0]
     assert connection.calls[0][1][0] == "raw-1"
+    assert connection.calls[0][1][5] == "https://example.com/canonical"
+    assert connection.calls[0][1][8] == "artifact-raw-1"
+    assert connection.calls[0][1][10] == '{"topic": "ai"}'
     assert "INSERT INTO evidence_items" in connection.calls[1][0]
+    assert "source_urls" in connection.calls[1][0]
+    assert "lineage_json" in connection.calls[1][0]
     assert connection.calls[1][1][0] == "ev-1"
     assert connection.calls[1][1][2] == "https://example.com/a"
+    assert connection.calls[1][1][3] == '["https://example.com/a"]'
+    assert connection.calls[1][1][4] == '["raw-1"]'
+    assert connection.calls[1][1][8] == "policy"
+    assert connection.calls[1][1][10] == '{"source_item_id": "raw-1"}'
+    assert connection.calls[1][1][12] == '{"topic": "ai"}'
     assert "INSERT INTO claims" in connection.calls[2][0]
+    assert "updated_at = now()" in connection.calls[2][0]
     assert connection.calls[2][1][2] == "accepted"
     assert "DELETE FROM claim_supports" in connection.calls[3][0]
     assert "INSERT INTO claim_supports" in connection.calls[4][0]
@@ -164,6 +186,7 @@ def test_postgres_repository_saves_source_evidence_claim_and_quality_records() -
     assert connection.calls[4][1][3] == "ev-1"
     assert connection.calls[4][1][5] == 0.8
     assert "INSERT INTO quality_results" in connection.calls[5][0]
+    assert "updated_at = now()" in connection.calls[5][0]
     assert connection.calls[5][1][0] == "run-1:quality"
     assert connection.calls[5][1][6] == 1.0
 

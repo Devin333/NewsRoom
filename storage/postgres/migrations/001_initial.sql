@@ -4,11 +4,13 @@ CREATE TABLE IF NOT EXISTS workflow_runs (
     workflow_version TEXT NOT NULL,
     status TEXT NOT NULL,
     profile TEXT NOT NULL,
+    topic TEXT,
     artifact_dir TEXT,
     manifest_path TEXT,
     events_path TEXT,
     error JSONB NOT NULL DEFAULT '{}'::jsonb,
     metrics JSONB NOT NULL DEFAULT '{}'::jsonb,
+    metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -23,6 +25,7 @@ CREATE TABLE IF NOT EXISTS reports (
     quality_score DOUBLE PRECISION,
     citation_coverage_score DOUBLE PRECISION,
     manifest_path TEXT,
+    metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -107,18 +110,32 @@ CREATE TABLE IF NOT EXISTS source_items (
     source_id TEXT NOT NULL,
     title TEXT NOT NULL,
     url TEXT NOT NULL,
+    canonical_url TEXT,
+    published_at TIMESTAMPTZ,
+    fetched_at TIMESTAMPTZ,
+    raw_artifact_id TEXT,
     payload JSONB NOT NULL DEFAULT '{}'::jsonb,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS evidence_items (
     evidence_id TEXT PRIMARY KEY,
     run_id TEXT REFERENCES workflow_runs(run_id) ON DELETE CASCADE,
     source_url TEXT NOT NULL,
+    source_urls JSONB NOT NULL DEFAULT '[]'::jsonb,
+    source_item_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
     title TEXT NOT NULL,
+    summary TEXT NOT NULL DEFAULT '',
     confidence DOUBLE PRECISION,
+    category TEXT NOT NULL DEFAULT 'news',
+    published_at TIMESTAMPTZ,
+    lineage_json JSONB NOT NULL DEFAULT '{}'::jsonb,
     payload JSONB NOT NULL DEFAULT '{}'::jsonb,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS claims (
@@ -127,7 +144,8 @@ CREATE TABLE IF NOT EXISTS claims (
     status TEXT NOT NULL,
     text TEXT NOT NULL,
     payload JSONB NOT NULL DEFAULT '{}'::jsonb,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX IF NOT EXISTS idx_claims_run
@@ -161,7 +179,8 @@ CREATE TABLE IF NOT EXISTS quality_results (
     claim_support_score DOUBLE PRECISION,
     evidence_alignment_score DOUBLE PRECISION,
     payload JSONB NOT NULL DEFAULT '{}'::jsonb,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX IF NOT EXISTS idx_quality_results_run
@@ -269,4 +288,85 @@ CREATE INDEX IF NOT EXISTS idx_source_health_status
     ON source_health(status);
 
 CREATE INDEX IF NOT EXISTS idx_workflow_runs_finished ON workflow_runs(updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_workflow_runs_workflow_id ON workflow_runs(workflow_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_workflow_runs_status ON workflow_runs(status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_workflow_runs_topic ON workflow_runs(topic, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_workflow_runs_metrics_gin ON workflow_runs USING GIN(metrics);
 CREATE INDEX IF NOT EXISTS idx_reports_run_id ON reports(run_id);
+CREATE INDEX IF NOT EXISTS idx_reports_status ON reports(status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_reports_json_gin ON reports USING GIN(report_json);
+CREATE INDEX IF NOT EXISTS idx_reports_metadata_gin ON reports USING GIN(metadata_json);
+
+ALTER TABLE workflow_runs
+    ADD COLUMN IF NOT EXISTS topic TEXT;
+
+ALTER TABLE workflow_runs
+    ADD COLUMN IF NOT EXISTS metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+ALTER TABLE reports
+    ADD COLUMN IF NOT EXISTS metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+ALTER TABLE source_items
+    ADD COLUMN IF NOT EXISTS canonical_url TEXT;
+
+ALTER TABLE source_items
+    ADD COLUMN IF NOT EXISTS published_at TIMESTAMPTZ;
+
+ALTER TABLE source_items
+    ADD COLUMN IF NOT EXISTS fetched_at TIMESTAMPTZ;
+
+ALTER TABLE source_items
+    ADD COLUMN IF NOT EXISTS raw_artifact_id TEXT;
+
+ALTER TABLE source_items
+    ADD COLUMN IF NOT EXISTS metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+ALTER TABLE source_items
+    ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
+
+CREATE INDEX IF NOT EXISTS idx_source_items_run_id ON source_items(run_id);
+CREATE INDEX IF NOT EXISTS idx_source_items_source_published ON source_items(source_id, published_at DESC);
+CREATE INDEX IF NOT EXISTS idx_source_items_published ON source_items(published_at DESC);
+CREATE INDEX IF NOT EXISTS idx_source_items_payload_gin ON source_items USING GIN(payload);
+CREATE INDEX IF NOT EXISTS idx_source_items_metadata_gin ON source_items USING GIN(metadata_json);
+
+ALTER TABLE evidence_items
+    ADD COLUMN IF NOT EXISTS source_urls JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+ALTER TABLE evidence_items
+    ADD COLUMN IF NOT EXISTS source_item_ids JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+ALTER TABLE evidence_items
+    ADD COLUMN IF NOT EXISTS summary TEXT NOT NULL DEFAULT '';
+
+ALTER TABLE evidence_items
+    ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'news';
+
+ALTER TABLE evidence_items
+    ADD COLUMN IF NOT EXISTS published_at TIMESTAMPTZ;
+
+ALTER TABLE evidence_items
+    ADD COLUMN IF NOT EXISTS lineage_json JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+ALTER TABLE evidence_items
+    ADD COLUMN IF NOT EXISTS metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+ALTER TABLE evidence_items
+    ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
+
+CREATE INDEX IF NOT EXISTS idx_evidence_items_run_id ON evidence_items(run_id);
+CREATE INDEX IF NOT EXISTS idx_evidence_items_category ON evidence_items(category);
+CREATE INDEX IF NOT EXISTS idx_evidence_items_published ON evidence_items(published_at DESC);
+CREATE INDEX IF NOT EXISTS idx_evidence_items_source_urls_gin ON evidence_items USING GIN(source_urls);
+CREATE INDEX IF NOT EXISTS idx_evidence_items_source_item_ids_gin ON evidence_items USING GIN(source_item_ids);
+CREATE INDEX IF NOT EXISTS idx_evidence_items_lineage_gin ON evidence_items USING GIN(lineage_json);
+CREATE INDEX IF NOT EXISTS idx_evidence_items_metadata_gin ON evidence_items USING GIN(metadata_json);
+
+ALTER TABLE claims
+    ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
+
+CREATE INDEX IF NOT EXISTS idx_claims_status ON claims(status);
+CREATE INDEX IF NOT EXISTS idx_claims_payload_gin ON claims USING GIN(payload);
+
+ALTER TABLE quality_results
+    ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();

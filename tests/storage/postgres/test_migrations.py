@@ -27,6 +27,33 @@ def test_postgres_migration_sql_contains_required_tables() -> None:
     assert "UNIQUE (claim_id, evidence_id, support_type)" in sql
     assert "idx_agent_conversations_run" in sql
     assert "idx_tool_executions_run" in sql
+    assert "idx_workflow_runs_workflow_id" in sql
+    assert "idx_workflow_runs_status" in sql
+    assert "idx_workflow_runs_topic" in sql
+    assert "idx_reports_status" in sql
+    assert "idx_source_items_source_published" in sql
+    assert "idx_source_items_published" in sql
+    assert "idx_evidence_items_source_urls_gin" in sql
+    assert "idx_evidence_items_source_item_ids_gin" in sql
+    assert "idx_evidence_items_lineage_gin" in sql
     assert "success_count_24h INTEGER" in sql
     assert "failure_count_24h INTEGER" in sql
     assert "avg_latency_ms_24h DOUBLE PRECISION" in sql
+
+
+def test_postgres_migration_sql_exposes_storage_contract_query_columns() -> None:
+    sql = load_migration_sql()
+
+    for column in [
+        "topic TEXT",
+        "metadata_json JSONB",
+        "canonical_url TEXT",
+        "published_at TIMESTAMPTZ",
+        "fetched_at TIMESTAMPTZ",
+        "raw_artifact_id TEXT",
+        "source_urls JSONB",
+        "source_item_ids JSONB",
+        "lineage_json JSONB",
+        "updated_at TIMESTAMPTZ",
+    ]:
+        assert column in sql

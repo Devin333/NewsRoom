@@ -334,15 +334,22 @@ class PostgresRepository:
     def _insert_source_item(self, cursor: Any, record: SourceItemRecord) -> None:
         sql = """
         INSERT INTO source_items (
-            source_item_id, run_id, source_id, title, url, payload
+            source_item_id, run_id, source_id, title, url, canonical_url,
+            published_at, fetched_at, raw_artifact_id, payload, metadata_json
         )
-        VALUES (%s, %s, %s, %s, %s, %s::jsonb)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb)
         ON CONFLICT (source_item_id) DO UPDATE SET
             run_id = EXCLUDED.run_id,
             source_id = EXCLUDED.source_id,
             title = EXCLUDED.title,
             url = EXCLUDED.url,
-            payload = EXCLUDED.payload
+            canonical_url = EXCLUDED.canonical_url,
+            published_at = EXCLUDED.published_at,
+            fetched_at = EXCLUDED.fetched_at,
+            raw_artifact_id = EXCLUDED.raw_artifact_id,
+            payload = EXCLUDED.payload,
+            metadata_json = EXCLUDED.metadata_json,
+            updated_at = now()
         """
         cursor.execute(
             sql,
@@ -352,22 +359,41 @@ class PostgresRepository:
                 record.source_id,
                 record.title,
                 record.url,
+                record.canonical_url,
+                record.published_at,
+                record.fetched_at,
+                record.raw_artifact_id,
                 _json(record.to_dict()),
+                _json(record.metadata),
             ),
         )
 
     def _insert_evidence_item(self, cursor: Any, record: EvidenceItemRecord) -> None:
         sql = """
         INSERT INTO evidence_items (
-            evidence_id, run_id, source_url, title, confidence, payload
+            evidence_id, run_id, source_url, source_urls, source_item_ids,
+            title, summary, confidence, category, published_at, lineage_json,
+            payload, metadata_json
         )
-        VALUES (%s, %s, %s, %s, %s, %s::jsonb)
+        VALUES (
+            %s, %s, %s, %s::jsonb, %s::jsonb,
+            %s, %s, %s, %s, %s, %s::jsonb,
+            %s::jsonb, %s::jsonb
+        )
         ON CONFLICT (evidence_id) DO UPDATE SET
             run_id = EXCLUDED.run_id,
             source_url = EXCLUDED.source_url,
+            source_urls = EXCLUDED.source_urls,
+            source_item_ids = EXCLUDED.source_item_ids,
             title = EXCLUDED.title,
+            summary = EXCLUDED.summary,
             confidence = EXCLUDED.confidence,
-            payload = EXCLUDED.payload
+            category = EXCLUDED.category,
+            published_at = EXCLUDED.published_at,
+            lineage_json = EXCLUDED.lineage_json,
+            payload = EXCLUDED.payload,
+            metadata_json = EXCLUDED.metadata_json,
+            updated_at = now()
         """
         cursor.execute(
             sql,
@@ -375,9 +401,16 @@ class PostgresRepository:
                 record.evidence_id,
                 record.run_id,
                 record.source_urls[0] if record.source_urls else "",
+                _json_list(record.source_urls),
+                _json_list(record.source_item_ids),
                 record.claim,
+                record.summary,
                 record.confidence,
+                record.category,
+                record.published_at,
+                _json(record.lineage_json),
                 _json(record.to_dict()),
+                _json(record.metadata),
             ),
         )
 
@@ -391,7 +424,8 @@ class PostgresRepository:
             run_id = EXCLUDED.run_id,
             status = EXCLUDED.status,
             text = EXCLUDED.text,
-            payload = EXCLUDED.payload
+            payload = EXCLUDED.payload,
+            updated_at = now()
         """
         cursor.execute(
             sql,
@@ -462,7 +496,8 @@ class PostgresRepository:
             citation_coverage_score = EXCLUDED.citation_coverage_score,
             claim_support_score = EXCLUDED.claim_support_score,
             evidence_alignment_score = EXCLUDED.evidence_alignment_score,
-            payload = EXCLUDED.payload
+            payload = EXCLUDED.payload,
+            updated_at = now()
         """
         cursor.execute(
             sql,
@@ -506,6 +541,10 @@ class PostgresRepository:
 
 def _json(value: Any) -> str:
     return json.dumps(value or {}, ensure_ascii=False, sort_keys=True)
+
+
+def _json_list(value: Any) -> str:
+    return json.dumps(value or [], ensure_ascii=False, sort_keys=True)
 
 
 def _claim_support_id(claim_id: str, support_type: str, evidence_id: str) -> str:
