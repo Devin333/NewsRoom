@@ -2227,12 +2227,13 @@ token_usage
 | human escalation wait | 已实现基础版 | `control.request_human_review` / `control.escalate` 写入 approval store 后，AgentLoop 进入 WAITING_FOR_APPROVAL 并暴露 approval_id / approval_kind |
 | Workflow pause mapping | 已实现 | AgentLoopStepRunner 将 waiting_for_approval 映射为 StepStatus.PAUSED |
 | approval decision resume context | 已实现基础版 | ApprovalApplicationService 可为已决 approval 生成标准 buffer_updates / resume_metadata，Workflow resume 会记录 metadata |
+| approval context checkpoint resume | 已实现基础版 | WorkflowRunner 可消费 approval resume context，按原 run_id 找最新 checkpoint 并恢复 paused Workflow |
 | Workflow stalled mapping | 已实现 | AgentLoopStepRunner 将 stalled 映射为 StepStatus.BLOCKED |
 | conversation diagnostics | 已实现 | conversation 中写入 diagnostic message，assistant result 仍保持最后 |
 | agent artifact 输出 | 已增强 | WorkflowExecutor 会把 redacted LLM call request/response 写为 `llm_call` step artifacts，并写回 manifest/step result |
 | sub-agent delegation | 暂不做 | 仍为目标态，不在本轮实现 |
 | conversation compaction | 已实现基础版 | LocalJsonConversationStore 可生成 redacted deterministic compaction summary，AgentRunner 可按阈值自动触发 |
-| cursor resume | 已实现基础版 | Workflow checkpoint/resume 已有；ConversationStore 已补 latest cursor 读写；AgentRunner 会在持久化/compaction 后写 cursor，并支持 opt-in cursor/summary resume context；Workflow AgentLoop step 已传 run_id/step_id/checkpoint metadata 和 resume flag；approval decision 可生成 resume context；尚未做 mid-iteration replay / 自动 approval replay |
+| cursor resume | 已实现基础版 | Workflow checkpoint/resume 已有；ConversationStore 已补 latest cursor 读写；AgentRunner 会在持久化/compaction 后写 cursor，并支持 opt-in cursor/summary resume context；Workflow AgentLoop step 已传 run_id/step_id/checkpoint metadata 和 resume flag；approval decision 可生成 resume context 并驱动 latest checkpoint resume；尚未做 mid-iteration replay |
 | multi-layer LLM judge | 暂不做 | 当前 OutputJudge 仍是 deterministic local judge |
 
 ### K.4 边界保持
@@ -2264,7 +2265,7 @@ WorkflowExecutor
 下一阶段应优先做：
 
 ```text
-1. Approval replay：按 approval_id 自动定位 checkpoint 并恢复 paused AgentLoop/Workflow。
+1. Approval replay API/CLI/MCP 入口：approval decision 后一键恢复 paused Workflow。
 2. AgentLoop mid-iteration replay 与 Workflow checkpoint 的更深绑定。
 3. SubAgent delegation，但默认关闭。
 4. 更完整的 JSON Schema keyword 覆盖和 schema registry 复用。

@@ -145,6 +145,32 @@ class WorkflowRunner:
         self._persist_storage_indexes(result)
         return RunResult.from_workflow_result(result)
 
+    def resume_from_approval_context(
+        self,
+        workflow: WorkflowSpec,
+        approval_context: Any,
+        *,
+        profile: str,
+        run_id: str | None = None,
+    ) -> RunResult:
+        if self._checkpoint_store is None:
+            raise ValueError("checkpoint_store is required to resume from approval context")
+        context = _approval_context_payload(approval_context)
+        approval_run_id = _approval_context_run_id(context)
+        if not approval_run_id:
+            raise ValueError("approval resume context does not include an original run id")
+        checkpoint = self._checkpoint_store.get_latest_checkpoint(approval_run_id)
+        if checkpoint is None:
+            raise ValueError(f"checkpoint not found for approval run id: {approval_run_id}")
+        return self.resume_from_checkpoint(
+            workflow,
+            checkpoint,
+            profile=profile,
+            run_id=run_id,
+            buffer_updates=dict(context.get("buffer_updates") or {}),
+            resume_metadata=dict(context.get("resume_metadata") or {}),
+        )
+
     def _budget_tracker_for_run(self) -> GlobalBudgetTracker | None:
         if self._global_budget_tracker is not None:
             return self._global_budget_tracker
@@ -449,6 +475,43 @@ def _source_artifact_refs(run_dir: Path, manifest: dict[str, Any]) -> list[Artif
             continue
         refs.append(ref)
     return refs
+
+
+def _approval_context_payload(approval_context: Any) -> dict[str, Any]:
+    if isinstance(approval_context, dict):
+        return dict(approval_context)
+    to_dict = getattr(approval_context, "to_dict", None)
+    if callable(to_dict):
+        payload = to_dict()
+        if isinstance(payload, dict):
+            return dict(payload)
+    payload: dict[str, Any] = {}
+    for key in ("buffer_updates", "resume_metadata", "decision_payload", "approval_id"):
+        if hasattr(approval_context, key):
+            payload[key] = getattr(approval_context, key)
+    approval = getattr(approval_context, "approval", None)
+    if approval is not None:
+        payload["approval"] = approval.to_dict() if hasattr(approval, "to_dict") else approval
+    return payload
+
+
+def _approval_context_run_id(context: dict[str, Any]) -> str | None:
+    for value in (
+        _nested_value(context.get("resume_metadata"), "approval_run_id"),
+        _nested_value(context.get("decision_payload"), "run_id"),
+        _nested_value(context.get("approval"), "run_id"),
+    ):
+        if value:
+            return str(value)
+    return None
+
+
+def _nested_value(value: Any, key: str) -> Any:
+    if isinstance(value, dict):
+        return value.get(key)
+    if hasattr(value, key):
+        return getattr(value, key)
+    return None
 
 
 def _parse_datetime(value: Any) -> datetime | None:

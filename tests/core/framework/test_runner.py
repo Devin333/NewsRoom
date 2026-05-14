@@ -348,6 +348,101 @@ def test_workflow_runner_records_approval_resume_metadata(tmp_path) -> None:
     assert resumed.output["report"] == "approved:ai:appr-1"
 
 
+def test_workflow_runner_resumes_from_approval_context(tmp_path) -> None:
+    checkpoint_store = LocalJsonCheckpointStore(tmp_path / "checkpoints")
+    functions = FunctionStepRegistry()
+    functions.register(
+        "sample.finalize",
+        lambda buffer: {
+            "report": (
+                f"approved:{buffer.read('request')['topic']}:"
+                f"{buffer.read('human_review_decision')['approval_id']}"
+            )
+        },
+    )
+    step_runners = StepRunnerRegistry.with_function_runner(FunctionStepRunner(functions))
+    step_runners.register(StepType.HUMAN_REVIEW, HumanReviewStepRunner())
+    runner = WorkflowRunner(
+        artifact_root=tmp_path,
+        step_runner_registry=step_runners,
+        checkpoint_store=checkpoint_store,
+    )
+    spec = _human_review_resume_spec()
+    paused = runner.run(
+        spec,
+        {"topic": "ai"},
+        profile="test",
+        run_id="runner-approval-context-paused",
+    )
+    approval_context = {
+        "buffer_updates": {
+            "human_review_decision": {
+                "decision": "approved",
+                "approval_id": "appr-context",
+            }
+        },
+        "resume_metadata": {
+            "approval_id": "appr-context",
+            "approval_status": "approved",
+            "decision_type": "approve",
+            "approval_run_id": "runner-approval-context-paused",
+        },
+    }
+
+    assert paused.status == WorkflowStatus.WAITING_FOR_HUMAN
+
+    resumed = runner.resume_from_approval_context(
+        spec,
+        approval_context,
+        profile="test",
+        run_id="runner-approval-context-resumed",
+    )
+
+    assert resumed.status == WorkflowStatus.SUCCEEDED
+    assert resumed.output["report"] == "approved:ai:appr-context"
+    assert resumed.manifest["resumed_from_checkpoint_id"]
+    assert resumed.manifest["resume_metadata"]["approval_id"] == "appr-context"
+
+
+def test_workflow_runner_rejects_approval_context_without_run_id(tmp_path) -> None:
+    runner = WorkflowRunner(
+        artifact_root=tmp_path,
+        function_registry=FunctionStepRegistry(),
+        checkpoint_store=LocalJsonCheckpointStore(tmp_path / "checkpoints"),
+    )
+
+    with pytest.raises(ValueError, match="original run id"):
+        runner.resume_from_approval_context(
+            _human_review_resume_spec(),
+            {
+                "buffer_updates": {"human_review_decision": {"decision": "approved"}},
+                "resume_metadata": {"approval_id": "appr-missing-run"},
+            },
+            profile="test",
+        )
+
+
+def test_workflow_runner_rejects_approval_context_without_checkpoint(tmp_path) -> None:
+    runner = WorkflowRunner(
+        artifact_root=tmp_path,
+        function_registry=FunctionStepRegistry(),
+        checkpoint_store=LocalJsonCheckpointStore(tmp_path / "checkpoints"),
+    )
+
+    with pytest.raises(ValueError, match="checkpoint not found"):
+        runner.resume_from_approval_context(
+            _human_review_resume_spec(),
+            {
+                "buffer_updates": {"human_review_decision": {"decision": "approved"}},
+                "resume_metadata": {
+                    "approval_id": "appr-missing-checkpoint",
+                    "approval_run_id": "run-without-checkpoint",
+                },
+            },
+            profile="test",
+        )
+
+
 def test_workflow_runner_accepts_prebuilt_step_runner_registry(tmp_path) -> None:
     functions = FunctionStepRegistry()
     functions.register("sample.echo", lambda buffer: {"echo": buffer.read("request")})
