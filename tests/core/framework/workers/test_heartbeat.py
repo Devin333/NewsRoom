@@ -1,7 +1,9 @@
 from datetime import UTC, datetime
 
 from core.framework.workers import (
+    InMemoryTaskQueue,
     RedisWorkerRegistry,
+    Task,
     WorkerHeartbeat,
     WorkerHeartbeatStatus,
     WorkerStatus,
@@ -43,6 +45,8 @@ def test_worker_heartbeat_status_marks_stale_as_unhealthy() -> None:
     assert status.stale is True
     assert status.status == WorkerStatus.UNHEALTHY
     assert status.to_dict()["stored_status"] == "running"
+    assert heartbeat.queues == ["news:queue:daily"]
+    assert heartbeat.to_dict()["queues"] == ["news:queue:daily"]
 
 
 def test_redis_worker_registry_saves_gets_and_lists_workers() -> None:
@@ -54,10 +58,19 @@ def test_redis_worker_registry_saves_gets_and_lists_workers() -> None:
         last_heartbeat_at=_dt("2026-05-11T00:00:00Z"),
     )
 
-    registry.save(heartbeat)
+    registry.heartbeat(heartbeat)
 
     assert registry.get("worker-1") == heartbeat
     assert registry.list() == [heartbeat]
+    assert registry.status(
+        "worker-1",
+        now=_dt("2026-05-11T00:01:01Z"),
+        stale_after_seconds=60,
+    ).status == WorkerStatus.UNHEALTHY
+    assert registry.list_statuses(
+        now=_dt("2026-05-11T00:01:01Z"),
+        stale_after_seconds=60,
+    )[0].stale is True
 
 
 def test_redis_worker_registry_cleans_missing_index_entries() -> None:
@@ -67,6 +80,39 @@ def test_redis_worker_registry_cleans_missing_index_entries() -> None:
 
     assert registry.list() == []
     assert redis.sets[registry.index_key] == set()
+
+
+def test_stale_worker_pending_task_can_be_reclaimed() -> None:
+    queue = InMemoryTaskQueue(now_fn=lambda: _dt("2026-05-11T00:00:00Z"))
+    task = Task(
+        task_type="daily_intelligence.run",
+        payload={"topic": "AI"},
+        task_id="task-1",
+        timeout_seconds=30,
+    )
+    queue.enqueue(task)
+    queue.lease("worker-1", ["news:queue:daily"])
+    heartbeat = WorkerHeartbeat(
+        worker_id="worker-1",
+        queue_names=["news:queue:daily"],
+        current_task_id="task-1",
+        last_heartbeat_at=_dt("2026-05-11T00:00:00Z"),
+    )
+
+    status = WorkerHeartbeatStatus.from_record(
+        heartbeat,
+        now=_dt("2026-05-11T00:02:00Z"),
+        stale_after_seconds=60,
+    )
+    reclaimed = queue.reclaim_stale(
+        "worker-2",
+        ["news:queue:daily"],
+        now=_dt("2026-05-11T00:02:00Z"),
+    )
+
+    assert status.stale is True
+    assert reclaimed is task
+    assert reclaimed.leased_by == "worker-2"
 
 
 class _FakeRedis:

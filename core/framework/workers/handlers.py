@@ -29,7 +29,9 @@ class DailyIntelligenceTaskHandler:
             success=task_success,
             status=task_status,
             workflow_run_id=result.run_id,
-            output=result.to_dict(),
+            run_status=workflow_status,
+            report_status=_report_status_from_result(result),
+            output=_handler_output(result.to_dict()),
             error_type=workflow_error.get("error_type") if not task_success else None,
             error_message=workflow_error.get("message") if not task_success else None,
         )
@@ -54,7 +56,8 @@ class MemoryReindexTaskHandler:
             success=True,
             status=TaskStatus.SUCCEEDED,
             workflow_run_id=run_id,
-            output=result.to_dict(),
+            run_status="succeeded",
+            output=_handler_output(result.to_dict()),
         )
 
 
@@ -75,7 +78,8 @@ class SourceHealthCheckTaskHandler:
             task_id=task.task_id,
             success=True,
             status=TaskStatus.SUCCEEDED,
-            output=result.to_dict(),
+            run_status="succeeded",
+            output=_handler_output(result.to_dict(), run_id=task.payload.get("run_id")),
         )
 
 
@@ -101,3 +105,56 @@ def _task_status_from_workflow_status(status: str) -> TaskStatus:
     if status == WorkflowStatus.CANCELLED.value:
         return TaskStatus.CANCELLED
     return TaskStatus.FAILED
+
+
+def _report_status_from_result(result) -> str | None:
+    output = getattr(result, "output", None)
+    if isinstance(output, dict):
+        report = output.get("report") or output.get("report_metadata")
+        if isinstance(report, dict):
+            status = report.get("status") or report.get("report_status")
+            if status is not None:
+                return str(status)
+        if "blocked_report" in output:
+            return "blocked"
+    return None
+
+
+def _handler_output(payload: dict, *, run_id: str | None = None) -> dict:
+    output = dict(payload)
+    actual_run_id = output.get("run_id") or run_id
+    if actual_run_id is not None:
+        output.setdefault("run_id", actual_run_id)
+    output.setdefault("artifact_dir", output.get("artifact_dir"))
+    output.setdefault("summary", _summary_from_output(output))
+    return output
+
+
+def _summary_from_output(output: dict) -> dict:
+    nested_output = output.get("output")
+    if isinstance(nested_output, dict):
+        summary = nested_output.get("summary")
+        if isinstance(summary, dict):
+            return dict(summary)
+        if isinstance(summary, str):
+            return {"text": summary}
+        nested_summary = _report_summary_from_mapping(nested_output)
+        if nested_summary:
+            return nested_summary
+    return _report_summary_from_mapping(output)
+
+
+def _report_summary_from_mapping(output: dict) -> dict:
+    for key in ("report", "report_metadata", "blocked_report"):
+        report = output.get(key)
+        if isinstance(report, dict):
+            return _summary_fields(report)
+    return _summary_fields(output)
+
+
+def _summary_fields(output: dict) -> dict:
+    return {
+        key: output[key]
+        for key in ("title", "status", "report_status")
+        if key in output
+    }

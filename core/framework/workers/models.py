@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import Enum
 from typing import Any
 from uuid import uuid4
@@ -41,6 +41,14 @@ class Task:
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
+    @property
+    def attempt(self) -> int:
+        return self.attempts
+
+    @attempt.setter
+    def attempt(self, value: int) -> None:
+        self.attempts = int(value)
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "task_id": self.task_id,
@@ -48,6 +56,7 @@ class Task:
             "queue_name": self.queue_name,
             "payload": dict(self.payload),
             "status": self.status.value,
+            "attempt": self.attempts,
             "attempts": self.attempts,
             "max_attempts": self.max_attempts,
             "priority": self.priority,
@@ -74,7 +83,7 @@ class Task:
             queue_name=str(data.get("queue_name") or "news:queue:daily"),
             payload=dict(data.get("payload") or {}),
             status=TaskStatus(data.get("status") or TaskStatus.CREATED.value),
-            attempts=int(data.get("attempts") or 0),
+            attempts=int(data.get("attempts", data.get("attempt", 0)) or 0),
             max_attempts=int(data.get("max_attempts") or 3),
             priority=int(data.get("priority") or 0),
             timeout_seconds=_optional_int(data.get("timeout_seconds")),
@@ -106,21 +115,98 @@ class TaskError:
 
 
 @dataclass(frozen=True)
+class TaskEnqueueResult:
+    task_id: str
+    queue_name: str
+    accepted: bool
+    status: TaskStatus
+    message_id: str | None = None
+    reason: str | None = None
+    delayed_until: datetime | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "task_id": self.task_id,
+            "queue_name": self.queue_name,
+            "accepted": self.accepted,
+            "status": self.status.value,
+            "message_id": self.message_id,
+            "reason": self.reason,
+            "delayed_until": _format_datetime(self.delayed_until),
+        }
+
+    def __bool__(self) -> bool:
+        return self.accepted
+
+    def __str__(self) -> str:
+        return self.message_id or self.task_id
+
+
+@dataclass(frozen=True)
+class BackpressurePolicy:
+    max_pending_per_queue: int | None = None
+
+    def should_reject(self, *, pending_count: int) -> bool:
+        return (
+            self.max_pending_per_queue is not None
+            and pending_count >= self.max_pending_per_queue
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"max_pending_per_queue": self.max_pending_per_queue}
+
+
+@dataclass(frozen=True)
+class QueueStatus:
+    queue_name: str
+    pending_count: int = 0
+    leased_count: int = 0
+    delayed_count: int = 0
+    dead_letter_count: int = 0
+    lag: int | None = None
+    oldest_task_age: float | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "queue_name": self.queue_name,
+            "pending_count": self.pending_count,
+            "leased_count": self.leased_count,
+            "delayed_count": self.delayed_count,
+            "dead_letter_count": self.dead_letter_count,
+            "lag": self.lag,
+            "oldest_task_age": self.oldest_task_age,
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
 class TaskResult:
     task_id: str
     success: bool
     status: TaskStatus
     workflow_run_id: str | None = None
+    task_status: TaskStatus | None = None
+    run_status: str | None = None
+    report_status: str | None = None
     output: dict[str, Any] = field(default_factory=dict)
     error_type: str | None = None
     error_message: str | None = None
     finished_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "status", TaskStatus(self.status))
+        task_status = self.task_status if self.task_status is not None else self.status
+        object.__setattr__(self, "task_status", TaskStatus(task_status))
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "task_id": self.task_id,
             "success": self.success,
             "status": self.status.value,
+            "task_status": self.task_status.value,
+            "run_status": self.run_status,
+            "report_status": self.report_status,
             "workflow_run_id": self.workflow_run_id,
             "output": dict(self.output),
             "error_type": self.error_type,
@@ -151,6 +237,15 @@ class TaskRetryPolicy:
         if self.retryable_error_types and error.error_type not in self.retryable_error_types:
             return False
         return error.retryable and task.attempts < min(task.max_attempts, self.max_attempts)
+
+    def next_run_at(
+        self,
+        task: Task,
+        *,
+        now: datetime | None = None,
+    ) -> datetime:
+        reference = _normalize_datetime(now or datetime.now(UTC))
+        return reference + timedelta(seconds=self.delay_seconds(task.attempts))
 
     def delay_seconds(self, attempts: int) -> int:
         delay = self.base_delay_seconds * (self.backoff_multiplier ** max(0, attempts - 1))
@@ -279,6 +374,9 @@ class WorkerMetrics:
     failed_count: int = 0
     dead_letter_count: int = 0
     cancelled_count: int = 0
+    pending_count: int = 0
+    lag: int | None = None
+    oldest_task_age: float | None = None
     avg_task_latency_ms: float | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -291,6 +389,9 @@ class WorkerMetrics:
             "failed_count": self.failed_count,
             "dead_letter_count": self.dead_letter_count,
             "cancelled_count": self.cancelled_count,
+            "pending_count": self.pending_count,
+            "lag": self.lag,
+            "oldest_task_age": self.oldest_task_age,
             "avg_task_latency_ms": self.avg_task_latency_ms,
             "metadata": dict(self.metadata),
         }
@@ -301,15 +402,23 @@ class DeadLetterRecord:
     task: Task
     reason: str
     error: TaskError | None = None
-    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    attempts: int | None = None
+    failed_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    last_event: TaskEvent | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "task": self.task.to_dict(),
             "reason": self.reason,
             "error": self.error.to_dict() if self.error else None,
-            "created_at": _format_datetime(self.created_at),
+            "attempts": self.task.attempts if self.attempts is None else self.attempts,
+            "failed_at": _format_datetime(self.failed_at),
+            "last_event": self.last_event.to_dict() if self.last_event else None,
         }
+
+    @property
+    def created_at(self) -> datetime:
+        return self.failed_at
 
 
 def _parse_datetime(value: Any) -> datetime:
@@ -329,10 +438,16 @@ def _parse_optional_datetime(value: Any) -> datetime | None:
 def _format_datetime(value: datetime | None) -> str | None:
     if value is None:
         return None
-    return value.isoformat().replace("+00:00", "Z")
+    return _normalize_datetime(value).isoformat().replace("+00:00", "Z")
 
 
 def _optional_int(value: Any) -> int | None:
     if value is None or value == "":
         return None
     return int(value)
+
+
+def _normalize_datetime(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)

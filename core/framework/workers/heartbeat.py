@@ -27,6 +27,10 @@ class WorkerHeartbeat:
     failed_count: int = 0
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    @property
+    def queues(self) -> list[str]:
+        return list(self.queue_names)
+
     def is_stale(self, *, now: datetime | None = None, stale_after_seconds: int = 60) -> bool:
         if stale_after_seconds < 0:
             return False
@@ -50,6 +54,7 @@ class WorkerHeartbeat:
         return {
             "worker_id": self.worker_id,
             "queue_names": list(self.queue_names),
+            "queues": list(self.queue_names),
             "status": self.status.value,
             "started_at": _format_datetime(self.started_at),
             "last_heartbeat_at": _format_datetime(self.last_heartbeat_at),
@@ -63,7 +68,10 @@ class WorkerHeartbeat:
     def from_dict(cls, data: dict[str, Any]) -> "WorkerHeartbeat":
         return cls(
             worker_id=str(data["worker_id"]),
-            queue_names=[str(queue_name) for queue_name in data.get("queue_names") or []],
+            queue_names=[
+                str(queue_name)
+                for queue_name in data.get("queue_names") or data.get("queues") or []
+            ],
             status=WorkerStatus(data.get("status") or WorkerStatus.RUNNING.value),
             started_at=_parse_datetime(data.get("started_at")),
             last_heartbeat_at=_parse_datetime(data.get("last_heartbeat_at")),
@@ -117,6 +125,9 @@ class RedisWorkerRegistry:
         self.redis.sadd(self.index_key, record.worker_id)
         return record
 
+    def heartbeat(self, record: WorkerHeartbeat) -> WorkerHeartbeat:
+        return self.save(record)
+
     def get(self, worker_id: str) -> WorkerHeartbeat | None:
         raw = self.redis.get(self._worker_key(worker_id))
         if raw is None:
@@ -133,6 +144,37 @@ class RedisWorkerRegistry:
                 continue
             records.append(record)
         return records
+
+    def status(
+        self,
+        worker_id: str,
+        *,
+        now: datetime | None = None,
+        stale_after_seconds: int = 60,
+    ) -> WorkerHeartbeatStatus | None:
+        record = self.get(worker_id)
+        if record is None:
+            return None
+        return WorkerHeartbeatStatus.from_record(
+            record,
+            now=now,
+            stale_after_seconds=stale_after_seconds,
+        )
+
+    def list_statuses(
+        self,
+        *,
+        now: datetime | None = None,
+        stale_after_seconds: int = 60,
+    ) -> list[WorkerHeartbeatStatus]:
+        return [
+            WorkerHeartbeatStatus.from_record(
+                record,
+                now=now,
+                stale_after_seconds=stale_after_seconds,
+            )
+            for record in self.list()
+        ]
 
     def delete(self, worker_id: str) -> None:
         self.redis.delete(self._worker_key(worker_id))

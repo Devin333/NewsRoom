@@ -12,8 +12,10 @@ _EXPORT_MODULES = {
     "ApprovalDecisionType": "core.framework.workers.approval",
     "ApprovalNotFoundError": "core.framework.workers.approval",
     "ApprovalRequest": "core.framework.workers.approval",
+    "ApprovalResumeContext": "core.framework.workers.approval",
     "ApprovalStatus": "core.framework.workers.approval",
     "ApprovalStore": "core.framework.workers.approval",
+    "BackpressurePolicy": "core.framework.workers.models",
     "DailyIntelligenceTaskHandler": "core.framework.workers.handlers",
     "DeadLetterRecord": "core.framework.workers.models",
     "EnqueuedScheduleTask": "core.framework.workers.scheduler",
@@ -27,6 +29,7 @@ _EXPORT_MODULES = {
     "RedisQueueConsumerStatus": "core.framework.workers.redis_queue",
     "RedisQueueStatus": "core.framework.workers.redis_queue",
     "RedisWorkerRegistry": "core.framework.workers.heartbeat",
+    "QueueStatus": "core.framework.workers.models",
     "ScheduleEvaluation": "core.framework.workers.scheduler",
     "ScheduleNotFoundError": "core.framework.workers.schedule_store",
     "ScheduleRecord": "core.framework.workers.schedule_store",
@@ -37,6 +40,7 @@ _EXPORT_MODULES = {
     "SchedulerTickResult": "core.framework.workers.scheduler",
     "SourceHealthCheckTaskHandler": "core.framework.workers.handlers",
     "Task": "core.framework.workers.models",
+    "TaskEnqueueResult": "core.framework.workers.models",
     "TaskEvent": "core.framework.workers.models",
     "TaskError": "core.framework.workers.models",
     "TaskRecord": "core.framework.workers.models",
@@ -46,9 +50,11 @@ _EXPORT_MODULES = {
     "WorkerHeartbeat": "core.framework.workers.heartbeat",
     "WorkerHeartbeatStatus": "core.framework.workers.heartbeat",
     "WorkerLoop": "core.framework.workers.worker_loop",
+    "WorkerLoopRunResult": "core.framework.workers.worker_loop",
     "WorkerMetrics": "core.framework.workers.models",
     "WorkerRecord": "core.framework.workers.models",
     "WorkerStatus": "core.framework.workers.heartbeat",
+    "build_approval_resume_context": "core.framework.workers.approval",
 }
 
 __all__ = list(_EXPORT_MODULES)

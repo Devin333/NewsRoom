@@ -1,6 +1,17 @@
 import json
+from datetime import UTC, datetime, timedelta
 
-from core.framework.workers import InMemoryTaskQueue, RedisStreamTaskQueue, Task, TaskError, TaskStatus
+from core.framework.workers import (
+    BackpressurePolicy,
+    InMemoryTaskQueue,
+    QueueStatus,
+    RedisStreamTaskQueue,
+    Task,
+    TaskEnqueueResult,
+    TaskError,
+    TaskRetryPolicy,
+    TaskStatus,
+)
 
 
 def test_in_memory_queue_enqueue_lease_ack() -> None:
@@ -9,11 +20,75 @@ def test_in_memory_queue_enqueue_lease_ack() -> None:
 
     queue.enqueue(task)
     leased = queue.lease("worker-1", ["news:queue:daily"])
-    queue.ack(leased.task_id, "worker-1")
 
     assert leased is task
     assert leased.status == TaskStatus.LEASED
+    assert queue.queue_status("news:queue:daily").leased_count == 1
+
+    queue.ack(leased.task_id, "worker-1")
+
+    assert leased.status == TaskStatus.SUCCEEDED
+    assert queue.events[-1].event_type == "task_succeeded"
     assert queue.lease("worker-1", ["news:queue:daily"]) is None
+
+
+def test_in_memory_queue_backpressure_rejects_when_pending_limit_reached() -> None:
+    queue = InMemoryTaskQueue(
+        backpressure_policy=BackpressurePolicy(max_pending_per_queue=1)
+    )
+    first = Task(task_type="daily_intelligence.run", payload={"topic": "AI"}, task_id="task-1")
+    second = Task(task_type="daily_intelligence.run", payload={"topic": "ML"}, task_id="task-2")
+
+    accepted = queue.enqueue(first)
+    rejected = queue.enqueue(second)
+
+    assert accepted is None
+    assert isinstance(rejected, TaskEnqueueResult)
+    assert rejected.accepted is False
+    assert rejected.reason == "backpressure"
+    assert bool(rejected) is False
+    assert queue.queue_status("news:queue:daily").pending_count == 1
+
+
+def test_in_memory_queue_retry_delay_and_dead_letter_records_are_observable() -> None:
+    now = datetime(2026, 5, 11, 1, 0, tzinfo=UTC)
+    queue = InMemoryTaskQueue(
+        retry_policy=TaskRetryPolicy(base_delay_seconds=30, max_delay_seconds=30),
+        now_fn=lambda: now,
+    )
+    retry_task = Task(
+        task_type="daily_intelligence.run",
+        payload={"topic": "AI"},
+        task_id="retry-task",
+        max_attempts=2,
+    )
+    queue.enqueue(retry_task)
+    leased = queue.lease("worker-1", ["news:queue:daily"])
+
+    queue.fail(leased.task_id, "worker-1", TaskError("Timeout", "timeout"))
+
+    assert retry_task.status == TaskStatus.QUEUED
+    assert retry_task.scheduled_for == now + timedelta(seconds=30)
+    assert queue.events[-1].event_type == "task_enqueued"
+    assert any(event.event_type == "task_retry_scheduled" for event in queue.events)
+    status = queue.queue_status("news:queue:daily")
+    assert isinstance(status, QueueStatus)
+    assert status.delayed_count == 1
+
+    dead_letter_task = Task(
+        task_type="daily_intelligence.run",
+        payload={"topic": "AI"},
+        task_id="dead-task",
+        max_attempts=1,
+    )
+    queue.enqueue(dead_letter_task)
+    leased_dead = queue.lease("worker-1", ["news:queue:daily"])
+    queue.fail(leased_dead.task_id, "worker-1", TaskError("TaskFailed", "failed"))
+
+    dead_letters = queue.list_dead_letters()
+    assert dead_letters[0].task.task_id == "dead-task"
+    assert dead_letters[0].attempts == 1
+    assert dead_letters[0].last_event.event_type == "task_dead_lettered"
 
 
 def test_in_memory_queue_cancels_queued_task() -> None:
@@ -47,6 +122,52 @@ def test_in_memory_queue_requeues_dead_letter_task() -> None:
     assert requeued is True
     assert leased_again.task_id == "task-1"
     assert leased_again.metadata["requeue_reason"] == "operator_retry"
+    assert queue.list_dead_letters() == []
+
+
+def test_in_memory_queue_rejects_duplicate_unfinished_dedup_key() -> None:
+    queue = InMemoryTaskQueue()
+    first = Task(
+        task_type="daily_intelligence.run",
+        payload={"topic": "AI"},
+        task_id="task-1",
+        dedup_key="daily:AI",
+    )
+    duplicate = Task(
+        task_type="daily_intelligence.run",
+        payload={"topic": "AI"},
+        task_id="task-2",
+        dedup_key="daily:AI",
+    )
+
+    queue.enqueue(first)
+    rejected = queue.enqueue(duplicate)
+
+    assert rejected.accepted is False
+    assert rejected.reason == "duplicate_dedup_key"
+
+
+def test_in_memory_queue_reclaims_expired_lease() -> None:
+    now = datetime(2026, 5, 11, 1, 0, tzinfo=UTC)
+    queue = InMemoryTaskQueue(now_fn=lambda: now)
+    task = Task(
+        task_type="daily_intelligence.run",
+        payload={"topic": "AI"},
+        task_id="task-1",
+        timeout_seconds=30,
+    )
+    queue.enqueue(task)
+    queue.lease("worker-1", ["news:queue:daily"])
+
+    reclaimed = queue.reclaim_stale(
+        "worker-2",
+        ["news:queue:daily"],
+        now=now + timedelta(seconds=31),
+    )
+
+    assert reclaimed is task
+    assert task.leased_by == "worker-2"
+    assert queue.events[-1].event_type == "task_reclaimed"
 
 
 def test_redis_stream_queue_enqueue_uses_xadd() -> None:
@@ -60,6 +181,22 @@ def test_redis_stream_queue_enqueue_uses_xadd() -> None:
     stream, payload = redis.xadd_calls[0]
     assert stream == "news:queue:daily"
     assert json.loads(payload["task"])["task_id"] == "task-1"
+
+
+def test_redis_stream_queue_redacts_secret_payload_values() -> None:
+    redis = _FakeRedis()
+    queue = RedisStreamTaskQueue(redis)
+    task = Task(
+        task_type="daily_intelligence.run",
+        payload={"api_key": "hidden", "nested": {"authorization": "Bearer hidden"}},
+        task_id="task-1",
+    )
+
+    queue.enqueue(task)
+
+    payload = json.loads(redis.xadd_calls[0][1]["task"])
+    assert payload["payload"]["api_key"] == "[REDACTED]"
+    assert payload["payload"]["nested"]["authorization"] == "[REDACTED]"
 
 
 def test_redis_stream_queue_lease_one_decodes_task_payload() -> None:
@@ -146,13 +283,67 @@ def test_redis_stream_queue_status_reports_missing_group() -> None:
     assert payload["pending_count"] == 0
 
 
+def test_redis_stream_queue_fail_retries_and_acks_original_message() -> None:
+    task = Task(task_type="daily_intelligence.run", payload={}, task_id="task-1", attempts=1)
+    redis = _FakeRedis()
+    queue = RedisStreamTaskQueue(
+        redis,
+        retry_policy=TaskRetryPolicy(retryable_error_types=["Timeout"], base_delay_seconds=5),
+    )
+
+    result = queue.fail(_leased(task), TaskError("Timeout", "temporary timeout"))
+
+    assert result.accepted is True
+    assert result.status == TaskStatus.RETRYING
+    assert redis.xack_calls == [("news:queue:daily", "news-workers", "1-0")]
+    assert json.loads(redis.xadd_calls[0][1]["task"])["metadata"]["retry_next_run_at"]
+
+
+def test_redis_stream_queue_fail_dead_letters_and_requeues_record() -> None:
+    task = Task(task_type="daily_intelligence.run", payload={}, task_id="task-1", attempts=3)
+    redis = _FakeRedis()
+    queue = RedisStreamTaskQueue(redis)
+
+    result = queue.fail(_leased(task), TaskError("ValidationError", "bad input", retryable=False))
+    dead_letters = queue.list_dead_letters()
+    requeued = queue.requeue_dead_letter("task-1", reason="operator_retry")
+
+    assert result.status == TaskStatus.DEAD_LETTER
+    assert dead_letters[0].task.task_id == "task-1"
+    assert dead_letters[0].error.error_type == "ValidationError"
+    assert dead_letters[0].last_event.event_type == "task_dead_lettered"
+    assert requeued is True
+    assert redis.xack_calls == [("news:queue:daily", "news-workers", "1-0")]
+    assert redis.xdel_calls == [("news:queue:dead-letter", "1-0")]
+    assert json.loads(redis.xadd_calls[-1][1]["task"])["metadata"]["requeue_reason"] == "operator_retry"
+
+
 class _FakeRedis:
     def __init__(self) -> None:
         self.xadd_calls = []
+        self.xack_calls = []
+        self.xdel_calls = []
+        self.streams = {}
 
     def xadd(self, stream, payload):
         self.xadd_calls.append((stream, payload))
-        return "1-0"
+        message_id = f"{len(self.streams.get(stream, [])) + 1}-0"
+        self.streams.setdefault(stream, []).append((message_id, payload))
+        return message_id
+
+    def xack(self, stream, group, message_id):
+        self.xack_calls.append((stream, group, message_id))
+        return 1
+
+    def xrange(self, stream, min, max, count):
+        return list(self.streams.get(stream, []))[:count]
+
+    def xdel(self, stream, message_id):
+        self.xdel_calls.append((stream, message_id))
+        self.streams[stream] = [
+            record for record in self.streams.get(stream, []) if record[0] != message_id
+        ]
+        return 1
 
 
 class _FakeRedisReader:
@@ -206,3 +397,9 @@ class _FakeRedisStatus:
         if self.pending_error:
             raise self.pending_error
         return self.pending
+
+
+def _leased(task):
+    from core.framework.workers import LeasedTask
+
+    return LeasedTask(queue_name="news:queue:daily", message_id="1-0", task=task)

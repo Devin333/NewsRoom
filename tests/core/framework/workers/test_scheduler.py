@@ -119,6 +119,31 @@ def test_interval_schedule_catch_up_caps_due_times() -> None:
     assert evaluation.state_update_at == _dt("2026-05-11T00:20:00Z")
 
 
+def test_interval_schedule_catch_up_limited_alias_caps_due_times() -> None:
+    scheduler = Scheduler(_FakeQueue())
+    schedule = ScheduleSpec(
+        schedule_id="memory",
+        name="Memory catchup",
+        trigger_type="interval",
+        task_type="memory_index",
+        interval_seconds=600,
+        misfire_policy="catch_up_limited",
+        max_catchup_runs=2,
+    )
+
+    evaluation = scheduler.evaluate(
+        schedule,
+        now=_dt("2026-05-11T00:35:00Z"),
+        last_run_at=_dt("2026-05-11T00:00:00Z"),
+    )
+
+    assert schedule.misfire_policy == MisfirePolicy.CATCH_UP_LIMITED
+    assert evaluation.due_times == (
+        _dt("2026-05-11T00:10:00Z"),
+        _dt("2026-05-11T00:20:00Z"),
+    )
+
+
 def test_interval_schedule_skip_advances_state_without_enqueue() -> None:
     queue = _FakeQueue()
     scheduler = Scheduler(queue)

@@ -2,9 +2,19 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
-from core.framework.workers.models import LeasedTask, Task, TaskStatus
+from core.framework.workers.models import (
+    DeadLetterRecord,
+    LeasedTask,
+    Task,
+    TaskEnqueueResult,
+    TaskError,
+    TaskEvent,
+    TaskRetryPolicy,
+    TaskStatus,
+)
 
 
 @dataclass(frozen=True)
@@ -26,6 +36,8 @@ class RedisQueueStatus:
     group_name: str
     group_exists: bool
     pending_count: int = 0
+    lag: int | None = None
+    oldest_task_age: float | None = None
     consumers: list[RedisQueueConsumerStatus] | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -36,22 +48,35 @@ class RedisQueueStatus:
             "group_name": self.group_name,
             "group_exists": self.group_exists,
             "pending_count": self.pending_count,
+            "lag": self.stream_length if self.lag is None else self.lag,
+            "oldest_task_age": self.oldest_task_age,
             "consumer_count": len(consumers),
             "consumers": [consumer.to_dict() for consumer in consumers],
         }
 
 
 class RedisStreamTaskQueue:
-    def __init__(self, redis_client: Any, *, group_name: str = "news-workers") -> None:
+    def __init__(
+        self,
+        redis_client: Any,
+        *,
+        group_name: str = "news-workers",
+        dead_letter_queue_name: str = "news:queue:dead-letter",
+        retry_policy: TaskRetryPolicy | None = None,
+    ) -> None:
         self.redis = redis_client
         self.group_name = group_name
+        self.dead_letter_queue_name = dead_letter_queue_name
+        self.retry_policy = retry_policy or TaskRetryPolicy()
 
     def enqueue(self, task: Task) -> str:
         task.status = TaskStatus.QUEUED
         task.leased_by = None
+        task.lease_expires_at = None
+        task.updated_at = datetime.now(UTC)
         return self.redis.xadd(
             task.queue_name,
-            {"task": json.dumps(task.to_dict(), ensure_ascii=False, sort_keys=True)},
+            {"task": json.dumps(_redacted_task_dict(task), ensure_ascii=False, sort_keys=True)},
         )
 
     def ensure_group(self, queue_names: list[str]) -> None:
@@ -131,14 +156,92 @@ class RedisStreamTaskQueue:
     def ack(self, queue_name: str, message_id: str) -> int:
         return self.redis.xack(queue_name, self.group_name, message_id)
 
-    def move_to_dead_letter(self, task: Task, reason: str) -> str:
+    def fail(self, leased: LeasedTask, error: TaskError) -> TaskEnqueueResult:
+        task = leased.task
+        task.metadata["last_error"] = error.to_dict()
+        if self.retry_policy.should_retry(task, error):
+            next_run_at = self.retry_policy.next_run_at(task)
+            task.status = TaskStatus.RETRYING
+            task.scheduled_for = next_run_at
+            task.metadata["retry_next_run_at"] = next_run_at.isoformat().replace("+00:00", "Z")
+            message_id = self.enqueue(task)
+            self.ack(leased.queue_name, leased.message_id)
+            return TaskEnqueueResult(
+                task_id=task.task_id,
+                queue_name=task.queue_name,
+                accepted=True,
+                status=TaskStatus.RETRYING,
+                message_id=str(message_id),
+                delayed_until=next_run_at,
+            )
+        message_id = self.move_to_dead_letter(task, error.error_message, error=error)
+        self.ack(leased.queue_name, leased.message_id)
+        return TaskEnqueueResult(
+            task_id=task.task_id,
+            queue_name=self.dead_letter_queue_name,
+            accepted=True,
+            status=TaskStatus.DEAD_LETTER,
+            message_id=str(message_id),
+            reason=error.error_message,
+        )
+
+    def move_to_dead_letter(self, task: Task, reason: str, error: TaskError | None = None) -> str:
         task.status = TaskStatus.DEAD_LETTER
-        payload = task.to_dict()
+        task.updated_at = datetime.now(UTC)
+        payload = _redacted_task_dict(task)
         payload["dead_letter_reason"] = reason
+        if error is not None:
+            payload["dead_letter_error"] = error.to_dict()
+        payload["dead_letter_failed_at"] = task.updated_at.isoformat().replace("+00:00", "Z")
+        payload["dead_letter_last_event"] = TaskEvent(
+            event_type="task_dead_lettered",
+            task_id=task.task_id,
+            task_status=TaskStatus.DEAD_LETTER,
+            queue_name=task.queue_name,
+            payload={"reason": reason, **(error.to_dict() if error else {})},
+            occurred_at=task.updated_at,
+        ).to_dict()
         return self.redis.xadd(
-            "news:queue:dead-letter",
+            self.dead_letter_queue_name,
             {"task": json.dumps(payload, ensure_ascii=False, sort_keys=True)},
         )
+
+    def list_dead_letters(self, *, count: int = 100) -> list[DeadLetterRecord]:
+        records = self.redis.xrange(self.dead_letter_queue_name, min="-", max="+", count=count)
+        dead_letters: list[DeadLetterRecord] = []
+        for _message_id, fields in records or []:
+            payload = json.loads(_decode(_field_value(fields, "task")))
+            task = Task.from_dict(payload)
+            error_payload = payload.get("dead_letter_error")
+            last_event_payload = payload.get("dead_letter_last_event")
+            dead_letters.append(
+                DeadLetterRecord(
+                    task=task,
+                    reason=str(payload.get("dead_letter_reason") or "dead_lettered"),
+                    error=TaskError(**error_payload) if error_payload else None,
+                    attempts=int(payload.get("attempts") or task.attempts),
+                    failed_at=_parse_datetime(payload.get("dead_letter_failed_at")),
+                    last_event=TaskEvent(**last_event_payload) if last_event_payload else None,
+                )
+            )
+        return dead_letters
+
+    def requeue_dead_letter(self, task_id: str, *, reason: str = "manual_requeue") -> bool:
+        records = self.redis.xrange(self.dead_letter_queue_name, min="-", max="+", count=1000)
+        for message_id, fields in records or []:
+            payload = json.loads(_decode(_field_value(fields, "task")))
+            if str(payload.get("task_id")) != task_id:
+                continue
+            task = Task.from_dict(payload)
+            task.metadata["dead_letter_reason"] = payload.get("dead_letter_reason")
+            task.metadata["requeue_reason"] = reason
+            task.status = TaskStatus.QUEUED
+            task.scheduled_for = None
+            self.enqueue(task)
+            if hasattr(self.redis, "xdel"):
+                self.redis.xdel(self.dead_letter_queue_name, _decode(message_id))
+            return True
+        return False
 
     def status(self, queue_names: list[str]) -> list[RedisQueueStatus]:
         return [self._queue_status(queue_name) for queue_name in queue_names]
@@ -155,6 +258,7 @@ class RedisStreamTaskQueue:
                 stream_length=stream_length,
                 group_name=self.group_name,
                 group_exists=False,
+                lag=stream_length,
             )
 
         consumers = [
@@ -170,6 +274,7 @@ class RedisStreamTaskQueue:
             group_name=self.group_name,
             group_exists=True,
             pending_count=int(_dict_value(pending, "pending") or 0),
+            lag=stream_length,
             consumers=consumers,
         )
 
@@ -227,3 +332,51 @@ def _dict_value(data: dict[Any, Any], key: str) -> Any:
     if byte_key in data:
         return data[byte_key]
     return None
+
+
+def _redacted_task_dict(task: Task) -> dict[str, Any]:
+    payload = task.to_dict()
+    payload["payload"] = _redact_secrets(payload.get("payload") or {})
+    payload["metadata"] = _redact_secrets(payload.get("metadata") or {})
+    return payload
+
+
+def _redact_secrets(value: Any) -> Any:
+    if isinstance(value, dict):
+        redacted: dict[str, Any] = {}
+        for key, item in value.items():
+            if _is_secret_key(str(key)):
+                redacted[key] = "[REDACTED]"
+            else:
+                redacted[key] = _redact_secrets(item)
+        return redacted
+    if isinstance(value, list):
+        return [_redact_secrets(item) for item in value]
+    return value
+
+
+def _is_secret_key(key: str) -> bool:
+    normalized = key.lower().replace("-", "_")
+    return any(
+        token in normalized
+        for token in (
+            "api_key",
+            "apikey",
+            "authorization",
+            "cookie",
+            "password",
+            "secret",
+            "token",
+        )
+    )
+
+
+def _parse_datetime(value: Any) -> datetime:
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
+    if isinstance(value, str) and value:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return parsed.astimezone(UTC)
+    return datetime.now(UTC)
