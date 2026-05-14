@@ -649,6 +649,9 @@ def test_agent_runner_persists_conversation_when_store_is_provided(tmp_path) -> 
         _agent(),
         {"request": {"topic": "chips"}},
         conversation_id="conversation-1",
+        run_id="run-1",
+        step_id="agent",
+        workflow_checkpoint_id="cp-1",
     )
 
     messages = store.read_messages("conversation-1")
@@ -664,6 +667,21 @@ def test_agent_runner_persists_conversation_when_store_is_provided(tmp_path) -> 
         "agent_id=analyst status=accepted iterations=1 "
         "stop_reason=final_output_accepted"
     )
+    cursor = store.read_cursor("conversation-1")
+    assert cursor is not None
+    assert cursor.message_offset == 2
+    assert cursor.message_id == messages[2].message_id
+    assert cursor.run_id == "run-1"
+    assert cursor.step_id == "agent"
+    assert cursor.workflow_checkpoint_id == "cp-1"
+    assert cursor.metadata == {
+        "agent_id": "analyst",
+        "iterations": 1,
+        "message_type": "agent_result",
+        "status": "accepted",
+        "stop_reason": "final_output_accepted",
+        "success": True,
+    }
 
 
 def test_agent_runner_compacts_conversation_when_threshold_is_exceeded(tmp_path) -> None:
@@ -716,6 +734,11 @@ def test_agent_runner_compacts_conversation_when_threshold_is_exceeded(tmp_path)
         "agent_result",
     ]
     assert messages[0].content["summary"] == compaction.summary
+    cursor = store.read_cursor("conversation-compact")
+    assert cursor is not None
+    assert cursor.message_offset == 2
+    assert cursor.message_id == messages[-1].message_id
+    assert cursor.metadata["message_type"] == "agent_result"
 
 
 def test_agent_runner_skips_conversation_compaction_when_disabled(tmp_path) -> None:

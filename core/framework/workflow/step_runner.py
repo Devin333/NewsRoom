@@ -281,6 +281,7 @@ class AgentLoopStepRunner:
         self._agent_runner = agent_runner
         self._agent_registry = dict(agent_registry)
         self._global_budget_tracker = global_budget_tracker
+        self._run_id: str | None = None
 
     def can_resolve(self, step: StepSpec) -> bool:
         agent_id = str(step.metadata.get("agent_id") or step.implementation)
@@ -288,6 +289,15 @@ class AgentLoopStepRunner:
 
     def configure_global_budget_tracker(self, global_budget_tracker: Any | None) -> None:
         self._global_budget_tracker = global_budget_tracker
+
+    def configure_run_context(
+        self,
+        *,
+        artifact_manager: ArtifactManager,
+        run_id: str,
+    ) -> None:
+        _ = artifact_manager
+        self._run_id = run_id
 
     def run(self, step: StepSpec, buffer: ScopedDataBuffer) -> StepOutcome:
         if step.step_type != StepType.AGENT_LOOP:
@@ -310,7 +320,11 @@ class AgentLoopStepRunner:
 
         run_kwargs: dict[str, Any] = {
             "conversation_id": str(conversation_id) if conversation_id else None,
+            "run_id": self._run_id,
+            "step_id": step.step_id,
         }
+        if "workflow_checkpoint_id" in step.metadata:
+            run_kwargs["workflow_checkpoint_id"] = str(step.metadata["workflow_checkpoint_id"])
         if self._global_budget_tracker is not None:
             run_kwargs["global_budget_tracker"] = self._global_budget_tracker
         result = self._agent_runner.run(agent, inputs, **run_kwargs)

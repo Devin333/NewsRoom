@@ -9,7 +9,7 @@ from core.framework.agent_loop.prompt import PromptBuilder
 from core.framework.agent_loop.judge import OutputJudge
 from core.framework.llm import GlobalBudgetTracker, LLMClient
 from core.framework.tools import ToolExecutor, ToolRegistry
-from storage.conversation import AgentMessageRecord, LocalJsonConversationStore
+from storage.conversation import AgentMessageRecord, ConversationCursor, LocalJsonConversationStore
 
 
 class AgentRunner:
@@ -32,6 +32,9 @@ class AgentRunner:
         inputs: dict[str, Any],
         *,
         conversation_id: str | None = None,
+        run_id: str | None = None,
+        step_id: str | None = None,
+        workflow_checkpoint_id: str | None = None,
         global_budget_tracker: GlobalBudgetTracker | None = None,
     ) -> AgentLoopResult:
         self._append_conversation_message(
@@ -41,6 +44,8 @@ class AgentRunner:
                 role="user",
                 content=inputs,
                 agent_id=agent.agent_id,
+                run_id=run_id,
+                step_id=step_id,
                 metadata={"message_type": "agent_inputs"},
             ),
         )
@@ -57,8 +62,20 @@ class AgentRunner:
             global_budget_tracker=global_budget_tracker or self._global_budget_tracker,
         )
         result = loop.run(agent, inputs, tools)
-        self._append_conversation_events(conversation_id, agent, result.events)
-        self._append_conversation_diagnostics(conversation_id, agent, result)
+        self._append_conversation_events(
+            conversation_id,
+            agent,
+            result.events,
+            run_id=run_id,
+            step_id=step_id,
+        )
+        self._append_conversation_diagnostics(
+            conversation_id,
+            agent,
+            result,
+            run_id=run_id,
+            step_id=step_id,
+        )
         self._append_conversation_message(
             conversation_id,
             AgentMessageRecord(
@@ -66,6 +83,8 @@ class AgentRunner:
                 role="assistant",
                 content=_conversation_result_payload(result),
                 agent_id=agent.agent_id,
+                run_id=run_id,
+                step_id=step_id,
                 metadata={
                     "message_type": "agent_result",
                     "status": result.status.value,
@@ -83,6 +102,14 @@ class AgentRunner:
                 ),
             )
             self._compact_conversation_if_needed(conversation_id, agent)
+            self._write_conversation_cursor(
+                conversation_id,
+                agent=agent,
+                result=result,
+                run_id=run_id,
+                step_id=step_id,
+                workflow_checkpoint_id=workflow_checkpoint_id,
+            )
         return result
 
     def _append_conversation_message(
@@ -99,11 +126,20 @@ class AgentRunner:
         conversation_id: str | None,
         agent: AgentSpec,
         events: list[dict[str, Any]],
+        *,
+        run_id: str | None = None,
+        step_id: str | None = None,
     ) -> None:
         if self._conversation_store is None or not conversation_id:
             return
         for event in events:
-            message = _conversation_message_from_event(conversation_id, agent, event)
+            message = _conversation_message_from_event(
+                conversation_id,
+                agent,
+                event,
+                run_id=run_id,
+                step_id=step_id,
+            )
             if message is not None:
                 self._conversation_store.append_message(conversation_id, message)
 
@@ -112,6 +148,9 @@ class AgentRunner:
         conversation_id: str | None,
         agent: AgentSpec,
         result: AgentLoopResult,
+        *,
+        run_id: str | None = None,
+        step_id: str | None = None,
     ) -> None:
         if self._conversation_store is None or not conversation_id:
             return
@@ -129,6 +168,8 @@ class AgentRunner:
                     "trace_summary": trace_summary,
                 },
                 agent_id=agent.agent_id,
+                run_id=run_id,
+                step_id=step_id,
                 metadata={
                     "message_type": "agent_loop_diagnostics",
                     "status": result.status.value,
@@ -153,6 +194,41 @@ class AgentRunner:
             keep_last=policy.conversation_compaction_keep_last,
         )
 
+    def _write_conversation_cursor(
+        self,
+        conversation_id: str,
+        *,
+        agent: AgentSpec,
+        result: AgentLoopResult,
+        run_id: str | None,
+        step_id: str | None,
+        workflow_checkpoint_id: str | None,
+    ) -> None:
+        if self._conversation_store is None:
+            return
+        messages = self._conversation_store.read_messages(conversation_id)
+        if not messages:
+            return
+        latest = messages[-1]
+        self._conversation_store.write_cursor(
+            ConversationCursor(
+                conversation_id=conversation_id,
+                message_offset=len(messages) - 1,
+                message_id=latest.message_id,
+                run_id=run_id,
+                step_id=step_id,
+                workflow_checkpoint_id=workflow_checkpoint_id,
+                metadata={
+                    "agent_id": agent.agent_id,
+                    "status": result.status.value,
+                    "success": result.success,
+                    "stop_reason": _result_stop_reason(result),
+                    "iterations": result.iterations,
+                    "message_type": latest.metadata.get("message_type"),
+                },
+            )
+        )
+
 
 def _conversation_result_payload(result: AgentLoopResult) -> dict[str, Any]:
     if result.success:
@@ -175,6 +251,9 @@ def _conversation_message_from_event(
     conversation_id: str,
     agent: AgentSpec,
     event: dict[str, Any],
+    *,
+    run_id: str | None = None,
+    step_id: str | None = None,
 ) -> AgentMessageRecord | None:
     event_type = str(event.get("event_type") or "")
     if event_type == "tool_observation":
@@ -186,6 +265,8 @@ def _conversation_message_from_event(
             role="tool",
             content=dict(observation),
             agent_id=agent.agent_id,
+            run_id=run_id,
+            step_id=step_id,
             metadata={
                 "message_type": "agent_tool_observation",
                 "event_type": event_type,
@@ -204,6 +285,8 @@ def _conversation_message_from_event(
                 "via_tool": event.get("via_tool"),
             },
             agent_id=agent.agent_id,
+            run_id=run_id,
+            step_id=step_id,
             metadata={
                 "message_type": "agent_judge_retry",
                 "event_type": event_type,
@@ -222,6 +305,8 @@ def _conversation_message_from_event(
             role="diagnostic",
             content=dict(event),
             agent_id=agent.agent_id,
+            run_id=run_id,
+            step_id=step_id,
             metadata={
                 "message_type": "agent_loop_stop_event",
                 "event_type": event_type,

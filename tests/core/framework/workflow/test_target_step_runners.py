@@ -42,6 +42,7 @@ from core.framework.workflow import (
     WorkflowExecutor,
     build_default_step_runner_registry,
 )
+from storage.conversation import LocalJsonConversationStore
 
 
 def test_tool_call_step_runner_executes_real_tool(tmp_path) -> None:
@@ -166,6 +167,71 @@ def test_agent_loop_step_runner_executes_registered_agent(tmp_path) -> None:
     assert result.output["analysis_result"]["summary"] == "ok"
     assert result.output["agent_loop_metrics"]["llm_calls"] == 2
     assert result.output["agent_loop_metrics"]["tool_calls"] == 1
+
+
+def test_agent_loop_step_runner_writes_conversation_cursor_context(tmp_path) -> None:
+    conversation_store = LocalJsonConversationStore(tmp_path / "conversations")
+    agent = AgentSpec(
+        agent_id="analyst",
+        name="Analyst",
+        role="Analyze",
+        goal="Produce analysis",
+        instructions="Return JSON actions only.",
+        input_keys=["request"],
+        output_key="analysis_result",
+    )
+    runner = AgentLoopStepRunner(
+        AgentRunner(
+            llm_client=FakeLLMClient(
+                ['{"action_type":"final_output","output":{"analysis_result":{"summary":"ok"}}}']
+            ),
+            tool_registry=ToolRegistry(),
+            conversation_store=conversation_store,
+        ),
+        {"analyst": agent},
+    )
+    registry = StepRunnerRegistry()
+    registry.register(StepType.AGENT_LOOP, runner)
+    spec = WorkflowSpec(
+        workflow_id="agent-loop-cursor",
+        name="Agent Loop Cursor",
+        version="1.0",
+        start_step_id="agent",
+        steps=[
+            StepSpec(
+                step_id="agent",
+                implementation="analyst",
+                step_type=StepType.AGENT_LOOP,
+                read_keys=["request"],
+                write_keys=["analysis_result"],
+                required_output_keys=["analysis_result"],
+                metadata={
+                    "conversation_id": "conversation-workflow",
+                    "workflow_checkpoint_id": "cp-workflow",
+                },
+            )
+        ],
+    )
+    executor = WorkflowExecutor(
+        function_step_runner=None,
+        step_runner_registry=registry,
+        artifact_manager=ArtifactManager(tmp_path / "runs"),
+    )
+
+    result = executor.execute(
+        spec,
+        {"topic": "chips"},
+        profile="test",
+        run_id="run-agent-cursor",
+    )
+    cursor = conversation_store.read_cursor("conversation-workflow")
+
+    assert result.status == WorkflowStatus.SUCCEEDED
+    assert cursor is not None
+    assert cursor.run_id == "run-agent-cursor"
+    assert cursor.step_id == "agent"
+    assert cursor.workflow_checkpoint_id == "cp-workflow"
+    assert cursor.metadata["agent_id"] == "analyst"
 
 
 def test_agent_loop_step_runner_writes_redacted_llm_call_artifacts(tmp_path) -> None:
@@ -977,7 +1043,14 @@ def test_executor_publishes_event_bus_blocks_resource_and_writes_policy_artifact
 class _FakeAgentRunner:
     def __init__(self, result: AgentLoopResult) -> None:
         self._result = result
+        self.calls = []
 
-    def run(self, agent, inputs, *, conversation_id=None):
-        _ = agent, inputs, conversation_id
+    def run(self, agent, inputs, *, conversation_id=None, **kwargs):
+        self.calls.append(
+            {
+                "agent": agent,
+                "inputs": inputs,
+                "kwargs": {"conversation_id": conversation_id, **kwargs},
+            }
+        )
         return self._result

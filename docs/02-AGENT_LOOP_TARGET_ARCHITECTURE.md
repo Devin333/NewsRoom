@@ -2118,11 +2118,11 @@ test_tool_result_pointer
 | PromptBuilder | 已实现 | `core/framework/agent_loop/prompt.py` | 通过内部 `LLMRequest` 构造 prompt，不直接调用 provider SDK |
 | OutputJudge | 已实现基础版 | `core/framework/agent_loop/judge.py` | 检查 required output key、tool allowlist、source boundary、secret-like output |
 | AgentLoop | 已大幅增强 | `core/framework/agent_loop/loop.py` | 支持多轮 LLM、tool call、observation、judge retry、control output、stall、approval wait、diagnostics、trace |
-| AgentRunner | 已实现 | `core/framework/agent_loop/runner.py` | 装配 LLMClient、ToolRegistry、ToolExecutor、ConversationStore 并调用 AgentLoop |
+| AgentRunner | 已实现 | `core/framework/agent_loop/runner.py` | 装配 LLMClient、ToolRegistry、ToolExecutor、ConversationStore 并调用 AgentLoop，持久化后写 latest conversation cursor |
 | ToolRuntime 边界 | 已实现 | `core/framework/tools/*` + AgentLoop | AgentLoop 调工具必须经过 `ToolExecutor` |
 | LLM Layer 边界 | 已实现 | `core/framework/llm/*` + AgentLoop | AgentLoop 调 LLM 必须经过 `LLMClient` |
 | Conversation persistence | 已有基础 | `storage/conversation/*` + `AgentRunner` | 持久化 user/tool/judge/diagnostic/assistant message，assistant result 保持最后 |
-| Workflow 集成 | 已实现 | `AgentLoopStepRunner` | Workflow step 可调用 AgentRunner，并把 AgentLoop result/events/metrics 写入 DataBuffer |
+| Workflow 集成 | 已实现 | `AgentLoopStepRunner` | Workflow step 可调用 AgentRunner，把 run_id/step_id/checkpoint metadata 传入 cursor，并把 AgentLoop result/events/metrics 写入 DataBuffer |
 | Deterministic smoke workflow | 已实现 | `workflows/daily_intelligence/test_agent_loop.py` | FakeLLM + fake tool 的离线回归 workflow |
 
 ### K.2 本轮大增强内容
@@ -2230,7 +2230,7 @@ token_usage
 | agent artifact 输出 | 已增强 | WorkflowExecutor 会把 redacted LLM call request/response 写为 `llm_call` step artifacts，并写回 manifest/step result |
 | sub-agent delegation | 暂不做 | 仍为目标态，不在本轮实现 |
 | conversation compaction | 已实现基础版 | LocalJsonConversationStore 可生成 redacted deterministic compaction summary，AgentRunner 可按阈值自动触发 |
-| cursor resume | 部分实现 | Workflow checkpoint/resume 已有；ConversationStore 已补 latest cursor 读写，AgentLoop mid-run resume 尚未接入 |
+| cursor resume | 部分实现 | Workflow checkpoint/resume 已有；ConversationStore 已补 latest cursor 读写；AgentRunner 会在持久化/compaction 后写 cursor，Workflow AgentLoop step 已传 run_id/step_id/checkpoint metadata；AgentLoop mid-run resume 尚未接入 |
 | multi-layer LLM judge | 暂不做 | 当前 OutputJudge 仍是 deterministic local judge |
 
 ### K.4 边界保持
