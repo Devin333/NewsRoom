@@ -11,6 +11,8 @@ class ReportNotFoundError(FileNotFoundError):
 
 
 FINAL_REPORT_STATUS = "final"
+BLOCKED_REPORT_STATUS = "blocked"
+REPORT_ARTIFACT_KEYS = ("report_json", "blocked_report", "report_markdown")
 
 
 @dataclass(frozen=True)
@@ -88,7 +90,7 @@ class LocalJsonRepository:
             artifacts = manifest.get("artifacts", {})
             if manifest.get("status") != "succeeded":
                 continue
-            if "report_json" not in artifacts and "report_markdown" not in artifacts:
+            if not _has_report_artifact(artifacts):
                 continue
             candidates.append((manifest.get("finished_at") or "", manifest_path, manifest))
 
@@ -100,7 +102,7 @@ class LocalJsonRepository:
 
     def get_report(self, report_id: str) -> LatestReportRecord:
         run_id, report_status = _parse_report_id(report_id)
-        if report_status != "final":
+        if report_status not in {FINAL_REPORT_STATUS, BLOCKED_REPORT_STATUS}:
             raise ReportNotFoundError(f"report not found: {report_id}")
         manifest_path = self.artifact_root / run_id / "manifest.json"
         if not manifest_path.exists():
@@ -109,7 +111,9 @@ class LocalJsonRepository:
         if manifest.get("status") != "succeeded":
             raise ReportNotFoundError(f"report not found: {report_id}")
         artifacts = manifest.get("artifacts", {})
-        if "report_json" not in artifacts and "report_markdown" not in artifacts:
+        if not _has_report_artifact(artifacts):
+            raise ReportNotFoundError(f"report not found: {report_id}")
+        if _report_status_from_artifacts(artifacts) != report_status:
             raise ReportNotFoundError(f"report not found: {report_id}")
         return _detail_from_manifest(manifest_path, manifest)
 
@@ -166,7 +170,7 @@ class LocalJsonRepository:
             if workflow_id is not None and manifest.get("workflow_id") != workflow_id:
                 continue
             artifacts = manifest.get("artifacts", {})
-            if "report_json" not in artifacts and "report_markdown" not in artifacts:
+            if not _has_report_artifact(artifacts):
                 continue
             manifests.append((manifest_path, manifest))
         return manifests
@@ -179,18 +183,29 @@ def _artifact_path(run_dir: Path, relative: str | None) -> Path | None:
     return path if path.exists() else None
 
 
+def _has_report_artifact(artifacts: dict[str, Any]) -> bool:
+    return any(key in artifacts for key in REPORT_ARTIFACT_KEYS)
+
+
+def _report_status_from_artifacts(artifacts: dict[str, Any]) -> str:
+    if "blocked_report" in artifacts and "report_json" not in artifacts:
+        return BLOCKED_REPORT_STATUS
+    return FINAL_REPORT_STATUS
+
+
 def _detail_from_manifest(manifest_path: Path, manifest: dict[str, Any]) -> LatestReportRecord:
     run_dir = manifest_path.parent
     artifacts = manifest.get("artifacts", {})
-    report_json_path = _artifact_path(run_dir, artifacts.get("report_json"))
+    report_status = _report_status_from_artifacts(artifacts)
+    report_json_path = _artifact_path(run_dir, artifacts.get("report_json") or artifacts.get("blocked_report"))
     report_markdown_path = _artifact_path(run_dir, artifacts.get("report_markdown"))
     report_json = _read_optional_json(report_json_path)
     report_markdown = _read_optional_text(report_markdown_path)
     run_id = str(manifest["run_id"])
     return LatestReportRecord(
-        report_id=f"{run_id}:final",
+        report_id=f"{run_id}:{report_status}",
         run_id=run_id,
-        status=FINAL_REPORT_STATUS,
+        status=report_status,
         finished_at=manifest.get("finished_at") or "",
         title=(report_json or {}).get("title"),
         quality_score=manifest.get("quality_score"),
@@ -205,14 +220,15 @@ def _detail_from_manifest(manifest_path: Path, manifest: dict[str, Any]) -> Late
 def _summary_from_manifest(manifest_path: Path, manifest: dict[str, Any]) -> ReportSearchRecord:
     run_dir = manifest_path.parent
     artifacts = manifest.get("artifacts", {})
-    report_json_path = _artifact_path(run_dir, artifacts.get("report_json"))
+    report_status = _report_status_from_artifacts(artifacts)
+    report_json_path = _artifact_path(run_dir, artifacts.get("report_json") or artifacts.get("blocked_report"))
     report_markdown_path = _artifact_path(run_dir, artifacts.get("report_markdown"))
     report_json = _read_optional_json(report_json_path)
     run_id = str(manifest["run_id"])
     return ReportSearchRecord(
-        report_id=f"{run_id}:final",
+        report_id=f"{run_id}:{report_status}",
         run_id=run_id,
-        status=FINAL_REPORT_STATUS,
+        status=report_status,
         finished_at=manifest.get("finished_at") or "",
         title=(report_json or {}).get("title"),
         quality_score=manifest.get("quality_score"),

@@ -12,10 +12,12 @@ def _write_report_run(
     title: str,
     *,
     workflow_id: str | None = None,
+    blocked: bool = False,
 ) -> None:
     run_dir = root / run_id
     run_dir.mkdir(parents=True)
-    (run_dir / "report.json").write_text(json.dumps({"title": title}), encoding="utf-8")
+    report_name = "blocked_report.json" if blocked else "report.json"
+    (run_dir / report_name).write_text(json.dumps({"title": title}), encoding="utf-8")
     (run_dir / "report.md").write_text(f"# {title}\n", encoding="utf-8")
     (run_dir / "manifest.json").write_text(
         json.dumps(
@@ -27,7 +29,7 @@ def _write_report_run(
                 "finished_at": finished_at,
                 "quality_score": 0.9,
                 "artifacts": {
-                    "report_json": "report.json",
+                    ("blocked_report" if blocked else "report_json"): report_name,
                     "report_markdown": "report.md",
                 },
             }
@@ -64,6 +66,24 @@ def test_local_json_repository_gets_report_by_id(tmp_path) -> None:
     assert record.report_markdown == "# AI Policy Report\n"
 
 
+def test_local_json_repository_gets_blocked_report_by_id(tmp_path) -> None:
+    _write_report_run(
+        tmp_path,
+        "run-blocked",
+        "2026-05-11T00:00:00Z",
+        "Blocked AI Report",
+        blocked=True,
+    )
+
+    record = LocalJsonRepository(tmp_path).get_report("run-blocked:blocked")
+
+    assert record.report_id == "run-blocked:blocked"
+    assert record.run_id == "run-blocked"
+    assert record.status == "blocked"
+    assert record.title == "Blocked AI Report"
+    assert record.report_json == {"title": "Blocked AI Report"}
+
+
 def test_local_json_repository_rejects_invalid_report_id(tmp_path) -> None:
     with pytest.raises(ValueError, match="invalid report id"):
         LocalJsonRepository(tmp_path).get_report("../secret:final")
@@ -83,6 +103,19 @@ def test_local_json_repository_raises_for_non_final_report_id(tmp_path) -> None:
         LocalJsonRepository(tmp_path).get_report("run-1:blocked")
 
 
+def test_local_json_repository_raises_for_wrong_blocked_report_status(tmp_path) -> None:
+    _write_report_run(
+        tmp_path,
+        "run-blocked",
+        "2026-05-11T00:00:00Z",
+        "Blocked AI Report",
+        blocked=True,
+    )
+
+    with pytest.raises(ReportNotFoundError, match="report not found"):
+        LocalJsonRepository(tmp_path).get_report("run-blocked:final")
+
+
 def test_local_json_repository_raises_when_missing_report(tmp_path) -> None:
     with pytest.raises(ReportNotFoundError, match="no local report"):
         LocalJsonRepository(tmp_path).latest_report()
@@ -91,13 +124,20 @@ def test_local_json_repository_raises_when_missing_report(tmp_path) -> None:
 def test_local_json_repository_searches_reports(tmp_path) -> None:
     _write_report_run(tmp_path, "old", "2026-05-10T00:00:00Z", "Chip Supply Report")
     _write_report_run(tmp_path, "new", "2026-05-11T00:00:00Z", "AI Policy Report")
+    _write_report_run(
+        tmp_path,
+        "blocked",
+        "2026-05-12T00:00:00Z",
+        "Blocked Policy Report",
+        blocked=True,
+    )
 
     records = LocalJsonRepository(tmp_path).search_reports("policy")
 
-    assert [record.run_id for record in records] == ["new"]
-    assert records[0].report_id == "new:final"
-    assert records[0].status == "final"
-    assert records[0].title == "AI Policy Report"
+    assert [record.run_id for record in records] == ["blocked", "new"]
+    assert records[0].report_id == "blocked:blocked"
+    assert records[0].status == "blocked"
+    assert records[0].title == "Blocked Policy Report"
 
 
 def test_local_json_repository_lists_reports_with_workflow_filter(tmp_path) -> None:
@@ -131,3 +171,20 @@ def test_local_json_repository_lists_reports_with_workflow_filter(tmp_path) -> N
     assert [record.run_id for record in records] == ["daily-new", "daily-old"]
     assert records[0].workflow_id == "daily-intelligence-live"
     assert records[0].profile == "live-offline"
+
+
+def test_local_json_repository_lists_blocked_reports(tmp_path) -> None:
+    _write_report_run(
+        tmp_path,
+        "blocked",
+        "2026-05-12T00:00:00Z",
+        "Blocked Policy Report",
+        workflow_id="daily-intelligence-live",
+        blocked=True,
+    )
+
+    records = LocalJsonRepository(tmp_path).list_reports(limit=10)
+
+    assert records[0].report_id == "blocked:blocked"
+    assert records[0].status == "blocked"
+    assert records[0].title == "Blocked Policy Report"
