@@ -8,7 +8,8 @@ from core.framework.agent_loop.parser import AgentActionParser
 from core.framework.agent_loop.prompt import PromptBuilder
 from core.framework.agent_loop.judge import OutputJudge
 from core.framework.llm import GlobalBudgetTracker, LLMClient
-from core.framework.tools import ToolExecutor, ToolRegistry
+from core.framework.tools.executor import ToolExecutor
+from core.framework.tools.registry import ToolRegistry
 from storage.conversation import AgentMessageRecord, ConversationCursor, LocalJsonConversationStore
 
 
@@ -41,6 +42,7 @@ class AgentRunner:
         loop_inputs = self._inputs_with_resume_context(
             inputs,
             conversation_id,
+            agent_id=agent.agent_id,
             resume_from_cursor=resume_from_cursor,
         )
         self._append_conversation_message(
@@ -205,6 +207,7 @@ class AgentRunner:
         inputs: dict[str, Any],
         conversation_id: str | None,
         *,
+        agent_id: str,
         resume_from_cursor: bool,
     ) -> dict[str, Any]:
         loop_inputs = dict(inputs)
@@ -213,6 +216,12 @@ class AgentRunner:
         cursor = self._conversation_store.read_cursor(conversation_id)
         if cursor is None:
             return loop_inputs
+        cursor_agent_id = cursor.metadata.get("agent_id")
+        if cursor_agent_id is not None and str(cursor_agent_id) != agent_id:
+            raise ValueError(
+                "conversation cursor agent_id mismatch: "
+                f"{cursor_agent_id} != {agent_id}"
+            )
         loop_inputs["conversation_cursor"] = cursor.to_dict()
         summary = self._conversation_store.get_summary(conversation_id)
         if summary is not None:

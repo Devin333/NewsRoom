@@ -1,4 +1,7 @@
+import pytest
+
 from core.framework.agent_loop import (
+    AgentLoopTrace,
     AgentLoopPolicy,
     AgentLoopStatus,
     AgentLoopStopReason,
@@ -14,13 +17,10 @@ from core.framework.llm import (
     LLMStreamEvent,
     TokenUsage,
 )
-from core.framework.tools import (
-    REDACTED_VALUE,
-    ToolDefinition,
-    ToolPolicy,
-    ToolRegistry,
-    register_control_tools,
-)
+from core.framework.tools.control_tools import register_control_tools
+from core.framework.tools.models import ToolDefinition, ToolPolicy
+from core.framework.tools.redaction import REDACTED_VALUE
+from core.framework.tools.registry import ToolRegistry
 from core.framework.workers import InMemoryApprovalStore
 from storage.conversation import ConversationCursor, LocalJsonConversationStore
 
@@ -407,6 +407,40 @@ def test_agent_runner_records_redacted_llm_call_artifacts() -> None:
     assert fake_secret not in str(result.to_dict()["llm_call_artifacts"])
 
 
+def test_agent_loop_trace_records_replayable_redacted_call_refs() -> None:
+    fake_secret = "sk" + "-abcdef1234567890"
+    llm = FakeLLMClient(
+        [
+            LLMResponse(
+                content='{"action_type":"final_output","output":{"analysis_result":{"summary":"ok"}}}',
+                usage=TokenUsage(input_tokens=4, output_tokens=6),
+                metadata={
+                    "provider": "fake",
+                    "model": "fake-llm",
+                    "api_key": fake_secret,
+                    "llm_call_id": "call-1",
+                },
+            )
+        ]
+    )
+
+    result = AgentRunner(llm_client=llm, tool_registry=_registry()).run(
+        _agent(),
+        {"request": {"topic": fake_secret}},
+    )
+    iteration = result.trace["iterations"][0]
+    restored = AgentLoopTrace.from_dict(result.trace)
+
+    assert result.success is True
+    assert iteration["prompt_hash"]
+    assert iteration["llm_call_id"] == "call-1"
+    assert iteration["llm_artifact_ref"] == "analyst:llm_call:1"
+    assert iteration["parsed_action"]["action_type"] == "final_output"
+    assert iteration["judge_result"]["decision"] == "accept"
+    assert fake_secret not in str(result.trace)
+    assert restored.to_dict() == result.trace
+
+
 def test_agent_runner_consumes_llm_stream_and_records_stream_events() -> None:
     class StreamingLLM:
         def __init__(self) -> None:
@@ -537,6 +571,60 @@ def test_agent_runner_redacts_tool_observations_before_next_prompt() -> None:
     assert REDACTED_VALUE in second_prompt
 
 
+def test_agent_runner_uses_pointer_pattern_for_large_tool_observations() -> None:
+    large_text = "x" * 400
+    registry = ToolRegistry()
+    registry.register(
+        ToolDefinition(name="memory.search", input_schema={"required": ["query"]}),
+        lambda args: {"items": [{"title": large_text} for _ in range(5)]},
+    )
+    llm = FakeLLMClient(
+        [
+            '{"action_type":"tool_call","tool_name":"memory.search","tool_args":{"query":"chips"}}',
+            '{"action_type":"final_output","output":{"analysis_result":{"summary":"ok"}}}',
+        ]
+    )
+    agent = AgentSpec(
+        agent_id="analyst",
+        name="Analyst",
+        role="Analyze",
+        goal="Produce analysis",
+        instructions="Return JSON actions only.",
+        input_keys=["request"],
+        output_key="analysis_result",
+        allowed_tools=["memory.search"],
+        tool_policy=ToolPolicy(
+            allowed_tools=["memory.search"],
+            max_result_chars_inline=120,
+            spill_large_results_to_artifact=True,
+        ),
+    )
+
+    result = AgentRunner(llm_client=llm, tool_registry=registry).run(
+        agent,
+        {"request": {"topic": "chips"}},
+    )
+
+    observation = next(
+        event["observation"]
+        for event in result.events
+        if event["event_type"] == "tool_observation"
+    )
+    prompt = llm.requests[1].messages[1]["content"]
+
+    assert result.success is True
+    assert observation["tool_call_id"]
+    assert observation["tool_name"] == "memory.search"
+    assert observation["status"] == "succeeded"
+    assert observation["elapsed_ms"] >= 0
+    assert observation["result"]["output"]["artifact_ref"]["artifact_id"].startswith(
+        "tool_result:"
+    )
+    assert observation["result"]["output"]["count"] == 1
+    assert "artifact_ref" in prompt
+    assert large_text not in prompt
+
+
 def test_agent_runner_reports_parser_retry_diagnostics() -> None:
     llm = FakeLLMClient(["not-json", "still-not-json"])
     agent = AgentSpec(
@@ -562,6 +650,36 @@ def test_agent_runner_reports_parser_retry_diagnostics() -> None:
     assert result.diagnostics.stop_reason == AgentLoopStopReason.PARSER_RETRY_EXHAUSTED
     assert result.diagnostics.issues[0].code == "parser_retry_exhausted"
     assert result.trace["summary"]["parser_error_count"] == 2
+
+
+def test_agent_runner_reports_empty_output_retry_diagnostics() -> None:
+    llm = FakeLLMClient(
+        [
+            '{"action_type":"final_output","output":{}}',
+            '{"action_type":"final_output","output":{}}',
+        ]
+    )
+    agent = AgentSpec(
+        agent_id="analyst",
+        name="Analyst",
+        role="Analyze",
+        goal="Produce analysis",
+        instructions="Return JSON actions only.",
+        input_keys=["request"],
+        output_key="analysis_result",
+        loop_policy=AgentLoopPolicy(max_iterations=4, max_judge_retries=1),
+    )
+
+    result = AgentRunner(llm_client=llm, tool_registry=_registry()).run(
+        agent,
+        {"request": {"topic": "chips"}},
+    )
+
+    assert result.success is False
+    assert result.status == AgentLoopStatus.RETRY_EXHAUSTED
+    assert result.diagnostics is not None
+    assert result.diagnostics.stop_reason == AgentLoopStopReason.EMPTY_OUTPUT_EXHAUSTED
+    assert result.diagnostics.issues[0].code == "empty_output_exhausted"
 
 
 def test_agent_runner_stalls_on_repeated_tool_call_signature() -> None:
@@ -597,6 +715,68 @@ def test_agent_runner_stalls_on_repeated_tool_call_signature() -> None:
     assert result.diagnostics.stop_reason == AgentLoopStopReason.REPEATED_TOOL_CALL_STALLED
     assert result.diagnostics.repeated_tool_calls == 1
     assert result.diagnostics.issues[0].code == "repeated_tool_call"
+
+
+def test_agent_runner_blocks_subagent_delegation_by_default() -> None:
+    llm = FakeLLMClient(
+        [
+            (
+                '{"action_type":"delegate_to_subagent",'
+                '"subagent_id":"citation_sanity_checker",'
+                '"subagent_task":"check citations",'
+                '"handoff_reason":"citation risk"}'
+            )
+        ]
+    )
+
+    result = AgentRunner(llm_client=llm, tool_registry=_registry()).run(
+        _agent(),
+        {"request": {"topic": "chips"}},
+    )
+
+    assert result.success is False
+    assert result.status == AgentLoopStatus.BLOCKED
+    assert result.diagnostics is not None
+    assert result.diagnostics.stop_reason == AgentLoopStopReason.AGENT_POLICY_BLOCKED
+    assert result.verdict is not None
+    assert result.verdict.policy_violations == ["subagent delegation not allowed"]
+
+
+def test_agent_runner_allows_listed_subagent_contract_without_orchestration() -> None:
+    llm = FakeLLMClient(
+        [
+            (
+                '{"action_type":"delegate_to_subagent",'
+                '"subagent_id":"citation_sanity_checker",'
+                '"subagent_task":"check citations",'
+                '"handoff_reason":"citation risk"}'
+            ),
+            '{"action_type":"final_output","output":{"analysis_result":{"summary":"ok"}}}',
+        ]
+    )
+    agent = AgentSpec(
+        agent_id="writer",
+        name="WriterAgent",
+        role="Write",
+        goal="Write report",
+        instructions="Return JSON actions only.",
+        input_keys=["request"],
+        output_key="analysis_result",
+        loop_policy=AgentLoopPolicy(allow_subagents=True),
+        allowed_subagents=["citation_sanity_checker"],
+    )
+
+    result = AgentRunner(llm_client=llm, tool_registry=_registry()).run(
+        agent,
+        {"request": {"topic": "chips"}},
+    )
+
+    assert result.success is True
+    assert result.output == {"analysis_result": {"summary": "ok"}}
+    assert "(0," not in llm.requests[1].messages[1]["content"]
+    assert "parent_agent_id=writer" in llm.requests[1].messages[1]["content"]
+    assert "child_agent_id=citation_sanity_checker" in llm.requests[1].messages[1]["content"]
+    assert "handoff_reason=citation risk" in llm.requests[1].messages[1]["content"]
 
 
 def test_agent_runner_waits_for_tool_approval_with_diagnostics() -> None:
@@ -792,6 +972,33 @@ def test_agent_runner_persists_conversation_when_store_is_provided(tmp_path) -> 
         "stop_reason": "final_output_accepted",
         "success": True,
     }
+
+
+def test_agent_runner_rejects_resume_cursor_for_different_agent(tmp_path) -> None:
+    llm = FakeLLMClient(
+        ['{"action_type":"final_output","output":{"analysis_result":{"summary":"ok"}}}']
+    )
+    store = LocalJsonConversationStore(tmp_path)
+    store.write_cursor(
+        ConversationCursor(
+            conversation_id="conversation-resume",
+            message_offset=0,
+            message_id="message-0",
+            metadata={"agent_id": "other-agent"},
+        )
+    )
+
+    with pytest.raises(ValueError, match="conversation cursor agent_id mismatch"):
+        AgentRunner(
+            llm_client=llm,
+            tool_registry=_registry(),
+            conversation_store=store,
+        ).run(
+            _agent(),
+            {"request": {"topic": "chips"}},
+            conversation_id="conversation-resume",
+            resume_from_cursor=True,
+        )
 
 
 def test_agent_runner_compacts_conversation_when_threshold_is_exceeded(tmp_path) -> None:

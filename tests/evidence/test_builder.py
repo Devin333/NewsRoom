@@ -77,7 +77,11 @@ def test_evidence_builder_creates_bundle_from_ranked_sources() -> None:
     ]
 
     compatibility_bundle = EvidenceBuilder().build([ranked], bundle_id="run-1")
-    assert compatibility_bundle.to_dict() == bundle.to_dict()
+    compatibility_payload = compatibility_bundle.to_dict()
+    bundle_payload = bundle.to_dict()
+    compatibility_payload.pop("created_at")
+    bundle_payload.pop("created_at")
+    assert compatibility_payload == bundle_payload
 
 
 def test_evidence_builder_uses_source_extraction_confidence_not_relevance() -> None:
@@ -117,4 +121,101 @@ def test_evidence_builder_uses_source_extraction_confidence_not_relevance() -> N
     assert (
         build_result.bundle.items[0].metadata["source_extraction_confidence_basis"]
         == "extraction_confidence"
+    )
+
+
+def test_evidence_builder_downgrades_missing_lineage() -> None:
+    item = NormalizedSourceItem(
+        normalized_item_id="norm_missing",
+        source_item_id="raw_missing",
+        source_id="source",
+        title="Missing lineage",
+        normalized_title="missing lineage",
+        url="https://example.com/missing-lineage",
+        canonical_url="https://example.com/missing-lineage",
+        canonical_url_hash="hash-url",
+        title_hash="hash-title",
+        content_hash="hash-content",
+        source_reliability="high",
+        fetched_at=datetime(2026, 5, 11, tzinfo=UTC),
+        summary="Missing lineage summary.",
+    )
+    ranked = RankedSourceItem(
+        ranked_item_id="rank_missing",
+        item=item,
+        relevance_score=1.0,
+        recency_score=1.0,
+        reliability_score=1.0,
+        novelty_score=1.0,
+        final_score=1.0,
+        lineage=None,
+    )
+    object.__setattr__(ranked, "lineage", None)
+    object.__setattr__(item, "lineage", None)
+
+    build_result = EvidenceBuilder().build_with_scores([ranked], bundle_id="run-missing")
+    evidence = build_result.bundle.items[0]
+
+    assert evidence.confidence == 0.35
+    assert evidence.publishable is False
+    assert "missing_lineage" in evidence.metadata["validation_notes"]
+
+
+def test_evidence_builder_merges_duplicate_evidence_and_retains_source_ids() -> None:
+    first = _ranked_for_duplicate("raw_1", "rank_1")
+    second = _ranked_for_duplicate("raw_2", "rank_2")
+
+    bundle = EvidenceBuilder().build_with_scores(
+        [first, second],
+        bundle_id="run-dupe",
+    ).bundle
+
+    assert bundle.item_count == 1
+    assert bundle.items[0].source_item_ids == ["raw_1", "raw_2"]
+    assert bundle.items[0].metadata["merged_ranked_item_ids"] == ["rank_1", "rank_2"]
+    assert bundle.source_coverage["merged_duplicate_count"] == 1
+
+
+def _ranked_for_duplicate(source_item_id: str, ranked_item_id: str) -> RankedSourceItem:
+    item = NormalizedSourceItem(
+        normalized_item_id=f"norm_{source_item_id}",
+        source_item_id=source_item_id,
+        source_id="source",
+        title="Duplicate item",
+        normalized_title="duplicate item",
+        url="https://example.com/duplicate",
+        canonical_url="https://example.com/duplicate",
+        canonical_url_hash="hash-url",
+        title_hash="hash-title",
+        content_hash=f"hash-content-{source_item_id}",
+        source_reliability="high",
+        fetched_at=datetime(2026, 5, 11, tzinfo=UTC),
+        summary="Duplicate item summary.",
+        metadata={
+            "lineage": {
+                "source_id": "source",
+                "source_item_id": source_item_id,
+                "normalized_item_id": f"norm_{source_item_id}",
+                "ranked_item_id": ranked_item_id,
+                "canonical_url": "https://example.com/duplicate",
+            }
+        },
+    )
+    return RankedSourceItem(
+        ranked_item_id=ranked_item_id,
+        item=item,
+        relevance_score=1.0,
+        recency_score=1.0,
+        reliability_score=1.0,
+        novelty_score=1.0,
+        final_score=1.0,
+        metadata={
+            "lineage": {
+                "source_id": "source",
+                "source_item_id": source_item_id,
+                "normalized_item_id": f"norm_{source_item_id}",
+                "ranked_item_id": ranked_item_id,
+                "canonical_url": "https://example.com/duplicate",
+            }
+        },
     )

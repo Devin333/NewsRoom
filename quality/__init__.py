@@ -2,8 +2,10 @@
 
 from quality.citation_checker import CitationCheckResult, CitationChecker
 from quality.editor_gate import EditorDecision, EditorGate, EditorReview, RewritePolicy
+from quality.eval_dataset import golden_quality_eval_cases, run_quality_eval_case
 from quality.errors import QualityError, QualityErrorType, quality_error_policy
 from quality.models import (
+    BlockedReport,
     HumanReviewDecision,
     HumanReviewRequest,
     QualityEvalCase,
@@ -18,9 +20,11 @@ from quality.support_matrix import SectionSupport, SupportMatrix, SupportMatrixB
 __all__ = [
     "CitationCheckResult",
     "CitationChecker",
+    "BlockedReport",
     "EditorDecision",
     "EditorGate",
     "EditorReview",
+    "golden_quality_eval_cases",
     "HumanReviewDecision",
     "HumanReviewRequest",
     "QualityEvalCase",
@@ -33,6 +37,7 @@ __all__ = [
     "QualityScorer",
     "ReportQualitySummary",
     "RewritePolicy",
+    "run_quality_eval_case",
     "SectionSupport",
     "SupportMatrix",
     "SupportMatrixBuilder",

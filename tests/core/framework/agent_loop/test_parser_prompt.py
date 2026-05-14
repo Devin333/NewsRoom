@@ -22,6 +22,22 @@ def test_action_parser_parses_final_output() -> None:
     assert action.output == {"analysis_result": {"summary": "ok"}}
 
 
+def test_action_parser_parses_delegate_to_subagent() -> None:
+    action = AgentActionParser().parse(
+        (
+            '{"action_type":"delegate_to_subagent",'
+            '"subagent_id":"citation_sanity_checker",'
+            '"subagent_task":"check citations",'
+            '"handoff_reason":"citation risk"}'
+        )
+    )
+
+    assert action.action_type == "delegate_to_subagent"
+    assert action.subagent_id == "citation_sanity_checker"
+    assert action.subagent_task == "check citations"
+    assert action.handoff_reason == "citation risk"
+
+
 def test_action_parser_rejects_invalid_json() -> None:
     with pytest.raises(AgentActionParserError, match="not valid JSON"):
         AgentActionParser().parse("not-json")

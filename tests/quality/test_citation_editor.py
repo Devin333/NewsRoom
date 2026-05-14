@@ -1,5 +1,5 @@
 from evidence import EvidenceBundle, EvidenceItem, VerifiedClaim, VerifiedFindings
-from quality import CitationChecker, EditorDecision, EditorGate
+from quality import CitationChecker, EditorDecision, EditorGate, RewritePolicy
 
 
 def _bundle() -> EvidenceBundle:
@@ -31,6 +31,23 @@ def test_citation_checker_passes_known_urls() -> None:
     assert result.claim_support_score == 1.0
 
 
+def test_citation_checker_passes_known_evidence_ids() -> None:
+    report = {
+        "sections": [
+            {
+                "title": "Summary",
+                "content": "A summary",
+                "evidence_ids": ["ev_1"],
+            }
+        ]
+    }
+
+    result = CitationChecker().check(report, _bundle())
+
+    assert result.passed is True
+    assert result.cited_evidence_ids == ["ev_1"]
+
+
 def test_citation_checker_fails_unknown_urls_and_editor_blocks() -> None:
     report = {"sections": [{"title": "Summary", "sources": ["https://example.com/missing"]}]}
 
@@ -43,6 +60,15 @@ def test_citation_checker_fails_unknown_urls_and_editor_blocks() -> None:
     assert citation_result.citation_coverage_score == 1.0
     assert review.decision == EditorDecision.BLOCKED
     assert "https://example.com/missing" in review.reasons
+
+
+def test_citation_checker_fails_unknown_evidence_ids() -> None:
+    report = {"sections": [{"title": "Summary", "evidence_ids": ["ev_missing"]}]}
+
+    result = CitationChecker().check(report, _bundle())
+
+    assert result.passed is False
+    assert result.unsupported_evidence_ids == ["ev_missing"]
 
 
 def test_citation_checker_fails_missing_section_sources_and_editor_blocks() -> None:
@@ -141,3 +167,56 @@ def test_citation_checker_flags_rejected_claim_usage() -> None:
     assert result.rejected_claim_usage == ["The vendor acquired a rival."]
     assert review.decision == EditorDecision.BLOCKED
     assert "report uses rejected claims as facts" in review.reasons
+
+
+def test_rewrite_policy_blocks_rewrite_that_adds_new_source_url() -> None:
+    rewritten = {
+        "sections": [
+            {
+                "title": "Summary",
+                "content": "A summary",
+                "sources": ["https://example.com/new"],
+            }
+        ]
+    }
+
+    result = RewritePolicy().validate_rewrite(
+        rewritten_report=rewritten,
+        evidence_bundle=_bundle(),
+    )
+
+    assert result.passed is False
+    assert result.new_source_urls == ["https://example.com/new"]
+    assert result.decision == EditorDecision.BLOCKED
+
+
+def test_rewrite_policy_does_not_allow_uncertain_claim_as_fact() -> None:
+    findings = VerifiedFindings(
+        uncertain_claims=[
+            VerifiedClaim(
+                claim_id="claim_uncertain",
+                claim="A deployment date is set.",
+                status="uncertain",
+                confidence=0.4,
+                uncertainty_reason="no evidence",
+            )
+        ]
+    )
+    rewritten = {
+        "sections": [
+            {
+                "title": "Summary",
+                "content": "A deployment date is set.",
+                "sources": ["https://example.com/a"],
+            }
+        ]
+    }
+
+    result = RewritePolicy().validate_rewrite(
+        rewritten_report=rewritten,
+        evidence_bundle=_bundle(),
+        verified_findings=findings,
+    )
+
+    assert result.passed is False
+    assert result.uncertain_claims_as_fact == ["A deployment date is set."]

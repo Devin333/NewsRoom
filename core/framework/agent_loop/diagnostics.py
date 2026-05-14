@@ -128,7 +128,28 @@ class AgentLoopStallDetector:
         trace: AgentLoopTrace,
         iteration: int,
         judge_retries: int,
+        empty_output_retries: int = 0,
     ) -> StallDetection:
+        if empty_output_retries > self.policy.max_judge_retries:
+            summary = (
+                "empty output retry limit exceeded: "
+                f"{empty_output_retries} > {self.policy.max_judge_retries}"
+            )
+            return StallDetection(
+                stalled=True,
+                stop_reason=AgentLoopStopReason.EMPTY_OUTPUT_EXHAUSTED,
+                summary=summary,
+                issue=AgentLoopIssue(
+                    code="empty_output_exhausted",
+                    message=summary,
+                    severity=AgentLoopDiagnosticSeverity.ERROR,
+                    iteration=iteration,
+                    metadata={
+                        "empty_output_retries": empty_output_retries,
+                        "max_judge_retries": self.policy.max_judge_retries,
+                    },
+                ),
+            )
         if judge_retries > self.policy.max_judge_retries:
             summary = (
                 "judge retry limit exceeded: "

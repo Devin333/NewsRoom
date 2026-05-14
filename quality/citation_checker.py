@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from evidence.models import EvidenceBundle, EvidenceItem, VerifiedFindings
+from quality.support_matrix import SupportMatrix, SupportMatrixBuilder
 
 
 CLAIM_SUPPORT_TOKEN_OVERLAP_THRESHOLD = 0.75
@@ -14,7 +15,9 @@ CLAIM_SUPPORT_TOKEN_OVERLAP_THRESHOLD = 0.75
 class CitationCheckResult:
     passed: bool
     cited_urls: list[str] = field(default_factory=list)
+    cited_evidence_ids: list[str] = field(default_factory=list)
     unsupported_urls: list[str] = field(default_factory=list)
+    unsupported_evidence_ids: list[str] = field(default_factory=list)
     missing_section_sources: list[str] = field(default_factory=list)
     unsupported_claims: list[str] = field(default_factory=list)
     rejected_claim_usage: list[str] = field(default_factory=list)
@@ -32,7 +35,9 @@ class CitationCheckResult:
         return {
             "passed": self.passed,
             "cited_urls": list(self.cited_urls),
+            "cited_evidence_ids": list(self.cited_evidence_ids),
             "unsupported_urls": list(self.unsupported_urls),
+            "unsupported_evidence_ids": list(self.unsupported_evidence_ids),
             "unknown_urls": list(self.unsupported_urls),
             "missing_section_sources": list(self.missing_section_sources),
             "unsupported_claims": list(self.unsupported_claims),
@@ -53,11 +58,19 @@ class CitationChecker:
         verified_findings: VerifiedFindings | None = None,
     ) -> CitationCheckResult:
         cited_urls = sorted(_collect_cited_urls(report))
+        cited_evidence_ids = sorted(_collect_cited_evidence_ids(report))
         allowed_urls = evidence_bundle.source_urls
+        allowed_evidence_ids = evidence_bundle.evidence_ids
         unsupported_urls = sorted(url for url in cited_urls if url not in allowed_urls)
+        unsupported_evidence_ids = sorted(
+            evidence_id for evidence_id in cited_evidence_ids if evidence_id not in allowed_evidence_ids
+        )
         missing_section_sources = _missing_section_sources(report)
-        unsupported_claims = _unsupported_claims(report, evidence_bundle)
-        rejected_claim_usage = _rejected_claim_usage(report, verified_findings)
+        support_matrix = SupportMatrixBuilder().build(report, evidence_bundle, verified_findings)
+        unsupported_claims = [str(claim) for claim in support_matrix.unsupported_claims]
+        rejected_claim_usage = [
+            usage.text for usage in support_matrix.rejected_claim_usage
+        ] or _rejected_claim_usage(report, verified_findings)
         uncertain_notes = _uncertain_claim_notes(report, verified_findings)
         notes = [*uncertain_notes]
         section_source_coverage_score = _citation_coverage_score(report, missing_section_sources)
@@ -65,12 +78,15 @@ class CitationChecker:
         return CitationCheckResult(
             passed=not (
                 unsupported_urls
+                or unsupported_evidence_ids
                 or missing_section_sources
                 or unsupported_claims
                 or rejected_claim_usage
             ),
             cited_urls=cited_urls,
+            cited_evidence_ids=cited_evidence_ids,
             unsupported_urls=unsupported_urls,
+            unsupported_evidence_ids=unsupported_evidence_ids,
             missing_section_sources=missing_section_sources,
             unsupported_claims=unsupported_claims,
             rejected_claim_usage=rejected_claim_usage,
@@ -82,6 +98,7 @@ class CitationChecker:
                 "evidence_bundle_id": evidence_bundle.bundle_id,
                 "evidence_item_count": len(evidence_bundle.items),
                 "verified_claim_count": len(verified_findings.all_claims) if verified_findings else 0,
+                "support_matrix": support_matrix.to_dict(),
             },
         )
 
@@ -102,10 +119,32 @@ def _collect_cited_urls(value) -> set[str]:
     return urls
 
 
+def _collect_cited_evidence_ids(value) -> set[str]:
+    evidence_ids: set[str] = set()
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if key in {"evidence_id"} and isinstance(item, str):
+                evidence_ids.add(item)
+            elif key in {"evidence_ids", "citation_evidence_ids"} and isinstance(item, list):
+                evidence_ids.update(str(value) for value in item if value is not None)
+            elif key == "citations" and isinstance(item, list):
+                for citation in item:
+                    if isinstance(citation, str) and citation.startswith("ev_"):
+                        evidence_ids.add(citation)
+                    elif isinstance(citation, dict) and citation.get("evidence_id"):
+                        evidence_ids.add(str(citation["evidence_id"]))
+            else:
+                evidence_ids.update(_collect_cited_evidence_ids(item))
+    elif isinstance(value, list):
+        for item in value:
+            evidence_ids.update(_collect_cited_evidence_ids(item))
+    return evidence_ids
+
+
 def _missing_section_sources(report: dict) -> list[str]:
     missing = []
     for section in report.get("sections", []):
-        if not _section_sources(section):
+        if not _section_sources(section) and not _section_evidence_ids(section):
             missing.append(str(section.get("title", "Untitled")))
     return missing
 
@@ -125,6 +164,26 @@ def _section_sources(section: dict) -> list[str]:
     if isinstance(sources, list):
         return [source for source in sources if isinstance(source, str)]
     return []
+
+
+def _section_evidence_ids(section: dict) -> list[str]:
+    evidence_ids = section.get("evidence_ids") or []
+    citations = section.get("citations") or []
+    values: list[Any] = []
+    if isinstance(evidence_ids, list):
+        values.extend(evidence_ids)
+    elif isinstance(evidence_ids, str):
+        values.append(evidence_ids)
+    if isinstance(citations, list):
+        values.extend(
+            citation.get("evidence_id")
+            if isinstance(citation, dict)
+            else citation
+            for citation in citations
+        )
+    elif isinstance(citations, str):
+        values.append(citations)
+    return [str(value) for value in values if value is not None and str(value)]
 
 
 def _unsupported_claims(report: dict, evidence_bundle: EvidenceBundle) -> list[str]:

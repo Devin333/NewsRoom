@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 from core.framework.agent_loop.diagnostics import (
@@ -32,9 +33,10 @@ from core.framework.llm import (
     LLMResponse,
     LLMStreamAccumulator,
 )
-from core.framework.tools import (
+from core.framework.tools.executor import ToolExecutor
+from core.framework.tools.models import (
+    ArtifactRef,
     ToolCall,
-    ToolExecutor,
     ToolObservation,
     ToolPolicy,
     ToolResult,
@@ -80,6 +82,7 @@ class AgentLoop:
         llm_call_artifacts: list[LLMCallArtifact] = []
         judge_retries = 0
         parser_errors = 0
+        empty_output_retries = 0
 
         for iteration in range(1, agent.loop_policy.max_iterations + 1):
             metrics.iterations = iteration
@@ -101,11 +104,12 @@ class AgentLoop:
                 inputs,
                 feedback=feedback,
                 tool_observations=[
-                    observation.to_dict()
+                    _prompt_safe_observation(observation, agent.resolved_tool_policy()).to_dict()
                     for observation in tool_observations
                 ],
                 tools=tools,
             )
+            trace.record_prompt(iteration_trace, request)
             try:
                 self._check_global_budget_before_llm_call(metrics)
             except GlobalBudgetExceededError as exc:
@@ -175,15 +179,15 @@ class AgentLoop:
                     llm_call_artifacts=llm_call_artifacts,
                 )
 
-            llm_trace = trace.record_llm_call(iteration_trace, response)
-            llm_call_artifacts.append(
-                _llm_call_artifact(
-                    agent=agent,
-                    iteration=iteration,
-                    request=request,
-                    response=response,
-                )
+            llm_artifact = _llm_call_artifact(
+                agent=agent,
+                iteration=iteration,
+                request=request,
+                response=response,
             )
+            llm_trace = trace.record_llm_call(iteration_trace, response)
+            trace.record_llm_artifact(iteration_trace, llm_artifact.artifact_id)
+            llm_call_artifacts.append(llm_artifact)
             metrics.llm_calls += 1
             metrics.add_usage(response.usage)
             try:
@@ -311,6 +315,22 @@ class AgentLoop:
                 feedback = tool_result
                 continue
 
+            if action.action_type == "delegate_to_subagent":
+                result = self._handle_delegate_action(
+                    agent=agent,
+                    action=action,
+                    metrics=metrics,
+                    events=events,
+                    trace=trace,
+                    diagnostics=diagnostics,
+                    iteration_trace=iteration_trace,
+                    llm_call_artifacts=llm_call_artifacts,
+                )
+                if isinstance(result, AgentLoopResult):
+                    return result
+                feedback = result
+                continue
+
             verdict = self._output_judge.judge(
                 agent=agent,
                 action=action,
@@ -330,12 +350,13 @@ class AgentLoop:
                 iteration_trace=iteration_trace,
                 verdict=verdict,
                 judge_retries=judge_retries,
+                empty_output_retries=empty_output_retries,
                 via_tool=None,
                 llm_call_artifacts=llm_call_artifacts,
             )
             if isinstance(verdict_result, AgentLoopResult):
                 return verdict_result
-            judge_retries, feedback = verdict_result
+            judge_retries, empty_output_retries, feedback = verdict_result
 
         detection = max_iterations_detection(metrics.iterations, agent.loop_policy)
         return self._stalled_result(
@@ -382,7 +403,8 @@ class AgentLoop:
                 max_tool_calls=_max_tool_calls_per_agent(tool_policy),
             )
         else:
-            observation = self._execute_tool(tool_call, tool_policy)
+            observation = self._execute_tool(tool_call, _execution_tool_policy(tool_policy))
+        observation = _prompt_safe_observation(observation, tool_policy)
 
         tool_observations.append(observation)
         called_tools.append(observation.call.tool_name)
@@ -488,12 +510,13 @@ class AgentLoop:
                 iteration_trace=iteration_trace,
                 verdict=verdict,
                 judge_retries=metrics.judge_retries,
+                empty_output_retries=0,
                 via_tool=observation.call.tool_name,
                 llm_call_artifacts=llm_call_artifacts,
             )
             if isinstance(result, AgentLoopResult):
                 return result
-            return result[1]
+            return result[2]
 
         if observation.status == ToolStatus.BLOCKED:
             return observation.result.error_message or "tool call blocked"
@@ -502,6 +525,62 @@ class AgentLoop:
         if observation.status == ToolStatus.TIMEOUT:
             return observation.result.error_message or "tool call timed out"
         return None
+
+    def _handle_delegate_action(
+        self,
+        *,
+        agent: AgentSpec,
+        action: AgentAction,
+        metrics: AgentLoopMetrics,
+        events: AgentLoopEventRecorder,
+        trace: AgentLoopTrace,
+        diagnostics: AgentLoopDiagnosticsBuilder,
+        iteration_trace: IterationTrace,
+        llm_call_artifacts: list[LLMCallArtifact],
+    ) -> str | AgentLoopResult:
+        child_agent_id = action.subagent_id or ""
+        if not agent.allows_subagent(child_agent_id):
+            verdict = JudgeVerdict(
+                decision=JudgeDecision.BLOCK,
+                confidence=1.0,
+                feedback=f"subagent delegation is not allowed: {child_agent_id}",
+                policy_violations=["subagent delegation not allowed"],
+            )
+            trace.record_judge(iteration_trace, verdict)
+            events.judge_block(iteration=iteration_trace.iteration, verdict=verdict.to_dict())
+            return self._blocked_result(
+                agent=agent,
+                metrics=metrics,
+                events=events,
+                trace=trace,
+                diagnostics=diagnostics,
+                iterations=iteration_trace.iteration,
+                verdict=verdict,
+                stop_reason=AgentLoopStopReason.AGENT_POLICY_BLOCKED,
+                via_tool=None,
+                llm_call_artifacts=llm_call_artifacts,
+            )
+
+        handoff_reason = action.handoff_reason or "subagent delegation requested"
+        metadata = {
+            "parent_agent_id": agent.agent_id,
+            "child_agent_id": child_agent_id,
+            "handoff_reason": handoff_reason,
+        }
+        verdict = JudgeVerdict(
+            decision=JudgeDecision.ESCALATE,
+            confidence=1.0,
+            feedback="subagent delegation accepted by policy but orchestration is deferred",
+            policy_violations=[],
+            quality_errors=[f"delegation handoff: {metadata}"],
+        )
+        trace.record_judge(iteration_trace, verdict)
+        return (
+            "subagent delegation contract recorded; "
+            f"parent_agent_id={agent.agent_id}; "
+            f"child_agent_id={child_agent_id}; "
+            f"handoff_reason={handoff_reason}"
+        )
 
     def _handle_verdict(
         self,
@@ -518,7 +597,8 @@ class AgentLoop:
         judge_retries: int,
         via_tool: str | None,
         llm_call_artifacts: list[LLMCallArtifact],
-    ) -> tuple[int, str] | AgentLoopResult:
+        empty_output_retries: int,
+    ) -> tuple[int, int, str] | AgentLoopResult:
         iteration = iteration_trace.iteration
         verdict_payload = verdict.to_dict()
         if verdict.decision == JudgeDecision.ACCEPT:
@@ -559,6 +639,9 @@ class AgentLoop:
             )
 
         next_judge_retries = judge_retries + 1
+        next_empty_output_retries = (
+            empty_output_retries + 1 if not (action.output or {}) else 0
+        )
         metrics.judge_retries += 1
         feedback = verdict.feedback or "output rejected by judge"
         events.judge_retry(
@@ -571,9 +654,11 @@ class AgentLoop:
             trace=trace,
             iteration=iteration,
             judge_retries=next_judge_retries,
+            empty_output_retries=next_empty_output_retries,
         )
         if detection.stalled:
-            trace.mark_stop_candidate(iteration_trace, AgentLoopStopReason.JUDGE_RETRY_EXHAUSTED.value)
+            stop_reason = detection.stop_reason or AgentLoopStopReason.JUDGE_RETRY_EXHAUSTED
+            trace.mark_stop_candidate(iteration_trace, stop_reason.value)
             return self._retry_exhausted_result(
                 agent=agent,
                 metrics=metrics,
@@ -582,11 +667,11 @@ class AgentLoop:
                 diagnostics=diagnostics,
                 iterations=iteration,
                 verdict=verdict,
-                stop_reason=AgentLoopStopReason.JUDGE_RETRY_EXHAUSTED,
+                stop_reason=stop_reason,
                 detection=detection,
                 llm_call_artifacts=llm_call_artifacts,
             )
-        return next_judge_retries, feedback
+        return next_judge_retries, next_empty_output_retries, feedback
 
     def _execute_tool(self, tool_call: ToolCall, tool_policy: ToolPolicy) -> ToolObservation:
         return self._tool_executor.execute(tool_call, tool_policy)
@@ -944,6 +1029,87 @@ def _trace_payload(trace: AgentLoopTrace, agent: AgentSpec) -> dict[str, Any]:
     return trace.to_dict()
 
 
+def _prompt_safe_observation(
+    observation: ToolObservation,
+    policy: ToolPolicy,
+) -> ToolObservation:
+    if observation.status != ToolStatus.SUCCEEDED:
+        return observation
+    result = observation.result
+    output = result.output
+    if output is None:
+        return observation
+    output_bytes = result.output_bytes
+    if output_bytes is None:
+        output_bytes = len(str(output).encode("utf-8"))
+    if output_bytes <= policy.max_result_chars_inline:
+        return observation
+
+    artifact_refs = list(result.artifact_refs)
+    if not artifact_refs:
+        artifact_refs.append(
+            ArtifactRef(
+                artifact_id=f"tool_result:{observation.call.call_id}",
+                relative_path=f"tool_results/{observation.call.call_id}.json",
+                size_bytes=output_bytes,
+            )
+        )
+    pointer_output = {
+        "artifact_ref": artifact_refs[0].to_dict(),
+        "summary": _large_result_summary(output),
+        "count": _large_result_count(output),
+        "sample": _large_result_sample(output),
+    }
+    pointer_result = replace(
+        result,
+        output=pointer_output,
+        output_summary=(
+            result.output_summary
+            or f"Tool result stored as artifact pointer: {artifact_refs[0].relative_path}"
+        ),
+        artifact_refs=artifact_refs,
+        output_bytes=output_bytes,
+        redacted=True,
+    )
+    return ToolObservation(
+        call=observation.call,
+        result=pointer_result,
+        elapsed_ms=observation.elapsed_ms,
+    )
+
+
+def _execution_tool_policy(policy: ToolPolicy) -> ToolPolicy:
+    if not policy.spill_large_results_to_artifact:
+        return policy
+    return replace(policy, spill_large_results_to_artifact=False)
+
+
+def _large_result_summary(value: Any) -> str:
+    if isinstance(value, list):
+        return f"large list result with {len(value)} item(s)"
+    if isinstance(value, dict):
+        return f"large object result with {len(value)} top-level field(s)"
+    return "large scalar tool result"
+
+
+def _large_result_count(value: Any) -> int | None:
+    if isinstance(value, (list, dict, str)):
+        return len(value)
+    return None
+
+
+def _large_result_sample(value: Any) -> Any:
+    if isinstance(value, list):
+        return value[:3]
+    if isinstance(value, dict):
+        return {
+            key: value[key]
+            for key in list(value)[:3]
+        }
+    text = str(value)
+    return text[:500]
+
+
 def _llm_call_artifact(
     *,
     agent: AgentSpec,
@@ -1046,6 +1212,8 @@ def _control_approval_metadata(observation: ToolObservation) -> dict[str, Any]:
 
 
 def _blocked_stop_reason(verdict: JudgeVerdict) -> AgentLoopStopReason:
+    if any("subagent delegation" in violation for violation in verdict.policy_violations):
+        return AgentLoopStopReason.AGENT_POLICY_BLOCKED
     if any("secret" in violation for violation in verdict.policy_violations):
         return AgentLoopStopReason.SECRET_BLOCKED
     return AgentLoopStopReason.JUDGE_BLOCKED

@@ -5,7 +5,8 @@ from enum import Enum
 from typing import Any
 
 from core.framework.llm import TokenUsage
-from core.framework.tools import ToolPolicy, harden_restricted_agent_tool_policy
+from core.framework.tools.boundary import harden_restricted_agent_tool_policy
+from core.framework.tools.models import ToolPolicy
 
 
 class AgentLoopStatus(str, Enum):
@@ -20,6 +21,7 @@ class AgentLoopStatus(str, Enum):
 class JudgeDecision(str, Enum):
     ACCEPT = "accept"
     RETRY = "retry"
+    ESCALATE = "escalate"
     BLOCK = "block"
 
 
@@ -30,9 +32,11 @@ class AgentLoopStopReason(str, Enum):
     SECRET_BLOCKED = "secret_blocked"
     TOOL_APPROVAL_REQUIRED = "tool_approval_required"
     TOOL_BUDGET_EXCEEDED = "tool_budget_exceeded"
+    AGENT_POLICY_BLOCKED = "agent_policy_blocked"
     REPEATED_TOOL_CALL_STALLED = "repeated_tool_call_stalled"
     PARSER_RETRY_EXHAUSTED = "parser_retry_exhausted"
     JUDGE_RETRY_EXHAUSTED = "judge_retry_exhausted"
+    EMPTY_OUTPUT_EXHAUSTED = "empty_output_exhausted"
     MAX_ITERATIONS_EXCEEDED = "max_iterations_exceeded"
     LLM_FAILED = "llm_failed"
     GLOBAL_BUDGET_EXCEEDED = "global_budget_exceeded"
@@ -88,6 +92,7 @@ class AgentLoopPolicy:
     conversation_compaction_enabled: bool = True
     conversation_compaction_max_messages: int = 50
     conversation_compaction_keep_last: int = 10
+    allow_subagents: bool = False
 
     def __post_init__(self) -> None:
         _validate_non_negative("max_iterations", self.max_iterations, minimum=1)
@@ -123,17 +128,93 @@ class AgentSpec:
     allowed_tools: list[str] = field(default_factory=list)
     loop_policy: AgentLoopPolicy = field(default_factory=AgentLoopPolicy)
     tool_policy: ToolPolicy | None = None
+    model_policy: dict[str, Any] = field(default_factory=dict)
+    evidence_policy: dict[str, Any] = field(default_factory=dict)
     system_prompt_template: str = "{role}\n{instructions}"
     task_prompt_template: str = "Goal: {goal}\nInputs: {inputs}"
     allowed_sources: list[str] = field(default_factory=list)
+    allowed_subagents: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.agent_id, str) or not self.agent_id.strip():
+            raise ValueError("agent_id is required")
 
     def resolved_tool_policy(self) -> ToolPolicy:
         if self.tool_policy:
-            return harden_restricted_agent_tool_policy(self.agent_id, self.tool_policy)
-        return harden_restricted_agent_tool_policy(
+            return _harden_agent_loop_tool_policy(
+                self.agent_id,
+                harden_restricted_agent_tool_policy(self.agent_id, self.tool_policy),
+            )
+        return _harden_agent_loop_tool_policy(
             self.agent_id,
-            ToolPolicy(allowed_tools=list(self.allowed_tools), require_explicit_allowlist=True),
+            harden_restricted_agent_tool_policy(
+                self.agent_id,
+                ToolPolicy(
+                    allowed_tools=list(self.allowed_tools),
+                    require_explicit_allowlist=True,
+                ),
+            ),
+        )
+
+    @property
+    def allow_subagents(self) -> bool:
+        return bool(self.loop_policy.allow_subagents)
+
+    def allows_subagent(self, child_agent_id: str) -> bool:
+        return self.allow_subagents and child_agent_id in set(self.allowed_subagents)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "agent_id": self.agent_id,
+            "name": self.name,
+            "role": self.role,
+            "goal": self.goal,
+            "instructions": self.instructions,
+            "input_keys": list(self.input_keys),
+            "output_key": self.output_key,
+            "output_schema": _copy_mapping(self.output_schema),
+            "allowed_tools": list(self.allowed_tools),
+            "loop_policy": _agent_loop_policy_to_dict(self.loop_policy),
+            "tool_policy": (
+                _tool_policy_to_dict(self.tool_policy)
+                if self.tool_policy is not None
+                else None
+            ),
+            "model_policy": dict(self.model_policy),
+            "evidence_policy": dict(self.evidence_policy),
+            "system_prompt_template": self.system_prompt_template,
+            "task_prompt_template": self.task_prompt_template,
+            "allowed_sources": list(self.allowed_sources),
+            "allowed_subagents": list(self.allowed_subagents),
+            "metadata": dict(self.metadata),
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> AgentSpec:
+        return cls(
+            agent_id=str(payload.get("agent_id") or ""),
+            name=str(payload.get("name") or ""),
+            role=str(payload.get("role") or ""),
+            goal=str(payload.get("goal") or ""),
+            instructions=str(payload.get("instructions") or ""),
+            input_keys=[str(item) for item in payload.get("input_keys", [])],
+            output_key=str(payload.get("output_key") or ""),
+            output_schema=_optional_mapping(payload.get("output_schema")),
+            allowed_tools=[str(item) for item in payload.get("allowed_tools", [])],
+            loop_policy=_agent_loop_policy_from_dict(payload.get("loop_policy")),
+            tool_policy=_tool_policy_from_dict(payload.get("tool_policy")),
+            model_policy=dict(payload.get("model_policy") or {}),
+            evidence_policy=dict(payload.get("evidence_policy") or {}),
+            system_prompt_template=str(
+                payload.get("system_prompt_template") or "{role}\n{instructions}"
+            ),
+            task_prompt_template=str(
+                payload.get("task_prompt_template") or "Goal: {goal}\nInputs: {inputs}"
+            ),
+            allowed_sources=[str(item) for item in payload.get("allowed_sources", [])],
+            allowed_subagents=[str(item) for item in payload.get("allowed_subagents", [])],
+            metadata=dict(payload.get("metadata") or {}),
         )
 
 
@@ -143,6 +224,9 @@ class AgentAction:
     output: dict[str, Any] | None = None
     tool_name: str | None = None
     tool_args: dict[str, Any] = field(default_factory=dict)
+    subagent_id: str | None = None
+    subagent_task: str | None = None
+    handoff_reason: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -150,6 +234,9 @@ class AgentAction:
             "output": self.output,
             "tool_name": self.tool_name,
             "tool_args": dict(self.tool_args),
+            "subagent_id": self.subagent_id,
+            "subagent_task": self.subagent_task,
+            "handoff_reason": self.handoff_reason,
         }
 
 
@@ -364,3 +451,110 @@ def _validate_non_negative(name: str, value: int, *, minimum: int = 0) -> None:
         if minimum == 0:
             raise ValueError(f"{name} must be non-negative")
         raise ValueError(f"{name} must be at least {minimum}")
+
+
+def _agent_loop_policy_to_dict(policy: AgentLoopPolicy) -> dict[str, Any]:
+    return {
+        "max_iterations": policy.max_iterations,
+        "max_judge_retries": policy.max_judge_retries,
+        "max_parser_errors": policy.max_parser_errors,
+        "max_repeated_tool_calls": policy.max_repeated_tool_calls,
+        "max_consecutive_tool_failures": policy.max_consecutive_tool_failures,
+        "stop_on_first_valid_output": policy.stop_on_first_valid_output,
+        "stall_detection_enabled": policy.stall_detection_enabled,
+        "trace_enabled": policy.trace_enabled,
+        "max_trace_preview_chars": policy.max_trace_preview_chars,
+        "llm_streaming_enabled": policy.llm_streaming_enabled,
+        "conversation_compaction_enabled": policy.conversation_compaction_enabled,
+        "conversation_compaction_max_messages": policy.conversation_compaction_max_messages,
+        "conversation_compaction_keep_last": policy.conversation_compaction_keep_last,
+        "allow_subagents": policy.allow_subagents,
+    }
+
+
+def _agent_loop_policy_from_dict(value: Any) -> AgentLoopPolicy:
+    if not isinstance(value, dict):
+        return AgentLoopPolicy()
+    supported = _agent_loop_policy_to_dict(AgentLoopPolicy()).keys()
+    return AgentLoopPolicy(**{key: value[key] for key in supported if key in value})
+
+
+def _tool_policy_to_dict(policy: ToolPolicy) -> dict[str, Any]:
+    return {
+        "allowed_tools": list(policy.allowed_tools),
+        "blocked_tools": list(policy.blocked_tools),
+        "allow_mcp_tools": policy.allow_mcp_tools,
+        "max_tool_calls_per_iteration": policy.max_tool_calls_per_iteration,
+        "max_tool_calls_per_agent": policy.max_tool_calls_per_agent,
+        "require_explicit_allowlist": policy.require_explicit_allowlist,
+        "allow_dangerous_tools": policy.allow_dangerous_tools,
+        "require_approval_for_side_effects": policy.require_approval_for_side_effects,
+        "max_result_chars_inline": policy.max_result_chars_inline,
+        "spill_large_results_to_artifact": policy.spill_large_results_to_artifact,
+        "timeout_seconds_default": policy.timeout_seconds_default,
+        "max_attempts_default": policy.max_attempts_default,
+    }
+
+
+def _tool_policy_from_dict(value: Any) -> ToolPolicy | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise TypeError("tool_policy must be an object")
+    supported = _tool_policy_to_dict(ToolPolicy()).keys()
+    return ToolPolicy(**{key: value[key] for key in supported if key in value})
+
+
+def _harden_agent_loop_tool_policy(agent_id: str, policy: ToolPolicy) -> ToolPolicy:
+    normalized_agent_id = "".join(ch for ch in agent_id.casefold() if ch.isalnum())
+    blocked_allowed_tools = set()
+    if normalized_agent_id in {"editor", "editoragent"}:
+        blocked_allowed_tools.update(
+            tool_name
+            for tool_name in policy.allowed_tools
+            if _is_editor_mutation_tool(tool_name)
+        )
+    if not blocked_allowed_tools:
+        return policy
+    return ToolPolicy(
+        allowed_tools=[
+            tool_name
+            for tool_name in policy.allowed_tools
+            if tool_name not in blocked_allowed_tools
+        ],
+        blocked_tools=sorted({*policy.blocked_tools, *blocked_allowed_tools}),
+        allow_mcp_tools=policy.allow_mcp_tools,
+        max_tool_calls_per_iteration=policy.max_tool_calls_per_iteration,
+        max_tool_calls_per_agent=policy.max_tool_calls_per_agent,
+        require_explicit_allowlist=True,
+        allow_dangerous_tools=policy.allow_dangerous_tools,
+        require_approval_for_side_effects=policy.require_approval_for_side_effects,
+        max_result_chars_inline=policy.max_result_chars_inline,
+        spill_large_results_to_artifact=policy.spill_large_results_to_artifact,
+        timeout_seconds_default=policy.timeout_seconds_default,
+        max_attempts_default=policy.max_attempts_default,
+    )
+
+
+def _is_editor_mutation_tool(tool_name: str) -> bool:
+    normalized = tool_name.strip()
+    return (
+        normalized.startswith("source.")
+        or normalized in {"report.publish", "postgres.save_report"}
+        or normalized.endswith(".publish")
+        or normalized.endswith(".save_report")
+    )
+
+
+def _copy_mapping(value: dict[str, Any] | None) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    return dict(value)
+
+
+def _optional_mapping(value: Any) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise TypeError("output_schema must be an object")
+    return dict(value)

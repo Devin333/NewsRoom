@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from core.framework import RunResult, WorkflowRunner
+from core.framework.workflow import DataBuffer
 from core.framework.agent_loop import AgentRunner, AgentSpec
 from core.framework.llm import FakeLLMClient
 from core.framework.specs import StepSpec, WorkflowSpec
@@ -158,3 +159,26 @@ def _build_fake_tool_registry() -> ToolRegistry:
         },
     )
     return registry
+
+
+def test_agent_loop_smoke_workflow(tmp_path) -> None:
+    buffer = DataBuffer({"request": {"topic": "agentic research"}})
+    output = _run_agent_step(
+        buffer.scope(
+            read_keys=["request"],
+            write_keys=[
+                "analysis_result",
+                "agent_loop_result",
+                "agent_loop_events",
+                "agent_loop_metrics",
+                "agent_loop_diagnostics",
+                "agent_loop_trace",
+            ],
+        )
+    )
+
+    assert output["analysis_result"]["confidence"] == "high"
+    assert output["agent_loop_metrics"]["llm_calls"] == 3
+    assert output["agent_loop_metrics"]["tool_calls"] == 1
+    assert output["agent_loop_diagnostics"]["stop_reason"] == "final_output_accepted"
+    assert output["agent_loop_trace"]["summary"]["judge_retry_count"] == 1

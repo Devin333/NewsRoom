@@ -50,6 +50,7 @@ class OutputJudge:
             if not tool_policy.allows(tool_name)
         ]
         policy_violations.extend(self._source_violations(output, agent.allowed_sources))
+        policy_violations.extend(self._evidence_id_violations(output, inputs or {}))
 
         if self._contains_secret(output):
             return JudgeVerdict(
@@ -57,6 +58,20 @@ class OutputJudge:
                 confidence=1.0,
                 feedback="output contains secret-like content",
                 policy_violations=["secret-like content detected"],
+            )
+
+        if policy_violations and any(
+            violation.startswith("evidence id outside boundary:")
+            for violation in policy_violations
+        ):
+            return JudgeVerdict(
+                decision=JudgeDecision.BLOCK,
+                confidence=1.0,
+                feedback="unsupported evidence id referenced",
+                missing_output_keys=missing_output_keys,
+                schema_errors=schema_errors,
+                quality_errors=quality_errors,
+                policy_violations=policy_violations,
             )
 
         if missing_output_keys or schema_errors or quality_errors or policy_violations:
@@ -115,10 +130,14 @@ class OutputJudge:
             evidence_bundle,
             _verified_findings_from_inputs(inputs),
         )
+        unsupported_claims = _stable_unsupported_claims(
+            report,
+            result.unsupported_claims,
+        )
         errors: list[str] = []
         errors.extend(f"unsupported citation URL: {url}" for url in result.unsupported_urls)
         errors.extend(f"missing section sources: {title}" for title in result.missing_section_sources)
-        errors.extend(f"unsupported claim outside evidence: {claim}" for claim in result.unsupported_claims)
+        errors.extend(f"unsupported claim outside evidence: {claim}" for claim in unsupported_claims)
         errors.extend(f"rejected claim used: {claim}" for claim in result.rejected_claim_usage)
         return errors
 
@@ -158,6 +177,20 @@ class OutputJudge:
         inspect(output)
         return violations
 
+    def _evidence_id_violations(
+        self,
+        output: Any,
+        inputs: dict[str, Any],
+    ) -> list[str]:
+        allowed_ids = _allowed_evidence_ids_from_inputs(inputs)
+        if not allowed_ids:
+            return []
+        referenced_ids = _collect_evidence_ids(output)
+        return [
+            f"evidence id outside boundary: {evidence_id}"
+            for evidence_id in sorted(referenced_ids - allowed_ids)
+        ]
+
 
 def _evidence_bundle_from_inputs(inputs: dict[str, Any]) -> EvidenceBundle | None:
     for key in ("evidence_bundle", "bundle"):
@@ -169,6 +202,45 @@ def _evidence_bundle_from_inputs(inputs: dict[str, Any]) -> EvidenceBundle | Non
             if key in request:
                 return _coerce_evidence_bundle(request[key])
     return None
+
+
+def _allowed_evidence_ids_from_inputs(inputs: dict[str, Any]) -> set[str]:
+    bundle = _evidence_bundle_from_inputs(inputs)
+    if bundle is None:
+        return set()
+    return {item.evidence_id for item in bundle.items if item.evidence_id}
+
+
+def _collect_evidence_ids(value: Any) -> set[str]:
+    ids: set[str] = set()
+
+    def inspect(item: Any, *, key: str | None = None) -> None:
+        if isinstance(item, dict):
+            for child_key, child_value in item.items():
+                inspect(child_value, key=str(child_key))
+            return
+        if isinstance(item, list):
+            for child in item:
+                inspect(child, key=key)
+            return
+        if key in {
+            "evidence_id",
+            "evidence_ids",
+            "source_evidence_id",
+            "source_evidence_ids",
+            "supporting_evidence_id",
+            "supporting_evidence_ids",
+            "rejecting_evidence_id",
+            "rejecting_evidence_ids",
+            "citation_evidence_id",
+            "citation_evidence_ids",
+        } and isinstance(item, str):
+            stripped = item.strip()
+            if stripped:
+                ids.add(stripped)
+
+    inspect(value)
+    return ids
 
 
 def _verified_findings_from_inputs(inputs: dict[str, Any]) -> VerifiedFindings | None:
@@ -235,3 +307,19 @@ def _float(value: Any, *, default: float) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _stable_unsupported_claims(report: dict[str, Any], claims: list[str]) -> list[str]:
+    title_map = {
+        str(section.get("title", "Untitled")).casefold(): str(section.get("title", "Untitled"))
+        for section in report.get("sections", [])
+        if isinstance(section, dict)
+    }
+    stable = []
+    for claim in claims:
+        prefix, separator, rest = claim.partition(": ")
+        if separator and prefix.casefold() in title_map:
+            stable.append(f"{title_map[prefix.casefold()]}: {rest}")
+        else:
+            stable.append(claim)
+    return stable

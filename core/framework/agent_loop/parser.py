@@ -20,7 +20,7 @@ class AgentActionParser:
             raise AgentActionParserError("LLM response must be a JSON object")
 
         action_type = payload.get("action_type")
-        if action_type not in {"tool_call", "final_output"}:
+        if action_type not in {"tool_call", "final_output", "delegate_to_subagent"}:
             raise AgentActionParserError(f"unsupported agent action type: {action_type}")
 
         if action_type == "tool_call":
@@ -31,6 +31,23 @@ class AgentActionParser:
             if not isinstance(tool_args, dict):
                 raise AgentActionParserError("tool_args must be an object")
             return AgentAction(action_type="tool_call", tool_name=tool_name, tool_args=tool_args)
+
+        if action_type == "delegate_to_subagent":
+            subagent_id = payload.get("subagent_id")
+            if not isinstance(subagent_id, str) or not subagent_id.strip():
+                raise AgentActionParserError("delegate_to_subagent action requires subagent_id")
+            subagent_task = payload.get("subagent_task")
+            if subagent_task is not None and not isinstance(subagent_task, str):
+                raise AgentActionParserError("subagent_task must be a string")
+            handoff_reason = payload.get("handoff_reason")
+            if handoff_reason is not None and not isinstance(handoff_reason, str):
+                raise AgentActionParserError("handoff_reason must be a string")
+            return AgentAction(
+                action_type="delegate_to_subagent",
+                subagent_id=subagent_id,
+                subagent_task=subagent_task,
+                handoff_reason=handoff_reason,
+            )
 
         output = payload.get("output")
         if not isinstance(output, dict):

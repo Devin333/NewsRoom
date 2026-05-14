@@ -6,9 +6,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from core.framework.agent_loop.models import JudgeVerdict
-from core.framework.llm import LLMResponse, TokenUsage
+from core.framework.llm import LLMRequest, LLMResponse, TokenUsage
 from core.framework.serialization import to_json_safe
-from core.framework.tools import ToolObservation
+from core.framework.tools.models import ToolObservation
 from core.framework.tools.redaction import redact_sensitive_values
 
 
@@ -38,6 +38,14 @@ class ToolCallSignature:
     def key(self) -> str:
         return f"{self.tool_name}:{self.arguments_hash}"
 
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> ToolCallSignature:
+        return cls(
+            tool_name=str(payload.get("tool_name") or ""),
+            arguments_hash=str(payload.get("arguments_hash") or ""),
+            arguments_preview=dict(payload.get("arguments_preview") or {}),
+        )
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "tool_name": self.tool_name,
@@ -49,6 +57,7 @@ class ToolCallSignature:
 @dataclass(frozen=True)
 class LLMCallTrace:
     iteration: int
+    llm_call_id: str
     input_tokens: int = 0
     output_tokens: int = 0
     total_tokens: int = 0
@@ -70,6 +79,7 @@ class LLMCallTrace:
         usage = response.usage
         return cls(
             iteration=iteration,
+            llm_call_id=_optional_text(metadata.get("llm_call_id")) or f"llm_call:{iteration}",
             input_tokens=usage.input_tokens,
             output_tokens=usage.output_tokens,
             total_tokens=usage.total_tokens,
@@ -94,6 +104,35 @@ class LLMCallTrace:
             response_chars=len(response.content or ""),
         )
 
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> LLMCallTrace:
+        return cls(
+            iteration=int(payload.get("iteration") or 0),
+            llm_call_id=str(payload.get("llm_call_id") or f"llm_call:{payload.get('iteration') or 0}"),
+            input_tokens=int(payload.get("input_tokens") or 0),
+            output_tokens=int(payload.get("output_tokens") or 0),
+            total_tokens=int(payload.get("total_tokens") or 0),
+            provider=_optional_text(payload.get("provider")),
+            model=_optional_text(payload.get("model")),
+            route_id=_optional_text(payload.get("route_id")),
+            deployment_id=_optional_text(payload.get("deployment_id")),
+            cache_hit=_optional_bool(payload.get("cache_hit")),
+            fallback_used=_optional_bool(payload.get("fallback_used")),
+            fallback_count=_optional_int(payload.get("fallback_count")),
+            router_event_count=_optional_int(payload.get("router_event_count")),
+            provider_resolution_trace=[
+                dict(item)
+                for item in payload.get("provider_resolution_trace", [])
+                if isinstance(item, dict)
+            ],
+            route_manifest=(
+                dict(payload["route_manifest"])
+                if isinstance(payload.get("route_manifest"), dict)
+                else None
+            ),
+            response_chars=int(payload.get("response_chars") or 0),
+        )
+
     def token_usage(self) -> TokenUsage:
         return TokenUsage(
             input_tokens=self.input_tokens,
@@ -103,6 +142,7 @@ class LLMCallTrace:
     def to_dict(self) -> dict[str, Any]:
         return {
             "iteration": self.iteration,
+            "llm_call_id": self.llm_call_id,
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
             "total_tokens": self.total_tokens,
@@ -128,6 +168,14 @@ class LLMErrorTrace:
     error_type: str
     error_message: str
 
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> LLMErrorTrace:
+        return cls(
+            iteration=int(payload.get("iteration") or 0),
+            error_type=str(payload.get("error_type") or ""),
+            error_message=str(payload.get("error_message") or ""),
+        )
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "iteration": self.iteration,
@@ -142,6 +190,15 @@ class ParserErrorTrace:
     error_type: str
     error_message: str
     content_preview: str
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> ParserErrorTrace:
+        return cls(
+            iteration=int(payload.get("iteration") or 0),
+            error_type=str(payload.get("error_type") or ""),
+            error_message=str(payload.get("error_message") or ""),
+            content_preview=str(payload.get("content_preview") or ""),
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -158,6 +215,15 @@ class ParsedActionTrace:
     action_type: str
     tool_name: str | None = None
     output_keys: list[str] = field(default_factory=list)
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> ParsedActionTrace:
+        return cls(
+            iteration=int(payload.get("iteration") or 0),
+            action_type=str(payload.get("action_type") or ""),
+            tool_name=_optional_text(payload.get("tool_name")),
+            output_keys=[str(item) for item in payload.get("output_keys", [])],
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -213,6 +279,25 @@ class ToolCallTrace:
             safe_for_llm=observation.safe_for_llm,
         )
 
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> ToolCallTrace:
+        return cls(
+            iteration=int(payload.get("iteration") or 0),
+            tool_call_id=str(payload.get("tool_call_id") or ""),
+            tool_name=str(payload.get("tool_name") or ""),
+            status=str(payload.get("status") or ""),
+            summary=str(payload.get("summary") or ""),
+            elapsed_ms=float(payload.get("elapsed_ms") or 0.0),
+            signature=ToolCallSignature.from_dict(dict(payload.get("signature") or {})),
+            error_type=_optional_text(payload.get("error_type")),
+            error_message=_optional_text(payload.get("error_message")),
+            output_bytes=_optional_int(payload.get("output_bytes")),
+            artifact_refs=[
+                dict(item) for item in payload.get("artifact_refs", []) if isinstance(item, dict)
+            ],
+            safe_for_llm=bool(payload.get("safe_for_llm", True)),
+        )
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "iteration": self.iteration,
@@ -254,6 +339,19 @@ class JudgeTrace:
             policy_violations=list(verdict.policy_violations),
         )
 
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> JudgeTrace:
+        return cls(
+            iteration=int(payload.get("iteration") or 0),
+            decision=str(payload.get("decision") or ""),
+            confidence=float(payload.get("confidence") or 0.0),
+            feedback=_optional_text(payload.get("feedback")),
+            missing_output_keys=[str(item) for item in payload.get("missing_output_keys", [])],
+            schema_errors=[str(item) for item in payload.get("schema_errors", [])],
+            quality_errors=[str(item) for item in payload.get("quality_errors", [])],
+            policy_violations=[str(item) for item in payload.get("policy_violations", [])],
+        )
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "iteration": self.iteration,
@@ -271,6 +369,9 @@ class JudgeTrace:
 class IterationTrace:
     iteration: int
     feedback: str | None = None
+    prompt_hash: str | None = None
+    llm_call_id: str | None = None
+    llm_artifact_ref: str | None = None
     tool_observation_count_before: int = 0
     tools_available: list[str] = field(default_factory=list)
     llm_call: LLMCallTrace | None = None
@@ -281,10 +382,47 @@ class IterationTrace:
     judge: JudgeTrace | None = None
     stop_candidate: str | None = None
 
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> IterationTrace:
+        llm_call = _optional_trace(payload.get("llm_call"), LLMCallTrace.from_dict)
+        item = cls(
+            iteration=int(payload.get("iteration") or 0),
+            feedback=_optional_text(payload.get("feedback")),
+            prompt_hash=_optional_text(payload.get("prompt_hash")),
+            llm_call_id=_optional_text(payload.get("llm_call_id")),
+            llm_artifact_ref=_optional_text(payload.get("llm_artifact_ref")),
+            tool_observation_count_before=int(
+                payload.get("tool_observation_count_before") or 0
+            ),
+            tools_available=[str(tool) for tool in payload.get("tools_available", [])],
+            llm_call=llm_call,
+            llm_error=_optional_trace(payload.get("llm_error"), LLMErrorTrace.from_dict),
+            parser_error=_optional_trace(
+                payload.get("parser_error"),
+                ParserErrorTrace.from_dict,
+            ),
+            parsed_action=_optional_trace(
+                payload.get("parsed_action"),
+                ParsedActionTrace.from_dict,
+            ),
+            tool_call=_optional_trace(payload.get("tool_call"), ToolCallTrace.from_dict),
+            judge=_optional_trace(
+                payload.get("judge") or payload.get("judge_result"),
+                JudgeTrace.from_dict,
+            ),
+            stop_candidate=_optional_text(payload.get("stop_candidate")),
+        )
+        if item.llm_call_id is None and llm_call is not None:
+            item.llm_call_id = llm_call.llm_call_id
+        return item
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "iteration": self.iteration,
             "feedback": self.feedback,
+            "prompt_hash": self.prompt_hash,
+            "llm_call_id": self.llm_call_id,
+            "llm_artifact_ref": self.llm_artifact_ref,
             "tool_observation_count_before": self.tool_observation_count_before,
             "tools_available": list(self.tools_available),
             "llm_call": self.llm_call.to_dict() if self.llm_call else None,
@@ -292,7 +430,9 @@ class IterationTrace:
             "parser_error": self.parser_error.to_dict() if self.parser_error else None,
             "parsed_action": self.parsed_action.to_dict() if self.parsed_action else None,
             "tool_call": self.tool_call.to_dict() if self.tool_call else None,
+            "tool_calls": [self.tool_call.to_dict()] if self.tool_call else [],
             "judge": self.judge.to_dict() if self.judge else None,
+            "judge_result": self.judge.to_dict() if self.judge else None,
             "stop_candidate": self.stop_candidate,
         }
 
@@ -328,8 +468,17 @@ class AgentLoopTrace:
     def record_llm_call(self, iteration: IterationTrace, response: LLMResponse) -> LLMCallTrace:
         trace = LLMCallTrace.from_response(iteration.iteration, response)
         iteration.llm_call = trace
+        iteration.llm_call_id = trace.llm_call_id
         self.llm_calls.append(trace)
         return trace
+
+    def record_prompt(self, iteration: IterationTrace, request: LLMRequest) -> str:
+        prompt_hash = hashlib.sha256(_stable_json_bytes(request.to_dict(redact=True))).hexdigest()
+        iteration.prompt_hash = prompt_hash
+        return prompt_hash
+
+    def record_llm_artifact(self, iteration: IterationTrace, artifact_id: str) -> None:
+        iteration.llm_artifact_ref = artifact_id
 
     def record_llm_error(self, iteration: IterationTrace, exc: Exception) -> LLMErrorTrace:
         trace = LLMErrorTrace(
@@ -468,6 +617,34 @@ class AgentLoopTrace:
             "summary": self.summary(),
         }
 
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> AgentLoopTrace:
+        trace = cls(agent_id=str(payload.get("agent_id") or ""))
+        trace.iterations = [
+            IterationTrace.from_dict(item)
+            for item in payload.get("iterations", [])
+            if isinstance(item, dict)
+        ]
+        trace.llm_calls = [
+            item.llm_call for item in trace.iterations if item.llm_call is not None
+        ]
+        trace.llm_errors = [
+            item.llm_error for item in trace.iterations if item.llm_error is not None
+        ]
+        trace.parser_errors = [
+            item.parser_error for item in trace.iterations if item.parser_error is not None
+        ]
+        trace.actions = [
+            item.parsed_action
+            for item in trace.iterations
+            if item.parsed_action is not None
+        ]
+        trace.tool_calls = [
+            item.tool_call for item in trace.iterations if item.tool_call is not None
+        ]
+        trace.judges = [item.judge for item in trace.iterations if item.judge is not None]
+        return trace
+
 
 def _stable_json_bytes(value: Any) -> bytes:
     return json.dumps(
@@ -547,3 +724,9 @@ def _optional_int(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _optional_trace(value: Any, factory: Any) -> Any:
+    if not isinstance(value, dict):
+        return None
+    return factory(value)

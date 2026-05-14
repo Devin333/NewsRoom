@@ -126,6 +126,31 @@ class QualityResult:
 
 
 @dataclass(frozen=True)
+class BlockedReport:
+    title: str
+    blocked_reason: str
+    unsupported_claims: list[Any] = field(default_factory=list)
+    quality_score: float | None = None
+    next_actions: list[str] = field(default_factory=list)
+    status: str = "blocked"
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "title": self.title,
+            "blocked_reason": self.blocked_reason,
+            "unsupported_claims": [
+                claim.to_dict() if hasattr(claim, "to_dict") else claim
+                for claim in self.unsupported_claims
+            ],
+            "quality_score": self.quality_score,
+            "next_actions": list(self.next_actions),
+            "status": self.status,
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
 class HumanReviewRequest:
     review_id: str
     run_id: str
@@ -133,6 +158,10 @@ class HumanReviewRequest:
     risk_level: str
     report_id: str | None = None
     draft_id: str | None = None
+    review_reason: str | None = None
+    claims_to_review: list[dict[str, Any]] = field(default_factory=list)
+    evidence_refs: list[Any] = field(default_factory=list)
+    suggested_decision: str | None = None
     evidence_bundle_ref: Any | None = None
     quality_artifact_refs: dict[str, Any] = field(default_factory=dict)
     status: str = "pending"
@@ -146,7 +175,11 @@ class HumanReviewRequest:
             "report_id": self.report_id,
             "draft_id": self.draft_id,
             "reason": self.reason,
+            "review_reason": self.review_reason or self.reason,
             "risk_level": self.risk_level,
+            "claims_to_review": [dict(claim) for claim in self.claims_to_review],
+            "evidence_refs": [_artifact_ref(ref) for ref in self.evidence_refs],
+            "suggested_decision": self.suggested_decision,
             "evidence_bundle_ref": _artifact_ref(self.evidence_bundle_ref),
             "quality_artifact_refs": {
                 key: _artifact_ref(value) for key, value in self.quality_artifact_refs.items()
@@ -165,6 +198,67 @@ class HumanReviewDecision:
     notes: str | None = None
     decided_at: datetime = field(default_factory=_utc_now)
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        allowed = {"approve", "reject", "request_rewrite", "edit_required"}
+        if self.decision not in allowed:
+            raise ValueError(f"unsupported human review decision: {self.decision}")
+
+    def to_quality_result(self, *, base_result: QualityResult | None = None) -> QualityResult:
+        if self.decision == "approve":
+            decision = "pass"
+            route = "final"
+            passed = True
+            blocked = False
+            rewrite_required = False
+        elif self.decision == "request_rewrite" or self.decision == "edit_required":
+            decision = "rewrite_required"
+            route = "rewrite"
+            passed = False
+            blocked = False
+            rewrite_required = True
+        else:
+            decision = "blocked"
+            route = "blocked"
+            passed = False
+            blocked = True
+            rewrite_required = False
+        return QualityResult(
+            decision=decision,
+            passed=passed,
+            route=route,
+            blocked=blocked,
+            quality_score=base_result.quality_score if base_result else None,
+            citation_coverage_score=base_result.citation_coverage_score if base_result else None,
+            claim_support_score=base_result.claim_support_score if base_result else None,
+            section_source_coverage_score=(
+                base_result.section_source_coverage_score if base_result else None
+            ),
+            support_coverage=base_result.support_coverage if base_result else None,
+            evidence_alignment_score=base_result.evidence_alignment_score if base_result else None,
+            rewrite_attempts=base_result.rewrite_attempts if base_result else 0,
+            rewrite_required=rewrite_required,
+            human_review_required=False,
+            route_history=[
+                *(base_result.route_history if base_result else []),
+                "human_review",
+                route,
+            ],
+            reasons=[f"human review decision: {self.decision}"],
+            artifact_refs=base_result.artifact_refs if base_result else {},
+            citation_check_result=base_result.citation_check_result if base_result else None,
+            editor_review=base_result.editor_review if base_result else None,
+            support_matrix=base_result.support_matrix if base_result else None,
+            report_quality_summary=base_result.report_quality_summary if base_result else None,
+            quality_gate_metrics=base_result.quality_gate_metrics if base_result else None,
+            metadata={
+                **(base_result.metadata if base_result else {}),
+                "human_review_id": self.review_id,
+                "human_review_decision": self.decision,
+                "reviewer_id": self.reviewer_id,
+                "review_notes": self.notes,
+            },
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
