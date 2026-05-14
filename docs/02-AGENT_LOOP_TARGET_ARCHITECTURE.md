@@ -2217,7 +2217,7 @@ token_usage
 | 多轮 LLM loop | 已实现 | FakeLLM/真实 LLMClient 均走同一协议 |
 | tool call / observation | 已实现 | 通过 ToolExecutor，observation 会回填 prompt |
 | control.set_output | 已实现 | 可通过 control tool 设置结构化输出 |
-| schema/key judge | 已实现基础版 | 目前主要检查 output_key，不是完整 JSON Schema validator |
+| schema/key judge | 已增强 | 已支持 output_key、JSON Schema 常用约束、source boundary、evidence boundary 的 deterministic judge |
 | source boundary | 已实现基础版 | 检查 output 中 source/url 是否越界 |
 | secret-like output block | 已实现 | 命中后 BLOCK，不进入发布逻辑 |
 | parser retry diagnostics | 已实现 | parser error 进入 trace/diagnostics |
@@ -2227,7 +2227,7 @@ token_usage
 | Workflow pause mapping | 已实现 | AgentLoopStepRunner 将 waiting_for_approval 映射为 StepStatus.PAUSED |
 | Workflow stalled mapping | 已实现 | AgentLoopStepRunner 将 stalled 映射为 StepStatus.BLOCKED |
 | conversation diagnostics | 已实现 | conversation 中写入 diagnostic message，assistant result 仍保持最后 |
-| agent artifact 输出 | 部分实现 | test agent workflow 写 `agent_loop_events/diagnostics/trace` artifact |
+| agent artifact 输出 | 已增强 | WorkflowExecutor 会把 redacted LLM call request/response 写为 `llm_call` step artifacts，并写回 manifest/step result |
 | sub-agent delegation | 暂不做 | 仍为目标态，不在本轮实现 |
 | conversation compaction | 暂不做 | 已保留目标态，后续单独做 |
 | cursor resume | 暂不做 | 由 storage/workflow checkpoint 后续对齐 |
@@ -2262,10 +2262,9 @@ WorkflowExecutor
 下一阶段应优先做：
 
 ```text
-1. JSON Schema 级 OutputJudge。
-2. Conversation compaction。
-3. Agent artifact writer 与 ArtifactManager 对齐。
-4. Cursor/checkpoint resume。
-5. Human escalation 与 approval service 对齐。
-6. SubAgent delegation，但默认关闭。
+1. Conversation compaction。
+2. Cursor/checkpoint resume。
+3. Human escalation 与 approval service 对齐。
+4. SubAgent delegation，但默认关闭。
+5. 更完整的 JSON Schema keyword 覆盖和 schema registry 复用。
 ```
