@@ -69,6 +69,10 @@ class DeterministicEmbeddingModel:
         return [self.embed_text(text) for text in texts]
 
 
+class FakeEmbeddingAdapter(DeterministicEmbeddingModel):
+    """Stable deterministic embedding adapter for storage tests."""
+
+
 @dataclass(frozen=True)
 class OpenAICompatibleEmbeddingConfig:
     provider: str

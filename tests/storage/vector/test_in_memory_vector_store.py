@@ -1,8 +1,8 @@
-from storage.vector import InMemoryVectorStore, VectorDocument, VectorSearchQuery
+from storage.vector import FakeEmbeddingAdapter, InMemoryVectorStore, VectorDocument, VectorSearchQuery
 
 
 def test_in_memory_vector_store_searches_by_similarity() -> None:
-    store = InMemoryVectorStore()
+    store = InMemoryVectorStore(embedding_model=FakeEmbeddingAdapter())
     store.upsert_documents(
         [
             VectorDocument(

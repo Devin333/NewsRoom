@@ -17,6 +17,9 @@ class VectorDocument:
     report_id: str | None = None
     evidence_id: str | None = None
     source_item_id: str | None = None
+    topic: str | None = None
+    section_id: str | None = None
+    published_at: datetime | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def with_vector(self, vector: list[float]) -> "VectorDocument":
@@ -41,6 +44,12 @@ class VectorDocument:
             payload["evidence_id"] = self.evidence_id
         if self.source_item_id:
             payload["source_item_id"] = self.source_item_id
+        if self.topic:
+            payload["topic"] = self.topic
+        if self.section_id:
+            payload["section_id"] = self.section_id
+        if self.published_at:
+            payload["published_at"] = self.published_at.isoformat().replace("+00:00", "Z")
         return payload
 
 
@@ -65,6 +74,9 @@ class VectorSearchResult:
     report_id: str | None = None
     evidence_id: str | None = None
     source_item_id: str | None = None
+    topic: str | None = None
+    section_id: str | None = None
+    published_at: str | None = None
 
     @classmethod
     def from_payload(cls, *, score: float, payload: dict[str, Any]) -> "VectorSearchResult":
@@ -78,6 +90,9 @@ class VectorSearchResult:
             report_id=payload.get("report_id"),
             evidence_id=payload.get("evidence_id"),
             source_item_id=payload.get("source_item_id"),
+            topic=payload.get("topic"),
+            section_id=payload.get("section_id"),
+            published_at=payload.get("published_at"),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -91,6 +106,9 @@ class VectorSearchResult:
             "report_id": self.report_id,
             "evidence_id": self.evidence_id,
             "source_item_id": self.source_item_id,
+            "topic": self.topic,
+            "section_id": self.section_id,
+            "published_at": self.published_at,
         }
 
 

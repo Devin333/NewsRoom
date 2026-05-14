@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from storage.vector.embeddings import DeterministicEmbeddingModel
+from storage.vector.embeddings import FakeEmbeddingAdapter
 from storage.vector.models import (
     VectorCollectionStatus,
     VectorDocument,
@@ -13,8 +13,8 @@ from storage.vector.models import (
 
 
 class InMemoryVectorStore:
-    def __init__(self, embedding_model: DeterministicEmbeddingModel | None = None) -> None:
-        self.embedding_model = embedding_model or DeterministicEmbeddingModel()
+    def __init__(self, embedding_model: FakeEmbeddingAdapter | None = None) -> None:
+        self.embedding_model = embedding_model or FakeEmbeddingAdapter()
         self._collections: dict[str, dict[str, VectorDocument]] = {}
 
     def upsert_documents(self, docs: list[VectorDocument]) -> None:
