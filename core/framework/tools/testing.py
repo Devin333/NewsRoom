@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from core.framework.artifacts import ArtifactManager
+from core.framework.tools.boundary import is_external_fetch_tool, is_restricted_agent_id
 from core.framework.tools.executor import ToolExecutor
 from core.framework.tools.models import (
     ToolCall,
@@ -12,6 +13,7 @@ from core.framework.tools.models import (
     ToolResult,
     ToolRuntimeError,
     ToolStatus,
+    is_default_dangerous_tool_name,
 )
 from core.framework.tools.redaction import contains_redacted_value
 from core.framework.tools.registry import ToolRegistry
@@ -113,6 +115,19 @@ class ToolTestRunner:
                     ),
                     elapsed_ms=0.0,
                 )
+            elif _restricted_agent_boundary_blocks(call):
+                observation = ToolObservation(
+                    call=call,
+                    result=ToolResult(
+                        status=ToolStatus.BLOCKED,
+                        error_type="ToolPermissionError",
+                        error_message=(
+                            "restricted agent is not allowed to call external fetch/search "
+                            f"tool: {call.tool_name}"
+                        ),
+                    ),
+                    elapsed_ms=0.0,
+                )
             else:
                 normalize_tool_arguments(registered.definition, dict(call.arguments))
                 observation = self._dry_run_observation(call, registered.definition, test_case)
@@ -144,7 +159,7 @@ class ToolTestRunner:
         definition: Any,
         test_case: ToolTestCase,
     ) -> ToolObservation:
-        if definition.is_dangerous and not test_case.policy.allow_dangerous_tools:
+        if _is_dangerous_tool(definition) and not test_case.policy.allow_dangerous_tools:
             return ToolObservation(
                 call=call,
                 result=ToolResult(
@@ -180,6 +195,20 @@ class ToolTestRunner:
             ),
             elapsed_ms=0.0,
         )
+
+
+def _restricted_agent_boundary_blocks(call: ToolCall) -> bool:
+    return (
+        bool(call.requested_by_agent_id)
+        and is_restricted_agent_id(call.requested_by_agent_id)
+        and is_external_fetch_tool(call.tool_name)
+    )
+
+
+def _is_dangerous_tool(definition: Any) -> bool:
+    if is_default_dangerous_tool_name(definition.name):
+        return True
+    return bool(definition.is_dangerous)
 
 
 def _expectation_errors(test_case: ToolTestCase, observation: ToolObservation) -> list[str]:

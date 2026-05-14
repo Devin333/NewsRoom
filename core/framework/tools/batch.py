@@ -55,7 +55,7 @@ class ToolBatchExecutor:
                 )
                 for call in calls
             ]
-        if self._can_execute_parallel(calls):
+        if mode == "best_effort" and self._can_execute_parallel(calls):
             return self._execute_parallel(calls, policy)
         return self._execute_serial(calls, policy, mode=mode)
 

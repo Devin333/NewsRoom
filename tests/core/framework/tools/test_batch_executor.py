@@ -122,3 +122,37 @@ def test_tool_batch_executor_blocks_batches_over_iteration_budget() -> None:
     ]
     assert calls["count"] == 0
     assert "max_tool_calls_per_iteration" in (observations[0].result.error_message or "")
+
+
+def test_tool_batch_executor_strict_mode_stops_after_first_failure_for_parallel_safe_tools() -> None:
+    calls: list[str] = []
+    registry = ToolRegistry()
+    registry.register(
+        ToolDefinition(
+            name="memory.first",
+            input_schema={"required": []},
+            concurrency_safe=True,
+        ),
+        lambda args: calls.append("first") or (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+    registry.register(
+        ToolDefinition(
+            name="memory.second",
+            input_schema={"required": []},
+            concurrency_safe=True,
+        ),
+        lambda args: calls.append("second") or {"ok": True},
+    )
+    executor = ToolBatchExecutor(registry, max_workers=2)
+
+    observations = executor.execute_batch(
+        [
+            ToolCall(tool_name="memory.first", arguments={}),
+            ToolCall(tool_name="memory.second", arguments={}),
+        ],
+        ToolPolicy(allowed_tools=["memory.first", "memory.second"]),
+        mode="strict",
+    )
+
+    assert [observation.status for observation in observations] == [ToolStatus.FAILED]
+    assert calls == ["first"]

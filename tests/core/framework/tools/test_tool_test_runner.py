@@ -75,3 +75,44 @@ def test_tool_test_runner_reports_status_expectation_errors() -> None:
     assert report.observation.status == ToolStatus.BLOCKED
     assert report.errors == ["expected status succeeded, got blocked"]
     assert report.metrics.blocked_calls == 1
+
+
+def test_tool_test_runner_dry_run_blocks_default_dangerous_named_tool() -> None:
+    registry = ToolRegistry()
+    registry.register(ToolDefinition(name="http.request"), lambda args: {"sent": True})
+    runner = ToolTestRunner(registry)
+
+    report = runner.run_case(
+        ToolTestCase(
+            name="http request dry run blocked",
+            tool_name="http.request",
+            policy=ToolPolicy(allowed_tools=["http.request"]),
+            expected_status=ToolStatus.BLOCKED,
+            expected_error_type="ToolPermissionError",
+            dry_run=True,
+        )
+    )
+
+    assert report.passed is True
+    assert report.observation.result.error_message == "dangerous tool is not allowed: http.request"
+
+
+def test_tool_test_runner_dry_run_enforces_restricted_agent_boundary() -> None:
+    registry = ToolRegistry()
+    registry.register(ToolDefinition(name="source.fetch_url"), lambda args: {"body": "ok"})
+    runner = ToolTestRunner(registry)
+
+    report = runner.run_case(
+        ToolTestCase(
+            name="writer fetch dry run blocked",
+            tool_name="source.fetch_url",
+            requested_by_agent_id="WriterAgent",
+            policy=ToolPolicy(allowed_tools=["source.fetch_url"]),
+            expected_status=ToolStatus.BLOCKED,
+            expected_error_type="ToolPermissionError",
+            dry_run=True,
+        )
+    )
+
+    assert report.passed is True
+    assert "restricted agent" in (report.observation.result.error_message or "")
