@@ -306,6 +306,41 @@ def test_local_json_persistence_adapter_writes_individual_final_state_records(tm
     assert len(repository.list_quality_results("run-1")) == 1
 
 
+def test_local_json_persistence_adapter_skips_bad_record_json(tmp_path) -> None:
+    repository = LocalJsonPersistenceAdapter(tmp_path)
+    repository.save_source_item(
+        SourceItemRecord(
+            source_item_id="raw-1",
+            run_id="run-1",
+            source_id="source",
+            title="Title",
+            url="https://example.com/a",
+        )
+    )
+    bad_path = tmp_path / "_records" / "source_items" / "run-1" / "bad.json"
+    bad_path.write_text("{bad", encoding="utf-8")
+
+    records = repository.list_source_items("run-1")
+
+    assert [record["source_item_id"] for record in records] == ["raw-1"]
+
+
+def test_local_json_persistence_adapter_rejects_unsafe_run_id_on_reads(tmp_path) -> None:
+    repository = LocalJsonPersistenceAdapter(tmp_path)
+
+    with pytest.raises(ValueError, match="invalid run_id"):
+        repository.list_source_items("../secret")
+
+    with pytest.raises(ValueError, match="invalid run_id"):
+        repository.list_evidence_items("../secret")
+
+    with pytest.raises(ValueError, match="invalid run_id"):
+        repository.list_claims("../secret")
+
+    with pytest.raises(ValueError, match="invalid run_id"):
+        repository.list_quality_results("../secret")
+
+
 class _BatchRepository:
     def __init__(self) -> None:
         self.migrated = False

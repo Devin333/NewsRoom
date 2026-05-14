@@ -154,17 +154,17 @@ class LocalJsonPersistenceAdapter:
             self.save_quality_result(batch.quality_result)
 
     def list_source_items(self, run_id: str) -> list[dict[str, Any]]:
-        return _read_record_dir(self.artifact_root / "_records" / "source_items" / _safe_record_name(run_id))
+        return _read_record_dir(self.artifact_root / "_records" / "source_items" / _safe_run_id(run_id))
 
     def list_evidence_items(self, run_id: str) -> list[dict[str, Any]]:
-        return _read_record_dir(self.artifact_root / "_records" / "evidence_items" / _safe_record_name(run_id))
+        return _read_record_dir(self.artifact_root / "_records" / "evidence_items" / _safe_run_id(run_id))
 
     def list_claims(self, run_id: str) -> list[dict[str, Any]]:
-        return _read_record_dir(self.artifact_root / "_records" / "claims" / _safe_record_name(run_id))
+        return _read_record_dir(self.artifact_root / "_records" / "claims" / _safe_run_id(run_id))
 
     def list_quality_results(self, run_id: str) -> list[dict[str, Any]]:
         return _read_record_dir(
-            self.artifact_root / "_records" / "quality_results" / _safe_record_name(run_id)
+            self.artifact_root / "_records" / "quality_results" / _safe_run_id(run_id)
         )
 
 
@@ -479,14 +479,28 @@ def _write_record_json(path: Path, payload: dict[str, Any]) -> None:
 def _read_record_dir(path: Path) -> list[dict[str, Any]]:
     if not path.exists():
         return []
-    return [
-        json.loads(record_path.read_text(encoding="utf-8"))
-        for record_path in sorted(path.glob("*.json"))
-    ]
+    records: list[dict[str, Any]] = []
+    for record_path in sorted(path.glob("*.json")):
+        try:
+            payload = json.loads(record_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(payload, dict):
+            records.append(payload)
+    return records
 
 
 def _safe_record_name(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", value).strip("._") or "record"
+
+
+def _safe_run_id(value: str) -> str:
+    if not value:
+        raise ValueError("run_id is required")
+    relative = Path(value)
+    if relative.is_absolute() or ".." in relative.parts or len(relative.parts) != 1:
+        raise ValueError(f"invalid run_id: {value}")
+    return _safe_record_name(value)
 
 
 def _datetime_or_none(value: Any) -> datetime | None:
