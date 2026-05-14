@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from core.framework.run_result import RunResult
 from core.framework.specs import WorkflowStatus
 from domain.reports import BlockedReport, FinalReport
@@ -169,6 +171,44 @@ def test_local_json_persistence_adapter_writes_records(tmp_path) -> None:
     report_payload = json.loads(report_path.read_text(encoding="utf-8"))
     assert report_payload["report_id"] == "run-1:final"
     assert report_payload["citation_coverage_score"] == 1.0
+
+
+def test_local_json_persistence_adapter_preserves_record_when_write_fails(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    repository = LocalJsonPersistenceAdapter(tmp_path)
+    repository.save_workflow_run(
+        WorkflowRunRecord(
+            run_id="run-1",
+            workflow_id="daily",
+            workflow_version="1",
+            status="succeeded",
+            profile="live-offline",
+        )
+    )
+    workflow_path = tmp_path / "_records" / "workflow_runs" / "run-1.json"
+    original_payload = json.loads(workflow_path.read_text(encoding="utf-8"))
+
+    def fail_after_partial_write(payload, handle, **kwargs):
+        handle.write('{"partial":')
+        raise RuntimeError("simulated write failure")
+
+    monkeypatch.setattr("storage.repository.json.dump", fail_after_partial_write)
+
+    with pytest.raises(RuntimeError, match="simulated write failure"):
+        repository.save_workflow_run(
+            WorkflowRunRecord(
+                run_id="run-1",
+                workflow_id="daily",
+                workflow_version="1",
+                status="failed",
+                profile="live-offline",
+            )
+        )
+
+    assert json.loads(workflow_path.read_text(encoding="utf-8")) == original_payload
+    assert list(workflow_path.parent.glob(".run-1.json.*.tmp")) == []
 
 
 def test_run_result_extracts_source_evidence_claim_and_quality_records() -> None:
