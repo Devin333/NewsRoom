@@ -14,6 +14,31 @@ def _dt(value: datetime | None) -> str | None:
     return value.isoformat().replace("+00:00", "Z") if value else None
 
 
+def _parse_dt(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.astimezone(UTC) if value.tzinfo else value.replace(tzinfo=UTC)
+    text = str(value).strip()
+    if not text:
+        return None
+    return datetime.fromisoformat(text.replace("Z", "+00:00")).astimezone(UTC)
+
+
+def _dict(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _str_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value]
+
+
+def _float_or_none(value: Any) -> float | None:
+    return float(value) if value is not None else None
+
+
 @dataclass(frozen=True)
 class SourceItemRecord:
     source_item_id: str
@@ -49,6 +74,25 @@ class SourceItemRecord:
             "metadata": dict(self.metadata),
         }
 
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "SourceItemRecord":
+        return cls(
+            source_item_id=str(payload["source_item_id"]),
+            run_id=str(payload["run_id"]),
+            source_id=str(payload["source_id"]),
+            title=str(payload.get("title") or ""),
+            url=str(payload.get("url") or ""),
+            canonical_url=payload.get("canonical_url"),
+            published_at=_parse_dt(payload.get("published_at")),
+            fetched_at=_parse_dt(payload.get("fetched_at")) or _utc_now(),
+            summary=payload.get("summary"),
+            content_hash=payload.get("content_hash"),
+            language=payload.get("language"),
+            source_reliability=payload.get("source_reliability"),
+            raw_artifact_id=payload.get("raw_artifact_id"),
+            metadata=_dict(payload.get("metadata")),
+        )
+
 
 @dataclass(frozen=True)
 class EvidenceItemRecord:
@@ -78,6 +122,22 @@ class EvidenceItemRecord:
             "lineage_json": dict(self.lineage_json),
             "metadata": dict(self.metadata),
         }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "EvidenceItemRecord":
+        return cls(
+            evidence_id=str(payload["evidence_id"]),
+            run_id=str(payload["run_id"]),
+            claim=str(payload.get("claim") or ""),
+            summary=str(payload.get("summary") or ""),
+            source_urls=_str_list(payload.get("source_urls")),
+            source_item_ids=_str_list(payload.get("source_item_ids")),
+            confidence=float(payload.get("confidence") or 0.0),
+            category=str(payload.get("category") or "news"),
+            published_at=_parse_dt(payload.get("published_at")),
+            lineage_json=_dict(payload.get("lineage_json")),
+            metadata=_dict(payload.get("metadata")),
+        )
 
 
 @dataclass(frozen=True)
@@ -109,6 +169,22 @@ class ClaimRecord:
             "created_at": _dt(self.created_at),
         }
 
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "ClaimRecord":
+        return cls(
+            claim_id=str(payload["claim_id"]),
+            run_id=str(payload["run_id"]),
+            status=str(payload.get("status") or "uncertain"),
+            text=str(payload.get("text") or ""),
+            confidence=_float_or_none(payload.get("confidence")),
+            supporting_evidence_ids=_str_list(payload.get("supporting_evidence_ids")),
+            supporting_sources=_str_list(payload.get("supporting_sources")),
+            rejecting_evidence_ids=_str_list(payload.get("rejecting_evidence_ids")),
+            rejecting_sources=_str_list(payload.get("rejecting_sources")),
+            payload=_dict(payload.get("payload")),
+            created_at=_parse_dt(payload.get("created_at")) or _utc_now(),
+        )
+
 
 @dataclass(frozen=True)
 class QualityResultRecord:
@@ -136,6 +212,21 @@ class QualityResultRecord:
             "payload": dict(self.payload),
             "created_at": _dt(self.created_at),
         }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "QualityResultRecord":
+        return cls(
+            quality_result_id=str(payload["quality_result_id"]),
+            run_id=str(payload["run_id"]),
+            decision=str(payload.get("decision") or "unknown"),
+            passed=bool(payload.get("passed")),
+            quality_score=_float_or_none(payload.get("quality_score")),
+            citation_coverage_score=_float_or_none(payload.get("citation_coverage_score")),
+            claim_support_score=_float_or_none(payload.get("claim_support_score")),
+            evidence_alignment_score=_float_or_none(payload.get("evidence_alignment_score")),
+            payload=_dict(payload.get("payload")),
+            created_at=_parse_dt(payload.get("created_at")) or _utc_now(),
+        )
 
 
 @dataclass(frozen=True)
@@ -167,6 +258,22 @@ class SearchResult:
             "metadata": dict(self.metadata),
         }
 
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "SearchResult":
+        return cls(
+            result_id=str(payload["result_id"]),
+            result_type=str(payload["result_type"]),
+            snippet=str(payload.get("snippet") or ""),
+            score=float(payload.get("score") or 0.0),
+            title=payload.get("title"),
+            keyword_score=_float_or_none(payload.get("keyword_score")),
+            semantic_score=_float_or_none(payload.get("semantic_score")),
+            recency_score=_float_or_none(payload.get("recency_score")),
+            quality_score=_float_or_none(payload.get("quality_score")),
+            refs={str(key): str(value) for key, value in _dict(payload.get("refs")).items()},
+            metadata=_dict(payload.get("metadata")),
+        )
+
 
 @dataclass(frozen=True)
 class SchemaVersionedRecord:
@@ -178,6 +285,13 @@ class SchemaVersionedRecord:
             "schema_version": self.schema_version,
             "data": dict(self.data),
         }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "SchemaVersionedRecord":
+        return cls(
+            schema_version=str(payload["schema_version"]),
+            data=_dict(payload.get("data")),
+        )
 
 
 class StorageErrorType(str, Enum):
@@ -223,3 +337,15 @@ class StorageError:
             "data_integrity_risk": self.data_integrity_risk,
             "metadata": dict(self.metadata),
         }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "StorageError":
+        return cls(
+            error_type=str(payload["error_type"]),
+            message=str(payload.get("message") or ""),
+            retryable=bool(payload.get("retryable")),
+            workflow_blocking=bool(payload.get("workflow_blocking")),
+            operator_action_required=bool(payload.get("operator_action_required")),
+            data_integrity_risk=bool(payload.get("data_integrity_risk")),
+            metadata=_dict(payload.get("metadata")),
+        )

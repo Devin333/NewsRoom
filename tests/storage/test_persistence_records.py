@@ -1,4 +1,5 @@
 import json
+from datetime import UTC, datetime
 
 import pytest
 
@@ -22,6 +23,136 @@ from storage.repository import (
     source_item_records_from_result,
     workflow_run_record_from_result,
 )
+
+
+def test_storage_record_contracts_roundtrip_with_stable_dict_output() -> None:
+    fetched_at = datetime(2026, 5, 11, 0, 0, tzinfo=UTC)
+    created_at = datetime(2026, 5, 11, 1, 0, tzinfo=UTC)
+    source = SourceItemRecord(
+        source_item_id="source-item-1",
+        run_id="run-1",
+        source_id="rss-openai",
+        title="Source title",
+        url="https://example.com/source",
+        canonical_url="https://example.com/canonical",
+        published_at=fetched_at,
+        fetched_at=fetched_at,
+        raw_artifact_id="artifact-raw-1",
+        metadata={"topic": "ai"},
+    )
+    evidence = EvidenceItemRecord(
+        evidence_id="evidence-1",
+        run_id="run-1",
+        claim="Claim text",
+        summary="Evidence summary",
+        source_urls=["https://example.com/source"],
+        source_item_ids=["source-item-1"],
+        confidence=0.87,
+        lineage_json={"source_item_id": "source-item-1"},
+        metadata={"category": "policy"},
+    )
+    quality = QualityResultRecord(
+        quality_result_id="quality-1",
+        run_id="run-1",
+        decision="pass",
+        passed=True,
+        quality_score=0.91,
+        citation_coverage_score=0.8,
+        claim_support_score=0.75,
+        evidence_alignment_score=0.7,
+        payload={"details": {"passed": True}},
+        created_at=created_at,
+    )
+
+    assert SourceItemRecord.from_dict(source.to_dict()).to_dict() == source.to_dict()
+    assert EvidenceItemRecord.from_dict(evidence.to_dict()).to_dict() == evidence.to_dict()
+    assert QualityResultRecord.from_dict(quality.to_dict()).to_dict() == quality.to_dict()
+    assert set(source.to_dict()) >= {
+        "source_id",
+        "source_item_id",
+        "url",
+        "canonical_url",
+        "published_at",
+        "fetched_at",
+        "raw_artifact_id",
+    }
+    assert set(evidence.to_dict()) >= {
+        "evidence_id",
+        "source_item_ids",
+        "source_urls",
+        "confidence",
+        "lineage_json",
+    }
+    assert set(quality.to_dict()) >= {"decision", "passed", "payload"}
+
+
+def test_claim_record_contract_supports_review_statuses_roundtrip() -> None:
+    for status in ["accepted", "rejected", "uncertain"]:
+        claim = ClaimRecord(
+            claim_id=f"claim-{status}",
+            run_id="run-1",
+            status=status,
+            text="Claim text",
+            confidence=0.5,
+            supporting_evidence_ids=["ev-support"],
+            rejecting_evidence_ids=["ev-reject"],
+            payload={"status": status},
+            created_at=datetime(2026, 5, 11, 1, 0, tzinfo=UTC),
+        )
+
+        assert ClaimRecord.from_dict(claim.to_dict()).to_dict() == claim.to_dict()
+
+
+def test_workflow_and_report_record_contracts_roundtrip_with_stable_dict_output() -> None:
+    workflow = WorkflowRunRecord(
+        run_id="run-1",
+        workflow_id="daily",
+        workflow_version="1",
+        status="succeeded",
+        profile="live-offline",
+        artifact_dir="runs/run-1",
+        manifest_path="runs/run-1/manifest.json",
+        events_path="runs/run-1/events.jsonl",
+        error={"type": "none"},
+        metrics={"quality_score": 0.9},
+    )
+    report = ReportRecord(
+        report_id="run-1:final",
+        run_id="run-1",
+        status="final",
+        title="Daily",
+        report_json={"title": "Daily"},
+        report_markdown="# Daily\n",
+        quality_score=0.9,
+        citation_coverage_score=0.8,
+        manifest_path="runs/run-1/manifest.json",
+    )
+
+    assert WorkflowRunRecord.from_dict(workflow.to_dict()).to_dict() == workflow.to_dict()
+    assert ReportRecord.from_dict(report.to_dict()).to_dict() == report.to_dict()
+    assert set(workflow.to_dict()) >= {
+        "run_id",
+        "workflow_id",
+        "workflow_version",
+        "status",
+        "profile",
+        "artifact_dir",
+        "manifest_path",
+        "events_path",
+        "error",
+        "metrics",
+    }
+    assert set(report.to_dict()) >= {
+        "report_id",
+        "run_id",
+        "status",
+        "title",
+        "report_json",
+        "report_markdown",
+        "quality_score",
+        "citation_coverage_score",
+        "manifest_path",
+    }
 
 
 def test_workflow_run_record_from_result_extracts_metrics() -> None:
