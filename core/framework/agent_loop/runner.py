@@ -35,8 +35,14 @@ class AgentRunner:
         run_id: str | None = None,
         step_id: str | None = None,
         workflow_checkpoint_id: str | None = None,
+        resume_from_cursor: bool = False,
         global_budget_tracker: GlobalBudgetTracker | None = None,
     ) -> AgentLoopResult:
+        loop_inputs = self._inputs_with_resume_context(
+            inputs,
+            conversation_id,
+            resume_from_cursor=resume_from_cursor,
+        )
         self._append_conversation_message(
             conversation_id,
             AgentMessageRecord(
@@ -61,7 +67,7 @@ class AgentRunner:
             output_judge=OutputJudge(),
             global_budget_tracker=global_budget_tracker or self._global_budget_tracker,
         )
-        result = loop.run(agent, inputs, tools)
+        result = loop.run(agent, loop_inputs, tools)
         self._append_conversation_events(
             conversation_id,
             agent,
@@ -193,6 +199,25 @@ class AgentRunner:
             conversation_id,
             keep_last=policy.conversation_compaction_keep_last,
         )
+
+    def _inputs_with_resume_context(
+        self,
+        inputs: dict[str, Any],
+        conversation_id: str | None,
+        *,
+        resume_from_cursor: bool,
+    ) -> dict[str, Any]:
+        loop_inputs = dict(inputs)
+        if not resume_from_cursor or self._conversation_store is None or not conversation_id:
+            return loop_inputs
+        cursor = self._conversation_store.read_cursor(conversation_id)
+        if cursor is None:
+            return loop_inputs
+        loop_inputs["conversation_cursor"] = cursor.to_dict()
+        summary = self._conversation_store.get_summary(conversation_id)
+        if summary is not None:
+            loop_inputs["conversation_summary"] = summary
+        return loop_inputs
 
     def _write_conversation_cursor(
         self,

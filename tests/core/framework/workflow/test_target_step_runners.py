@@ -234,6 +234,36 @@ def test_agent_loop_step_runner_writes_conversation_cursor_context(tmp_path) -> 
     assert cursor.metadata["agent_id"] == "analyst"
 
 
+def test_agent_loop_step_runner_passes_cursor_resume_flag() -> None:
+    agent_result = AgentLoopResult(
+        success=True,
+        status=AgentLoopStatus.ACCEPTED,
+        output={"analysis": {"summary": "ok"}},
+    )
+    fake_runner = _FakeAgentRunner(agent_result)
+    runner = AgentLoopStepRunner(fake_runner, {"analyst": object()})
+    buffer = DataBuffer({"request": {"topic": "ai"}})
+
+    outcome = runner.run(
+        StepSpec(
+            step_id="agent",
+            implementation="analyst",
+            step_type=StepType.AGENT_LOOP,
+            read_keys=["request"],
+            write_keys=["analysis"],
+            metadata={
+                "conversation_id": "conversation-1",
+                "resume_from_conversation_cursor": True,
+            },
+        ),
+        buffer.scope(read_keys=["request"], write_keys=["analysis"]),
+    )
+
+    assert outcome.status == StepStatus.SUCCEEDED
+    assert fake_runner.calls[-1]["kwargs"]["conversation_id"] == "conversation-1"
+    assert fake_runner.calls[-1]["kwargs"]["resume_from_cursor"] is True
+
+
 def test_agent_loop_step_runner_writes_redacted_llm_call_artifacts(tmp_path) -> None:
     fake_secret = "sk" + "-abcdef1234567890"
     agent = AgentSpec(

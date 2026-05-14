@@ -21,7 +21,7 @@ from core.framework.tools import (
     ToolRegistry,
     register_control_tools,
 )
-from storage.conversation import LocalJsonConversationStore
+from storage.conversation import ConversationCursor, LocalJsonConversationStore
 
 
 def _registry() -> ToolRegistry:
@@ -739,6 +739,75 @@ def test_agent_runner_compacts_conversation_when_threshold_is_exceeded(tmp_path)
     assert cursor.message_offset == 2
     assert cursor.message_id == messages[-1].message_id
     assert cursor.metadata["message_type"] == "agent_result"
+
+
+def test_agent_runner_can_include_cursor_context_in_loop_inputs(tmp_path) -> None:
+    llm = FakeLLMClient(
+        ['{"action_type":"final_output","output":{"analysis_result":{"summary":"ok"}}}']
+    )
+    store = LocalJsonConversationStore(tmp_path)
+    store.write_summary("conversation-resume", "prior summary")
+    store.write_cursor(
+        ConversationCursor(
+            conversation_id="conversation-resume",
+            message_offset=4,
+            message_id="message-4",
+            run_id="run-prior",
+            step_id="agent-prior",
+        )
+    )
+
+    inputs = {"request": {"topic": "chips"}}
+
+    AgentRunner(
+        llm_client=llm,
+        tool_registry=_registry(),
+        conversation_store=store,
+    ).run(
+        _agent(),
+        inputs,
+        conversation_id="conversation-resume",
+        resume_from_cursor=True,
+    )
+
+    prompt = llm.requests[0].messages[1]["content"]
+    messages = store.read_messages("conversation-resume")
+
+    assert '"conversation_cursor"' in prompt
+    assert '"message_id": "message-4"' in prompt
+    assert '"conversation_summary": "prior summary"' in prompt
+    assert inputs == {"request": {"topic": "chips"}}
+    assert messages[0].content == {"request": {"topic": "chips"}}
+
+
+def test_agent_runner_omits_cursor_context_by_default(tmp_path) -> None:
+    llm = FakeLLMClient(
+        ['{"action_type":"final_output","output":{"analysis_result":{"summary":"ok"}}}']
+    )
+    store = LocalJsonConversationStore(tmp_path)
+    store.write_summary("conversation-resume", "prior summary")
+    store.write_cursor(
+        ConversationCursor(
+            conversation_id="conversation-resume",
+            message_offset=4,
+            message_id="message-4",
+        )
+    )
+
+    AgentRunner(
+        llm_client=llm,
+        tool_registry=_registry(),
+        conversation_store=store,
+    ).run(
+        _agent(),
+        {"request": {"topic": "chips"}},
+        conversation_id="conversation-resume",
+    )
+
+    prompt = llm.requests[0].messages[1]["content"]
+
+    assert '"conversation_cursor"' not in prompt
+    assert '"conversation_summary"' not in prompt
 
 
 def test_agent_runner_skips_conversation_compaction_when_disabled(tmp_path) -> None:
