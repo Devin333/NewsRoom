@@ -4,7 +4,12 @@ import json
 from pathlib import Path
 
 from storage.artifacts import ArtifactRef
+from storage.lifecycle.retention import RetentionPolicy
 from storage.metrics.models import StorageMetrics
+
+
+_REPORT_RETENTION_SENTINEL_DAYS = 123456789
+_REPORT_TYPE_POLICY = RetentionPolicy(report_retention_days=_REPORT_RETENTION_SENTINEL_DAYS)
 
 
 class LocalStorageMetricsCollector:
@@ -16,7 +21,7 @@ class LocalStorageMetricsCollector:
         artifact_refs = self._artifact_refs()
         return StorageMetrics(
             runs_count=len(manifests),
-            reports_count=sum(1 for manifest in manifests if "report_json" in (manifest.get("artifacts") or {})),
+            reports_count=sum(1 for manifest in manifests if _has_report_artifact(manifest)),
             artifacts_count=len(artifact_refs),
             source_items_count=self._json_record_count("source_items"),
             evidence_items_count=self._json_record_count("evidence_items"),
@@ -70,3 +75,13 @@ class LocalStorageMetricsCollector:
         if not root.exists():
             return 0
         return sum(1 for path in root.rglob("*.json") if path.is_file())
+
+
+def _has_report_artifact(manifest: dict) -> bool:
+    artifacts = manifest.get("artifacts") or {}
+    if not isinstance(artifacts, dict):
+        return False
+    return any(
+        _REPORT_TYPE_POLICY.retention_days_for(str(artifact_type)) == _REPORT_RETENTION_SENTINEL_DAYS
+        for artifact_type in artifacts
+    )
