@@ -37,6 +37,22 @@ class LocalJsonEventStore:
         _validate_id(step_id, "step_id")
         return [event for event in self.list_by_run(run_id) if event.step_id == step_id]
 
+    def filter_by_type(
+        self,
+        run_id: str,
+        event_type: str,
+        *,
+        limit: int | None = None,
+    ) -> list[EventRecord]:
+        if not event_type:
+            raise ValueError("event_type is required")
+        if limit is not None and limit <= 0:
+            raise ValueError("limit must be greater than zero")
+        events = [event for event in self.list_by_run(run_id) if event.event_type == event_type]
+        if limit is not None:
+            return events[:limit]
+        return events
+
     async def stream_from_offset(self, run_id: str, offset: int) -> AsyncIterator[EventRecord]:
         _validate_id(run_id, "run_id")
         if offset < 0:

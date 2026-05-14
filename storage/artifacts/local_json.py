@@ -56,6 +56,13 @@ class LocalJsonArtifactIndexStore:
         _validate_id(step_id, "step_id")
         return [ref for ref in self.list_by_run(run_id) if ref.step_id == step_id]
 
+    def list_by_type(self, artifact_type: str, *, run_id: str | None = None) -> list[ArtifactRef]:
+        if not artifact_type:
+            raise ValueError("artifact_type is required")
+        if run_id is not None:
+            return [ref for ref in self.list_by_run(run_id) if ref.artifact_type == artifact_type]
+        return [ref for ref in self.list_all() if ref.artifact_type == artifact_type]
+
     def delete_artifact(self, run_id: str, artifact_id: str) -> None:
         path = self._record_path(run_id, artifact_id)
         if path.exists():

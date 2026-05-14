@@ -10,6 +10,7 @@ def _event(
     event_id: str,
     *,
     step_id: str | None = None,
+    event_type: str = "workflow_step_completed",
     timestamp: datetime | None = None,
     severity: str = "info",
 ) -> EventRecord:
@@ -18,7 +19,7 @@ def _event(
         run_id="run-1",
         workflow_id="daily",
         step_id=step_id,
-        event_type="workflow_step_completed",
+        event_type=event_type,
         timestamp=timestamp or datetime(2026, 5, 11, 1, 0, tzinfo=UTC),
         payload={"status": "ok"},
         severity=severity,
@@ -79,6 +80,18 @@ def test_local_json_event_store_lists_by_step_and_streams_from_offset(tmp_path) 
     assert asyncio.run(collect()) == [second, third]
 
 
+def test_local_json_event_store_filters_by_type(tmp_path) -> None:
+    store = LocalJsonEventStore(tmp_path)
+    first = _event("event-1", event_type="workflow_started")
+    second = _event("event-2", event_type="workflow_step_completed")
+    third = _event("event-3", event_type="workflow_started")
+    for event in [first, second, third]:
+        store.append_event(event)
+
+    assert store.filter_by_type("run-1", "workflow_started") == [first, third]
+    assert store.filter_by_type("run-1", "workflow_started", limit=1) == [first]
+
+
 def test_local_json_event_store_handles_missing_and_rejects_invalid_inputs(tmp_path) -> None:
     store = LocalJsonEventStore(tmp_path)
 
@@ -86,6 +99,12 @@ def test_local_json_event_store_handles_missing_and_rejects_invalid_inputs(tmp_p
 
     with pytest.raises(ValueError, match="limit must be greater than zero"):
         store.list_by_run("run-1", limit=0)
+
+    with pytest.raises(ValueError, match="limit must be greater than zero"):
+        store.filter_by_type("run-1", "workflow_started", limit=0)
+
+    with pytest.raises(ValueError, match="event_type is required"):
+        store.filter_by_type("run-1", "")
 
     with pytest.raises(ValueError, match="invalid run_id"):
         store.list_by_run("../secret")

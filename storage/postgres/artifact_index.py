@@ -87,6 +87,19 @@ class PostgresArtifactIndexStore:
             (run_id, step_id),
         )
 
+    def list_by_type(self, artifact_type: str, *, run_id: str | None = None) -> list[ArtifactRef]:
+        _validate_required(artifact_type, "artifact_type")
+        if run_id is not None:
+            _validate_id(run_id, "run_id")
+            return self._fetch_refs(
+                _select_sql("WHERE artifact_type = %s AND run_id = %s"),
+                (artifact_type, run_id),
+            )
+        return self._fetch_refs(
+            _select_sql("WHERE artifact_type = %s"),
+            (artifact_type,),
+        )
+
     def delete_artifact(self, run_id: str, artifact_id: str) -> None:
         _validate_id(run_id, "run_id")
         _validate_id(artifact_id, "artifact_id")
@@ -192,6 +205,11 @@ def _validate_id(value: str, label: str) -> None:
     relative = Path(value)
     if relative.is_absolute() or ".." in relative.parts or len(relative.parts) != 1:
         raise ValueError(f"invalid {label}: {value}")
+
+
+def _validate_required(value: str, label: str) -> None:
+    if not value:
+        raise ValueError(f"{label} is required")
 
 
 def _validate_relative_path(value: str) -> None:

@@ -71,14 +71,29 @@ def test_postgres_artifact_index_gets_and_lists_refs() -> None:
     run_refs = store.list_by_run("run-1")
     all_refs = store.list_all()
     step_refs = store.list_by_step("run-1", "draft")
+    type_refs = store.list_by_type("report_json", run_id="run-1")
 
     assert found == _ref("artifact-1")
     assert run_refs == [found]
     assert all_refs == [found]
     assert step_refs == [found]
+    assert type_refs == [found]
     assert "WHERE run_id = %s AND artifact_id = %s" in connection.calls[0][0]
     assert "WHERE run_id = %s" in connection.calls[1][0]
     assert "WHERE run_id = %s AND step_id = %s" in connection.calls[3][0]
+    assert "WHERE artifact_type = %s AND run_id = %s" in connection.calls[4][0]
+    assert connection.calls[4][1] == ("report_json", "run-1")
+
+
+def test_postgres_artifact_index_lists_refs_by_type_across_runs() -> None:
+    connection = FakeConnection(rows=[_row("artifact-1")])
+    store = PostgresArtifactIndexStore("postgresql://example", connection_factory=lambda: connection)
+
+    refs = store.list_by_type("report_json")
+
+    assert refs == [_ref("artifact-1")]
+    assert "WHERE artifact_type = %s" in connection.calls[0][0]
+    assert connection.calls[0][1] == ("report_json",)
 
 
 def test_postgres_artifact_index_raises_when_missing() -> None:
@@ -87,6 +102,9 @@ def test_postgres_artifact_index_raises_when_missing() -> None:
 
     with pytest.raises(ArtifactIndexNotFoundError, match="artifact index record not found"):
         store.get_artifact("run-1", "missing")
+
+    with pytest.raises(ValueError, match="artifact_type is required"):
+        store.list_by_type("")
 
 
 def test_postgres_artifact_index_deletes_ref() -> None:

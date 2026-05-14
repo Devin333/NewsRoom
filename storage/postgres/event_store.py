@@ -75,6 +75,24 @@ class PostgresEventStore:
             (run_id, step_id),
         )
 
+    def filter_by_type(
+        self,
+        run_id: str,
+        event_type: str,
+        *,
+        limit: int | None = None,
+    ) -> list[EventRecord]:
+        _validate_id(run_id, "run_id")
+        _validate_required(event_type, "event_type")
+        if limit is not None and limit <= 0:
+            raise ValueError("limit must be greater than zero")
+        sql = _select_sql("WHERE run_id = %s AND event_type = %s")
+        params: tuple[Any, ...] = (run_id, event_type)
+        if limit is not None:
+            sql += "\nLIMIT %s"
+            params = (run_id, event_type, limit)
+        return self._fetch_events(sql, params)
+
     async def stream_from_offset(self, run_id: str, offset: int) -> AsyncIterator[EventRecord]:
         _validate_id(run_id, "run_id")
         if offset < 0:
@@ -189,3 +207,8 @@ def _validate_id(value: str, label: str) -> None:
     relative = Path(value)
     if relative.is_absolute() or ".." in relative.parts or len(relative.parts) != 1:
         raise ValueError(f"invalid {label}: {value}")
+
+
+def _validate_required(value: str, label: str) -> None:
+    if not value:
+        raise ValueError(f"{label} is required")

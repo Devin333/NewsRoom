@@ -81,14 +81,18 @@ def test_postgres_event_store_lists_events_by_run_and_step() -> None:
 
     run_events = store.list_by_run("run-1", limit=10)
     step_events = store.list_by_step("run-1", "collect")
+    type_events = store.filter_by_type("run-1", "workflow_succeeded", limit=5)
 
     assert run_events[0].event_id == "event-1"
     assert run_events[0].payload == {"status": "ok"}
     assert run_events[0].timestamp == datetime(2026, 5, 11, 1, 0, tzinfo=UTC)
     assert step_events[0].step_id == "collect"
+    assert type_events[0].event_type == "workflow_succeeded"
     assert "LIMIT %s" in connection.calls[0][0]
     assert connection.calls[0][1] == ("run-1", 10)
     assert "step_id = %s" in connection.calls[1][0]
+    assert "event_type = %s" in connection.calls[2][0]
+    assert connection.calls[2][1] == ("run-1", "workflow_succeeded", 5)
 
 
 def test_postgres_event_store_streams_from_offset() -> None:
@@ -110,6 +114,12 @@ def test_postgres_event_store_rejects_invalid_limit() -> None:
 
     with pytest.raises(ValueError, match="limit must be greater than zero"):
         store.list_by_run("run-1", limit=0)
+
+    with pytest.raises(ValueError, match="limit must be greater than zero"):
+        store.filter_by_type("run-1", "workflow_succeeded", limit=0)
+
+    with pytest.raises(ValueError, match="event_type is required"):
+        store.filter_by_type("run-1", "")
 
 
 def _event_row(step_id):

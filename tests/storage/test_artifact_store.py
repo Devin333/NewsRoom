@@ -19,13 +19,14 @@ def _ref(
     *,
     run_id: str = "run-1",
     step_id: str | None = None,
+    artifact_type: str = "report",
     created_at: datetime | None = None,
 ) -> ArtifactRef:
     return ArtifactRef(
         artifact_id=artifact_id,
         run_id=run_id,
         step_id=step_id,
-        artifact_type="report",
+        artifact_type=artifact_type,
         path=f"artifacts/report/{artifact_id}.json",
         content_type="application/json",
         size_bytes=2,
@@ -137,6 +138,23 @@ def test_local_json_artifact_index_store_indexes_by_run_and_step(tmp_path) -> No
     assert store.list_by_step("run-1", "missing") == []
 
 
+def test_local_json_artifact_index_store_lists_by_type(tmp_path) -> None:
+    store = LocalJsonArtifactIndexStore(tmp_path)
+    first = _ref("artifact-1", artifact_type="report_json")
+    second = _ref("artifact-2", artifact_type="events")
+    third = _ref("artifact-3", run_id="run-2", artifact_type="report_json")
+
+    store.index_artifact(second)
+    store.index_artifact(first)
+    store.index_artifact(third)
+
+    assert [ref.artifact_id for ref in store.list_by_type("report_json")] == [
+        "artifact-1",
+        "artifact-3",
+    ]
+    assert store.list_by_type("report_json", run_id="run-1") == [first]
+
+
 def test_local_json_artifact_index_store_lists_all_runs(tmp_path) -> None:
     store = LocalJsonArtifactIndexStore(tmp_path)
     first = _ref("artifact-1", run_id="run-1", created_at=datetime(2026, 5, 11, 1, 0, tzinfo=UTC))
@@ -161,3 +179,6 @@ def test_local_json_artifact_index_store_handles_missing_and_rejects_unsafe_ids(
 
     with pytest.raises(ValueError, match="invalid step_id"):
         store.list_by_step("run-1", "../step")
+
+    with pytest.raises(ValueError, match="artifact_type is required"):
+        store.list_by_type("")
