@@ -68,11 +68,14 @@ def test_filesystem_artifact_store_writes_reads_exists_and_deletes(tmp_path) -> 
     assert ref.checksum == sha256(content).hexdigest()
     assert (tmp_path / "run-1" / ref.path).read_bytes() == content
     assert store.exists(ref) is True
+    assert store.list("run-1") == [ref.path]
+    assert store.checksum(ref) == ref.checksum
     assert store.read(ref) == content
 
     store.delete(ref)
 
     assert store.exists(ref) is False
+    assert store.list("run-1") == []
     with pytest.raises(ArtifactNotFoundError):
         store.read(ref)
 
@@ -99,6 +102,9 @@ def test_filesystem_artifact_store_rejects_unsafe_ids_and_paths(tmp_path) -> Non
 
     with pytest.raises(ValueError, match="invalid run_id"):
         store.write(ArtifactWriteRequest(run_id="../secret", artifact_type="report", content=b"{}"))
+
+    with pytest.raises(ValueError, match="invalid run_id"):
+        store.list("../secret")
 
     with pytest.raises(ValueError, match="invalid artifact_id"):
         store.write(

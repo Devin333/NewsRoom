@@ -70,6 +70,23 @@ class FilesystemArtifactStore:
     def exists(self, artifact_ref: ArtifactRef) -> bool:
         return self._artifact_path(artifact_ref.run_id, artifact_ref.path).exists()
 
+    def list(self, run_id: str) -> list[str]:
+        _validate_id(run_id, "run_id")
+        run_dir = self.root / run_id
+        if not run_dir.exists():
+            return []
+        return sorted(
+            path.relative_to(run_dir).as_posix()
+            for path in run_dir.rglob("*")
+            if path.is_file()
+        )
+
+    def checksum(self, artifact_ref: ArtifactRef) -> str:
+        path = self._artifact_path(artifact_ref.run_id, artifact_ref.path)
+        if not path.exists():
+            raise ArtifactNotFoundError(f"artifact not found: {artifact_ref.run_id}/{artifact_ref.path}")
+        return sha256(path.read_bytes()).hexdigest()
+
     def delete(self, artifact_ref: ArtifactRef) -> None:
         path = self._artifact_path(artifact_ref.run_id, artifact_ref.path)
         if path.exists():
