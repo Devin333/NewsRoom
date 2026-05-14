@@ -501,3 +501,59 @@ def test_postgres_repository_lists_reports_with_workflow_filter() -> None:
     assert params == ("daily-intelligence-live", 5)
     assert records[0].report_id == "report-1"
     assert records[0].workflow_id == "daily-intelligence-live"
+
+
+def test_postgres_repository_lists_final_state_records_by_run() -> None:
+    connection = FakeConnection(rows=[({"source_item_id": "raw-1"},), ('{"source_item_id":"raw-2"}',)])
+    repository = PostgresRepository("postgresql://example", connection_factory=lambda: connection)
+
+    records = repository.list_source_items("run-1")
+
+    sql, params = connection.calls[0]
+    assert "FROM source_items" in sql
+    assert "WHERE run_id = %s" in sql
+    assert "ORDER BY published_at ASC NULLS LAST, source_item_id ASC" in sql
+    assert params == ("run-1",)
+    assert records == [{"source_item_id": "raw-1"}, {"source_item_id": "raw-2"}]
+
+
+@pytest.mark.parametrize(
+    ("method_name", "table_name", "order_by", "expected"),
+    [
+        (
+            "list_evidence_items",
+            "evidence_items",
+            "ORDER BY published_at ASC NULLS LAST, evidence_id ASC",
+            {"evidence_id": "ev-1"},
+        ),
+        (
+            "list_claims",
+            "claims",
+            "ORDER BY created_at ASC, claim_id ASC",
+            {"claim_id": "claim-1"},
+        ),
+        (
+            "list_quality_results",
+            "quality_results",
+            "ORDER BY created_at ASC, quality_result_id ASC",
+            {"quality_result_id": "quality-1"},
+        ),
+    ],
+)
+def test_postgres_repository_lists_other_final_state_records_by_run(
+    method_name,
+    table_name,
+    order_by,
+    expected,
+) -> None:
+    connection = FakeConnection(rows=[(expected,)])
+    repository = PostgresRepository("postgresql://example", connection_factory=lambda: connection)
+
+    records = getattr(repository, method_name)("run-1")
+
+    sql, params = connection.calls[0]
+    assert f"FROM {table_name}" in sql
+    assert "WHERE run_id = %s" in sql
+    assert order_by in sql
+    assert params == ("run-1",)
+    assert records == [expected]

@@ -267,6 +267,42 @@ class PostgresRepository:
         rows = self._fetch_all(sql, (pattern, pattern, pattern, limit))
         return [_search_record_from_row(row) for row in rows]
 
+    def list_source_items(self, run_id: str) -> list[dict[str, Any]]:
+        sql = """
+        SELECT payload
+        FROM source_items
+        WHERE run_id = %s
+        ORDER BY published_at ASC NULLS LAST, source_item_id ASC
+        """
+        return [_dict_or_empty(row[0]) for row in self._fetch_all(sql, (run_id,))]
+
+    def list_evidence_items(self, run_id: str) -> list[dict[str, Any]]:
+        sql = """
+        SELECT payload
+        FROM evidence_items
+        WHERE run_id = %s
+        ORDER BY published_at ASC NULLS LAST, evidence_id ASC
+        """
+        return [_dict_or_empty(row[0]) for row in self._fetch_all(sql, (run_id,))]
+
+    def list_claims(self, run_id: str) -> list[dict[str, Any]]:
+        sql = """
+        SELECT payload
+        FROM claims
+        WHERE run_id = %s
+        ORDER BY created_at ASC, claim_id ASC
+        """
+        return [_dict_or_empty(row[0]) for row in self._fetch_all(sql, (run_id,))]
+
+    def list_quality_results(self, run_id: str) -> list[dict[str, Any]]:
+        sql = """
+        SELECT payload
+        FROM quality_results
+        WHERE run_id = %s
+        ORDER BY created_at ASC, quality_result_id ASC
+        """
+        return [_dict_or_empty(row[0]) for row in self._fetch_all(sql, (run_id,))]
+
     def _insert_workflow_run(self, cursor: Any, record: WorkflowRunRecord) -> None:
         sql = """
         INSERT INTO workflow_runs (
