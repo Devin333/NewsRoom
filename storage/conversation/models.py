@@ -107,3 +107,46 @@ class ConversationCompactionRecord:
             redacted=bool(payload.get("redacted", True)),
             metadata=dict(payload.get("metadata") or {}),
         )
+
+
+@dataclass(frozen=True)
+class ConversationCursor:
+    conversation_id: str
+    message_offset: int
+    message_id: str | None = None
+    run_id: str | None = None
+    step_id: str | None = None
+    workflow_checkpoint_id: str | None = None
+    updated_at: datetime = field(default_factory=_utc_now)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.message_offset, int):
+            raise TypeError("message_offset must be an integer")
+        if self.message_offset < 0:
+            raise ValueError("message_offset must be non-negative")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "conversation_id": self.conversation_id,
+            "message_offset": self.message_offset,
+            "message_id": self.message_id,
+            "run_id": self.run_id,
+            "step_id": self.step_id,
+            "workflow_checkpoint_id": self.workflow_checkpoint_id,
+            "updated_at": self.updated_at.isoformat().replace("+00:00", "Z"),
+            "metadata": dict(self.metadata),
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> ConversationCursor:
+        return cls(
+            conversation_id=str(payload["conversation_id"]),
+            message_offset=int(payload.get("message_offset", 0)),
+            message_id=_optional_str(payload.get("message_id")),
+            run_id=_optional_str(payload.get("run_id")),
+            step_id=_optional_str(payload.get("step_id")),
+            workflow_checkpoint_id=_optional_str(payload.get("workflow_checkpoint_id")),
+            updated_at=_parse_datetime(str(payload["updated_at"])),
+            metadata=dict(payload.get("metadata") or {}),
+        )

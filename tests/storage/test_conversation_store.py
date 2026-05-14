@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from storage.conversation import AgentMessageRecord, LocalJsonConversationStore
+from storage.conversation import AgentMessageRecord, ConversationCursor, LocalJsonConversationStore
 from storage.security import REDACTED_VALUE
 
 
@@ -29,6 +29,24 @@ def test_agent_message_record_round_trips() -> None:
     assert restored.to_dict()["created_at"] == "2026-05-11T01:00:00Z"
 
 
+def test_conversation_cursor_round_trips() -> None:
+    cursor = ConversationCursor(
+        conversation_id="conversation-1",
+        message_offset=3,
+        message_id="message-3",
+        run_id="run-1",
+        step_id="agent",
+        workflow_checkpoint_id="cp-1",
+        updated_at=datetime(2026, 5, 11, 2, 0, tzinfo=UTC),
+        metadata={"phase": "draft"},
+    )
+
+    restored = ConversationCursor.from_dict(cursor.to_dict())
+
+    assert restored == cursor
+    assert restored.to_dict()["updated_at"] == "2026-05-11T02:00:00Z"
+
+
 def test_local_json_conversation_store_appends_reads_and_limits(tmp_path) -> None:
     store = LocalJsonConversationStore(tmp_path)
     first = _message("message-1", "user", "First")
@@ -53,6 +71,48 @@ def test_local_json_conversation_store_writes_and_reads_summary(tmp_path) -> Non
 
     assert path.exists()
     assert store.get_summary("conversation-1") == "Conversation summary"
+
+
+def test_local_json_conversation_store_writes_and_reads_cursor(tmp_path) -> None:
+    store = LocalJsonConversationStore(tmp_path)
+    cursor = ConversationCursor(
+        conversation_id="conversation-1",
+        message_offset=2,
+        message_id="message-2",
+        run_id="run-1",
+        step_id="agent",
+        workflow_checkpoint_id="cp-000002-agent",
+        updated_at=datetime(2026, 5, 11, 3, 0, tzinfo=UTC),
+        metadata={"phase": "draft"},
+    )
+
+    assert store.read_cursor("conversation-1") is None
+
+    path = store.write_cursor(cursor)
+
+    assert path.exists()
+    assert store.read_cursor("conversation-1") == cursor
+
+
+def test_local_json_conversation_store_redacts_cursor_metadata(tmp_path) -> None:
+    fake_secret = "sk" + "-conversationsecret123456"
+    store = LocalJsonConversationStore(tmp_path)
+
+    store.write_cursor(
+        ConversationCursor(
+            conversation_id="conversation-1",
+            message_offset=1,
+            metadata={"api_key": fake_secret, "safe": "visible"},
+        )
+    )
+
+    cursor = store.read_cursor("conversation-1")
+
+    assert cursor is not None
+    assert cursor.metadata["api_key"] == REDACTED_VALUE
+    assert cursor.metadata["safe"] == "visible"
+    assert cursor.metadata["redaction_report"]
+    assert fake_secret not in str(cursor.to_dict())
 
 
 def test_local_json_conversation_store_redacts_message_and_summary(tmp_path) -> None:
@@ -134,6 +194,21 @@ def test_local_json_conversation_store_rejects_invalid_inputs(tmp_path) -> None:
 
     with pytest.raises(ValueError, match="keep_last must be non-negative"):
         store.compact_messages("conversation-1", keep_last=-1)
+
+    with pytest.raises(ValueError, match="invalid conversation_id"):
+        store.read_cursor("../secret")
+
+    with pytest.raises(ValueError, match="invalid message_id"):
+        store.write_cursor(
+            ConversationCursor(
+                conversation_id="conversation-1",
+                message_offset=1,
+                message_id="../secret",
+            )
+        )
+
+    with pytest.raises(ValueError, match="message_offset must be non-negative"):
+        ConversationCursor(conversation_id="conversation-1", message_offset=-1)
 
     with pytest.raises(ValueError, match="does not match"):
         store.append_message("other-conversation", _message("message-1", "user", "ok"))

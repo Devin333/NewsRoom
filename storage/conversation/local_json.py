@@ -5,7 +5,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from storage.conversation.models import AgentMessageRecord, ConversationCompactionRecord
+from storage.conversation.models import (
+    AgentMessageRecord,
+    ConversationCompactionRecord,
+    ConversationCursor,
+)
 from storage.security import StorageRedactor
 
 
@@ -156,6 +160,44 @@ class LocalJsonConversationStore:
             return None
         return ConversationCompactionRecord.from_dict(json.loads(path.read_text(encoding="utf-8")))
 
+    def write_cursor(self, cursor: ConversationCursor) -> Path:
+        _validate_id(cursor.conversation_id, "conversation_id")
+        _validate_optional_id(cursor.message_id, "message_id")
+        _validate_optional_id(cursor.run_id, "run_id")
+        _validate_optional_id(cursor.step_id, "step_id")
+        _validate_optional_id(cursor.workflow_checkpoint_id, "workflow_checkpoint_id")
+        metadata_redaction = self.redactor.redact(
+            cursor.metadata,
+            run_id=cursor.conversation_id,
+            artifact_id="conversation_cursor",
+        )
+        metadata = dict(metadata_redaction.value)
+        if metadata_redaction.redacted:
+            metadata["redaction_report"] = metadata_redaction.report.to_dict()
+        safe_cursor = ConversationCursor(
+            conversation_id=cursor.conversation_id,
+            message_offset=cursor.message_offset,
+            message_id=cursor.message_id,
+            run_id=cursor.run_id,
+            step_id=cursor.step_id,
+            workflow_checkpoint_id=cursor.workflow_checkpoint_id,
+            updated_at=cursor.updated_at,
+            metadata=metadata,
+        )
+        path = self._cursor_path(cursor.conversation_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8") as handle:
+            json.dump(safe_cursor.to_dict(), handle, ensure_ascii=False, indent=2, sort_keys=True)
+            handle.write("\n")
+        return path
+
+    def read_cursor(self, conversation_id: str) -> ConversationCursor | None:
+        _validate_id(conversation_id, "conversation_id")
+        path = self._cursor_path(conversation_id)
+        if not path.exists():
+            return None
+        return ConversationCursor.from_dict(json.loads(path.read_text(encoding="utf-8")))
+
     def _redacted_message(self, message: AgentMessageRecord) -> AgentMessageRecord:
         content_redaction = self.redactor.redact(
             message.content,
@@ -200,6 +242,10 @@ class LocalJsonConversationStore:
         _validate_id(conversation_id, "conversation_id")
         return self.root / conversation_id / "compaction.json"
 
+    def _cursor_path(self, conversation_id: str) -> Path:
+        _validate_id(conversation_id, "conversation_id")
+        return self.root / conversation_id / "cursor.json"
+
     def _write_messages(self, conversation_id: str, messages: list[AgentMessageRecord]) -> Path:
         path = self._messages_path(conversation_id)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -227,6 +273,12 @@ def _validate_id(value: str, label: str) -> None:
     relative = Path(value)
     if relative.is_absolute() or ".." in relative.parts or len(relative.parts) != 1:
         raise ValueError(f"invalid {label}: {value}")
+
+
+def _validate_optional_id(value: str | None, label: str) -> None:
+    if value is None:
+        return
+    _validate_id(value, label)
 
 
 def _build_compaction_summary(
