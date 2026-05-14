@@ -99,6 +99,52 @@ def test_tool_batch_executor_serializes_side_effecting_tools() -> None:
     assert active["max"] == 1
 
 
+def test_tool_batch_executor_serializes_default_dangerous_tool_names() -> None:
+    active = {"count": 0, "max": 0}
+    lock = Lock()
+
+    def publish(args: dict) -> dict:
+        with lock:
+            active["count"] += 1
+            active["max"] = max(active["max"], active["count"])
+        time.sleep(0.05)
+        with lock:
+            active["count"] -= 1
+        return {"id": args["id"]}
+
+    registry = ToolRegistry()
+    registry.register(
+        ToolDefinition(
+            name="report.publish",
+            input_schema={"required": ["id"]},
+            side_effect="publishing",
+            concurrency_safe=True,
+        ),
+        publish,
+    )
+    executor = ToolBatchExecutor(registry, max_workers=2)
+
+    observations = executor.execute_batch(
+        [
+            ToolCall(tool_name="report.publish", arguments={"id": "a"}),
+            ToolCall(tool_name="report.publish", arguments={"id": "b"}),
+        ],
+        ToolPolicy(
+            allowed_tools=["report.publish"],
+            allow_dangerous_tools=True,
+            require_approval_for_side_effects=False,
+            timeout_seconds_default=1.0,
+        ),
+    )
+
+    assert [observation.status for observation in observations] == [
+        ToolStatus.SUCCEEDED,
+        ToolStatus.SUCCEEDED,
+    ]
+    assert [observation.result.output["id"] for observation in observations] == ["a", "b"]
+    assert active["max"] == 1
+
+
 def test_tool_batch_executor_blocks_batches_over_iteration_budget() -> None:
     calls = {"count": 0}
     registry = ToolRegistry()

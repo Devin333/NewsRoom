@@ -57,6 +57,7 @@ def test_notification_webhook_tool_posts_json_to_allowed_domain() -> None:
             ),
             ToolPolicy(
                 allowed_tools=["notification.webhook"],
+                allow_dangerous_tools=True,
                 require_approval_for_side_effects=False,
             ),
         )
@@ -77,7 +78,7 @@ def test_notification_webhook_tool_posts_json_to_allowed_domain() -> None:
     }
 
 
-def test_notification_webhook_tool_requires_approval_by_default() -> None:
+def test_notification_webhook_tool_is_blocked_by_default() -> None:
     calls = {"count": 0}
 
     def sender(url, body, headers, timeout_seconds):
@@ -100,7 +101,7 @@ def test_notification_webhook_tool_requires_approval_by_default() -> None:
         ToolPolicy(allowed_tools=["notification.webhook"]),
     )
 
-    assert observation.status == ToolStatus.APPROVAL_REQUIRED
+    assert observation.status == ToolStatus.BLOCKED
     assert calls["count"] == 0
 
 
@@ -126,6 +127,7 @@ def test_notification_webhook_tool_blocks_domains_outside_allowlist_before_send(
         ),
         ToolPolicy(
             allowed_tools=["notification.webhook"],
+            allow_dangerous_tools=True,
             require_approval_for_side_effects=False,
         ),
     )
@@ -161,6 +163,7 @@ def test_notification_webhook_tool_rejects_secret_headers_before_send() -> None:
         ),
         ToolPolicy(
             allowed_tools=["notification.webhook"],
+            allow_dangerous_tools=True,
             require_approval_for_side_effects=False,
         ),
     )
@@ -221,6 +224,7 @@ def test_notification_slack_tool_posts_json_to_configured_webhook_without_leakin
             ),
             ToolPolicy(
                 allowed_tools=["notification.slack"],
+                allow_dangerous_tools=True,
                 require_approval_for_side_effects=False,
             ),
         )
@@ -250,7 +254,7 @@ def test_notification_slack_tool_posts_json_to_configured_webhook_without_leakin
     }
 
 
-def test_notification_slack_tool_requires_approval_by_default() -> None:
+def test_notification_slack_tool_is_blocked_by_default() -> None:
     calls = {"count": 0}
 
     def sender(url, body, headers, timeout_seconds):
@@ -273,7 +277,7 @@ def test_notification_slack_tool_requires_approval_by_default() -> None:
         ToolPolicy(allowed_tools=["notification.slack"]),
     )
 
-    assert observation.status == ToolStatus.APPROVAL_REQUIRED
+    assert observation.status == ToolStatus.BLOCKED
     assert calls["count"] == 0
 
 
@@ -300,6 +304,7 @@ def test_notification_slack_tool_blocks_domains_outside_allowlist_before_send() 
         ),
         ToolPolicy(
             allowed_tools=["notification.slack"],
+            allow_dangerous_tools=True,
             require_approval_for_side_effects=False,
         ),
     )
@@ -328,6 +333,7 @@ def test_notification_slack_tool_requires_message_content_before_send() -> None:
         ToolCall(tool_name="notification.slack", arguments={}),
         ToolPolicy(
             allowed_tools=["notification.slack"],
+            allow_dangerous_tools=True,
             require_approval_for_side_effects=False,
         ),
     )
@@ -366,6 +372,7 @@ def test_notification_email_tool_sends_mime_message_to_allowed_domain() -> None:
         ),
         ToolPolicy(
             allowed_tools=["notification.email"],
+            allow_dangerous_tools=True,
             require_approval_for_side_effects=False,
         ),
     )
@@ -394,7 +401,7 @@ def test_notification_email_tool_sends_mime_message_to_allowed_domain() -> None:
     )
 
 
-def test_notification_email_tool_requires_approval_by_default() -> None:
+def test_notification_email_tool_is_blocked_by_default() -> None:
     sender = _CapturingEmailSender()
     registry = ToolRegistry()
     register_notification_tools(
@@ -417,7 +424,7 @@ def test_notification_email_tool_requires_approval_by_default() -> None:
         ToolPolicy(allowed_tools=["notification.email"]),
     )
 
-    assert observation.status == ToolStatus.APPROVAL_REQUIRED
+    assert observation.status == ToolStatus.BLOCKED
     assert sender.message is None
 
 
@@ -443,6 +450,7 @@ def test_notification_email_tool_blocks_domains_outside_allowlist_before_send() 
         ),
         ToolPolicy(
             allowed_tools=["notification.email"],
+            allow_dangerous_tools=True,
             require_approval_for_side_effects=False,
         ),
     )
@@ -473,6 +481,7 @@ def test_notification_email_tool_requires_body_before_send() -> None:
         ),
         ToolPolicy(
             allowed_tools=["notification.email"],
+            allow_dangerous_tools=True,
             require_approval_for_side_effects=False,
         ),
     )
@@ -506,6 +515,7 @@ def test_notification_rss_publish_tool_writes_configured_feed_item(tmp_path) -> 
         ),
         ToolPolicy(
             allowed_tools=["notification.rss_publish"],
+            allow_dangerous_tools=True,
             require_approval_for_side_effects=False,
         ),
     )
@@ -524,7 +534,7 @@ def test_notification_rss_publish_tool_writes_configured_feed_item(tmp_path) -> 
     assert item.findtext("pubDate") == "Tue, 12 May 2026 00:00:00 GMT"
 
 
-def test_notification_rss_publish_tool_requires_approval_by_default(tmp_path) -> None:
+def test_notification_rss_publish_tool_is_blocked_by_default(tmp_path) -> None:
     feed_path = tmp_path / "feeds" / "news.xml"
     registry = ToolRegistry()
     register_notification_tools(registry, rss_feed_path=feed_path)
@@ -541,7 +551,7 @@ def test_notification_rss_publish_tool_requires_approval_by_default(tmp_path) ->
         ToolPolicy(allowed_tools=["notification.rss_publish"]),
     )
 
-    assert observation.status == ToolStatus.APPROVAL_REQUIRED
+    assert observation.status == ToolStatus.BLOCKED
     assert not feed_path.exists()
 
 

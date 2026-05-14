@@ -213,6 +213,7 @@ def test_report_publish_tool_saves_report_record(tmp_path) -> None:
         ),
         ToolPolicy(
             allowed_tools=["report.publish"],
+            allow_dangerous_tools=True,
             require_approval_for_side_effects=False,
         ),
     )
@@ -236,7 +237,7 @@ def test_report_publish_tool_saves_report_record(tmp_path) -> None:
     assert record["citation_coverage_score"] == 1.0
 
 
-def test_report_publish_tool_requires_approval_by_default(tmp_path) -> None:
+def test_report_publish_tool_is_blocked_by_default(tmp_path) -> None:
     repository = LocalJsonPersistenceAdapter(tmp_path)
     registry = ToolRegistry()
     register_report_tools(registry, persistence_repository=repository)
@@ -256,7 +257,7 @@ def test_report_publish_tool_requires_approval_by_default(tmp_path) -> None:
         ToolPolicy(allowed_tools=["report.publish"]),
     )
 
-    assert observation.status == ToolStatus.APPROVAL_REQUIRED
+    assert observation.status == ToolStatus.BLOCKED
     assert not (tmp_path / "_records" / "reports" / "run-1_final.json").exists()
 
 

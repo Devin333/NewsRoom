@@ -72,7 +72,7 @@ def test_classify_tool_risk_is_deterministic() -> None:
                 requires_approval=True,
             )
         )
-        == "high"
+        == "critical"
     )
     assert (
         classify_tool_risk(
@@ -102,13 +102,28 @@ def test_inspect_tool_policy_reports_exposure_and_unknown_tools() -> None:
     inspection = inspect_tool_policy(registry, policy, agent_id="analyst")
     payload = inspection.to_dict()
 
-    assert inspection.exposed_tool_count == 3
+    assert inspection.exposed_tool_count == 2
     assert inspection.unknown_allowed_tools == ["unknown.tool"]
     assert inspection.unknown_blocked_tools == ["unknown.blocked"]
-    assert inspection.exposed_side_effect_tools == ["report.publish"]
+    assert inspection.exposed_dangerous_tools == []
+    assert inspection.exposed_side_effect_tools == []
     assert inspection.exposed_mcp_tools == ["mcp.fixture.echo"]
     assert payload["agent_id"] == "analyst"
     assert payload["broad_access"] is False
+
+
+def test_inspect_tool_policy_reports_dangerous_exposure_when_explicitly_enabled() -> None:
+    registry = _inspection_registry()
+    policy = ToolPolicy(
+        allowed_tools=["report.publish"],
+        allow_dangerous_tools=True,
+    )
+
+    inspection = inspect_tool_policy(registry, policy, agent_id="publisher")
+
+    assert inspection.exposed_tool_count == 1
+    assert inspection.exposed_dangerous_tools == ["report.publish"]
+    assert inspection.exposed_side_effect_tools == ["report.publish"]
 
 
 def test_inspection_counts_default_dangerous_tool_names_without_marker() -> None:
@@ -163,17 +178,18 @@ def test_inspect_tool_registry_reports_risk_namespaces_and_findings() -> None:
     assert inspection.risk_summary.risk_counts == {
         "low": 2,
         "medium": 0,
-        "high": 1,
-        "critical": 1,
+        "high": 0,
+        "critical": 2,
     }
     assert namespaces["report"].side_effect_count == 1
+    assert namespaces["report"].dangerous_count == 1
     assert namespaces["system"].dangerous_count == 1
     assert "dangerous_tool_defined" in finding_codes
     assert "policy_exposes_dangerous_tool" in finding_codes
     assert "agent_tool_boundary_violation" in finding_codes
     assert inspection.blocking_finding_count >= 2
     assert inspection.ok is False
-    assert payload["risk_summary"]["dangerous_tools"] == 1
+    assert payload["risk_summary"]["dangerous_tools"] == 2
     assert payload["boundary_report"]["blocking_finding_count"] == 1
 
 

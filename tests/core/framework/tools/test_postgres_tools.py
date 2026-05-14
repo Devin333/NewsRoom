@@ -31,6 +31,7 @@ def test_postgres_save_report_tool_writes_typed_report_record() -> None:
         ),
         ToolPolicy(
             allowed_tools=["postgres.save_report"],
+            allow_dangerous_tools=True,
             require_approval_for_side_effects=False,
         ),
     )
@@ -71,6 +72,7 @@ def test_postgres_insert_report_alias_uses_same_repository_path() -> None:
         ),
         ToolPolicy(
             allowed_tools=["postgres.insert_report"],
+            allow_dangerous_tools=True,
             require_approval_for_side_effects=False,
         ),
     )
@@ -80,7 +82,7 @@ def test_postgres_insert_report_alias_uses_same_repository_path() -> None:
     assert repository.records[0].report_id == "run-1:final"
 
 
-def test_postgres_save_report_tool_requires_approval_by_default() -> None:
+def test_postgres_save_report_tool_is_blocked_by_default() -> None:
     repository = _RecordingReportRepository()
     registry = ToolRegistry()
     register_postgres_tools(registry, repository=repository)
@@ -99,7 +101,7 @@ def test_postgres_save_report_tool_requires_approval_by_default() -> None:
         ToolPolicy(allowed_tools=["postgres.save_report"]),
     )
 
-    assert observation.status == ToolStatus.APPROVAL_REQUIRED
+    assert observation.status == ToolStatus.BLOCKED
     assert repository.records == []
 
 
@@ -134,6 +136,7 @@ def test_postgres_update_source_health_tool_writes_typed_health_record() -> None
         ),
         ToolPolicy(
             allowed_tools=["postgres.update_source_health"],
+            allow_dangerous_tools=True,
             require_approval_for_side_effects=False,
         ),
     )
@@ -160,7 +163,7 @@ def test_postgres_update_source_health_tool_writes_typed_health_record() -> None
     assert health.last_error.metadata == {"phase": "fetch"}
 
 
-def test_postgres_update_source_health_tool_requires_approval_by_default() -> None:
+def test_postgres_update_source_health_tool_is_blocked_by_default() -> None:
     repository = _RecordingReportRepository()
     registry = ToolRegistry()
     register_postgres_tools(
@@ -178,7 +181,7 @@ def test_postgres_update_source_health_tool_requires_approval_by_default() -> No
         ToolPolicy(allowed_tools=["postgres.update_source_health"]),
     )
 
-    assert observation.status == ToolStatus.APPROVAL_REQUIRED
+    assert observation.status == ToolStatus.BLOCKED
     assert repository.health_records == []
 
 

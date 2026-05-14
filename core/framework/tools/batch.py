@@ -11,6 +11,7 @@ from core.framework.tools.models import (
     ToolPolicy,
     ToolResult,
     ToolStatus,
+    is_default_dangerous_tool_name,
 )
 from core.framework.tools.registry import ToolRegistry
 from core.framework.tools.secrets import SecretProvider
@@ -104,7 +105,7 @@ class ToolBatchExecutor:
                 definition = self._registry.get(call.tool_name).definition
             except ToolDefinitionError:
                 return False
-            if definition.is_dangerous:
+            if definition.is_dangerous or is_default_dangerous_tool_name(definition.name):
                 return False
             if not definition.concurrency_safe:
                 return False

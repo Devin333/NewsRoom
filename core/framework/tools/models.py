@@ -142,7 +142,8 @@ class ToolPolicy:
 
 
 def is_default_dangerous_tool_name(tool_name: str) -> bool:
-    return tool_name in {
+    normalized = str(tool_name).strip()
+    dangerous_names = {
         "system.execute",
         "system.execute_command",
         "file.write",
@@ -150,10 +151,17 @@ def is_default_dangerous_tool_name(tool_name: str) -> bool:
         "postgres.query",
         "http.request",
         "generic_http_request",
+        "report.publish",
         "publish_report",
         "publish.external",
         "notification.send",
     }
+    dangerous_prefixes = (
+        "postgres.",
+        "notification.",
+        "publish.",
+    )
+    return normalized in dangerous_names or normalized.startswith(dangerous_prefixes)
 
 
 def _is_mcp_tool(tool_name: str) -> bool:

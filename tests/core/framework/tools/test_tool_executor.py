@@ -172,7 +172,7 @@ def test_tool_executor_requires_approval_for_side_effecting_tool() -> None:
 
     observation = executor.execute(
         ToolCall(tool_name="report.publish", arguments={"report_id": "report-1"}),
-        ToolPolicy(allowed_tools=["report.publish"]),
+        ToolPolicy(allowed_tools=["report.publish"], allow_dangerous_tools=True),
     )
 
     assert observation.status == ToolStatus.APPROVAL_REQUIRED
@@ -208,7 +208,7 @@ def test_tool_executor_stores_tool_approval_request_when_store_is_configured() -
             requested_by_agent_id="publisher",
             call_id="call-approval",
         ),
-        ToolPolicy(allowed_tools=["report.publish"]),
+        ToolPolicy(allowed_tools=["report.publish"], allow_dangerous_tools=True),
     )
 
     approvals = approval_store.list_approvals()
@@ -251,7 +251,7 @@ def test_tool_executor_validates_arguments_before_creating_tool_approval() -> No
 
     observation = executor.execute(
         ToolCall(tool_name="report.publish", arguments={}),
-        ToolPolicy(allowed_tools=["report.publish"]),
+        ToolPolicy(allowed_tools=["report.publish"], allow_dangerous_tools=True),
     )
 
     assert observation.status == ToolStatus.FAILED
@@ -275,6 +275,7 @@ def test_tool_executor_can_run_side_effecting_tool_when_approval_gate_is_disable
         ToolCall(tool_name="notification.internal_send", arguments={"message": "ready"}),
         ToolPolicy(
             allowed_tools=["notification.internal_send"],
+            allow_dangerous_tools=True,
             require_approval_for_side_effects=False,
         ),
     )

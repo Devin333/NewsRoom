@@ -99,7 +99,10 @@ def test_dangerous_tool_default_deny_covers_named_privileged_tools() -> None:
         "postgres.query",
         "http.request",
         "publish.external",
+        "report.publish",
+        "postgres.save_report",
         "notification.send",
+        "notification.webhook",
     ]:
         registry.register(
             ToolDefinition(
@@ -322,7 +325,7 @@ def test_tool_test_runner_checks_error_type_redaction_and_approval() -> None:
         ToolTestCase(
             name="approval contract",
             tool_name="report.publish",
-            policy=ToolPolicy(allowed_tools=["report.publish"]),
+            policy=ToolPolicy(allowed_tools=["report.publish"], allow_dangerous_tools=True),
             expected_status=ToolStatus.APPROVAL_REQUIRED,
             require_approval_required=True,
             dry_run=True,
