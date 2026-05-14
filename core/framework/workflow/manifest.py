@@ -139,6 +139,7 @@ def validate_run_manifest(
     if require_terminal_artifact:
         _validate_terminal_artifact(manifest, artifacts)
     _validate_step_artifacts(manifest, artifacts)
+    _validate_artifact_metadata(manifest, artifacts)
 
 
 def _normalize_manifest_artifact_path(relative_path: str) -> str:
@@ -239,4 +240,36 @@ def _validate_step_artifacts(
         if artifacts.get(artifact_key) != normalized_path:
             raise RunManifestError(
                 f"run manifest step artifact is missing artifact map entry: {artifact_key}"
+            )
+
+
+def _validate_artifact_metadata(
+    manifest: dict[str, Any],
+    artifacts: dict[str, str],
+) -> None:
+    raw_metadata = manifest.get("artifact_metadata")
+    if raw_metadata is None:
+        return
+    if not isinstance(raw_metadata, dict):
+        raise RunManifestError("run manifest artifact_metadata must be an object")
+    for artifact_key in artifacts:
+        metadata = raw_metadata.get(artifact_key)
+        if not isinstance(metadata, dict):
+            raise RunManifestError(
+                f"run manifest artifact metadata is missing for: {artifact_key}"
+            )
+        checksum = metadata.get("checksum")
+        content_type = metadata.get("content_type")
+        size_bytes = metadata.get("size_bytes")
+        if not isinstance(checksum, str) or not checksum:
+            raise RunManifestError(
+                f"run manifest artifact metadata checksum is required for: {artifact_key}"
+            )
+        if not isinstance(content_type, str) or not content_type:
+            raise RunManifestError(
+                f"run manifest artifact metadata content_type is required for: {artifact_key}"
+            )
+        if not isinstance(size_bytes, int) or size_bytes < 0:
+            raise RunManifestError(
+                f"run manifest artifact metadata size_bytes is required for: {artifact_key}"
             )

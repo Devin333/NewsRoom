@@ -41,26 +41,32 @@ def test_function_step_runner_rejects_missing_required_output() -> None:
     runner = FunctionStepRunner(registry)
     buffer = DataBuffer()
 
-    with pytest.raises(StepExecutionError, match="required output keys"):
-        runner.run(
-            StepSpec(
-                step_id="empty",
-                implementation="sample.empty",
-                write_keys=["plan"],
-                required_output_keys=["plan"],
-            ),
-            buffer.scope(read_keys=[], write_keys=["plan"]),
-        )
+    outcome = runner.run(
+        StepSpec(
+            step_id="empty",
+            implementation="sample.empty",
+            write_keys=["plan"],
+            required_output_keys=["plan"],
+        ),
+        buffer.scope(read_keys=[], write_keys=["plan"]),
+    )
+
+    assert outcome.status == StepStatus.FAILED
+    assert outcome.error_type == "StepExecutionError"
+    assert "required output keys" in outcome.error_message
 
 
 def test_function_step_runner_rejects_unregistered_function() -> None:
     runner = FunctionStepRunner(FunctionStepRegistry())
 
-    with pytest.raises(StepExecutionError, match="not registered"):
-        runner.run(
-            StepSpec(step_id="missing", implementation="sample.missing"),
-            DataBuffer().scope(read_keys=[], write_keys=[]),
-        )
+    outcome = runner.run(
+        StepSpec(step_id="missing", implementation="sample.missing"),
+        DataBuffer().scope(read_keys=[], write_keys=[]),
+    )
+
+    assert outcome.status == StepStatus.FAILED
+    assert outcome.error_type == "StepExecutionError"
+    assert "not registered" in outcome.error_message
 
 
 def test_step_runner_registry_returns_registered_runner() -> None:

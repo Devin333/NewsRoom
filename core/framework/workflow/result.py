@@ -36,6 +36,23 @@ class StepOutcome:
     lineage: list[dict[str, Any]] = field(default_factory=list)
     next_hint: str | None = None
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "status", StepStatus(self.status))
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "StepOutcome":
+        return cls(
+            status=StepStatus(str(data["status"])),
+            outputs=dict(data.get("outputs") or {}),
+            error_type=data.get("error_type"),
+            error_message=data.get("error_message"),
+            error_details=dict(data.get("error_details") or {}),
+            metrics=dict(data.get("metrics") or {}),
+            artifacts=list(data.get("artifacts") or []),
+            lineage=list(data.get("lineage") or []),
+            next_hint=data.get("next_hint"),
+        )
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "status": self.status.value,
@@ -64,6 +81,39 @@ class WorkflowResult:
     artifact_dir: str | None = None
     manifest_path: str | None = None
     events_path: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "status", WorkflowStatus(self.status))
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "WorkflowResult":
+        raw_error = data.get("error")
+        if raw_error is None:
+            error = None
+        else:
+            error = WorkflowError(
+                error_type=str(raw_error["error_type"]),
+                message=str(raw_error["message"]),
+                step_id=raw_error.get("step_id"),
+                details=dict(raw_error.get("details") or {}),
+            )
+        return cls(
+            run_id=str(data["run_id"]),
+            workflow_id=str(data["workflow_id"]),
+            workflow_version=str(data["workflow_version"]),
+            status=WorkflowStatus(str(data["status"])),
+            output=dict(data.get("output") or {}),
+            error=error,
+            path=[str(step_id) for step_id in data.get("path", [])],
+            step_results={
+                str(step_id): StepOutcome.from_dict(raw_outcome)
+                for step_id, raw_outcome in (data.get("step_results") or {}).items()
+            },
+            manifest=dict(data.get("manifest") or {}),
+            artifact_dir=data.get("artifact_dir"),
+            manifest_path=data.get("manifest_path"),
+            events_path=data.get("events_path"),
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {

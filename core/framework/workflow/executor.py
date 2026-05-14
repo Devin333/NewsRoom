@@ -82,7 +82,12 @@ class WorkflowExecutor:
         _resume_metadata: dict[str, Any] | None = None,
     ) -> WorkflowResult:
         initial_buffer_values = _initial_buffer_values or {"request": request}
-        workflow.validate(request_keys=list(initial_buffer_values))
+        workflow.validate(
+            request_keys=list(initial_buffer_values),
+            strict=True,
+            checkpoint_store_available=self._checkpoint_store is not None,
+            allow_pause_artifact_strategy=True,
+        )
         _validate_step_runners(workflow, self._step_runner_registry)
 
         actual_run_id = run_id or uuid4().hex
@@ -197,6 +202,7 @@ class WorkflowExecutor:
             _emit_agent_loop_stream_events(recorder, step, outcome)
             outcome = self._write_llm_call_artifacts(actual_run_id, step, outcome)
             _sync_llm_call_artifacts_to_buffer(buffer, step, outcome)
+            outcome = _finalize_step_outcome_contract(step, outcome)
             _write_step_policy_terminal_artifact(
                 self._artifact_manager,
                 actual_run_id,
@@ -590,12 +596,14 @@ class WorkflowExecutor:
         self._artifact_manager.write_json(actual_run_id, "step_results.json", step_results_payload)
         self._artifact_manager.write_json(actual_run_id, "metrics.json", metrics_payload)
         self._artifact_manager.write_json(actual_run_id, "redaction_report.json", redaction_report)
+        self._artifact_manager.write_json(actual_run_id, "manifest.json", manifest)
         manifest["event_count"] = metrics_payload["event_count"]
         manifest["metrics"] = metrics_payload
         manifest["redaction_report"] = redaction_report
+        events_path = recorder.write_jsonl(run_dir / "events.jsonl")
+        _populate_artifact_metadata(manifest, run_dir)
         validate_run_manifest(manifest, require_terminal_artifact=True)
         manifest_path = self._artifact_manager.write_json(actual_run_id, "manifest.json", manifest)
-        events_path = recorder.write_jsonl(run_dir / "events.jsonl")
 
         return WorkflowResult(
             run_id=actual_run_id,
@@ -770,7 +778,12 @@ class WorkflowExecutor:
     ) -> StepOutcome:
         try:
             runner = self._step_runner_registry.get(step.step_type)
-            return runner.run(step, scoped_buffer)
+            outcome = runner.run(step, scoped_buffer)
+            if not isinstance(outcome, StepOutcome):
+                raise StepExecutionError(
+                    f"step runner returned {type(outcome).__name__}, expected StepOutcome"
+                )
+            return _outcome_with_attempt(outcome, attempt=attempt, max_attempts=max_attempts)
         except Exception as exc:  # pragma: no cover - concrete branches covered by tests
             return StepOutcome(
                 status=StepStatus.FAILED,
@@ -1233,17 +1246,7 @@ def _step_outcomes_from_checkpoint(payload: dict[str, Any]) -> dict[str, StepOut
     for step_id, raw_outcome in payload.items():
         if not isinstance(raw_outcome, dict):
             continue
-        outcomes[str(step_id)] = StepOutcome(
-            status=StepStatus(str(raw_outcome.get("status", StepStatus.SUCCEEDED.value))),
-            outputs=dict(raw_outcome.get("outputs") or {}),
-            error_type=raw_outcome.get("error_type"),
-            error_message=raw_outcome.get("error_message"),
-            error_details=dict(raw_outcome.get("error_details") or {}),
-            metrics=dict(raw_outcome.get("metrics") or {}),
-            artifacts=list(raw_outcome.get("artifacts") or []),
-            lineage=list(raw_outcome.get("lineage") or []),
-            next_hint=raw_outcome.get("next_hint"),
-        )
+        outcomes[str(step_id)] = StepOutcome.from_dict(raw_outcome)
     return outcomes
 
 
@@ -1331,6 +1334,97 @@ def _record_step_artifacts(manifest: dict[str, Any], outcome: StepOutcome) -> No
         register_manifest_step_artifact(manifest, artifact_ref)
 
 
+def _outcome_with_attempt(outcome: StepOutcome, *, attempt: int, max_attempts: int) -> StepOutcome:
+    metrics = dict(outcome.metrics)
+    metrics.setdefault("attempt", attempt)
+    metrics.setdefault("max_attempts", max_attempts)
+    error_details = dict(outcome.error_details)
+    if outcome.status in {StepStatus.FAILED, StepStatus.TIMEOUT, StepStatus.BLOCKED}:
+        error_details.setdefault("attempt", attempt)
+        error_details.setdefault("max_attempts", max_attempts)
+    return StepOutcome(
+        status=outcome.status,
+        outputs=dict(outcome.outputs),
+        error_type=outcome.error_type,
+        error_message=outcome.error_message,
+        error_details=error_details,
+        metrics=metrics,
+        artifacts=list(outcome.artifacts),
+        lineage=[dict(item) for item in outcome.lineage],
+        next_hint=outcome.next_hint,
+    )
+
+
+def _finalize_step_outcome_contract(step: StepSpec, outcome: StepOutcome) -> StepOutcome:
+    allowed_output_keys = set(step.write_keys)
+    filtered_outputs = {
+        key: value
+        for key, value in outcome.outputs.items()
+        if key in allowed_output_keys
+    }
+    if outcome.status == StepStatus.SUCCEEDED:
+        missing = sorted(set(step.required_output_keys) - set(filtered_outputs))
+        if missing:
+            error_details = {
+                **dict(outcome.error_details),
+                "missing_required_output_keys": missing,
+            }
+            return StepOutcome(
+                status=StepStatus.FAILED,
+                outputs=filtered_outputs,
+                error_type="StepOutputContractViolation",
+                error_message=(
+                    f"step {step.step_id} did not return required output keys: "
+                    f"{', '.join(missing)}"
+                ),
+                error_details=error_details,
+                metrics=_ensure_contract_metrics(step, outcome, filtered_outputs),
+                artifacts=list(outcome.artifacts),
+                lineage=[dict(item) for item in outcome.lineage],
+                next_hint=outcome.next_hint,
+            )
+    if filtered_outputs == outcome.outputs and _has_contract_metrics(outcome.metrics):
+        return outcome
+    return StepOutcome(
+        status=outcome.status,
+        outputs=filtered_outputs,
+        error_type=outcome.error_type,
+        error_message=outcome.error_message,
+        error_details=dict(outcome.error_details),
+        metrics=_ensure_contract_metrics(step, outcome, filtered_outputs),
+        artifacts=list(outcome.artifacts),
+        lineage=[dict(item) for item in outcome.lineage],
+        next_hint=outcome.next_hint,
+    )
+
+
+def _ensure_contract_metrics(
+    step: StepSpec,
+    outcome: StepOutcome,
+    outputs: dict[str, Any],
+) -> dict[str, Any]:
+    metrics = dict(outcome.metrics)
+    metrics.setdefault("duration_ms", 0.0)
+    metrics.setdefault("attempt", int(metrics.get("attempt") or 1))
+    metrics.setdefault("input_key_count", len(step.read_keys))
+    metrics["output_key_count"] = len(outputs)
+    metrics.setdefault("artifact_count", len(outcome.artifacts))
+    return metrics
+
+
+def _has_contract_metrics(metrics: dict[str, Any]) -> bool:
+    return all(
+        key in metrics
+        for key in (
+            "duration_ms",
+            "attempt",
+            "input_key_count",
+            "output_key_count",
+            "artifact_count",
+        )
+    )
+
+
 def _sync_llm_call_artifacts_to_buffer(
     buffer: DataBuffer,
     step: StepSpec,
@@ -1354,6 +1448,50 @@ def _workflow_version_payload(workflow: WorkflowSpec) -> dict[str, Any]:
         "trigger": workflow.trigger.to_dict() if workflow.trigger else None,
         "metadata": dict(workflow.metadata),
     }
+
+
+def _populate_artifact_metadata(manifest: dict[str, Any], run_dir: Any) -> None:
+    artifacts = manifest.get("artifacts") or {}
+    if not isinstance(artifacts, dict):
+        return
+    metadata = manifest.setdefault("artifact_metadata", {})
+    if not isinstance(metadata, dict):
+        metadata = {}
+        manifest["artifact_metadata"] = metadata
+    for artifact_key, relative_path in sorted(artifacts.items()):
+        if not isinstance(relative_path, str):
+            continue
+        try:
+            path = run_dir / relative_path
+            data = path.read_bytes()
+        except OSError:
+            continue
+        metadata[str(artifact_key)] = {
+            "checksum": sha256(data).hexdigest(),
+            "content_type": _content_type_for_artifact_path(str(relative_path)),
+            "size_bytes": len(data),
+        }
+    metadata.setdefault(
+        "manifest",
+        {
+            "checksum": "pending",
+            "content_type": "application/json",
+            "size_bytes": 0,
+        },
+    )
+
+
+def _content_type_for_artifact_path(relative_path: str) -> str:
+    suffix = str(relative_path).rsplit(".", 1)[-1].casefold() if "." in relative_path else ""
+    if suffix == "json":
+        return "application/json"
+    if suffix == "jsonl":
+        return "application/x-ndjson"
+    if suffix == "md":
+        return "text/markdown"
+    if suffix == "txt":
+        return "text/plain"
+    return "application/octet-stream"
 
 
 def _workflow_metrics_payload(

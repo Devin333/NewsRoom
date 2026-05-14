@@ -10,20 +10,22 @@ class WorkflowSpecError(ValueError):
 
 
 class StepType(str, Enum):
-    FUNCTION = "function"
-    AGENT_LOOP = "agent_loop"
-    TOOL_CALL = "tool_call"
-    TOOL_BATCH = "tool_batch"
-    PARALLEL_GROUP = "parallel_group"
-    JOIN = "join"
-    SUBWORKFLOW = "subworkflow"
-    HUMAN_REVIEW = "human_review"
-    ARTIFACT = "artifact"
-    PERSIST = "persist"
-    MEMORY_INDEX = "memory_index"
-    ROUTER = "router"
-    QUALITY_GATE = "quality_gate"
-    NOTIFICATION = "notification"
+    """Workflow step runner families with stable runtime ownership boundaries."""
+
+    FUNCTION = "function"  # Deterministic Python function registered in FunctionStepRegistry.
+    AGENT_LOOP = "agent_loop"  # AgentLoop execution; LLM/tool iteration stays outside executor.
+    ROUTER = "router"  # Deterministic route selection that emits a next_hint.
+    QUALITY_GATE = "quality_gate"  # Runtime quality decision step; publish decisions remain policy driven.
+    PERSIST = "persist"  # Persistence side-effect step backed by the tool runtime.
+    ARTIFACT = "artifact"  # Writes workflow artifacts through ArtifactManager.
+    PARALLEL_GROUP = "parallel_group"  # In-step function fan-out with namespaced branch outputs.
+    JOIN = "join"  # Fan-in summary over declared inputs and branch outcomes.
+    SUBWORKFLOW = "subworkflow"  # Child WorkflowSpec execution in a separate child run.
+    HUMAN_REVIEW = "human_review"  # Pause/resume boundary for human approval or review.
+    NOTIFICATION = "notification"  # Notification side-effect step backed by the tool runtime.
+    TOOL_BATCH = "tool_batch"  # Batched tool calls with tool-runtime policy enforcement.
+    TOOL_CALL = "tool_call"  # Single tool call with tool-runtime policy enforcement.
+    MEMORY_INDEX = "memory_index"  # Memory indexing side-effect backed by the tool runtime.
 
 
 class EdgeCondition(str, Enum):
@@ -42,29 +44,33 @@ class EdgeCondition(str, Enum):
 
 
 class StepStatus(str, Enum):
-    PENDING = "pending"
-    RUNNING = "running"
-    SUCCEEDED = "succeeded"
-    FAILED = "failed"
-    SKIPPED = "skipped"
-    RETRYING = "retrying"
-    BLOCKED = "blocked"
-    PAUSED = "paused"
-    CANCELLED = "cancelled"
-    TIMEOUT = "timeout"
+    """Per-step execution state; do not use for workflow or worker task records."""
+
+    PENDING = "pending"  # Step is defined but not yet scheduled in this workflow run.
+    RUNNING = "running"  # Step attempt is currently executing.
+    SUCCEEDED = "succeeded"  # Step completed and its declared outputs are available.
+    FAILED = "failed"  # Step failed and may route through retry or failure policy.
+    BLOCKED = "blocked"  # Step cannot proceed without an external/configuration fix.
+    PAUSED = "paused"  # Step intentionally paused and may resume from checkpoint.
+    TIMEOUT = "timeout"  # Step attempt exceeded its timeout policy.
+    SKIPPED = "skipped"  # Step was intentionally bypassed by routing or policy.
+    RETRYING = "retrying"  # Step has a retry scheduled; persisted only as an intermediate signal.
+    CANCELLED = "cancelled"  # Step was cancelled by operator or enclosing workflow.
 
 
 class WorkflowStatus(str, Enum):
-    CREATED = "created"
-    RUNNING = "running"
-    PAUSED = "paused"
-    WAITING_FOR_HUMAN = "waiting_for_human"
-    RETRYING = "retrying"
-    SUCCEEDED = "succeeded"
-    FAILED = "failed"
-    BLOCKED = "blocked"
-    CANCELLED = "cancelled"
-    BUDGET_EXCEEDED = "budget_exceeded"
+    """Workflow run state; separate from StepStatus and worker TaskStatus."""
+
+    CREATED = "created"  # Run has been created but execution has not started.
+    RUNNING = "running"  # Workflow executor is actively processing scheduled steps.
+    PAUSED = "paused"  # Workflow is paused at a non-human checkpoint.
+    WAITING_FOR_HUMAN = "waiting_for_human"  # Workflow is paused for human review/approval.
+    RETRYING = "retrying"  # Workflow has retry work scheduled; not a worker task status.
+    SUCCEEDED = "succeeded"  # Workflow reached a terminal successful state.
+    FAILED = "failed"  # Workflow reached a terminal failure state.
+    BLOCKED = "blocked"  # Workflow cannot proceed without an external/configuration fix.
+    CANCELLED = "cancelled"  # Workflow was cancelled before normal terminal completion.
+    BUDGET_EXCEEDED = "budget_exceeded"  # Workflow stopped because global/runtime budget was exhausted.
 
 
 @dataclass(frozen=True)
@@ -514,8 +520,22 @@ class WorkflowSpec:
         if not isinstance(self.output_schema, dict):
             raise WorkflowSpecError(f"output_schema must be an object for workflow {self.workflow_id}")
 
-    def validate(self, *, request_keys: list[str] | None = None) -> None:
-        result = self.validation_result(request_keys=request_keys)
+    def validate(
+        self,
+        *,
+        request_keys: list[str] | None = None,
+        registered_step_types: list[StepType | str] | None = None,
+        strict: bool = False,
+        checkpoint_store_available: bool = False,
+        allow_pause_artifact_strategy: bool = False,
+    ) -> None:
+        result = self.validation_result(
+            request_keys=request_keys,
+            registered_step_types=registered_step_types,
+            strict=strict,
+            checkpoint_store_available=checkpoint_store_available,
+            allow_pause_artifact_strategy=allow_pause_artifact_strategy,
+        )
         if not result.passed:
             raise WorkflowSpecError(result.errors[0].message)
 
@@ -524,6 +544,9 @@ class WorkflowSpec:
         *,
         request_keys: list[str] | None = None,
         registered_step_types: list[StepType | str] | None = None,
+        strict: bool = False,
+        checkpoint_store_available: bool = False,
+        allow_pause_artifact_strategy: bool = False,
     ) -> ValidationResult:
         errors: list[ValidationErrorItem] = []
         warnings: list[ValidationWarningItem] = []
@@ -602,6 +625,18 @@ class WorkflowSpec:
                 )
 
         for step in self.steps:
+            if strict and step.step_type == StepType.HUMAN_REVIEW:
+                has_pause_strategy = (
+                    allow_pause_artifact_strategy
+                    or _human_review_has_pause_artifact_strategy(step)
+                )
+                if not checkpoint_store_available and not has_pause_strategy:
+                    add_error(
+                        "human_review_checkpoint_required",
+                        "human_review step requires checkpoint_store or pause artifact strategy "
+                        f"in strict mode: {step.step_id}",
+                        step_id=step.step_id,
+                    )
             undeclared_outputs = sorted(set(step.required_output_keys) - set(step.write_keys))
             if undeclared_outputs:
                 add_error(
@@ -662,6 +697,14 @@ class WorkflowSpec:
                     f"conditional edge {edge.edge_id} requires condition_expr",
                     edge_id=edge.edge_id,
                 )
+            if edge.condition == EdgeCondition.LLM_DECIDE and _llm_decide_is_governance_edge(edge):
+                add_error(
+                    "llm_decide_governance_forbidden",
+                    f"LLM_DECIDE edge {edge.edge_id} cannot control safety, approval, "
+                    "quality pass, or publish decisions",
+                    edge_id=edge.edge_id,
+                    metadata={"target_step_id": edge.target_step_id},
+                )
             for secret_path in _secret_paths(edge.to_dict()):
                 add_warning(
                     "secret_like_spec_field",
@@ -716,6 +759,27 @@ class WorkflowSpec:
                     f"{step.step_id}: {', '.join(missing_reads)}",
                     step_id=step.step_id,
                 )
+            if strict:
+                missing_strict_reads = sorted(
+                    set(step.read_keys)
+                    - _strict_keys_available_before_step(
+                        workflow=self,
+                        target_step_id=step.step_id,
+                        initial_keys=initial_keys,
+                    )
+                )
+                if missing_strict_reads:
+                    add_error(
+                        "read_keys_not_available_on_all_paths",
+                        f"read_keys are not available on every path before step "
+                        f"{step.step_id}: {', '.join(missing_strict_reads)}",
+                        step_id=step.step_id,
+                    )
+        _validate_parallel_write_conflicts(
+            workflow=self,
+            add_error=add_error,
+            strict=strict,
+        )
         return ValidationResult(passed=not errors, errors=errors, warnings=warnings)
 
     def step_by_id(self, step_id: str) -> StepSpec:
@@ -848,3 +912,173 @@ def _reachable_step_ids(start_step_id: str, adjacency: dict[str, set[str]]) -> s
         reachable.add(step_id)
         stack.extend(sorted(adjacency.get(step_id, set()) - reachable, reverse=True))
     return reachable
+
+
+def _strict_keys_available_before_step(
+    *,
+    workflow: WorkflowSpec,
+    target_step_id: str,
+    initial_keys: set[str],
+) -> set[str]:
+    if target_step_id == workflow.start_step_id:
+        return set(initial_keys)
+    predecessors = _workflow_predecessors(workflow)
+    incoming_step_ids = predecessors.get(target_step_id, set())
+    if not incoming_step_ids:
+        return set(initial_keys)
+
+    step_by_id = {step.step_id: step for step in workflow.steps}
+    available: set[str] | None = None
+    for predecessor_step_id in incoming_step_ids:
+        predecessor_keys = _strict_keys_after_step(
+            workflow=workflow,
+            step_id=predecessor_step_id,
+            initial_keys=initial_keys,
+            visiting=set(),
+            step_by_id=step_by_id,
+            predecessors=predecessors,
+        )
+        available = predecessor_keys if available is None else available & predecessor_keys
+    return available or set(initial_keys)
+
+
+def _strict_keys_after_step(
+    *,
+    workflow: WorkflowSpec,
+    step_id: str,
+    initial_keys: set[str],
+    visiting: set[str],
+    step_by_id: dict[str, StepSpec],
+    predecessors: dict[str, set[str]],
+) -> set[str]:
+    if step_id in visiting:
+        return set(initial_keys)
+    visiting = {*visiting, step_id}
+    if step_id == workflow.start_step_id:
+        before = set(initial_keys)
+    else:
+        incoming_step_ids = predecessors.get(step_id, set())
+        before: set[str] | None = None
+        for predecessor_step_id in incoming_step_ids:
+            predecessor_keys = _strict_keys_after_step(
+                workflow=workflow,
+                step_id=predecessor_step_id,
+                initial_keys=initial_keys,
+                visiting=visiting,
+                step_by_id=step_by_id,
+                predecessors=predecessors,
+            )
+            before = predecessor_keys if before is None else before & predecessor_keys
+        before = before or set(initial_keys)
+    return before | set(step_by_id[step_id].write_keys)
+
+
+def _workflow_predecessors(workflow: WorkflowSpec) -> dict[str, set[str]]:
+    predecessors = {step.step_id: set() for step in workflow.steps}
+    for edge in workflow.edges:
+        if edge.target_step_id in predecessors:
+            predecessors[edge.target_step_id].add(edge.source_step_id)
+    for step in workflow.steps:
+        fallback_step_id = step.failure_policy.fallback_step_id
+        if fallback_step_id in predecessors:
+            predecessors[fallback_step_id].add(step.step_id)
+    return predecessors
+
+
+def _validate_parallel_write_conflicts(
+    *,
+    workflow: WorkflowSpec,
+    add_error: Any,
+    strict: bool,
+) -> None:
+    step_by_id = {step.step_id: step for step in workflow.steps}
+    for step in workflow.steps:
+        if step.step_type == StepType.PARALLEL_GROUP:
+            branches = step.metadata.get("branches")
+            if not isinstance(branches, list):
+                continue
+            conflict_strategy = str(step.metadata.get("conflict_strategy") or "error")
+            seen: dict[str, str] = {}
+            for index, branch in enumerate(branches):
+                if not isinstance(branch, dict):
+                    add_error(
+                        "parallel_branch_invalid",
+                        f"parallel_group branch must be an object in step {step.step_id}",
+                        step_id=step.step_id,
+                        metadata={"branch_index": index},
+                    )
+                    continue
+                branch_id = str(branch.get("branch_id") or branch.get("implementation") or index)
+                for key in [str(item) for item in branch.get("write_keys", [])]:
+                    if key in seen and conflict_strategy == "error":
+                        add_error(
+                            "parallel_write_conflict",
+                            f"parallel_group step {step.step_id} has write conflict for key {key}",
+                            step_id=step.step_id,
+                            metadata={
+                                "write_key": key,
+                                "first_branch_id": seen[key],
+                                "second_branch_id": branch_id,
+                            },
+                        )
+                    seen.setdefault(key, branch_id)
+        if not strict:
+            continue
+        outgoing = [
+            edge.target_step_id
+            for edge in workflow.edges
+            if edge.source_step_id == step.step_id
+        ]
+        if len(outgoing) < 2:
+            continue
+        fanout_writes: dict[str, str] = {}
+        for target_step_id in outgoing:
+            target = step_by_id.get(target_step_id)
+            if target is None:
+                continue
+            for key in target.write_keys:
+                if key in fanout_writes:
+                    add_error(
+                        "parallel_fanout_write_conflict",
+                        f"fan-out targets from {step.step_id} write the same key: {key}",
+                        step_id=step.step_id,
+                        metadata={
+                            "write_key": key,
+                            "first_target_step_id": fanout_writes[key],
+                            "second_target_step_id": target_step_id,
+                        },
+                    )
+                fanout_writes.setdefault(key, target_step_id)
+
+
+def _human_review_has_pause_artifact_strategy(step: StepSpec) -> bool:
+    if step.metadata.get("pause_artifact_strategy") or step.metadata.get("pause_artifact"):
+        return True
+    policy = step.artifact_policy
+    return bool(policy is not None and policy.write_step_output)
+
+
+def _llm_decide_is_governance_edge(edge: EdgeSpec) -> bool:
+    text = " ".join(
+        str(value)
+        for value in (
+            edge.edge_id,
+            edge.target_step_id,
+            edge.description,
+            edge.metadata.get("route_hint"),
+            edge.metadata.get("decision"),
+            edge.metadata.get("purpose"),
+        )
+    ).casefold()
+    governance_tokens = (
+        "approval",
+        "approve",
+        "approved",
+        "human_approved",
+        "publish",
+        "quality_pass",
+        "quality.pass",
+        "safety",
+        "safe_to_publish",
+    )
+    return any(token in text for token in governance_tokens)

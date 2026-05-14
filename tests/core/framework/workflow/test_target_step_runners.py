@@ -35,7 +35,6 @@ from core.framework.workflow import (
     ParallelGroupStepRunner,
     QualityGateStepRunner,
     RouterStepRunner,
-    StepExecutionError,
     StepRunnerRegistry,
     SubworkflowStepRunner,
     ToolCallStepRunner,
@@ -685,8 +684,11 @@ def test_parallel_group_step_runner_reports_output_conflicts() -> None:
         },
     )
 
-    with pytest.raises(StepExecutionError, match="output conflict"):
-        runner.run(step, buffer.scope(read_keys=[], write_keys=["item"]))
+    outcome = runner.run(step, buffer.scope(read_keys=[], write_keys=["item"]))
+
+    assert outcome.status == StepStatus.FAILED
+    assert outcome.error_type == "StepExecutionError"
+    assert "output conflict" in outcome.error_message
 
 
 def test_parallel_group_step_runner_merges_dict_outputs_and_branch_results() -> None:
