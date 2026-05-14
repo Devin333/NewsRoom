@@ -5,19 +5,58 @@ from pathlib import Path
 from typing import Literal
 
 from core.framework import RunResult
+from core.framework.specs import WorkflowSpec
 from core.framework.specs import WorkflowStatus
+from core.framework.workflow import FunctionStepRegistry
+from interfaces.services.approval_service import ApprovalApplicationService
 from interfaces.services.diagnose_service import DiagnoseCheck, DiagnoseResult, DiagnosticApplicationService
 from interfaces.services.report_service import ReportApplicationService
+from storage.checkpoint import LocalJsonCheckpointStore
 from storage.memory import MemoryIngestionService, memory_ingestion_service_from_env
 from storage.repository import persist_run_result, repository_from_env
 from workflows.daily_intelligence import DailyIntelligenceRunner
+from workflows.daily_intelligence import build_daily_intelligence_workflow
+from workflows.daily_intelligence import build_test_agent_loop_registry
+from workflows.daily_intelligence import build_test_agent_loop_workflow
+from workflows.daily_intelligence import build_test_no_llm_registry
+from workflows.daily_intelligence import build_test_no_llm_workflow
 from workflows.daily_intelligence.test_agent_loop import run_test_agent_loop
 from workflows.daily_intelligence.test_no_llm import run_test_no_llm
+from workflows.daily_intelligence.runner import PROFILE_LIVE, PROFILE_LIVE_OFFLINE
 from workflows.weekly_intelligence import PROFILE_WEEKLY, WeeklyIntelligenceRunner
 
 
 LiveSmokeStatus = Literal["succeeded", "failed", "skipped"]
 _LIVE_SMOKE_READINESS_CHECKS = {"source_config", "model_config", "dashscope_api_key"}
+DEFAULT_CHECKPOINT_STORE_PATH = ".newsroom/checkpoints"
+
+
+@dataclass(frozen=True)
+class ApprovalWorkflowResumeResult:
+    approval_context: dict[str, object]
+    run_result: RunResult
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "approval_context": self.approval_context,
+            "run_result": self.run_result.to_dict(),
+            "run_id": self.run_result.run_id,
+            "workflow_id": self.run_result.workflow_id,
+            "workflow_version": self.run_result.workflow_version,
+            "status": self.run_result.status.value,
+            "output": self.run_result.to_dict()["output"],
+            "artifact_dir": self.run_result.artifact_dir,
+            "manifest_path": self.run_result.manifest_path,
+            "events_path": self.run_result.events_path,
+            "error": self.run_result.error,
+        }
+
+
+@dataclass(frozen=True)
+class _ResolvedWorkflow:
+    workflow: WorkflowSpec
+    profile: str
+    registry: FunctionStepRegistry
 
 
 @dataclass(frozen=True)
@@ -165,6 +204,37 @@ class RunApplicationService:
         )
         return result
 
+    def resume_from_approval(
+        self,
+        approval_id: str,
+        *,
+        workflow_id: str = "daily",
+        profile: str | None = None,
+        run_id: str | None = None,
+        decision_key: str = "human_review_decision",
+        approval_service: ApprovalApplicationService | None = None,
+        checkpoint_store_path: str | Path = DEFAULT_CHECKPOINT_STORE_PATH,
+    ) -> ApprovalWorkflowResumeResult:
+        resolved = _resolve_approval_resume_workflow(workflow_id, profile=profile)
+        context = (
+            approval_service or ApprovalApplicationService()
+        ).build_resume_context(approval_id, decision_key=decision_key)
+        runner = WorkflowRunner(
+            artifact_root=self.artifact_root,
+            function_registry=resolved.registry,
+            checkpoint_store=LocalJsonCheckpointStore(checkpoint_store_path),
+        )
+        run_result = runner.resume_from_approval_context(
+            resolved.workflow,
+            context,
+            profile=resolved.profile,
+            run_id=run_id,
+        )
+        return ApprovalWorkflowResumeResult(
+            approval_context=context.to_dict(),
+            run_result=run_result,
+        )
+
     def _index_memory_if_configured(self, result: RunResult, *, topic: str) -> None:
         memory_service = self.memory_ingestion_service or memory_ingestion_service_from_env()
         if memory_service is None:
@@ -189,3 +259,59 @@ def _live_smoke_readiness_issues(diagnostics: DiagnoseResult) -> list[DiagnoseCh
 def _readiness_message(readiness_issues: list[DiagnoseCheck]) -> str:
     issue_ids = ", ".join(check.check_id for check in readiness_issues)
     return f"live smoke readiness checks are not ready: {issue_ids}"
+
+
+def _resolve_approval_resume_workflow(
+    workflow_id: str,
+    *,
+    profile: str | None,
+) -> _ResolvedWorkflow:
+    normalized_workflow = _normalize_workflow_id(workflow_id)
+    normalized_profile = _normalize_profile(profile)
+    if normalized_workflow in {"daily", "daily-intelligence", "daily_intelligence", "daily-intelligence-live"}:
+        actual_profile = normalized_profile or PROFILE_LIVE_OFFLINE
+        if actual_profile not in {PROFILE_LIVE, PROFILE_LIVE_OFFLINE}:
+            raise ValueError(
+                f"unsupported daily approval resume profile: {actual_profile}"
+            )
+        runner = DailyIntelligenceRunner()
+        return _ResolvedWorkflow(
+            workflow=build_daily_intelligence_workflow(actual_profile),
+            profile=actual_profile,
+            registry=runner._function_registry(actual_profile),
+        )
+    if normalized_workflow in {"test-no-llm", "daily-intelligence-test-no-llm"}:
+        if normalized_profile and normalized_profile != "test-no-llm":
+            raise ValueError(
+                f"unsupported test-no-llm approval resume profile: {normalized_profile}"
+            )
+        return _ResolvedWorkflow(
+            workflow=build_test_no_llm_workflow(),
+            profile="test-no-llm",
+            registry=build_test_no_llm_registry(),
+        )
+    if normalized_workflow in {"test-agent-loop", "daily-intelligence-test-agent-loop"}:
+        if normalized_profile and normalized_profile != "test-agent-loop":
+            raise ValueError(
+                f"unsupported test-agent-loop approval resume profile: {normalized_profile}"
+            )
+        return _ResolvedWorkflow(
+            workflow=build_test_agent_loop_workflow(),
+            profile="test-agent-loop",
+            registry=build_test_agent_loop_registry(),
+        )
+    raise ValueError(f"unsupported approval resume workflow_id: {workflow_id}")
+
+
+def _normalize_workflow_id(value: str | None) -> str:
+    normalized = str(value or "").strip().lower()
+    if not normalized:
+        raise ValueError("workflow_id is required")
+    return normalized
+
+
+def _normalize_profile(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).strip().lower()
+    return normalized or None
