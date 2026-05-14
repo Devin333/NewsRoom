@@ -305,6 +305,8 @@ class QualityEvalRecord:
     editor_review: Any
     quality_summary: Any
     passed: bool
+    expected_decision: str | None = None
+    actual_decision: str | None = None
     differences: list[str] = field(default_factory=list)
     created_at: datetime = field(default_factory=_utc_now)
 
@@ -316,6 +318,8 @@ class QualityEvalRecord:
             "editor_review": _artifact_ref(self.editor_review),
             "quality_summary": _artifact_ref(self.quality_summary),
             "passed": self.passed,
+            "expected_decision": self.expected_decision,
+            "actual_decision": self.actual_decision,
             "differences": list(self.differences),
             "created_at": self.created_at.isoformat().replace("+00:00", "Z"),
         }

@@ -1,7 +1,8 @@
 from datetime import UTC, datetime
 
+from domain.sources import Lineage
 from domain.sources import NormalizedSourceItem, RankedSourceItem
-from evidence import EvidenceBuilder
+from evidence import EvidenceBuilder, EvidenceItem
 
 
 def test_evidence_builder_creates_bundle_from_ranked_sources() -> None:
@@ -159,6 +160,57 @@ def test_evidence_builder_downgrades_missing_lineage() -> None:
     assert evidence.confidence == 0.35
     assert evidence.publishable is False
     assert "missing_lineage" in evidence.metadata["validation_notes"]
+
+
+def test_evidence_item_requires_core_fields_to_be_publishable() -> None:
+    evidence = EvidenceItem(
+        evidence_id="ev_manual",
+        source_url="https://example.com/item",
+        title="Title",
+        summary="Summary",
+        confidence=0.9,
+        source_id="source",
+        publishable=True,
+    )
+
+    assert evidence.publishable is False
+    assert evidence.metadata["validation_notes"] == [
+        "missing_source_item_id",
+        "missing_lineage",
+    ]
+
+    publishable = EvidenceItem(
+        evidence_id="ev_publishable",
+        source_url="https://example.com/item",
+        title="Title",
+        summary="Summary",
+        confidence=0.9,
+        source_id="source",
+        source_item_id="raw-1",
+        lineage=Lineage(source_id="source", source_item_id="raw-1"),
+        publishable=True,
+    )
+
+    assert publishable.publishable is True
+    assert "validation_notes" not in publishable.metadata
+
+
+def test_internal_evidence_without_url_is_not_publishable_citation() -> None:
+    evidence = EvidenceItem(
+        evidence_id="ev_internal",
+        source_url="",
+        title="Internal note",
+        summary="Manual analyst note.",
+        confidence=0.5,
+        source_id="manual",
+        source_item_id="manual-1",
+        lineage=Lineage(source_id="manual", source_item_id="manual-1"),
+        metadata={"evidence_kind": "internal"},
+        publishable=True,
+    )
+
+    assert evidence.publishable is False
+    assert "missing_source_url" in evidence.metadata["validation_notes"]
 
 
 def test_evidence_builder_merges_duplicate_evidence_and_retains_source_ids() -> None:

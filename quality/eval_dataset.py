@@ -82,6 +82,8 @@ def run_quality_eval_case(case: QualityEvalCase) -> QualityEvalRecord:
         editor_review=editor_review,
         quality_summary=quality_summary,
         passed=not differences,
+        expected_decision=expected,
+        actual_decision=actual,
         differences=differences,
     )
 

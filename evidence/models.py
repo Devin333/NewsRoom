@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from numbers import Real
 from typing import Any
 
 from domain.sources import Lineage
@@ -44,9 +45,29 @@ class EvidenceItem:
         if self.source_url and self.source_url not in source_urls:
             source_urls.insert(0, self.source_url)
         object.__setattr__(self, "source_urls", source_urls)
+
+        metadata = dict(self.metadata)
+        validation_notes = _stable_notes(metadata.get("validation_notes", []))
+        if not self.evidence_id:
+            validation_notes.append("missing_evidence_id")
+        if not self.source_item_id:
+            validation_notes.append("missing_source_item_id")
+        if not self.source_url:
+            validation_notes.append("missing_source_url")
+        if not (self.title.strip() or self.summary.strip()):
+            validation_notes.append("missing_title_summary")
+        if not isinstance(self.confidence, Real):
+            validation_notes.append("missing_confidence")
+        if self.lineage is None:
+            validation_notes.append("missing_lineage")
+        validation_notes = _stable_notes(validation_notes)
+        if validation_notes:
+            metadata["validation_notes"] = validation_notes
+        object.__setattr__(self, "metadata", metadata)
+
         publishable = self.publishable and bool(self.source_url)
         evidence_kind = str(self.metadata.get("evidence_kind") or self.metadata.get("source_type") or "")
-        if not self.source_url and evidence_kind not in {"internal", "manual"}:
+        if validation_notes and evidence_kind not in {"internal", "manual"}:
             publishable = False
         object.__setattr__(self, "publishable", publishable)
 
@@ -275,3 +296,21 @@ class EvidenceBuildResult:
                 self.verified_findings.to_dict() if self.verified_findings else None
             ),
         }
+
+
+def _stable_notes(values: Any) -> list[str]:
+    if isinstance(values, str):
+        values = [values]
+    if not isinstance(values, list):
+        values = []
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        if value is None:
+            continue
+        text = str(value)
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        result.append(text)
+    return result

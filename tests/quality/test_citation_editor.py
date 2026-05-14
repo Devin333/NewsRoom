@@ -1,5 +1,5 @@
 from evidence import EvidenceBundle, EvidenceItem, VerifiedClaim, VerifiedFindings
-from quality import CitationChecker, EditorDecision, EditorGate, RewritePolicy
+from quality import CitationChecker, EditorDecision, EditorGate, EditorReview, RewritePolicy
 
 
 def _bundle() -> EvidenceBundle:
@@ -187,6 +187,65 @@ def test_rewrite_policy_blocks_rewrite_that_adds_new_source_url() -> None:
 
     assert result.passed is False
     assert result.new_source_urls == ["https://example.com/new"]
+    assert result.decision == EditorDecision.BLOCKED
+
+
+def test_rewrite_policy_instructions_list_claim_deletion_and_citation_fixes() -> None:
+    instructions = RewritePolicy().instructions_for(
+        EditorReview(
+            decision=EditorDecision.REWRITE_REQUIRED,
+            unsupported_claims=["Summary: Unsupported robotics acquisition."],
+            missing_sections=["Summary"],
+        )
+    )
+
+    assert instructions == [
+        "delete or downgrade unsupported claim: Summary: Unsupported robotics acquisition.",
+        "add citation from existing evidence only: Summary",
+    ]
+
+
+def test_rewrite_policy_accepts_rewrite_after_unsupported_claim_removed() -> None:
+    rewritten = {
+        "sections": [
+            {
+                "title": "Summary",
+                "content": "A summary",
+                "sources": ["https://example.com/a"],
+            }
+        ]
+    }
+
+    result = RewritePolicy().validate_rewrite(
+        rewritten_report=rewritten,
+        evidence_bundle=_bundle(),
+    )
+
+    assert result.passed is True
+    assert result.unsupported_claims == []
+    assert result.decision == EditorDecision.PASS
+
+
+def test_rewrite_policy_blocks_rewrite_that_still_has_unsupported_claims() -> None:
+    rewritten = {
+        "sections": [
+            {
+                "title": "Summary",
+                "content": "This section still invents a quantum chip acquisition.",
+                "sources": ["https://example.com/a"],
+            }
+        ]
+    }
+
+    result = RewritePolicy().validate_rewrite(
+        rewritten_report=rewritten,
+        evidence_bundle=_bundle(),
+    )
+
+    assert result.passed is False
+    assert result.unsupported_claims == [
+        "Summary: This section still invents a quantum chip acquisition."
+    ]
     assert result.decision == EditorDecision.BLOCKED
 
 

@@ -240,3 +240,19 @@ def test_quality_eval_golden_cases_pass() -> None:
     records = [run_quality_eval_case(case) for case in golden_quality_eval_cases()]
 
     assert [record.passed for record in records] == [True, True, True, True, True]
+    assert [record.expected_decision for record in records] == [
+        "pass",
+        "rewrite_required",
+        "blocked",
+        "blocked",
+        "rewrite_required",
+    ]
+    assert [record.actual_decision for record in records] == [
+        "pass",
+        "rewrite_required",
+        "blocked",
+        "blocked",
+        "rewrite_required",
+    ]
+    assert records[0].to_dict()["expected_decision"] == "pass"
+    assert records[0].to_dict()["actual_decision"] == "pass"

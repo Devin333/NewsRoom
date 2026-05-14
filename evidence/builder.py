@@ -221,6 +221,8 @@ def _evidence_key(ranked: RankedSourceItem) -> str:
 
 def _evidence_validation_notes(ranked: RankedSourceItem, lineage: Any) -> list[str]:
     notes: list[str] = []
+    if not ranked.item.source_item_id:
+        notes.append("missing_source_item_id")
     if not ranked.item.canonical_url:
         notes.append("missing_source_url")
     if lineage is None:
