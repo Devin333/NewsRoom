@@ -7,6 +7,8 @@ from core.framework.agent_loop import (
     AgentLoopStopReason,
     AgentRunner,
     AgentSpec,
+    SubAgentResult,
+    SubAgentTask,
 )
 from core.framework.llm import (
     FakeLLMClient,
@@ -22,7 +24,11 @@ from core.framework.tools.models import ToolDefinition, ToolPolicy
 from core.framework.tools.redaction import REDACTED_VALUE
 from core.framework.tools.registry import ToolRegistry
 from core.framework.workers import InMemoryApprovalStore
-from storage.conversation import ConversationCursor, LocalJsonConversationStore
+from storage.conversation import (
+    AgentIterationCheckpoint,
+    ConversationCursor,
+    LocalJsonConversationStore,
+)
 
 
 def _registry() -> ToolRegistry:
@@ -779,6 +785,114 @@ def test_agent_runner_allows_listed_subagent_contract_without_orchestration() ->
     assert "handoff_reason=citation risk" in llm.requests[1].messages[1]["content"]
 
 
+def test_agent_runner_executes_allowed_subagent_and_returns_snapshot_feedback() -> None:
+    class FakeSubAgentExecutor:
+        def __init__(self) -> None:
+            self.tasks: list[SubAgentTask] = []
+
+        def run(self, task: SubAgentTask) -> SubAgentResult:
+            self.tasks.append(task)
+            return SubAgentResult(
+                child_agent_id=task.child_agent_id,
+                success=True,
+                output={"citation_check": {"risk": "low"}},
+                summary="citations look safe",
+                metrics={"iterations": 1},
+            )
+
+    executor = FakeSubAgentExecutor()
+    llm = FakeLLMClient(
+        [
+            (
+                '{"action_type":"delegate_to_subagent",'
+                '"subagent_id":"citation_sanity_checker",'
+                '"subagent_task":"check citations",'
+                '"handoff_reason":"citation risk"}'
+            ),
+            '{"action_type":"final_output","output":{"analysis_result":{"summary":"ok"}}}',
+        ]
+    )
+    agent = AgentSpec(
+        agent_id="writer",
+        name="WriterAgent",
+        role="Write",
+        goal="Write report",
+        instructions="Return JSON actions only.",
+        input_keys=["request"],
+        output_key="analysis_result",
+        loop_policy=AgentLoopPolicy(allow_subagents=True),
+        allowed_subagents=["citation_sanity_checker"],
+    )
+
+    result = AgentRunner(
+        llm_client=llm,
+        tool_registry=_registry(),
+        subagent_executor=executor,
+    ).run(agent, {"request": {"topic": "chips"}})
+
+    assert result.success is True
+    assert len(executor.tasks) == 1
+    assert executor.tasks[0].parent_agent_id == "writer"
+    assert executor.tasks[0].child_agent_id == "citation_sanity_checker"
+    assert executor.tasks[0].inputs["parent_inputs"] == {"request": {"topic": "chips"}}
+    assert [event["event_type"] for event in result.events if "subagent" in event["event_type"]] == [
+        "subagent_delegation_requested",
+        "subagent_completed",
+    ]
+    assert "subagent delegation completed" in llm.requests[1].messages[1]["content"]
+    assert "citations look safe" in llm.requests[1].messages[1]["content"]
+    assert "citation_check" in llm.requests[1].messages[1]["content"]
+
+
+def test_agent_runner_retries_after_allowed_subagent_failure() -> None:
+    class FailingSubAgentExecutor:
+        def run(self, task: SubAgentTask) -> SubAgentResult:
+            return SubAgentResult(
+                child_agent_id=task.child_agent_id,
+                success=False,
+                status="failed",
+                error="citation checker unavailable",
+            )
+
+    llm = FakeLLMClient(
+        [
+            (
+                '{"action_type":"delegate_to_subagent",'
+                '"subagent_id":"citation_sanity_checker",'
+                '"subagent_task":"check citations",'
+                '"handoff_reason":"citation risk"}'
+            ),
+            '{"action_type":"final_output","output":{"analysis_result":{"summary":"ok"}}}',
+        ]
+    )
+    agent = AgentSpec(
+        agent_id="writer",
+        name="WriterAgent",
+        role="Write",
+        goal="Write report",
+        instructions="Return JSON actions only.",
+        input_keys=["request"],
+        output_key="analysis_result",
+        loop_policy=AgentLoopPolicy(allow_subagents=True),
+        allowed_subagents=["citation_sanity_checker"],
+    )
+
+    result = AgentRunner(
+        llm_client=llm,
+        tool_registry=_registry(),
+        subagent_executor=FailingSubAgentExecutor(),
+    ).run(agent, {"request": {"topic": "chips"}})
+
+    assert result.success is True
+    subagent_failed = [
+        event for event in result.events if event["event_type"] == "subagent_failed"
+    ]
+    assert subagent_failed[0]["error"] == "citation checker unavailable"
+    assert "subagent delegation returned non-success status: failed" in (
+        llm.requests[1].messages[1]["content"]
+    )
+
+
 def test_agent_runner_waits_for_tool_approval_with_diagnostics() -> None:
     registry = ToolRegistry()
     registry.register(
@@ -815,6 +929,66 @@ def test_agent_runner_waits_for_tool_approval_with_diagnostics() -> None:
     assert result.diagnostics.stop_reason == AgentLoopStopReason.TOOL_APPROVAL_REQUIRED
     assert result.diagnostics.issues[0].tool_name == "report.publish"
     assert result.events[-1]["event_type"] == "agent_waiting_for_approval"
+
+
+def test_agent_runner_persists_waiting_for_approval_iteration_checkpoint(tmp_path) -> None:
+    approval_store = InMemoryApprovalStore()
+    registry = ToolRegistry()
+    register_control_tools(registry, approval_store=approval_store, run_id="run-approval")
+    llm = FakeLLMClient(
+        [
+            (
+                '{"action_type":"tool_call",'
+                '"tool_name":"control.request_human_review",'
+                '"tool_args":{'
+                '"requested_action":"review:analysis",'
+                '"reason":"editor review required",'
+                '"risk_level":"high",'
+                '"payload":{"draft_id":"draft-1"},'
+                '"task_id":"task-review",'
+                '"requested_by":"analyst"}}'
+            )
+        ]
+    )
+    store = LocalJsonConversationStore(tmp_path)
+    agent = AgentSpec(
+        agent_id="analyst",
+        name="Analyst",
+        role="Analyze",
+        goal="Produce analysis",
+        instructions="Return JSON actions only.",
+        input_keys=["request"],
+        output_key="analysis_result",
+        allowed_tools=["control.request_human_review"],
+    )
+
+    result = AgentRunner(
+        llm_client=llm,
+        tool_registry=registry,
+        conversation_store=store,
+    ).run(
+        agent,
+        {"request": {"report_id": "r1"}},
+        conversation_id="conversation-approval",
+        run_id="run-approval",
+        step_id="publish",
+        workflow_checkpoint_id="cp-approval",
+    )
+    checkpoint = store.read_iteration_checkpoint("conversation-approval")
+
+    assert result.status == AgentLoopStatus.WAITING_FOR_APPROVAL
+    approval = approval_store.list_approvals()[0]
+    assert checkpoint is not None
+    assert checkpoint.status == "waiting_for_approval"
+    assert checkpoint.stop_reason == "tool_approval_required"
+    assert checkpoint.run_id == "run-approval"
+    assert checkpoint.step_id == "publish"
+    assert checkpoint.workflow_checkpoint_id == "cp-approval"
+    assert checkpoint.last_tool_observation is not None
+    assert checkpoint.last_tool_observation["tool_name"] == "control.request_human_review"
+    assert checkpoint.last_tool_observation["status"] == "succeeded"
+    assert checkpoint.last_tool_observation["approval_id"] == approval.approval_id
+    assert checkpoint.metadata["approval_ids"] == [approval.approval_id]
 
 
 def test_agent_runner_waits_for_human_review_control_approval() -> None:
@@ -958,6 +1132,7 @@ def test_agent_runner_persists_conversation_when_store_is_provided(tmp_path) -> 
         "stop_reason=final_output_accepted"
     )
     cursor = store.read_cursor("conversation-1")
+    checkpoint = store.read_iteration_checkpoint("conversation-1")
     assert cursor is not None
     assert cursor.message_offset == 2
     assert cursor.message_id == messages[2].message_id
@@ -972,6 +1147,21 @@ def test_agent_runner_persists_conversation_when_store_is_provided(tmp_path) -> 
         "stop_reason": "final_output_accepted",
         "success": True,
     }
+    assert checkpoint is not None
+    assert checkpoint.conversation_id == "conversation-1"
+    assert checkpoint.agent_id == "analyst"
+    assert checkpoint.run_id == "run-1"
+    assert checkpoint.step_id == "agent"
+    assert checkpoint.workflow_checkpoint_id == "cp-1"
+    assert checkpoint.message_id == messages[2].message_id
+    assert checkpoint.status == "accepted"
+    assert checkpoint.iteration == 1
+    assert checkpoint.stop_reason == "final_output_accepted"
+    assert checkpoint.trace_summary["iteration_count"] == 1
+    assert checkpoint.diagnostics_summary["summary"] == "agent output accepted"
+    assert checkpoint.llm_call_artifact_ids == ["analyst:llm_call:1"]
+    assert checkpoint.metadata["success"] is True
+    assert checkpoint.metadata["event_count"] == len(result.events)
 
 
 def test_agent_runner_rejects_resume_cursor_for_different_agent(tmp_path) -> None:
@@ -1073,6 +1263,17 @@ def test_agent_runner_can_include_cursor_context_in_loop_inputs(tmp_path) -> Non
             step_id="agent-prior",
         )
     )
+    store.write_iteration_checkpoint(
+        AgentIterationCheckpoint(
+            conversation_id="conversation-resume",
+            agent_id="analyst",
+            iteration=4,
+            status="waiting_for_approval",
+            stop_reason="tool_approval_required",
+            trace_summary={"iteration_count": 4},
+            diagnostics_summary={"summary": "tool approval required"},
+        )
+    )
 
     inputs = {"request": {"topic": "chips"}}
 
@@ -1093,6 +1294,8 @@ def test_agent_runner_can_include_cursor_context_in_loop_inputs(tmp_path) -> Non
     assert '"conversation_cursor"' in prompt
     assert '"message_id": "message-4"' in prompt
     assert '"conversation_summary": "prior summary"' in prompt
+    assert '"agent_iteration_checkpoint"' in prompt
+    assert '"status": "waiting_for_approval"' in prompt
     assert inputs == {"request": {"topic": "chips"}}
     assert messages[0].content == {"request": {"topic": "chips"}}
 
@@ -1110,6 +1313,14 @@ def test_agent_runner_omits_cursor_context_by_default(tmp_path) -> None:
             message_id="message-4",
         )
     )
+    store.write_iteration_checkpoint(
+        AgentIterationCheckpoint(
+            conversation_id="conversation-resume",
+            agent_id="analyst",
+            iteration=4,
+            status="waiting_for_approval",
+        )
+    )
 
     AgentRunner(
         llm_client=llm,
@@ -1125,6 +1336,7 @@ def test_agent_runner_omits_cursor_context_by_default(tmp_path) -> None:
 
     assert '"conversation_cursor"' not in prompt
     assert '"conversation_summary"' not in prompt
+    assert '"agent_iteration_checkpoint"' not in prompt
 
 
 def test_agent_runner_skips_conversation_compaction_when_disabled(tmp_path) -> None:

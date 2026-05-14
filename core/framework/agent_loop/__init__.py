@@ -27,6 +27,12 @@ from core.framework.agent_loop.prompt import PromptBuilder
 from core.framework.agent_loop.judge import OutputJudge
 from core.framework.agent_loop.loop import AgentLoop
 from core.framework.agent_loop.runner import AgentRunner
+from core.framework.agent_loop.subagents import (
+    SubAgentExecutor,
+    SubAgentResult,
+    SubAgentStatus,
+    SubAgentTask,
+)
 from core.framework.agent_loop.trace import (
     AgentLoopTrace,
     IterationTrace,
@@ -72,6 +78,10 @@ __all__ = [
     "ParserErrorTrace",
     "PromptBuilder",
     "StallDetection",
+    "SubAgentExecutor",
+    "SubAgentResult",
+    "SubAgentStatus",
+    "SubAgentTask",
     "ToolCallSignature",
     "ToolCallTrace",
 ]

@@ -2233,7 +2233,8 @@ token_usage
 | agent artifact 输出 | 已增强 | WorkflowExecutor 会把 redacted LLM call request/response 写为 `llm_call` step artifacts，并写回 manifest/step result |
 | sub-agent delegation | 暂不做 | 仍为目标态，不在本轮实现 |
 | conversation compaction | 已实现基础版 | LocalJsonConversationStore 可生成 redacted deterministic compaction summary，AgentRunner 可按阈值自动触发 |
-| cursor resume | 已实现基础版 | Workflow checkpoint/resume 已有；ConversationStore 已补 latest cursor 读写；AgentRunner 会在持久化/compaction 后写 cursor，并支持 opt-in cursor/summary resume context；Workflow AgentLoop step 已传 run_id/step_id/checkpoint metadata 和 resume flag；approval decision 可生成 resume context 并驱动 latest checkpoint resume；尚未做 mid-iteration replay |
+| iteration checkpoint | 已实现基础版 | LocalJsonConversationStore 可持久化 latest AgentLoop iteration checkpoint；AgentRunner 会写入 status、stop_reason、iteration、trace/diagnostics summary、last tool observation、LLM call artifact ids，并在显式 cursor resume 时注入 `agent_iteration_checkpoint` |
+| cursor resume | 已实现基础版 | Workflow checkpoint/resume 已有；ConversationStore 已补 latest cursor 读写；AgentRunner 会在持久化/compaction 后写 cursor，并支持 opt-in cursor/summary/iteration checkpoint resume context；Workflow AgentLoop step 已传 run_id/step_id/checkpoint metadata 和 resume flag；approval decision 可生成 resume context 并驱动 latest checkpoint resume；尚未做 mid-iteration replay |
 | multi-layer LLM judge | 暂不做 | 当前 OutputJudge 仍是 deterministic local judge |
 
 ### K.4 边界保持
@@ -2265,7 +2266,7 @@ WorkflowExecutor
 下一阶段应优先做：
 
 ```text
-1. AgentLoop mid-iteration replay 与 Workflow checkpoint 的更深绑定。
+1. AgentLoop mid-iteration replay：基于已持久化 iteration checkpoint 恢复 tool observation / judge feedback 上下文。
 2. SubAgent delegation，但默认关闭。
 3. 更完整的 JSON Schema keyword 覆盖和 schema registry 复用。
 4. Phase-aware / LLM-assisted conversation compaction。

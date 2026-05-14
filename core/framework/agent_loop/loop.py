@@ -24,6 +24,11 @@ from core.framework.agent_loop.models import (
 )
 from core.framework.agent_loop.parser import AgentActionParser
 from core.framework.agent_loop.prompt import PromptBuilder
+from core.framework.agent_loop.subagents import (
+    SubAgentExecutor,
+    SubAgentResult,
+    SubAgentTask,
+)
 from core.framework.agent_loop.trace import AgentLoopTrace, IterationTrace
 from core.framework.llm import (
     GlobalBudgetExceededError,
@@ -54,6 +59,7 @@ class AgentLoop:
         action_parser: AgentActionParser | None = None,
         output_judge: OutputJudge | None = None,
         global_budget_tracker: GlobalBudgetTracker | None = None,
+        subagent_executor: SubAgentExecutor | None = None,
     ) -> None:
         self._llm_client = llm_client
         self._tool_executor = tool_executor
@@ -61,6 +67,7 @@ class AgentLoop:
         self._action_parser = action_parser or AgentActionParser()
         self._output_judge = output_judge or OutputJudge()
         self._global_budget_tracker = global_budget_tracker
+        self._subagent_executor = subagent_executor
 
     def run(
         self,
@@ -318,6 +325,7 @@ class AgentLoop:
             if action.action_type == "delegate_to_subagent":
                 result = self._handle_delegate_action(
                     agent=agent,
+                    inputs=inputs,
                     action=action,
                     metrics=metrics,
                     events=events,
@@ -530,6 +538,7 @@ class AgentLoop:
         self,
         *,
         agent: AgentSpec,
+        inputs: dict[str, Any],
         action: AgentAction,
         metrics: AgentLoopMetrics,
         events: AgentLoopEventRecorder,
@@ -562,11 +571,72 @@ class AgentLoop:
             )
 
         handoff_reason = action.handoff_reason or "subagent delegation requested"
+        subagent_task = action.subagent_task or handoff_reason
         metadata = {
             "parent_agent_id": agent.agent_id,
             "child_agent_id": child_agent_id,
             "handoff_reason": handoff_reason,
         }
+        events.subagent_delegation_requested(
+            iteration=iteration_trace.iteration,
+            parent_agent_id=agent.agent_id,
+            child_agent_id=child_agent_id,
+            handoff_reason=handoff_reason,
+            task=subagent_task,
+        )
+        if self._subagent_executor is not None:
+            try:
+                subagent_result = self._subagent_executor.run(
+                    SubAgentTask(
+                        parent_agent_id=agent.agent_id,
+                        child_agent_id=child_agent_id,
+                        task=subagent_task,
+                        inputs=_subagent_inputs_snapshot(inputs=inputs, action=action),
+                        handoff_reason=handoff_reason,
+                        metadata=metadata,
+                    )
+                )
+            except Exception as exc:
+                events.subagent_failed(
+                    iteration=iteration_trace.iteration,
+                    child_agent_id=child_agent_id,
+                    status="failed",
+                    error=str(exc),
+                )
+                verdict = JudgeVerdict(
+                    decision=JudgeDecision.RETRY,
+                    confidence=0.2,
+                    feedback=f"subagent delegation failed: {exc}",
+                    quality_errors=[f"subagent delegation failed: {child_agent_id}"],
+                )
+                trace.record_judge(iteration_trace, verdict)
+                return verdict.feedback or "subagent delegation failed"
+            result_payload = subagent_result.to_dict()
+            if subagent_result.success:
+                events.subagent_completed(
+                    iteration=iteration_trace.iteration,
+                    child_agent_id=child_agent_id,
+                    output_keys=sorted(subagent_result.output.keys()),
+                    summary=subagent_result.summary,
+                )
+                return _subagent_feedback(subagent_result)
+            events.subagent_failed(
+                iteration=iteration_trace.iteration,
+                child_agent_id=child_agent_id,
+                status=str(result_payload["status"]),
+                error=subagent_result.error,
+            )
+            verdict = JudgeVerdict(
+                decision=JudgeDecision.RETRY,
+                confidence=0.2,
+                feedback=(
+                    "subagent delegation returned non-success status: "
+                    f"{result_payload['status']}"
+                ),
+                quality_errors=[f"subagent delegation failed: {result_payload}"],
+            )
+            trace.record_judge(iteration_trace, verdict)
+            return verdict.feedback or "subagent delegation failed"
         verdict = JudgeVerdict(
             decision=JudgeDecision.ESCALATE,
             confidence=1.0,
@@ -1209,6 +1279,29 @@ def _control_approval_metadata(observation: ToolObservation) -> dict[str, Any]:
     if isinstance(escalation_type, str) and escalation_type:
         payload["escalation_type"] = escalation_type
     return payload
+
+
+def _subagent_inputs_snapshot(
+    *,
+    inputs: dict[str, Any],
+    action: AgentAction,
+) -> dict[str, Any]:
+    return {
+        "parent_inputs": dict(inputs),
+        "subagent_task": action.subagent_task,
+        "handoff_reason": action.handoff_reason,
+    }
+
+
+def _subagent_feedback(result: SubAgentResult) -> str:
+    payload = result.to_dict()
+    return (
+        "subagent delegation completed; "
+        f"child_agent_id={result.child_agent_id}; "
+        f"status={payload['status']}; "
+        f"summary={result.summary or ''}; "
+        f"output={payload['output']}"
+    )
 
 
 def _blocked_stop_reason(verdict: JudgeVerdict) -> AgentLoopStopReason:

@@ -238,6 +238,62 @@ class AgentLoopEventRecorder:
             },
         )
 
+    def subagent_delegation_requested(
+        self,
+        *,
+        iteration: int,
+        parent_agent_id: str,
+        child_agent_id: str,
+        handoff_reason: str,
+        task: str,
+    ) -> None:
+        self.emit(
+            AgentLoopEventType.SUBAGENT_DELEGATION_REQUESTED,
+            iteration=iteration,
+            payload={
+                "parent_agent_id": parent_agent_id,
+                "child_agent_id": child_agent_id,
+                "handoff_reason": handoff_reason,
+                "task": task,
+            },
+        )
+
+    def subagent_completed(
+        self,
+        *,
+        iteration: int,
+        child_agent_id: str,
+        output_keys: list[str],
+        summary: str | None,
+    ) -> None:
+        self.emit(
+            AgentLoopEventType.SUBAGENT_COMPLETED,
+            iteration=iteration,
+            payload={
+                "child_agent_id": child_agent_id,
+                "output_keys": sorted(output_keys),
+                "summary": summary,
+            },
+        )
+
+    def subagent_failed(
+        self,
+        *,
+        iteration: int,
+        child_agent_id: str,
+        status: str,
+        error: str | None,
+    ) -> None:
+        self.emit(
+            AgentLoopEventType.SUBAGENT_FAILED,
+            iteration=iteration,
+            payload={
+                "child_agent_id": child_agent_id,
+                "status": status,
+                "error": error,
+            },
+        )
+
     def judge_accept(self, *, iteration: int, verdict: dict[str, Any]) -> None:
         self.emit(
             AgentLoopEventType.JUDGE_ACCEPT,
