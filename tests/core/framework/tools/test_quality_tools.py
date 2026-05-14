@@ -141,7 +141,9 @@ def test_quality_editor_score_tool_passes_fully_supported_report() -> None:
     assert observation.result.output["quality_score"] == 1.0
     assert observation.result.output["citation_check"]["passed"] is True
     assert observation.result.output["support_matrix"]["coverage_ratio"] == 1.0
-    assert observation.result.output["editor_review"]["reasons"] == []
+    assert observation.result.output["editor_review"]["reasons"] == [
+        "coverage threshold met and no rejected or high-severity unsupported usage"
+    ]
 
 
 def test_quality_editor_score_tool_blocks_unsupported_report() -> None:

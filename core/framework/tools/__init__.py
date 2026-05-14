@@ -58,6 +58,7 @@ from core.framework.tools.models import (
     ToolSecretError,
     ToolStatus,
     ToolTimeoutError,
+    is_default_dangerous_tool_name,
 )
 from core.framework.tools.notification_tools import (
     RssFeedPublisher,
@@ -155,6 +156,7 @@ __all__ = [
     "classify_tool_risk",
     "contains_redacted_value",
     "harden_restricted_agent_tool_policy",
+    "is_default_dangerous_tool_name",
     "inspect_tool_executor",
     "inspect_tool_policy",
     "inspect_tool_registry",

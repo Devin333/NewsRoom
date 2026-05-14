@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -67,6 +67,8 @@ class ToolCatalog:
     namespaces: list[ToolCatalogNamespace]
     registry_valid: bool
     registry_errors: list[str]
+    duplicate_risk_count: int = 0
+    duplicate_risk_namespaces: list[str] = field(default_factory=list)
     agent_id: str | None = None
 
     @property
@@ -86,6 +88,8 @@ class ToolCatalog:
             "tools": [definition.to_dict() for definition in self.tools],
             "registry_valid": self.registry_valid,
             "registry_errors": list(self.registry_errors),
+            "duplicate_risk_count": self.duplicate_risk_count,
+            "duplicate_risk_namespaces": list(self.duplicate_risk_namespaces or []),
         }
 
 
@@ -295,6 +299,8 @@ def build_tool_catalog(
         namespaces=_catalog_namespaces(sorted_tools),
         registry_valid=validation.ok,
         registry_errors=list(validation.errors),
+        duplicate_risk_count=_duplicate_risk_count(sorted_tools),
+        duplicate_risk_namespaces=_duplicate_risk_namespaces(sorted_tools),
         agent_id=agent_id,
     )
 
@@ -307,3 +313,34 @@ def _catalog_namespaces(tools: list[ToolDefinition]) -> list[ToolCatalogNamespac
         ToolCatalogNamespace(namespace=namespace, tool_count=counts[namespace])
         for namespace in sorted(counts)
     ]
+
+
+def _duplicate_risk_count(tools: list[ToolDefinition]) -> int:
+    return sum(
+        len(definitions)
+        for definitions in _definitions_by_leaf_name(tools).values()
+        if len(definitions) > 1
+    )
+
+
+def _duplicate_risk_namespaces(tools: list[ToolDefinition]) -> list[str]:
+    namespaces = {
+        definition.namespace
+        for definitions in _definitions_by_leaf_name(tools).values()
+        if len(definitions) > 1
+        for definition in definitions
+    }
+    return sorted(namespaces)
+
+
+def _definitions_by_leaf_name(
+    tools: list[ToolDefinition],
+) -> dict[str, list[ToolDefinition]]:
+    grouped: dict[str, list[ToolDefinition]] = {}
+    for definition in tools:
+        grouped.setdefault(_leaf_tool_name(definition.name), []).append(definition)
+    return grouped
+
+
+def _leaf_tool_name(tool_name: str) -> str:
+    return tool_name.rsplit(".", maxsplit=1)[-1]

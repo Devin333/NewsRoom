@@ -89,7 +89,7 @@ def test_tool_registry_rejects_unknown_duplicate_policy() -> None:
         registry.register(
             ToolDefinition(name="artifact.load"),
             lambda args: args,
-            duplicate_policy="replace",
+            duplicate_policy="overwrite",
         )
 
 

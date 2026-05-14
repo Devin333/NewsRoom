@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import re
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from core.framework.tools.models import ToolDefinition
+from core.framework.tools.models import ToolDefinition, ToolRuntimeError, ToolTimeoutError
 from core.framework.tools.registry import ToolRegistry
 
 
@@ -50,7 +52,11 @@ class MCPToolAdapter:
             return []
         return [
             self._definition_from_remote_tool(server, remote_tool)
-            for remote_tool in self._client.list_tools(server)
+            for remote_tool in _run_mcp_operation(
+                lambda: self._client.list_tools(server),
+                timeout_seconds=server.timeout_seconds,
+                operation=f"list tools from MCP server {server.server_id}",
+            )
         ]
 
     def register_tools(self, registry: ToolRegistry, server: MCPServerConfig) -> list[ToolDefinition]:
@@ -59,10 +65,16 @@ class MCPToolAdapter:
             remote_tool_name = str(definition.metadata["remote_tool_name"])
             registry.register(
                 definition,
-                lambda args, remote_tool_name=remote_tool_name: self._client.call_tool(
-                    server,
-                    remote_tool_name,
-                    args,
+                lambda args, remote_tool_name=remote_tool_name: _run_mcp_operation(
+                    lambda: self._client.call_tool(
+                        server,
+                        remote_tool_name,
+                        args,
+                    ),
+                    timeout_seconds=server.timeout_seconds,
+                    operation=(
+                        f"call MCP tool {server.server_id}.{remote_tool_name}"
+                    ),
                 ),
             )
         return definitions
@@ -112,3 +124,36 @@ def _string_list(value: Any, field_name: str, tool_name: str) -> list[str]:
     if not isinstance(value, list):
         raise ValueError(f"{field_name} must be a list for MCP tool {tool_name}")
     return [str(item) for item in value]
+
+
+def _run_mcp_operation(
+    operation_fn: Any,
+    *,
+    timeout_seconds: float,
+    operation: str,
+) -> Any:
+    if timeout_seconds <= 0:
+        try:
+            return operation_fn()
+        except ToolRuntimeError:
+            raise
+        except Exception as exc:
+            raise ToolRuntimeError(f"MCP transport error during {operation}: {exc}") from exc
+
+    pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="news-mcp-tool")
+    future = pool.submit(operation_fn)
+    timed_out = False
+    try:
+        return future.result(timeout=timeout_seconds)
+    except FutureTimeoutError as exc:
+        timed_out = True
+        future.cancel()
+        raise ToolTimeoutError(
+            f"MCP operation timed out during {operation} after {timeout_seconds:g} seconds"
+        ) from exc
+    except ToolRuntimeError:
+        raise
+    except Exception as exc:
+        raise ToolRuntimeError(f"MCP transport error during {operation}: {exc}") from exc
+    finally:
+        pool.shutdown(wait=not timed_out, cancel_futures=True)

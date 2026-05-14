@@ -11,8 +11,8 @@ from core.framework.tools.models import (
 )
 
 
-DuplicateToolPolicy = Literal["error", "skip", "replace_explicit"]
-_DUPLICATE_POLICIES = {"error", "skip", "replace_explicit"}
+DuplicateToolPolicy = Literal["error", "skip", "replace_explicit", "replace"]
+_DUPLICATE_POLICIES = {"error", "skip", "replace_explicit", "replace"}
 
 
 @dataclass(frozen=True)
@@ -51,7 +51,12 @@ class ToolRegistry:
 
         existing = self._tools.get(definition.name)
         if existing is not None and duplicate_policy == "error":
-            raise ToolDefinitionError(f"tool already registered: {definition.name}")
+            raise ToolDefinitionError(
+                "tool already registered: "
+                f"{definition.name} "
+                f"(old namespace={existing.definition.namespace}, "
+                f"new namespace={definition.namespace})"
+            )
         if existing is not None and duplicate_policy == "skip":
             return existing
 

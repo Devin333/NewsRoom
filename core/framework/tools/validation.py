@@ -6,16 +6,20 @@ from core.framework.tools.models import ToolDefinition, ToolDefinitionError, Too
 
 
 def validate_tool_arguments(definition: ToolDefinition, arguments: dict[str, Any]) -> None:
+    normalized_arguments = normalize_tool_arguments(definition, arguments)
+    arguments.clear()
+    arguments.update(normalized_arguments)
+
+
+def normalize_tool_arguments(
+    definition: ToolDefinition,
+    arguments: dict[str, Any],
+) -> dict[str, Any]:
     schema = definition.input_schema or {}
     if not isinstance(schema, dict):
         raise ToolDefinitionError(f"input_schema must be an object for tool {definition.name}")
-
-    required = definition.required_arguments
-    missing = [argument for argument in required if argument not in arguments]
-    if missing:
-        raise ToolRuntimeError(
-            f"missing required arguments for {definition.name}: {', '.join(missing)}"
-        )
+    if not isinstance(arguments, dict):
+        raise ToolRuntimeError(f"arguments for {definition.name} must be an object")
 
     properties = schema.get("properties", {})
     if properties is None:
@@ -23,14 +27,32 @@ def validate_tool_arguments(definition: ToolDefinition, arguments: dict[str, Any
     if not isinstance(properties, dict):
         raise ToolDefinitionError(f"properties must be an object for tool {definition.name}")
 
+    normalized = dict(arguments)
+    for argument_name, property_schema in properties.items():
+        if argument_name in normalized:
+            continue
+        if not isinstance(property_schema, dict):
+            raise ToolDefinitionError(
+                f"property schema must be an object for {definition.name}.{argument_name}"
+            )
+        if "default" in property_schema:
+            normalized[argument_name] = property_schema["default"]
+
+    required = definition.required_arguments
+    missing = [argument for argument in required if argument not in normalized]
+    if missing:
+        raise ToolRuntimeError(
+            f"missing required arguments for {definition.name}: {', '.join(missing)}"
+        )
+
     if schema.get("additionalProperties") is False:
-        unexpected = sorted(set(arguments) - set(properties))
+        unexpected = sorted(set(normalized) - set(properties))
         if unexpected:
             raise ToolRuntimeError(
                 f"unexpected arguments for {definition.name}: {', '.join(unexpected)}"
             )
 
-    for argument_name, value in arguments.items():
+    for argument_name, value in normalized.items():
         property_schema = properties.get(argument_name)
         if property_schema is None:
             continue
@@ -39,6 +61,7 @@ def validate_tool_arguments(definition: ToolDefinition, arguments: dict[str, Any
                 f"property schema must be an object for {definition.name}.{argument_name}"
             )
         _validate_argument_schema(definition.name, argument_name, value, property_schema)
+    return normalized
 
 
 def _validate_argument_schema(

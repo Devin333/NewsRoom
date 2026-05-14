@@ -263,7 +263,7 @@ def test_tool_executor_can_run_side_effecting_tool_when_approval_gate_is_disable
     registry = ToolRegistry()
     registry.register(
         ToolDefinition(
-            name="notification.send",
+            name="notification.internal_send",
             side_effect="external_write",
             input_schema={"required": ["message"], "properties": {"message": {"type": "string"}}},
         ),
@@ -272,9 +272,9 @@ def test_tool_executor_can_run_side_effecting_tool_when_approval_gate_is_disable
     executor = ToolExecutor(registry)
 
     observation = executor.execute(
-        ToolCall(tool_name="notification.send", arguments={"message": "ready"}),
+        ToolCall(tool_name="notification.internal_send", arguments={"message": "ready"}),
         ToolPolicy(
-            allowed_tools=["notification.send"],
+            allowed_tools=["notification.internal_send"],
             require_approval_for_side_effects=False,
         ),
     )
@@ -542,7 +542,7 @@ def test_tool_executor_redacts_sensitive_output_and_serialized_arguments() -> No
     registry = ToolRegistry()
     registry.register(
         ToolDefinition(
-            name="http.request",
+            name="http.safe_fetch",
             description="Fetch a protected resource",
             input_schema={"required": ["url"]},
         ),
@@ -557,12 +557,12 @@ def test_tool_executor_redacts_sensitive_output_and_serialized_arguments() -> No
 
     observation = executor.execute(
         ToolCall(
-            tool_name="http.request",
+            tool_name="http.safe_fetch",
             arguments={"url": "https://example.com", "authorization": "Bearer input-secret"},
             requested_by_agent_id="analyst",
             call_id="call-1",
         ),
-        ToolPolicy(allowed_tools=["http.request"]),
+        ToolPolicy(allowed_tools=["http.safe_fetch"]),
     )
 
     payload = observation.to_dict()

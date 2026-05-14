@@ -5,19 +5,36 @@ from typing import Any
 
 from core.framework.artifacts import ArtifactManager
 from core.framework.tools.executor import ToolExecutor
-from core.framework.tools.models import ToolCall, ToolObservation, ToolPolicy, ToolStatus
+from core.framework.tools.models import (
+    ToolCall,
+    ToolObservation,
+    ToolPolicy,
+    ToolResult,
+    ToolRuntimeError,
+    ToolStatus,
+)
+from core.framework.tools.redaction import contains_redacted_value
 from core.framework.tools.registry import ToolRegistry
 from core.framework.tools.secrets import SecretProvider
 from core.framework.tools.telemetry import ToolEvent, ToolMetrics
+from core.framework.tools.validation import normalize_tool_arguments
 
 
 @dataclass(frozen=True)
 class ToolTestCase:
     name: str
-    call: ToolCall
-    policy: ToolPolicy
+    call: ToolCall | None = None
+    policy: ToolPolicy = field(default_factory=ToolPolicy)
+    tool_name: str | None = None
+    args: dict[str, Any] = field(default_factory=dict)
+    requested_by_agent_id: str = ""
     expected_status: ToolStatus = ToolStatus.SUCCEEDED
+    expected_output_keys: list[str] = field(default_factory=list)
+    expected_error_type: str | None = None
     require_artifact_refs: bool = False
+    require_redaction: bool = False
+    require_approval_required: bool = False
+    dry_run: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -56,13 +73,16 @@ class ToolTestRunner:
         self._secret_provider = secret_provider
 
     def run_case(self, test_case: ToolTestCase) -> ToolTestReport:
+        if test_case.dry_run:
+            return self._run_dry_case(test_case)
+
         executor = ToolExecutor(
             self._registry,
             artifact_manager=self._artifact_manager,
             run_id=self._run_id,
             secret_provider=self._secret_provider,
         )
-        observation = executor.execute(test_case.call, test_case.policy)
+        observation = executor.execute(_case_call(test_case), test_case.policy)
         errors = _expectation_errors(test_case, observation)
         return ToolTestReport(
             case_name=test_case.name,
@@ -76,6 +96,91 @@ class ToolTestRunner:
     def run_cases(self, test_cases: list[ToolTestCase]) -> list[ToolTestReport]:
         return [self.run_case(test_case) for test_case in test_cases]
 
+    def _run_dry_case(self, test_case: ToolTestCase) -> ToolTestReport:
+        call = _case_call(test_case)
+        try:
+            registered = self._registry.get(call.tool_name)
+            if not test_case.policy.allows(call.tool_name):
+                observation = ToolObservation(
+                    call=call,
+                    result=ToolResult(
+                        status=ToolStatus.BLOCKED,
+                        error_type="ToolPermissionError",
+                        error_message=(
+                            f"agent {call.requested_by_agent_id} is not allowed "
+                            f"to call {call.tool_name}"
+                        ),
+                    ),
+                    elapsed_ms=0.0,
+                )
+            else:
+                normalize_tool_arguments(registered.definition, dict(call.arguments))
+                observation = self._dry_run_observation(call, registered.definition, test_case)
+        except Exception as exc:
+            observation = ToolObservation(
+                call=call,
+                result=ToolResult(
+                    status=ToolStatus.FAILED,
+                    error_type=type(exc).__name__,
+                    error_message=str(exc),
+                ),
+                elapsed_ms=0.0,
+            )
+        errors = _expectation_errors(test_case, observation)
+        metrics = ToolMetrics()
+        metrics.record(observation)
+        return ToolTestReport(
+            case_name=test_case.name,
+            passed=not errors,
+            errors=errors,
+            observation=observation,
+            events=[],
+            metrics=metrics,
+        )
+
+    def _dry_run_observation(
+        self,
+        call: ToolCall,
+        definition: Any,
+        test_case: ToolTestCase,
+    ) -> ToolObservation:
+        if definition.is_dangerous and not test_case.policy.allow_dangerous_tools:
+            return ToolObservation(
+                call=call,
+                result=ToolResult(
+                    status=ToolStatus.BLOCKED,
+                    error_type="ToolPermissionError",
+                    error_message=f"dangerous tool is not allowed: {call.tool_name}",
+                ),
+                elapsed_ms=0.0,
+            )
+        if (
+            test_case.policy.require_approval_for_side_effects
+            and (
+                definition.requires_approval
+                or definition.side_effect not in {"", "none", "read_only"}
+            )
+        ):
+            return ToolObservation(
+                call=call,
+                result=ToolResult(
+                    status=ToolStatus.APPROVAL_REQUIRED,
+                    output_summary=(
+                        f"Tool requires approval before execution: {call.tool_name}"
+                    ),
+                ),
+                elapsed_ms=0.0,
+            )
+        return ToolObservation(
+            call=call,
+            result=ToolResult(
+                status=ToolStatus.SUCCEEDED,
+                output={"dry_run": True, "tool_name": call.tool_name},
+                output_summary="Tool dry-run validation passed",
+            ),
+            elapsed_ms=0.0,
+        )
+
 
 def _expectation_errors(test_case: ToolTestCase, observation: ToolObservation) -> list[str]:
     errors: list[str] = []
@@ -86,4 +191,41 @@ def _expectation_errors(test_case: ToolTestCase, observation: ToolObservation) -
         )
     if test_case.require_artifact_refs and not observation.result.artifact_refs:
         errors.append("expected at least one artifact ref")
+    if test_case.expected_error_type and observation.result.error_type != test_case.expected_error_type:
+        errors.append(
+            "expected error type "
+            f"{test_case.expected_error_type}, got {observation.result.error_type}"
+        )
+    if test_case.expected_output_keys:
+        if not isinstance(observation.result.output, dict):
+            errors.append("expected output to be an object")
+        else:
+            missing = [
+                key
+                for key in test_case.expected_output_keys
+                if key not in observation.result.output
+            ]
+            if missing:
+                errors.append(f"expected output keys missing: {', '.join(missing)}")
+    if test_case.require_redaction and not contains_redacted_value(
+        observation.result.to_dict()
+    ):
+        errors.append("expected result to contain redacted values")
+    if (
+        test_case.require_approval_required
+        and observation.status != ToolStatus.APPROVAL_REQUIRED
+    ):
+        errors.append("expected approval_required observation")
     return errors
+
+
+def _case_call(test_case: ToolTestCase) -> ToolCall:
+    if test_case.call is not None:
+        return test_case.call
+    if not test_case.tool_name:
+        raise ToolRuntimeError("ToolTestCase requires call or tool_name")
+    return ToolCall(
+        tool_name=test_case.tool_name,
+        arguments=dict(test_case.args),
+        requested_by_agent_id=test_case.requested_by_agent_id,
+    )

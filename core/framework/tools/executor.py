@@ -10,6 +10,7 @@ from typing import Any
 from core.framework.artifacts import ArtifactManager
 from core.framework.serialization import to_json_safe
 from core.framework.tools.approval import ToolApprovalRequest
+from core.framework.tools.boundary import is_external_fetch_tool, is_restricted_agent_id
 from core.framework.tools.models import (
     ArtifactRef,
     ToolCall,
@@ -21,19 +22,18 @@ from core.framework.tools.models import (
     ToolSecretError,
     ToolStatus,
     ToolTimeoutError,
+    is_default_dangerous_tool_name,
     timed_tool_call,
 )
 from core.framework.tools.redaction import contains_redacted_value, redact_sensitive_values
 from core.framework.tools.registry import ToolRegistry
 from core.framework.tools.secrets import SecretProvider
 from core.framework.tools.telemetry import ToolEvent, ToolExecutionRecord, ToolMetrics
-from core.framework.tools.validation import validate_tool_arguments
+from core.framework.tools.validation import normalize_tool_arguments
 from core.framework.workers.approval import ApprovalStore
 
 
 _RUNTIME_SECRETS_ARGUMENT = "_secrets"
-
-
 class ToolExecutor:
     def __init__(
         self,
@@ -74,6 +74,10 @@ class ToolExecutor:
                     f"agent {call.requested_by_agent_id} is not allowed to call {call.tool_name}"
                 )
 
+            restricted_agent_result = _restricted_agent_boundary_gate(call)
+            if restricted_agent_result is not None:
+                return restricted_agent_result
+
             dangerous_result = _dangerous_gate(registered.definition, policy)
             if dangerous_result is not None:
                 return dangerous_result
@@ -83,7 +87,7 @@ class ToolExecutor:
                     f"reserved tool argument is not allowed: {_RUNTIME_SECRETS_ARGUMENT}"
                 )
 
-            validate_tool_arguments(registered.definition, call.arguments)
+            arguments = normalize_tool_arguments(registered.definition, call.arguments)
             self._emit("tool_args_validated", call)
 
             approval_result = self._approval_gate(call, registered.definition, policy)
@@ -91,7 +95,7 @@ class ToolExecutor:
                 return approval_result
 
             arguments = _arguments_with_secrets(
-                call.arguments,
+                arguments,
                 registered.definition,
                 self._secret_provider,
             )
@@ -142,6 +146,7 @@ class ToolExecutor:
             )
             elapsed_ms = 0.0
 
+        result = _with_duration(result, elapsed_ms)
         observation = ToolObservation(call=call, result=result, elapsed_ms=elapsed_ms)
         self._record_observation(observation)
         self._records.append(_execution_record(observation, self._events, started_at))
@@ -333,13 +338,55 @@ def _execution_record(
 
 
 def _dangerous_gate(definition: Any, policy: ToolPolicy) -> ToolResult | None:
-    if definition.is_dangerous and not policy.allow_dangerous_tools:
+    if _is_dangerous_tool(definition) and not policy.allow_dangerous_tools:
         return ToolResult(
             status=ToolStatus.BLOCKED,
             error_type="ToolPermissionError",
             error_message=f"dangerous tool is not allowed: {definition.name}",
         )
     return None
+
+
+def _restricted_agent_boundary_gate(call: ToolCall) -> ToolResult | None:
+    if (
+        call.requested_by_agent_id
+        and is_restricted_agent_id(call.requested_by_agent_id)
+        and is_external_fetch_tool(call.tool_name)
+    ):
+        return ToolResult(
+            status=ToolStatus.BLOCKED,
+            error_type="ToolPermissionError",
+            error_message=(
+                "restricted agent is not allowed to call external fetch/search "
+                f"tool: {call.tool_name}"
+            ),
+        )
+    return None
+
+
+def _is_dangerous_tool(definition: Any) -> bool:
+    name = str(getattr(definition, "name", ""))
+    if is_default_dangerous_tool_name(name):
+        return True
+    return bool(getattr(definition, "is_dangerous", False))
+
+
+def _with_duration(result: ToolResult, elapsed_ms: float) -> ToolResult:
+    if result.duration_ms is not None:
+        return result
+    return ToolResult(
+        status=result.status,
+        output=result.output,
+        output_summary=result.output_summary,
+        artifact_refs=list(result.artifact_refs),
+        error_type=result.error_type,
+        error_message=result.error_message,
+        approval_id=result.approval_id,
+        redacted=result.redacted,
+        output_bytes=result.output_bytes,
+        duration_ms=elapsed_ms,
+        metadata=dict(result.metadata),
+    )
 
 
 def _has_side_effects(side_effect: str) -> bool:

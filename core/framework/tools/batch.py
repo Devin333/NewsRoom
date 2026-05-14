@@ -35,9 +35,17 @@ class ToolBatchExecutor:
         self._secret_provider = secret_provider
         self._max_workers = max(1, max_workers)
 
-    def execute_batch(self, calls: list[ToolCall], policy: ToolPolicy) -> list[ToolObservation]:
+    def execute_batch(
+        self,
+        calls: list[ToolCall],
+        policy: ToolPolicy,
+        *,
+        mode: str = "best_effort",
+    ) -> list[ToolObservation]:
         if not calls:
             return []
+        if mode not in {"best_effort", "strict"}:
+            raise ValueError(f"unsupported tool batch mode: {mode}")
         if len(calls) > _max_tool_calls_per_iteration(policy):
             return [
                 _blocked_budget_observation(
@@ -49,7 +57,7 @@ class ToolBatchExecutor:
             ]
         if self._can_execute_parallel(calls):
             return self._execute_parallel(calls, policy)
-        return [self._execute_one(call, policy) for call in calls]
+        return self._execute_serial(calls, policy, mode=mode)
 
     def _execute_parallel(self, calls: list[ToolCall], policy: ToolPolicy) -> list[ToolObservation]:
         results: list[ToolObservation | None] = [None] * len(calls)
@@ -74,6 +82,21 @@ class ToolBatchExecutor:
             secret_provider=self._secret_provider,
         )
         return executor.execute(call, policy)
+
+    def _execute_serial(
+        self,
+        calls: list[ToolCall],
+        policy: ToolPolicy,
+        *,
+        mode: str,
+    ) -> list[ToolObservation]:
+        observations: list[ToolObservation] = []
+        for call in calls:
+            observation = self._execute_one(call, policy)
+            observations.append(observation)
+            if mode == "strict" and observation.status != ToolStatus.SUCCEEDED:
+                break
+        return observations
 
     def _can_execute_parallel(self, calls: list[ToolCall]) -> bool:
         for call in calls:

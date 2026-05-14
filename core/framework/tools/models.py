@@ -7,7 +7,7 @@ from time import perf_counter
 from typing import Any
 from uuid import uuid4
 
-from core.framework.tools.redaction import redact_sensitive_values
+from core.framework.tools.redaction import contains_redacted_value, redact_sensitive_values
 
 
 class ToolRuntimeError(RuntimeError):
@@ -133,9 +133,27 @@ class ToolPolicy:
     def exposes(self, definition: ToolDefinition) -> bool:
         if not self.allows(definition.name):
             return False
-        if definition.is_dangerous and not self.allow_dangerous_tools:
+        if (
+            (definition.is_dangerous or is_default_dangerous_tool_name(definition.name))
+            and not self.allow_dangerous_tools
+        ):
             return False
         return True
+
+
+def is_default_dangerous_tool_name(tool_name: str) -> bool:
+    return tool_name in {
+        "system.execute",
+        "system.execute_command",
+        "file.write",
+        "file.delete",
+        "postgres.query",
+        "http.request",
+        "generic_http_request",
+        "publish_report",
+        "publish.external",
+        "notification.send",
+    }
 
 
 def _is_mcp_tool(tool_name: str) -> bool:
@@ -187,11 +205,40 @@ class ToolResult:
     approval_id: str | None = None
     redacted: bool = True
     output_bytes: int | None = None
+    duration_ms: float | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def error(self) -> dict[str, str | None] | None:
+        if self.error_type is None and self.error_message is None:
+            return None
+        return {
+            "type": self.error_type,
+            "message": self.error_message,
+        }
+
+    @property
+    def artifact_ref(self) -> ArtifactRef | None:
+        return self.artifact_refs[0] if self.artifact_refs else None
+
+    @property
+    def redaction_report(self) -> dict[str, Any]:
+        return {
+            "redacted": self.redacted,
+            "contains_redacted_value": contains_redacted_value(
+                redact_sensitive_values(self.output)
+            ),
+        }
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "status": self.status.value,
             "output": redact_sensitive_values(self.output),
+            "error": self.error,
+            "duration_ms": self.duration_ms,
+            "artifact_ref": self.artifact_ref.to_dict() if self.artifact_ref else None,
+            "metadata": dict(self.metadata),
+            "redaction_report": self.redaction_report,
             "output_summary": self.output_summary,
             "artifact_refs": [artifact_ref.to_dict() for artifact_ref in self.artifact_refs],
             "error_type": self.error_type,
@@ -207,6 +254,37 @@ class ToolObservation:
     call: ToolCall
     result: ToolResult
     elapsed_ms: float
+
+    @property
+    def tool_call_id(self) -> str:
+        return self.call.call_id
+
+    @property
+    def tool_name(self) -> str:
+        return self.call.tool_name
+
+    @property
+    def artifact_ref(self) -> ArtifactRef | None:
+        return self.result.artifact_refs[0] if self.result.artifact_refs else None
+
+    @property
+    def sample(self) -> Any:
+        if self.result.output is None:
+            return None
+        if isinstance(self.result.output, dict):
+            return {
+                key: value
+                for key, value in list(
+                    redact_sensitive_values(self.result.output).items()
+                )[:3]
+            }
+        if isinstance(self.result.output, list):
+            return redact_sensitive_values(self.result.output[:3])
+        return redact_sensitive_values(self.result.output)
+
+    @property
+    def error_type(self) -> str | None:
+        return self.result.error_type
 
     @property
     def status(self) -> ToolStatus:
@@ -234,6 +312,9 @@ class ToolObservation:
             "tool_name": self.call.tool_name,
             "status": self.status.value,
             "summary": self.summary,
+            "artifact_ref": self.artifact_ref.to_dict() if self.artifact_ref else None,
+            "sample": self.sample,
+            "error_type": self.error_type,
             "highlights": self.highlights,
             "artifact_refs": [artifact_ref.to_dict() for artifact_ref in self.result.artifact_refs],
             "safe_for_llm": self.safe_for_llm,
