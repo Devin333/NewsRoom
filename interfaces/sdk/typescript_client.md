@@ -14,9 +14,40 @@ Minimum surface:
 - `client.runs.health(runId)`
 - `client.runs.catalogHealth()`
 - `client.runs.compare({ baseRunId, targetRunId })`
+- `client.runs.lineage(runId)`
+- `client.runs.lineageUpstream(runId, { targetType, targetId })`
+- `client.runs.lineageDownstream(runId, { sourceType, sourceId })`
+- `client.runs.artifacts(runId)`
+- `client.runs.artifact(runId, artifactKey)`
 - `client.reports.latest()`
+- `client.reports.list({ limit, workflowId })`
+- `client.reports.get(reportId)`
+- `client.reports.markdown(reportId)`
+- `client.reports.quality(reportId)`
 - `client.reports.search({ query, limit })`
 - `client.memory.search({ query, collection, filters, limit })`
+- `client.memory.get(documentId, { collection })`
+- `client.memory.reindex(runId, { topic })`
+- `client.mcp.catalog()`
+- `client.mcp.capabilities()`
+- `client.workers.list({ staleAfterSeconds })`
+- `client.workers.get(workerId, { staleAfterSeconds })`
+- `client.workers.queues({ queueNames })`
+- `client.storage.metrics()`
+- `client.storage.retentionPlan({ runId, now, reportRetentionDays })`
+- `client.sources.list({ includeDisabled })`
+- `client.sources.health({ includeDisabled })`
+- `client.sources.validation()`
+- `client.sources.get(sourceId)`
+- `client.sources.probe(sourceId, { force, includeDisabled, limit })`
+- `client.sources.fetchArxiv({ query, limit })`
+- `client.sources.fetchGithubReleases({ repository, limit })`
+- `client.schedules.list({ includeDisabled })`
+- `client.schedules.trigger(scheduleId, { now })`
+- `client.approvals.list({ status })`
+- `client.approvals.get(approvalId)`
+- `client.approvals.approve(approvalId, { decidedBy, reason })`
+- `client.approvals.reject(approvalId, { decidedBy, reason })`
 
 SDK implementations must preserve the common `ApiResponse` / `ApiError` envelope and must not read runtime storage directly.
 Run inspection helpers must call `/api/v1/runs/...` endpoints and must not read `.newsroom/runs` directly.

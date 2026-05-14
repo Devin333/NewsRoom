@@ -65,6 +65,123 @@ def test_news_client_reads_run_inspection_endpoints() -> None:
     ]
 
 
+def test_news_client_reads_p1_p2_interface_surfaces() -> None:
+    opener = _FakeOpener(
+        {
+            "success": True,
+            "data": {"ok": True},
+            "request_id": "req-1",
+            "schema_version": "1.0",
+        }
+    )
+    client = NewsClient("https://news.example", opener=opener)
+
+    assert client.mcp.catalog() == {"ok": True}
+    assert client.mcp.capabilities() == {"ok": True}
+    assert client.workers.list(stale_after_seconds=30) == {"ok": True}
+    assert client.workers.get("worker/1", stale_after_seconds=45) == {"ok": True}
+    assert client.workers.queues(queue_names=["news:queue:daily", "custom"]) == {"ok": True}
+    assert client.storage.metrics() == {"ok": True}
+    assert client.storage.retention_plan(run_id="run/1", report_retention_days=7) == {"ok": True}
+    assert client.sources.list(include_disabled=True) == {"ok": True}
+    assert client.sources.health(include_disabled=True) == {"ok": True}
+    assert client.sources.validation() == {"ok": True}
+    assert client.sources.get("source/1") == {"ok": True}
+    assert client.schedules.list(include_disabled=True) == {"ok": True}
+    assert client.approvals.list(status="pending") == {"ok": True}
+    assert client.approvals.get("approval/1") == {"ok": True}
+
+    assert [request.full_url for request in opener.requests] == [
+        "https://news.example/api/v1/mcp/catalog",
+        "https://news.example/api/v1/mcp/capabilities",
+        "https://news.example/api/v1/workers?stale_after_seconds=30",
+        "https://news.example/api/v1/workers/worker%2F1?stale_after_seconds=45",
+        "https://news.example/api/v1/queues?queue_name=news%3Aqueue%3Adaily&queue_name=custom",
+        "https://news.example/api/v1/storage/metrics",
+        "https://news.example/api/v1/storage/retention/plan?run_id=run%2F1&report_retention_days=7",
+        "https://news.example/api/v1/sources?include_disabled=True",
+        "https://news.example/api/v1/sources/health?include_disabled=True",
+        "https://news.example/api/v1/sources/validation",
+        "https://news.example/api/v1/sources/source%2F1",
+        "https://news.example/api/v1/schedules?include_disabled=True",
+        "https://news.example/api/v1/approvals?status=pending",
+        "https://news.example/api/v1/approvals/approval%2F1",
+    ]
+
+
+def test_news_client_writes_extended_interface_surfaces() -> None:
+    opener = _FakeOpener(
+        {
+            "success": True,
+            "data": {"ok": True},
+            "request_id": "req-1",
+            "schema_version": "1.0",
+        }
+    )
+    client = NewsClient("https://news.example", opener=opener)
+
+    assert client.memory.reindex("run/1", topic="AI policy") == {"ok": True}
+    assert client.sources.probe("source/1", force=True, include_disabled=True, limit=2) == {"ok": True}
+    assert client.sources.fetch_arxiv("cat:cs.AI", limit=1) == {"ok": True}
+    assert client.sources.fetch_github_releases("owner/repo", limit=1) == {"ok": True}
+    assert client.schedules.trigger("schedule/1", now="2026-05-14T00:00:00Z") == {"ok": True}
+    assert client.approvals.approve("approval/1", decided_by="reviewer", reason="ok") == {"ok": True}
+    assert client.approvals.reject("approval/2", decided_by="reviewer") == {"ok": True}
+
+    assert [request.full_url for request in opener.requests] == [
+        "https://news.example/api/v1/memory/reindex",
+        "https://news.example/api/v1/sources/source%2F1/probe",
+        "https://news.example/api/v1/sources/arxiv/fetch",
+        "https://news.example/api/v1/sources/github/releases",
+        "https://news.example/api/v1/schedules/schedule%2F1/trigger",
+        "https://news.example/api/v1/approvals/approval%2F1/approve",
+        "https://news.example/api/v1/approvals/approval%2F2/reject",
+    ]
+    assert [json.loads(request.data.decode("utf-8")) for request in opener.requests] == [
+        {"run_id": "run/1", "topic": "AI policy"},
+        {"force": True, "include_disabled": True, "limit": 2},
+        {"query": "cat:cs.AI", "limit": 1},
+        {"repository": "owner/repo", "limit": 1},
+        {"now": "2026-05-14T00:00:00Z"},
+        {"decided_by": "reviewer", "reason": "ok"},
+        {"decided_by": "reviewer", "reason": None},
+    ]
+
+
+def test_news_client_reads_report_memory_and_artifact_helpers() -> None:
+    opener = _FakeOpener(
+        {
+            "success": True,
+            "data": {"ok": True},
+            "request_id": "req-1",
+            "schema_version": "1.0",
+        }
+    )
+    client = NewsClient("https://news.example", opener=opener)
+
+    assert client.reports.list(limit=1, workflow_id="daily") == {"ok": True}
+    assert client.reports.markdown("report/1") == {"ok": True}
+    assert client.reports.quality("report/1") == {"ok": True}
+    assert client.memory.get("doc/1", collection="reports") == {"ok": True}
+    assert client.runs.lineage("run/1") == {"ok": True}
+    assert client.runs.lineage_upstream("run/1", target_type="report", target_id="r1") == {"ok": True}
+    assert client.runs.lineage_downstream("run/1", source_type="source", source_id="s1") == {"ok": True}
+    assert client.runs.artifacts("run/1") == {"ok": True}
+    assert client.runs.artifact("run/1", "report/json") == {"ok": True}
+
+    assert [request.full_url for request in opener.requests] == [
+        "https://news.example/api/v1/reports?limit=1&workflow_id=daily",
+        "https://news.example/api/v1/reports/report%2F1/markdown",
+        "https://news.example/api/v1/reports/report%2F1/quality",
+        "https://news.example/api/v1/memory/doc%2F1?collection=reports",
+        "https://news.example/api/v1/runs/run%2F1/lineage",
+        "https://news.example/api/v1/runs/run%2F1/lineage/upstream?target_type=report&target_id=r1",
+        "https://news.example/api/v1/runs/run%2F1/lineage/downstream?source_type=source&source_id=s1",
+        "https://news.example/api/v1/runs/run%2F1/artifacts",
+        "https://news.example/api/v1/runs/run%2F1/artifacts/report%2Fjson",
+    ]
+
+
 def test_news_client_raises_typed_api_error() -> None:
     client = NewsClient(
         "https://news.example",
