@@ -2226,7 +2226,7 @@ token_usage
 | tool approval wait | 已实现 | approval_required 映射为 AgentLoopStatus.WAITING_FOR_APPROVAL |
 | human escalation wait | 已实现基础版 | `control.request_human_review` / `control.escalate` 写入 approval store 后，AgentLoop 进入 WAITING_FOR_APPROVAL 并暴露 approval_id / approval_kind |
 | Workflow pause mapping | 已实现 | AgentLoopStepRunner 将 waiting_for_approval 映射为 StepStatus.PAUSED |
-| approval decision resume context | 已实现基础版 | ApprovalApplicationService 可为已决 approval 生成标准 buffer_updates / resume_metadata，Workflow resume 会记录 metadata |
+| approval decision resume context | 已增强 | ApprovalApplicationService 可为已决 approval 生成标准 buffer_updates / resume_metadata；API、CLI、MCP、Python SDK 已可读取该 resume context，Workflow resume 会记录 metadata |
 | approval context checkpoint resume | 已实现基础版 | WorkflowRunner 可消费 approval resume context，按原 run_id 找最新 checkpoint 并恢复 paused Workflow |
 | Workflow stalled mapping | 已实现 | AgentLoopStepRunner 将 stalled 映射为 StepStatus.BLOCKED |
 | conversation diagnostics | 已实现 | conversation 中写入 diagnostic message，assistant result 仍保持最后 |
@@ -2265,7 +2265,7 @@ WorkflowExecutor
 下一阶段应优先做：
 
 ```text
-1. Approval replay API/CLI/MCP 入口：approval decision 后一键恢复 paused Workflow。
+1. Approval replay API/CLI/MCP 入口：在现有 resume context 接口之上，提供 approval decision 后一键恢复 paused Workflow 的受控入口。
 2. AgentLoop mid-iteration replay 与 Workflow checkpoint 的更深绑定。
 3. SubAgent delegation，但默认关闭。
 4. 更完整的 JSON Schema keyword 覆盖和 schema registry 复用。

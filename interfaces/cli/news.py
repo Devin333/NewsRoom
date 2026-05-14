@@ -613,6 +613,24 @@ def build_parser() -> argparse.ArgumentParser:
     approvals_show_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     approvals_show_parser.set_defaults(handler=_approvals_show)
 
+    approvals_resume_parser = approvals_subparsers.add_parser(
+        "resume-context",
+        help="Build workflow resume context for a decided approval",
+    )
+    approvals_resume_parser.add_argument("approval_id", help="Approval id")
+    approvals_resume_parser.add_argument(
+        "--decision-key",
+        default="human_review_decision",
+        help="DataBuffer key to write the decision payload into",
+    )
+    approvals_resume_parser.add_argument(
+        "--store-path",
+        default=DEFAULT_APPROVAL_STORE_PATH,
+        help="Local JSON approval store path",
+    )
+    approvals_resume_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    approvals_resume_parser.set_defaults(handler=_approvals_resume_context)
+
     approvals_approve_parser = approvals_subparsers.add_parser("approve", help="Approve a request")
     approvals_approve_parser.add_argument("approval_id", help="Approval id")
     approvals_approve_parser.add_argument("--decided-by", required=True, help="Decision maker")
@@ -1869,6 +1887,29 @@ def _approvals_show(args: argparse.Namespace) -> int:
         print(str(exc))
         return 1
     _print_approval_detail(result.to_dict(), json_output=args.json)
+    return 0
+
+
+def _approvals_resume_context(args: argparse.Namespace) -> int:
+    try:
+        result = ApprovalApplicationService(store_path=args.store_path).build_resume_context(
+            args.approval_id,
+            decision_key=args.decision_key,
+        )
+    except (ApprovalNotFoundError, ValueError) as exc:
+        print(str(exc))
+        return 1
+    payload = result.to_dict()
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        print(f"approval_id={payload['approval_id']}")
+        print(f"decision_key={payload['decision_key']}")
+        print(f"decision={payload['decision_payload']['decision']}")
+        print(f"buffer_update_keys={','.join(sorted(payload['buffer_updates']))}")
+        approval_run_id = payload["resume_metadata"].get("approval_run_id")
+        if approval_run_id:
+            print(f"approval_run_id={approval_run_id}")
     return 0
 
 

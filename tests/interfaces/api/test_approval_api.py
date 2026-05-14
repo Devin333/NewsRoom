@@ -69,3 +69,50 @@ def test_approval_api_already_decided_uses_conflict(tmp_path) -> None:
     assert response.status_code == 409
     assert payload["success"] is False
     assert payload["error"]["code"] == "approval_already_decided"
+
+
+def test_approval_api_resume_context_for_decided_approval(tmp_path) -> None:
+    service = ApprovalApplicationService(store_path=tmp_path / "approvals.json")
+    client = TestClient(create_app(approval_service_factory=lambda: service))
+    approval_id = client.post(
+        "/api/v1/approvals",
+        json={
+            "requested_action": "continue_agent",
+            "risk_level": "medium",
+            "task_id": "task-paused",
+            "run_id": "run-paused",
+        },
+    ).json()["data"]["approval_id"]
+    client.post(
+        f"/api/v1/approvals/{approval_id}/approve",
+        json={"decided_by": "operator", "reason": "resume"},
+    )
+
+    response = client.post(
+        f"/api/v1/approvals/{approval_id}/resume-context",
+        json={"decision_key": "editor_decision"},
+    )
+    payload = response.json()["data"]
+
+    assert response.status_code == 200
+    assert payload["decision_key"] == "editor_decision"
+    assert payload["buffer_updates"]["editor_decision"]["approval_id"] == approval_id
+    assert payload["buffer_updates"]["editor_decision"]["decision"] == "approved"
+    assert payload["resume_metadata"]["approval_run_id"] == "run-paused"
+    assert payload["resume_metadata"]["task_id"] == "task-paused"
+
+
+def test_approval_api_resume_context_rejects_pending_approval(tmp_path) -> None:
+    service = ApprovalApplicationService(store_path=tmp_path / "approvals.json")
+    client = TestClient(create_app(approval_service_factory=lambda: service))
+    approval_id = client.post(
+        "/api/v1/approvals",
+        json={"requested_action": "continue_agent"},
+    ).json()["data"]["approval_id"]
+
+    response = client.post(f"/api/v1/approvals/{approval_id}/resume-context", json={})
+    payload = response.json()
+
+    assert response.status_code == 400
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "approval_resume_context_unavailable"

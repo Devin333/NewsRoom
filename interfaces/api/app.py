@@ -26,6 +26,7 @@ from interfaces.models import (
     ApiResponse,
     ApprovalDecisionRequest,
     ApprovalModifyRequest,
+    ApprovalResumeContextRequest,
     ArxivSourceFetchRequest,
     ArtifactRef,
     ApprovalSubmitRequest,
@@ -1077,6 +1078,27 @@ def create_app(
             result = approval_service_factory().get_approval(approval_id)
         except ApprovalNotFoundError as exc:
             return _error(status_code=404, code="approval_not_found", message=str(exc))
+        return _success(result.to_dict())
+
+    @api.post("/api/v1/approvals/{approval_id}/resume-context")
+    def approval_resume_context(
+        approval_id: str,
+        request: ApprovalResumeContextRequest | None = None,
+    ):
+        actual_request = request or ApprovalResumeContextRequest()
+        try:
+            result = approval_service_factory().build_resume_context(
+                approval_id,
+                decision_key=actual_request.decision_key,
+            )
+        except ApprovalNotFoundError as exc:
+            return _error(status_code=404, code="approval_not_found", message=str(exc))
+        except ValueError as exc:
+            return _error(
+                status_code=400,
+                code="approval_resume_context_unavailable",
+                message=str(exc),
+            )
         return _success(result.to_dict())
 
     @api.post("/api/v1/approvals/{approval_id}/approve")

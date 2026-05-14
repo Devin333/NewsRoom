@@ -118,3 +118,57 @@ def test_news_cli_approval_modify_uses_local_json_store(tmp_path, capsys) -> Non
     assert exit_code == 0
     assert payload["approval"]["status"] == "modified"
     assert payload["approval"]["decision"]["modifications"] == {"channel": "slack"}
+
+
+def test_news_cli_approval_resume_context_uses_local_json_store(tmp_path, capsys) -> None:
+    store_path = tmp_path / "approvals.json"
+
+    news_cli.main(
+        [
+            "approvals",
+            "submit",
+            "--requested-action",
+            "continue_agent",
+            "--task-id",
+            "task-paused",
+            "--run-id",
+            "run-paused",
+            "--store-path",
+            str(store_path),
+            "--json",
+        ]
+    )
+    approval_id = json.loads(capsys.readouterr().out)["approval_id"]
+    news_cli.main(
+        [
+            "approvals",
+            "approve",
+            approval_id,
+            "--decided-by",
+            "operator",
+            "--store-path",
+            str(store_path),
+            "--json",
+        ]
+    )
+    capsys.readouterr()
+
+    exit_code = news_cli.main(
+        [
+            "approvals",
+            "resume-context",
+            approval_id,
+            "--decision-key",
+            "editor_decision",
+            "--store-path",
+            str(store_path),
+            "--json",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["decision_key"] == "editor_decision"
+    assert payload["buffer_updates"]["editor_decision"]["approval_id"] == approval_id
+    assert payload["resume_metadata"]["approval_run_id"] == "run-paused"
+    assert payload["resume_metadata"]["task_id"] == "task-paused"

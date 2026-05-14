@@ -68,6 +68,7 @@ def test_mcp_catalog_lists_tools_without_calling_factories() -> None:
     assert "news.worker.status" in tool_names
     assert "news.queue.status" in tool_names
     assert "news.approval.submit" in tool_names
+    assert "news.approval.resume_context" in tool_names
     assert "news://reports/latest" in resource_uris
     assert "news://reports/{report_id}" in resource_uris
     assert "news://runs/{run_id}/manifest" in resource_uris
@@ -124,6 +125,9 @@ def test_mcp_capability_manifest_describes_tools_resources_and_prompts() -> None
     assert capabilities["news.daily.run"]["category"] == "runs"
     assert capabilities["news.report.publish"]["requires_approval"] is True
     assert capabilities["news.report.publish"]["risk_level"] == "high"
+    assert capabilities["news.approval.resume_context"]["permission"] == "approvals:decide"
+    assert capabilities["news.approval.resume_context"]["read_only"] is True
+    assert capabilities["news.approval.resume_context"]["category"] == "approvals"
     assert capabilities["news://runs/{run_id}/manifest"]["kind"] == "resource"
     assert capabilities["news://runs/{run_id}/manifest"]["read_only"] is True
     assert capabilities["news://runs/{run_id}/manifest"]["permission"] == "runs:read"
@@ -576,6 +580,10 @@ def test_mcp_approval_tools_persist_submit_approve_and_read(tmp_path) -> None:
     )
     fetched = service.call_tool("news.approval.get", {"approval_id": approval_id})
     listed = service.call_tool("news.approval.list", {"status": "approved"})
+    resume_context = service.call_tool(
+        "news.approval.resume_context",
+        {"approval_id": approval_id, "decision_key": "editor_decision"},
+    )
 
     assert store_path.exists()
     assert approved.success is True
@@ -584,6 +592,10 @@ def test_mcp_approval_tools_persist_submit_approve_and_read(tmp_path) -> None:
     assert fetched.data["approval"]["status"] == "approved"
     assert listed.data["approval_count"] == 1
     assert listed.data["approvals"][0]["approval_id"] == approval_id
+    assert resume_context.success is True
+    assert resume_context.data["decision_key"] == "editor_decision"
+    assert resume_context.data["buffer_updates"]["editor_decision"]["approval_id"] == approval_id
+    assert resume_context.data["resume_metadata"]["approval_run_id"] == "run-1"
 
 
 def test_mcp_reads_latest_report_resource_from_local_json_artifact(tmp_path) -> None:

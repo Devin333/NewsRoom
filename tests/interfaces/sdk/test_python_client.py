@@ -127,6 +127,7 @@ def test_news_client_writes_extended_interface_surfaces() -> None:
     assert client.schedules.trigger("schedule/1", now="2026-05-14T00:00:00Z") == {"ok": True}
     assert client.approvals.approve("approval/1", decided_by="reviewer", reason="ok") == {"ok": True}
     assert client.approvals.reject("approval/2", decided_by="reviewer") == {"ok": True}
+    assert client.approvals.resume_context("approval/3", decision_key="editor_decision") == {"ok": True}
 
     assert [request.full_url for request in opener.requests] == [
         "https://news.example/api/v1/memory/reindex",
@@ -136,6 +137,7 @@ def test_news_client_writes_extended_interface_surfaces() -> None:
         "https://news.example/api/v1/schedules/schedule%2F1/trigger",
         "https://news.example/api/v1/approvals/approval%2F1/approve",
         "https://news.example/api/v1/approvals/approval%2F2/reject",
+        "https://news.example/api/v1/approvals/approval%2F3/resume-context",
     ]
     assert [json.loads(request.data.decode("utf-8")) for request in opener.requests] == [
         {"run_id": "run/1", "topic": "AI policy"},
@@ -145,6 +147,7 @@ def test_news_client_writes_extended_interface_surfaces() -> None:
         {"now": "2026-05-14T00:00:00Z"},
         {"decided_by": "reviewer", "reason": "ok"},
         {"decided_by": "reviewer", "reason": None},
+        {"decision_key": "editor_decision"},
     ]
 
 

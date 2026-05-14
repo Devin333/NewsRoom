@@ -307,6 +307,8 @@ class MCPApplicationService:
                 return self._approval_modify(args)
             if tool_name == "news.approval.submit_decision":
                 return self._approval_submit_decision(args)
+            if tool_name == "news.approval.resume_context":
+                return self._approval_resume_context(args)
             return MCPToolCallResult(
                 tool_name=tool_name,
                 success=False,
@@ -926,6 +928,17 @@ class MCPApplicationService:
             raise ValueError("decision must be approve, reject, or modify")
         return MCPToolCallResult(
             tool_name="news.approval.submit_decision",
+            success=True,
+            data=result.to_dict(),
+        )
+
+    def _approval_resume_context(self, args: dict[str, Any]) -> MCPToolCallResult:
+        result = self.approval_service_factory().build_resume_context(
+            _approval_id(args),
+            decision_key=str(args.get("decision_key") or "human_review_decision"),
+        )
+        return MCPToolCallResult(
+            tool_name="news.approval.resume_context",
             success=True,
             data=result.to_dict(),
         )
@@ -1720,6 +1733,22 @@ def _tools() -> list[MCPTool]:
                     "decided_by": {"type": "string"},
                     "modifications": {"type": "object"},
                     "reason": {"type": "string"},
+                },
+            },
+        ),
+        MCPTool(
+            name="news.approval.resume_context",
+            title="Build approval resume context",
+            description="Build DataBuffer updates and resume metadata from a decided approval.",
+            input_schema={
+                "type": "object",
+                "required": ["approval_id"],
+                "properties": {
+                    "approval_id": {"type": "string"},
+                    "decision_key": {
+                        "type": "string",
+                        "default": "human_review_decision",
+                    },
                 },
             },
         ),

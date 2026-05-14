@@ -199,3 +199,7 @@ class ApprovalDecisionRequest(BaseModel):
 
 class ApprovalModifyRequest(ApprovalDecisionRequest):
     modifications: dict[str, Any] = Field(default_factory=dict)
+
+
+class ApprovalResumeContextRequest(BaseModel):
+    decision_key: str = Field(default="human_review_decision", min_length=1)

@@ -456,6 +456,17 @@ class ApprovalsClient:
             json_body={"decided_by": decided_by, "reason": reason},
         )
 
+    def resume_context(
+        self,
+        approval_id: str,
+        *,
+        decision_key: str = "human_review_decision",
+    ) -> dict[str, Any]:
+        return self.client.post(
+            f"/api/v1/approvals/{_quote_path_segment(approval_id)}/resume-context",
+            json_body={"decision_key": decision_key},
+        )
+
 
 def _url(base_url: str, path: str, *, params: dict[str, Any] | None) -> str:
     query = {

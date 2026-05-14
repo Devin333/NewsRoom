@@ -48,6 +48,7 @@ Minimum surface:
 - `client.approvals.get(approvalId)`
 - `client.approvals.approve(approvalId, { decidedBy, reason })`
 - `client.approvals.reject(approvalId, { decidedBy, reason })`
+- `client.approvals.resumeContext(approvalId, { decisionKey })`
 
 SDK implementations must preserve the common `ApiResponse` / `ApiError` envelope and must not read runtime storage directly.
 Run inspection helpers must call `/api/v1/runs/...` endpoints and must not read `.newsroom/runs` directly.
