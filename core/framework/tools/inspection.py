@@ -8,7 +8,12 @@ from core.framework.tools.boundary import (
     audit_agent_tool_boundary,
 )
 from core.framework.tools.executor import ToolExecutor
-from core.framework.tools.models import ToolDefinition, ToolPolicy, ToolStatus
+from core.framework.tools.models import (
+    ToolDefinition,
+    ToolPolicy,
+    ToolStatus,
+    is_default_dangerous_tool_name,
+)
 from core.framework.tools.registry import ToolRegistry
 from core.framework.tools.telemetry import ToolEvent, ToolExecutionRecord, ToolMetrics
 
@@ -343,7 +348,8 @@ def inspect_tool_registry(
         has_side_effects = _has_side_effects(definition)
         is_external = _is_external_tool(definition.name)
 
-        dangerous_tools += int(definition.is_dangerous)
+        is_dangerous = _is_dangerous_tool(definition)
+        dangerous_tools += int(is_dangerous)
         approval_required_tools += int(definition.requires_approval)
         side_effect_tools += int(has_side_effects)
         external_tools += int(is_external)
@@ -366,7 +372,7 @@ def inspect_tool_registry(
         )
         namespace_counts["tool_count"] += 1
         namespace_counts["exposed_count"] += int(definition.name in exposed_names)
-        namespace_counts["dangerous_count"] += int(definition.is_dangerous)
+        namespace_counts["dangerous_count"] += int(is_dangerous)
         namespace_counts["approval_required_count"] += int(definition.requires_approval)
         namespace_counts["side_effect_count"] += int(has_side_effects)
         namespace_counts["external_count"] += int(is_external)
@@ -380,7 +386,7 @@ def inspect_tool_registry(
                 exposed=definition.name in exposed_names,
                 risk_level=risk_level,
                 side_effect=definition.side_effect,
-                is_dangerous=definition.is_dangerous,
+                is_dangerous=is_dangerous,
                 requires_approval=definition.requires_approval,
                 timeout_seconds=definition.timeout_seconds,
                 max_attempts=definition.max_attempts,
@@ -489,7 +495,7 @@ def inspect_tool_policy(
         unknown_allowed_tools=sorted(set(policy.allowed_tools) - known_tools),
         unknown_blocked_tools=sorted(set(policy.blocked_tools) - known_tools),
         exposed_dangerous_tools=sorted(
-            definition.name for definition in exposed_definitions if definition.is_dangerous
+            definition.name for definition in exposed_definitions if _is_dangerous_tool(definition)
         ),
         exposed_side_effect_tools=sorted(
             definition.name for definition in exposed_definitions if _has_side_effects(definition)
@@ -569,7 +575,7 @@ def inspect_tool_runtime(
 
 
 def classify_tool_risk(definition: ToolDefinition) -> str:
-    if definition.is_dangerous or definition.side_effect == "destructive":
+    if _is_dangerous_tool(definition) or definition.side_effect == "destructive":
         return "critical"
     if definition.side_effect in {
         "publishing",
@@ -589,7 +595,7 @@ def classify_tool_risk(definition: ToolDefinition) -> str:
 
 def _definition_findings(definition: ToolDefinition) -> list[ToolInspectionFinding]:
     findings: list[ToolInspectionFinding] = []
-    if definition.is_dangerous:
+    if _is_dangerous_tool(definition):
         findings.append(
             ToolInspectionFinding(
                 code="dangerous_tool_defined",
@@ -769,6 +775,10 @@ def _string_counts(values: Iterable[str]) -> dict[str, int]:
 
 def _has_side_effects(definition: ToolDefinition) -> bool:
     return definition.side_effect not in SIDE_EFFECT_NONE
+
+
+def _is_dangerous_tool(definition: ToolDefinition) -> bool:
+    return definition.is_dangerous or is_default_dangerous_tool_name(definition.name)
 
 
 def _is_external_tool(tool_name: str) -> bool:

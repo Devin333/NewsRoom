@@ -57,6 +57,7 @@ def _inspection_registry() -> ToolRegistry:
 
 def test_classify_tool_risk_is_deterministic() -> None:
     assert classify_tool_risk(ToolDefinition(name="memory.search")) == "low"
+    assert classify_tool_risk(ToolDefinition(name="http.request")) == "critical"
     assert (
         classify_tool_risk(
             ToolDefinition(name="local.write", side_effect="writes_local_state")
@@ -108,6 +109,33 @@ def test_inspect_tool_policy_reports_exposure_and_unknown_tools() -> None:
     assert inspection.exposed_mcp_tools == ["mcp.fixture.echo"]
     assert payload["agent_id"] == "analyst"
     assert payload["broad_access"] is False
+
+
+def test_inspection_counts_default_dangerous_tool_names_without_marker() -> None:
+    registry = ToolRegistry()
+    registry.register(ToolDefinition(name="http.request"), lambda args: {"ok": True})
+
+    inspection = inspect_tool_registry(
+        registry,
+        policy=ToolPolicy(
+            allowed_tools=["http.request"],
+            allow_dangerous_tools=True,
+        ),
+    )
+    payload = inspection.to_dict()
+
+    assert inspection.risk_summary.critical == 1
+    assert inspection.risk_summary.dangerous_tools == 1
+    assert inspection.policy is not None
+    assert inspection.policy.exposed_dangerous_tools == ["http.request"]
+    assert inspection.tools[0].is_dangerous is True
+    assert inspection.tools[0].risk_level == "critical"
+    assert payload["namespaces"][0]["dangerous_count"] == 1
+    assert "dangerous_tool_defined" in inspection.tools[0].finding_codes
+    assert any(
+        finding.code == "policy_exposes_dangerous_tool"
+        for finding in inspection.findings
+    )
 
 
 def test_inspect_tool_registry_reports_risk_namespaces_and_findings() -> None:
