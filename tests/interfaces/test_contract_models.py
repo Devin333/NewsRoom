@@ -1,27 +1,36 @@
 from interfaces.api.models import ApiError as ApiApiError
 from interfaces.api.models import ApiResponse as ApiApiResponse
 from interfaces.api.models import ApprovalResumeContextRequest as ApiApprovalResumeContextRequest
+from interfaces.api.models import ApprovalView as ApiApprovalView
 from interfaces.api.models import ArtifactRef as ApiArtifactRef
 from interfaces.api.models import DailyRunRequest as ApiDailyRunRequest
+from interfaces.api.models import MemorySearchResponse as ApiMemorySearchResponse
 from interfaces.api.models import PageResult as ApiPageResult
 from interfaces.api.models import Pagination as ApiPagination
 from interfaces.api.models import ReportDetail as ApiReportDetail
 from interfaces.api.models import ReportSummary as ApiReportSummary
 from interfaces.api.models import RunRequest as ApiRunRequest
 from interfaces.api.models import RunResponse as ApiRunResponse
+from interfaces.api.models import ScheduleView as ApiScheduleView
+from interfaces.api.models import SourceHealthView as ApiSourceHealthView
 from interfaces.api.models import WeeklyRunRequest as ApiWeeklyRunRequest
 from interfaces.models import (
     ApiError,
     ApiResponse,
     ApprovalResumeContextRequest,
+    ApprovalView,
     ArtifactRef,
     DailyRunRequest,
+    MemorySearchMatch,
+    MemorySearchResponse,
     PageResult,
     Pagination,
     ReportDetail,
     ReportSummary,
     RunRequest,
     RunResponse,
+    ScheduleView,
+    SourceHealthView,
     WeeklyRunRequest,
 )
 
@@ -39,6 +48,10 @@ def test_contract_models_are_exported_from_shared_interfaces_models() -> None:
     assert ApiReportSummary is ReportSummary
     assert ApiReportDetail is ReportDetail
     assert ApiWeeklyRunRequest is WeeklyRunRequest
+    assert ApiSourceHealthView is SourceHealthView
+    assert ApiMemorySearchResponse is MemorySearchResponse
+    assert ApiScheduleView is ScheduleView
+    assert ApiApprovalView is ApprovalView
     assert RunRequest.__module__ == "interfaces.models.contracts"
     assert RunResponse.__module__ == "interfaces.models.contracts"
     assert ReportSummary.__module__ == "interfaces.models.contracts"
@@ -123,3 +136,61 @@ def test_report_summary_matches_target_contract_fields() -> None:
     assert summary.citation_coverage_score == 1.0
     assert summary.source_count == 3
     assert summary.evidence_count == 2
+
+
+def test_target_view_models_are_serializable_and_schema_ready() -> None:
+    health = SourceHealthView(
+        source_id="source-1",
+        source_name="Source",
+        url="https://example.com/rss",
+        status="healthy",
+    )
+    memory = MemorySearchResponse(
+        collection="report_sections",
+        query="agent runtime",
+        limit=1,
+        result_count=1,
+        results=[
+            MemorySearchMatch(
+                document_id="doc-1",
+                collection="report_sections",
+                score=0.9,
+                text="Agent runtime memory improved.",
+                metadata={"run_id": "run-1"},
+            )
+        ],
+    )
+    schedule = ScheduleView(
+        schedule_id="daily",
+        name="Daily intelligence",
+        trigger_type="interval",
+        task_type="daily_intelligence.run",
+        queue_name="news:queue:daily",
+        interval_seconds=86400,
+        payload={"topic": "AI"},
+    )
+    approval = ApprovalView(
+        approval_id="approval-1",
+        requested_action="publish_report",
+        status="pending",
+        risk_level="high",
+        run_id="run-1",
+        requested_by="operator",
+    )
+
+    payloads = [
+        model.model_dump() if hasattr(model, "model_dump") else model.dict()
+        for model in (health, memory, schedule, approval)
+    ]
+
+    assert payloads[0]["status"] == "healthy"
+    assert payloads[1]["results"][0]["document_id"] == "doc-1"
+    assert payloads[2]["payload"] == {"topic": "AI"}
+    assert payloads[3]["requested_action"] == "publish_report"
+    for model in (SourceHealthView, MemorySearchResponse, ScheduleView, ApprovalView):
+        schema = (
+            model.model_json_schema()
+            if hasattr(model, "model_json_schema")
+            else model.schema()
+        )
+        assert schema["title"] == model.__name__

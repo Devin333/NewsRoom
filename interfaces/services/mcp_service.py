@@ -1903,50 +1903,50 @@ def _prompt_capability(prompt: MCPPrompt) -> MCPCapability:
 
 def _tool_permission(tool_name: str) -> str:
     if tool_name.startswith("news.report.") and tool_name.endswith(".publish"):
-        return "reports:publish"
+        return "manage:approvals"
     if tool_name in {"news.report.request_review"}:
-        return "approvals:decide"
+        return "manage:approvals"
     if tool_name.startswith("news.approval."):
-        return "approvals:decide" if not tool_name.endswith((".list", ".get")) else "approvals:read"
+        return "manage:approvals" if not tool_name.endswith((".list", ".get")) else "read:reports"
     if tool_name.startswith("news.daily.") or tool_name.startswith("news.topic.") or tool_name.startswith(
         "news.weekly."
     ):
-        return "runs:create" if not tool_name.endswith(".enqueue") else "runs:create"
+        return "write:runs"
     if tool_name.startswith("news.run."):
-        return "runs:read"
+        return "read:reports"
     if tool_name.startswith("news.report."):
-        return "reports:read"
+        return "read:reports"
     if tool_name.startswith("news.source."):
-        return "sources:read"
+        return "read:reports"
     if tool_name.startswith("news.memory."):
-        return "memory:search"
+        return "read:reports"
     if tool_name.startswith("news.entity."):
-        return "entities:read" if _tool_is_read_only(tool_name) else "entities:write"
+        return "read:reports" if _tool_is_read_only(tool_name) else "write:runs"
     if tool_name.startswith("news.subscription."):
-        return "subscriptions:read" if _tool_is_read_only(tool_name) else "subscriptions:write"
+        return "read:reports" if _tool_is_read_only(tool_name) else "manage:schedules"
     if tool_name.startswith("news.storage."):
-        return "storage:read"
+        return "admin:storage"
     if tool_name.startswith("news.worker.") or tool_name.startswith("news.queue."):
-        return "workers:read"
+        return "read:reports"
     if tool_name == "news.diagnose":
         return "admin:diagnose"
-    return "mcp:read"
+    return "read:reports"
 
 
 def _resource_permission(uri: str) -> str:
     if uri.startswith("news://reports/"):
-        return "reports:read"
+        return "read:reports"
     if uri.startswith("news://runs/") or uri.startswith("news://artifacts/"):
-        return "runs:read"
+        return "read:reports"
     if uri.startswith("news://memory/"):
-        return "memory:search"
+        return "read:reports"
     if uri.startswith("news://storage/"):
-        return "storage:read"
+        return "admin:storage"
     if uri.startswith("news://sources/"):
-        return "sources:read"
+        return "read:reports"
     if uri.startswith("news://workers") or uri.startswith("news://queues"):
-        return "workers:read"
-    return "mcp:read"
+        return "read:reports"
+    return "read:reports"
 
 
 def _mcp_category(name: str) -> str:

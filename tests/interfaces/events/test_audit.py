@@ -10,12 +10,14 @@ def test_actor_context_expands_role_permissions() -> None:
 
     assert actor.actor_id == "devin"
     assert actor.has_permission("runs:create") is True
+    assert actor.has_permission("write:runs") is True
     assert actor.has_permission("reports:publish") is False
+    assert actor.has_permission("manage:approvals") is False
 
 
 def test_actor_context_supports_target_interface_roles() -> None:
-    readonly = actor_context_from_headers(
-        {"X-News-Actor": "reader", "X-News-Roles": "read-only"},
+    viewer = actor_context_from_headers(
+        {"X-News-Actor": "reader", "X-News-Roles": "viewer"},
         request_id="req-1",
     )
     mcp_client = actor_context_from_headers(
@@ -23,8 +25,10 @@ def test_actor_context_supports_target_interface_roles() -> None:
         request_id="req-2",
     )
 
-    assert readonly.has_permission("reports:read") is True
-    assert readonly.has_permission("runs:create") is False
+    assert viewer.has_permission("read:reports") is True
+    assert viewer.has_permission("reports:read") is True
+    assert viewer.has_permission("runs:create") is False
+    assert viewer.has_permission("write:runs") is False
     assert mcp_client.has_permission("mcp:read") is True
     assert mcp_client.has_permission("reports:publish") is False
 

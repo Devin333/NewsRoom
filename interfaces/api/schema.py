@@ -4,10 +4,26 @@ from copy import deepcopy
 from typing import Any
 
 from interfaces.api.app import create_app
-from interfaces.models import ApiError, ApiResponse, RunResponse
+from interfaces.models import (
+    ApiError,
+    ApiResponse,
+    ApprovalView,
+    MemorySearchResponse,
+    RunResponse,
+    ScheduleView,
+    SourceHealthView,
+)
 
 
-_CONTRACT_MODELS = (ApiError, ApiResponse, RunResponse)
+_CONTRACT_MODELS = (
+    ApiError,
+    ApiResponse,
+    ApprovalView,
+    MemorySearchResponse,
+    RunResponse,
+    ScheduleView,
+    SourceHealthView,
+)
 
 
 def export_openapi_schema() -> dict[str, Any]:

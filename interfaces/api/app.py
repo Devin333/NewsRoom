@@ -1541,35 +1541,35 @@ def _required_api_permission(method: str, path: str) -> str | None:
     if resource == "admin":
         return "admin:diagnose"
     if resource == "mcp":
-        return "mcp:read"
+        return "read:reports"
     if resource == "runs":
-        return "runs:read" if method == "GET" else "runs:create"
+        return "read:reports" if method == "GET" else "write:runs"
     if resource == "reports":
         if method == "GET":
-            return "reports:read"
+            return "read:reports"
         if path.endswith("/publish"):
-            return "reports:publish"
-        return "reports:read"
+            return "manage:approvals"
+        return "read:reports"
     if resource == "search":
-        return "reports:read"
+        return "read:reports"
     if resource == "memory":
-        return "memory:search"
+        return "read:reports"
     if resource == "sources":
-        return "sources:read" if method == "GET" else "sources:write"
+        return "read:reports"
     if resource in {"workers", "queues"}:
-        return "workers:read"
+        return "read:reports"
     if resource == "schedules":
-        return "schedules:read" if method == "GET" else "schedules:write"
+        return "read:reports" if method == "GET" else "manage:schedules"
     if resource == "approvals":
-        return "approvals:read" if method == "GET" else "approvals:decide"
+        return "read:reports" if method == "GET" else "manage:approvals"
     if resource == "entities":
-        return "entities:read" if method == "GET" else "entities:write"
+        return "read:reports" if method == "GET" else "write:runs"
     if resource == "subscriptions":
-        return "subscriptions:read" if method == "GET" else "subscriptions:write"
+        return "read:reports" if method == "GET" else "manage:schedules"
     if resource == "storage":
-        return "storage:read"
+        return "admin:storage"
     if resource == "artifacts":
-        return "runs:read"
+        return "read:reports"
     return None
 
 

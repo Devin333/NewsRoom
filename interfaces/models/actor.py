@@ -8,8 +8,42 @@ from pydantic import BaseModel, Field
 
 ActorType = Literal["user", "service", "mcp_client", "system", "anonymous"]
 
+READ_REPORTS_PERMISSION = "read:reports"
+WRITE_RUNS_PERMISSION = "write:runs"
+MANAGE_SCHEDULES_PERMISSION = "manage:schedules"
+MANAGE_APPROVALS_PERMISSION = "manage:approvals"
+ADMIN_STORAGE_PERMISSION = "admin:storage"
+
+PERMISSION_ALIASES: dict[str, set[str]] = {
+    READ_REPORTS_PERMISSION: {
+        "runs:read",
+        "reports:read",
+        "sources:read",
+        "memory:search",
+        "workers:read",
+        "schedules:read",
+        "approvals:read",
+        "mcp:read",
+        "storage:read",
+        "entities:read",
+        "subscriptions:read",
+    },
+    WRITE_RUNS_PERMISSION: {"runs:create", "runs:cancel"},
+    MANAGE_SCHEDULES_PERMISSION: {"schedules:write"},
+    MANAGE_APPROVALS_PERMISSION: {"reports:publish", "approvals:decide"},
+    ADMIN_STORAGE_PERMISSION: {"storage:read"},
+}
+
 ROLE_PERMISSIONS: dict[str, set[str]] = {
+    "viewer": {
+        READ_REPORTS_PERMISSION,
+    },
     "admin": {
+        READ_REPORTS_PERMISSION,
+        WRITE_RUNS_PERMISSION,
+        MANAGE_SCHEDULES_PERMISSION,
+        MANAGE_APPROVALS_PERMISSION,
+        ADMIN_STORAGE_PERMISSION,
         "runs:create",
         "runs:read",
         "runs:cancel",
@@ -22,7 +56,6 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "schedules:read",
         "schedules:write",
         "approvals:read",
-        "approvals:decide",
         "admin:diagnose",
         "mcp:read",
         "storage:read",
@@ -32,6 +65,9 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "subscriptions:write",
     },
     "operator": {
+        READ_REPORTS_PERMISSION,
+        WRITE_RUNS_PERMISSION,
+        MANAGE_SCHEDULES_PERMISSION,
         "runs:create",
         "runs:read",
         "runs:cancel",
@@ -43,7 +79,6 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "schedules:read",
         "schedules:write",
         "approvals:read",
-        "approvals:decide",
         "admin:diagnose",
         "mcp:read",
         "storage:read",
@@ -53,6 +88,8 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "subscriptions:write",
     },
     "developer": {
+        READ_REPORTS_PERMISSION,
+        WRITE_RUNS_PERMISSION,
         "runs:create",
         "runs:read",
         "reports:read",
@@ -66,12 +103,15 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "subscriptions:read",
     },
     "reviewer": {
+        READ_REPORTS_PERMISSION,
+        MANAGE_APPROVALS_PERMISSION,
         "runs:read",
         "reports:read",
         "approvals:read",
         "approvals:decide",
     },
     "read-only": {
+        READ_REPORTS_PERMISSION,
         "runs:read",
         "reports:read",
         "sources:read",
@@ -85,6 +125,7 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "subscriptions:read",
     },
     "analyst_readonly": {
+        READ_REPORTS_PERMISSION,
         "runs:read",
         "reports:read",
         "sources:read",
@@ -98,6 +139,7 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "subscriptions:read",
     },
     "mcp_client": {
+        READ_REPORTS_PERMISSION,
         "mcp:read",
         "runs:read",
         "reports:read",
@@ -106,6 +148,11 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "workers:read",
     },
     "service": {
+        READ_REPORTS_PERMISSION,
+        WRITE_RUNS_PERMISSION,
+        MANAGE_SCHEDULES_PERMISSION,
+        MANAGE_APPROVALS_PERMISSION,
+        ADMIN_STORAGE_PERMISSION,
         "runs:create",
         "runs:read",
         "reports:read",
@@ -140,14 +187,30 @@ class ActorContext(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     def has_permission(self, permission: str) -> bool:
-        return permission in self.effective_permissions
+        required = _equivalent_permissions(permission)
+        return bool(required.intersection(self.effective_permissions))
 
     @property
     def effective_permissions(self) -> set[str]:
         permissions = set(self.permissions)
         for role in self.roles:
             permissions.update(ROLE_PERMISSIONS.get(role, set()))
-        return permissions
+        expanded = set(permissions)
+        for permission in permissions:
+            expanded.update(_equivalent_permissions(permission))
+        return expanded
+
+
+def _equivalent_permissions(permission: str) -> set[str]:
+    equivalents = {permission}
+    aliases = PERMISSION_ALIASES.get(permission)
+    if aliases:
+        equivalents.update(aliases)
+    for canonical, legacy_aliases in PERMISSION_ALIASES.items():
+        if permission in legacy_aliases:
+            equivalents.add(canonical)
+            equivalents.update(legacy_aliases)
+    return equivalents
 
 
 def actor_context_from_headers(

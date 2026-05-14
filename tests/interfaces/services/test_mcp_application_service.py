@@ -118,21 +118,21 @@ def test_mcp_capability_manifest_describes_tools_resources_and_prompts() -> None
     assert all(capability["permission"] for capability in capabilities.values())
     assert capabilities["news.report.latest"]["kind"] == "tool"
     assert capabilities["news.report.latest"]["read_only"] is True
-    assert capabilities["news.report.latest"]["permission"] == "reports:read"
+    assert capabilities["news.report.latest"]["permission"] == "read:reports"
     assert capabilities["news.report.latest"]["category"] == "reports"
     assert capabilities["news.daily.run"]["read_only"] is False
-    assert capabilities["news.daily.run"]["permission"] == "runs:create"
+    assert capabilities["news.daily.run"]["permission"] == "write:runs"
     assert capabilities["news.daily.run"]["category"] == "runs"
     assert capabilities["news.report.publish"]["requires_approval"] is True
     assert capabilities["news.report.publish"]["risk_level"] == "high"
-    assert capabilities["news.approval.resume_context"]["permission"] == "approvals:decide"
+    assert capabilities["news.approval.resume_context"]["permission"] == "manage:approvals"
     assert capabilities["news.approval.resume_context"]["read_only"] is True
     assert capabilities["news.approval.resume_context"]["category"] == "approvals"
     assert capabilities["news://runs/{run_id}/manifest"]["kind"] == "resource"
     assert capabilities["news://runs/{run_id}/manifest"]["read_only"] is True
-    assert capabilities["news://runs/{run_id}/manifest"]["permission"] == "runs:read"
-    assert capabilities["news://storage/metrics"]["permission"] == "storage:read"
-    assert capabilities["news://reports/latest"]["permission"] == "reports:read"
+    assert capabilities["news://runs/{run_id}/manifest"]["permission"] == "read:reports"
+    assert capabilities["news://storage/metrics"]["permission"] == "admin:storage"
+    assert capabilities["news://reports/latest"]["permission"] == "read:reports"
     assert capabilities["news://runs/{run_id}/manifest"]["metadata"]["redacted"] is True
     assert capabilities["news.evidence_audit"]["kind"] == "prompt"
     assert capabilities["news.evidence_audit"]["permission"] == "mcp:read"

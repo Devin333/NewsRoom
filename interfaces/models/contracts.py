@@ -119,9 +119,39 @@ class MemorySearchRequest(BaseModel):
     filters: dict[str, Any] = Field(default_factory=dict)
 
 
+class MemorySearchMatch(BaseModel):
+    document_id: str
+    collection: str | None = None
+    score: float | None = None
+    text: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class MemorySearchResponse(BaseModel):
+    collection: str
+    query: str
+    filters: dict[str, Any] = Field(default_factory=dict)
+    limit: int = Field(default=5, ge=1)
+    result_count: int
+    results: list[MemorySearchMatch] = Field(default_factory=list)
+
+
 class MemoryReindexRequest(BaseModel):
     run_id: str
     topic: str | None = None
+
+
+class SourceHealthView(BaseModel):
+    source_id: str
+    status: str
+    source_name: str | None = None
+    url: str | None = None
+    consecutive_failures: int = 0
+    last_success_at: datetime | None = None
+    last_failure_at: datetime | None = None
+    cooldown_until: datetime | None = None
+    last_error: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class SourceProbeRequest(BaseModel):
@@ -171,6 +201,21 @@ class DailyScheduleRequest(BaseModel):
     queue_name: str = "news:queue:daily"
 
 
+class ScheduleView(BaseModel):
+    schedule_id: str
+    name: str
+    trigger_type: str
+    enabled: bool = True
+    task_type: str | None = None
+    queue_name: str | None = None
+    interval_seconds: int | None = None
+    run_at: datetime | None = None
+    last_run_at: datetime | None = None
+    next_run_at: datetime | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class ScheduleTickRequest(BaseModel):
     now: datetime | None = None
     include_disabled: bool = False
@@ -189,6 +234,24 @@ class ApprovalSubmitRequest(BaseModel):
     run_id: str | None = None
     requested_by: str | None = None
     expires_at: datetime | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ApprovalView(BaseModel):
+    approval_id: str
+    requested_action: str
+    status: str
+    risk_level: str = "medium"
+    reason: str | None = None
+    task_id: str | None = None
+    run_id: str | None = None
+    requested_by: str | None = None
+    requested_at: datetime | None = None
+    expires_at: datetime | None = None
+    decided_by: str | None = None
+    decided_at: datetime | None = None
+    decision_type: str | None = None
+    modifications: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

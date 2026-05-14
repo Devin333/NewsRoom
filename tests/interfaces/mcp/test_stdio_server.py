@@ -25,13 +25,13 @@ def test_stdio_handles_capabilities_list() -> None:
     assert response["result"]["schema_version"] == "newsroom.mcp_capability_manifest.v1"
     assert response["result"]["boundary"] == "inbound_mcp_server"
     capabilities = {capability["name"]: capability for capability in response["result"]["capabilities"]}
-    assert capabilities["news.report.latest"]["permission"] == "reports:read"
+    assert capabilities["news.report.latest"]["permission"] == "read:reports"
     assert capabilities["news.report.latest"]["read_only"] is True
     assert capabilities["news.report.latest"]["category"] == "reports"
     assert capabilities["news.report.latest"]["boundary"] == "inbound_mcp_server"
     assert capabilities["news.report.publish"]["requires_approval"] is True
     assert capabilities["news://reports/latest"]["kind"] == "resource"
-    assert capabilities["news://reports/latest"]["permission"] == "reports:read"
+    assert capabilities["news://reports/latest"]["permission"] == "read:reports"
     assert capabilities["news.evidence_audit"]["kind"] == "prompt"
 
 

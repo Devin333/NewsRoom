@@ -138,7 +138,7 @@ def test_api_key_readonly_role_allows_read_and_blocks_write() -> None:
     assert read_response.status_code == 200
     assert write_response.status_code == 403
     assert write_response.json()["error"]["code"] == "forbidden"
-    assert write_response.json()["error"]["details"]["required_permission"] == "runs:create"
+    assert write_response.json()["error"]["details"]["required_permission"] == "write:runs"
     assert fake_worker.enqueue_calls == []
 
 
@@ -182,7 +182,7 @@ def test_api_key_mcp_client_role_allows_mcp_catalog_only() -> None:
 
     assert catalog.status_code == 200
     assert run.status_code == 403
-    assert run.json()["error"]["details"]["required_permission"] == "runs:create"
+    assert run.json()["error"]["details"]["required_permission"] == "write:runs"
 
 
 def test_api_key_roles_can_be_loaded_from_env(monkeypatch) -> None:
