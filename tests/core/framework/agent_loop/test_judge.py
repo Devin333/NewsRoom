@@ -1,4 +1,10 @@
-from core.framework.agent_loop import AgentAction, AgentSpec, JudgeDecision, OutputJudge
+from core.framework.agent_loop import (
+    AgentAction,
+    AgentLoopPolicy,
+    AgentSpec,
+    JudgeDecision,
+    OutputJudge,
+)
 from evidence.models import EvidenceBundle, EvidenceItem
 
 
@@ -39,6 +45,51 @@ def test_output_judge_retries_missing_output_key() -> None:
 
     assert verdict.decision == JudgeDecision.RETRY
     assert verdict.missing_output_keys == ["analysis_result"]
+
+
+def test_output_judge_blocks_subagent_delegation_by_default() -> None:
+    verdict = OutputJudge().judge(
+        agent=_agent(allowed_subagents=["citation_sanity_checker"]),
+        action=AgentAction(
+            action_type="delegate_to_subagent",
+            subagent_id="citation_sanity_checker",
+            subagent_task="check citations",
+            handoff_reason="citation risk",
+        ),
+        called_tools=[],
+    )
+
+    assert verdict.decision == JudgeDecision.BLOCK
+    assert verdict.feedback == (
+        "subagent delegation is not allowed: citation_sanity_checker"
+    )
+    assert verdict.policy_violations == ["subagent delegation not allowed"]
+
+
+def test_output_judge_allows_listed_subagent_as_deferred_escalation_contract() -> None:
+    verdict = OutputJudge().judge(
+        agent=_agent(
+            agent_id="writer",
+            loop_policy=AgentLoopPolicy(allow_subagents=True),
+            allowed_subagents=["citation_sanity_checker"],
+        ),
+        action=AgentAction(
+            action_type="delegate_to_subagent",
+            subagent_id="citation_sanity_checker",
+            subagent_task="check citations",
+            handoff_reason="citation risk",
+        ),
+        called_tools=[],
+    )
+
+    assert verdict.decision == JudgeDecision.ESCALATE
+    assert verdict.policy_violations == []
+    assert verdict.quality_errors == [
+        (
+            "delegation handoff: parent_agent_id=writer; "
+            "child_agent_id=citation_sanity_checker; handoff_reason=citation risk"
+        )
+    ]
 
 
 def test_output_judge_blocks_secret_like_output() -> None:

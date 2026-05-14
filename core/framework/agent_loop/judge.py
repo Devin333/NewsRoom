@@ -28,6 +28,29 @@ class OutputJudge:
         called_tools: list[str],
         inputs: dict[str, Any] | None = None,
     ) -> JudgeVerdict:
+        if action.action_type == "delegate_to_subagent":
+            child_agent_id = action.subagent_id or ""
+            if not agent.allows_subagent(child_agent_id):
+                return JudgeVerdict(
+                    decision=JudgeDecision.BLOCK,
+                    confidence=1.0,
+                    feedback=f"subagent delegation is not allowed: {child_agent_id}",
+                    policy_violations=["subagent delegation not allowed"],
+                )
+            return JudgeVerdict(
+                decision=JudgeDecision.ESCALATE,
+                confidence=1.0,
+                feedback="subagent delegation accepted by policy but orchestration is deferred",
+                quality_errors=[
+                    (
+                        "delegation handoff: "
+                        f"parent_agent_id={agent.agent_id}; "
+                        f"child_agent_id={child_agent_id}; "
+                        f"handoff_reason={action.handoff_reason or 'subagent delegation requested'}"
+                    )
+                ],
+            )
+
         if action.action_type != "final_output":
             return JudgeVerdict(
                 decision=JudgeDecision.RETRY,
