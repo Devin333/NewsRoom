@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 import pytest
 
 from storage.events import EventRecord, LocalJsonEventStore
+from storage.security import REDACTED_VALUE
 
 
 def _event(
@@ -90,6 +91,30 @@ def test_local_json_event_store_filters_by_type(tmp_path) -> None:
 
     assert store.filter_by_type("run-1", "workflow_started") == [first, third]
     assert store.filter_by_type("run-1", "workflow_started", limit=1) == [first]
+
+
+def test_local_json_event_store_redacts_payload_and_metadata(tmp_path) -> None:
+    fake_secret = "sk" + "-eventsecret123456"
+    store = LocalJsonEventStore(tmp_path)
+    event = EventRecord(
+        event_id="event-1",
+        run_id="run-1",
+        event_type="tool_call_failed",
+        timestamp=datetime(2026, 5, 11, 1, 0, tzinfo=UTC),
+        payload={"api_key": fake_secret, "message": f"failed with {fake_secret}"},
+        metadata={"authorization": f"Bearer {fake_secret}", "safe": "visible"},
+    )
+
+    store.append_event(event)
+    restored = store.list_by_run("run-1")[0]
+
+    assert restored.redacted is True
+    assert restored.payload["api_key"] == REDACTED_VALUE
+    assert restored.payload["message"] == f"failed with {REDACTED_VALUE}"
+    assert restored.metadata["authorization"] == REDACTED_VALUE
+    assert restored.metadata["safe"] == "visible"
+    assert restored.metadata["redaction_reports"]
+    assert fake_secret not in str(restored.to_dict())
 
 
 def test_local_json_event_store_handles_missing_and_rejects_invalid_inputs(tmp_path) -> None:

@@ -5,14 +5,22 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 
 from storage.events.models import EventRecord
+from storage.security import StorageRedactor
 
 
 class LocalJsonEventStore:
-    def __init__(self, root: str | Path = ".newsroom/runs/_records/events") -> None:
+    def __init__(
+        self,
+        root: str | Path = ".newsroom/runs/_records/events",
+        *,
+        redactor: StorageRedactor | None = None,
+    ) -> None:
         self.root = Path(root)
+        self.redactor = redactor or StorageRedactor()
 
     def append_event(self, event: EventRecord) -> int:
         _validate_event(event)
+        event = self._redacted_event(event)
         path = self._events_path(event.run_id)
         offset = _line_count(path)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -64,6 +72,43 @@ class LocalJsonEventStore:
     def _events_path(self, run_id: str) -> Path:
         _validate_id(run_id, "run_id")
         return self.root / f"{run_id}.jsonl"
+
+    def _redacted_event(self, event: EventRecord) -> EventRecord:
+        payload_redaction = self.redactor.redact(
+            event.payload,
+            run_id=event.run_id,
+            artifact_id=event.event_id,
+        )
+        metadata_redaction = self.redactor.redact(
+            event.metadata,
+            run_id=event.run_id,
+            artifact_id=f"{event.event_id}:metadata",
+        )
+        metadata = dict(metadata_redaction.value)
+        reports = []
+        if payload_redaction.redacted:
+            reports.append(payload_redaction.report.to_dict())
+        if metadata_redaction.redacted:
+            reports.append(metadata_redaction.report.to_dict())
+        if reports:
+            metadata["redaction_reports"] = reports
+        return EventRecord(
+            event_id=event.event_id,
+            run_id=event.run_id,
+            event_type=event.event_type,
+            timestamp=event.timestamp,
+            workflow_id=event.workflow_id,
+            step_id=event.step_id,
+            task_id=event.task_id,
+            agent_id=event.agent_id,
+            tool_call_id=event.tool_call_id,
+            request_id=event.request_id,
+            payload=dict(payload_redaction.value),
+            severity=event.severity,
+            trace_id=event.trace_id,
+            redacted=True,
+            metadata=metadata,
+        )
 
 
 def _read_events(path: Path) -> list[EventRecord]:
