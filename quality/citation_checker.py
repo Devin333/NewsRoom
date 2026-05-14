@@ -7,6 +7,9 @@ from typing import Any
 from evidence.models import EvidenceBundle, EvidenceItem, VerifiedFindings
 
 
+CLAIM_SUPPORT_TOKEN_OVERLAP_THRESHOLD = 0.75
+
+
 @dataclass(frozen=True)
 class CitationCheckResult:
     passed: bool
@@ -215,9 +218,24 @@ def _split_claim_sentences(content: str) -> list[str]:
 
 def _claim_supported_by_evidence(claim: str, item: EvidenceItem) -> bool:
     evidence_text = f"{item.title} {item.summary}"
+    atomic_claims = _atomic_claims(claim)
+    if len(atomic_claims) > 1:
+        return all(_single_claim_supported_by_evidence(part, evidence_text) for part in atomic_claims)
+    return _single_claim_supported_by_evidence(claim, evidence_text)
+
+
+def _single_claim_supported_by_evidence(claim: str, evidence_text: str) -> bool:
     if _normalize(claim) in _normalize(evidence_text):
         return True
-    return _token_overlap(claim, evidence_text) >= 0.5
+    return _token_overlap(claim, evidence_text) >= CLAIM_SUPPORT_TOKEN_OVERLAP_THRESHOLD
+
+
+def _atomic_claims(claim: str) -> list[str]:
+    parts = [
+        part.strip(" -.,;:")
+        for part in re.split(r"\s*;\s*|\s+\b(?:and|but|while|whereas)\b\s+", claim)
+    ]
+    return [part for part in parts if len(_tokens(part)) >= 1]
 
 
 def _report_text(report: dict) -> str:

@@ -296,6 +296,24 @@ class AgentLoopMetrics:
 
 
 @dataclass(frozen=True)
+class LLMCallArtifact:
+    artifact_id: str
+    iteration: int
+    request: dict[str, Any]
+    response: dict[str, Any]
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "artifact_id": self.artifact_id,
+            "iteration": self.iteration,
+            "request": dict(self.request),
+            "response": dict(self.response),
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
 class AgentLoopResult:
     success: bool
     status: AgentLoopStatus
@@ -306,6 +324,7 @@ class AgentLoopResult:
     events: list[dict[str, Any]] = field(default_factory=list)
     trace: dict[str, Any] = field(default_factory=dict)
     diagnostics: AgentLoopDiagnostics | None = None
+    llm_call_artifacts: list[LLMCallArtifact] = field(default_factory=list)
     error: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -319,6 +338,9 @@ class AgentLoopResult:
             "events": [dict(event) for event in self.events],
             "trace": dict(self.trace),
             "diagnostics": self.diagnostics.to_dict() if self.diagnostics else None,
+            "llm_call_artifacts": [
+                artifact.to_dict() for artifact in self.llm_call_artifacts
+            ],
             "error": self.error,
         }
 

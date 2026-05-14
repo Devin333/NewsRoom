@@ -188,6 +188,50 @@ def test_writer_agent_cannot_fetch_even_when_policy_allows_fetch_tool() -> None:
     assert "not allowed" in observations[0]["result"]["error_message"]
 
 
+def test_editor_agent_cannot_fetch_even_when_policy_allows_fetch_tool() -> None:
+    calls = {"count": 0}
+    registry = ToolRegistry()
+    registry.register(
+        ToolDefinition(name="source.fetch_url", input_schema={"required": ["url"]}),
+        lambda args: calls.__setitem__("count", calls["count"] + 1) or {"content": "raw"},
+    )
+    llm = FakeLLMClient(
+        [
+            (
+                '{"action_type":"tool_call","tool_name":"source.fetch_url",'
+                '"tool_args":{"url":"https://example.com/raw"}}'
+            )
+        ]
+    )
+    agent = AgentSpec(
+        agent_id="editor",
+        name="EditorAgent",
+        role="Edit",
+        goal="Edit only from provided evidence",
+        instructions="Return JSON actions only.",
+        input_keys=["request"],
+        output_key="edited_report",
+        allowed_tools=["source.fetch_url"],
+        loop_policy=AgentLoopPolicy(max_iterations=1),
+    )
+
+    result = AgentRunner(llm_client=llm, tool_registry=registry).run(
+        agent,
+        {"request": {"topic": "chips"}},
+    )
+
+    observations = [
+        event["observation"]
+        for event in result.events
+        if event["event_type"] == "tool_observation"
+    ]
+    assert llm.requests[0].tools == []
+    assert calls["count"] == 0
+    assert result.metrics.tool_blocks == 1
+    assert observations[0]["status"] == "blocked"
+    assert "not allowed" in observations[0]["result"]["error_message"]
+
+
 def test_agent_runner_blocks_tool_call_after_agent_budget_is_exhausted() -> None:
     calls = {"count": 0}
     registry = ToolRegistry()
@@ -333,6 +377,33 @@ def test_agent_runner_carries_llm_route_manifest_into_events_and_trace() -> None
     assert llm_event["router_event_count"] == 7
     assert llm_trace["route_manifest"]["schema_version"] == "newsroom.llm_route_manifest.v1"
     assert llm_trace["provider_resolution_trace"][0]["source"] == "agent_task_route"
+
+
+def test_agent_runner_records_redacted_llm_call_artifacts() -> None:
+    fake_secret = "sk" + "-abcdef1234567890"
+    llm = FakeLLMClient(
+        [
+            LLMResponse(
+                content='{"action_type":"final_output","output":{"analysis_result":{"summary":"ok"}}}',
+                usage=TokenUsage(input_tokens=4, output_tokens=6),
+                metadata={"provider": "fake", "model": "fake-llm", "api_key": fake_secret},
+            )
+        ]
+    )
+
+    result = AgentRunner(llm_client=llm, tool_registry=_registry()).run(
+        _agent(),
+        {"request": {"topic": fake_secret}},
+    )
+    artifact = result.llm_call_artifacts[0].to_dict()
+
+    assert result.success is True
+    assert artifact["artifact_id"] == "analyst:llm_call:1"
+    assert artifact["iteration"] == 1
+    assert artifact["request"]["messages"][1]["content"].find(fake_secret) == -1
+    assert artifact["response"]["metadata"]["api_key"] == REDACTED_VALUE
+    assert artifact["metadata"]["provider"] == "fake"
+    assert fake_secret not in str(result.to_dict()["llm_call_artifacts"])
 
 
 def test_agent_runner_consumes_llm_stream_and_records_stream_events() -> None:

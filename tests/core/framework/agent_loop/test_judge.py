@@ -97,6 +97,47 @@ def test_output_judge_retries_json_schema_violation() -> None:
     assert verdict.schema_errors == ["$.analysis_result.summary: expected string, got int"]
 
 
+def test_output_judge_retries_json_schema_constraint_violation() -> None:
+    verdict = OutputJudge().judge(
+        agent=_agent(
+            output_schema={
+                "type": "object",
+                "required": ["analysis_result"],
+                "properties": {
+                    "analysis_result": {
+                        "type": "object",
+                        "required": ["summary", "sources"],
+                        "properties": {
+                            "summary": {"type": "string", "minLength": 10},
+                            "sources": {
+                                "type": "array",
+                                "minItems": 1,
+                                "uniqueItems": True,
+                                "items": {"type": "string", "pattern": "^https://"},
+                            },
+                        },
+                    }
+                },
+            }
+        ),
+        action=AgentAction(
+            action_type="final_output",
+            output={
+                "analysis_result": {
+                    "summary": "short",
+                    "sources": ["https://example.com/a"],
+                }
+            },
+        ),
+        called_tools=[],
+    )
+
+    assert verdict.decision == JudgeDecision.RETRY
+    assert verdict.schema_errors == [
+        "$.analysis_result.summary: expected string length at least 10, got 5"
+    ]
+
+
 def test_output_judge_retries_report_claim_outside_evidence_boundary() -> None:
     bundle = EvidenceBundle(
         bundle_id="bundle-1",
@@ -136,4 +177,49 @@ def test_output_judge_retries_report_claim_outside_evidence_boundary() -> None:
     assert verdict.decision == JudgeDecision.RETRY
     assert verdict.quality_errors == [
         "unsupported claim outside evidence: Unsupported: The vendor acquired a rival."
+    ]
+
+
+def test_output_judge_retries_editor_claim_outside_evidence_boundary() -> None:
+    bundle = EvidenceBundle(
+        bundle_id="bundle-1",
+        items=[
+            EvidenceItem(
+                evidence_id="ev-1",
+                source_url="https://example.com/a",
+                title="The model update improves inference latency",
+                summary="The vendor released a model update that improves inference latency.",
+                confidence=0.9,
+                source_id="source-1",
+            )
+        ],
+    )
+
+    verdict = OutputJudge().judge(
+        agent=_agent(agent_id="editor", name="EditorAgent", output_key="edited_report"),
+        action=AgentAction(
+            action_type="final_output",
+            output={
+                "edited_report": {
+                    "title": "Edited Brief",
+                    "sections": [
+                        {
+                            "title": "Edit",
+                            "content": "The vendor released a model update and expanded into robotics.",
+                            "sources": ["https://example.com/a"],
+                        }
+                    ],
+                }
+            },
+        ),
+        called_tools=[],
+        inputs={"evidence_bundle": bundle},
+    )
+
+    assert verdict.decision == JudgeDecision.RETRY
+    assert verdict.quality_errors == [
+        (
+            "unsupported claim outside evidence: "
+            "Edit: The vendor released a model update and expanded into robotics."
+        )
     ]

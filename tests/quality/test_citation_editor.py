@@ -80,6 +80,38 @@ def test_citation_checker_flags_unsupported_claims() -> None:
     assert result.claim_support_score == 0.0
 
 
+def test_citation_checker_flags_claim_that_adds_new_fact_to_cited_evidence() -> None:
+    bundle = EvidenceBundle(
+        bundle_id="bundle",
+        items=[
+            EvidenceItem(
+                evidence_id="ev_1",
+                source_url="https://example.com/a",
+                title="The model update improves inference latency",
+                summary="The vendor released a model update that improves inference latency.",
+                confidence=0.9,
+                source_id="source",
+            )
+        ],
+    )
+    report = {
+        "sections": [
+            {
+                "title": "Edit",
+                "content": "The vendor released a model update and expanded into robotics.",
+                "sources": ["https://example.com/a"],
+            }
+        ]
+    }
+
+    result = CitationChecker().check(report, bundle)
+
+    assert result.passed is False
+    assert result.unsupported_claims == [
+        "Edit: The vendor released a model update and expanded into robotics."
+    ]
+
+
 def test_citation_checker_flags_rejected_claim_usage() -> None:
     findings = VerifiedFindings(
         rejected_claims=[

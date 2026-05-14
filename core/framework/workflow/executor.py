@@ -4,6 +4,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from datetime import UTC, datetime
+from hashlib import sha256
 from typing import Any, Callable
 from uuid import uuid4
 
@@ -32,6 +33,7 @@ from core.framework.workflow.step_runner import (
     StepExecutionError,
     StepRunnerRegistry,
 )
+from storage.artifacts import ArtifactRef
 from storage.checkpoint import WorkflowCheckpoint
 
 _WORKFLOW_STEP_TIMEOUT_ERROR = "WorkflowStepTimeoutError"
@@ -187,6 +189,8 @@ class WorkflowExecutor:
             )
             outcome = self._run_step_with_retries(step, buffer, recorder)
             _emit_agent_loop_stream_events(recorder, step, outcome)
+            outcome = self._write_llm_call_artifacts(actual_run_id, step, outcome)
+            _sync_llm_call_artifacts_to_buffer(buffer, step, outcome)
             _write_step_policy_terminal_artifact(
                 self._artifact_manager,
                 actual_run_id,
@@ -790,6 +794,65 @@ class WorkflowExecutor:
             self._artifact_manager.write_json(run_id, relative_path, output[output_key])
             register_manifest_artifact(manifest, output_key, relative_path)
 
+    def _write_llm_call_artifacts(
+        self,
+        run_id: str,
+        step: StepSpec,
+        outcome: StepOutcome,
+    ) -> StepOutcome:
+        llm_call_artifacts = outcome.outputs.get("llm_call_artifacts")
+        if not isinstance(llm_call_artifacts, list) or not llm_call_artifacts:
+            return outcome
+
+        artifact_refs: list[ArtifactRef] = []
+        written_payloads: list[dict[str, Any]] = []
+        for index, payload in enumerate(llm_call_artifacts, start=1):
+            if not isinstance(payload, dict):
+                continue
+            artifact_payload = dict(payload)
+            artifact_id = str(
+                artifact_payload.get("artifact_id")
+                or f"{step.step_id}:llm_call:{index}"
+            )
+            relative_path = f"llm_calls/{step.step_id}_{index:03d}.json"
+            path = self._artifact_manager.write_json(run_id, relative_path, artifact_payload)
+            data = path.read_bytes()
+            artifact_ref = ArtifactRef(
+                artifact_id=artifact_id,
+                run_id=run_id,
+                step_id=step.step_id,
+                artifact_type="llm_call",
+                path=relative_path,
+                content_type="application/json",
+                size_bytes=len(data),
+                checksum=sha256(data).hexdigest(),
+                redacted=True,
+                metadata={
+                    "iteration": artifact_payload.get("iteration"),
+                    "agent_id": (artifact_payload.get("metadata") or {}).get("agent_id")
+                    if isinstance(artifact_payload.get("metadata"), dict)
+                    else None,
+                },
+            )
+            artifact_refs.append(artifact_ref)
+            written_payloads.append({**artifact_payload, "artifact_ref": artifact_ref.to_dict()})
+
+        if not artifact_refs:
+            return outcome
+        outputs = dict(outcome.outputs)
+        outputs["llm_call_artifacts"] = written_payloads
+        return StepOutcome(
+            status=outcome.status,
+            outputs=outputs,
+            error_type=outcome.error_type,
+            error_message=outcome.error_message,
+            error_details=dict(outcome.error_details),
+            metrics=dict(outcome.metrics),
+            artifacts=[*outcome.artifacts, *artifact_refs],
+            lineage=[dict(item) for item in outcome.lineage],
+            next_hint=outcome.next_hint,
+        )
+
     def _write_source_diagnostic_artifacts(
         self,
         run_id: str,
@@ -1258,6 +1321,20 @@ def _record_step_artifacts(manifest: dict[str, Any], outcome: StepOutcome) -> No
         return
     for artifact_ref in outcome.artifacts:
         register_manifest_step_artifact(manifest, artifact_ref)
+
+
+def _sync_llm_call_artifacts_to_buffer(
+    buffer: DataBuffer,
+    step: StepSpec,
+    outcome: StepOutcome,
+) -> None:
+    artifacts = outcome.outputs.get("llm_call_artifacts")
+    if "llm_call_artifacts" in step.write_keys and isinstance(artifacts, list):
+        buffer.write(
+            "llm_call_artifacts",
+            artifacts,
+            lineage={"step_id": step.step_id, "post_processed": True},
+        )
 
 
 def _workflow_version_payload(workflow: WorkflowSpec) -> dict[str, Any]:

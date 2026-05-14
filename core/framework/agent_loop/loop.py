@@ -19,6 +19,7 @@ from core.framework.agent_loop.models import (
     AgentSpec,
     JudgeDecision,
     JudgeVerdict,
+    LLMCallArtifact,
 )
 from core.framework.agent_loop.parser import AgentActionParser
 from core.framework.agent_loop.prompt import PromptBuilder
@@ -76,6 +77,7 @@ class AgentLoop:
         tool_observations: list[ToolObservation] = []
         called_tools: list[str] = []
         last_verdict: JudgeVerdict | None = None
+        llm_call_artifacts: list[LLMCallArtifact] = []
         judge_retries = 0
         parser_errors = 0
 
@@ -119,6 +121,7 @@ class AgentLoop:
                     diagnostics=diagnostics,
                     iterations=iteration,
                     exc=exc,
+                    llm_call_artifacts=llm_call_artifacts,
                 )
             try:
                 response = self._complete_llm_request(
@@ -140,6 +143,7 @@ class AgentLoop:
                     diagnostics=diagnostics,
                     iterations=iteration,
                     exc=exc,
+                    llm_call_artifacts=llm_call_artifacts,
                 )
             except Exception as exc:
                 if _is_global_budget_exception(exc):
@@ -154,6 +158,7 @@ class AgentLoop:
                         diagnostics=diagnostics,
                         iterations=iteration,
                         exc=exc,
+                        llm_call_artifacts=llm_call_artifacts,
                     )
                 metrics.llm_error_count += 1
                 trace.record_llm_error(iteration_trace, exc)
@@ -167,9 +172,18 @@ class AgentLoop:
                     iterations=iteration,
                     stop_reason=AgentLoopStopReason.LLM_FAILED,
                     error=str(exc),
+                    llm_call_artifacts=llm_call_artifacts,
                 )
 
             llm_trace = trace.record_llm_call(iteration_trace, response)
+            llm_call_artifacts.append(
+                _llm_call_artifact(
+                    agent=agent,
+                    iteration=iteration,
+                    request=request,
+                    response=response,
+                )
+            )
             metrics.llm_calls += 1
             metrics.add_usage(response.usage)
             try:
@@ -199,6 +213,7 @@ class AgentLoop:
                     diagnostics=diagnostics,
                     iterations=iteration,
                     exc=exc,
+                    llm_call_artifacts=llm_call_artifacts,
                 )
             events.llm_call(
                 iteration=iteration,
@@ -258,6 +273,7 @@ class AgentLoop:
                         verdict=last_verdict,
                         stop_reason=AgentLoopStopReason.PARSER_RETRY_EXHAUSTED,
                         detection=detection,
+                        llm_call_artifacts=llm_call_artifacts,
                     )
                 continue
 
@@ -288,6 +304,7 @@ class AgentLoop:
                     iteration_trace=iteration_trace,
                     tool_observations=tool_observations,
                     called_tools=called_tools,
+                    llm_call_artifacts=llm_call_artifacts,
                 )
                 if isinstance(tool_result, AgentLoopResult):
                     return tool_result
@@ -314,6 +331,7 @@ class AgentLoop:
                 verdict=verdict,
                 judge_retries=judge_retries,
                 via_tool=None,
+                llm_call_artifacts=llm_call_artifacts,
             )
             if isinstance(verdict_result, AgentLoopResult):
                 return verdict_result
@@ -329,6 +347,7 @@ class AgentLoop:
             iterations=metrics.iterations,
             verdict=last_verdict,
             detection=detection,
+            llm_call_artifacts=llm_call_artifacts,
         )
 
     def _handle_tool_action(
@@ -345,6 +364,7 @@ class AgentLoop:
         iteration_trace: IterationTrace,
         tool_observations: list[ToolObservation],
         called_tools: list[str],
+        llm_call_artifacts: list[LLMCallArtifact],
     ) -> str | AgentLoopResult | None:
         iteration = iteration_trace.iteration
         tool_policy = agent.resolved_tool_policy()
@@ -406,6 +426,7 @@ class AgentLoop:
                 iterations=iteration,
                 verdict=None,
                 detection=detection,
+                llm_call_artifacts=llm_call_artifacts,
             )
 
         if observation.status == ToolStatus.APPROVAL_REQUIRED:
@@ -423,6 +444,7 @@ class AgentLoop:
                 iterations=iteration,
                 tool_name=observation.call.tool_name,
                 approval_id=observation.result.approval_id,
+                llm_call_artifacts=llm_call_artifacts,
             )
 
         if observation.status == ToolStatus.SUCCEEDED and _is_control_set_output(observation):
@@ -449,6 +471,7 @@ class AgentLoop:
                 verdict=verdict,
                 judge_retries=metrics.judge_retries,
                 via_tool=observation.call.tool_name,
+                llm_call_artifacts=llm_call_artifacts,
             )
             if isinstance(result, AgentLoopResult):
                 return result
@@ -476,6 +499,7 @@ class AgentLoop:
         verdict: JudgeVerdict,
         judge_retries: int,
         via_tool: str | None,
+        llm_call_artifacts: list[LLMCallArtifact],
     ) -> tuple[int, str] | AgentLoopResult:
         iteration = iteration_trace.iteration
         verdict_payload = verdict.to_dict()
@@ -497,6 +521,7 @@ class AgentLoop:
                     else AgentLoopStopReason.FINAL_OUTPUT_ACCEPTED
                 ),
                 via_tool=via_tool,
+                llm_call_artifacts=llm_call_artifacts,
             )
 
         if verdict.decision == JudgeDecision.BLOCK:
@@ -512,6 +537,7 @@ class AgentLoop:
                 verdict=verdict,
                 stop_reason=_blocked_stop_reason(verdict),
                 via_tool=via_tool,
+                llm_call_artifacts=llm_call_artifacts,
             )
 
         next_judge_retries = judge_retries + 1
@@ -540,6 +566,7 @@ class AgentLoop:
                 verdict=verdict,
                 stop_reason=AgentLoopStopReason.JUDGE_RETRY_EXHAUSTED,
                 detection=detection,
+                llm_call_artifacts=llm_call_artifacts,
             )
         return next_judge_retries, feedback
 
@@ -626,6 +653,7 @@ class AgentLoop:
         verdict: JudgeVerdict,
         stop_reason: AgentLoopStopReason,
         via_tool: str | None,
+        llm_call_artifacts: list[LLMCallArtifact],
     ) -> AgentLoopResult:
         events.final_output(iteration=iterations, output_keys=sorted(output.keys()), via_tool=via_tool)
         result_diagnostics = diagnostics.accepted(
@@ -649,6 +677,7 @@ class AgentLoop:
             events=events.to_dicts(),
             trace=_trace_payload(trace, agent),
             diagnostics=result_diagnostics,
+            llm_call_artifacts=list(llm_call_artifacts),
         )
 
     def _blocked_result(
@@ -663,6 +692,7 @@ class AgentLoop:
         verdict: JudgeVerdict,
         stop_reason: AgentLoopStopReason,
         via_tool: str | None,
+        llm_call_artifacts: list[LLMCallArtifact],
     ) -> AgentLoopResult:
         result_diagnostics = diagnostics.blocked(
             metrics=metrics,
@@ -684,6 +714,7 @@ class AgentLoop:
             events=events.to_dicts(),
             trace=_trace_payload(trace, agent),
             diagnostics=result_diagnostics,
+            llm_call_artifacts=list(llm_call_artifacts),
             error=verdict.feedback,
         )
 
@@ -697,6 +728,7 @@ class AgentLoop:
         diagnostics: AgentLoopDiagnosticsBuilder,
         iterations: int,
         exc: Exception,
+        llm_call_artifacts: list[LLMCallArtifact],
     ) -> AgentLoopResult:
         budget_check = _budget_check_from_exception(exc)
         if budget_check is not None:
@@ -729,6 +761,7 @@ class AgentLoop:
             events=events.to_dicts(),
             trace=_trace_payload(trace, agent),
             diagnostics=result_diagnostics,
+            llm_call_artifacts=list(llm_call_artifacts),
             error=str(exc),
         )
 
@@ -743,6 +776,7 @@ class AgentLoop:
         iterations: int,
         tool_name: str,
         approval_id: str | None,
+        llm_call_artifacts: list[LLMCallArtifact],
     ) -> AgentLoopResult:
         result_diagnostics = diagnostics.waiting_for_approval(
             metrics=metrics,
@@ -763,6 +797,7 @@ class AgentLoop:
             events=events.to_dicts(),
             trace=_trace_payload(trace, agent),
             diagnostics=result_diagnostics,
+            llm_call_artifacts=list(llm_call_artifacts),
             error=result_diagnostics.summary,
         )
 
@@ -778,6 +813,7 @@ class AgentLoop:
         verdict: JudgeVerdict | None,
         stop_reason: AgentLoopStopReason,
         detection: StallDetection | None = None,
+        llm_call_artifacts: list[LLMCallArtifact],
     ) -> AgentLoopResult:
         result_diagnostics = diagnostics.retry_exhausted(
             metrics=metrics,
@@ -800,6 +836,7 @@ class AgentLoop:
             events=events.to_dicts(),
             trace=_trace_payload(trace, agent),
             diagnostics=result_diagnostics,
+            llm_call_artifacts=list(llm_call_artifacts),
             error=result_diagnostics.summary,
         )
 
@@ -814,6 +851,7 @@ class AgentLoop:
         iterations: int,
         verdict: JudgeVerdict | None,
         detection: StallDetection,
+        llm_call_artifacts: list[LLMCallArtifact],
     ) -> AgentLoopResult:
         result_diagnostics = diagnostics.stalled(
             metrics=metrics,
@@ -835,6 +873,7 @@ class AgentLoop:
             events=events.to_dicts(),
             trace=_trace_payload(trace, agent),
             diagnostics=result_diagnostics,
+            llm_call_artifacts=list(llm_call_artifacts),
             error=result_diagnostics.summary,
         )
 
@@ -849,6 +888,7 @@ class AgentLoop:
         iterations: int,
         stop_reason: AgentLoopStopReason,
         error: str,
+        llm_call_artifacts: list[LLMCallArtifact],
     ) -> AgentLoopResult:
         result_diagnostics = diagnostics.failed(
             metrics=metrics,
@@ -865,6 +905,7 @@ class AgentLoop:
             events=events.to_dicts(),
             trace=_trace_payload(trace, agent),
             diagnostics=result_diagnostics,
+            llm_call_artifacts=list(llm_call_artifacts),
             error=error,
         )
 
@@ -873,6 +914,31 @@ def _trace_payload(trace: AgentLoopTrace, agent: AgentSpec) -> dict[str, Any]:
     if not agent.loop_policy.trace_enabled:
         return {"agent_id": agent.agent_id, "summary": trace.summary()}
     return trace.to_dict()
+
+
+def _llm_call_artifact(
+    *,
+    agent: AgentSpec,
+    iteration: int,
+    request: LLMRequest,
+    response: LLMResponse,
+) -> LLMCallArtifact:
+    metadata = dict(response.metadata)
+    return LLMCallArtifact(
+        artifact_id=f"{agent.agent_id}:llm_call:{iteration}",
+        iteration=iteration,
+        request=request.to_dict(redact=True),
+        response=response.to_dict(redact=True),
+        metadata={
+            "agent_id": agent.agent_id,
+            "provider": metadata.get("provider") or metadata.get("llm_provider"),
+            "model": metadata.get("model") or metadata.get("llm_model"),
+            "route_id": metadata.get("llm_route_id"),
+            "deployment_id": metadata.get("llm_deployment_id"),
+            "fallback_used": metadata.get("llm_fallback_used"),
+            "streamed": metadata.get("llm_streamed"),
+        },
+    )
 
 
 def _tool_names(tools: list[dict[str, Any]]) -> list[str]:

@@ -5,7 +5,13 @@ import pytest
 from core.framework.artifacts import ArtifactManager
 from core.framework.agent_loop import AgentLoopResult, AgentLoopStatus, AgentRunner, AgentSpec
 from core.framework.events import EventBus
-from core.framework.llm import FakeLLMClient, GlobalBudgetPolicy, GlobalBudgetTracker
+from core.framework.llm import (
+    FakeLLMClient,
+    GlobalBudgetPolicy,
+    GlobalBudgetTracker,
+    LLMResponse,
+    REDACTED_VALUE,
+)
 from core.framework.specs import (
     ArtifactPolicySpec,
     EdgeSpec,
@@ -160,6 +166,89 @@ def test_agent_loop_step_runner_executes_registered_agent(tmp_path) -> None:
     assert result.output["analysis_result"]["summary"] == "ok"
     assert result.output["agent_loop_metrics"]["llm_calls"] == 2
     assert result.output["agent_loop_metrics"]["tool_calls"] == 1
+
+
+def test_agent_loop_step_runner_writes_redacted_llm_call_artifacts(tmp_path) -> None:
+    fake_secret = "sk" + "-abcdef1234567890"
+    agent = AgentSpec(
+        agent_id="analyst",
+        name="Analyst",
+        role="Analyze",
+        goal="Produce analysis",
+        instructions="Return JSON actions only.",
+        input_keys=["request"],
+        output_key="analysis_result",
+    )
+    runner = AgentLoopStepRunner(
+        AgentRunner(
+            llm_client=FakeLLMClient(
+                [
+                    LLMResponse(
+                        content=(
+                            '{"action_type":"final_output",'
+                            '"output":{"analysis_result":{"summary":"ok"}}}'
+                        ),
+                        metadata={
+                            "provider": "fake",
+                            "model": "fake-llm",
+                            "api_key": fake_secret,
+                        },
+                    )
+                ]
+            ),
+            tool_registry=ToolRegistry(),
+        ),
+        {"analyst": agent},
+    )
+    registry = StepRunnerRegistry()
+    registry.register(StepType.AGENT_LOOP, runner)
+    spec = WorkflowSpec(
+        workflow_id="agent-loop-llm-artifacts",
+        name="Agent Loop LLM Artifacts",
+        version="1.0",
+        start_step_id="agent",
+        steps=[
+            StepSpec(
+                step_id="agent",
+                implementation="analyst",
+                step_type=StepType.AGENT_LOOP,
+                read_keys=["request"],
+                write_keys=["analysis_result", "llm_call_artifacts"],
+                required_output_keys=["analysis_result", "llm_call_artifacts"],
+            )
+        ],
+    )
+    executor = WorkflowExecutor(
+        function_step_runner=None,
+        step_runner_registry=registry,
+        artifact_manager=ArtifactManager(tmp_path),
+    )
+
+    result = executor.execute(
+        spec,
+        {"topic": fake_secret},
+        profile="test",
+        run_id="run-agent-llm-artifacts",
+    )
+
+    run_dir = tmp_path / "run-agent-llm-artifacts"
+    manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+    llm_artifact = json.loads((run_dir / "llm_calls" / "agent_001.json").read_text(encoding="utf-8"))
+    step_results = json.loads((run_dir / "step_results.json").read_text(encoding="utf-8"))
+    step_artifacts = manifest["step_artifacts"]
+    llm_refs = [item for item in step_artifacts if item["artifact_type"] == "llm_call"]
+
+    assert result.status == WorkflowStatus.SUCCEEDED
+    assert result.output["llm_call_artifacts"][0]["artifact_id"] == "analyst:llm_call:1"
+    assert (
+        step_results["agent"]["outputs"]["llm_call_artifacts"][0]["artifact_ref"]["path"]
+        == "llm_calls/agent_001.json"
+    )
+    assert manifest["artifacts"]["step.agent.llm_call.analyst:llm_call:1"] == "llm_calls/agent_001.json"
+    assert llm_refs[0]["redacted"] is True
+    assert llm_artifact["request"]["messages"][1]["content"].find(fake_secret) == -1
+    assert llm_artifact["response"]["metadata"]["api_key"] == REDACTED_VALUE
+    assert fake_secret not in (run_dir / "llm_calls" / "agent_001.json").read_text(encoding="utf-8")
 
 
 def test_agent_loop_step_runner_marks_global_budget_exceeded(tmp_path) -> None:

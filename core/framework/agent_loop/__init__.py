@@ -14,6 +14,7 @@ from core.framework.agent_loop.models import (
     AgentSpec,
     JudgeDecision,
     JudgeVerdict,
+    LLMCallArtifact,
 )
 from core.framework.agent_loop.diagnostics import (
     AgentLoopDiagnosticsBuilder,
@@ -63,6 +64,7 @@ __all__ = [
     "JudgeDecision",
     "JudgeTrace",
     "JudgeVerdict",
+    "LLMCallArtifact",
     "LLMCallTrace",
     "LLMErrorTrace",
     "OutputJudge",

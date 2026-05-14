@@ -323,6 +323,7 @@ class AgentLoopStepRunner:
         metrics_key = str(step.metadata.get("metrics_key") or "agent_loop_metrics")
         diagnostics_key = str(step.metadata.get("diagnostics_key") or "agent_loop_diagnostics")
         trace_key = str(step.metadata.get("trace_key") or "agent_loop_trace")
+        llm_artifacts_key = str(step.metadata.get("llm_artifacts_key") or "llm_call_artifacts")
         outputs[result_key] = result_payload
         outputs[events_key] = result.events
         outputs[metrics_key] = result.metrics.to_dict()
@@ -330,6 +331,9 @@ class AgentLoopStepRunner:
             result.diagnostics.to_dict() if result.diagnostics is not None else None
         )
         outputs[trace_key] = result.trace
+        outputs[llm_artifacts_key] = [
+            artifact.to_dict() for artifact in result.llm_call_artifacts
+        ]
 
         for key, value in outputs.items():
             if key in buffer.list_allowed_writes():
