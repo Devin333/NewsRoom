@@ -5,7 +5,7 @@ import pytest
 from core.framework.artifacts import ArtifactManager
 from core.framework.agent_loop import AgentLoopResult, AgentLoopStatus, AgentRunner, AgentSpec
 from core.framework.events import EventBus
-from core.framework.llm import FakeLLMClient
+from core.framework.llm import FakeLLMClient, GlobalBudgetPolicy, GlobalBudgetTracker
 from core.framework.specs import (
     ArtifactPolicySpec,
     EdgeSpec,
@@ -160,6 +160,132 @@ def test_agent_loop_step_runner_executes_registered_agent(tmp_path) -> None:
     assert result.output["analysis_result"]["summary"] == "ok"
     assert result.output["agent_loop_metrics"]["llm_calls"] == 2
     assert result.output["agent_loop_metrics"]["tool_calls"] == 1
+
+
+def test_agent_loop_step_runner_marks_global_budget_exceeded(tmp_path) -> None:
+    agent = AgentSpec(
+        agent_id="analyst",
+        name="Analyst",
+        role="Analyze",
+        goal="Produce analysis",
+        instructions="Return JSON actions only.",
+        input_keys=["request"],
+        output_key="analysis_result",
+    )
+    runner = AgentLoopStepRunner(
+        AgentRunner(
+            llm_client=FakeLLMClient(
+                [
+                    '{"action_type":"final_output","output":{"wrong_key":{"summary":"missing"}}}',
+                    '{"action_type":"final_output","output":{"analysis_result":{"summary":"ok"}}}',
+                ]
+            ),
+            tool_registry=ToolRegistry(),
+        ),
+        {"analyst": agent},
+        global_budget_tracker=GlobalBudgetTracker(GlobalBudgetPolicy(max_llm_calls=1)),
+    )
+    registry = StepRunnerRegistry()
+    registry.register(StepType.AGENT_LOOP, runner)
+    spec = WorkflowSpec(
+        workflow_id="agent-loop-budget",
+        name="Agent Loop Budget",
+        version="1.0",
+        start_step_id="agent",
+        steps=[
+            StepSpec(
+                step_id="agent",
+                implementation="analyst",
+                step_type=StepType.AGENT_LOOP,
+                read_keys=["request"],
+                write_keys=["agent_loop_result", "agent_loop_metrics"],
+            )
+        ],
+    )
+    executor = WorkflowExecutor(
+        function_step_runner=None,
+        step_runner_registry=registry,
+        artifact_manager=ArtifactManager(tmp_path),
+    )
+
+    result = executor.execute(spec, {"topic": "chips"}, profile="test", run_id="run-agent-budget")
+
+    assert result.status == WorkflowStatus.BUDGET_EXCEEDED
+    assert result.error is not None
+    assert result.error.details["budget_exceeded"] is True
+    assert result.error.details["global_budget_check"]["violations"] == ["max_llm_calls"]
+    assert result.manifest["metrics"]["global_budget_usage"]["llm_calls"] == 2
+
+
+def test_agent_loop_step_runner_writes_diagnostics_artifact_for_blocked_run(tmp_path) -> None:
+    fake_secret = "sk" + "-abcdef1234567890"
+    agent = AgentSpec(
+        agent_id="analyst",
+        name="Analyst",
+        role="Analyze",
+        goal="Produce analysis",
+        instructions="Return JSON actions only.",
+        input_keys=["request"],
+        output_key="analysis_result",
+    )
+    runner = AgentLoopStepRunner(
+        AgentRunner(
+            llm_client=FakeLLMClient(
+                [
+                    (
+                        '{"action_type":"final_output",'
+                        '"output":{"analysis_result":{"secret":"'
+                        + fake_secret
+                        + '"}}}'
+                    )
+                ]
+            ),
+            tool_registry=ToolRegistry(),
+        ),
+        {"analyst": agent},
+    )
+    registry = StepRunnerRegistry()
+    registry.register(StepType.AGENT_LOOP, runner)
+    spec = WorkflowSpec(
+        workflow_id="agent-loop-blocked",
+        name="Agent Loop Blocked",
+        version="1.0",
+        start_step_id="agent",
+        steps=[
+            StepSpec(
+                step_id="agent",
+                implementation="analyst",
+                step_type=StepType.AGENT_LOOP,
+                read_keys=["request"],
+                write_keys=[
+                    "agent_loop_result",
+                    "agent_loop_events",
+                    "agent_loop_metrics",
+                    "agent_loop_diagnostics",
+                    "agent_loop_trace",
+                ],
+            )
+        ],
+    )
+    executor = WorkflowExecutor(
+        function_step_runner=None,
+        step_runner_registry=registry,
+        artifact_manager=ArtifactManager(tmp_path),
+    )
+
+    result = executor.execute(spec, {"topic": "chips"}, profile="test", run_id="run-agent-blocked")
+
+    run_dir = tmp_path / "run-agent-blocked"
+    manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+    diagnostics = json.loads((run_dir / "agent_loop_diagnostics.json").read_text(encoding="utf-8"))
+
+    assert result.status == WorkflowStatus.BLOCKED
+    assert result.output["agent_loop_diagnostics"]["stop_reason"] == "secret_blocked"
+    assert manifest["artifacts"]["agent_loop_diagnostics"] == "agent_loop_diagnostics.json"
+    assert manifest["artifacts"]["agent_loop_trace"] == "agent_loop_trace.json"
+    assert manifest["agent_loop_metrics"]["llm_calls"] == 1
+    assert manifest["llm_calls"] == 1
+    assert diagnostics["severity"] == "blocked"
 
 
 def test_artifact_step_runner_writes_real_artifact(tmp_path) -> None:

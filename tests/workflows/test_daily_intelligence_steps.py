@@ -147,6 +147,8 @@ def test_daily_evidence_and_quality_gate_steps_produce_final_report() -> None:
 
     assert evidence_bundle.bundle_id == "daily"
     assert buffer.read("quality_gate_metrics").decision == "pass"
+    assert buffer.read("quality_result").decision == "pass"
+    assert buffer.read("quality_result").route == "final"
     assert buffer.read("final_report").title == "Daily Intelligence: AI policy"
     assert "https://example.com/ai-policy" in buffer.read("report_markdown")
     assert [event.event_type for event in buffer.read("quality_events")] == [

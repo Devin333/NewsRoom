@@ -100,7 +100,12 @@ def test_workflow_run_inspector_builds_summary_and_replay_bundle(tmp_path) -> No
     assert replay_bundle.request == {"topic": "ai"}
     assert replay_bundle.output["report"] == "Report: ai"
     assert replay_bundle.step_results["write"]["outputs"]["report"] == "Report: ai"
-    assert replay_bundle_summary(replay_bundle)["has_output"] is True
+    replay_summary = replay_bundle_summary(replay_bundle)
+    assert replay_bundle.integrity["valid"] is True
+    assert replay_bundle.to_dict()["integrity"]["valid"] is True
+    assert replay_summary["has_output"] is True
+    assert replay_summary["step_result_count"] == 2
+    assert replay_summary["integrity_valid"] is True
 
 
 def test_workflow_run_inspector_reports_missing_artifact_file(tmp_path) -> None:

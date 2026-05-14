@@ -2,10 +2,13 @@ import pytest
 
 import core.framework.runner as runner_module
 from core.framework import WorkflowRunner
-from core.framework.specs import StepSpec, StepType, WorkflowSpec, WorkflowStatus
+from core.framework.specs import EdgeCondition, EdgeSpec, StepSpec, StepType, WorkflowSpec, WorkflowStatus
 from core.framework.workflow import (
     FunctionStepRegistry,
+    FunctionStepRunner,
+    HumanReviewStepRunner,
     RUN_MANIFEST_SCHEMA_VERSION,
+    StepRunnerRegistry,
     build_default_step_runner_registry,
 )
 from domain.sources import SourceError
@@ -162,6 +165,118 @@ def test_workflow_runner_can_persist_checkpoints_when_injected(tmp_path) -> None
         "checkpoint_created",
         "workflow_succeeded",
     ]
+
+
+def test_workflow_runner_resumes_from_checkpoint_after_step_failure(tmp_path) -> None:
+    checkpoint_store = LocalJsonCheckpointStore(tmp_path / "checkpoints")
+    write_should_fail = {"value": True}
+    registry = FunctionStepRegistry()
+    registry.register("sample.plan", lambda buffer: {"plan": buffer.read("request")["topic"]})
+
+    def write_report(buffer):
+        if write_should_fail["value"]:
+            raise RuntimeError("writer crashed")
+        return {"report": f"Report: {buffer.read('plan')}"}
+
+    registry.register("sample.write", write_report)
+    runner = WorkflowRunner(
+        artifact_root=tmp_path,
+        function_registry=registry,
+        checkpoint_store=checkpoint_store,
+    )
+    spec = _resumable_two_step_spec()
+
+    failed = runner.run(spec, {"topic": "ai"}, profile="test", run_id="runner-resume-source")
+
+    assert failed.status == WorkflowStatus.FAILED
+    checkpoint = next(
+        item
+        for item in checkpoint_store.list_checkpoints("runner-resume-source")
+        if item.current_step_ids == ["write"]
+    )
+
+    write_should_fail["value"] = False
+    resumed = runner.resume_from_checkpoint(
+        spec,
+        checkpoint,
+        profile="test",
+        run_id="runner-resumed-success",
+    )
+
+    assert resumed.status == WorkflowStatus.SUCCEEDED
+    assert resumed.output["plan"] == "ai"
+    assert resumed.output["report"] == "Report: ai"
+    inspection = runner.inspect_run(
+        "runner-resumed-success",
+        verify_checksums=True,
+        strict=True,
+    )
+    replay = runner.build_replay_bundle(
+        "runner-resumed-success",
+        verify_checksums=True,
+        strict=True,
+    )
+    events = LocalJsonEventStore(tmp_path / "_records" / "events").list_by_run(
+        "runner-resumed-success"
+    )
+    assert inspection.integrity.valid is True
+    assert replay.integrity["valid"] is True
+    assert replay.integrity["warnings"] == []
+    assert replay.step_results["plan"]["outputs"]["plan"] == "ai"
+    assert replay.step_results["write"]["outputs"]["report"] == "Report: ai"
+    assert replay.step_results["artifact"]["artifacts"][0]["checksum"]
+    assert replay.manifest["resumed_from_checkpoint_id"] == checkpoint.checkpoint_id
+    assert [event.event_type for event in events][:2] == [
+        "workflow_resumed",
+        "checkpoint_restored",
+    ]
+
+
+def test_workflow_runner_resumes_human_review_after_approval(tmp_path) -> None:
+    checkpoint_store = LocalJsonCheckpointStore(tmp_path / "checkpoints")
+    functions = FunctionStepRegistry()
+    functions.register(
+        "sample.finalize",
+        lambda buffer: {
+            "report": (
+                f"approved:{buffer.read('request')['topic']}:"
+                f"{buffer.read('human_review_decision')['decision']}"
+            )
+        },
+    )
+    step_runners = StepRunnerRegistry.with_function_runner(FunctionStepRunner(functions))
+    step_runners.register(StepType.HUMAN_REVIEW, HumanReviewStepRunner())
+    runner = WorkflowRunner(
+        artifact_root=tmp_path,
+        step_runner_registry=step_runners,
+        checkpoint_store=checkpoint_store,
+    )
+    spec = _human_review_resume_spec()
+
+    paused = runner.run(spec, {"topic": "ai"}, profile="test", run_id="runner-human-paused")
+
+    assert paused.status == WorkflowStatus.WAITING_FOR_HUMAN
+    checkpoint = checkpoint_store.get_latest_checkpoint("runner-human-paused")
+    assert checkpoint is not None
+    assert checkpoint.current_step_ids == ["review"]
+
+    resumed = runner.resume_from_checkpoint(
+        spec,
+        checkpoint,
+        profile="test",
+        run_id="runner-human-approved",
+        buffer_updates={"human_review_decision": {"decision": "approved"}},
+    )
+
+    assert resumed.status == WorkflowStatus.SUCCEEDED
+    assert resumed.output["report"] == "approved:ai:approved"
+    inspection = runner.inspect_run("runner-human-approved", strict=True)
+    replay = runner.build_replay_bundle("runner-human-approved", strict=True)
+    assert inspection.integrity.valid is True
+    assert replay.integrity["valid"] is True
+    assert replay.manifest["resumed_from_checkpoint_id"] == checkpoint.checkpoint_id
+    assert replay.step_results["review"]["next_hint"] == "human_approved"
+    assert replay.step_results["finalize"]["outputs"]["report"] == "approved:ai:approved"
 
 
 def test_workflow_runner_accepts_prebuilt_step_runner_registry(tmp_path) -> None:
@@ -447,3 +562,80 @@ class _CollectingLineageStore:
     def record_many(self, refs):
         self.refs.extend(refs)
         return []
+
+
+def _resumable_two_step_spec() -> WorkflowSpec:
+    return WorkflowSpec(
+        workflow_id="runner-resume",
+        name="Runner Resume",
+        version="1.0",
+        start_step_id="plan",
+        steps=[
+            StepSpec(
+                step_id="plan",
+                implementation="sample.plan",
+                read_keys=["request"],
+                write_keys=["plan"],
+                required_output_keys=["plan"],
+            ),
+            StepSpec(
+                step_id="write",
+                implementation="sample.write",
+                read_keys=["plan"],
+                write_keys=["report"],
+                required_output_keys=["report"],
+            ),
+            StepSpec(
+                step_id="artifact",
+                implementation="artifact.write",
+                step_type=StepType.ARTIFACT,
+                read_keys=["report"],
+                write_keys=["report_artifact"],
+                required_output_keys=["report_artifact"],
+                metadata={
+                    "content_key": "report",
+                    "relative_path": "steps/report/artifact.json",
+                    "artifact_id": "resumed-report",
+                    "output_key": "report_artifact",
+                },
+            ),
+        ],
+        edges=[
+            EdgeSpec("plan-to-write", "plan", "write"),
+            EdgeSpec("write-to-artifact", "write", "artifact"),
+        ],
+    )
+
+
+def _human_review_resume_spec() -> WorkflowSpec:
+    return WorkflowSpec(
+        workflow_id="runner-human-review",
+        name="Runner Human Review",
+        version="1.0",
+        start_step_id="review",
+        input_schema={"properties": {"human_review_decision": {"type": "object"}}},
+        steps=[
+            StepSpec(
+                step_id="review",
+                implementation="human.review",
+                step_type=StepType.HUMAN_REVIEW,
+                read_keys=["request", "human_review_decision"],
+                write_keys=["human_review_request"],
+            ),
+            StepSpec(
+                step_id="finalize",
+                implementation="sample.finalize",
+                read_keys=["request", "human_review_decision"],
+                write_keys=["report"],
+                required_output_keys=["report"],
+            ),
+        ],
+        edges=[
+            EdgeSpec(
+                "review-approved",
+                "review",
+                "finalize",
+                condition=EdgeCondition.HUMAN_APPROVED,
+            )
+        ],
+    )

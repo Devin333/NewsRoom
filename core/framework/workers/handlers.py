@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from core.framework.specs import WorkflowStatus
 from interfaces.services.memory_service import MemoryApplicationService
 from interfaces.services.run_service import RunApplicationService
 from interfaces.services.source_service import SourceApplicationService
@@ -19,14 +20,18 @@ class DailyIntelligenceTaskHandler:
             source_limit=int(task.payload.get("source_limit", 3)),
             run_id=task.payload.get("run_id"),
         )
+        workflow_status = _workflow_status_value(result.status)
+        task_status = _task_status_from_workflow_status(workflow_status)
+        task_success = task_status != TaskStatus.FAILED
+        workflow_error = result.error or {}
         return TaskResult(
             task_id=task.task_id,
-            success=result.status.value == "succeeded",
-            status=TaskStatus.SUCCEEDED if result.status.value == "succeeded" else TaskStatus.FAILED,
+            success=task_success,
+            status=task_status,
             workflow_run_id=result.run_id,
             output=result.to_dict(),
-            error_type=(result.error or {}).get("error_type") if result.error else None,
-            error_message=(result.error or {}).get("message") if result.error else None,
+            error_type=workflow_error.get("error_type") if not task_success else None,
+            error_message=workflow_error.get("message") if not task_success else None,
         )
 
 
@@ -78,3 +83,21 @@ def _optional_int(value) -> int | None:
     if value is None or value == "":
         return None
     return int(value)
+
+
+def _workflow_status_value(status) -> str:
+    return str(getattr(status, "value", status))
+
+
+def _task_status_from_workflow_status(status: str) -> TaskStatus:
+    if status == WorkflowStatus.SUCCEEDED.value:
+        return TaskStatus.SUCCEEDED
+    if status in {WorkflowStatus.BLOCKED.value, WorkflowStatus.BUDGET_EXCEEDED.value}:
+        return TaskStatus.SUCCEEDED
+    if status == WorkflowStatus.WAITING_FOR_HUMAN.value:
+        return TaskStatus.WAITING_FOR_APPROVAL
+    if status == WorkflowStatus.PAUSED.value:
+        return TaskStatus.PAUSED
+    if status == WorkflowStatus.CANCELLED.value:
+        return TaskStatus.CANCELLED
+    return TaskStatus.FAILED

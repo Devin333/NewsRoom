@@ -10,6 +10,7 @@ from quality.models import (
     QualityEvalRecord,
     QualityEvent,
     QualityGateMetrics,
+    QualityResult,
 )
 from quality.scoring import QualityScorer, ReportQualitySummary
 from quality.support_matrix import SectionSupport, SupportMatrix, SupportMatrixBuilder
@@ -28,6 +29,7 @@ __all__ = [
     "QualityError",
     "QualityErrorType",
     "QualityGateMetrics",
+    "QualityResult",
     "QualityScorer",
     "ReportQualitySummary",
     "RewritePolicy",

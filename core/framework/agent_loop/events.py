@@ -74,6 +74,11 @@ class AgentLoopEventRecorder:
         response_chars: int,
         provider: str | None = None,
         model: str | None = None,
+        route_id: str | None = None,
+        deployment_id: str | None = None,
+        fallback_used: bool | None = None,
+        fallback_count: int | None = None,
+        router_event_count: int | None = None,
     ) -> None:
         payload: dict[str, Any] = {
             "token_usage": dict(token_usage),
@@ -83,7 +88,35 @@ class AgentLoopEventRecorder:
             payload["provider"] = provider
         if model:
             payload["model"] = model
+        if route_id:
+            payload["route_id"] = route_id
+        if deployment_id:
+            payload["deployment_id"] = deployment_id
+        if fallback_used is not None:
+            payload["fallback_used"] = fallback_used
+        if fallback_count is not None:
+            payload["fallback_count"] = fallback_count
+        if router_event_count is not None:
+            payload["router_event_count"] = router_event_count
         self.emit(AgentLoopEventType.LLM_CALL, iteration=iteration, payload=payload)
+
+    def llm_stream_event(
+        self,
+        *,
+        iteration: int,
+        stream_event: dict[str, Any],
+        sequence: int,
+    ) -> None:
+        event_type = str(stream_event.get("event_type") or "")
+        payload: dict[str, Any] = {
+            "sequence": sequence,
+            "stream_event_type": event_type,
+            "stream_event": dict(stream_event),
+        }
+        text_delta = stream_event.get("text_delta")
+        if isinstance(text_delta, str):
+            payload["text_delta_chars"] = len(text_delta)
+        self.emit(AgentLoopEventType.LLM_STREAM_EVENT, iteration=iteration, payload=payload)
 
     def llm_failed(self, *, iteration: int, exc: Exception) -> None:
         self.emit(

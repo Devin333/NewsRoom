@@ -1,5 +1,6 @@
 import json
 import time
+from hashlib import sha256
 
 from core.framework.artifacts import ArtifactManager
 from core.framework.workers import InMemoryApprovalStore
@@ -647,6 +648,7 @@ def test_tool_executor_spills_large_redacted_result_to_artifact(tmp_path) -> Non
     assert artifact_ref["artifact_id"] == "tool_result:call-large"
     assert artifact_ref["content_type"] == "application/json"
     assert artifact_path.exists()
+    assert artifact_ref["checksum"] == sha256(artifact_path.read_bytes()).hexdigest()
     assert payload["summary"] == "Tool result spilled to artifact: tool_results/call-large.json"
     assert payload["artifact_refs"] == [artifact_ref]
     assert payload["highlights"] == []
@@ -694,7 +696,7 @@ def test_tool_executor_fails_output_that_exceeds_tool_max_result_bytes() -> None
     assert "x" * 20 not in str(guardrail_events[0].to_dict())
 
 
-def test_tool_executor_keeps_large_result_inline_without_artifact_context() -> None:
+def test_tool_executor_requires_artifact_context_for_large_result_pointer() -> None:
     registry = ToolRegistry()
     registry.register(
         ToolDefinition(name="memory.large", input_schema={"required": ["query"]}),
@@ -707,6 +709,10 @@ def test_tool_executor_keeps_large_result_inline_without_artifact_context() -> N
         ToolPolicy(allowed_tools=["memory.large"], max_result_chars_inline=20),
     )
 
-    assert observation.status == ToolStatus.SUCCEEDED
-    assert observation.result.output == {"items": ["x" * 80], "token": REDACTED_VALUE}
+    assert observation.status == ToolStatus.FAILED
+    assert observation.result.error_type == "ToolRuntimeError"
+    assert "artifact context" in (observation.result.error_message or "")
+    assert observation.result.output is None
     assert observation.result.artifact_refs == []
+    assert observation.result.output_bytes is not None
+    assert observation.result.output_bytes > 20

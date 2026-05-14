@@ -5,7 +5,7 @@ import pytest
 from domain.sources import SourceError, SourceHealth, SourceHealthStatus
 from storage.postgres import PostgresRepository
 from storage.records import ClaimRecord, EvidenceItemRecord, QualityResultRecord, SourceItemRecord
-from storage.repository import ReportRecord, WorkflowRunRecord
+from storage.repository import ReportRecord, RunPersistenceBatch, WorkflowRunRecord
 
 
 class FakeCursor:
@@ -133,6 +133,8 @@ def test_postgres_repository_saves_source_evidence_claim_and_quality_records() -
             run_id="run-1",
             status="accepted",
             text="Title",
+            confidence=0.8,
+            supporting_evidence_ids=["ev-1"],
             supporting_sources=["https://example.com/a"],
         )
     )
@@ -156,9 +158,82 @@ def test_postgres_repository_saves_source_evidence_claim_and_quality_records() -
     assert connection.calls[1][1][2] == "https://example.com/a"
     assert "INSERT INTO claims" in connection.calls[2][0]
     assert connection.calls[2][1][2] == "accepted"
-    assert "INSERT INTO quality_results" in connection.calls[3][0]
-    assert connection.calls[3][1][0] == "run-1:quality"
-    assert connection.calls[3][1][6] == 1.0
+    assert "DELETE FROM claim_supports" in connection.calls[3][0]
+    assert "INSERT INTO claim_supports" in connection.calls[4][0]
+    assert connection.calls[4][1][0] == "claim-1:supporting:ev-1"
+    assert connection.calls[4][1][3] == "ev-1"
+    assert connection.calls[4][1][5] == 0.8
+    assert "INSERT INTO quality_results" in connection.calls[5][0]
+    assert connection.calls[5][1][0] == "run-1:quality"
+    assert connection.calls[5][1][6] == 1.0
+
+
+def test_postgres_repository_saves_run_records_in_one_transaction() -> None:
+    connection = FakeConnection()
+    repository = PostgresRepository("postgresql://example", connection_factory=lambda: connection)
+
+    repository.save_run_records(
+        RunPersistenceBatch(
+            workflow_run=WorkflowRunRecord(
+                run_id="run-1",
+                workflow_id="daily",
+                workflow_version="1",
+                status="succeeded",
+                profile="live-offline",
+            ),
+            report=ReportRecord(
+                report_id="run-1:final",
+                run_id="run-1",
+                status="final",
+                title="Daily",
+            ),
+            source_items=[
+                SourceItemRecord(
+                    source_item_id="raw-1",
+                    run_id="run-1",
+                    source_id="source",
+                    title="Title",
+                    url="https://example.com/a",
+                )
+            ],
+            evidence_items=[
+                EvidenceItemRecord(
+                    evidence_id="ev-1",
+                    run_id="run-1",
+                    claim="Title",
+                    summary="Summary",
+                    source_urls=["https://example.com/a"],
+                    source_item_ids=["raw-1"],
+                    confidence=0.9,
+                )
+            ],
+            claims=[
+                ClaimRecord(
+                    claim_id="claim-1",
+                    run_id="run-1",
+                    status="accepted",
+                    text="Title",
+                    supporting_evidence_ids=["ev-1"],
+                )
+            ],
+            quality_result=QualityResultRecord(
+                quality_result_id="run-1:quality",
+                run_id="run-1",
+                decision="pass",
+                passed=True,
+            ),
+        )
+    )
+
+    executed_sql = "\n".join(sql for sql, _ in connection.calls)
+    assert connection.commits == 1
+    assert "INSERT INTO workflow_runs" in executed_sql
+    assert "INSERT INTO reports" in executed_sql
+    assert "INSERT INTO source_items" in executed_sql
+    assert "INSERT INTO evidence_items" in executed_sql
+    assert "INSERT INTO claims" in executed_sql
+    assert "INSERT INTO claim_supports" in executed_sql
+    assert "INSERT INTO quality_results" in executed_sql
 
 
 def test_postgres_repository_updates_source_health() -> None:

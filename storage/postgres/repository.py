@@ -11,7 +11,7 @@ from domain.sources import SourceError, SourceHealth
 from storage.local_json import ReportNotFoundError
 from storage.postgres.migrations import load_migration_sql
 from storage.records import ClaimRecord, EvidenceItemRecord, QualityResultRecord, SourceItemRecord
-from storage.repository import ReportRecord, WorkflowRunRecord
+from storage.repository import ReportRecord, RunPersistenceBatch, WorkflowRunRecord
 
 
 ConnectionFactory = Callable[[], Any]
@@ -92,169 +92,38 @@ class PostgresRepository:
             connection.commit()
 
     def save_workflow_run(self, record: WorkflowRunRecord) -> None:
-        sql = """
-        INSERT INTO workflow_runs (
-            run_id, workflow_id, workflow_version, status, profile,
-            artifact_dir, manifest_path, events_path, error, metrics
-        )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb)
-        ON CONFLICT (run_id) DO UPDATE SET
-            status = EXCLUDED.status,
-            artifact_dir = EXCLUDED.artifact_dir,
-            manifest_path = EXCLUDED.manifest_path,
-            events_path = EXCLUDED.events_path,
-            error = EXCLUDED.error,
-            metrics = EXCLUDED.metrics,
-            updated_at = now()
-        """
-        params = (
-            record.run_id,
-            record.workflow_id,
-            record.workflow_version,
-            record.status,
-            record.profile,
-            record.artifact_dir,
-            record.manifest_path,
-            record.events_path,
-            _json(record.error),
-            _json(record.metrics),
-        )
-        self._execute(sql, params)
+        self._execute_with_cursor(self._insert_workflow_run, record)
 
     def save_report(self, record: ReportRecord) -> None:
-        sql = """
-        INSERT INTO reports (
-            report_id, run_id, status, title, report_json,
-            report_markdown, quality_score, citation_coverage_score, manifest_path
-        )
-        VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s)
-        ON CONFLICT (report_id) DO UPDATE SET
-            status = EXCLUDED.status,
-            title = EXCLUDED.title,
-            report_json = EXCLUDED.report_json,
-            report_markdown = EXCLUDED.report_markdown,
-            quality_score = EXCLUDED.quality_score,
-            citation_coverage_score = EXCLUDED.citation_coverage_score,
-            manifest_path = EXCLUDED.manifest_path,
-            updated_at = now()
-        """
-        params = (
-            record.report_id,
-            record.run_id,
-            record.status,
-            record.title,
-            _json(record.report_json),
-            record.report_markdown,
-            record.quality_score,
-            record.citation_coverage_score,
-            record.manifest_path,
-        )
-        self._execute(sql, params)
+        self._execute_with_cursor(self._insert_report, record)
 
     def save_source_item(self, record: SourceItemRecord) -> None:
-        sql = """
-        INSERT INTO source_items (
-            source_item_id, run_id, source_id, title, url, payload
-        )
-        VALUES (%s, %s, %s, %s, %s, %s::jsonb)
-        ON CONFLICT (source_item_id) DO UPDATE SET
-            run_id = EXCLUDED.run_id,
-            source_id = EXCLUDED.source_id,
-            title = EXCLUDED.title,
-            url = EXCLUDED.url,
-            payload = EXCLUDED.payload
-        """
-        self._execute(
-            sql,
-            (
-                record.source_item_id,
-                record.run_id,
-                record.source_id,
-                record.title,
-                record.url,
-                _json(record.to_dict()),
-            ),
-        )
+        self._execute_with_cursor(self._insert_source_item, record)
 
     def save_evidence_item(self, record: EvidenceItemRecord) -> None:
-        sql = """
-        INSERT INTO evidence_items (
-            evidence_id, run_id, source_url, title, confidence, payload
-        )
-        VALUES (%s, %s, %s, %s, %s, %s::jsonb)
-        ON CONFLICT (evidence_id) DO UPDATE SET
-            run_id = EXCLUDED.run_id,
-            source_url = EXCLUDED.source_url,
-            title = EXCLUDED.title,
-            confidence = EXCLUDED.confidence,
-            payload = EXCLUDED.payload
-        """
-        self._execute(
-            sql,
-            (
-                record.evidence_id,
-                record.run_id,
-                record.source_urls[0] if record.source_urls else "",
-                record.claim,
-                record.confidence,
-                _json(record.to_dict()),
-            ),
-        )
+        self._execute_with_cursor(self._insert_evidence_item, record)
 
     def save_claim(self, record: ClaimRecord) -> None:
-        sql = """
-        INSERT INTO claims (
-            claim_id, run_id, status, text, payload
-        )
-        VALUES (%s, %s, %s, %s, %s::jsonb)
-        ON CONFLICT (claim_id) DO UPDATE SET
-            run_id = EXCLUDED.run_id,
-            status = EXCLUDED.status,
-            text = EXCLUDED.text,
-            payload = EXCLUDED.payload
-        """
-        self._execute(
-            sql,
-            (
-                record.claim_id,
-                record.run_id,
-                record.status,
-                record.text,
-                _json(record.to_dict()),
-            ),
-        )
+        self._execute_with_cursor(self._insert_claim, record)
 
     def save_quality_result(self, record: QualityResultRecord) -> None:
-        sql = """
-        INSERT INTO quality_results (
-            quality_result_id, run_id, decision, passed, quality_score,
-            citation_coverage_score, claim_support_score, evidence_alignment_score, payload
-        )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
-        ON CONFLICT (quality_result_id) DO UPDATE SET
-            run_id = EXCLUDED.run_id,
-            decision = EXCLUDED.decision,
-            passed = EXCLUDED.passed,
-            quality_score = EXCLUDED.quality_score,
-            citation_coverage_score = EXCLUDED.citation_coverage_score,
-            claim_support_score = EXCLUDED.claim_support_score,
-            evidence_alignment_score = EXCLUDED.evidence_alignment_score,
-            payload = EXCLUDED.payload
-        """
-        self._execute(
-            sql,
-            (
-                record.quality_result_id,
-                record.run_id,
-                record.decision,
-                record.passed,
-                record.quality_score,
-                record.citation_coverage_score,
-                record.claim_support_score,
-                record.evidence_alignment_score,
-                _json(record.payload),
-            ),
-        )
+        self._execute_with_cursor(self._insert_quality_result, record)
+
+    def save_run_records(self, batch: RunPersistenceBatch) -> None:
+        with self._connection_factory() as connection:
+            with connection.cursor() as cursor:
+                self._insert_workflow_run(cursor, batch.workflow_run)
+                if batch.report is not None:
+                    self._insert_report(cursor, batch.report)
+                for source_item in batch.source_items:
+                    self._insert_source_item(cursor, source_item)
+                for evidence_item in batch.evidence_items:
+                    self._insert_evidence_item(cursor, evidence_item)
+                for claim in batch.claims:
+                    self._insert_claim(cursor, claim)
+                if batch.quality_result is not None:
+                    self._insert_quality_result(cursor, batch.quality_result)
+            connection.commit()
 
     def update_source_health(self, health: SourceHealth) -> None:
         sql = """
@@ -398,6 +267,224 @@ class PostgresRepository:
         rows = self._fetch_all(sql, (pattern, pattern, pattern, limit))
         return [_search_record_from_row(row) for row in rows]
 
+    def _insert_workflow_run(self, cursor: Any, record: WorkflowRunRecord) -> None:
+        sql = """
+        INSERT INTO workflow_runs (
+            run_id, workflow_id, workflow_version, status, profile,
+            artifact_dir, manifest_path, events_path, error, metrics
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb)
+        ON CONFLICT (run_id) DO UPDATE SET
+            status = EXCLUDED.status,
+            artifact_dir = EXCLUDED.artifact_dir,
+            manifest_path = EXCLUDED.manifest_path,
+            events_path = EXCLUDED.events_path,
+            error = EXCLUDED.error,
+            metrics = EXCLUDED.metrics,
+            updated_at = now()
+        """
+        cursor.execute(
+            sql,
+            (
+                record.run_id,
+                record.workflow_id,
+                record.workflow_version,
+                record.status,
+                record.profile,
+                record.artifact_dir,
+                record.manifest_path,
+                record.events_path,
+                _json(record.error),
+                _json(record.metrics),
+            ),
+        )
+
+    def _insert_report(self, cursor: Any, record: ReportRecord) -> None:
+        sql = """
+        INSERT INTO reports (
+            report_id, run_id, status, title, report_json,
+            report_markdown, quality_score, citation_coverage_score, manifest_path
+        )
+        VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s)
+        ON CONFLICT (report_id) DO UPDATE SET
+            status = EXCLUDED.status,
+            title = EXCLUDED.title,
+            report_json = EXCLUDED.report_json,
+            report_markdown = EXCLUDED.report_markdown,
+            quality_score = EXCLUDED.quality_score,
+            citation_coverage_score = EXCLUDED.citation_coverage_score,
+            manifest_path = EXCLUDED.manifest_path,
+            updated_at = now()
+        """
+        cursor.execute(
+            sql,
+            (
+                record.report_id,
+                record.run_id,
+                record.status,
+                record.title,
+                _json(record.report_json),
+                record.report_markdown,
+                record.quality_score,
+                record.citation_coverage_score,
+                record.manifest_path,
+            ),
+        )
+
+    def _insert_source_item(self, cursor: Any, record: SourceItemRecord) -> None:
+        sql = """
+        INSERT INTO source_items (
+            source_item_id, run_id, source_id, title, url, payload
+        )
+        VALUES (%s, %s, %s, %s, %s, %s::jsonb)
+        ON CONFLICT (source_item_id) DO UPDATE SET
+            run_id = EXCLUDED.run_id,
+            source_id = EXCLUDED.source_id,
+            title = EXCLUDED.title,
+            url = EXCLUDED.url,
+            payload = EXCLUDED.payload
+        """
+        cursor.execute(
+            sql,
+            (
+                record.source_item_id,
+                record.run_id,
+                record.source_id,
+                record.title,
+                record.url,
+                _json(record.to_dict()),
+            ),
+        )
+
+    def _insert_evidence_item(self, cursor: Any, record: EvidenceItemRecord) -> None:
+        sql = """
+        INSERT INTO evidence_items (
+            evidence_id, run_id, source_url, title, confidence, payload
+        )
+        VALUES (%s, %s, %s, %s, %s, %s::jsonb)
+        ON CONFLICT (evidence_id) DO UPDATE SET
+            run_id = EXCLUDED.run_id,
+            source_url = EXCLUDED.source_url,
+            title = EXCLUDED.title,
+            confidence = EXCLUDED.confidence,
+            payload = EXCLUDED.payload
+        """
+        cursor.execute(
+            sql,
+            (
+                record.evidence_id,
+                record.run_id,
+                record.source_urls[0] if record.source_urls else "",
+                record.claim,
+                record.confidence,
+                _json(record.to_dict()),
+            ),
+        )
+
+    def _insert_claim(self, cursor: Any, record: ClaimRecord) -> None:
+        sql = """
+        INSERT INTO claims (
+            claim_id, run_id, status, text, payload
+        )
+        VALUES (%s, %s, %s, %s, %s::jsonb)
+        ON CONFLICT (claim_id) DO UPDATE SET
+            run_id = EXCLUDED.run_id,
+            status = EXCLUDED.status,
+            text = EXCLUDED.text,
+            payload = EXCLUDED.payload
+        """
+        cursor.execute(
+            sql,
+            (
+                record.claim_id,
+                record.run_id,
+                record.status,
+                record.text,
+                _json(record.to_dict()),
+            ),
+        )
+        cursor.execute("DELETE FROM claim_supports WHERE claim_id = %s", (record.claim_id,))
+        self._insert_claim_supports(cursor, record, "supporting", record.supporting_evidence_ids)
+        self._insert_claim_supports(cursor, record, "rejecting", record.rejecting_evidence_ids)
+
+    def _insert_claim_supports(
+        self,
+        cursor: Any,
+        record: ClaimRecord,
+        support_type: str,
+        evidence_ids: list[str],
+    ) -> None:
+        sql = """
+        INSERT INTO claim_supports (
+            claim_support_id, claim_id, run_id, evidence_id, support_type, confidence, payload
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb)
+        ON CONFLICT (claim_support_id) DO UPDATE SET
+            run_id = EXCLUDED.run_id,
+            evidence_id = EXCLUDED.evidence_id,
+            support_type = EXCLUDED.support_type,
+            confidence = EXCLUDED.confidence,
+            payload = EXCLUDED.payload
+        """
+        for evidence_id in evidence_ids:
+            payload = {
+                "claim_id": record.claim_id,
+                "evidence_id": evidence_id,
+                "support_type": support_type,
+                "supporting_sources": list(record.supporting_sources),
+                "rejecting_sources": list(record.rejecting_sources),
+            }
+            cursor.execute(
+                sql,
+                (
+                    _claim_support_id(record.claim_id, support_type, evidence_id),
+                    record.claim_id,
+                    record.run_id,
+                    evidence_id,
+                    support_type,
+                    record.confidence,
+                    _json(payload),
+                ),
+            )
+
+    def _insert_quality_result(self, cursor: Any, record: QualityResultRecord) -> None:
+        sql = """
+        INSERT INTO quality_results (
+            quality_result_id, run_id, decision, passed, quality_score,
+            citation_coverage_score, claim_support_score, evidence_alignment_score, payload
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+        ON CONFLICT (quality_result_id) DO UPDATE SET
+            run_id = EXCLUDED.run_id,
+            decision = EXCLUDED.decision,
+            passed = EXCLUDED.passed,
+            quality_score = EXCLUDED.quality_score,
+            citation_coverage_score = EXCLUDED.citation_coverage_score,
+            claim_support_score = EXCLUDED.claim_support_score,
+            evidence_alignment_score = EXCLUDED.evidence_alignment_score,
+            payload = EXCLUDED.payload
+        """
+        cursor.execute(
+            sql,
+            (
+                record.quality_result_id,
+                record.run_id,
+                record.decision,
+                record.passed,
+                record.quality_score,
+                record.citation_coverage_score,
+                record.claim_support_score,
+                record.evidence_alignment_score,
+                _json(record.payload),
+            ),
+        )
+
+    def _execute_with_cursor(self, operation: Callable[[Any, Any], None], record: Any) -> None:
+        with self._connection_factory() as connection:
+            with connection.cursor() as cursor:
+                operation(cursor, record)
+            connection.commit()
+
     def _execute(self, sql: str, params: tuple[Any, ...]) -> None:
         with self._connection_factory() as connection:
             with connection.cursor() as cursor:
@@ -419,6 +506,10 @@ class PostgresRepository:
 
 def _json(value: Any) -> str:
     return json.dumps(value or {}, ensure_ascii=False, sort_keys=True)
+
+
+def _claim_support_id(claim_id: str, support_type: str, evidence_id: str) -> str:
+    return f"{claim_id}:{support_type}:{evidence_id}"
 
 
 def _json_or_none(value: Any) -> str | None:

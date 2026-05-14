@@ -23,7 +23,14 @@ from core.framework.agent_loop.models import (
 from core.framework.agent_loop.parser import AgentActionParser
 from core.framework.agent_loop.prompt import PromptBuilder
 from core.framework.agent_loop.trace import AgentLoopTrace, IterationTrace
-from core.framework.llm import LLMClient
+from core.framework.llm import (
+    GlobalBudgetExceededError,
+    GlobalBudgetTracker,
+    LLMClient,
+    LLMRequest,
+    LLMResponse,
+    LLMStreamAccumulator,
+)
 from core.framework.tools import (
     ToolCall,
     ToolExecutor,
@@ -43,12 +50,14 @@ class AgentLoop:
         prompt_builder: PromptBuilder | None = None,
         action_parser: AgentActionParser | None = None,
         output_judge: OutputJudge | None = None,
+        global_budget_tracker: GlobalBudgetTracker | None = None,
     ) -> None:
         self._llm_client = llm_client
         self._tool_executor = tool_executor
         self._prompt_builder = prompt_builder or PromptBuilder()
         self._action_parser = action_parser or AgentActionParser()
         self._output_judge = output_judge or OutputJudge()
+        self._global_budget_tracker = global_budget_tracker
 
     def run(
         self,
@@ -96,8 +105,56 @@ class AgentLoop:
                 tools=tools,
             )
             try:
-                response = self._llm_client.complete(request)
+                self._check_global_budget_before_llm_call(metrics)
+            except GlobalBudgetExceededError as exc:
+                trace.mark_stop_candidate(
+                    iteration_trace,
+                    AgentLoopStopReason.GLOBAL_BUDGET_EXCEEDED.value,
+                )
+                return self._global_budget_exceeded_result(
+                    agent=agent,
+                    metrics=metrics,
+                    events=events,
+                    trace=trace,
+                    diagnostics=diagnostics,
+                    iterations=iteration,
+                    exc=exc,
+                )
+            try:
+                response = self._complete_llm_request(
+                    request,
+                    agent=agent,
+                    iteration=iteration,
+                    metrics=metrics,
+                    events=events,
+                )
+            except GlobalBudgetExceededError as exc:
+                metrics.llm_error_count += 1
+                trace.record_llm_error(iteration_trace, exc)
+                events.llm_failed(iteration=iteration, exc=exc)
+                return self._global_budget_exceeded_result(
+                    agent=agent,
+                    metrics=metrics,
+                    events=events,
+                    trace=trace,
+                    diagnostics=diagnostics,
+                    iterations=iteration,
+                    exc=exc,
+                )
             except Exception as exc:
+                if _is_global_budget_exception(exc):
+                    metrics.llm_error_count += 1
+                    trace.record_llm_error(iteration_trace, exc)
+                    events.llm_failed(iteration=iteration, exc=exc)
+                    return self._global_budget_exceeded_result(
+                        agent=agent,
+                        metrics=metrics,
+                        events=events,
+                        trace=trace,
+                        diagnostics=diagnostics,
+                        iterations=iteration,
+                        exc=exc,
+                    )
                 metrics.llm_error_count += 1
                 trace.record_llm_error(iteration_trace, exc)
                 events.llm_failed(iteration=iteration, exc=exc)
@@ -115,12 +172,45 @@ class AgentLoop:
             llm_trace = trace.record_llm_call(iteration_trace, response)
             metrics.llm_calls += 1
             metrics.add_usage(response.usage)
+            try:
+                self._record_global_budget_call(metrics, response)
+            except GlobalBudgetExceededError as exc:
+                trace.mark_stop_candidate(
+                    iteration_trace,
+                    AgentLoopStopReason.GLOBAL_BUDGET_EXCEEDED.value,
+                )
+                events.llm_call(
+                    iteration=iteration,
+                    token_usage=response.usage.to_dict(),
+                    response_chars=llm_trace.response_chars,
+                    provider=llm_trace.provider,
+                    model=llm_trace.model,
+                    route_id=llm_trace.route_id,
+                    deployment_id=llm_trace.deployment_id,
+                    fallback_used=llm_trace.fallback_used,
+                    fallback_count=llm_trace.fallback_count,
+                    router_event_count=llm_trace.router_event_count,
+                )
+                return self._global_budget_exceeded_result(
+                    agent=agent,
+                    metrics=metrics,
+                    events=events,
+                    trace=trace,
+                    diagnostics=diagnostics,
+                    iterations=iteration,
+                    exc=exc,
+                )
             events.llm_call(
                 iteration=iteration,
                 token_usage=response.usage.to_dict(),
                 response_chars=llm_trace.response_chars,
                 provider=llm_trace.provider,
                 model=llm_trace.model,
+                route_id=llm_trace.route_id,
+                deployment_id=llm_trace.deployment_id,
+                fallback_used=llm_trace.fallback_used,
+                fallback_count=llm_trace.fallback_count,
+                router_event_count=llm_trace.router_event_count,
             )
 
             try:
@@ -188,6 +278,7 @@ class AgentLoop:
             if action.action_type == "tool_call":
                 tool_result = self._handle_tool_action(
                     agent=agent,
+                    inputs=inputs,
                     action=action,
                     metrics=metrics,
                     events=events,
@@ -207,6 +298,7 @@ class AgentLoop:
                 agent=agent,
                 action=action,
                 called_tools=called_tools,
+                inputs=inputs,
             )
             last_verdict = verdict
             trace.record_judge(iteration_trace, verdict)
@@ -243,6 +335,7 @@ class AgentLoop:
         self,
         *,
         agent: AgentSpec,
+        inputs: dict[str, Any],
         action: AgentAction,
         metrics: AgentLoopMetrics,
         events: AgentLoopEventRecorder,
@@ -341,6 +434,7 @@ class AgentLoop:
                     output=control_output,
                 ),
                 called_tools=called_tools,
+                inputs=inputs,
             )
             trace.record_judge(iteration_trace, verdict)
             result = self._handle_verdict(
@@ -452,6 +546,73 @@ class AgentLoop:
     def _execute_tool(self, tool_call: ToolCall, tool_policy: ToolPolicy) -> ToolObservation:
         return self._tool_executor.execute(tool_call, tool_policy)
 
+    def _complete_llm_request(
+        self,
+        request: LLMRequest,
+        *,
+        agent: AgentSpec,
+        iteration: int,
+        metrics: AgentLoopMetrics,
+        events: AgentLoopEventRecorder,
+    ) -> LLMResponse:
+        if not agent.loop_policy.llm_streaming_enabled:
+            return self._llm_client.complete(request)
+        stream = getattr(self._llm_client, "stream", None)
+        if not callable(stream):
+            return self._llm_client.complete(request)
+
+        accumulator = LLMStreamAccumulator()
+        stream_event_count = 0
+        for stream_event_count, stream_event in enumerate(stream(request), start=1):
+            accumulator.add_event(stream_event)
+            metrics.llm_stream_event_count += 1
+            events.llm_stream_event(
+                iteration=iteration,
+                stream_event=stream_event.to_dict(),
+                sequence=stream_event_count,
+            )
+        response = accumulator.to_response()
+        metadata = dict(response.metadata)
+        metadata["llm_streamed"] = True
+        metadata["llm_stream_event_count"] = stream_event_count
+        return LLMResponse(
+            content=response.content,
+            usage=response.usage,
+            metadata=metadata,
+            structured_output=response.structured_output,
+            tool_calls=list(response.tool_calls),
+        )
+
+    def _check_global_budget_before_llm_call(self, metrics: AgentLoopMetrics) -> None:
+        if self._global_budget_tracker is None:
+            return
+        check = self._global_budget_tracker.check_before_llm_call()
+        metrics.global_budget_check = check.to_dict()
+        metrics.global_budget_usage = check.usage.to_dict()
+
+    def _record_global_budget_call(
+        self,
+        metrics: AgentLoopMetrics,
+        response,
+    ) -> None:
+        metadata = dict(response.metadata)
+        router_budget_check = metadata.get("llm_global_budget_check")
+        router_budget_usage = metadata.get("llm_global_budget_usage")
+        if isinstance(router_budget_check, dict):
+            metrics.global_budget_check = dict(router_budget_check)
+            metrics.global_budget_usage = (
+                dict(router_budget_usage) if isinstance(router_budget_usage, dict) else None
+            )
+            return
+        if self._global_budget_tracker is None:
+            return
+        check = self._global_budget_tracker.record_llm_call(
+            response.usage,
+            estimated_cost_usd=_optional_float(metadata.get("llm_estimated_cost_usd")),
+        )
+        metrics.global_budget_check = check.to_dict()
+        metrics.global_budget_usage = check.usage.to_dict()
+
     def _accepted_result(
         self,
         *,
@@ -524,6 +685,51 @@ class AgentLoop:
             trace=_trace_payload(trace, agent),
             diagnostics=result_diagnostics,
             error=verdict.feedback,
+        )
+
+    def _global_budget_exceeded_result(
+        self,
+        *,
+        agent: AgentSpec,
+        metrics: AgentLoopMetrics,
+        events: AgentLoopEventRecorder,
+        trace: AgentLoopTrace,
+        diagnostics: AgentLoopDiagnosticsBuilder,
+        iterations: int,
+        exc: Exception,
+    ) -> AgentLoopResult:
+        budget_check = _budget_check_from_exception(exc)
+        if budget_check is not None:
+            metrics.global_budget_check = budget_check
+            usage = budget_check.get("usage")
+            metrics.global_budget_usage = dict(usage) if isinstance(usage, dict) else None
+        verdict = JudgeVerdict(
+            decision=JudgeDecision.BLOCK,
+            confidence=1.0,
+            feedback=str(exc),
+            policy_violations=["global budget exceeded"],
+        )
+        result_diagnostics = diagnostics.blocked(
+            metrics=metrics,
+            iterations=iterations,
+            stop_reason=AgentLoopStopReason.GLOBAL_BUDGET_EXCEEDED,
+            verdict=verdict,
+        )
+        events.blocked(
+            iteration=iterations,
+            stop_reason=AgentLoopStopReason.GLOBAL_BUDGET_EXCEEDED.value,
+            verdict=verdict.to_dict(),
+        )
+        return AgentLoopResult(
+            success=False,
+            status=AgentLoopStatus.BLOCKED,
+            verdict=verdict,
+            iterations=iterations,
+            metrics=metrics,
+            events=events.to_dicts(),
+            trace=_trace_payload(trace, agent),
+            diagnostics=result_diagnostics,
+            error=str(exc),
         )
 
     def _waiting_for_approval_result(
@@ -721,3 +927,29 @@ def _blocked_stop_reason(verdict: JudgeVerdict) -> AgentLoopStopReason:
     if any("secret" in violation for violation in verdict.policy_violations):
         return AgentLoopStopReason.SECRET_BLOCKED
     return AgentLoopStopReason.JUDGE_BLOCKED
+
+
+def _is_global_budget_exception(exc: Exception) -> bool:
+    return getattr(exc, "error_type", None) == "global_budget_exceeded"
+
+
+def _budget_check_from_exception(exc: Exception) -> dict[str, Any] | None:
+    check = getattr(exc, "check", None)
+    if check is not None and hasattr(check, "to_dict"):
+        payload = check.to_dict()
+        return dict(payload) if isinstance(payload, dict) else None
+    manifest = getattr(exc, "manifest", None)
+    if isinstance(manifest, dict):
+        check_payload = manifest.get("global_budget_check")
+        if isinstance(check_payload, dict):
+            return dict(check_payload)
+    return None
+
+
+def _optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None

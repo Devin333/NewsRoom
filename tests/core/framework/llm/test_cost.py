@@ -2,6 +2,9 @@ import pytest
 
 from core.framework.llm import (
     CostEstimator,
+    GlobalBudgetExceededError,
+    GlobalBudgetPolicy,
+    GlobalBudgetTracker,
     LLMBudgetExceededError,
     LLMBudgetGuard,
     LLMBudgetPolicy,
@@ -79,3 +82,46 @@ def test_budget_guard_non_fail_mode_returns_failed_check() -> None:
 
     assert check.within_budget is False
     assert check.violations == ("max_cost_per_call_usd",)
+
+
+def test_global_budget_tracker_accumulates_llm_usage_and_cost() -> None:
+    tracker = GlobalBudgetTracker(
+        GlobalBudgetPolicy(max_llm_calls=2, max_total_tokens=40, max_total_cost_usd=0.01)
+    )
+
+    first = tracker.record_llm_call(
+        TokenUsage(input_tokens=10, output_tokens=5),
+        ModelPricing(input_usd_per_1m_tokens=100.0, output_usd_per_1m_tokens=100.0),
+    )
+    second = tracker.record_llm_call(
+        TokenUsage(input_tokens=8, output_tokens=7),
+        estimated_cost_usd=0.0015,
+    )
+
+    assert first.within_budget is True
+    assert second.within_budget is True
+    assert second.usage.llm_calls == 2
+    assert second.usage.token_usage.total_tokens == 30
+    assert second.usage.estimated_cost_usd == 0.003
+    assert tracker.snapshot()["llm_calls"] == 2
+
+
+def test_global_budget_tracker_blocks_preflight_when_call_limit_would_be_exceeded() -> None:
+    tracker = GlobalBudgetTracker(GlobalBudgetPolicy(max_llm_calls=1))
+    tracker.record_llm_call(TokenUsage(input_tokens=1, output_tokens=1))
+
+    with pytest.raises(GlobalBudgetExceededError) as exc_info:
+        tracker.check_before_llm_call()
+
+    assert exc_info.value.check.violations == ("max_llm_calls",)
+    assert exc_info.value.check.usage.llm_calls == 2
+
+
+def test_global_budget_tracker_raises_after_total_token_violation() -> None:
+    tracker = GlobalBudgetTracker(GlobalBudgetPolicy(max_total_tokens=3))
+
+    with pytest.raises(GlobalBudgetExceededError) as exc_info:
+        tracker.record_llm_call(TokenUsage(input_tokens=2, output_tokens=2))
+
+    assert exc_info.value.check.violations == ("max_total_tokens",)
+    assert tracker.usage.token_usage.total_tokens == 4

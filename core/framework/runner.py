@@ -10,6 +10,7 @@ from typing import Any
 
 from core.framework.artifacts.filesystem import ArtifactManager
 from core.framework.events import EventBus
+from core.framework.llm import GlobalBudgetPolicy, GlobalBudgetTracker
 from core.framework.run_result import RunResult
 from core.framework.specs import WorkflowSpec
 from core.framework.workflow.executor import WorkflowExecutor
@@ -61,6 +62,8 @@ class WorkflowRunner:
         checkpoint_store: Any | None = None,
         event_bus: EventBus | None = None,
         redactor: StorageRedactor | None = None,
+        global_budget_policy: GlobalBudgetPolicy | None = None,
+        global_budget_tracker: GlobalBudgetTracker | None = None,
     ) -> None:
         self._artifact_root = Path(artifact_root)
         self._artifact_manager = ArtifactManager(self._artifact_root)
@@ -90,6 +93,8 @@ class WorkflowRunner:
         self._checkpoint_store = checkpoint_store
         self._event_bus = event_bus
         self._run_inspector = WorkflowRunInspector(self._artifact_root)
+        self._global_budget_policy = global_budget_policy
+        self._global_budget_tracker = global_budget_tracker
 
     def run(
         self,
@@ -105,6 +110,7 @@ class WorkflowRunner:
             artifact_manager=self._artifact_manager,
             checkpoint_store=self._checkpoint_store,
             event_bus=self._event_bus,
+            global_budget_tracker=self._budget_tracker_for_run(),
         )
         result = executor.execute(workflow, request, profile=profile, run_id=run_id)
         self._persist_storage_indexes(result)
@@ -125,6 +131,7 @@ class WorkflowRunner:
             artifact_manager=self._artifact_manager,
             checkpoint_store=self._checkpoint_store,
             event_bus=self._event_bus,
+            global_budget_tracker=self._budget_tracker_for_run(),
         )
         result = executor.resume_from_checkpoint(
             workflow,
@@ -135,6 +142,13 @@ class WorkflowRunner:
         )
         self._persist_storage_indexes(result)
         return RunResult.from_workflow_result(result)
+
+    def _budget_tracker_for_run(self) -> GlobalBudgetTracker | None:
+        if self._global_budget_tracker is not None:
+            return self._global_budget_tracker
+        if self._global_budget_policy is not None:
+            return GlobalBudgetTracker(self._global_budget_policy)
+        return None
 
     def _persist_storage_indexes(self, result: WorkflowResult) -> None:
         self._indexer.index(result)

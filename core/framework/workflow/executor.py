@@ -51,6 +51,7 @@ class WorkflowExecutor:
         step_runner_registry: StepRunnerRegistry | None = None,
         checkpoint_store: Any | None = None,
         event_bus: EventBus | None = None,
+        global_budget_tracker: Any | None = None,
     ) -> None:
         if step_runner_registry is None:
             if function_step_runner is None:
@@ -62,6 +63,7 @@ class WorkflowExecutor:
         self._sleep_fn = sleep_fn or time.sleep
         self._checkpoint_store = checkpoint_store
         self._event_bus = event_bus
+        self._global_budget_tracker = global_budget_tracker
 
     def execute(
         self,
@@ -86,6 +88,7 @@ class WorkflowExecutor:
             self._step_runner_registry,
             artifact_manager=self._artifact_manager,
             run_id=actual_run_id,
+            global_budget_tracker=self._global_budget_tracker,
         )
         recorder = EventRecorder(actual_run_id, event_bus=self._event_bus)
         buffer = DataBuffer(initial_buffer_values)
@@ -183,6 +186,7 @@ class WorkflowExecutor:
                 manifest,
             )
             outcome = self._run_step_with_retries(step, buffer, recorder)
+            _emit_agent_loop_stream_events(recorder, step, outcome)
             _write_step_policy_terminal_artifact(
                 self._artifact_manager,
                 actual_run_id,
@@ -244,7 +248,25 @@ class WorkflowExecutor:
                         "workflow_paused",
                         {"reason": "human_review", "step_id": step.step_id},
                     )
+                else:
+                    recorder.emit(
+                        "workflow_paused",
+                        {"reason": "step_paused", "step_id": step.step_id},
+                    )
                 stop_after_checkpoint = True
+            elif _is_budget_exceeded_outcome(outcome):
+                recorder.emit(
+                    "step_blocked" if outcome.status == StepStatus.BLOCKED else "step_failed",
+                    {"step_id": step.step_id, "outcome": outcome},
+                )
+                status = WorkflowStatus.BUDGET_EXCEEDED
+                error = WorkflowError(
+                    error_type=outcome.error_type or "WorkflowBudgetExceeded",
+                    message=outcome.error_message or f"workflow budget exceeded at step: {step.step_id}",
+                    step_id=step.step_id,
+                    details=outcome.error_details,
+                )
+                current_step_ids = []
             elif outcome.status == StepStatus.BLOCKED:
                 recorder.emit("step_blocked", {"step_id": step.step_id, "outcome": outcome})
                 status = WorkflowStatus.BLOCKED
@@ -302,42 +324,12 @@ class WorkflowExecutor:
         manifest["checkpoint_count"] = len(checkpoint_ids)
         if checkpoint_ids:
             manifest["latest_checkpoint_id"] = checkpoint_ids[-1]
+        self._write_agent_loop_artifacts(actual_run_id, manifest, output)
 
         if status == WorkflowStatus.SUCCEEDED:
             recorder.emit("workflow_succeeded", {"path": path})
             self._artifact_manager.write_json(actual_run_id, "output.json", output)
             register_manifest_artifact(manifest, "output", "output.json")
-            if "agent_loop_metrics" in output:
-                manifest["agent_loop_metrics"] = output["agent_loop_metrics"]
-                metrics = output["agent_loop_metrics"]
-                manifest["llm_calls"] = metrics.get("llm_calls", 0)
-                manifest["tool_calls"] = metrics.get("tool_calls", 0)
-                manifest["token_usage"] = metrics.get("token_usage", {})
-            if "agent_loop_events" in output:
-                self._artifact_manager.write_json(
-                    actual_run_id,
-                    "agent_loop_events.json",
-                    output["agent_loop_events"],
-                )
-                register_manifest_artifact(manifest, "agent_loop_events", "agent_loop_events.json")
-            if "agent_loop_diagnostics" in output:
-                self._artifact_manager.write_json(
-                    actual_run_id,
-                    "agent_loop_diagnostics.json",
-                    output["agent_loop_diagnostics"],
-                )
-                register_manifest_artifact(
-                    manifest,
-                    "agent_loop_diagnostics",
-                    "agent_loop_diagnostics.json",
-                )
-            if "agent_loop_trace" in output:
-                self._artifact_manager.write_json(
-                    actual_run_id,
-                    "agent_loop_trace.json",
-                    output["agent_loop_trace"],
-                )
-                register_manifest_artifact(manifest, "agent_loop_trace", "agent_loop_trace.json")
             self._write_source_diagnostic_artifacts(actual_run_id, manifest, output)
             if "evidence_bundle" in output:
                 self._artifact_manager.write_json(
@@ -467,6 +459,24 @@ class WorkflowExecutor:
                     "quality_gate_metrics",
                     "quality_gate_metrics.json",
                 )
+            if "quality_result" in output:
+                self._artifact_manager.write_json(
+                    actual_run_id,
+                    "quality_result.json",
+                    output["quality_result"],
+                )
+                register_manifest_artifact(
+                    manifest,
+                    "quality_result",
+                    "quality_result.json",
+                )
+                quality_result = output["quality_result"]
+                route = _field_value(quality_result, "route")
+                if route is not None:
+                    manifest["quality_route"] = route
+                decision = _field_value(quality_result, "decision")
+                if decision is not None:
+                    manifest["quality_decision"] = decision
             if "rewrite_policy" in output:
                 self._artifact_manager.write_json(
                     actual_run_id,
@@ -530,9 +540,7 @@ class WorkflowExecutor:
             self._artifact_manager.write_json(actual_run_id, "pause.json", pause_payload)
             register_manifest_artifact(manifest, "pause", "pause.json")
         else:
-            terminal_event = (
-                "workflow_blocked" if status == WorkflowStatus.BLOCKED else "workflow_failed"
-            )
+            terminal_event = _terminal_error_event_type(status)
             recorder.emit(terminal_event, {"path": path, "error": error})
             self._artifact_manager.write_json(actual_run_id, "error.json", error)
             register_manifest_artifact(manifest, "error", "error.json")
@@ -566,6 +574,7 @@ class WorkflowExecutor:
             artifact_count=len(manifest.get("artifacts") or {}),
             event_count=len(recorder.list_events()),
             output=output,
+            global_budget_tracker=self._global_budget_tracker,
         )
         redaction_report = _redaction_report(output)
         self._artifact_manager.write_json(actual_run_id, "step_results.json", step_results_payload)
@@ -757,6 +766,29 @@ class WorkflowExecutor:
                 error_message=str(exc),
                 error_details={"attempt": attempt, "max_attempts": max_attempts},
             )
+
+    def _write_agent_loop_artifacts(
+        self,
+        run_id: str,
+        manifest: dict[str, Any],
+        output: dict[str, Any],
+    ) -> None:
+        if isinstance(output.get("agent_loop_metrics"), dict):
+            metrics = output["agent_loop_metrics"]
+            manifest["agent_loop_metrics"] = metrics
+            manifest["llm_calls"] = metrics.get("llm_calls", 0)
+            manifest["tool_calls"] = metrics.get("tool_calls", 0)
+            manifest["token_usage"] = metrics.get("token_usage", {})
+        agent_artifacts = {
+            "agent_loop_events": "agent_loop_events.json",
+            "agent_loop_diagnostics": "agent_loop_diagnostics.json",
+            "agent_loop_trace": "agent_loop_trace.json",
+        }
+        for output_key, relative_path in agent_artifacts.items():
+            if output_key not in output:
+                continue
+            self._artifact_manager.write_json(run_id, relative_path, output[output_key])
+            register_manifest_artifact(manifest, output_key, relative_path)
 
     def _write_source_diagnostic_artifacts(
         self,
@@ -1089,11 +1121,32 @@ def _failure_fallback_step_id(workflow: WorkflowSpec, step: StepSpec) -> str | N
 
 
 def _is_retryable_outcome(step: StepSpec, outcome: StepOutcome) -> bool:
+    if _is_budget_exceeded_outcome(outcome):
+        return False
     if outcome.status == StepStatus.FAILED:
         return True
     if outcome.status == StepStatus.TIMEOUT:
         return step.timeout_policy.on_timeout == "retry"
     return False
+
+
+def _is_budget_exceeded_outcome(outcome: StepOutcome) -> bool:
+    if outcome.status not in {StepStatus.FAILED, StepStatus.BLOCKED, StepStatus.TIMEOUT}:
+        return False
+    if outcome.outputs.get("budget_exceeded") is True:
+        return True
+    if outcome.error_details.get("budget_exceeded") is True:
+        return True
+    error_type = str(outcome.error_type or "").casefold()
+    return "budget" in error_type and "exceed" in error_type
+
+
+def _terminal_error_event_type(status: WorkflowStatus) -> str:
+    if status == WorkflowStatus.BLOCKED:
+        return "workflow_blocked"
+    if status == WorkflowStatus.BUDGET_EXCEEDED:
+        return "workflow_budget_exceeded"
+    return "workflow_failed"
 
 
 def _prepend_new_steps(new_step_ids: list[str], existing_step_ids: list[str]) -> list[str]:
@@ -1173,6 +1226,33 @@ def _emit_routing_events(recorder: EventRecorder, decision: RoutingDecision) -> 
             recorder.emit("edge_rejected", payload)
 
 
+def _emit_agent_loop_stream_events(
+    recorder: EventRecorder,
+    step: StepSpec,
+    outcome: StepOutcome,
+) -> None:
+    events = outcome.outputs.get("agent_loop_events")
+    if not isinstance(events, list):
+        return
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        if event.get("event_type") != "llm_stream_event":
+            continue
+        recorder.emit(
+            "agent_llm_stream_event",
+            {
+                "step_id": step.step_id,
+                "agent_id": event.get("agent_id"),
+                "iteration": event.get("iteration"),
+                "sequence": event.get("sequence"),
+                "stream_event_type": event.get("stream_event_type"),
+                "text_delta_chars": event.get("text_delta_chars"),
+                "stream_event": event.get("stream_event"),
+            },
+        )
+
+
 def _record_step_artifacts(manifest: dict[str, Any], outcome: StepOutcome) -> None:
     if not outcome.artifacts:
         return
@@ -1201,6 +1281,7 @@ def _workflow_metrics_payload(
     artifact_count: int,
     event_count: int,
     output: dict[str, Any],
+    global_budget_tracker: Any | None = None,
 ) -> dict[str, Any]:
     failed_steps = [
         step_id
@@ -1230,6 +1311,12 @@ def _workflow_metrics_payload(
             metrics["llm_calls"] = agent_metrics.get("llm_calls", 0)
             metrics["tool_calls"] = agent_metrics.get("tool_calls", 0)
             metrics["token_usage"] = agent_metrics.get("token_usage", {})
+            if agent_metrics.get("global_budget_check") is not None:
+                metrics["global_budget_check"] = agent_metrics.get("global_budget_check")
+            if agent_metrics.get("global_budget_usage") is not None:
+                metrics["global_budget_usage"] = agent_metrics.get("global_budget_usage")
+    if global_budget_tracker is not None and hasattr(global_budget_tracker, "snapshot"):
+        metrics["global_budget_usage"] = global_budget_tracker.snapshot()
     if "source_pipeline_metrics" in output:
         source_metrics = output["source_pipeline_metrics"]
         if hasattr(source_metrics, "to_dict"):
@@ -1356,9 +1443,13 @@ def _configure_step_runners(
     *,
     artifact_manager: ArtifactManager,
     run_id: str,
+    global_budget_tracker: Any | None = None,
 ) -> None:
     for step_type in registry.registered_step_types():
         runner = registry.get(step_type)
         configure = getattr(runner, "configure_run_context", None)
         if callable(configure):
             configure(artifact_manager=artifact_manager, run_id=run_id)
+        configure_budget = getattr(runner, "configure_global_budget_tracker", None)
+        if callable(configure_budget) and global_budget_tracker is not None:
+            configure_budget(global_budget_tracker)

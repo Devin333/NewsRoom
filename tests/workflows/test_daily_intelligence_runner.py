@@ -162,6 +162,9 @@ def test_daily_intelligence_runner_live_offline_writes_report_artifacts(tmp_path
     assert manifest["artifacts"]["report_quality_summary"] == "report_quality_summary.json"
     assert manifest["artifacts"]["quality_events"] == "quality_events.json"
     assert manifest["artifacts"]["quality_gate_metrics"] == "quality_gate_metrics.json"
+    assert manifest["artifacts"]["quality_result"] == "quality_result.json"
+    assert manifest["quality_decision"] == "pass"
+    assert manifest["quality_route"] == "final"
     assert manifest["artifacts"]["rewrite_policy"] == "rewrite_policy.json"
     assert manifest["artifacts"]["rewrite_instructions"] == "rewrite_instructions.json"
     assert manifest["quality_score"] == 1.0
@@ -345,6 +348,10 @@ def test_daily_intelligence_runner_live_offline_writes_report_artifacts(tmp_path
     assert quality_metrics["quality_score"] == 1.0
     assert quality_metrics["accepted_claims_count"] == len(result.output["evidence_bundle"].items)
     assert quality_metrics["claim_support_score"] == 1.0
+    quality_result = json.loads((run_dir / "quality_result.json").read_text())
+    assert quality_result["decision"] == "pass"
+    assert quality_result["route"] == "final"
+    assert quality_result["artifact_refs"]["citation_check_result"] == "citation_check_result.json"
 
     lineage_store = LocalJsonLineageStore(tmp_path / "_records" / "lineage")
     evidence_id = result.output["evidence_bundle"].items[0].evidence_id
@@ -505,14 +512,57 @@ def test_daily_intelligence_runner_blocks_uncited_live_report(tmp_path) -> None:
     assert result.output["quality_gate_metrics"].blocked is True
     assert result.output["quality_gate_metrics"].decision == "blocked"
     assert result.output["quality_gate_metrics"].missing_section_sources_count == 1
+    assert result.output["quality_result"].route == "human_review"
+    assert result.output["quality_result"].route_history == ["blocked", "human_review"]
     assert any(event.event_type == "editor_gate_blocked" for event in result.output["quality_events"])
 
     run_dir = Path(result.artifact_dir)
     manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["artifacts"]["quality_events"] == "quality_events.json"
     assert manifest["artifacts"]["quality_gate_metrics"] == "quality_gate_metrics.json"
+    assert manifest["artifacts"]["quality_result"] == "quality_result.json"
+    assert manifest["quality_route"] == "human_review"
     assert manifest["artifacts"]["blocked_report"] == "blocked_report.json"
     assert manifest["artifacts"]["human_review_request"] == "human_review_request.json"
+
+
+def test_daily_intelligence_runner_rewrites_unsupported_claim_before_final_report(tmp_path) -> None:
+    registry = SourceRegistry(
+        [
+            SourceDefinition(
+                source_id="fixture",
+                name="Fixture",
+                source_type="rss",
+                url="https://example.com/rss.xml",
+                reliability="high",
+            )
+        ]
+    )
+    connector = FeedConnector(fetch_text=lambda url: RSS_FIXTURE)
+    result = DailyIntelligenceRunner(
+        artifact_root=tmp_path,
+        source_registry=registry,
+        feed_connector=connector,
+        llm_client=_UnsupportedClaimLLM(),
+    ).run(profile="live", topic="AI policy", source_limit=1, run_id="daily-live-unsupported-claim")
+
+    assert result.status == WorkflowStatus.SUCCEEDED
+    assert result.output["editor_review"].decision == EditorDecision.PASS
+    assert result.output["quality_result"].route == "rewrite"
+    assert result.output["quality_result"].route_history == ["rewrite"]
+    assert result.output["quality_gate_metrics"].rewrite_attempts == 1
+    assert "final_report" in result.output
+    final_content = " ".join(
+        str(section.get("content", "")) for section in result.output["final_report"].sections
+    )
+    assert "quantum chip acquisition" not in final_content
+
+    run_dir = Path(result.artifact_dir)
+    quality_result = json.loads((run_dir / "quality_result.json").read_text(encoding="utf-8"))
+    assert quality_result["route"] == "rewrite"
+    assert quality_result["rewrite_attempts"] == 1
+    manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["artifacts"]["quality_result"] == "quality_result.json"
 
 
 def test_daily_intelligence_runner_live_uses_topic_source_selection(tmp_path) -> None:
@@ -1992,6 +2042,28 @@ class _UncitedReportLLM:
                             "title": "Summary",
                             "content": "Policy summary without citations.",
                             "sources": [],
+                        }
+                    ],
+                }
+            ),
+            usage=TokenUsage(input_tokens=3, output_tokens=4),
+        )
+
+
+class _UnsupportedClaimLLM:
+    def complete(self, request):
+        return LLMResponse(
+            content=json.dumps(
+                {
+                    "title": "Unsupported Claim Live Report",
+                    "sections": [
+                        {
+                            "title": "Summary",
+                            "content": (
+                                "Policy summary. "
+                                "The vendor completed a quantum chip acquisition."
+                            ),
+                            "sources": ["https://example.com/ai-policy"],
                         }
                     ],
                 }

@@ -71,6 +71,9 @@ class ToolRegistry:
     def list_tools(self) -> list[ToolDefinition]:
         return [registered.definition for registered in self._tools.values()]
 
+    def list_registered_tools(self) -> list[RegisteredTool]:
+        return list(self._tools.values())
+
     def list_tools_for_agent(self, agent_id: str, policy: ToolPolicy) -> list[ToolDefinition]:
         _ = agent_id
         return [definition for definition in self.list_tools() if policy.exposes(definition)]

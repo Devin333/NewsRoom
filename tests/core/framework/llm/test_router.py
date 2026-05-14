@@ -4,6 +4,8 @@ import pytest
 
 from core.framework.llm import (
     InMemoryLLMCooldownTracker,
+    GlobalBudgetPolicy,
+    GlobalBudgetTracker,
     LLMCooldownPolicy,
     LLMProviderError,
     LLMRequest,
@@ -271,6 +273,51 @@ def test_llm_router_returns_failed_budget_check_for_non_fail_policy() -> None:
     assert response.metadata["llm_budget_check"]["violations"] == ["max_cost_per_call_usd"]
 
 
+def test_llm_router_records_global_budget_usage() -> None:
+    primary = StaticClient(
+        LLMResponse(content="primary", usage=TokenUsage(input_tokens=1_000, output_tokens=500))
+    )
+    tracker = GlobalBudgetTracker(GlobalBudgetPolicy(max_total_cost_usd=0.01))
+    router = LLMRouter(
+        routes=[ModelRoute(route_id="writer", primary_deployment_id="primary")],
+        deployments=[
+            ModelDeployment(
+                deployment_id="primary",
+                provider="test",
+                model="model-a",
+                client=primary,
+                pricing=ModelPricing(input_usd_per_1m_tokens=2.0, output_usd_per_1m_tokens=10.0),
+            )
+        ],
+        global_budget_tracker=tracker,
+    )
+
+    response = router.complete("writer", LLMRequest(messages=[{"role": "user", "content": "hi"}]))
+
+    assert response.metadata["llm_global_budget_check"]["within_budget"] is True
+    assert response.metadata["llm_global_budget_usage"]["llm_calls"] == 1
+    assert response.metadata["llm_global_budget_usage"]["estimated_cost_usd"] == 0.007
+    assert response.metadata["llm_route_manifest"]["global_budget_usage"]["llm_calls"] == 1
+
+
+def test_llm_router_raises_before_call_when_global_budget_preflight_fails() -> None:
+    primary = StaticClient(LLMResponse(content="primary"))
+    tracker = GlobalBudgetTracker(GlobalBudgetPolicy(max_llm_calls=0))
+    router = LLMRouter(
+        routes=[ModelRoute(route_id="writer", primary_deployment_id="primary")],
+        deployments=[ModelDeployment("primary", "test", "model-a", primary)],
+        global_budget_tracker=tracker,
+    )
+
+    with pytest.raises(LLMRouteError) as exc_info:
+        router.complete("writer", LLMRequest(messages=[{"role": "user", "content": "hi"}]))
+
+    assert primary.call_count == 0
+    assert exc_info.value.error_type == "global_budget_exceeded"
+    assert exc_info.value.manifest["error"]["error_type"] == "global_budget_exceeded"
+    assert exc_info.value.manifest["global_budget_check"]["violations"] == ["max_llm_calls"]
+
+
 def test_llm_router_falls_back_only_after_retryable_provider_error() -> None:
     primary = FailingClient(
         LLMProviderError(
@@ -304,6 +351,83 @@ def test_llm_router_falls_back_only_after_retryable_provider_error() -> None:
     assert response.metadata["llm_deployment_id"] == "fallback"
     assert response.metadata["llm_fallback_used"] is True
     assert response.metadata["llm_attempted_deployments"] == ["primary", "fallback"]
+    assert response.metadata["llm_fallback_count"] == 1
+    assert response.metadata["llm_route_manifest"]["fallback_used"] is True
+    assert response.metadata["llm_route_manifest"]["metrics"]["fallback_count"] == 1
+    assert "llm_fallback_selected" in [
+        event["event_type"] for event in response.metadata["llm_router_events"]
+    ]
+
+
+def test_llm_router_records_fallback_events_and_redacted_route_manifest() -> None:
+    now = datetime(2026, 5, 12, tzinfo=UTC)
+    events = []
+    primary = FailingClient(
+        LLMProviderError(
+            "temporary outage",
+            provider="primary",
+            error_type="provider_server_error",
+            retryable=True,
+            status_code=503,
+        )
+    )
+    fallback = StaticClient(LLMResponse(content="fallback"))
+    router = LLMRouter(
+        routes=[
+            ModelRoute(
+                route_id="writer",
+                primary_deployment_id="primary",
+                fallback_deployment_ids=("fallback",),
+            )
+        ],
+        deployments=[
+            ModelDeployment("primary", "test", "model-a", primary),
+            ModelDeployment("fallback", "test", "model-b", fallback),
+        ],
+        routing_policy=LLMRoutingPolicy(agent_task_routes={("agent-a", "draft"): "writer"}),
+        now_fn=lambda: now,
+        event_sink=events.append,
+    )
+    secret = "sk" + "-router-secret-value"
+
+    response = router.complete_for(
+        LLMRequest(
+            messages=[{"role": "user", "content": f"hi {secret}"}],
+            metadata={"api_key": secret},
+        ),
+        agent_id="agent-a",
+        task_type="draft",
+    )
+
+    event_payloads = response.metadata["llm_router_events"]
+    manifest = response.metadata["llm_route_manifest"]
+
+    assert [event.event_type for event in events] == [
+        "llm_route_started",
+        "llm_deployment_attempt_started",
+        "llm_deployment_attempt_failed",
+        "llm_fallback_selected",
+        "llm_deployment_attempt_started",
+        "llm_deployment_attempt_succeeded",
+        "llm_route_completed",
+    ]
+    assert [event["event_type"] for event in event_payloads] == [event.event_type for event in events]
+    assert event_payloads[0]["occurred_at"] == "2026-05-12T00:00:00Z"
+    assert manifest["schema_version"] == "newsroom.llm_route_manifest.v1"
+    assert manifest["status"] == "succeeded"
+    assert manifest["selected_deployment_id"] == "fallback"
+    assert manifest["fallback_count"] == 1
+    assert manifest["metrics"]["provider_error_count"] == 1
+    assert manifest["provider_resolution_trace"][0] == {
+        "source": "agent_task_route",
+        "matched": True,
+        "agent_id": "agent-a",
+        "task_type": "draft",
+        "route_id": "writer",
+    }
+    assert manifest["redacted_request"]["metadata"]["api_key"] == "[redacted]"
+    assert secret not in str(manifest)
+    assert "[redacted]" in str(manifest)
 
 
 def test_llm_router_rejects_fallback_missing_required_capability() -> None:
@@ -520,6 +644,10 @@ def test_llm_router_raises_when_fallback_chain_exhausted() -> None:
     assert exc_info.value.retryable is True
     assert exc_info.value.attempted_deployments == ("primary", "fallback")
     assert [error["deployment_id"] for error in exc_info.value.errors] == ["primary", "fallback"]
+    assert "llm_fallback_selected" in [event["event_type"] for event in exc_info.value.events]
+    assert exc_info.value.manifest["status"] == "failed"
+    assert exc_info.value.manifest["fallback_count"] == 1
+    assert exc_info.value.manifest["error"]["error_type"] == "provider_error"
 
 
 def test_llm_router_raises_for_disabled_deployment() -> None:

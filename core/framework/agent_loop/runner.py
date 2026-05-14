@@ -7,7 +7,7 @@ from core.framework.agent_loop.models import AgentLoopResult, AgentSpec
 from core.framework.agent_loop.parser import AgentActionParser
 from core.framework.agent_loop.prompt import PromptBuilder
 from core.framework.agent_loop.judge import OutputJudge
-from core.framework.llm import LLMClient
+from core.framework.llm import GlobalBudgetTracker, LLMClient
 from core.framework.tools import ToolExecutor, ToolRegistry
 from storage.conversation import AgentMessageRecord, LocalJsonConversationStore
 
@@ -19,10 +19,12 @@ class AgentRunner:
         llm_client: LLMClient,
         tool_registry: ToolRegistry,
         conversation_store: LocalJsonConversationStore | None = None,
+        global_budget_tracker: GlobalBudgetTracker | None = None,
     ) -> None:
         self._llm_client = llm_client
         self._tool_registry = tool_registry
         self._conversation_store = conversation_store
+        self._global_budget_tracker = global_budget_tracker
 
     def run(
         self,
@@ -30,6 +32,7 @@ class AgentRunner:
         inputs: dict[str, Any],
         *,
         conversation_id: str | None = None,
+        global_budget_tracker: GlobalBudgetTracker | None = None,
     ) -> AgentLoopResult:
         self._append_conversation_message(
             conversation_id,
@@ -51,6 +54,7 @@ class AgentRunner:
             prompt_builder=PromptBuilder(),
             action_parser=AgentActionParser(),
             output_judge=OutputJudge(),
+            global_budget_tracker=global_budget_tracker or self._global_budget_tracker,
         )
         result = loop.run(agent, inputs, tools)
         self._append_conversation_events(conversation_id, agent, result.events)

@@ -217,7 +217,7 @@ def _claim_supported_by_evidence(claim: str, item: EvidenceItem) -> bool:
     evidence_text = f"{item.title} {item.summary}"
     if _normalize(claim) in _normalize(evidence_text):
         return True
-    return _token_overlap(claim, evidence_text) >= 0.25
+    return _token_overlap(claim, evidence_text) >= 0.5
 
 
 def _report_text(report: dict) -> str:

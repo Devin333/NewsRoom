@@ -164,6 +164,7 @@ class ArtifactRef:
     relative_path: str
     content_type: str = "application/json"
     size_bytes: int | None = None
+    checksum: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -171,6 +172,7 @@ class ArtifactRef:
             "relative_path": self.relative_path,
             "content_type": self.content_type,
             "size_bytes": self.size_bytes,
+            "checksum": self.checksum,
         }
 
 

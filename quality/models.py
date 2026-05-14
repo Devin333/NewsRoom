@@ -70,6 +70,62 @@ class QualityGateMetrics:
 
 
 @dataclass(frozen=True)
+class QualityResult:
+    decision: str
+    passed: bool
+    route: str
+    blocked: bool
+    quality_score: float | None = None
+    citation_coverage_score: float | None = None
+    claim_support_score: float | None = None
+    section_source_coverage_score: float | None = None
+    support_coverage: float | None = None
+    evidence_alignment_score: float | None = None
+    rewrite_attempts: int = 0
+    rewrite_required: bool = False
+    human_review_required: bool = False
+    route_history: list[str] = field(default_factory=list)
+    reasons: list[str] = field(default_factory=list)
+    artifact_refs: dict[str, Any] = field(default_factory=dict)
+    citation_check_result: Any | None = None
+    editor_review: Any | None = None
+    support_matrix: Any | None = None
+    report_quality_summary: Any | None = None
+    quality_gate_metrics: Any | None = None
+    created_at: datetime = field(default_factory=_utc_now)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "decision": self.decision,
+            "passed": self.passed,
+            "route": self.route,
+            "blocked": self.blocked,
+            "quality_score": self.quality_score,
+            "citation_coverage_score": self.citation_coverage_score,
+            "claim_support_score": self.claim_support_score,
+            "section_source_coverage_score": self.section_source_coverage_score,
+            "support_coverage": self.support_coverage,
+            "evidence_alignment_score": self.evidence_alignment_score,
+            "rewrite_attempts": self.rewrite_attempts,
+            "rewrite_required": self.rewrite_required,
+            "human_review_required": self.human_review_required,
+            "route_history": list(self.route_history),
+            "reasons": list(self.reasons),
+            "artifact_refs": {
+                key: _artifact_ref(value) for key, value in self.artifact_refs.items()
+            },
+            "citation_check_result": _artifact_ref(self.citation_check_result),
+            "editor_review": _artifact_ref(self.editor_review),
+            "support_matrix": _artifact_ref(self.support_matrix),
+            "report_quality_summary": _artifact_ref(self.report_quality_summary),
+            "quality_gate_metrics": _artifact_ref(self.quality_gate_metrics),
+            "created_at": self.created_at.isoformat().replace("+00:00", "Z"),
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
 class HumanReviewRequest:
     review_id: str
     run_id: str

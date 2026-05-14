@@ -171,6 +171,55 @@ def test_openai_compatible_client_does_not_retry_http_400(monkeypatch) -> None:
     assert exc_info.value.attempts == 1
 
 
+@pytest.mark.parametrize(
+    ("status_code", "expected_error_type", "expected_retryable"),
+    [
+        (401, "invalid_api_key", False),
+        (403, "invalid_api_key", False),
+        (404, "invalid_model", False),
+        (408, "provider_timeout", True),
+        (413, "context_length_exceeded", False),
+        (429, "rate_limited", True),
+        (500, "provider_server_error", True),
+        (502, "provider_server_error", True),
+        (504, "provider_server_error", True),
+    ],
+)
+def test_openai_compatible_client_classifies_http_provider_errors(
+    monkeypatch,
+    status_code: int,
+    expected_error_type: str,
+    expected_retryable: bool,
+) -> None:
+    monkeypatch.setenv("TEST_LLM_KEY", "redacted-test-key")
+    calls = 0
+
+    def transport(request: Request, timeout: float) -> bytes:
+        nonlocal calls
+        calls += 1
+        raise HTTPError(request.full_url, status_code, "provider error", hdrs=None, fp=BytesIO(b""))
+
+    client = OpenAICompatibleClient(
+        OpenAICompatibleConfig(
+            provider="test",
+            base_url="https://llm.example/v1",
+            model="test-model",
+            api_key_env="TEST_LLM_KEY",
+        ),
+        transport=transport,
+        retry_policy=LLMRetryPolicy(max_attempts=1, retry_delay_seconds=(0,)),
+        sleep=lambda seconds: None,
+    )
+
+    with pytest.raises(LLMProviderError) as exc_info:
+        client.complete(LLMRequest(messages=[{"role": "user", "content": "hi"}]))
+
+    assert calls == 1
+    assert exc_info.value.status_code == status_code
+    assert exc_info.value.error_type == expected_error_type
+    assert exc_info.value.retryable is expected_retryable
+
+
 def test_openai_compatible_client_raises_after_exhausting_retryable_http_error(monkeypatch) -> None:
     monkeypatch.setenv("TEST_LLM_KEY", "redacted-test-key")
     calls = 0

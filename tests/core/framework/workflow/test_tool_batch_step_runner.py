@@ -107,7 +107,7 @@ def test_tool_batch_step_runner_executes_real_builtin_tools(tmp_path) -> None:
 
 
 def test_tool_batch_step_runner_fails_when_tool_is_blocked(tmp_path) -> None:
-    tool_registry = build_builtin_tool_registry()
+    tool_registry = build_builtin_tool_registry(include_dangerous_tools=True)
     step_runner_registry = StepRunnerRegistry.with_function_runner(
         FunctionStepRunner(FunctionStepRegistry())
     )

@@ -4,6 +4,7 @@ import json
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from datetime import UTC, datetime
+from hashlib import sha256
 from typing import Any
 
 from core.framework.artifacts import ArtifactManager
@@ -159,9 +160,26 @@ class ToolExecutor:
         if (
             policy.spill_large_results_to_artifact
             and output_bytes > policy.max_result_chars_inline
-            and self._artifact_manager is not None
-            and self._run_id is not None
         ):
+            if self._artifact_manager is None or self._run_id is None:
+                self._emit(
+                    "tool_output_guardrail_failed",
+                    call,
+                    {
+                        "reason": "artifact_context_required",
+                        "output_bytes": output_bytes,
+                        "max_result_chars_inline": policy.max_result_chars_inline,
+                    },
+                )
+                return ToolResult(
+                    status=ToolStatus.FAILED,
+                    error_type="ToolRuntimeError",
+                    error_message=(
+                        "tool output exceeded max_result_chars_inline and no "
+                        "artifact context is configured"
+                    ),
+                    output_bytes=output_bytes,
+                )
             relative_path = f"tool_results/{call.call_id}.json"
             artifact_payload = {
                 "call": call.to_dict(),
@@ -169,10 +187,12 @@ class ToolExecutor:
                 "output_bytes": output_bytes,
             }
             path = self._artifact_manager.write_json(self._run_id, relative_path, artifact_payload)
+            artifact_bytes = path.read_bytes()
             artifact_ref = ArtifactRef(
                 artifact_id=f"tool_result:{call.call_id}",
                 relative_path=relative_path,
-                size_bytes=path.stat().st_size,
+                size_bytes=len(artifact_bytes),
+                checksum=sha256(artifact_bytes).hexdigest(),
             )
             return ToolResult(
                 status=ToolStatus.SUCCEEDED,

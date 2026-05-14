@@ -2,10 +2,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 from core.framework.llm.capabilities import ModelCapabilities
-from core.framework.llm.cost import LLMBudgetExceededError, LLMBudgetGuard, LLMBudgetPolicy, ModelPricing
+from core.framework.llm.cost import (
+    GlobalBudgetExceededError,
+    GlobalBudgetTracker,
+    LLMBudgetExceededError,
+    LLMBudgetGuard,
+    LLMBudgetPolicy,
+    ModelPricing,
+)
 from core.framework.llm.models import LLMClient, LLMRequest, LLMResponse
 from core.framework.llm.openai_compatible import LLMProviderError
 from core.framework.llm.redaction import redact_sensitive_values
@@ -38,6 +45,34 @@ class ModelRoute:
 
 
 @dataclass(frozen=True)
+class LLMRouterEvent:
+    event_type: str
+    route_id: str
+    deployment_id: str | None = None
+    provider: str | None = None
+    model: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    occurred_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+
+    def to_dict(self, *, redact: bool = True) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "event_type": self.event_type,
+            "route_id": self.route_id,
+            "deployment_id": self.deployment_id,
+            "provider": self.provider,
+            "model": self.model,
+            "metadata": dict(self.metadata),
+            "occurred_at": _datetime_to_json(self.occurred_at),
+        }
+        if redact:
+            return redact_sensitive_values(payload)
+        return payload
+
+
+LLMRouterEventSink = Callable[[LLMRouterEvent], None]
+
+
+@dataclass(frozen=True)
 class LLMRoutingPolicy:
     default_route_id: str | None = None
     agent_routes: dict[str, str] = field(default_factory=dict)
@@ -51,24 +86,79 @@ class LLMRoutingPolicy:
         agent_id: str | None = None,
         task_type: str | None = None,
     ) -> str | None:
+        resolved, _trace = self.resolve_with_trace(
+            route_id=route_id,
+            agent_id=agent_id,
+            task_type=task_type,
+        )
+        return resolved
+
+    def resolve_with_trace(
+        self,
+        *,
+        route_id: str | None = None,
+        agent_id: str | None = None,
+        task_type: str | None = None,
+    ) -> tuple[str | None, tuple[dict[str, Any], ...]]:
+        trace: list[dict[str, Any]] = []
         explicit_route = _optional_text(route_id)
         if explicit_route:
-            return explicit_route
+            trace.append(
+                {
+                    "source": "explicit_route",
+                    "matched": True,
+                    "route_id": explicit_route,
+                }
+            )
+            return explicit_route, tuple(trace)
         clean_agent_id = _optional_text(agent_id)
         clean_task_type = _optional_text(task_type)
         if clean_agent_id and clean_task_type:
             pair_route = self.agent_task_routes.get((clean_agent_id, clean_task_type))
+            trace.append(
+                {
+                    "source": "agent_task_route",
+                    "matched": pair_route is not None,
+                    "agent_id": clean_agent_id,
+                    "task_type": clean_task_type,
+                    "route_id": pair_route,
+                }
+            )
             if pair_route:
-                return pair_route
+                return pair_route, tuple(trace)
         if clean_agent_id:
             agent_route = self.agent_routes.get(clean_agent_id)
+            trace.append(
+                {
+                    "source": "agent_route",
+                    "matched": agent_route is not None,
+                    "agent_id": clean_agent_id,
+                    "route_id": agent_route,
+                }
+            )
             if agent_route:
-                return agent_route
+                return agent_route, tuple(trace)
         if clean_task_type:
             task_route = self.task_routes.get(clean_task_type)
+            trace.append(
+                {
+                    "source": "task_route",
+                    "matched": task_route is not None,
+                    "task_type": clean_task_type,
+                    "route_id": task_route,
+                }
+            )
             if task_route:
-                return task_route
-        return _optional_text(self.default_route_id)
+                return task_route, tuple(trace)
+        default_route = _optional_text(self.default_route_id)
+        trace.append(
+            {
+                "source": "default_route",
+                "matched": default_route is not None,
+                "route_id": default_route,
+            }
+        )
+        return default_route, tuple(trace)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -186,6 +276,8 @@ class LLMRouteError(RuntimeError):
         retryable: bool = False,
         attempted_deployments: Iterable[str] = (),
         errors: Iterable[dict[str, Any]] = (),
+        events: Iterable[dict[str, Any]] = (),
+        manifest: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(message)
         self.route_id = route_id
@@ -193,6 +285,8 @@ class LLMRouteError(RuntimeError):
         self.retryable = retryable
         self.attempted_deployments = tuple(attempted_deployments)
         self.errors = tuple(dict(error) for error in errors)
+        self.events = tuple(dict(event) for event in events)
+        self.manifest = dict(manifest or {})
 
     def to_dict(self, *, redact: bool = True) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -202,6 +296,8 @@ class LLMRouteError(RuntimeError):
             "retryable": self.retryable,
             "attempted_deployments": list(self.attempted_deployments),
             "errors": [dict(error) for error in self.errors],
+            "events": [dict(event) for event in self.events],
+            "manifest": dict(self.manifest),
         }
         if redact:
             return redact_sensitive_values(payload)
@@ -216,7 +312,9 @@ class LLMRouter:
         deployments: Iterable[ModelDeployment],
         routing_policy: LLMRoutingPolicy | None = None,
         cooldown_tracker: InMemoryLLMCooldownTracker | None = None,
+        global_budget_tracker: GlobalBudgetTracker | None = None,
         now_fn: Any | None = None,
+        event_sink: LLMRouterEventSink | None = None,
     ) -> None:
         self._routes = {route.route_id: route for route in routes}
         self._deployments = {
@@ -225,7 +323,9 @@ class LLMRouter:
         }
         self._routing_policy = routing_policy
         self._cooldown_tracker = cooldown_tracker
+        self._global_budget_tracker = global_budget_tracker
         self._now_fn = now_fn or (lambda: datetime.now(UTC))
+        self._event_sink = event_sink
 
     def resolve_route_id(
         self,
@@ -234,14 +334,10 @@ class LLMRouter:
         agent_id: str | None = None,
         task_type: str | None = None,
     ) -> str:
-        resolved = (
-            _optional_text(route_id)
-            if self._routing_policy is None
-            else self._routing_policy.resolve(
-                route_id=route_id,
-                agent_id=agent_id,
-                task_type=task_type,
-            )
+        resolved, trace = self._resolve_route_id_with_trace(
+            route_id=route_id,
+            agent_id=agent_id,
+            task_type=task_type,
         )
         if not resolved:
             raise LLMRouteError(
@@ -254,6 +350,7 @@ class LLMRouter:
                         "agent_id": agent_id,
                         "task_type": task_type,
                         "routing_policy_configured": self._routing_policy is not None,
+                        "resolution_trace": trace,
                     }
                 ],
             )
@@ -267,32 +364,86 @@ class LLMRouter:
         agent_id: str | None = None,
         task_type: str | None = None,
     ) -> LLMResponse:
-        return self.complete(
-            self.resolve_route_id(
-                route_id=route_id,
-                agent_id=agent_id,
-                task_type=task_type,
-            ),
-            request,
+        resolved, resolution_trace = self._resolve_route_id_with_trace(
+            route_id=route_id,
+            agent_id=agent_id,
+            task_type=task_type,
         )
+        if not resolved:
+            raise LLMRouteError(
+                "LLM route could not be resolved",
+                route_id=route_id or "",
+                error_type="route_not_resolved",
+                retryable=False,
+                errors=[
+                    {
+                        "agent_id": agent_id,
+                        "task_type": task_type,
+                        "routing_policy_configured": self._routing_policy is not None,
+                        "resolution_trace": resolution_trace,
+                    }
+                ],
+            )
+        return self._complete(resolved, request, resolution_trace=resolution_trace)
 
     def complete(self, route_id: str, request: LLMRequest) -> LLMResponse:
+        return self._complete(route_id, request, resolution_trace=())
+
+    def _complete(
+        self,
+        route_id: str,
+        request: LLMRequest,
+        *,
+        resolution_trace: Iterable[dict[str, Any]],
+    ) -> LLMResponse:
         route = self._route(route_id)
         attempted_deployments: list[str] = []
         errors: list[dict[str, Any]] = []
         deployment_chain = route.deployment_chain()
+        resolution_trace = tuple(dict(item) for item in resolution_trace)
+        route_events: list[LLMRouterEvent] = []
+        self._record_event(
+            route_events,
+            "llm_route_started",
+            route.route_id,
+            metadata={
+                "deployment_chain": list(deployment_chain),
+                "required_capabilities": list(route.required_capabilities),
+                "resolution_trace": list(resolution_trace),
+            },
+        )
 
         for index, deployment_id in enumerate(deployment_chain):
             attempted_deployments.append(deployment_id)
             deployment = self._deployment(route.route_id, deployment_id, attempted_deployments, errors)
+            self._record_event(
+                route_events,
+                "llm_deployment_attempt_started",
+                route.route_id,
+                deployment=deployment,
+                metadata={
+                    "attempt_index": index + 1,
+                    "fallback_attempt": index > 0,
+                },
+            )
             if not deployment.enabled:
-                raise LLMRouteError(
+                self._record_event(
+                    route_events,
+                    "llm_deployment_rejected",
+                    route.route_id,
+                    deployment=deployment,
+                    metadata={"reason": "deployment_disabled", "retryable": False},
+                )
+                raise self._build_route_error(
                     f"LLM route {route.route_id} deployment is disabled: {deployment_id}",
                     route_id=route.route_id,
                     error_type="deployment_disabled",
                     retryable=False,
+                    request=request,
                     attempted_deployments=attempted_deployments,
                     errors=errors,
+                    events=route_events,
+                    resolution_trace=resolution_trace,
                 )
             cooldown_until = self._active_cooldown_until(deployment)
             if cooldown_until is not None:
@@ -305,15 +456,37 @@ class LLMRouter:
                     }
                 )
                 has_fallback = index < len(deployment_chain) - 1
+                self._record_event(
+                    route_events,
+                    "llm_deployment_skipped",
+                    route.route_id,
+                    deployment=deployment,
+                    metadata={
+                        "reason": "deployment_in_cooldown",
+                        "cooldown_until": _datetime_to_json(cooldown_until),
+                        "retryable": True,
+                    },
+                )
                 if has_fallback:
+                    self._record_fallback_event(
+                        route_events,
+                        route_id=route.route_id,
+                        from_deployment=deployment,
+                        to_deployment_id=deployment_chain[index + 1],
+                        reason="deployment_in_cooldown",
+                        errors=errors,
+                    )
                     continue
-                raise LLMRouteError(
+                raise self._build_route_error(
                     f"LLM route {route.route_id} deployment is in cooldown: {deployment_id}",
                     route_id=route.route_id,
                     error_type="deployment_in_cooldown",
                     retryable=True,
+                    request=request,
                     attempted_deployments=attempted_deployments,
                     errors=errors,
+                    events=route_events,
+                    resolution_trace=resolution_trace,
                 )
             missing_capabilities = deployment.capabilities.missing(route.required_capabilities)
             if missing_capabilities:
@@ -325,14 +498,62 @@ class LLMRouter:
                         "retryable": False,
                     }
                 )
-                raise LLMRouteError(
+                self._record_event(
+                    route_events,
+                    "llm_deployment_rejected",
+                    route.route_id,
+                    deployment=deployment,
+                    metadata={
+                        "reason": "missing_required_capability",
+                        "missing_capabilities": list(missing_capabilities),
+                        "retryable": False,
+                    },
+                )
+                raise self._build_route_error(
                     f"LLM route {route.route_id} deployment lacks required capabilities: {deployment_id}",
                     route_id=route.route_id,
                     error_type="missing_required_capability",
                     retryable=False,
+                    request=request,
                     attempted_deployments=attempted_deployments,
                     errors=errors,
+                    events=route_events,
+                    resolution_trace=resolution_trace,
                 )
+
+            try:
+                self._check_global_budget_before_call()
+            except GlobalBudgetExceededError as exc:
+                errors.append(
+                    {
+                        "deployment_id": deployment_id,
+                        "error_type": "global_budget_exceeded",
+                        "retryable": False,
+                        "global_budget_check": exc.check.to_dict(),
+                    }
+                )
+                self._record_event(
+                    route_events,
+                    "llm_global_budget_exceeded",
+                    route.route_id,
+                    deployment=deployment,
+                    metadata={
+                        "phase": "preflight",
+                        "global_budget_check": exc.check.to_dict(),
+                        "retryable": False,
+                    },
+                )
+                raise self._build_route_error(
+                    f"LLM route {route.route_id} exceeded global budget before deployment {deployment_id}",
+                    route_id=route.route_id,
+                    error_type="global_budget_exceeded",
+                    retryable=False,
+                    request=request,
+                    attempted_deployments=attempted_deployments,
+                    errors=errors,
+                    events=route_events,
+                    resolution_trace=resolution_trace,
+                ) from exc
 
             try:
                 response = deployment.client.complete(request)
@@ -343,15 +564,38 @@ class LLMRouter:
                     error_payload["cooldown_state"] = cooldown_state.to_dict()
                 errors.append(error_payload)
                 has_fallback = index < len(deployment_chain) - 1
+                self._record_event(
+                    route_events,
+                    "llm_deployment_attempt_failed",
+                    route.route_id,
+                    deployment=deployment,
+                    metadata={
+                        "error_type": exc.error_type,
+                        "status_code": exc.status_code,
+                        "retryable": exc.retryable,
+                        "attempts": exc.attempts,
+                    },
+                )
                 if exc.retryable and has_fallback:
+                    self._record_fallback_event(
+                        route_events,
+                        route_id=route.route_id,
+                        from_deployment=deployment,
+                        to_deployment_id=deployment_chain[index + 1],
+                        reason=exc.error_type,
+                        errors=errors,
+                    )
                     continue
-                raise LLMRouteError(
+                raise self._build_route_error(
                     f"LLM route {route.route_id} failed at deployment {deployment_id}",
                     route_id=route.route_id,
                     error_type="provider_error",
                     retryable=exc.retryable,
+                    request=request,
                     attempted_deployments=attempted_deployments,
                     errors=errors,
+                    events=route_events,
+                    resolution_trace=resolution_trace,
                 ) from exc
             except Exception as exc:
                 errors.append(
@@ -362,13 +606,27 @@ class LLMRouter:
                         "retryable": False,
                     }
                 )
-                raise LLMRouteError(
+                self._record_event(
+                    route_events,
+                    "llm_deployment_attempt_failed",
+                    route.route_id,
+                    deployment=deployment,
+                    metadata={
+                        "error_type": "client_error",
+                        "message": str(exc),
+                        "retryable": False,
+                    },
+                )
+                raise self._build_route_error(
                     f"LLM route {route.route_id} client failed at deployment {deployment_id}",
                     route_id=route.route_id,
                     error_type="client_error",
                     retryable=False,
+                    request=request,
                     attempted_deployments=attempted_deployments,
                     errors=errors,
+                    events=route_events,
+                    resolution_trace=resolution_trace,
                 ) from exc
 
             if self._cooldown_tracker is not None:
@@ -384,31 +642,242 @@ class LLMRouter:
                         "budget_check": exc.check.to_dict(),
                     }
                 )
-                raise LLMRouteError(
+                self._record_event(
+                    route_events,
+                    "llm_budget_exceeded",
+                    route.route_id,
+                    deployment=deployment,
+                    metadata={"budget_check": exc.check.to_dict(), "retryable": False},
+                )
+                raise self._build_route_error(
                     f"LLM route {route.route_id} exceeded budget at deployment {deployment_id}",
                     route_id=route.route_id,
                     error_type="llm_budget_exceeded",
                     retryable=False,
+                    request=request,
                     attempted_deployments=attempted_deployments,
                     errors=errors,
+                    events=route_events,
+                    resolution_trace=resolution_trace,
                 ) from exc
+            try:
+                global_budget_check = self._record_global_budget_call(
+                    response,
+                    deployment=deployment,
+                    budget_check=budget_check,
+                )
+            except GlobalBudgetExceededError as exc:
+                errors.append(
+                    {
+                        "deployment_id": deployment_id,
+                        "error_type": "global_budget_exceeded",
+                        "retryable": False,
+                        "global_budget_check": exc.check.to_dict(),
+                    }
+                )
+                self._record_event(
+                    route_events,
+                    "llm_global_budget_exceeded",
+                    route.route_id,
+                    deployment=deployment,
+                    metadata={
+                        "phase": "post_call",
+                        "global_budget_check": exc.check.to_dict(),
+                        "retryable": False,
+                    },
+                )
+                raise self._build_route_error(
+                    f"LLM route {route.route_id} exceeded global budget at deployment {deployment_id}",
+                    route_id=route.route_id,
+                    error_type="global_budget_exceeded",
+                    retryable=False,
+                    request=request,
+                    attempted_deployments=attempted_deployments,
+                    errors=errors,
+                    events=route_events,
+                    resolution_trace=resolution_trace,
+                ) from exc
+            self._record_event(
+                route_events,
+                "llm_deployment_attempt_succeeded",
+                route.route_id,
+                deployment=deployment,
+                metadata={
+                    "attempt_index": index + 1,
+                    "usage": response.usage.to_dict(),
+                    "budget_check": budget_check.to_dict() if budget_check is not None else None,
+                    "global_budget_check": (
+                        global_budget_check.to_dict() if global_budget_check is not None else None
+                    ),
+                },
+            )
+            self._record_event(
+                route_events,
+                "llm_route_completed",
+                route.route_id,
+                deployment=deployment,
+                metadata={
+                    "attempted_deployments": list(attempted_deployments),
+                    "fallback_used": index > 0,
+                },
+            )
 
             return _with_routing_metadata(
                 response,
+                request=request,
                 route_id=route.route_id,
                 deployment=deployment,
                 attempted_deployments=attempted_deployments,
                 fallback_used=index > 0,
                 budget_check=budget_check,
+                global_budget_check=global_budget_check,
+                events=route_events,
+                errors=errors,
+                resolution_trace=resolution_trace,
             )
 
-        raise LLMRouteError(
+        raise self._build_route_error(
             f"LLM route {route.route_id} has no deployments",
             route_id=route.route_id,
             error_type="empty_route",
             retryable=False,
+            request=request,
             attempted_deployments=attempted_deployments,
             errors=errors,
+            events=route_events,
+            resolution_trace=resolution_trace,
+        )
+
+    def _resolve_route_id_with_trace(
+        self,
+        *,
+        route_id: str | None = None,
+        agent_id: str | None = None,
+        task_type: str | None = None,
+    ) -> tuple[str | None, tuple[dict[str, Any], ...]]:
+        if self._routing_policy is None:
+            explicit_route = _optional_text(route_id)
+            return explicit_route, (
+                {
+                    "source": "explicit_route",
+                    "matched": explicit_route is not None,
+                    "route_id": explicit_route,
+                    "routing_policy_configured": False,
+                },
+            )
+        return self._routing_policy.resolve_with_trace(
+            route_id=route_id,
+            agent_id=agent_id,
+            task_type=task_type,
+        )
+
+    def _record_event(
+        self,
+        events: list[LLMRouterEvent],
+        event_type: str,
+        route_id: str,
+        *,
+        deployment: ModelDeployment | None = None,
+        deployment_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> LLMRouterEvent:
+        event = LLMRouterEvent(
+            event_type=event_type,
+            route_id=route_id,
+            deployment_id=deployment.deployment_id if deployment is not None else deployment_id,
+            provider=deployment.provider if deployment is not None else None,
+            model=deployment.model if deployment is not None else None,
+            metadata=redact_sensitive_values(dict(metadata or {})),
+            occurred_at=self._now_fn(),
+        )
+        events.append(event)
+        if self._event_sink is not None:
+            self._event_sink(event)
+        return event
+
+    def _record_fallback_event(
+        self,
+        events: list[LLMRouterEvent],
+        *,
+        route_id: str,
+        from_deployment: ModelDeployment,
+        to_deployment_id: str,
+        reason: str,
+        errors: list[dict[str, Any]],
+    ) -> LLMRouterEvent:
+        to_deployment = self._deployments.get(to_deployment_id)
+        return self._record_event(
+            events,
+            "llm_fallback_selected",
+            route_id,
+            deployment=to_deployment,
+            deployment_id=to_deployment_id,
+            metadata={
+                "from_deployment_id": from_deployment.deployment_id,
+                "from_provider": from_deployment.provider,
+                "from_model": from_deployment.model,
+                "to_deployment_id": to_deployment_id,
+                "to_provider": to_deployment.provider if to_deployment is not None else None,
+                "to_model": to_deployment.model if to_deployment is not None else None,
+                "reason": reason,
+                "error_count": len(errors),
+                "errors": [dict(error) for error in errors],
+            },
+        )
+
+    def _build_route_error(
+        self,
+        message: str,
+        *,
+        route_id: str,
+        error_type: str,
+        retryable: bool,
+        request: LLMRequest,
+        attempted_deployments: list[str],
+        errors: list[dict[str, Any]],
+        events: list[LLMRouterEvent],
+        resolution_trace: Iterable[dict[str, Any]],
+    ) -> LLMRouteError:
+        self._record_event(
+            events,
+            "llm_route_failed",
+            route_id,
+            metadata={
+                "error_type": error_type,
+                "retryable": retryable,
+                "attempted_deployments": list(attempted_deployments),
+                "error_count": len(errors),
+            },
+        )
+        event_payloads = _event_payloads(events)
+        manifest = _build_route_manifest(
+            route_id=route_id,
+            status="failed",
+            request=request,
+            response=None,
+            selected_deployment=None,
+            attempted_deployments=attempted_deployments,
+            fallback_used=_fallback_count(events) > 0,
+            budget_check=None,
+            events=event_payloads,
+            errors=errors,
+            resolution_trace=resolution_trace,
+            error={
+                "message": message,
+                "error_type": error_type,
+                "retryable": retryable,
+            },
+            global_budget_check=_last_global_budget_check(errors),
+        )
+        return LLMRouteError(
+            message,
+            route_id=route_id,
+            error_type=error_type,
+            retryable=retryable,
+            attempted_deployments=attempted_deployments,
+            errors=errors,
+            events=event_payloads,
+            manifest=manifest,
         )
 
     def _route(self, route_id: str) -> ModelRoute:
@@ -468,6 +937,29 @@ class LLMRouter:
             return None
         return self._cooldown_tracker.record_failure(deployment_id, error)
 
+    def _check_global_budget_before_call(self):
+        if self._global_budget_tracker is None:
+            return None
+        return self._global_budget_tracker.check_before_llm_call()
+
+    def _record_global_budget_call(
+        self,
+        response: LLMResponse,
+        *,
+        deployment: ModelDeployment,
+        budget_check,
+    ):
+        if self._global_budget_tracker is None:
+            return None
+        estimated_cost_usd = (
+            budget_check.estimated_cost_usd if budget_check is not None else None
+        )
+        return self._global_budget_tracker.record_llm_call(
+            response.usage,
+            deployment.pricing,
+            estimated_cost_usd=estimated_cost_usd,
+        )
+
 
 def _provider_error_payload(deployment_id: str, error: LLMProviderError) -> dict[str, Any]:
     payload = error.to_dict()
@@ -507,13 +999,35 @@ def _check_budget(
 def _with_routing_metadata(
     response: LLMResponse,
     *,
+    request: LLMRequest,
     route_id: str,
     deployment: ModelDeployment,
     attempted_deployments: list[str],
     fallback_used: bool,
     budget_check,
+    global_budget_check,
+    events: Iterable[LLMRouterEvent],
+    errors: Iterable[dict[str, Any]],
+    resolution_trace: Iterable[dict[str, Any]],
 ) -> LLMResponse:
     metadata = dict(response.metadata)
+    event_payloads = _event_payloads(events)
+    manifest = _build_route_manifest(
+        route_id=route_id,
+        status="succeeded",
+        request=request,
+        response=response,
+        selected_deployment=deployment,
+        attempted_deployments=attempted_deployments,
+        fallback_used=fallback_used,
+        budget_check=budget_check,
+        global_budget_check=global_budget_check,
+        events=event_payloads,
+        errors=errors,
+        resolution_trace=resolution_trace,
+        error=None,
+    )
+    metrics = dict(manifest["metrics"])
     metadata.update(
         {
             "llm_route_id": route_id,
@@ -523,9 +1037,121 @@ def _with_routing_metadata(
             "llm_capabilities": deployment.capabilities.to_dict(),
             "llm_fallback_used": fallback_used,
             "llm_attempted_deployments": list(attempted_deployments),
+            "llm_fallback_count": metrics["fallback_count"],
+            "llm_router_event_count": metrics["event_count"],
+            "llm_provider_resolution_trace": [dict(item) for item in resolution_trace],
+            "llm_router_events": event_payloads,
+            "llm_route_manifest": manifest,
         }
     )
     if budget_check is not None:
         metadata["llm_estimated_cost_usd"] = budget_check.estimated_cost_usd
         metadata["llm_budget_check"] = budget_check.to_dict()
+    if global_budget_check is not None:
+        metadata["llm_global_budget_check"] = global_budget_check.to_dict()
+        metadata["llm_global_budget_usage"] = global_budget_check.usage.to_dict()
     return replace(response, metadata=metadata)
+
+
+def _event_payloads(events: Iterable[LLMRouterEvent | dict[str, Any]]) -> list[dict[str, Any]]:
+    payloads: list[dict[str, Any]] = []
+    for event in events:
+        if isinstance(event, LLMRouterEvent):
+            payloads.append(event.to_dict())
+        else:
+            payloads.append(redact_sensitive_values(dict(event)))
+    return payloads
+
+
+def _build_route_manifest(
+    *,
+    route_id: str,
+    status: str,
+    request: LLMRequest,
+    response: LLMResponse | None,
+    selected_deployment: ModelDeployment | None,
+    attempted_deployments: Iterable[str],
+    fallback_used: bool,
+    budget_check,
+    events: Iterable[dict[str, Any]],
+    errors: Iterable[dict[str, Any]],
+    resolution_trace: Iterable[dict[str, Any]],
+    error: dict[str, Any] | None,
+    global_budget_check=None,
+) -> dict[str, Any]:
+    event_payloads = [dict(event) for event in events]
+    errors_payload = [redact_sensitive_values(dict(item)) for item in errors]
+    attempted_deployment_list = list(attempted_deployments)
+    metrics = _route_metrics(event_payloads, attempted_deployment_list)
+    manifest: dict[str, Any] = {
+        "schema_version": "newsroom.llm_route_manifest.v1",
+        "status": status,
+        "route_id": route_id,
+        "selected_deployment_id": (
+            selected_deployment.deployment_id if selected_deployment is not None else None
+        ),
+        "selected_provider": selected_deployment.provider if selected_deployment is not None else None,
+        "selected_model": selected_deployment.model if selected_deployment is not None else None,
+        "attempted_deployments": attempted_deployment_list,
+        "fallback_used": fallback_used,
+        "fallback_count": metrics["fallback_count"],
+        "provider_resolution_trace": [redact_sensitive_values(dict(item)) for item in resolution_trace],
+        "events": event_payloads,
+        "errors": errors_payload,
+        "metrics": metrics,
+        "redacted_request": request.to_dict(redact=True),
+    }
+    if response is not None:
+        manifest["redacted_response"] = response.to_dict(redact=True)
+    if budget_check is not None:
+        manifest["budget_check"] = budget_check.to_dict()
+    if global_budget_check is not None:
+        if hasattr(global_budget_check, "to_dict"):
+            manifest["global_budget_check"] = global_budget_check.to_dict()
+            manifest["global_budget_usage"] = global_budget_check.usage.to_dict()
+        elif isinstance(global_budget_check, dict):
+            manifest["global_budget_check"] = dict(global_budget_check)
+            usage = global_budget_check.get("usage")
+            if isinstance(usage, dict):
+                manifest["global_budget_usage"] = dict(usage)
+    if error is not None:
+        manifest["error"] = redact_sensitive_values(dict(error))
+    return redact_sensitive_values(manifest)
+
+
+def _route_metrics(
+    events: Iterable[dict[str, Any]],
+    attempted_deployments: Iterable[str],
+) -> dict[str, Any]:
+    event_list = [dict(event) for event in events]
+    return {
+        "attempt_count": len(list(attempted_deployments)),
+        "event_count": len(event_list),
+        "fallback_count": sum(
+            1 for event in event_list if event.get("event_type") == "llm_fallback_selected"
+        ),
+        "provider_error_count": sum(
+            1
+            for event in event_list
+            if event.get("event_type") == "llm_deployment_attempt_failed"
+            and (event.get("metadata") or {}).get("error_type") != "client_error"
+        ),
+        "cooldown_skip_count": sum(
+            1
+            for event in event_list
+            if event.get("event_type") == "llm_deployment_skipped"
+            and (event.get("metadata") or {}).get("reason") == "deployment_in_cooldown"
+        ),
+    }
+
+
+def _fallback_count(events: Iterable[LLMRouterEvent]) -> int:
+    return sum(1 for event in events if event.event_type == "llm_fallback_selected")
+
+
+def _last_global_budget_check(errors: Iterable[dict[str, Any]]):
+    for error in reversed([dict(item) for item in errors]):
+        check = error.get("global_budget_check")
+        if check is not None:
+            return check
+    return None

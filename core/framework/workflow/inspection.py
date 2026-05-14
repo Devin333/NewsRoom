@@ -508,6 +508,7 @@ class WorkflowReplayBundle:
     pause: Any = None
     events: list[WorkflowEventRecord] = field(default_factory=list)
     artifacts: list[WorkflowArtifactRecord] = field(default_factory=list)
+    integrity: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -527,6 +528,7 @@ class WorkflowReplayBundle:
             "pause": to_json_safe(self.pause),
             "events": [event.to_dict() for event in self.events],
             "artifacts": [artifact.to_dict() for artifact in self.artifacts],
+            "integrity": to_json_safe(self.integrity),
         }
 
 
@@ -568,6 +570,8 @@ class WorkflowReplayContentBundle:
     manifest_path: str
     events: list[dict[str, Any]]
     artifacts: list[WorkflowArtifactContentRecord]
+    step_results: dict[str, Any] = field(default_factory=dict)
+    integrity: dict[str, Any] = field(default_factory=dict)
     events_path: str | None = None
     events_error: str | None = None
 
@@ -596,6 +600,9 @@ class WorkflowReplayContentBundle:
             "events_error": self.events_error,
             "artifact_count": self.artifact_count,
             "artifacts": [artifact.to_dict() for artifact in self.artifacts],
+            "step_result_count": len(self.step_results),
+            "step_results": to_json_safe(self.step_results),
+            "integrity": to_json_safe(self.integrity),
         }
 
 
@@ -1268,6 +1275,7 @@ class WorkflowRunInspector:
                 manifest=manifest,
                 verify_checksums=verify_checksums,
             ),
+            integrity=integrity.to_dict(),
         )
 
     def build_replay_content_bundle(
@@ -1281,6 +1289,7 @@ class WorkflowRunInspector:
     ) -> WorkflowReplayContentBundle:
         actual_run_dir = self._resolve_run_dir(run_id=run_id, run_dir=run_dir)
         manifest = self.load_manifest(actual_run_dir)
+        integrity = self.validate_run_dir(actual_run_dir, manifest=manifest)
         artifact_paths = _manifest_artifact_map(manifest)
         events: list[dict[str, Any]] = []
         events_path = None
@@ -1328,6 +1337,13 @@ class WorkflowRunInspector:
             events_path=events_path,
             events_error=events_error,
             artifacts=artifacts,
+            step_results=self.read_json_artifact(
+                actual_run_dir,
+                "step_results",
+                manifest=manifest,
+                default={},
+            ),
+            integrity=integrity.to_dict(),
         )
 
     def build_diagnostics(
@@ -2882,6 +2898,7 @@ def _event_phase(event_type: str) -> str:
 def _event_severity(event_type: str, *, status: str | None = None) -> str:
     error_events = {
         "workflow_failed",
+        "workflow_budget_exceeded",
         "workflow_loop_limit_exceeded",
         "step_failed",
         "step_timeout",
@@ -2923,6 +2940,8 @@ def _status_from_event_type(event_type: str) -> str | None:
         return WorkflowStatus.SUCCEEDED.value
     if event_type == "workflow_failed":
         return WorkflowStatus.FAILED.value
+    if event_type == "workflow_budget_exceeded":
+        return WorkflowStatus.BUDGET_EXCEEDED.value
     if event_type == "workflow_blocked":
         return WorkflowStatus.BLOCKED.value
     if event_type == "workflow_paused":
@@ -2996,6 +3015,13 @@ def _timeline_message(
     if event_type == "workflow_failed":
         message = error.get("message") or payload.get("message")
         return f"workflow failed: {message}" if message else "workflow failed"
+    if event_type == "workflow_budget_exceeded":
+        message = error.get("message") or payload.get("message")
+        return (
+            f"workflow budget exceeded: {message}"
+            if message
+            else "workflow budget exceeded"
+        )
     if event_type == "workflow_blocked":
         return "workflow blocked"
     if event_type == "workflow_paused":
@@ -3076,6 +3102,7 @@ def _is_terminal_event(event_type: str) -> bool:
     return event_type in {
         "workflow_succeeded",
         "workflow_failed",
+        "workflow_budget_exceeded",
         "workflow_blocked",
         "workflow_paused",
         "workflow_cancelled",
@@ -3498,6 +3525,7 @@ def replay_bundle_summary(bundle: WorkflowReplayBundle) -> dict[str, Any]:
         "event_count": len(bundle.events),
         "artifact_count": len(bundle.artifacts),
         "step_result_count": len(bundle.step_results),
+        "integrity_valid": bool(bundle.integrity.get("valid")),
         "has_request": bundle.request is not None,
         "has_output": bundle.output is not None,
         "has_error": bundle.error is not None,

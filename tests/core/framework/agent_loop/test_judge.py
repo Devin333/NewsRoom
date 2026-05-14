@@ -1,4 +1,5 @@
 from core.framework.agent_loop import AgentAction, AgentSpec, JudgeDecision, OutputJudge
+from evidence.models import EvidenceBundle, EvidenceItem
 
 
 def _agent(**kwargs) -> AgentSpec:
@@ -66,3 +67,73 @@ def test_output_judge_retries_source_boundary_violation() -> None:
 
     assert verdict.decision == JudgeDecision.RETRY
     assert "source outside boundary" in verdict.policy_violations[0]
+
+
+def test_output_judge_retries_json_schema_violation() -> None:
+    verdict = OutputJudge().judge(
+        agent=_agent(
+            output_schema={
+                "type": "object",
+                "required": ["analysis_result"],
+                "properties": {
+                    "analysis_result": {
+                        "type": "object",
+                        "required": ["summary"],
+                        "properties": {"summary": {"type": "string"}},
+                        "additionalProperties": False,
+                    }
+                },
+                "additionalProperties": False,
+            }
+        ),
+        action=AgentAction(
+            action_type="final_output",
+            output={"analysis_result": {"summary": 7}},
+        ),
+        called_tools=[],
+    )
+
+    assert verdict.decision == JudgeDecision.RETRY
+    assert verdict.schema_errors == ["$.analysis_result.summary: expected string, got int"]
+
+
+def test_output_judge_retries_report_claim_outside_evidence_boundary() -> None:
+    bundle = EvidenceBundle(
+        bundle_id="bundle-1",
+        items=[
+            EvidenceItem(
+                evidence_id="ev-1",
+                source_url="https://example.com/a",
+                title="Vendor released a model update",
+                summary="The update improves inference latency.",
+                confidence=0.9,
+                source_id="source-1",
+            )
+        ],
+    )
+
+    verdict = OutputJudge().judge(
+        agent=_agent(agent_id="writer", name="WriterAgent", output_key="final_report"),
+        action=AgentAction(
+            action_type="final_output",
+            output={
+                "final_report": {
+                    "title": "Daily Brief",
+                    "sections": [
+                        {
+                            "title": "Unsupported",
+                            "content": "The vendor acquired a rival.",
+                            "sources": ["https://example.com/a"],
+                        }
+                    ],
+                }
+            },
+        ),
+        called_tools=[],
+        inputs={"evidence_bundle": bundle},
+    )
+
+    assert verdict.decision == JudgeDecision.RETRY
+    assert verdict.quality_errors == [
+        "unsupported claim outside evidence: Unsupported: The vendor acquired a rival."
+    ]

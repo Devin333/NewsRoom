@@ -25,6 +25,29 @@ from sources.connectors import ArxivConnector, GithubConnector, SourceFetchPolic
 from sources.health import BasicSourceHealthManager
 from storage.memory import MemoryIngestionService
 
+_SAFE_SIDE_EFFECTS = {"", "none", "read_only"}
+_DANGEROUS_TOOL_NAMES = {
+    "artifact.write",
+    "control.delegate_to_subagent",
+    "control.escalate",
+    "control.request_human_review",
+    "local_json.save",
+    "memory.index",
+    "qdrant.upsert",
+    "report.export",
+    "report.publish",
+    "source.fetch_official_blog",
+    "source.fetch_url",
+    "source.probe",
+}
+_DANGEROUS_TOOL_PREFIXES = (
+    "arxiv.",
+    "github.",
+    "notification.",
+    "postgres.",
+    "web.",
+)
+
 
 @dataclass(frozen=True)
 class ToolCatalogNamespace:
@@ -67,6 +90,89 @@ class ToolCatalog:
 
 
 def build_builtin_tool_registry(
+    *,
+    artifact_manager: ArtifactManager | None = None,
+    run_id: str | None = None,
+    local_json_root: str | Path | None = None,
+    source_registry: SourceRegistry | None = None,
+    source_fetch_text: FetchText | None = None,
+    source_fetch_policy: SourceFetchPolicy | None = None,
+    allowed_source_domains: list[str] | None = None,
+    source_health_manager: BasicSourceHealthManager | None = None,
+    arxiv_connector: ArxivConnector | None = None,
+    github_connector: GithubConnector | None = None,
+    web_search_provider: WebSearchProvider | None = None,
+    vector_store: Any | None = None,
+    memory_ingestion_service: MemoryIngestionService | None = None,
+    qdrant_vector_store: Any | None = None,
+    qdrant_document_store: Any | None = None,
+    report_service: Any | None = None,
+    persistence_repository: Any | None = None,
+    postgres_repository: Any | None = None,
+    postgres_source_health_repository: Any | None = None,
+    approval_store: Any | None = None,
+    task_queue: Any | None = None,
+    notification_options: dict[str, Any] | None = None,
+    include_network_tools: bool = False,
+    include_dangerous_tools: bool = False,
+) -> ToolRegistry:
+    registry = _build_unfiltered_builtin_tool_registry(
+        artifact_manager=artifact_manager,
+        run_id=run_id,
+        local_json_root=local_json_root,
+        source_registry=source_registry,
+        source_fetch_text=source_fetch_text,
+        source_fetch_policy=source_fetch_policy,
+        allowed_source_domains=allowed_source_domains,
+        source_health_manager=source_health_manager,
+        arxiv_connector=arxiv_connector,
+        github_connector=github_connector,
+        web_search_provider=web_search_provider,
+        vector_store=vector_store,
+        memory_ingestion_service=memory_ingestion_service,
+        qdrant_vector_store=qdrant_vector_store,
+        qdrant_document_store=qdrant_document_store,
+        report_service=report_service,
+        persistence_repository=persistence_repository,
+        postgres_repository=postgres_repository,
+        postgres_source_health_repository=postgres_source_health_repository,
+        approval_store=approval_store,
+        task_queue=task_queue,
+        notification_options=notification_options,
+        include_network_tools=include_network_tools or include_dangerous_tools,
+    )
+    if include_dangerous_tools:
+        return registry
+    return _filtered_builtin_registry(registry, dangerous_only=False)
+
+
+def build_builtin_safe_tool_registry(**kwargs: Any) -> ToolRegistry:
+    options = dict(kwargs)
+    options["include_network_tools"] = False
+    options["include_dangerous_tools"] = False
+    return build_builtin_tool_registry(**options)
+
+
+def build_builtin_dangerous_tool_registry(**kwargs: Any) -> ToolRegistry:
+    options = dict(kwargs)
+    include_network_tools = bool(options.pop("include_network_tools", True))
+    options.pop("include_dangerous_tools", None)
+    registry = _build_unfiltered_builtin_tool_registry(
+        **options,
+        include_network_tools=include_network_tools,
+    )
+    return _filtered_builtin_registry(registry, dangerous_only=True)
+
+
+def build_builtin_safe_registry(**kwargs: Any) -> ToolRegistry:
+    return build_builtin_safe_tool_registry(**kwargs)
+
+
+def build_builtin_dangerous_registry(**kwargs: Any) -> ToolRegistry:
+    return build_builtin_dangerous_tool_registry(**kwargs)
+
+
+def _build_unfiltered_builtin_tool_registry(
     *,
     artifact_manager: ArtifactManager | None = None,
     run_id: str | None = None,
@@ -148,6 +254,28 @@ def build_builtin_tool_registry(
         register_notification_tools(registry, **dict(notification_options))
 
     return registry
+
+
+def _filtered_builtin_registry(registry: ToolRegistry, *, dangerous_only: bool) -> ToolRegistry:
+    filtered = ToolRegistry()
+    for registered in registry.list_registered_tools():
+        is_dangerous = _is_dangerous_builtin_tool(registered.definition)
+        if dangerous_only != is_dangerous:
+            continue
+        filtered.register(registered.definition, registered.executor)
+    return filtered
+
+
+def _is_dangerous_builtin_tool(definition: ToolDefinition) -> bool:
+    if definition.is_dangerous or definition.requires_approval:
+        return True
+    if definition.side_effect not in _SAFE_SIDE_EFFECTS:
+        return True
+    if definition.name in _DANGEROUS_TOOL_NAMES:
+        return True
+    if any(definition.name.startswith(prefix) for prefix in _DANGEROUS_TOOL_PREFIXES):
+        return True
+    return any(key.startswith("writes_") for key in definition.metadata)
 
 
 def build_tool_catalog(

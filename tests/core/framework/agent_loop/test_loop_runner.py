@@ -5,7 +5,15 @@ from core.framework.agent_loop import (
     AgentRunner,
     AgentSpec,
 )
-from core.framework.llm import FakeLLMClient
+from core.framework.llm import (
+    FakeLLMClient,
+    GlobalBudgetPolicy,
+    GlobalBudgetTracker,
+    LLMResponse,
+    LLMRequest,
+    LLMStreamEvent,
+    TokenUsage,
+)
 from core.framework.tools import (
     REDACTED_VALUE,
     ToolDefinition,
@@ -136,6 +144,50 @@ def test_agent_runner_exports_tools_from_resolved_policy() -> None:
     assert [tool["name"] for tool in llm.requests[0].tools] == ["memory.search"]
 
 
+def test_writer_agent_cannot_fetch_even_when_policy_allows_fetch_tool() -> None:
+    calls = {"count": 0}
+    registry = ToolRegistry()
+    registry.register(
+        ToolDefinition(name="source.fetch_url", input_schema={"required": ["url"]}),
+        lambda args: calls.__setitem__("count", calls["count"] + 1) or {"content": "raw"},
+    )
+    llm = FakeLLMClient(
+        [
+            (
+                '{"action_type":"tool_call","tool_name":"source.fetch_url",'
+                '"tool_args":{"url":"https://example.com/raw"}}'
+            )
+        ]
+    )
+    agent = AgentSpec(
+        agent_id="writer",
+        name="WriterAgent",
+        role="Write",
+        goal="Write only from provided evidence",
+        instructions="Return JSON actions only.",
+        input_keys=["request"],
+        output_key="final_report",
+        allowed_tools=["source.fetch_url"],
+        loop_policy=AgentLoopPolicy(max_iterations=1),
+    )
+
+    result = AgentRunner(llm_client=llm, tool_registry=registry).run(
+        agent,
+        {"request": {"topic": "chips"}},
+    )
+
+    observations = [
+        event["observation"]
+        for event in result.events
+        if event["event_type"] == "tool_observation"
+    ]
+    assert llm.requests[0].tools == []
+    assert calls["count"] == 0
+    assert result.metrics.tool_blocks == 1
+    assert observations[0]["status"] == "blocked"
+    assert "not allowed" in observations[0]["result"]["error_message"]
+
+
 def test_agent_runner_blocks_tool_call_after_agent_budget_is_exhausted() -> None:
     calls = {"count": 0}
     registry = ToolRegistry()
@@ -237,6 +289,130 @@ def test_agent_runner_accepts_control_set_output_tool_result() -> None:
         event for event in result.events if event["event_type"] == "final_output"
     ]
     assert final_output_events[-1]["via_tool"] == "control.set_output"
+
+
+def test_agent_runner_carries_llm_route_manifest_into_events_and_trace() -> None:
+    llm = FakeLLMClient(
+        [
+            LLMResponse(
+                content='{"action_type":"final_output","output":{"analysis_result":{"summary":"ok"}}}',
+                usage=TokenUsage(input_tokens=10, output_tokens=4),
+                metadata={
+                    "provider": "test",
+                    "model": "model-b",
+                    "llm_route_id": "writer",
+                    "llm_deployment_id": "fallback",
+                    "llm_fallback_used": True,
+                    "llm_fallback_count": 1,
+                    "llm_router_event_count": 7,
+                    "llm_provider_resolution_trace": [
+                        {"source": "agent_task_route", "matched": True, "route_id": "writer"}
+                    ],
+                    "llm_route_manifest": {
+                        "schema_version": "newsroom.llm_route_manifest.v1",
+                        "status": "succeeded",
+                        "fallback_count": 1,
+                    },
+                },
+            )
+        ]
+    )
+
+    result = AgentRunner(llm_client=llm, tool_registry=_registry()).run(
+        _agent(),
+        {"request": {"topic": "chips"}},
+    )
+
+    llm_event = next(event for event in result.events if event["event_type"] == "llm_call")
+    llm_trace = result.trace["iterations"][0]["llm_call"]
+
+    assert llm_event["route_id"] == "writer"
+    assert llm_event["deployment_id"] == "fallback"
+    assert llm_event["fallback_used"] is True
+    assert llm_event["fallback_count"] == 1
+    assert llm_event["router_event_count"] == 7
+    assert llm_trace["route_manifest"]["schema_version"] == "newsroom.llm_route_manifest.v1"
+    assert llm_trace["provider_resolution_trace"][0]["source"] == "agent_task_route"
+
+
+def test_agent_runner_consumes_llm_stream_and_records_stream_events() -> None:
+    class StreamingLLM:
+        def __init__(self) -> None:
+            self.requests: list[LLMRequest] = []
+
+        def complete(self, request: LLMRequest) -> LLMResponse:
+            raise AssertionError("streaming path should not call complete")
+
+        def stream(self, request: LLMRequest):
+            self.requests.append(request)
+            yield LLMStreamEvent(event_type="message_start", metadata={"provider": "fake"})
+            yield LLMStreamEvent(
+                event_type="text_delta",
+                text_delta='{"action_type":"final_output","output":',
+            )
+            yield LLMStreamEvent(
+                event_type="text_delta",
+                text_delta='{"analysis_result":{"summary":"ok"}}}',
+            )
+            yield LLMStreamEvent(
+                event_type="usage_delta",
+                usage_delta=TokenUsage(input_tokens=5, output_tokens=7),
+            )
+            yield LLMStreamEvent(event_type="message_complete", metadata={"finish_reason": "stop"})
+
+    agent = AgentSpec(
+        agent_id="analyst",
+        name="Analyst",
+        role="Analyze",
+        goal="Produce analysis",
+        instructions="Return JSON actions only.",
+        input_keys=["request"],
+        output_key="analysis_result",
+        loop_policy=AgentLoopPolicy(llm_streaming_enabled=True),
+    )
+
+    result = AgentRunner(llm_client=StreamingLLM(), tool_registry=_registry()).run(
+        agent,
+        {"request": {"topic": "chips"}},
+    )
+
+    stream_events = [
+        event for event in result.events if event["event_type"] == "llm_stream_event"
+    ]
+
+    assert result.success is True
+    assert result.output == {"analysis_result": {"summary": "ok"}}
+    assert result.metrics.llm_calls == 1
+    assert result.metrics.llm_stream_event_count == 5
+    assert result.metrics.token_usage.total_tokens == 12
+    assert [event["sequence"] for event in stream_events] == [1, 2, 3, 4, 5]
+    assert stream_events[1]["stream_event_type"] == "text_delta"
+    assert stream_events[1]["text_delta_chars"] == 39
+    assert result.trace["iterations"][0]["llm_call"]["response_chars"] > 0
+
+
+def test_agent_runner_blocks_before_llm_call_when_global_budget_is_exhausted() -> None:
+    llm = FakeLLMClient(
+        [
+            '{"action_type":"final_output","output":{"wrong_key":{"summary":"missing"}}}',
+            '{"action_type":"final_output","output":{"analysis_result":{"summary":"ok"}}}',
+        ]
+    )
+    tracker = GlobalBudgetTracker(GlobalBudgetPolicy(max_llm_calls=1))
+
+    result = AgentRunner(
+        llm_client=llm,
+        tool_registry=_registry(),
+        global_budget_tracker=tracker,
+    ).run(_agent(), {"request": {"topic": "chips"}})
+
+    assert result.success is False
+    assert result.status == AgentLoopStatus.BLOCKED
+    assert result.diagnostics is not None
+    assert result.diagnostics.stop_reason == AgentLoopStopReason.GLOBAL_BUDGET_EXCEEDED
+    assert result.metrics.llm_calls == 1
+    assert result.metrics.global_budget_check["violations"] == ["max_llm_calls"]
+    assert llm.call_count == 1
 
 
 def test_agent_runner_blocks_secret_like_final_output() -> None:

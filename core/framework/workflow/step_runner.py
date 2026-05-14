@@ -72,6 +72,7 @@ def build_default_step_runner_registry(
     run_id: str | None = None,
     approval_store: Any | None = None,
     secret_provider: Any | None = None,
+    global_budget_tracker: Any | None = None,
     max_parallel_workers: int = 4,
     max_tool_batch_workers: int = 4,
 ) -> StepRunnerRegistry:
@@ -108,7 +109,14 @@ def build_default_step_runner_registry(
         )
 
     if agent_runner is not None and agent_registry:
-        registry.register(StepType.AGENT_LOOP, AgentLoopStepRunner(agent_runner, agent_registry))
+        registry.register(
+            StepType.AGENT_LOOP,
+            AgentLoopStepRunner(
+                agent_runner,
+                agent_registry,
+                global_budget_tracker=global_budget_tracker,
+            ),
+        )
 
     registry.register(StepType.ROUTER, RouterStepRunner())
     registry.register(StepType.JOIN, JoinStepRunner())
@@ -268,13 +276,18 @@ class AgentLoopStepRunner:
         self,
         agent_runner: Any,
         agent_registry: dict[str, Any],
+        global_budget_tracker: Any | None = None,
     ) -> None:
         self._agent_runner = agent_runner
         self._agent_registry = dict(agent_registry)
+        self._global_budget_tracker = global_budget_tracker
 
     def can_resolve(self, step: StepSpec) -> bool:
         agent_id = str(step.metadata.get("agent_id") or step.implementation)
         return agent_id in self._agent_registry
+
+    def configure_global_budget_tracker(self, global_budget_tracker: Any | None) -> None:
+        self._global_budget_tracker = global_budget_tracker
 
     def run(self, step: StepSpec, buffer: ScopedDataBuffer) -> StepOutcome:
         if step.step_type != StepType.AGENT_LOOP:
@@ -295,11 +308,12 @@ class AgentLoopStepRunner:
         if "conversation_id_key" in step.metadata:
             conversation_id = buffer.read(str(step.metadata["conversation_id_key"]))
 
-        result = self._agent_runner.run(
-            agent,
-            inputs,
-            conversation_id=str(conversation_id) if conversation_id else None,
-        )
+        run_kwargs: dict[str, Any] = {
+            "conversation_id": str(conversation_id) if conversation_id else None,
+        }
+        if self._global_budget_tracker is not None:
+            run_kwargs["global_budget_tracker"] = self._global_budget_tracker
+        result = self._agent_runner.run(agent, inputs, **run_kwargs)
         result_payload = result.to_dict()
         outputs: dict[str, Any] = {}
         if result.success:
@@ -307,9 +321,15 @@ class AgentLoopStepRunner:
         result_key = str(step.metadata.get("result_key") or "agent_loop_result")
         events_key = str(step.metadata.get("events_key") or "agent_loop_events")
         metrics_key = str(step.metadata.get("metrics_key") or "agent_loop_metrics")
+        diagnostics_key = str(step.metadata.get("diagnostics_key") or "agent_loop_diagnostics")
+        trace_key = str(step.metadata.get("trace_key") or "agent_loop_trace")
         outputs[result_key] = result_payload
         outputs[events_key] = result.events
         outputs[metrics_key] = result.metrics.to_dict()
+        outputs[diagnostics_key] = (
+            result.diagnostics.to_dict() if result.diagnostics is not None else None
+        )
+        outputs[trace_key] = result.trace
 
         for key, value in outputs.items():
             if key in buffer.list_allowed_writes():
@@ -1082,7 +1102,7 @@ def _tool_policy_from_step(step: StepSpec) -> ToolPolicy:
 def _agent_loop_error_details(result_payload: dict[str, Any]) -> dict[str, Any]:
     diagnostics = result_payload.get("diagnostics")
     if isinstance(diagnostics, dict):
-        return {
+        details = {
             "agent_loop_status": result_payload.get("status"),
             "stop_reason": diagnostics.get("stop_reason"),
             "severity": diagnostics.get("severity"),
@@ -1091,6 +1111,13 @@ def _agent_loop_error_details(result_payload: dict[str, Any]) -> dict[str, Any]:
             "issues": diagnostics.get("issues") or [],
             "suggestions": diagnostics.get("suggestions") or [],
         }
+        if diagnostics.get("stop_reason") == "global_budget_exceeded":
+            details["budget_exceeded"] = True
+            metrics = result_payload.get("metrics")
+            if isinstance(metrics, dict):
+                details["global_budget_check"] = metrics.get("global_budget_check")
+                details["global_budget_usage"] = metrics.get("global_budget_usage")
+        return details
     return {"agent_loop_status": result_payload.get("status")}
 
 

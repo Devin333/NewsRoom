@@ -6,12 +6,14 @@ from core.framework.tools import (
     ToolExecutor,
     ToolPolicy,
     ToolStatus,
+    build_builtin_dangerous_tool_registry,
+    build_builtin_safe_tool_registry,
     build_builtin_tool_registry,
     build_tool_catalog,
 )
 
 
-def test_builtin_tool_registry_discovers_core_real_tools() -> None:
+def test_builtin_tool_registry_defaults_to_safe_core_tools() -> None:
     registry = build_builtin_tool_registry()
     names = {definition.name for definition in registry.list_tools()}
 
@@ -20,23 +22,67 @@ def test_builtin_tool_registry_discovers_core_real_tools() -> None:
     assert "report.validate" in names
     assert "quality.duplicate_check" in names
     assert "control.set_output" in names
-    assert "arxiv.search_papers" in names
-    assert "github.fetch_releases" in names
-    assert "web.search" in names
+    assert "arxiv.search_papers" not in names
+    assert "github.fetch_releases" not in names
+    assert "web.search" not in names
+    assert "source.fetch_url" not in names
+    assert "report.publish" not in names
     assert "artifact.load" not in names
 
 
-def test_builtin_tool_registry_registers_dependency_backed_artifact_tools(tmp_path) -> None:
+def test_builtin_safe_registry_filters_dependency_backed_file_write_tools(tmp_path) -> None:
     artifact_manager = ArtifactManager(tmp_path)
     artifact_manager.start_run("run-tools")
 
-    registry = build_builtin_tool_registry(
+    registry = build_builtin_safe_tool_registry(
         artifact_manager=artifact_manager,
         run_id="run-tools",
     )
     names = {definition.name for definition in registry.list_tools()}
 
-    assert {"artifact.write", "artifact.load", "artifact.search"}.issubset(names)
+    assert {"artifact.load", "artifact.search"}.issubset(names)
+    assert "artifact.write" not in names
+
+
+def test_builtin_dangerous_registry_collects_explicit_risky_tools(tmp_path) -> None:
+    artifact_manager = ArtifactManager(tmp_path)
+    artifact_manager.start_run("run-tools")
+
+    registry = build_builtin_dangerous_tool_registry(
+        artifact_manager=artifact_manager,
+        run_id="run-tools",
+        local_json_root=tmp_path / "local-json",
+        vector_store=object(),
+        memory_ingestion_service=object(),
+        qdrant_vector_store=object(),
+        qdrant_document_store=object(),
+        persistence_repository=object(),
+        postgres_repository=object(),
+        notification_options={
+            "allowed_webhook_domains": ["example.com"],
+            "rss_feed_path": tmp_path / "feed.xml",
+        },
+    )
+    names = {definition.name for definition in registry.list_tools()}
+
+    assert registry.validate_no_conflicts().ok is True
+    assert {
+        "artifact.write",
+        "arxiv.search_papers",
+        "github.fetch_releases",
+        "local_json.save",
+        "memory.index",
+        "notification.rss_publish",
+        "notification.webhook",
+        "postgres.save_report",
+        "qdrant.upsert",
+        "report.export",
+        "report.publish",
+        "source.fetch_url",
+        "web.search",
+    }.issubset(names)
+    assert "report.validate" not in names
+    assert "quality.duplicate_check" not in names
 
 
 def test_tool_catalog_applies_policy_and_groups_namespaces() -> None:

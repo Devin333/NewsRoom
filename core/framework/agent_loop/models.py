@@ -5,7 +5,7 @@ from enum import Enum
 from typing import Any
 
 from core.framework.llm import TokenUsage
-from core.framework.tools import ToolPolicy
+from core.framework.tools import ToolPolicy, harden_restricted_agent_tool_policy
 
 
 class AgentLoopStatus(str, Enum):
@@ -35,6 +35,7 @@ class AgentLoopStopReason(str, Enum):
     JUDGE_RETRY_EXHAUSTED = "judge_retry_exhausted"
     MAX_ITERATIONS_EXCEEDED = "max_iterations_exceeded"
     LLM_FAILED = "llm_failed"
+    GLOBAL_BUDGET_EXCEEDED = "global_budget_exceeded"
     TOOL_FAILED = "tool_failed"
     UNKNOWN_FAILED = "unknown_failed"
 
@@ -43,6 +44,7 @@ class AgentLoopEventType(str, Enum):
     AGENT_STARTED = "agent_started"
     ITERATION_STARTED = "iteration_started"
     LLM_CALL = "llm_call"
+    LLM_STREAM_EVENT = "llm_stream_event"
     LLM_CALL_FAILED = "llm_call_failed"
     ACTION_PARSED = "action_parsed"
     PARSER_ERROR = "parser_error"
@@ -82,6 +84,7 @@ class AgentLoopPolicy:
     stall_detection_enabled: bool = True
     trace_enabled: bool = True
     max_trace_preview_chars: int = 500
+    llm_streaming_enabled: bool = False
 
     def __post_init__(self) -> None:
         _validate_non_negative("max_iterations", self.max_iterations, minimum=1)
@@ -104,6 +107,7 @@ class AgentSpec:
     instructions: str
     input_keys: list[str]
     output_key: str
+    output_schema: dict[str, Any] | None = None
     allowed_tools: list[str] = field(default_factory=list)
     loop_policy: AgentLoopPolicy = field(default_factory=AgentLoopPolicy)
     tool_policy: ToolPolicy | None = None
@@ -114,8 +118,11 @@ class AgentSpec:
 
     def resolved_tool_policy(self) -> ToolPolicy:
         if self.tool_policy:
-            return self.tool_policy
-        return ToolPolicy(allowed_tools=list(self.allowed_tools), require_explicit_allowlist=True)
+            return harden_restricted_agent_tool_policy(self.agent_id, self.tool_policy)
+        return harden_restricted_agent_tool_policy(
+            self.agent_id,
+            ToolPolicy(allowed_tools=list(self.allowed_tools), require_explicit_allowlist=True),
+        )
 
 
 @dataclass(frozen=True)
@@ -237,8 +244,11 @@ class AgentLoopMetrics:
     repeated_tool_calls: int = 0
     stalled_iterations: int = 0
     llm_error_count: int = 0
+    llm_stream_event_count: int = 0
     total_tool_elapsed_ms: float = 0.0
     token_usage: TokenUsage = field(default_factory=TokenUsage)
+    global_budget_check: dict[str, Any] | None = None
+    global_budget_usage: dict[str, Any] | None = None
 
     def add_usage(self, usage: TokenUsage) -> None:
         self.token_usage = TokenUsage(
@@ -277,8 +287,11 @@ class AgentLoopMetrics:
             "repeated_tool_calls": self.repeated_tool_calls,
             "stalled_iterations": self.stalled_iterations,
             "llm_error_count": self.llm_error_count,
+            "llm_stream_event_count": self.llm_stream_event_count,
             "total_tool_elapsed_ms": self.total_tool_elapsed_ms,
             "token_usage": self.token_usage.to_dict(),
+            "global_budget_check": self.global_budget_check,
+            "global_budget_usage": self.global_budget_usage,
         }
 
 

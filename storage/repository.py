@@ -40,6 +40,16 @@ class ReportRecord:
     manifest_path: str | None = None
 
 
+@dataclass(frozen=True)
+class RunPersistenceBatch:
+    workflow_run: WorkflowRunRecord
+    report: ReportRecord | None = None
+    source_items: list[SourceItemRecord] = field(default_factory=list)
+    evidence_items: list[EvidenceItemRecord] = field(default_factory=list)
+    claims: list[ClaimRecord] = field(default_factory=list)
+    quality_result: QualityResultRecord | None = None
+
+
 class PersistenceRepository(Protocol):
     def migrate(self) -> None: ...
 
@@ -54,6 +64,8 @@ class PersistenceRepository(Protocol):
     def save_claim(self, record: ClaimRecord) -> None: ...
 
     def save_quality_result(self, record: QualityResultRecord) -> None: ...
+
+    def save_run_records(self, batch: RunPersistenceBatch) -> None: ...
 
 
 class LocalJsonPersistenceAdapter:
@@ -126,6 +138,19 @@ class LocalJsonPersistenceAdapter:
             / f"{_safe_record_name(record.quality_result_id)}.json",
             record.to_dict(),
         )
+
+    def save_run_records(self, batch: RunPersistenceBatch) -> None:
+        self.save_workflow_run(batch.workflow_run)
+        if batch.report is not None:
+            self.save_report(batch.report)
+        for source_item in batch.source_items:
+            self.save_source_item(source_item)
+        for evidence_item in batch.evidence_items:
+            self.save_evidence_item(evidence_item)
+        for claim in batch.claims:
+            self.save_claim(claim)
+        if batch.quality_result is not None:
+            self.save_quality_result(batch.quality_result)
 
     def list_source_items(self, run_id: str) -> list[dict[str, Any]]:
         return _read_record_dir(self.artifact_root / "_records" / "source_items" / _safe_record_name(run_id))
@@ -208,19 +233,34 @@ def persist_run_result(
 ) -> None:
     if migrate:
         repository.migrate()
-    repository.save_workflow_run(workflow_run_record_from_result(result, profile=profile))
-    report = report_record_from_result(result)
-    if report:
-        repository.save_report(report)
-    for source_item in source_item_records_from_result(result):
+    batch = run_persistence_batch_from_result(result, profile=profile)
+    save_batch = getattr(repository, "save_run_records", None)
+    if save_batch is not None:
+        save_batch(batch)
+        return
+
+    repository.save_workflow_run(batch.workflow_run)
+    if batch.report:
+        repository.save_report(batch.report)
+    for source_item in batch.source_items:
         _optional_save(repository, "save_source_item", source_item)
-    for evidence_item in evidence_item_records_from_result(result):
+    for evidence_item in batch.evidence_items:
         _optional_save(repository, "save_evidence_item", evidence_item)
-    for claim in claim_records_from_result(result):
+    for claim in batch.claims:
         _optional_save(repository, "save_claim", claim)
-    quality_result = quality_result_record_from_result(result)
-    if quality_result:
-        _optional_save(repository, "save_quality_result", quality_result)
+    if batch.quality_result:
+        _optional_save(repository, "save_quality_result", batch.quality_result)
+
+
+def run_persistence_batch_from_result(result: RunResult, *, profile: str) -> RunPersistenceBatch:
+    return RunPersistenceBatch(
+        workflow_run=workflow_run_record_from_result(result, profile=profile),
+        report=report_record_from_result(result),
+        source_items=source_item_records_from_result(result),
+        evidence_items=evidence_item_records_from_result(result),
+        claims=claim_records_from_result(result),
+        quality_result=quality_result_record_from_result(result),
+    )
 
 
 def source_item_records_from_result(result: RunResult) -> list[SourceItemRecord]:
@@ -320,27 +360,48 @@ def claim_records_from_result(result: RunResult) -> list[ClaimRecord]:
 
 
 def quality_result_record_from_result(result: RunResult) -> QualityResultRecord | None:
+    quality_result = _to_dict(result.output.get("quality_result"))
     quality_summary = _to_dict(result.output.get("report_quality_summary"))
     editor_review = _to_dict(result.output.get("editor_review"))
     citation_check = _to_dict(result.output.get("citation_check_result"))
-    if not quality_summary and not editor_review and not citation_check:
+    if not quality_result and not quality_summary and not editor_review and not citation_check:
         return None
-    decision = str(editor_review.get("decision") or quality_summary.get("decision") or "unknown")
+    decision = str(
+        quality_result.get("decision")
+        or editor_review.get("decision")
+        or quality_summary.get("decision")
+        or "unknown"
+    )
     return QualityResultRecord(
         quality_result_id=f"{result.run_id}:quality",
         run_id=result.run_id,
         decision=decision,
-        passed=decision == "pass",
-        quality_score=_optional_float(quality_summary.get("quality_score")),
+        passed=bool(quality_result.get("passed")) if quality_result else decision == "pass",
+        quality_score=_optional_float(
+            _first_not_none(quality_result.get("quality_score"), quality_summary.get("quality_score"))
+        ),
         citation_coverage_score=_optional_float(
-            quality_summary.get("citation_coverage_score")
-            or citation_check.get("citation_coverage_score")
+            _first_not_none(
+                quality_result.get("citation_coverage_score"),
+                quality_summary.get("citation_coverage_score"),
+                citation_check.get("citation_coverage_score"),
+            )
         ),
         claim_support_score=_optional_float(
-            quality_summary.get("claim_support_score") or citation_check.get("claim_support_score")
+            _first_not_none(
+                quality_result.get("claim_support_score"),
+                quality_summary.get("claim_support_score"),
+                citation_check.get("claim_support_score"),
+            )
         ),
-        evidence_alignment_score=_optional_float(quality_summary.get("evidence_alignment_score")),
+        evidence_alignment_score=_optional_float(
+            _first_not_none(
+                quality_result.get("evidence_alignment_score"),
+                quality_summary.get("evidence_alignment_score"),
+            )
+        ),
         payload={
+            "quality_result": quality_result,
             "quality_summary": quality_summary,
             "editor_review": editor_review,
             "citation_check": citation_check,
@@ -431,6 +492,13 @@ def _optional_float(value: Any) -> float | None:
     if value is None:
         return None
     return float(value)
+
+
+def _first_not_none(*values: Any) -> Any:
+    for value in values:
+        if value is not None:
+            return value
+    return None
 
 
 def _optional_save(repository: Any, method_name: str, record: Any) -> None:

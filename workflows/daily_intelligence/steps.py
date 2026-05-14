@@ -13,6 +13,7 @@ from quality import (
     HumanReviewRequest,
     QualityEvent,
     QualityGateMetrics,
+    QualityResult,
     QualityScorer,
     RewritePolicy,
     SupportMatrixBuilder,
@@ -328,6 +329,21 @@ def quality_gate(buffer: ScopedDataBuffer) -> dict[str, Any]:
         rewrite_attempts=rewrite_attempts,
         human_review_required=human_review_required,
     )
+    quality_route = _quality_route(
+        review=review,
+        rewrite_attempts=rewrite_attempts,
+        human_review_required=human_review_required,
+    )
+    quality_result = _quality_result(
+        citation_check=citation_check,
+        support_matrix=support_matrix,
+        quality_summary=quality_summary,
+        review=review,
+        quality_gate_metrics=quality_gate_metrics,
+        route=quality_route,
+        rewrite_attempts=rewrite_attempts,
+        human_review_required=human_review_required,
+    )
     outputs: dict[str, Any] = {
         "citation_check_result": citation_check,
         "editor_review": review,
@@ -335,6 +351,8 @@ def quality_gate(buffer: ScopedDataBuffer) -> dict[str, Any]:
         "report_quality_summary": quality_summary,
         "quality_events": quality_events,
         "quality_gate_metrics": quality_gate_metrics,
+        "quality_result": quality_result,
+        "quality_route": quality_route,
         "rewrite_policy": rewrite_policy,
         "rewrite_instructions": review.rewrite_instructions,
     }
@@ -609,6 +627,92 @@ def _quality_gate_metrics(
         rewrite_attempts=rewrite_attempts,
         rewrite_required=review.decision == EditorDecision.REWRITE_REQUIRED,
         human_review_required=human_review_required,
+    )
+
+
+def _quality_route(
+    *,
+    review: Any,
+    rewrite_attempts: int,
+    human_review_required: bool,
+) -> str:
+    if human_review_required:
+        return "human_review"
+    if review.decision == EditorDecision.BLOCKED:
+        return "blocked"
+    if rewrite_attempts > 0 or review.decision == EditorDecision.REWRITE_REQUIRED:
+        return "rewrite"
+    return "final"
+
+
+def _quality_route_history(
+    *,
+    route: str,
+    review: Any,
+    rewrite_attempts: int,
+    human_review_required: bool,
+) -> list[str]:
+    history = []
+    if rewrite_attempts > 0:
+        history.append("rewrite")
+    if review.decision == EditorDecision.BLOCKED:
+        history.append("blocked")
+    if human_review_required:
+        history.append("human_review")
+    if not history:
+        history.append(route)
+    return history
+
+
+def _quality_result(
+    *,
+    citation_check: Any,
+    support_matrix: Any,
+    quality_summary: Any,
+    review: Any,
+    quality_gate_metrics: Any,
+    route: str,
+    rewrite_attempts: int,
+    human_review_required: bool,
+) -> QualityResult:
+    return QualityResult(
+        decision=review.decision.value,
+        passed=review.decision == EditorDecision.PASS,
+        route=route,
+        blocked=review.decision != EditorDecision.PASS,
+        quality_score=quality_summary.quality_score,
+        citation_coverage_score=citation_check.citation_coverage_score,
+        claim_support_score=citation_check.claim_support_score,
+        section_source_coverage_score=citation_check.section_source_coverage_score,
+        support_coverage=quality_summary.support_coverage,
+        evidence_alignment_score=quality_summary.evidence_alignment_score,
+        rewrite_attempts=rewrite_attempts,
+        rewrite_required=review.decision == EditorDecision.REWRITE_REQUIRED,
+        human_review_required=human_review_required,
+        route_history=_quality_route_history(
+            route=route,
+            review=review,
+            rewrite_attempts=rewrite_attempts,
+            human_review_required=human_review_required,
+        ),
+        reasons=review.reasons,
+        artifact_refs={
+            "citation_check_result": "citation_check_result.json",
+            "editor_review": "editor_review.json",
+            "support_matrix": "support_matrix.json",
+            "report_quality_summary": "report_quality_summary.json",
+            "quality_gate_metrics": "quality_gate_metrics.json",
+            "quality_events": "quality_events.json",
+        },
+        citation_check_result=citation_check,
+        editor_review=review,
+        support_matrix=support_matrix,
+        report_quality_summary=quality_summary,
+        quality_gate_metrics=quality_gate_metrics,
+        metadata={
+            "source": "daily.quality_gate",
+            "failure_route": route if review.decision != EditorDecision.PASS else None,
+        },
     )
 
 

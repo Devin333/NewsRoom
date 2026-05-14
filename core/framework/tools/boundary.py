@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -98,6 +99,91 @@ def audit_agent_tool_boundary(
     )
 
 
+def audit_agent_spec_tool_boundary(
+    agent_specs: Iterable[Any],
+    *,
+    restricted_agent_ids: set[str] | None = None,
+    external_fetch_tool_prefixes: tuple[str, ...] = DEFAULT_EXTERNAL_FETCH_TOOL_PREFIXES,
+    external_fetch_tool_names: set[str] | None = None,
+) -> AgentToolBoundaryReport:
+    return audit_agent_tool_boundary(
+        {
+            str(getattr(agent_spec, "agent_id")): _agent_spec_policy(agent_spec)
+            for agent_spec in agent_specs
+        },
+        restricted_agent_ids=restricted_agent_ids,
+        external_fetch_tool_prefixes=external_fetch_tool_prefixes,
+        external_fetch_tool_names=external_fetch_tool_names,
+    )
+
+
+def is_restricted_agent_id(
+    agent_id: str,
+    *,
+    restricted_agent_ids: set[str] | None = None,
+) -> bool:
+    restricted = {
+        _normalize_agent_id(agent_id)
+        for agent_id in (restricted_agent_ids or DEFAULT_RESTRICTED_AGENT_IDS)
+    }
+    return _normalize_agent_id(agent_id) in restricted
+
+
+def is_external_fetch_tool(
+    tool_name: str,
+    *,
+    external_fetch_tool_prefixes: tuple[str, ...] = DEFAULT_EXTERNAL_FETCH_TOOL_PREFIXES,
+    external_fetch_tool_names: set[str] | None = None,
+) -> bool:
+    return _is_external_fetch_tool(
+        tool_name,
+        prefixes=external_fetch_tool_prefixes,
+        names=external_fetch_tool_names or DEFAULT_EXTERNAL_FETCH_TOOL_NAMES,
+    )
+
+
+def harden_restricted_agent_tool_policy(
+    agent_id: str,
+    policy: ToolPolicy,
+    *,
+    restricted_agent_ids: set[str] | None = None,
+    external_fetch_tool_prefixes: tuple[str, ...] = DEFAULT_EXTERNAL_FETCH_TOOL_PREFIXES,
+    external_fetch_tool_names: set[str] | None = None,
+) -> ToolPolicy:
+    if not is_restricted_agent_id(agent_id, restricted_agent_ids=restricted_agent_ids):
+        return policy
+
+    blocked_names = external_fetch_tool_names or DEFAULT_EXTERNAL_FETCH_TOOL_NAMES
+    blocked_allowed_tools = [
+        tool_name
+        for tool_name in policy.allowed_tools
+        if is_external_fetch_tool(
+            tool_name,
+            external_fetch_tool_prefixes=external_fetch_tool_prefixes,
+            external_fetch_tool_names=blocked_names,
+        )
+    ]
+    blocked_allowed_set = set(blocked_allowed_tools)
+    return ToolPolicy(
+        allowed_tools=[
+            tool_name
+            for tool_name in policy.allowed_tools
+            if tool_name not in blocked_allowed_set
+        ],
+        blocked_tools=sorted({*policy.blocked_tools, *blocked_allowed_set, *blocked_names}),
+        allow_mcp_tools=policy.allow_mcp_tools,
+        max_tool_calls_per_iteration=policy.max_tool_calls_per_iteration,
+        max_tool_calls_per_agent=policy.max_tool_calls_per_agent,
+        require_explicit_allowlist=True,
+        allow_dangerous_tools=policy.allow_dangerous_tools,
+        require_approval_for_side_effects=policy.require_approval_for_side_effects,
+        max_result_chars_inline=policy.max_result_chars_inline,
+        spill_large_results_to_artifact=policy.spill_large_results_to_artifact,
+        timeout_seconds_default=policy.timeout_seconds_default,
+        max_attempts_default=policy.max_attempts_default,
+    )
+
+
 def _allowed_tool_names(policy_like: ToolPolicy | dict[str, Any] | list[str] | tuple[str, ...]) -> list[str]:
     if isinstance(policy_like, ToolPolicy):
         return list(policy_like.allowed_tools)
@@ -105,6 +191,14 @@ def _allowed_tool_names(policy_like: ToolPolicy | dict[str, Any] | list[str] | t
         value = policy_like.get("allowed_tools", [])
         return [str(tool_name) for tool_name in value]
     return [str(tool_name) for tool_name in policy_like]
+
+
+def _agent_spec_policy(agent_spec: Any) -> ToolPolicy | dict[str, Any] | list[str]:
+    tool_policy = getattr(agent_spec, "tool_policy", None)
+    if tool_policy is not None:
+        return tool_policy
+    allowed_tools = getattr(agent_spec, "allowed_tools", [])
+    return [str(tool_name) for tool_name in allowed_tools]
 
 
 def _is_external_fetch_tool(

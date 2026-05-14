@@ -130,6 +130,27 @@ CREATE TABLE IF NOT EXISTS claims (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE INDEX IF NOT EXISTS idx_claims_run
+    ON claims(run_id);
+
+CREATE TABLE IF NOT EXISTS claim_supports (
+    claim_support_id TEXT PRIMARY KEY,
+    claim_id TEXT NOT NULL REFERENCES claims(claim_id) ON DELETE CASCADE,
+    run_id TEXT REFERENCES workflow_runs(run_id) ON DELETE CASCADE,
+    evidence_id TEXT NOT NULL,
+    support_type TEXT NOT NULL,
+    confidence DOUBLE PRECISION,
+    payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (claim_id, evidence_id, support_type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_claim_supports_claim
+    ON claim_supports(claim_id);
+
+CREATE INDEX IF NOT EXISTS idx_claim_supports_evidence
+    ON claim_supports(run_id, evidence_id);
+
 CREATE TABLE IF NOT EXISTS quality_results (
     quality_result_id TEXT PRIMARY KEY,
     run_id TEXT REFERENCES workflow_runs(run_id) ON DELETE CASCADE,
@@ -163,6 +184,47 @@ CREATE INDEX IF NOT EXISTS idx_memory_documents_collection
 
 CREATE INDEX IF NOT EXISTS idx_memory_documents_run
     ON memory_documents(run_id);
+
+CREATE TABLE IF NOT EXISTS agent_conversations (
+    conversation_id TEXT PRIMARY KEY,
+    run_id TEXT REFERENCES workflow_runs(run_id) ON DELETE CASCADE,
+    workflow_id TEXT,
+    agent_id TEXT,
+    step_id TEXT,
+    message_count INTEGER NOT NULL DEFAULT 0,
+    payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_conversations_run
+    ON agent_conversations(run_id);
+
+CREATE INDEX IF NOT EXISTS idx_agent_conversations_agent
+    ON agent_conversations(agent_id);
+
+CREATE TABLE IF NOT EXISTS tool_executions (
+    tool_execution_id TEXT PRIMARY KEY,
+    run_id TEXT REFERENCES workflow_runs(run_id) ON DELETE CASCADE,
+    workflow_id TEXT,
+    step_id TEXT,
+    tool_name TEXT NOT NULL,
+    status TEXT NOT NULL,
+    started_at TIMESTAMPTZ,
+    finished_at TIMESTAMPTZ,
+    latency_ms DOUBLE PRECISION,
+    request JSONB NOT NULL DEFAULT '{}'::jsonb,
+    response JSONB NOT NULL DEFAULT '{}'::jsonb,
+    error JSONB NOT NULL DEFAULT '{}'::jsonb,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_tool_executions_run
+    ON tool_executions(run_id);
+
+CREATE INDEX IF NOT EXISTS idx_tool_executions_tool
+    ON tool_executions(tool_name, status);
 
 CREATE TABLE IF NOT EXISTS schema_versions (
     schema_name TEXT PRIMARY KEY,

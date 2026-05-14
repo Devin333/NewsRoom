@@ -26,6 +26,7 @@ from core.framework.workflow import (
     StepOutcome,
     StepRunnerRegistry,
     WorkflowExecutor,
+    WorkflowRunInspector,
 )
 from storage.artifacts import ArtifactRef
 from storage.checkpoint import LocalJsonCheckpointStore
@@ -151,6 +152,68 @@ def test_workflow_executor_runs_function_steps_and_writes_artifacts(tmp_path) ->
         "step_succeeded",
         "workflow_succeeded",
     ]
+
+
+def test_workflow_executor_promotes_agent_loop_stream_events(tmp_path) -> None:
+    class StreamingAgentStepRunner:
+        def run(self, step, buffer) -> StepOutcome:
+            agent_events = [
+                {
+                    "event_type": "llm_stream_event",
+                    "agent_id": "analyst",
+                    "iteration": 1,
+                    "sequence": 1,
+                    "stream_event_type": "text_delta",
+                    "text_delta_chars": 5,
+                    "stream_event": {
+                        "event_type": "text_delta",
+                        "text_delta": "hello",
+                    },
+                }
+            ]
+            outputs = {"agent_loop_events": agent_events, "report": "done"}
+            for key, value in outputs.items():
+                buffer.write(key, value)
+            return StepOutcome(status=StepStatus.SUCCEEDED, outputs=outputs)
+
+    registry = StepRunnerRegistry()
+    registry.register(StepType.AGENT_LOOP, StreamingAgentStepRunner())
+    spec = WorkflowSpec(
+        workflow_id="agent-stream",
+        name="Agent Stream",
+        version="1.0",
+        start_step_id="agent",
+        steps=[
+            StepSpec(
+                step_id="agent",
+                implementation="agent.run",
+                step_type=StepType.AGENT_LOOP,
+                write_keys=["agent_loop_events", "report"],
+                required_output_keys=["report"],
+            )
+        ],
+    )
+    executor = WorkflowExecutor(
+        function_step_runner=None,
+        step_runner_registry=registry,
+        artifact_manager=ArtifactManager(tmp_path),
+    )
+
+    result = executor.execute(spec, {}, profile="test", run_id="run-agent-stream")
+
+    events = [
+        json.loads(line)
+        for line in (tmp_path / "run-agent-stream" / "events.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    stream_event = next(event for event in events if event["event_type"] == "agent_llm_stream_event")
+
+    assert result.status == WorkflowStatus.SUCCEEDED
+    assert stream_event["payload"]["step_id"] == "agent"
+    assert stream_event["payload"]["agent_id"] == "analyst"
+    assert stream_event["payload"]["stream_event_type"] == "text_delta"
+    assert stream_event["payload"]["stream_event"]["text_delta"] == "hello"
 
 
 def test_workflow_executor_writes_checkpoints_when_store_is_configured(tmp_path) -> None:
@@ -373,6 +436,49 @@ def test_workflow_executor_fails_after_retry_exhaustion(tmp_path) -> None:
         for line in (tmp_path / "run-exhausted" / "events.jsonl").read_text(encoding="utf-8").splitlines()
     ]
     assert events.count("step_retry_scheduled") == 2
+
+
+def test_workflow_executor_does_not_retry_budget_exceeded_outcome(tmp_path) -> None:
+    outcome = StepOutcome(
+        status=StepStatus.FAILED,
+        error_type="WorkflowBudgetExceeded",
+        error_message="run budget exceeded",
+        error_details={"budget_exceeded": True},
+    )
+    runner = _StaticOutcomeRunner(outcome)
+    runner_registry = StepRunnerRegistry()
+    runner_registry.register(StepType.FUNCTION, runner)
+    spec = WorkflowSpec(
+        workflow_id="budget-no-retry",
+        name="Budget No Retry",
+        version="1.0",
+        start_step_id="budget",
+        steps=[
+            StepSpec(
+                step_id="budget",
+                implementation="budget.exceeded",
+                retry_policy=RetryPolicySpec(max_retries=3, retry_delay_seconds=[0, 0, 0]),
+            )
+        ],
+    )
+    executor = WorkflowExecutor(
+        function_step_runner=None,
+        step_runner_registry=runner_registry,
+        artifact_manager=ArtifactManager(tmp_path),
+    )
+
+    result = executor.execute(spec, {"topic": "ai"}, profile="test", run_id="run-budget-no-retry")
+
+    events = [
+        json.loads(line)["event_type"]
+        for line in (tmp_path / "run-budget-no-retry" / "events.jsonl").read_text(
+            encoding="utf-8"
+        ).splitlines()
+    ]
+    assert result.status == WorkflowStatus.BUDGET_EXCEEDED
+    assert runner.calls == 1
+    assert "step_retry_scheduled" not in events
+    assert events[-1] == "workflow_budget_exceeded"
 
 
 def test_workflow_executor_fails_step_on_timeout_without_retry(tmp_path) -> None:
@@ -808,6 +914,116 @@ def test_workflow_executor_marks_failed_step_as_blocked(tmp_path) -> None:
     ]
 
 
+@pytest.mark.parametrize(
+    (
+        "case_id",
+        "outcome",
+        "expected_status",
+        "terminal_artifact_key",
+        "terminal_event_type",
+    ),
+    [
+        (
+            "paused",
+            StepOutcome(status=StepStatus.PAUSED, outputs={"marker": "paused"}),
+            WorkflowStatus.PAUSED,
+            "pause",
+            "workflow_paused",
+        ),
+        (
+            "blocked",
+            StepOutcome(
+                status=StepStatus.BLOCKED,
+                error_type="QualityGateBlocked",
+                error_message="quality gate blocked",
+            ),
+            WorkflowStatus.BLOCKED,
+            "error",
+            "workflow_blocked",
+        ),
+        (
+            "failed",
+            StepOutcome(
+                status=StepStatus.FAILED,
+                error_type="StateFailed",
+                error_message="state failed",
+            ),
+            WorkflowStatus.FAILED,
+            "error",
+            "workflow_failed",
+        ),
+        (
+            "budget-exceeded",
+            StepOutcome(
+                status=StepStatus.FAILED,
+                outputs={"budget_exceeded": True},
+                error_type="WorkflowBudgetExceeded",
+                error_message="run budget exceeded",
+                error_details={"budget_exceeded": True, "budget_usd": 1.25},
+            ),
+            WorkflowStatus.BUDGET_EXCEEDED,
+            "error",
+            "workflow_budget_exceeded",
+        ),
+    ],
+)
+def test_workflow_executor_persists_p0_state_boundaries(
+    tmp_path,
+    case_id,
+    outcome,
+    expected_status,
+    terminal_artifact_key,
+    terminal_event_type,
+) -> None:
+    runner_registry = StepRunnerRegistry()
+    runner_registry.register(StepType.FUNCTION, _StaticOutcomeRunner(outcome))
+    spec = WorkflowSpec(
+        workflow_id=f"state-{case_id}",
+        name=f"State {case_id}",
+        version="1.0",
+        start_step_id="state",
+        steps=[
+            StepSpec(
+                step_id="state",
+                implementation="state.static",
+                write_keys=["marker", "budget_exceeded"],
+            )
+        ],
+    )
+    executor = WorkflowExecutor(
+        function_step_runner=None,
+        step_runner_registry=runner_registry,
+        artifact_manager=ArtifactManager(tmp_path),
+    )
+    run_id = f"run-state-{case_id}"
+
+    result = executor.execute(spec, {"topic": "ai"}, profile="test", run_id=run_id)
+
+    run_dir = tmp_path / run_id
+    manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+    events = [
+        json.loads(line)["event_type"]
+        for line in (run_dir / "events.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    inspection = WorkflowRunInspector(tmp_path).inspect_run(run_id, strict=True)
+    replay_bundle = WorkflowRunInspector(tmp_path).build_replay_bundle(run_id, strict=True)
+
+    assert result.status == expected_status
+    assert manifest["status"] == expected_status.value
+    assert manifest["artifacts"][terminal_artifact_key] == f"{terminal_artifact_key}.json"
+    assert terminal_event_type in events
+    assert inspection.status == expected_status.value
+    assert inspection.terminal_artifact_key == terminal_artifact_key
+    assert replay_bundle.manifest["status"] == expected_status.value
+    assert replay_bundle.step_results["state"]["status"] == outcome.status.value
+    if expected_status == WorkflowStatus.PAUSED:
+        assert result.error is None
+        assert replay_bundle.pause["status"] == "paused"
+    else:
+        assert result.error is not None
+        assert replay_bundle.error["error_type"] == result.error.error_type
+
+
 def test_workflow_executor_records_routing_failure_artifacts(tmp_path) -> None:
     registry = FunctionStepRegistry()
     registry.register("sample.decide", lambda buffer: {"decision": "publish"})
@@ -1085,3 +1301,16 @@ class _PausingHumanReviewRunner:
             outputs={"human_review_request": request},
             next_hint="human_review",
         )
+
+
+class _StaticOutcomeRunner:
+    def __init__(self, outcome: StepOutcome) -> None:
+        self._outcome = outcome
+        self.calls = 0
+
+    def run(self, step: StepSpec, buffer) -> StepOutcome:
+        _ = step
+        self.calls += 1
+        for key, value in self._outcome.outputs.items():
+            buffer.write(key, value)
+        return self._outcome

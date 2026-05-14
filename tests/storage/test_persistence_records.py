@@ -2,19 +2,21 @@ import json
 
 from core.framework.run_result import RunResult
 from core.framework.specs import WorkflowStatus
-from domain.reports import FinalReport
+from domain.reports import BlockedReport, FinalReport
 from evidence import EvidenceBundle, EvidenceItem, VerifiedClaim, VerifiedFindings
 from quality import QualityGateMetrics, ReportQualitySummary
 from storage.records import ClaimRecord, EvidenceItemRecord, QualityResultRecord, SourceItemRecord
 from storage.repository import (
     LocalJsonPersistenceAdapter,
     ReportRecord,
+    RunPersistenceBatch,
     WorkflowRunRecord,
     claim_records_from_result,
     evidence_item_records_from_result,
     persist_run_result,
     quality_result_record_from_result,
     report_record_from_result,
+    run_persistence_batch_from_result,
     source_item_records_from_result,
     workflow_run_record_from_result,
 )
@@ -101,6 +103,40 @@ def test_report_record_from_result_extracts_final_report() -> None:
     assert record.citation_coverage_score == 1.0
 
 
+def test_report_record_from_result_preserves_blocked_report_status() -> None:
+    result = RunResult(
+        run_id="run-blocked",
+        workflow_id="daily",
+        workflow_version="1",
+        status=WorkflowStatus.BLOCKED,
+        output={
+            "blocked_report": BlockedReport(
+                title="Blocked Daily",
+                reasons=["quality gate blocked"],
+                draft={"title": "Draft"},
+            ),
+            "report_markdown": "# Blocked\n",
+            "report_quality_summary": ReportQualitySummary(
+                quality_score=0.35,
+                support_coverage=0.2,
+                citation_passed=False,
+                decision="block",
+            ),
+        },
+        error={"error_type": "QualityGateBlocked", "message": "quality gate blocked"},
+        manifest_path="runs/run-blocked/manifest.json",
+    )
+
+    record = report_record_from_result(result)
+
+    assert record is not None
+    assert record.report_id == "run-blocked:blocked"
+    assert record.status == "blocked"
+    assert record.title == "Blocked Daily"
+    assert record.report_json["reasons"] == ["quality gate blocked"]
+    assert record.quality_score == 0.35
+
+
 def test_local_json_persistence_adapter_writes_records(tmp_path) -> None:
     repository = LocalJsonPersistenceAdapter(tmp_path)
 
@@ -151,6 +187,30 @@ def test_run_result_extracts_source_evidence_claim_and_quality_records() -> None
     assert quality_record is not None
     assert quality_record.decision == "pass"
     assert quality_record.claim_support_score == 1.0
+
+
+def test_run_persistence_batch_from_result_collects_final_state_records() -> None:
+    batch = run_persistence_batch_from_result(_storage_run_result(), profile="live-offline")
+
+    assert isinstance(batch, RunPersistenceBatch)
+    assert batch.workflow_run.run_id == "run-1"
+    assert batch.report is None
+    assert batch.source_items[0].source_item_id == "raw-1"
+    assert batch.evidence_items[0].evidence_id == "ev-1"
+    assert batch.claims[0].supporting_evidence_ids == ["ev-1"]
+    assert batch.quality_result is not None
+    assert batch.quality_result.quality_result_id == "run-1:quality"
+
+
+def test_persist_run_result_uses_repository_batch_boundary_when_available() -> None:
+    repository = _BatchRepository()
+
+    persist_run_result(repository, _storage_run_result(), profile="live-offline")
+
+    assert repository.migrated is True
+    assert len(repository.batches) == 1
+    assert repository.batches[0].workflow_run.run_id == "run-1"
+    assert repository.individual_writes == []
 
 
 def test_local_json_persistence_adapter_writes_final_state_records(tmp_path) -> None:
@@ -204,6 +264,25 @@ def test_local_json_persistence_adapter_writes_individual_final_state_records(tm
     assert len(repository.list_evidence_items("run-1")) == 1
     assert len(repository.list_claims("run-1")) == 1
     assert len(repository.list_quality_results("run-1")) == 1
+
+
+class _BatchRepository:
+    def __init__(self) -> None:
+        self.migrated = False
+        self.batches: list[RunPersistenceBatch] = []
+        self.individual_writes: list[str] = []
+
+    def migrate(self) -> None:
+        self.migrated = True
+
+    def save_run_records(self, batch: RunPersistenceBatch) -> None:
+        self.batches.append(batch)
+
+    def save_workflow_run(self, record) -> None:
+        self.individual_writes.append("workflow_run")
+
+    def save_report(self, record) -> None:
+        self.individual_writes.append("report")
 
 
 def _storage_run_result() -> RunResult:

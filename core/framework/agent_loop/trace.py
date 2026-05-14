@@ -57,6 +57,11 @@ class LLMCallTrace:
     route_id: str | None = None
     deployment_id: str | None = None
     cache_hit: bool | None = None
+    fallback_used: bool | None = None
+    fallback_count: int | None = None
+    router_event_count: int | None = None
+    provider_resolution_trace: list[dict[str, Any]] = field(default_factory=list)
+    route_manifest: dict[str, Any] | None = None
     response_chars: int = 0
 
     @classmethod
@@ -73,6 +78,19 @@ class LLMCallTrace:
             route_id=_optional_text(metadata.get("llm_route_id")),
             deployment_id=_optional_text(metadata.get("llm_deployment_id")),
             cache_hit=_optional_bool(metadata.get("llm_cache_hit")),
+            fallback_used=_optional_bool(metadata.get("llm_fallback_used")),
+            fallback_count=_optional_int(metadata.get("llm_fallback_count")),
+            router_event_count=_optional_int(metadata.get("llm_router_event_count")),
+            provider_resolution_trace=[
+                dict(item)
+                for item in metadata.get("llm_provider_resolution_trace", [])
+                if isinstance(item, dict)
+            ],
+            route_manifest=(
+                dict(metadata["llm_route_manifest"])
+                if isinstance(metadata.get("llm_route_manifest"), dict)
+                else None
+            ),
             response_chars=len(response.content or ""),
         )
 
@@ -93,6 +111,13 @@ class LLMCallTrace:
             "route_id": self.route_id,
             "deployment_id": self.deployment_id,
             "cache_hit": self.cache_hit,
+            "fallback_used": self.fallback_used,
+            "fallback_count": self.fallback_count,
+            "router_event_count": self.router_event_count,
+            "provider_resolution_trace": [
+                dict(item) for item in self.provider_resolution_trace
+            ],
+            "route_manifest": dict(self.route_manifest) if self.route_manifest else None,
             "response_chars": self.response_chars,
         }
 
@@ -513,3 +538,12 @@ def _optional_bool(value: Any) -> bool | None:
     if isinstance(value, str):
         return value.strip().casefold() in {"1", "true", "yes", "on"}
     return bool(value)
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None

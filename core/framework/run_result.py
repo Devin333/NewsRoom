@@ -19,6 +19,7 @@ class RunResult:
     manifest_path: str | None = None
     events_path: str | None = None
     error: dict[str, Any] | None = None
+    manifest: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_workflow_result(cls, result: WorkflowResult) -> RunResult:
@@ -32,6 +33,7 @@ class RunResult:
             manifest_path=result.manifest_path,
             events_path=result.events_path,
             error=result.error.to_dict() if result.error else None,
+            manifest=result.manifest,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -45,4 +47,5 @@ class RunResult:
             "manifest_path": self.manifest_path,
             "events_path": self.events_path,
             "error": to_json_safe(self.error),
+            "manifest": to_json_safe(self.manifest),
         }
