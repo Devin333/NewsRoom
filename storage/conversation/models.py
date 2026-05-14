@@ -73,6 +73,7 @@ class ConversationCompactionRecord:
     original_message_count: int
     compacted_message_count: int
     retained_message_count: int
+    marker_message_id: str
     compacted_until_message_id: str | None = None
     created_at: datetime = field(default_factory=_utc_now)
     redacted: bool = True
@@ -85,6 +86,7 @@ class ConversationCompactionRecord:
             "original_message_count": self.original_message_count,
             "compacted_message_count": self.compacted_message_count,
             "retained_message_count": self.retained_message_count,
+            "marker_message_id": self.marker_message_id,
             "compacted_until_message_id": self.compacted_until_message_id,
             "created_at": self.created_at.isoformat().replace("+00:00", "Z"),
             "redacted": self.redacted,
@@ -99,6 +101,7 @@ class ConversationCompactionRecord:
             original_message_count=int(payload.get("original_message_count") or 0),
             compacted_message_count=int(payload.get("compacted_message_count") or 0),
             retained_message_count=int(payload.get("retained_message_count") or 0),
+            marker_message_id=str(payload["marker_message_id"]),
             compacted_until_message_id=_optional_str(payload.get("compacted_until_message_id")),
             created_at=_parse_datetime(str(payload["created_at"])),
             redacted=bool(payload.get("redacted", True)),

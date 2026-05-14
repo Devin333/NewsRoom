@@ -112,12 +112,31 @@ class LocalJsonConversationStore:
         }
         if redaction.redacted:
             metadata["redaction_report"] = redaction.report.to_dict()
+        marker_message = AgentMessageRecord(
+            message_id=_compaction_marker_message_id(compacted[-1].message_id if compacted else "none"),
+            conversation_id=conversation_id,
+            role="system",
+            content={
+                "summary": str(redaction.value),
+                "compacted_message_count": len(compacted),
+                "retained_message_count": len(retained),
+                "compacted_until_message_id": compacted[-1].message_id if compacted else None,
+            },
+            created_at=datetime.now(UTC),
+            redacted=True,
+            metadata={
+                "message_type": "conversation_compaction",
+                "compacted_until_message_id": compacted[-1].message_id if compacted else None,
+                "retained_message_ids": [message.message_id for message in retained],
+            },
+        )
         record = ConversationCompactionRecord(
             conversation_id=conversation_id,
             summary=str(redaction.value),
             original_message_count=len(messages),
             compacted_message_count=len(compacted),
             retained_message_count=len(retained),
+            marker_message_id=marker_message.message_id,
             compacted_until_message_id=compacted[-1].message_id if compacted else None,
             metadata=metadata,
         )
@@ -126,6 +145,7 @@ class LocalJsonConversationStore:
         with path.open("w", encoding="utf-8") as handle:
             json.dump(record.to_dict(), handle, ensure_ascii=False, indent=2, sort_keys=True)
             handle.write("\n")
+        self._write_messages(conversation_id, [marker_message, *retained])
         self.write_summary(conversation_id, record.summary)
         return record
 
@@ -179,6 +199,15 @@ class LocalJsonConversationStore:
     def _compaction_path(self, conversation_id: str) -> Path:
         _validate_id(conversation_id, "conversation_id")
         return self.root / conversation_id / "compaction.json"
+
+    def _write_messages(self, conversation_id: str, messages: list[AgentMessageRecord]) -> Path:
+        path = self._messages_path(conversation_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8") as handle:
+            for message in messages:
+                handle.write(json.dumps(message.to_dict(), ensure_ascii=False, sort_keys=True))
+                handle.write("\n")
+        return path
 
 
 def _read_messages(path: Path) -> list[AgentMessageRecord]:
@@ -247,3 +276,11 @@ def _preview(value: Any, *, max_chars: int) -> str:
     if len(text) <= max_chars:
         return text
     return text[: max_chars - 3].rstrip() + "..."
+
+
+def _compaction_marker_message_id(compacted_until_message_id: str) -> str:
+    safe_id = "".join(
+        character if character.isalnum() or character in "._-" else "_"
+        for character in compacted_until_message_id
+    ).strip("._-")
+    return f"compaction-{safe_id or 'messages'}"

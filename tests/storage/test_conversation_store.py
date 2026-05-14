@@ -104,13 +104,23 @@ def test_local_json_conversation_store_compacts_messages(tmp_path) -> None:
     assert record.original_message_count == 5
     assert record.compacted_message_count == 3
     assert record.retained_message_count == 2
+    assert record.marker_message_id == "compaction-message-3"
     assert record.compacted_until_message_id == "message-3"
     assert record.metadata["retained_message_ids"] == ["message-4", "message-5"]
     assert record.metadata["role_counts"]["judge"] == 1
     assert fake_secret not in record.summary
     assert REDACTED_VALUE in record.summary
     assert store.get_summary("conversation-1") == record.summary
-    assert store.read_messages("conversation-1")[0].message_id == "message-1"
+    messages = store.read_messages("conversation-1")
+    assert [message.message_id for message in messages] == [
+        "compaction-message-3",
+        "message-4",
+        "message-5",
+    ]
+    assert messages[0].role == "system"
+    assert messages[0].content["summary"] == record.summary
+    assert messages[0].metadata["message_type"] == "conversation_compaction"
+    assert fake_secret not in str(messages[0].to_dict())
 
 
 def test_local_json_conversation_store_rejects_invalid_inputs(tmp_path) -> None:

@@ -709,6 +709,59 @@ def test_agent_runner_compacts_conversation_when_threshold_is_exceeded(tmp_path)
     assert compaction.metadata["retained_message_ids"]
     assert "Compacted 3 older conversation messages" in compaction.summary
     assert store.get_summary("conversation-compact") == compaction.summary
+    messages = store.read_messages("conversation-compact")
+    assert [message.metadata.get("message_type") for message in messages] == [
+        "conversation_compaction",
+        "agent_loop_diagnostics",
+        "agent_result",
+    ]
+    assert messages[0].content["summary"] == compaction.summary
+
+
+def test_agent_runner_skips_conversation_compaction_when_disabled(tmp_path) -> None:
+    llm = FakeLLMClient(
+        [
+            '{"action_type":"tool_call","tool_name":"memory.search","tool_args":{"query":"chips"}}',
+            '{"action_type":"final_output","output":{"wrong_key":{"summary":"missing"}}}',
+            '{"action_type":"final_output","output":{"analysis_result":{"summary":"ok"}}}',
+        ]
+    )
+    store = LocalJsonConversationStore(tmp_path)
+    agent = AgentSpec(
+        agent_id="analyst",
+        name="Analyst",
+        role="Analyze",
+        goal="Produce analysis",
+        instructions="Return JSON actions only.",
+        input_keys=["request"],
+        output_key="analysis_result",
+        allowed_tools=["memory.search"],
+        loop_policy=AgentLoopPolicy(
+            conversation_compaction_enabled=False,
+            conversation_compaction_max_messages=3,
+            conversation_compaction_keep_last=2,
+        ),
+    )
+
+    result = AgentRunner(
+        llm_client=llm,
+        tool_registry=_registry(),
+        conversation_store=store,
+    ).run(
+        agent,
+        {"request": {"topic": "chips"}},
+        conversation_id="conversation-no-compact",
+    )
+
+    assert result.success is True
+    assert store.get_compaction("conversation-no-compact") is None
+    assert [message.role for message in store.read_messages("conversation-no-compact")] == [
+        "user",
+        "tool",
+        "judge",
+        "diagnostic",
+        "assistant",
+    ]
 
 
 def test_agent_runner_persists_tool_and_judge_events_to_conversation(tmp_path) -> None:
