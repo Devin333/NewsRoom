@@ -915,6 +915,10 @@ def test_agent_runner_waits_for_tool_approval_with_diagnostics() -> None:
         input_keys=["request"],
         output_key="publish_result",
         allowed_tools=["report.publish"],
+        tool_policy=ToolPolicy(
+            allowed_tools=["report.publish"],
+            allow_dangerous_tools=True,
+        ),
     )
 
     result = AgentRunner(llm_client=llm, tool_registry=registry).run(

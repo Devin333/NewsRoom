@@ -1,5 +1,8 @@
 import json
+import os
 from datetime import UTC, datetime, timedelta
+
+import pytest
 
 from core.framework.workers import (
     BackpressurePolicy,
@@ -316,6 +319,42 @@ def test_redis_stream_queue_fail_dead_letters_and_requeues_record() -> None:
     assert redis.xack_calls == [("news:queue:daily", "news-workers", "1-0")]
     assert redis.xdel_calls == [("news:queue:dead-letter", "1-0")]
     assert json.loads(redis.xadd_calls[-1][1]["task"])["metadata"]["requeue_reason"] == "operator_retry"
+
+
+@pytest.mark.skipif(
+    os.getenv("NEWSROOM_WORKER_REDIS_TESTS") != "1",
+    reason="set NEWSROOM_WORKER_REDIS_TESTS=1 to run Redis stream integration tests",
+)
+def test_redis_stream_queue_integration_ack_reclaim_and_dlq() -> None:
+    redis = pytest.importorskip("redis")
+    client = redis.Redis.from_url(os.getenv("NEWSROOM_REDIS_URL", "redis://localhost:6379/15"))
+    client.ping()
+    queue_name = "news:test:queue:daily"
+    dlq_name = "news:test:queue:dead-letter"
+    client.delete(queue_name, dlq_name)
+    queue = RedisStreamTaskQueue(
+        client,
+        group_name="news-test-workers",
+        dead_letter_queue_name=dlq_name,
+    )
+
+    acked = Task(task_type="daily_intelligence.run", payload={"topic": "AI"}, queue_name=queue_name)
+    queue.enqueue(acked)
+    leased = queue.lease_one("worker-1", [queue_name], block_ms=10)
+    queue.ack(leased.queue_name, leased.message_id)
+
+    pending = Task(task_type="daily_intelligence.run", payload={"topic": "ML"}, queue_name=queue_name)
+    queue.enqueue(pending)
+    queue.lease_one("worker-1", [queue_name], block_ms=10)
+    reclaimed = queue.reclaim_stale_one("worker-2", [queue_name], min_idle_ms=0)
+    failed = queue.fail(
+        reclaimed,
+        TaskError("ValidationError", "bad input", retryable=False),
+    )
+
+    assert failed.status == TaskStatus.DEAD_LETTER
+    assert queue.list_dead_letters()[0].task.task_id == pending.task_id
+    assert queue.status([queue_name])[0].group_exists is True
 
 
 class _FakeRedis:

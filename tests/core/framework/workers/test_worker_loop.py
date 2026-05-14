@@ -87,6 +87,25 @@ def test_worker_loop_pauses_approval_task_without_acknowledging() -> None:
     assert worker.events[-1].event_type == "task_paused"
 
 
+def test_worker_loop_does_not_retry_business_task_failure() -> None:
+    queue = InMemoryTaskQueue()
+    task = Task(task_type="business-failure", payload={}, task_id="task-1", max_attempts=2)
+    queue.enqueue(task)
+    worker = WorkerLoop(
+        worker_id="worker-1",
+        queue=queue,
+        handlers={"business-failure": _BusinessFailureHandler()},
+        queue_names=["news:queue:daily"],
+    )
+
+    result = worker.run_once()
+
+    assert result.success is False
+    assert result.error_type == "StepFailed"
+    assert task.status == TaskStatus.DEAD_LETTER
+    assert queue.list_dead_letters()[0].error.retryable is False
+
+
 def test_worker_loop_run_stops_on_max_tasks() -> None:
     queue = InMemoryTaskQueue()
     queue.enqueue(Task(task_type="static", payload={}, task_id="task-1"))
@@ -342,4 +361,15 @@ class _StaticHandler:
             success=True,
             status=self.status,
             output={"run_id": task.payload.get("run_id")},
+        )
+
+
+class _BusinessFailureHandler:
+    def handle(self, task):
+        return TaskResult(
+            task_id=task.task_id,
+            success=False,
+            status=TaskStatus.FAILED,
+            error_type="StepFailed",
+            error_message="quality workflow step failed",
         )

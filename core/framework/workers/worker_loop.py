@@ -120,7 +120,11 @@ class WorkerLoop:
         self._record_event("task_started", task)
         handler = self.handlers.get(task.task_type)
         if handler is None:
-            error = TaskError("UnknownTaskType", f"no handler for {task.task_type}")
+            error = TaskError(
+                "UnknownTaskType",
+                f"no handler for {task.task_type}",
+                retryable=False,
+            )
             self.queue.fail(task.task_id, self.worker_id, error)
             self._record_event("task_failed", task, payload=error.to_dict())
             return TaskResult(
@@ -156,7 +160,11 @@ class WorkerLoop:
             self.queue.fail(
                 task.task_id,
                 self.worker_id,
-                TaskError(result.error_type or "TaskFailed", result.error_message or "task failed"),
+                TaskError(
+                    result.error_type or "TaskFailed",
+                    result.error_message or "task failed",
+                    retryable=_is_recoverable_task_result(result),
+                ),
             )
             self._record_event(
                 "task_failed",
@@ -176,3 +184,20 @@ class WorkerLoop:
                 payload=payload or {},
             )
         )
+
+
+_RECOVERABLE_TASK_ERROR_TYPES = {
+    "ConnectionError",
+    "InfrastructureError",
+    "OSError",
+    "RateLimitError",
+    "RedisConnectionError",
+    "TemporaryError",
+    "Timeout",
+    "TimeoutError",
+    "TransientError",
+}
+
+
+def _is_recoverable_task_result(result: TaskResult) -> bool:
+    return (result.error_type or "") in _RECOVERABLE_TASK_ERROR_TYPES
