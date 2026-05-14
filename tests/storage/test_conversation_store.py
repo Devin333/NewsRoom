@@ -81,6 +81,38 @@ def test_local_json_conversation_store_redacts_message_and_summary(tmp_path) -> 
     assert REDACTED_VALUE in store.get_summary("conversation-1")
 
 
+def test_local_json_conversation_store_compacts_messages(tmp_path) -> None:
+    fake_secret = "sk" + "-conversationsecret123456"
+    store = LocalJsonConversationStore(tmp_path)
+    for index, role in enumerate(["user", "tool", "judge", "diagnostic", "assistant"], start=1):
+        store.append_message(
+            "conversation-1",
+            AgentMessageRecord(
+                message_id=f"message-{index}",
+                conversation_id="conversation-1",
+                role=role,
+                content={"text": f"Message {index} {fake_secret}"},
+                created_at=datetime(2026, 5, 11, index, 0, tzinfo=UTC),
+            ),
+        )
+
+    record = store.compact_messages("conversation-1", keep_last=2)
+    restored = store.get_compaction("conversation-1")
+
+    assert record is not None
+    assert restored == record
+    assert record.original_message_count == 5
+    assert record.compacted_message_count == 3
+    assert record.retained_message_count == 2
+    assert record.compacted_until_message_id == "message-3"
+    assert record.metadata["retained_message_ids"] == ["message-4", "message-5"]
+    assert record.metadata["role_counts"]["judge"] == 1
+    assert fake_secret not in record.summary
+    assert REDACTED_VALUE in record.summary
+    assert store.get_summary("conversation-1") == record.summary
+    assert store.read_messages("conversation-1")[0].message_id == "message-1"
+
+
 def test_local_json_conversation_store_rejects_invalid_inputs(tmp_path) -> None:
     store = LocalJsonConversationStore(tmp_path)
 
@@ -89,6 +121,9 @@ def test_local_json_conversation_store_rejects_invalid_inputs(tmp_path) -> None:
 
     with pytest.raises(ValueError, match="limit must be greater than zero"):
         store.read_messages("conversation-1", limit=0)
+
+    with pytest.raises(ValueError, match="keep_last must be non-negative"):
+        store.compact_messages("conversation-1", keep_last=-1)
 
     with pytest.raises(ValueError, match="does not match"):
         store.append_message("other-conversation", _message("message-1", "user", "ok"))

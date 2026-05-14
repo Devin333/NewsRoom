@@ -2229,7 +2229,7 @@ token_usage
 | conversation diagnostics | 已实现 | conversation 中写入 diagnostic message，assistant result 仍保持最后 |
 | agent artifact 输出 | 已增强 | WorkflowExecutor 会把 redacted LLM call request/response 写为 `llm_call` step artifacts，并写回 manifest/step result |
 | sub-agent delegation | 暂不做 | 仍为目标态，不在本轮实现 |
-| conversation compaction | 暂不做 | 已保留目标态，后续单独做 |
+| conversation compaction | 已实现基础版 | LocalJsonConversationStore 可生成 redacted deterministic compaction summary，AgentRunner 可按阈值自动触发 |
 | cursor resume | 暂不做 | 由 storage/workflow checkpoint 后续对齐 |
 | multi-layer LLM judge | 暂不做 | 当前 OutputJudge 仍是 deterministic local judge |
 
@@ -2262,9 +2262,9 @@ WorkflowExecutor
 下一阶段应优先做：
 
 ```text
-1. Conversation compaction。
-2. Cursor/checkpoint resume。
-3. Human escalation 与 approval service 对齐。
-4. SubAgent delegation，但默认关闭。
-5. 更完整的 JSON Schema keyword 覆盖和 schema registry 复用。
+1. Cursor/checkpoint resume。
+2. Human escalation 与 approval service 对齐。
+3. SubAgent delegation，但默认关闭。
+4. 更完整的 JSON Schema keyword 覆盖和 schema registry 复用。
+5. Phase-aware / LLM-assisted conversation compaction。
 ```

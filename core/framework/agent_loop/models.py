@@ -85,6 +85,9 @@ class AgentLoopPolicy:
     trace_enabled: bool = True
     max_trace_preview_chars: int = 500
     llm_streaming_enabled: bool = False
+    conversation_compaction_enabled: bool = True
+    conversation_compaction_max_messages: int = 50
+    conversation_compaction_keep_last: int = 10
 
     def __post_init__(self) -> None:
         _validate_non_negative("max_iterations", self.max_iterations, minimum=1)
@@ -96,6 +99,15 @@ class AgentLoopPolicy:
             self.max_consecutive_tool_failures,
         )
         _validate_non_negative("max_trace_preview_chars", self.max_trace_preview_chars)
+        _validate_non_negative(
+            "conversation_compaction_max_messages",
+            self.conversation_compaction_max_messages,
+            minimum=1,
+        )
+        _validate_non_negative(
+            "conversation_compaction_keep_last",
+            self.conversation_compaction_keep_last,
+        )
 
 
 @dataclass(frozen=True)

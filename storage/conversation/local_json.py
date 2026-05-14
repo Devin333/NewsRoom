@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from storage.conversation.models import AgentMessageRecord
+from storage.conversation.models import AgentMessageRecord, ConversationCompactionRecord
 from storage.security import StorageRedactor
 
 
@@ -78,6 +78,64 @@ class LocalJsonConversationStore:
         payload = json.loads(path.read_text(encoding="utf-8"))
         return str(payload.get("summary") or "")
 
+    def compact_messages(
+        self,
+        conversation_id: str,
+        *,
+        keep_last: int = 10,
+        max_summary_chars: int = 2000,
+    ) -> ConversationCompactionRecord | None:
+        _validate_id(conversation_id, "conversation_id")
+        if keep_last < 0:
+            raise ValueError("keep_last must be non-negative")
+        if max_summary_chars <= 0:
+            raise ValueError("max_summary_chars must be greater than zero")
+
+        messages = self.read_messages(conversation_id)
+        if len(messages) <= keep_last:
+            return None
+        compacted = messages[:-keep_last] if keep_last else messages
+        retained = messages[-keep_last:] if keep_last else []
+        summary = _build_compaction_summary(
+            compacted,
+            retained_count=len(retained),
+            max_summary_chars=max_summary_chars,
+        )
+        redaction = self.redactor.redact(
+            summary,
+            run_id=conversation_id,
+            artifact_id="conversation_compaction",
+        )
+        metadata: dict[str, Any] = {
+            "retained_message_ids": [message.message_id for message in retained],
+            "role_counts": _role_counts(messages),
+        }
+        if redaction.redacted:
+            metadata["redaction_report"] = redaction.report.to_dict()
+        record = ConversationCompactionRecord(
+            conversation_id=conversation_id,
+            summary=str(redaction.value),
+            original_message_count=len(messages),
+            compacted_message_count=len(compacted),
+            retained_message_count=len(retained),
+            compacted_until_message_id=compacted[-1].message_id if compacted else None,
+            metadata=metadata,
+        )
+        path = self._compaction_path(conversation_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8") as handle:
+            json.dump(record.to_dict(), handle, ensure_ascii=False, indent=2, sort_keys=True)
+            handle.write("\n")
+        self.write_summary(conversation_id, record.summary)
+        return record
+
+    def get_compaction(self, conversation_id: str) -> ConversationCompactionRecord | None:
+        _validate_id(conversation_id, "conversation_id")
+        path = self._compaction_path(conversation_id)
+        if not path.exists():
+            return None
+        return ConversationCompactionRecord.from_dict(json.loads(path.read_text(encoding="utf-8")))
+
     def _redacted_message(self, message: AgentMessageRecord) -> AgentMessageRecord:
         content_redaction = self.redactor.redact(
             message.content,
@@ -118,6 +176,10 @@ class LocalJsonConversationStore:
         _validate_id(conversation_id, "conversation_id")
         return self.root / conversation_id / "summary.json"
 
+    def _compaction_path(self, conversation_id: str) -> Path:
+        _validate_id(conversation_id, "conversation_id")
+        return self.root / conversation_id / "compaction.json"
+
 
 def _read_messages(path: Path) -> list[AgentMessageRecord]:
     messages = []
@@ -136,3 +198,52 @@ def _validate_id(value: str, label: str) -> None:
     relative = Path(value)
     if relative.is_absolute() or ".." in relative.parts or len(relative.parts) != 1:
         raise ValueError(f"invalid {label}: {value}")
+
+
+def _build_compaction_summary(
+    messages: list[AgentMessageRecord],
+    *,
+    retained_count: int,
+    max_summary_chars: int,
+) -> str:
+    role_counts = _role_counts(messages)
+    lines = [
+        (
+            "Compacted "
+            f"{len(messages)} older conversation messages; "
+            f"retained last {retained_count} messages."
+        ),
+        "Role counts: "
+        + ", ".join(f"{role}={count}" for role, count in sorted(role_counts.items())),
+    ]
+    important = [
+        message
+        for message in messages
+        if message.role in {"user", "judge", "diagnostic", "assistant"}
+    ][-8:]
+    if important:
+        lines.append("Recent compacted highlights:")
+        for message in important:
+            lines.append(f"- {message.role}: {_preview(message.content, max_chars=180)}")
+    summary = "\n".join(lines)
+    if len(summary) <= max_summary_chars:
+        return summary
+    return summary[: max_summary_chars - 3].rstrip() + "..."
+
+
+def _role_counts(messages: list[AgentMessageRecord]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for message in messages:
+        counts[message.role] = counts.get(message.role, 0) + 1
+    return counts
+
+
+def _preview(value: Any, *, max_chars: int) -> str:
+    if isinstance(value, str):
+        text = value
+    else:
+        text = json.dumps(value, ensure_ascii=False, sort_keys=True)
+    text = " ".join(text.split())
+    if len(text) <= max_chars:
+        return text
+    return text[: max_chars - 3].rstrip() + "..."

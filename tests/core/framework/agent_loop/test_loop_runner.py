@@ -666,6 +666,51 @@ def test_agent_runner_persists_conversation_when_store_is_provided(tmp_path) -> 
     )
 
 
+def test_agent_runner_compacts_conversation_when_threshold_is_exceeded(tmp_path) -> None:
+    llm = FakeLLMClient(
+        [
+            '{"action_type":"tool_call","tool_name":"memory.search","tool_args":{"query":"chips"}}',
+            '{"action_type":"final_output","output":{"wrong_key":{"summary":"missing"}}}',
+            '{"action_type":"final_output","output":{"analysis_result":{"summary":"ok"}}}',
+        ]
+    )
+    store = LocalJsonConversationStore(tmp_path)
+    agent = AgentSpec(
+        agent_id="analyst",
+        name="Analyst",
+        role="Analyze",
+        goal="Produce analysis",
+        instructions="Return JSON actions only.",
+        input_keys=["request"],
+        output_key="analysis_result",
+        allowed_tools=["memory.search"],
+        loop_policy=AgentLoopPolicy(
+            conversation_compaction_max_messages=3,
+            conversation_compaction_keep_last=2,
+        ),
+    )
+
+    result = AgentRunner(
+        llm_client=llm,
+        tool_registry=_registry(),
+        conversation_store=store,
+    ).run(
+        agent,
+        {"request": {"topic": "chips"}},
+        conversation_id="conversation-compact",
+    )
+    compaction = store.get_compaction("conversation-compact")
+
+    assert result.success is True
+    assert compaction is not None
+    assert compaction.original_message_count == 5
+    assert compaction.compacted_message_count == 3
+    assert compaction.retained_message_count == 2
+    assert compaction.metadata["retained_message_ids"]
+    assert "Compacted 3 older conversation messages" in compaction.summary
+    assert store.get_summary("conversation-compact") == compaction.summary
+
+
 def test_agent_runner_persists_tool_and_judge_events_to_conversation(tmp_path) -> None:
     llm = FakeLLMClient(
         [

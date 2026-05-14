@@ -82,6 +82,7 @@ class AgentRunner:
                     f"stop_reason={_result_stop_reason(result)}"
                 ),
             )
+            self._compact_conversation_if_needed(conversation_id, agent)
         return result
 
     def _append_conversation_message(
@@ -136,6 +137,20 @@ class AgentRunner:
                     "severity": diagnostics.get("severity"),
                 },
             ),
+        )
+
+    def _compact_conversation_if_needed(self, conversation_id: str, agent: AgentSpec) -> None:
+        if self._conversation_store is None:
+            return
+        policy = agent.loop_policy
+        if not policy.conversation_compaction_enabled:
+            return
+        messages = self._conversation_store.read_messages(conversation_id)
+        if len(messages) <= policy.conversation_compaction_max_messages:
+            return
+        self._conversation_store.compact_messages(
+            conversation_id,
+            keep_last=policy.conversation_compaction_keep_last,
         )
 
 
