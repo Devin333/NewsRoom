@@ -309,6 +309,8 @@ class MCPApplicationService:
                 return self._approval_submit_decision(args)
             if tool_name == "news.approval.resume_context":
                 return self._approval_resume_context(args)
+            if tool_name == "news.approval.resume_workflow":
+                return self._approval_resume_workflow(args)
             return MCPToolCallResult(
                 tool_name=tool_name,
                 success=False,
@@ -939,6 +941,22 @@ class MCPApplicationService:
         )
         return MCPToolCallResult(
             tool_name="news.approval.resume_context",
+            success=True,
+            data=result.to_dict(),
+        )
+
+    def _approval_resume_workflow(self, args: dict[str, Any]) -> MCPToolCallResult:
+        result = self.run_service_factory().resume_from_approval(
+            _approval_id(args),
+            workflow_id=str(args.get("workflow_id") or "daily"),
+            profile=_optional_arg(args, "profile"),
+            run_id=_optional_arg(args, "run_id"),
+            decision_key=str(args.get("decision_key") or "human_review_decision"),
+            approval_service=self.approval_service_factory(),
+            checkpoint_store_path=str(args.get("checkpoint_store_path") or ".newsroom/checkpoints"),
+        )
+        return MCPToolCallResult(
+            tool_name="news.approval.resume_workflow",
             success=True,
             data=result.to_dict(),
         )
@@ -1752,6 +1770,26 @@ def _tools() -> list[MCPTool]:
                 },
             },
         ),
+        MCPTool(
+            name="news.approval.resume_workflow",
+            title="Resume workflow from approval",
+            description="Resume a supported workflow from the latest checkpoint for a decided approval.",
+            input_schema={
+                "type": "object",
+                "required": ["approval_id"],
+                "properties": {
+                    "approval_id": {"type": "string"},
+                    "workflow_id": {"type": "string", "default": "daily"},
+                    "profile": {"type": "string"},
+                    "run_id": {"type": "string"},
+                    "decision_key": {
+                        "type": "string",
+                        "default": "human_review_decision",
+                    },
+                    "checkpoint_store_path": {"type": "string"},
+                },
+            },
+        ),
     ]
 
 
@@ -1995,6 +2033,7 @@ def _tool_is_read_only(tool_name: str) -> bool:
         ".reject",
         ".modify",
         ".submit_decision",
+        ".resume_workflow",
     )
     return not any(tool_name.endswith(marker) for marker in write_markers)
 

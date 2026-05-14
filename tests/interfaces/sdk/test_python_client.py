@@ -128,6 +128,14 @@ def test_news_client_writes_extended_interface_surfaces() -> None:
     assert client.approvals.approve("approval/1", decided_by="reviewer", reason="ok") == {"ok": True}
     assert client.approvals.reject("approval/2", decided_by="reviewer") == {"ok": True}
     assert client.approvals.resume_context("approval/3", decision_key="editor_decision") == {"ok": True}
+    assert client.approvals.resume_workflow(
+        "approval/4",
+        workflow_id="test-no-llm",
+        profile="test-no-llm",
+        run_id="run-resumed",
+        decision_key="editor_decision",
+        checkpoint_store_path=".newsroom/checkpoints-test",
+    ) == {"ok": True}
 
     assert [request.full_url for request in opener.requests] == [
         "https://news.example/api/v1/memory/reindex",
@@ -138,6 +146,7 @@ def test_news_client_writes_extended_interface_surfaces() -> None:
         "https://news.example/api/v1/approvals/approval%2F1/approve",
         "https://news.example/api/v1/approvals/approval%2F2/reject",
         "https://news.example/api/v1/approvals/approval%2F3/resume-context",
+        "https://news.example/api/v1/approvals/approval%2F4/resume-workflow",
     ]
     assert [json.loads(request.data.decode("utf-8")) for request in opener.requests] == [
         {"run_id": "run/1", "topic": "AI policy"},
@@ -148,6 +157,13 @@ def test_news_client_writes_extended_interface_surfaces() -> None:
         {"decided_by": "reviewer", "reason": "ok"},
         {"decided_by": "reviewer", "reason": None},
         {"decision_key": "editor_decision"},
+        {
+            "workflow_id": "test-no-llm",
+            "profile": "test-no-llm",
+            "run_id": "run-resumed",
+            "decision_key": "editor_decision",
+            "checkpoint_store_path": ".newsroom/checkpoints-test",
+        },
     ]
 
 

@@ -69,6 +69,7 @@ def test_mcp_catalog_lists_tools_without_calling_factories() -> None:
     assert "news.queue.status" in tool_names
     assert "news.approval.submit" in tool_names
     assert "news.approval.resume_context" in tool_names
+    assert "news.approval.resume_workflow" in tool_names
     assert "news://reports/latest" in resource_uris
     assert "news://reports/{report_id}" in resource_uris
     assert "news://runs/{run_id}/manifest" in resource_uris
@@ -128,6 +129,9 @@ def test_mcp_capability_manifest_describes_tools_resources_and_prompts() -> None
     assert capabilities["news.approval.resume_context"]["permission"] == "manage:approvals"
     assert capabilities["news.approval.resume_context"]["read_only"] is True
     assert capabilities["news.approval.resume_context"]["category"] == "approvals"
+    assert capabilities["news.approval.resume_workflow"]["permission"] == "manage:approvals"
+    assert capabilities["news.approval.resume_workflow"]["read_only"] is False
+    assert capabilities["news.approval.resume_workflow"]["category"] == "approvals"
     assert capabilities["news://runs/{run_id}/manifest"]["kind"] == "resource"
     assert capabilities["news://runs/{run_id}/manifest"]["read_only"] is True
     assert capabilities["news://runs/{run_id}/manifest"]["permission"] == "read:reports"
@@ -554,8 +558,10 @@ def test_mcp_memory_bootstrap_uses_real_in_memory_vector_store() -> None:
 
 def test_mcp_approval_tools_persist_submit_approve_and_read(tmp_path) -> None:
     store_path = tmp_path / "approvals.json"
+    run_service = _FakeRunService()
     service = MCPApplicationService(
-        approval_service_factory=lambda: ApprovalApplicationService(store_path=store_path)
+        approval_service_factory=lambda: ApprovalApplicationService(store_path=store_path),
+        run_service_factory=lambda: run_service,
     )
 
     submitted = service.call_tool(
@@ -584,6 +590,17 @@ def test_mcp_approval_tools_persist_submit_approve_and_read(tmp_path) -> None:
         "news.approval.resume_context",
         {"approval_id": approval_id, "decision_key": "editor_decision"},
     )
+    resume_workflow = service.call_tool(
+        "news.approval.resume_workflow",
+        {
+            "approval_id": approval_id,
+            "workflow_id": "test-no-llm",
+            "profile": "test-no-llm",
+            "run_id": "approval-resumed-run",
+            "decision_key": "editor_decision",
+            "checkpoint_store_path": str(tmp_path / "checkpoints"),
+        },
+    )
 
     assert store_path.exists()
     assert approved.success is True
@@ -596,6 +613,12 @@ def test_mcp_approval_tools_persist_submit_approve_and_read(tmp_path) -> None:
     assert resume_context.data["decision_key"] == "editor_decision"
     assert resume_context.data["buffer_updates"]["editor_decision"]["approval_id"] == approval_id
     assert resume_context.data["resume_metadata"]["approval_run_id"] == "run-1"
+    assert resume_workflow.success is True
+    assert resume_workflow.data["run_id"] == "approval-resumed-run"
+    assert run_service.calls[0]["kind"] == "approval_resume"
+    assert run_service.calls[0]["approval_id"] == approval_id
+    assert run_service.calls[0]["workflow_id"] == "test-no-llm"
+    assert run_service.calls[0]["decision_key"] == "editor_decision"
 
 
 def test_mcp_reads_latest_report_resource_from_local_json_artifact(tmp_path) -> None:
@@ -1179,6 +1202,45 @@ class _FakeRunService:
             status=WorkflowStatus.SUCCEEDED,
             output={"topic": kwargs.get("topic")},
         )
+
+    def resume_from_approval(self, approval_id, **kwargs):
+        self.calls.append({"kind": "approval_resume", "approval_id": approval_id, **kwargs})
+        return _FakeApprovalWorkflowResumeResult(
+            approval_id=approval_id,
+            run_id=kwargs.get("run_id") or "approval-resumed-run",
+        )
+
+
+class _FakeApprovalWorkflowResumeResult:
+    def __init__(self, *, approval_id: str, run_id: str) -> None:
+        self.approval_id = approval_id
+        self.run_id = run_id
+
+    def to_dict(self):
+        return {
+            "approval_context": {"approval_id": self.approval_id},
+            "run_result": {
+                "run_id": self.run_id,
+                "workflow_id": "daily-intelligence-test-no-llm",
+                "workflow_version": "0.1.0",
+                "status": "succeeded",
+                "output": {"ok": True},
+                "artifact_dir": None,
+                "manifest_path": None,
+                "events_path": None,
+                "error": None,
+                "manifest": {},
+            },
+            "run_id": self.run_id,
+            "workflow_id": "daily-intelligence-test-no-llm",
+            "workflow_version": "0.1.0",
+            "status": "succeeded",
+            "output": {"ok": True},
+            "artifact_dir": None,
+            "manifest_path": None,
+            "events_path": None,
+            "error": None,
+        }
 
 
 class _FakeSourceService:

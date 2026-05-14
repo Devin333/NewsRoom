@@ -1,5 +1,7 @@
 from fastapi.testclient import TestClient
 
+from core.framework.run_result import RunResult
+from core.framework.specs import WorkflowStatus
 from interfaces.api import create_app
 from interfaces.services.approval_service import ApprovalApplicationService
 
@@ -116,3 +118,114 @@ def test_approval_api_resume_context_rejects_pending_approval(tmp_path) -> None:
     assert response.status_code == 400
     assert payload["success"] is False
     assert payload["error"]["code"] == "approval_resume_context_unavailable"
+
+
+def test_approval_api_resume_workflow_uses_run_service_and_envelope(tmp_path) -> None:
+    approval_service = ApprovalApplicationService(store_path=tmp_path / "approvals.json")
+    run_service = _FakeRunService()
+    client = TestClient(
+        create_app(
+            approval_service_factory=lambda: approval_service,
+            run_service_factory=lambda: run_service,
+        )
+    )
+    approval_id = client.post(
+        "/api/v1/approvals",
+        json={"requested_action": "continue_agent", "run_id": "approval-source-run"},
+    ).json()["data"]["approval_id"]
+    client.post(
+        f"/api/v1/approvals/{approval_id}/approve",
+        json={"decided_by": "operator"},
+    )
+
+    response = client.post(
+        f"/api/v1/approvals/{approval_id}/resume-workflow",
+        json={
+            "workflow_id": "test-no-llm",
+            "profile": "test-no-llm",
+            "run_id": "approval-resumed-run",
+            "decision_key": "editor_decision",
+            "checkpoint_store_path": str(tmp_path / "checkpoints"),
+        },
+    )
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["success"] is True
+    assert payload["data"]["run_id"] == "approval-resumed-run"
+    assert payload["data"]["status"] == "succeeded"
+    assert run_service.calls[0]["approval_id"] == approval_id
+    assert run_service.calls[0]["workflow_id"] == "test-no-llm"
+    assert run_service.calls[0]["profile"] == "test-no-llm"
+    assert run_service.calls[0]["decision_key"] == "editor_decision"
+    assert run_service.calls[0]["approval_service"] is approval_service
+    assert run_service.calls[0]["checkpoint_store_path"] == str(tmp_path / "checkpoints")
+
+
+def test_approval_api_resume_workflow_rejects_service_error(tmp_path) -> None:
+    approval_service = ApprovalApplicationService(store_path=tmp_path / "approvals.json")
+    client = TestClient(
+        create_app(
+            approval_service_factory=lambda: approval_service,
+            run_service_factory=lambda: _FailingRunService(),
+        )
+    )
+    approval_id = client.post(
+        "/api/v1/approvals",
+        json={"requested_action": "continue_agent", "run_id": "approval-source-run"},
+    ).json()["data"]["approval_id"]
+    client.post(
+        f"/api/v1/approvals/{approval_id}/approve",
+        json={"decided_by": "operator"},
+    )
+
+    response = client.post(f"/api/v1/approvals/{approval_id}/resume-workflow", json={})
+    payload = response.json()
+
+    assert response.status_code == 400
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "approval_workflow_resume_unavailable"
+
+
+class _FakeApprovalWorkflowResumeResult:
+    def __init__(self, approval_id: str, run_id: str) -> None:
+        self.approval_id = approval_id
+        self.run_result = RunResult(
+            run_id=run_id,
+            workflow_id="daily-intelligence-test-no-llm",
+            workflow_version="0.1.0",
+            status=WorkflowStatus.SUCCEEDED,
+            output={"ok": True},
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "approval_context": {"approval_id": self.approval_id},
+            "run_result": self.run_result.to_dict(),
+            "run_id": self.run_result.run_id,
+            "workflow_id": self.run_result.workflow_id,
+            "workflow_version": self.run_result.workflow_version,
+            "status": self.run_result.status.value,
+            "output": self.run_result.output,
+            "artifact_dir": self.run_result.artifact_dir,
+            "manifest_path": self.run_result.manifest_path,
+            "events_path": self.run_result.events_path,
+            "error": self.run_result.error,
+        }
+
+
+class _FakeRunService:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def resume_from_approval(self, approval_id: str, **kwargs):
+        self.calls.append({"approval_id": approval_id, **kwargs})
+        return _FakeApprovalWorkflowResumeResult(
+            approval_id,
+            kwargs.get("run_id") or "approval-resumed-run",
+        )
+
+
+class _FailingRunService:
+    def resume_from_approval(self, approval_id: str, **kwargs):
+        raise ValueError("unsupported approval resume workflow_id: unknown")

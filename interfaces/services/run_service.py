@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from core.framework import RunResult
+from core.framework import RunResult, WorkflowRunner
 from core.framework.specs import WorkflowSpec
 from core.framework.specs import WorkflowStatus
 from core.framework.workflow import FunctionStepRegistry

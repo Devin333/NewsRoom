@@ -266,3 +266,11 @@ class ApprovalModifyRequest(ApprovalDecisionRequest):
 
 class ApprovalResumeContextRequest(BaseModel):
     decision_key: str = Field(default="human_review_decision", min_length=1)
+
+
+class ApprovalWorkflowResumeRequest(BaseModel):
+    workflow_id: str = Field(default="daily", min_length=1)
+    profile: str | None = None
+    run_id: str | None = None
+    decision_key: str = Field(default="human_review_decision", min_length=1)
+    checkpoint_store_path: str | None = None

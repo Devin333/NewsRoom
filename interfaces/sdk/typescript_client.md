@@ -49,6 +49,8 @@ Minimum surface:
 - `client.approvals.approve(approvalId, { decidedBy, reason })`
 - `client.approvals.reject(approvalId, { decidedBy, reason })`
 - `client.approvals.resumeContext(approvalId, { decisionKey })`
+- `client.approvals.resumeWorkflow(approvalId, { workflowId, profile, runId, decisionKey, checkpointStorePath })`
 
 SDK implementations must preserve the common `ApiResponse` / `ApiError` envelope and must not read runtime storage directly.
 Run inspection helpers must call `/api/v1/runs/...` endpoints and must not read `.newsroom/runs` directly.
+Approval workflow resume helpers must call `POST /api/v1/approvals/{approvalId}/resume-workflow` and must not resolve checkpoints locally.

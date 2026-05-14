@@ -467,6 +467,27 @@ class ApprovalsClient:
             json_body={"decision_key": decision_key},
         )
 
+    def resume_workflow(
+        self,
+        approval_id: str,
+        *,
+        workflow_id: str = "daily",
+        profile: str | None = None,
+        run_id: str | None = None,
+        decision_key: str = "human_review_decision",
+        checkpoint_store_path: str | None = None,
+    ) -> dict[str, Any]:
+        return self.client.post(
+            f"/api/v1/approvals/{_quote_path_segment(approval_id)}/resume-workflow",
+            json_body={
+                "workflow_id": workflow_id,
+                "profile": profile,
+                "run_id": run_id,
+                "decision_key": decision_key,
+                "checkpoint_store_path": checkpoint_store_path,
+            },
+        )
+
 
 def _url(base_url: str, path: str, *, params: dict[str, Any] | None) -> str:
     query = {

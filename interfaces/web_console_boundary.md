@@ -125,6 +125,7 @@ HTTP API:
 - `POST /api/v1/approvals/{approval_id}/reject`
 - `POST /api/v1/approvals/{approval_id}/modify`
 - `POST /api/v1/approvals/{approval_id}/resume-context`
+- `POST /api/v1/approvals/{approval_id}/resume-workflow`
 
 ## Memory Page
 

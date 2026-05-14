@@ -1,6 +1,7 @@
 from interfaces.api.models import ApiError as ApiApiError
 from interfaces.api.models import ApiResponse as ApiApiResponse
 from interfaces.api.models import ApprovalResumeContextRequest as ApiApprovalResumeContextRequest
+from interfaces.api.models import ApprovalWorkflowResumeRequest as ApiApprovalWorkflowResumeRequest
 from interfaces.api.models import ApprovalView as ApiApprovalView
 from interfaces.api.models import ArtifactRef as ApiArtifactRef
 from interfaces.api.models import DailyRunRequest as ApiDailyRunRequest
@@ -18,6 +19,7 @@ from interfaces.models import (
     ApiError,
     ApiResponse,
     ApprovalResumeContextRequest,
+    ApprovalWorkflowResumeRequest,
     ApprovalView,
     ArtifactRef,
     DailyRunRequest,
@@ -41,6 +43,7 @@ def test_contract_models_are_exported_from_shared_interfaces_models() -> None:
     assert ApiDailyRunRequest is DailyRunRequest
     assert ApiApiResponse is ApiResponse
     assert ApiApprovalResumeContextRequest is ApprovalResumeContextRequest
+    assert ApiApprovalWorkflowResumeRequest is ApprovalWorkflowResumeRequest
     assert ApiApiError is ApiError
     assert ApiArtifactRef is ArtifactRef
     assert ApiPagination is Pagination
@@ -57,6 +60,9 @@ def test_contract_models_are_exported_from_shared_interfaces_models() -> None:
     assert ReportSummary.__module__ == "interfaces.models.contracts"
     assert ReportDetail.__module__ == "interfaces.models.contracts"
     assert ApprovalResumeContextRequest().decision_key == "human_review_decision"
+    resume_request = ApprovalWorkflowResumeRequest()
+    assert resume_request.workflow_id == "daily"
+    assert resume_request.decision_key == "human_review_decision"
     assert Pagination(limit=10).limit == 10
     assert PageResult(items=[]).items == []
 
