@@ -2,7 +2,12 @@ from datetime import UTC, datetime
 
 import pytest
 
-from storage.conversation import AgentMessageRecord, ConversationCursor, LocalJsonConversationStore
+from storage.conversation import (
+    AgentIterationCheckpoint,
+    AgentMessageRecord,
+    ConversationCursor,
+    LocalJsonConversationStore,
+)
 from storage.security import REDACTED_VALUE
 
 
@@ -45,6 +50,31 @@ def test_conversation_cursor_round_trips() -> None:
 
     assert restored == cursor
     assert restored.to_dict()["updated_at"] == "2026-05-11T02:00:00Z"
+
+
+def test_agent_iteration_checkpoint_round_trips() -> None:
+    checkpoint = AgentIterationCheckpoint(
+        conversation_id="conversation-1",
+        agent_id="analyst",
+        iteration=2,
+        status="waiting_for_approval",
+        stop_reason="tool_approval_required",
+        run_id="run-1",
+        step_id="agent",
+        workflow_checkpoint_id="cp-1",
+        message_id="message-2",
+        trace_summary={"iteration_count": 2, "tool_call_count": 1},
+        diagnostics_summary={"summary": "tool approval required", "healthy": False},
+        last_tool_observation={"tool_name": "publish.report", "status": "approval_required"},
+        llm_call_artifact_ids=["analyst:llm_call:1", "analyst:llm_call:2"],
+        updated_at=datetime(2026, 5, 11, 4, 0, tzinfo=UTC),
+        metadata={"approval_id": "approval-1"},
+    )
+
+    restored = AgentIterationCheckpoint.from_dict(checkpoint.to_dict())
+
+    assert restored == checkpoint
+    assert restored.to_dict()["updated_at"] == "2026-05-11T04:00:00Z"
 
 
 def test_local_json_conversation_store_appends_reads_and_limits(tmp_path) -> None:
@@ -92,6 +122,58 @@ def test_local_json_conversation_store_writes_and_reads_cursor(tmp_path) -> None
 
     assert path.exists()
     assert store.read_cursor("conversation-1") == cursor
+
+
+def test_local_json_conversation_store_writes_and_reads_iteration_checkpoint(tmp_path) -> None:
+    store = LocalJsonConversationStore(tmp_path)
+    checkpoint = AgentIterationCheckpoint(
+        conversation_id="conversation-1",
+        agent_id="analyst",
+        iteration=1,
+        status="accepted",
+        stop_reason="final_output_accepted",
+        run_id="run-1",
+        step_id="agent",
+        workflow_checkpoint_id="cp-000002-agent",
+        message_id="message-2",
+        trace_summary={"iteration_count": 1},
+        diagnostics_summary={"summary": "accepted", "healthy": True},
+        llm_call_artifact_ids=["analyst:llm_call:1"],
+        updated_at=datetime(2026, 5, 11, 5, 0, tzinfo=UTC),
+        metadata={"phase": "draft"},
+    )
+
+    assert store.read_iteration_checkpoint("conversation-1") is None
+
+    path = store.write_iteration_checkpoint(checkpoint)
+
+    assert path.exists()
+    assert store.read_iteration_checkpoint("conversation-1") == checkpoint
+
+
+def test_local_json_conversation_store_redacts_iteration_checkpoint_metadata(tmp_path) -> None:
+    fake_secret = "sk" + "-conversationsecret123456"
+    store = LocalJsonConversationStore(tmp_path)
+
+    store.write_iteration_checkpoint(
+        AgentIterationCheckpoint(
+            conversation_id="conversation-1",
+            agent_id="analyst",
+            iteration=1,
+            status="blocked",
+            diagnostics_summary={"summary": f"blocked because {fake_secret}"},
+            metadata={"api_key": fake_secret, "safe": "visible"},
+        )
+    )
+
+    checkpoint = store.read_iteration_checkpoint("conversation-1")
+
+    assert checkpoint is not None
+    assert checkpoint.metadata["api_key"] == REDACTED_VALUE
+    assert checkpoint.metadata["safe"] == "visible"
+    assert checkpoint.metadata["redaction_reports"]
+    assert checkpoint.diagnostics_summary["summary"] == f"blocked because {REDACTED_VALUE}"
+    assert fake_secret not in str(checkpoint.to_dict())
 
 
 def test_local_json_conversation_store_redacts_cursor_metadata(tmp_path) -> None:
@@ -197,6 +279,27 @@ def test_local_json_conversation_store_rejects_invalid_inputs(tmp_path) -> None:
 
     with pytest.raises(ValueError, match="invalid conversation_id"):
         store.read_cursor("../secret")
+
+    with pytest.raises(ValueError, match="invalid conversation_id"):
+        store.read_iteration_checkpoint("../secret")
+
+    with pytest.raises(ValueError, match="invalid agent_id"):
+        store.write_iteration_checkpoint(
+            AgentIterationCheckpoint(
+                conversation_id="conversation-1",
+                agent_id="../secret",
+                iteration=1,
+                status="accepted",
+            )
+        )
+
+    with pytest.raises(ValueError, match="iteration must be non-negative"):
+        AgentIterationCheckpoint(
+            conversation_id="conversation-1",
+            agent_id="analyst",
+            iteration=-1,
+            status="accepted",
+        )
 
     with pytest.raises(ValueError, match="invalid message_id"):
         store.write_cursor(

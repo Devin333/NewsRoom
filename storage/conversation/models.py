@@ -150,3 +150,78 @@ class ConversationCursor:
             updated_at=_parse_datetime(str(payload["updated_at"])),
             metadata=dict(payload.get("metadata") or {}),
         )
+
+
+@dataclass(frozen=True)
+class AgentIterationCheckpoint:
+    conversation_id: str
+    agent_id: str
+    iteration: int
+    status: str
+    stop_reason: str | None = None
+    run_id: str | None = None
+    step_id: str | None = None
+    workflow_checkpoint_id: str | None = None
+    message_id: str | None = None
+    trace_summary: dict[str, Any] = field(default_factory=dict)
+    diagnostics_summary: dict[str, Any] = field(default_factory=dict)
+    last_tool_observation: dict[str, Any] | None = None
+    llm_call_artifact_ids: list[str] = field(default_factory=list)
+    updated_at: datetime = field(default_factory=_utc_now)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.iteration, int):
+            raise TypeError("iteration must be an integer")
+        if self.iteration < 0:
+            raise ValueError("iteration must be non-negative")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "conversation_id": self.conversation_id,
+            "agent_id": self.agent_id,
+            "iteration": self.iteration,
+            "status": self.status,
+            "stop_reason": self.stop_reason,
+            "run_id": self.run_id,
+            "step_id": self.step_id,
+            "workflow_checkpoint_id": self.workflow_checkpoint_id,
+            "message_id": self.message_id,
+            "trace_summary": dict(self.trace_summary),
+            "diagnostics_summary": dict(self.diagnostics_summary),
+            "last_tool_observation": (
+                dict(self.last_tool_observation)
+                if self.last_tool_observation is not None
+                else None
+            ),
+            "llm_call_artifact_ids": list(self.llm_call_artifact_ids),
+            "updated_at": self.updated_at.isoformat().replace("+00:00", "Z"),
+            "metadata": dict(self.metadata),
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> AgentIterationCheckpoint:
+        return cls(
+            conversation_id=str(payload["conversation_id"]),
+            agent_id=str(payload["agent_id"]),
+            iteration=int(payload.get("iteration", 0)),
+            status=str(payload["status"]),
+            stop_reason=_optional_str(payload.get("stop_reason")),
+            run_id=_optional_str(payload.get("run_id")),
+            step_id=_optional_str(payload.get("step_id")),
+            workflow_checkpoint_id=_optional_str(payload.get("workflow_checkpoint_id")),
+            message_id=_optional_str(payload.get("message_id")),
+            trace_summary=dict(payload.get("trace_summary") or {}),
+            diagnostics_summary=dict(payload.get("diagnostics_summary") or {}),
+            last_tool_observation=(
+                dict(payload["last_tool_observation"])
+                if isinstance(payload.get("last_tool_observation"), dict)
+                else None
+            ),
+            llm_call_artifact_ids=[
+                str(artifact_id)
+                for artifact_id in payload.get("llm_call_artifact_ids") or []
+            ],
+            updated_at=_parse_datetime(str(payload["updated_at"])),
+            metadata=dict(payload.get("metadata") or {}),
+        )

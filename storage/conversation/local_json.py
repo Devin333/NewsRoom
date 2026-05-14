@@ -7,6 +7,7 @@ from typing import Any
 
 from storage.conversation.models import (
     AgentMessageRecord,
+    AgentIterationCheckpoint,
     ConversationCompactionRecord,
     ConversationCursor,
 )
@@ -198,6 +199,67 @@ class LocalJsonConversationStore:
             return None
         return ConversationCursor.from_dict(json.loads(path.read_text(encoding="utf-8")))
 
+    def write_iteration_checkpoint(self, checkpoint: AgentIterationCheckpoint) -> Path:
+        _validate_id(checkpoint.conversation_id, "conversation_id")
+        _validate_id(checkpoint.agent_id, "agent_id")
+        _validate_optional_id(checkpoint.run_id, "run_id")
+        _validate_optional_id(checkpoint.step_id, "step_id")
+        _validate_optional_id(checkpoint.workflow_checkpoint_id, "workflow_checkpoint_id")
+        _validate_optional_id(checkpoint.message_id, "message_id")
+        metadata_redaction = self.redactor.redact(
+            checkpoint.metadata,
+            run_id=checkpoint.conversation_id,
+            artifact_id="agent_iteration_checkpoint_metadata",
+        )
+        diagnostics_redaction = self.redactor.redact(
+            checkpoint.diagnostics_summary,
+            run_id=checkpoint.conversation_id,
+            artifact_id="agent_iteration_checkpoint_diagnostics",
+        )
+        metadata = dict(metadata_redaction.value)
+        diagnostics_summary = dict(diagnostics_redaction.value)
+        reports = []
+        if metadata_redaction.redacted:
+            reports.append(metadata_redaction.report.to_dict())
+        if diagnostics_redaction.redacted:
+            reports.append(diagnostics_redaction.report.to_dict())
+        if reports:
+            metadata["redaction_reports"] = reports
+        safe_checkpoint = AgentIterationCheckpoint(
+            conversation_id=checkpoint.conversation_id,
+            agent_id=checkpoint.agent_id,
+            iteration=checkpoint.iteration,
+            status=checkpoint.status,
+            stop_reason=checkpoint.stop_reason,
+            run_id=checkpoint.run_id,
+            step_id=checkpoint.step_id,
+            workflow_checkpoint_id=checkpoint.workflow_checkpoint_id,
+            message_id=checkpoint.message_id,
+            trace_summary=dict(checkpoint.trace_summary),
+            diagnostics_summary=diagnostics_summary,
+            last_tool_observation=(
+                dict(checkpoint.last_tool_observation)
+                if checkpoint.last_tool_observation is not None
+                else None
+            ),
+            llm_call_artifact_ids=list(checkpoint.llm_call_artifact_ids),
+            updated_at=checkpoint.updated_at,
+            metadata=metadata,
+        )
+        path = self._iteration_checkpoint_path(checkpoint.conversation_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8") as handle:
+            json.dump(safe_checkpoint.to_dict(), handle, ensure_ascii=False, indent=2, sort_keys=True)
+            handle.write("\n")
+        return path
+
+    def read_iteration_checkpoint(self, conversation_id: str) -> AgentIterationCheckpoint | None:
+        _validate_id(conversation_id, "conversation_id")
+        path = self._iteration_checkpoint_path(conversation_id)
+        if not path.exists():
+            return None
+        return AgentIterationCheckpoint.from_dict(json.loads(path.read_text(encoding="utf-8")))
+
     def _redacted_message(self, message: AgentMessageRecord) -> AgentMessageRecord:
         content_redaction = self.redactor.redact(
             message.content,
@@ -245,6 +307,10 @@ class LocalJsonConversationStore:
     def _cursor_path(self, conversation_id: str) -> Path:
         _validate_id(conversation_id, "conversation_id")
         return self.root / conversation_id / "cursor.json"
+
+    def _iteration_checkpoint_path(self, conversation_id: str) -> Path:
+        _validate_id(conversation_id, "conversation_id")
+        return self.root / conversation_id / "iteration_checkpoint.json"
 
     def _write_messages(self, conversation_id: str, messages: list[AgentMessageRecord]) -> Path:
         path = self._messages_path(conversation_id)
