@@ -41,6 +41,79 @@ def test_approval_service_lists_by_status_and_approves() -> None:
     assert approved.approval.decision.reason == "ready"
 
 
+def test_approval_service_builds_resume_context_from_decision() -> None:
+    service = ApprovalApplicationService(store=InMemoryApprovalStore())
+    submitted = service.submit_request(
+        requested_action="review:analysis",
+        risk_level="high",
+        payload={"draft_id": "draft-1"},
+        task_id="review-step",
+        run_id="run-paused",
+        requested_by="analyst",
+    )
+    service.approve(
+        submitted.approval.approval_id,
+        decided_by="editor",
+        reason="ready",
+    )
+
+    context = service.build_resume_context(
+        submitted.approval.approval_id,
+        decision_key="editor_decision",
+    )
+
+    assert context.decision_key == "editor_decision"
+    assert context.buffer_updates["editor_decision"]["decision"] == "approved"
+    assert context.buffer_updates["editor_decision"]["approval_id"] == submitted.approval.approval_id
+    assert context.buffer_updates["editor_decision"]["requested_action"] == "review:analysis"
+    assert context.resume_metadata == {
+        "approval_id": submitted.approval.approval_id,
+        "approval_status": "approved",
+        "decision_type": "approve",
+        "requested_action": "review:analysis",
+        "risk_level": "high",
+        "decided_by": "editor",
+        "task_id": "review-step",
+        "approval_run_id": "run-paused",
+    }
+    assert context.to_dict()["buffer_updates"]["editor_decision"]["decided_by"] == "editor"
+
+
+def test_approval_service_rejects_resume_context_for_pending_approval() -> None:
+    service = ApprovalApplicationService(store=InMemoryApprovalStore())
+    submitted = service.submit_request(
+        requested_action="review:analysis",
+        payload={"draft_id": "draft-1"},
+    )
+
+    try:
+        service.build_resume_context(submitted.approval.approval_id)
+    except ValueError as exc:
+        assert "decision is not recorded" in str(exc)
+    else:
+        raise AssertionError("expected pending approval resume context to fail")
+
+
+def test_approval_service_modified_resume_context_routes_as_approved() -> None:
+    service = ApprovalApplicationService(store=InMemoryApprovalStore())
+    submitted = service.submit_request(
+        requested_action="review:analysis",
+        payload={"draft_id": "draft-1"},
+    )
+    service.modify(
+        submitted.approval.approval_id,
+        decided_by="editor",
+        modifications={"summary": "tighten lead"},
+    )
+
+    context = service.build_resume_context(submitted.approval.approval_id)
+
+    assert context.decision_payload["decision"] == "approved"
+    assert context.decision_payload["status"] == "modified"
+    assert context.decision_payload["decision_type"] == "modify"
+    assert context.decision_payload["modifications"] == {"summary": "tighten lead"}
+
+
 def test_approval_service_rejects_request() -> None:
     service = ApprovalApplicationService(store=InMemoryApprovalStore())
     submitted = service.submit_request(

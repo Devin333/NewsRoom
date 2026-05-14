@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 import core.framework.runner as runner_module
@@ -277,6 +279,73 @@ def test_workflow_runner_resumes_human_review_after_approval(tmp_path) -> None:
     assert replay.manifest["resumed_from_checkpoint_id"] == checkpoint.checkpoint_id
     assert replay.step_results["review"]["next_hint"] == "human_approved"
     assert replay.step_results["finalize"]["outputs"]["report"] == "approved:ai:approved"
+
+
+def test_workflow_runner_records_approval_resume_metadata(tmp_path) -> None:
+    checkpoint_store = LocalJsonCheckpointStore(tmp_path / "checkpoints")
+    functions = FunctionStepRegistry()
+    functions.register(
+        "sample.finalize",
+        lambda buffer: {
+            "report": (
+                f"approved:{buffer.read('request')['topic']}:"
+                f"{buffer.read('human_review_decision')['approval_id']}"
+            )
+        },
+    )
+    step_runners = StepRunnerRegistry.with_function_runner(FunctionStepRunner(functions))
+    step_runners.register(StepType.HUMAN_REVIEW, HumanReviewStepRunner())
+    runner = WorkflowRunner(
+        artifact_root=tmp_path,
+        step_runner_registry=step_runners,
+        checkpoint_store=checkpoint_store,
+    )
+    spec = _human_review_resume_spec()
+    paused = runner.run(
+        spec,
+        {"topic": "ai"},
+        profile="test",
+        run_id="runner-approval-paused",
+    )
+    checkpoint = checkpoint_store.get_latest_checkpoint("runner-approval-paused")
+    resume_metadata = {
+        "approval_id": "appr-1",
+        "approval_status": "approved",
+        "decision_type": "approve",
+        "requested_action": "review:analysis",
+        "risk_level": "high",
+        "decided_by": "editor",
+    }
+
+    assert paused.status == WorkflowStatus.WAITING_FOR_HUMAN
+    assert checkpoint is not None
+
+    resumed = runner.resume_from_checkpoint(
+        spec,
+        checkpoint,
+        profile="test",
+        run_id="runner-approval-resumed",
+        buffer_updates={
+            "human_review_decision": {
+                "decision": "approved",
+                "approval_id": "appr-1",
+            }
+        },
+        resume_metadata=resume_metadata,
+    )
+
+    event_records = [
+        json.loads(line)
+        for line in (tmp_path / "runner-approval-resumed" / "events.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+
+    assert resumed.status == WorkflowStatus.SUCCEEDED
+    assert resumed.manifest["resume_metadata"] == resume_metadata
+    assert event_records[0]["event_type"] == "workflow_resumed"
+    assert event_records[0]["payload"]["resume_metadata"] == resume_metadata
+    assert resumed.output["report"] == "approved:ai:appr-1"
 
 
 def test_workflow_runner_accepts_prebuilt_step_runner_registry(tmp_path) -> None:

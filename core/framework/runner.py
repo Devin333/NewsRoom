@@ -124,6 +124,7 @@ class WorkflowRunner:
         profile: str,
         run_id: str | None = None,
         buffer_updates: dict[str, Any] | None = None,
+        resume_metadata: dict[str, Any] | None = None,
     ) -> RunResult:
         executor = WorkflowExecutor(
             function_step_runner=None,
@@ -139,6 +140,7 @@ class WorkflowRunner:
             profile=profile,
             run_id=run_id,
             buffer_updates=buffer_updates,
+            resume_metadata=resume_metadata,
         )
         self._persist_storage_indexes(result)
         return RunResult.from_workflow_result(result)

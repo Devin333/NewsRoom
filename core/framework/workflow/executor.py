@@ -79,6 +79,7 @@ class WorkflowExecutor:
         _initial_path: list[str] | None = None,
         _initial_step_results: dict[str, StepOutcome] | None = None,
         _resumed_checkpoint_id: str | None = None,
+        _resume_metadata: dict[str, Any] | None = None,
     ) -> WorkflowResult:
         initial_buffer_values = _initial_buffer_values or {"request": request}
         workflow.validate(request_keys=list(initial_buffer_values))
@@ -119,6 +120,8 @@ class WorkflowExecutor:
         )
         if _resumed_checkpoint_id is not None:
             manifest["resumed_from_checkpoint_id"] = _resumed_checkpoint_id
+        if _resume_metadata:
+            manifest["resume_metadata"] = dict(_resume_metadata)
 
         if _resumed_checkpoint_id is None:
             recorder.emit(
@@ -130,14 +133,17 @@ class WorkflowExecutor:
                 },
             )
         else:
+            resumed_payload = {
+                "workflow_id": workflow.workflow_id,
+                "workflow_version": workflow.version,
+                "profile": profile,
+                "checkpoint_id": _resumed_checkpoint_id,
+            }
+            if _resume_metadata:
+                resumed_payload["resume_metadata"] = dict(_resume_metadata)
             recorder.emit(
                 "workflow_resumed",
-                {
-                    "workflow_id": workflow.workflow_id,
-                    "workflow_version": workflow.version,
-                    "profile": profile,
-                    "checkpoint_id": _resumed_checkpoint_id,
-                },
+                resumed_payload,
             )
             recorder.emit("checkpoint_restored", {"checkpoint_id": _resumed_checkpoint_id})
 
@@ -614,6 +620,7 @@ class WorkflowExecutor:
         profile: str,
         run_id: str | None = None,
         buffer_updates: dict[str, Any] | None = None,
+        resume_metadata: dict[str, Any] | None = None,
     ) -> WorkflowResult:
         if checkpoint.workflow_id != workflow.workflow_id:
             raise StepExecutionError(
@@ -644,6 +651,7 @@ class WorkflowExecutor:
             _initial_path=list(checkpoint.path),
             _initial_step_results=_step_outcomes_from_checkpoint(checkpoint.step_results),
             _resumed_checkpoint_id=checkpoint.checkpoint_id,
+            _resume_metadata=resume_metadata,
         )
 
     def _run_step_with_retries(
