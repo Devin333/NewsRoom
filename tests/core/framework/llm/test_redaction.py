@@ -66,11 +66,9 @@ def test_llm_response_to_dict_redacts_content_and_metadata_by_default() -> None:
     assert payload["structured_output"]["leaked"] == REDACTED_VALUE
     assert payload["tool_calls"][0]["arguments"]["token"] == REDACTED_VALUE
     assert secret not in payload["tool_calls"][0]["raw_arguments"]
-    assert payload["usage"] == {
-        "input_tokens": 3,
-        "output_tokens": 5,
-        "total_tokens": 8,
-    }
+    assert payload["usage"]["input_tokens"] == 3
+    assert payload["usage"]["output_tokens"] == 5
+    assert payload["usage"]["total_tokens"] == 8
 
 
 def test_llm_provider_error_to_dict_redacts_message() -> None:
@@ -87,14 +85,15 @@ def test_llm_provider_error_to_dict_redacts_message() -> None:
     payload = error.to_dict()
 
     assert secret not in str(payload)
-    assert payload == {
-        "message": f"provider returned raw credential {REDACTED_VALUE}",
-        "provider": "test",
-        "error_type": "provider_client_error",
-        "retryable": False,
-        "status_code": 400,
-        "attempts": 1,
-    }
+    assert payload["message"] == f"provider returned raw credential {REDACTED_VALUE}"
+    assert payload["provider"] == "test"
+    assert payload["model"] is None
+    assert payload["deployment_id"] is None
+    assert payload["error_type"] == "provider_client_error"
+    assert payload["error_category"] == "provider_client_error"
+    assert payload["retryable"] is False
+    assert payload["status_code"] == 400
+    assert payload["attempts"] == 1
 
 
 def test_redactor_masks_password_bearing_dsn_in_free_text() -> None:

@@ -36,6 +36,8 @@ class LLMProviderError(RuntimeError):
         message: str,
         *,
         provider: str | None = None,
+        model: str | None = None,
+        deployment_id: str | None = None,
         error_type: str = "unknown_llm_error",
         retryable: bool = False,
         status_code: int | None = None,
@@ -43,6 +45,8 @@ class LLMProviderError(RuntimeError):
     ) -> None:
         super().__init__(message)
         self.provider = provider
+        self.model = model
+        self.deployment_id = deployment_id
         self.error_type = error_type
         self.retryable = retryable
         self.status_code = status_code
@@ -52,7 +56,10 @@ class LLMProviderError(RuntimeError):
         payload: dict[str, Any] = {
             "message": str(self),
             "provider": self.provider,
+            "model": self.model,
+            "deployment_id": self.deployment_id,
             "error_type": self.error_type,
+            "error_category": _canonical_error_category(self.error_type),
             "retryable": self.retryable,
             "status_code": self.status_code,
             "attempts": self.attempts,
@@ -140,7 +147,8 @@ class OpenAICompatibleClient:
             raise LLMProviderError(
                 f"{self.config.provider} request tool schema is invalid: {exc}",
                 provider=self.config.provider,
-                error_type="invalid_request_schema",
+                model=self.config.model,
+                error_type="schema_error",
                 retryable=False,
             ) from exc
 
@@ -175,7 +183,8 @@ class OpenAICompatibleClient:
             raise LLMProviderError(
                 f"{self.config.provider} request tool schema is invalid: {exc}",
                 provider=self.config.provider,
-                error_type="invalid_request_schema",
+                model=self.config.model,
+                error_type="schema_error",
                 retryable=False,
             ) from exc
         payload["stream"] = True
@@ -228,7 +237,8 @@ class OpenAICompatibleClient:
             raise LLMProviderError(
                 f"{self.config.provider} streaming tool call parse failed: {exc}",
                 provider=self.config.provider,
-                error_type="stream_tool_call_parse_error",
+                model=self.config.model,
+                error_type="schema_error",
                 retryable=False,
                 attempts=1,
             ) from exc
@@ -236,7 +246,8 @@ class OpenAICompatibleClient:
             raise LLMProviderError(
                 f"{self.config.provider} stream chunk is not valid JSON",
                 provider=self.config.provider,
-                error_type="provider_stream_chunk_invalid",
+                model=self.config.model,
+                error_type="schema_error",
                 retryable=False,
                 attempts=1,
             ) from exc
@@ -288,7 +299,8 @@ class OpenAICompatibleClient:
             raise LLMProviderError(
                 f"{self.config.provider} response payload is not valid JSON",
                 provider=self.config.provider,
-                error_type="provider_response_shape_invalid",
+                model=self.config.model,
+                error_type="schema_error",
                 retryable=False,
                 attempts=attempts,
             ) from exc
@@ -296,7 +308,8 @@ class OpenAICompatibleClient:
             raise LLMProviderError(
                 f"{self.config.provider} response payload is not an object",
                 provider=self.config.provider,
-                error_type="provider_response_shape_invalid",
+                model=self.config.model,
+                error_type="schema_error",
                 retryable=False,
                 attempts=attempts,
             )
@@ -308,7 +321,8 @@ class OpenAICompatibleClient:
             raise LLMProviderError(
                 f"{self.config.provider} stream chunk is not an object",
                 provider=self.config.provider,
-                error_type="provider_stream_chunk_invalid",
+                model=self.config.model,
+                error_type="schema_error",
                 retryable=False,
                 attempts=1,
             )
@@ -326,7 +340,8 @@ class OpenAICompatibleClient:
             raise LLMProviderError(
                 f"{self.config.provider} response missing choices",
                 provider=self.config.provider,
-                error_type="provider_response_shape_invalid",
+                model=self.config.model,
+                error_type="schema_error",
                 retryable=False,
                 attempts=attempts,
             )
@@ -335,7 +350,8 @@ class OpenAICompatibleClient:
             raise LLMProviderError(
                 f"{self.config.provider} response choice is not an object",
                 provider=self.config.provider,
-                error_type="provider_response_shape_invalid",
+                model=self.config.model,
+                error_type="schema_error",
                 retryable=False,
                 attempts=attempts,
             )
@@ -344,7 +360,8 @@ class OpenAICompatibleClient:
             raise LLMProviderError(
                 f"{self.config.provider} response message is not an object",
                 provider=self.config.provider,
-                error_type="provider_response_shape_invalid",
+                model=self.config.model,
+                error_type="schema_error",
                 retryable=False,
                 attempts=attempts,
             )
@@ -354,7 +371,8 @@ class OpenAICompatibleClient:
             raise LLMProviderError(
                 f"{self.config.provider} tool call parse failed: {exc}",
                 provider=self.config.provider,
-                error_type="tool_call_parse_error",
+                model=self.config.model,
+                error_type="schema_error",
                 retryable=False,
                 attempts=attempts,
             ) from exc
@@ -366,7 +384,8 @@ class OpenAICompatibleClient:
             raise LLMProviderError(
                 f"{self.config.provider} response missing message content",
                 provider=self.config.provider,
-                error_type="provider_response_shape_invalid",
+                model=self.config.model,
+                error_type="schema_error",
                 retryable=False,
                 attempts=attempts,
             )
@@ -385,15 +404,41 @@ class OpenAICompatibleClient:
             usage = TokenUsage(
                 input_tokens=int(usage_payload.get("prompt_tokens", 0) or 0),
                 output_tokens=int(usage_payload.get("completion_tokens", 0) or 0),
+                reasoning_tokens=int(
+                    (usage_payload.get("completion_tokens_details") or {}).get(
+                        "reasoning_tokens",
+                        0,
+                    )
+                    or 0
+                )
+                if isinstance(usage_payload.get("completion_tokens_details"), dict)
+                else 0,
+                cached_input_tokens=int(
+                    (usage_payload.get("prompt_tokens_details") or {}).get(
+                        "cached_tokens",
+                        0,
+                    )
+                    or 0
+                )
+                if isinstance(usage_payload.get("prompt_tokens_details"), dict)
+                else 0,
             )
         except (TypeError, ValueError) as exc:
             raise LLMProviderError(
                 f"{self.config.provider} response usage is invalid",
                 provider=self.config.provider,
-                error_type="provider_response_shape_invalid",
+                model=self.config.model,
+                error_type="schema_error",
                 retryable=False,
                 attempts=attempts,
             ) from exc
+        validation_metadata: dict[str, Any] = {}
+        if _expects_structured_output(request):
+            validation_metadata["structured_output_validation"] = {
+                "validated": structured_output is not None,
+                "schema_name": request.output_schema_name if request.output_schema else None,
+                "provider_native_json_mode": _uses_provider_native_json_mode(request),
+            }
         return LLMResponse(
             content=content,
             usage=usage,
@@ -403,6 +448,7 @@ class OpenAICompatibleClient:
                 "response_id": payload.get("id"),
                 "attempts": attempts,
                 "retry_count": attempts - 1,
+                **validation_metadata,
             },
             structured_output=structured_output,
             tool_calls=tool_calls,
@@ -421,7 +467,8 @@ class OpenAICompatibleClient:
             raise LLMProviderError(
                 f"{self.config.provider} structured output is not valid JSON",
                 provider=self.config.provider,
-                error_type="structured_output_parse_error",
+                model=self.config.model,
+                error_type="schema_error",
                 retryable=False,
                 attempts=attempts,
             ) from exc
@@ -429,7 +476,8 @@ class OpenAICompatibleClient:
             raise LLMProviderError(
                 f"{self.config.provider} structured output is not a JSON object",
                 provider=self.config.provider,
-                error_type="structured_output_parse_error",
+                model=self.config.model,
+                error_type="schema_error",
                 retryable=False,
                 attempts=attempts,
             )
@@ -440,7 +488,8 @@ class OpenAICompatibleClient:
                 raise LLMProviderError(
                     f"{self.config.provider} structured output failed schema validation: {exc}",
                     provider=self.config.provider,
-                    error_type="structured_output_validation_error",
+                    model=self.config.model,
+                    error_type="schema_error",
                     retryable=False,
                     attempts=attempts,
                 ) from exc
@@ -453,6 +502,7 @@ class OpenAICompatibleClient:
         return LLMProviderError(
             f"{self.config.provider} request failed: HTTP {status_code}",
             provider=self.config.provider,
+            model=self.config.model,
             error_type=error_type,
             retryable=retryable,
             status_code=status_code,
@@ -462,10 +512,11 @@ class OpenAICompatibleClient:
     def _error_from_network(self, exc: TimeoutError | URLError | OSError, *, attempts: int) -> LLMProviderError:
         reason = getattr(exc, "reason", None)
         is_timeout = isinstance(exc, TimeoutError) or isinstance(reason, TimeoutError)
-        error_type = "provider_timeout" if is_timeout else "provider_connection_error"
+        error_type = "timeout" if is_timeout else "transient_network"
         return LLMProviderError(
             f"{self.config.provider} request failed: {error_type}",
             provider=self.config.provider,
+            model=self.config.model,
             error_type=error_type,
             retryable=True,
             attempts=attempts,
@@ -474,24 +525,45 @@ class OpenAICompatibleClient:
 
 def _error_type_from_http_status(status_code: int) -> str:
     if status_code == 400:
-        return "invalid_request_schema"
+        return "invalid_request"
     if status_code in (401, 403):
-        return "invalid_api_key"
+        return "auth_error"
     if status_code == 404:
-        return "invalid_model"
+        return "unsupported_model"
     if status_code == 408:
-        return "provider_timeout"
+        return "timeout"
     if status_code == 409:
-        return "temporary_provider_error"
+        return "transient_network"
     if status_code == 413:
-        return "context_length_exceeded"
+        return "context_length"
     if status_code == 429:
-        return "rate_limited"
+        return "rate_limit"
     if 500 <= status_code <= 599:
-        return "provider_server_error"
+        return "server_error"
     if 400 <= status_code <= 499:
-        return "provider_client_error"
+        return "invalid_request"
     return "unknown_llm_error"
+
+
+def _canonical_error_category(error_type: str) -> str:
+    aliases = {
+        "rate_limited": "rate_limit",
+        "provider_timeout": "timeout",
+        "provider_connection_error": "transient_network",
+        "temporary_provider_error": "transient_network",
+        "provider_server_error": "server_error",
+        "invalid_api_key": "auth_error",
+        "invalid_request_schema": "invalid_request",
+        "context_length_exceeded": "context_length",
+        "invalid_model": "unsupported_model",
+        "provider_response_shape_invalid": "schema_error",
+        "provider_stream_chunk_invalid": "schema_error",
+        "tool_call_parse_error": "schema_error",
+        "stream_tool_call_parse_error": "schema_error",
+        "structured_output_parse_error": "schema_error",
+        "structured_output_validation_error": "schema_error",
+    }
+    return aliases.get(error_type, error_type)
 
 
 def _provider_response_format(request: LLMRequest) -> dict[str, Any] | None:
@@ -520,6 +592,13 @@ def _expects_structured_output(request: LLMRequest) -> bool:
     if isinstance(response_format, dict):
         return response_format.get("type") in {"json_object", "json_schema"}
     return False
+
+
+def _uses_provider_native_json_mode(request: LLMRequest) -> bool:
+    response_format = _provider_response_format(request)
+    if not isinstance(response_format, dict):
+        return False
+    return response_format.get("type") in {"json_object", "json_schema"}
 
 
 class _OpenAIStreamToolCallAssembler:
@@ -584,20 +663,20 @@ def _events_from_stream_chunk(
 ) -> list[LLMStreamEvent]:
     choices = chunk.get("choices") or []
     if not isinstance(choices, list):
-        raise LLMProviderError(
-            f"{provider} stream chunk choices are invalid",
-            provider=provider,
-            error_type="provider_stream_chunk_invalid",
-            retryable=False,
-            attempts=attempts,
-        )
+            raise LLMProviderError(
+                f"{provider} stream chunk choices are invalid",
+                provider=provider,
+                error_type="schema_error",
+                retryable=False,
+                attempts=attempts,
+            )
     events: list[LLMStreamEvent] = []
     for choice in choices:
         if not isinstance(choice, dict):
             raise LLMProviderError(
                 f"{provider} stream chunk choice is invalid",
                 provider=provider,
-                error_type="provider_stream_chunk_invalid",
+                error_type="schema_error",
                 retryable=False,
                 attempts=attempts,
             )
@@ -606,7 +685,7 @@ def _events_from_stream_chunk(
             raise LLMProviderError(
                 f"{provider} stream chunk delta is invalid",
                 provider=provider,
-                error_type="provider_stream_chunk_invalid",
+                error_type="schema_error",
                 retryable=False,
                 attempts=attempts,
             )
@@ -635,6 +714,16 @@ def _usage_from_stream_chunk(chunk: dict[str, Any]) -> TokenUsage | None:
     return TokenUsage(
         input_tokens=int(usage.get("prompt_tokens", 0) or 0),
         output_tokens=int(usage.get("completion_tokens", 0) or 0),
+        reasoning_tokens=int(
+            (usage.get("completion_tokens_details") or {}).get("reasoning_tokens", 0) or 0
+        )
+        if isinstance(usage.get("completion_tokens_details"), dict)
+        else 0,
+        cached_input_tokens=int(
+            (usage.get("prompt_tokens_details") or {}).get("cached_tokens", 0) or 0
+        )
+        if isinstance(usage.get("prompt_tokens_details"), dict)
+        else 0,
     )
 
 

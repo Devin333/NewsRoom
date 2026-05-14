@@ -323,7 +323,9 @@ def test_llm_router_falls_back_only_after_retryable_provider_error() -> None:
         LLMProviderError(
             "temporary outage",
             provider="primary",
-            error_type="provider_server_error",
+            model="model-a",
+            deployment_id="primary",
+            error_type="server_error",
             retryable=True,
             status_code=503,
         )
@@ -357,6 +359,9 @@ def test_llm_router_falls_back_only_after_retryable_provider_error() -> None:
     assert "llm_fallback_selected" in [
         event["event_type"] for event in response.metadata["llm_router_events"]
     ]
+    assert "fallback_selected" in [
+        event["metadata"]["event_name"] for event in response.metadata["llm_router_events"]
+    ]
 
 
 def test_llm_router_records_fallback_events_and_redacted_route_manifest() -> None:
@@ -366,7 +371,7 @@ def test_llm_router_records_fallback_events_and_redacted_route_manifest() -> Non
         LLMProviderError(
             "temporary outage",
             provider="primary",
-            error_type="provider_server_error",
+            error_type="server_error",
             retryable=True,
             status_code=503,
         )
@@ -412,6 +417,8 @@ def test_llm_router_records_fallback_events_and_redacted_route_manifest() -> Non
         "llm_route_completed",
     ]
     assert [event["event_type"] for event in event_payloads] == [event.event_type for event in events]
+    assert "route_attempt_failed" in event_payloads[2]["metadata"]["event_aliases"]
+    assert "fallback_selected" in event_payloads[3]["metadata"]["event_aliases"]
     assert event_payloads[0]["occurred_at"] == "2026-05-12T00:00:00Z"
     assert manifest["schema_version"] == "newsroom.llm_route_manifest.v1"
     assert manifest["status"] == "succeeded"
@@ -435,7 +442,7 @@ def test_llm_router_rejects_fallback_missing_required_capability() -> None:
         LLMProviderError(
             "temporary outage",
             provider="primary",
-            error_type="provider_server_error",
+            error_type="server_error",
             retryable=True,
             status_code=503,
         )
@@ -470,7 +477,7 @@ def test_llm_router_rejects_fallback_missing_required_capability() -> None:
     assert exc_info.value.error_type == "missing_required_capability"
     assert exc_info.value.attempted_deployments == ("primary", "fallback")
     assert [error["error_type"] for error in exc_info.value.errors] == [
-        "provider_server_error",
+        "server_error",
         "missing_required_capability",
     ]
 
@@ -480,7 +487,7 @@ def test_llm_router_does_not_fallback_after_non_retryable_provider_error() -> No
         LLMProviderError(
             "bad request",
             provider="primary",
-            error_type="invalid_request_schema",
+            error_type="invalid_request",
             retryable=False,
             status_code=400,
         )
@@ -544,6 +551,42 @@ def test_llm_router_skips_static_cooldown_primary_and_uses_fallback() -> None:
     assert response.metadata["llm_fallback_used"] is True
 
 
+def test_llm_router_records_cooldown_skip_with_w04_event_alias() -> None:
+    now = datetime(2026, 5, 12, tzinfo=UTC)
+    primary = StaticClient(LLMResponse(content="primary"))
+    fallback = StaticClient(LLMResponse(content="fallback"))
+    router = LLMRouter(
+        routes=[
+            ModelRoute(
+                route_id="writer",
+                primary_deployment_id="primary",
+                fallback_deployment_ids=("fallback",),
+            )
+        ],
+        deployments=[
+            ModelDeployment(
+                "primary",
+                "test",
+                "model-a",
+                primary,
+                cooldown_until=now + timedelta(seconds=60),
+            ),
+            ModelDeployment("fallback", "test", "model-b", fallback),
+        ],
+        now_fn=lambda: now,
+    )
+
+    response = router.complete("writer", LLMRequest(messages=[{"role": "user", "content": "hi"}]))
+
+    skipped = next(
+        event
+        for event in response.metadata["llm_router_events"]
+        if event["event_type"] == "llm_deployment_skipped"
+    )
+    assert skipped["metadata"]["event_name"] == "deployment_skipped_cooldown"
+    assert "deployment_skipped_cooldown" in skipped["metadata"]["event_aliases"]
+
+
 def test_llm_router_records_dynamic_cooldown_after_retryable_failure() -> None:
     now = datetime(2026, 5, 12, tzinfo=UTC)
     clock = {"now": now}
@@ -559,7 +602,7 @@ def test_llm_router_records_dynamic_cooldown_after_retryable_failure() -> None:
         LLMProviderError(
             "rate limited",
             provider="primary",
-            error_type="rate_limited",
+            error_type="rate_limit",
             retryable=True,
             status_code=429,
         )
@@ -606,7 +649,7 @@ def test_llm_cooldown_tracker_resets_failures_on_success() -> None:
         "primary",
         LLMProviderError(
             "temporary",
-            error_type="provider_server_error",
+            error_type="server_error",
             retryable=True,
             status_code=503,
         ),

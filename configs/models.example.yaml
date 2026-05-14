@@ -1,0 +1,59 @@
+# Example model configuration. Keep real secrets in the environment only.
+
+default_route_id: daily-intelligence-writer
+
+model_groups:
+  openai-compatible-writer:
+    deployments:
+      - deployment_id: openai-compatible-primary
+        provider: openai-compatible
+        provider_name: openai-compatible
+        model: ${NEWS_LLM_MODEL}
+        api_base: ${NEWS_LLM_BASE_URL}
+        api_key: ${OPENAI_COMPATIBLE_API_KEY}
+        timeout_seconds: 90
+        max_retries: 2
+
+  dashscope-writer:
+    deployments:
+      - deployment_id: dashscope-deepseek-v4-flash
+        provider: openai-compatible
+        provider_name: dashscope
+        model: deepseek-v4-flash
+        api_base: https://dashscope.aliyuncs.com/compatible-mode/v1
+        api_key: ${DASHSCOPE_API_KEY}
+        timeout_seconds: 90
+        max_retries: 2
+
+  openrouter-writer:
+    deployments:
+      - deployment_id: openrouter-writer
+        provider: openai-compatible
+        provider_name: openrouter
+        model: ${OPENROUTER_MODEL}
+        api_base: https://openrouter.ai/api/v1
+        api_key: ${OPENROUTER_API_KEY}
+        timeout_seconds: 90
+        max_retries: 2
+
+  local-writer:
+    deployments:
+      - deployment_id: local-openai-compatible
+        provider: openai-compatible
+        provider_name: local
+        model: ${LOCAL_LLM_MODEL}
+        api_base: ${LOCAL_LLM_BASE_URL}
+        api_key: ${LOCAL_LLM_API_KEY}
+        timeout_seconds: 120
+        max_retries: 0
+
+routes:
+  daily-intelligence-writer:
+    model_group: dashscope-writer
+  local-dev-writer:
+    model_group: local-writer
+  openrouter-writer:
+    model_group: openrouter-writer
+
+embeddings: {}
+pricing: {}

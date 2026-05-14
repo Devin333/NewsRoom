@@ -17,9 +17,12 @@ class ModelPricing:
 
 class CostEstimator:
     def estimate(self, usage: TokenUsage, pricing: ModelPricing | None) -> float:
+        if usage.estimated_cost_usd is not None:
+            return round(float(usage.estimated_cost_usd), 12)
         if pricing is None:
             return 0.0
-        input_cost = _component_cost(usage.input_tokens, pricing.input_usd_per_1m_tokens)
+        billed_input_tokens = max(usage.input_tokens - usage.cached_input_tokens, 0)
+        input_cost = _component_cost(billed_input_tokens, pricing.input_usd_per_1m_tokens)
         output_cost = _component_cost(usage.output_tokens, pricing.output_usd_per_1m_tokens)
         return round(input_cost + output_cost, 12)
 
@@ -165,13 +168,35 @@ class GlobalBudgetTracker:
     def snapshot(self) -> dict[str, object]:
         return self._usage.to_dict()
 
-    def check_before_llm_call(self) -> GlobalBudgetCheck:
+    def check_before_llm_call(
+        self,
+        estimated_prompt_tokens: int | None = None,
+    ) -> GlobalBudgetCheck:
+        next_usage = self._preflight_usage(estimated_prompt_tokens=estimated_prompt_tokens)
+        return self._check(next_usage, preflight=True)
+
+    def reserve_llm_call(
+        self,
+        estimated_prompt_tokens: int | None = None,
+    ) -> GlobalBudgetCheck:
+        next_usage = self._preflight_usage(estimated_prompt_tokens=estimated_prompt_tokens)
+        check = self._check(next_usage, preflight=True)
+        self._usage = next_usage
+        return check
+
+    def _preflight_usage(self, *, estimated_prompt_tokens: int | None) -> GlobalBudgetUsage:
+        prompt_tokens = _non_negative_token_estimate(estimated_prompt_tokens)
         next_usage = GlobalBudgetUsage(
             llm_calls=self._usage.llm_calls + 1,
-            token_usage=self._usage.token_usage,
+            token_usage=TokenUsage(
+                input_tokens=self._usage.token_usage.input_tokens + prompt_tokens,
+                output_tokens=self._usage.token_usage.output_tokens,
+                reasoning_tokens=self._usage.token_usage.reasoning_tokens,
+                cached_input_tokens=self._usage.token_usage.cached_input_tokens,
+            ),
             estimated_cost_usd=self._usage.estimated_cost_usd,
         )
-        return self._check(next_usage, preflight=True)
+        return next_usage
 
     def record_llm_call(
         self,
@@ -179,17 +204,30 @@ class GlobalBudgetTracker:
         pricing: ModelPricing | None = None,
         *,
         estimated_cost_usd: float | None = None,
+        replace_reserved_prompt_tokens: int | None = None,
+        count_request: bool = True,
     ) -> GlobalBudgetCheck:
         call_cost = (
             round(float(estimated_cost_usd), 12)
             if estimated_cost_usd is not None
             else self.estimator.estimate(usage, pricing)
         )
+        reserved_prompt_tokens = _non_negative_token_estimate(replace_reserved_prompt_tokens)
         next_usage = GlobalBudgetUsage(
-            llm_calls=self._usage.llm_calls + 1,
+            llm_calls=self._usage.llm_calls + (1 if count_request else 0),
             token_usage=TokenUsage(
-                input_tokens=self._usage.token_usage.input_tokens + usage.input_tokens,
+                input_tokens=(
+                    self._usage.token_usage.input_tokens
+                    - reserved_prompt_tokens
+                    + usage.input_tokens
+                ),
                 output_tokens=self._usage.token_usage.output_tokens + usage.output_tokens,
+                reasoning_tokens=(
+                    self._usage.token_usage.reasoning_tokens + usage.reasoning_tokens
+                ),
+                cached_input_tokens=(
+                    self._usage.token_usage.cached_input_tokens + usage.cached_input_tokens
+                ),
             ),
             estimated_cost_usd=round(self._usage.estimated_cost_usd + call_cost, 12),
         )
@@ -229,3 +267,12 @@ def _component_cost(tokens: int, usd_per_1m_tokens: float | None) -> float:
     if usd_per_1m_tokens is None:
         return 0.0
     return tokens * usd_per_1m_tokens / 1_000_000
+
+
+def _non_negative_token_estimate(value: int | None) -> int:
+    if value is None:
+        return 0
+    parsed = int(value)
+    if parsed < 0:
+        raise ValueError("estimated prompt tokens must be non-negative")
+    return parsed

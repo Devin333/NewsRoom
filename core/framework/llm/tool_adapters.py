@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from copy import deepcopy
+from dataclasses import is_dataclass, asdict
 from typing import Any
 
 from core.framework.llm.models import LLMToolCall
@@ -20,6 +21,7 @@ _UNSAFE_TOOL_NAME_CHARS = re.compile(r"[^A-Za-z0-9_-]+")
 
 
 def to_openai_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    tools = [_tool_to_mapping(tool) for tool in tools]
     name_map = openai_tool_name_map(tools)
     adapted_tools = []
     for tool in tools:
@@ -29,13 +31,14 @@ def to_openai_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
         internal_name = _internal_tool_name(tool)
         provider_name = name_map[internal_name]
+        description = _required_tool_description(tool)
         input_schema = _openai_parameters(tool.get("input_schema"))
         adapted_tools.append(
             {
                 "type": "function",
                 "function": {
                     "name": provider_name,
-                    "description": str(tool.get("description") or ""),
+                    "description": description,
                     "parameters": deepcopy(input_schema),
                 },
             }
@@ -44,6 +47,7 @@ def to_openai_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def openai_tool_name_map(tools: list[dict[str, Any]]) -> dict[str, str]:
+    tools = [_tool_to_mapping(tool) for tool in tools]
     internal_to_provider: dict[str, str] = {}
     provider_to_internal: dict[str, str] = {}
     for tool in tools:
@@ -71,6 +75,7 @@ def parse_openai_tool_calls(
     raw_tool_calls: Any,
     tools: list[dict[str, Any]],
 ) -> list[LLMToolCall]:
+    tools = [_tool_to_mapping(tool) for tool in tools]
     if raw_tool_calls in (None, []):
         return []
     if not isinstance(raw_tool_calls, list):
@@ -148,4 +153,52 @@ def _openai_parameters(input_schema: Any) -> dict[str, Any]:
     parameters = deepcopy(input_schema)
     parameters.setdefault("type", "object")
     parameters.setdefault("properties", {})
+    _validate_json_schema_types(parameters)
     return parameters
+
+
+def _tool_to_mapping(tool: Any) -> dict[str, Any]:
+    if isinstance(tool, dict):
+        return dict(tool)
+    to_dict = getattr(tool, "to_dict", None)
+    if callable(to_dict):
+        payload = to_dict()
+        if isinstance(payload, dict):
+            return payload
+    if is_dataclass(tool):
+        payload = asdict(tool)
+        if isinstance(payload, dict):
+            return payload
+    raise LLMToolSchemaError("tool schema must be an object")
+
+
+def _required_tool_description(tool: dict[str, Any]) -> str:
+    description = tool.get("description")
+    if not isinstance(description, str) or not description.strip():
+        raise LLMToolSchemaError("tool schema requires a non-empty description")
+    return description.strip()
+
+
+def _validate_json_schema_types(schema: Any, *, path: str = "$") -> None:
+    if not isinstance(schema, dict):
+        raise LLMToolSchemaError(f"{path}: schema must be an object")
+    schema_type = schema.get("type")
+    if schema_type is not None:
+        allowed_types = schema_type if isinstance(schema_type, list) else [schema_type]
+        if not allowed_types or not all(isinstance(item, str) for item in allowed_types):
+            raise LLMToolSchemaError(f"{path}: type must be a string or array")
+        supported = {"object", "array", "string", "integer", "number", "boolean", "null"}
+        unsupported = [item for item in allowed_types if item not in supported]
+        if unsupported:
+            raise LLMToolSchemaError(
+                f"{path}: unsupported parameter type: {', '.join(unsupported)}"
+            )
+    properties = schema.get("properties")
+    if properties is not None:
+        if not isinstance(properties, dict):
+            raise LLMToolSchemaError(f"{path}.properties must be an object")
+        for name, property_schema in properties.items():
+            _validate_json_schema_types(property_schema, path=f"{path}.properties.{name}")
+    items = schema.get("items")
+    if items is not None:
+        _validate_json_schema_types(items, path=f"{path}.items")

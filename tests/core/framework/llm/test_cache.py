@@ -40,9 +40,12 @@ def test_cached_llm_client_serves_allowed_task_from_cache() -> None:
     assert inner.call_count == 1
     assert first.content == "response-1"
     assert first.metadata["llm_cache_hit"] is False
+    assert first.metadata["llm_budget_cost_counted"] is True
     assert second.content == "response-1"
     assert second.metadata["llm_cache_hit"] is True
     assert second.metadata["llm_cacheable"] is True
+    assert second.metadata["llm_budget_cost_counted"] is False
+    assert second.metadata["llm_budget_request_counted"] is True
 
 
 def test_cached_llm_client_bypasses_unlisted_task_type() -> None:

@@ -40,11 +40,65 @@ def test_stream_accumulator_collects_completed_tool_calls() -> None:
         arguments={"query": "chips"},
     )
 
+    accumulator.add_event(LLMStreamEvent(event_type="message_start"))
     accumulator.add_event(LLMStreamEvent(event_type="tool_call_complete", tool_call=tool_call))
+    accumulator.add_event(LLMStreamEvent(event_type="message_complete"))
 
     response = accumulator.to_response()
 
     assert response.tool_calls == [tool_call]
+
+
+def test_stream_accumulator_rebuilds_tool_call_from_deltas() -> None:
+    accumulator = LLMStreamAccumulator()
+
+    accumulator.add_event(LLMStreamEvent(event_type="message_start"))
+    accumulator.add_event(
+        LLMStreamEvent(
+            event_type="tool_call_start",
+            tool_call_delta={
+                "tool_call_id": "call_1",
+                "provider_tool_call_id": "provider_call_1",
+                "tool_name": "memory.search",
+                "arguments": "{\"query\"",
+            },
+        )
+    )
+    accumulator.add_event(
+        LLMStreamEvent(
+            event_type="tool_call_delta",
+            tool_call_delta={"tool_call_id": "call_1", "arguments": ": \"chips\"}"},
+        )
+    )
+    accumulator.add_event(LLMStreamEvent(event_type="message_complete"))
+
+    response = accumulator.to_response()
+
+    assert len(response.tool_calls) == 1
+    assert response.tool_calls[0].tool_name == "memory.search"
+    assert response.tool_calls[0].arguments == {"query": "chips"}
+    assert response.tool_calls[0].provider_tool_call_id == "provider_call_1"
+
+
+def test_stream_accumulator_rejects_out_of_order_events() -> None:
+    accumulator = LLMStreamAccumulator()
+
+    with pytest.raises(ValueError, match="before message_start"):
+        accumulator.add_event(LLMStreamEvent(event_type="text_delta", text_delta="oops"))
+
+
+def test_stream_accumulator_error_event_interrupts_response() -> None:
+    accumulator = LLMStreamAccumulator()
+
+    accumulator.add_event(LLMStreamEvent(event_type="message_start"))
+
+    with pytest.raises(RuntimeError, match="rate_limit"):
+        accumulator.add_event(
+            LLMStreamEvent(event_type="error", metadata={"error_type": "rate_limit"})
+        )
+
+    with pytest.raises(ValueError, match="after error"):
+        accumulator.add_event(LLMStreamEvent(event_type="text_delta", text_delta="late"))
 
 
 def test_stream_event_to_dict_redacts_sensitive_values() -> None:

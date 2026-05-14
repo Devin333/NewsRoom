@@ -62,7 +62,7 @@ def test_openai_compatible_client_posts_chat_completion_and_normalizes_response(
     response = client.complete(
         LLMRequest(
             messages=[{"role": "user", "content": "hi"}],
-            tools=[{"name": "memory.search"}],
+            tools=[{"name": "memory.search", "description": "Search memory"}],
         )
     )
 
@@ -77,7 +77,7 @@ def test_openai_compatible_client_posts_chat_completion_and_normalizes_response(
                 "type": "function",
                 "function": {
                     "name": "memory_search",
-                    "description": "",
+                    "description": "Search memory",
                     "parameters": {"type": "object", "properties": {}},
                 },
             }
@@ -167,22 +167,22 @@ def test_openai_compatible_client_does_not_retry_http_400(monkeypatch) -> None:
     assert calls == 1
     assert exc_info.value.retryable is False
     assert exc_info.value.status_code == 400
-    assert exc_info.value.error_type == "invalid_request_schema"
+    assert exc_info.value.error_type == "invalid_request"
     assert exc_info.value.attempts == 1
 
 
 @pytest.mark.parametrize(
     ("status_code", "expected_error_type", "expected_retryable"),
     [
-        (401, "invalid_api_key", False),
-        (403, "invalid_api_key", False),
-        (404, "invalid_model", False),
-        (408, "provider_timeout", True),
-        (413, "context_length_exceeded", False),
-        (429, "rate_limited", True),
-        (500, "provider_server_error", True),
-        (502, "provider_server_error", True),
-        (504, "provider_server_error", True),
+        (401, "auth_error", False),
+        (403, "auth_error", False),
+        (404, "unsupported_model", False),
+        (408, "timeout", True),
+        (413, "context_length", False),
+        (429, "rate_limit", True),
+        (500, "server_error", True),
+        (502, "server_error", True),
+        (504, "server_error", True),
     ],
 )
 def test_openai_compatible_client_classifies_http_provider_errors(
@@ -217,6 +217,8 @@ def test_openai_compatible_client_classifies_http_provider_errors(
     assert calls == 1
     assert exc_info.value.status_code == status_code
     assert exc_info.value.error_type == expected_error_type
+    assert exc_info.value.model == "test-model"
+    assert exc_info.value.to_dict()["error_category"] == expected_error_type
     assert exc_info.value.retryable is expected_retryable
 
 
@@ -247,7 +249,7 @@ def test_openai_compatible_client_raises_after_exhausting_retryable_http_error(m
     assert calls == 2
     assert exc_info.value.retryable is True
     assert exc_info.value.status_code == 503
-    assert exc_info.value.error_type == "provider_server_error"
+    assert exc_info.value.error_type == "server_error"
     assert exc_info.value.attempts == 2
 
 
@@ -304,7 +306,7 @@ def test_openai_compatible_client_does_not_retry_malformed_provider_response(mon
 
     assert calls == 1
     assert exc_info.value.retryable is False
-    assert exc_info.value.error_type == "provider_response_shape_invalid"
+    assert exc_info.value.error_type == "schema_error"
     assert exc_info.value.attempts == 1
 
 
@@ -447,7 +449,7 @@ def test_openai_compatible_client_validates_structured_output_schema(monkeypatch
 
     assert calls == 1
     assert exc_info.value.retryable is False
-    assert exc_info.value.error_type == "structured_output_validation_error"
+    assert exc_info.value.error_type == "schema_error"
     assert "missing required property: title" in str(exc_info.value)
 
 
@@ -482,7 +484,7 @@ def test_openai_compatible_client_does_not_retry_invalid_structured_output(monke
 
     assert calls == 1
     assert exc_info.value.retryable is False
-    assert exc_info.value.error_type == "structured_output_parse_error"
+    assert exc_info.value.error_type == "schema_error"
 
 
 def test_openai_compatible_client_parses_provider_tool_calls(monkeypatch) -> None:
@@ -588,12 +590,12 @@ def test_openai_compatible_client_rejects_invalid_provider_tool_call_arguments(m
         client.complete(
             LLMRequest(
                 messages=[{"role": "user", "content": "hi"}],
-                tools=[{"name": "memory.search"}],
+                tools=[{"name": "memory.search", "description": "Search memory"}],
             )
         )
 
     assert exc_info.value.retryable is False
-    assert exc_info.value.error_type == "tool_call_parse_error"
+    assert exc_info.value.error_type == "schema_error"
 
 
 def test_openai_compatible_client_rejects_colliding_provider_tool_names(monkeypatch) -> None:
@@ -619,12 +621,15 @@ def test_openai_compatible_client_rejects_colliding_provider_tool_names(monkeypa
         client.complete(
             LLMRequest(
                 messages=[{"role": "user", "content": "hi"}],
-                tools=[{"name": "memory.search"}, {"name": "memory_search"}],
+                tools=[
+                    {"name": "memory.search", "description": "Search memory"},
+                    {"name": "memory_search", "description": "Search memory"},
+                ],
             )
         )
 
     assert calls == 0
-    assert exc_info.value.error_type == "invalid_request_schema"
+    assert exc_info.value.error_type == "schema_error"
 
 
 def test_openai_compatible_client_streams_text_deltas_and_usage(monkeypatch) -> None:
@@ -740,11 +745,10 @@ def test_openai_compatible_client_streams_fragmented_tool_call(monkeypatch) -> N
         client.stream(
             LLMRequest(
                 messages=[{"role": "user", "content": "hi"}],
-                tools=[{"name": "memory.search"}],
+                tools=[{"name": "memory.search", "description": "Search memory"}],
             )
         )
     )
-
     tool_event = events[1]
 
     assert [event.event_type for event in events] == [
@@ -778,7 +782,7 @@ def test_openai_compatible_client_stream_rejects_invalid_chunk(monkeypatch) -> N
         list(client.stream(LLMRequest(messages=[{"role": "user", "content": "hi"}])))
 
     assert exc_info.value.retryable is False
-    assert exc_info.value.error_type == "provider_stream_chunk_invalid"
+    assert exc_info.value.error_type == "schema_error"
 
 
 def _success_body(*, response_id: str = "chatcmpl-test", content: str = "{\"ok\": true}") -> bytes:

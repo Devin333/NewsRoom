@@ -8,10 +8,27 @@ class LLMStructuredOutputValidationError(ValueError):
     """Raised when parsed structured output violates the requested schema."""
 
 
-def validate_structured_output(value: Any, schema: dict[str, Any]) -> None:
+def validate_structured_output(value: Any, schema: Any) -> None:
+    schema = _schema_to_dict(schema)
     if not isinstance(schema, dict):
         raise LLMStructuredOutputValidationError("schema must be an object")
     _validate_value(value, schema, "$")
+
+
+def _schema_to_dict(schema: Any) -> dict[str, Any]:
+    if isinstance(schema, dict):
+        return schema
+    model_json_schema = getattr(schema, "model_json_schema", None)
+    if callable(model_json_schema):
+        exported = model_json_schema()
+        if isinstance(exported, dict):
+            return exported
+    schema_method = getattr(schema, "schema", None)
+    if callable(schema_method):
+        exported = schema_method()
+        if isinstance(exported, dict):
+            return exported
+    raise LLMStructuredOutputValidationError("schema must be an object")
 
 
 def _validate_value(value: Any, schema: dict[str, Any], path: str) -> None:

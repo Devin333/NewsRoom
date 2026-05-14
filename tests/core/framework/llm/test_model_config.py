@@ -45,6 +45,66 @@ routes:
     assert deployment.retry_policy().max_attempts == 3
 
 
+def test_load_openai_compatible_deployment_uses_default_route_id_and_env_overrides(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    config_path = tmp_path / "models.yaml"
+    config_path.write_text(
+        """
+default_route_id: default-writer
+model_groups:
+  writer-primary:
+    deployments:
+      - deployment_id: compatible-live
+        provider: openai-compatible
+        provider_name: dashscope
+        model: configured-model
+        api_base: https://configured.example/v1
+        api_key: ${TEST_LLM_KEY}
+routes:
+  default-writer:
+    model_group: writer-primary
+""".strip(),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("NEWS_LLM_MODEL", "override-model")
+    monkeypatch.setenv("NEWS_LLM_BASE_URL", "https://override.example/v1")
+    monkeypatch.setenv("NEWS_LLM_API_KEY_ENV", "OVERRIDE_KEY")
+
+    deployment = load_openai_compatible_deployment(config_path, route_id=None)
+
+    assert deployment.route_id == "default-writer"
+    assert deployment.config.model == "override-model"
+    assert deployment.config.base_url == "https://override.example/v1"
+    assert deployment.config.api_key_env == "OVERRIDE_KEY"
+
+
+def test_load_openai_compatible_deployment_resolves_model_and_base_env_placeholders(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    config_path = tmp_path / "models.yaml"
+    config_path.write_text(
+        """
+deployments:
+  - deployment_id: compatible-live
+    provider: openai-compatible
+    model: ${TEST_LLM_MODEL}
+    api_base: ${TEST_LLM_BASE_URL}
+    api_key: ${TEST_LLM_KEY}
+""".strip(),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TEST_LLM_MODEL", "resolved-model")
+    monkeypatch.setenv("TEST_LLM_BASE_URL", "https://resolved.example/v1")
+
+    deployment = load_openai_compatible_deployment(config_path)
+
+    assert deployment.config.model == "resolved-model"
+    assert deployment.config.base_url == "https://resolved.example/v1"
+
+
 def test_build_openai_compatible_client_from_config_uses_configured_retry_policy(tmp_path) -> None:
     config_path = tmp_path / "models.yaml"
     config_path.write_text(
@@ -81,6 +141,48 @@ deployments:
     )
 
     with pytest.raises(LLMConfigurationError, match="api_key"):
+        load_openai_compatible_deployment(config_path)
+
+
+def test_model_config_diagnostics_reject_raw_api_key_env_without_printing_secret(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    config_path = tmp_path / "models.yaml"
+    config_path.write_text(
+        """
+deployments:
+  - deployment_id: compatible-live
+    provider: openai-compatible
+    model: test-model
+    api_base: https://llm.example/v1
+    api_key: ${TEST_LLM_KEY}
+""".strip(),
+        encoding="utf-8",
+    )
+    secret = "sk-secret-value-for-test"
+    monkeypatch.setenv("NEWS_LLM_API_KEY", secret)
+
+    with pytest.raises(LLMConfigurationError) as exc_info:
+        load_openai_compatible_deployment(config_path)
+
+    assert secret not in str(exc_info.value)
+    assert "NEWS_LLM_API_KEY_ENV" in str(exc_info.value)
+
+
+def test_model_config_reports_missing_required_fields(tmp_path) -> None:
+    config_path = tmp_path / "models.yaml"
+    config_path.write_text(
+        """
+deployments:
+  - deployment_id: compatible-live
+    provider: openai-compatible
+    api_key: ${TEST_LLM_KEY}
+""".strip(),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(LLMConfigurationError, match="api_base is required"):
         load_openai_compatible_deployment(config_path)
 
 

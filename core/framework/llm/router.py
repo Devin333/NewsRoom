@@ -13,6 +13,7 @@ from core.framework.llm.cost import (
     LLMBudgetPolicy,
     ModelPricing,
 )
+from core.framework.llm.context import estimate_request_tokens
 from core.framework.llm.models import LLMClient, LLMRequest, LLMResponse
 from core.framework.llm.openai_compatible import LLMProviderError
 from core.framework.llm.redaction import redact_sensitive_values
@@ -187,11 +188,14 @@ class LLMCooldownPolicy:
             raise ValueError("failure_count_threshold must be at least 1")
 
     def cooldown_seconds_for(self, error: LLMProviderError) -> int:
-        if error.error_type == "rate_limited" or error.status_code == 429:
+        if error.error_type in {"rate_limit", "rate_limited"} or error.status_code == 429:
             return self.cooldown_on_rate_limit_seconds
         if error.error_type in {
+            "server_error",
             "provider_server_error",
+            "transient_network",
             "temporary_provider_error",
+            "timeout",
             "provider_timeout",
             "provider_connection_error",
         }:
@@ -402,6 +406,7 @@ class LLMRouter:
         deployment_chain = route.deployment_chain()
         resolution_trace = tuple(dict(item) for item in resolution_trace)
         route_events: list[LLMRouterEvent] = []
+        prompt_token_estimate = estimate_request_tokens(request)
         self._record_event(
             route_events,
             "llm_route_started",
@@ -410,6 +415,7 @@ class LLMRouter:
                 "deployment_chain": list(deployment_chain),
                 "required_capabilities": list(route.required_capabilities),
                 "resolution_trace": list(resolution_trace),
+                "estimated_prompt_tokens": prompt_token_estimate,
             },
         )
 
@@ -466,6 +472,7 @@ class LLMRouter:
                         "cooldown_until": _datetime_to_json(cooldown_until),
                         "retryable": True,
                     },
+                    aliases=("deployment_skipped_cooldown",),
                 )
                 if has_fallback:
                     self._record_fallback_event(
@@ -522,7 +529,9 @@ class LLMRouter:
                 )
 
             try:
-                self._check_global_budget_before_call()
+                preflight_budget_check = self._check_global_budget_before_call(
+                    estimated_prompt_tokens=prompt_token_estimate,
+                )
             except GlobalBudgetExceededError as exc:
                 errors.append(
                     {
@@ -571,10 +580,12 @@ class LLMRouter:
                     deployment=deployment,
                     metadata={
                         "error_type": exc.error_type,
+                        "error_category": _canonical_error_category(exc.error_type),
                         "status_code": exc.status_code,
                         "retryable": exc.retryable,
                         "attempts": exc.attempts,
                     },
+                    aliases=("route_attempt_failed",),
                 )
                 if exc.retryable and has_fallback:
                     self._record_fallback_event(
@@ -616,6 +627,7 @@ class LLMRouter:
                         "message": str(exc),
                         "retryable": False,
                     },
+                    aliases=("route_attempt_failed",),
                 )
                 raise self._build_route_error(
                     f"LLM route {route.route_id} client failed at deployment {deployment_id}",
@@ -665,6 +677,7 @@ class LLMRouter:
                     response,
                     deployment=deployment,
                     budget_check=budget_check,
+                    prompt_token_estimate=prompt_token_estimate,
                 )
             except GlobalBudgetExceededError as exc:
                 errors.append(
@@ -705,6 +718,11 @@ class LLMRouter:
                 metadata={
                     "attempt_index": index + 1,
                     "usage": response.usage.to_dict(),
+                    "preflight_global_budget_check": (
+                        preflight_budget_check.to_dict()
+                        if preflight_budget_check is not None
+                        else None
+                    ),
                     "budget_check": budget_check.to_dict() if budget_check is not None else None,
                     "global_budget_check": (
                         global_budget_check.to_dict() if global_budget_check is not None else None
@@ -780,6 +798,7 @@ class LLMRouter:
         deployment: ModelDeployment | None = None,
         deployment_id: str | None = None,
         metadata: dict[str, Any] | None = None,
+        aliases: Iterable[str] = (),
     ) -> LLMRouterEvent:
         event = LLMRouterEvent(
             event_type=event_type,
@@ -787,7 +806,13 @@ class LLMRouter:
             deployment_id=deployment.deployment_id if deployment is not None else deployment_id,
             provider=deployment.provider if deployment is not None else None,
             model=deployment.model if deployment is not None else None,
-            metadata=redact_sensitive_values(dict(metadata or {})),
+            metadata=redact_sensitive_values(
+                {
+                    **dict(metadata or {}),
+                    "event_aliases": list(aliases),
+                    "event_name": _event_name_alias(event_type),
+                }
+            ),
             occurred_at=self._now_fn(),
         )
         events.append(event)
@@ -823,6 +848,7 @@ class LLMRouter:
                 "error_count": len(errors),
                 "errors": [dict(error) for error in errors],
             },
+            aliases=("fallback_selected",),
         )
 
     def _build_route_error(
@@ -937,10 +963,12 @@ class LLMRouter:
             return None
         return self._cooldown_tracker.record_failure(deployment_id, error)
 
-    def _check_global_budget_before_call(self):
+    def _check_global_budget_before_call(self, *, estimated_prompt_tokens: int):
         if self._global_budget_tracker is None:
             return None
-        return self._global_budget_tracker.check_before_llm_call()
+        return self._global_budget_tracker.reserve_llm_call(
+            estimated_prompt_tokens=estimated_prompt_tokens,
+        )
 
     def _record_global_budget_call(
         self,
@@ -948,6 +976,7 @@ class LLMRouter:
         *,
         deployment: ModelDeployment,
         budget_check,
+        prompt_token_estimate: int,
     ):
         if self._global_budget_tracker is None:
             return None
@@ -958,12 +987,17 @@ class LLMRouter:
             response.usage,
             deployment.pricing,
             estimated_cost_usd=estimated_cost_usd,
+            replace_reserved_prompt_tokens=prompt_token_estimate,
+            count_request=False,
         )
 
 
 def _provider_error_payload(deployment_id: str, error: LLMProviderError) -> dict[str, Any]:
     payload = error.to_dict()
     payload["deployment_id"] = deployment_id
+    payload["model"] = payload.get("model")
+    payload["provider"] = payload.get("provider")
+    payload["error_category"] = _canonical_error_category(str(payload.get("error_type") or ""))
     return payload
 
 
@@ -1147,6 +1181,36 @@ def _route_metrics(
 
 def _fallback_count(events: Iterable[LLMRouterEvent]) -> int:
     return sum(1 for event in events if event.event_type == "llm_fallback_selected")
+
+
+def _event_name_alias(event_type: str) -> str:
+    aliases = {
+        "llm_deployment_attempt_failed": "route_attempt_failed",
+        "llm_fallback_selected": "fallback_selected",
+        "llm_deployment_skipped": "deployment_skipped_cooldown",
+    }
+    return aliases.get(event_type, event_type.removeprefix("llm_"))
+
+
+def _canonical_error_category(error_type: str) -> str:
+    aliases = {
+        "rate_limited": "rate_limit",
+        "provider_timeout": "timeout",
+        "provider_connection_error": "transient_network",
+        "temporary_provider_error": "transient_network",
+        "provider_server_error": "server_error",
+        "invalid_api_key": "auth_error",
+        "invalid_request_schema": "invalid_request",
+        "context_length_exceeded": "context_length",
+        "invalid_model": "unsupported_model",
+        "provider_response_shape_invalid": "schema_error",
+        "provider_stream_chunk_invalid": "schema_error",
+        "tool_call_parse_error": "schema_error",
+        "stream_tool_call_parse_error": "schema_error",
+        "structured_output_parse_error": "schema_error",
+        "structured_output_validation_error": "schema_error",
+    }
+    return aliases.get(error_type, error_type)
 
 
 def _last_global_budget_check(errors: Iterable[dict[str, Any]]):

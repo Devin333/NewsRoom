@@ -117,6 +117,33 @@ def test_global_budget_tracker_blocks_preflight_when_call_limit_would_be_exceede
     assert exc_info.value.check.usage.llm_calls == 2
 
 
+def test_global_budget_tracker_reserves_prompt_tokens_then_replaces_with_actual_usage() -> None:
+    tracker = GlobalBudgetTracker(GlobalBudgetPolicy(max_llm_calls=1, max_total_tokens=20))
+
+    preflight = tracker.reserve_llm_call(estimated_prompt_tokens=9)
+    actual = tracker.record_llm_call(
+        TokenUsage(input_tokens=4, output_tokens=3),
+        replace_reserved_prompt_tokens=9,
+        count_request=False,
+    )
+
+    assert preflight.usage.llm_calls == 1
+    assert preflight.usage.token_usage.input_tokens == 9
+    assert actual.usage.llm_calls == 1
+    assert actual.usage.token_usage.total_tokens == 7
+
+
+def test_global_budget_tracker_cache_hit_counts_request_without_cost() -> None:
+    tracker = GlobalBudgetTracker(GlobalBudgetPolicy(max_llm_calls=2, max_total_cost_usd=0.0))
+
+    check = tracker.record_llm_call(
+        TokenUsage(input_tokens=10, output_tokens=0, estimated_cost_usd=0.0)
+    )
+
+    assert check.usage.llm_calls == 1
+    assert check.usage.estimated_cost_usd == 0.0
+
+
 def test_global_budget_tracker_raises_after_total_token_violation() -> None:
     tracker = GlobalBudgetTracker(GlobalBudgetPolicy(max_total_tokens=3))
 

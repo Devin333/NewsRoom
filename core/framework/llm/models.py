@@ -11,17 +11,25 @@ from core.framework.llm.redaction import redact_sensitive_values
 class TokenUsage:
     input_tokens: int = 0
     output_tokens: int = 0
+    reasoning_tokens: int = 0
+    cached_input_tokens: int = 0
+    estimated_cost_usd: float | None = None
 
     @property
     def total_tokens(self) -> int:
-        return self.input_tokens + self.output_tokens
+        return self.input_tokens + self.output_tokens + self.reasoning_tokens
 
-    def to_dict(self) -> dict[str, int]:
-        return {
+    def to_dict(self) -> dict[str, int | float | None]:
+        payload: dict[str, int | float | None] = {
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
+            "reasoning_tokens": self.reasoning_tokens,
+            "cached_input_tokens": self.cached_input_tokens,
             "total_tokens": self.total_tokens,
         }
+        if self.estimated_cost_usd is not None:
+            payload["estimated_cost_usd"] = self.estimated_cost_usd
+        return payload
 
 
 @dataclass(frozen=True)

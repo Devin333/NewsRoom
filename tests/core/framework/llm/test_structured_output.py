@@ -130,3 +130,19 @@ def test_validate_structured_output_enforces_const_and_property_counts() -> None
 
     with pytest.raises(LLMStructuredOutputValidationError, match="expected at least 2 properties"):
         validate_structured_output({"kind": "report"}, schema)
+
+
+def test_validate_structured_output_accepts_pydantic_like_schema() -> None:
+    class ReportSchema:
+        @classmethod
+        def model_json_schema(cls) -> dict:
+            return {
+                "type": "object",
+                "required": ["title"],
+                "properties": {"title": {"type": "string"}},
+            }
+
+    validate_structured_output({"title": "Daily"}, ReportSchema)
+
+    with pytest.raises(LLMStructuredOutputValidationError, match="missing required property"):
+        validate_structured_output({}, ReportSchema)

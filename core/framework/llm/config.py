@@ -58,21 +58,23 @@ def build_openai_compatible_client_from_config(
 def load_openai_compatible_deployment(
     path: str | Path | None = None,
     *,
-    route_id: str = DEFAULT_MODEL_ROUTE_ID,
+    route_id: str | None = None,
 ) -> OpenAICompatibleDeploymentConfig:
     configured_path, required = _default_model_config_path(path)
     if configured_path is None:
+        selected_route_id = route_id or DEFAULT_MODEL_ROUTE_ID
         return OpenAICompatibleDeploymentConfig(
             deployment_id="dashscope-default",
-            route_id=route_id,
+            route_id=selected_route_id,
             config=OpenAICompatibleConfig.dashscope_defaults(),
         )
     if not configured_path.exists():
         if required:
             raise LLMConfigurationError(f"model config file does not exist: {configured_path}")
+        selected_route_id = route_id or DEFAULT_MODEL_ROUTE_ID
         return OpenAICompatibleDeploymentConfig(
             deployment_id="dashscope-default",
-            route_id=route_id,
+            route_id=selected_route_id,
             config=OpenAICompatibleConfig.dashscope_defaults(),
         )
 
@@ -80,8 +82,9 @@ def load_openai_compatible_deployment(
     if not isinstance(payload, dict):
         raise LLMConfigurationError("model config must be an object")
     _assert_no_literal_secrets(payload)
-    deployment_payload = _select_deployment_payload(payload, route_id=route_id)
-    return _deployment_config(deployment_payload, route_id=route_id)
+    selected_route_id = _select_route_id(payload, route_id=route_id)
+    deployment_payload = _select_deployment_payload(payload, route_id=selected_route_id)
+    return _deployment_config(deployment_payload, route_id=selected_route_id)
 
 
 def _default_model_config_path(path: str | Path | None) -> tuple[Path | None, bool]:
@@ -161,6 +164,23 @@ def _select_deployment_payload(payload: dict[str, Any], *, route_id: str) -> dic
     raise LLMConfigurationError("model config must define at least one deployment")
 
 
+def _select_route_id(payload: dict[str, Any], *, route_id: str | None) -> str:
+    explicit_route_id = _optional_text(route_id)
+    if explicit_route_id:
+        return explicit_route_id
+    routes = _dict_value(payload.get("routes"), field="routes", default={})
+    configured_default = _optional_text(
+        payload.get("default_route_id")
+        or payload.get("default_route")
+        or payload.get("default_model_route")
+    )
+    if configured_default:
+        if routes and configured_default not in routes:
+            raise LLMConfigurationError(f"default_route_id is not configured: {configured_default}")
+        return configured_default
+    return DEFAULT_MODEL_ROUTE_ID
+
+
 def _deployment_list(value: Any, *, field: str) -> list[dict[str, Any]]:
     if value is None:
         return []
@@ -202,15 +222,33 @@ def _deployment_config(
     *,
     route_id: str,
 ) -> OpenAICompatibleDeploymentConfig:
-    provider_kind = _required_text(payload.get("provider"), field="provider")
+    provider_kind = _env_override_text(
+        payload,
+        "provider",
+        env_names=("NEWS_LLM_PROVIDER",),
+        field="provider",
+        required=True,
+    )
     if provider_kind not in {"openai-compatible", "openai_compatible", "dashscope"}:
         raise LLMConfigurationError(f"unsupported OpenAI-compatible provider: {provider_kind}")
-    provider_name = _optional_text(payload.get("provider_name")) or (
+    provider_name = _optional_text(
+        _env_override_text(
+            payload,
+            "provider_name",
+            env_names=("NEWS_LLM_PROVIDER_NAME",),
+            field="provider_name",
+            required=False,
+        )
+    ) or (
         "dashscope" if provider_kind == "dashscope" else provider_kind
     )
-    base_url = _required_text(
-        payload.get("api_base") or payload.get("base_url") or payload.get("api_url"),
+    base_url = _env_override_text(
+        payload,
+        "api_base",
+        aliases=("base_url", "api_url"),
+        env_names=("NEWS_LLM_BASE_URL",),
         field="api_base",
+        required=True,
     )
     _validate_url(base_url, field="api_base")
     api_key_env = _api_key_env(payload)
@@ -225,7 +263,13 @@ def _deployment_config(
         config=OpenAICompatibleConfig(
             provider=provider_name,
             base_url=base_url,
-            model=_required_text(payload.get("model"), field="model"),
+            model=_env_override_text(
+                payload,
+                "model",
+                env_names=("NEWS_LLM_MODEL",),
+                field="model",
+                required=True,
+            ),
             api_key_env=api_key_env,
             timeout_seconds=timeout_seconds,
         ),
@@ -234,11 +278,18 @@ def _deployment_config(
 
 
 def _api_key_env(payload: dict[str, Any]) -> str:
-    api_key_env = _optional_text(payload.get("api_key_env"))
+    api_key_env = _optional_text(
+        os.getenv("NEWS_LLM_API_KEY_ENV") or payload.get("api_key_env")
+    )
     if api_key_env:
         if _ENV_NAME_RE.fullmatch(api_key_env) is None:
             raise LLMConfigurationError("api_key_env must be an environment variable name")
         return api_key_env
+    override_secret = _optional_text(os.getenv("NEWS_LLM_API_KEY"))
+    if override_secret:
+        raise LLMConfigurationError(
+            "NEWS_LLM_API_KEY must not be used in model diagnostics; set NEWS_LLM_API_KEY_ENV"
+        )
     api_key = _required_text(payload.get("api_key"), field="api_key")
     match = _ENV_PLACEHOLDER_RE.fullmatch(api_key)
     if match is None:
@@ -296,6 +347,39 @@ def _required_text(value: Any, *, field: str) -> str:
     if text is None:
         raise LLMConfigurationError(f"{field} is required")
     return text
+
+
+def _env_override_text(
+    payload: dict[str, Any],
+    key: str,
+    *,
+    field: str,
+    required: bool,
+    aliases: tuple[str, ...] = (),
+    env_names: tuple[str, ...] = (),
+) -> str:
+    for env_name in env_names:
+        env_value = _optional_text(os.getenv(env_name))
+        if env_value:
+            return env_value
+    for candidate in (key, *aliases):
+        value = _optional_text(payload.get(candidate))
+        if value:
+            return _resolve_env_placeholder(value, field=field)
+    if required:
+        raise LLMConfigurationError(f"{field} is required")
+    return ""
+
+
+def _resolve_env_placeholder(value: str, *, field: str) -> str:
+    match = _ENV_PLACEHOLDER_RE.fullmatch(value)
+    if match is None:
+        return value
+    env_name = match.group(1)
+    resolved = _optional_text(os.getenv(env_name))
+    if resolved is None:
+        raise LLMConfigurationError(f"{field} environment variable is not set: {env_name}")
+    return resolved
 
 
 def _optional_text(value: Any) -> str | None:
