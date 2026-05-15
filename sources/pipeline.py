@@ -58,6 +58,9 @@ from workflows.daily_intelligence.spec import (
     WORKFLOW_VERSION,
     build_daily_intelligence_workflow,
 )
+from workflows.daily_intelligence.artifact_publisher import (
+    build_daily_intelligence_artifact_publishers,
+)
 from workflows.daily_intelligence.steps import (
     AllSourcesFailedError,
     build_evidence,
@@ -170,7 +173,11 @@ class DailyIntelligenceRunner:
         if profile not in {PROFILE_LIVE, PROFILE_LIVE_OFFLINE}:
             raise ValueError(f"unsupported daily intelligence profile: {profile}")
         registry = self._function_registry(profile)
-        runner = WorkflowRunner(artifact_root=self.artifact_root, function_registry=registry)
+        runner = WorkflowRunner(
+            artifact_root=self.artifact_root,
+            function_registry=registry,
+            artifact_publishers=build_daily_intelligence_artifact_publishers(),
+        )
         return runner.run(
             build_daily_intelligence_workflow(profile),
             {"topic": topic, "source_limit": source_limit, "profile": profile},

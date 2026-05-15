@@ -26,6 +26,9 @@ from workflows.daily_intelligence.profiles import (
     PROFILE_LIVE_OFFLINE,
     validate_daily_profile,
 )
+from workflows.daily_intelligence.artifact_publisher import (
+    build_daily_intelligence_artifact_publishers,
+)
 from workflows.daily_intelligence.registry import build_daily_intelligence_registry
 from workflows.daily_intelligence.report_writer import ReportWriter
 from workflows.daily_intelligence.source_collection import DailySourceCollector
@@ -169,7 +172,11 @@ class DailyIntelligenceRunner:
     ) -> RunResult:
         validate_daily_profile(profile)
         registry = self._function_registry(profile)
-        runner = WorkflowRunner(artifact_root=self.artifact_root, function_registry=registry)
+        runner = WorkflowRunner(
+            artifact_root=self.artifact_root,
+            function_registry=registry,
+            artifact_publishers=build_daily_intelligence_artifact_publishers(),
+        )
         return runner.run(
             build_daily_intelligence_workflow(profile),
             {"topic": topic, "source_limit": source_limit, "profile": profile},

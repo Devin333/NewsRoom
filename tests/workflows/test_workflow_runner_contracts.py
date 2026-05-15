@@ -51,9 +51,14 @@ def test_daily_and_weekly_wrappers_share_workflow_runner_assembly_contract(
 
     assert len(calls) == 2
     for call in calls:
-        assert set(call["init_kwargs"]) == {"artifact_root", "function_registry"}
+        assert set(call["init_kwargs"]) == {
+            "artifact_root",
+            "artifact_publishers",
+            "function_registry",
+        }
         assert call["init_kwargs"]["artifact_root"] == tmp_path
         assert isinstance(call["init_kwargs"]["function_registry"], FunctionStepRegistry)
+        assert call["init_kwargs"]["artifact_publishers"] is not None
         assert {step.step_type for step in call["workflow"].steps} == {StepType.FUNCTION}
 
     daily_call, weekly_call = calls

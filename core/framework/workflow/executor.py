@@ -9,7 +9,6 @@ from typing import Any, Callable
 from uuid import uuid4
 
 from core.framework.artifacts.filesystem import ArtifactManager
-from core.framework.artifacts.source_artifacts import SourceArtifactWriter
 from core.framework.events.recorder import EventBus, EventRecorder
 from core.framework.specs import (
     EdgeCondition,
@@ -270,7 +269,7 @@ class WorkflowExecutor:
                 recorder.emit("step_paused", {"step_id": step.step_id, "outcome": outcome})
                 if step.step_type == StepType.HUMAN_REVIEW:
                     recorder.emit(
-                        "human_review_requested",
+                        "human_review_paused",
                         {"step_id": step.step_id, "outcome": outcome},
                     )
                     recorder.emit(
@@ -357,212 +356,11 @@ class WorkflowExecutor:
 
         if status == WorkflowStatus.SUCCEEDED:
             recorder.emit("workflow_succeeded", {"path": path})
-            self._write_source_diagnostic_artifacts(actual_run_id, manifest, output)
-            if "evidence_bundle" in output:
-                self._artifact_manager.write_json(
-                    actual_run_id,
-                    "evidence_bundle.json",
-                    output["evidence_bundle"],
-                )
-                register_manifest_artifact(manifest, "evidence_bundle", "evidence_bundle.json")
-                source_map = _evidence_source_map(output["evidence_bundle"])
-                if source_map is not None:
-                    self._artifact_manager.write_json(
-                        actual_run_id,
-                        "evidence_source_map.json",
-                        source_map,
-                    )
-                    register_manifest_artifact(
-                        manifest,
-                        "evidence_source_map",
-                        "evidence_source_map.json",
-                    )
-            if "evidence_scores" in output:
-                self._artifact_manager.write_json(
-                    actual_run_id,
-                    "evidence_scores.json",
-                    output["evidence_scores"],
-                )
-                register_manifest_artifact(manifest, "evidence_scores", "evidence_scores.json")
-            if "candidate_claims" in output:
-                self._artifact_manager.write_json(
-                    actual_run_id,
-                    "candidate_claims.json",
-                    output["candidate_claims"],
-                )
-                register_manifest_artifact(manifest, "candidate_claims", "candidate_claims.json")
-            if "verified_findings" in output:
-                self._artifact_manager.write_json(
-                    actual_run_id,
-                    "verified_findings.json",
-                    output["verified_findings"],
-                )
-                register_manifest_artifact(
-                    manifest,
-                    "verified_findings",
-                    "verified_findings.json",
-                )
-            if "citation_check_result" in output:
-                self._artifact_manager.write_json(
-                    actual_run_id,
-                    "citation_check_result.json",
-                    output["citation_check_result"],
-                )
-                register_manifest_artifact(
-                    manifest,
-                    "citation_check_result",
-                    "citation_check_result.json",
-                )
-                unsupported_claims = _field_value(output["citation_check_result"], "unsupported_claims")
-                if unsupported_claims:
-                    self._artifact_manager.write_json(
-                        actual_run_id,
-                        "unsupported_claims.json",
-                        unsupported_claims,
-                    )
-                    register_manifest_artifact(
-                        manifest,
-                        "unsupported_claims",
-                        "unsupported_claims.json",
-                    )
-                rejected_claim_usage = _field_value(output["citation_check_result"], "rejected_claim_usage")
-                if rejected_claim_usage:
-                    self._artifact_manager.write_json(
-                        actual_run_id,
-                        "rejected_claim_usage.json",
-                        rejected_claim_usage,
-                    )
-                    register_manifest_artifact(
-                        manifest,
-                        "rejected_claim_usage",
-                        "rejected_claim_usage.json",
-                    )
-            if "editor_review" in output:
-                self._artifact_manager.write_json(
-                    actual_run_id,
-                    "editor_review.json",
-                    output["editor_review"],
-                )
-                register_manifest_artifact(manifest, "editor_review", "editor_review.json")
-            if "support_matrix" in output:
-                self._artifact_manager.write_json(
-                    actual_run_id,
-                    "support_matrix.json",
-                    output["support_matrix"],
-                )
-                register_manifest_artifact(manifest, "support_matrix", "support_matrix.json")
-            if "report_quality_summary" in output:
-                self._artifact_manager.write_json(
-                    actual_run_id,
-                    "report_quality_summary.json",
-                    output["report_quality_summary"],
-                )
-                register_manifest_artifact(
-                    manifest,
-                    "report_quality_summary",
-                    "report_quality_summary.json",
-                )
-                summary = output["report_quality_summary"]
-                if hasattr(summary, "quality_score"):
-                    manifest["quality_score"] = summary.quality_score
-                elif isinstance(summary, dict):
-                    manifest["quality_score"] = summary.get("quality_score")
-            if "quality_events" in output:
-                self._artifact_manager.write_json(
-                    actual_run_id,
-                    "quality_events.json",
-                    output["quality_events"],
-                )
-                register_manifest_artifact(manifest, "quality_events", "quality_events.json")
-                manifest["quality_event_count"] = len(output["quality_events"])
-            if "quality_gate_metrics" in output:
-                self._artifact_manager.write_json(
-                    actual_run_id,
-                    "quality_gate_metrics.json",
-                    output["quality_gate_metrics"],
-                )
-                register_manifest_artifact(
-                    manifest,
-                    "quality_gate_metrics",
-                    "quality_gate_metrics.json",
-                )
-            if "quality_result" in output:
-                self._artifact_manager.write_json(
-                    actual_run_id,
-                    "quality_result.json",
-                    output["quality_result"],
-                )
-                register_manifest_artifact(
-                    manifest,
-                    "quality_result",
-                    "quality_result.json",
-                )
-                quality_result = output["quality_result"]
-                route = _field_value(quality_result, "route")
-                if route is not None:
-                    manifest["quality_route"] = route
-                decision = _field_value(quality_result, "decision")
-                if decision is not None:
-                    manifest["quality_decision"] = decision
-            if "rewrite_policy" in output:
-                self._artifact_manager.write_json(
-                    actual_run_id,
-                    "rewrite_policy.json",
-                    output["rewrite_policy"],
-                )
-                register_manifest_artifact(manifest, "rewrite_policy", "rewrite_policy.json")
-            if "rewrite_instructions" in output:
-                self._artifact_manager.write_json(
-                    actual_run_id,
-                    "rewrite_instructions.json",
-                    output["rewrite_instructions"],
-                )
-                register_manifest_artifact(
-                    manifest,
-                    "rewrite_instructions",
-                    "rewrite_instructions.json",
-                )
-            if "rewritten_report_draft" in output:
-                self._artifact_manager.write_json(
-                    actual_run_id,
-                    "rewritten_report_draft.json",
-                    output["rewritten_report_draft"],
-                )
-                register_manifest_artifact(
-                    manifest,
-                    "rewritten_report_draft",
-                    "rewritten_report_draft.json",
-                )
-            if "human_review_request" in output:
-                self._artifact_manager.write_json(
-                    actual_run_id,
-                    "human_review_request.json",
-                    output["human_review_request"],
-                )
-                register_manifest_artifact(
-                    manifest,
-                    "human_review_request",
-                    "human_review_request.json",
-                )
-            if "final_report" in output:
-                self._artifact_manager.write_json(actual_run_id, "report.json", output["final_report"])
-                register_manifest_artifact(manifest, "report_json", "report.json")
-            if isinstance(output.get("report_markdown"), str):
-                self._artifact_manager.write_text(actual_run_id, "report.md", output["report_markdown"])
-                register_manifest_artifact(manifest, "report_markdown", "report.md")
-            if "blocked_report" in output:
-                self._artifact_manager.write_json(
-                    actual_run_id,
-                    "blocked_report.json",
-                    output["blocked_report"],
-                )
-                register_manifest_artifact(manifest, "blocked_report", "blocked_report.json")
         elif status in {WorkflowStatus.PAUSED, WorkflowStatus.WAITING_FOR_HUMAN}:
             pass
         else:
             terminal_event = _terminal_error_event_type(status)
             recorder.emit(terminal_event, {"path": path, "error": error})
-            self._write_source_diagnostic_artifacts(actual_run_id, manifest, output)
 
         metrics_payload = _workflow_metrics_payload(
             started_monotonic=started_monotonic,
@@ -872,263 +670,6 @@ class WorkflowExecutor:
             next_hint=outcome.next_hint,
         )
 
-    def _write_source_diagnostic_artifacts(
-        self,
-        run_id: str,
-        manifest: dict[str, Any],
-        output: dict[str, Any],
-    ) -> None:
-        if "raw_items" in output:
-            self._artifact_manager.write_json(run_id, "raw_items.json", output["raw_items"])
-            register_manifest_artifact(manifest, "raw_items", "raw_items.json")
-        if "source_errors" in output:
-            self._artifact_manager.write_json(
-                run_id,
-                "source_errors.json",
-                output["source_errors"],
-            )
-            register_manifest_artifact(manifest, "source_errors", "source_errors.json")
-        if "skipped_sources" in output:
-            self._artifact_manager.write_json(
-                run_id,
-                "skipped_sources.json",
-                output["skipped_sources"],
-            )
-            register_manifest_artifact(manifest, "skipped_sources", "skipped_sources.json")
-        if "failed_sources" in output:
-            self._artifact_manager.write_json(
-                run_id,
-                "failed_sources.json",
-                output["failed_sources"],
-            )
-            register_manifest_artifact(manifest, "failed_sources", "failed_sources.json")
-        if "source_fetch_requests" in output:
-            self._artifact_manager.write_json(
-                run_id,
-                "source_fetch_requests.json",
-                output["source_fetch_requests"],
-            )
-            register_manifest_artifact(
-                manifest,
-                "source_fetch_requests",
-                "source_fetch_requests.json",
-            )
-        if "source_fetch_results" in output:
-            self._artifact_manager.write_json(
-                run_id,
-                "source_fetch_results.json",
-                output["source_fetch_results"],
-            )
-            register_manifest_artifact(
-                manifest,
-                "source_fetch_results",
-                "source_fetch_results.json",
-            )
-        if "source_health_updates" in output:
-            self._artifact_manager.write_json(
-                run_id,
-                "source_health_updates.json",
-                output["source_health_updates"],
-            )
-            register_manifest_artifact(
-                manifest,
-                "source_health_updates",
-                "source_health_updates.json",
-            )
-        if "source_health_report" in output:
-            self._artifact_manager.write_json(
-                run_id,
-                "source_health_report.json",
-                output["source_health_report"],
-            )
-            register_manifest_artifact(
-                manifest,
-                "source_health_report",
-                "source_health_report.json",
-            )
-        if "source_duplicate_groups" in output:
-            self._artifact_manager.write_json(
-                run_id,
-                "source_duplicate_groups.json",
-                output["source_duplicate_groups"],
-            )
-            register_manifest_artifact(
-                manifest,
-                "source_duplicate_groups",
-                "source_duplicate_groups.json",
-            )
-        if "source_events" in output:
-            self._artifact_manager.write_json(
-                run_id,
-                "source_events.json",
-                output["source_events"],
-            )
-            register_manifest_artifact(manifest, "source_events", "source_events.json")
-            manifest["source_event_count"] = len(output["source_events"])
-        if "source_pipeline_metrics" in output:
-            self._artifact_manager.write_json(
-                run_id,
-                "source_pipeline_metrics.json",
-                output["source_pipeline_metrics"],
-            )
-            register_manifest_artifact(
-                manifest,
-                "source_pipeline_metrics",
-                "source_pipeline_metrics.json",
-            )
-        if "source_connector_dispatch_report" in output:
-            self._artifact_manager.write_json(
-                run_id,
-                "source_connector_dispatch_report.json",
-                output["source_connector_dispatch_report"],
-            )
-            register_manifest_artifact(
-                manifest,
-                "source_connector_dispatch_report",
-                "source_connector_dispatch_report.json",
-            )
-        if "source_error_policy_report" in output:
-            self._artifact_manager.write_json(
-                run_id,
-                "source_error_policy_report.json",
-                output["source_error_policy_report"],
-            )
-            register_manifest_artifact(
-                manifest,
-                "source_error_policy_report",
-                "source_error_policy_report.json",
-            )
-        if "source_fallback_report" in output:
-            self._artifact_manager.write_json(
-                run_id,
-                "source_fallback_report.json",
-                output["source_fallback_report"],
-            )
-            register_manifest_artifact(
-                manifest,
-                "source_fallback_report",
-                "source_fallback_report.json",
-            )
-        if "source_selection_report" in output:
-            self._artifact_manager.write_json(
-                run_id,
-                "source_selection_report.json",
-                output["source_selection_report"],
-            )
-            register_manifest_artifact(
-                manifest,
-                "source_selection_report",
-                "source_selection_report.json",
-            )
-        if "source_coverage_report" in output:
-            self._artifact_manager.write_json(
-                run_id,
-                "source_coverage_report.json",
-                output["source_coverage_report"],
-            )
-            register_manifest_artifact(
-                manifest,
-                "source_coverage_report",
-                "source_coverage_report.json",
-            )
-        if "source_quality_scores" in output:
-            self._artifact_manager.write_json(
-                run_id,
-                "source_quality_scores.json",
-                output["source_quality_scores"],
-            )
-            register_manifest_artifact(
-                manifest,
-                "source_quality_scores",
-                "source_quality_scores.json",
-            )
-            manifest["source_quality_score_count"] = len(output["source_quality_scores"])
-        if "source_quality_summary_report" in output:
-            self._artifact_manager.write_json(
-                run_id,
-                "source_quality_summary_report.json",
-                output["source_quality_summary_report"],
-            )
-            register_manifest_artifact(
-                manifest,
-                "source_quality_summary_report",
-                "source_quality_summary_report.json",
-            )
-        if "source_ranking_scores" in output:
-            self._artifact_manager.write_json(
-                run_id,
-                "source_ranking_scores.json",
-                output["source_ranking_scores"],
-            )
-            register_manifest_artifact(
-                manifest,
-                "source_ranking_scores",
-                "source_ranking_scores.json",
-            )
-            manifest["source_ranking_score_count"] = len(output["source_ranking_scores"])
-        if "source_freshness_report" in output:
-            self._artifact_manager.write_json(
-                run_id,
-                "source_freshness_report.json",
-                output["source_freshness_report"],
-            )
-            register_manifest_artifact(
-                manifest,
-                "source_freshness_report",
-                "source_freshness_report.json",
-            )
-        if "source_traceability_report" in output:
-            self._artifact_manager.write_json(
-                run_id,
-                "source_traceability_report.json",
-                output["source_traceability_report"],
-            )
-            register_manifest_artifact(
-                manifest,
-                "source_traceability_report",
-                "source_traceability_report.json",
-            )
-        if "source_governance_report" in output:
-            self._artifact_manager.write_json(
-                run_id,
-                "source_governance_report.json",
-                output["source_governance_report"],
-            )
-            register_manifest_artifact(
-                manifest,
-                "source_governance_report",
-                "source_governance_report.json",
-            )
-        source_artifacts = SourceArtifactWriter(self._artifact_manager).write_source_artifacts(
-            run_id,
-            raw_items=output.get("raw_items"),
-            source_fetch_requests=output.get("source_fetch_requests"),
-            source_fetch_results=output.get("source_fetch_results"),
-            source_errors=output.get("source_errors"),
-        )
-        if source_artifacts:
-            register_manifest_artifact(
-                manifest,
-                "source_artifacts",
-                "source_artifacts/index.json",
-            )
-            manifest["source_artifacts"] = {
-                "item_count": source_artifacts["item_count"],
-                "error_count": source_artifacts["error_count"],
-                "raw_content_count": source_artifacts["raw_content_count"],
-                "fetch_request_count": source_artifacts["fetch_request_count"],
-                "fetch_result_count": source_artifacts["fetch_result_count"],
-                "total_count": len(source_artifacts["entries"]),
-            }
-            if source_artifacts.get("response_headers_count"):
-                manifest["source_artifacts"]["response_headers_count"] = source_artifacts[
-                    "response_headers_count"
-                ]
-            if source_artifacts.get("parsed_items_count"):
-                manifest["source_artifacts"]["parsed_items_count"] = source_artifacts[
-                    "parsed_items_count"
-                ]
-
     def _write_checkpoint(
         self,
         *,
@@ -1171,16 +712,6 @@ class WorkflowExecutor:
             },
         )
         return checkpoint_id
-
-
-def _evidence_source_map(evidence_bundle: Any) -> dict[str, list[str]] | None:
-    if isinstance(evidence_bundle, dict):
-        source_map = evidence_bundle.get("source_map")
-    else:
-        source_map = getattr(evidence_bundle, "source_map", None)
-    if source_map is None:
-        return None
-    return {str(key): list(value) for key, value in source_map.items()}
 
 
 def _blocks_on_failure(step: StepSpec) -> bool:
@@ -1483,20 +1014,6 @@ def _workflow_metrics_payload(
                 metrics["global_budget_usage"] = agent_metrics.get("global_budget_usage")
     if global_budget_tracker is not None and hasattr(global_budget_tracker, "snapshot"):
         metrics["global_budget_usage"] = global_budget_tracker.snapshot()
-    if "source_pipeline_metrics" in output:
-        source_metrics = output["source_pipeline_metrics"]
-        if hasattr(source_metrics, "to_dict"):
-            source_metrics = source_metrics.to_dict()
-        if isinstance(source_metrics, dict):
-            metrics["source_success_count"] = source_metrics.get("success_count")
-            metrics["source_failure_count"] = source_metrics.get("failure_count")
-    if "quality_gate_metrics" in output:
-        quality_metrics = output["quality_gate_metrics"]
-        if hasattr(quality_metrics, "to_dict"):
-            quality_metrics = quality_metrics.to_dict()
-        if isinstance(quality_metrics, dict):
-            metrics["citation_coverage"] = quality_metrics.get("citation_coverage_score")
-            metrics["editor_score"] = quality_metrics.get("editor_score")
     return metrics
 
 
@@ -1577,14 +1094,6 @@ def _sensitive_key(key: str) -> bool:
             "token",
         )
     )
-
-
-def _field_value(value: Any, field_name: str) -> Any:
-    if hasattr(value, field_name):
-        return getattr(value, field_name)
-    if isinstance(value, dict):
-        return value.get(field_name)
-    return None
 
 
 def _validate_step_runners(workflow: WorkflowSpec, registry: StepRunnerRegistry) -> None:

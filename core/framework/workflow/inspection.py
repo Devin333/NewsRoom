@@ -2888,7 +2888,7 @@ def _event_phase(event_type: str) -> str:
         return "routing"
     if event_type.startswith("checkpoint_"):
         return "checkpoint"
-    if event_type in {"human_review_requested"}:
+    if event_type in {"human_review_paused", "human_review_requested"}:
         return "human"
     if event_type in {"policy_violation"}:
         return "policy"
@@ -2911,6 +2911,7 @@ def _event_severity(event_type: str, *, status: str | None = None) -> str:
         "step_paused",
         "step_retry_scheduled",
         "edge_rejected",
+        "human_review_paused",
         "human_review_requested",
     }
     if event_type in error_events:
@@ -3006,8 +3007,8 @@ def _timeline_message(
         return _edge_message("edge rejected", edge_id, source_step_id, target_step_id)
     if event_type == "edge_evaluated":
         return _edge_message("edge evaluated", edge_id, source_step_id, target_step_id)
-    if event_type == "human_review_requested":
-        return f"human review requested: {step_id}" if step_id else "human review requested"
+    if event_type in {"human_review_paused", "human_review_requested"}:
+        return f"human review paused: {step_id}" if step_id else "human review paused"
     if event_type == "policy_violation":
         return _optional_string(payload.get("message")) or "policy violation"
     if event_type == "workflow_succeeded":

@@ -7,8 +7,17 @@ from typing import Any
 
 from core.framework import RunResult, WorkflowRunner
 from core.framework.specs import EdgeSpec, StepSpec, WorkflowSpec
-from core.framework.workflow import FunctionStepRegistry, ScopedDataBuffer
+from core.framework.workflow import (
+    ArtifactPublishContext,
+    ArtifactPublishPhase,
+    FunctionStepRegistry,
+    RuntimeArtifactPublisher,
+    ScopedDataBuffer,
+    WorkflowArtifactPublisherRegistry,
+    register_manifest_artifact_once,
+)
 from domain.reports import FinalReport, render_markdown
+from storage.artifacts import ArtifactRef
 from storage.local_json import LocalJsonRepository
 from workflows.daily_intelligence.spec import WORKFLOW_ID as DAILY_WORKFLOW_ID
 
@@ -46,7 +55,11 @@ class WeeklyIntelligenceRunner:
         if source_limit <= 0:
             raise ValueError("source_limit must be greater than zero")
         registry = self._function_registry()
-        runner = WorkflowRunner(artifact_root=self.artifact_root, function_registry=registry)
+        runner = WorkflowRunner(
+            artifact_root=self.artifact_root,
+            function_registry=registry,
+            artifact_publishers=_weekly_artifact_publishers(),
+        )
         period = _resolve_period(period_start=period_start, period_end=period_end)
         return runner.run(
             build_weekly_intelligence_workflow(),
@@ -157,6 +170,64 @@ def build_weekly_intelligence_workflow() -> WorkflowSpec:
             "type": "object",
             "required": ["final_report", "report_markdown", "weekly_metrics"],
         },
+    )
+
+
+class WeeklyIntelligenceArtifactPublisher:
+    publisher_id = "weekly_intelligence"
+
+    def supports(self, context: ArtifactPublishContext) -> bool:
+        return (
+            context.phase == ArtifactPublishPhase.TERMINAL
+            and context.workflow.workflow_id == WORKFLOW_ID
+        )
+
+    def publish(self, context: ArtifactPublishContext) -> list[ArtifactRef]:
+        refs: list[ArtifactRef] = []
+        if "final_report" in context.output:
+            register_manifest_artifact_once(context.manifest, "report_json", "report.json")
+            path = context.artifact_manager.write_json(
+                context.run_id,
+                "report.json",
+                context.output["final_report"],
+            )
+            refs.append(
+                ArtifactRef(
+                    artifact_id="report_json",
+                    run_id=context.run_id,
+                    artifact_type="report_json",
+                    path="report.json",
+                    content_type="application/json",
+                    size_bytes=path.stat().st_size,
+                    redacted=True,
+                    metadata={"workflow_id": context.workflow.workflow_id},
+                )
+            )
+        if isinstance(context.output.get("report_markdown"), str):
+            register_manifest_artifact_once(context.manifest, "report_markdown", "report.md")
+            path = context.artifact_manager.write_text(
+                context.run_id,
+                "report.md",
+                context.output["report_markdown"],
+            )
+            refs.append(
+                ArtifactRef(
+                    artifact_id="report_markdown",
+                    run_id=context.run_id,
+                    artifact_type="report_markdown",
+                    path="report.md",
+                    content_type="text/markdown",
+                    size_bytes=path.stat().st_size,
+                    redacted=True,
+                    metadata={"workflow_id": context.workflow.workflow_id},
+                )
+            )
+        return refs
+
+
+def _weekly_artifact_publishers() -> WorkflowArtifactPublisherRegistry:
+    return WorkflowArtifactPublisherRegistry(
+        [WeeklyIntelligenceArtifactPublisher(), RuntimeArtifactPublisher()]
     )
 
 

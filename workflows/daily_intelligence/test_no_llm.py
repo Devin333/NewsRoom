@@ -6,6 +6,9 @@ from typing import Any
 from core.framework import RunResult, WorkflowRunner
 from core.framework.specs import EdgeSpec, StepSpec, WorkflowSpec
 from core.framework.workflow import FunctionStepRegistry, ScopedDataBuffer
+from workflows.daily_intelligence.artifact_publisher import (
+    build_daily_intelligence_artifact_publishers,
+)
 
 PROFILE = "test-no-llm"
 WORKFLOW_ID = "daily-intelligence-test-no-llm"
@@ -75,6 +78,7 @@ def run_test_no_llm(
     runner = WorkflowRunner(
         artifact_root=artifact_root,
         function_registry=build_test_no_llm_registry(),
+        artifact_publishers=build_daily_intelligence_artifact_publishers(),
     )
     return runner.run(
         build_test_no_llm_workflow(),

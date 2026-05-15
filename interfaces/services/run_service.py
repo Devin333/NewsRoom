@@ -20,6 +20,7 @@ from workflows.daily_intelligence import build_test_agent_loop_registry
 from workflows.daily_intelligence import build_test_agent_loop_workflow
 from workflows.daily_intelligence import build_test_no_llm_registry
 from workflows.daily_intelligence import build_test_no_llm_workflow
+from workflows.daily_intelligence.artifact_publisher import build_daily_intelligence_artifact_publishers
 from workflows.daily_intelligence.test_agent_loop import run_test_agent_loop
 from workflows.daily_intelligence.test_no_llm import run_test_no_llm
 from workflows.daily_intelligence.runner import PROFILE_LIVE, PROFILE_LIVE_OFFLINE
@@ -223,6 +224,9 @@ class RunApplicationService:
             artifact_root=self.artifact_root,
             function_registry=resolved.registry,
             checkpoint_store=LocalJsonCheckpointStore(checkpoint_store_path),
+            artifact_publishers=build_daily_intelligence_artifact_publishers()
+            if resolved.workflow.workflow_id.startswith("daily-intelligence")
+            else None,
         )
         run_result = runner.resume_from_approval_context(
             resolved.workflow,

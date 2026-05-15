@@ -93,7 +93,7 @@ def test_manifest_schema_version_tolerates_legacy_read() -> None:
     assert manifest_schema_version({}) is None
 
 
-def test_quality_manifest_fields_only_from_quality_result(tmp_path) -> None:
+def test_generic_executor_does_not_publish_daily_quality_manifest_fields(tmp_path) -> None:
     functions = FunctionStepRegistry()
     functions.register(
         "sample.quality",
@@ -125,6 +125,8 @@ def test_quality_manifest_fields_only_from_quality_result(tmp_path) -> None:
     manifest = json.loads((tmp_path / "run-quality-manifest" / "manifest.json").read_text(encoding="utf-8"))
 
     assert result.status == WorkflowStatus.SUCCEEDED
-    assert manifest["quality_score"] == 0.97
-    assert manifest["quality_route"] == "publish"
-    assert manifest["quality_decision"] == "approved"
+    assert "quality_score" not in manifest
+    assert "quality_route" not in manifest
+    assert "quality_decision" not in manifest
+    assert "quality_result" not in manifest["artifacts"]
+    assert "report_quality_summary" not in manifest["artifacts"]
