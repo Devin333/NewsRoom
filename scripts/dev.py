@@ -110,8 +110,16 @@ def _compile_command() -> list[str]:
 
 
 def _workflow_test_paths() -> list[str]:
-    paths = sorted(glob.glob("tests/core/framework/workflow/test_workflow_compiler_*.py"))
-    return paths or ["tests/core/framework/workflow/test_workflow_compiler_*.py"]
+    paths = sorted(
+        [
+            *glob.glob("tests/core/framework/workflow/test_workflow_compiler_*.py"),
+            *glob.glob("tests/core/framework/workflow/test_scheduler_*.py"),
+        ]
+    )
+    return paths or [
+        "tests/core/framework/workflow/test_workflow_compiler_*.py",
+        "tests/core/framework/workflow/test_scheduler_*.py",
+    ]
 
 
 def _smoke_test_no_llm_command(run_id: str | None = None) -> list[str]:
