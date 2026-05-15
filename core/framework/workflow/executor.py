@@ -20,11 +20,16 @@ from core.framework.specs import (
     WorkflowStatus,
 )
 from core.framework.workflow.buffer import DataBuffer
+from core.framework.workflow.artifact_publishers import (
+    ArtifactPublishContext,
+    ArtifactPublishPhase,
+    RuntimeArtifactPublisher,
+    WorkflowArtifactPublisherRegistry,
+)
 from core.framework.workflow.manifest import (
     build_run_manifest,
     register_manifest_artifact,
     register_manifest_step_artifact,
-    validate_run_manifest,
 )
 from core.framework.workflow.result import StepOutcome, WorkflowError, WorkflowResult
 from core.framework.workflow.routing import RoutingDecision, RoutingEngine
@@ -54,6 +59,7 @@ class WorkflowExecutor:
         checkpoint_store: Any | None = None,
         event_bus: EventBus | None = None,
         global_budget_tracker: Any | None = None,
+        artifact_publishers: WorkflowArtifactPublisherRegistry | None = None,
     ) -> None:
         if step_runner_registry is None:
             if function_step_runner is None:
@@ -66,6 +72,9 @@ class WorkflowExecutor:
         self._checkpoint_store = checkpoint_store
         self._event_bus = event_bus
         self._global_budget_tracker = global_budget_tracker
+        self._artifact_publishers = artifact_publishers or WorkflowArtifactPublisherRegistry(
+            [RuntimeArtifactPublisher()]
+        )
 
     def execute(
         self,
@@ -104,19 +113,6 @@ class WorkflowExecutor:
         started_at = _utc_now()
         started_monotonic = time.perf_counter()
 
-        self._artifact_manager.write_json(actual_run_id, "request.json", request)
-        self._artifact_manager.write_json(actual_run_id, "workflow_spec.json", workflow)
-        self._artifact_manager.write_json(
-            actual_run_id,
-            "workflow_version.json",
-            _workflow_version_payload(workflow),
-        )
-        self._artifact_manager.write_json(
-            actual_run_id,
-            "data_buffer.initial.json",
-            initial_buffer_snapshot.to_dict(),
-        )
-
         manifest = build_run_manifest(
             run_id=actual_run_id,
             workflow=workflow,
@@ -127,6 +123,23 @@ class WorkflowExecutor:
             manifest["resumed_from_checkpoint_id"] = _resumed_checkpoint_id
         if _resume_metadata:
             manifest["resume_metadata"] = dict(_resume_metadata)
+
+        self._artifact_publishers.publish_all(
+            ArtifactPublishContext(
+                phase=ArtifactPublishPhase.START,
+                run_id=actual_run_id,
+                workflow=workflow,
+                profile=profile,
+                status=WorkflowStatus.RUNNING,
+                request=request,
+                output={},
+                manifest=manifest,
+                artifact_manager=self._artifact_manager,
+                step_results={},
+                path=[],
+                initial_buffer_snapshot=initial_buffer_snapshot,
+            )
+        )
 
         if _resumed_checkpoint_id is None:
             recorder.emit(
@@ -344,8 +357,6 @@ class WorkflowExecutor:
 
         if status == WorkflowStatus.SUCCEEDED:
             recorder.emit("workflow_succeeded", {"path": path})
-            self._artifact_manager.write_json(actual_run_id, "output.json", output)
-            register_manifest_artifact(manifest, "output", "output.json")
             self._write_source_diagnostic_artifacts(actual_run_id, manifest, output)
             if "evidence_bundle" in output:
                 self._artifact_manager.write_json(
@@ -547,40 +558,12 @@ class WorkflowExecutor:
                 )
                 register_manifest_artifact(manifest, "blocked_report", "blocked_report.json")
         elif status in {WorkflowStatus.PAUSED, WorkflowStatus.WAITING_FOR_HUMAN}:
-            pause_payload = {
-                "status": status.value,
-                "path": path,
-                "current_step_ids": list(current_step_ids),
-                "latest_checkpoint_id": checkpoint_ids[-1] if checkpoint_ids else None,
-            }
-            self._artifact_manager.write_json(actual_run_id, "pause.json", pause_payload)
-            register_manifest_artifact(manifest, "pause", "pause.json")
+            pass
         else:
             terminal_event = _terminal_error_event_type(status)
             recorder.emit(terminal_event, {"path": path, "error": error})
-            self._artifact_manager.write_json(actual_run_id, "error.json", error)
-            register_manifest_artifact(manifest, "error", "error.json")
             self._write_source_diagnostic_artifacts(actual_run_id, manifest, output)
 
-        self._artifact_manager.write_json(
-            actual_run_id,
-            "data_buffer_snapshot.json",
-            output,
-        )
-        self._artifact_manager.write_json(
-            actual_run_id,
-            "data_buffer.final.json",
-            output,
-        )
-        self._artifact_manager.write_json(
-            actual_run_id,
-            "data_buffer.diff.json",
-            buffer_diff.to_dict(),
-        )
-        step_results_payload = {
-            step_id: outcome.to_dict()
-            for step_id, outcome in step_results.items()
-        }
         metrics_payload = _workflow_metrics_payload(
             started_monotonic=started_monotonic,
             status=status,
@@ -593,17 +576,32 @@ class WorkflowExecutor:
             global_budget_tracker=self._global_budget_tracker,
         )
         redaction_report = _redaction_report(output)
-        self._artifact_manager.write_json(actual_run_id, "step_results.json", step_results_payload)
-        self._artifact_manager.write_json(actual_run_id, "metrics.json", metrics_payload)
-        self._artifact_manager.write_json(actual_run_id, "redaction_report.json", redaction_report)
-        self._artifact_manager.write_json(actual_run_id, "manifest.json", manifest)
-        manifest["event_count"] = metrics_payload["event_count"]
-        manifest["metrics"] = metrics_payload
-        manifest["redaction_report"] = redaction_report
         events_path = recorder.write_jsonl(run_dir / "events.jsonl")
-        _populate_artifact_metadata(manifest, run_dir)
-        validate_run_manifest(manifest, require_terminal_artifact=True)
-        manifest_path = self._artifact_manager.write_json(actual_run_id, "manifest.json", manifest)
+        self._artifact_publishers.publish_all(
+            ArtifactPublishContext(
+                phase=ArtifactPublishPhase.TERMINAL,
+                run_id=actual_run_id,
+                workflow=workflow,
+                profile=profile,
+                status=status,
+                request=request,
+                output=output,
+                manifest=manifest,
+                artifact_manager=self._artifact_manager,
+                step_results=step_results,
+                path=path,
+                error=error,
+                current_step_ids=current_step_ids,
+                checkpoint_ids=checkpoint_ids,
+                initial_buffer_snapshot=initial_buffer_snapshot,
+                final_buffer_snapshot=final_buffer_snapshot,
+                buffer_diff=buffer_diff,
+                metrics_payload=metrics_payload,
+                redaction_report=redaction_report,
+                events_path=events_path,
+            )
+        )
+        manifest_path = run_dir / "manifest.json"
 
         return WorkflowResult(
             run_id=actual_run_id,
@@ -1437,61 +1435,6 @@ def _sync_llm_call_artifacts_to_buffer(
             artifacts,
             lineage={"step_id": step.step_id, "post_processed": True},
         )
-
-
-def _workflow_version_payload(workflow: WorkflowSpec) -> dict[str, Any]:
-    return {
-        "workflow_id": workflow.workflow_id,
-        "workflow_version": workflow.version,
-        "name": workflow.name,
-        "description": workflow.description,
-        "trigger": workflow.trigger.to_dict() if workflow.trigger else None,
-        "metadata": dict(workflow.metadata),
-    }
-
-
-def _populate_artifact_metadata(manifest: dict[str, Any], run_dir: Any) -> None:
-    artifacts = manifest.get("artifacts") or {}
-    if not isinstance(artifacts, dict):
-        return
-    metadata = manifest.setdefault("artifact_metadata", {})
-    if not isinstance(metadata, dict):
-        metadata = {}
-        manifest["artifact_metadata"] = metadata
-    for artifact_key, relative_path in sorted(artifacts.items()):
-        if not isinstance(relative_path, str):
-            continue
-        try:
-            path = run_dir / relative_path
-            data = path.read_bytes()
-        except OSError:
-            continue
-        metadata[str(artifact_key)] = {
-            "checksum": sha256(data).hexdigest(),
-            "content_type": _content_type_for_artifact_path(str(relative_path)),
-            "size_bytes": len(data),
-        }
-    metadata.setdefault(
-        "manifest",
-        {
-            "checksum": "pending",
-            "content_type": "application/json",
-            "size_bytes": 0,
-        },
-    )
-
-
-def _content_type_for_artifact_path(relative_path: str) -> str:
-    suffix = str(relative_path).rsplit(".", 1)[-1].casefold() if "." in relative_path else ""
-    if suffix == "json":
-        return "application/json"
-    if suffix == "jsonl":
-        return "application/x-ndjson"
-    if suffix == "md":
-        return "text/markdown"
-    if suffix == "txt":
-        return "text/plain"
-    return "application/octet-stream"
 
 
 def _workflow_metrics_payload(

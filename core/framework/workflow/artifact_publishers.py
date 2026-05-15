@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from hashlib import sha256
 from pathlib import Path
 from typing import Any, Iterable, Protocol
 
 from core.framework.artifacts.filesystem import ArtifactManager
 from core.framework.specs import WorkflowSpec, WorkflowStatus
-from core.framework.workflow.manifest import register_manifest_artifact
+from core.framework.workflow.manifest import register_manifest_artifact, validate_run_manifest
 from core.framework.workflow.result import StepOutcome, WorkflowError
 from storage.artifacts import ArtifactRef
 
@@ -53,6 +54,103 @@ class WorkflowArtifactPublisher(Protocol):
 
     def publish(self, context: ArtifactPublishContext) -> list[ArtifactRef]:
         ...
+
+
+class RuntimeArtifactPublisher:
+    publisher_id = "runtime"
+
+    def supports(self, context: ArtifactPublishContext) -> bool:
+        return context.phase in {
+            ArtifactPublishPhase.START,
+            ArtifactPublishPhase.TERMINAL,
+        }
+
+    def publish(self, context: ArtifactPublishContext) -> list[ArtifactRef]:
+        if context.phase == ArtifactPublishPhase.START:
+            return self._publish_start(context)
+        return self._publish_terminal(context)
+
+    def _publish_start(self, context: ArtifactPublishContext) -> list[ArtifactRef]:
+        refs = [
+            _write_json_artifact(context, "request", "request.json", context.request),
+            _write_json_artifact(context, "workflow_spec", "workflow_spec.json", context.workflow),
+            _write_json_artifact(
+                context,
+                "workflow_version",
+                "workflow_version.json",
+                _workflow_version_payload(context.workflow),
+            ),
+            _write_json_artifact(
+                context,
+                "data_buffer_initial",
+                "data_buffer.initial.json",
+                _artifact_payload(context.initial_buffer_snapshot),
+            ),
+        ]
+        return refs
+
+    def _publish_terminal(self, context: ArtifactPublishContext) -> list[ArtifactRef]:
+        refs: list[ArtifactRef] = []
+        if context.status == WorkflowStatus.SUCCEEDED:
+            refs.append(_write_json_artifact(context, "output", "output.json", context.output))
+        elif context.status in {WorkflowStatus.PAUSED, WorkflowStatus.WAITING_FOR_HUMAN}:
+            refs.append(_write_json_artifact(context, "pause", "pause.json", _pause_payload(context)))
+        else:
+            refs.append(_write_json_artifact(context, "error", "error.json", context.error))
+
+        metrics_payload = _required_payload(context.metrics_payload, "metrics_payload")
+        metrics_payload["artifact_count"] = len(context.manifest.get("artifacts") or {})
+        context.metrics_payload = metrics_payload
+
+        refs.extend(
+            [
+                _write_json_artifact(
+                    context,
+                    "data_buffer_snapshot",
+                    "data_buffer_snapshot.json",
+                    context.output,
+                ),
+                _write_json_artifact(
+                    context,
+                    "data_buffer_final",
+                    "data_buffer.final.json",
+                    _artifact_payload(context.final_buffer_snapshot, fallback=context.output),
+                ),
+                _write_json_artifact(
+                    context,
+                    "data_buffer_diff",
+                    "data_buffer.diff.json",
+                    _artifact_payload(context.buffer_diff),
+                ),
+                _write_json_artifact(
+                    context,
+                    "step_results",
+                    "step_results.json",
+                    {
+                        step_id: outcome.to_dict()
+                        for step_id, outcome in context.step_results.items()
+                    },
+                ),
+                _write_json_artifact(
+                    context,
+                    "metrics",
+                    "metrics.json",
+                    metrics_payload,
+                ),
+                _write_json_artifact(
+                    context,
+                    "redaction_report",
+                    "redaction_report.json",
+                    _required_payload(context.redaction_report, "redaction_report"),
+                ),
+            ]
+        )
+
+        context.manifest["event_count"] = context.metrics_payload["event_count"]
+        context.manifest["metrics"] = context.metrics_payload
+        context.manifest["redaction_report"] = context.redaction_report
+        refs.append(_write_manifest_artifact(context))
+        return refs
 
 
 class WorkflowArtifactPublisherRegistry:
@@ -120,6 +218,149 @@ def register_manifest_artifact_once(
             f"{existing_path} != {relative_path}"
         )
     register_manifest_artifact(manifest, artifact_key, relative_path)
+
+
+def _write_json_artifact(
+    context: ArtifactPublishContext,
+    artifact_key: str,
+    relative_path: str,
+    payload: Any,
+) -> ArtifactRef:
+    register_manifest_artifact_once(context.manifest, artifact_key, relative_path)
+    path = context.artifact_manager.write_json(context.run_id, relative_path, payload)
+    return _artifact_ref(
+        context,
+        artifact_id=artifact_key,
+        artifact_type=artifact_key,
+        relative_path=relative_path,
+        path=path,
+        content_type="application/json",
+    )
+
+
+def _write_manifest_artifact(context: ArtifactPublishContext) -> ArtifactRef:
+    register_manifest_artifact_once(context.manifest, "manifest", "manifest.json")
+    context.artifact_manager.write_json(context.run_id, "manifest.json", context.manifest)
+    _populate_artifact_metadata(context.manifest, context.artifact_manager.run_dir(context.run_id))
+    validate_run_manifest(context.manifest, require_terminal_artifact=True)
+    path = context.artifact_manager.write_json(context.run_id, "manifest.json", context.manifest)
+    return _artifact_ref(
+        context,
+        artifact_id="manifest",
+        artifact_type="manifest",
+        relative_path="manifest.json",
+        path=path,
+        content_type="application/json",
+    )
+
+
+def _artifact_ref(
+    context: ArtifactPublishContext,
+    *,
+    artifact_id: str,
+    artifact_type: str,
+    relative_path: str,
+    path: Path,
+    content_type: str,
+) -> ArtifactRef:
+    data = path.read_bytes()
+    return ArtifactRef(
+        artifact_id=artifact_id,
+        run_id=context.run_id,
+        artifact_type=artifact_type,
+        path=Path(relative_path).as_posix(),
+        content_type=content_type,
+        size_bytes=len(data),
+        checksum=sha256(data).hexdigest(),
+        redacted=True,
+        metadata={
+            "artifact_key": artifact_id,
+            "workflow_id": context.workflow.workflow_id,
+            "workflow_version": context.workflow.version,
+            "phase": context.phase.value,
+        },
+    )
+
+
+def _pause_payload(context: ArtifactPublishContext) -> dict[str, Any]:
+    checkpoint_ids = context.checkpoint_ids or []
+    return {
+        "status": context.status.value,
+        "path": list(context.path),
+        "current_step_ids": list(context.current_step_ids or []),
+        "latest_checkpoint_id": checkpoint_ids[-1] if checkpoint_ids else None,
+    }
+
+
+def _artifact_payload(value: Any, *, fallback: Any | None = None) -> Any:
+    if value is None:
+        return fallback
+    to_dict = getattr(value, "to_dict", None)
+    if callable(to_dict):
+        return to_dict()
+    return value
+
+
+def _required_payload(value: dict[str, Any] | None, field_name: str) -> dict[str, Any]:
+    if value is None:
+        raise ValueError(f"{field_name} is required for terminal runtime artifact publishing")
+    return value
+
+
+def _workflow_version_payload(workflow: WorkflowSpec) -> dict[str, Any]:
+    return {
+        "workflow_id": workflow.workflow_id,
+        "workflow_version": workflow.version,
+        "name": workflow.name,
+        "description": workflow.description,
+        "trigger": workflow.trigger.to_dict() if workflow.trigger else None,
+        "metadata": dict(workflow.metadata),
+    }
+
+
+def _populate_artifact_metadata(manifest: dict[str, Any], run_dir: Path) -> None:
+    artifacts = manifest.get("artifacts") or {}
+    if not isinstance(artifacts, dict):
+        return
+    metadata = manifest.setdefault("artifact_metadata", {})
+    if not isinstance(metadata, dict):
+        metadata = {}
+        manifest["artifact_metadata"] = metadata
+    for artifact_key, relative_path in sorted(artifacts.items()):
+        relative = _manifest_artifact_path(relative_path)
+        if relative is None:
+            continue
+        try:
+            path = run_dir / relative
+            data = path.read_bytes()
+        except OSError:
+            continue
+        metadata[str(artifact_key)] = {
+            "checksum": sha256(data).hexdigest(),
+            "content_type": _content_type_for_artifact_path(relative),
+            "size_bytes": len(data),
+        }
+    metadata.setdefault(
+        "manifest",
+        {
+            "checksum": "pending",
+            "content_type": "application/json",
+            "size_bytes": 0,
+        },
+    )
+
+
+def _content_type_for_artifact_path(relative_path: str) -> str:
+    suffix = str(relative_path).rsplit(".", 1)[-1].casefold() if "." in relative_path else ""
+    if suffix == "json":
+        return "application/json"
+    if suffix == "jsonl":
+        return "application/x-ndjson"
+    if suffix == "md":
+        return "text/markdown"
+    if suffix == "txt":
+        return "text/plain"
+    return "application/octet-stream"
 
 
 def _publisher_id(publisher: WorkflowArtifactPublisher) -> str:

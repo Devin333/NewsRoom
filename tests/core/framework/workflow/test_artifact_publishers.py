@@ -11,7 +11,9 @@ from core.framework.workflow import (
     ArtifactPublishContext,
     ArtifactPublishPhase,
     ArtifactPublisherRegistry,
+    DataBuffer,
     StepOutcome,
+    RuntimeArtifactPublisher,
     WorkflowArtifactPublisherRegistry,
     register_manifest_artifact_once,
 )
@@ -33,6 +35,96 @@ def test_artifact_publish_context_normalizes_phase_and_status(tmp_path) -> None:
     assert context.current_step_ids == ["start"]
     assert context.checkpoint_ids == ["cp-1"]
     assert context.events_path == tmp_path / "run-1" / "events.jsonl"
+
+
+def test_runtime_artifact_publisher_writes_start_artifacts(tmp_path) -> None:
+    manifest = {"artifacts": {}}
+    context = _context(
+        tmp_path,
+        phase=ArtifactPublishPhase.START,
+        status=WorkflowStatus.RUNNING,
+        manifest=manifest,
+        initial_buffer_snapshot=DataBuffer({"request": {"topic": "ai"}}).snapshot(),
+    )
+
+    refs = RuntimeArtifactPublisher().publish(context)
+
+    run_dir = tmp_path / "run-1"
+    assert [ref.artifact_id for ref in refs] == [
+        "request",
+        "workflow_spec",
+        "workflow_version",
+        "data_buffer_initial",
+    ]
+    assert (run_dir / "request.json").exists()
+    assert (run_dir / "workflow_spec.json").exists()
+    assert (run_dir / "workflow_version.json").exists()
+    assert (run_dir / "data_buffer.initial.json").exists()
+    assert manifest["artifacts"]["request"] == "request.json"
+    assert manifest["artifacts"]["data_buffer_initial"] == "data_buffer.initial.json"
+
+
+@pytest.mark.parametrize(
+    ("status", "terminal_key", "terminal_path"),
+    [
+        (WorkflowStatus.SUCCEEDED, "output", "output.json"),
+        (WorkflowStatus.FAILED, "error", "error.json"),
+        (WorkflowStatus.PAUSED, "pause", "pause.json"),
+    ],
+)
+def test_runtime_artifact_publisher_writes_terminal_artifacts(
+    tmp_path,
+    status,
+    terminal_key,
+    terminal_path,
+) -> None:
+    manifest = _runtime_manifest(status=status)
+    start_context = _context(
+        tmp_path,
+        phase=ArtifactPublishPhase.START,
+        status=WorkflowStatus.RUNNING,
+        manifest=manifest,
+        initial_buffer_snapshot=DataBuffer({"request": {"topic": "ai"}}).snapshot(),
+    )
+    RuntimeArtifactPublisher().publish(start_context)
+    (tmp_path / "run-1" / "events.jsonl").write_text("", encoding="utf-8")
+    output = {"report": "done"} if status == WorkflowStatus.SUCCEEDED else {}
+    context = _context(
+        tmp_path,
+        phase=ArtifactPublishPhase.TERMINAL,
+        status=status,
+        output=output,
+        manifest=manifest,
+        error=None if status != WorkflowStatus.FAILED else _workflow_error(),
+        current_step_ids=["review"] if status == WorkflowStatus.PAUSED else [],
+        checkpoint_ids=["cp-1"] if status == WorkflowStatus.PAUSED else [],
+        final_buffer_snapshot=DataBuffer(output).snapshot(),
+        buffer_diff=DataBuffer(output).diff(DataBuffer({}).snapshot()),
+        metrics_payload={"status": status.value, "event_count": 3},
+        redaction_report={"redacted": False},
+    )
+
+    refs = RuntimeArtifactPublisher().publish(context)
+
+    run_dir = tmp_path / "run-1"
+    artifact_ids = {ref.artifact_id for ref in refs}
+    assert terminal_key in artifact_ids
+    assert (run_dir / terminal_path).exists()
+    assert (run_dir / "data_buffer.final.json").exists()
+    assert (run_dir / "data_buffer.diff.json").exists()
+    assert (run_dir / "step_results.json").exists()
+    assert (run_dir / "metrics.json").exists()
+    assert (run_dir / "redaction_report.json").exists()
+    assert (run_dir / "manifest.json").exists()
+    assert manifest["artifacts"][terminal_key] == terminal_path
+    assert manifest["artifacts"]["data_buffer_final"] == "data_buffer.final.json"
+    assert manifest["artifacts"]["data_buffer_diff"] == "data_buffer.diff.json"
+    assert manifest["artifacts"]["step_results"] == "step_results.json"
+    assert manifest["artifacts"]["metrics"] == "metrics.json"
+    assert manifest["artifacts"]["redaction_report"] == "redaction_report.json"
+    if status == WorkflowStatus.PAUSED:
+        pause = __import__("json").loads((run_dir / "pause.json").read_text(encoding="utf-8"))
+        assert pause["latest_checkpoint_id"] == "cp-1"
 
 
 def test_artifact_publisher_registry_filters_and_publishes_in_order(tmp_path) -> None:
@@ -128,8 +220,16 @@ def _context(
     *,
     phase: ArtifactPublishPhase | str = ArtifactPublishPhase.TERMINAL,
     status: WorkflowStatus | str = WorkflowStatus.SUCCEEDED,
+    output: dict | None = None,
+    manifest: dict | None = None,
+    error=None,
     current_step_ids: list[str] | None = None,
     checkpoint_ids: list[str] | None = None,
+    initial_buffer_snapshot=None,
+    final_buffer_snapshot=None,
+    buffer_diff=None,
+    metrics_payload: dict | None = None,
+    redaction_report: dict | None = None,
     events_path=None,
 ) -> ArtifactPublishContext:
     return ArtifactPublishContext(
@@ -145,15 +245,56 @@ def _context(
         profile="test",
         status=status,
         request={"topic": "ai"},
-        output={},
-        manifest={"artifacts": {}},
+        output=output or {},
+        manifest=manifest or {"artifacts": {}},
         artifact_manager=ArtifactManager(tmp_path),
         step_results={},
         path=[],
+        error=error,
         current_step_ids=current_step_ids,
         checkpoint_ids=checkpoint_ids,
+        initial_buffer_snapshot=initial_buffer_snapshot,
+        final_buffer_snapshot=final_buffer_snapshot,
+        buffer_diff=buffer_diff,
+        metrics_payload=metrics_payload,
+        redaction_report=redaction_report,
         events_path=events_path,
     )
+
+
+def _runtime_manifest(*, status: WorkflowStatus) -> dict:
+    return {
+        "schema_version": "newsroom.workflow_run_manifest.v1",
+        "run_id": "run-1",
+        "workflow_id": "publisher-test",
+        "workflow_version": "1.0",
+        "profile": "test",
+        "status": status.value,
+        "started_at": "2026-05-15T00:00:00Z",
+        "finished_at": "2026-05-15T00:00:01Z",
+        "path": [],
+        "steps": {},
+        "artifacts": {
+            "request": "request.json",
+            "workflow_spec": "workflow_spec.json",
+            "workflow_version": "workflow_version.json",
+            "events": "events.jsonl",
+            "manifest": "manifest.json",
+            "data_buffer_snapshot": "data_buffer_snapshot.json",
+            "data_buffer_initial": "data_buffer.initial.json",
+            "data_buffer_final": "data_buffer.final.json",
+            "data_buffer_diff": "data_buffer.diff.json",
+            "step_results": "step_results.json",
+            "metrics": "metrics.json",
+            "redaction_report": "redaction_report.json",
+        },
+    }
+
+
+def _workflow_error():
+    from core.framework.workflow import WorkflowError
+
+    return WorkflowError(error_type="StepFailed", message="failed")
 
 
 @dataclass
