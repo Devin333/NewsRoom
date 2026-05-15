@@ -12,6 +12,8 @@ from core.framework.workflow.artifact_publishers import (
     ArtifactPublisherRegistry,
     ArtifactPublishPhase,
     WorkflowArtifactPublisher,
+    WorkflowArtifactPublisherRegistry,
+    register_manifest_artifact_once,
 )
 from core.framework.workflow.executor import WorkflowExecutor
 from core.framework.workflow.inspection import (
@@ -161,6 +163,7 @@ __all__ = [
     "WorkflowExecutor",
     "WorkflowArtifactContentRecord",
     "WorkflowArtifactPublisher",
+    "WorkflowArtifactPublisherRegistry",
     "WorkflowArtifactInventory",
     "WorkflowArtifactRecord",
     "WorkflowDataBufferChange",
@@ -214,6 +217,7 @@ __all__ = [
     "redact_sensitive_values",
     "replay_bundle_summary",
     "register_manifest_artifact",
+    "register_manifest_artifact_once",
     "register_manifest_step_artifact",
     "required_artifact_records",
     "resolve_artifact_path",

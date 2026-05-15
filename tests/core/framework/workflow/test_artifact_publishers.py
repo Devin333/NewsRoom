@@ -12,6 +12,8 @@ from core.framework.workflow import (
     ArtifactPublishPhase,
     ArtifactPublisherRegistry,
     StepOutcome,
+    WorkflowArtifactPublisherRegistry,
+    register_manifest_artifact_once,
 )
 from storage.artifacts import ArtifactRef
 
@@ -52,12 +54,68 @@ def test_artifact_publisher_registry_filters_and_publishes_in_order(tmp_path) ->
     assert [ref.artifact_id for ref in refs] == ["first-ref", "second-ref"]
 
 
+def test_workflow_artifact_publisher_registry_name_is_available(tmp_path) -> None:
+    publisher = _FakePublisher("runtime", ArtifactPublishPhase.START, [])
+    registry = WorkflowArtifactPublisherRegistry([publisher])
+
+    assert registry.get("runtime") is publisher
+
+
 def test_artifact_publisher_registry_rejects_duplicate_ids() -> None:
     publisher = _FakePublisher("runtime", ArtifactPublishPhase.START, [])
     registry = ArtifactPublisherRegistry([publisher])
 
-    with pytest.raises(ValueError, match="already registered: runtime"):
+    with pytest.raises(ValueError, match="artifact publisher already registered: runtime"):
         registry.register(publisher)
+
+
+def test_artifact_publisher_registry_allows_distinct_artifacts(tmp_path) -> None:
+    registry = ArtifactPublisherRegistry(
+        [
+            _StaticRefPublisher("report", "report_json", ArtifactPublishPhase.TERMINAL),
+            _StaticRefPublisher("events", "events", ArtifactPublishPhase.TERMINAL),
+        ]
+    )
+
+    refs = registry.publish_all(_context(tmp_path, phase=ArtifactPublishPhase.TERMINAL))
+
+    assert [ref.artifact_id for ref in refs] == ["report_json", "events"]
+
+
+def test_artifact_publisher_registry_rejects_duplicate_artifact_id(tmp_path) -> None:
+    registry = ArtifactPublisherRegistry(
+        [
+            _StaticRefPublisher("report-a", "report_json", ArtifactPublishPhase.TERMINAL),
+            _StaticRefPublisher("report-b", "report_json", ArtifactPublishPhase.TERMINAL),
+        ]
+    )
+
+    with pytest.raises(ValueError, match="duplicate artifact id published: report_json"):
+        registry.publish_all(_context(tmp_path, phase=ArtifactPublishPhase.TERMINAL))
+
+
+def test_register_manifest_artifact_once_rejects_path_conflict() -> None:
+    manifest = {"artifacts": {"report_markdown": "report.md"}}
+
+    register_manifest_artifact_once(manifest, "report_markdown", "report.md")
+
+    with pytest.raises(
+        ValueError,
+        match="manifest artifact key conflict: report_markdown report.md != reports/report.md",
+    ):
+        register_manifest_artifact_once(
+            manifest,
+            "report_markdown",
+            "reports/report.md",
+        )
+
+
+def test_register_manifest_artifact_once_accepts_dict_artifact_record() -> None:
+    manifest = {"artifacts": {"report_markdown": {"path": "report.md"}}}
+
+    register_manifest_artifact_once(manifest, "report_markdown", "report.md")
+
+    assert manifest["artifacts"]["report_markdown"] == "report.md"
 
 
 def test_artifact_publisher_registry_rejects_missing_id() -> None:
@@ -115,6 +173,30 @@ class _FakePublisher:
                 run_id=context.run_id,
                 artifact_type=self.publisher_id,
                 path=f"{self.publisher_id}.json",
+                content_type="application/json",
+                size_bytes=2,
+                checksum="{}",
+                created_at=datetime(2026, 5, 15, tzinfo=UTC),
+            )
+        ]
+
+
+@dataclass
+class _StaticRefPublisher:
+    publisher_id: str
+    artifact_id: str
+    phase: ArtifactPublishPhase
+
+    def supports(self, context: ArtifactPublishContext) -> bool:
+        return context.phase == self.phase
+
+    def publish(self, context: ArtifactPublishContext) -> list[ArtifactRef]:
+        return [
+            ArtifactRef(
+                artifact_id=self.artifact_id,
+                run_id=context.run_id,
+                artifact_type=self.publisher_id,
+                path=f"{self.artifact_id}.json",
                 content_type="application/json",
                 size_bytes=2,
                 checksum="{}",
