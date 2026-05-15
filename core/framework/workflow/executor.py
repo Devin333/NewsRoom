@@ -33,6 +33,11 @@ from core.framework.workflow.manifest import (
 )
 from core.framework.workflow.result import StepOutcome, WorkflowError, WorkflowResult
 from core.framework.workflow.routing import RoutingDecision, RoutingEngine
+from core.framework.workflow.state_machine import (
+    WorkflowRuntimeEvent,
+    WorkflowRuntimeEventType,
+    WorkflowStateMachine,
+)
 from core.framework.workflow.step_runner import (
     FunctionStepRunner,
     StepExecutionError,
@@ -87,6 +92,7 @@ class WorkflowExecutor:
         self._event_bus = event_bus
         self._global_budget_tracker = global_budget_tracker
         self._artifact_publishers = _artifact_publisher_registry(artifact_publishers)
+        self._workflow_state_machine = WorkflowStateMachine()
 
     def execute(
         self,
@@ -136,13 +142,26 @@ class WorkflowExecutor:
         if _resume_metadata:
             manifest["resume_metadata"] = dict(_resume_metadata)
 
+        status = self._workflow_state_machine.transition(
+            WorkflowStatus.CREATED,
+            WorkflowRuntimeEvent(
+                event_type=WorkflowRuntimeEventType.START,
+                reason=(
+                    "workflow_resumed"
+                    if _resumed_checkpoint_id is not None
+                    else "workflow_execution_started"
+                ),
+                checkpoint_id=_resumed_checkpoint_id,
+            ),
+        )
+
         self._artifact_publishers.publish_all(
             ArtifactPublishContext(
                 phase=ArtifactPublishPhase.START,
                 run_id=actual_run_id,
                 workflow=workflow,
                 profile=profile,
-                status=WorkflowStatus.RUNNING,
+                status=status,
                 request=request,
                 output={},
                 manifest=manifest,
@@ -177,7 +196,6 @@ class WorkflowExecutor:
             )
             recorder.emit("checkpoint_restored", {"checkpoint_id": _resumed_checkpoint_id})
 
-        status = WorkflowStatus.RUNNING
         error: WorkflowError | None = None
         path: list[str] = list(_initial_path or [])
         step_results: dict[str, StepOutcome] = dict(_initial_step_results or {})
@@ -190,7 +208,19 @@ class WorkflowExecutor:
             visit_count = step_visit_counts.get(current_step_id, 0) + 1
             step_visit_counts[current_step_id] = visit_count
             if visit_count > workflow.max_step_visits:
-                status = WorkflowStatus.FAILED
+                status = _workflow_transition(
+                    self._workflow_state_machine,
+                    status,
+                    WorkflowRuntimeEvent(
+                        event_type=WorkflowRuntimeEventType.FAIL,
+                        reason="workflow_loop_limit_exceeded",
+                        step_id=current_step_id,
+                        metadata={
+                            "max_step_visits": workflow.max_step_visits,
+                            "visit_count": visit_count,
+                        },
+                    ),
+                )
                 error = WorkflowError(
                     error_type="WorkflowLoopLimitExceeded",
                     message=(
@@ -256,7 +286,19 @@ class WorkflowExecutor:
                         fan_out=True,
                     )
                 except Exception as exc:
-                    status = WorkflowStatus.FAILED
+                    status = _workflow_transition(
+                        self._workflow_state_machine,
+                        status,
+                        WorkflowRuntimeEvent(
+                            event_type=WorkflowRuntimeEventType.FAIL,
+                            reason=str(exc),
+                            step_id=step.step_id,
+                            metadata={
+                                "phase": "routing",
+                                "exception": repr(exc),
+                            },
+                        ),
+                    )
                     error = WorkflowError(
                         error_type=type(exc).__name__,
                         message=str(exc),
@@ -271,16 +313,44 @@ class WorkflowExecutor:
                         current_step_ids,
                     )
                     if not current_step_ids:
-                        status = WorkflowStatus.SUCCEEDED
+                        status = _workflow_transition(
+                            self._workflow_state_machine,
+                            status,
+                            WorkflowRuntimeEvent(
+                                event_type=WorkflowRuntimeEventType.SUCCEED,
+                                reason="terminal_step_completed",
+                                step_id=step.step_id,
+                            ),
+                        )
             elif outcome.status == StepStatus.PAUSED:
                 current_step_ids = [step.step_id, *current_step_ids]
-                status = (
-                    WorkflowStatus.WAITING_FOR_HUMAN
-                    if step.step_type == StepType.HUMAN_REVIEW
-                    else WorkflowStatus.PAUSED
-                )
                 recorder.emit("step_paused", {"step_id": step.step_id, "outcome": outcome})
+                checkpoint_id = self._write_checkpoint(
+                    run_id=actual_run_id,
+                    workflow=workflow,
+                    profile=profile,
+                    current_step_ids=current_step_ids,
+                    buffer=buffer,
+                    step_results=step_results,
+                    path=path,
+                    recorder=recorder,
+                )
+                if checkpoint_id is not None:
+                    checkpoint_ids.append(checkpoint_id)
+                pause_checkpoint_id = checkpoint_id or f"pause-artifact:{actual_run_id}:{step.step_id}"
                 if step.step_type == StepType.HUMAN_REVIEW:
+                    human_review_request_id = _human_review_request_id(step, outcome)
+                    status = _workflow_transition(
+                        self._workflow_state_machine,
+                        status,
+                        WorkflowRuntimeEvent(
+                            event_type=WorkflowRuntimeEventType.REQUEST_HUMAN_REVIEW,
+                            reason="human_review_required",
+                            step_id=step.step_id,
+                            checkpoint_id=pause_checkpoint_id,
+                            human_review_request_id=human_review_request_id,
+                        ),
+                    )
                     recorder.emit(
                         "human_review_paused",
                         {"step_id": step.step_id, "outcome": outcome},
@@ -290,6 +360,16 @@ class WorkflowExecutor:
                         {"reason": "human_review", "step_id": step.step_id},
                     )
                 else:
+                    status = _workflow_transition(
+                        self._workflow_state_machine,
+                        status,
+                        WorkflowRuntimeEvent(
+                            event_type=WorkflowRuntimeEventType.PAUSE,
+                            reason="step_paused",
+                            step_id=step.step_id,
+                            checkpoint_id=pause_checkpoint_id,
+                        ),
+                    )
                     recorder.emit(
                         "workflow_paused",
                         {"reason": "step_paused", "step_id": step.step_id},
@@ -300,7 +380,16 @@ class WorkflowExecutor:
                     "step_blocked" if outcome.status == StepStatus.BLOCKED else "step_failed",
                     {"step_id": step.step_id, "outcome": outcome},
                 )
-                status = WorkflowStatus.BUDGET_EXCEEDED
+                status = _workflow_transition(
+                    self._workflow_state_machine,
+                    status,
+                    WorkflowRuntimeEvent(
+                        event_type=WorkflowRuntimeEventType.BUDGET_EXCEEDED,
+                        reason=outcome.error_message or "workflow_budget_exceeded",
+                        step_id=step.step_id,
+                        metadata=outcome.error_details,
+                    ),
+                )
                 error = WorkflowError(
                     error_type=outcome.error_type or "WorkflowBudgetExceeded",
                     message=outcome.error_message or f"workflow budget exceeded at step: {step.step_id}",
@@ -310,7 +399,16 @@ class WorkflowExecutor:
                 current_step_ids = []
             elif outcome.status == StepStatus.BLOCKED:
                 recorder.emit("step_blocked", {"step_id": step.step_id, "outcome": outcome})
-                status = WorkflowStatus.BLOCKED
+                status = _workflow_transition(
+                    self._workflow_state_machine,
+                    status,
+                    WorkflowRuntimeEvent(
+                        event_type=WorkflowRuntimeEventType.BLOCK,
+                        reason=outcome.error_message or "step_blocked",
+                        step_id=step.step_id,
+                        metadata=outcome.error_details,
+                    ),
+                )
                 error = WorkflowError(
                     error_type=outcome.error_type or "StepBlocked",
                     message=outcome.error_message or f"step blocked: {step.step_id}",
@@ -328,7 +426,16 @@ class WorkflowExecutor:
                 )
                 if _blocks_on_failure(step):
                     recorder.emit("step_blocked", {"step_id": step.step_id, "outcome": outcome})
-                    status = WorkflowStatus.BLOCKED
+                    status = _workflow_transition(
+                        self._workflow_state_machine,
+                        status,
+                        WorkflowRuntimeEvent(
+                            event_type=WorkflowRuntimeEventType.BLOCK,
+                            reason=step_error.message,
+                            step_id=step.step_id,
+                            metadata=step_error.details,
+                        ),
+                    )
                     error = step_error
                     current_step_ids = []
                 else:
@@ -336,9 +443,20 @@ class WorkflowExecutor:
                     if fallback_step_id is not None:
                         current_step_ids = _prepend_new_steps([fallback_step_id], current_step_ids)
                     else:
-                        status = WorkflowStatus.FAILED
+                        status = _workflow_transition(
+                            self._workflow_state_machine,
+                            status,
+                            WorkflowRuntimeEvent(
+                                event_type=WorkflowRuntimeEventType.FAIL,
+                                reason=step_error.message,
+                                step_id=step.step_id,
+                                metadata=step_error.details,
+                            ),
+                        )
                         error = step_error
                         current_step_ids = []
+            if stop_after_checkpoint:
+                break
             checkpoint_id = self._write_checkpoint(
                 run_id=actual_run_id,
                 workflow=workflow,
@@ -351,8 +469,6 @@ class WorkflowExecutor:
             )
             if checkpoint_id is not None:
                 checkpoint_ids.append(checkpoint_id)
-            if stop_after_checkpoint:
-                break
 
         final_buffer_snapshot = buffer.snapshot()
         output = final_buffer_snapshot.to_dict()
@@ -765,6 +881,38 @@ def _is_budget_exceeded_outcome(outcome: StepOutcome) -> bool:
         return True
     error_type = str(outcome.error_type or "").casefold()
     return "budget" in error_type and "exceed" in error_type
+
+
+def _workflow_transition(
+    state_machine: WorkflowStateMachine,
+    current: WorkflowStatus,
+    event: WorkflowRuntimeEvent,
+) -> WorkflowStatus:
+    if current == WorkflowStatus.RUNNING:
+        return state_machine.transition(current, event)
+    return current
+
+
+def _human_review_request_id(step: StepSpec, outcome: StepOutcome) -> str:
+    request_key = str(step.metadata.get("request_key") or "human_review_request")
+    request = outcome.outputs.get(request_key)
+    for source in (
+        request,
+        outcome.outputs.get("human_review_request"),
+        outcome.outputs.get("human_review_decision"),
+    ):
+        request_id = _field_value(source, "request_id") or _field_value(source, "id")
+        if request_id is not None:
+            return str(request_id)
+    return f"{step.step_id}:human_review_request"
+
+
+def _field_value(value: Any, key: str) -> Any:
+    if isinstance(value, dict):
+        return value.get(key)
+    if hasattr(value, key):
+        return getattr(value, key)
+    return None
 
 
 def _terminal_error_event_type(status: WorkflowStatus) -> str:

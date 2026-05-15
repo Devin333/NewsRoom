@@ -47,6 +47,7 @@ class StepStatus(str, Enum):
     """Per-step execution state; do not use for workflow or worker task records."""
 
     PENDING = "pending"  # Step is defined but not yet scheduled in this workflow run.
+    READY = "ready"  # Step is scheduled and ready for execution.
     RUNNING = "running"  # Step attempt is currently executing.
     SUCCEEDED = "succeeded"  # Step completed and its declared outputs are available.
     FAILED = "failed"  # Step failed and may route through retry or failure policy.

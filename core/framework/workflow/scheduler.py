@@ -5,10 +5,16 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
-from core.framework.specs import EdgeSpec, StepSpec, StepStatus, WorkflowSpec
+from core.framework.specs import EdgeSpec, StepSpec, StepStatus, WorkflowSpec, WorkflowStatus
 from core.framework.workflow.compiler import CompiledWorkflowGraph
 from core.framework.workflow.result import StepOutcome as RuntimeStepOutcome
 from core.framework.workflow.routing import RoutingEngine
+from core.framework.workflow.state_machine import (
+    StepRuntimeEvent,
+    StepRuntimeEventType,
+    StepStateMachine,
+    WorkflowStateMachine,
+)
 
 
 class WorkflowScheduleError(RuntimeError):
@@ -73,6 +79,7 @@ class SchedulerState:
     running: set[str] = field(default_factory=set)
     visit_counts: dict[str, int] = field(default_factory=dict)
     branch_groups: dict[str, BranchGroupState] = field(default_factory=dict)
+    step_statuses: dict[str, StepStatus] = field(default_factory=dict)
 
 
 class WorkflowScheduler:
@@ -82,11 +89,15 @@ class WorkflowScheduler:
         workflow: WorkflowSpec,
         graph: CompiledWorkflowGraph,
         routing_engine: RoutingEngine,
+        workflow_state_machine: WorkflowStateMachine | None = None,
+        step_state_machine: StepStateMachine | None = None,
         state: SchedulerState | None = None,
     ) -> None:
         self.workflow = workflow
         self.graph = graph
         self.routing_engine = routing_engine
+        self.workflow_state_machine = workflow_state_machine or WorkflowStateMachine()
+        self.step_state_machine = step_state_machine or StepStateMachine()
         self.state = state or SchedulerState()
         self._step_by_id = {step.step_id: step for step in workflow.steps}
         self._edge_by_id = {edge.edge_id: edge for edge in workflow.edges}
@@ -105,7 +116,13 @@ class WorkflowScheduler:
         )
         return self.state
 
-    def next_ready_steps(self, max_count: int = 1) -> list[ScheduledStep]:
+    def next_ready_steps(
+        self,
+        max_count: int = 1,
+        *,
+        workflow_status: WorkflowStatus = WorkflowStatus.RUNNING,
+    ) -> list[ScheduledStep]:
+        self.workflow_state_machine.assert_can_schedule(workflow_status)
         selected: list[ScheduledStep] = []
         limit = max(1, int(max_count))
 
@@ -121,6 +138,15 @@ class WorkflowScheduler:
                 continue
 
             self._guard_max_step_visits(scheduled.step_id)
+            self._transition_step_status(
+                scheduled.step_id,
+                StepRuntimeEvent(
+                    event_type=StepRuntimeEventType.START,
+                    reason="scheduler_selected_step",
+                    attempt=scheduled.attempt,
+                ),
+                default=StepStatus.READY,
+            )
             self.state.running.add(scheduled.step_id)
             selected.append(scheduled)
 
@@ -133,19 +159,58 @@ class WorkflowScheduler:
             )
 
         self.state.running.discard(step_id)
+        self._clear_terminal_sets(step_id)
 
         if outcome.status == StepOutcomeStatus.SUCCESS:
+            self._transition_step_status(
+                step_id,
+                StepRuntimeEvent(
+                    event_type=StepRuntimeEventType.SUCCEED,
+                    reason=_outcome_reason(outcome),
+                ),
+            )
             self.state.completed.add(step_id)
             self._schedule_downstream_steps(step_id, outcome, reason="upstream_success")
         elif outcome.status == StepOutcomeStatus.FAILURE:
+            self._transition_step_status(
+                step_id,
+                StepRuntimeEvent(
+                    event_type=StepRuntimeEventType.FAIL,
+                    reason=_outcome_reason(outcome),
+                    error=outcome.error,
+                ),
+            )
             self.state.failed.add(step_id)
             self._handle_failed_or_blocked_step(step_id, outcome)
         elif outcome.status == StepOutcomeStatus.SKIPPED:
+            self._transition_step_status(
+                step_id,
+                StepRuntimeEvent(
+                    event_type=StepRuntimeEventType.SKIP,
+                    reason=_outcome_reason(outcome),
+                ),
+            )
             self.state.skipped.add(step_id)
             self._schedule_downstream_steps(step_id, outcome, reason="upstream_skipped")
         elif outcome.status == StepOutcomeStatus.PAUSED:
+            self._transition_step_status(
+                step_id,
+                StepRuntimeEvent(
+                    event_type=StepRuntimeEventType.PAUSE,
+                    reason=_outcome_reason(outcome),
+                    checkpoint_id=_outcome_checkpoint_id(outcome),
+                ),
+            )
             self.state.paused.add(step_id)
         elif outcome.status == StepOutcomeStatus.BLOCKED:
+            self._transition_step_status(
+                step_id,
+                StepRuntimeEvent(
+                    event_type=StepRuntimeEventType.BLOCK,
+                    reason=_outcome_reason(outcome),
+                    error=outcome.error,
+                ),
+            )
             self.state.blocked.add(step_id)
             self._handle_failed_or_blocked_step(step_id, outcome)
 
@@ -283,6 +348,17 @@ class WorkflowScheduler:
             return
         if any(item.step_id == step_id for item in self.state.ready_queue):
             return
+        current = self.state.step_statuses.get(step_id, StepStatus.PENDING)
+        if current != StepStatus.READY:
+            self._transition_step_status(
+                step_id,
+                StepRuntimeEvent(
+                    event_type=StepRuntimeEventType.SCHEDULE,
+                    reason=scheduled.reason,
+                    attempt=scheduled.attempt,
+                ),
+                default=StepStatus.PENDING,
+            )
         self.state.ready_queue.append(scheduled)
 
     def _resolve_outgoing_edges(self, step_id: str, outcome: StepOutcome) -> list[EdgeSpec]:
@@ -307,7 +383,7 @@ class WorkflowScheduler:
 
         current = self.state.visit_counts.get(step_id, 0)
         if current >= max_visits:
-            self.state.blocked.add(step_id)
+            self._mark_blocked(step_id, force=True)
             raise WorkflowScheduleError(
                 f"Step exceeded max_step_visits: {step_id}, max={max_visits}"
             )
@@ -387,12 +463,7 @@ class WorkflowScheduler:
         if step_id in self.state.failed:
             return
 
-        self.state.blocked.add(step_id)
-        self.state.ready_queue = [
-            scheduled
-            for scheduled in self.state.ready_queue
-            if scheduled.step_id != step_id
-        ]
+        self._mark_blocked(step_id)
 
         for downstream_step_id in self._get_downstream_step_ids(step_id):
             if self._is_join_step(downstream_step_id):
@@ -426,7 +497,7 @@ class WorkflowScheduler:
         blocked: set[str],
     ) -> bool:
         if failed or blocked:
-            self.state.blocked.add(join_step_id)
+            self._mark_blocked(join_step_id)
             self._remove_ready_step(join_step_id)
             return False
         return upstream_step_ids <= completed
@@ -441,7 +512,7 @@ class WorkflowScheduler:
         if completed:
             return True
         if upstream_step_ids <= finished:
-            self.state.blocked.add(join_step_id)
+            self._mark_blocked(join_step_id)
             self._remove_ready_step(join_step_id)
         return False
 
@@ -456,7 +527,7 @@ class WorkflowScheduler:
             return False
         if completed:
             return True
-        self.state.blocked.add(join_step_id)
+        self._mark_blocked(join_step_id)
         self._remove_ready_step(join_step_id)
         return False
 
@@ -478,7 +549,7 @@ class WorkflowScheduler:
         if len(completed) >= int(quorum):
             return True
         if upstream_step_ids <= finished:
-            self.state.blocked.add(join_step_id)
+            self._mark_blocked(join_step_id)
             self._remove_ready_step(join_step_id)
         return False
 
@@ -488,6 +559,41 @@ class WorkflowScheduler:
             for scheduled in self.state.ready_queue
             if scheduled.step_id != step_id
         ]
+
+    def _clear_terminal_sets(self, step_id: str) -> None:
+        self.state.completed.discard(step_id)
+        self.state.failed.discard(step_id)
+        self.state.blocked.discard(step_id)
+        self.state.paused.discard(step_id)
+        self.state.skipped.discard(step_id)
+
+    def _mark_blocked(self, step_id: str, *, force: bool = False) -> None:
+        if step_id in self.state.completed and not force:
+            return
+        if force:
+            self.state.completed.discard(step_id)
+            self.state.failed.discard(step_id)
+            self.state.paused.discard(step_id)
+            self.state.skipped.discard(step_id)
+        self.state.blocked.add(step_id)
+        self.state.step_statuses[step_id] = StepStatus.BLOCKED
+        self._remove_ready_step(step_id)
+
+    def _transition_step_status(
+        self,
+        step_id: str,
+        event: StepRuntimeEvent,
+        *,
+        default: StepStatus = StepStatus.RUNNING,
+    ) -> StepStatus:
+        current = self.state.step_statuses.get(step_id, default)
+        next_status = self.step_state_machine.transition(
+            current,
+            event,
+            step_id=step_id,
+        )
+        self.state.step_statuses[step_id] = next_status
+        return next_status
 
 
 def scheduler_state_to_dict(state: SchedulerState) -> dict[str, Any]:
@@ -519,6 +625,10 @@ def scheduler_state_to_dict(state: SchedulerState) -> dict[str, Any]:
                 "blocked": sorted(group.blocked),
             }
             for group_id, group in state.branch_groups.items()
+        },
+        "step_statuses": {
+            step_id: status.value
+            for step_id, status in sorted(state.step_statuses.items())
         },
     }
 
@@ -558,6 +668,10 @@ def scheduler_state_from_dict(data: Mapping[str, Any]) -> SchedulerState:
             for step_id, count in dict(data.get("visit_counts", {})).items()
         },
         branch_groups=branch_groups,
+        step_statuses={
+            str(step_id): StepStatus(str(status))
+            for step_id, status in dict(data.get("step_statuses", {})).items()
+        },
     )
 
 
@@ -596,3 +710,17 @@ def _runtime_status(status: StepOutcomeStatus) -> StepStatus:
     if status == StepOutcomeStatus.BLOCKED:
         return StepStatus.FAILED
     raise WorkflowScheduleError(f"unsupported scheduler outcome status: {status}")
+
+
+def _outcome_reason(outcome: StepOutcome) -> str | None:
+    reason = outcome.metadata.get("reason")
+    if reason is not None:
+        return str(reason)
+    return outcome.error
+
+
+def _outcome_checkpoint_id(outcome: StepOutcome) -> str | None:
+    checkpoint_id = outcome.metadata.get("checkpoint_id")
+    if checkpoint_id is None:
+        return None
+    return str(checkpoint_id)

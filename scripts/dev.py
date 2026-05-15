@@ -114,11 +114,15 @@ def _workflow_test_paths() -> list[str]:
         [
             *glob.glob("tests/core/framework/workflow/test_workflow_compiler_*.py"),
             *glob.glob("tests/core/framework/workflow/test_scheduler_*.py"),
+            "tests/core/framework/workflow/test_workflow_state_machine.py",
+            "tests/core/framework/workflow/test_step_state_machine.py",
         ]
     )
     return paths or [
         "tests/core/framework/workflow/test_workflow_compiler_*.py",
         "tests/core/framework/workflow/test_scheduler_*.py",
+        "tests/core/framework/workflow/test_workflow_state_machine.py",
+        "tests/core/framework/workflow/test_step_state_machine.py",
     ]
 
 
