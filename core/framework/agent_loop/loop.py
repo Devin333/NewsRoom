@@ -629,10 +629,7 @@ class AgentLoop:
             verdict = JudgeVerdict(
                 decision=JudgeDecision.RETRY,
                 confidence=0.2,
-                feedback=(
-                    "subagent delegation returned non-success status: "
-                    f"{result_payload['status']}"
-                ),
+                feedback=_failed_subagent_feedback(result_payload),
                 quality_errors=[f"subagent delegation failed: {result_payload}"],
             )
             trace.record_judge(iteration_trace, verdict)
@@ -1302,6 +1299,26 @@ def _subagent_feedback(result: SubAgentResult) -> str:
         f"summary={result.summary or ''}; "
         f"output={payload['output']}"
     )
+
+
+def _failed_subagent_feedback(result_payload: dict[str, Any]) -> str:
+    details: list[str] = [
+        "subagent delegation returned non-success status: "
+        f"{result_payload.get('status')}"
+    ]
+    for key in ("error", "summary"):
+        value = result_payload.get(key)
+        if value:
+            details.append(f"{key}={value}")
+    metadata = result_payload.get("metadata")
+    if isinstance(metadata, dict):
+        stop_reason = metadata.get("stop_reason")
+        if stop_reason:
+            details.append(f"stop_reason={stop_reason}")
+    child_agent_id = result_payload.get("child_agent_id")
+    if child_agent_id:
+        details.append(f"child_agent_id={child_agent_id}")
+    return "; ".join(details)
 
 
 def _blocked_stop_reason(verdict: JudgeVerdict) -> AgentLoopStopReason:
