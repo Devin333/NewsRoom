@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 from core.framework.specs import EdgeSpec, StepSpec, WorkflowSpec
-
-PROFILE_LIVE = "live"
-PROFILE_LIVE_OFFLINE = "live-offline"
+from workflows.daily_intelligence.profiles import PROFILE_LIVE, PROFILE_LIVE_OFFLINE
 WORKFLOW_ID = "daily-intelligence-live"
 WORKFLOW_VERSION = "0.1.0"
 
