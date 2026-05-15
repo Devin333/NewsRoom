@@ -12,34 +12,59 @@ def test_daily_artifact_publisher_writes_report_and_quality_manifest(tmp_path) -
     manager = ArtifactManager(tmp_path)
     manager.start_run("run-1")
     manifest = {"artifacts": {}}
+    output = {
+        "evidence_bundle": {
+            "bundle_id": "bundle-1",
+            "source_map": {"ev-1": ["https://example.com/source"]},
+            "items": [
+                {
+                    "evidence_id": "ev-1",
+                    "title": "Source item",
+                    "source_url": "https://example.com/source",
+                }
+            ],
+        },
+        "citation_check_result": {
+            "passed": True,
+            "unsupported_claims": [],
+            "rejected_claim_usage": [],
+        },
+        "quality_result": {"decision": "pass", "route": "final"},
+        "final_report": {"title": "Daily Intelligence", "sections": []},
+        "report_markdown": "# Daily Intelligence",
+    }
     context = _context(
         manager,
         manifest=manifest,
-        output={
-            "final_report": {"title": "Daily", "sections": []},
-            "report_markdown": "# Daily\n",
-            "report_quality_summary": {"quality_score": 0.97},
-            "quality_events": [{"event_type": "citation_checked"}],
-            "quality_result": {"route": "final", "decision": "pass"},
-        },
+        output=output,
     )
 
     refs = DailyIntelligenceArtifactPublisher().publish(context)
 
     run_dir = tmp_path / "run-1"
     assert {ref.artifact_id for ref in refs} >= {
+        "evidence_bundle",
+        "evidence_source_map",
+        "citation_check_result",
+        "quality_result",
         "report_json",
         "report_markdown",
-        "report_quality_summary",
-        "quality_events",
-        "quality_result",
     }
-    assert json.loads((run_dir / "report.json").read_text(encoding="utf-8"))["title"] == "Daily"
-    assert (run_dir / "report.md").read_text(encoding="utf-8") == "# Daily\n"
+    assert (run_dir / "evidence_bundle.json").exists()
+    assert (run_dir / "citation_check_result.json").exists()
+    assert (run_dir / "quality_result.json").exists()
+    assert (run_dir / "report.json").exists()
+    assert (run_dir / "report.md").exists()
+    assert (
+        json.loads((run_dir / "report.json").read_text(encoding="utf-8"))["title"]
+        == "Daily Intelligence"
+    )
+    assert (run_dir / "report.md").read_text(encoding="utf-8") == "# Daily Intelligence"
+    assert manifest["artifacts"]["evidence_bundle"] == "evidence_bundle.json"
+    assert manifest["artifacts"]["citation_check_result"] == "citation_check_result.json"
+    assert manifest["artifacts"]["quality_result"] == "quality_result.json"
     assert manifest["artifacts"]["report_json"] == "report.json"
     assert manifest["artifacts"]["report_markdown"] == "report.md"
-    assert manifest["quality_score"] == 0.97
-    assert manifest["quality_event_count"] == 1
     assert manifest["quality_route"] == "final"
     assert manifest["quality_decision"] == "pass"
 

@@ -64,6 +64,13 @@ def test_runtime_artifact_publisher_writes_start_artifacts(tmp_path) -> None:
     assert manifest["artifacts"]["data_buffer_initial"] == "data_buffer.initial.json"
 
 
+def test_runtime_artifact_publisher_supports_start_and_terminal(tmp_path) -> None:
+    publisher = RuntimeArtifactPublisher()
+
+    assert publisher.supports(_context(tmp_path, phase=ArtifactPublishPhase.START)) is True
+    assert publisher.supports(_context(tmp_path, phase=ArtifactPublishPhase.TERMINAL)) is True
+
+
 @pytest.mark.parametrize(
     ("status", "terminal_key", "terminal_path"),
     [
