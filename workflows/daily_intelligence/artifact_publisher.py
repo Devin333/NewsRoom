@@ -8,8 +8,6 @@ from core.framework.artifacts.source_artifacts import SourceArtifactWriter
 from core.framework.workflow.artifact_publishers import (
     ArtifactPublishContext,
     ArtifactPublishPhase,
-    RuntimeArtifactPublisher,
-    WorkflowArtifactPublisherRegistry,
     register_manifest_artifact_once,
 )
 from storage.artifacts import ArtifactRef
@@ -219,10 +217,8 @@ class DailyIntelligenceArtifactPublisher:
         return refs
 
 
-def build_daily_intelligence_artifact_publishers() -> WorkflowArtifactPublisherRegistry:
-    return WorkflowArtifactPublisherRegistry(
-        [DailyIntelligenceArtifactPublisher(), RuntimeArtifactPublisher()]
-    )
+def build_daily_intelligence_artifact_publishers() -> list[DailyIntelligenceArtifactPublisher]:
+    return [DailyIntelligenceArtifactPublisher()]
 
 
 def _write_json_artifacts_from_output(

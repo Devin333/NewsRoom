@@ -23,6 +23,7 @@ from core.framework.workflow.artifact_publishers import (
     ArtifactPublishContext,
     ArtifactPublishPhase,
     RuntimeArtifactPublisher,
+    WorkflowArtifactPublisher,
     WorkflowArtifactPublisherRegistry,
 )
 from core.framework.workflow.manifest import (
@@ -47,6 +48,18 @@ def _utc_now() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
+def _artifact_publisher_registry(
+    artifact_publishers: list[WorkflowArtifactPublisher]
+    | WorkflowArtifactPublisherRegistry
+    | None,
+) -> WorkflowArtifactPublisherRegistry:
+    if isinstance(artifact_publishers, WorkflowArtifactPublisherRegistry):
+        return artifact_publishers
+    return WorkflowArtifactPublisherRegistry(
+        [*(artifact_publishers or []), RuntimeArtifactPublisher()]
+    )
+
+
 class WorkflowExecutor:
     def __init__(
         self,
@@ -58,7 +71,9 @@ class WorkflowExecutor:
         checkpoint_store: Any | None = None,
         event_bus: EventBus | None = None,
         global_budget_tracker: Any | None = None,
-        artifact_publishers: WorkflowArtifactPublisherRegistry | None = None,
+        artifact_publishers: list[WorkflowArtifactPublisher]
+        | WorkflowArtifactPublisherRegistry
+        | None = None,
     ) -> None:
         if step_runner_registry is None:
             if function_step_runner is None:
@@ -71,9 +86,7 @@ class WorkflowExecutor:
         self._checkpoint_store = checkpoint_store
         self._event_bus = event_bus
         self._global_budget_tracker = global_budget_tracker
-        self._artifact_publishers = artifact_publishers or WorkflowArtifactPublisherRegistry(
-            [RuntimeArtifactPublisher()]
-        )
+        self._artifact_publishers = _artifact_publisher_registry(artifact_publishers)
 
     def execute(
         self,

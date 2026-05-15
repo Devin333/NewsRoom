@@ -11,9 +11,7 @@ from core.framework.workflow import (
     ArtifactPublishContext,
     ArtifactPublishPhase,
     FunctionStepRegistry,
-    RuntimeArtifactPublisher,
     ScopedDataBuffer,
-    WorkflowArtifactPublisherRegistry,
     register_manifest_artifact_once,
 )
 from domain.reports import FinalReport, render_markdown
@@ -225,10 +223,8 @@ class WeeklyIntelligenceArtifactPublisher:
         return refs
 
 
-def _weekly_artifact_publishers() -> WorkflowArtifactPublisherRegistry:
-    return WorkflowArtifactPublisherRegistry(
-        [WeeklyIntelligenceArtifactPublisher(), RuntimeArtifactPublisher()]
-    )
+def _weekly_artifact_publishers() -> list[WeeklyIntelligenceArtifactPublisher]:
+    return [WeeklyIntelligenceArtifactPublisher()]
 
 
 def _write_weekly_report(buffer: ScopedDataBuffer) -> dict[str, Any]:

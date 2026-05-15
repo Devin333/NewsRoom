@@ -18,6 +18,7 @@ from core.framework.specs import (
     WorkflowStatus,
 )
 from core.framework.workflow import (
+    ArtifactPublishContext,
     FunctionStepRegistry,
     FunctionStepRunner,
     HumanReviewStepRunner,
@@ -152,6 +153,34 @@ def test_workflow_executor_runs_function_steps_and_writes_artifacts(tmp_path) ->
         "step_succeeded",
         "workflow_succeeded",
     ]
+
+
+def test_workflow_executor_wraps_custom_artifact_publishers_with_runtime_publisher(tmp_path) -> None:
+    registry = FunctionStepRegistry()
+    registry.register("sample.plan", lambda buffer: {"plan": {"topic": buffer.read("request")["topic"]}})
+    registry.register("sample.write", lambda buffer: {"report": f"Report: {buffer.read('plan')['topic']}"})
+    custom_publisher = _CustomArtifactPublisher()
+    executor = WorkflowExecutor(
+        function_step_runner=FunctionStepRunner(registry),
+        artifact_manager=ArtifactManager(tmp_path),
+        artifact_publishers=[custom_publisher],
+    )
+
+    result = executor.execute(
+        _sample_spec(),
+        {"topic": "ai"},
+        profile="test",
+        run_id="run-custom-publisher",
+    )
+
+    run_dir = tmp_path / "run-custom-publisher"
+    manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert result.status == WorkflowStatus.SUCCEEDED
+    assert (run_dir / "output.json").exists()
+    assert (run_dir / "custom.json").exists()
+    assert manifest["artifacts"]["custom"] == "custom.json"
+    assert manifest["artifacts"]["output"] == "output.json"
+    assert custom_publisher.phases == ["terminal"]
 
 
 def test_workflow_executor_promotes_agent_loop_stream_events(tmp_path) -> None:
@@ -1257,6 +1286,38 @@ class _ArtifactMarkerRunner:
         }
         buffer.write("artifact_marker", output)
         return StepOutcome(status=StepStatus.SUCCEEDED, outputs={"artifact_marker": output})
+
+
+class _CustomArtifactPublisher:
+    publisher_id = "custom"
+
+    def __init__(self) -> None:
+        self.phases: list[str] = []
+
+    def supports(self, context: ArtifactPublishContext) -> bool:
+        return context.phase.value == "terminal"
+
+    def publish(self, context: ArtifactPublishContext) -> list[ArtifactRef]:
+        self.phases.append(context.phase.value)
+        path = context.artifact_manager.write_json(
+            context.run_id,
+            "custom.json",
+            {"publisher": self.publisher_id},
+        )
+        context.manifest["artifacts"]["custom"] = "custom.json"
+        data = path.read_bytes()
+        return [
+            ArtifactRef(
+                artifact_id="custom",
+                run_id=context.run_id,
+                artifact_type="custom",
+                path="custom.json",
+                content_type="application/json",
+                size_bytes=len(data),
+                checksum=sha256(data).hexdigest(),
+                redacted=True,
+            )
+        ]
 
 
 class _StepArtifactRunner:

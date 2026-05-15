@@ -14,7 +14,10 @@ from core.framework.llm import GlobalBudgetPolicy, GlobalBudgetTracker
 from core.framework.run_result import RunResult
 from core.framework.specs import WorkflowSpec
 from core.framework.workflow.executor import WorkflowExecutor
-from core.framework.workflow.artifact_publishers import WorkflowArtifactPublisherRegistry
+from core.framework.workflow.artifact_publishers import (
+    WorkflowArtifactPublisher,
+    WorkflowArtifactPublisherRegistry,
+)
 from core.framework.workflow.inspection import (
     WorkflowReplayBundle,
     WorkflowReplayContentBundle,
@@ -65,7 +68,9 @@ class WorkflowRunner:
         redactor: StorageRedactor | None = None,
         global_budget_policy: GlobalBudgetPolicy | None = None,
         global_budget_tracker: GlobalBudgetTracker | None = None,
-        artifact_publishers: WorkflowArtifactPublisherRegistry | None = None,
+        artifact_publishers: list[WorkflowArtifactPublisher]
+        | WorkflowArtifactPublisherRegistry
+        | None = None,
     ) -> None:
         self._artifact_root = Path(artifact_root)
         self._artifact_manager = ArtifactManager(self._artifact_root)
