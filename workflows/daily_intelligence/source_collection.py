@@ -8,7 +8,6 @@ from domain.sources import (
     SourceError,
     SourceFetchRequest,
     SourceFetchResult,
-    SourceHealthStatus,
     SourcePipelineEvent,
     SourcePipelineMetrics,
 )
@@ -21,8 +20,8 @@ from workflows.daily_intelligence.source_collection_output import (
 )
 from workflows.daily_intelligence.source_config import ensure_live_source_registry
 from workflows.daily_intelligence.source_dispatcher import SourceDispatcher
+from workflows.daily_intelligence.source_event_recorder import SourceEventRecorder
 from workflows.daily_intelligence.source_fetch_records import (
-    dt,
     elapsed_ms,
     error_metadata_bool,
     error_phase,
@@ -32,6 +31,7 @@ from workflows.daily_intelligence.source_fetch_records import (
     source_fetch_request_id,
     with_error_request_id,
 )
+from workflows.daily_intelligence.source_health_flow import SourceHealthFlow
 from workflows.daily_intelligence.source_offline_collection import collect_offline_sources
 from workflows.daily_intelligence.source_processing import source_event as _source_event
 
@@ -58,6 +58,12 @@ class DailySourceCollector:
         source_fetch_results: list[SourceFetchResult] = []
         source_health_updates = []
         source_events: list[SourcePipelineEvent] = []
+        event_recorder = SourceEventRecorder(source_events)
+        health_flow = SourceHealthFlow(
+            health_manager=self.source_health_manager,
+            events=event_recorder,
+            health_updates=source_health_updates,
+        )
         metrics = SourcePipelineMetrics()
         if profile == PROFILE_LIVE_OFFLINE:
             return collect_offline_sources(
@@ -90,27 +96,11 @@ class DailySourceCollector:
                 connector_name=self.source_dispatcher.connector_name_for_source(source),
             )
             source_fetch_requests.append(fetch_request)
-            fetch_decision = self.source_health_manager.fetch_decision(
-                source.source_id,
-                source_name=source.name,
-                url=source.url,
-                min_interval_seconds=source.fetch_interval_seconds,
-            )
-            if not fetch_decision.should_fetch:
-                health = fetch_decision.health
-                skip_reason = fetch_decision.skip_reason or "skipped"
-                skip_metadata = {
-                    "source_id": source.source_id,
-                    "source_name": source.name,
-                    "url": source.url,
-                    "reason": skip_reason,
-                    "cooldown_until": dt(fetch_decision.cooldown_until),
-                    "next_fetch_at": dt(fetch_decision.next_fetch_at),
-                    "last_success_at": dt(health.last_success_at),
-                }
-                skipped_sources.append(
-                    {key: value for key, value in skip_metadata.items() if value is not None}
-                )
+            skip_decision = health_flow.decide_fetch(source)
+            if skip_decision.should_skip:
+                skip_reason = skip_decision.reason or "skipped"
+                skip_metadata = dict(skip_decision.metadata or {})
+                skipped_sources.append(skip_metadata)
                 source_fetch_results.append(
                     skipped_source_fetch_result(
                         source,
@@ -119,58 +109,12 @@ class DailySourceCollector:
                         metadata=skip_metadata,
                     )
                 )
-                source_health_updates.append(health)
-                source_events.append(
-                    _source_event(
-                        "source_fetch_skipped",
-                        source.source_id,
-                        reason=skip_reason,
-                        cooldown_until=dt(fetch_decision.cooldown_until),
-                        next_fetch_at=dt(fetch_decision.next_fetch_at),
-                        last_success_at=dt(health.last_success_at),
-                    )
-                )
-                source_events.append(
-                    _source_event(
-                        "source_health_updated",
-                        source.source_id,
-                        status=health.status.value,
-                        consecutive_failures=health.consecutive_failures,
-                    )
-                )
                 metrics.sources_skipped += 1
                 metrics.record_source_skipped(source.source_type)
                 continue
-            is_probe = self.source_health_manager.should_probe(source.source_id)
-            if is_probe:
-                health = self.source_health_manager.get(
-                    source.source_id,
-                    source_name=source.name,
-                    url=source.url,
-                )
-                source_events.append(
-                    _source_event(
-                        "source_probe_started",
-                        source.source_id,
-                        cooldown_until=dt(health.cooldown_until),
-                        consecutive_failures=health.consecutive_failures,
-                    )
-                )
-            source_events.append(
-                _source_event(
-                    "source_fetch_started",
-                    source.source_id,
-                    source_type=source.source_type.value,
-                    url=source.url,
-                )
-            )
-            source_events.append(
-                _source_event(
-                    "source_parse_started",
-                    source.source_id,
-                    source_type=source.source_type.value,
-                )
-            )
+            is_probe = health_flow.probe_started(source)
+            event_recorder.fetch_started(source)
+            event_recorder.parse_started(source)
             latency_start = perf_counter()
             items, errors, connector_fetch_result = self.source_dispatcher.fetch_source(
                 source,
@@ -202,61 +146,30 @@ class DailySourceCollector:
                     reliability=source.reliability,
                     item_count=len(items),
                 )
-                source_events.append(
-                    _source_event(
-                        "source_fetch_succeeded",
-                        source.source_id,
-                        item_count=len(items),
-                        fetch_latency_ms=fetch_latency_ms,
-                    )
+                event_recorder.fetch_succeeded(
+                    source,
+                    item_count=len(items),
+                    fetch_latency_ms=fetch_latency_ms,
                 )
-                source_events.append(
-                    _source_event(
-                        "source_parse_succeeded",
-                        source.source_id,
-                        item_count=len(items),
-                    )
+                event_recorder.parse_succeeded(source, item_count=len(items))
+                health_flow.record_success(
+                    source,
+                    fetch_latency_ms=fetch_latency_ms,
+                    is_probe=is_probe,
+                    item_count=len(items),
                 )
-                source_health = self.source_health_manager.record_success(
-                    source.source_id,
-                    latency_ms=fetch_latency_ms,
-                    source_name=source.name,
-                    url=source.url,
-                )
-                source_health_updates.append(source_health)
-                source_events.append(
-                    _source_event(
-                        "source_health_updated",
-                        source.source_id,
-                        status=source_health.status.value,
-                        consecutive_failures=source_health.consecutive_failures,
-                    )
-                )
-                if is_probe:
-                    source_events.append(
-                        _source_event(
-                            "source_probe_succeeded",
-                            source.source_id,
-                            item_count=len(items),
-                            fetch_latency_ms=fetch_latency_ms,
-                            status=source_health.status.value,
-                        )
-                    )
             if errors:
                 metrics.sources_failed += 1
                 metrics.record_source_failed(source.source_type)
                 source_errors.extend(errors)
                 failed_sources.extend(error.to_dict() for error in errors)
                 if is_probe:
-                    source_events.append(
-                        _source_event(
-                            "source_probe_failed",
-                            source.source_id,
-                            error_type=errors[0].error_type,
-                            error_count=len(errors),
-                            fetch_latency_ms=fetch_latency_ms,
+                    event_recorder.probe_failed(
+                        source,
+                        error_type=errors[0].error_type,
+                        error_count=len(errors),
+                        fetch_latency_ms=fetch_latency_ms,
                     )
-                )
                 for error in errors:
                     retryable = error_metadata_bool(error, "retryable", default=True)
                     source_health_affecting = error_metadata_bool(
@@ -264,52 +177,22 @@ class DailySourceCollector:
                         "source_health_affecting",
                         default=True,
                     )
-                    source_events.append(
-                        _source_event(
-                            "source_fetch_failed",
-                            source.source_id,
-                            error_type=error.error_type,
-                            retryable=retryable,
-                            source_health_affecting=source_health_affecting,
-                            fetch_latency_ms=fetch_latency_ms,
-                        )
+                    event_recorder.fetch_failed(
+                        source,
+                        error=error,
+                        retryable=retryable,
+                        source_health_affecting=source_health_affecting,
+                        fetch_latency_ms=fetch_latency_ms,
                     )
                     if error_phase(error) == "parse":
-                        source_events.append(
-                            _source_event(
-                                "source_parse_failed",
-                                source.source_id,
-                                error_type=error.error_type,
-                                retryable=retryable,
-                            )
-                        )
+                        event_recorder.parse_failed(source, error=error, retryable=retryable)
                     metrics.record_error(error)
                     if source_health_affecting:
-                        source_health = self.source_health_manager.record_failure(
-                            source.source_id,
+                        health_flow.record_failure(
+                            source,
                             error,
-                            latency_ms=fetch_latency_ms,
-                            source_name=source.name,
-                            url=source.url,
+                            fetch_latency_ms=fetch_latency_ms,
                         )
-                        source_health_updates.append(source_health)
-                        source_events.append(
-                            _source_event(
-                                "source_health_updated",
-                                source.source_id,
-                                status=source_health.status.value,
-                                consecutive_failures=source_health.consecutive_failures,
-                            )
-                        )
-                        if source_health.status == SourceHealthStatus.DOWN:
-                            source_events.append(
-                                _source_event(
-                                    "source_cooldown_started",
-                                    source.source_id,
-                                    cooldown_until=dt(source_health.cooldown_until),
-                                    consecutive_failures=source_health.consecutive_failures,
-                                )
-                            )
         metrics.raw_items_count = len(raw_items)
         if not raw_items:
             record_all_sources_failed(
