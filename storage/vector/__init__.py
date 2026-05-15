@@ -14,6 +14,7 @@ from storage.vector.fake_store import InMemoryVectorStore
 from storage.vector.models import (
     VectorCollectionStatus,
     VectorDocument,
+    VectorPayloadIndexStatus,
     VectorSearchQuery,
     VectorSearchResult,
 )
@@ -31,6 +32,7 @@ __all__ = [
     "QdrantVectorStore",
     "VectorCollectionStatus",
     "VectorDocument",
+    "VectorPayloadIndexStatus",
     "VectorSearchQuery",
     "VectorSearchResult",
     "embedding_model_from_env",

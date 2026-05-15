@@ -126,3 +126,21 @@ class VectorCollectionStatus:
             "existed_before": self.existed_before,
             "created": self.created,
         }
+
+
+@dataclass(frozen=True)
+class VectorPayloadIndexStatus:
+    collection: str
+    field_name: str
+    field_schema: str
+    existed_before: bool
+    created: bool
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "collection": self.collection,
+            "field_name": self.field_name,
+            "field_schema": self.field_schema,
+            "existed_before": self.existed_before,
+            "created": self.created,
+        }

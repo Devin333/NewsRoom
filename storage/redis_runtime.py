@@ -7,6 +7,22 @@ from typing import Any
 
 
 DEFAULT_REDIS_URL = "redis://127.0.0.1:6379/0"
+LONG_TERM_FACT_KEY_PREFIXES = (
+    "report:",
+    "reports:",
+    "final_report:",
+    "final-report:",
+    "blocked_report:",
+    "evidence:",
+    "evidence_item:",
+    "evidence_items:",
+    "source_item:",
+    "source_items:",
+    "claim:",
+    "claims:",
+    "quality_result:",
+    "quality_results:",
+)
 
 
 @dataclass(frozen=True)
@@ -39,6 +55,7 @@ class RedisRuntimeStore:
         self.delete(key)
 
     def set(self, key: str, value: Any, *, ttl_seconds: int | None = None) -> None:
+        _validate_runtime_key(key)
         payload = json.dumps(value, ensure_ascii=False, sort_keys=True)
         if ttl_seconds is None:
             self.redis.set(self._key(key), payload)
@@ -46,6 +63,7 @@ class RedisRuntimeStore:
             self.redis.set(self._key(key), payload, ex=ttl_seconds)
 
     def get(self, key: str) -> Any | None:
+        _validate_runtime_key(key)
         raw = self.redis.get(self._key(key))
         if raw is None:
             return None
@@ -54,9 +72,11 @@ class RedisRuntimeStore:
         return json.loads(str(raw))
 
     def delete(self, key: str) -> None:
+        _validate_runtime_key(key)
         self.redis.delete(self._key(key))
 
     def expire(self, key: str, ttl_seconds: int) -> bool:
+        _validate_runtime_key(key)
         if ttl_seconds <= 0:
             raise ValueError("ttl_seconds must be greater than zero")
         return bool(self.redis.expire(self._key(key), ttl_seconds))
@@ -69,9 +89,11 @@ class RedisRuntimeStore:
         return sorted(key.removeprefix(prefix) for key in keys if key.startswith(prefix))
 
     def acquire_lock(self, key: str, *, owner: str, ttl_seconds: int) -> bool:
+        _validate_runtime_key(key)
         return bool(self.redis.set(self._key(f"lock:{key}"), owner, nx=True, ex=ttl_seconds))
 
     def release_lock(self, key: str, *, owner: str) -> bool:
+        _validate_runtime_key(key)
         lock_key = self._key(f"lock:{key}")
         current = self.redis.get(lock_key)
         if isinstance(current, bytes):
@@ -82,8 +104,7 @@ class RedisRuntimeStore:
         return True
 
     def _key(self, key: str) -> str:
-        if not key or "/" in key or ".." in key:
-            raise ValueError(f"invalid runtime key: {key}")
+        _validate_runtime_key(key)
         return f"{self.key_prefix}:{key}"
 
 
@@ -179,8 +200,18 @@ def redis_runtime_store_from_env(
 def _validate_runtime_key(value: str) -> None:
     if not value or "/" in value or ".." in value:
         raise ValueError(f"invalid runtime key: {value}")
+    if value.startswith(LONG_TERM_FACT_KEY_PREFIXES):
+        raise ValueError(
+            "Redis runtime store cannot persist long-term report, source, evidence, "
+            f"claim, or quality fact keys: {value}"
+        )
 
 
 def _validate_runtime_key_pattern(value: str) -> None:
     if not value or "/" in value or ".." in value:
         raise ValueError(f"invalid runtime key pattern: {value}")
+    if value.startswith(LONG_TERM_FACT_KEY_PREFIXES):
+        raise ValueError(
+            "Redis runtime store cannot list long-term report, source, evidence, "
+            f"claim, or quality fact keys: {value}"
+        )

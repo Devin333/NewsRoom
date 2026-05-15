@@ -1,6 +1,7 @@
 """PostgreSQL persistence package."""
 
 from storage.postgres.artifact_index import PostgresArtifactIndexStore
+from storage.postgres.conversation import PostgresConversationStore
 from storage.postgres.event_store import PostgresEventStore
 from storage.postgres.lineage import PostgresLineageStore
 from storage.postgres.metrics import PostgresStorageMetricsCollector
@@ -15,6 +16,7 @@ __all__ = [
     "PostgresReportDetailRecord",
     "PostgresReportSearchRecord",
     "PostgresArtifactIndexStore",
+    "PostgresConversationStore",
     "PostgresEventStore",
     "PostgresLineageStore",
     "PostgresStorageMetricsCollector",

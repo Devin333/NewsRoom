@@ -8,11 +8,33 @@ from typing import Any
 
 REQUIRED_TABLES = [
     "workflow_runs",
+    "workflow_events",
+    "artifact_index",
+    "lineage_refs",
     "reports",
+    "report_sections",
     "source_items",
     "evidence_items",
     "claims",
+    "claim_supports",
     "quality_results",
+    "memory_documents",
+    "agent_conversations",
+    "agent_conversation_messages",
+    "agent_conversation_state",
+    "tool_executions",
+    "schema_versions",
+    "source_health",
+]
+
+REQUIRED_INDEXES = [
+    "idx_workflow_events_run_offset",
+    "idx_artifact_index_run_created",
+    "idx_lineage_refs_target",
+    "idx_agent_conversations_run",
+    "idx_agent_conversation_messages_conversation_offset",
+    "idx_agent_conversation_state_updated",
+    "idx_memory_documents_collection",
 ]
 
 
@@ -52,6 +74,17 @@ def main() -> int:
                     (REQUIRED_TABLES,),
                 )
                 existing_tables = {str(row[0]) for row in cursor.fetchall()}
+                cursor.execute(
+                    """
+                    SELECT indexname
+                    FROM pg_indexes
+                    WHERE schemaname = 'public'
+                      AND indexname = ANY(%s)
+                    ORDER BY indexname
+                    """,
+                    (REQUIRED_INDEXES,),
+                )
+                existing_indexes = {str(row[0]) for row in cursor.fetchall()}
     except Exception as exc:
         _emit(
             status="unready",
@@ -61,13 +94,16 @@ def main() -> int:
         return 0
 
     missing_tables = sorted(set(REQUIRED_TABLES) - existing_tables)
-    if missing_tables:
+    missing_indexes = sorted(set(REQUIRED_INDEXES) - existing_indexes)
+    if missing_tables or missing_indexes:
         _emit(
             status="unready",
             service="postgres",
-            reason="required tables are missing; run the storage migration",
+            reason="required storage schema objects are missing; run the storage migration",
             missing_tables=missing_tables,
+            missing_indexes=missing_indexes,
             existing_tables=sorted(existing_tables),
+            existing_indexes=sorted(existing_indexes),
         )
         return 0
 
@@ -75,6 +111,7 @@ def main() -> int:
         status="ready",
         service="postgres",
         checked_tables=sorted(existing_tables),
+        checked_indexes=sorted(existing_indexes),
     )
     return 0
 

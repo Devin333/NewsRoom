@@ -104,6 +104,48 @@ def test_qdrant_store_bootstraps_missing_collections_and_reports_existing() -> N
     assert client.created_collections[0][1].size == 8
 
 
+def test_qdrant_store_ensures_payload_indexes() -> None:
+    client = _FakeQdrantClient(
+        existing_collections={"evidence_items"},
+        payload_schema={"evidence_items": {"run_id": "keyword"}},
+    )
+    store = QdrantVectorStore(
+        client,
+        embedding_model=DeterministicEmbeddingModel(dimension=8),
+        vector_size=8,
+    )
+
+    statuses = store.ensure_payload_indexes(
+        ["evidence_items"],
+        payload_indexes={"run_id": "keyword", "published_at": "datetime"},
+    )
+
+    assert [status.to_dict() for status in statuses] == [
+        {
+            "collection": "evidence_items",
+            "field_name": "run_id",
+            "field_schema": "keyword",
+            "existed_before": True,
+            "created": False,
+        },
+        {
+            "collection": "evidence_items",
+            "field_name": "published_at",
+            "field_schema": "datetime",
+            "existed_before": False,
+            "created": True,
+        },
+    ]
+    assert client.payload_indexes == [
+        {
+            "collection_name": "evidence_items",
+            "field_name": "published_at",
+            "field_schema": "datetime",
+            "wait": True,
+        }
+    ]
+
+
 def test_qdrant_store_from_env_uses_configured_dashscope_embeddings(monkeypatch) -> None:
     client = _FakeQdrantClient()
     monkeypatch.setattr("storage.vector.qdrant_store.QdrantClient", lambda url: client)
@@ -125,10 +167,12 @@ def test_qdrant_store_from_env_uses_configured_dashscope_embeddings(monkeypatch)
 
 
 class _FakeQdrantClient:
-    def __init__(self, *, points=None, existing_collections=None) -> None:
+    def __init__(self, *, points=None, existing_collections=None, payload_schema=None) -> None:
         self.points = points or []
         self.existing_collections = set(existing_collections or [])
+        self.payload_schema = dict(payload_schema or {})
         self.created_collections = []
+        self.payload_indexes = []
         self.upserts = []
         self.query_calls = []
 
@@ -138,6 +182,22 @@ class _FakeQdrantClient:
     def create_collection(self, *, collection_name, vectors_config):
         self.created_collections.append((collection_name, vectors_config))
         self.existing_collections.add(collection_name)
+        self.payload_schema.setdefault(collection_name, {})
+        return True
+
+    def get_collection(self, collection):
+        return _FakeCollectionInfo(self.payload_schema.get(collection, {}))
+
+    def create_payload_index(self, *, collection_name, field_name, field_schema, wait):
+        self.payload_indexes.append(
+            {
+                "collection_name": collection_name,
+                "field_name": field_name,
+                "field_schema": str(field_schema),
+                "wait": wait,
+            }
+        )
+        self.payload_schema.setdefault(collection_name, {})[field_name] = str(field_schema)
         return True
 
     def upsert(self, *, collection_name, points, wait):
@@ -157,3 +217,8 @@ class _FakePoint:
     def __init__(self, *, score, payload) -> None:
         self.score = score
         self.payload = payload
+
+
+class _FakeCollectionInfo:
+    def __init__(self, payload_schema) -> None:
+        self.payload_schema = payload_schema

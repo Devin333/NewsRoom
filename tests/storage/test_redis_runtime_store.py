@@ -33,6 +33,10 @@ def test_in_memory_runtime_store_supports_short_term_runtime_primitives() -> Non
     assert store.get("progress:run-1") is None
     with pytest.raises(ValueError, match="invalid runtime key"):
         store.set("../report", {"should_not_store": True})
+    with pytest.raises(ValueError, match="cannot persist long-term"):
+        store.set("final_report:run-1", {"should_not_store": True})
+    with pytest.raises(ValueError, match="cannot persist long-term"):
+        store.get("evidence:ev-1")
     with pytest.raises(ValueError, match="ttl_seconds must be greater than zero"):
         store.expire("cache:source-1", 0)
 
@@ -71,6 +75,10 @@ def test_redis_runtime_store_supports_short_term_runtime_primitives() -> None:
     assert store.get("progress:run-1") is None
     with pytest.raises(ValueError, match="invalid runtime key pattern"):
         store.list_keys("../*")
+    with pytest.raises(ValueError, match="cannot persist long-term"):
+        store.set("report:run-1", {"should_not_store": True})
+    with pytest.raises(ValueError, match="cannot list long-term"):
+        store.list_keys("evidence:*")
 
 
 class _FakeRedis:

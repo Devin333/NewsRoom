@@ -34,6 +34,24 @@ def test_check_qdrant_skips_without_url(monkeypatch, capsys) -> None:
     assert "NEWS_QDRANT_URL" in output["reason"]
 
 
+def test_check_postgres_required_objects_do_not_expose_dsn() -> None:
+    module = _load_script("check_postgres")
+
+    assert "agent_conversation_messages" in module.REQUIRED_TABLES
+    assert "agent_conversation_state" in module.REQUIRED_TABLES
+    assert "idx_agent_conversation_messages_conversation_offset" in module.REQUIRED_INDEXES
+    assert "NEWS_DATABASE_DSN" not in module.REQUIRED_TABLES
+
+
+def test_check_qdrant_default_payload_indexes() -> None:
+    module = _load_script("check_qdrant")
+
+    assert "evidence_items" in module.DEFAULT_COLLECTIONS
+    assert "report_sections" in module.DEFAULT_COLLECTIONS
+    assert "run_id" in module.DEFAULT_PAYLOAD_INDEXES
+    assert "published_at" in module.DEFAULT_PAYLOAD_INDEXES
+
+
 def _load_script(name: str):
     script_path = REPO_ROOT / "scripts" / f"{name}.py"
     spec = importlib.util.spec_from_file_location(name, script_path)

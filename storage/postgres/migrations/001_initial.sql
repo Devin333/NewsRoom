@@ -222,6 +222,46 @@ CREATE INDEX IF NOT EXISTS idx_agent_conversations_run
 CREATE INDEX IF NOT EXISTS idx_agent_conversations_agent
     ON agent_conversations(agent_id);
 
+CREATE TABLE IF NOT EXISTS agent_conversation_messages (
+    conversation_id TEXT NOT NULL REFERENCES agent_conversations(conversation_id) ON DELETE CASCADE,
+    message_id TEXT NOT NULL,
+    message_offset BIGINT NOT NULL,
+    role TEXT NOT NULL,
+    content JSONB,
+    created_at TIMESTAMPTZ NOT NULL,
+    agent_id TEXT,
+    run_id TEXT,
+    step_id TEXT,
+    redacted BOOLEAN NOT NULL DEFAULT TRUE,
+    metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    indexed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (conversation_id, message_id),
+    UNIQUE (conversation_id, message_offset)
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_conversation_messages_conversation_offset
+    ON agent_conversation_messages(conversation_id, message_offset);
+
+CREATE INDEX IF NOT EXISTS idx_agent_conversation_messages_run
+    ON agent_conversation_messages(run_id);
+
+CREATE INDEX IF NOT EXISTS idx_agent_conversation_messages_agent
+    ON agent_conversation_messages(agent_id);
+
+CREATE TABLE IF NOT EXISTS agent_conversation_state (
+    conversation_id TEXT PRIMARY KEY REFERENCES agent_conversations(conversation_id) ON DELETE CASCADE,
+    summary TEXT,
+    summary_updated_at TIMESTAMPTZ,
+    cursor_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    compaction_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    iteration_checkpoint_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_conversation_state_updated
+    ON agent_conversation_state(updated_at DESC);
+
 CREATE TABLE IF NOT EXISTS tool_executions (
     tool_execution_id TEXT PRIMARY KEY,
     run_id TEXT REFERENCES workflow_runs(run_id) ON DELETE CASCADE,

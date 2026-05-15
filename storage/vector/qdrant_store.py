@@ -11,6 +11,7 @@ from storage.vector.embeddings import EmbeddingModel, embedding_model_from_env
 from storage.vector.models import (
     VectorCollectionStatus,
     VectorDocument,
+    VectorPayloadIndexStatus,
     VectorSearchQuery,
     VectorSearchResult,
 )
@@ -18,6 +19,16 @@ from storage.vector.models import (
 
 DEFAULT_QDRANT_URL = "http://127.0.0.1:6333"
 DEFAULT_VECTOR_SIZE = 64
+DEFAULT_PAYLOAD_INDEXES = {
+    "run_id": "keyword",
+    "report_id": "keyword",
+    "topic": "keyword",
+    "source_type": "keyword",
+    "category": "keyword",
+    "published_at": "datetime",
+    "confidence": "float",
+    "language": "keyword",
+}
 
 
 class QdrantVectorStore:
@@ -101,6 +112,38 @@ class QdrantVectorStore:
             )
         return statuses
 
+    def ensure_payload_indexes(
+        self,
+        collections: list[str],
+        payload_indexes: Mapping[str, str] | None = None,
+    ) -> list[VectorPayloadIndexStatus]:
+        index_schema = dict(payload_indexes or DEFAULT_PAYLOAD_INDEXES)
+        statuses: list[VectorPayloadIndexStatus] = []
+        for collection in collections:
+            self._ensure_collection(collection)
+            existing = _payload_schema_fields(self.client, collection)
+            for field_name, field_schema in index_schema.items():
+                existed_before = field_name in existing
+                created = False
+                if not existed_before:
+                    self.client.create_payload_index(
+                        collection_name=collection,
+                        field_name=field_name,
+                        field_schema=_payload_schema_type(field_schema),
+                        wait=True,
+                    )
+                    created = True
+                statuses.append(
+                    VectorPayloadIndexStatus(
+                        collection=collection,
+                        field_name=field_name,
+                        field_schema=field_schema,
+                        existed_before=existed_before,
+                        created=created,
+                    )
+                )
+        return statuses
+
     def _ensure_collection(self, collection: str) -> None:
         if self.client.collection_exists(collection):
             return
@@ -143,3 +186,30 @@ def _vector_size_from_env(values: Mapping[str, str]) -> int:
     if values.get("NEWS_EMBEDDING_DIMENSIONS"):
         return int(values["NEWS_EMBEDDING_DIMENSIONS"])
     return DEFAULT_VECTOR_SIZE
+
+
+def _payload_schema_fields(client: QdrantClient, collection: str) -> set[str]:
+    try:
+        info = client.get_collection(collection)
+    except Exception:
+        return set()
+    payload_schema = getattr(info, "payload_schema", None)
+    if isinstance(payload_schema, Mapping):
+        return {str(key) for key in payload_schema}
+    return set()
+
+
+def _payload_schema_type(value: str) -> models.PayloadSchemaType:
+    normalized = value.strip().lower()
+    mapping = {
+        "bool": models.PayloadSchemaType.BOOL,
+        "datetime": models.PayloadSchemaType.DATETIME,
+        "float": models.PayloadSchemaType.FLOAT,
+        "integer": models.PayloadSchemaType.INTEGER,
+        "keyword": models.PayloadSchemaType.KEYWORD,
+        "text": models.PayloadSchemaType.TEXT,
+        "uuid": models.PayloadSchemaType.UUID,
+    }
+    if normalized not in mapping:
+        raise ValueError(f"unsupported Qdrant payload index schema: {value}")
+    return mapping[normalized]

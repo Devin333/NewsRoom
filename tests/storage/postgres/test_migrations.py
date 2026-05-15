@@ -17,6 +17,8 @@ def test_postgres_migration_sql_contains_required_tables() -> None:
         "quality_results",
         "memory_documents",
         "agent_conversations",
+        "agent_conversation_messages",
+        "agent_conversation_state",
         "tool_executions",
         "schema_versions",
         "report_sections",
@@ -26,6 +28,8 @@ def test_postgres_migration_sql_contains_required_tables() -> None:
 
     assert "UNIQUE (claim_id, evidence_id, support_type)" in sql
     assert "idx_agent_conversations_run" in sql
+    assert "idx_agent_conversation_messages_conversation_offset" in sql
+    assert "idx_agent_conversation_state_updated" in sql
     assert "idx_tool_executions_run" in sql
     assert "idx_workflow_runs_workflow_id" in sql
     assert "idx_workflow_runs_status" in sql
