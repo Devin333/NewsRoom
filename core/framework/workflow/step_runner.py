@@ -47,6 +47,22 @@ class StepRunnerRegistry:
         except KeyError as exc:
             raise StepExecutionError(f"step runner is not registered: {actual_step_type.value}") from exc
 
+    def resolve(
+        self,
+        *,
+        step_type: StepType | str,
+        implementation: str | None = None,
+        step: StepSpec | None = None,
+    ) -> StepRunner | None:
+        _ = implementation
+        runner = self._runners.get(StepType(step_type))
+        if runner is None:
+            return None
+        can_resolve = getattr(runner, "can_resolve", None)
+        if callable(can_resolve) and step is not None and not bool(can_resolve(step)):
+            return None
+        return runner
+
     def is_registered(self, step_type: StepType | str) -> bool:
         return StepType(step_type) in self._runners
 

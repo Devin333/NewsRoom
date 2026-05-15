@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import glob
 import os
 import subprocess
 import sys
@@ -32,7 +33,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "test":
         return _run([sys.executable, "-m", "pytest", "-q"], env=env)
     if args.command == "test-workflows":
-        return _run([sys.executable, "-m", "pytest", "tests/workflows", "-q"], env=env)
+        return _run(
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                *_workflow_test_paths(),
+                "tests/workflows",
+                "-q",
+            ],
+            env=env,
+        )
     if args.command == "test-services":
         return _run([sys.executable, "-m", "pytest", "tests/interfaces/services", "-q"], env=env)
     if args.command == "smoke-test-no-llm":
@@ -96,6 +107,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _compile_command() -> list[str]:
     return [sys.executable, "-m", "compileall", "-q", *COMPILE_PATHS]
+
+
+def _workflow_test_paths() -> list[str]:
+    paths = sorted(glob.glob("tests/core/framework/workflow/test_workflow_compiler_*.py"))
+    return paths or ["tests/core/framework/workflow/test_workflow_compiler_*.py"]
 
 
 def _smoke_test_no_llm_command(run_id: str | None = None) -> list[str]:
