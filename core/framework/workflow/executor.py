@@ -18,7 +18,7 @@ from core.framework.specs import (
     WorkflowSpec,
     WorkflowStatus,
 )
-from core.framework.workflow.buffer import DataBuffer
+from core.framework.workflow.buffer import DataBuffer, step_scope_from_spec
 from core.framework.workflow.artifact_publishers import (
     ArtifactPublishContext,
     ArtifactPublishPhase,
@@ -127,6 +127,7 @@ class WorkflowExecutor:
         )
         recorder = EventRecorder(actual_run_id, event_bus=self._event_bus)
         buffer = DataBuffer(initial_buffer_values)
+        buffer.register_scopes(step_scope_from_spec(step) for step in workflow.steps)
         initial_buffer_snapshot = buffer.snapshot()
         started_at = _utc_now()
         started_monotonic = time.perf_counter()
@@ -615,7 +616,7 @@ class WorkflowExecutor:
                     error_message=resource_violation["message"],
                     error_details=resource_violation,
                 )
-            scoped_buffer = buffer.scope(step.read_keys, step.write_keys)
+            scoped_buffer = buffer.scoped(step.step_id)
             outcome = self._run_step_attempt(step, scoped_buffer, attempt, max_attempts)
             if outcome.status == StepStatus.TIMEOUT:
                 recorder.emit(
@@ -1123,8 +1124,9 @@ def _sync_llm_call_artifacts_to_buffer(
     artifacts = outcome.outputs.get("llm_call_artifacts")
     if "llm_call_artifacts" in step.write_keys and isinstance(artifacts, list):
         buffer.write(
-            "llm_call_artifacts",
-            artifacts,
+            key="llm_call_artifacts",
+            value=artifacts,
+            step_id=step.step_id,
             lineage={"step_id": step.step_id, "post_processed": True},
         )
 
