@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install package
+        run: |
+          python -m pip install -U pip
+          python -m pip install -e ".[dev]"
+
+      - name: Compile modules
+        run: python -m scripts.dev compile
+
+      - name: Run workflow tests
+        run: python -m scripts.dev test-workflows
+
+      - name: Run service tests
+        run: python -m scripts.dev test-services
+
+      - name: Run fixed smoke commands
+        run: python -m scripts.dev smoke
