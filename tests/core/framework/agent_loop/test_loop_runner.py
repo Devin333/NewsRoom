@@ -7,6 +7,7 @@ from core.framework.agent_loop import (
     AgentLoopStopReason,
     AgentRunner,
     AgentSpec,
+    LocalSubAgentExecutor,
     SubAgentResult,
     SubAgentTask,
 )
@@ -844,6 +845,121 @@ def test_agent_runner_executes_allowed_subagent_and_returns_snapshot_feedback() 
     assert "citation_check" in llm.requests[1].messages[1]["content"]
 
 
+def test_local_subagent_executor_runs_child_agent_with_parent_snapshot() -> None:
+    llm = FakeLLMClient(
+        [
+            (
+                '{"action_type":"delegate_to_subagent",'
+                '"subagent_id":"citation_sanity_checker",'
+                '"subagent_task":"check citations",'
+                '"handoff_reason":"citation risk"}'
+            ),
+            '{"action_type":"final_output","output":{"citation_check":{"risk":"low"}}}',
+            '{"action_type":"final_output","output":{"analysis_result":{"summary":"ok"}}}',
+        ]
+    )
+    child = AgentSpec(
+        agent_id="citation_sanity_checker",
+        name="Citation Checker",
+        role="Check citations",
+        goal="Return citation risk",
+        instructions="Return JSON actions only.",
+        input_keys=["subagent_task", "parent_inputs"],
+        output_key="citation_check",
+    )
+    parent = AgentSpec(
+        agent_id="writer",
+        name="WriterAgent",
+        role="Write",
+        goal="Write report",
+        instructions="Return JSON actions only.",
+        input_keys=["request"],
+        output_key="analysis_result",
+        loop_policy=AgentLoopPolicy(allow_subagents=True),
+        allowed_subagents=["citation_sanity_checker"],
+    )
+    executor = LocalSubAgentExecutor(
+        agents={"citation_sanity_checker": child},
+        llm_client=llm,
+        tool_registry=_registry(),
+    )
+
+    result = AgentRunner(
+        llm_client=llm,
+        tool_registry=_registry(),
+        subagent_executor=executor,
+    ).run(parent, {"request": {"topic": "chips"}})
+    child_prompt = llm.requests[1].messages[1]["content"]
+    parent_resume_prompt = llm.requests[2].messages[1]["content"]
+
+    assert result.success is True
+    assert result.output == {"analysis_result": {"summary": "ok"}}
+    assert '"subagent_task": "check citations"' in child_prompt
+    assert '"parent_agent_id": "writer"' in child_prompt
+    assert '"parent_inputs": {"request": {"topic": "chips"}}' in child_prompt
+    assert "subagent delegation completed" in parent_resume_prompt
+    assert "citation_check" in parent_resume_prompt
+
+
+def test_local_subagent_executor_disables_nested_delegation_by_default() -> None:
+    llm = FakeLLMClient(
+        [
+            (
+                '{"action_type":"delegate_to_subagent",'
+                '"subagent_id":"citation_sanity_checker",'
+                '"subagent_task":"check citations"}'
+            ),
+            (
+                '{"action_type":"delegate_to_subagent",'
+                '"subagent_id":"nested_agent",'
+                '"subagent_task":"nested work"}'
+            ),
+            '{"action_type":"final_output","output":{"analysis_result":{"summary":"handled"}}}',
+        ]
+    )
+    child = AgentSpec(
+        agent_id="citation_sanity_checker",
+        name="Citation Checker",
+        role="Check citations",
+        goal="Return citation risk",
+        instructions="Return JSON actions only.",
+        input_keys=["subagent_task", "parent_inputs"],
+        output_key="citation_check",
+        loop_policy=AgentLoopPolicy(allow_subagents=True),
+        allowed_subagents=["nested_agent"],
+    )
+    parent = AgentSpec(
+        agent_id="writer",
+        name="WriterAgent",
+        role="Write",
+        goal="Write report",
+        instructions="Return JSON actions only.",
+        input_keys=["request"],
+        output_key="analysis_result",
+        loop_policy=AgentLoopPolicy(allow_subagents=True),
+        allowed_subagents=["citation_sanity_checker"],
+    )
+    executor = LocalSubAgentExecutor(
+        agents={"citation_sanity_checker": child},
+        llm_client=llm,
+        tool_registry=_registry(),
+    )
+
+    result = AgentRunner(
+        llm_client=llm,
+        tool_registry=_registry(),
+        subagent_executor=executor,
+    ).run(parent, {"request": {"topic": "chips"}})
+
+    assert result.success is True
+    assert [event["event_type"] for event in result.events if "subagent" in event["event_type"]] == [
+        "subagent_delegation_requested",
+        "subagent_failed",
+    ]
+    assert "agent_policy_blocked" in llm.requests[2].messages[1]["content"]
+    assert "nested_agent" in llm.requests[2].messages[1]["content"]
+
+
 def test_agent_runner_retries_after_allowed_subagent_failure() -> None:
     class FailingSubAgentExecutor:
         def run(self, task: SubAgentTask) -> SubAgentResult:
@@ -1183,6 +1299,41 @@ def test_agent_runner_rejects_resume_cursor_for_different_agent(tmp_path) -> Non
     )
 
     with pytest.raises(ValueError, match="conversation cursor agent_id mismatch"):
+        AgentRunner(
+            llm_client=llm,
+            tool_registry=_registry(),
+            conversation_store=store,
+        ).run(
+            _agent(),
+            {"request": {"topic": "chips"}},
+            conversation_id="conversation-resume",
+            resume_from_cursor=True,
+        )
+
+
+def test_agent_runner_rejects_resume_checkpoint_for_different_agent(tmp_path) -> None:
+    llm = FakeLLMClient(
+        ['{"action_type":"final_output","output":{"analysis_result":{"summary":"ok"}}}']
+    )
+    store = LocalJsonConversationStore(tmp_path)
+    store.write_cursor(
+        ConversationCursor(
+            conversation_id="conversation-resume",
+            message_offset=0,
+            message_id="message-0",
+            metadata={"agent_id": "analyst"},
+        )
+    )
+    store.write_iteration_checkpoint(
+        AgentIterationCheckpoint(
+            conversation_id="conversation-resume",
+            agent_id="other-agent",
+            iteration=1,
+            status="accepted",
+        )
+    )
+
+    with pytest.raises(ValueError, match="agent iteration checkpoint agent_id mismatch"):
         AgentRunner(
             llm_client=llm,
             tool_registry=_registry(),

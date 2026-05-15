@@ -28,6 +28,7 @@ from core.framework.agent_loop.judge import OutputJudge
 from core.framework.agent_loop.loop import AgentLoop
 from core.framework.agent_loop.runner import AgentRunner
 from core.framework.agent_loop.subagents import (
+    LocalSubAgentExecutor,
     SubAgentExecutor,
     SubAgentResult,
     SubAgentStatus,
@@ -78,6 +79,7 @@ __all__ = [
     "ParserErrorTrace",
     "PromptBuilder",
     "StallDetection",
+    "LocalSubAgentExecutor",
     "SubAgentExecutor",
     "SubAgentResult",
     "SubAgentStatus",
