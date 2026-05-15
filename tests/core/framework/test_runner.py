@@ -4,14 +4,17 @@ import pytest
 
 import core.framework.runner as runner_module
 from core.framework import WorkflowRunner
+from core.framework.artifacts.source_artifacts import SourceArtifactWriter
 from core.framework.specs import EdgeCondition, EdgeSpec, StepSpec, StepType, WorkflowSpec, WorkflowStatus
 from core.framework.workflow import (
+    ArtifactPublishContext,
     FunctionStepRegistry,
     FunctionStepRunner,
     HumanReviewStepRunner,
     RUN_MANIFEST_SCHEMA_VERSION,
     StepRunnerRegistry,
     build_default_step_runner_registry,
+    register_manifest_artifact_once,
 )
 from domain.sources import SourceError
 from storage.artifacts import LocalJsonArtifactIndexStore
@@ -232,6 +235,56 @@ def test_workflow_runner_resumes_from_checkpoint_after_step_failure(tmp_path) ->
         "workflow_resumed",
         "checkpoint_restored",
     ]
+
+
+def test_workflow_runner_passes_artifact_publishers_to_run_and_resume(tmp_path) -> None:
+    checkpoint_store = LocalJsonCheckpointStore(tmp_path / "checkpoints")
+    write_should_fail = {"value": True}
+    registry = FunctionStepRegistry()
+    registry.register("sample.plan", lambda buffer: {"plan": buffer.read("request")["topic"]})
+
+    def write_report(buffer):
+        if write_should_fail["value"]:
+            raise RuntimeError("writer crashed")
+        return {"report": f"Report: {buffer.read('plan')}"}
+
+    registry.register("sample.write", write_report)
+    publisher = _RunnerCustomArtifactPublisher()
+    runner = WorkflowRunner(
+        artifact_root=tmp_path,
+        function_registry=registry,
+        checkpoint_store=checkpoint_store,
+        artifact_publishers=[publisher],
+    )
+    spec = _resumable_two_step_spec()
+
+    failed = runner.run(spec, {"topic": "ai"}, profile="test", run_id="runner-custom-failed")
+    checkpoint = next(
+        item
+        for item in checkpoint_store.list_checkpoints("runner-custom-failed")
+        if item.current_step_ids == ["write"]
+    )
+    write_should_fail["value"] = False
+    resumed = runner.resume_from_checkpoint(
+        spec,
+        checkpoint,
+        profile="test",
+        run_id="runner-custom-resumed",
+    )
+
+    failed_manifest = json.loads(
+        (tmp_path / "runner-custom-failed" / "manifest.json").read_text(encoding="utf-8")
+    )
+    resumed_manifest = json.loads(
+        (tmp_path / "runner-custom-resumed" / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert failed.status == WorkflowStatus.FAILED
+    assert resumed.status == WorkflowStatus.SUCCEEDED
+    assert publisher.run_ids == ["runner-custom-failed", "runner-custom-resumed"]
+    assert failed_manifest["artifacts"]["runner_custom"] == "runner_custom.json"
+    assert resumed_manifest["artifacts"]["runner_custom"] == "runner_custom.json"
+    assert (tmp_path / "runner-custom-failed" / "runner_custom.json").exists()
+    assert (tmp_path / "runner-custom-resumed" / "runner_custom.json").exists()
 
 
 def test_workflow_runner_resumes_human_review_after_approval(tmp_path) -> None:
@@ -621,7 +674,11 @@ def test_workflow_runner_indexes_expanded_source_artifact_refs(tmp_path) -> None
             ],
         },
     )
-    runner = WorkflowRunner(artifact_root=tmp_path, function_registry=registry)
+    runner = WorkflowRunner(
+        artifact_root=tmp_path,
+        function_registry=registry,
+        artifact_publishers=[_SourceDiagnosticsArtifactPublisher()],
+    )
     spec = WorkflowSpec(
         workflow_id="source-artifacts",
         name="Source Artifacts",
@@ -725,6 +782,47 @@ class _CollectingLineageStore:
 
     def record_many(self, refs):
         self.refs.extend(refs)
+        return []
+
+
+class _RunnerCustomArtifactPublisher:
+    publisher_id = "runner_custom"
+
+    def __init__(self) -> None:
+        self.run_ids: list[str] = []
+
+    def supports(self, context: ArtifactPublishContext) -> bool:
+        return context.phase.value == "terminal"
+
+    def publish(self, context: ArtifactPublishContext) -> list:
+        self.run_ids.append(context.run_id)
+        register_manifest_artifact_once(context.manifest, "runner_custom", "runner_custom.json")
+        context.artifact_manager.write_json(
+            context.run_id,
+            "runner_custom.json",
+            {"run_id": context.run_id, "status": context.status.value},
+        )
+        return []
+
+
+class _SourceDiagnosticsArtifactPublisher:
+    publisher_id = "test_source_diagnostics"
+
+    def supports(self, context: ArtifactPublishContext) -> bool:
+        return context.phase.value == "terminal"
+
+    def publish(self, context: ArtifactPublishContext) -> list:
+        source_artifacts = SourceArtifactWriter(context.artifact_manager).write_source_artifacts(
+            context.run_id,
+            raw_items=context.output.get("raw_items") or [],
+            source_errors=context.output.get("source_errors") or [],
+        )
+        if source_artifacts:
+            register_manifest_artifact_once(
+                context.manifest,
+                "source_artifacts",
+                "source_artifacts/index.json",
+            )
         return []
 
 
