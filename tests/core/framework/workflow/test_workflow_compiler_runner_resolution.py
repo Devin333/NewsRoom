@@ -53,7 +53,7 @@ def test_compile_fails_when_function_implementation_is_missing() -> None:
     )
 
     assert result.passed is False
-    assert result.has_error(WorkflowCompileIssueCode.RUNNER_NOT_FOUND)
+    assert result.has_error(WorkflowCompileIssueCode.RUNNER_IMPLEMENTATION_NOT_FOUND)
 
 
 class _AnyRunner:

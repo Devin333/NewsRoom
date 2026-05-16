@@ -6,7 +6,8 @@ from itertools import combinations
 from typing import Any
 
 from core.framework.specs import EdgeCondition, EdgeSpec, StepSpec, StepType, WorkflowSpec
-from core.framework.workflow.step_runner import StepRunnerRegistry
+from core.framework.workflow.manifest import WorkflowRunnerManifest, build_runner_manifest
+from core.framework.workflow.registry import StepRunnerRegistry
 
 
 class WorkflowCompileSeverity(StrEnum):
@@ -32,6 +33,10 @@ class WorkflowCompileIssueCode(StrEnum):
     WRITE_KEY_RESERVED = "write_key_reserved"
     REQUIRED_OUTPUT_KEY_UNSATISFIED = "required_output_key_unsatisfied"
     RUNNER_NOT_FOUND = "runner_not_found"
+    RUNNER_IMPLEMENTATION_NOT_FOUND = "runner_implementation_not_found"
+    RUNNER_MISSING_DEPENDENCY = "runner_missing_dependency"
+    RUNNER_STEP_VALIDATION_FAILED = "runner_step_validation_failed"
+    RUNNER_VALIDATION_WARNING = "runner_validation_warning"
     SPEC_VALIDATION_FAILED = "spec_validation_failed"
 
 
@@ -92,6 +97,7 @@ class WorkflowCompileResult:
     required_step_types: list[StepType]
     required_implementations: list[str]
     read_write_plan: WorkflowReadWritePlan
+    runner_manifest: WorkflowRunnerManifest | None = None
 
     def has_error(self, code: WorkflowCompileIssueCode) -> bool:
         return any(error.code == code for error in self.errors)
@@ -146,10 +152,15 @@ class WorkflowCompiler:
 
         read_write_plan = self._check_dataflow(spec, graph, step_by_id, errors, warnings)
         self._check_required_output_keys(spec, step_by_id, read_write_plan, errors)
-        self._check_runner_resolution(spec, errors)
+        self._check_runner_registry_validation(spec, errors, warnings)
 
         required_step_types = self._collect_required_step_types(spec)
         required_implementations = self._collect_required_implementations(spec)
+        runner_manifest = (
+            build_runner_manifest(spec, self.runner_registry)
+            if self.runner_registry is not None
+            else None
+        )
         return WorkflowCompileResult(
             passed=len(errors) == 0,
             errors=errors,
@@ -158,6 +169,7 @@ class WorkflowCompiler:
             required_step_types=required_step_types,
             required_implementations=required_implementations,
             read_write_plan=read_write_plan,
+            runner_manifest=runner_manifest,
         )
 
     def _validate_basic_fields(
@@ -560,34 +572,45 @@ class WorkflowCompiler:
                     )
                 )
 
-    def _check_runner_resolution(
+    def _check_runner_registry_validation(
         self,
         spec: WorkflowSpec,
         errors: list[WorkflowCompileError],
+        warnings: list[WorkflowCompileWarning],
     ) -> None:
         if self.runner_registry is None:
             return
-        for step in spec.steps:
-            runner = self.runner_registry.resolve(
-                step_type=step.step_type,
-                implementation=step.implementation,
-                step=step,
+        validation = self.runner_registry.validate_workflow(spec)
+        for item in validation.errors:
+            code = _RUNNER_VALIDATION_CODE_TO_COMPILE_CODE.get(
+                item.code,
+                WorkflowCompileIssueCode.RUNNER_STEP_VALIDATION_FAILED,
             )
-            if runner is None:
-                errors.append(
-                    WorkflowCompileError(
-                        code=WorkflowCompileIssueCode.RUNNER_NOT_FOUND,
-                        message=(
-                            f"No StepRunner found for step_type={step.step_type.value}, "
-                            f"implementation={step.implementation}"
-                        ),
-                        step_id=step.step_id,
-                        details={
-                            "step_type": step.step_type.value,
-                            "implementation": step.implementation,
-                        },
-                    )
+            errors.append(
+                WorkflowCompileError(
+                    code=code,
+                    message=item.message,
+                    step_id=item.step_id,
+                    details={
+                        "runner_id": item.runner_id,
+                        "validation_code": item.code,
+                        **dict(item.details),
+                    },
                 )
+            )
+        for item in validation.warnings:
+            warnings.append(
+                WorkflowCompileWarning(
+                    code=WorkflowCompileIssueCode.RUNNER_VALIDATION_WARNING,
+                    message=item.message,
+                    step_id=item.step_id,
+                    details={
+                        "runner_id": item.runner_id,
+                        "validation_code": item.code,
+                        **dict(item.details),
+                    },
+                )
+            )
 
     def _collect_required_step_types(self, spec: WorkflowSpec) -> list[StepType]:
         return sorted({step.step_type for step in spec.steps}, key=lambda item: item.value)
@@ -694,6 +717,12 @@ _SPEC_ERROR_CODE_MAP = {
     "conditional_expression_missing": WorkflowCompileIssueCode.CONDITIONAL_EDGE_MISSING_EXPR,
     "read_keys_unavailable": WorkflowCompileIssueCode.READ_KEY_UNAVAILABLE,
     "required_outputs_undeclared": WorkflowCompileIssueCode.REQUIRED_OUTPUT_KEY_UNSATISFIED,
+}
+
+_RUNNER_VALIDATION_CODE_TO_COMPILE_CODE = {
+    "runner_not_found": WorkflowCompileIssueCode.RUNNER_NOT_FOUND,
+    "implementation_not_resolvable": WorkflowCompileIssueCode.RUNNER_IMPLEMENTATION_NOT_FOUND,
+    "runner_missing_dependencies": WorkflowCompileIssueCode.RUNNER_MISSING_DEPENDENCY,
 }
 
 _COMPILER_OWNED_VALIDATION_CODES = {

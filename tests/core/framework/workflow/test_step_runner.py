@@ -141,16 +141,26 @@ def test_build_default_step_runner_registry_registers_core_and_optional_runners(
     }
 
 
-def test_build_default_step_runner_registry_skips_dependency_bound_runners_without_dependencies() -> None:
+def test_build_default_step_runner_registry_registers_dependency_bound_runners_without_dependencies() -> None:
     registry = build_default_step_runner_registry(FunctionStepRegistry())
 
     assert registry.is_registered(StepType.FUNCTION)
     assert registry.is_registered(StepType.PARALLEL_GROUP)
     assert registry.is_registered(StepType.ARTIFACT)
     assert registry.is_registered(StepType.ROUTER)
-    assert not registry.is_registered(StepType.TOOL_CALL)
-    assert not registry.is_registered(StepType.AGENT_LOOP)
-    assert not registry.is_registered(StepType.SUBWORKFLOW)
+    assert registry.is_registered(StepType.TOOL_CALL)
+    assert registry.is_registered(StepType.AGENT_LOOP)
+    assert registry.is_registered(StepType.SUBWORKFLOW)
+
+    descriptors = {item.runner_id: item for item in registry.describe()}
+    assert descriptors["builtin.tool"].missing_dependencies == ["tool_registry"]
+    assert descriptors["builtin.agent_loop"].missing_dependencies == [
+        "agent_registry",
+        "llm_client",
+    ]
+    assert descriptors["builtin.artifact"].missing_dependencies == ["artifact_publisher"]
+    assert descriptors["builtin.human_review"].missing_dependencies == ["human_review_store"]
+    assert descriptors["builtin.subworkflow"].missing_dependencies == ["workflow_executor"]
 
 
 class _CustomRunner:

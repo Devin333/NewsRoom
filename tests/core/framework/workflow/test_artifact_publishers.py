@@ -11,7 +11,9 @@ from core.framework.workflow import (
     ArtifactPublishContext,
     ArtifactPublishPhase,
     ArtifactPublisherRegistry,
+    ArtifactStatus,
     DataBuffer,
+    LocalArtifactPublisher,
     StepOutcome,
     RuntimeArtifactPublisher,
     WorkflowArtifactPublisherRegistry,
@@ -220,6 +222,76 @@ def test_register_manifest_artifact_once_accepts_dict_artifact_record() -> None:
 def test_artifact_publisher_registry_rejects_missing_id() -> None:
     with pytest.raises(ValueError, match="non-empty publisher_id"):
         ArtifactPublisherRegistry([_MissingIdPublisher()])
+
+
+def test_local_artifact_publisher_writes_verifiable_artifact(tmp_path) -> None:
+    publisher = LocalArtifactPublisher(tmp_path)
+
+    result = publisher.publish_artifact(
+        run_id="run-1",
+        step_id="write",
+        key="report_artifact",
+        artifact_type="json",
+        content=b'{"report":"ready"}',
+        metadata={
+            "relative_path": "artifacts/write/report.json",
+            "media_type": "application/json",
+            "api_key": "secret",
+        },
+    )
+
+    assert result.succeeded
+    assert result.artifact_ref is not None
+    ref = result.artifact_ref
+    assert ref.artifact_id == "write:json"
+    assert ref.uri == "artifacts/write/report.json"
+    assert ref.size_bytes == len(b'{"report":"ready"}')
+    assert ref.created_by_step_id == "write"
+    assert ref.metadata["api_key"] == "***REDACTED***"
+    assert (tmp_path / "run-1" / ref.uri).exists()
+    assert publisher.exists(ref)
+    assert publisher.verify(ref)
+
+
+def test_local_artifact_publisher_honors_explicit_artifact_id(tmp_path) -> None:
+    publisher = LocalArtifactPublisher(tmp_path)
+
+    result = publisher.publish_artifact(
+        run_id="run-1",
+        step_id="write",
+        key="report_artifact",
+        artifact_type="json",
+        content=b"{}",
+        metadata={"artifact_id": "stable-artifact-id"},
+    )
+
+    assert result.succeeded
+    assert result.artifact_ref is not None
+    assert result.artifact_ref.artifact_id == "stable-artifact-id"
+
+
+def test_local_artifact_publisher_detects_missing_and_corrupted_artifacts(tmp_path) -> None:
+    publisher = LocalArtifactPublisher(tmp_path)
+    result = publisher.publish_artifact(
+        run_id="run-1",
+        step_id="write",
+        key="report_artifact",
+        artifact_type="json",
+        content=b"{}",
+        metadata={"relative_path": "artifacts/write/report.json"},
+    )
+    assert result.artifact_ref is not None
+    ref = result.artifact_ref
+
+    (tmp_path / "run-1" / ref.uri).write_bytes(b"changed")
+    assert not publisher.verify(ref)
+    assert publisher.recover(ref).artifact_ref.status == ArtifactStatus.CORRUPTED
+
+    (tmp_path / "run-1" / ref.uri).unlink()
+    assert not publisher.exists(ref)
+    recovered = publisher.recover(ref)
+    assert not recovered.succeeded
+    assert recovered.artifact_ref.status == ArtifactStatus.FAILED
 
 
 def _context(

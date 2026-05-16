@@ -3,13 +3,17 @@ import json
 import pytest
 
 from core.framework.artifacts import ArtifactManager
-from core.framework.specs import StepSpec, WorkflowSpec, WorkflowStatus
+from core.framework.specs import StepSpec, StepType, WorkflowSpec, WorkflowStatus
 from core.framework.workflow import (
+    ArtifactStatus,
     FunctionStepRegistry,
     FunctionStepRunner,
+    JsonManifestStore,
+    LocalArtifactPublisher,
     RUN_MANIFEST_SCHEMA_VERSION,
     RunManifestError,
     StepRunnerRegistry,
+    WorkflowRunManifest,
     WorkflowExecutor,
     manifest_schema_version,
     validate_run_manifest,
@@ -87,6 +91,94 @@ def test_manifest_validation_rejects_missing_artifact_metadata() -> None:
 
     with pytest.raises(RunManifestError, match="artifact metadata is missing"):
         validate_run_manifest(manifest, require_terminal_artifact=True)
+
+
+def test_workflow_run_manifest_records_artifacts_versions_and_operations(tmp_path) -> None:
+    publisher = LocalArtifactPublisher(tmp_path)
+    publish = publisher.publish_artifact(
+        run_id="run-1",
+        step_id="write",
+        key="report_artifact",
+        artifact_type="json",
+        content=b"{}",
+        metadata={"relative_path": "artifacts/write/report.json"},
+    )
+    assert publish.artifact_ref is not None
+
+    manifest = WorkflowRunManifest(
+        run_id="run-1",
+        workflow_id="wf",
+        workflow_version="1.0",
+        status=WorkflowStatus.SUCCEEDED,
+        created_at="2026-05-16T00:00:00Z",
+        updated_at="2026-05-16T00:00:00Z",
+        runner_versions={"write": "1.0.0"},
+    )
+    manifest.add_artifact(publish.artifact_ref)
+    manifest.add_checkpoint("cp-1")
+    manifest.add_operation({"operation": "resume_with_patch", "api_key": "secret"})
+    manifest.update_metrics({"duration_ms": 12, "token": "secret"})
+
+    assert manifest.artifacts[0].created_by_step_id == "write"
+    assert manifest.runner_versions == {"write": "1.0.0"}
+    assert manifest.checkpoints == ["cp-1"]
+    assert manifest.operations[0]["api_key"] == "***REDACTED***"
+    assert manifest.metrics["token"] == "***REDACTED***"
+
+    store = JsonManifestStore(tmp_path)
+    store.write(manifest)
+
+    assert store.exists("run-1")
+    restored = store.read("run-1")
+    assert restored.run_id == "run-1"
+    assert restored.artifacts[0].status == ArtifactStatus.PUBLISHED
+    assert restored.runner_versions["write"] == "1.0.0"
+
+
+def test_artifact_runner_adds_production_artifact_refs_to_manifest(tmp_path) -> None:
+    registry = StepRunnerRegistry()
+    from core.framework.workflow import ArtifactStepRunner
+
+    registry.register(StepType.ARTIFACT, ArtifactStepRunner())
+    spec = WorkflowSpec(
+        workflow_id="artifact-manifest",
+        name="Artifact Manifest",
+        version="1.0",
+        start_step_id="artifact",
+        steps=[
+            StepSpec(
+                step_id="artifact",
+                implementation="artifact.write",
+                step_type=StepType.ARTIFACT,
+                write_keys=["artifact_ref"],
+                required_output_keys=["artifact_ref"],
+                metadata={
+                    "content": {"report": "ready"},
+                    "relative_path": "steps/artifact/output.json",
+                    "artifact_id": "artifact-output",
+                    "artifact_metadata": {"token": "secret"},
+                },
+            )
+        ],
+    )
+    executor = WorkflowExecutor(
+        function_step_runner=None,
+        step_runner_registry=registry,
+        artifact_manager=ArtifactManager(tmp_path),
+    )
+
+    result = executor.execute(spec, {}, profile="test", run_id="run-artifact-manifest")
+
+    assert result.status == WorkflowStatus.SUCCEEDED
+    assert result.output["artifact_ref"]["content_hash"]
+    assert result.output["artifact_ref"]["created_by_step_id"] == "artifact"
+    manifest = json.loads((tmp_path / "run-artifact-manifest" / "manifest.json").read_text())
+    assert manifest["runner_versions"]["artifact"] == "1.0.0"
+    ref = next(item for item in manifest["artifact_refs"] if item["artifact_id"] == "artifact-output")
+    assert ref["uri"] == "steps/artifact/output.json"
+    assert ref["content_hash"]
+    assert ref["created_by_step_id"] == "artifact"
+    assert ref["metadata"]["token"] == "***REDACTED***"
 
 
 def test_manifest_schema_version_tolerates_legacy_read() -> None:

@@ -8,7 +8,11 @@ from typing import Any, Iterable, Protocol
 
 from core.framework.artifacts.filesystem import ArtifactManager
 from core.framework.specs import WorkflowSpec, WorkflowStatus
-from core.framework.workflow.manifest import register_manifest_artifact, validate_run_manifest
+from core.framework.workflow.manifest import (
+    manifest_hash,
+    register_manifest_artifact,
+    validate_run_manifest,
+)
 from core.framework.workflow.result import StepOutcome, WorkflowError
 from storage.artifacts import ArtifactRef
 
@@ -149,6 +153,7 @@ class RuntimeArtifactPublisher:
         context.manifest["event_count"] = context.metrics_payload["event_count"]
         context.manifest["metrics"] = context.metrics_payload
         context.manifest["redaction_report"] = context.redaction_report
+        context.manifest["manifest_hash"] = manifest_hash(context.manifest)
         refs.append(_write_manifest_artifact(context))
         return refs
 
@@ -240,8 +245,10 @@ def _write_json_artifact(
 
 def _write_manifest_artifact(context: ArtifactPublishContext) -> ArtifactRef:
     register_manifest_artifact_once(context.manifest, "manifest", "manifest.json")
+    context.manifest["manifest_hash"] = manifest_hash(context.manifest)
     context.artifact_manager.write_json(context.run_id, "manifest.json", context.manifest)
     _populate_artifact_metadata(context.manifest, context.artifact_manager.run_dir(context.run_id))
+    context.manifest["manifest_hash"] = manifest_hash(context.manifest)
     validate_run_manifest(context.manifest, require_terminal_artifact=True)
     path = context.artifact_manager.write_json(context.run_id, "manifest.json", context.manifest)
     return _artifact_ref(

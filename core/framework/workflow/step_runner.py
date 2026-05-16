@@ -3,79 +3,27 @@ from __future__ import annotations
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from hashlib import sha256
+import json
 import time
-from typing import Any, Protocol
+from typing import Any
 
 from core.framework.artifacts import ArtifactManager
 from core.framework.specs import StepSpec, StepStatus, StepType
+from core.framework.workflow.artifacts import LocalArtifactPublisher
 from core.framework.workflow.buffer import DataBuffer, ScopedDataBuffer
+from core.framework.workflow.registry import StepRunnerRegistry
 from core.framework.workflow.result import StepOutcome
-from storage.artifacts import ArtifactRef
+from core.framework.workflow.runner import (
+    StepExecutionError,
+    StepRunner,
+    StepRunnerCapability,
+    StepRunnerSideEffectLevel,
+    ValidationErrorItem,
+    default_runner_can_resolve,
+)
+from storage.artifacts import ArtifactRef as StorageArtifactRef
 
 FunctionStep = Callable[[ScopedDataBuffer], dict[str, Any] | None]
-
-
-class StepExecutionError(RuntimeError):
-    """Raised when a step cannot be executed by a runner."""
-
-
-class StepRunner(Protocol):
-    def run(self, step: StepSpec, buffer: ScopedDataBuffer) -> StepOutcome:
-        ...
-
-
-class StepRunnerRegistry:
-    def __init__(self) -> None:
-        self._runners: dict[StepType, StepRunner] = {}
-
-    @classmethod
-    def with_function_runner(cls, runner: FunctionStepRunner) -> StepRunnerRegistry:
-        registry = cls()
-        registry.register(StepType.FUNCTION, runner)
-        return registry
-
-    def register(self, step_type: StepType | str, runner: StepRunner) -> None:
-        actual_step_type = StepType(step_type)
-        if actual_step_type in self._runners:
-            raise StepExecutionError(f"step runner is already registered: {actual_step_type.value}")
-        self._runners[actual_step_type] = runner
-
-    def get(self, step_type: StepType | str) -> StepRunner:
-        actual_step_type = StepType(step_type)
-        try:
-            return self._runners[actual_step_type]
-        except KeyError as exc:
-            raise StepExecutionError(f"step runner is not registered: {actual_step_type.value}") from exc
-
-    def resolve(
-        self,
-        *,
-        step_type: StepType | str,
-        implementation: str | None = None,
-        step: StepSpec | None = None,
-    ) -> StepRunner | None:
-        _ = implementation
-        runner = self._runners.get(StepType(step_type))
-        if runner is None:
-            return None
-        can_resolve = getattr(runner, "can_resolve", None)
-        if callable(can_resolve) and step is not None and not bool(can_resolve(step)):
-            return None
-        return runner
-
-    def is_registered(self, step_type: StepType | str) -> bool:
-        return StepType(step_type) in self._runners
-
-    def missing_step_types(self, step_types: list[StepType | str]) -> list[StepType]:
-        missing = {
-            StepType(step_type)
-            for step_type in step_types
-            if not self.is_registered(step_type)
-        }
-        return sorted(missing, key=lambda step_type: step_type.value)
-
-    def registered_step_types(self) -> list[StepType]:
-        return sorted(self._runners, key=lambda step_type: step_type.value)
 
 
 def build_default_step_runner_registry(
@@ -92,65 +40,79 @@ def build_default_step_runner_registry(
     global_budget_tracker: Any | None = None,
     max_parallel_workers: int = 4,
     max_tool_batch_workers: int = 4,
+    available_dependencies: set[str] | None = None,
 ) -> StepRunnerRegistry:
     """Build the standard runtime registry from explicitly injected dependencies."""
 
-    registry = StepRunnerRegistry()
-
+    dependencies = set(available_dependencies or set())
+    effective_function_registry = function_registry or FunctionStepRegistry()
+    effective_tool_registry = tool_registry
+    effective_agent_registry = dict(agent_registry or {})
+    effective_workflow_registry = dict(workflow_registry or {})
     if function_registry is not None:
-        registry.register(StepType.FUNCTION, FunctionStepRunner(function_registry))
-        registry.register(
-            StepType.PARALLEL_GROUP,
-            ParallelGroupStepRunner(function_registry, max_workers=max_parallel_workers),
-        )
-
+        dependencies.add("function_registry")
     if tool_registry is not None:
-        tool_call_runner = ToolCallStepRunner(
-            tool_registry,
+        dependencies.add("tool_registry")
+    if agent_runner is not None:
+        dependencies.add("llm_client")
+    if agent_registry:
+        dependencies.add("agent_registry")
+    if workflow_registry is not None:
+        dependencies.add("workflow_executor")
+    if artifact_manager is not None:
+        dependencies.add("artifact_publisher")
+    if approval_store is not None:
+        dependencies.add("human_review_store")
+
+    registry = StepRunnerRegistry(available_dependencies=dependencies)
+
+    registry.register(FunctionStepRunner(effective_function_registry))
+    registry.register(
+        ParallelGroupStepRunner(effective_function_registry, max_workers=max_parallel_workers),
+    )
+
+    tool_call_runner = ToolCallStepRunner(
+        effective_tool_registry,
+        artifact_manager=artifact_manager,
+        run_id=run_id,
+        approval_store=approval_store,
+        secret_provider=secret_provider,
+    )
+    registry.register(tool_call_runner)
+    for step_type in sorted(_TOOL_CALL_STEP_TYPES - {StepType.TOOL_CALL}, key=lambda item: item.value):
+        registry.register_alias(step_type, tool_call_runner)
+    registry.register(
+        ToolBatchStepRunner(
+            effective_tool_registry,
             artifact_manager=artifact_manager,
             run_id=run_id,
-            approval_store=approval_store,
             secret_provider=secret_provider,
-        )
-        for step_type in _TOOL_CALL_STEP_TYPES:
-            registry.register(step_type, tool_call_runner)
-        registry.register(
-            StepType.TOOL_BATCH,
-            ToolBatchStepRunner(
-                tool_registry,
-                artifact_manager=artifact_manager,
-                run_id=run_id,
-                secret_provider=secret_provider,
-                max_workers=max_tool_batch_workers,
-            ),
-        )
+            max_workers=max_tool_batch_workers,
+        ),
+    )
 
-    if agent_runner is not None and agent_registry:
-        registry.register(
-            StepType.AGENT_LOOP,
-            AgentLoopStepRunner(
-                agent_runner,
-                agent_registry,
-                global_budget_tracker=global_budget_tracker,
-            ),
-        )
+    registry.register(
+        AgentLoopStepRunner(
+            agent_runner,
+            effective_agent_registry,
+            global_budget_tracker=global_budget_tracker,
+        ),
+    )
 
-    registry.register(StepType.ROUTER, RouterStepRunner())
-    registry.register(StepType.JOIN, JoinStepRunner())
-    registry.register(StepType.QUALITY_GATE, QualityGateStepRunner())
-    registry.register(StepType.HUMAN_REVIEW, HumanReviewStepRunner())
-    registry.register(StepType.ARTIFACT, ArtifactStepRunner(artifact_manager, run_id=run_id))
+    registry.register(RouterStepRunner())
+    registry.register(JoinStepRunner())
+    registry.register(QualityGateStepRunner())
+    registry.register(HumanReviewStepRunner())
+    registry.register(ArtifactStepRunner(artifact_manager, run_id=run_id))
 
-    if workflow_registry is not None:
-        registry.register(
-            StepType.SUBWORKFLOW,
-            SubworkflowStepRunner(
-                workflow_registry,
-                registry,
-                artifact_manager=artifact_manager,
-                run_id=run_id,
-            ),
+    registry.register(
+        SubworkflowStepRunner(
+            effective_workflow_registry,
+            registry,
+            artifact_manager=artifact_manager,
+            run_id=run_id,
         )
+    )
 
     return registry
 
@@ -175,11 +137,35 @@ class FunctionStepRegistry:
 
 
 class FunctionStepRunner:
+    capability = StepRunnerCapability(
+        step_type=StepType.FUNCTION,
+        runner_id="builtin.function",
+        version="1.0.0",
+        supports_checkpoint=True,
+        supports_resume=True,
+        supports_timeout=True,
+        supports_retry=True,
+        side_effect_level=StepRunnerSideEffectLevel.NONE,
+        required_dependencies=["function_registry"],
+        description="Runs an in-process Python function step.",
+    )
+
     def __init__(self, registry: FunctionStepRegistry) -> None:
         self._registry = registry
 
     def can_resolve(self, step: StepSpec) -> bool:
-        return self._registry.is_registered(step.implementation)
+        return step.step_type == StepType.FUNCTION and self._registry.is_registered(step.implementation)
+
+    def validate_step(self, step: StepSpec) -> list[ValidationErrorItem]:
+        if step.implementation:
+            return []
+        return [
+            ValidationErrorItem(
+                code="function_missing_implementation",
+                message="Function step requires implementation.",
+                field="implementation",
+            )
+        ]
 
     def run(self, step: StepSpec, buffer: ScopedDataBuffer) -> StepOutcome:
         started = time.perf_counter()
@@ -216,6 +202,19 @@ class FunctionStepRunner:
 
 
 class ToolBatchStepRunner:
+    capability = StepRunnerCapability(
+        step_type=StepType.TOOL_BATCH,
+        runner_id="builtin.tool_batch",
+        version="1.0.0",
+        supports_checkpoint=True,
+        supports_resume=False,
+        supports_timeout=True,
+        supports_retry=True,
+        side_effect_level=StepRunnerSideEffectLevel.EXTERNAL_WRITE,
+        required_dependencies=["tool_registry"],
+        description="Runs batched tool calls through ToolRuntime.",
+    )
+
     def __init__(
         self,
         registry: Any,
@@ -230,6 +229,20 @@ class ToolBatchStepRunner:
         self._run_id = run_id
         self._secret_provider = secret_provider
         self._max_workers = max_workers
+
+    def can_resolve(self, step: StepSpec) -> bool:
+        return default_runner_can_resolve(self.capability, step)
+
+    def validate_step(self, step: StepSpec) -> list[ValidationErrorItem]:
+        if step.metadata.get("tool_calls") is not None or step.metadata.get("tool_calls_key") is not None:
+            return []
+        return [
+            ValidationErrorItem(
+                code="tool_batch_missing_tool_calls",
+                message="Tool batch step requires metadata.tool_calls or metadata.tool_calls_key.",
+                field="metadata.tool_calls",
+            )
+        ]
 
     def configure_run_context(
         self,
@@ -319,6 +332,19 @@ class ToolBatchStepRunner:
 
 
 class AgentLoopStepRunner:
+    capability = StepRunnerCapability(
+        step_type=StepType.AGENT_LOOP,
+        runner_id="builtin.agent_loop",
+        version="1.0.0",
+        supports_checkpoint=True,
+        supports_resume=True,
+        supports_timeout=True,
+        supports_retry=False,
+        side_effect_level=StepRunnerSideEffectLevel.EXTERNAL_WRITE,
+        required_dependencies=["llm_client", "agent_registry"],
+        description="Runs an AgentLoop step through the configured agent runner.",
+    )
+
     def __init__(
         self,
         agent_runner: Any,
@@ -331,8 +357,23 @@ class AgentLoopStepRunner:
         self._run_id: str | None = None
 
     def can_resolve(self, step: StepSpec) -> bool:
+        if step.step_type != StepType.AGENT_LOOP:
+            return False
+        if self._agent_runner is None or not self._agent_registry:
+            return True
         agent_id = str(step.metadata.get("agent_id") or step.implementation)
         return agent_id in self._agent_registry
+
+    def validate_step(self, step: StepSpec) -> list[ValidationErrorItem]:
+        if step.metadata.get("agent_id") or step.implementation:
+            return []
+        return [
+            ValidationErrorItem(
+                code="agent_loop_missing_agent",
+                message="AgentLoop step requires metadata.agent_id or implementation.",
+                field="metadata.agent_id",
+            )
+        ]
 
     def configure_global_budget_tracker(self, global_budget_tracker: Any | None) -> None:
         self._global_budget_tracker = global_budget_tracker
@@ -498,6 +539,19 @@ class AgentLoopStepRunner:
 
 
 class ToolCallStepRunner:
+    capability = StepRunnerCapability(
+        step_type=StepType.TOOL_CALL,
+        runner_id="builtin.tool",
+        version="1.0.0",
+        supports_checkpoint=True,
+        supports_resume=False,
+        supports_timeout=True,
+        supports_retry=True,
+        side_effect_level=StepRunnerSideEffectLevel.EXTERNAL_WRITE,
+        required_dependencies=["tool_registry"],
+        description="Runs a single ToolRuntime-backed tool step.",
+    )
+
     def __init__(
         self,
         registry: Any,
@@ -512,6 +566,24 @@ class ToolCallStepRunner:
         self._run_id = run_id
         self._approval_store = approval_store
         self._secret_provider = secret_provider
+
+    def can_resolve(self, step: StepSpec) -> bool:
+        return step.step_type in _TOOL_CALL_STEP_TYPES
+
+    def validate_step(self, step: StepSpec) -> list[ValidationErrorItem]:
+        if step.metadata.get("tool_call") is not None:
+            return []
+        if step.metadata.get("tool_name") is not None:
+            return []
+        if step.metadata.get("tool_call_key") is not None:
+            return []
+        return [
+            ValidationErrorItem(
+                code="tool_missing_tool_name",
+                message="Tool step requires metadata.tool_name, metadata.tool_call, or metadata.tool_call_key.",
+                field="metadata.tool_name",
+            )
+        ]
 
     def configure_run_context(
         self,
@@ -596,6 +668,19 @@ class ToolCallStepRunner:
 
 
 class ParallelGroupStepRunner:
+    capability = StepRunnerCapability(
+        step_type=StepType.PARALLEL_GROUP,
+        runner_id="builtin.parallel_group",
+        version="1.0.0",
+        supports_checkpoint=True,
+        supports_resume=True,
+        supports_timeout=True,
+        supports_retry=True,
+        side_effect_level=StepRunnerSideEffectLevel.NONE,
+        required_dependencies=["function_registry"],
+        description="Runs in-process function branches concurrently.",
+    )
+
     def __init__(
         self,
         function_registry: FunctionStepRegistry,
@@ -604,6 +689,21 @@ class ParallelGroupStepRunner:
     ) -> None:
         self._function_registry = function_registry
         self._max_workers = max(1, max_workers)
+
+    def can_resolve(self, step: StepSpec) -> bool:
+        return default_runner_can_resolve(self.capability, step)
+
+    def validate_step(self, step: StepSpec) -> list[ValidationErrorItem]:
+        branches = step.metadata.get("branches")
+        if isinstance(branches, list) and branches:
+            return []
+        return [
+            ValidationErrorItem(
+                code="parallel_group_missing_branches",
+                message="Parallel group step requires non-empty metadata.branches.",
+                field="metadata.branches",
+            )
+        ]
 
     def run(self, step: StepSpec, buffer: ScopedDataBuffer) -> StepOutcome:
         started = time.perf_counter()
@@ -706,6 +806,19 @@ class ParallelGroupStepRunner:
 
 
 class SubworkflowStepRunner:
+    capability = StepRunnerCapability(
+        step_type=StepType.SUBWORKFLOW,
+        runner_id="builtin.subworkflow",
+        version="1.0.0",
+        supports_checkpoint=True,
+        supports_resume=True,
+        supports_timeout=True,
+        supports_retry=True,
+        side_effect_level=StepRunnerSideEffectLevel.EXTERNAL_WRITE,
+        required_dependencies=["workflow_executor"],
+        description="Runs a child WorkflowSpec as a subworkflow.",
+    )
+
     def __init__(
         self,
         workflow_registry: dict[str, Any],
@@ -729,8 +842,23 @@ class SubworkflowStepRunner:
         self._run_id = run_id
 
     def can_resolve(self, step: StepSpec) -> bool:
+        if step.step_type != StepType.SUBWORKFLOW:
+            return False
+        if not self._workflow_registry:
+            return True
         workflow_id = str(step.metadata.get("workflow_id") or step.implementation)
         return workflow_id in self._workflow_registry
+
+    def validate_step(self, step: StepSpec) -> list[ValidationErrorItem]:
+        if step.metadata.get("workflow_id") or step.implementation:
+            return []
+        return [
+            ValidationErrorItem(
+                code="subworkflow_missing_workflow_id",
+                message="Subworkflow step requires metadata.workflow_id or implementation.",
+                field="metadata.workflow_id",
+            )
+        ]
 
     def run(self, step: StepSpec, buffer: ScopedDataBuffer) -> StepOutcome:
         started = time.perf_counter()
@@ -825,6 +953,25 @@ class SubworkflowStepRunner:
 
 
 class RouterStepRunner:
+    capability = StepRunnerCapability(
+        step_type=StepType.ROUTER,
+        runner_id="builtin.router",
+        version="1.0.0",
+        supports_checkpoint=False,
+        supports_resume=True,
+        supports_timeout=False,
+        supports_retry=True,
+        side_effect_level=StepRunnerSideEffectLevel.NONE,
+        required_dependencies=[],
+        description="Selects a deterministic route hint.",
+    )
+
+    def can_resolve(self, step: StepSpec) -> bool:
+        return default_runner_can_resolve(self.capability, step)
+
+    def validate_step(self, step: StepSpec) -> list[ValidationErrorItem]:
+        return []
+
     def run(self, step: StepSpec, buffer: ScopedDataBuffer) -> StepOutcome:
         started = time.perf_counter()
         try:
@@ -856,6 +1003,25 @@ class RouterStepRunner:
 
 
 class JoinStepRunner:
+    capability = StepRunnerCapability(
+        step_type=StepType.JOIN,
+        runner_id="builtin.join",
+        version="1.0.0",
+        supports_checkpoint=False,
+        supports_resume=True,
+        supports_timeout=False,
+        supports_retry=True,
+        side_effect_level=StepRunnerSideEffectLevel.NONE,
+        required_dependencies=[],
+        description="Summarizes declared fan-in inputs.",
+    )
+
+    def can_resolve(self, step: StepSpec) -> bool:
+        return default_runner_can_resolve(self.capability, step)
+
+    def validate_step(self, step: StepSpec) -> list[ValidationErrorItem]:
+        return []
+
     def run(self, step: StepSpec, buffer: ScopedDataBuffer) -> StepOutcome:
         started = time.perf_counter()
         try:
@@ -891,6 +1057,25 @@ class JoinStepRunner:
 
 
 class QualityGateStepRunner:
+    capability = StepRunnerCapability(
+        step_type=StepType.QUALITY_GATE,
+        runner_id="builtin.quality_gate",
+        version="1.0.0",
+        supports_checkpoint=True,
+        supports_resume=True,
+        supports_timeout=True,
+        supports_retry=False,
+        side_effect_level=StepRunnerSideEffectLevel.NONE,
+        required_dependencies=[],
+        description="Evaluates deterministic report quality gate rules.",
+    )
+
+    def can_resolve(self, step: StepSpec) -> bool:
+        return default_runner_can_resolve(self.capability, step)
+
+    def validate_step(self, step: StepSpec) -> list[ValidationErrorItem]:
+        return []
+
     def run(self, step: StepSpec, buffer: ScopedDataBuffer) -> StepOutcome:
         started = time.perf_counter()
         try:
@@ -963,6 +1148,25 @@ class QualityGateStepRunner:
 
 
 class HumanReviewStepRunner:
+    capability = StepRunnerCapability(
+        step_type=StepType.HUMAN_REVIEW,
+        runner_id="builtin.human_review",
+        version="1.0.0",
+        supports_checkpoint=True,
+        supports_resume=True,
+        supports_timeout=True,
+        supports_retry=False,
+        side_effect_level=StepRunnerSideEffectLevel.EXTERNAL_WRITE,
+        required_dependencies=["human_review_store"],
+        description="Creates or consumes a human review pause boundary.",
+    )
+
+    def can_resolve(self, step: StepSpec) -> bool:
+        return default_runner_can_resolve(self.capability, step)
+
+    def validate_step(self, step: StepSpec) -> list[ValidationErrorItem]:
+        return []
+
     def run(self, step: StepSpec, buffer: ScopedDataBuffer) -> StepOutcome:
         started = time.perf_counter()
         try:
@@ -1020,14 +1224,29 @@ class HumanReviewStepRunner:
 
 
 class ArtifactStepRunner:
+    capability = StepRunnerCapability(
+        step_type=StepType.ARTIFACT,
+        runner_id="builtin.artifact",
+        version="1.0.0",
+        supports_checkpoint=True,
+        supports_resume=True,
+        supports_timeout=True,
+        supports_retry=False,
+        side_effect_level=StepRunnerSideEffectLevel.EXTERNAL_WRITE,
+        required_dependencies=["artifact_publisher"],
+        description="Writes a workflow artifact through ArtifactManager.",
+    )
+
     def __init__(
         self,
         artifact_manager: ArtifactManager | None = None,
         *,
         run_id: str | None = None,
+        artifact_publisher: Any | None = None,
     ) -> None:
         self._artifact_manager = artifact_manager
         self._run_id = run_id
+        self._artifact_publisher = artifact_publisher
 
     def configure_run_context(
         self,
@@ -1037,6 +1256,22 @@ class ArtifactStepRunner:
     ) -> None:
         self._artifact_manager = artifact_manager
         self._run_id = run_id
+        if self._artifact_publisher is None:
+            self._artifact_publisher = LocalArtifactPublisher(artifact_manager.root)
+
+    def can_resolve(self, step: StepSpec) -> bool:
+        return default_runner_can_resolve(self.capability, step)
+
+    def validate_step(self, step: StepSpec) -> list[ValidationErrorItem]:
+        if step.metadata.get("content") is not None or step.metadata.get("content_key") is not None:
+            return []
+        return [
+            ValidationErrorItem(
+                code="artifact_missing_content",
+                message="Artifact step requires metadata.content or metadata.content_key.",
+                field="metadata.content",
+            )
+        ]
 
     def run(self, step: StepSpec, buffer: ScopedDataBuffer) -> StepOutcome:
         started = time.perf_counter()
@@ -1045,6 +1280,8 @@ class ArtifactStepRunner:
                 raise StepExecutionError(f"unsupported step type for ArtifactStepRunner: {step.step_type}")
             if self._artifact_manager is None or self._run_id is None:
                 raise StepExecutionError("ArtifactStepRunner requires run context")
+            if self._artifact_publisher is None:
+                self._artifact_publisher = LocalArtifactPublisher(self._artifact_manager.root)
 
             content = step.metadata.get("content")
             content_key = step.metadata.get("content_key")
@@ -1054,34 +1291,52 @@ class ArtifactStepRunner:
             content_type = str(step.metadata.get("content_type") or "application/json")
             artifact_type = str(step.metadata.get("artifact_type") or "step_output")
             artifact_id = str(step.metadata.get("artifact_id") or f"{step.step_id}:{artifact_type}")
+            output_key = str(step.metadata.get("output_key") or "artifact_ref")
 
             if content_type == "text/plain" or relative_path.endswith((".md", ".txt")):
-                path = self._artifact_manager.write_text(self._run_id, relative_path, str(content))
-                data = path.read_bytes()
+                data = str(content).encode("utf-8")
             else:
-                path = self._artifact_manager.write_json(self._run_id, relative_path, content)
-                data = path.read_bytes()
+                data = _json_artifact_bytes(content)
 
-            artifact_ref = ArtifactRef(
+            publish_result = self._artifact_publisher.publish_artifact(
+                run_id=self._run_id,
+                step_id=step.step_id,
+                key=output_key,
+                artifact_type=artifact_type,
+                content=data,
+                metadata={
+                    "artifact_id": artifact_id,
+                    "relative_path": relative_path,
+                    "content_type": content_type,
+                    **dict(step.metadata.get("artifact_metadata") or {}),
+                },
+            )
+            if not publish_result.succeeded or publish_result.artifact_ref is None:
+                raise StepExecutionError(publish_result.error or "artifact publish failed")
+
+            workflow_artifact_ref = publish_result.artifact_ref
+            artifact_ref = StorageArtifactRef(
                 artifact_id=artifact_id,
                 run_id=self._run_id,
                 step_id=step.step_id,
                 artifact_type=artifact_type,
-                path=relative_path,
+                path=workflow_artifact_ref.uri,
                 content_type=content_type,
-                size_bytes=len(data),
-                checksum=sha256(data).hexdigest(),
+                size_bytes=workflow_artifact_ref.size_bytes,
+                checksum=workflow_artifact_ref.content_hash,
                 redacted=bool(step.metadata.get("redacted", True)),
-                metadata=dict(step.metadata.get("artifact_metadata") or {}),
+                metadata={
+                    "artifact_key": output_key,
+                    "workflow_artifact_ref": workflow_artifact_ref.to_dict(),
+                },
             )
-            output_key = str(step.metadata.get("output_key") or "artifact_ref")
             outputs = _validated_outputs(
                 step,
-                {output_key: artifact_ref.to_dict()},
+                {output_key: workflow_artifact_ref.to_dict()},
                 runner_name="artifact step",
             )
             if output_key in buffer.list_allowed_writes():
-                buffer.write(output_key, artifact_ref.to_dict())
+                buffer.write(output_key, workflow_artifact_ref.to_dict())
             return StepOutcome(
                 status=StepStatus.SUCCEEDED,
                 outputs=outputs,
@@ -1575,6 +1830,20 @@ def _validated_outputs(
         for key, value in outputs.items()
         if str(key) in set(step.write_keys)
     }
+
+
+def _json_artifact_bytes(content: Any) -> bytes:
+    from core.framework.serialization import to_json_safe
+
+    return (
+        json.dumps(
+            to_json_safe(content),
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    ).encode("utf-8")
 
 
 def _contract_metrics(

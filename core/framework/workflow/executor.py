@@ -27,9 +27,13 @@ from core.framework.workflow.artifact_publishers import (
     WorkflowArtifactPublisherRegistry,
 )
 from core.framework.workflow.manifest import (
+    add_manifest_checkpoint,
+    build_runner_manifest,
     build_run_manifest,
     register_manifest_artifact,
     register_manifest_step_artifact,
+    update_manifest_metrics,
+    update_manifest_runner_versions,
 )
 from core.framework.workflow.result import StepOutcome, WorkflowError, WorkflowResult
 from core.framework.workflow.routing import RoutingDecision, RoutingEngine
@@ -43,6 +47,7 @@ from core.framework.workflow.step_runner import (
     StepExecutionError,
     StepRunnerRegistry,
 )
+from core.framework.workflow.runner import StepRunnerResolutionError
 from storage.artifacts import ArtifactRef
 from storage.checkpoint import WorkflowCheckpoint
 
@@ -132,12 +137,18 @@ class WorkflowExecutor:
         started_at = _utc_now()
         started_monotonic = time.perf_counter()
 
+        runner_manifest = build_runner_manifest(
+            workflow,
+            self._step_runner_registry,
+        )
         manifest = build_run_manifest(
             run_id=actual_run_id,
             workflow=workflow,
             profile=profile,
             started_at=started_at,
         )
+        manifest["runners"] = runner_manifest.to_dict()["runners"]
+        update_manifest_runner_versions(manifest, runner_manifest)
         if _resumed_checkpoint_id is not None:
             manifest["resumed_from_checkpoint_id"] = _resumed_checkpoint_id
         if _resume_metadata:
@@ -338,6 +349,7 @@ class WorkflowExecutor:
                 )
                 if checkpoint_id is not None:
                     checkpoint_ids.append(checkpoint_id)
+                    add_manifest_checkpoint(manifest, checkpoint_id)
                 pause_checkpoint_id = checkpoint_id or f"pause-artifact:{actual_run_id}:{step.step_id}"
                 if step.step_type == StepType.HUMAN_REVIEW:
                     human_review_request_id = _human_review_request_id(step, outcome)
@@ -470,6 +482,7 @@ class WorkflowExecutor:
             )
             if checkpoint_id is not None:
                 checkpoint_ids.append(checkpoint_id)
+                add_manifest_checkpoint(manifest, checkpoint_id)
 
         final_buffer_snapshot = buffer.snapshot()
         output = final_buffer_snapshot.to_dict()
@@ -504,6 +517,7 @@ class WorkflowExecutor:
             global_budget_tracker=self._global_budget_tracker,
         )
         redaction_report = _redaction_report(output)
+        update_manifest_metrics(manifest, metrics_payload)
         events_path = recorder.write_jsonl(run_dir / "events.jsonl")
         self._artifact_publishers.publish_all(
             ArtifactPublishContext(
@@ -616,6 +630,19 @@ class WorkflowExecutor:
                     error_message=resource_violation["message"],
                     error_details=resource_violation,
                 )
+            capability_violation = _step_runner_capability_violation(
+                step,
+                self._step_runner_registry,
+                resume_mode=False,
+            )
+            if capability_violation is not None:
+                recorder.emit("runner_capability_violation", capability_violation)
+                return StepOutcome(
+                    status=StepStatus.FAILED,
+                    error_type="StepRunnerCapabilityError",
+                    error_message=capability_violation["message"],
+                    error_details=capability_violation,
+                )
             scoped_buffer = buffer.scoped(step.step_id)
             outcome = self._run_step_attempt(step, scoped_buffer, attempt, max_attempts)
             if outcome.status == StepStatus.TIMEOUT:
@@ -703,7 +730,12 @@ class WorkflowExecutor:
         max_attempts: int,
     ) -> StepOutcome:
         try:
-            runner = self._step_runner_registry.get(step.step_type)
+            runner = self._step_runner_registry.resolve(step)
+            if runner is None:
+                raise StepRunnerResolutionError(
+                    "step runner cannot resolve step: "
+                    f"{step.step_id} ({step.step_type.value}:{step.implementation})"
+                )
             outcome = runner.run(step, scoped_buffer)
             if not isinstance(outcome, StepOutcome):
                 raise StepExecutionError(
@@ -962,6 +994,59 @@ def _resource_policy_violation(step: StepSpec, buffer: DataBuffer) -> dict[str, 
                     f"exceeding max_items {max_items}"
                 ),
             }
+    return None
+
+
+def _step_runner_capability_violation(
+    step: StepSpec,
+    registry: StepRunnerRegistry,
+    *,
+    resume_mode: bool,
+) -> dict[str, Any] | None:
+    runner = registry.resolve(step)
+    if runner is None:
+        return {
+            "step_id": step.step_id,
+            "step_type": step.step_type.value,
+            "implementation": step.implementation,
+            "message": (
+                "No StepRunner can resolve step "
+                f"{step.step_id}: {step.step_type.value}/{step.implementation}"
+            ),
+        }
+    capability = getattr(runner, "capability", None)
+    if capability is None:
+        return None
+    if step.timeout_policy.timeout_seconds is not None and not capability.supports_timeout:
+        return {
+            "step_id": step.step_id,
+            "runner_id": capability.runner_id,
+            "capability": "timeout",
+            "message": (
+                f"Runner {capability.runner_id} does not support timeout "
+                f"for step {step.step_id}."
+            ),
+        }
+    if step.retry_policy.max_retries > 0 and not capability.supports_retry:
+        return {
+            "step_id": step.step_id,
+            "runner_id": capability.runner_id,
+            "capability": "retry",
+            "message": (
+                f"Runner {capability.runner_id} does not support retry "
+                f"for step {step.step_id}."
+            ),
+        }
+    if resume_mode and not capability.supports_resume:
+        return {
+            "step_id": step.step_id,
+            "runner_id": capability.runner_id,
+            "capability": "resume",
+            "message": (
+                f"Runner {capability.runner_id} does not support resume "
+                f"for step {step.step_id}."
+            ),
+        }
     return None
 
 
@@ -1260,20 +1345,25 @@ def _sensitive_key(key: str) -> bool:
 
 
 def _validate_step_runners(workflow: WorkflowSpec, registry: StepRunnerRegistry) -> None:
-    missing = registry.missing_step_types([step.step_type for step in workflow.steps])
-    if missing:
-        labels = ", ".join(step_type.value for step_type in missing)
-        raise StepExecutionError(f"step runner is not registered: {labels}")
-    unresolved = []
-    for step in workflow.steps:
-        runner = registry.get(step.step_type)
-        can_resolve = getattr(runner, "can_resolve", None)
-        if callable(can_resolve) and not can_resolve(step):
-            unresolved.append(f"{step.step_id}:{step.implementation}")
-    if unresolved:
-        raise StepExecutionError(
-            "step implementation is not registered: " + ", ".join(sorted(unresolved))
-        )
+    validation = registry.validate_workflow(workflow)
+    if validation.passed:
+        return
+    messages = [
+        f"{issue.step_id}:{issue.code}:{issue.message}"
+        for issue in validation.errors
+    ]
+    legacy_messages = []
+    for issue in validation.errors:
+        step_type = issue.details.get("step_type")
+        implementation = issue.details.get("implementation")
+        if issue.code == "runner_not_found" and step_type:
+            legacy_messages.append(f"step runner is not registered: {step_type}")
+        if issue.code == "implementation_not_resolvable" and implementation:
+            legacy_messages.append(
+                f"step implementation is not registered: {implementation}"
+            )
+    detail_messages = [*messages, *legacy_messages]
+    raise StepExecutionError("step runner validation failed: " + "; ".join(detail_messages))
 
 
 def _configure_step_runners(
@@ -1283,8 +1373,14 @@ def _configure_step_runners(
     run_id: str,
     global_budget_tracker: Any | None = None,
 ) -> None:
+    configured_runner_ids: set[str] = set()
     for step_type in registry.registered_step_types():
         runner = registry.get(step_type)
+        capability = getattr(runner, "capability", None)
+        runner_id = getattr(capability, "runner_id", f"{step_type.value}:{id(runner)}")
+        if runner_id in configured_runner_ids:
+            continue
+        configured_runner_ids.add(str(runner_id))
         configure = getattr(runner, "configure_run_context", None)
         if callable(configure):
             configure(artifact_manager=artifact_manager, run_id=run_id)
