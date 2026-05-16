@@ -28,6 +28,10 @@ from core.framework.workflow.artifact_publishers import (
     WorkflowArtifactPublisher,
     WorkflowArtifactPublisherRegistry,
 )
+from core.framework.workflow.budget_governance import (
+    budget_summary_from_tracker,
+    restore_global_budget_tracker_usage,
+)
 from core.framework.workflow.checkpointing import (
     ResumeMode,
     WorkflowResumePlanner,
@@ -45,8 +49,13 @@ from core.framework.workflow.manifest import (
     update_manifest_metrics,
     update_manifest_runner_versions,
 )
+from core.framework.workflow.resource_governance import (
+    StepResourceEstimator,
+    StepResourceGuard,
+)
 from core.framework.workflow.result import StepOutcome, WorkflowError, WorkflowResult
 from core.framework.workflow.routing import RoutingDecision, RoutingEngine
+from core.framework.workflow.safety_governance import safety_violation_for_step
 from core.framework.workflow.state_machine import (
     WorkflowRuntimeEvent,
     WorkflowRuntimeEventType,
@@ -458,6 +467,7 @@ class WorkflowExecutor:
                 current_step_ids = []
             elif outcome.status == StepStatus.BLOCKED:
                 recorder.emit("step_blocked", {"step_id": step.step_id, "outcome": outcome})
+                _record_policy_violation(manifest, outcome)
                 status = _workflow_transition(
                     self._workflow_state_machine,
                     status,
@@ -485,6 +495,7 @@ class WorkflowExecutor:
                 )
                 if _blocks_on_failure(step):
                     recorder.emit("step_blocked", {"step_id": step.step_id, "outcome": outcome})
+                    _record_policy_violation(manifest, outcome)
                     status = _workflow_transition(
                         self._workflow_state_machine,
                         status,
@@ -646,6 +657,9 @@ class WorkflowExecutor:
             plan = WorkflowResumePlanner().plan(workflow, resume_request)
         except ValueError as exc:
             raise StepExecutionError(str(exc)) from exc
+        budget_usage = plan.resume_metadata.get("budget_usage")
+        if restore_global_budget_tracker_usage(self._global_budget_tracker, budget_usage):
+            plan.resume_metadata["resume_budget_inherited"] = True
         request = plan.initial_buffer_values.get("request")
         if not isinstance(request, dict):
             request = {}
@@ -689,6 +703,15 @@ class WorkflowExecutor:
                     error_type="WorkflowResourcePolicyViolation",
                     error_message=resource_violation["message"],
                     error_details=resource_violation,
+                )
+            safety_violation = safety_violation_for_step(step)
+            if safety_violation is not None:
+                recorder.emit("runtime_safety_violation", safety_violation)
+                return StepOutcome(
+                    status=StepStatus.BLOCKED,
+                    error_type="WorkflowRuntimeSafetyViolation",
+                    error_message=safety_violation["message"],
+                    error_details=safety_violation,
                 )
             capability_violation = _step_runner_capability_violation(
                 step,
@@ -924,6 +947,11 @@ class WorkflowExecutor:
             event_offset=event_offset,
             metadata={"profile": profile},
         )
+        if self._global_budget_tracker is not None and hasattr(
+            self._global_budget_tracker,
+            "snapshot",
+        ):
+            checkpoint.metadata["budget_usage"] = self._global_budget_tracker.snapshot()
         checkpoint = envelope_to_checkpoint(envelope_from_checkpoint(checkpoint))
         self._checkpoint_store.save_checkpoint(checkpoint)
         recorder.emit(
@@ -1096,27 +1124,30 @@ def _step_outcomes_from_checkpoint(payload: dict[str, Any]) -> dict[str, StepOut
 
 
 def _resource_policy_violation(step: StepSpec, buffer: DataBuffer) -> dict[str, Any] | None:
-    max_items = step.resource_policy.max_items
-    if max_items is None:
+    estimate = StepResourceEstimator().estimate_inputs(step, buffer)
+    violations = StepResourceGuard().check(step, estimate)
+    if not violations:
         return None
-    for key in step.read_keys:
-        if not buffer.exists(key):
-            continue
-        value = buffer.read(key)
-        item_count = _item_count(value)
-        if item_count is not None and item_count > max_items:
-            return {
-                "step_id": step.step_id,
-                "policy": "resource.max_items",
-                "key": key,
-                "item_count": item_count,
-                "max_items": max_items,
-                "message": (
-                    f"step {step.step_id} read key {key} has {item_count} items, "
-                    f"exceeding max_items {max_items}"
-                ),
-            }
-    return None
+    violation = violations[0]
+    payload = violation.to_dict()
+    payload["policy"] = violation.code
+    payload["resource_estimate"] = estimate.to_dict()
+    if violation.code == "resource.max_items":
+        payload["item_count"] = int(violation.actual)
+        payload["max_items"] = int(violation.limit)
+    return payload
+
+
+def _record_policy_violation(manifest: dict[str, Any], outcome: StepOutcome) -> None:
+    if outcome.error_type not in {
+        "WorkflowResourcePolicyViolation",
+        "WorkflowRuntimeSafetyViolation",
+    }:
+        return
+    violations = manifest.setdefault("policy_violations", [])
+    if not isinstance(violations, list):
+        return
+    violations.append(dict(outcome.error_details))
 
 
 def _step_runner_capability_violation(
@@ -1172,14 +1203,6 @@ def _step_runner_capability_violation(
     return None
 
 
-def _item_count(value: Any) -> int | None:
-    if isinstance(value, dict) and isinstance(value.get("items"), list):
-        return len(value["items"])
-    if isinstance(value, (list, tuple, set, dict)):
-        return len(value)
-    return None
-
-
 def _checkpoint_id(step_id: str, event_offset: int) -> str:
     safe_step_id = "".join(
         character if character.isalnum() or character in "._-" else "_"
@@ -1220,6 +1243,7 @@ def _apply_resume_metadata_to_manifest(
         "skip_step_id",
         "skip_reason",
         "skip_next_step_ids",
+        "resume_budget_inherited",
     ):
         if key in resume_metadata:
             manifest[key] = resume_metadata[key]
@@ -1505,6 +1529,23 @@ def _workflow_metrics_payload(
                 metrics["global_budget_usage"] = agent_metrics.get("global_budget_usage")
     if global_budget_tracker is not None and hasattr(global_budget_tracker, "snapshot"):
         metrics["global_budget_usage"] = global_budget_tracker.snapshot()
+        budget_summary = budget_summary_from_tracker(global_budget_tracker)
+        if budget_summary is not None:
+            metrics["budget"] = budget_summary
+    if "budget" not in metrics:
+        metrics["budget"] = {
+            "total_tokens": 0,
+            "total_cost_usd": 0.0,
+            "llm_calls": 0,
+            "tool_calls": 0,
+            "wall_time_seconds": 0.0,
+            "exceeded": status == WorkflowStatus.BUDGET_EXCEEDED,
+            "exceeded_reason": (
+                "workflow_budget_exceeded"
+                if status == WorkflowStatus.BUDGET_EXCEEDED
+                else None
+            ),
+        }
     return metrics
 
 

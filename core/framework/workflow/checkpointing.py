@@ -897,6 +897,10 @@ def _base_resume_metadata(request: WorkflowResumeRequest) -> dict[str, Any]:
             "checkpoint_migrations": list(checkpoint.metadata.get("migrations") or []),
         }
     )
+    budget_usage = checkpoint.metadata.get("budget_usage")
+    if isinstance(budget_usage, dict):
+        metadata["budget_usage"] = dict(budget_usage)
+        metadata["resume_budget_inherited"] = True
     return metadata
 
 

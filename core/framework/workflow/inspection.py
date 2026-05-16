@@ -300,6 +300,70 @@ class WorkflowTimelineSummary:
 
 
 @dataclass(frozen=True)
+class StepTimelineItem:
+    step_id: str
+    status: str
+    started_at: str | None = None
+    finished_at: str | None = None
+    attempts: int = 0
+    retry_count: int = 0
+    duration_ms: float | None = None
+    events: list[dict[str, Any]] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "step_id": self.step_id,
+            "status": self.status,
+            "started_at": self.started_at,
+            "finished_at": self.finished_at,
+            "attempts": self.attempts,
+            "retry_count": self.retry_count,
+            "duration_ms": self.duration_ms,
+            "events": to_json_safe(self.events),
+        }
+
+
+@dataclass(frozen=True)
+class RootCauseResult:
+    root_cause: str | None
+    failed_step_id: str | None = None
+    blocked_step_id: str | None = None
+    event_type: str | None = None
+    phase: str | None = None
+    message: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "root_cause": self.root_cause,
+            "failed_step_id": self.failed_step_id,
+            "blocked_step_id": self.blocked_step_id,
+            "event_type": self.event_type,
+            "phase": self.phase,
+            "message": self.message,
+            "metadata": to_json_safe(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class ArtifactIntegrityReport:
+    valid: bool
+    missing_artifacts: list[str] = field(default_factory=list)
+    checksum_failures: list[str] = field(default_factory=list)
+    size_mismatches: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "valid": self.valid,
+            "missing_artifacts": list(self.missing_artifacts),
+            "checksum_failures": list(self.checksum_failures),
+            "size_mismatches": list(self.size_mismatches),
+            "warnings": list(self.warnings),
+        }
+
+
+@dataclass(frozen=True)
 class WorkflowArtifactInventory:
     artifact_count: int
     existing_count: int
@@ -431,6 +495,7 @@ class WorkflowRunHealthReport:
     terminal_artifact_key: str | None = None
     terminal_artifact_exists: bool | None = None
     duration_ms: float | None = None
+    checks: dict[str, str] = field(default_factory=dict)
 
     @property
     def healthy(self) -> bool:
@@ -461,6 +526,7 @@ class WorkflowRunHealthReport:
             "terminal_artifact_key": self.terminal_artifact_key,
             "terminal_artifact_exists": self.terminal_artifact_exists,
             "duration_ms": self.duration_ms,
+            "checks": dict(self.checks),
         }
 
 
@@ -509,6 +575,8 @@ class WorkflowReplayBundle:
     events: list[WorkflowEventRecord] = field(default_factory=list)
     artifacts: list[WorkflowArtifactRecord] = field(default_factory=list)
     integrity: dict[str, Any] = field(default_factory=dict)
+    step_timeline: list[StepTimelineItem] = field(default_factory=list)
+    routing_diagnostics: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -529,6 +597,8 @@ class WorkflowReplayBundle:
             "events": [event.to_dict() for event in self.events],
             "artifacts": [artifact.to_dict() for artifact in self.artifacts],
             "integrity": to_json_safe(self.integrity),
+            "step_timeline": [item.to_dict() for item in self.step_timeline],
+            "routing_diagnostics": to_json_safe(self.routing_diagnostics),
         }
 
 
@@ -572,6 +642,8 @@ class WorkflowReplayContentBundle:
     artifacts: list[WorkflowArtifactContentRecord]
     step_results: dict[str, Any] = field(default_factory=dict)
     integrity: dict[str, Any] = field(default_factory=dict)
+    step_timeline: list[dict[str, Any]] = field(default_factory=list)
+    routing_diagnostics: dict[str, Any] = field(default_factory=dict)
     events_path: str | None = None
     events_error: str | None = None
 
@@ -603,6 +675,8 @@ class WorkflowReplayContentBundle:
             "step_result_count": len(self.step_results),
             "step_results": to_json_safe(self.step_results),
             "integrity": to_json_safe(self.integrity),
+            "step_timeline": to_json_safe(self.step_timeline),
+            "routing_diagnostics": to_json_safe(self.routing_diagnostics),
         }
 
 
@@ -614,6 +688,17 @@ class WorkflowRunDiagnostics:
     artifact_inventory: WorkflowArtifactInventory | None = None
     data_buffer_diff_summary: WorkflowDataBufferDiffSummary | None = None
     health_report: WorkflowRunHealthReport | None = None
+    severity: str = "unknown"
+    status: str | None = None
+    root_cause: str | None = None
+    failed_step_id: str | None = None
+    blocked_step_id: str | None = None
+    missing_artifacts: list[str] = field(default_factory=list)
+    checksum_failures: list[str] = field(default_factory=list)
+    policy_violations: list[str] = field(default_factory=list)
+    resume_available: bool = False
+    suggested_actions: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
     def healthy(self) -> bool:
@@ -622,6 +707,17 @@ class WorkflowRunDiagnostics:
     def to_dict(self) -> dict[str, Any]:
         return {
             "inspection": self.inspection.to_dict(),
+            "severity": self.severity,
+            "status": self.status,
+            "root_cause": self.root_cause,
+            "failed_step_id": self.failed_step_id,
+            "blocked_step_id": self.blocked_step_id,
+            "missing_artifacts": list(self.missing_artifacts),
+            "checksum_failures": list(self.checksum_failures),
+            "policy_violations": list(self.policy_violations),
+            "resume_available": self.resume_available,
+            "suggested_actions": list(self.suggested_actions),
+            "metadata": to_json_safe(self.metadata),
             "timeline": [item.to_dict() for item in self.timeline],
             "timeline_summary": (
                 self.timeline_summary.to_dict() if self.timeline_summary else None
@@ -637,6 +733,169 @@ class WorkflowRunDiagnostics:
             "health_report": self.health_report.to_dict() if self.health_report else None,
             "healthy": self.healthy,
         }
+
+
+class WorkflowRootCauseAnalyzer:
+    def analyze(
+        self,
+        manifest: dict[str, Any],
+        events: list[dict[str, Any]],
+        step_results: dict[str, Any],
+    ) -> RootCauseResult:
+        for step_id, result in step_results.items():
+            if not isinstance(result, dict):
+                continue
+            if result.get("error_type") == "WorkflowBudgetExceeded" or _truthy_nested(
+                result.get("error_details"),
+                "budget_exceeded",
+            ):
+                return RootCauseResult(
+                    root_cause="WorkflowBudgetExceeded",
+                    failed_step_id=str(step_id),
+                    event_type="workflow_budget_exceeded",
+                    phase="workflow",
+                    message=_optional_string(result.get("error_message")),
+                )
+        for violation in _manifest_policy_violations(manifest):
+            policy = _optional_string(violation.get("policy") or violation.get("code"))
+            if policy and policy.startswith("resource."):
+                return RootCauseResult(
+                    root_cause="WorkflowResourcePolicyViolation",
+                    blocked_step_id=_optional_string(violation.get("step_id")),
+                    event_type="policy_violation",
+                    phase="policy",
+                    message=_optional_string(violation.get("message")),
+                    metadata={"policy": policy},
+                )
+        for step_id, result in step_results.items():
+            if not isinstance(result, dict):
+                continue
+            status = _optional_string(result.get("status"))
+            if status == StepStatus.BLOCKED.value:
+                return RootCauseResult(
+                    root_cause=result.get("error_type") or "StepBlocked",
+                    blocked_step_id=str(step_id),
+                    event_type="step_blocked",
+                    phase="step",
+                    message=_optional_string(result.get("error_message")),
+                )
+        for step_id, result in step_results.items():
+            if not isinstance(result, dict):
+                continue
+            status = _optional_string(result.get("status"))
+            if status in {StepStatus.FAILED.value, StepStatus.TIMEOUT.value}:
+                return RootCauseResult(
+                    root_cause=result.get("error_type") or "StepFailed",
+                    failed_step_id=str(step_id),
+                    event_type="step_failed",
+                    phase="step",
+                    message=_optional_string(result.get("error_message")),
+                )
+        for event in events:
+            if not isinstance(event, dict):
+                continue
+            payload = event.get("payload")
+            if not isinstance(payload, dict):
+                payload = {}
+            if payload.get("phase") == "routing" or event.get("event_type") in {
+                "edge_rejected",
+                "routing_error",
+            }:
+                return RootCauseResult(
+                    root_cause="RoutingError",
+                    failed_step_id=_optional_string(payload.get("step_id")),
+                    event_type=_optional_string(event.get("event_type")),
+                    phase="routing",
+                    message=_optional_string(payload.get("message")),
+                )
+        missing = _manifest_missing_artifacts(manifest)
+        if missing:
+            return RootCauseResult(
+                root_cause="MissingArtifact",
+                phase="artifact",
+                message="missing artifact: " + ", ".join(missing),
+            )
+        return RootCauseResult(root_cause=None)
+
+
+class ArtifactIntegrityInspector:
+    def inspect(
+        self,
+        run_dir: Path,
+        manifest: dict[str, Any],
+        *,
+        strict: bool,
+    ) -> ArtifactIntegrityReport:
+        missing: list[str] = []
+        checksum_failures: list[str] = []
+        size_mismatches: list[str] = []
+        warnings: list[str] = []
+        for artifact_key, relative_path in _manifest_artifact_map(manifest).items():
+            try:
+                path = resolve_artifact_path(run_dir, relative_path)
+            except WorkflowRunInspectionError:
+                missing.append(artifact_key)
+                continue
+            if not path.exists():
+                missing.append(artifact_key)
+                continue
+            if artifact_key == "manifest":
+                continue
+            metadata = _artifact_record_metadata(manifest, artifact_key)
+            expected_size = _optional_int(metadata.get("size_bytes"))
+            if expected_size is not None and path.stat().st_size != expected_size:
+                size_mismatches.append(artifact_key)
+            expected_checksum = _optional_string(metadata.get("checksum"))
+            if expected_checksum and _sha256_file(path) != expected_checksum:
+                checksum_failures.append(artifact_key)
+        terminal_key = terminal_artifact_key(manifest)
+        if terminal_key and terminal_key not in _manifest_artifact_map(manifest):
+            missing.append(terminal_key)
+        if checksum_failures and not strict:
+            warnings.extend(
+                f"manifest artifact checksum mismatch: {artifact_key}"
+                for artifact_key in checksum_failures
+            )
+        return ArtifactIntegrityReport(
+            valid=not missing and not size_mismatches and not (strict and checksum_failures),
+            missing_artifacts=_dedupe_preserve_order(missing),
+            checksum_failures=_dedupe_preserve_order(checksum_failures),
+            size_mismatches=_dedupe_preserve_order(size_mismatches),
+            warnings=_dedupe_preserve_order(warnings),
+        )
+
+
+class WorkflowTimelineBuilder:
+    def build(self, events: list[dict[str, Any]]) -> list[StepTimelineItem]:
+        grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for event in events:
+            if not isinstance(event, dict):
+                continue
+            step_id = _event_step_id(event)
+            if step_id is not None:
+                grouped[step_id].append(event)
+        items: list[StepTimelineItem] = []
+        for step_id, step_events in sorted(grouped.items()):
+            started_at = _first_event_time(step_events, {"step_started"})
+            finished_at = _last_terminal_step_event_time(step_events)
+            status = _last_step_status(step_events) or "unknown"
+            attempts = sum(1 for event in step_events if event.get("event_type") == "step_started")
+            retry_count = sum(
+                1 for event in step_events if event.get("event_type") == "step_retry_scheduled"
+            )
+            items.append(
+                StepTimelineItem(
+                    step_id=step_id,
+                    status=status,
+                    started_at=started_at,
+                    finished_at=finished_at,
+                    attempts=attempts,
+                    retry_count=retry_count,
+                    duration_ms=_duration_ms(started_at, finished_at),
+                    events=step_events,
+                )
+            )
+        return items
 
 
 @dataclass(frozen=True)
@@ -939,6 +1198,10 @@ class WorkflowRunComparison:
     health_severity_changed: bool = False
     base_health_severity: str | None = None
     target_health_severity: str | None = None
+    path_diff: dict[str, Any] = field(default_factory=dict)
+    output_diff: dict[str, Any] = field(default_factory=dict)
+    metric_diff: dict[str, Any] = field(default_factory=dict)
+    artifact_diff: dict[str, Any] = field(default_factory=dict)
 
     @property
     def has_behavioral_change(self) -> bool:
@@ -978,6 +1241,10 @@ class WorkflowRunComparison:
             "health_severity_changed": self.health_severity_changed,
             "base_health_severity": self.base_health_severity,
             "target_health_severity": self.target_health_severity,
+            "path_diff": to_json_safe(self.path_diff),
+            "output_diff": to_json_safe(self.output_diff),
+            "metric_diff": to_json_safe(self.metric_diff),
+            "artifact_diff": to_json_safe(self.artifact_diff),
             "has_behavioral_change": self.has_behavioral_change,
         }
 
@@ -1124,6 +1391,7 @@ class WorkflowRunInspector:
             actual_run_dir,
             manifest=manifest,
             verify_checksums=verify_checksums,
+            strict_checksums=strict,
         )
         if strict and not integrity.valid:
             raise WorkflowRunInspectionError(
@@ -1210,12 +1478,15 @@ class WorkflowRunInspector:
             actual_run_dir,
             manifest=manifest,
             verify_checksums=verify_checksums,
+            strict_checksums=strict,
         )
         if strict and not integrity.valid:
             raise WorkflowRunInspectionError(
                 "workflow run replay bundle is invalid: " + "; ".join(integrity.errors)
             )
         terminal_key = terminal_artifact_key(manifest)
+        events = self.read_events(actual_run_dir, manifest=manifest, missing_ok=True)
+        event_payloads = [event.to_dict() for event in events]
         return WorkflowReplayBundle(
             run_dir=str(actual_run_dir),
             manifest=manifest,
@@ -1269,13 +1540,15 @@ class WorkflowRunInspector:
                 if terminal_key == "pause"
                 else None
             ),
-            events=self.read_events(actual_run_dir, manifest=manifest, missing_ok=True),
+            events=events,
             artifacts=self.list_artifacts(
                 actual_run_dir,
                 manifest=manifest,
                 verify_checksums=verify_checksums,
             ),
             integrity=integrity.to_dict(),
+            step_timeline=WorkflowTimelineBuilder().build(event_payloads),
+            routing_diagnostics=_routing_diagnostics_from_events(event_payloads),
         )
 
     def build_replay_content_bundle(
@@ -1344,6 +1617,10 @@ class WorkflowRunInspector:
                 default={},
             ),
             integrity=integrity.to_dict(),
+            step_timeline=[
+                item.to_dict() for item in WorkflowTimelineBuilder().build(events)
+            ],
+            routing_diagnostics=_routing_diagnostics_from_events(events),
         )
 
     def build_diagnostics(
@@ -1360,6 +1637,7 @@ class WorkflowRunInspector:
             verify_checksums=verify_checksums,
             strict=strict,
         )
+        summary_payload = _diagnostics_summary_payload(inspection)
         return WorkflowRunDiagnostics(
             inspection=inspection,
             timeline=list(inspection.timeline),
@@ -1367,6 +1645,7 @@ class WorkflowRunInspector:
             artifact_inventory=inspection.artifact_inventory,
             data_buffer_diff_summary=inspection.data_buffer_diff_summary,
             health_report=inspection.health_report,
+            **summary_payload,
         )
 
     def build_timeline(
@@ -1449,6 +1728,7 @@ class WorkflowRunInspector:
         *,
         manifest: dict[str, Any] | None = None,
         verify_checksums: bool = False,
+        strict_checksums: bool = False,
     ) -> WorkflowManifestIntegrityReport:
         actual_run_dir = Path(run_dir)
         manifest_payload = manifest or self.load_manifest(actual_run_dir)
@@ -1482,12 +1762,30 @@ class WorkflowRunInspector:
                     warnings.append(checksum_warning)
 
         unexpected_files = _unexpected_run_files(actual_run_dir, artifacts.values())
+        artifact_integrity = ArtifactIntegrityInspector().inspect(
+            actual_run_dir,
+            manifest_payload,
+            strict=False,
+        )
+        warnings.extend(artifact_integrity.warnings)
+        if artifact_integrity.size_mismatches:
+            warnings.extend(
+                f"manifest artifact size mismatch: {artifact_key}"
+                for artifact_key in artifact_integrity.size_mismatches
+            )
+        if strict_checksums and artifact_integrity.checksum_failures:
+            errors.extend(
+                f"manifest artifact checksum mismatch: {artifact_key}"
+                for artifact_key in artifact_integrity.checksum_failures
+            )
         return WorkflowManifestIntegrityReport(
             valid=not errors,
             errors=errors,
             warnings=warnings,
             missing_artifact_keys=missing_artifact_keys,
-            missing_artifact_files=missing_artifact_files,
+            missing_artifact_files=_dedupe_preserve_order(
+                missing_artifact_files + artifact_integrity.missing_artifacts
+            ),
             unexpected_files=unexpected_files,
             artifact_count=len(artifacts),
             file_count=_count_files(actual_run_dir),
@@ -2174,10 +2472,14 @@ def build_run_health_report(
     paused_steps = sorted(
         step.step_id for step in inspection.steps if step.status == StepStatus.PAUSED.value
     )
+    policy_violations = _inspection_policy_violations(inspection)
+    budget_summary = _inspection_budget_summary(inspection)
+    resume_metadata = _resume_metadata_for_inspection(inspection)
 
     if not inspection.integrity.valid:
         issues.extend(inspection.integrity.errors)
         actions.append("inspect manifest.json and restore missing run artifacts")
+        actions.append("rebuild missing artifacts or rerun_from_step from the latest checkpoint")
     if inspection.integrity.missing_artifact_keys:
         issues.append(
             "missing required manifest artifact keys: "
@@ -2187,9 +2489,11 @@ def build_run_health_report(
         issues.append(
             "missing artifact files: " + ", ".join(artifact_inventory.missing_artifact_keys)
         )
+        actions.append("rebuild missing artifacts or rerun_from_step before replay")
     if failed_steps:
         issues.append("failed steps: " + ", ".join(failed_steps))
         actions.append("open step_results.json and events.jsonl for failed step details")
+        actions.append("rerun_from_step from the failed step after fixing the root cause")
     if inspection.status in {
         WorkflowStatus.FAILED.value,
         WorkflowStatus.CANCELLED.value,
@@ -2199,9 +2503,31 @@ def build_run_health_report(
     if inspection.status == WorkflowStatus.BLOCKED.value:
         warnings.append("workflow is blocked by policy or governance state")
         actions.append("inspect error.json and step policy output before retrying")
+    for violation in policy_violations:
+        message = _policy_violation_message(violation)
+        if message:
+            warnings.append(message)
+        actions.extend(_policy_violation_actions(violation))
+    if budget_summary.get("exceeded") is True:
+        exceeded_reason = _optional_string(budget_summary.get("exceeded_reason"))
+        if exceeded_reason:
+            issues.append(f"workflow budget exceeded: {exceeded_reason}")
+        else:
+            issues.append("workflow budget exceeded")
+        actions.append(
+            "reduce source_limit, max_items, prompt size, or increase workflow budget before retrying"
+        )
     if inspection.paused:
         warnings.append("workflow is paused and requires resume input")
         actions.append("resume from checkpoint after the required external input is available")
+        if inspection.status == WorkflowStatus.WAITING_FOR_HUMAN.value:
+            actions.append("submit human review decision before resuming the run")
+    if resume_metadata.get("available") is True:
+        actions.append("resume_from_checkpoint is available for this run")
+    elif resume_metadata.get("rerun_from_step_available") is True:
+        actions.append("rerun_from_step is available from the latest checkpoint")
+    elif resume_metadata.get("mark_blocked_resolved_available") is True:
+        actions.append("mark_blocked_resolved before rerun_from_step or resume_with_patch")
     if inspection.integrity.warnings:
         warnings.extend(inspection.integrity.warnings)
     if inspection.integrity.unexpected_files:
@@ -2255,7 +2581,398 @@ def build_run_health_report(
         terminal_artifact_key=inspection.terminal_artifact_key,
         terminal_artifact_exists=artifact_inventory.terminal_artifact_exists,
         duration_ms=timeline_summary.duration_ms,
+        checks=_health_checks(
+            inspection,
+            artifact_inventory=artifact_inventory,
+            resume_metadata=resume_metadata,
+        ),
     )
+
+
+def _inspection_policy_violations(
+    inspection: WorkflowRunInspection,
+) -> list[dict[str, Any]]:
+    violations = inspection.manifest.get("policy_violations")
+    if not isinstance(violations, list):
+        return []
+    return [violation for violation in violations if isinstance(violation, dict)]
+
+
+def _inspection_budget_summary(inspection: WorkflowRunInspection) -> dict[str, Any]:
+    metrics = inspection.metrics if isinstance(inspection.metrics, dict) else {}
+    budget = metrics.get("budget")
+    if isinstance(budget, dict):
+        return budget
+    manifest_metrics = inspection.manifest.get("metrics")
+    if isinstance(manifest_metrics, dict):
+        budget = manifest_metrics.get("budget")
+        if isinstance(budget, dict):
+            return budget
+    return {}
+
+
+def _diagnostics_summary_payload(
+    inspection: WorkflowRunInspection,
+) -> dict[str, Any]:
+    event_payloads = [event.to_dict() for event in _inspection_events(inspection)]
+    step_results = _step_results_from_manifest_or_summary(inspection)
+    root_cause = WorkflowRootCauseAnalyzer().analyze(
+        inspection.manifest,
+        event_payloads,
+        step_results,
+    )
+    health = inspection.health_report
+    artifact_integrity = ArtifactIntegrityInspector().inspect(
+        Path(inspection.run_dir),
+        inspection.manifest,
+        strict=False,
+    )
+    policy_violations = _policy_violation_strings(_inspection_policy_violations(inspection))
+    resume_metadata = _resume_metadata_for_inspection(inspection)
+    selected_edges = [
+        item.edge_id
+        for item in inspection.timeline
+        if item.event_type == "edge_traversed" and item.edge_id is not None
+    ]
+    routing_evaluations = [
+        item.payload_excerpt
+        for item in inspection.timeline
+        if item.event_type == "edge_evaluated"
+    ]
+    step_timeline = WorkflowTimelineBuilder().build(event_payloads)
+    suggested_actions = list(health.suggested_actions if health else [])
+    if resume_metadata.get("available") is True:
+        suggested_actions.append("resume_from_checkpoint is available")
+    return {
+        "severity": health.severity if health else "unknown",
+        "status": inspection.status,
+        "root_cause": root_cause.root_cause,
+        "failed_step_id": root_cause.failed_step_id or _first_failed_step_id(inspection),
+        "blocked_step_id": root_cause.blocked_step_id or _first_blocked_step_id(inspection),
+        "missing_artifacts": _dedupe_preserve_order(
+            list(inspection.integrity.missing_artifact_files)
+            + list(artifact_integrity.missing_artifacts)
+        ),
+        "checksum_failures": artifact_integrity.checksum_failures,
+        "policy_violations": policy_violations,
+        "resume_available": bool(resume_metadata.get("available")),
+        "suggested_actions": _dedupe_preserve_order(suggested_actions),
+        "metadata": {
+            "root_cause": root_cause.to_dict(),
+            "resume": resume_metadata,
+            "routing": {
+                "selected_edge_ids": selected_edges,
+                "selected_edge_id": selected_edges[0] if selected_edges else None,
+                "evaluations": routing_evaluations,
+            },
+            "step_timeline": [item.to_dict() for item in step_timeline],
+            "artifact_integrity": artifact_integrity.to_dict(),
+        },
+    }
+
+
+def _inspection_events(inspection: WorkflowRunInspection) -> list[WorkflowEventRecord]:
+    events_path = Path(inspection.run_dir) / "events.jsonl"
+    if not events_path.exists():
+        return []
+    try:
+        return list(_read_event_jsonl(events_path))
+    except WorkflowRunInspectionError:
+        return []
+
+
+def _step_results_from_manifest_or_summary(
+    inspection: WorkflowRunInspection,
+) -> dict[str, Any]:
+    step_results_path = Path(inspection.run_dir) / "step_results.json"
+    if step_results_path.exists():
+        try:
+            payload = _read_json_file(step_results_path)
+            if isinstance(payload, dict):
+                return payload
+        except WorkflowRunInspectionError:
+            pass
+    return {
+        step.step_id: {
+            "status": step.status,
+            "error_type": step.error_type,
+            "error_message": step.error_message,
+        }
+        for step in inspection.steps
+    }
+
+
+def _policy_violation_strings(violations: list[dict[str, Any]]) -> list[str]:
+    values: list[str] = []
+    for violation in violations:
+        policy = _optional_string(violation.get("policy") or violation.get("code"))
+        step_id = _optional_string(violation.get("step_id"))
+        if policy and step_id:
+            values.append(f"{policy}:{step_id}")
+        elif policy:
+            values.append(policy)
+    return _dedupe_preserve_order(values)
+
+
+def _resume_metadata_for_inspection(inspection: WorkflowRunInspection) -> dict[str, Any]:
+    status = inspection.status
+    latest_checkpoint_id = _optional_string(
+        inspection.manifest.get("latest_checkpoint_id")
+        or inspection.manifest.get("resumed_from_checkpoint_id")
+    )
+    checkpoint_count = int(inspection.manifest.get("checkpoint_count") or 0)
+    has_checkpoint = bool(latest_checkpoint_id or checkpoint_count > 0)
+    supported_modes: list[str] = []
+    available = False
+    if status in {WorkflowStatus.PAUSED.value, WorkflowStatus.WAITING_FOR_HUMAN.value}:
+        available = has_checkpoint
+        if available:
+            supported_modes.extend(["resume_exact", "resume_with_patch"])
+            if status == WorkflowStatus.WAITING_FOR_HUMAN.value:
+                supported_modes.append("resume_after_human_review")
+    rerun_from_step_available = bool(
+        has_checkpoint
+        and status
+        in {
+            WorkflowStatus.FAILED.value,
+            WorkflowStatus.BLOCKED.value,
+            WorkflowStatus.CANCELLED.value,
+            WorkflowStatus.SUCCEEDED.value,
+        }
+    )
+    mark_blocked_resolved_available = status == WorkflowStatus.BLOCKED.value
+    return {
+        "available": available,
+        "latest_checkpoint_id": latest_checkpoint_id,
+        "supported_modes": supported_modes,
+        "rerun_from_step_available": rerun_from_step_available,
+        "mark_blocked_resolved_available": mark_blocked_resolved_available,
+        "checkpoint_count": checkpoint_count,
+    }
+
+
+def _health_checks(
+    inspection: WorkflowRunInspection,
+    *,
+    artifact_inventory: WorkflowArtifactInventory,
+    resume_metadata: dict[str, Any],
+) -> dict[str, str]:
+    manifest_health = "passed" if inspection.integrity.valid else "failed"
+    artifact_health = "passed"
+    if artifact_inventory.missing_count:
+        artifact_health = "failed"
+    elif inspection.integrity.warnings:
+        artifact_health = "warning"
+    event_health = "passed"
+    if inspection.event_summary is None or inspection.event_summary.event_count == 0:
+        event_health = "warning"
+    runtime_health = "passed"
+    if inspection.status in {
+        WorkflowStatus.FAILED.value,
+        WorkflowStatus.BLOCKED.value,
+        WorkflowStatus.BUDGET_EXCEEDED.value,
+        WorkflowStatus.CANCELLED.value,
+    }:
+        runtime_health = "failed"
+    elif inspection.paused:
+        runtime_health = "warning"
+    checkpoint_health = "passed"
+    if inspection.paused and not resume_metadata.get("latest_checkpoint_id"):
+        checkpoint_health = "failed"
+    resume_health = "passed"
+    if inspection.paused and not resume_metadata.get("available"):
+        resume_health = "failed"
+    elif resume_metadata.get("available") or resume_metadata.get("rerun_from_step_available"):
+        resume_health = "passed"
+    return {
+        "artifact_health": artifact_health,
+        "checkpoint_health": checkpoint_health,
+        "event_health": event_health,
+        "manifest_health": manifest_health,
+        "runtime_health": runtime_health,
+        "resume_health": resume_health,
+    }
+
+
+def _policy_violation_message(violation: dict[str, Any]) -> str | None:
+    policy = _optional_string(violation.get("policy") or violation.get("code"))
+    step_id = _optional_string(violation.get("step_id"))
+    message = _optional_string(violation.get("message"))
+    if policy and step_id and message:
+        return f"policy violation {policy} on step {step_id}: {message}"
+    if policy and step_id:
+        return f"policy violation {policy} on step {step_id}"
+    if policy:
+        return f"policy violation {policy}"
+    return message
+
+
+def _policy_violation_actions(violation: dict[str, Any]) -> list[str]:
+    policy = _optional_string(violation.get("policy") or violation.get("code")) or ""
+    error_type = _optional_string(violation.get("error_type")) or ""
+    if policy == "resource.max_items":
+        return ["reduce source_limit/max_items input size or increase step resource_policy.max_items"]
+    if policy == "resource.max_input_tokens":
+        return [
+            "reduce prompt/input text size or increase step resource_policy.max_input_tokens"
+        ]
+    if policy == "resource.max_artifact_bytes":
+        return [
+            "reduce artifact payload size or increase step resource_policy.max_artifact_bytes"
+        ]
+    if policy == "resource.max_parallelism":
+        return [
+            "reduce parallel branch count or increase step resource_policy.max_parallelism"
+        ]
+    if policy.startswith("runtime_safety.") or error_type == "WorkflowRuntimeSafetyViolation":
+        return ["collect required approval or adjust runtime safety policy before retrying"]
+    if policy:
+        return ["inspect policy_violations in manifest.json before retrying"]
+    return []
+
+
+def _routing_diagnostics_from_events(events: list[dict[str, Any]]) -> dict[str, Any]:
+    evaluations: list[dict[str, Any]] = []
+    selected_edge_ids: list[str] = []
+    rejected_edge_ids: list[str] = []
+    target_step_ids: list[str] = []
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        event_type = _optional_string(event.get("event_type"))
+        payload = event.get("payload")
+        if not isinstance(payload, dict):
+            payload = {}
+        if event_type == "edge_evaluated":
+            evaluations.append(dict(payload))
+        elif event_type == "edge_traversed":
+            edge_id = _optional_string(payload.get("edge_id"))
+            target_step_id = _optional_string(payload.get("target_step_id"))
+            if edge_id:
+                selected_edge_ids.append(edge_id)
+            if target_step_id:
+                target_step_ids.append(target_step_id)
+        elif event_type == "edge_rejected":
+            edge_id = _optional_string(payload.get("edge_id"))
+            if edge_id:
+                rejected_edge_ids.append(edge_id)
+    return {
+        "selected_edge_id": selected_edge_ids[0] if selected_edge_ids else None,
+        "selected_edge_ids": _dedupe_preserve_order(selected_edge_ids),
+        "target_step_ids": _dedupe_preserve_order(target_step_ids),
+        "rejected_edge_ids": _dedupe_preserve_order(rejected_edge_ids),
+        "evaluations": evaluations,
+    }
+
+
+def _manifest_policy_violations(manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    violations = manifest.get("policy_violations")
+    if not isinstance(violations, list):
+        return []
+    return [violation for violation in violations if isinstance(violation, dict)]
+
+
+def _manifest_missing_artifacts(manifest: dict[str, Any]) -> list[str]:
+    artifacts = _manifest_artifact_map(manifest)
+    return [key for key in REQUIRED_RUN_ARTIFACTS if key not in artifacts]
+
+
+def _truthy_nested(payload: Any, key: str) -> bool:
+    return isinstance(payload, dict) and bool(payload.get(key))
+
+
+def _event_step_id(event: dict[str, Any]) -> str | None:
+    step_id = _optional_string(event.get("step_id"))
+    if step_id:
+        return step_id
+    payload = event.get("payload")
+    if isinstance(payload, dict):
+        step_id = _optional_string(payload.get("step_id"))
+        if step_id:
+            return step_id
+        outcome = payload.get("outcome")
+        if isinstance(outcome, dict):
+            return _optional_string(outcome.get("step_id"))
+    return None
+
+
+def _first_event_time(events: list[dict[str, Any]], event_types: set[str]) -> str | None:
+    for event in events:
+        if event.get("event_type") in event_types:
+            return _optional_string(event.get("occurred_at"))
+    return None
+
+
+def _last_terminal_step_event_time(events: list[dict[str, Any]]) -> str | None:
+    for event in reversed(events):
+        if event.get("event_type") in {
+            "step_succeeded",
+            "step_failed",
+            "step_blocked",
+            "step_paused",
+            "step_timeout",
+        }:
+            return _optional_string(event.get("occurred_at"))
+    return None
+
+
+def _last_step_status(events: list[dict[str, Any]]) -> str | None:
+    for event in reversed(events):
+        status = _status_from_event_type(_optional_string(event.get("event_type")) or "")
+        if status is not None:
+            return status
+        payload = event.get("payload")
+        if isinstance(payload, dict):
+            status = _optional_string(payload.get("status"))
+            if status:
+                return status
+    return None
+
+
+def _first_failed_step_id(inspection: WorkflowRunInspection) -> str | None:
+    for step in inspection.steps:
+        if step.status in {StepStatus.FAILED.value, StepStatus.TIMEOUT.value}:
+            return step.step_id
+    return None
+
+
+def _first_blocked_step_id(inspection: WorkflowRunInspection) -> str | None:
+    for step in inspection.steps:
+        if step.status == StepStatus.BLOCKED.value:
+            return step.step_id
+    return None
+
+
+def _manifest_path_list(manifest: dict[str, Any]) -> list[str]:
+    path = manifest.get("path")
+    if isinstance(path, list):
+        return [str(item) for item in path]
+    step_results = manifest.get("step_results")
+    if isinstance(step_results, dict):
+        return [str(key) for key in step_results]
+    return []
+
+
+def _manifest_output_keys(manifest: dict[str, Any]) -> list[str]:
+    output_keys = manifest.get("output_keys")
+    if isinstance(output_keys, list):
+        return sorted(str(key) for key in output_keys)
+    return []
+
+
+def _inspection_output_keys(inspection: WorkflowRunInspection) -> list[str]:
+    keys = _manifest_output_keys(inspection.manifest)
+    if keys:
+        return keys
+    output_path = Path(inspection.run_dir) / "output.json"
+    if output_path.exists():
+        try:
+            output = _read_json_file(output_path)
+        except WorkflowRunInspectionError:
+            return []
+        if isinstance(output, dict):
+            return sorted(str(key) for key in output)
+    return []
 
 
 def timeline_items_by_step(
@@ -2345,6 +3062,12 @@ def compare_workflow_run_inspections(
     )
     base_health = base.health_report.severity if base.health_report else None
     target_health = target.health_report.severity if target.health_report else None
+    base_path = _manifest_path_list(base.manifest)
+    target_path = _manifest_path_list(target.manifest)
+    base_output_keys = _inspection_output_keys(base)
+    target_output_keys = _inspection_output_keys(target)
+    base_metrics = base.metrics if isinstance(base.metrics, dict) else {}
+    target_metrics = target.metrics if isinstance(target.metrics, dict) else {}
     return WorkflowRunComparison(
         base_run_id=base.run_id,
         target_run_id=target.run_id,
@@ -2369,6 +3092,33 @@ def compare_workflow_run_inspections(
         health_severity_changed=base_health != target_health,
         base_health_severity=base_health,
         target_health_severity=target_health,
+        path_diff={
+            "base": base_path,
+            "target": target_path,
+            "changed": base_path != target_path,
+        },
+        output_diff={
+            "base_keys": base_output_keys,
+            "target_keys": target_output_keys,
+            "added_keys": sorted(set(target_output_keys) - set(base_output_keys)),
+            "removed_keys": sorted(set(base_output_keys) - set(target_output_keys)),
+            "changed": base_output_keys != target_output_keys,
+        },
+        metric_diff={
+            "budget": {
+                "base": to_json_safe(base_metrics.get("budget")),
+                "target": to_json_safe(target_metrics.get("budget")),
+                "changed": base_metrics.get("budget") != target_metrics.get("budget"),
+            },
+            "changed": base_metrics != target_metrics,
+        },
+        artifact_diff={
+            "base_keys": sorted(base_artifacts),
+            "target_keys": sorted(target_artifacts),
+            "added_keys": sorted(target_artifacts - base_artifacts),
+            "removed_keys": sorted(base_artifacts - target_artifacts),
+            "changed": base_artifacts != target_artifacts,
+        },
     )
 
 
@@ -3404,6 +4154,21 @@ def _artifact_record_metadata(manifest: dict[str, Any], artifact_key: str) -> di
     terminal_key = terminal_artifact_key(manifest)
     if terminal_key == artifact_key:
         metadata["terminal"] = True
+    artifact_metadata = manifest.get("artifact_metadata")
+    if isinstance(artifact_metadata, dict) and isinstance(
+        artifact_metadata.get(artifact_key),
+        dict,
+    ):
+        metadata.update(artifact_metadata[artifact_key])
+    step_artifact = _step_artifact_payload_for_key(manifest, artifact_key)
+    if isinstance(step_artifact, dict):
+        metadata.update(
+            {
+                key: value
+                for key, value in step_artifact.items()
+                if key in {"checksum", "size_bytes", "content_type"}
+            }
+        )
     return metadata
 
 

@@ -208,6 +208,7 @@ class ResourcePolicySpec:
     max_cost_usd: float | None = None
     max_items: int | None = None
     max_parallelism: int | None = None
+    max_artifact_bytes: int | None = None
 
     def __post_init__(self) -> None:
         for field_name in (
@@ -215,6 +216,7 @@ class ResourcePolicySpec:
             "max_output_tokens",
             "max_items",
             "max_parallelism",
+            "max_artifact_bytes",
         ):
             value = getattr(self, field_name)
             if value is not None and value < 0:
@@ -229,6 +231,7 @@ class ResourcePolicySpec:
             "max_cost_usd": self.max_cost_usd,
             "max_items": self.max_items,
             "max_parallelism": self.max_parallelism,
+            "max_artifact_bytes": self.max_artifact_bytes,
         }
 
 
