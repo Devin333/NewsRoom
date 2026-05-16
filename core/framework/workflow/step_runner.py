@@ -13,6 +13,12 @@ from core.framework.artifacts import ArtifactManager
 from core.framework.specs import StepSpec, StepStatus, StepType
 from core.framework.workflow.artifacts import LocalArtifactPublisher
 from core.framework.workflow.buffer import DataBuffer, ScopedDataBuffer
+from core.framework.workflow.human_review import (
+    HumanReviewRequest,
+    human_review_expires_at,
+    human_review_request_id,
+    utc_now_iso as human_review_utc_now_iso,
+)
 from core.framework.workflow.registry import StepRunnerRegistry
 from core.framework.workflow.result import StepOutcome
 from core.framework.workflow.runner import (
@@ -27,6 +33,7 @@ from storage.artifacts import ArtifactRef as StorageArtifactRef
 
 if TYPE_CHECKING:
     from core.framework.tools import ToolCall, ToolPolicy
+    from core.framework.specs import WorkflowSpec
 
 FunctionStep = Callable[[ScopedDataBuffer], dict[str, Any] | None]
 
@@ -1264,6 +1271,24 @@ class HumanReviewStepRunner:
         description="Creates or consumes a human review pause boundary.",
     )
 
+    def __init__(self) -> None:
+        self._run_id: str | None = None
+        self._workflow_id: str | None = None
+        self._workflow_version: str | None = None
+
+    def configure_run_context(
+        self,
+        *,
+        artifact_manager: ArtifactManager,
+        run_id: str,
+    ) -> None:
+        _ = artifact_manager
+        self._run_id = run_id
+
+    def configure_workflow_context(self, *, workflow: WorkflowSpec) -> None:
+        self._workflow_id = workflow.workflow_id
+        self._workflow_version = workflow.version
+
     def can_resolve(self, step: StepSpec) -> bool:
         return default_runner_can_resolve(self.capability, step)
 
@@ -1293,17 +1318,48 @@ class HumanReviewStepRunner:
                 )
 
             request_key = str(step.metadata.get("request_key") or "human_review_request")
-            request = {
-                "step_id": step.step_id,
+            created_at = human_review_utc_now_iso()
+            checkpoint_id = _optional_metadata_str(step.metadata.get("checkpoint_id"))
+            run_id = self._run_id or _optional_metadata_str(step.metadata.get("run_id")) or "unknown-run"
+            request_id = human_review_request_id(
+                run_id=run_id,
+                step_id=step.step_id,
+                checkpoint_id=checkpoint_id,
+            )
+            request_metadata = {
+                **dict(step.metadata.get("request_metadata") or {}),
+                "approval_id": str(step.metadata.get("approval_id") or request_id),
                 "implementation": step.implementation,
-                "review_type": step.metadata.get("review_type", "human_review"),
-                "inputs": {
+            }
+            request = HumanReviewRequest(
+                request_id=request_id,
+                run_id=run_id,
+                step_id=step.step_id,
+                workflow_id=(
+                    self._workflow_id
+                    or _optional_metadata_str(step.metadata.get("workflow_id"))
+                    or "unknown-workflow"
+                ),
+                workflow_version=(
+                    self._workflow_version
+                    or _optional_metadata_str(step.metadata.get("workflow_version"))
+                    or "unknown-version"
+                ),
+                checkpoint_id=checkpoint_id,
+                review_type=str(step.metadata.get("review_type") or "human_review"),
+                required_role=_optional_metadata_str(step.metadata.get("required_role")),
+                created_at=created_at,
+                expires_at=human_review_expires_at(
+                    created_at=created_at,
+                    timeout_seconds=step.metadata.get("review_timeout_seconds"),
+                ),
+                inputs={
                     key: buffer.read(key)
                     for key in buffer.list_allowed_reads()
                     if key != decision_key and buffer.exists(key)
                 },
-                "metadata": dict(step.metadata.get("request_metadata") or {}),
-            }
+                metadata=request_metadata,
+            ).to_dict()
             outputs = _validated_outputs(
                 step,
                 {request_key: request},
@@ -2237,6 +2293,13 @@ def _utc_now_iso() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
+def _optional_metadata_str(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value)
+    return text if text else None
+
+
 def _elapsed_ms(started: float | None) -> float:
     if started is None:
         return 0.0
@@ -2599,7 +2662,7 @@ def _human_next_hint(decision: Any) -> str | None:
     if value is None:
         return None
     value = str(value)
-    if value in {"approved", "rejected"}:
+    if value in {"approved", "rejected", "needs_changes"}:
         return f"human_{value}"
     return value
 

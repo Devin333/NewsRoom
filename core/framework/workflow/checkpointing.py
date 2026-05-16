@@ -15,6 +15,12 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from core.framework.specs import StepSpec, WorkflowSpec
+from core.framework.workflow.human_review import (
+    HumanReviewDecision,
+    ensure_human_review_not_expired,
+    ensure_human_review_permission,
+    validate_human_review_binding,
+)
 from core.framework.workflow.result import StepOutcome
 from storage.checkpoint import WorkflowCheckpoint
 
@@ -129,6 +135,10 @@ class HumanReviewResumeDecision:
     actor_id: str
     reason: str | None = None
     patch: dict[str, Any] = field(default_factory=dict)
+    approval_id: str | None = None
+    request_id: str | None = None
+    actor_roles: list[str] = field(default_factory=list)
+    actor_permissions: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if self.decision not in RESUME_DECISIONS:
@@ -137,12 +147,21 @@ class HumanReviewResumeDecision:
             raise ValueError("human review actor_id is required")
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "decision": self.decision,
             "actor_id": self.actor_id,
             "reason": self.reason,
             "patch": dict(self.patch),
         }
+        if self.approval_id is not None:
+            payload["approval_id"] = self.approval_id
+        if self.request_id is not None:
+            payload["request_id"] = self.request_id
+        if self.actor_roles:
+            payload["actor_roles"] = list(self.actor_roles)
+        if self.actor_permissions:
+            payload["actor_permissions"] = list(self.actor_permissions)
+        return payload
 
 
 @dataclass(frozen=True)
@@ -541,6 +560,20 @@ class WorkflowResumePlanner:
         elif request.mode == ResumeMode.AFTER_HUMAN_REVIEW:
             decision = coerce_human_review_resume_decision(request.human_decision)
             decision_payload = decision.to_dict()
+            human_review_request = _human_review_request_from_checkpoint(checkpoint)
+            validate_human_review_binding(
+                checkpoint_run_id=checkpoint.run_id,
+                checkpoint_id=checkpoint.checkpoint_id,
+                current_step_ids=list(checkpoint.current_step_ids),
+                request_payload=human_review_request,
+                decision_payload=decision_payload,
+                strict=(request.strict and human_review_request is not None),
+            )
+            ensure_human_review_not_expired(request_payload=human_review_request)
+            ensure_human_review_permission(
+                request_payload=human_review_request,
+                decision_payload=decision_payload,
+            )
             buffer_values["human_review_decision"] = decision_payload
             if decision.patch:
                 self._apply_patch(
@@ -555,6 +588,11 @@ class WorkflowResumePlanner:
                 )
             resume_metadata["resume_actor_id"] = decision.actor_id
             resume_metadata["resume_human_decision"] = decision.decision
+            if decision.approval_id is not None:
+                resume_metadata["resume_approval_id"] = decision.approval_id
+            if decision.request_id is not None:
+                resume_metadata["resume_human_review_request_id"] = decision.request_id
+            resume_metadata["resume_current_step_ids"] = list(current_step_ids)
         elif request.mode == ResumeMode.AFTER_APPROVAL:
             approval_context = dict(request.approval_context or {})
             validate_approval_resume_binding(
@@ -646,14 +684,53 @@ def coerce_human_review_resume_decision(
         raise ValueError("human_decision is required")
     if isinstance(human_decision, HumanReviewResumeDecision):
         return human_decision
-    if not isinstance(human_decision, dict):
+    if isinstance(human_decision, HumanReviewDecision):
+        payload = human_decision.to_dict()
+    elif isinstance(human_decision, dict):
+        payload = dict(human_decision)
+    else:
         raise ValueError("human_decision must be an object")
-    return HumanReviewResumeDecision(
-        decision=str(human_decision.get("decision") or ""),
-        actor_id=str(human_decision.get("actor_id") or ""),
-        reason=_optional_str(human_decision.get("reason")),
-        patch=dict(human_decision.get("patch") or {}),
+    patch = payload.get("patch") or {}
+    if not isinstance(patch, dict):
+        raise ValueError("human_decision.patch must be an object")
+    metadata = payload.get("metadata") or {}
+    if not isinstance(metadata, dict):
+        raise ValueError("human_decision.metadata must be an object")
+    approval_id = payload.get("approval_id") or metadata.get("approval_id")
+    request_id = payload.get("request_id") or metadata.get("request_id")
+    actor_roles = _metadata_list(
+        payload.get("actor_roles")
+        or payload.get("roles")
+        or metadata.get("actor_roles")
+        or metadata.get("roles")
     )
+    actor_permissions = _metadata_list(
+        payload.get("actor_permissions")
+        or payload.get("permissions")
+        or metadata.get("actor_permissions")
+        or metadata.get("permissions")
+    )
+    return HumanReviewResumeDecision(
+        decision=str(payload.get("decision") or ""),
+        actor_id=str(payload.get("actor_id") or ""),
+        reason=_optional_str(payload.get("reason")),
+        patch=dict(patch),
+        approval_id=_optional_str(approval_id),
+        request_id=_optional_str(request_id),
+        actor_roles=actor_roles,
+        actor_permissions=actor_permissions,
+    )
+
+
+def _human_review_request_from_checkpoint(
+    checkpoint: WorkflowCheckpointEnvelope,
+) -> dict[str, Any] | None:
+    for value in checkpoint.data_buffer_snapshot.values():
+        if not isinstance(value, dict):
+            continue
+        if value.get("request_id") and value.get("review_type"):
+            return dict(value)
+    return None
 
 
 def inspect_checkpoint_artifacts(

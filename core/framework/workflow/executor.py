@@ -138,6 +138,7 @@ class WorkflowExecutor:
             self._step_runner_registry,
             artifact_manager=self._artifact_manager,
             run_id=actual_run_id,
+            workflow=workflow,
             global_budget_tracker=self._global_budget_tracker,
         )
         recorder = EventRecorder(actual_run_id, event_bus=self._event_bus)
@@ -164,6 +165,7 @@ class WorkflowExecutor:
         if _resume_metadata:
             manifest["resume_metadata"] = _public_resume_metadata(_resume_metadata)
             _apply_resume_metadata_to_manifest(manifest, _resume_metadata)
+            _apply_human_review_resume_metadata_to_manifest(manifest, _resume_metadata)
 
         status = self._workflow_state_machine.transition(
             WorkflowStatus.CREATED,
@@ -219,6 +221,7 @@ class WorkflowExecutor:
                 "workflow_resumed",
                 resumed_payload,
             )
+            _emit_human_review_resume_events(recorder, _resume_metadata)
             recorder.emit("checkpoint_restored", {"checkpoint_id": _resumed_checkpoint_id})
 
         error: WorkflowError | None = None
@@ -398,6 +401,14 @@ class WorkflowExecutor:
                             checkpoint_id=pause_checkpoint_id,
                             human_review_request_id=human_review_request_id,
                         ),
+                    )
+                    recorder.emit(
+                        "human_review_requested",
+                        {
+                            "step_id": step.step_id,
+                            "request_id": human_review_request_id,
+                            "checkpoint_id": pause_checkpoint_id,
+                        },
                     )
                     recorder.emit(
                         "human_review_paused",
@@ -1196,6 +1207,8 @@ def _apply_resume_metadata_to_manifest(
         "resume_actor_id",
         "resume_approval_id",
         "resume_human_decision",
+        "resume_human_review_request_id",
+        "resume_current_step_ids",
         "checkpoint_schema_version",
         "checkpoint_checksum",
         "checkpoint_migrations",
@@ -1210,6 +1223,35 @@ def _apply_resume_metadata_to_manifest(
     ):
         if key in resume_metadata:
             manifest[key] = resume_metadata[key]
+
+
+def _apply_human_review_resume_metadata_to_manifest(
+    manifest: dict[str, Any],
+    resume_metadata: dict[str, Any],
+) -> None:
+    decision = resume_metadata.get("resume_human_decision")
+    if decision is None:
+        return
+    reviews = manifest.setdefault("human_reviews", [])
+    if not isinstance(reviews, list):
+        return
+    reviews.append(
+        {
+            "request_id": resume_metadata.get("resume_human_review_request_id"),
+            "approval_id": resume_metadata.get("resume_approval_id"),
+            "step_id": _resume_current_step_id(resume_metadata),
+            "decision": decision,
+            "actor_id": resume_metadata.get("resume_actor_id"),
+            "decided_at": _utc_now(),
+        }
+    )
+
+
+def _resume_current_step_id(resume_metadata: dict[str, Any]) -> str | None:
+    current_step_ids = resume_metadata.get("resume_current_step_ids")
+    if isinstance(current_step_ids, list) and current_step_ids:
+        return str(current_step_ids[0])
+    return None
 
 
 def _public_resume_metadata(resume_metadata: dict[str, Any]) -> dict[str, Any]:
@@ -1227,6 +1269,26 @@ def _emit_routing_events(recorder: EventRecorder, decision: RoutingDecision) -> 
             recorder.emit("edge_traversed", payload)
         else:
             recorder.emit("edge_rejected", payload)
+
+
+def _emit_human_review_resume_events(
+    recorder: EventRecorder,
+    resume_metadata: dict[str, Any] | None,
+) -> None:
+    if not resume_metadata:
+        return
+    decision = resume_metadata.get("resume_human_decision")
+    if decision is None:
+        return
+    payload = {
+        "decision": decision,
+        "actor_id": resume_metadata.get("resume_actor_id"),
+        "approval_id": resume_metadata.get("resume_approval_id"),
+        "request_id": resume_metadata.get("resume_human_review_request_id"),
+    }
+    recorder.emit("human_review_decision_received", payload)
+    if decision in {"approved", "rejected", "needs_changes"}:
+        recorder.emit(f"human_review_{decision}", payload)
 
 
 def _emit_agent_loop_stream_events(
@@ -1552,6 +1614,7 @@ def _configure_step_runners(
     *,
     artifact_manager: ArtifactManager,
     run_id: str,
+    workflow: WorkflowSpec,
     global_budget_tracker: Any | None = None,
 ) -> None:
     configured_runner_ids: set[str] = set()
@@ -1565,6 +1628,9 @@ def _configure_step_runners(
         configure = getattr(runner, "configure_run_context", None)
         if callable(configure):
             configure(artifact_manager=artifact_manager, run_id=run_id)
+        configure_workflow = getattr(runner, "configure_workflow_context", None)
+        if callable(configure_workflow):
+            configure_workflow(workflow=workflow)
         configure_budget = getattr(runner, "configure_global_budget_tracker", None)
         if callable(configure_budget) and global_budget_tracker is not None:
             configure_budget(global_budget_tracker)
