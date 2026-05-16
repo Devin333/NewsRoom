@@ -314,6 +314,7 @@ class WorkflowExecutor:
             step_results[step.step_id] = outcome
             manifest["steps"][step.step_id] = outcome.to_dict()
             _record_step_artifacts(manifest, outcome)
+            _record_child_runs(manifest, outcome)
             manifest["path"] = list(path)
 
             if outcome.status == StepStatus.SUCCEEDED:
@@ -352,9 +353,11 @@ class WorkflowExecutor:
                     current_step_ids = []
                 else:
                     _emit_routing_events(recorder, routing_decision)
-                    current_step_ids = _prepend_new_steps(
-                        routing_decision.target_step_ids,
-                        current_step_ids,
+                    current_step_ids = _prepend_schedulable_steps(
+                        workflow=workflow,
+                        new_step_ids=routing_decision.target_step_ids,
+                        existing_step_ids=current_step_ids,
+                        step_results=step_results,
                     )
                     if not current_step_ids:
                         status = _workflow_transition(
@@ -1014,6 +1017,64 @@ def _prepend_new_steps(new_step_ids: list[str], existing_step_ids: list[str]) ->
     return queued
 
 
+def _prepend_schedulable_steps(
+    *,
+    workflow: WorkflowSpec,
+    new_step_ids: list[str],
+    existing_step_ids: list[str],
+    step_results: dict[str, StepOutcome],
+) -> list[str]:
+    schedulable = [
+        step_id
+        for step_id in new_step_ids
+        if _should_schedule_join(
+            workflow=workflow,
+            join_step=workflow.step_by_id(step_id),
+            step_results=step_results,
+        )
+    ]
+    return _prepend_new_steps(schedulable, existing_step_ids)
+
+
+def _should_schedule_join(
+    *,
+    workflow: WorkflowSpec,
+    join_step: StepSpec,
+    step_results: dict[str, StepOutcome],
+) -> bool:
+    if join_step.step_type != StepType.JOIN:
+        return True
+    required_upstream_step_ids = _join_required_upstream_step_ids(workflow, join_step)
+    if not required_upstream_step_ids:
+        return True
+    return all(
+        step_id in step_results and _is_terminal_step_outcome(step_results[step_id])
+        for step_id in required_upstream_step_ids
+    )
+
+
+def _join_required_upstream_step_ids(workflow: WorkflowSpec, join_step: StepSpec) -> list[str]:
+    raw = join_step.metadata.get("required_upstream_step_ids") or join_step.metadata.get("upstream_step_ids")
+    if isinstance(raw, list) and raw:
+        return [str(step_id) for step_id in raw]
+    return [
+        edge.source_step_id
+        for edge in workflow.edges
+        if edge.target_step_id == join_step.step_id
+    ]
+
+
+def _is_terminal_step_outcome(outcome: StepOutcome) -> bool:
+    return outcome.status in {
+        StepStatus.SUCCEEDED,
+        StepStatus.FAILED,
+        StepStatus.BLOCKED,
+        StepStatus.SKIPPED,
+        StepStatus.TIMEOUT,
+        StepStatus.CANCELLED,
+    }
+
+
 def _step_outcomes_from_checkpoint(payload: dict[str, Any]) -> dict[str, StepOutcome]:
     outcomes: dict[str, StepOutcome] = {}
     for step_id, raw_outcome in payload.items():
@@ -1200,6 +1261,34 @@ def _record_step_artifacts(manifest: dict[str, Any], outcome: StepOutcome) -> No
         return
     for artifact_ref in outcome.artifacts:
         register_manifest_step_artifact(manifest, artifact_ref)
+
+
+def _record_child_runs(manifest: dict[str, Any], outcome: StepOutcome) -> None:
+    raw_child_runs = outcome.outputs.get("child_runs")
+    if not isinstance(raw_child_runs, list):
+        return
+    child_runs = manifest.setdefault("child_runs", [])
+    if not isinstance(child_runs, list):
+        return
+    child_run_ids = manifest.setdefault("child_run_ids", [])
+    if not isinstance(child_run_ids, list):
+        return
+    existing_ids = {
+        item.get("child_run_id")
+        for item in child_runs
+        if isinstance(item, dict)
+    }
+    for item in raw_child_runs:
+        if not isinstance(item, dict):
+            continue
+        child_run_id = item.get("child_run_id")
+        if child_run_id is None:
+            continue
+        if child_run_id not in existing_ids:
+            child_runs.append(dict(item))
+            existing_ids.add(child_run_id)
+        if child_run_id not in child_run_ids:
+            child_run_ids.append(child_run_id)
 
 
 def _outcome_with_attempt(outcome: StepOutcome, *, attempt: int, max_attempts: int) -> StepOutcome:

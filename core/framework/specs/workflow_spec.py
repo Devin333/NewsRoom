@@ -1022,7 +1022,8 @@ def _validate_parallel_write_conflicts(
                                 "second_branch_id": branch_id,
                             },
                         )
-                    seen.setdefault(key, branch_id)
+                    if conflict_strategy != "namespace":
+                        seen.setdefault(key, branch_id)
         if not strict:
             continue
         outgoing = [
