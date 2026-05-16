@@ -28,7 +28,14 @@ from core.framework.workflow.inspection import (
     WorkflowRunInspector,
 )
 from core.framework.workflow.manifest import manifest_schema_version
+from core.framework.workflow.operations import (
+    LocalWorkflowRunOperationService,
+    OperationActor,
+    OperationResult,
+    WorkflowRunOperationService,
+)
 from core.framework.workflow.result import WorkflowResult
+from core.framework.workflow.checkpointing import WorkflowResumePlan
 from core.framework.workflow.step_runner import (
     FunctionStepRegistry,
     StepRunnerRegistry,
@@ -66,6 +73,7 @@ class WorkflowRunner:
         global_budget_policy: GlobalBudgetPolicy | None = None,
         global_budget_tracker: GlobalBudgetTracker | None = None,
         artifact_publishers: list[WorkflowArtifactPublisher] | None = None,
+        operation_service: WorkflowRunOperationService | None = None,
     ) -> None:
         self._artifact_root = Path(artifact_root)
         self._artifact_manager = ArtifactManager(self._artifact_root)
@@ -98,6 +106,11 @@ class WorkflowRunner:
         self._global_budget_policy = global_budget_policy
         self._global_budget_tracker = global_budget_tracker
         self._artifact_publishers = list(artifact_publishers or [])
+        self._operation_service = operation_service or LocalWorkflowRunOperationService(
+            artifact_root=self._artifact_root,
+            runner=self,
+            checkpoint_store=self._checkpoint_store,
+        )
 
     def run(
         self,
@@ -117,6 +130,40 @@ class WorkflowRunner:
             artifact_publishers=self._artifact_publishers,
         )
         result = executor.execute(workflow, request, profile=profile, run_id=run_id)
+        self._persist_storage_indexes(result)
+        return RunResult.from_workflow_result(result)
+
+    def execute_resume_plan(
+        self,
+        workflow: WorkflowSpec,
+        plan: WorkflowResumePlan,
+        *,
+        profile: str,
+    ) -> RunResult:
+        executor = WorkflowExecutor(
+            function_step_runner=None,
+            step_runner_registry=self._step_runner_registry,
+            artifact_manager=self._artifact_manager,
+            checkpoint_store=self._checkpoint_store,
+            event_bus=self._event_bus,
+            global_budget_tracker=self._budget_tracker_for_run(),
+            artifact_publishers=self._artifact_publishers,
+        )
+        request = plan.initial_buffer_values.get("request")
+        if not isinstance(request, dict):
+            request = {}
+        result = executor.execute(
+            workflow,
+            request,
+            profile=profile,
+            run_id=plan.run_id,
+            _initial_buffer_values=plan.initial_buffer_values,
+            _current_step_ids=plan.current_step_ids,
+            _initial_path=plan.initial_path,
+            _initial_step_results=plan.initial_step_results,
+            _resumed_checkpoint_id=plan.resumed_from_checkpoint_id,
+            _resume_metadata=plan.resume_metadata,
+        )
         self._persist_storage_indexes(result)
         return RunResult.from_workflow_result(result)
 
@@ -174,6 +221,56 @@ class WorkflowRunner:
             run_id=run_id,
             buffer_updates=dict(context.get("buffer_updates") or {}),
             resume_metadata=dict(context.get("resume_metadata") or {}),
+        )
+
+    def cancel_run(
+        self,
+        run_id: str,
+        reason: str,
+        *,
+        actor: OperationActor | None = None,
+    ) -> OperationResult:
+        return self._operation_service.cancel_run(run_id, reason, actor=actor)
+
+    def rerun_from_step(
+        self,
+        run_id: str,
+        step_id: str,
+        *,
+        actor: OperationActor | None = None,
+    ) -> OperationResult:
+        return self._operation_service.rerun_from_step(run_id, step_id, actor=actor)
+
+    def resume_with_patch(
+        self,
+        run_id: str,
+        patch: dict[str, Any],
+        *,
+        actor: OperationActor | None = None,
+    ) -> OperationResult:
+        return self._operation_service.resume_with_patch(run_id, patch, actor=actor)
+
+    def skip_step(
+        self,
+        run_id: str,
+        step_id: str,
+        reason: str,
+        *,
+        actor: OperationActor | None = None,
+    ) -> OperationResult:
+        return self._operation_service.skip_step(run_id, step_id, reason, actor=actor)
+
+    def mark_blocked_resolved(
+        self,
+        run_id: str,
+        resolution: dict[str, Any],
+        *,
+        actor: OperationActor | None = None,
+    ) -> OperationResult:
+        return self._operation_service.mark_blocked_resolved(
+            run_id,
+            resolution,
+            actor=actor,
         )
 
     def _budget_tracker_for_run(self) -> GlobalBudgetTracker | None:

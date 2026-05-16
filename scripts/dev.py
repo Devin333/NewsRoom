@@ -2,10 +2,17 @@ from __future__ import annotations
 
 import argparse
 import glob
+import json
 import os
 import subprocess
 import sys
 from collections.abc import Sequence
+from pathlib import Path
+
+from core.framework.workflow.operations import (
+    LocalWorkflowRunOperationService,
+    OperationActor,
+)
 
 
 COMPILE_PATHS = [
@@ -58,6 +65,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run(_news_command("sources", "validate"), env=env)
     if args.command == "diagnose":
         return _run(_news_command("diagnose"), env=env)
+    if args.command == "run-cancel":
+        return _run_operation(args, "cancel")
+    if args.command == "run-rerun-from-step":
+        return _run_operation(args, "rerun_from_step")
+    if args.command == "run-resume-with-patch":
+        return _run_operation(args, "resume_with_patch")
+    if args.command == "run-skip-step":
+        return _run_operation(args, "skip_step")
+    if args.command == "run-mark-blocked-resolved":
+        return _run_operation(args, "mark_blocked_resolved")
     if args.command == "smoke":
         commands = [
             _compile_command(),
@@ -102,7 +119,47 @@ def build_parser() -> argparse.ArgumentParser:
         help="Fail instead of returning skipped when live dependencies are not configured",
     )
 
+    _add_run_operation_parsers(subparsers)
+
     return parser
+
+
+def _add_run_operation_parsers(subparsers: argparse._SubParsersAction) -> None:
+    cancel_parser = subparsers.add_parser("run-cancel", help="Cancel a workflow run")
+    _add_operation_base_args(cancel_parser)
+    cancel_parser.add_argument("--reason", required=True)
+
+    rerun_parser = subparsers.add_parser(
+        "run-rerun-from-step",
+        help="Rerun a workflow run from a step",
+    )
+    _add_operation_base_args(rerun_parser)
+    rerun_parser.add_argument("--step-id", required=True)
+
+    resume_parser = subparsers.add_parser(
+        "run-resume-with-patch",
+        help="Resume a workflow run with a JSON patch",
+    )
+    _add_operation_base_args(resume_parser)
+    resume_parser.add_argument("--patch-json", required=True)
+
+    skip_parser = subparsers.add_parser("run-skip-step", help="Skip a workflow step")
+    _add_operation_base_args(skip_parser)
+    skip_parser.add_argument("--step-id", required=True)
+    skip_parser.add_argument("--reason", required=True)
+
+    blocked_parser = subparsers.add_parser(
+        "run-mark-blocked-resolved",
+        help="Record that a blocked run has been externally resolved",
+    )
+    _add_operation_base_args(blocked_parser)
+    blocked_parser.add_argument("--resolution-json", required=True)
+
+
+def _add_operation_base_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--run-id", required=True)
+    parser.add_argument("--artifact-root", default="outputs/runs")
+    parser.add_argument("--actor-id", default=None)
 
 
 def _compile_command() -> list[str]:
@@ -182,6 +239,49 @@ def _smoke_live_command(*, fail_if_unready: bool) -> list[str]:
 
 def _news_command(*args: str) -> list[str]:
     return [sys.executable, "-m", "interfaces.cli.news", *args]
+
+
+def _run_operation(args: argparse.Namespace, operation: str) -> int:
+    service = LocalWorkflowRunOperationService(artifact_root=args.artifact_root)
+    actor = OperationActor(actor_id=args.actor_id) if args.actor_id else None
+    if operation == "cancel":
+        result = service.cancel_run(args.run_id, args.reason, actor=actor)
+    elif operation == "rerun_from_step":
+        result = service.rerun_from_step(args.run_id, args.step_id, actor=actor)
+    elif operation == "resume_with_patch":
+        result = service.resume_with_patch(
+            args.run_id,
+            _read_json_argument(args.patch_json),
+            actor=actor,
+        )
+    elif operation == "skip_step":
+        result = service.skip_step(
+            args.run_id,
+            args.step_id,
+            args.reason,
+            actor=actor,
+        )
+    elif operation == "mark_blocked_resolved":
+        result = service.mark_blocked_resolved(
+            args.run_id,
+            _read_json_argument(args.resolution_json),
+            actor=actor,
+        )
+    else:  # pragma: no cover - parser dispatch prevents this
+        raise ValueError(f"unknown run operation: {operation}")
+    print(json.dumps(result.to_dict(), ensure_ascii=False, sort_keys=True))
+    return 0 if result.status.value in {"accepted", "applied"} else 1
+
+
+def _read_json_argument(value: str) -> dict:
+    path = Path(value)
+    if path.exists():
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    else:
+        payload = json.loads(value)
+    if not isinstance(payload, dict):
+        raise ValueError("JSON argument must be an object")
+    return payload
 
 
 def _run_many(commands: Sequence[Sequence[str]], *, env: dict[str, str], keep_going: bool) -> int:

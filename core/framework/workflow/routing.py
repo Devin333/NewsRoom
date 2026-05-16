@@ -179,7 +179,7 @@ def _edge_matches(
     if edge.condition == EdgeCondition.HUMAN_APPROVED:
         return _human_decision(outcome, buffer) == "approved"
     if edge.condition == EdgeCondition.HUMAN_REJECTED:
-        return _human_decision(outcome, buffer) == "rejected"
+        return _human_decision(outcome, buffer) in {"rejected", "needs_changes"}
     if edge.condition == EdgeCondition.BUDGET_EXCEEDED:
         return bool(_lookup(outcome.outputs, "budget_exceeded") or _lookup_buffer(buffer, "budget_exceeded"))
     if edge.condition == EdgeCondition.SOURCE_UNAVAILABLE:
@@ -260,6 +260,8 @@ def _human_decision(outcome: StepOutcome, buffer: DataBuffer | None) -> str | No
             return str(status)
     if outcome.next_hint in {"human_approved", "human_rejected"}:
         return outcome.next_hint.removeprefix("human_")
+    if outcome.next_hint == "human_needs_changes":
+        return "needs_changes"
     return None
 
 

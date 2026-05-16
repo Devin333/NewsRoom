@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 import time
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from datetime import UTC, datetime
 from hashlib import sha256
+from pathlib import Path
 from typing import Any, Callable
 from uuid import uuid4
 
@@ -25,6 +27,14 @@ from core.framework.workflow.artifact_publishers import (
     RuntimeArtifactPublisher,
     WorkflowArtifactPublisher,
     WorkflowArtifactPublisherRegistry,
+)
+from core.framework.workflow.checkpointing import (
+    ResumeMode,
+    WorkflowResumePlanner,
+    WorkflowResumeRequest,
+    envelope_from_checkpoint,
+    envelope_to_checkpoint,
+    inspect_checkpoint_artifacts,
 )
 from core.framework.workflow.manifest import (
     add_manifest_checkpoint,
@@ -152,7 +162,8 @@ class WorkflowExecutor:
         if _resumed_checkpoint_id is not None:
             manifest["resumed_from_checkpoint_id"] = _resumed_checkpoint_id
         if _resume_metadata:
-            manifest["resume_metadata"] = dict(_resume_metadata)
+            manifest["resume_metadata"] = _public_resume_metadata(_resume_metadata)
+            _apply_resume_metadata_to_manifest(manifest, _resume_metadata)
 
         status = self._workflow_state_machine.transition(
             WorkflowStatus.CREATED,
@@ -201,7 +212,9 @@ class WorkflowExecutor:
                 "checkpoint_id": _resumed_checkpoint_id,
             }
             if _resume_metadata:
-                resumed_payload["resume_metadata"] = dict(_resume_metadata)
+                resumed_payload["resume_metadata"] = _public_resume_metadata(
+                    _resume_metadata
+                )
             recorder.emit(
                 "workflow_resumed",
                 resumed_payload,
@@ -211,11 +224,30 @@ class WorkflowExecutor:
         error: WorkflowError | None = None
         path: list[str] = list(_initial_path or [])
         step_results: dict[str, StepOutcome] = dict(_initial_step_results or {})
+        if step_results:
+            manifest["steps"].update(
+                {
+                    step_id: outcome.to_dict()
+                    for step_id, outcome in step_results.items()
+                }
+            )
         checkpoint_ids: list[str] = []
         step_visit_counts: dict[str, int] = {}
         current_step_ids: list[str] = list(_current_step_ids or [workflow.start_step_id])
 
         while current_step_ids:
+            if self._is_run_cancelled(actual_run_id):
+                status = _workflow_transition(
+                    self._workflow_state_machine,
+                    status,
+                    WorkflowRuntimeEvent(
+                        event_type=WorkflowRuntimeEventType.CANCEL,
+                        reason="cancel marker found",
+                    ),
+                )
+                recorder.emit("workflow_cancelled", {"run_id": actual_run_id})
+                current_step_ids = []
+                break
             current_step_id = current_step_ids.pop(0)
             visit_count = step_visit_counts.get(current_step_id, 0) + 1
             step_visit_counts[current_step_id] = visit_count
@@ -501,6 +533,8 @@ class WorkflowExecutor:
             recorder.emit("workflow_succeeded", {"path": path})
         elif status in {WorkflowStatus.PAUSED, WorkflowStatus.WAITING_FOR_HUMAN}:
             pass
+        elif status == WorkflowStatus.CANCELLED:
+            pass
         else:
             terminal_event = _terminal_error_event_type(status)
             recorder.emit(terminal_event, {"path": path, "error": error})
@@ -570,36 +604,48 @@ class WorkflowExecutor:
         buffer_updates: dict[str, Any] | None = None,
         resume_metadata: dict[str, Any] | None = None,
     ) -> WorkflowResult:
-        if checkpoint.workflow_id != workflow.workflow_id:
-            raise StepExecutionError(
-                "checkpoint workflow_id does not match workflow: "
-                f"{checkpoint.workflow_id} != {workflow.workflow_id}"
-            )
-        if checkpoint.workflow_version != workflow.version:
-            raise StepExecutionError(
-                "checkpoint workflow_version does not match workflow: "
-                f"{checkpoint.workflow_version} != {workflow.version}"
-            )
-
-        initial_values = dict(checkpoint.data_buffer_snapshot)
-        if buffer_updates:
-            initial_values.update(buffer_updates)
-        request = initial_values.get("request")
+        envelope = envelope_from_checkpoint(checkpoint)
+        public_resume_metadata = dict(resume_metadata or {})
+        actual_resume_metadata = dict(public_resume_metadata)
+        recovery_report = inspect_checkpoint_artifacts(
+            checkpoint=envelope,
+            manifest=_load_checkpoint_manifest(self._artifact_manager.root, checkpoint.run_id),
+            artifact_root=self._artifact_manager.root,
+            strict=False,
+        )
+        actual_resume_metadata["partial_artifact_recovery"] = recovery_report.to_dict()
+        actual_resume_metadata["_public_resume_metadata"] = (
+            public_resume_metadata
+            if resume_metadata is not None
+            else {"partial_artifact_recovery": recovery_report.to_dict()}
+        )
+        mode = ResumeMode.WITH_PATCH if buffer_updates else ResumeMode.EXACT
+        resume_request = WorkflowResumeRequest(
+            mode=mode,
+            checkpoint=envelope,
+            run_id=run_id,
+            patch=dict(buffer_updates or {}),
+            strict=True,
+            metadata=actual_resume_metadata,
+        )
+        try:
+            plan = WorkflowResumePlanner().plan(workflow, resume_request)
+        except ValueError as exc:
+            raise StepExecutionError(str(exc)) from exc
+        request = plan.initial_buffer_values.get("request")
         if not isinstance(request, dict):
             request = {}
-        resume_run_id = run_id or f"{checkpoint.run_id}-resume-{checkpoint.checkpoint_id}"
-        current_step_ids = list(checkpoint.current_step_ids or [workflow.start_step_id])
         return self.execute(
             workflow,
             request,
             profile=profile,
-            run_id=resume_run_id,
-            _initial_buffer_values=initial_values,
-            _current_step_ids=current_step_ids,
-            _initial_path=list(checkpoint.path),
-            _initial_step_results=_step_outcomes_from_checkpoint(checkpoint.step_results),
-            _resumed_checkpoint_id=checkpoint.checkpoint_id,
-            _resume_metadata=resume_metadata,
+            run_id=plan.run_id,
+            _initial_buffer_values=plan.initial_buffer_values,
+            _current_step_ids=plan.current_step_ids,
+            _initial_path=plan.initial_path,
+            _initial_step_results=plan.initial_step_results,
+            _resumed_checkpoint_id=plan.resumed_from_checkpoint_id,
+            _resume_metadata=plan.resume_metadata,
         )
 
     def _run_step_with_retries(
@@ -864,6 +910,7 @@ class WorkflowExecutor:
             event_offset=event_offset,
             metadata={"profile": profile},
         )
+        checkpoint = envelope_to_checkpoint(envelope_from_checkpoint(checkpoint))
         self._checkpoint_store.save_checkpoint(checkpoint)
         recorder.emit(
             "checkpoint_created",
@@ -874,6 +921,9 @@ class WorkflowExecutor:
             },
         )
         return checkpoint_id
+
+    def _is_run_cancelled(self, run_id: str) -> bool:
+        return (self._artifact_manager.run_dir(run_id) / "cancel.json").exists()
 
 
 def _blocks_on_failure(step: StepSpec) -> bool:
@@ -1064,6 +1114,48 @@ def _checkpoint_id(step_id: str, event_offset: int) -> str:
         for character in step_id
     ).strip("._-")
     return f"cp-{event_offset:06d}-{safe_step_id or 'step'}"
+
+
+def _load_checkpoint_manifest(artifact_root: Path, run_id: str) -> dict[str, Any] | None:
+    path = artifact_root / run_id / "manifest.json"
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _apply_resume_metadata_to_manifest(
+    manifest: dict[str, Any],
+    resume_metadata: dict[str, Any],
+) -> None:
+    for key in (
+        "resume_mode",
+        "resume_original_run_id",
+        "resume_patch_keys",
+        "resume_actor_id",
+        "resume_approval_id",
+        "resume_human_decision",
+        "checkpoint_schema_version",
+        "checkpoint_checksum",
+        "checkpoint_migrations",
+        "operation_id",
+        "operation_type",
+        "original_run_id",
+        "rerun_from_run_id",
+        "rerun_from_step_id",
+        "skip_step_id",
+        "skip_reason",
+        "skip_next_step_ids",
+    ):
+        if key in resume_metadata:
+            manifest[key] = resume_metadata[key]
+
+
+def _public_resume_metadata(resume_metadata: dict[str, Any]) -> dict[str, Any]:
+    public_metadata = resume_metadata.get("_public_resume_metadata")
+    if isinstance(public_metadata, dict):
+        return dict(public_metadata)
+    return dict(resume_metadata)
 
 
 def _emit_routing_events(recorder: EventRecorder, decision: RoutingDecision) -> None:
