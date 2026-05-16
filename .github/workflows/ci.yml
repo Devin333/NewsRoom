@@ -25,8 +25,11 @@ jobs:
       - name: Compile modules
         run: python -m scripts.dev compile
 
-      - name: Run workflow tests
-        run: python -m scripts.dev test-workflows
+      - name: Run workflow runtime contract tests
+        run: python -m scripts.dev test-workflow-runtime-contracts
+
+      - name: Run workflow domain tests
+        run: python -m scripts.dev test-workflow-domain
 
       - name: Run service tests
         run: python -m scripts.dev test-services

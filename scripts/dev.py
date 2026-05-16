@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import glob
 import json
 import os
 import subprocess
@@ -45,10 +44,26 @@ def main(argv: Sequence[str] | None = None) -> int:
                 sys.executable,
                 "-m",
                 "pytest",
-                *_workflow_test_paths(),
+                "tests/core/framework/workflow",
                 "tests/workflows",
                 "-q",
             ],
+            env=env,
+        )
+    if args.command == "test-workflow-runtime-contracts":
+        return _run(
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                "tests/core/framework/workflow",
+                "-q",
+            ],
+            env=env,
+        )
+    if args.command == "test-workflow-domain":
+        return _run(
+            [sys.executable, "-m", "pytest", "tests/workflows", "-q"],
             env=env,
         )
     if args.command == "test-services":
@@ -96,6 +111,11 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("compile", help="Compile project Python modules")
     subparsers.add_parser("test", help="Run the full pytest suite")
     subparsers.add_parser("test-workflows", help="Run workflow tests")
+    subparsers.add_parser(
+        "test-workflow-runtime-contracts",
+        help="Run workflow runtime contract tests",
+    )
+    subparsers.add_parser("test-workflow-domain", help="Run workflow domain tests")
     subparsers.add_parser("test-services", help="Run interface service tests")
     subparsers.add_parser("sources-validate", help="Validate configured source registry")
     subparsers.add_parser("diagnose", help="Run local diagnostics")
@@ -164,23 +184,6 @@ def _add_operation_base_args(parser: argparse.ArgumentParser) -> None:
 
 def _compile_command() -> list[str]:
     return [sys.executable, "-m", "compileall", "-q", *COMPILE_PATHS]
-
-
-def _workflow_test_paths() -> list[str]:
-    paths = sorted(
-        [
-            *glob.glob("tests/core/framework/workflow/test_workflow_compiler_*.py"),
-            *glob.glob("tests/core/framework/workflow/test_scheduler_*.py"),
-            "tests/core/framework/workflow/test_workflow_state_machine.py",
-            "tests/core/framework/workflow/test_step_state_machine.py",
-        ]
-    )
-    return paths or [
-        "tests/core/framework/workflow/test_workflow_compiler_*.py",
-        "tests/core/framework/workflow/test_scheduler_*.py",
-        "tests/core/framework/workflow/test_workflow_state_machine.py",
-        "tests/core/framework/workflow/test_step_state_machine.py",
-    ]
 
 
 def _smoke_test_no_llm_command(run_id: str | None = None) -> list[str]:
