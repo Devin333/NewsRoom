@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
 from interfaces.api.deps import ApiRouteHelpers, ApiServices
-from interfaces.models import MCPPromptGetRequest, MCPResourceReadRequest, MCPToolCallRequest
+from interfaces.models import ActorContext, MCPPromptGetRequest, MCPResourceReadRequest, MCPToolCallRequest
+from interfaces.services.mcp_service import tool_required_permission
 
 
 def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
@@ -22,8 +23,23 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
         return helpers.success(services.mcp_service_factory().capability_manifest().to_dict())
 
     @router.post("/api/v1/mcp/tools/{tool_name}/call")
-    def mcp_call_tool(tool_name: str, request: MCPToolCallRequest | None = None):
-        actual_request = request or MCPToolCallRequest()
+    def mcp_call_tool(tool_name: str, request: Request, payload: MCPToolCallRequest | None = None):
+        actual_request = payload or MCPToolCallRequest()
+        actor = getattr(request.state, "actor_context", None)
+        if isinstance(actor, ActorContext):
+            required_permission = tool_required_permission(tool_name)
+            if required_permission and not actor.has_permission(required_permission):
+                return helpers.error(
+                    status_code=403,
+                    code="forbidden",
+                    message=f"missing required permission: {required_permission}",
+                    details={
+                        "required_permission": required_permission,
+                        "roles": actor.roles,
+                        "tool_name": tool_name,
+                    },
+                    user_action_required=True,
+                )
         result = services.mcp_service_factory().call_tool(tool_name, actual_request.arguments)
         return helpers.success(result.to_dict())
 

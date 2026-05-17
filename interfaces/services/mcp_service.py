@@ -2020,6 +2020,10 @@ def _prompt_capability(prompt: MCPPrompt) -> MCPCapability:
     )
 
 
+def tool_required_permission(tool_name: str) -> str:
+    return _tool_permission(tool_name)
+
+
 def _tool_permission(tool_name: str) -> str:
     if tool_name.startswith("news.report.") and tool_name.endswith(".publish"):
         return "manage:approvals"

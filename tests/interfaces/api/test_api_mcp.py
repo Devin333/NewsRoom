@@ -55,6 +55,33 @@ def test_api_mcp_tool_resource_and_prompt_results_are_enveloped() -> None:
     assert prompt_response.json()["data"]["name"] == "news.run.diagnose"
 
 
+def test_api_mcp_tool_call_requires_tool_specific_permission() -> None:
+    client = TestClient(
+        create_app(
+            api_keys={"readonly-token": ["read-only"]},
+            run_operation_service_factory=lambda: _FakeRunOperationService(),
+            audit_emitter_factory=None,
+        )
+    )
+
+    response = client.post(
+        "/api/v1/mcp/tools/news.run.cancel/call",
+        headers={"Authorization": "Bearer readonly-token"},
+        json={
+            "arguments": {
+                "run_id": "run-1",
+                "reason": "manual stop",
+            }
+        },
+    )
+
+    payload = response.json()
+    assert response.status_code == 403
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "forbidden"
+    assert payload["error"]["message"] == "missing required permission: write:runs"
+
+
 def test_api_mcp_default_service_uses_injected_run_operation_service() -> None:
     fake_operations = _FakeRunOperationService()
     client = TestClient(
