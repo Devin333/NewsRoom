@@ -156,6 +156,71 @@ def test_news_cli_runs_compare_json(monkeypatch, capsys) -> None:
     assert payload["comparison"]["same_workflow"] is True
 
 
+def test_news_cli_runs_artifacts_json(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(news_cli, "ArtifactInspectionService", _FakeArtifactService)
+
+    exit_code = news_cli.main(["runs", "artifacts", "run-1", "--json"])
+
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["run_id"] == "run-1"
+    assert payload["artifact_count"] == 1
+    assert payload["artifacts"][0]["artifact_key"] == "report_json"
+
+
+def test_news_cli_runs_artifacts_missing_returns_not_found(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(news_cli, "ArtifactInspectionService", _MissingArtifactService)
+
+    exit_code = news_cli.main(["runs", "artifacts", "missing", "--json"])
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 3
+    assert "run not found: missing" in captured.out
+
+
+def test_news_cli_runs_cancel_json(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(news_cli, "RunOperationApplicationService", _FakeRunOperationService)
+
+    exit_code = news_cli.main(
+        [
+            "runs",
+            "cancel",
+            "run-1",
+            "--reason",
+            "manual stop",
+            "--actor-id",
+            "operator",
+            "--json",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["operation_type"] == "cancel_run"
+    assert payload["status"] == "accepted"
+    assert payload["details"]["reason"] == "manual stop"
+    assert payload["details"]["actor_id"] == "operator"
+
+
+def test_news_cli_runs_rerun_from_step_json(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(news_cli, "RunOperationApplicationService", _FakeRunOperationService)
+
+    exit_code = news_cli.main(
+        ["runs", "rerun-from-step", "run-1", "write_report", "--actor-id", "operator", "--json"]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["operation_type"] == "rerun_from_step"
+    assert payload["status"] == "accepted"
+    assert payload["details"]["step_id"] == "write_report"
+    assert payload["details"]["actor_id"] == "operator"
+
+
 class _FakeRunInspectionService:
     def __init__(self, artifact_root=".newsroom/runs") -> None:
         self.artifact_root = artifact_root
@@ -293,6 +358,74 @@ class _FakeRunInspectionService:
                     "status_changed": False,
                     "workflow_version_changed": True,
                     "has_behavioral_change": True,
+                },
+            }
+        )
+
+
+class _FakeArtifactService:
+    def __init__(self, artifact_root=".newsroom/runs") -> None:
+        self.artifact_root = artifact_root
+
+    def list_artifacts(self, run_id):
+        return _FakeResult(
+            {
+                "run_id": run_id,
+                "artifact_count": 1,
+                "artifacts": [
+                    {
+                        "artifact_key": "report_json",
+                        "relative_path": "report.json",
+                        "content_type": "application/json",
+                        "size_bytes": 14,
+                    }
+                ],
+            }
+        )
+
+
+class _MissingArtifactService:
+    def __init__(self, artifact_root=".newsroom/runs") -> None:
+        self.artifact_root = artifact_root
+
+    def list_artifacts(self, run_id):
+        raise FileNotFoundError(f"run not found: {run_id}")
+
+
+class _FakeRunOperationService:
+    def __init__(self, artifact_root=".newsroom/runs") -> None:
+        self.artifact_root = artifact_root
+
+    def cancel_run(self, run_id, *, reason=None, actor_id=None, metadata=None):
+        return _FakeResult(
+            {
+                "operation_id": "op-cancel",
+                "operation_type": "cancel_run",
+                "status": "accepted",
+                "run_id": run_id,
+                "message": "accepted",
+                "new_run_id": None,
+                "details": {
+                    "reason": reason,
+                    "actor_id": actor_id,
+                    "metadata": metadata or {},
+                },
+            }
+        )
+
+    def rerun_from_step(self, run_id, *, step_id, actor_id=None, metadata=None):
+        return _FakeResult(
+            {
+                "operation_id": "op-rerun",
+                "operation_type": "rerun_from_step",
+                "status": "accepted",
+                "run_id": run_id,
+                "message": "accepted",
+                "new_run_id": "run-2",
+                "details": {
+                    "step_id": step_id,
+                    "actor_id": actor_id,
+                    "metadata": metadata or {},
                 },
             }
         )

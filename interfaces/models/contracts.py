@@ -10,6 +10,37 @@ from interfaces.models.common import PageResult, Pagination
 
 SCHEMA_VERSION = "1.0"
 DailyProfile = Literal["live", "live-offline", "agentic-offline", "agentic-live"]
+RunStatus = Literal[
+    "accepted",
+    "queued",
+    "running",
+    "paused",
+    "waiting_for_human",
+    "succeeded",
+    "failed",
+    "blocked",
+    "cancelled",
+    "budget_exceeded",
+]
+ReportStatus = Literal[
+    "draft",
+    "ready",
+    "needs_review",
+    "published",
+    "blocked",
+    "failed",
+]
+
+
+class ApiMeta(BaseModel):
+    request_id: str
+    schema_version: str = SCHEMA_VERSION
+
+
+class PageRequest(BaseModel):
+    limit: int = Field(default=20, ge=1)
+    cursor: str | None = None
+    offset: int | None = Field(default=None, ge=0)
 
 
 class ApiError(BaseModel):
@@ -75,7 +106,7 @@ class WeeklyRunRequest(BaseModel):
 class RunResponse(BaseModel):
     run_id: str | None = None
     task_id: str | None = None
-    status: Literal["accepted", "queued", "running", "succeeded", "failed", "blocked", "cancelled"]
+    status: RunStatus
     task_status: str | None = None
     run_status: str | None = None
     report_status: str | None = None
@@ -84,6 +115,55 @@ class RunResponse(BaseModel):
     artifact_refs: list[ArtifactRef] = Field(default_factory=list)
     diagnostics: list[str] = Field(default_factory=list)
     message: str | None = None
+
+
+class RunListItem(BaseModel):
+    run_id: str
+    workflow_id: str | None = None
+    workflow_version: str | None = None
+    profile: str | None = None
+    status: str
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    report_id: str | None = None
+    artifact_dir: str | None = None
+
+
+class RunDetail(RunListItem):
+    output_preview: dict[str, Any] = Field(default_factory=dict)
+    error: dict[str, Any] | None = None
+    metrics: dict[str, Any] = Field(default_factory=dict)
+
+
+class RunEventView(BaseModel):
+    event_id: str | None = None
+    event_type: str
+    step_id: str | None = None
+    created_at: datetime | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class RunOperationRequest(BaseModel):
+    reason: str | None = None
+    actor_id: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class RunRerunFromStepRequest(RunOperationRequest):
+    step_id: str = Field(min_length=1)
+
+
+class RunResumeWithPatchRequest(RunOperationRequest):
+    patch: dict[str, Any] = Field(default_factory=dict)
+
+
+class RunSkipStepRequest(RunOperationRequest):
+    step_id: str = Field(min_length=1)
+
+
+class RunMarkBlockedResolvedRequest(RunOperationRequest):
+    resolution_type: str = Field(default="manual", min_length=1)
+    resolved_by: str | None = None
 
 
 class ReportSummary(BaseModel):
@@ -140,6 +220,18 @@ class MemorySearchResponse(BaseModel):
 class MemoryReindexRequest(BaseModel):
     run_id: str
     topic: str | None = None
+
+
+class MCPToolCallRequest(BaseModel):
+    arguments: dict[str, Any] = Field(default_factory=dict)
+
+
+class MCPResourceReadRequest(BaseModel):
+    uri: str = Field(min_length=1)
+
+
+class MCPPromptGetRequest(BaseModel):
+    arguments: dict[str, Any] = Field(default_factory=dict)
 
 
 class SourceHealthView(BaseModel):

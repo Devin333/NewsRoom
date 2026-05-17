@@ -1,6 +1,7 @@
 import json
 
 import interfaces.cli.news as news_cli
+from interfaces.services.mcp_service import MCPApplicationService
 
 
 def test_news_cli_mcp_catalog_json(monkeypatch, capsys) -> None:
@@ -33,6 +34,19 @@ def test_news_cli_mcp_capabilities_json(monkeypatch, capsys) -> None:
     assert payload["capabilities"][0]["category"] == "sources"
 
 
+def test_news_cli_mcp_manifest_alias_json(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(news_cli, "MCPApplicationService", _FakeMCPService)
+
+    exit_code = news_cli.main(["mcp", "manifest", "--json"])
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert exit_code == 0
+    assert payload["schema_version"] == "newsroom.mcp_capability_manifest.v1"
+    assert payload["version"] == "1.0"
+
+
 def test_news_cli_mcp_call_json(monkeypatch, capsys) -> None:
     monkeypatch.setattr(news_cli, "MCPApplicationService", _FakeMCPService)
 
@@ -56,6 +70,43 @@ def test_news_cli_mcp_call_json(monkeypatch, capsys) -> None:
     assert payload["data"]["source_count"] == 1
 
 
+def test_news_cli_mcp_tools_list_json(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(news_cli, "MCPApplicationService", _FakeMCPService)
+
+    exit_code = news_cli.main(["mcp", "tools", "list", "--json"])
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert exit_code == 0
+    assert payload["tool_count"] == 1
+    assert payload["tools"][0]["name"] == "news.source.health"
+
+
+def test_news_cli_mcp_tools_call_json(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(news_cli, "MCPApplicationService", _FakeMCPService)
+
+    exit_code = news_cli.main(
+        [
+            "mcp",
+            "tools",
+            "call",
+            "news.source.health",
+            "--args",
+            "{\"include_disabled\": true}",
+            "--json",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert exit_code == 0
+    assert payload["tool_name"] == "news.source.health"
+    assert payload["success"] is True
+    assert payload["data"]["arguments"] == {"include_disabled": True}
+
+
 def test_news_cli_mcp_read_resource_json(monkeypatch, capsys) -> None:
     monkeypatch.setattr(news_cli, "MCPApplicationService", _FakeMCPService)
 
@@ -75,6 +126,27 @@ def test_news_cli_mcp_read_resource_json(monkeypatch, capsys) -> None:
     assert payload["uri"] == "news://sources/health"
     assert payload["success"] is True
     assert payload["data"]["source_count"] == 1
+
+
+def test_news_cli_mcp_resources_read_json(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(news_cli, "MCPApplicationService", _FakeMCPService)
+
+    exit_code = news_cli.main(
+        [
+            "mcp",
+            "resources",
+            "read",
+            "news://sources/health",
+            "--json",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert exit_code == 0
+    assert payload["uri"] == "news://sources/health"
+    assert payload["success"] is True
 
 
 def test_news_cli_mcp_get_prompt_json(monkeypatch, capsys) -> None:
@@ -100,6 +172,78 @@ def test_news_cli_mcp_get_prompt_json(monkeypatch, capsys) -> None:
     assert "run-1" in payload["messages"][0]["content"]
 
 
+def test_news_cli_mcp_prompts_list_json(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(news_cli, "MCPApplicationService", _FakeMCPService)
+
+    exit_code = news_cli.main(["mcp", "prompts", "list", "--json"])
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert exit_code == 0
+    assert payload["prompt_count"] == 1
+    assert payload["prompts"][0]["name"] == "news.evidence_audit"
+
+
+def test_news_cli_mcp_prompts_get_json(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(news_cli, "MCPApplicationService", _FakeMCPService)
+
+    exit_code = news_cli.main(
+        [
+            "mcp",
+            "prompts",
+            "get",
+            "news.evidence_audit",
+            "--args",
+            "{\"run_id\": \"run-1\"}",
+            "--json",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert exit_code == 0
+    assert payload["name"] == "news.evidence_audit"
+    assert payload["success"] is True
+    assert "run-1" in payload["messages"][0]["content"]
+
+
+def test_news_cli_mcp_real_service_outputs_contract_json(capsys) -> None:
+    exit_code = news_cli.main(["mcp", "manifest", "--json"])
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    capabilities = {capability["name"]: capability for capability in payload["capabilities"]}
+
+    assert exit_code == 0
+    assert payload == MCPApplicationService().capability_manifest().to_dict()
+    assert capabilities["news.run.cancel"]["metadata"]["requires_confirmation"] is True
+    assert capabilities["news.run.cancel"]["metadata"]["side_effect_level"] == "external_write"
+
+
+def test_news_cli_mcp_real_prompt_get_json(capsys) -> None:
+    exit_code = news_cli.main(
+        [
+            "mcp",
+            "prompts",
+            "get",
+            "news.run.diagnose",
+            "--args",
+            "{\"run_id\": \"run-1\"}",
+            "--json",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert exit_code == 0
+    assert payload["name"] == "news.run.diagnose"
+    assert payload["success"] is True
+    assert "run-1" in payload["messages"][0]["content"]
+
+
 class _FakeMCPService:
     def catalog(self):
         return _FakeResult(
@@ -112,8 +256,21 @@ class _FakeMCPService:
                         "input_schema": {},
                     }
                 ],
-                "resources": [],
-                "prompts": [],
+                "resources": [
+                    {
+                        "uri": "news://sources/health",
+                        "name": "source_health",
+                        "description": "Read source health.",
+                        "mime_type": "application/json",
+                    }
+                ],
+                "prompts": [
+                    {
+                        "name": "news.evidence_audit",
+                        "description": "Audit evidence.",
+                        "arguments_schema": {},
+                    }
+                ],
             }
         )
 

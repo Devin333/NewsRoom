@@ -26,6 +26,7 @@ from interfaces.services.memory_service import DEFAULT_MEMORY_COLLECTION, Memory
 from interfaces.services.mcp_service import MCPApplicationService
 from interfaces.services.report_service import ReportApplicationService
 from interfaces.services.run_inspection_service import RunInspectionService
+from interfaces.services.run_operation_service import RunOperationApplicationService
 from interfaces.services.run_service import RunApplicationService
 from interfaces.services.run_service import DEFAULT_CHECKPOINT_STORE_PATH
 from interfaces.services.schedule_service import (
@@ -141,6 +142,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     reports_search_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     reports_search_parser.set_defaults(handler=_reports_search)
+
+    reports_latest_parser = reports_subparsers.add_parser("latest", help="Show latest persisted report")
+    reports_latest_parser.add_argument(
+        "--format",
+        choices=["markdown", "json"],
+        default="markdown",
+        help="Output format",
+    )
+    reports_latest_parser.add_argument(
+        "--artifact-root",
+        default=".newsroom/runs",
+        help="Directory where run artifacts are stored",
+    )
+    reports_latest_parser.set_defaults(handler=_latest_report)
 
     subscriptions_parser = subparsers.add_parser("subscriptions", help="Manage topic subscriptions")
     subscriptions_subparsers = subscriptions_parser.add_subparsers(
@@ -1033,6 +1048,43 @@ def build_parser() -> argparse.ArgumentParser:
     runs_compare_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     runs_compare_parser.set_defaults(handler=_runs_compare)
 
+    runs_artifacts_parser = runs_subparsers.add_parser("artifacts", help="List artifacts for a run")
+    runs_artifacts_parser.add_argument("run_id", help="Run id")
+    runs_artifacts_parser.add_argument(
+        "--artifact-root",
+        default=".newsroom/runs",
+        help="Directory where run artifacts are stored",
+    )
+    runs_artifacts_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    runs_artifacts_parser.set_defaults(handler=_runs_artifacts)
+
+    runs_cancel_parser = runs_subparsers.add_parser("cancel", help="Request cancellation for a run")
+    runs_cancel_parser.add_argument("run_id", help="Run id")
+    runs_cancel_parser.add_argument("--reason", required=True, help="Reason for cancellation")
+    runs_cancel_parser.add_argument("--actor-id", default=None, help="Optional actor id")
+    runs_cancel_parser.add_argument(
+        "--artifact-root",
+        default=".newsroom/runs",
+        help="Directory where run artifacts are stored",
+    )
+    runs_cancel_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    runs_cancel_parser.set_defaults(handler=_runs_cancel)
+
+    runs_rerun_parser = runs_subparsers.add_parser(
+        "rerun-from-step",
+        help="Request a rerun starting from one workflow step",
+    )
+    runs_rerun_parser.add_argument("run_id", help="Run id")
+    runs_rerun_parser.add_argument("step_id", help="Step id")
+    runs_rerun_parser.add_argument("--actor-id", default=None, help="Optional actor id")
+    runs_rerun_parser.add_argument(
+        "--artifact-root",
+        default=".newsroom/runs",
+        help="Directory where run artifacts are stored",
+    )
+    runs_rerun_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    runs_rerun_parser.set_defaults(handler=_runs_rerun_from_step)
+
     artifacts_parser = subparsers.add_parser("artifacts", help="Inspect run artifacts")
     artifacts_subparsers = artifacts_parser.add_subparsers(dest="artifacts_command", required=True)
 
@@ -1092,6 +1144,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     mcp_capabilities_parser.set_defaults(handler=_mcp_capabilities)
 
+    mcp_manifest_parser = mcp_subparsers.add_parser(
+        "manifest",
+        help="Show MCP capability manifest",
+    )
+    mcp_manifest_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print machine-readable JSON",
+    )
+    mcp_manifest_parser.set_defaults(handler=_mcp_capabilities)
+
     mcp_call_parser = mcp_subparsers.add_parser("call", help="Call an MCP tool locally")
     mcp_call_parser.add_argument("tool_name", help="MCP tool name")
     mcp_call_parser.add_argument("--args-json", default="{}", help="Tool arguments as a JSON object")
@@ -1108,6 +1171,63 @@ def build_parser() -> argparse.ArgumentParser:
     mcp_get_prompt_parser.add_argument("--args-json", default="{}", help="Prompt arguments as a JSON object")
     mcp_get_prompt_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     mcp_get_prompt_parser.set_defaults(handler=_mcp_get_prompt)
+
+    mcp_tools_parser = mcp_subparsers.add_parser("tools", help="Inspect or call MCP tools")
+    mcp_tools_subparsers = mcp_tools_parser.add_subparsers(dest="mcp_tools_command", required=True)
+    mcp_tools_list_parser = mcp_tools_subparsers.add_parser("list", help="List MCP tools")
+    mcp_tools_list_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    mcp_tools_list_parser.set_defaults(handler=_mcp_tools_list)
+
+    mcp_tools_call_parser = mcp_tools_subparsers.add_parser("call", help="Call an MCP tool locally")
+    mcp_tools_call_parser.add_argument("tool_name", help="MCP tool name")
+    mcp_tools_call_parser.add_argument(
+        "--args",
+        dest="args_json",
+        default="{}",
+        help="Tool arguments as a JSON object",
+    )
+    mcp_tools_call_parser.add_argument(
+        "--args-json",
+        dest="args_json",
+        help=argparse.SUPPRESS,
+    )
+    mcp_tools_call_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    mcp_tools_call_parser.set_defaults(handler=_mcp_call)
+
+    mcp_resources_parser = mcp_subparsers.add_parser("resources", help="Inspect MCP resources")
+    mcp_resources_subparsers = mcp_resources_parser.add_subparsers(
+        dest="mcp_resources_command",
+        required=True,
+    )
+    mcp_resources_read_parser = mcp_resources_subparsers.add_parser(
+        "read",
+        help="Read an MCP resource locally",
+    )
+    mcp_resources_read_parser.add_argument("uri", help="MCP resource URI")
+    mcp_resources_read_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    mcp_resources_read_parser.set_defaults(handler=_mcp_read_resource)
+
+    mcp_prompts_parser = mcp_subparsers.add_parser("prompts", help="Inspect MCP prompts")
+    mcp_prompts_subparsers = mcp_prompts_parser.add_subparsers(dest="mcp_prompts_command", required=True)
+    mcp_prompts_list_parser = mcp_prompts_subparsers.add_parser("list", help="List MCP prompts")
+    mcp_prompts_list_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    mcp_prompts_list_parser.set_defaults(handler=_mcp_prompts_list)
+
+    mcp_prompts_get_parser = mcp_prompts_subparsers.add_parser("get", help="Get an MCP prompt locally")
+    mcp_prompts_get_parser.add_argument("prompt_name", help="MCP prompt name")
+    mcp_prompts_get_parser.add_argument(
+        "--args",
+        dest="args_json",
+        default="{}",
+        help="Prompt arguments as a JSON object",
+    )
+    mcp_prompts_get_parser.add_argument(
+        "--args-json",
+        dest="args_json",
+        help=argparse.SUPPRESS,
+    )
+    mcp_prompts_get_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    mcp_prompts_get_parser.set_defaults(handler=_mcp_get_prompt)
 
     mcp_serve_parser = mcp_subparsers.add_parser("serve-stdio", help="Run MCP stdio adapter")
     mcp_serve_parser.set_defaults(handler=_mcp_serve_stdio)
@@ -1177,6 +1297,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     return args.handler(args)
+
+
+def print_json(payload: Any) -> None:
+    print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
 
 
 def _run_test_no_llm(args: argparse.Namespace) -> int:
@@ -2703,6 +2827,75 @@ def _runs_compare(args: argparse.Namespace) -> int:
     return 0
 
 
+def _runs_artifacts(args: argparse.Namespace) -> int:
+    try:
+        result = ArtifactInspectionService(artifact_root=args.artifact_root).list_artifacts(args.run_id)
+    except FileNotFoundError as exc:
+        print(str(exc))
+        return 3
+    except ValueError as exc:
+        print(str(exc))
+        return 2
+    payload = result.to_dict()
+    if args.json:
+        print_json(payload)
+    else:
+        print(f"run_id={payload['run_id']}")
+        print(f"artifact_count={payload['artifact_count']}")
+        for artifact in payload["artifacts"]:
+            print(
+                f"- {artifact['artifact_key']} path={artifact['relative_path']} "
+                f"type={artifact['content_type']} size={artifact['size_bytes']}"
+            )
+    return 0
+
+
+def _runs_cancel(args: argparse.Namespace) -> int:
+    try:
+        result = RunOperationApplicationService(artifact_root=args.artifact_root).cancel_run(
+            args.run_id,
+            reason=args.reason,
+            actor_id=args.actor_id,
+        )
+    except FileNotFoundError as exc:
+        print(str(exc))
+        return 3
+    except ValueError as exc:
+        print(str(exc))
+        return 2
+    return _print_run_operation_result(result.to_dict(), json_output=args.json)
+
+
+def _runs_rerun_from_step(args: argparse.Namespace) -> int:
+    try:
+        result = RunOperationApplicationService(artifact_root=args.artifact_root).rerun_from_step(
+            args.run_id,
+            step_id=args.step_id,
+            actor_id=args.actor_id,
+        )
+    except FileNotFoundError as exc:
+        print(str(exc))
+        return 3
+    except ValueError as exc:
+        print(str(exc))
+        return 2
+    return _print_run_operation_result(result.to_dict(), json_output=args.json)
+
+
+def _print_run_operation_result(payload: dict[str, Any], *, json_output: bool) -> int:
+    if json_output:
+        print_json(payload)
+    else:
+        print(f"operation_id={payload['operation_id']}")
+        print(f"operation_type={payload['operation_type']}")
+        print(f"status={payload['status']}")
+        print(f"run_id={payload['run_id']}")
+        if payload.get("new_run_id"):
+            print(f"new_run_id={payload['new_run_id']}")
+        print(f"message={payload['message']}")
+    return 0 if payload.get("status") in {"accepted", "applied"} else 1
+
+
 def _artifacts_list(args: argparse.Namespace) -> int:
     try:
         result = ArtifactInspectionService(artifact_root=args.artifact_root).list_artifacts(args.run_id)
@@ -2848,6 +3041,32 @@ def _mcp_capabilities(args: argparse.Namespace) -> int:
                 f"- {capability['kind']} {capability['name']} "
                 f"permission={capability['permission']} read_only={str(capability['read_only']).lower()}"
             )
+    return 0
+
+
+def _mcp_tools_list(args: argparse.Namespace) -> int:
+    catalog = MCPApplicationService().catalog().to_dict()
+    tools = catalog.get("tools") or []
+    payload = {"tool_count": len(tools), "tools": tools}
+    if args.json:
+        print_json(payload)
+    else:
+        print(f"tools={payload['tool_count']}")
+        for tool in tools:
+            print(f"- {tool['name']}: {tool['description']}")
+    return 0
+
+
+def _mcp_prompts_list(args: argparse.Namespace) -> int:
+    catalog = MCPApplicationService().catalog().to_dict()
+    prompts = catalog.get("prompts") or []
+    payload = {"prompt_count": len(prompts), "prompts": prompts}
+    if args.json:
+        print_json(payload)
+    else:
+        print(f"prompts={payload['prompt_count']}")
+        for prompt in prompts:
+            print(f"- {prompt['name']}: {prompt['description']}")
     return 0
 
 

@@ -53,6 +53,15 @@ SOURCE_HEALTH_RESOURCE_URI = "news://sources/health"
 WORKERS_RESOURCE_TEMPLATE = "news://workers"
 WORKER_RESOURCE_TEMPLATE = "news://workers/{worker_id}"
 QUEUES_RESOURCE_URI = "news://queues"
+DANGEROUS_MCP_TOOLS = frozenset(
+    {
+        "news.report.publish",
+        "news.run.cancel",
+        "news.run.rerun_from_step",
+        "news.approval.approve",
+        "news.approval.reject",
+    }
+)
 RETENTION_POLICY_ARG_NAMES = (
     "raw_source_retention_days",
     "llm_artifact_retention_days",
@@ -78,6 +87,7 @@ class MCPApplicationService:
         diagnostic_service_factory: Callable[[], Any] | None = None,
         approval_service_factory: Callable[[], Any] | None = None,
         run_inspection_service_factory: Callable[[], Any] | None = None,
+        run_operation_service_factory: Callable[[], Any] | None = None,
         artifact_service_factory: Callable[[], Any] | None = None,
         storage_service_factory: Callable[[], Any] | None = None,
     ) -> None:
@@ -94,6 +104,9 @@ class MCPApplicationService:
         self.approval_service_factory = approval_service_factory or _approval_service_factory
         self.run_inspection_service_factory = (
             run_inspection_service_factory or _run_inspection_service_factory
+        )
+        self.run_operation_service_factory = (
+            run_operation_service_factory or _run_operation_service_factory
         )
         self.artifact_service_factory = artifact_service_factory or _artifact_service_factory
         self.storage_service_factory = storage_service_factory or _storage_service_factory
@@ -275,6 +288,10 @@ class MCPApplicationService:
                 return self._run_replay(args)
             if tool_name == "news.run.diagnostics":
                 return self._run_diagnostics(args)
+            if tool_name == "news.run.cancel":
+                return self._run_cancel(args)
+            if tool_name == "news.run.rerun_from_step":
+                return self._run_rerun_from_step(args)
             if tool_name == "news.run.health":
                 return self._run_health(args)
             if tool_name == "news.run.catalog_health":
@@ -719,6 +736,32 @@ class MCPApplicationService:
         result = self.run_inspection_service_factory().get_run_diagnostics(run_id)
         return MCPToolCallResult(
             tool_name="news.run.diagnostics",
+            success=True,
+            data=result.to_dict(),
+        )
+
+    def _run_cancel(self, args: dict[str, Any]) -> MCPToolCallResult:
+        result = self.run_operation_service_factory().cancel_run(
+            _required_arg(args, "run_id"),
+            reason=_optional_arg(args, "reason"),
+            actor_id=_optional_arg(args, "actor_id"),
+            metadata=dict(args.get("metadata") or {}),
+        )
+        return MCPToolCallResult(
+            tool_name="news.run.cancel",
+            success=True,
+            data=result.to_dict(),
+        )
+
+    def _run_rerun_from_step(self, args: dict[str, Any]) -> MCPToolCallResult:
+        result = self.run_operation_service_factory().rerun_from_step(
+            _required_arg(args, "run_id"),
+            step_id=_required_arg(args, "step_id"),
+            actor_id=_optional_arg(args, "actor_id"),
+            metadata=dict(args.get("metadata") or {}),
+        )
+        return MCPToolCallResult(
+            tool_name="news.run.rerun_from_step",
             success=True,
             data=result.to_dict(),
         )
@@ -1535,6 +1578,36 @@ def _tools() -> list[MCPTool]:
             },
         ),
         MCPTool(
+            name="news.run.cancel",
+            title="Cancel run",
+            description="Request workflow run cancellation through RunOperationApplicationService.",
+            input_schema={
+                "type": "object",
+                "required": ["run_id"],
+                "properties": {
+                    "run_id": {"type": "string"},
+                    "reason": {"type": "string"},
+                    "actor_id": {"type": "string"},
+                    "metadata": {"type": "object"},
+                },
+            },
+        ),
+        MCPTool(
+            name="news.run.rerun_from_step",
+            title="Rerun from step",
+            description="Request a workflow rerun plan from a specific step.",
+            input_schema={
+                "type": "object",
+                "required": ["run_id", "step_id"],
+                "properties": {
+                    "run_id": {"type": "string"},
+                    "step_id": {"type": "string"},
+                    "actor_id": {"type": "string"},
+                    "metadata": {"type": "object"},
+                },
+            },
+        ),
+        MCPTool(
             name="news.run.health",
             title="Inspect run health",
             description="Read workflow run health through RunInspectionService.",
@@ -1895,6 +1968,8 @@ def _capabilities_from_catalog(catalog: MCPCatalog) -> list[MCPCapability]:
 
 def _tool_capability(tool: MCPTool) -> MCPCapability:
     read_only = _tool_is_read_only(tool.name)
+    requires_confirmation = _tool_requires_confirmation(tool.name)
+    side_effect_level = _tool_side_effect_level(tool.name, read_only=read_only)
     return MCPCapability(
         name=tool.name,
         kind="tool",
@@ -1906,7 +1981,11 @@ def _tool_capability(tool: MCPTool) -> MCPCapability:
         risk_level=_tool_risk_level(tool.name),
         requires_approval=_tool_requires_approval(tool.name),
         input_schema=tool.input_schema,
-        metadata={"side_effect": "none" if read_only else "application_service_write"},
+        metadata={
+            "requires_confirmation": requires_confirmation,
+            "side_effect_level": side_effect_level,
+            "side_effect": side_effect_level,
+        },
     )
 
 
@@ -1951,6 +2030,8 @@ def _tool_permission(tool_name: str) -> str:
     if tool_name.startswith("news.daily.") or tool_name.startswith("news.topic.") or tool_name.startswith(
         "news.weekly."
     ):
+        return "write:runs"
+    if tool_name in {"news.run.cancel", "news.run.rerun_from_step"}:
         return "write:runs"
     if tool_name.startswith("news.run."):
         return "read:reports"
@@ -2019,6 +2100,8 @@ def _mcp_category(name: str) -> str:
 
 
 def _tool_is_read_only(tool_name: str) -> bool:
+    if tool_name in {"news.run.cancel", "news.run.rerun_from_step"}:
+        return False
     write_markers = (
         ".enqueue",
         ".run",
@@ -2044,16 +2127,52 @@ def _tool_requires_approval(tool_name: str) -> bool:
     return tool_name in {"news.report.publish", "news.report.request_review"}
 
 
+def _tool_requires_confirmation(tool_name: str) -> bool:
+    return tool_name in DANGEROUS_MCP_TOOLS
+
+
 def _tool_risk_level(tool_name: str) -> Literal["low", "medium", "high"]:
-    if _tool_requires_approval(tool_name):
+    if _tool_requires_approval(tool_name) or _tool_requires_confirmation(tool_name):
         return "high"
     if _tool_is_read_only(tool_name):
         return "low"
     return "medium"
 
 
+def _tool_side_effect_level(tool_name: str, *, read_only: bool) -> str:
+    if _tool_requires_confirmation(tool_name):
+        return "external_write"
+    return "none" if read_only else "application_service_write"
+
+
 def _prompts() -> list[MCPPrompt]:
     return [
+        MCPPrompt(
+            name="news.daily.briefing",
+            description="Prepare a daily intelligence briefing prompt for a topic.",
+            arguments_schema={
+                "type": "object",
+                "properties": {
+                    "topic": {"type": "string"},
+                    "date": {"type": "string"},
+                },
+            },
+        ),
+        MCPPrompt(
+            name="news.report.review",
+            description="Review a generated report for evidence coverage and clarity.",
+            arguments_schema={"type": "object", "properties": {"report_id": {"type": "string"}}},
+        ),
+        MCPPrompt(
+            name="news.run.diagnose",
+            description="Diagnose a workflow run and propose remediation steps.",
+            arguments_schema={"type": "object", "properties": {"run_id": {"type": "string"}}},
+        ),
+        MCPPrompt(
+            name="news.source.triage",
+            description="Triage source health and reliability issues.",
+            arguments_schema={"type": "object", "properties": {"source_id": {"type": "string"}}},
+        ),
         MCPPrompt(
             name="news.daily_report_review",
             description="Review a generated daily report for evidence coverage and clarity.",
@@ -2096,6 +2215,35 @@ def _prompts() -> list[MCPPrompt]:
 
 def _prompt_templates() -> dict[str, dict[str, str]]:
     return {
+        "news.daily.briefing": {
+            "description": "Prepare a daily intelligence briefing prompt for a topic.",
+            "text": (
+                "Prepare the daily intelligence briefing for {topic} on {date}.\n"
+                "Use only approved NewsRoom evidence and separate current facts from historical context."
+            ),
+        },
+        "news.report.review": {
+            "description": "Review a generated report for evidence coverage and clarity.",
+            "text": (
+                "Review report {report_id}.\n"
+                "Check evidence coverage, citation clarity, unsupported claims, and rewrite risks. "
+                "Return concise findings and recommended fixes."
+            ),
+        },
+        "news.run.diagnose": {
+            "description": "Diagnose a workflow run and propose remediation steps.",
+            "text": (
+                "Diagnose workflow run {run_id}.\n"
+                "Summarize failed steps, missing artifacts, blocked states, and safe recovery options."
+            ),
+        },
+        "news.source.triage": {
+            "description": "Triage source health and reliability issues.",
+            "text": (
+                "Triage source {source_id}.\n"
+                "Review recent failures, cooldown state, reliability, and remediation steps."
+            ),
+        },
         "news.daily_report_review": {
             "description": "Review a generated daily report for evidence coverage and clarity.",
             "text": (
@@ -2228,6 +2376,12 @@ def _run_inspection_service_factory():
     from interfaces.services.run_inspection_service import RunInspectionService
 
     return RunInspectionService()
+
+
+def _run_operation_service_factory():
+    from interfaces.services.run_operation_service import RunOperationApplicationService
+
+    return RunOperationApplicationService()
 
 
 def _artifact_service_factory():

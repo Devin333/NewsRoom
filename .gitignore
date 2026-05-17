@@ -214,6 +214,14 @@ tempCodeRunnerFile.py
 openspec/
 .codex/
 
+# Web console local/generated files
+apps/web/node_modules/
+apps/web/.next/
+apps/web/out/
+apps/web/tsconfig.tsbuildinfo
+apps/web/.next-dev*.log
+apps/web/.next-dev.pid
+
 # Marimo
 marimo/_static/
 marimo/_lsp/

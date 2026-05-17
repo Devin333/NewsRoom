@@ -25,6 +25,8 @@ class RunSummary:
     profile: str | None = None
     started_at: str | None = None
     finished_at: str | None = None
+    report_id: str | None = None
+    artifact_dir: str | None = None
     quality_score: float | None = None
     step_count: int | None = None
     event_count: int | None = None
@@ -39,6 +41,8 @@ class RunSummary:
             "profile": self.profile,
             "started_at": self.started_at,
             "finished_at": self.finished_at,
+            "report_id": self.report_id,
+            "artifact_dir": self.artifact_dir,
             "quality_score": self.quality_score,
             "step_count": self.step_count,
             "event_count": self.event_count,
@@ -59,10 +63,25 @@ class RunDetail:
     run_id: str
     manifest: dict[str, Any]
     manifest_path: str
+    artifact_dir: str | None = None
+    output_preview: dict[str, Any] | None = None
+    error: dict[str, Any] | None = None
+    metrics: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "run_id": self.run_id,
+            "workflow_id": self.manifest.get("workflow_id"),
+            "workflow_version": self.manifest.get("workflow_version"),
+            "profile": self.manifest.get("profile"),
+            "status": self.manifest.get("status"),
+            "started_at": self.manifest.get("started_at"),
+            "finished_at": self.manifest.get("finished_at"),
+            "report_id": _manifest_report_id(self.manifest),
+            "artifact_dir": self.artifact_dir,
+            "output_preview": to_json_safe(self.output_preview or {}),
+            "error": to_json_safe(self.error),
+            "metrics": to_json_safe(self.metrics or {}),
             "manifest": dict(self.manifest),
             "manifest_path": self.manifest_path,
         }
@@ -80,6 +99,19 @@ class RunEventsResult:
             "event_count": len(self.events),
             "events": [dict(event) for event in self.events],
             "events_path": self.events_path,
+        }
+
+
+@dataclass(frozen=True)
+class RunStepsResult:
+    run_id: str
+    steps: list[dict[str, Any]]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "run_id": self.run_id,
+            "step_count": len(self.steps),
+            "steps": [to_json_safe(step) for step in self.steps],
         }
 
 
@@ -183,10 +215,27 @@ class RunInspectionService:
         self.artifact_root = Path(artifact_root)
         self._inspector = WorkflowRunInspector(self.artifact_root)
 
-    def list_runs(self, *, limit: int = 20) -> RunListResult:
+    def list_runs(
+        self,
+        *,
+        limit: int = 20,
+        offset: int = 0,
+        status: str | None = None,
+        workflow_id: str | None = None,
+        profile: str | None = None,
+    ) -> RunListResult:
         if limit <= 0:
             raise ValueError("limit must be greater than zero")
-        catalog = self._inspector.list_runs(limit=limit, include_invalid=True)
+        if offset < 0:
+            raise ValueError("offset must be greater than or equal to zero")
+        catalog = self._inspector.list_runs(
+            limit=limit,
+            offset=offset,
+            status=status,
+            workflow_id=workflow_id,
+            profile=profile,
+            include_invalid=True,
+        )
         return RunListResult(
             [
                 _summary_from_run_item(item)
@@ -205,11 +254,25 @@ class RunInspectionService:
             run_id=str(manifest.get("run_id") or run_id),
             manifest=manifest,
             manifest_path=str(manifest_path),
+            artifact_dir=str(run_dir),
+            output_preview=_manifest_output_preview(manifest),
+            error=_manifest_error(manifest),
+            metrics=_manifest_metrics(manifest),
         )
 
-    def get_run_events(self, run_id: str, *, limit: int | None = None) -> RunEventsResult:
+    def get_run_events(
+        self,
+        run_id: str,
+        *,
+        event_type: str | None = None,
+        step_id: str | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> RunEventsResult:
         if limit is not None and limit <= 0:
             raise ValueError("limit must be greater than zero")
+        if offset < 0:
+            raise ValueError("offset must be greater than or equal to zero")
         detail = self.get_run(run_id)
         artifacts = detail.manifest.get("artifacts") or {}
         if "events" not in artifacts:
@@ -227,6 +290,13 @@ class RunInspectionService:
             if "not found" in str(exc):
                 raise FileNotFoundError(str(exc)) from exc
             raise ValueError(str(exc)) from exc
+        events = [
+            event
+            for event in events
+            if _event_matches(event, event_type=event_type, step_id=step_id)
+        ]
+        if offset:
+            events = events[offset:]
         if limit is not None:
             events = events[:limit]
         return RunEventsResult(
@@ -234,6 +304,19 @@ class RunInspectionService:
             events=events,
             events_path=str(events_path),
         )
+
+    def get_run_steps(self, run_id: str) -> RunStepsResult:
+        detail = self.get_run(run_id)
+        manifest_steps = detail.manifest.get("steps") or {}
+        if not isinstance(manifest_steps, dict):
+            raise ValueError(f"invalid steps manifest for run: {run_id}")
+        path = [str(step_id) for step_id in detail.manifest.get("path", [])]
+        steps = [
+            _step_view(step_id, payload, sequence=path.index(step_id) if step_id in path else None)
+            for step_id, payload in sorted(manifest_steps.items())
+        ]
+        steps.sort(key=lambda step: (step["sequence"] is None, step["sequence"] or 0, step["step_id"]))
+        return RunStepsResult(run_id=detail.run_id, steps=steps)
 
     def replay_run(self, run_id: str) -> RunReplayResult:
         run_dir = _resolve_run_dir_for_service(self.artifact_root, run_id)
@@ -290,6 +373,8 @@ def _summary_from_run_item(item: WorkflowRunListItem) -> RunSummary:
         profile=item.profile,
         started_at=item.started_at,
         finished_at=item.finished_at,
+        report_id=None,
+        artifact_dir=item.run_dir,
         step_count=item.step_count,
         event_count=item.event_count,
         manifest_path=item.manifest_path,
@@ -342,3 +427,99 @@ def _existing_run_dir(artifact_root: Path, run_id: str) -> Path:
     if not (run_dir / "manifest.json").exists():
         raise FileNotFoundError(f"run not found: {run_id}")
     return run_dir
+
+
+def _manifest_report_id(manifest: dict[str, Any]) -> str | None:
+    report_id = manifest.get("report_id")
+    if report_id is not None:
+        return str(report_id)
+    output = manifest.get("output")
+    if isinstance(output, dict) and output.get("report_id") is not None:
+        return str(output["report_id"])
+    return None
+
+
+def _manifest_output_preview(manifest: dict[str, Any]) -> dict[str, Any]:
+    output = manifest.get("output")
+    if not isinstance(output, dict):
+        return {}
+    preview: dict[str, Any] = {}
+    for key, value in output.items():
+        if len(preview) >= 12:
+            break
+        preview[str(key)] = _preview_value(value)
+    return preview
+
+
+def _manifest_error(manifest: dict[str, Any]) -> dict[str, Any] | None:
+    error = manifest.get("error")
+    if isinstance(error, dict):
+        return error
+    if error is None:
+        return None
+    return {"message": str(error)}
+
+
+def _manifest_metrics(manifest: dict[str, Any]) -> dict[str, Any]:
+    metrics = manifest.get("metrics")
+    if isinstance(metrics, dict):
+        return metrics
+    return {
+        key: value
+        for key, value in {
+            "step_count": manifest.get("step_count"),
+            "event_count": manifest.get("event_count"),
+            "checkpoint_count": manifest.get("checkpoint_count"),
+            "operation_count": manifest.get("operation_count"),
+        }.items()
+        if value is not None
+    }
+
+
+def _event_matches(
+    event: dict[str, Any],
+    *,
+    event_type: str | None,
+    step_id: str | None,
+) -> bool:
+    if event_type is not None and event.get("event_type") != event_type:
+        return False
+    if step_id is None:
+        return True
+    payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+    return event.get("step_id") == step_id or payload.get("step_id") == step_id
+
+
+def _step_view(
+    step_id: Any,
+    payload: Any,
+    *,
+    sequence: int | None,
+) -> dict[str, Any]:
+    data = dict(payload) if isinstance(payload, dict) else {"value": payload}
+    outputs = data.get("outputs") if isinstance(data.get("outputs"), dict) else {}
+    error = data.get("error") if isinstance(data.get("error"), dict) else None
+    return {
+        "step_id": str(step_id),
+        "sequence": sequence,
+        "status": str(data.get("status") or "unknown"),
+        "started_at": data.get("started_at"),
+        "finished_at": data.get("finished_at"),
+        "output_keys": sorted(str(key) for key in outputs),
+        "error": to_json_safe(error),
+        "metrics": to_json_safe(data.get("metrics") if isinstance(data.get("metrics"), dict) else {}),
+        "artifact_refs": to_json_safe(
+            data.get("artifact_refs") if isinstance(data.get("artifact_refs"), list) else []
+        ),
+        "raw": to_json_safe(data),
+    }
+
+
+def _preview_value(value: Any) -> Any:
+    safe = to_json_safe(value)
+    if isinstance(safe, dict):
+        return {"type": "object", "keys": sorted(str(key) for key in safe)[:12]}
+    if isinstance(safe, list):
+        return {"type": "array", "count": len(safe)}
+    text = str(safe)
+    return text[:240] + ("..." if len(text) > 240 else "")
