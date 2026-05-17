@@ -3,7 +3,9 @@ from __future__ import annotations
 from core.framework.specs import EdgeSpec, StepSpec, StepType, WorkflowSpec
 from workflows.daily_intelligence.agent_registry import PROFILE_AGENTIC_LIVE
 from workflows.daily_intelligence.agents import (
+    ANALYST_AGENT_ID,
     EDITOR_AGENT_ID,
+    PLANNER_AGENT_ID,
     VERIFIER_AGENT_ID,
     WRITER_AGENT_ID,
 )
@@ -18,11 +20,13 @@ def build_agentic_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
         workflow_id=AGENTIC_WORKFLOW_ID,
         name="Daily Intelligence Agentic",
         version=AGENTIC_WORKFLOW_VERSION,
-        description="Daily intelligence workflow with writer, verifier, and editor AgentLoop steps.",
+        description="Daily intelligence workflow with planner, analyst, writer, verifier, and editor AgentLoop steps.",
         start_step_id="collect_sources",
         terminal_step_ids=["finalize_report"],
         steps=[
             *_source_and_evidence_steps(),
+            _planner_agent_step(),
+            _analyst_agent_step(),
             _writer_agent_step(),
             _verifier_agent_step(),
             _editor_agent_step(),
@@ -34,7 +38,9 @@ def build_agentic_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
             EdgeSpec("normalize-to-dedupe", "normalize_sources", "deduplicate_sources"),
             EdgeSpec("dedupe-to-rank", "deduplicate_sources", "rank_sources"),
             EdgeSpec("rank-to-evidence", "rank_sources", "build_evidence"),
-            EdgeSpec("evidence-to-writer", "build_evidence", "writer_agent"),
+            EdgeSpec("evidence-to-planner", "build_evidence", "planner_agent"),
+            EdgeSpec("planner-to-analyst", "planner_agent", "analyst_agent"),
+            EdgeSpec("analyst-to-writer", "analyst_agent", "writer_agent"),
             EdgeSpec("writer-to-verifier", "writer_agent", "verifier_agent"),
             EdgeSpec("verifier-to-editor", "verifier_agent", "editor_agent"),
             EdgeSpec("editor-to-finalize", "editor_agent", "finalize_report"),
@@ -199,6 +205,62 @@ def _source_and_evidence_steps() -> list[StepSpec]:
     ]
 
 
+def _planner_agent_step() -> StepSpec:
+    return StepSpec(
+        step_id="planner_agent",
+        name="Planner Agent",
+        implementation=PLANNER_AGENT_ID,
+        step_type=StepType.AGENT_LOOP,
+        read_keys=["request"],
+        write_keys=[
+            "research_plan",
+            "planner_notes",
+            "planner_agent_loop_result",
+            "planner_agent_loop_events",
+            "planner_agent_loop_metrics",
+            "planner_agent_loop_diagnostics",
+            "planner_agent_loop_trace",
+            "planner_llm_call_artifacts",
+        ],
+        required_output_keys=["research_plan"],
+        metadata=_agent_step_metadata(
+            PLANNER_AGENT_ID,
+            prefix="planner",
+        ),
+    )
+
+
+def _analyst_agent_step() -> StepSpec:
+    return StepSpec(
+        step_id="analyst_agent",
+        name="Analyst Agent",
+        implementation=ANALYST_AGENT_ID,
+        step_type=StepType.AGENT_LOOP,
+        read_keys=[
+            "request",
+            "research_plan",
+            "evidence_bundle",
+            "source_errors",
+            "source_pipeline_metrics",
+        ],
+        write_keys=[
+            "analysis_result",
+            "analyst_notes",
+            "analyst_agent_loop_result",
+            "analyst_agent_loop_events",
+            "analyst_agent_loop_metrics",
+            "analyst_agent_loop_diagnostics",
+            "analyst_agent_loop_trace",
+            "analyst_llm_call_artifacts",
+        ],
+        required_output_keys=["analysis_result"],
+        metadata=_agent_step_metadata(
+            ANALYST_AGENT_ID,
+            prefix="analyst",
+        ),
+    )
+
+
 def _writer_agent_step() -> StepSpec:
     return StepSpec(
         step_id="writer_agent",
@@ -207,6 +269,9 @@ def _writer_agent_step() -> StepSpec:
         step_type=StepType.AGENT_LOOP,
         read_keys=[
             "request",
+            "research_plan",
+            "analysis_result",
+            "verified_findings",
             "evidence_bundle",
             "source_errors",
             "source_pipeline_metrics",

@@ -18,11 +18,15 @@ def test_agentic_daily_runner_offline_runs_full_workflow(tmp_path) -> None:
 
     assert result.status == WorkflowStatus.SUCCEEDED
     assert result.workflow_id == "daily-intelligence-agentic"
+    assert result.output["research_plan"]["topic"] == "AI policy"
+    assert result.output["analysis_result"]["findings"][0]["id"] == "finding-1"
     assert result.output["report_draft"]["title"] == "Daily Intelligence: AI policy"
     assert result.output["verification_result"]["status"] == "pass"
     assert result.output["editor_review"]["decision"] == "pass"
     assert result.output["final_report"].title == "Daily Intelligence: AI policy"
     assert "https://example.com/ai-chip-policy" in result.output["report_markdown"]
+    assert result.output["planner_agent_loop_result"]["success"] is True
+    assert result.output["analyst_agent_loop_result"]["success"] is True
     assert result.output["writer_agent_loop_result"]["success"] is True
     assert result.output["verifier_agent_loop_result"]["success"] is True
     assert result.output["editor_agent_loop_result"]["success"] is True
@@ -38,7 +42,7 @@ def test_agentic_daily_runner_offline_runs_full_workflow(tmp_path) -> None:
     assert manifest["quality_route"] == "publish"
 
     runners_by_step = {runner["step_id"]: runner for runner in manifest["runners"]}
-    for step_id in ("writer_agent", "verifier_agent", "editor_agent"):
+    for step_id in ("planner_agent", "analyst_agent", "writer_agent", "verifier_agent", "editor_agent"):
         assert runners_by_step[step_id]["runner_id"] == "builtin.agent_loop"
         assert runners_by_step[step_id]["step_type"] == "agent_loop"
         assert manifest["steps"][step_id]["status"] == "succeeded"
@@ -48,7 +52,7 @@ def test_agentic_daily_runner_offline_runs_full_workflow(tmp_path) -> None:
         for event in _events(run_dir / "events.jsonl")
         if event["event_type"] in {"step_started", "step_succeeded"}
     }
-    for step_id in ("writer_agent", "verifier_agent", "editor_agent"):
+    for step_id in ("planner_agent", "analyst_agent", "writer_agent", "verifier_agent", "editor_agent"):
         assert ("step_started", step_id) in event_pairs
         assert ("step_succeeded", step_id) in event_pairs
 

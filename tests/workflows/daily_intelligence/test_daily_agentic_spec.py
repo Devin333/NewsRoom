@@ -11,7 +11,9 @@ from workflows.daily_intelligence.agent_registry import (
 )
 from workflows.daily_intelligence.agent_tools import build_daily_agent_tool_registry
 from workflows.daily_intelligence.agents import (
+    ANALYST_AGENT_ID,
     EDITOR_AGENT_ID,
+    PLANNER_AGENT_ID,
     VERIFIER_AGENT_ID,
     WRITER_AGENT_ID,
 )
@@ -28,6 +30,14 @@ def test_agentic_daily_workflow_start_and_terminal_steps() -> None:
 def test_agentic_daily_workflow_declares_agent_steps() -> None:
     workflow = build_agentic_daily_intelligence_workflow(PROFILE_AGENTIC_OFFLINE)
     steps = {step.step_id: step for step in workflow.steps}
+
+    assert steps["planner_agent"].step_type == StepType.AGENT_LOOP
+    assert steps["planner_agent"].metadata["agent_id"] == PLANNER_AGENT_ID
+    assert steps["planner_agent"].implementation == PLANNER_AGENT_ID
+
+    assert steps["analyst_agent"].step_type == StepType.AGENT_LOOP
+    assert steps["analyst_agent"].metadata["agent_id"] == ANALYST_AGENT_ID
+    assert steps["analyst_agent"].implementation == ANALYST_AGENT_ID
 
     assert steps["writer_agent"].step_type == StepType.AGENT_LOOP
     assert steps["writer_agent"].metadata["agent_id"] == WRITER_AGENT_ID
@@ -49,7 +59,9 @@ def test_agentic_daily_workflow_routes_evidence_to_agents_to_finalize() -> None:
         for edge in workflow.edges
     }
 
-    assert edges["evidence-to-writer"] == ("build_evidence", "writer_agent")
+    assert edges["evidence-to-planner"] == ("build_evidence", "planner_agent")
+    assert edges["planner-to-analyst"] == ("planner_agent", "analyst_agent")
+    assert edges["analyst-to-writer"] == ("analyst_agent", "writer_agent")
     assert edges["writer-to-verifier"] == ("writer_agent", "verifier_agent")
     assert edges["verifier-to-editor"] == ("verifier_agent", "editor_agent")
     assert edges["editor-to-finalize"] == ("editor_agent", "finalize_report")

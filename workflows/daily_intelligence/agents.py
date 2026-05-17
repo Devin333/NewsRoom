@@ -3,9 +3,77 @@ from __future__ import annotations
 from core.framework.agent_loop import AgentSpec
 
 
+PLANNER_AGENT_ID = "daily.planner"
+ANALYST_AGENT_ID = "daily.analyst"
 WRITER_AGENT_ID = "daily.writer"
 VERIFIER_AGENT_ID = "daily.verifier"
 EDITOR_AGENT_ID = "daily.editor"
+
+
+def build_planner_agent() -> AgentSpec:
+    return AgentSpec(
+        agent_id=PLANNER_AGENT_ID,
+        name="Daily Intelligence Planner",
+        role="PlannerAgent",
+        goal="Create a source-bounded research plan for the requested daily intelligence topic.",
+        instructions=(
+            "Plan the report structure and research focus using only the request. "
+            "Do not fetch sources or infer facts. Return JSON only."
+        ),
+        input_keys=["request"],
+        output_key="research_plan",
+        allowed_tools=[],
+        output_schema={
+            "type": "object",
+            "required": ["research_plan"],
+            "properties": {
+                "research_plan": {
+                    "type": "object",
+                    "required": ["topic", "sections", "constraints"],
+                    "properties": {
+                        "topic": {"type": "string"},
+                        "sections": {"type": "array", "items": {"type": "string"}},
+                        "constraints": {"type": "object"},
+                    },
+                },
+                "planner_notes": {"type": "object"},
+            },
+        },
+    )
+
+
+def build_analyst_agent() -> AgentSpec:
+    return AgentSpec(
+        agent_id=ANALYST_AGENT_ID,
+        name="Daily Intelligence Analyst",
+        role="AnalystAgent",
+        goal="Transform the evidence bundle into structured findings, trend signals, and risk notes.",
+        instructions=(
+            "Only use the provided evidence bundle and research plan. Do not introduce "
+            "outside facts or sources. Mark uncertain or inferential points explicitly. "
+            "Return JSON only."
+        ),
+        input_keys=["request", "research_plan", "evidence_bundle", "source_errors", "source_pipeline_metrics"],
+        output_key="analysis_result",
+        allowed_tools=[],
+        output_schema={
+            "type": "object",
+            "required": ["analysis_result"],
+            "properties": {
+                "analysis_result": {
+                    "type": "object",
+                    "required": ["findings", "trend_signals", "risk_notes", "uncertainty_notes"],
+                    "properties": {
+                        "findings": {"type": "array", "items": {"type": "object"}},
+                        "trend_signals": {"type": "array", "items": {"type": "object"}},
+                        "risk_notes": {"type": "array", "items": {"type": "string"}},
+                        "uncertainty_notes": {"type": "array", "items": {"type": "string"}},
+                    },
+                },
+                "analyst_notes": {"type": "object"},
+            },
+        },
+    )
 
 
 def build_writer_agent() -> AgentSpec:
@@ -15,11 +83,15 @@ def build_writer_agent() -> AgentSpec:
         role="WriterAgent",
         goal="Create a source-grounded daily intelligence report draft.",
         instructions=(
-            "Only use the provided evidence. Do not introduce outside facts or "
-            "sources. Return JSON only."
+            "Only use the provided research plan, analysis result, verified findings, "
+            "and evidence bundle. Do not introduce outside facts or sources. Every "
+            "section must stay evidence-bounded. Return JSON only."
         ),
         input_keys=[
             "request",
+            "research_plan",
+            "analysis_result",
+            "verified_findings",
             "evidence_bundle",
             "source_errors",
             "source_pipeline_metrics",

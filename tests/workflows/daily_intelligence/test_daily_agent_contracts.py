@@ -4,34 +4,65 @@ import pytest
 
 from workflows.daily_intelligence.agent_outputs import (
     normalize_agent_report_draft,
+    validate_analysis_result,
     validate_editor_review,
+    validate_research_plan,
     validate_report_draft,
     validate_verification_result,
 )
 from workflows.daily_intelligence.agents import (
+    ANALYST_AGENT_ID,
     EDITOR_AGENT_ID,
+    PLANNER_AGENT_ID,
     VERIFIER_AGENT_ID,
     WRITER_AGENT_ID,
+    build_analyst_agent,
     build_editor_agent,
+    build_planner_agent,
     build_verifier_agent,
     build_writer_agent,
 )
 
 
 def test_daily_agent_ids_are_non_empty_and_unique() -> None:
-    agent_ids = {WRITER_AGENT_ID, VERIFIER_AGENT_ID, EDITOR_AGENT_ID}
+    agent_ids = {PLANNER_AGENT_ID, ANALYST_AGENT_ID, WRITER_AGENT_ID, VERIFIER_AGENT_ID, EDITOR_AGENT_ID}
 
-    assert agent_ids == {"daily.writer", "daily.verifier", "daily.editor"}
+    assert agent_ids == {
+        "daily.planner",
+        "daily.analyst",
+        "daily.writer",
+        "daily.verifier",
+        "daily.editor",
+    }
     assert all(agent_ids)
 
 
 def test_daily_agent_specs_define_contract_keys() -> None:
+    planner = build_planner_agent()
+    analyst = build_analyst_agent()
     writer = build_writer_agent()
     verifier = build_verifier_agent()
     editor = build_editor_agent()
 
+    assert planner.input_keys == ["request"]
+    assert planner.output_key == "research_plan"
+    assert planner.output_schema is not None
+
+    assert analyst.input_keys == [
+        "request",
+        "research_plan",
+        "evidence_bundle",
+        "source_errors",
+        "source_pipeline_metrics",
+    ]
+    assert analyst.output_key == "analysis_result"
+    assert analyst.output_schema is not None
+
     assert writer.input_keys == [
         "request",
+        "research_plan",
+        "analysis_result",
+        "verified_findings",
         "evidence_bundle",
         "source_errors",
         "source_pipeline_metrics",
@@ -60,7 +91,13 @@ def test_daily_agent_specs_define_contract_keys() -> None:
 
 
 def test_daily_agent_tool_policies_reject_undeclared_tools() -> None:
-    for agent in [build_writer_agent(), build_verifier_agent(), build_editor_agent()]:
+    for agent in [
+        build_planner_agent(),
+        build_analyst_agent(),
+        build_writer_agent(),
+        build_verifier_agent(),
+        build_editor_agent(),
+    ]:
         policy = agent.resolved_tool_policy()
 
         assert agent.allowed_tools == []
@@ -71,6 +108,8 @@ def test_daily_agent_tool_policies_reject_undeclared_tools() -> None:
 
 
 def test_daily_agent_output_validators_accept_valid_payloads() -> None:
+    assert validate_research_plan(_valid_research_plan())["topic"] == "AI policy"
+    assert validate_analysis_result(_valid_analysis_result())["findings"][0]["id"] == "finding-1"
     assert validate_report_draft(_valid_report_draft())["title"] == "Daily Brief"
     assert validate_report_draft({"report_draft": _valid_report_draft()})[
         "sections"
@@ -89,6 +128,8 @@ def test_normalize_agent_report_draft_accepts_wrapped_or_direct_draft() -> None:
 @pytest.mark.parametrize(
     ("validator", "payload"),
     [
+        (validate_research_plan, {"topic": "AI policy"}),
+        (validate_analysis_result, {"findings": []}),
         (validate_report_draft, {"title": "Daily Brief", "metadata": {}}),
         (validate_verification_result, {"status": "pass"}),
         (validate_editor_review, {"decision": "pass"}),
@@ -102,6 +143,25 @@ def test_daily_agent_output_validators_reject_missing_keys(validator, payload) -
 @pytest.mark.parametrize(
     ("validator", "payload", "message"),
     [
+        (
+            validate_research_plan,
+            {
+                "topic": "",
+                "sections": [],
+                "constraints": {},
+            },
+            "topic must be a non-empty string",
+        ),
+        (
+            validate_analysis_result,
+            {
+                "findings": {},
+                "trend_signals": [],
+                "risk_notes": [],
+                "uncertainty_notes": [],
+            },
+            "findings must be a list",
+        ),
         (
             validate_report_draft,
             {
@@ -152,6 +212,23 @@ def test_daily_agent_output_validators_reject_invalid_values(
 ) -> None:
     with pytest.raises(ValueError, match=message):
         validator(payload)
+
+
+def _valid_research_plan() -> dict:
+    return {
+        "topic": "AI policy",
+        "sections": ["Executive Summary", "Top Highlights"],
+        "constraints": {"source_boundary": "evidence_bundle"},
+    }
+
+
+def _valid_analysis_result() -> dict:
+    return {
+        "findings": [{"id": "finding-1", "summary": "Source-grounded finding."}],
+        "trend_signals": [{"title": "Adoption signal", "inference": True}],
+        "risk_notes": ["Single-source evidence."],
+        "uncertainty_notes": ["Trend remains inferential."],
+    }
 
 
 def _valid_report_draft() -> dict:

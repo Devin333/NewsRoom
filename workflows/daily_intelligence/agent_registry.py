@@ -11,10 +11,14 @@ from core.framework.llm import (
 from storage.conversation import LocalJsonConversationStore
 from workflows.daily_intelligence.agent_tools import build_daily_agent_tool_registry
 from workflows.daily_intelligence.agents import (
+    ANALYST_AGENT_ID,
     EDITOR_AGENT_ID,
+    PLANNER_AGENT_ID,
     VERIFIER_AGENT_ID,
     WRITER_AGENT_ID,
+    build_analyst_agent,
     build_editor_agent,
+    build_planner_agent,
     build_verifier_agent,
     build_writer_agent,
 )
@@ -30,6 +34,8 @@ DAILY_AGENTIC_MODEL_ROUTE_ID = "daily-intelligence-agentic"
 
 def build_daily_agent_registry() -> dict[str, AgentSpec]:
     return {
+        PLANNER_AGENT_ID: build_planner_agent(),
+        ANALYST_AGENT_ID: build_analyst_agent(),
         WRITER_AGENT_ID: build_writer_agent(),
         VERIFIER_AGENT_ID: build_verifier_agent(),
         EDITOR_AGENT_ID: build_editor_agent(),
@@ -45,6 +51,57 @@ def build_daily_agent_fake_llm_client(
     scenario = _fake_scenario(normalized_topic)
     return FakeLLMClient(
         [
+            _agent_action(
+                {
+                    "research_plan": {
+                        "topic": normalized_topic,
+                        "sections": [
+                            "Executive Summary",
+                            "Top Highlights",
+                            "Risk / Uncertainty / Verification Notes",
+                        ],
+                        "constraints": {
+                            "source_boundary": "evidence_bundle",
+                            "llm_mode": "offline",
+                            "allow_external_sources": False,
+                        },
+                    },
+                    "planner_notes": {
+                        "mode": "offline",
+                        "section_count": 3,
+                    },
+                }
+            ),
+            _agent_action(
+                {
+                    "analysis_result": {
+                        "findings": [
+                            {
+                                "id": "finding-1",
+                                "title": f"{normalized_topic} policy signal",
+                                "summary": "AI chip policy update: Export controls and model supply chains remain central.",
+                                "confidence": "medium",
+                                "supporting_sources": ["https://example.com/ai-chip-policy"],
+                                "inference": False,
+                            }
+                        ],
+                        "trend_signals": [
+                            {
+                                "title": "Export controls remain a central policy signal",
+                                "confidence": "low",
+                                "inference": True,
+                                "supporting_sources": ["https://example.com/ai-chip-policy"],
+                            }
+                        ],
+                        "risk_notes": ["Evidence is limited to the deterministic offline fixture."],
+                        "uncertainty_notes": ["Trend interpretation remains inferential in offline mode."],
+                    },
+                    "analyst_notes": {
+                        "mode": "offline",
+                        "evidence_boundary": "preserved",
+                    },
+                }
+            ),
             _agent_action(
                 {
                     "report_draft": _fake_report_draft(normalized_topic),
@@ -123,7 +180,7 @@ def _fake_report_draft(topic: str) -> dict:
         "title": f"Daily Intelligence: {topic}",
         "sections": [
             {
-                "title": "Summary",
+                "title": "Executive Summary",
                 "content": "AI chip policy update: Export controls and model supply chains remain central.",
                 "sources": ["https://example.com/ai-chip-policy"],
             }

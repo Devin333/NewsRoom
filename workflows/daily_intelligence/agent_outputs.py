@@ -10,6 +10,31 @@ EDITOR_DECISIONS = frozenset(
 )
 
 
+def validate_research_plan(payload: Any) -> dict[str, Any]:
+    plan = _require_dict(payload, "research_plan")
+    _require_keys(plan, ["topic", "sections", "constraints"], "research_plan")
+    if not isinstance(plan["topic"], str) or not plan["topic"].strip():
+        raise ValueError("research_plan.topic must be a non-empty string")
+    if not isinstance(plan["sections"], list):
+        raise ValueError("research_plan.sections must be a list")
+    if not isinstance(plan["constraints"], dict):
+        raise ValueError("research_plan.constraints must be an object")
+    return dict(plan)
+
+
+def validate_analysis_result(payload: Any) -> dict[str, Any]:
+    result = _require_dict(payload, "analysis_result")
+    _require_keys(
+        result,
+        ["findings", "trend_signals", "risk_notes", "uncertainty_notes"],
+        "analysis_result",
+    )
+    for key in ("findings", "trend_signals", "risk_notes", "uncertainty_notes"):
+        if not isinstance(result[key], list):
+            raise ValueError(f"analysis_result.{key} must be a list")
+    return dict(result)
+
+
 def validate_report_draft(payload: Any) -> dict[str, Any]:
     draft = normalize_agent_report_draft(payload)
     _require_keys(draft, ["title", "sections", "metadata"], "report_draft")

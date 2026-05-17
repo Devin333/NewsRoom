@@ -23,6 +23,8 @@ def test_run_service_runs_agentic_daily_offline_and_persists_report(tmp_path) ->
     assert result.workflow_id == "daily-intelligence-agentic"
     assert result.output["final_report"].title == "Daily Intelligence: AI policy"
     assert "# Daily Intelligence: AI policy" in result.output["report_markdown"]
+    assert result.output["planner_agent_loop_result"]["success"] is True
+    assert result.output["analyst_agent_loop_result"]["success"] is True
     assert "writer_agent_loop_result" in result.output
     assert "verifier_agent_loop_result" in result.output
     assert "editor_agent_loop_result" in result.output

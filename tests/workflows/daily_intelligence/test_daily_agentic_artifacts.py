@@ -21,26 +21,42 @@ def test_agentic_daily_artifacts_include_agent_summary_and_loop_outputs(tmp_path
     manifest = _read_json(run_dir / "manifest.json")
 
     assert manifest["agentic"] is True
-    assert manifest["agent_count"] == 3
-    assert manifest["agent_steps"] == ["writer_agent", "verifier_agent", "editor_agent"]
+    assert manifest["agent_count"] == 5
+    assert manifest["agent_steps"] == [
+        "planner_agent",
+        "analyst_agent",
+        "writer_agent",
+        "verifier_agent",
+        "editor_agent",
+    ]
     assert manifest["artifacts"]["agentic_summary"] == "agentic_summary.json"
-    assert manifest["agentic_summary"]["agent_count"] == 3
+    assert manifest["agentic_summary"]["agent_count"] == 5
     assert manifest["agentic_summary"]["final_decision"] == "pass"
 
     summary = _read_json(run_dir / "agentic_summary.json")
     assert summary["run_id"] == "agentic-artifacts"
     assert summary["workflow_id"] == "daily-intelligence-agentic"
-    assert summary["agent_count"] == 3
+    assert summary["agent_count"] == 5
     assert summary["final_decision"] == "pass"
     assert summary["quality_score"] == 1.0
 
     agents_by_step = {agent["step_id"]: agent for agent in summary["agents"]}
-    assert set(agents_by_step) == {"writer_agent", "verifier_agent", "editor_agent"}
+    assert set(agents_by_step) == {
+        "planner_agent",
+        "analyst_agent",
+        "writer_agent",
+        "verifier_agent",
+        "editor_agent",
+    }
+    assert agents_by_step["planner_agent"]["agent_id"] == "daily.planner"
+    assert agents_by_step["analyst_agent"]["agent_id"] == "daily.analyst"
     assert agents_by_step["writer_agent"]["agent_id"] == "daily.writer"
     assert agents_by_step["verifier_agent"]["agent_id"] == "daily.verifier"
     assert agents_by_step["editor_agent"]["agent_id"] == "daily.editor"
 
     for step_id, label in [
+        ("planner_agent", "planner"),
+        ("analyst_agent", "analyst"),
         ("writer_agent", "writer"),
         ("verifier_agent", "verifier"),
         ("editor_agent", "editor"),

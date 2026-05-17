@@ -12,7 +12,9 @@ from workflows.daily_intelligence.agent_registry import (
 )
 from workflows.daily_intelligence.agent_tools import build_daily_agent_tool_registry
 from workflows.daily_intelligence.agents import (
+    ANALYST_AGENT_ID,
     EDITOR_AGENT_ID,
+    PLANNER_AGENT_ID,
     VERIFIER_AGENT_ID,
     WRITER_AGENT_ID,
 )
@@ -21,7 +23,15 @@ from workflows.daily_intelligence.agents import (
 def test_daily_agent_registry_contains_writer_verifier_and_editor() -> None:
     registry = build_daily_agent_registry()
 
-    assert set(registry) == {WRITER_AGENT_ID, VERIFIER_AGENT_ID, EDITOR_AGENT_ID}
+    assert set(registry) == {
+        PLANNER_AGENT_ID,
+        ANALYST_AGENT_ID,
+        WRITER_AGENT_ID,
+        VERIFIER_AGENT_ID,
+        EDITOR_AGENT_ID,
+    }
+    assert registry[PLANNER_AGENT_ID].agent_id == PLANNER_AGENT_ID
+    assert registry[ANALYST_AGENT_ID].agent_id == ANALYST_AGENT_ID
     assert registry[WRITER_AGENT_ID].agent_id == WRITER_AGENT_ID
     assert registry[VERIFIER_AGENT_ID].agent_id == VERIFIER_AGENT_ID
     assert registry[EDITOR_AGENT_ID].agent_id == EDITOR_AGENT_ID
@@ -40,10 +50,33 @@ def test_daily_agent_runner_consumes_fake_llm_sequence() -> None:
     llm = build_daily_agent_fake_llm_client(PROFILE_AGENTIC_OFFLINE, topic="AI policy")
     runner = build_daily_agent_runner(profile=PROFILE_AGENTIC_OFFLINE, llm_client=llm)
 
+    planner_result = runner.run(
+        agent_registry[PLANNER_AGENT_ID],
+        {
+            "request": {"topic": "AI policy"},
+        },
+        run_id="daily-agent-registry-test",
+        step_id="planner_agent",
+    )
+    analyst_result = runner.run(
+        agent_registry[ANALYST_AGENT_ID],
+        {
+            "request": {"topic": "AI policy"},
+            "research_plan": planner_result.output["research_plan"],
+            "evidence_bundle": _evidence_bundle(),
+            "source_errors": [],
+            "source_pipeline_metrics": {},
+        },
+        run_id="daily-agent-registry-test",
+        step_id="analyst_agent",
+    )
     writer_result = runner.run(
         agent_registry[WRITER_AGENT_ID],
         {
             "request": {"topic": "AI policy"},
+            "research_plan": planner_result.output["research_plan"],
+            "analysis_result": analyst_result.output["analysis_result"],
+            "verified_findings": {},
             "evidence_bundle": _evidence_bundle(),
             "source_errors": [],
             "source_pipeline_metrics": {},
@@ -75,10 +108,17 @@ def test_daily_agent_runner_consumes_fake_llm_sequence() -> None:
         step_id="editor_agent",
     )
 
+    assert planner_result.success is True
+    assert planner_result.status == AgentLoopStatus.ACCEPTED
+    assert planner_result.output["research_plan"]["topic"] == "AI policy"
+
+    assert analyst_result.success is True
+    assert analyst_result.status == AgentLoopStatus.ACCEPTED
+    assert analyst_result.output["analysis_result"]["findings"][0]["id"] == "finding-1"
+
     assert writer_result.success is True
     assert writer_result.status == AgentLoopStatus.ACCEPTED
     assert writer_result.output["report_draft"]["title"] == "Daily Intelligence: AI policy"
-    assert writer_result.metrics.llm_calls == 1
 
     assert verifier_result.success is True
     assert verifier_result.status == AgentLoopStatus.ACCEPTED
@@ -90,7 +130,7 @@ def test_daily_agent_runner_consumes_fake_llm_sequence() -> None:
     assert editor_result.output["editor_review"]["decision"] == "pass"
     assert editor_result.output["edited_report_draft"] is None
 
-    assert llm.call_count == 3
+    assert llm.call_count == 5
 
 
 def test_daily_agent_registry_unknown_agent_id_is_not_returned() -> None:

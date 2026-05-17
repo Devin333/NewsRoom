@@ -16,6 +16,16 @@ from storage.artifacts import ArtifactRef
 AGENTIC_WORKFLOW_IDS = {"daily-intelligence-agentic"}
 DAILY_AGENT_STEPS = (
     {
+        "label": "planner",
+        "agent_id": "daily.planner",
+        "step_id": "planner_agent",
+    },
+    {
+        "label": "analyst",
+        "agent_id": "daily.analyst",
+        "step_id": "analyst_agent",
+    },
+    {
         "label": "writer",
         "agent_id": "daily.writer",
         "step_id": "writer_agent",
