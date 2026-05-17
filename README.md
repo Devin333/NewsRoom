@@ -69,6 +69,8 @@ python -m scripts.dev compile
 python -m scripts.dev test
 python -m scripts.dev test-workflows
 python -m scripts.dev test-services
+python -m scripts.dev test-interfaces
+python -m scripts.dev interface-smoke
 python -m scripts.dev smoke
 python -m scripts.dev smoke-live-offline
 python -m scripts.dev smoke-live
@@ -90,3 +92,32 @@ make diagnose
 `live` is the product path: real sources, real LLM, real artifacts, and local JSON persistence by default.
 
 `test-no-llm`, `test-agent-loop`, and `live-offline` are development and regression profiles. They are useful for CI and local checks, but they are not the product MVP path.
+
+## Interface Layer
+
+The interface layer exposes CLI, HTTP API, Web Console, and MCP entrypoints over application services. Start with:
+
+```text
+docs/09-INTERFACES_CLI_API_MCP.md
+docs/api/README.md
+docs/api/openapi.json
+docs/web-console.md
+docs/mcp.md
+```
+
+Useful local commands:
+
+```bash
+news reports latest --format markdown
+news runs list --json
+news mcp catalog --json
+python -m scripts.dev export-openapi
+python -m scripts.dev web-check
+```
+
+Example clients live under:
+
+```text
+examples/api/
+examples/mcp/
+```

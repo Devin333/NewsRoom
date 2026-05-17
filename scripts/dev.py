@@ -68,6 +68,71 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     if args.command == "test-services":
         return _run([sys.executable, "-m", "pytest", "tests/interfaces/services", "-q"], env=env)
+    if args.command == "test-interfaces":
+        return _run(
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                "tests/interfaces",
+                "-q",
+            ],
+            env=env,
+        )
+    if args.command == "test-api":
+        return _run([sys.executable, "-m", "pytest", "tests/interfaces/api", "-q"], env=env)
+    if args.command == "test-cli":
+        return _run([sys.executable, "-m", "pytest", "tests/interfaces/cli", "-q"], env=env)
+    if args.command == "test-mcp":
+        return _run([sys.executable, "-m", "pytest", "tests/interfaces/mcp", "-q"], env=env)
+    if args.command == "export-openapi":
+        return _run(_export_openapi_command(), env=env)
+    if args.command == "test-api-contracts":
+        return _run(
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                "tests/interfaces/api/test_api_contracts.py",
+                "tests/interfaces/api/test_openapi_contract.py",
+                "-q",
+            ],
+            env=env,
+        )
+    if args.command == "web-check":
+        return _run(_web_check_command(), env=env)
+    if args.command == "interface-smoke":
+        commands = [
+            _compile_command(),
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                "tests/interfaces/api/test_api_current_baseline.py",
+                "tests/interfaces/mcp/test_mcp_current_baseline.py",
+                "-q",
+            ],
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                "tests/interfaces/api/test_api_contracts.py",
+                "tests/interfaces/api/test_openapi_contract.py",
+                "-q",
+            ],
+            _export_openapi_command(),
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                "tests/interfaces/cli/test_cli_current_baseline.py",
+                "-q",
+            ],
+            _mcp_smoke_command(),
+            _api_smoke_command(),
+            _web_check_command(),
+        ]
+        return _run_many(commands, env=env, keep_going=args.keep_going)
     if args.command == "smoke-test-no-llm":
         return _run(_smoke_test_no_llm_command(run_id=args.run_id), env=env)
     if args.command == "smoke-test-agent-loop":
@@ -120,8 +185,25 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subparsers.add_parser("test-workflow-domain", help="Run workflow domain tests")
     subparsers.add_parser("test-services", help="Run interface service tests")
+    subparsers.add_parser("test-interfaces", help="Run interface acceptance tests")
+    subparsers.add_parser("test-api", help="Run HTTP API interface tests")
+    subparsers.add_parser("test-cli", help="Run CLI interface tests")
+    subparsers.add_parser("test-mcp", help="Run MCP interface tests")
+    subparsers.add_parser("export-openapi", help="Export docs/api/openapi.json")
+    subparsers.add_parser("test-api-contracts", help="Run API contract tests")
+    subparsers.add_parser("web-check", help="Check Web Console skeleton files")
     subparsers.add_parser("sources-validate", help="Validate configured source registry")
     subparsers.add_parser("diagnose", help="Run local diagnostics")
+
+    interface_smoke_parser = subparsers.add_parser(
+        "interface-smoke",
+        help="Run interface-layer acceptance smoke commands",
+    )
+    interface_smoke_parser.add_argument(
+        "--keep-going",
+        action="store_true",
+        help="Run all smoke commands even after a failure",
+    )
 
     smoke_parser = subparsers.add_parser("smoke", help="Run fixed offline smoke commands")
     smoke_parser.add_argument("--keep-going", action="store_true", help="Run all commands even after a failure")
@@ -193,6 +275,22 @@ def _add_operation_base_args(parser: argparse.ArgumentParser) -> None:
 
 def _compile_command() -> list[str]:
     return [sys.executable, "-m", "compileall", "-q", *COMPILE_PATHS]
+
+
+def _export_openapi_command() -> list[str]:
+    return [sys.executable, "-m", "scripts.export_openapi"]
+
+
+def _web_check_command() -> list[str]:
+    return [sys.executable, "-m", "scripts.check_web_console"]
+
+
+def _api_smoke_command() -> list[str]:
+    return [sys.executable, "-m", "scripts.smoke.api_smoke"]
+
+
+def _mcp_smoke_command() -> list[str]:
+    return [sys.executable, "-m", "scripts.smoke.mcp_smoke"]
 
 
 def _smoke_test_no_llm_command(run_id: str | None = None) -> list[str]:
