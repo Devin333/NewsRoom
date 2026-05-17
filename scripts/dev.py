@@ -74,6 +74,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run(_smoke_test_agent_loop_command(run_id=args.run_id), env=env)
     if args.command == "smoke-live-offline":
         return _run(_smoke_live_offline_command(run_id=args.run_id), env=env)
+    if args.command == "smoke-agentic-offline":
+        return _run(_smoke_agentic_offline_command(run_id=args.run_id), env=env)
     if args.command == "smoke-live":
         return _run(_smoke_live_command(fail_if_unready=args.fail_if_unready), env=env)
     if args.command == "sources-validate":
@@ -96,6 +98,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             _smoke_test_no_llm_command(),
             _smoke_test_agent_loop_command(),
             _smoke_live_offline_command(),
+            _smoke_agentic_offline_command(),
             _news_command("sources", "validate"),
         ]
         return _run_many(commands, env=env, keep_going=args.keep_going)
@@ -131,6 +134,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     live_offline_parser = subparsers.add_parser("smoke-live-offline", help="Run offline daily workflow smoke")
     live_offline_parser.add_argument("--run-id", default=None, help="Optional deterministic run id")
+
+    agentic_offline_parser = subparsers.add_parser(
+        "smoke-agentic-offline",
+        help="Run deterministic agentic offline daily workflow smoke",
+    )
+    agentic_offline_parser.add_argument("--run-id", default=None, help="Optional deterministic run id")
 
     live_parser = subparsers.add_parser("smoke-live", help="Run gated live smoke")
     live_parser.add_argument(
@@ -221,6 +230,21 @@ def _smoke_live_offline_command(run_id: str | None = None) -> list[str]:
         "--source-limit",
         "2",
     )
+    if run_id:
+        command.extend(["--run-id", run_id])
+    return command
+
+
+def _smoke_agentic_offline_command(run_id: str | None = None) -> list[str]:
+    command = [
+        sys.executable,
+        "-m",
+        "scripts.smoke.agentic_daily_offline",
+        "--topic",
+        SMOKE_TOPIC,
+        "--source-limit",
+        "2",
+    ]
     if run_id:
         command.extend(["--run-id", run_id])
     return command

@@ -297,6 +297,28 @@ def test_submit_daily_run_enqueues_task() -> None:
     assert payload["data"]["run_id"] == "api-run"
 
 
+def test_submit_daily_run_accepts_agentic_profile() -> None:
+    fake_worker = _FakeWorkerService()
+    client = TestClient(create_app(worker_service_factory=lambda: fake_worker))
+
+    response = client.post(
+        "/api/v1/runs/daily",
+        json={
+            "profile": "agentic-offline",
+            "topic": "AI policy",
+            "source_limit": 2,
+            "run_id": "api-agentic-run",
+        },
+    )
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert fake_worker.enqueue_calls[0]["profile"] == "agentic-offline"
+    assert payload["success"] is True
+    assert payload["data"]["status"] == "queued"
+    assert payload["data"]["run_id"] == "api-agentic-run"
+
+
 def test_latest_report_returns_report_detail() -> None:
     client = TestClient(create_app(report_service_factory=lambda: _FakeReportService()))
 

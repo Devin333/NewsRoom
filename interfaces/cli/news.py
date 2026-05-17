@@ -46,6 +46,7 @@ from interfaces.services.worker_service import (
     WorkerApplicationService,
 )
 from storage.lifecycle import RetentionPolicy
+from workflows.daily_intelligence.profiles import DAILY_PROFILE_CHOICES
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -57,7 +58,7 @@ def build_parser() -> argparse.ArgumentParser:
     daily_parser = run_subparsers.add_parser("daily", help="Run daily intelligence workflow")
     daily_parser.add_argument(
         "--profile",
-        choices=["live", "live-offline"],
+        choices=DAILY_PROFILE_CHOICES,
         default="live",
         help="Execution profile",
     )
@@ -155,7 +156,7 @@ def build_parser() -> argparse.ArgumentParser:
     subscriptions_create_parser.add_argument("--cadence", choices=["daily", "weekly"], default="weekly")
     subscriptions_create_parser.add_argument(
         "--profile",
-        choices=["live", "live-offline"],
+        choices=DAILY_PROFILE_CHOICES,
         default="live-offline",
     )
     subscriptions_create_parser.add_argument("--source-limit", type=int, default=5)
@@ -298,7 +299,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     enqueue_daily_parser.add_argument(
         "--profile",
-        choices=["live", "live-offline"],
+        choices=DAILY_PROFILE_CHOICES,
         default="live-offline",
         help="Execution profile",
     )
@@ -490,7 +491,7 @@ def build_parser() -> argparse.ArgumentParser:
     schedules_add_daily_parser.add_argument("--run-at", default=None, help="Optional first due time as ISO datetime")
     schedules_add_daily_parser.add_argument(
         "--profile",
-        choices=["live", "live-offline"],
+        choices=DAILY_PROFILE_CHOICES,
         default="live-offline",
         help="Execution profile",
     )

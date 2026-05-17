@@ -17,6 +17,7 @@ from interfaces.mcp.models import (
     MCPToolCallResult,
 )
 from storage.lifecycle import RetentionPolicy
+from workflows.daily_intelligence.profiles import DAILY_PROFILE_CHOICES
 
 
 DEFAULT_DAILY_QUEUE = "news:queue:daily"
@@ -60,6 +61,7 @@ RETENTION_POLICY_ARG_NAMES = (
     "evidence_retention_days",
     "vector_retention_days",
 )
+DAILY_PROFILE_ENUM = list(DAILY_PROFILE_CHOICES)
 
 
 class MCPApplicationService:
@@ -1142,7 +1144,7 @@ def _tools() -> list[MCPTool]:
             input_schema={
                 "type": "object",
                 "properties": {
-                    "profile": {"type": "string", "enum": ["live", "live-offline"]},
+                    "profile": {"type": "string", "enum": DAILY_PROFILE_ENUM},
                     "topic": {"type": "string"},
                     "source_limit": {"type": "integer", "minimum": 1},
                     "run_id": {"type": "string"},
@@ -1157,7 +1159,7 @@ def _tools() -> list[MCPTool]:
             input_schema={
                 "type": "object",
                 "properties": {
-                    "profile": {"type": "string", "enum": ["live", "live-offline"]},
+                    "profile": {"type": "string", "enum": DAILY_PROFILE_ENUM},
                     "topic": {"type": "string"},
                     "source_limit": {"type": "integer", "minimum": 1},
                     "run_id": {"type": "string"},
@@ -1172,7 +1174,7 @@ def _tools() -> list[MCPTool]:
                 "type": "object",
                 "required": ["topic"],
                 "properties": {
-                    "profile": {"type": "string", "enum": ["live", "live-offline"]},
+                    "profile": {"type": "string", "enum": DAILY_PROFILE_ENUM},
                     "topic": {"type": "string"},
                     "source_limit": {"type": "integer", "minimum": 1},
                     "run_id": {"type": "string"},
@@ -1403,7 +1405,7 @@ def _tools() -> list[MCPTool]:
                 "properties": {
                     "topic": {"type": "string"},
                     "cadence": {"type": "string", "enum": ["daily", "weekly"]},
-                    "profile": {"type": "string", "enum": ["live", "live-offline"]},
+                    "profile": {"type": "string", "enum": DAILY_PROFILE_ENUM},
                     "source_limit": {"type": "integer", "minimum": 1},
                     "subscription_id": {"type": "string"},
                     "enabled": {"type": "boolean"},

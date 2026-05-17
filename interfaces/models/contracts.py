@@ -9,6 +9,7 @@ from interfaces.models.common import PageResult, Pagination
 
 
 SCHEMA_VERSION = "1.0"
+DailyProfile = Literal["live", "live-offline", "agentic-offline", "agentic-live"]
 
 
 class ApiError(BaseModel):
@@ -39,7 +40,7 @@ class ArtifactRef(BaseModel):
 
 
 class DailyRunRequest(BaseModel):
-    profile: Literal["live", "live-offline"] = "live-offline"
+    profile: DailyProfile = "live-offline"
     topic: str = "AI"
     source_limit: int = Field(default=3, ge=1)
     run_id: str | None = None
@@ -48,7 +49,7 @@ class DailyRunRequest(BaseModel):
 
 class RunRequest(BaseModel):
     workflow_id: str
-    profile: Literal["live", "live-offline"] = "live-offline"
+    profile: DailyProfile = "live-offline"
     topic: str | None = None
     language: Literal["en"] = "en"
     source_limit: int | None = Field(default=None, ge=1)
@@ -182,7 +183,7 @@ class EntityCreateRequest(BaseModel):
 class TopicSubscriptionCreateRequest(BaseModel):
     topic: str = Field(min_length=1)
     cadence: Literal["daily", "weekly"] = "weekly"
-    profile: Literal["live", "live-offline"] = "live-offline"
+    profile: DailyProfile = "live-offline"
     source_limit: int = Field(default=5, ge=1)
     subscription_id: str | None = None
     enabled: bool = True
@@ -195,7 +196,7 @@ class DailyScheduleRequest(BaseModel):
     trigger_type: Literal["interval", "manual"] = "interval"
     interval_seconds: int = Field(default=86400, ge=1)
     run_at: datetime | None = None
-    profile: Literal["live", "live-offline"] = "live-offline"
+    profile: DailyProfile = "live-offline"
     topic: str = "AI"
     source_limit: int = Field(default=3, ge=1)
     queue_name: str = "news:queue:daily"

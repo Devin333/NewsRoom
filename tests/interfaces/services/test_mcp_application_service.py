@@ -90,6 +90,21 @@ def test_mcp_catalog_lists_tools_without_calling_factories() -> None:
     assert "news.trend_analysis_prompt" in prompt_names
 
 
+def test_mcp_catalog_daily_profile_schemas_include_agentic_profiles() -> None:
+    catalog = MCPApplicationService().catalog().to_dict()
+    tools = {tool["name"]: tool for tool in catalog["tools"]}
+
+    for tool_name in [
+        "news.daily.enqueue",
+        "news.daily.run",
+        "news.topic.run",
+        "news.subscription.create",
+    ]:
+        profile_enum = tools[tool_name]["input_schema"]["properties"]["profile"]["enum"]
+        assert "agentic-offline" in profile_enum
+        assert "agentic-live" in profile_enum
+
+
 def test_mcp_capability_manifest_describes_tools_resources_and_prompts() -> None:
     service = MCPApplicationService(
         worker_service_factory=_raising_factory,

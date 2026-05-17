@@ -13,6 +13,33 @@ from core.framework.workflow.artifact_publishers import (
 from storage.artifacts import ArtifactRef
 
 
+AGENTIC_WORKFLOW_IDS = {"daily-intelligence-agentic"}
+DAILY_AGENT_STEPS = (
+    {
+        "label": "writer",
+        "agent_id": "daily.writer",
+        "step_id": "writer_agent",
+    },
+    {
+        "label": "verifier",
+        "agent_id": "daily.verifier",
+        "step_id": "verifier_agent",
+    },
+    {
+        "label": "editor",
+        "agent_id": "daily.editor",
+        "step_id": "editor_agent",
+    },
+)
+AGENT_LOOP_ARTIFACT_SUFFIXES = {
+    "result": "agent_loop_result",
+    "metrics": "agent_loop_metrics",
+    "diagnostics": "agent_loop_diagnostics",
+    "trace": "agent_loop_trace",
+    "llm_call_artifacts": "llm_call_artifacts",
+}
+
+
 class DailyIntelligenceArtifactPublisher:
     publisher_id = "daily_intelligence"
 
@@ -26,6 +53,7 @@ class DailyIntelligenceArtifactPublisher:
         refs.extend(self._publish_source_diagnostics(context))
         refs.extend(self._publish_evidence_artifacts(context))
         refs.extend(self._publish_quality_artifacts(context))
+        refs.extend(self._publish_agentic_artifacts(context))
         refs.extend(self._publish_report_artifacts(context))
         return refs
 
@@ -119,6 +147,43 @@ class DailyIntelligenceArtifactPublisher:
             )
         )
         _update_quality_manifest_fields(context.manifest, output)
+        return refs
+
+    def _publish_agentic_artifacts(self, context: ArtifactPublishContext) -> list[ArtifactRef]:
+        if not _is_agentic_workflow_id(context.workflow.workflow_id):
+            return []
+
+        refs: list[ArtifactRef] = []
+        output = context.output
+        context.manifest["agentic"] = True
+        context.manifest["agent_count"] = len(DAILY_AGENT_STEPS)
+        context.manifest["agent_steps"] = [agent["step_id"] for agent in DAILY_AGENT_STEPS]
+
+        for agent in DAILY_AGENT_STEPS:
+            label = agent["label"]
+            for artifact_name, suffix in AGENT_LOOP_ARTIFACT_SUFFIXES.items():
+                output_key = f"{label}_{suffix}"
+                if output_key not in output:
+                    continue
+                artifact_key = f"{label}_{suffix}"
+                relative_path = f"agentic/{artifact_key}.json"
+                refs.append(
+                    _write_json_artifact(
+                        context,
+                        artifact_key,
+                        relative_path,
+                        _agentic_artifact_payload(artifact_name, output[output_key]),
+                    )
+                )
+
+        summary = _agentic_summary(context)
+        refs.append(_write_json_artifact(context, "agentic_summary", "agentic_summary.json", summary))
+        context.manifest["agentic_summary"] = {
+            "agent_count": summary["agent_count"],
+            "final_decision": summary.get("final_decision"),
+            "quality_score": summary.get("quality_score"),
+            "artifact": "agentic_summary.json",
+        }
         return refs
 
     def _publish_report_artifacts(self, context: ArtifactPublishContext) -> list[ArtifactRef]:
@@ -344,6 +409,107 @@ def _update_quality_manifest_fields(manifest: dict[str, Any], output: dict[str, 
         manifest["quality_decision"] = decision
 
 
+def _agentic_summary(context: ArtifactPublishContext) -> dict[str, Any]:
+    output = context.output
+    agents = []
+    for agent in DAILY_AGENT_STEPS:
+        label = agent["label"]
+        result = _dict_value(output.get(f"{label}_agent_loop_result"))
+        metrics = _dict_value(output.get(f"{label}_agent_loop_metrics"))
+        diagnostics = _dict_value(output.get(f"{label}_agent_loop_diagnostics"))
+        trace = _dict_value(output.get(f"{label}_agent_loop_trace"))
+        summary = _dict_value(trace.get("summary"))
+        agents.append(
+            {
+                "agent_id": agent["agent_id"],
+                "step_id": agent["step_id"],
+                "status": _agent_status(result),
+                "success": result.get("success"),
+                "llm_calls": _int_value(metrics.get("llm_calls")),
+                "tool_calls": _int_value(metrics.get("tool_calls")),
+                "stop_reason": (
+                    result.get("stop_reason")
+                    or summary.get("stop_reason")
+                    or diagnostics.get("stop_reason")
+                ),
+                "diagnostics_present": output.get(f"{label}_agent_loop_diagnostics") is not None,
+                "trace_present": output.get(f"{label}_agent_loop_trace") is not None,
+                "llm_artifact_count": len(_list_value(output.get(f"{label}_llm_call_artifacts"))),
+            }
+        )
+
+    editor_review = _dict_value(output.get("editor_review"))
+    quality_result = _dict_value(output.get("quality_result"))
+    quality_summary = _dict_value(output.get("report_quality_summary"))
+    final_decision = (
+        editor_review.get("decision")
+        or quality_result.get("decision")
+        or quality_summary.get("decision")
+    )
+    return {
+        "run_id": context.run_id,
+        "workflow_id": context.workflow.workflow_id,
+        "workflow_version": context.workflow.version,
+        "agent_count": len(agents),
+        "agents": agents,
+        "final_decision": final_decision,
+        "quality_score": _first_not_none(
+            editor_review.get("quality_score"),
+            quality_result.get("quality_score"),
+            quality_summary.get("quality_score"),
+        ),
+    }
+
+
+def _agentic_artifact_payload(artifact_name: str, payload: Any) -> Any:
+    if artifact_name == "result":
+        return _redacted_agent_loop_result(payload)
+    if artifact_name == "llm_call_artifacts":
+        return _redacted_llm_artifact_index(payload)
+    return payload
+
+
+def _redacted_agent_loop_result(payload: Any) -> Any:
+    if not isinstance(payload, dict):
+        return payload
+    result = dict(payload)
+    if "llm_call_artifacts" in result:
+        result["llm_call_artifacts"] = _redacted_llm_artifact_index(result["llm_call_artifacts"])
+    return result
+
+
+def _redacted_llm_artifact_index(payload: Any) -> list[dict[str, Any]]:
+    entries = []
+    for item in _list_value(payload):
+        if not isinstance(item, dict):
+            continue
+        response = _dict_value(item.get("response"))
+        usage = _dict_value(response.get("usage"))
+        artifact_ref = _dict_value(item.get("artifact_ref"))
+        entries.append(
+            {
+                "artifact_id": item.get("artifact_id"),
+                "iteration": item.get("iteration"),
+                "metadata": _dict_value(item.get("metadata")),
+                "artifact_ref": artifact_ref or None,
+                "usage": usage or None,
+                "redacted": True,
+            }
+        )
+    return entries
+
+
+def _agent_status(result: dict[str, Any]) -> str:
+    status = result.get("status")
+    if status:
+        return str(status)
+    if result.get("success") is True:
+        return "succeeded"
+    if result.get("success") is False:
+        return "failed"
+    return "unknown"
+
+
 def _evidence_source_map(evidence_bundle: Any) -> dict[str, list[str]] | None:
     if isinstance(evidence_bundle, dict):
         source_map = evidence_bundle.get("source_map")
@@ -362,6 +528,34 @@ def _field_value(value: Any, field_name: str) -> Any:
     return None
 
 
+def _dict_value(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    return {}
+
+
+def _list_value(value: Any) -> list[Any]:
+    if isinstance(value, list):
+        return value
+    if value is None:
+        return []
+    return [value]
+
+
+def _int_value(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _first_not_none(*values: Any) -> Any:
+    for value in values:
+        if value is not None:
+            return value
+    return None
+
+
 def _is_daily_workflow_id(workflow_id: str) -> bool:
     normalized = str(workflow_id).strip().lower()
     return normalized in {
@@ -369,3 +563,7 @@ def _is_daily_workflow_id(workflow_id: str) -> bool:
         "daily-intelligence",
         "daily_intelligence",
     } or normalized.startswith("daily-intelligence")
+
+
+def _is_agentic_workflow_id(workflow_id: str) -> bool:
+    return str(workflow_id).strip().lower() in AGENTIC_WORKFLOW_IDS

@@ -5,6 +5,7 @@ from typing import Any
 
 from core.framework.agent_loop.models import AgentSpec
 from core.framework.llm import LLMRequest
+from core.framework.serialization import to_json_safe
 
 
 class PromptBuilder:
@@ -23,11 +24,15 @@ class PromptBuilder:
         )
         user = agent.task_prompt_template.format(
             goal=agent.goal,
-            inputs=json.dumps(inputs, ensure_ascii=False, sort_keys=True),
+            inputs=json.dumps(to_json_safe(inputs), ensure_ascii=False, sort_keys=True),
         )
         if tool_observations:
             user += "\nTool observations: "
-            user += json.dumps(tool_observations, ensure_ascii=False, sort_keys=True)
+            user += json.dumps(
+                to_json_safe(tool_observations),
+                ensure_ascii=False,
+                sort_keys=True,
+            )
         if feedback:
             user += f"\nJudge feedback: {feedback}"
 

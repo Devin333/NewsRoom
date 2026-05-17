@@ -14,13 +14,14 @@ from interfaces.services.report_service import ReportApplicationService
 from storage.checkpoint import LocalJsonCheckpointStore
 from storage.memory import MemoryIngestionService, memory_ingestion_service_from_env
 from storage.repository import persist_run_result, repository_from_env
-from workflows.daily_intelligence import DailyIntelligenceRunner
+from workflows.daily_intelligence import AgenticDailyIntelligenceRunner, DailyIntelligenceRunner
 from workflows.daily_intelligence import build_daily_intelligence_workflow
 from workflows.daily_intelligence import build_test_agent_loop_registry
 from workflows.daily_intelligence import build_test_agent_loop_workflow
 from workflows.daily_intelligence import build_test_no_llm_registry
 from workflows.daily_intelligence import build_test_no_llm_workflow
 from workflows.daily_intelligence.artifact_publisher import build_daily_intelligence_artifact_publishers
+from workflows.daily_intelligence.profiles import daily_agentic_enabled
 from workflows.daily_intelligence.test_agent_loop import run_test_agent_loop
 from workflows.daily_intelligence.test_no_llm import run_test_no_llm
 from workflows.daily_intelligence.runner import PROFILE_LIVE, PROFILE_LIVE_OFFLINE
@@ -117,7 +118,37 @@ class RunApplicationService:
     ) -> RunResult:
         repository = repository_from_env(artifact_root=self.artifact_root)
         repository.migrate()
-        result = DailyIntelligenceRunner(artifact_root=self.artifact_root).run(
+        runner_cls = (
+            AgenticDailyIntelligenceRunner
+            if daily_agentic_enabled(profile)
+            else DailyIntelligenceRunner
+        )
+        result = runner_cls(artifact_root=self.artifact_root).run(
+            profile=profile,
+            topic=topic,
+            source_limit=source_limit,
+            run_id=run_id,
+        )
+        persist_run_result(
+            repository,
+            result,
+            profile=profile,
+            migrate=False,
+        )
+        self._index_memory_if_configured(result, topic=topic)
+        return result
+
+    def run_daily_agentic(
+        self,
+        *,
+        profile: str,
+        topic: str,
+        source_limit: int,
+        run_id: str | None = None,
+    ) -> RunResult:
+        repository = repository_from_env(artifact_root=self.artifact_root)
+        repository.migrate()
+        result = AgenticDailyIntelligenceRunner(artifact_root=self.artifact_root).run(
             profile=profile,
             topic=topic,
             source_limit=source_limit,

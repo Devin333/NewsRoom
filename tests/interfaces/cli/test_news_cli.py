@@ -186,6 +186,58 @@ def test_news_cli_run_daily_uses_run_application_service(monkeypatch, tmp_path, 
     assert payload["run_id"] == "cli-service-run"
 
 
+def test_news_cli_run_daily_accepts_agentic_profile(monkeypatch, tmp_path, capsys) -> None:
+    import interfaces.cli.news as news_cli
+
+    calls = []
+
+    class FakeRunResult:
+        def __init__(self, run_id: str) -> None:
+            self.run_id = run_id
+            self.status = news_cli.WorkflowStatus.SUCCEEDED
+            self.output = {"final_report": {"title": "Daily Intelligence"}}
+            self.error = None
+            self.artifact_dir = str(tmp_path / run_id)
+            self.manifest_path = str(tmp_path / run_id / "manifest.json")
+            self.events_path = str(tmp_path / run_id / "events.jsonl")
+
+        def to_dict(self):
+            return {
+                "run_id": self.run_id,
+                "status": self.status.value,
+                "output": self.output,
+            }
+
+    class FakeRunApplicationService:
+        def __init__(self, artifact_root):
+            self.artifact_root = artifact_root
+
+        def run_daily(self, **kwargs):
+            calls.append({"artifact_root": self.artifact_root, **kwargs})
+            return FakeRunResult(str(kwargs["run_id"]))
+
+    monkeypatch.setattr(news_cli, "RunApplicationService", FakeRunApplicationService)
+
+    exit_code = news_cli.main(
+        [
+            "run",
+            "daily",
+            "--profile",
+            "agentic-offline",
+            "--artifact-root",
+            str(tmp_path),
+            "--run-id",
+            "cli-agentic-run",
+            "--json",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert calls[0]["profile"] == "agentic-offline"
+    assert payload["run_id"] == "cli-agentic-run"
+
+
 def test_news_cli_run_live_smoke_json_output(monkeypatch, tmp_path, capsys) -> None:
     import interfaces.cli.news as news_cli
 
