@@ -6,6 +6,8 @@ from quality.eval_dataset import golden_quality_eval_cases, run_quality_eval_cas
 from quality.errors import QualityError, QualityErrorType, quality_error_policy
 from quality.models import (
     BlockedReport,
+    CitationFailureCategory,
+    CitationSectionResult,
     HumanReviewDecision,
     HumanReviewRequest,
     QualityEvalCase,
@@ -21,6 +23,8 @@ __all__ = [
     "CitationCheckResult",
     "CitationChecker",
     "BlockedReport",
+    "CitationFailureCategory",
+    "CitationSectionResult",
     "EditorDecision",
     "EditorGate",
     "EditorReview",

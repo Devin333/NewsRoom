@@ -349,6 +349,8 @@ def test_daily_intelligence_runner_live_offline_writes_report_artifacts(tmp_path
     assert quality_metrics["quality_score"] == 1.0
     assert quality_metrics["accepted_claims_count"] == len(result.output["evidence_bundle"].items)
     assert quality_metrics["claim_support_score"] == 1.0
+    assert quality_metrics["citation_failure_category_count"] == 0
+    assert quality_metrics["citation_failure_categories"] == []
     quality_result = json.loads((run_dir / "quality_result.json").read_text())
     assert quality_result["decision"] == "pass"
     assert quality_result["route"] == "final"

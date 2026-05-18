@@ -37,9 +37,14 @@ def evaluate_report_quality(
             "citation_check_succeeded" if citation_check.passed else "citation_check_failed",
             unsupported_urls_count=len(citation_check.unsupported_urls),
             unknown_urls_count=len(citation_check.unknown_urls),
+            unsupported_evidence_ids_count=len(citation_check.unsupported_evidence_ids),
             missing_section_sources_count=len(citation_check.missing_section_sources),
             unsupported_claims_count=len(citation_check.unsupported_claims),
             rejected_claim_usage_count=len(citation_check.rejected_claim_usage),
+            citation_failure_category_count=len(citation_check.failure_categories),
+            citation_failure_categories=[
+                category.code for category in citation_check.failure_categories
+            ],
             citation_coverage_score=citation_check.citation_coverage_score,
             claim_support_score=citation_check.claim_support_score,
             rewrite_attempt=rewrite_attempts,

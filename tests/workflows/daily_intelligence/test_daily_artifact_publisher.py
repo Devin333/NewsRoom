@@ -29,6 +29,8 @@ def test_daily_artifact_publisher_writes_report_and_quality_manifest(tmp_path) -
             "passed": True,
             "unsupported_claims": [],
             "rejected_claim_usage": [],
+            "failure_categories": [],
+            "section_results": [],
         },
         "quality_result": {"decision": "pass", "route": "final"},
         "final_report": {"title": "Daily Intelligence", "sections": []},

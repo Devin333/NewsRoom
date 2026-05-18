@@ -71,6 +71,12 @@ def quality_gate_metrics(
         rewrite_attempts=rewrite_attempts,
         rewrite_required=review.decision == EditorDecision.REWRITE_REQUIRED,
         human_review_required=human_review_required,
+        unknown_urls_count=len(citation_check.unknown_urls),
+        unsupported_evidence_ids_count=len(citation_check.unsupported_evidence_ids),
+        citation_failure_category_count=len(citation_check.failure_categories),
+        citation_failure_categories=[
+            category.code for category in citation_check.failure_categories
+        ],
     )
 
 
@@ -137,6 +143,17 @@ def quality_result(
         metadata={
             "source": "daily.quality_gate",
             "failure_route": route if review.decision != EditorDecision.PASS else None,
+            "citation_failure_categories": [
+                category.to_dict() for category in citation_check.failure_categories
+            ],
+            "accepted_claims_count": quality_summary.accepted_claims_count,
+            "rejected_claims_count": quality_summary.rejected_claims_count,
+            "uncertain_claims_count": quality_summary.uncertain_claims_count,
+            "unsupported_claims_count": quality_summary.unsupported_claims_count,
+            "high_severity_unsupported_claims_count": (
+                quality_summary.high_severity_unsupported_claims_count
+            ),
+            "remediation": list(review.required_changes),
         },
     )
 

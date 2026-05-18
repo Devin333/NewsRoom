@@ -142,6 +142,58 @@ def test_support_matrix_does_not_auto_support_low_information_claims() -> None:
     assert matrix.unsupported_claims[0].text == "Robotics expansion."
 
 
+def test_support_matrix_exposes_verified_claim_aggregates() -> None:
+    findings = VerifiedFindings(
+        accepted_claims=[
+            VerifiedClaim(
+                claim_id="claim_supported",
+                claim="A summary covers the main update.",
+                status="accepted",
+                confidence=0.9,
+                supporting_evidence_ids=["ev_1"],
+                supporting_sources=["https://example.com/a"],
+                section_id="summary",
+            )
+        ],
+        rejected_claims=[
+            VerifiedClaim(
+                claim_id="claim_rejected",
+                claim="The vendor acquired a rival.",
+                status="rejected",
+                confidence=1.0,
+                section_id="summary",
+                severity="high",
+            )
+        ],
+        uncertain_claims=[
+            VerifiedClaim(
+                claim_id="claim_uncertain",
+                claim="The vendor may expand into robotics.",
+                status="uncertain",
+                confidence=0.4,
+                section_id="summary",
+            )
+        ],
+    )
+    report = {
+        "sections": [
+            {
+                "section_id": "summary",
+                "title": "Summary",
+                "content": "The vendor acquired a rival.",
+                "sources": ["https://example.com/a"],
+            }
+        ]
+    }
+
+    matrix = SupportMatrixBuilder().build(report, _bundle(), findings)
+
+    assert matrix.accepted_claim_ids == ["claim_supported"]
+    assert matrix.rejected_claim_ids == ["claim_rejected"]
+    assert matrix.uncertain_claim_ids == ["claim_uncertain"]
+    assert matrix.high_severity_unsupported_claims == []
+
+
 def test_quality_scorer_penalizes_unsupported_and_duplicate_sections() -> None:
     report = {
         "sections": [
@@ -162,7 +214,67 @@ def test_quality_scorer_penalizes_unsupported_and_duplicate_sections() -> None:
     assert summary.duplicate_sections == ["B"]
     assert summary.quality_score == 0.0
     assert summary.overall_score == 0.0
+    assert summary.unsupported_claims_count == 1
+    assert summary.accepted_claims_count == 0
+    assert summary.rejected_claims_count == 0
+    assert summary.uncertain_claims_count == 0
+    assert summary.high_severity_unsupported_claims_count == 0
     assert summary.decision == "blocked"
+
+
+def test_quality_scorer_carries_verified_claim_aggregate_counts() -> None:
+    findings = VerifiedFindings(
+        accepted_claims=[
+            VerifiedClaim(
+                claim_id="claim_supported",
+                claim="A summary covers the main update.",
+                status="accepted",
+                confidence=0.9,
+                supporting_evidence_ids=["ev_1"],
+            )
+        ],
+        rejected_claims=[
+            VerifiedClaim(
+                claim_id="claim_rejected",
+                claim="The vendor acquired a rival.",
+                status="rejected",
+                confidence=1.0,
+                section_id="summary",
+            )
+        ],
+        uncertain_claims=[
+            VerifiedClaim(
+                claim_id="claim_uncertain",
+                claim="The vendor may expand into robotics.",
+                status="uncertain",
+                confidence=0.4,
+            )
+        ],
+    )
+    report = {
+        "sections": [
+            {
+                "section_id": "summary",
+                "title": "Summary",
+                "content": "The vendor acquired a rival.",
+                "sources": ["https://example.com/a"],
+            }
+        ]
+    }
+    citation = CitationChecker().check(report, _bundle(), findings)
+    matrix = SupportMatrixBuilder().build(report, _bundle(), findings)
+
+    summary = QualityScorer().score(
+        report=report,
+        citation_check=citation,
+        support_matrix=matrix,
+    )
+
+    assert summary.accepted_claims_count == 1
+    assert summary.rejected_claims_count == 1
+    assert summary.uncertain_claims_count == 1
+    assert summary.unsupported_claims_count == 1
+    assert summary.high_severity_unsupported_claims_count == 0
 
 
 def test_quality_scorer_degrades_uncertain_unsupported_claims_but_keeps_them_blocked() -> None:
