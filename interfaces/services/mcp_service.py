@@ -411,6 +411,7 @@ class MCPApplicationService:
         result = self.report_service_factory().list_reports(
             limit=_optional_int_arg(args, "limit", default=20),
             workflow_id=_optional_arg(args, "workflow_id"),
+            workflow_family=_optional_arg(args, "workflow_family"),
         )
         return MCPToolCallResult(
             tool_name="news.report.list",
@@ -584,6 +585,7 @@ class MCPApplicationService:
             artifact_root=str(args.get("artifact_root") or ".newsroom/runs"),
             limit=_optional_int_arg(args, "limit", default=20),
             workflow_id=_optional_arg(args, "workflow_id"),
+            workflow_family=_optional_arg(args, "workflow_family"),
         )
         return MCPToolCallResult(
             tool_name="news.entity.match_reports",

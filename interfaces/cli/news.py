@@ -109,6 +109,7 @@ def build_parser() -> argparse.ArgumentParser:
     reports_list_parser = reports_subparsers.add_parser("list", help="List persisted reports")
     reports_list_parser.add_argument("--limit", type=int, default=20, help="Maximum reports")
     reports_list_parser.add_argument("--workflow-id", default=None, help="Optional workflow id filter")
+    reports_list_parser.add_argument("--workflow-family", default=None, help="Optional workflow family filter")
     reports_list_parser.add_argument(
         "--artifact-root",
         default=".newsroom/runs",
@@ -283,6 +284,7 @@ def build_parser() -> argparse.ArgumentParser:
     entities_match_parser.add_argument("--artifact-root", default=".newsroom/runs")
     entities_match_parser.add_argument("--limit", type=int, default=20)
     entities_match_parser.add_argument("--workflow-id", default=None)
+    entities_match_parser.add_argument("--workflow-family", default=None)
     entities_match_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     entities_match_parser.set_defaults(handler=_entities_match_reports)
 
@@ -1455,6 +1457,7 @@ def _reports_list(args: argparse.Namespace) -> int:
         result = ReportApplicationService(artifact_root=args.artifact_root).list_reports(
             limit=args.limit,
             workflow_id=args.workflow_id,
+            workflow_family=args.workflow_family,
         )
     except ValueError as exc:
         print(str(exc))
@@ -1640,6 +1643,7 @@ def _entities_match_reports(args: argparse.Namespace) -> int:
             artifact_root=args.artifact_root,
             limit=args.limit,
             workflow_id=args.workflow_id,
+            workflow_family=args.workflow_family,
         )
     except (KeyError, ValueError) as exc:
         print(str(exc))

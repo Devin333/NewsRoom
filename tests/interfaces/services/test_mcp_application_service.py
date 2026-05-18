@@ -309,7 +309,37 @@ def test_mcp_daily_run_returns_runner_validation_error(tmp_path, monkeypatch) ->
     assert "unsupported daily intelligence profile" in result.error_message
 
 
-def test_mcp_entity_tools_use_real_local_json_service(tmp_path) -> None:
+def test_mcp_entity_match_reports_accepts_daily_workflow_family(tmp_path) -> None:
+    store_path = tmp_path / "entities.json"
+    artifact_root = tmp_path / "runs"
+    _write_report_run(
+        artifact_root,
+        "run-entity-family",
+        "Daily Intelligence: OpenAI",
+        "OpenAI and ChatGPT were cited in this report.",
+    )
+    service = MCPApplicationService(
+        entity_service_factory=lambda: EntityTrackingApplicationService(store_path=store_path)
+    )
+    created = service.call_tool(
+        "news.entity.create",
+        {"name": "OpenAI", "kind": "company", "aliases": ["ChatGPT"]},
+    )
+
+    result = service.call_tool(
+        "news.entity.match_reports",
+        {
+            "entity_id": created.data["entity_id"],
+            "artifact_root": str(artifact_root),
+            "workflow_family": "daily",
+        },
+    )
+
+    assert result.success is True
+    assert result.data["workflow_family"] == "daily"
+    assert result.data["match_count"] == 1
+
+
     store_path = tmp_path / "entities.json"
     service = MCPApplicationService(
         entity_service_factory=lambda: EntityTrackingApplicationService(store_path=store_path)
@@ -735,7 +765,27 @@ def test_mcp_report_list_reads_real_local_report_artifacts(tmp_path) -> None:
     }
 
 
-def test_mcp_report_get_reads_real_local_report_artifact(tmp_path) -> None:
+def test_mcp_report_list_accepts_daily_workflow_family(tmp_path) -> None:
+    _write_report_run(
+        tmp_path,
+        "run-list-family",
+        "Daily Intelligence: OpenAI",
+        "OpenAI appeared in the report.",
+    )
+    service = MCPApplicationService(
+        report_service_factory=lambda: ReportApplicationService(artifact_root=tmp_path)
+    )
+
+    result = service.call_tool(
+        "news.report.list",
+        {"workflow_family": "daily", "limit": 5},
+    )
+
+    assert result.success is True
+    assert result.data["workflow_family"] == "daily"
+    assert result.data["report_count"] == 1
+
+
     _write_report_run(
         tmp_path,
         "run-get-1",

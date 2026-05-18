@@ -555,7 +555,45 @@ def test_news_cli_reports_list_json_output(tmp_path, capsys) -> None:
     assert payload["reports"][0]["workflow_id"] == LEGACY_DAILY_WORKFLOW_ID
 
 
-def test_news_cli_reports_show_json_output(tmp_path, capsys) -> None:
+def test_news_cli_reports_list_accepts_workflow_family(tmp_path, capsys) -> None:
+    assert (
+        main(
+            [
+                "run",
+                "daily",
+                "--profile",
+                "live-offline",
+                "--artifact-root",
+                str(tmp_path),
+                "--run-id",
+                "list-family-source",
+                "--topic",
+                "AI policy",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "reports",
+            "list",
+            "--workflow-family",
+            "daily",
+            "--artifact-root",
+            str(tmp_path),
+            "--json",
+        ]
+    )
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert exit_code == 0
+    assert payload["workflow_family"] == "daily"
+    assert payload["report_count"] == 1
+
+
     assert (
         main(
             [

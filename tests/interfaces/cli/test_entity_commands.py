@@ -60,8 +60,8 @@ def test_news_cli_entities_create_list_and_match_reports_json(tmp_path, capsys) 
             str(store_path),
             "--artifact-root",
             str(artifact_root),
-            "--workflow-id",
-            LEGACY_DAILY_WORKFLOW_ID,
+            "--workflow-family",
+            "daily",
             "--json",
         ]
     )
@@ -72,7 +72,68 @@ def test_news_cli_entities_create_list_and_match_reports_json(tmp_path, capsys) 
     assert match_payload["matches"][0]["report_id"] == "entity-daily:final"
 
 
-def test_news_cli_entities_disable_enable_delete_json(tmp_path, capsys) -> None:
+def test_news_cli_entities_match_reports_accepts_workflow_family(tmp_path, capsys) -> None:
+    store_path = tmp_path / "entities.json"
+    artifact_root = tmp_path / "runs"
+
+    create_code = main(
+        [
+            "entities",
+            "create",
+            "--name",
+            "OpenAI",
+            "--entity-id",
+            "company:openai",
+            "--alias",
+            "ChatGPT",
+            "--store-path",
+            str(store_path),
+            "--json",
+        ]
+    )
+    capsys.readouterr()
+    assert create_code == 0
+
+    assert (
+        main(
+            [
+                "run",
+                "daily",
+                "--profile",
+                "live-offline",
+                "--topic",
+                "OpenAI policy",
+                "--artifact-root",
+                str(artifact_root),
+                "--run-id",
+                "entity-family-daily",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    match_code = main(
+        [
+            "entities",
+            "match-reports",
+            "company:openai",
+            "--store-path",
+            str(store_path),
+            "--artifact-root",
+            str(artifact_root),
+            "--workflow-family",
+            "daily",
+            "--json",
+        ]
+    )
+    match_payload = json.loads(capsys.readouterr().out)
+
+    assert match_code == 0
+    assert match_payload["workflow_family"] == "daily"
+    assert match_payload["match_count"] == 1
+
+
     store_path = tmp_path / "entities.json"
     assert (
         main(
