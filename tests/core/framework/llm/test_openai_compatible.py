@@ -680,6 +680,9 @@ def test_openai_compatible_client_streams_text_deltas_and_usage(monkeypatch) -> 
         "finish_reason": "stop",
         "attempts": 1,
         "retry_count": 0,
+        "structured_output_requested": False,
+        "response_format": None,
+        "tool_count": 0,
     }
 
 

@@ -265,6 +265,9 @@ class OpenAICompatibleClient:
                 "finish_reason": last_finish_reason or "stop",
                 "attempts": 1,
                 "retry_count": 0,
+                "structured_output_requested": request.output_schema is not None,
+                "response_format": request.response_format,
+                "tool_count": len(request.tools),
             },
         )
 

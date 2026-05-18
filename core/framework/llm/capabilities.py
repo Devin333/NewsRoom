@@ -55,6 +55,7 @@ class ModelCapabilities:
 
 def _normalize_capability_name(capability: str) -> str:
     normalized = capability.strip().lower().replace("-", "_")
+    normalized = _CAPABILITY_ALIASES.get(normalized, normalized)
     if normalized.startswith("supports_"):
         return normalized
     return f"supports_{normalized}"
