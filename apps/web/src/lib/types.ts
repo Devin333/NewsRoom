@@ -59,6 +59,7 @@ export type ReportListItem = {
 export type ReportList = {
   limit?: number
   workflow_id?: string | null
+  workflow_family?: string | null
   report_count: number
   reports: ReportListItem[]
 }
@@ -158,6 +159,29 @@ export type RunOperationResult = {
   details?: Record<string, unknown>
 }
 
+export type ApprovalResumeContext = {
+  approval_id: string
+  approval?: ApprovalItem
+  decision_key: string
+  decision_payload: Record<string, unknown>
+  buffer_updates: Record<string, unknown>
+  resume_metadata: Record<string, unknown>
+}
+
+export type ApprovalWorkflowResumeResult = {
+  approval_context?: Record<string, unknown>
+  run_result?: Record<string, unknown>
+  run_id: string
+  workflow_id?: string | null
+  workflow_version?: string | null
+  status: string
+  output?: Record<string, unknown>
+  artifact_dir?: string | null
+  manifest_path?: string | null
+  events_path?: string | null
+  error?: Record<string, unknown> | null
+}
+
 export type WorkerSummary = {
   worker_count?: number
   workers?: unknown[]
@@ -167,19 +191,28 @@ export type WorkerSummary = {
 export type WorkerStatus = {
   worker_id?: string | null
   status?: string | null
-  queue_name?: string | null
+  stored_status?: string | null
+  stale?: boolean
+  queue_names?: string[]
   current_task_id?: string | null
-  leased_until?: string | null
-  heartbeat_at?: string | null
+  last_heartbeat_at?: string | null
+  processed_count?: number | null
+  failed_count?: number | null
   metadata?: Record<string, unknown>
 }
 
 export type QueueStatus = {
   queue_name?: string | null
+  stream_length?: number | null
+  group_name?: string | null
+  group_exists?: boolean
   pending_count?: number | null
   leased_count?: number | null
   dead_letter_count?: number | null
-  stale_count?: number | null
+  lag?: number | null
+  oldest_task_age?: number | null
+  consumer_count?: number | null
+  consumers?: Array<{ consumer_name: string; pending_count: number }>
   metadata?: Record<string, unknown>
 }
 

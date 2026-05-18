@@ -88,6 +88,14 @@ export default async function RunDetailPage({ params }: { params: { runId: strin
           <span className="font-mono text-ink">/api/v1/runs/{runId}/replay</span>
         </div>
       </section>
+
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold text-ink">Live event streams</h2>
+        <div className="rounded-lg border border-line bg-white p-4 text-sm text-muted">
+          <p><span className="font-mono text-ink">/api/v1/runs/{runId}/progress</span></p>
+          <p className="mt-2"><span className="font-mono text-ink">/api/v1/runs/{runId}/events/stream</span></p>
+        </div>
+      </section>
     </main>
   )
 }
