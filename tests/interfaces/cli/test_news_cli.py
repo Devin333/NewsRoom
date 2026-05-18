@@ -1,6 +1,7 @@
 import json
 
 from interfaces.cli.news import main
+from workflows.daily_intelligence.profiles import LEGACY_DAILY_WORKFLOW_ID
 from interfaces.services.diagnose_service import DiagnoseCheck, DiagnoseResult
 from interfaces.services.run_service import LiveSmokeResult
 
@@ -538,7 +539,7 @@ def test_news_cli_reports_list_json_output(tmp_path, capsys) -> None:
             "reports",
             "list",
             "--workflow-id",
-            "daily-intelligence-live",
+            LEGACY_DAILY_WORKFLOW_ID,
             "--artifact-root",
             str(tmp_path),
             "--json",
@@ -548,10 +549,10 @@ def test_news_cli_reports_list_json_output(tmp_path, capsys) -> None:
     payload = json.loads(captured.out)
 
     assert exit_code == 0
-    assert payload["workflow_id"] == "daily-intelligence-live"
+    assert payload["workflow_id"] == LEGACY_DAILY_WORKFLOW_ID
     assert payload["report_count"] == 1
     assert payload["reports"][0]["report_id"] == "list-source:final"
-    assert payload["reports"][0]["workflow_id"] == "daily-intelligence-live"
+    assert payload["reports"][0]["workflow_id"] == LEGACY_DAILY_WORKFLOW_ID
 
 
 def test_news_cli_reports_show_json_output(tmp_path, capsys) -> None:

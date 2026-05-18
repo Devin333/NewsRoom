@@ -12,7 +12,7 @@ from interfaces.services.report_service import ReportApplicationService
 from interfaces.services.run_inspection_service import RunInspectionService
 from interfaces.services.run_service import RunApplicationService
 from interfaces.services.storage_service import StorageApplicationService
-from interfaces.services.subscription_service import SubscriptionApplicationService
+from workflows.daily_intelligence.profiles import LEGACY_DAILY_WORKFLOW_ID
 from storage.artifacts import ArtifactWriteRequest, FilesystemArtifactStore, LocalJsonArtifactIndexStore
 from storage.lineage import LineageRef, LocalJsonLineageStore
 from storage.vector import InMemoryVectorStore
@@ -285,7 +285,7 @@ def test_mcp_daily_and_weekly_run_use_real_runners(tmp_path, monkeypatch) -> Non
 
     assert daily.success is True
     assert daily.data["run_id"] == "mcp-daily-run"
-    assert daily.data["workflow_id"] == "daily-intelligence-live"
+    assert daily.data["workflow_id"] == LEGACY_DAILY_WORKFLOW_ID
     assert daily.data["status"] == "succeeded"
     assert weekly.success is True
     assert weekly.data["run_id"] == "mcp-weekly-run"
@@ -362,7 +362,7 @@ def test_mcp_entity_match_reports_reads_real_local_report_artifacts(tmp_path) ->
         {
             "entity_id": created.data["entity_id"],
             "artifact_root": str(artifact_root),
-            "workflow_id": "daily-intelligence-live",
+            "workflow_id": LEGACY_DAILY_WORKFLOW_ID,
         },
     )
 
@@ -723,11 +723,11 @@ def test_mcp_report_list_reads_real_local_report_artifacts(tmp_path) -> None:
 
     result = service.call_tool(
         "news.report.list",
-        {"workflow_id": "daily-intelligence-live", "limit": 5},
+        {"workflow_id": LEGACY_DAILY_WORKFLOW_ID, "limit": 5},
     )
 
     assert result.success is True
-    assert result.data["workflow_id"] == "daily-intelligence-live"
+    assert result.data["workflow_id"] == LEGACY_DAILY_WORKFLOW_ID
     assert result.data["report_count"] == 2
     assert {report["report_id"] for report in result.data["reports"]} == {
         "run-list-1:final",
@@ -1202,7 +1202,7 @@ class _FakeRunService:
         self.calls.append({"kind": "daily", **kwargs})
         return RunResult(
             run_id=kwargs.get("run_id") or "daily-run",
-            workflow_id="daily-intelligence-live",
+            workflow_id=LEGACY_DAILY_WORKFLOW_ID,
             workflow_version="1.0",
             status=WorkflowStatus.SUCCEEDED,
             output={"topic": kwargs.get("topic")},
@@ -1443,7 +1443,7 @@ def _write_report_run(root, run_id: str, title: str, body: str) -> None:
         json.dumps(
             {
                 "run_id": run_id,
-                "workflow_id": "daily-intelligence-live",
+                "workflow_id": LEGACY_DAILY_WORKFLOW_ID,
                 "profile": "live-offline",
                 "status": "succeeded",
                 "finished_at": "2026-05-11T00:00:00Z",

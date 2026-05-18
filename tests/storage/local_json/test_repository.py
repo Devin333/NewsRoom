@@ -3,6 +3,7 @@ import json
 import pytest
 
 from storage.local_json import LocalJsonRepository, ReportNotFoundError
+from workflows.daily_intelligence.profiles import LEGACY_DAILY_WORKFLOW_ID
 
 
 def _write_report_run(
@@ -146,14 +147,14 @@ def test_local_json_repository_lists_reports_with_workflow_filter(tmp_path) -> N
         "daily-old",
         "2026-05-10T00:00:00Z",
         "Old Daily",
-        workflow_id="daily-intelligence-live",
+        workflow_id=LEGACY_DAILY_WORKFLOW_ID,
     )
     _write_report_run(
         tmp_path,
         "daily-new",
         "2026-05-11T00:00:00Z",
         "New Daily",
-        workflow_id="daily-intelligence-live",
+        workflow_id=LEGACY_DAILY_WORKFLOW_ID,
     )
     _write_report_run(
         tmp_path,
@@ -165,11 +166,11 @@ def test_local_json_repository_lists_reports_with_workflow_filter(tmp_path) -> N
 
     records = LocalJsonRepository(tmp_path).list_reports(
         limit=10,
-        workflow_id="daily-intelligence-live",
+        workflow_id=LEGACY_DAILY_WORKFLOW_ID,
     )
 
     assert [record.run_id for record in records] == ["daily-new", "daily-old"]
-    assert records[0].workflow_id == "daily-intelligence-live"
+    assert records[0].workflow_id == LEGACY_DAILY_WORKFLOW_ID
     assert records[0].profile == "live-offline"
 
 
@@ -179,7 +180,7 @@ def test_local_json_repository_lists_blocked_reports(tmp_path) -> None:
         "blocked",
         "2026-05-12T00:00:00Z",
         "Blocked Policy Report",
-        workflow_id="daily-intelligence-live",
+        workflow_id=LEGACY_DAILY_WORKFLOW_ID,
         blocked=True,
     )
 

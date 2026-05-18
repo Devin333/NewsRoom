@@ -226,6 +226,7 @@ class PostgresRepository:
         *,
         limit: int = 20,
         workflow_id: str | None = None,
+        workflow_ids: tuple[str, ...] | None = None,
     ) -> list[PostgresReportSearchRecord]:
         if limit <= 0:
             raise ValueError("limit must be greater than zero")
@@ -234,6 +235,10 @@ class PostgresRepository:
         if workflow_id:
             where = "WHERE wr.workflow_id = %s"
             params = (workflow_id, limit)
+        elif workflow_ids:
+            placeholders = ", ".join(["%s"] * len(workflow_ids))
+            where = f"WHERE wr.workflow_id IN ({placeholders})"
+            params = (*workflow_ids, limit)
         else:
             params = (limit,)
         sql = f"""

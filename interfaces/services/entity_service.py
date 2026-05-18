@@ -72,12 +72,14 @@ class EntityReportMatchResult:
     matches: list[EntityReportMatch]
     limit: int
     workflow_id: str | None
+    workflow_family: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "entity": self.entity.to_dict(),
             "limit": self.limit,
             "workflow_id": self.workflow_id,
+            "workflow_family": self.workflow_family,
             "match_count": len(self.matches),
             "matches": [match.to_dict() for match in self.matches],
         }
@@ -138,6 +140,7 @@ class EntityTrackingApplicationService:
         artifact_root: str | Path = ".newsroom/runs",
         limit: int = 20,
         workflow_id: str | None = None,
+        workflow_family: str | None = None,
     ) -> EntityReportMatchResult:
         if limit <= 0:
             raise ValueError("limit must be greater than zero")
@@ -146,6 +149,7 @@ class EntityTrackingApplicationService:
         candidate_set = report_service.list_reports(
             limit=max(limit * 5, limit),
             workflow_id=workflow_id,
+            workflow_family=workflow_family,
         )
         matches: list[EntityReportMatch] = []
         for candidate in candidate_set.reports:
@@ -160,6 +164,7 @@ class EntityTrackingApplicationService:
             matches=matches,
             limit=limit,
             workflow_id=workflow_id,
+            workflow_family=workflow_family,
         )
 
 

@@ -17,7 +17,10 @@ from core.framework.workflow import (
 from domain.reports import FinalReport, render_markdown
 from storage.artifacts import ArtifactRef
 from storage.local_json import LocalJsonRepository
-from workflows.daily_intelligence.spec import WORKFLOW_ID as DAILY_WORKFLOW_ID
+from workflows.daily_intelligence.profiles import (
+    LEGACY_DAILY_WORKFLOW_ID,
+    daily_workflow_ids,
+)
 
 PROFILE_WEEKLY = "weekly"
 WORKFLOW_ID = "weekly-intelligence"
@@ -65,7 +68,7 @@ class WeeklyIntelligenceRunner:
                 "language": language,
                 "topic": _clean_topic(topic),
                 "source_limit": source_limit,
-                "source_workflow_id": DAILY_WORKFLOW_ID,
+                "source_workflow_id": LEGACY_DAILY_WORKFLOW_ID,
                 "period_start": _format_datetime(period[0]),
                 "period_end": _format_datetime(period[1]),
             },
@@ -84,12 +87,17 @@ class WeeklyIntelligenceRunner:
         source_limit = int(request.get("source_limit", 20))
         period_start = _parse_datetime(str(request["period_start"]))
         period_end = _parse_datetime(str(request["period_end"]))
-        workflow_id = str(request.get("source_workflow_id") or DAILY_WORKFLOW_ID)
+        workflow_id = str(request.get("source_workflow_id") or LEGACY_DAILY_WORKFLOW_ID)
+        workflow_family = request.get("source_workflow_family")
         topic = request.get("topic")
 
         source_reports: list[dict[str, Any]] = []
         scan_limit = max(source_limit * 5, source_limit)
-        candidates = self.report_repository.list_reports(limit=scan_limit, workflow_id=workflow_id)
+        candidates = self.report_repository.list_reports(
+            limit=scan_limit,
+            workflow_id=workflow_id if workflow_family is None else None,
+            workflow_ids=daily_workflow_ids() if workflow_family == "daily" else None,
+        )
         for candidate in candidates:
             finished_at = _try_parse_datetime(candidate.finished_at)
             if finished_at is None:

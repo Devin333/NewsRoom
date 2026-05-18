@@ -3,6 +3,7 @@ from pathlib import Path
 
 from core.framework.specs import WorkflowStatus
 from workflows.daily_intelligence import DailyIntelligenceRunner
+from workflows.daily_intelligence.profiles import LEGACY_DAILY_WORKFLOW_ID
 from workflows.weekly_intelligence import WeeklyIntelligenceRunner
 
 
@@ -35,6 +36,26 @@ def test_weekly_intelligence_runner_writes_report_from_daily_artifacts(tmp_path)
     assert manifest["artifacts"]["report_markdown"] == "report.md"
     assert report["metadata"]["source_report_count"] == 1
     assert "https://example.com/ai-chip-policy" in report["source_urls"]
+
+
+def test_weekly_intelligence_runner_reads_daily_workflow_family(tmp_path) -> None:
+    daily = DailyIntelligenceRunner(artifact_root=tmp_path).run(
+        profile="live-offline",
+        topic="AI policy",
+        source_limit=2,
+        run_id="daily-source",
+    )
+    assert daily.status == WorkflowStatus.SUCCEEDED
+
+    weekly = WeeklyIntelligenceRunner(artifact_root=tmp_path).run(
+        topic="AI policy",
+        period_start="2026-05-01T00:00:00Z",
+        period_end="2026-05-20T00:00:00Z",
+        run_id="weekly-source-family",
+    )
+
+    assert weekly.status == WorkflowStatus.SUCCEEDED
+    assert weekly.output["final_report"].metadata["source_workflow_id"] == LEGACY_DAILY_WORKFLOW_ID
 
 
 def test_weekly_intelligence_runner_fails_without_daily_reports(tmp_path) -> None:

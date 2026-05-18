@@ -7,6 +7,7 @@ from typing import Any
 
 from interfaces.models.common import ApiActionResult
 from storage.local_json import LocalJsonRepository
+from workflows.daily_intelligence.profiles import daily_workflow_ids
 
 
 @dataclass(frozen=True)
@@ -29,11 +30,13 @@ class ReportListResultSet:
     limit: int
     reports: list[Any]
     workflow_id: str | None = None
+    workflow_family: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "limit": self.limit,
             "workflow_id": self.workflow_id,
+            "workflow_family": self.workflow_family,
             "report_count": len(self.reports),
             "reports": [report.to_dict() for report in self.reports],
         }
@@ -99,13 +102,21 @@ class ReportApplicationService:
         *,
         limit: int = 20,
         workflow_id: str | None = None,
+        workflow_family: str | None = None,
     ) -> ReportListResultSet:
         if limit <= 0:
             raise ValueError("limit must be greater than zero")
+        if workflow_id and workflow_family:
+            raise ValueError("workflow_id and workflow_family are mutually exclusive")
         return ReportListResultSet(
             limit=limit,
             workflow_id=workflow_id,
-            reports=self.repository.list_reports(limit=limit, workflow_id=workflow_id),
+            workflow_family=workflow_family,
+            reports=self.repository.list_reports(
+                limit=limit,
+                workflow_id=workflow_id,
+                workflow_ids=_workflow_ids_for_family(workflow_family),
+            ),
         )
 
     def search_reports(self, *, query: str, limit: int = 20) -> ReportSearchResultSet:
@@ -210,3 +221,14 @@ def _quality_payload(report_json: Any) -> dict[str, Any]:
         if isinstance(value, dict):
             return dict(value)
     return {}
+
+
+def _workflow_ids_for_family(workflow_family: str | None) -> tuple[str, ...] | None:
+    if workflow_family is None:
+        return None
+    normalized = workflow_family.strip().lower()
+    if not normalized:
+        return None
+    if normalized == "daily":
+        return daily_workflow_ids()
+    raise ValueError(f"unsupported workflow_family: {workflow_family}")

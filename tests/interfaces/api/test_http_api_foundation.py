@@ -8,6 +8,7 @@ from interfaces.events import AuditEmitter, InMemoryAuditSink
 from interfaces.services.run_inspection_service import RunInspectionService
 from interfaces.services.worker_service import EnqueuedTaskResult
 from storage.repository import ReportRecord
+from workflows.daily_intelligence.profiles import LEGACY_DAILY_WORKFLOW_ID
 
 
 def test_health_uses_common_envelope() -> None:
@@ -358,15 +359,27 @@ def test_get_report_returns_report_detail() -> None:
 def test_list_reports_returns_report_catalog() -> None:
     client = TestClient(create_app(report_service_factory=lambda: _FakeReportService()))
 
-    response = client.get("/api/v1/reports?limit=1&workflow_id=daily-intelligence-live")
+    response = client.get(f"/api/v1/reports?limit=1&workflow_id={LEGACY_DAILY_WORKFLOW_ID}")
     payload = response.json()
 
     assert response.status_code == 200
     assert payload["success"] is True
-    assert payload["data"]["workflow_id"] == "daily-intelligence-live"
+    assert payload["data"]["workflow_id"] == LEGACY_DAILY_WORKFLOW_ID
     assert payload["data"]["report_count"] == 1
     assert payload["data"]["reports"][0]["report_id"] == "report-1"
-    assert payload["data"]["reports"][0]["workflow_id"] == "daily-intelligence-live"
+    assert payload["data"]["reports"][0]["workflow_id"] == LEGACY_DAILY_WORKFLOW_ID
+
+
+def test_list_reports_returns_report_catalog_for_daily_workflow_family() -> None:
+    client = TestClient(create_app(report_service_factory=lambda: _FakeReportService()))
+
+    response = client.get("/api/v1/reports?limit=1&workflow_family=daily")
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["success"] is True
+    assert payload["data"]["workflow_family"] == "daily"
+    assert payload["data"]["report_count"] == 1
 
 
 def test_latest_report_missing_uses_unified_error() -> None:
@@ -615,7 +628,7 @@ def test_entity_report_matches_return_matches() -> None:
     client = TestClient(create_app(entity_service_factory=lambda: _FakeEntityService()))
 
     response = client.get(
-        "/api/v1/entities/company:openai/report-matches?limit=1&workflow_id=daily-intelligence-live"
+        f"/api/v1/entities/company:openai/report-matches?limit=1&workflow_id={LEGACY_DAILY_WORKFLOW_ID}"
     )
     payload = response.json()
 
@@ -995,13 +1008,14 @@ class _FakeReportService:
             raise ValueError(f"invalid report id: {report_id}")
         return self.latest_report()
 
-    def list_reports(self, *, limit, workflow_id=None):
+    def list_reports(self, *, limit, workflow_id=None, workflow_family=None):
         if limit <= 0:
             raise ValueError("limit must be greater than zero")
         return _FakeResult(
             {
                 "limit": limit,
                 "workflow_id": workflow_id,
+                "workflow_family": workflow_family,
                 "report_count": 1,
                 "reports": [
                     {
@@ -1011,7 +1025,7 @@ class _FakeReportService:
                         "finished_at": "2026-05-11T01:00:00Z",
                         "title": "Daily Intelligence",
                         "quality_score": 0.9,
-                        "workflow_id": "daily-intelligence-live",
+                        "workflow_id": LEGACY_DAILY_WORKFLOW_ID,
                         "manifest_path": ".newsroom/runs/run-1/manifest.json",
                         "report_json_path": ".newsroom/runs/run-1/report.json",
                         "report_markdown_path": ".newsroom/runs/run-1/report.md",
@@ -1313,7 +1327,7 @@ class _FakeEntityService:
     def delete_entity(self, entity_id):
         return True
 
-    def match_reports(self, entity_id, *, limit, workflow_id):
+    def match_reports(self, entity_id, *, limit, workflow_id=None, workflow_family=None):
         return _FakeResult(
             {
                 "entity": {
@@ -1328,6 +1342,7 @@ class _FakeEntityService:
                 },
                 "limit": limit,
                 "workflow_id": workflow_id,
+                "workflow_family": workflow_family,
                 "match_count": 1,
                 "matches": [
                     {
@@ -1335,7 +1350,7 @@ class _FakeEntityService:
                         "run_id": "run-1",
                         "title": "Daily Intelligence: OpenAI",
                         "finished_at": "2026-05-11T00:00:00Z",
-                        "workflow_id": "daily-intelligence-live",
+                        "workflow_id": LEGACY_DAILY_WORKFLOW_ID,
                         "matched_aliases": ["OpenAI", "ChatGPT"],
                         "match_count": 2,
                         "quality_score": 0.9,

@@ -21,7 +21,13 @@ from workflows.daily_intelligence import build_test_agent_loop_workflow
 from workflows.daily_intelligence import build_test_no_llm_registry
 from workflows.daily_intelligence import build_test_no_llm_workflow
 from workflows.daily_intelligence.artifact_publisher import build_daily_intelligence_artifact_publishers
-from workflows.daily_intelligence.profiles import PROFILE_AGENTIC_LIVE, daily_agentic_enabled
+from workflows.daily_intelligence.profiles import (
+    LEGACY_DAILY_WORKFLOW_ID,
+    PROFILE_AGENTIC_LIVE,
+    PROFILE_LIVE,
+    PROFILE_LIVE_OFFLINE,
+    daily_agentic_enabled,
+)
 from workflows.daily_intelligence.test_agent_loop import run_test_agent_loop
 from workflows.daily_intelligence.test_no_llm import run_test_no_llm
 from workflows.daily_intelligence.runner import PROFILE_LIVE, PROFILE_LIVE_OFFLINE
@@ -116,27 +122,13 @@ class RunApplicationService:
         source_limit: int,
         run_id: str | None = None,
     ) -> RunResult:
-        repository = repository_from_env(artifact_root=self.artifact_root)
-        repository.migrate()
-        runner_cls = (
-            AgenticDailyIntelligenceRunner
-            if daily_agentic_enabled(profile)
-            else DailyIntelligenceRunner
-        )
-        result = runner_cls(artifact_root=self.artifact_root).run(
+        return self._run_daily_with_runner(
+            runner_cls=_daily_runner_cls(profile),
             profile=profile,
             topic=topic,
             source_limit=source_limit,
             run_id=run_id,
         )
-        persist_run_result(
-            repository,
-            result,
-            profile=profile,
-            migrate=False,
-        )
-        self._index_memory_if_configured(result, topic=topic)
-        return result
 
     def run_daily_agentic(
         self,
@@ -146,22 +138,13 @@ class RunApplicationService:
         source_limit: int,
         run_id: str | None = None,
     ) -> RunResult:
-        repository = repository_from_env(artifact_root=self.artifact_root)
-        repository.migrate()
-        result = AgenticDailyIntelligenceRunner(artifact_root=self.artifact_root).run(
+        return self._run_daily_with_runner(
+            runner_cls=AgenticDailyIntelligenceRunner,
             profile=profile,
             topic=topic,
             source_limit=source_limit,
             run_id=run_id,
         )
-        persist_run_result(
-            repository,
-            result,
-            profile=profile,
-            migrate=False,
-        )
-        self._index_memory_if_configured(result, topic=topic)
-        return result
 
     def run_live_smoke(
         self,
@@ -282,6 +265,32 @@ class RunApplicationService:
         )
         result.output["memory_ingestion_result"] = ingestion_result.to_dict()
 
+    def _run_daily_with_runner(
+        self,
+        *,
+        runner_cls,
+        profile: str,
+        topic: str,
+        source_limit: int,
+        run_id: str | None,
+    ) -> RunResult:
+        repository = repository_from_env(artifact_root=self.artifact_root)
+        repository.migrate()
+        result = runner_cls(artifact_root=self.artifact_root).run(
+            profile=profile,
+            topic=topic,
+            source_limit=source_limit,
+            run_id=run_id,
+        )
+        persist_run_result(
+            repository,
+            result,
+            profile=profile,
+            migrate=False,
+        )
+        self._index_memory_if_configured(result, topic=topic)
+        return result
+
 
 def _live_smoke_readiness_issues(diagnostics: DiagnoseResult) -> list[DiagnoseCheck]:
     return [
@@ -303,7 +312,7 @@ def _resolve_approval_resume_workflow(
 ) -> _ResolvedWorkflow:
     normalized_workflow = _normalize_workflow_id(workflow_id)
     normalized_profile = _normalize_profile(profile)
-    if normalized_workflow in {"daily", "daily-intelligence", "daily_intelligence", "daily-intelligence-live"}:
+    if normalized_workflow in {"daily", "daily-intelligence", "daily_intelligence", LEGACY_DAILY_WORKFLOW_ID}:
         actual_profile = normalized_profile or PROFILE_LIVE_OFFLINE
         if actual_profile not in {PROFILE_LIVE, PROFILE_LIVE_OFFLINE}:
             raise ValueError(
@@ -350,3 +359,9 @@ def _normalize_profile(value: str | None) -> str | None:
         return None
     normalized = str(value).strip().lower()
     return normalized or None
+
+
+def _daily_runner_cls(profile: str):
+    if profile in {PROFILE_LIVE, PROFILE_LIVE_OFFLINE}:
+        return AgenticDailyIntelligenceRunner
+    return AgenticDailyIntelligenceRunner if daily_agentic_enabled(profile) else DailyIntelligenceRunner

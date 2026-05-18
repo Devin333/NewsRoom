@@ -122,11 +122,15 @@ class LocalJsonRepository:
         *,
         limit: int = 20,
         workflow_id: str | None = None,
+        workflow_ids: tuple[str, ...] | None = None,
     ) -> list[ReportSearchRecord]:
         if limit <= 0:
             raise ValueError("limit must be greater than zero")
         records: list[ReportSearchRecord] = []
-        for manifest_path, manifest in self._iter_report_manifests(workflow_id=workflow_id):
+        for manifest_path, manifest in self._iter_report_manifests(
+            workflow_id=workflow_id,
+            workflow_ids=workflow_ids,
+        ):
             records.append(_summary_from_manifest(manifest_path, manifest))
         records.sort(key=lambda item: item.finished_at, reverse=True)
         return records[:limit]
@@ -158,6 +162,7 @@ class LocalJsonRepository:
         self,
         *,
         workflow_id: str | None = None,
+        workflow_ids: tuple[str, ...] | None = None,
     ) -> list[tuple[Path, dict[str, Any]]]:
         manifests: list[tuple[Path, dict[str, Any]]] = []
         for manifest_path in self.artifact_root.glob("*/manifest.json"):
@@ -168,6 +173,8 @@ class LocalJsonRepository:
             if manifest.get("status") != "succeeded":
                 continue
             if workflow_id is not None and manifest.get("workflow_id") != workflow_id:
+                continue
+            if workflow_ids is not None and manifest.get("workflow_id") not in set(workflow_ids):
                 continue
             artifacts = manifest.get("artifacts", {})
             if not _has_report_artifact(artifacts):

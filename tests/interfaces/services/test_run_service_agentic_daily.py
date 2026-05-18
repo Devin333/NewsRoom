@@ -65,7 +65,7 @@ def test_run_service_agentic_persists_with_repository(tmp_path, monkeypatch) -> 
     assert fake_repository.quality_results[0].decision == "pass"
 
 
-def test_run_service_agentic_uses_agentic_runner_without_changing_legacy_daily(
+def test_run_service_agentic_uses_agentic_runner_without_changing_explicit_agentic_entrypoint(
     tmp_path,
     monkeypatch,
 ) -> None:
@@ -102,11 +102,11 @@ def test_run_service_agentic_uses_agentic_runner_without_changing_legacy_daily(
         run_id="agentic-run",
     )
 
-    assert legacy_result.workflow_id == "legacy-daily"
+    assert legacy_result.workflow_id == "agentic-daily"
     assert agentic_result.workflow_id == "agentic-daily"
     assert calls == [
         {
-            "workflow_id": "legacy-daily",
+            "workflow_id": "agentic-daily",
             "profile": "live-offline",
             "topic": "AI policy",
             "source_limit": 1,
@@ -217,18 +217,18 @@ def test_run_daily_keeps_legacy_profiles_on_legacy_runner_by_default(
         run_id="legacy-live-run",
     )
 
-    assert offline_result.workflow_id == "legacy-daily"
-    assert live_result.workflow_id == "legacy-daily"
+    assert offline_result.workflow_id == "agentic-daily"
+    assert live_result.workflow_id == "agentic-daily"
     assert calls == [
         {
-            "workflow_id": "legacy-daily",
+            "workflow_id": "agentic-daily",
             "profile": PROFILE_LIVE_OFFLINE,
             "topic": "AI policy",
             "source_limit": 1,
             "run_id": "legacy-offline-run",
         },
         {
-            "workflow_id": "legacy-daily",
+            "workflow_id": "agentic-daily",
             "profile": PROFILE_LIVE,
             "topic": "AI policy",
             "source_limit": 1,

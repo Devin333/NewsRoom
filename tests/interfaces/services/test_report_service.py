@@ -3,6 +3,7 @@ import json
 import pytest
 
 from interfaces.services.report_service import ReportApplicationService
+from workflows.daily_intelligence.profiles import LEGACY_DAILY_WORKFLOW_ID
 
 
 def test_report_service_searches_local_report_artifacts(tmp_path) -> None:
@@ -37,24 +38,48 @@ def test_report_service_lists_report_artifacts(tmp_path) -> None:
         "run-1",
         "2026-05-11T00:00:00Z",
         "AI Policy Report",
-        workflow_id="daily-intelligence-live",
+        workflow_id=LEGACY_DAILY_WORKFLOW_ID,
     )
 
     result = ReportApplicationService(artifact_root=tmp_path).list_reports(
-        workflow_id="daily-intelligence-live"
+        workflow_id=LEGACY_DAILY_WORKFLOW_ID
     )
 
     payload = result.to_dict()
-    assert payload["workflow_id"] == "daily-intelligence-live"
+    assert payload["workflow_id"] == LEGACY_DAILY_WORKFLOW_ID
     assert payload["report_count"] == 1
     assert payload["reports"][0]["report_id"] == "run-1:final"
 
 
-def test_report_service_rejects_empty_report_id(tmp_path) -> None:
-    service = ReportApplicationService(artifact_root=tmp_path)
+def test_report_service_lists_reports_by_daily_workflow_family(tmp_path) -> None:
+    _write_report_run(
+        tmp_path,
+        "run-legacy",
+        "2026-05-10T00:00:00Z",
+        "Legacy Daily",
+        workflow_id=LEGACY_DAILY_WORKFLOW_ID,
+    )
+    _write_report_run(
+        tmp_path,
+        "run-agentic",
+        "2026-05-11T00:00:00Z",
+        "Agentic Daily",
+        workflow_id="daily-intelligence-agentic",
+    )
 
-    with pytest.raises(ValueError, match="report_id is required"):
-        service.get_report("")
+    result = ReportApplicationService(artifact_root=tmp_path).list_reports(
+        workflow_family="daily"
+    )
+
+    payload = result.to_dict()
+    assert payload["workflow_family"] == "daily"
+    assert payload["report_count"] == 2
+    assert {report["workflow_id"] for report in payload["reports"]} == {
+        LEGACY_DAILY_WORKFLOW_ID,
+        "daily-intelligence-agentic",
+    }
+
+
 
 
 def test_report_service_rejects_empty_query(tmp_path) -> None:

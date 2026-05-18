@@ -33,11 +33,12 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
         return helpers.success(helpers.model_to_dict(data))
 
     @router.get("/api/v1/reports")
-    def list_reports(limit: int = 20, workflow_id: str | None = None):
+    def list_reports(limit: int = 20, workflow_id: str | None = None, workflow_family: str | None = None):
         try:
             result = services.report_service_factory().list_reports(
                 limit=limit,
                 workflow_id=workflow_id,
+                workflow_family=workflow_family,
             )
         except ValueError as exc:
             return helpers.error(status_code=400, code="invalid_report_catalog", message=str(exc))

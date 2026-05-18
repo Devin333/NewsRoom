@@ -6,6 +6,7 @@ from core.framework.llm import LLMResponse, TokenUsage
 from core.framework.specs import WorkflowStatus
 from domain.sources import RawSourceItem, SourceDefinition, SourceError
 from sources import SourceConfigError, SourceRegistry
+from workflows.daily_intelligence.profiles import LEGACY_DAILY_WORKFLOW_ID
 from sources.connectors import (
     ARXIV_API_URL,
     GITHUB_API_URL,
@@ -132,7 +133,7 @@ def test_daily_intelligence_runner_workflow_runner_smoke(tmp_path) -> None:
     )
 
     assert result.status == WorkflowStatus.SUCCEEDED
-    assert result.workflow_id == "daily-intelligence-live"
+    assert result.workflow_id == LEGACY_DAILY_WORKFLOW_ID
     assert result.output["final_report"].title == "Daily Intelligence: AI policy"
 
 

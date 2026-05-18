@@ -5,7 +5,7 @@ from pathlib import Path
 
 from core.framework.specs import WorkflowStatus
 from workflows.daily_intelligence import DailyIntelligenceRunner
-from workflows.daily_intelligence.profiles import PROFILE_LIVE_OFFLINE
+from workflows.daily_intelligence.profiles import LEGACY_DAILY_WORKFLOW_ID, PROFILE_LIVE_OFFLINE
 
 
 def test_legacy_live_offline_daily_workflow_baseline(tmp_path) -> None:
@@ -29,7 +29,7 @@ def test_legacy_live_offline_daily_workflow_baseline(tmp_path) -> None:
     assert (run_dir / "events.jsonl").exists()
 
     manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
-    assert manifest["workflow_id"] == "daily-intelligence-live"
+    assert manifest["workflow_id"] == LEGACY_DAILY_WORKFLOW_ID
     assert manifest["profile"] == PROFILE_LIVE_OFFLINE
     assert manifest["status"] == WorkflowStatus.SUCCEEDED.value
     assert manifest["artifacts"]["manifest"] == "manifest.json"

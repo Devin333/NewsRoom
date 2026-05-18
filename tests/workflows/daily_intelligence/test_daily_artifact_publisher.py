@@ -6,6 +6,7 @@ from core.framework.artifacts import ArtifactManager
 from core.framework.specs import StepSpec, WorkflowSpec, WorkflowStatus
 from core.framework.workflow import ArtifactPublishContext, ArtifactPublishPhase
 from workflows.daily_intelligence.artifact_publisher import DailyIntelligenceArtifactPublisher
+from workflows.daily_intelligence.profiles import LEGACY_DAILY_WORKFLOW_ID
 
 
 def test_daily_artifact_publisher_writes_report_and_quality_manifest(tmp_path) -> None:
@@ -140,7 +141,7 @@ def _context(
         phase=ArtifactPublishPhase.TERMINAL,
         run_id="run-1",
         workflow=WorkflowSpec(
-            workflow_id="daily-intelligence-live",
+            workflow_id=LEGACY_DAILY_WORKFLOW_ID,
             name="Daily",
             version="1.0",
             start_step_id="start",

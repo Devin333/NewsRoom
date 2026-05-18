@@ -6,6 +6,7 @@ from core.framework.workers import Task, TaskStatus
 from interfaces.api import create_app
 from interfaces.events import AuditEmitter, InMemoryAuditSink
 from interfaces.services.worker_service import EnqueuedTaskResult
+from workflows.daily_intelligence.profiles import LEGACY_DAILY_WORKFLOW_ID
 
 
 def test_generic_run_api_enqueues_daily_task() -> None:
@@ -37,7 +38,7 @@ def test_generic_run_api_sync_daily_returns_runtime_status_fields() -> None:
     run_service = _FakeRunService(
         RunResult(
             run_id="run-sync",
-            workflow_id="daily-intelligence-live",
+            workflow_id=LEGACY_DAILY_WORKFLOW_ID,
             workflow_version="1.0",
             status=WorkflowStatus.BLOCKED,
             output={
