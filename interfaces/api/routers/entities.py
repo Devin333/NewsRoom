@@ -49,12 +49,18 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
         return helpers.success({"entity_id": entity_id, "deleted": deleted})
 
     @router.get("/api/v1/entities/{entity_id}/report-matches")
-    def entity_report_matches(entity_id: str, limit: int = 20, workflow_id: str | None = None):
+    def entity_report_matches(
+        entity_id: str,
+        limit: int = 20,
+        workflow_id: str | None = None,
+        workflow_family: str | None = None,
+    ):
         try:
             result = services.entity_service_factory().match_reports(
                 entity_id,
                 limit=limit,
                 workflow_id=workflow_id,
+                workflow_family=workflow_family,
             )
         except KeyError as exc:
             return helpers.error(

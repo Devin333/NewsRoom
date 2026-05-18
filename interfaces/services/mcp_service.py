@@ -1257,6 +1257,7 @@ def _tools() -> list[MCPTool]:
                 "properties": {
                     "limit": {"type": "integer", "minimum": 1},
                     "workflow_id": {"type": "string"},
+                    "workflow_family": {"type": "string"},
                 },
             },
         ),
@@ -1425,6 +1426,7 @@ def _tools() -> list[MCPTool]:
                     "artifact_root": {"type": "string"},
                     "limit": {"type": "integer", "minimum": 1},
                     "workflow_id": {"type": "string"},
+                    "workflow_family": {"type": "string"},
                 },
             },
         ),

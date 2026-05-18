@@ -11,11 +11,20 @@ class ReportsResource:
     def latest(self) -> JsonDict:
         return self.transport.request("GET", "/api/v1/reports/latest")
 
-    def list(self, limit: int = 20, workflow_id: str | None = None) -> JsonDict:
+    def list(
+        self,
+        limit: int = 20,
+        workflow_id: str | None = None,
+        workflow_family: str | None = None,
+    ) -> JsonDict:
         return self.transport.request(
             "GET",
             "/api/v1/reports",
-            params={"limit": limit, "workflow_id": workflow_id},
+            params={
+                "limit": limit,
+                "workflow_id": workflow_id,
+                "workflow_family": workflow_family,
+            },
         )
 
     def get(self, report_id: str) -> JsonDict:

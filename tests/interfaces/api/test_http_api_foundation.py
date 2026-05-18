@@ -639,8 +639,20 @@ def test_entity_report_matches_return_matches() -> None:
     assert payload["data"]["matches"][0]["matched_aliases"] == ["OpenAI", "ChatGPT"]
 
 
-def test_entities_create_invalid_metadata_returns_domain_error() -> None:
+def test_entity_report_matches_accepts_workflow_family() -> None:
     client = TestClient(create_app(entity_service_factory=lambda: _FakeEntityService()))
+
+    response = client.get(
+        "/api/v1/entities/company:openai/report-matches?limit=1&workflow_family=daily"
+    )
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["success"] is True
+    assert payload["data"]["workflow_family"] == "daily"
+    assert payload["data"]["match_count"] == 1
+
+
 
     response = client.post(
         "/api/v1/entities",
