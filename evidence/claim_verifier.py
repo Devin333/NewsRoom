@@ -68,10 +68,25 @@ class ClaimExtractor:
                 or _section_id(section.get("title"), section_index)
             )
             sources = _list_str(section.get("sources") or section.get("source_urls") or [])
-            evidence_ids = _list_str(section.get("evidence_ids") or [])
+            evidence_ids = _section_evidence_ids(section)
+            explicit_claims = _claims_from_section_grounding(
+                section,
+                section_id=section_id,
+                sources=sources,
+                evidence_ids=evidence_ids,
+            )
+            grounded_texts = [claim.text for claim in explicit_claims]
+            for claim in explicit_claims:
+                normalized = _normalize(claim.text)
+                if not normalized or normalized in seen:
+                    continue
+                seen.add(normalized)
+                claims.append(claim)
             for text in _section_claims(section):
                 normalized = _normalize(text)
                 if not normalized or normalized in seen:
+                    continue
+                if any(_claim_matches_text(text, grounded_text) for grounded_text in grounded_texts):
                     continue
                 seen.add(normalized)
                 claims.append(
@@ -328,7 +343,8 @@ def _coerce_lineage(value: Any) -> Lineage | None:
 def _text_supported_items(text: str, evidence_items: list[EvidenceItem]) -> list[EvidenceItem]:
     matches = []
     for item in evidence_items:
-        if _token_overlap(text, f"{item.title} {item.summary}") >= 0.45:
+        evidence_text = f"{item.title} {item.summary}"
+        if _normalize(text) in _normalize(evidence_text) or _token_overlap(text, evidence_text) >= 0.75:
             matches.append(item)
     return matches
 
@@ -373,6 +389,80 @@ def _section_claims(section: dict[str, Any]) -> list[str]:
     if isinstance(bullets, list):
         candidates.extend(str(bullet).strip() for bullet in bullets if str(bullet).strip())
     return [claim for claim in candidates if len(_tokens(claim)) >= 2]
+
+
+def _section_evidence_ids(section: dict[str, Any]) -> list[str]:
+    values = []
+    evidence_ids = section.get("evidence_ids") or []
+    citations = section.get("citations") or []
+    if isinstance(evidence_ids, list):
+        values.extend(evidence_ids)
+    elif isinstance(evidence_ids, str):
+        values.append(evidence_ids)
+    if isinstance(citations, list):
+        values.extend(
+            citation.get("evidence_id") if isinstance(citation, dict) else citation
+            for citation in citations
+        )
+    elif isinstance(citations, str):
+        values.append(citations)
+    return [str(value) for value in values if value is not None and str(value)]
+
+
+def _claims_from_section_grounding(
+    section: dict[str, Any],
+    *,
+    section_id: str,
+    sources: list[str],
+    evidence_ids: list[str],
+) -> list[Claim]:
+    claim_grounding = section.get("claim_grounding") or []
+    if not isinstance(claim_grounding, list):
+        return []
+    claims: list[Claim] = []
+    for index, grounded_claim in enumerate(claim_grounding):
+        if not isinstance(grounded_claim, dict):
+            continue
+        text = str(grounded_claim.get("text") or grounded_claim.get("claim") or "").strip()
+        if not text:
+            continue
+        grounded_evidence_ids = _list_str(grounded_claim.get("evidence_ids") or []) or list(evidence_ids)
+        grounded_sources = _list_str(grounded_claim.get("source_urls") or grounded_claim.get("sources") or []) or list(sources)
+        claim_id = str(
+            grounded_claim.get("claim_id")
+            or f"claim_{sha256(f'{section_id}:{_normalize(text)}'.encode('utf-8')).hexdigest()[:16]}"
+        )
+        claims.append(
+            Claim(
+                claim_id=claim_id,
+                text=text,
+                claim_type=_claim_type(text),
+                section_id=section_id,
+                severity=str(grounded_claim.get("severity") or _claim_severity(text)),
+                importance=str(grounded_claim.get("importance") or _claim_importance(text)),
+                source_evidence_ids=grounded_evidence_ids,
+                source_urls=grounded_sources,
+                created_by_agent_id="evidence.claim_extractor.report_grounding_rule",
+                metadata={
+                    "extraction_method": "report_claim_grounding",
+                    "claim_grounding_index": index,
+                },
+            )
+        )
+    return claims
+
+
+def _claim_matches_text(left: str, right: str) -> bool:
+    normalized_left = _normalize(left)
+    normalized_right = _normalize(right)
+    if not normalized_left or not normalized_right:
+        return False
+    return (
+        normalized_left == normalized_right
+        or normalized_left in normalized_right
+        or normalized_right in normalized_left
+        or _token_overlap(left, right) >= 0.75
+    )
 
 
 def _list_str(value: Any) -> list[str]:

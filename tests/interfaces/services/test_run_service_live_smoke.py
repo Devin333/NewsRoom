@@ -44,11 +44,11 @@ def test_run_live_smoke_ignores_non_mvp_dependency_warnings(monkeypatch, tmp_pat
     calls = []
 
     class Service(RunApplicationService):
-        def run_daily(self, **kwargs):
+        def run_daily_agentic(self, **kwargs):
             calls.append(kwargs)
             return RunResult(
                 run_id="live-smoke",
-                workflow_id="daily-intelligence-live",
+                workflow_id="daily-intelligence-agentic",
                 workflow_version="0.1.0",
                 status=WorkflowStatus.SUCCEEDED,
                 artifact_dir=str(tmp_path / "live-smoke"),
@@ -59,7 +59,7 @@ def test_run_live_smoke_ignores_non_mvp_dependency_warnings(monkeypatch, tmp_pat
     assert result.status == "succeeded"
     assert calls == [
         {
-            "profile": "live",
+            "profile": "agentic-live",
             "topic": "AI",
             "source_limit": 3,
             "run_id": None,

@@ -21,7 +21,9 @@ def test_agentic_daily_runner_offline_runs_full_workflow(tmp_path) -> None:
     assert result.output["research_plan"]["topic"] == "AI policy"
     assert result.output["analysis_result"]["findings"][0]["id"] == "finding-1"
     assert result.output["report_draft"]["title"] == "Daily Intelligence: AI policy"
+    assert result.output["report_draft"]["sections"][0]["claim_grounding"][0]["claim_id"] == "claim_policy_update"
     assert result.output["verification_result"]["status"] == "pass"
+    assert result.output["verification_result"]["grounded_claims"][0]["status"] == "supported"
     assert result.output["editor_review"]["decision"] == "pass"
     assert result.output["final_report"].title == "Daily Intelligence: AI policy"
     assert "https://example.com/ai-chip-policy" in result.output["report_markdown"]

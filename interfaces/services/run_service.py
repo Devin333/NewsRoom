@@ -21,7 +21,7 @@ from workflows.daily_intelligence import build_test_agent_loop_workflow
 from workflows.daily_intelligence import build_test_no_llm_registry
 from workflows.daily_intelligence import build_test_no_llm_workflow
 from workflows.daily_intelligence.artifact_publisher import build_daily_intelligence_artifact_publishers
-from workflows.daily_intelligence.profiles import daily_agentic_enabled
+from workflows.daily_intelligence.profiles import PROFILE_AGENTIC_LIVE, daily_agentic_enabled
 from workflows.daily_intelligence.test_agent_loop import run_test_agent_loop
 from workflows.daily_intelligence.test_no_llm import run_test_no_llm
 from workflows.daily_intelligence.runner import PROFILE_LIVE, PROFILE_LIVE_OFFLINE
@@ -183,8 +183,8 @@ class RunApplicationService:
                 source_limit=source_limit,
             )
 
-        result = self.run_daily(
-            profile="live",
+        result = self.run_daily_agentic(
+            profile=PROFILE_AGENTIC_LIVE,
             topic=topic,
             source_limit=source_limit,
             run_id=run_id,

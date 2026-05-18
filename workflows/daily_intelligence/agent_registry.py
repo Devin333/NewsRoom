@@ -123,6 +123,40 @@ def build_daily_agent_fake_llm_client(
                         "status": "supported",
                         "supported_claim_count": 1,
                         "unsupported_claim_count": 0,
+                        "sections": [
+                            {
+                                "section_id": "executive_summary",
+                                "section_title": "Executive Summary",
+                                "cited_urls": ["https://example.com/ai-chip-policy"],
+                                "cited_evidence_ids": [],
+                                "matched_evidence_ids": [],
+                                "claim_ids": ["claim_policy_update"],
+                                "claim_supports": [
+                                    {
+                                        "claim_id": "claim_policy_update",
+                                        "text": "AI chip policy update: Export controls and model supply chains remain central.",
+                                        "section_id": "executive_summary",
+                                        "evidence_ids": [],
+                                        "cited_urls": ["https://example.com/ai-chip-policy"],
+                                        "support_type": "supports",
+                                        "confidence": 1.0,
+                                        "severity": "low"
+                                    }
+                                ],
+                                "matched_evidence_confidences": [1.0],
+                                "coverage_score": 1.0,
+                                "supported": True
+                            }
+                        ],
+                        "section_claim_evidence_map": {
+                            "executive_summary": {
+                                "claim_policy_update": []
+                            }
+                        },
+                        "coverage_ratio": 1.0,
+                        "unsupported_sections": [],
+                        "unsupported_claims": [],
+                        "rejected_claim_usage": []
                     },
                     "verification_result": {
                         "status": "pass",
@@ -130,6 +164,16 @@ def build_daily_agent_fake_llm_client(
                         "missing_citations": [],
                         "risk_level": "low",
                         "reasons": [],
+                        "grounded_claims": [
+                            {
+                                "claim_id": "claim_policy_update",
+                                "section_id": "executive_summary",
+                                "status": "supported",
+                                "evidence_ids": [],
+                                "source_urls": ["https://example.com/ai-chip-policy"],
+                                "reason": "claim is explicitly grounded in section sources"
+                            }
+                        ]
                     },
                     "verifier_notes": {
                         "mode": "offline",
@@ -176,13 +220,25 @@ def _agent_action(output: dict) -> str:
 
 
 def _fake_report_draft(topic: str) -> dict:
+    section_id = "executive_summary"
+    claim_text = "AI chip policy update: Export controls and model supply chains remain central."
     return {
         "title": f"Daily Intelligence: {topic}",
         "sections": [
             {
+                "section_id": section_id,
                 "title": "Executive Summary",
-                "content": "AI chip policy update: Export controls and model supply chains remain central.",
+                "content": claim_text,
                 "sources": ["https://example.com/ai-chip-policy"],
+                "evidence_ids": [],
+                "claim_grounding": [
+                    {
+                        "claim_id": "claim_policy_update",
+                        "text": claim_text,
+                        "evidence_ids": [],
+                        "source_urls": ["https://example.com/ai-chip-policy"],
+                    }
+                ],
             }
         ],
         "metadata": {
@@ -252,13 +308,25 @@ def _fake_edited_report_draft(
     *,
     sources: list[str] | None = None,
 ) -> dict:
+    claim_text = "Edited summary: AI chip policy remains focused on export controls and model supply chains."
+    resolved_sources = sources or ["https://example.com/ai-chip-policy"]
     return {
         "title": f"Daily Intelligence: {topic}",
         "sections": [
             {
+                "section_id": "summary",
                 "title": "Summary",
-                "content": "Edited summary: AI chip policy remains focused on export controls and model supply chains.",
-                "sources": sources or ["https://example.com/ai-chip-policy"],
+                "content": claim_text,
+                "sources": resolved_sources,
+                "evidence_ids": [],
+                "claim_grounding": [
+                    {
+                        "claim_id": "claim_policy_update_edited",
+                        "text": claim_text,
+                        "evidence_ids": [],
+                        "source_urls": resolved_sources,
+                    }
+                ],
             }
         ],
         "metadata": {

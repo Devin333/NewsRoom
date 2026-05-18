@@ -78,7 +78,7 @@ class QualityScorer:
         evidence_alignment_score = round((coverage + claim_support_score) / 2, 4)
         source_reliability_score = _source_reliability_score(support_matrix)
         duplication_score = 1.0 if not duplicate_sections else max(0.0, round(1.0 - 0.2 * len(duplicate_sections), 4))
-        uncertainty_handling_score = 0.8 if citation_check.notes else 1.0
+        uncertainty_handling_score = _uncertainty_handling_score(report, support_matrix, citation_check)
         decision = _quality_decision(score, citation_check.passed)
         return ReportQualitySummary(
             quality_score=score,
@@ -144,6 +144,26 @@ def _source_reliability_score(support_matrix: SupportMatrix) -> float:
     if not confidences:
         return 0.0
     return round(sum(confidences) / len(confidences), 4)
+
+
+def _uncertainty_handling_score(
+    report: dict,
+    support_matrix: SupportMatrix,
+    citation_check: CitationCheckResult,
+) -> float:
+    unsupported = support_matrix.unsupported_claims
+    if not unsupported:
+        return 1.0 if not citation_check.notes else 0.8
+    report_text = _normalize(" ".join(str(section.get("content", "")) for section in report.get("sections", [])))
+    markers = ("uncertain", "may", "could", "reported", "preliminary", "inference")
+    flagged = 0
+    for claim in unsupported:
+        text = _normalize(claim.text)
+        if text and text in report_text and any(marker in report_text for marker in markers):
+            flagged += 1
+    if flagged == 0:
+        return 0.4
+    return round(0.4 + 0.6 * (flagged / len(unsupported)), 4)
 
 
 def _quality_decision(score: float, citation_passed: bool) -> str:

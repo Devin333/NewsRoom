@@ -69,6 +69,36 @@ def test_claim_extractor_extracts_section_claims_from_report() -> None:
     assert claims[1].severity == "high"
 
 
+def test_claim_extractor_prefers_explicit_claim_grounding_from_report() -> None:
+    from evidence import ClaimExtractor
+
+    claims = ClaimExtractor().extract(
+        report_draft={
+            "sections": [
+                {
+                    "section_id": "summary",
+                    "title": "Summary",
+                    "content": "AI policy update shipped.",
+                    "sources": ["https://example.com/a"],
+                    "evidence_ids": ["ev_1"],
+                    "claim_grounding": [
+                        {
+                            "claim_id": "claim_grounded",
+                            "text": "AI policy update shipped.",
+                            "evidence_ids": ["ev_1"],
+                            "source_urls": ["https://example.com/a"],
+                        }
+                    ],
+                }
+            ]
+        }
+    )
+
+    assert [claim.claim_id for claim in claims] == ["claim_grounded"]
+    assert claims[0].source_evidence_ids == ["ev_1"]
+    assert claims[0].metadata["extraction_method"] == "report_claim_grounding"
+
+
 def test_claim_verifier_accepts_evidence_backed_claims() -> None:
     findings = ClaimVerifier().verify(
         [
@@ -89,3 +119,21 @@ def test_claim_verifier_accepts_evidence_backed_claims() -> None:
     assert accepted.status == "accepted"
     assert accepted.supporting_evidence_ids == ["ev_1"]
     assert accepted.section_id == "summary"
+
+
+def test_claim_verifier_downgrades_weak_lexical_overlap_to_uncertain() -> None:
+    findings = ClaimVerifier().verify(
+        [
+            Claim(
+                claim_id="claim_weak_overlap",
+                text="Policy update mentions unrelated robotics expansion.",
+                claim_type="fact",
+                section_id="summary",
+            )
+        ],
+        _bundle(),
+    )
+
+    assert findings.accepted_claims == []
+    assert findings.uncertain_claims[0].claim_id == "claim_weak_overlap"
+    assert findings.uncertain_claims[0].uncertainty_reason == "claim has no direct evidence mapping"

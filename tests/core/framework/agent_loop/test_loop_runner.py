@@ -1,5 +1,6 @@
 import pytest
 
+from evidence.models import EvidenceBundle, EvidenceItem, VerifiedClaim, VerifiedFindings
 from core.framework.agent_loop import (
     AgentLoopTrace,
     AgentLoopPolicy,
@@ -59,7 +60,7 @@ def test_agent_runner_handles_tool_call_judge_retry_and_final_output() -> None:
         [
             '{"action_type":"tool_call","tool_name":"memory.search","tool_args":{"query":"chips"}}',
             '{"action_type":"final_output","output":{"wrong_key":{"summary":"missing"}}}',
-            '{"action_type":"final_output","output":{"analysis_result":{"summary":"ok"}}}',
+            '{"analysis_result":{"summary":"ok"}}',
         ]
     )
     result = AgentRunner(llm_client=llm, tool_registry=_registry()).run(
@@ -121,7 +122,83 @@ def test_agent_runner_returns_retry_exhausted_after_invalid_outputs() -> None:
     assert result.diagnostics.issues[0].code == "judge_retry_exhausted"
 
 
-def test_agent_runner_exports_tools_from_resolved_policy() -> None:
+def test_agent_runner_normalizes_agentic_live_writer_output_to_grounded_cards() -> None:
+    llm = FakeLLMClient(
+        [
+            '{"action_type":"final_output","output":{"report_draft":{"title":"Daily Intelligence: AI agents","sections":[{"section_id":"executive_summary","title":"Executive Summary of Key Developments","content":"Placeholder summary","sources":[],"claim_grounding":[{"claim_id":"claim_bad","text":"Placeholder summary","evidence_ids":[],"source_urls":["https://example.com/outside"]}]},{"section_id":"empty_section","title":"Regulatory and Ethical Considerations","content":"No evidence available for this section.","sources":[],"claim_grounding":[]}],"metadata":{}}}}'
+        ]
+    )
+    agent = AgentSpec(
+        agent_id="daily.writer",
+        name="WriterAgent",
+        role="Write",
+        goal="Create evidence-bounded cards",
+        instructions="Return JSON actions only.",
+        input_keys=["request", "evidence_bundle", "verified_findings"],
+        output_key="report_draft",
+        output_schema={
+            "type": "object",
+            "required": ["report_draft"],
+            "properties": {"report_draft": {"type": "object"}},
+        },
+    )
+    evidence_bundle = EvidenceBundle(
+        bundle_id="bundle-1",
+        items=[
+            EvidenceItem(
+                evidence_id="ev-1",
+                source_url="https://example.com/model",
+                title="Vendor released a model update",
+                summary="The model update improves inference latency.",
+                confidence=0.9,
+                source_id="source-1",
+            )
+        ],
+    )
+    verified_findings = VerifiedFindings(
+        accepted_claims=[
+            VerifiedClaim(
+                claim_id="claim-1",
+                claim="Vendor released a model update: The model update improves inference latency.",
+                status="accepted",
+                confidence=0.9,
+                supporting_evidence_ids=["ev-1"],
+                supporting_sources=["https://example.com/model"],
+                section_id="evidence",
+            )
+        ]
+    )
+
+    result = AgentRunner(llm_client=llm, tool_registry=_registry()).run(
+        agent,
+        {
+            "request": {"topic": "AI agents", "profile": "agentic-live"},
+            "evidence_bundle": evidence_bundle,
+            "verified_findings": verified_findings,
+        },
+    )
+
+    assert result.success is True
+    assert result.output["report_draft"]["sections"] == [
+        {
+            "section_id": "vendor_released_a_model_update",
+            "title": "Vendor released a model update",
+            "content": "Vendor released a model update: The model update improves inference latency.",
+            "sources": ["https://example.com/model"],
+            "evidence_ids": ["ev-1"],
+            "claim_grounding": [
+                {
+                    "claim_id": "claim-1",
+                    "text": "Vendor released a model update: The model update improves inference latency.",
+                    "evidence_ids": ["ev-1"],
+                    "source_urls": ["https://example.com/model"],
+                }
+            ],
+        }
+    ]
+    assert result.output["report_draft"]["metadata"]["writer_normalized_from_verified_findings"] is True
+
+
     registry = ToolRegistry()
     registry.register(ToolDefinition(name="memory.search"), lambda args: args)
     registry.register(ToolDefinition(name="artifact.load"), lambda args: args)

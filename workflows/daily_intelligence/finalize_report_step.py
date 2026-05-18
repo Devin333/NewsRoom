@@ -522,6 +522,15 @@ def _normalize_report_draft(payload: Any) -> dict[str, Any]:
         section_payload["sources"] = _string_list(
             section_payload.get("sources") or section_payload.get("source_urls") or []
         )
+        section_payload["section_id"] = str(
+            section_payload.get("section_id")
+            or section_payload.get("id")
+            or f"section_{index + 1}"
+        )
+        section_payload["evidence_ids"] = _string_list(section_payload.get("evidence_ids") or [])
+        section_payload["claim_grounding"] = _normalize_claim_grounding(
+            section_payload.get("claim_grounding") or []
+        )
         normalized_sections.append(section_payload)
     draft["title"] = str(draft.get("title") or "Daily Intelligence Report")
     draft["sections"] = normalized_sections
@@ -655,6 +664,22 @@ def _string_list(value: Any) -> list[str]:
         if text:
             result.append(text)
     return result
+
+
+def _normalize_claim_grounding(value: Any) -> list[dict[str, Any]]:
+    grounded_claims: list[dict[str, Any]] = []
+    for item in _list_value(value):
+        if not isinstance(item, Mapping):
+            continue
+        grounded_claims.append(
+            {
+                "claim_id": str(item.get("claim_id") or ""),
+                "text": str(item.get("text") or item.get("claim") or ""),
+                "evidence_ids": _string_list(item.get("evidence_ids") or []),
+                "source_urls": _string_list(item.get("source_urls") or item.get("sources") or []),
+            }
+        )
+    return grounded_claims
 
 
 def _float_value(value: Any, *, default: float | None) -> float | None:

@@ -178,6 +178,7 @@ class SupportMatrixBuilder:
         claims_by_section: dict[str, list[Claim]] = {}
         for claim in report_claims:
             claims_by_section.setdefault(claim.section_id, []).append(claim)
+        grounded_claims_by_section = _section_grounded_claims(report)
 
         sections: list[SectionSupport] = []
         unsupported_claims: list[UnsupportedClaim] = []
@@ -203,9 +204,11 @@ class SupportMatrixBuilder:
             for claim in section_claims:
                 matched_items = _matched_items_for_claim(
                     claim,
-                    candidate_items,
-                    evidence_by_id,
-                    accepted_by_claim_id,
+                    section=section,
+                    candidate_items=candidate_items,
+                    evidence_by_id=evidence_by_id,
+                    accepted_by_claim_id=accepted_by_claim_id,
+                    grounded_claims=grounded_claims_by_section.get(section_id, {}),
                 )
                 support_type = "supports" if matched_items else "unsupported"
                 support = ClaimSupport(
@@ -283,9 +286,12 @@ class SupportMatrixBuilder:
 
 def _matched_items_for_claim(
     claim: Claim,
+    *,
+    section: dict[str, Any],
     candidate_items: list[EvidenceItem],
     evidence_by_id: dict[str, EvidenceItem],
     accepted_by_claim_id: dict[str, Any],
+    grounded_claims: dict[str, dict[str, Any]],
 ) -> list[EvidenceItem]:
     if claim.claim_id in accepted_by_claim_id:
         accepted = accepted_by_claim_id[claim.claim_id]
@@ -294,6 +300,18 @@ def _matched_items_for_claim(
             for evidence_id in accepted.supporting_evidence_ids
             if evidence_id in evidence_by_id
         ]
+    grounded_claim = grounded_claims.get(claim.claim_id) or _grounded_claim_for_text(
+        claim.text,
+        grounded_claims,
+    )
+    if grounded_claim:
+        grounded_items = [
+            evidence_by_id[evidence_id]
+            for evidence_id in grounded_claim.get("evidence_ids", [])
+            if evidence_id in evidence_by_id
+        ]
+        if grounded_items:
+            return grounded_items
     explicit = [
         evidence_by_id[evidence_id]
         for evidence_id in claim.source_evidence_ids
@@ -301,8 +319,13 @@ def _matched_items_for_claim(
     ]
     if explicit:
         return explicit
-    if candidate_items and _is_low_information_claim(claim.text):
-        return candidate_items
+    section_explicit = [
+        evidence_by_id[evidence_id]
+        for evidence_id in _section_evidence_ids(section)
+        if evidence_id in evidence_by_id
+    ]
+    if section_explicit:
+        return section_explicit
     return [
         item
         for item in candidate_items
@@ -327,9 +350,46 @@ def _section_evidence_ids(section: dict) -> list[str]:
         return [
             value
             for value in (str(item) for item in evidence_ids if item is not None)
-            if value.startswith("ev_") or value
+            if value
         ]
     return []
+
+
+def _section_grounded_claims(report: dict[str, Any]) -> dict[str, dict[str, dict[str, Any]]]:
+    grounded_by_section: dict[str, dict[str, dict[str, Any]]] = {}
+    for index, section in enumerate(report.get("sections", [])):
+        section_id = _section_id(section, index)
+        claim_grounding = section.get("claim_grounding") or []
+        if not isinstance(claim_grounding, list):
+            continue
+        grounded_claims: dict[str, dict[str, Any]] = {}
+        for grounded_claim in claim_grounding:
+            if not isinstance(grounded_claim, dict):
+                continue
+            claim_id = str(grounded_claim.get("claim_id") or "").strip()
+            if not claim_id:
+                continue
+            grounded_claims[claim_id] = {
+                "claim_id": claim_id,
+                "text": str(grounded_claim.get("text") or grounded_claim.get("claim") or ""),
+                "evidence_ids": _string_list(grounded_claim.get("evidence_ids") or []),
+                "source_urls": _string_list(grounded_claim.get("source_urls") or grounded_claim.get("sources") or []),
+            }
+        if grounded_claims:
+            grounded_by_section[section_id] = grounded_claims
+    return grounded_by_section
+
+
+def _grounded_claim_for_text(
+    text: str,
+    grounded_claims: dict[str, dict[str, Any]],
+) -> dict[str, Any] | None:
+    for grounded_claim in grounded_claims.values():
+        grounded_text = str(grounded_claim.get("text") or "")
+        if _claim_text_matches(text, grounded_text):
+            return grounded_claim
+    return None
+
 
 
 def _section_id(section: dict[str, Any], section_index: int) -> str:
@@ -373,6 +433,19 @@ def _claim_supported_by_evidence(claim: str, item: EvidenceItem) -> bool:
     if len(atomic_claims) > 1:
         return all(_single_claim_supported_by_evidence(part, evidence_text) for part in atomic_claims)
     return _single_claim_supported_by_evidence(claim, evidence_text)
+
+
+def _claim_text_matches(left: str, right: str) -> bool:
+    normalized_left = _normalize(left)
+    normalized_right = _normalize(right)
+    if not normalized_left or not normalized_right:
+        return False
+    return (
+        normalized_left == normalized_right
+        or normalized_left in normalized_right
+        or normalized_right in normalized_left
+        or _token_overlap(left, right) >= CLAIM_SUPPORT_TOKEN_OVERLAP_THRESHOLD
+    )
 
 
 def _is_low_information_claim(claim: str) -> bool:
@@ -432,6 +505,14 @@ def _tokens(text: str) -> set[str]:
         for token in re.findall(r"[a-z0-9]+", text.casefold())
         if len(token) > 2 and token not in _STOPWORDS
     }
+
+
+def _string_list(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value] if value else []
+    if isinstance(value, list):
+        return [str(item) for item in value if item is not None and str(item)]
+    return []
 
 
 def _normalize(text: str) -> str:

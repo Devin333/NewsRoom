@@ -48,6 +48,33 @@ def test_citation_checker_passes_known_evidence_ids() -> None:
     assert result.cited_evidence_ids == ["ev_1"]
 
 
+def test_citation_checker_uses_explicit_claim_grounding_to_pass_supported_claim() -> None:
+    report = {
+        "sections": [
+            {
+                "section_id": "summary",
+                "title": "Summary",
+                "content": "A summary",
+                "sources": ["https://example.com/a"],
+                "claim_grounding": [
+                    {
+                        "claim_id": "claim_1",
+                        "text": "A summary",
+                        "evidence_ids": ["ev_1"],
+                        "source_urls": ["https://example.com/a"],
+                    }
+                ],
+            }
+        ]
+    }
+
+    result = CitationChecker().check(report, _bundle())
+
+    assert result.passed is True
+    assert result.unsupported_claims == []
+    assert result.claim_support_score == 1.0
+
+
 def test_citation_checker_fails_unknown_urls_and_editor_blocks() -> None:
     report = {"sections": [{"title": "Summary", "sources": ["https://example.com/missing"]}]}
 
@@ -135,6 +162,25 @@ def test_citation_checker_flags_claim_that_adds_new_fact_to_cited_evidence() -> 
     assert result.passed is False
     assert result.unsupported_claims == [
         "Edit: The vendor released a model update and expanded into robotics."
+    ]
+
+
+def test_citation_checker_blocks_weak_overlap_without_explicit_grounding() -> None:
+    report = {
+        "sections": [
+            {
+                "title": "Summary",
+                "content": "Policy update mentions unrelated robotics expansion.",
+                "sources": ["https://example.com/a"],
+            }
+        ]
+    }
+
+    result = CitationChecker().check(report, _bundle())
+
+    assert result.passed is False
+    assert result.unsupported_claims == [
+        "Summary: Policy update mentions unrelated robotics expansion."
     ]
 
 

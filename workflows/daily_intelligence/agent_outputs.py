@@ -44,9 +44,40 @@ def validate_report_draft(payload: Any) -> dict[str, Any]:
         context = f"report_draft.sections[{index}]"
         if not isinstance(section, dict):
             raise ValueError(f"{context} must be an object")
-        _require_keys(section, ["title", "content", "sources"], context)
+        _require_keys(section, ["section_id", "title", "content", "sources", "claim_grounding"], context)
+        claim_grounding = section.get("claim_grounding")
+        if claim_grounding is None:
+            claim_grounding = []
+        if not isinstance(claim_grounding, list):
+            raise ValueError(f"{context}.claim_grounding must be a list")
+        for claim_index, grounded_claim in enumerate(claim_grounding):
+            claim_context = f"{context}.claim_grounding[{claim_index}]"
+            if not isinstance(grounded_claim, dict):
+                raise ValueError(f"{claim_context} must be an object")
+            _require_keys(
+                grounded_claim,
+                ["claim_id", "text", "evidence_ids", "source_urls"],
+                claim_context,
+            )
+            if not isinstance(grounded_claim["evidence_ids"], list):
+                raise ValueError(f"{claim_context}.evidence_ids must be a list")
+            if not isinstance(grounded_claim["source_urls"], list):
+                raise ValueError(f"{claim_context}.source_urls must be a list")
+            if not grounded_claim["source_urls"]:
+                raise ValueError(f"{claim_context}.source_urls must contain at least one source URL")
+        section["sources"] = _resolved_section_sources(section)
         if not isinstance(section["sources"], list):
             raise ValueError(f"{context}.sources must be a list")
+        if not section["sources"]:
+            raise ValueError(f"{context}.sources must contain at least one source URL")
+        if not isinstance(section["content"], str) or not section["content"].strip():
+            raise ValueError(f"{context}.content must be a non-empty string")
+        if "\n\n" in section["content"]:
+            raise ValueError(f"{context}.content must be a compact card, not multi-paragraph prose")
+        if "section_id" in section and not isinstance(section["section_id"], str):
+            raise ValueError(f"{context}.section_id must be a string")
+        if "evidence_ids" in section and not isinstance(section["evidence_ids"], list):
+            raise ValueError(f"{context}.evidence_ids must be a list")
     if not isinstance(draft["metadata"], dict):
         raise ValueError("report_draft.metadata must be an object")
     return draft
@@ -56,13 +87,7 @@ def validate_verification_result(payload: Any) -> dict[str, Any]:
     result = _require_dict(payload, "verification_result")
     _require_keys(
         result,
-        [
-            "status",
-            "unsupported_claims",
-            "missing_citations",
-            "risk_level",
-            "reasons",
-        ],
+        ["status", "unsupported_claims", "missing_citations", "risk_level", "reasons", "grounded_claims"],
         "verification_result",
     )
     if result["status"] not in VERIFICATION_STATUSES:
@@ -72,6 +97,26 @@ def validate_verification_result(payload: Any) -> dict[str, Any]:
     for key in ("unsupported_claims", "missing_citations", "reasons"):
         if not isinstance(result[key], list):
             raise ValueError(f"verification_result.{key} must be a list")
+    grounded_claims = result.get("grounded_claims")
+    if grounded_claims is None:
+        grounded_claims = []
+    if not isinstance(grounded_claims, list):
+        raise ValueError("verification_result.grounded_claims must be a list")
+    for index, grounded_claim in enumerate(grounded_claims):
+        context = f"verification_result.grounded_claims[{index}]"
+        if not isinstance(grounded_claim, dict):
+            raise ValueError(f"{context} must be an object")
+        _require_keys(
+            grounded_claim,
+            ["claim_id", "section_id", "status", "evidence_ids", "source_urls", "reason"],
+            context,
+        )
+        if grounded_claim["status"] not in {"supported", "unsupported", "rejected", "uncertain"}:
+            raise ValueError(f"{context}.status is not supported")
+        if not isinstance(grounded_claim["evidence_ids"], list):
+            raise ValueError(f"{context}.evidence_ids must be a list")
+        if not isinstance(grounded_claim["source_urls"], list):
+            raise ValueError(f"{context}.source_urls must be a list")
     return dict(result)
 
 
@@ -101,6 +146,23 @@ def normalize_agent_report_draft(payload: dict[str, Any]) -> dict[str, Any]:
             raise ValueError("report_draft must be an object")
         return dict(nested)
     return dict(payload)
+
+
+def _resolved_section_sources(section: dict[str, Any]) -> list[str]:
+    sources = section.get("sources")
+    if isinstance(sources, list) and sources:
+        return [str(source) for source in sources if source is not None and str(source)]
+    resolved: list[str] = []
+    claim_grounding = section.get("claim_grounding") or []
+    if isinstance(claim_grounding, list):
+        for grounded_claim in claim_grounding:
+            if not isinstance(grounded_claim, dict):
+                continue
+            for source_url in grounded_claim.get("source_urls") or []:
+                text = str(source_url)
+                if text and text not in resolved:
+                    resolved.append(text)
+    return resolved
 
 
 def _require_dict(payload: Any, context: str) -> dict[str, Any]:

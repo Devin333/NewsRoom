@@ -116,14 +116,25 @@ def test_daily_agent_runner_consumes_fake_llm_sequence() -> None:
     assert analyst_result.status == AgentLoopStatus.ACCEPTED
     assert analyst_result.output["analysis_result"]["findings"][0]["id"] == "finding-1"
 
-    assert writer_result.success is True
-    assert writer_result.status == AgentLoopStatus.ACCEPTED
     assert writer_result.output["report_draft"]["title"] == "Daily Intelligence: AI policy"
+    assert writer_result.output["report_draft"]["sections"][0]["sources"] == [
+        "https://example.com/ai-chip-policy"
+    ]
+    assert writer_result.output["report_draft"]["sections"][0]["claim_grounding"][0][
+        "claim_id"
+    ] == "claim_policy_update"
+    assert writer_result.output["report_draft"]["sections"][0]["section_id"] == "executive_summary"
 
     assert verifier_result.success is True
     assert verifier_result.status == AgentLoopStatus.ACCEPTED
     assert verifier_result.output["verification_result"]["status"] == "pass"
+    assert verifier_result.output["verification_result"]["grounded_claims"][0][
+        "source_urls"
+    ] == ["https://example.com/ai-chip-policy"]
     assert verifier_result.output["citation_check_result"]["passed"] is True
+    assert verifier_result.output["support_matrix"]["section_claim_evidence_map"] == {
+        "executive_summary": {"claim_policy_update": []}
+    }
 
     assert editor_result.success is True
     assert editor_result.status == AgentLoopStatus.ACCEPTED

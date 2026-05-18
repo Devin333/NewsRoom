@@ -14,6 +14,21 @@ from quality.support_matrix import SupportMatrixBuilder
 def golden_quality_eval_cases() -> list[QualityEvalCase]:
     return [
         _case(
+            "grounded-pass",
+            "pass",
+            "AI policy update: Policy summary.",
+            ["https://example.com/ai-policy"],
+            section_evidence_ids=["ev_policy"],
+            claim_grounding=[
+                {
+                    "claim_id": "claim_grounded_pass",
+                    "text": "AI policy update: Policy summary.",
+                    "evidence_ids": ["ev_policy"],
+                    "source_urls": ["https://example.com/ai-policy"],
+                }
+            ],
+        ),
+        _case(
             "pass",
             "pass",
             "AI policy update: Policy summary.",
@@ -40,11 +55,12 @@ def golden_quality_eval_cases() -> list[QualityEvalCase]:
             rejected_claim="The vendor acquired a rival.",
         ),
         _case(
-            "uncertain",
-            "rewrite_required",
-            "AI policy update: Policy summary.",
-            ["https://example.com/ai-policy"],
-            uncertain_claim="AI policy update: Policy summary.",
+            "live-malformed-support",
+            "blocked",
+            "OpenAI has partnered with the Government of Malta to provide ChatGPT Plus subscriptions and AI skills training to all Maltese citizens.",
+            ["https://openai.com/index/malta-chatgpt-plus-partnership"],
+            evidence_title="OpenAI partners with Malta",
+            evidence_summary="OpenAI announced a Malta partnership focused on ChatGPT Plus access and AI literacy.",
         ),
     ]
 
@@ -97,14 +113,20 @@ def _case(
     duplicate: bool = False,
     rejected_claim: str | None = None,
     uncertain_claim: str | None = None,
+    evidence_title: str = "AI policy update",
+    evidence_summary: str = "Policy summary.",
+    section_evidence_ids: list[str] | None = None,
+    claim_grounding: list[dict[str, Any]] | None = None,
 ) -> QualityEvalCase:
-    bundle = _bundle()
+    bundle = _bundle(title=evidence_title, summary=evidence_summary)
     sections: list[dict[str, Any]] = [
         {
             "section_id": "summary",
             "title": "Summary",
             "content": content,
             "sources": sources,
+            "evidence_ids": list(section_evidence_ids or []),
+            "claim_grounding": list(claim_grounding or []),
         }
     ]
     if duplicate:
@@ -149,7 +171,7 @@ def _case(
     )
 
 
-def _bundle() -> EvidenceBundle:
+def _bundle(*, title: str = "AI policy update", summary: str = "Policy summary.") -> EvidenceBundle:
     return EvidenceBundle(
         bundle_id="golden",
         topic="AI policy",
@@ -157,8 +179,8 @@ def _bundle() -> EvidenceBundle:
             EvidenceItem(
                 evidence_id="ev_policy",
                 source_url="https://example.com/ai-policy",
-                title="AI policy update",
-                summary="Policy summary.",
+                title=title,
+                summary=summary,
                 confidence=0.9,
                 source_id="fixture",
                 source_item_id="raw-policy",

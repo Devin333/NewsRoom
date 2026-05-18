@@ -43,4 +43,6 @@ class PromptBuilder:
             ],
             tools=tools or [],
             metadata={"agent_id": agent.agent_id},
+            output_schema=agent.output_schema,
+            output_schema_name=f"{agent.agent_id.replace('.', '_')}_output",
         )

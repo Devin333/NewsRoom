@@ -31,6 +31,34 @@ def _writer(**kwargs) -> AgentSpec:
     return AgentSpec(**defaults)
 
 
+def _verifier(**kwargs) -> AgentSpec:
+    defaults = {
+        "agent_id": "verifier",
+        "name": "VerifierAgent",
+        "role": "Verify",
+        "goal": "Verify grounded claims",
+        "instructions": "Return JSON",
+        "input_keys": ["report_draft", "evidence_bundle"],
+        "output_key": "verification_result",
+        "allowed_tools": [],
+        "output_schema": {
+            "type": "object",
+            "required": ["verification_result"],
+            "properties": {
+                "verification_result": {
+                    "type": "object",
+                    "required": ["grounded_claims"],
+                    "properties": {
+                        "grounded_claims": {"type": "array"},
+                    },
+                }
+            },
+        },
+    }
+    defaults.update(kwargs)
+    return AgentSpec(**defaults)
+
+
 def _bundle() -> EvidenceBundle:
     return EvidenceBundle(
         bundle_id="bundle-1",
@@ -98,6 +126,35 @@ def test_output_judge_blocks_unsupported_evidence_id() -> None:
     assert verdict.decision == JudgeDecision.BLOCK
     assert verdict.feedback == "unsupported evidence id referenced"
     assert verdict.policy_violations == ["evidence id outside boundary: ev-999"]
+
+
+def test_output_judge_blocks_verifier_grounding_with_mutated_evidence_id() -> None:
+    verdict = OutputJudge().judge(
+        agent=_verifier(),
+        action=AgentAction(
+            action_type="final_output",
+            output={
+                "verification_result": {
+                    "grounded_claims": [
+                        {
+                            "claim_id": "claim-1",
+                            "section_id": "summary",
+                            "status": "supported",
+                            "evidence_ids": ["ev-1x"],
+                            "source_urls": ["https://example.com/model"],
+                            "reason": "copied from report grounding",
+                        }
+                    ]
+                }
+            },
+        ),
+        called_tools=[],
+        inputs={"evidence_bundle": _bundle()},
+    )
+
+    assert verdict.decision == JudgeDecision.BLOCK
+    assert verdict.feedback == "unsupported evidence id referenced"
+    assert verdict.policy_violations == ["evidence id outside boundary: ev-1x"]
 
 
 def test_output_judge_verdict_values_are_single_agent_decisions_only() -> None:

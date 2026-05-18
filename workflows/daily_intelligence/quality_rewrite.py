@@ -22,11 +22,14 @@ def rewrite_report_draft(
     evidence_by_url = {item.source_url: item for item in evidence_bundle.items}
     for section in sections:
         sources = section.get("sources") or section.get("source_urls") or []
-        if sources:
-            continue
-        matched_urls = _matching_source_urls(str(section.get("content", "")), evidence_by_url)
-        if matched_urls:
-            section["sources"] = matched_urls
+        if not sources:
+            matched_urls = _matching_source_urls(str(section.get("content", "")), evidence_by_url)
+            if matched_urls:
+                section["sources"] = matched_urls
+        section["claim_grounding"] = _filtered_claim_grounding(
+            section,
+            section.get("claim_grounding") or [],
+        )
     rewritten = dict(report_draft)
     rewritten["sections"] = sections
     metadata = dict(rewritten.get("metadata") or {})
@@ -83,6 +86,22 @@ def _matching_source_urls(content: str, evidence_by_url: dict[str, Any]) -> list
         if _token_overlap(content, f"{item.title} {item.summary}") >= 0.25:
             matches.append(url)
     return sorted(matches)
+
+
+def _filtered_claim_grounding(
+    section: dict[str, Any],
+    claim_grounding: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    content = str(section.get("content", "")).casefold()
+    filtered = []
+    for grounded_claim in claim_grounding:
+        if not isinstance(grounded_claim, dict):
+            continue
+        text = str(grounded_claim.get("text") or grounded_claim.get("claim") or "").strip()
+        if text and text.casefold() not in content:
+            continue
+        filtered.append(dict(grounded_claim))
+    return filtered
 
 
 def _token_overlap(left: str, right: str) -> float:

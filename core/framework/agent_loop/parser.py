@@ -20,6 +20,8 @@ class AgentActionParser:
             raise AgentActionParserError("LLM response must be a JSON object")
 
         action_type = payload.get("action_type")
+        if action_type is None:
+            return AgentAction(action_type="final_output", output=payload)
         if action_type not in {"tool_call", "final_output", "delegate_to_subagent"}:
             raise AgentActionParserError(f"unsupported agent action type: {action_type}")
 

@@ -69,6 +69,32 @@ def test_support_matrix_lists_unsupported_claims() -> None:
     assert matrix.unsupported_claims[0].text == "Unsupported robotics acquisition."
 
 
+def test_support_matrix_prioritizes_explicit_claim_grounding() -> None:
+    report = {
+        "sections": [
+            {
+                "section_id": "summary",
+                "title": "Summary",
+                "content": "A summary covers the main update.",
+                "sources": ["https://example.com/a"],
+                "claim_grounding": [
+                    {
+                        "claim_id": "claim_grounded",
+                        "text": "A summary covers the main update.",
+                        "evidence_ids": ["ev_1"],
+                        "source_urls": ["https://example.com/a"],
+                    }
+                ],
+            }
+        ]
+    }
+
+    matrix = SupportMatrixBuilder().build(report, _bundle())
+
+    assert matrix.section_claim_evidence_map == {"summary": {"claim_grounded": ["ev_1"]}}
+    assert matrix.unsupported_claims == []
+
+
 def test_support_matrix_lists_rejected_claim_usage() -> None:
     findings = VerifiedFindings(
         rejected_claims=[
@@ -98,6 +124,24 @@ def test_support_matrix_lists_rejected_claim_usage() -> None:
     assert matrix.rejected_claim_usage[0].section_id == "summary"
 
 
+def test_support_matrix_does_not_auto_support_low_information_claims() -> None:
+    report = {
+        "sections": [
+            {
+                "section_id": "summary",
+                "title": "Summary",
+                "content": "Robotics expansion.",
+                "sources": ["https://example.com/a"],
+            }
+        ]
+    }
+
+    matrix = SupportMatrixBuilder().build(report, _bundle())
+
+    assert matrix.coverage_ratio == 0.0
+    assert matrix.unsupported_claims[0].text == "Robotics expansion."
+
+
 def test_quality_scorer_penalizes_unsupported_and_duplicate_sections() -> None:
     report = {
         "sections": [
@@ -114,30 +158,35 @@ def test_quality_scorer_penalizes_unsupported_and_duplicate_sections() -> None:
         support_matrix=matrix,
     )
 
-    assert summary.support_coverage == 0.5
+    assert summary.support_coverage == 0.0
     assert summary.duplicate_sections == ["B"]
-    assert summary.quality_score == 0.2
-    assert summary.overall_score == 0.2
+    assert summary.quality_score == 0.0
+    assert summary.overall_score == 0.0
     assert summary.decision == "blocked"
 
 
-def test_editor_gate_blocks_unsupported_sections_even_when_citations_pass() -> None:
-    report = {"sections": [{"title": "Unsupported", "content": "No sources", "sources": []}]}
+def test_quality_scorer_degrades_uncertain_unsupported_claims_but_keeps_them_blocked() -> None:
+    report = {
+        "sections": [
+            {
+                "title": "Risk / Uncertainty / Verification Notes",
+                "content": "Uncertain: the vendor may expand into robotics.",
+                "sources": ["https://example.com/a"],
+            }
+        ]
+    }
     citation = CitationChecker().check(report, _bundle())
     matrix = SupportMatrixBuilder().build(report, _bundle())
+
     summary = QualityScorer().score(
         report=report,
         citation_check=citation,
         support_matrix=matrix,
     )
 
-    review = EditorGate().review(citation, matrix, summary)
-
-    assert citation.passed is False
-    assert review.decision == EditorDecision.BLOCKED
-    assert review.quality_score == 0.2
-    assert "missing section sources: Unsupported" in review.reasons
-    assert "unsupported section: Unsupported" in review.reasons
+    assert summary.uncertainty_handling_score > 0.4
+    assert summary.claim_support_score == 0.0
+    assert summary.decision == "blocked"
 
 
 def test_editor_gate_requests_rewrite_for_duplicate_supported_sections() -> None:
@@ -239,20 +288,22 @@ def test_human_review_request_payload_and_decision_mapping() -> None:
 def test_quality_eval_golden_cases_pass() -> None:
     records = [run_quality_eval_case(case) for case in golden_quality_eval_cases()]
 
-    assert [record.passed for record in records] == [True, True, True, True, True]
+    assert [record.passed for record in records] == [True, True, True, True, True, True]
     assert [record.expected_decision for record in records] == [
+        "pass",
         "pass",
         "rewrite_required",
         "blocked",
         "blocked",
-        "rewrite_required",
+        "blocked",
     ]
     assert [record.actual_decision for record in records] == [
         "pass",
+        "pass",
         "rewrite_required",
         "blocked",
         "blocked",
-        "rewrite_required",
+        "blocked",
     ]
     assert records[0].to_dict()["expected_decision"] == "pass"
     assert records[0].to_dict()["actual_decision"] == "pass"

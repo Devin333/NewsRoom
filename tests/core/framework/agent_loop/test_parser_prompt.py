@@ -22,6 +22,13 @@ def test_action_parser_parses_final_output() -> None:
     assert action.output == {"analysis_result": {"summary": "ok"}}
 
 
+def test_action_parser_treats_plain_object_as_final_output() -> None:
+    action = AgentActionParser().parse('{"analysis_result":{"summary":"ok"}}')
+
+    assert action.action_type == "final_output"
+    assert action.output == {"analysis_result": {"summary": "ok"}}
+
+
 def test_action_parser_parses_delegate_to_subagent() -> None:
     action = AgentActionParser().parse(
         (
@@ -52,6 +59,11 @@ def test_prompt_builder_includes_inputs_feedback_and_observations() -> None:
         instructions="Return JSON actions only.",
         input_keys=["request"],
         output_key="analysis_result",
+        output_schema={
+            "type": "object",
+            "required": ["analysis_result"],
+            "properties": {"analysis_result": {"type": "object"}},
+        },
     )
 
     request = PromptBuilder().build(
@@ -66,3 +78,5 @@ def test_prompt_builder_includes_inputs_feedback_and_observations() -> None:
     assert "chips" in request.messages[1]["content"]
     assert "missing analysis_result" in request.messages[1]["content"]
     assert request.tools == [{"name": "memory.search"}]
+    assert request.output_schema == agent.output_schema
+    assert request.output_schema_name == "analyst_output"

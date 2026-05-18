@@ -45,7 +45,11 @@ def evaluate_report_quality(
             rewrite_attempt=rewrite_attempts,
         )
     )
-    support_matrix = SupportMatrixBuilder().build(report_draft, evidence_bundle)
+    support_matrix = SupportMatrixBuilder().build(
+        report_draft,
+        evidence_bundle,
+        verified_findings,
+    )
     quality_summary = QualityScorer().score(
         report=report_draft,
         citation_check=citation_check,

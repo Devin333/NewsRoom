@@ -16,6 +16,7 @@ def test_finalize_report_pass_publishes_final_report_and_markdown() -> None:
     assert output["quality_gate_metrics"]["blocked"] is False
     assert output["final_report"].title == "Daily Intelligence: AI policy"
     assert output["final_report"].metadata["accepted_claims_count"] == 1
+    assert output["final_report"].sections[0]["claim_grounding"][0]["claim_id"] == "claim-1"
     assert "https://example.com/source" in output["report_markdown"]
     assert "blocked_report" not in output
 
@@ -38,6 +39,7 @@ def test_finalize_report_rewrite_required_with_edited_draft_publishes_edit() -> 
     assert output["quality_result"]["decision"] == "rewrite_required"
     assert output["quality_result"]["rewrite_attempts"] == 1
     assert output["final_report"].title == "Edited Daily Intelligence"
+    assert output["final_report"].sections[0]["claim_grounding"][0]["claim_id"] == "claim-1"
     assert "Edited source-grounded summary." in output["report_markdown"]
     assert output["rewrite_instructions"] == ["remove unsupported wording"]
 
@@ -148,6 +150,16 @@ def _buffer(
             "missing_citations": [],
             "risk_level": "low",
             "reasons": [],
+            "grounded_claims": [
+                {
+                    "claim_id": "claim-1",
+                    "section_id": "summary",
+                    "status": "supported",
+                    "evidence_ids": ["ev-1"],
+                    "source_urls": ["https://example.com/source"],
+                    "reason": "explicit grounding",
+                }
+            ],
         },
         "citation_check_result": {"passed": True, "unsupported_claims": []},
         "support_matrix": {"coverage_ratio": 1.0, "unsupported_sections": []},
@@ -194,9 +206,19 @@ def _report_draft(*, title: str = "Daily Intelligence: AI policy") -> dict:
         "title": title,
         "sections": [
             {
+                "section_id": "summary",
                 "title": "Summary",
                 "content": "Source-grounded summary.",
                 "sources": ["https://example.com/source"],
+                "evidence_ids": ["ev-1"],
+                "claim_grounding": [
+                    {
+                        "claim_id": "claim-1",
+                        "text": "Source-grounded summary.",
+                        "evidence_ids": ["ev-1"],
+                        "source_urls": ["https://example.com/source"],
+                    }
+                ],
             }
         ],
         "metadata": {"draft_id": "draft-1"},

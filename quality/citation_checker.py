@@ -70,7 +70,7 @@ class CitationChecker:
         unsupported_claims = [str(claim) for claim in support_matrix.unsupported_claims]
         rejected_claim_usage = [
             usage.text for usage in support_matrix.rejected_claim_usage
-        ] or _rejected_claim_usage(report, verified_findings)
+        ]
         uncertain_notes = _uncertain_claim_notes(report, verified_findings)
         notes = [*uncertain_notes]
         section_source_coverage_score = _citation_coverage_score(report, missing_section_sources)

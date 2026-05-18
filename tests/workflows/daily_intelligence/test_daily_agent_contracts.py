@@ -78,6 +78,7 @@ def test_daily_agent_specs_define_contract_keys() -> None:
     ]
     assert verifier.output_key == "verification_result"
     assert verifier.output_schema is not None
+    assert "Never invent, normalize, reformat, or partially rewrite evidence IDs" in verifier.instructions
 
     assert editor.input_keys == [
         "report_draft",
@@ -114,7 +115,13 @@ def test_daily_agent_output_validators_accept_valid_payloads() -> None:
     assert validate_report_draft({"report_draft": _valid_report_draft()})[
         "sections"
     ][0]["sources"] == ["https://example.com/source"]
+    assert validate_report_draft(_valid_report_draft())["sections"][0]["claim_grounding"][0][
+        "evidence_ids"
+    ] == ["ev_1"]
     assert validate_verification_result(_valid_verification_result())["status"] == "pass"
+    assert validate_verification_result(_valid_verification_result())["grounded_claims"][0][
+        "status"
+    ] == "supported"
     assert validate_editor_review(_valid_editor_review())["decision"] == "pass"
 
 
@@ -123,6 +130,15 @@ def test_normalize_agent_report_draft_accepts_wrapped_or_direct_draft() -> None:
 
     assert normalize_agent_report_draft(draft) == draft
     assert normalize_agent_report_draft({"report_draft": draft}) == draft
+
+
+def test_validate_report_draft_backfills_sources_from_claim_grounding() -> None:
+    draft = _valid_report_draft()
+    draft["sections"][0]["sources"] = []
+
+    validated = validate_report_draft(draft)
+
+    assert validated["sections"][0]["sources"] == ["https://example.com/source"]
 
 
 @pytest.mark.parametrize(
@@ -166,10 +182,94 @@ def test_daily_agent_output_validators_reject_missing_keys(validator, payload) -
             validate_report_draft,
             {
                 "title": "Daily Brief",
-                "sections": [{"title": "Summary", "content": "Text", "sources": "x"}],
+                "sections": [
+                    {
+                        "section_id": "summary",
+                        "title": "Summary",
+                        "content": "Text",
+                        "sources": ["https://example.com/source"],
+                    }
+                ],
                 "metadata": {},
             },
-            "sources must be a list",
+            "missing required key",
+        ),
+        (
+            validate_report_draft,
+            {
+                "title": "Daily Brief",
+                "sections": [
+                    {
+                        "section_id": "summary",
+                        "title": "Summary",
+                        "content": "Text",
+                        "sources": ["https://example.com/source"],
+                        "claim_grounding": {},
+                    }
+                ],
+                "metadata": {},
+            },
+            "claim_grounding must be a list",
+        ),
+        (
+            validate_verification_result,
+            {
+                "status": "pass",
+                "unsupported_claims": [],
+                "missing_citations": [],
+                "risk_level": "low",
+                "reasons": [],
+                "grounded_claims": {},
+            },
+            "grounded_claims must be a list",
+        ),
+        (
+            validate_report_draft,
+            {
+                "title": "Daily Brief",
+                "sections": [
+                    {
+                        "section_id": "summary",
+                        "title": "Summary",
+                        "content": "First paragraph.\n\nSecond paragraph.",
+                        "sources": ["https://example.com/source"],
+                        "claim_grounding": [
+                            {
+                                "claim_id": "claim_1",
+                                "text": "First paragraph.",
+                                "evidence_ids": ["ev_1"],
+                                "source_urls": ["https://example.com/source"],
+                            }
+                        ],
+                    }
+                ],
+                "metadata": {},
+            },
+            "compact card, not multi-paragraph prose",
+        ),
+        (
+            validate_report_draft,
+            {
+                "title": "Daily Brief",
+                "sections": [
+                    {
+                        "section_id": "summary",
+                        "title": "Summary",
+                        "content": "Text",
+                        "sources": ["https://example.com/source"],
+                        "claim_grounding": [
+                            {
+                                "claim_id": "claim_1",
+                                "text": "Text",
+                                "evidence_ids": ["ev_1"],
+                                "source_urls": [],
+                            }
+                        ],
+                    }
+                ],
+                "metadata": {},
+            },
+            "source_urls must contain at least one source URL",
         ),
         (
             validate_verification_result,
@@ -179,6 +279,7 @@ def test_daily_agent_output_validators_reject_missing_keys(validator, payload) -
                 "missing_citations": [],
                 "risk_level": "low",
                 "reasons": [],
+                "grounded_claims": [],
             },
             "status is not supported",
         ),
@@ -190,6 +291,7 @@ def test_daily_agent_output_validators_reject_missing_keys(validator, payload) -
                 "missing_citations": [],
                 "risk_level": "critical",
                 "reasons": [],
+                "grounded_claims": [],
             },
             "risk_level is not supported",
         ),
@@ -236,9 +338,19 @@ def _valid_report_draft() -> dict:
         "title": "Daily Brief",
         "sections": [
             {
+                "section_id": "summary",
                 "title": "Summary",
                 "content": "Source-grounded summary.",
                 "sources": ["https://example.com/source"],
+                "evidence_ids": ["ev_1"],
+                "claim_grounding": [
+                    {
+                        "claim_id": "claim_1",
+                        "text": "Source-grounded summary.",
+                        "evidence_ids": ["ev_1"],
+                        "source_urls": ["https://example.com/source"],
+                    }
+                ],
             }
         ],
         "metadata": {"profile": "agentic-offline"},
@@ -252,6 +364,16 @@ def _valid_verification_result() -> dict:
         "missing_citations": [],
         "risk_level": "low",
         "reasons": [],
+        "grounded_claims": [
+            {
+                "claim_id": "claim_1",
+                "section_id": "summary",
+                "status": "supported",
+                "evidence_ids": ["ev_1"],
+                "source_urls": ["https://example.com/source"],
+                "reason": "explicit grounding",
+            }
+        ],
     }
 
 
