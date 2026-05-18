@@ -34,5 +34,8 @@ jobs:
       - name: Run service tests
         run: python -m scripts.dev test-services
 
+      - name: Run PRD-aligned daily regression sweep
+        run: python -m scripts.dev test-prd-daily
+
       - name: Run fixed smoke commands
         run: python -m scripts.dev smoke

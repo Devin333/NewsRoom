@@ -83,10 +83,43 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run([sys.executable, "-m", "pytest", "tests/interfaces/api", "-q"], env=env)
     if args.command == "test-cli":
         return _run([sys.executable, "-m", "pytest", "tests/interfaces/cli", "-q"], env=env)
-    if args.command == "test-mcp":
-        return _run([sys.executable, "-m", "pytest", "tests/interfaces/mcp", "-q"], env=env)
-    if args.command == "export-openapi":
-        return _run(_export_openapi_command(), env=env)
+    if args.command == "test-prd-daily":
+        return _run(
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                "tests/core/framework/agent_loop",
+                "tests/core/framework/llm/test_openai_compatible.py",
+                "tests/interfaces/services/test_run_service_agentic_daily.py",
+                "tests/interfaces/services/test_run_service_live_smoke.py",
+                "tests/interfaces/services/test_report_service.py",
+                "tests/interfaces/services/test_entity_service.py",
+                "tests/interfaces/services/test_mcp_application_service.py",
+                "tests/interfaces/services/test_approval_workflow_resume_service.py",
+                "tests/interfaces/api/test_http_api_foundation.py",
+                "tests/interfaces/api/test_final_target_routes.py",
+                "tests/interfaces/api/test_approval_api.py",
+                "tests/interfaces/cli/test_news_cli.py",
+                "tests/interfaces/cli/test_entity_commands.py",
+                "tests/interfaces/cli/test_approval_commands.py",
+                "tests/evidence/test_claim_verifier.py",
+                "tests/quality/test_citation_editor.py",
+                "tests/quality/test_support_scoring.py",
+                "tests/workflows/daily_intelligence/test_daily_agent_contracts.py",
+                "tests/workflows/daily_intelligence/test_daily_agent_registry.py",
+                "tests/workflows/daily_intelligence/test_daily_agentic_runner_offline.py",
+                "tests/workflows/daily_intelligence/test_daily_finalize_report_step.py",
+                "tests/workflows/daily_intelligence/test_daily_current_baseline.py",
+                "tests/workflows/test_daily_intelligence_runner.py",
+                "tests/workflows/test_weekly_intelligence_runner.py",
+                "tests/workflows/test_workflow_runner_contracts.py",
+                "tests/storage/test_artifact_store.py",
+                "tests/storage/test_backup_restore.py",
+                "-q",
+            ],
+            env=env,
+        )
     if args.command == "test-api-contracts":
         return _run(
             [
@@ -189,6 +222,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("test-api", help="Run HTTP API interface tests")
     subparsers.add_parser("test-cli", help="Run CLI interface tests")
     subparsers.add_parser("test-mcp", help="Run MCP interface tests")
+    subparsers.add_parser("test-prd-daily", help="Run the PRD-aligned daily agentic regression sweep")
     subparsers.add_parser("export-openapi", help="Export docs/api/openapi.json")
     subparsers.add_parser("test-api-contracts", help="Run API contract tests")
     subparsers.add_parser("web-check", help="Check Web Console skeleton files")
