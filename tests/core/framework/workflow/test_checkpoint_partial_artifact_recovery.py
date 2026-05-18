@@ -67,6 +67,29 @@ def test_checkpoint_artifact_inspection_requires_some_buffer_snapshot(tmp_path) 
     assert "data_buffer_snapshot" in report.missing_required_artifacts
 
 
+def test_checkpoint_artifact_inspection_reports_required_and_optional_artifacts_from_manifest(tmp_path) -> None:
+    run_dir = tmp_path / "run-1"
+    run_dir.mkdir(parents=True)
+    (run_dir / "request.json").write_text("{}", encoding="utf-8")
+    report = inspect_checkpoint_artifacts(
+        checkpoint=envelope_from_checkpoint(_checkpoint()),
+        manifest={
+            "artifacts": {
+                "request": "request.json",
+                "events": "events.jsonl",
+                "report_json": "report.json",
+            }
+        },
+        artifact_root=tmp_path,
+        strict=False,
+    )
+
+    assert "request" in report.recovered_artifacts
+    assert "report_json" in report.missing_optional_artifacts
+    assert any("optional artifact is missing: report_json" in warning for warning in report.warnings)
+
+
+
 def _checkpoint(*, data_buffer_snapshot: dict | None = None) -> WorkflowCheckpoint:
     return WorkflowCheckpoint(
         checkpoint_id="cp-1",

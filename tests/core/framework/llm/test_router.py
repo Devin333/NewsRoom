@@ -179,7 +179,44 @@ def test_llm_router_rejects_primary_missing_required_capability_before_calling()
     assert exc_info.value.errors[0]["missing_capabilities"] == ["structured_output"]
 
 
-def test_llm_router_adds_cost_budget_metadata_when_policy_is_configured() -> None:
+def test_llm_router_route_required_capabilities_from_config_like_values() -> None:
+    primary = StaticClient(LLMResponse(content="primary"))
+    fallback = StaticClient(LLMResponse(content="fallback"))
+    route = ModelRoute(
+        route_id="writer",
+        primary_deployment_id="primary",
+        fallback_deployment_ids=("fallback",),
+        required_capabilities=("structured_output",),
+    )
+    router = LLMRouter(
+        routes=[route],
+        deployments=[
+            ModelDeployment(
+                deployment_id="primary",
+                provider="test",
+                model="model-a",
+                client=primary,
+                capabilities=ModelCapabilities(supports_structured_output=False),
+            ),
+            ModelDeployment(
+                deployment_id="fallback",
+                provider="test",
+                model="model-b",
+                client=fallback,
+                capabilities=ModelCapabilities(supports_structured_output=True),
+            ),
+        ],
+    )
+
+    with pytest.raises(LLMRouteError) as exc_info:
+        router.complete("writer", LLMRequest(messages=[{"role": "user", "content": "hi"}]))
+
+    assert primary.call_count == 0
+    assert fallback.call_count == 0
+    assert exc_info.value.error_type == "missing_required_capability"
+    assert exc_info.value.errors[0]["missing_capabilities"] == ["structured_output"]
+
+
     primary = StaticClient(
         LLMResponse(content="primary", usage=TokenUsage(input_tokens=1_000, output_tokens=500))
     )
@@ -435,6 +472,38 @@ def test_llm_router_records_fallback_events_and_redacted_route_manifest() -> Non
     assert manifest["redacted_request"]["metadata"]["api_key"] == "[redacted]"
     assert secret not in str(manifest)
     assert "[redacted]" in str(manifest)
+
+
+def test_llm_router_reports_fallback_chain_in_manifest_metadata() -> None:
+    primary = FailingClient(
+        LLMProviderError(
+            "temporary outage",
+            provider="primary",
+            error_type="server_error",
+            retryable=True,
+            status_code=503,
+        )
+    )
+    fallback = StaticClient(LLMResponse(content="fallback"))
+    router = LLMRouter(
+        routes=[
+            ModelRoute(
+                route_id="writer",
+                primary_deployment_id="primary",
+                fallback_deployment_ids=("fallback",),
+            )
+        ],
+        deployments=[
+            ModelDeployment("primary", "test", "model-a", primary),
+            ModelDeployment("fallback", "test", "model-b", fallback),
+        ],
+    )
+
+    response = router.complete("writer", LLMRequest(messages=[{"role": "user", "content": "hi"}]))
+
+    assert response.metadata["llm_route_manifest"]["fallback_used"] is True
+    assert response.metadata["llm_route_manifest"]["fallback_count"] == 1
+    assert response.metadata["llm_attempted_deployments"] == ["primary", "fallback"]
 
 
 def test_llm_router_rejects_fallback_missing_required_capability() -> None:

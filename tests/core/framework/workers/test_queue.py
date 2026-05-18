@@ -125,6 +125,7 @@ def test_in_memory_queue_requeues_dead_letter_task() -> None:
     assert requeued is True
     assert leased_again.task_id == "task-1"
     assert leased_again.metadata["requeue_reason"] == "operator_retry"
+    assert leased_again.metadata["dead_letter_reason"] == "failed"
     assert queue.list_dead_letters() == []
 
 
@@ -216,6 +217,7 @@ def test_redis_stream_queue_lease_one_decodes_task_payload() -> None:
     assert leased.task.status == TaskStatus.LEASED
     assert leased.task.leased_by == "worker-1"
     assert leased.task.attempts == 1
+    assert leased.task.metadata["lease_count"] == 1
     assert leased.queue_name == "news:queue:daily"
     assert leased.message_id == "1-0"
 
@@ -235,6 +237,8 @@ def test_redis_stream_queue_reclaim_stale_one_claims_pending_payload() -> None:
     assert leased.task.status == TaskStatus.LEASED
     assert leased.task.leased_by == "worker-2"
     assert leased.task.attempts == 1
+    assert leased.task.metadata["lease_count"] == 1
+    assert "reclaimed" not in leased.task.metadata
     assert leased.queue_name == "news:queue:daily"
     assert leased.message_id == "1-0"
     assert redis.xclaim_calls == [
@@ -323,6 +327,7 @@ def test_redis_stream_queue_fail_dead_letters_quality_gate_block_without_retry()
     assert queue.list_dead_letters()[0].error.error_type == "QualityGateBlocked"
 
 
+def test_redis_stream_queue_fail_dead_letters_and_requeues_record() -> None:
     task = Task(task_type="daily_intelligence.run", payload={}, task_id="task-1", attempts=3)
     redis = _FakeRedis()
     queue = RedisStreamTaskQueue(redis)

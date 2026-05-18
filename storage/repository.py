@@ -283,6 +283,12 @@ def report_record_from_result(result: RunResult) -> ReportRecord | None:
         "rejected_claim_usage": citation_check.get("rejected_claim_usage", []),
         "unsupported_sections": support_matrix.get("unsupported_sections", []),
         "remediation": quality_result.get("metadata", {}).get("remediation", []),
+        "reviewer_trace": quality_result.get("metadata", {}).get("reviewer_trace", {}),
+        "accepted_claims_count": quality_result.get("metadata", {}).get("accepted_claims_count"),
+        "rejected_claims_count": quality_result.get("metadata", {}).get("rejected_claims_count"),
+        "uncertain_claims_count": quality_result.get("metadata", {}).get("uncertain_claims_count"),
+        "unsupported_claims_count": quality_result.get("metadata", {}).get("unsupported_claims_count"),
+        "evidence_bundle_id": report_payload.get("metadata", {}).get("evidence_bundle_id") if isinstance(report_payload.get("metadata"), dict) else None,
     }
     if report_payload:
         report_payload = {

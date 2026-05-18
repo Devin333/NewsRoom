@@ -102,6 +102,8 @@ def test_approval_api_resume_context_for_decided_approval(tmp_path) -> None:
     assert payload["buffer_updates"]["editor_decision"]["decision"] == "approved"
     assert payload["resume_metadata"]["approval_run_id"] == "run-paused"
     assert payload["resume_metadata"]["task_id"] == "task-paused"
+    assert payload["resume_metadata"]["reviewer_trace"]["approval_id"] == approval_id
+    assert payload["resume_metadata"]["reviewer_trace"]["decision_type"] == "approve"
 
 
 

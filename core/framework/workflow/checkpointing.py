@@ -421,7 +421,11 @@ def check_checkpoint_compatibility(
     migrated_schema_version: str | None = None
 
     if not verify_checkpoint_checksum(envelope):
-        errors.append("checkpoint checksum is invalid")
+        message = "checkpoint checksum is invalid"
+        if strict:
+            errors.append(message)
+        else:
+            warnings.append(message)
 
     if envelope.workflow_id != workflow.workflow_id:
         errors.append(

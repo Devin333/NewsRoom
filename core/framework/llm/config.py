@@ -41,7 +41,11 @@ class OpenAICompatibleDeploymentConfig:
     config: OpenAICompatibleConfig
     capabilities: ModelCapabilities = ModelCapabilities()
     required_capabilities: tuple[str, ...] = ()
+    fallback_deployment_ids: tuple[str, ...] = ()
+    enabled: bool = True
+    cooldown_seconds: int | None = None
     max_retries: int = 0
+    budget_policy: dict[str, Any] = None  # type: ignore[assignment]
 
     def retry_policy(self) -> LLMRetryPolicy:
         return LLMRetryPolicy(max_attempts=max(1, self.max_retries + 1))
@@ -271,6 +275,15 @@ def _deployment_config(
     required_capabilities = _required_capabilities_from_route_payload(
         route_payload=route_payload or {}
     )
+    fallback_deployment_ids = _fallback_deployment_ids_from_route_payload(
+        route_payload=route_payload or {}
+    )
+    enabled = _bool_value(payload.get("enabled"), default=True)
+    cooldown_seconds = _optional_positive_int(
+        payload.get("cooldown_seconds"),
+        field="cooldown_seconds",
+    )
+    budget_policy = _budget_policy_from_route_payload(route_payload or {})
     return OpenAICompatibleDeploymentConfig(
         deployment_id=_required_text(payload.get("deployment_id"), field="deployment_id"),
         route_id=route_id,
@@ -289,7 +302,11 @@ def _deployment_config(
         ),
         capabilities=capabilities,
         required_capabilities=required_capabilities,
+        fallback_deployment_ids=fallback_deployment_ids,
+        enabled=enabled,
+        cooldown_seconds=cooldown_seconds,
         max_retries=max_retries,
+        budget_policy=budget_policy,
     )
 
 
@@ -362,6 +379,33 @@ def _required_capabilities_from_route_payload(*, route_payload: dict[str, Any]) 
             normalized.append(capability)
             seen.add(capability)
     return tuple(normalized)
+
+
+def _fallback_deployment_ids_from_route_payload(*, route_payload: dict[str, Any]) -> tuple[str, ...]:
+    raw = route_payload.get("fallback_deployment_ids") or route_payload.get("fallback_deployments")
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise LLMConfigurationError("fallback_deployment_ids must be a list")
+    values: list[str] = []
+    seen: set[str] = set()
+    for value in raw:
+        text = _optional_text(value)
+        if text is None:
+            raise LLMConfigurationError("fallback_deployment_ids must contain non-empty strings")
+        if text not in seen:
+            values.append(text)
+            seen.add(text)
+    return tuple(values)
+
+
+def _budget_policy_from_route_payload(route_payload: dict[str, Any]) -> dict[str, Any]:
+    raw = route_payload.get("budget_policy")
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise LLMConfigurationError("budget_policy must be an object")
+    return dict(raw)
 
 
 def _assert_no_literal_secrets(value: Any, *, path: str = "") -> None:
@@ -482,6 +526,12 @@ def _positive_int(value: Any, *, field: str) -> int:
     if parsed <= 0:
         raise LLMConfigurationError(f"{field} must be greater than zero")
     return parsed
+
+
+def _optional_positive_int(value: Any, *, field: str) -> int | None:
+    if value is None:
+        return None
+    return _positive_int(value, field=field)
 
 
 def _non_negative_int(value: Any, *, field: str) -> int:

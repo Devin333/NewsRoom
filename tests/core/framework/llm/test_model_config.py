@@ -161,6 +161,40 @@ routes:
     assert deployment.required_capabilities == ("structured_output", "tool_calling")
 
 
+def test_load_openai_compatible_deployment_reads_route_fallbacks_and_budget_policy(tmp_path) -> None:
+    config_path = tmp_path / "models.yaml"
+    config_path.write_text(
+        """
+deployments:
+  - deployment_id: compatible-live
+    provider: openai-compatible
+    model: test-model
+    api_base: https://llm.example/v1
+    api_key: ${TEST_LLM_KEY}
+    cooldown_seconds: 30
+routes:
+  writer:
+    deployment_id: compatible-live
+    fallback_deployment_ids:
+      - fallback-a
+      - fallback-b
+    budget_policy:
+      max_cost_per_call_usd: 0.01
+      on_budget_exceeded: fail
+""".strip(),
+        encoding="utf-8",
+    )
+
+    deployment = load_openai_compatible_deployment(config_path, route_id="writer")
+
+    assert deployment.fallback_deployment_ids == ("fallback-a", "fallback-b")
+    assert deployment.cooldown_seconds == 30
+    assert deployment.budget_policy == {
+        "max_cost_per_call_usd": 0.01,
+        "on_budget_exceeded": "fail",
+    }
+
+
 def test_build_openai_compatible_client_from_config_uses_configured_retry_policy(tmp_path) -> None:
     config_path = tmp_path / "models.yaml"
     config_path.write_text(
@@ -182,7 +216,28 @@ deployments:
     assert client._retry_policy.max_attempts == 2
 
 
-def test_model_config_rejects_non_boolean_capability_flag(tmp_path) -> None:
+def test_load_openai_compatible_deployment_rejects_invalid_fallback_list(tmp_path) -> None:
+    config_path = tmp_path / "models.yaml"
+    config_path.write_text(
+        """
+deployments:
+  - deployment_id: compatible-live
+    provider: openai-compatible
+    model: test-model
+    api_base: https://llm.example/v1
+    api_key: ${TEST_LLM_KEY}
+routes:
+  writer:
+    deployment_id: compatible-live
+    fallback_deployment_ids: fallback-a
+""".strip(),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(LLMConfigurationError, match="fallback_deployment_ids"):
+        load_openai_compatible_deployment(config_path, route_id="writer")
+
+
     config_path = tmp_path / "models.yaml"
     config_path.write_text(
         """

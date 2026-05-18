@@ -26,7 +26,7 @@ from core.framework.workflow.checkpointing import (
     WorkflowResumeRequest,
     envelope_from_checkpoint,
 )
-from core.framework.workflow.manifest import manifest_hash, stable_json_dumps
+from core.framework.workflow.manifest import manifest_hash, normalize_legacy_run_manifest, stable_json_dumps
 from core.framework.workflow.result import StepOutcome
 from core.framework.workflow.routing import RoutingEngine
 from storage.checkpoint import WorkflowCheckpoint
@@ -1188,7 +1188,7 @@ def load_run_manifest(artifact_root: str | Path, run_id: str) -> dict[str, Any]:
     path = Path(artifact_root) / run_id / "manifest.json"
     if not path.exists():
         raise FileNotFoundError(f"manifest not found for run_id: {run_id}")
-    return json.loads(path.read_text(encoding="utf-8"))
+    return normalize_legacy_run_manifest(json.loads(path.read_text(encoding="utf-8")))
 
 
 def save_run_manifest(
@@ -1266,6 +1266,9 @@ def append_operation_record(
         manifest["operations"] = operations
     operations.append(to_json_safe(payload))
     manifest["operation_count"] = len(operations)
+    manifest["latest_operation_id"] = payload.get("operation_id")
+    manifest["latest_operation_type"] = payload.get("operation_type")
+    manifest["latest_operation_status"] = payload.get("status")
 
 
 def operation_event(

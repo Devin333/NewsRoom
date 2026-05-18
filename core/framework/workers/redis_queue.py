@@ -303,9 +303,17 @@ def _leased_task_from_message(
 ) -> LeasedTask:
     raw_task = _field_value(fields, "task")
     task = Task.from_dict(json.loads(_decode(raw_task)))
+    previous_worker = task.leased_by
     task.status = TaskStatus.LEASED
     task.leased_by = worker_id
     task.attempts += 1
+    task.metadata["lease_count"] = task.attempts
+    if previous_worker and previous_worker != worker_id:
+        task.metadata["reclaimed"] = True
+        task.metadata["reclaimed_from_worker"] = previous_worker
+    task.updated_at = datetime.now(UTC)
+    if task.timeout_seconds is not None:
+        task.lease_expires_at = task.updated_at + timedelta(seconds=task.timeout_seconds)
     return LeasedTask(
         queue_name=queue_name,
         message_id=_decode(message_id),

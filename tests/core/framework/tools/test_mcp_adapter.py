@@ -85,6 +85,25 @@ def test_mcp_adapter_uses_executor_secret_provider_instead_of_environment(monkey
     ]
 
 
+def test_mcp_adapter_registers_server_metadata_for_inspection() -> None:
+    client = _InMemoryMCPClient()
+    adapter = MCPToolAdapter(client)
+    server = MCPServerConfig(
+        server_id="fixture-server",
+        name="Fixture MCP",
+        transport="in_memory",
+    )
+    registry = ToolRegistry()
+
+    definitions = adapter.register_tools(registry, server)
+    definition = definitions[0]
+
+    assert definition.metadata["source"] == "mcp"
+    assert definition.metadata["server_id"] == "fixture-server"
+    assert definition.metadata["server_name"] == "Fixture MCP"
+    assert definition.metadata["remote_tool_name"] == "echo"
+
+
 class _InMemoryMCPClient:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, dict[str, Any]]] = []

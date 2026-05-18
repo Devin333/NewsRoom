@@ -193,6 +193,19 @@ def test_inspect_tool_registry_reports_risk_namespaces_and_findings() -> None:
     assert payload["boundary_report"]["blocking_finding_count"] == 1
 
 
+def test_inspect_tool_registry_marks_mcp_tool_as_external() -> None:
+    registry = _inspection_registry()
+    policy = ToolPolicy(allowed_tools=["mcp.fixture.echo"], allow_mcp_tools=True)
+
+    inspection = inspect_tool_registry(registry, policy=policy, agent_id="analyst")
+    mcp_tool = next(tool for tool in inspection.tools if tool.name == "mcp.fixture.echo")
+
+    assert mcp_tool.namespace == "mcp"
+    assert inspection.risk_summary.external_tools >= 1
+    assert inspection.policy is not None
+    assert inspection.policy.exposed_mcp_tools == ["mcp.fixture.echo"]
+
+
 def test_inspect_tool_executor_summarizes_success_failed_and_blocked_calls() -> None:
     registry = _inspection_registry()
     executor = ToolExecutor(registry)
@@ -224,10 +237,12 @@ def test_inspect_tool_executor_summarizes_success_failed_and_blocked_calls() -> 
     assert inspection.event_type_counts["tool_call_requested"] == 3
     assert inspection.event_type_counts["tool_observation_created"] == 3
     assert inspection.metrics.total_calls == 3
+    assert inspection.metrics.spilled_result_count == 0
     assert inspection.failed_or_blocked_count == 2
     assert len(inspection.recent_records) == 2
     assert len(inspection.recent_events) == 2
     assert payload["metrics"]["calls_by_tool"] == {"memory.search": 2, "report.publish": 1}
+    assert payload["status_counts"]["blocked"] == 1
 
 
 def test_inspect_tool_runtime_combines_registry_and_executor() -> None:
@@ -252,6 +267,8 @@ def test_inspect_tool_runtime_combines_registry_and_executor() -> None:
     assert payload["summary"]["executor_status_counts"]["succeeded"] == 1
     assert payload["registry"]["policy"]["exposed_tool_count"] == 1
     assert payload["executor"]["total_records"] == 1
+    assert payload["executor"]["approval_required_count"] == 0
+    assert payload["executor"]["timeout_count"] == 0
 
 
 def test_builtin_registry_inspection_stays_offline_and_marks_network_tools_optional() -> None:

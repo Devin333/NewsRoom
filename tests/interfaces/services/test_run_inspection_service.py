@@ -44,13 +44,43 @@ def test_run_inspection_get_run_reads_manifest(tmp_path) -> None:
     _write_manifest(
         tmp_path,
         "run-1",
-        {"run_id": "run-1", "status": "succeeded", "workflow_id": "daily"},
+        {
+            "run_id": "run-1",
+            "status": "succeeded",
+            "workflow_id": "daily",
+            "workflow_version": "1.0",
+            "profile": "test",
+            "started_at": "2026-05-11T00:00:00Z",
+            "path": [],
+            "steps": {},
+            "artifacts": {
+                "request": "request.json",
+                "workflow_spec": "workflow_spec.json",
+                "workflow_version": "workflow_version.json",
+                "events": "events.jsonl",
+                "manifest": "manifest.json",
+                "data_buffer_snapshot": "data_buffer_snapshot.json",
+                "data_buffer_initial": "data_buffer.initial.json",
+                "data_buffer_final": "data_buffer.final.json",
+                "data_buffer_diff": "data_buffer.diff.json",
+                "step_results": "step_results.json",
+                "metrics": "metrics.json",
+                "redaction_report": "redaction_report.json",
+            },
+        },
     )
 
     result = RunInspectionService(tmp_path).get_run("run-1")
 
     assert result.run_id == "run-1"
     assert result.to_dict()["manifest"]["workflow_id"] == "daily"
+    assert result.to_dict()["manifest"]["schema_version"] == "newsroom.workflow_run_manifest.v1"
+    assert result.to_dict()["output_preview"]["partial_artifacts"]["required_artifact_keys"] == [
+        "request",
+        "events",
+        "step_results",
+        "manifest",
+    ]
 
 
 def test_run_inspection_reads_events_jsonl(tmp_path) -> None:

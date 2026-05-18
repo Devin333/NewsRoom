@@ -97,6 +97,11 @@ def test_report_service_quality_prefers_quality_trace_payload(tmp_path) -> None:
                 ],
                 "unsupported_sections": ["Summary"],
                 "remediation": ["remove unsupported claim"],
+                "reviewer_trace": {
+                    "approval_id": "appr-1",
+                    "decision_type": "approve",
+                    "decided_by": "operator",
+                },
             },
         },
     )
@@ -106,9 +111,41 @@ def test_report_service_quality_prefers_quality_trace_payload(tmp_path) -> None:
     assert result.to_dict()["quality"]["decision"] == "blocked"
     assert result.to_dict()["quality"]["route"] == "human_review"
     assert result.to_dict()["quality"]["unsupported_sections"] == ["Summary"]
+    assert result.to_dict()["quality"]["reviewer_trace"]["approval_id"] == "appr-1"
+    assert "accepted_claims_count" not in result.to_dict()["quality"]
 
 
-def test_report_service_rejects_empty_query(tmp_path) -> None:
+def test_report_service_quality_keeps_reviewer_artifact_refs_visible(tmp_path) -> None:
+    _write_report_run(
+        tmp_path,
+        "run-review",
+        "2026-05-11T00:00:00Z",
+        "Review Daily",
+        report_json={
+            "title": "Review Daily",
+            "quality_trace": {
+                "decision": "human_review",
+                "route": "human_review",
+                "reviewer_trace": {
+                    "approval_id": "appr-2",
+                    "decision_type": "modify",
+                    "artifact_refs": {
+                        "editor_review": "editor_review.json",
+                        "report_quality_summary": "report_quality_summary.json",
+                    },
+                },
+            },
+        },
+    )
+
+    result = ReportApplicationService(artifact_root=tmp_path).report_quality("run-review:final")
+
+    assert result.to_dict()["quality"]["reviewer_trace"]["artifact_refs"] == {
+        "editor_review": "editor_review.json",
+        "report_quality_summary": "report_quality_summary.json",
+    }
+
+
     service = ReportApplicationService(artifact_root=tmp_path)
 
     with pytest.raises(ValueError, match="query is required"):

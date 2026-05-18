@@ -219,6 +219,16 @@ def _approval_resume_metadata(approval: ApprovalRequest) -> dict[str, Any]:
         "requested_action": approval.requested_action,
         "risk_level": approval.risk_level,
         "decided_by": approval.decision.decided_by,
+        "reviewer_trace": {
+            "approval_id": approval.approval_id,
+            "approval_status": approval.status.value,
+            "decision_type": approval.decision.decision_type.value,
+            "requested_action": approval.requested_action,
+            "risk_level": approval.risk_level,
+            "decided_by": approval.decision.decided_by,
+            "reason": approval.decision.reason,
+            "modifications": dict(approval.decision.modifications),
+        },
     }
     if approval.task_id:
         metadata["task_id"] = approval.task_id

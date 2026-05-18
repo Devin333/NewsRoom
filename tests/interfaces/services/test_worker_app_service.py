@@ -38,11 +38,24 @@ def test_worker_service_enqueue_daily_uses_queue() -> None:
         "source_limit": 2,
         "run_id": "queued-run",
     }
+    assert result.task.dedup_key is None
     assert result.message_id == "1-0"
     assert queue.enqueued[0] is result.task
 
 
-def test_worker_service_enqueue_memory_reindex_uses_memory_queue() -> None:
+def test_worker_service_enqueue_daily_without_run_id_uses_stable_dedup_key() -> None:
+    queue = _FakeQueue()
+    service = WorkerApplicationService(queue=queue, handlers={})
+
+    result = service.enqueue_daily(
+        profile="live-offline",
+        topic="AI policy",
+        source_limit=2,
+    )
+
+    assert result.task.dedup_key == "news:queue:daily:daily:live-offline:ai policy"
+
+
     queue = _FakeQueue()
     service = WorkerApplicationService(queue=queue, handlers={})
 

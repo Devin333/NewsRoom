@@ -160,6 +160,7 @@ def test_daily_handler_maps_blocked_workflow_to_completed_task() -> None:
 
     assert result.success is True
     assert result.status == TaskStatus.SUCCEEDED
+    assert result.task_status == TaskStatus.SUCCEEDED
     assert result.run_status == "blocked"
     assert result.report_status == "blocked"
     assert result.error_type is None
@@ -181,6 +182,8 @@ def test_daily_handler_maps_human_review_workflow_to_waiting_task() -> None:
 
     assert result.success is True
     assert result.status == TaskStatus.WAITING_FOR_APPROVAL
+    assert result.task_status == TaskStatus.WAITING_FOR_APPROVAL
+    assert result.run_status == "waiting_for_human"
     assert result.output["status"] == "waiting_for_human"
 
 

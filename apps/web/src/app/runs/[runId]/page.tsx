@@ -2,6 +2,7 @@ import { ErrorState } from "@/components/common/ErrorState"
 import { EmptyState } from "@/components/common/EmptyState"
 import { StatusBadge } from "@/components/common/StatusBadge"
 import { RunArtifacts } from "@/components/runs/RunArtifacts"
+import { RunLiveEvents } from "@/components/runs/RunLiveEvents"
 import { RunOperationPanel } from "@/components/runs/RunOperationPanel"
 import { RunTimeline } from "@/components/runs/RunTimeline"
 import { safeApiGet } from "@/lib/api-client"
@@ -67,7 +68,7 @@ export default async function RunDetailPage({ params }: { params: { runId: strin
       <section className="space-y-3">
         <h2 className="text-lg font-semibold text-ink">Events Timeline</h2>
         {events.ok ? (
-          <RunTimeline events={events.data?.events ?? []} />
+          <RunLiveEvents runId={runId} initialEvents={events.data?.events ?? []} />
         ) : (
           <ErrorState message={events.errorMessage} requestId={events.requestId} />
         )}

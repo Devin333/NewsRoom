@@ -163,6 +163,14 @@ class DiagnosticApplicationService:
             )
         api_key_env = deployment.config.api_key_env
         capability_details = deployment.capabilities.to_dict()
+        route_details = {
+            "required_capabilities": list(deployment.required_capabilities),
+            "fallback_deployment_ids": list(getattr(deployment, "fallback_deployment_ids", ()) or ()),
+            "cooldown_seconds": getattr(deployment, "cooldown_seconds", None),
+            "budget_policy": dict(getattr(deployment, "budget_policy", {}) or {}),
+            "enabled": getattr(deployment, "enabled", True),
+            "max_retries": deployment.max_retries,
+        }
         if not self.env.get(api_key_env):
             return DiagnoseCheck(
                 check_id="model_config",
@@ -176,9 +184,8 @@ class DiagnosticApplicationService:
                     "provider": deployment.config.provider,
                     "model": deployment.config.model,
                     "api_key_env": api_key_env,
-                    "required_capabilities": list(deployment.required_capabilities),
+                    **route_details,
                     "capabilities": capability_details,
-                    "max_retries": deployment.max_retries,
                 },
                 remediation=f"Set {api_key_env} before using the live LLM profile.",
             )
@@ -194,9 +201,8 @@ class DiagnosticApplicationService:
                 "provider": deployment.config.provider,
                 "model": deployment.config.model,
                 "api_key_env": api_key_env,
-                "required_capabilities": list(deployment.required_capabilities),
+                **route_details,
                 "capabilities": capability_details,
-                "max_retries": deployment.max_retries,
             },
         )
 

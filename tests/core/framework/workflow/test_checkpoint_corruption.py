@@ -10,6 +10,7 @@ from core.framework.specs import StepSpec, WorkflowSpec
 from core.framework.workflow import FunctionStepRegistry, FunctionStepRunner, WorkflowExecutor
 from core.framework.workflow.checkpointing import (
     attach_checkpoint_checksum,
+    check_checkpoint_compatibility,
     checkpoint_checksum_payload,
     compute_checkpoint_checksum,
     envelope_from_checkpoint,
@@ -95,6 +96,24 @@ def test_checkpoint_checksum_strict_rejects_corruption(tmp_path) -> None:
             checkpoint_from_envelope(corrupted),
             profile="test",
         )
+
+
+def test_checkpoint_checksum_lenient_reports_warning_not_error() -> None:
+    envelope = envelope_from_checkpoint(_checkpoint())
+    corrupted = replace(
+        envelope,
+        data_buffer_snapshot={**envelope.data_buffer_snapshot, "plan": "tampered"},
+    )
+
+    result = check_checkpoint_compatibility(
+        envelope=corrupted,
+        workflow=_workflow(),
+        strict=False,
+    )
+
+    assert result.compatible is True
+    assert result.errors == []
+    assert any("checksum" in warning for warning in result.warnings)
 
 
 def checkpoint_from_envelope(envelope):

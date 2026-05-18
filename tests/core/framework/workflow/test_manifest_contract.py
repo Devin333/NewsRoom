@@ -183,6 +183,31 @@ def test_artifact_runner_adds_production_artifact_refs_to_manifest(tmp_path) -> 
 
 def test_manifest_schema_version_tolerates_legacy_read() -> None:
     assert manifest_schema_version({}) is None
+    legacy = {
+        "run_id": "run-1",
+        "workflow_id": "wf",
+        "workflow_version": "1.0",
+        "profile": "test",
+        "status": "succeeded",
+        "started_at": "2026-05-14T00:00:00Z",
+        "path": [],
+        "steps": {},
+        "artifacts": {
+            "request": "request.json",
+            "workflow_spec": "workflow_spec.json",
+            "workflow_version": "workflow_version.json",
+            "events": "events.jsonl",
+            "manifest": "manifest.json",
+            "data_buffer_snapshot": "data_buffer_snapshot.json",
+            "data_buffer_initial": "data_buffer.initial.json",
+            "data_buffer_final": "data_buffer.final.json",
+            "data_buffer_diff": "data_buffer.diff.json",
+            "step_results": "step_results.json",
+            "metrics": "metrics.json",
+            "redaction_report": "redaction_report.json",
+        },
+    }
+    validate_run_manifest(legacy)
 
 
 def test_generic_executor_does_not_publish_daily_quality_manifest_fields(tmp_path) -> None:

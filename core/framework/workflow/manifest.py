@@ -49,6 +49,14 @@ _SENSITIVE_MANIFEST_METADATA_KEYS = {
     "metrics",
 }
 
+_LEGACY_MANIFEST_OPTIONAL_DEFAULTS: dict[str, Any] = {
+    "artifact_refs": [],
+    "checkpoints": [],
+    "operations": [],
+    "runner_versions": {},
+    "step_artifacts": [],
+}
+
 
 class RunManifestError(ValueError):
     """Raised when a workflow run manifest would become invalid."""
@@ -204,7 +212,8 @@ class JsonManifestStore:
         path = self._manifest_path(run_id)
         if not path.exists():
             raise RunManifestError(f"manifest does not exist for run_id: {run_id}")
-        return WorkflowRunManifest.from_dict(json.loads(path.read_text(encoding="utf-8")))
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        return WorkflowRunManifest.from_dict(normalize_legacy_run_manifest(payload))
 
     def update(self, manifest: WorkflowRunManifest) -> None:
         manifest.touch()
@@ -436,11 +445,23 @@ def manifest_schema_version(manifest: dict[str, Any]) -> str | None:
     return str(value)
 
 
+def normalize_legacy_run_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(manifest)
+    for field, default in _LEGACY_MANIFEST_OPTIONAL_DEFAULTS.items():
+        normalized.setdefault(field, list(default) if isinstance(default, list) else dict(default) if isinstance(default, dict) else default)
+    if normalized.get("schema_version") is None:
+        normalized["schema_version"] = RUN_MANIFEST_SCHEMA_VERSION
+    if "finished_at" not in normalized:
+        normalized["finished_at"] = None
+    return normalized
+
+
 def validate_run_manifest(
     manifest: dict[str, Any],
     *,
     require_terminal_artifact: bool = False,
 ) -> None:
+    manifest = normalize_legacy_run_manifest(manifest)
     missing_fields = [field for field in _REQUIRED_MANIFEST_FIELDS if field not in manifest]
     if missing_fields:
         raise RunManifestError(

@@ -268,6 +268,14 @@ class ToolExecutorInspection:
             + self.status_counts.get(ToolStatus.TIMEOUT.value, 0)
         )
 
+    @property
+    def approval_required_count(self) -> int:
+        return self.status_counts.get(ToolStatus.APPROVAL_REQUIRED.value, 0)
+
+    @property
+    def timeout_count(self) -> int:
+        return self.status_counts.get(ToolStatus.TIMEOUT.value, 0)
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "total_records": self.total_records,
@@ -278,6 +286,8 @@ class ToolExecutorInspection:
             "recent_records": [record.to_dict() for record in self.recent_records],
             "recent_events": [event.to_dict() for event in self.recent_events],
             "failed_or_blocked_count": self.failed_or_blocked_count,
+            "approval_required_count": self.approval_required_count,
+            "timeout_count": self.timeout_count,
             "finding_count": len(self.findings),
             "findings": [finding.to_dict() for finding in self.findings],
         }

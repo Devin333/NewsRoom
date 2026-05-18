@@ -4,6 +4,7 @@ from quality import (
     CitationChecker,
     EditorDecision,
     EditorGate,
+    EditorReview,
     HumanReviewDecision,
     HumanReviewRequest,
     QualityResult,
@@ -346,6 +347,9 @@ def test_editor_gate_human_review_for_high_risk_borderline_report() -> None:
 
     assert review.decision == EditorDecision.HUMAN_REVIEW
     assert review.required_changes == ["human reviewer must approve, reject, or request rewrite"]
+    assert review.to_dict()["required_changes"] == [
+        "human reviewer must approve, reject, or request rewrite"
+    ]
 
 
 def test_blocked_report_payload_is_standardized() -> None:
@@ -397,7 +401,27 @@ def test_human_review_request_payload_and_decision_mapping() -> None:
     assert mapped.rewrite_required is True
 
 
-def test_quality_eval_golden_cases_pass() -> None:
+
+
+def test_editor_review_payload_keeps_required_changes_and_reasons_aligned() -> None:
+    review = EditorReview(
+        decision=EditorDecision.REWRITE_REQUIRED,
+        reasons=["rewrite required"],
+        required_changes=["remove unsupported claim", "add stronger source grounding"],
+        rewrite_instructions=["remove unsupported claim"],
+    )
+
+    payload = review.to_dict()
+
+    assert payload["decision"] == "rewrite_required"
+    assert payload["reasons"] == ["rewrite required"]
+    assert payload["required_changes"] == [
+        "remove unsupported claim",
+        "add stronger source grounding",
+    ]
+    assert payload["rewrite_instructions"] == ["remove unsupported claim"]
+
+
     records = [run_quality_eval_case(case) for case in golden_quality_eval_cases()]
 
     assert [record.passed for record in records] == [True, True, True, True, True, True]

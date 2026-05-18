@@ -55,6 +55,9 @@ def test_manifest_operations_record_and_count(tmp_path) -> None:
     assert manifest["operations"][0]["status"] == "applied"
     assert manifest["operations"][0]["actor_id"] == "devin"
     assert manifest["operations"][0]["reason"] == "manual cancel"
+    assert manifest["latest_operation_id"] == result.operation_id
+    assert manifest["latest_operation_type"] == "cancel_run"
+    assert manifest["latest_operation_status"] == "applied"
 
 
 def _write_run_manifest(tmp_path, run_id: str, *, status: str) -> None:
