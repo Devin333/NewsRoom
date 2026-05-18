@@ -73,6 +73,7 @@ class InMemoryTaskQueue:
                 task.status = TaskStatus.LEASED
                 task.leased_by = worker_id
                 task.attempts += 1
+                task.metadata["lease_count"] = task.attempts
                 if task.timeout_seconds is not None:
                     task.lease_expires_at = now + timedelta(seconds=task.timeout_seconds)
                 task.updated_at = now
@@ -183,7 +184,11 @@ class InMemoryTaskQueue:
                 continue
             del self._in_flight[task_id]
             task.status = TaskStatus.LEASED
+            previous_worker = task.leased_by
             task.leased_by = worker_id
+            task.metadata["reclaimed"] = True
+            task.metadata["reclaimed_from_worker"] = previous_worker
+            task.metadata["lease_count"] = task.attempts
             task.lease_expires_at = (
                 reference + timedelta(seconds=task.timeout_seconds)
                 if task.timeout_seconds is not None

@@ -195,6 +195,12 @@ class WorkerApplicationService:
             task_type=DailyIntelligenceTaskHandler.task_type,
             queue_name=queue_name,
             payload=payload,
+            dedup_key=_daily_task_dedup_key(
+                queue_name=queue_name,
+                profile=profile,
+                topic=topic,
+                run_id=run_id,
+            ),
         )
         message_id = self.queue.enqueue(task)
         return EnqueuedTaskResult(task=task, message_id=str(message_id))
@@ -550,3 +556,15 @@ def _reject_secret_payload_keys(payload: dict[str, Any]) -> None:
         normalized = key.lower().replace("-", "_")
         if any(fragment in normalized for fragment in secret_fragments):
             raise ValueError(f"task payload key is not allowed: {key}")
+
+
+def _daily_task_dedup_key(
+    *,
+    queue_name: str,
+    profile: str,
+    topic: str,
+    run_id: str | None,
+) -> str | None:
+    if run_id:
+        return None
+    return f"{queue_name}:daily:{profile}:{topic.strip().casefold()}"

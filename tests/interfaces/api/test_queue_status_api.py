@@ -29,6 +29,22 @@ def test_queue_status_api_maps_repeated_queue_names() -> None:
     assert fake_service.queue_status_calls == [["news:queue:daily", "news:queue:memory"]]
 
 
+def test_queue_status_api_invalid_queue_request_uses_unified_error() -> None:
+    client = TestClient(create_app(worker_service_factory=lambda: _RejectingWorkerService()))
+
+    response = client.get("/api/v1/queues?queue_name=")
+    payload = response.json()
+
+    assert response.status_code == 400
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "invalid_queue_status_request"
+
+
+class _RejectingWorkerService:
+    def queue_status(self, *, queue_names=None):
+        raise ValueError("queue_names must not contain empty values")
+
+
 class _FakeWorkerService:
     def __init__(self) -> None:
         self.queue_status_calls = []

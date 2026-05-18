@@ -31,7 +31,10 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
 
     @router.get("/api/v1/queues")
     def list_queues(queue_name: list[str] | None = Query(default=None)):
-        result = services.worker_service_factory().queue_status(queue_names=queue_name)
+        try:
+            result = services.worker_service_factory().queue_status(queue_names=queue_name)
+        except ValueError as exc:
+            return helpers.error(status_code=400, code="invalid_queue_status_request", message=str(exc))
         return helpers.success(result.to_dict())
 
     return router

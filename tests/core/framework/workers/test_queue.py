@@ -170,6 +170,9 @@ def test_in_memory_queue_reclaims_expired_lease() -> None:
 
     assert reclaimed is task
     assert task.leased_by == "worker-2"
+    assert task.metadata["reclaimed"] is True
+    assert task.metadata["reclaimed_from_worker"] == "worker-1"
+    assert task.metadata["lease_count"] == 1
     assert queue.events[-1].event_type == "task_reclaimed"
 
 
@@ -302,7 +305,24 @@ def test_redis_stream_queue_fail_retries_and_acks_original_message() -> None:
     assert json.loads(redis.xadd_calls[0][1]["task"])["metadata"]["retry_next_run_at"]
 
 
-def test_redis_stream_queue_fail_dead_letters_and_requeues_record() -> None:
+def test_redis_stream_queue_fail_dead_letters_quality_gate_block_without_retry() -> None:
+    task = Task(task_type="daily_intelligence.run", payload={}, task_id="task-blocked", attempts=1)
+    redis = _FakeRedis()
+    queue = RedisStreamTaskQueue(
+        redis,
+        retry_policy=TaskRetryPolicy(retryable_error_types=["Timeout"], base_delay_seconds=5),
+    )
+
+    result = queue.fail(
+        _leased(task),
+        TaskError("QualityGateBlocked", "quality gate blocked", retryable=False),
+    )
+
+    assert result.status == TaskStatus.DEAD_LETTER
+    assert redis.xack_calls == [("news:queue:daily", "news-workers", "1-0")]
+    assert queue.list_dead_letters()[0].error.error_type == "QualityGateBlocked"
+
+
     task = Task(task_type="daily_intelligence.run", payload={}, task_id="task-1", attempts=3)
     redis = _FakeRedis()
     queue = RedisStreamTaskQueue(redis)

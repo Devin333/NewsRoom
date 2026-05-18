@@ -149,7 +149,37 @@ def test_approval_decision_builds_resume_context_without_artifact_mutation() -> 
     assert workflow_artifact == {"run_id": "run-1", "status": "waiting_for_human"}
 
 
-def test_approval_resume_context_requires_decision_and_run_id() -> None:
+
+
+def test_approval_resume_context_includes_task_and_run_metadata() -> None:
+    store = InMemoryApprovalStore(
+        [
+            ApprovalRequest(
+                approval_id="appr-2",
+                requested_action="continue_agent",
+                task_id="task-paused",
+                run_id="run-paused",
+                metadata={"checkpoint_id": "ckpt-2", "queue_name": "news:queue:daily"},
+            )
+        ]
+    )
+
+    decided = store.record_decision(
+        "appr-2",
+        decision=ApprovalDecision(
+            decision_type="approve",
+            decided_by="operator",
+            reason="resume",
+        ),
+    )
+    context = build_approval_resume_context(decided)
+
+    assert context.task_id == "task-paused"
+    assert context.run_id == "run-paused"
+    assert context.metadata["approval_status"] == "approved"
+    assert context.metadata["requested_action"] == "continue_agent"
+
+
     pending = ApprovalRequest(
         approval_id="appr-1",
         requested_action="tool_approval",

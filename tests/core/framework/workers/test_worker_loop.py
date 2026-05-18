@@ -83,6 +83,7 @@ def test_worker_loop_pauses_approval_task_without_acknowledging() -> None:
     assert result.success is True
     assert result.status == TaskStatus.WAITING_FOR_APPROVAL
     assert task.status == TaskStatus.WAITING_FOR_APPROVAL
+    assert task.metadata["lease_count"] == 1
     assert queue.queue_status("news:queue:daily").leased_count == 1
     assert worker.events[-1].event_type == "task_paused"
 
