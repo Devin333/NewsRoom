@@ -33,6 +33,21 @@ def test_tool_definition_exports_openai_compatible_schema() -> None:
     ]
 
 
+def test_tool_definition_without_explicit_schema_defaults_to_empty_object() -> None:
+    tools = [{"name": "memory.search", "description": "Search memory"}]
+
+    assert to_openai_tools(tools) == [
+        {
+            "type": "function",
+            "function": {
+                "name": "memory_search",
+                "description": "Search memory",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+    ]
+
+
 def test_tool_definition_without_description_is_rejected() -> None:
     with pytest.raises(LLMToolSchemaError, match="non-empty description"):
         to_openai_tools([{"name": "memory.search"}])

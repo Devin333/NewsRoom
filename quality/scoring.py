@@ -22,6 +22,11 @@ class ReportQualitySummary:
     readability_score: float = 1.0
     duplication_score: float = 1.0
     uncertainty_handling_score: float = 1.0
+    accepted_claims_count: int = 0
+    rejected_claims_count: int = 0
+    uncertain_claims_count: int = 0
+    unsupported_claims_count: int = 0
+    high_severity_unsupported_claims_count: int = 0
     passed: bool = False
     decision: str = "blocked"
     duplicate_sections: list[str] = field(default_factory=list)
@@ -41,6 +46,11 @@ class ReportQualitySummary:
             "readability_score": self.readability_score,
             "duplication_score": self.duplication_score,
             "uncertainty_handling_score": self.uncertainty_handling_score,
+            "accepted_claims_count": self.accepted_claims_count,
+            "rejected_claims_count": self.rejected_claims_count,
+            "uncertain_claims_count": self.uncertain_claims_count,
+            "unsupported_claims_count": self.unsupported_claims_count,
+            "high_severity_unsupported_claims_count": self.high_severity_unsupported_claims_count,
             "passed": self.passed,
             "decision": self.decision,
             "duplicate_sections": list(self.duplicate_sections),
@@ -93,6 +103,13 @@ class QualityScorer:
             readability_score=readability_score,
             duplication_score=duplication_score,
             uncertainty_handling_score=uncertainty_handling_score,
+            accepted_claims_count=len(support_matrix.accepted_claim_ids),
+            rejected_claims_count=len(support_matrix.rejected_claim_ids),
+            uncertain_claims_count=len(support_matrix.uncertain_claim_ids),
+            unsupported_claims_count=len(support_matrix.unsupported_claims),
+            high_severity_unsupported_claims_count=len(
+                support_matrix.high_severity_unsupported_claims
+            ),
             passed=decision == "pass",
             decision=decision,
             duplicate_sections=duplicate_sections,

@@ -38,7 +38,21 @@ def test_retention_policy_round_trips() -> None:
     assert restored.retention_days_for("vector_memory") == 90
 
 
-def test_retention_policy_rejects_negative_windows() -> None:
+def test_retention_policy_uses_run_default_for_quality_and_events() -> None:
+    policy = RetentionPolicy(
+        raw_source_retention_days=7,
+        llm_artifact_retention_days=14,
+        run_artifact_retention_days=30,
+        report_retention_days=None,
+        evidence_retention_days=365,
+        vector_retention_days=90,
+    )
+
+    assert policy.retention_days_for("quality_result") == 30
+    assert policy.retention_days_for("quality_gate_metrics") == 30
+    assert policy.retention_days_for("events") == 30
+
+
     with pytest.raises(ValueError, match="raw_source_retention_days"):
         RetentionPolicy(raw_source_retention_days=-1)
 
@@ -122,3 +136,11 @@ def test_local_artifact_retention_executor_can_dry_run_expired_files(tmp_path) -
 
     assert selected == [old_raw]
     assert store.exists(old_raw) is True
+
+
+def test_retention_policy_keeps_manifest_request_indefinitely() -> None:
+    policy = RetentionPolicy()
+
+    assert policy.retention_days_for("manifest") is None
+    assert policy.retention_days_for("request") is None
+    assert policy.retention_days_for("workflow_spec") is None

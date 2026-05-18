@@ -263,6 +263,31 @@ def test_manual_schedule_requires_explicit_trigger() -> None:
     assert queue.enqueued == [manual.task]
 
 
+def test_scheduler_enqueues_catch_up_task_metadata_with_original_due_time() -> None:
+    queue = _FakeQueue()
+    scheduler = Scheduler(queue)
+    schedule = ScheduleSpec(
+        schedule_id="memory",
+        name="Memory catchup",
+        trigger_type="interval",
+        task_type="memory.reindex",
+        payload_template={"run_id": "run-1"},
+        interval_seconds=600,
+        misfire_policy="catch_up",
+        max_catchup_runs=2,
+    )
+
+    result = scheduler.enqueue_due(
+        [schedule],
+        now=_dt("2026-05-11T00:35:00Z"),
+        last_run_at_by_schedule={"memory": _dt("2026-05-11T00:00:00Z")},
+    )
+
+    assert result.enqueued_count == 2
+    assert result.enqueued[0].task.metadata["schedule_due_at"] == "2026-05-11T00:10:00Z"
+    assert result.enqueued[1].task.metadata["schedule_due_at"] == "2026-05-11T00:20:00Z"
+
+
 def test_task_serialization_preserves_schedule_metadata() -> None:
     queue = _FakeQueue()
     scheduler = Scheduler(queue)

@@ -10,7 +10,7 @@ from core.framework.llm import (
 
 
 def test_stream_accumulator_collects_text_usage_and_completion_metadata() -> None:
-    accumulator = LLMStreamAccumulator(metadata={"provider": "test"})
+    accumulator = LLMStreamAccumulator(metadata={"provider": "test", "model": "demo", "response_format": "json_object", "tool_count": 1})
 
     accumulator.add_event(LLMStreamEvent(event_type="message_start"))
     accumulator.add_event(LLMStreamEvent(event_type="text_delta", text_delta="hello "))
@@ -29,7 +29,7 @@ def test_stream_accumulator_collects_text_usage_and_completion_metadata() -> Non
     assert response.usage.input_tokens == 6
     assert response.usage.output_tokens == 5
     assert response.usage.total_tokens == 11
-    assert response.metadata == {"provider": "test", "finish_reason": "stop"}
+    assert response.metadata == {"provider": "test", "model": "demo", "response_format": "json_object", "tool_count": 1, "finish_reason": "stop"}
 
 
 def test_stream_accumulator_collects_completed_tool_calls() -> None:

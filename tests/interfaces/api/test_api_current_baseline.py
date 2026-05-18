@@ -99,11 +99,18 @@ class _FakeReportService:
             manifest_path=".newsroom/runs/run-baseline/manifest.json",
         )
 
-    def list_reports(self, *, limit: int, workflow_id: str | None = None) -> "_FakeResult":
+    def list_reports(
+        self,
+        *,
+        limit: int,
+        workflow_id: str | None = None,
+        workflow_family: str | None = None,
+    ) -> "_FakeResult":
         return _FakeResult(
             {
                 "limit": limit,
                 "workflow_id": workflow_id,
+                "workflow_family": workflow_family,
                 "report_count": 1,
                 "reports": [self.latest_report().to_dict()],
             }

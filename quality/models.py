@@ -10,6 +10,44 @@ def _utc_now() -> datetime:
 
 
 @dataclass(frozen=True)
+class CitationFailureCategory:
+    code: str
+    count: int
+    items: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "code": self.code,
+            "count": self.count,
+            "items": list(self.items),
+        }
+
+
+@dataclass(frozen=True)
+class CitationSectionResult:
+    section_id: str
+    section_title: str
+    cited_urls: list[str] = field(default_factory=list)
+    cited_evidence_ids: list[str] = field(default_factory=list)
+    issue_codes: list[str] = field(default_factory=list)
+    issue_details: dict[str, list[str]] = field(default_factory=dict)
+    passed: bool = True
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "section_id": self.section_id,
+            "section_title": self.section_title,
+            "cited_urls": list(self.cited_urls),
+            "cited_evidence_ids": list(self.cited_evidence_ids),
+            "issue_codes": list(self.issue_codes),
+            "issue_details": {
+                key: list(value) for key, value in self.issue_details.items()
+            },
+            "passed": self.passed,
+        }
+
+
+@dataclass(frozen=True)
 class QualityEvent:
     event_type: str
     occurred_at: datetime = field(default_factory=_utc_now)
@@ -44,6 +82,10 @@ class QualityGateMetrics:
     rewrite_attempts: int = 0
     rewrite_required: bool = False
     human_review_required: bool = False
+    unknown_urls_count: int = 0
+    unsupported_evidence_ids_count: int = 0
+    citation_failure_category_count: int = 0
+    citation_failure_categories: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -66,6 +108,10 @@ class QualityGateMetrics:
             "rewrite_attempts": self.rewrite_attempts,
             "rewrite_required": self.rewrite_required,
             "human_review_required": self.human_review_required,
+            "unknown_urls_count": self.unknown_urls_count,
+            "unsupported_evidence_ids_count": self.unsupported_evidence_ids_count,
+            "citation_failure_category_count": self.citation_failure_category_count,
+            "citation_failure_categories": list(self.citation_failure_categories),
         }
 
 

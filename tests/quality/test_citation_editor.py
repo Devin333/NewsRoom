@@ -215,6 +215,64 @@ def test_citation_checker_flags_rejected_claim_usage() -> None:
     assert "report uses rejected claims as facts" in review.reasons
 
 
+def test_citation_checker_exposes_failure_categories_and_section_results() -> None:
+    findings = VerifiedFindings(
+        rejected_claims=[
+            VerifiedClaim(
+                claim_id="claim_rejected",
+                claim="The vendor acquired a rival.",
+                status="rejected",
+                confidence=1.0,
+            )
+        ]
+    )
+    report = {
+        "sections": [
+            {
+                "section_id": "summary",
+                "title": "Summary",
+                "content": "The vendor acquired a rival.",
+                "sources": ["https://example.com/missing"],
+                "evidence_ids": ["ev_missing"],
+            },
+            {
+                "section_id": "notes",
+                "title": "Notes",
+                "content": "Uncited note.",
+            },
+        ]
+    }
+
+    result = CitationChecker().check(report, _bundle(), findings)
+    payload = result.to_dict()
+
+    assert result.passed is False
+    assert payload["failure_category_codes"] == [
+        "unknown_urls",
+        "unsupported_urls",
+        "unsupported_evidence_ids",
+        "missing_section_sources",
+        "unsupported_claims",
+        "rejected_claim_usage",
+        "failing_sections",
+    ]
+    assert payload["failure_categories"][0] == {
+        "code": "unknown_urls",
+        "count": 1,
+        "items": ["https://example.com/missing"],
+    }
+    section_results = {section["section_id"]: section for section in payload["section_results"]}
+    assert section_results["summary"]["passed"] is False
+    assert section_results["summary"]["issue_codes"] == [
+        "unknown_urls",
+        "unsupported_urls",
+        "unsupported_evidence_ids",
+        "unsupported_claims",
+        "rejected_claim_usage",
+    ]
+    assert section_results["notes"]["issue_codes"] == ["missing_section_sources", "unsupported_claims"]
+
+
 def test_rewrite_policy_blocks_rewrite_that_adds_new_source_url() -> None:
     rewritten = {
         "sections": [

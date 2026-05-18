@@ -52,6 +52,12 @@ def test_check_qdrant_default_payload_indexes() -> None:
     assert "published_at" in module.DEFAULT_PAYLOAD_INDEXES
 
 
+def test_check_qdrant_default_collections_include_storage_memory_contract_sets() -> None:
+    module = _load_script("check_qdrant")
+
+    assert set(module.DEFAULT_COLLECTIONS) >= {"report_sections", "evidence_items"}
+
+
 def _load_script(name: str):
     script_path = REPO_ROOT / "scripts" / f"{name}.py"
     spec = importlib.util.spec_from_file_location(name, script_path)

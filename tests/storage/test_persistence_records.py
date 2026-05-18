@@ -166,6 +166,11 @@ def test_workflow_run_record_from_result_extracts_metrics() -> None:
                 quality_score=0.9,
                 support_coverage=1.0,
                 citation_passed=True,
+                accepted_claims_count=2,
+                rejected_claims_count=0,
+                uncertain_claims_count=0,
+                unsupported_claims_count=0,
+                high_severity_unsupported_claims_count=0,
             ),
             "quality_gate_metrics": QualityGateMetrics(
                 evidence_items_count=2,
@@ -210,6 +215,11 @@ def test_report_record_from_result_extracts_final_report() -> None:
                 quality_score=1.0,
                 support_coverage=1.0,
                 citation_passed=True,
+                accepted_claims_count=1,
+                rejected_claims_count=0,
+                uncertain_claims_count=0,
+                unsupported_claims_count=0,
+                high_severity_unsupported_claims_count=0,
             ),
             "quality_gate_metrics": QualityGateMetrics(
                 evidence_items_count=1,
@@ -234,6 +244,8 @@ def test_report_record_from_result_extracts_final_report() -> None:
     assert record.status == "final"
     assert record.quality_score == 1.0
     assert record.citation_coverage_score == 1.0
+    assert record.report_json["quality_trace"]["decision"] == "blocked"
+    assert record.report_json["quality_trace"]["unsupported_sections"] == []
 
 
 def test_report_record_from_result_preserves_blocked_report_status() -> None:
@@ -267,6 +279,7 @@ def test_report_record_from_result_preserves_blocked_report_status() -> None:
     assert record.status == "blocked"
     assert record.title == "Blocked Daily"
     assert record.report_json["reasons"] == ["quality gate blocked"]
+    assert record.report_json["quality_trace"]["route"] is None
     assert record.quality_score == 0.35
 
 

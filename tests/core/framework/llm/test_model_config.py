@@ -105,6 +105,62 @@ deployments:
     assert deployment.config.base_url == "https://resolved.example/v1"
 
 
+def test_load_openai_compatible_deployment_reads_capabilities_from_config(tmp_path) -> None:
+    config_path = tmp_path / "models.yaml"
+    config_path.write_text(
+        """
+deployments:
+  - deployment_id: compatible-live
+    provider: openai-compatible
+    model: test-model
+    api_base: https://llm.example/v1
+    api_key: ${TEST_LLM_KEY}
+    capabilities:
+      json_mode: true
+      structured_output: true
+      prompt_cache: false
+      streaming: true
+      context_window_tokens: 200000
+      max_output_tokens: 8192
+""".strip(),
+        encoding="utf-8",
+    )
+
+    deployment = load_openai_compatible_deployment(config_path)
+
+    assert deployment.capabilities.supports_json_mode is True
+    assert deployment.capabilities.supports_structured_output is True
+    assert deployment.capabilities.supports_prompt_cache is False
+    assert deployment.capabilities.supports_streaming is True
+    assert deployment.capabilities.context_window_tokens == 200000
+    assert deployment.capabilities.max_output_tokens == 8192
+
+
+def test_load_openai_compatible_deployment_reads_route_required_capabilities(tmp_path) -> None:
+    config_path = tmp_path / "models.yaml"
+    config_path.write_text(
+        """
+deployments:
+  - deployment_id: compatible-live
+    provider: openai-compatible
+    model: test-model
+    api_base: https://llm.example/v1
+    api_key: ${TEST_LLM_KEY}
+routes:
+  writer:
+    deployment_id: compatible-live
+    required_capabilities:
+      - structured_output
+      - tool_calling
+""".strip(),
+        encoding="utf-8",
+    )
+
+    deployment = load_openai_compatible_deployment(config_path, route_id="writer")
+
+    assert deployment.required_capabilities == ("structured_output", "tool_calling")
+
+
 def test_build_openai_compatible_client_from_config_uses_configured_retry_policy(tmp_path) -> None:
     config_path = tmp_path / "models.yaml"
     config_path.write_text(
@@ -124,6 +180,26 @@ deployments:
 
     assert client.config.model == "test-model"
     assert client._retry_policy.max_attempts == 2
+
+
+def test_model_config_rejects_non_boolean_capability_flag(tmp_path) -> None:
+    config_path = tmp_path / "models.yaml"
+    config_path.write_text(
+        """
+deployments:
+  - deployment_id: compatible-live
+    provider: openai-compatible
+    model: test-model
+    api_base: https://llm.example/v1
+    api_key: ${TEST_LLM_KEY}
+    capabilities:
+      structured_output: sometimes
+""".strip(),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(LLMConfigurationError, match="capabilities.structured_output"):
+        load_openai_compatible_deployment(config_path)
 
 
 def test_model_config_rejects_literal_api_key(tmp_path) -> None:

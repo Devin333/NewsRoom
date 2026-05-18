@@ -448,6 +448,33 @@ def _manifest_output_preview(manifest: dict[str, Any]) -> dict[str, Any]:
         if len(preview) >= 12:
             break
         preview[str(key)] = _preview_value(value)
+    quality_result = output.get("quality_result") if isinstance(output.get("quality_result"), dict) else {}
+    citation_check = output.get("citation_check_result") if isinstance(output.get("citation_check_result"), dict) else {}
+    support_matrix = output.get("support_matrix") if isinstance(output.get("support_matrix"), dict) else {}
+    if quality_result or citation_check or support_matrix:
+        preview["quality_trace"] = {
+            "decision": quality_result.get("decision"),
+            "route": quality_result.get("route") or output.get("quality_route"),
+            "citation_failure_categories": quality_result.get("metadata", {}).get(
+                "citation_failure_categories", []
+            ),
+            "unsupported_claims": citation_check.get("unsupported_claims", []),
+            "rejected_claim_usage": citation_check.get("rejected_claim_usage", []),
+            "unsupported_sections": support_matrix.get("unsupported_sections", []),
+        }
+    llm_route_manifest = output.get("llm_route_manifest") if isinstance(output.get("llm_route_manifest"), dict) else {}
+    llm_router_events = output.get("llm_router_events") if isinstance(output.get("llm_router_events"), list) else []
+    if llm_route_manifest or llm_router_events:
+        preview["llm_trace"] = {
+            "selected_deployment_id": llm_route_manifest.get("selected_deployment_id"),
+            "fallback_used": llm_route_manifest.get("fallback_used"),
+            "fallback_count": llm_route_manifest.get("fallback_count"),
+            "provider_error_count": (llm_route_manifest.get("metrics") or {}).get("provider_error_count"),
+            "cooldown_skip_count": (llm_route_manifest.get("metrics") or {}).get("cooldown_skip_count"),
+            "router_event_count": len(llm_router_events),
+            "budget_check": llm_route_manifest.get("budget_check"),
+            "global_budget_check": llm_route_manifest.get("global_budget_check"),
+        }
     return preview
 
 

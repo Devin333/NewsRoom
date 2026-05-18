@@ -246,6 +246,7 @@ def _publish_outputs(
         rewrite_attempts=rewrite_attempts,
         human_review_required=False,
         quality_gate_metrics=quality_gate_metrics,
+        citation_check_result=citation_check_result,
     )
     return {
         "report_quality_summary": report_quality_summary,
@@ -299,6 +300,7 @@ def _blocked_outputs(
         rewrite_attempts=rewrite_attempts,
         human_review_required=human_review_required,
         quality_gate_metrics=quality_gate_metrics,
+        citation_check_result=citation_check_result,
     )
     reasons = list(editor_decision["reasons"]) or [_default_block_reason(route)]
     blocked_report = BlockedReport(
@@ -311,6 +313,9 @@ def _blocked_outputs(
             "quality_route": route,
             "verification_result": verification_result,
             "citation_check_result": citation_check_result,
+            "citation_failure_categories": _list_value(
+                citation_check_result.get("failure_categories")
+            ),
             "support_matrix": support_matrix,
             "rewrite_attempts": rewrite_attempts,
             "human_review_required": human_review_required,
@@ -378,6 +383,13 @@ def _report_quality_summary(
         "risk_level": verification_result.get("risk_level"),
         "citation_passed": citation_check_result.get("passed"),
         "support_coverage": _float_value(support_matrix.get("coverage_ratio"), default=None),
+        "accepted_claims_count": len(_list_value((support_matrix.get("accepted_claim_ids")))),
+        "rejected_claims_count": len(_list_value((support_matrix.get("rejected_claim_ids")))),
+        "uncertain_claims_count": len(_list_value((support_matrix.get("uncertain_claim_ids")))),
+        "unsupported_claims_count": len(_list_value((support_matrix.get("unsupported_claims")))),
+        "high_severity_unsupported_claims_count": len(
+            _list_value(support_matrix.get("high_severity_unsupported_claims"))
+        ),
         "reason_count": len(editor_decision["reasons"]),
     }
 
@@ -410,6 +422,18 @@ def _quality_gate_metrics(
         "uncertain_claims_count": _collection_count(verified_findings, "uncertain_claims"),
         "unsupported_claims_count": len(unsupported_claims),
         "missing_citations_count": len(missing_citations),
+        "unknown_urls_count": len(_list_value(citation_check_result.get("unknown_urls"))),
+        "unsupported_evidence_ids_count": len(
+            _list_value(citation_check_result.get("unsupported_evidence_ids"))
+        ),
+        "citation_failure_category_count": len(
+            _list_value(citation_check_result.get("failure_categories"))
+        ),
+        "citation_failure_categories": [
+            str(category.get("code"))
+            for category in _list_value(citation_check_result.get("failure_categories"))
+            if isinstance(category, Mapping) and category.get("code")
+        ],
         "unsupported_sections_count": len(unsupported_sections),
         "blocked": route != PUBLISH_ROUTE,
         "decision": editor_decision["decision"],
@@ -429,6 +453,7 @@ def _quality_result(
     rewrite_attempts: int,
     human_review_required: bool,
     quality_gate_metrics: dict[str, Any],
+    citation_check_result: dict[str, Any],
 ) -> dict[str, Any]:
     passed = route == PUBLISH_ROUTE
     return {
@@ -454,7 +479,18 @@ def _quality_result(
             "quality_events": "quality_events.json",
         },
         "quality_gate_metrics": dict(quality_gate_metrics),
-        "metadata": {"source": "daily.finalize_report"},
+        "metadata": {
+            "source": "daily.finalize_report",
+            "citation_failure_categories": _list_value(
+                citation_check_result.get("failure_categories")
+            ),
+            "remediation": list(editor_decision["rewrite_instructions"])
+            or [
+                "human reviewer must approve, reject, or request rewrite"
+                if human_review_required
+                else None
+            ],
+        },
     }
 
 

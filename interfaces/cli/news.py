@@ -2169,12 +2169,16 @@ def _print_approval_detail(payload: dict, *, json_output: bool) -> None:
 
 def _memory_search(args: argparse.Namespace) -> int:
     filters = _parse_filters(args.filters)
-    result = MemoryApplicationService().search(
-        text=args.query,
-        collection=args.collection,
-        limit=args.limit,
-        filters=filters,
-    )
+    try:
+        result = MemoryApplicationService().search(
+            text=args.query,
+            collection=args.collection,
+            limit=args.limit,
+            filters=filters,
+        )
+    except ModuleNotFoundError as exc:
+        print(str(exc))
+        return 1
     payload = result.to_dict()
 
     if args.json:
@@ -2196,7 +2200,7 @@ def _memory_reindex(args: argparse.Namespace) -> int:
             args.run_id,
             topic=args.topic,
         )
-    except (FileNotFoundError, ValueError) as exc:
+    except (FileNotFoundError, ValueError, ModuleNotFoundError) as exc:
         print(str(exc))
         return 1
     payload = result.to_dict()
@@ -2215,7 +2219,7 @@ def _memory_bootstrap(args: argparse.Namespace) -> int:
         result = MemoryApplicationService().bootstrap_collections(
             collections=args.collections or None,
         )
-    except ValueError as exc:
+    except (ValueError, ModuleNotFoundError) as exc:
         print(str(exc))
         return 1
     payload = result.to_dict()

@@ -20,11 +20,30 @@ def test_reports_resource_paths() -> None:
         ("GET", "/api/v1/reports/report%2F1/markdown"),
         ("GET", "/api/v1/search/reports"),
     ]
-    assert request_func.calls[1]["params"] == {"limit": 5, "workflow_id": None}
+    assert request_func.calls[1]["params"] == {
+        "limit": 5,
+        "workflow_id": None,
+        "workflow_family": None,
+    }
     assert request_func.calls[4]["params"] == {"q": "agent", "limit": 2}
 
 
-def test_memory_resource_search_path_and_payload() -> None:
+def test_reports_resource_accepts_workflow_family() -> None:
+    request_func = _Recorder()
+    client = NewsRoomClient("https://news.example", request_func=request_func)
+
+    assert client.reports.list(limit=5, workflow_family="daily")["ok"] is True
+
+    assert request_func.calls[0]["method"] == "GET"
+    assert request_func.calls[0]["path"] == "/api/v1/reports"
+    assert request_func.calls[0]["params"] == {
+        "limit": 5,
+        "workflow_id": None,
+        "workflow_family": "daily",
+    }
+
+
+def test_memory_resource_search_from_sdk() -> None:
     request_func = _Recorder()
     client = NewsRoomClient("https://news.example", request_func=request_func)
 

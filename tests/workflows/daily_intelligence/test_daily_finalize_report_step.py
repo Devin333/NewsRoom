@@ -85,6 +85,7 @@ def test_finalize_report_rewrite_required_without_edit_blocks() -> None:
     assert output["quality_gate_metrics"]["rewrite_required"] is True
     assert output["blocked_report"].reasons == ["unsupported claim remains"]
     assert output["rewrite_instructions"] == ["remove unsupported claim"]
+    assert output["quality_result"]["metadata"]["remediation"] == ["remove unsupported claim"]
     assert "final_report" not in output
 
 
@@ -105,6 +106,9 @@ def test_finalize_report_human_review_required_creates_request_and_blocked_marke
     assert output["human_review_request"]["status"] == "pending"
     assert output["human_review_request"]["reason"] == "borderline high-risk topic"
     assert output["blocked_report"].metadata["human_review_required"] is True
+    assert output["quality_result"]["metadata"]["remediation"] == [
+        "human reviewer must approve, reject, or request rewrite"
+    ]
 
 
 def test_finalize_report_block_decision_creates_blocked_report() -> None:

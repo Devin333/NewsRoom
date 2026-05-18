@@ -16,12 +16,12 @@ export function WorkerStatusTable({
         <h2 className="text-lg font-semibold text-ink">Workers</h2>
         {workers.length ? (
           <Table
-            headers={["Worker", "Status", "Queue", "Heartbeat"]}
+            headers={["Worker", "Status", "Queues", "Heartbeat"]}
             rows={workers.map((worker) => [
               worker.worker_id ?? "unknown",
               <StatusBadge key="status" status={worker.status ?? "unknown"} />,
-              worker.queue_name ?? "n/a",
-              formatDateTime(worker.heartbeat_at)
+              worker.queue_names?.join(", ") ?? "n/a",
+              formatDateTime(worker.last_heartbeat_at)
             ])}
           />
         ) : (
@@ -36,7 +36,7 @@ export function WorkerStatusTable({
             rows={queues.map((queue) => [
               queue.queue_name ?? "unknown",
               formatNumber(queue.pending_count),
-              formatNumber(queue.leased_count),
+              formatNumber(queue.leased_count ?? queue.pending_count),
               formatNumber(queue.dead_letter_count)
             ])}
           />

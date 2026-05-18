@@ -6,13 +6,7 @@ from typing import Any, Protocol
 
 from interfaces.services.artifact_service import ArtifactInspectionService
 from storage.memory import MemoryIngestionResult, MemoryIngestionService
-from storage.vector import (
-    VectorCollectionStatus,
-    VectorDocument,
-    VectorSearchQuery,
-    VectorSearchResult,
-    qdrant_store_from_env,
-)
+from storage.vector import VectorCollectionStatus, VectorDocument, VectorSearchQuery, VectorSearchResult
 
 
 DEFAULT_MEMORY_COLLECTION = "report_sections"
@@ -106,7 +100,11 @@ class MemoryApplicationService:
         artifact_service: ArtifactInspectionService | None = None,
         ingestion_service: MemoryIngestionService | None = None,
     ) -> None:
-        self.vector_store = vector_store or qdrant_store_from_env()
+        if vector_store is None:
+            from storage.vector import qdrant_store_from_env
+
+            vector_store = qdrant_store_from_env()
+        self.vector_store = vector_store
         self.artifact_service = artifact_service or ArtifactInspectionService(artifact_root)
         self.ingestion_service = ingestion_service or MemoryIngestionService(self.vector_store)
 

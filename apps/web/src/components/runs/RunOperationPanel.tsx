@@ -92,9 +92,15 @@ export function RunOperationPanel({ runId }: { runId: string }) {
         </button>
       </div>
       {result ? (
-        <p className="mt-3 rounded-md border border-good/30 bg-good/10 p-3 text-sm text-good">
-          {result.operation_type} {result.status}: {result.message}
-        </p>
+        <div className="mt-3 rounded-md border border-good/30 bg-good/10 p-3 text-sm text-good">
+          <p>
+            {result.operation_type} {result.status}: {result.message}
+          </p>
+          {result.new_run_id ? <p className="mt-1 font-mono text-xs">new_run_id={result.new_run_id}</p> : null}
+          {result.details ? (
+            <pre className="mt-2 whitespace-pre-wrap break-words text-xs text-ink">{JSON.stringify(result.details, null, 2)}</pre>
+          ) : null}
+        </div>
       ) : null}
       {error ? <div className="mt-3"><ErrorState message={error.message} requestId={error.requestId} /></div> : null}
     </section>

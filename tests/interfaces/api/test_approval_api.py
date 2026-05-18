@@ -104,6 +104,8 @@ def test_approval_api_resume_context_for_decided_approval(tmp_path) -> None:
     assert payload["resume_metadata"]["task_id"] == "task-paused"
 
 
+
+
 def test_approval_api_resume_context_rejects_pending_approval(tmp_path) -> None:
     service = ApprovalApplicationService(store_path=tmp_path / "approvals.json")
     client = TestClient(create_app(approval_service_factory=lambda: service))

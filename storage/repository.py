@@ -269,12 +269,29 @@ def report_record_from_result(result: RunResult) -> ReportRecord | None:
         return None
 
     report_payload = _to_dict(final_report or blocked_report)
+    quality_payload = _to_dict(quality_summary)
+    quality_result = _to_dict(result.output.get("quality_result"))
+    citation_check = _to_dict(result.output.get("citation_check_result"))
+    support_matrix = _to_dict(result.output.get("support_matrix"))
+    quality_trace = {
+        "decision": quality_result.get("decision") or quality_payload.get("decision"),
+        "route": quality_result.get("route") or result.output.get("quality_route"),
+        "citation_failure_categories": quality_result.get("metadata", {}).get(
+            "citation_failure_categories", []
+        ),
+        "unsupported_claims": citation_check.get("unsupported_claims", []),
+        "rejected_claim_usage": citation_check.get("rejected_claim_usage", []),
+        "unsupported_sections": support_matrix.get("unsupported_sections", []),
+        "remediation": quality_result.get("metadata", {}).get("remediation", []),
+    }
+    if report_payload:
+        report_payload = {
+            **report_payload,
+            "quality_trace": quality_trace,
+        }
     title = report_payload.get("title")
     status = "final" if final_report is not None else "blocked"
-    quality_score = None
-    quality_payload = _to_dict(quality_summary)
-    if quality_payload:
-        quality_score = quality_payload.get("quality_score")
+    quality_score = quality_payload.get("quality_score") if quality_payload else None
     citation_coverage_score = _citation_coverage_score(result.output)
     return ReportRecord(
         report_id=f"{result.run_id}:{status}",

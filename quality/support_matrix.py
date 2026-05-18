@@ -115,6 +115,10 @@ class SupportMatrix:
     sections: list[SectionSupport] = field(default_factory=list)
     unsupported_claims: list[UnsupportedClaim] = field(default_factory=list)
     rejected_claim_usage: list[RejectedClaimUsage] = field(default_factory=list)
+    accepted_claim_ids: list[str] = field(default_factory=list)
+    rejected_claim_ids: list[str] = field(default_factory=list)
+    uncertain_claim_ids: list[str] = field(default_factory=list)
+    high_severity_unsupported_claims: list[UnsupportedClaim] = field(default_factory=list)
 
     @property
     def unsupported_sections(self) -> list[SectionSupport]:
@@ -153,6 +157,12 @@ class SupportMatrix:
             "rejected_claim_usage": [
                 usage.to_dict() for usage in self.rejected_claim_usage
             ],
+            "accepted_claim_ids": list(self.accepted_claim_ids),
+            "rejected_claim_ids": list(self.rejected_claim_ids),
+            "uncertain_claim_ids": list(self.uncertain_claim_ids),
+            "high_severity_unsupported_claims": [
+                claim.to_dict() for claim in self.high_severity_unsupported_claims
+            ],
         }
 
 
@@ -174,6 +184,7 @@ class SupportMatrixBuilder:
             claim.claim_id: claim for claim in (verified_findings.accepted_claims if verified_findings else [])
         }
         rejected_claims = verified_findings.rejected_claims if verified_findings else []
+        uncertain_claims = verified_findings.uncertain_claims if verified_findings else []
         report_claims = ClaimExtractor().extract(report_draft=report)
         claims_by_section: dict[str, list[Claim]] = {}
         for claim in report_claims:
@@ -281,6 +292,12 @@ class SupportMatrixBuilder:
             sections=sections,
             unsupported_claims=unsupported_claims,
             rejected_claim_usage=rejected_usage,
+            accepted_claim_ids=sorted(accepted_by_claim_id),
+            rejected_claim_ids=sorted({claim.claim_id for claim in rejected_claims}),
+            uncertain_claim_ids=sorted({claim.claim_id for claim in uncertain_claims}),
+            high_severity_unsupported_claims=[
+                claim for claim in unsupported_claims if claim.severity == "high"
+            ],
         )
 
 

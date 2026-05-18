@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from core.framework.llm.capabilities import ModelCapabilities, _normalize_capability_name
 from core.framework.llm.openai_compatible import (
     LLMConfigurationError,
     LLMRetryPolicy,
@@ -38,6 +39,8 @@ class OpenAICompatibleDeploymentConfig:
     deployment_id: str
     route_id: str
     config: OpenAICompatibleConfig
+    capabilities: ModelCapabilities = ModelCapabilities()
+    required_capabilities: tuple[str, ...] = ()
     max_retries: int = 0
 
     def retry_policy(self) -> LLMRetryPolicy:
@@ -83,8 +86,14 @@ def load_openai_compatible_deployment(
         raise LLMConfigurationError("model config must be an object")
     _assert_no_literal_secrets(payload)
     selected_route_id = _select_route_id(payload, route_id=route_id)
+    routes = _dict_value(payload.get("routes"), field="routes", default={})
+    route_payload = _dict_value(routes.get(selected_route_id), field=f"routes.{selected_route_id}", default={})
     deployment_payload = _select_deployment_payload(payload, route_id=selected_route_id)
-    return _deployment_config(deployment_payload, route_id=selected_route_id)
+    return _deployment_config(
+        deployment_payload,
+        route_id=selected_route_id,
+        route_payload=route_payload,
+    )
 
 
 def _default_model_config_path(path: str | Path | None) -> tuple[Path | None, bool]:
@@ -221,6 +230,7 @@ def _deployment_config(
     payload: dict[str, Any],
     *,
     route_id: str,
+    route_payload: dict[str, Any] | None = None,
 ) -> OpenAICompatibleDeploymentConfig:
     provider_kind = _env_override_text(
         payload,
@@ -257,6 +267,10 @@ def _deployment_config(
         field="timeout_seconds",
     )
     max_retries = _non_negative_int(payload.get("max_retries", 0), field="max_retries")
+    capabilities = _capabilities_from_payload(payload)
+    required_capabilities = _required_capabilities_from_route_payload(
+        route_payload=route_payload or {}
+    )
     return OpenAICompatibleDeploymentConfig(
         deployment_id=_required_text(payload.get("deployment_id"), field="deployment_id"),
         route_id=route_id,
@@ -273,6 +287,8 @@ def _deployment_config(
             api_key_env=api_key_env,
             timeout_seconds=timeout_seconds,
         ),
+        capabilities=capabilities,
+        required_capabilities=required_capabilities,
         max_retries=max_retries,
     )
 
@@ -295,6 +311,57 @@ def _api_key_env(payload: dict[str, Any]) -> str:
     if match is None:
         raise LLMConfigurationError("api_key must use an environment placeholder such as ${DASHSCOPE_API_KEY}")
     return match.group(1)
+
+
+def _capabilities_from_payload(payload: dict[str, Any]) -> ModelCapabilities:
+    capability_payload = payload.get("capabilities")
+    if capability_payload is None:
+        capability_payload = payload.get("model_capabilities")
+    if capability_payload is None:
+        return ModelCapabilities()
+    if not isinstance(capability_payload, dict):
+        raise LLMConfigurationError("capabilities must be an object")
+    normalized = dict(capability_payload)
+    context_window_tokens = normalized.pop("context_window_tokens", None)
+    max_output_tokens = normalized.pop("max_output_tokens", None)
+    capability_values: dict[str, bool | int | None] = {}
+    for key, value in normalized.items():
+        if not isinstance(value, bool):
+            raise LLMConfigurationError(f"capabilities.{key} must be a boolean")
+        capability_name = _normalize_capability_name(key)
+        capability_values[capability_name] = value
+    if context_window_tokens is not None:
+        capability_values["context_window_tokens"] = _positive_int(
+            context_window_tokens,
+            field="capabilities.context_window_tokens",
+        )
+    if max_output_tokens is not None:
+        capability_values["max_output_tokens"] = _positive_int(
+            max_output_tokens,
+            field="capabilities.max_output_tokens",
+        )
+    try:
+        return ModelCapabilities(**capability_values)
+    except TypeError as exc:
+        raise LLMConfigurationError(f"invalid capabilities config: {exc}") from exc
+
+
+def _required_capabilities_from_route_payload(*, route_payload: dict[str, Any]) -> tuple[str, ...]:
+    raw = route_payload.get("required_capabilities")
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise LLMConfigurationError("required_capabilities must be a list")
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for value in raw:
+        if not isinstance(value, str) or not value.strip():
+            raise LLMConfigurationError("required_capabilities must contain non-empty strings")
+        capability = value.strip().lower().replace("-", "_")
+        if capability not in seen:
+            normalized.append(capability)
+            seen.add(capability)
+    return tuple(normalized)
 
 
 def _assert_no_literal_secrets(value: Any, *, path: str = "") -> None:
@@ -402,6 +469,16 @@ def _positive_float(value: Any, *, field: str) -> float:
         parsed = float(value)
     except (TypeError, ValueError) as exc:
         raise LLMConfigurationError(f"{field} must be a number") from exc
+    if parsed <= 0:
+        raise LLMConfigurationError(f"{field} must be greater than zero")
+    return parsed
+
+
+def _positive_int(value: Any, *, field: str) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise LLMConfigurationError(f"{field} must be an integer") from exc
     if parsed <= 0:
         raise LLMConfigurationError(f"{field} must be greater than zero")
     return parsed

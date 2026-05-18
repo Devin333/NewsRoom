@@ -162,6 +162,7 @@ class DiagnosticApplicationService:
                 remediation="Fix NEWS_MODELS_CONFIG or configs/models.yaml before using the live profile.",
             )
         api_key_env = deployment.config.api_key_env
+        capability_details = deployment.capabilities.to_dict()
         if not self.env.get(api_key_env):
             return DiagnoseCheck(
                 check_id="model_config",
@@ -175,6 +176,9 @@ class DiagnosticApplicationService:
                     "provider": deployment.config.provider,
                     "model": deployment.config.model,
                     "api_key_env": api_key_env,
+                    "required_capabilities": list(deployment.required_capabilities),
+                    "capabilities": capability_details,
+                    "max_retries": deployment.max_retries,
                 },
                 remediation=f"Set {api_key_env} before using the live LLM profile.",
             )
@@ -190,6 +194,9 @@ class DiagnosticApplicationService:
                 "provider": deployment.config.provider,
                 "model": deployment.config.model,
                 "api_key_env": api_key_env,
+                "required_capabilities": list(deployment.required_capabilities),
+                "capabilities": capability_details,
+                "max_retries": deployment.max_retries,
             },
         )
 

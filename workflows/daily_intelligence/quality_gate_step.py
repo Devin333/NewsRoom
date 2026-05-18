@@ -162,10 +162,21 @@ def quality_gate(buffer: ScopedDataBuffer) -> dict[str, Any]:
             draft=final_report_draft,
             metadata={
                 "citation_check_result": citation_check.to_dict(),
+                "citation_failure_categories": [
+                    category.to_dict() for category in citation_check.failure_categories
+                ],
                 "editor_review": review.to_dict(),
                 "quality_score": quality_summary.quality_score,
+                "accepted_claims_count": quality_summary.accepted_claims_count,
+                "rejected_claims_count": quality_summary.rejected_claims_count,
+                "uncertain_claims_count": quality_summary.uncertain_claims_count,
+                "unsupported_claims_count": quality_summary.unsupported_claims_count,
+                "high_severity_unsupported_claims_count": (
+                    quality_summary.high_severity_unsupported_claims_count
+                ),
                 "rewrite_attempts": rewrite_attempts,
                 "human_review_required": human_review_required,
+                "remediation": list(review.required_changes),
             },
         )
     return outputs

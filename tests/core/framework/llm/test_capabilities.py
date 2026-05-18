@@ -9,6 +9,15 @@ def test_model_capabilities_default_to_unsupported() -> None:
     assert capabilities.missing(("json_mode", "tool_calling")) == ("json_mode", "tool_calling")
 
 
+def test_model_capabilities_normalize_alias_names() -> None:
+    capabilities = ModelCapabilities(supports_structured_output=True, supports_streaming=True)
+
+    assert capabilities.supports("structured_output") is True
+    assert capabilities.supports("supports_structured_output") is True
+    assert capabilities.supports("streaming") is True
+    assert capabilities.missing(("structured_output", "streaming")) == ()
+
+
 def test_model_capabilities_support_aliases() -> None:
     capabilities = ModelCapabilities(
         supports_json_mode=True,
