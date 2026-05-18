@@ -617,7 +617,7 @@ class MCPApplicationService:
         return MCPToolCallResult(
             tool_name="news.subscription.create",
             success=True,
-            data=subscription.to_dict(),
+            data=_to_dict(subscription),
         )
 
     def _subscription_enable(self, args: dict[str, Any]) -> MCPToolCallResult:

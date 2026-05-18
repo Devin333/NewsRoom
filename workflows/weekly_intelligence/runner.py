@@ -69,6 +69,7 @@ class WeeklyIntelligenceRunner:
                 "topic": _clean_topic(topic),
                 "source_limit": source_limit,
                 "source_workflow_id": LEGACY_DAILY_WORKFLOW_ID,
+                "source_workflow_family": "daily",
                 "period_start": _format_datetime(period[0]),
                 "period_end": _format_datetime(period[1]),
             },

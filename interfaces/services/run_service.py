@@ -15,15 +15,17 @@ from storage.checkpoint import LocalJsonCheckpointStore
 from storage.memory import MemoryIngestionService, memory_ingestion_service_from_env
 from storage.repository import persist_run_result, repository_from_env
 from workflows.daily_intelligence import AgenticDailyIntelligenceRunner, DailyIntelligenceRunner
-from workflows.daily_intelligence import build_daily_intelligence_workflow
+from workflows.daily_intelligence import build_agentic_daily_intelligence_workflow, build_daily_intelligence_workflow
 from workflows.daily_intelligence import build_test_agent_loop_registry
 from workflows.daily_intelligence import build_test_agent_loop_workflow
 from workflows.daily_intelligence import build_test_no_llm_registry
 from workflows.daily_intelligence import build_test_no_llm_workflow
 from workflows.daily_intelligence.artifact_publisher import build_daily_intelligence_artifact_publishers
 from workflows.daily_intelligence.profiles import (
+    AGENTIC_DAILY_WORKFLOW_ID,
     LEGACY_DAILY_WORKFLOW_ID,
     PROFILE_AGENTIC_LIVE,
+    PROFILE_AGENTIC_OFFLINE,
     PROFILE_LIVE,
     PROFILE_LIVE_OFFLINE,
     daily_agentic_enabled,
@@ -312,15 +314,25 @@ def _resolve_approval_resume_workflow(
 ) -> _ResolvedWorkflow:
     normalized_workflow = _normalize_workflow_id(workflow_id)
     normalized_profile = _normalize_profile(profile)
-    if normalized_workflow in {"daily", "daily-intelligence", "daily_intelligence", LEGACY_DAILY_WORKFLOW_ID}:
-        actual_profile = normalized_profile or PROFILE_LIVE_OFFLINE
-        if actual_profile not in {PROFILE_LIVE, PROFILE_LIVE_OFFLINE}:
+    if normalized_workflow in {
+        "daily",
+        "daily-intelligence",
+        "daily_intelligence",
+        LEGACY_DAILY_WORKFLOW_ID,
+        AGENTIC_DAILY_WORKFLOW_ID,
+    }:
+        actual_profile = normalized_profile or PROFILE_AGENTIC_LIVE
+        if actual_profile == PROFILE_LIVE:
+            actual_profile = PROFILE_AGENTIC_LIVE
+        if actual_profile == PROFILE_LIVE_OFFLINE:
+            actual_profile = PROFILE_AGENTIC_OFFLINE
+        if actual_profile not in {PROFILE_AGENTIC_LIVE, PROFILE_AGENTIC_OFFLINE}:
             raise ValueError(
                 f"unsupported daily approval resume profile: {actual_profile}"
             )
-        runner = DailyIntelligenceRunner()
+        runner = AgenticDailyIntelligenceRunner()
         return _ResolvedWorkflow(
-            workflow=build_daily_intelligence_workflow(actual_profile),
+            workflow=build_agentic_daily_intelligence_workflow(actual_profile),
             profile=actual_profile,
             registry=runner._function_registry(actual_profile),
         )

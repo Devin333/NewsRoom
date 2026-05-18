@@ -57,6 +57,16 @@ def test_run_service_resumes_workflow_from_decided_approval(tmp_path, monkeypatc
     assert payload["run_result"]["manifest"]["resumed_from_checkpoint_id"] == checkpoint.checkpoint_id
 
 
+def test_run_service_resolves_daily_approval_resume_to_agentic_workflow(tmp_path) -> None:
+    resolved = run_service_module._resolve_approval_resume_workflow("daily", profile="live")
+
+    assert (
+        resolved.workflow.workflow_id
+        == run_service_module.build_agentic_daily_intelligence_workflow("agentic-live").workflow_id
+    )
+    assert resolved.profile == "agentic-live"
+
+
 def test_run_service_rejects_unsupported_approval_resume_workflow(tmp_path) -> None:
     approval_service = ApprovalApplicationService(store_path=tmp_path / "approvals.json")
     submitted = approval_service.submit_request(

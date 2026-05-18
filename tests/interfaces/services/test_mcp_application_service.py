@@ -12,6 +12,7 @@ from interfaces.services.report_service import ReportApplicationService
 from interfaces.services.run_inspection_service import RunInspectionService
 from interfaces.services.run_service import RunApplicationService
 from interfaces.services.storage_service import StorageApplicationService
+from interfaces.services.subscription_service import SubscriptionApplicationService
 from workflows.daily_intelligence.profiles import LEGACY_DAILY_WORKFLOW_ID
 from storage.artifacts import ArtifactWriteRequest, FilesystemArtifactStore, LocalJsonArtifactIndexStore
 from storage.lineage import LineageRef, LocalJsonLineageStore
@@ -285,7 +286,7 @@ def test_mcp_daily_and_weekly_run_use_real_runners(tmp_path, monkeypatch) -> Non
 
     assert daily.success is True
     assert daily.data["run_id"] == "mcp-daily-run"
-    assert daily.data["workflow_id"] == LEGACY_DAILY_WORKFLOW_ID
+    assert daily.data["workflow_id"] == "daily-intelligence-agentic"
     assert daily.data["status"] == "succeeded"
     assert weekly.success is True
     assert weekly.data["run_id"] == "mcp-weekly-run"

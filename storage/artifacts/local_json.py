@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from hashlib import sha256
 from pathlib import Path
 
 from storage.artifacts.filesystem import _validate_id, _validate_relative_path
@@ -37,7 +38,7 @@ class LocalJsonArtifactIndexStore:
 
     def list_by_run(self, run_id: str) -> list[ArtifactRef]:
         _validate_id(run_id, "run_id")
-        run_dir = self.root / run_id
+        run_dir = self.root / _run_dir_name(run_id)
         if not run_dir.exists():
             return []
         refs = [ArtifactRef.from_dict(json.loads(path.read_text(encoding="utf-8"))) for path in run_dir.glob("*.json")]
@@ -71,4 +72,13 @@ class LocalJsonArtifactIndexStore:
     def _record_path(self, run_id: str, artifact_id: str) -> Path:
         _validate_id(run_id, "run_id")
         _validate_id(artifact_id, "artifact_id")
-        return self.root / run_id / f"{artifact_id}.json"
+        return self.root / _run_dir_name(run_id) / _record_file_name(artifact_id)
+
+
+def _run_dir_name(run_id: str) -> str:
+    return sha256(run_id.encode("utf-8")).hexdigest()[:12]
+
+
+def _record_file_name(artifact_id: str) -> str:
+    digest = sha256(artifact_id.encode("utf-8")).hexdigest()[:16]
+    return f"a-{digest}.json"

@@ -4,7 +4,6 @@ from dataclasses import replace
 from typing import Any
 
 from evidence.models import VerifiedFindings
-from workflows.daily_intelligence.grounded_writer import normalize_daily_writer_output
 from core.framework.agent_loop.diagnostics import (
     AgentLoopDiagnosticsBuilder,
     AgentLoopStallDetector,
@@ -1371,6 +1370,8 @@ def _normalize_agent_output(
 ) -> dict[str, Any]:
     if agent.agent_id != "daily.writer" or _request_profile(inputs) != "agentic-live":
         return output
+    from workflows.daily_intelligence.grounded_writer import normalize_daily_writer_output
+
     return normalize_daily_writer_output(output=output, output_key=agent.output_key, inputs=inputs)
 
 

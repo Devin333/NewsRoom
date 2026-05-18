@@ -538,8 +538,8 @@ def test_news_cli_reports_list_json_output(tmp_path, capsys) -> None:
         [
             "reports",
             "list",
-            "--workflow-id",
-            LEGACY_DAILY_WORKFLOW_ID,
+            "--workflow-family",
+            "daily",
             "--artifact-root",
             str(tmp_path),
             "--json",
@@ -549,10 +549,10 @@ def test_news_cli_reports_list_json_output(tmp_path, capsys) -> None:
     payload = json.loads(captured.out)
 
     assert exit_code == 0
-    assert payload["workflow_id"] == LEGACY_DAILY_WORKFLOW_ID
+    assert payload["workflow_family"] == "daily"
     assert payload["report_count"] == 1
     assert payload["reports"][0]["report_id"] == "list-source:final"
-    assert payload["reports"][0]["workflow_id"] == LEGACY_DAILY_WORKFLOW_ID
+    assert payload["reports"][0]["workflow_id"] == "daily-intelligence-agentic"
 
 
 def test_news_cli_reports_list_accepts_workflow_family(tmp_path, capsys) -> None:

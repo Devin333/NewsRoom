@@ -34,7 +34,7 @@ def test_local_artifact_backup_service_creates_and_restores_real_files(tmp_path)
     assert manifest.file_count == 2
     assert manifest.total_bytes > len("real source body")
     assert {entry.path for entry in manifest.files} == {
-        "_records/artifact_index/run-1/raw-1.json",
+        "_records/artifact_index/4e65d3fbe8ad/a-e72e2581cffd8fef.json",
         "run-1/artifacts/source_item/raw-1.txt",
     }
     with ZipFile(backup_path) as archive:

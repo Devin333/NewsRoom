@@ -162,8 +162,33 @@ def test_approval_api_resume_workflow_uses_run_service_and_envelope(tmp_path) ->
     assert run_service.calls[0]["checkpoint_store_path"] == str(tmp_path / "checkpoints")
 
 
-def test_approval_api_resume_workflow_rejects_service_error(tmp_path) -> None:
+def test_approval_api_resume_workflow_defaults_daily_to_agentic_profile(tmp_path) -> None:
     approval_service = ApprovalApplicationService(store_path=tmp_path / "approvals.json")
+    run_service = _FakeRunService()
+    client = TestClient(
+        create_app(
+            approval_service_factory=lambda: approval_service,
+            run_service_factory=lambda: run_service,
+        )
+    )
+    approval_id = client.post(
+        "/api/v1/approvals",
+        json={"requested_action": "continue_agent", "run_id": "approval-source-run"},
+    ).json()["data"]["approval_id"]
+    client.post(
+        f"/api/v1/approvals/{approval_id}/approve",
+        json={"decided_by": "operator"},
+    )
+
+    response = client.post(f"/api/v1/approvals/{approval_id}/resume-workflow", json={})
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["success"] is True
+    assert run_service.calls[0]["workflow_id"] == "daily"
+    assert run_service.calls[0]["profile"] is None
+
+
     client = TestClient(
         create_app(
             approval_service_factory=lambda: approval_service,
