@@ -36,6 +36,8 @@ def test_memory_ingestion_builds_report_section_documents() -> None:
     assert first.payload["section_index"] == 0
     assert first.payload["topic"] == "AI"
     assert first.payload["source_urls"] == ["https://example.com/a"]
+    assert first.payload["section_id"] == "section_1"
+    assert first.section_id == "section_1"
     assert "Summary" in first.text
     assert "Agent runtime" in first.text
 
@@ -67,6 +69,8 @@ def test_memory_ingestion_builds_evidence_documents() -> None:
     assert doc.evidence_id == "evidence-1"
     assert doc.source_item_id == "source-1"
     assert doc.payload["source_url"] == "https://example.com/a"
+    assert doc.payload["source_urls"] == ["https://example.com/a"]
+    assert doc.payload["source_item_ids"] == []
     assert doc.payload["confidence"] == 0.91
     assert doc.payload["topic"] == "AI"
 

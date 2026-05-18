@@ -94,11 +94,15 @@ class MemoryIngestionService:
         for index, section in enumerate(payload.get("sections") or []):
             title = str(section.get("title") or f"Section {index + 1}")
             content = str(section.get("content") or "")
+            section_id = str(section.get("section_id") or section.get("id") or f"section_{index + 1}")
             section_sources = list(section.get("sources") or source_urls)
+            section_evidence_ids = [str(value) for value in (section.get("evidence_ids") or []) if value is not None]
             doc_payload: dict[str, Any] = {
                 "section_index": index,
+                "section_id": section_id,
                 "section_title": title,
                 "source_urls": section_sources,
+                "evidence_ids": section_evidence_ids,
                 "report_title": payload.get("title"),
                 "report_metadata": metadata,
             }
@@ -113,6 +117,8 @@ class MemoryIngestionService:
                     source_type="report_section",
                     run_id=run_id,
                     report_id=resolved_report_id,
+                    section_id=section_id,
+                    topic=resolved_topic,
                 )
             )
         return docs
@@ -129,12 +135,17 @@ class MemoryIngestionService:
         docs = []
         for item in payload.get("items") or []:
             metadata = dict(item.get("metadata") or {})
+            source_item_id = str(item.get("source_item_id") or "") or None
+            source_item_ids = [str(value) for value in item.get("source_item_ids") or [] if value is not None]
             doc_payload: dict[str, Any] = {
                 "bundle_id": bundle_id,
                 "title": item.get("title"),
                 "summary": item.get("summary"),
                 "source_url": item.get("source_url"),
+                "source_urls": [str(value) for value in item.get("source_urls") or [] if value is not None],
                 "source_id": item.get("source_id"),
+                "source_item_id": source_item_id,
+                "source_item_ids": source_item_ids,
                 "confidence": item.get("confidence"),
                 "metadata": metadata,
             }
@@ -150,7 +161,8 @@ class MemoryIngestionService:
                     source_type="evidence_item",
                     run_id=run_id,
                     evidence_id=evidence_id,
-                    source_item_id=item.get("source_id"),
+                    source_item_id=source_item_id or item.get("source_id"),
+                    topic=topic,
                 )
             )
         return docs
