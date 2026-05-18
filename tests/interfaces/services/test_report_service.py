@@ -81,6 +81,32 @@ def test_report_service_lists_reports_by_daily_workflow_family(tmp_path) -> None
 
 
 
+def test_report_service_quality_prefers_quality_trace_payload(tmp_path) -> None:
+    _write_report_run(
+        tmp_path,
+        "run-blocked",
+        "2026-05-11T00:00:00Z",
+        "Blocked Daily",
+        report_json={
+            "title": "Blocked Daily",
+            "quality_trace": {
+                "decision": "blocked",
+                "route": "human_review",
+                "citation_failure_categories": [
+                    {"code": "unsupported_claims", "count": 1, "items": ["Summary: Unsupported claim"]}
+                ],
+                "unsupported_sections": ["Summary"],
+                "remediation": ["remove unsupported claim"],
+            },
+        },
+    )
+
+    result = ReportApplicationService(artifact_root=tmp_path).report_quality("run-blocked:final")
+
+    assert result.to_dict()["quality"]["decision"] == "blocked"
+    assert result.to_dict()["quality"]["route"] == "human_review"
+    assert result.to_dict()["quality"]["unsupported_sections"] == ["Summary"]
+
 
 def test_report_service_rejects_empty_query(tmp_path) -> None:
     service = ReportApplicationService(artifact_root=tmp_path)
@@ -105,10 +131,12 @@ def _write_report_run(
     title: str,
     *,
     workflow_id: str | None = None,
+    report_json: dict | None = None,
 ) -> None:
     run_dir = root / run_id
     run_dir.mkdir(parents=True)
-    (run_dir / "report.json").write_text(json.dumps({"title": title}), encoding="utf-8")
+    payload = report_json or {"title": title}
+    (run_dir / "report.json").write_text(json.dumps(payload), encoding="utf-8")
     (run_dir / "report.md").write_text(f"# {title}\n", encoding="utf-8")
     (run_dir / "manifest.json").write_text(
         json.dumps(

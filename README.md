@@ -20,13 +20,53 @@ python -m pip install -U pip
 python -m pip install -e ".[dev]"
 ```
 
-Create local environment settings:
+## Install Modes
+
+Use the mode that matches what you want to do:
 
 ```powershell
-Copy-Item .env.example .env
+python -m pip install -e .
 ```
 
-Set `DASHSCOPE_API_KEY` in `.env` before running the real `live` profile. Leave `NEWS_DATABASE_DSN` empty to use the MVP local JSON repository and filesystem artifacts.
+- Core runtime only.
+- Suitable when you do not need local tests, vector memory, or extra service integrations.
+
+```powershell
+python -m pip install -e ".[qdrant]"
+```
+
+- Enables vector/memory features backed by `qdrant-client`.
+- Use this when you need memory search, memory bootstrap, or memory reindex commands.
+
+```powershell
+python -m pip install -e ".[dev]"
+```
+
+- Full local development environment.
+- Includes `pytest`, `qdrant-client`, API/runtime extras, and the tooling used by the documented smoke and test commands.
+
+## Dependency Troubleshooting
+
+If you see `ModuleNotFoundError` for `pydantic`, `pytest`, or `qdrant_client`:
+
+1. Verify you are using the project virtual environment:
+
+```powershell
+python -c "import sys; print(sys.executable)"
+```
+
+It should point to `F:\github\NewsRoom\.venv\Scripts\python.exe` on Windows.
+
+2. Reinstall the intended dependency set:
+
+```powershell
+python -m pip install -e ".[dev]"
+```
+
+3. Optional dependency note:
+- Non-memory commands should work without `qdrant-client`.
+- Memory/vector commands require `.[qdrant]` or `.[dev]`.
+
 
 ## Fixed Smoke Commands
 

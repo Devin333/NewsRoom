@@ -68,8 +68,8 @@ def test_run_service_migrates_repository_before_daily_workflow(tmp_path, monkeyp
     )
     monkeypatch.setattr(
         run_service_module,
-        "DailyIntelligenceRunner",
-        lambda artifact_root: _RecordingDailyRunner(order),
+        "_daily_runner_cls",
+        lambda profile: (lambda artifact_root: _RecordingDailyRunner(order)),
     )
 
     result = RunApplicationService(artifact_root=tmp_path).run_daily(

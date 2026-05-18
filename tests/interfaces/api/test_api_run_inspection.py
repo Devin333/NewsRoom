@@ -40,7 +40,41 @@ def test_run_inspection_api_lists_filters_and_reads_run_details(tmp_path) -> Non
     assert manifest_response.json()["data"]["manifest"]["workflow_id"] == "daily"
 
 
-def test_run_inspection_api_missing_run_uses_run_not_found(tmp_path) -> None:
+def test_run_inspection_api_includes_quality_trace_preview(tmp_path) -> None:
+    _write_run(
+        tmp_path,
+        "run-quality",
+        status="blocked",
+        workflow_id="daily",
+        profile="live-offline",
+        output={
+            "quality_result": {
+                "decision": "blocked",
+                "route": "human_review",
+                "metadata": {
+                    "citation_failure_categories": [{"code": "unsupported_claims", "count": 1, "items": ["Summary: Unsupported claim"]}]
+                },
+            },
+            "citation_check_result": {
+                "unsupported_claims": ["Summary: Unsupported claim"],
+                "rejected_claim_usage": [],
+            },
+            "support_matrix": {
+                "unsupported_sections": ["Summary"],
+            },
+        },
+    )
+    client = TestClient(_app(tmp_path))
+
+    detail_response = client.get("/api/v1/runs/run-quality")
+    payload = detail_response.json()
+
+    assert detail_response.status_code == 200
+    assert payload["data"]["output_preview"]["quality_trace"]["decision"] == "blocked"
+    assert payload["data"]["output_preview"]["quality_trace"]["route"] == "human_review"
+    assert payload["data"]["output_preview"]["quality_trace"]["unsupported_sections"] == ["Summary"]
+
+
     client = TestClient(_app(tmp_path))
 
     response = client.get("/api/v1/runs/missing")
@@ -51,7 +85,42 @@ def test_run_inspection_api_missing_run_uses_run_not_found(tmp_path) -> None:
     assert payload["error"]["code"] == "run_not_found"
 
 
-def test_run_inspection_api_filters_events_and_lists_steps(tmp_path) -> None:
+def test_run_inspection_api_includes_llm_trace_preview(tmp_path) -> None:
+    _write_run(
+        tmp_path,
+        "run-llm",
+        status="succeeded",
+        workflow_id="daily",
+        profile="live-offline",
+        output={
+            "llm_route_manifest": {
+                "selected_deployment_id": "primary",
+                "fallback_used": True,
+                "fallback_count": 1,
+                "metrics": {
+                    "provider_error_count": 1,
+                    "cooldown_skip_count": 0,
+                },
+                "budget_check": {"within_budget": True, "violations": []},
+                "global_budget_check": {"within_budget": True, "violations": []},
+            },
+            "llm_router_events": [
+                {"event_type": "llm_route_started"},
+                {"event_type": "llm_fallback_selected"},
+            ],
+        },
+    )
+    client = TestClient(_app(tmp_path))
+
+    detail_response = client.get("/api/v1/runs/run-llm")
+    payload = detail_response.json()
+
+    assert detail_response.status_code == 200
+    assert payload["data"]["output_preview"]["llm_trace"]["selected_deployment_id"] == "primary"
+    assert payload["data"]["output_preview"]["llm_trace"]["fallback_used"] is True
+    assert payload["data"]["output_preview"]["llm_trace"]["router_event_count"] == 2
+
+
     _write_run(
         tmp_path,
         "run-1",
@@ -107,6 +176,7 @@ def _write_run(
     workflow_id="daily",
     profile="live-offline",
     events=None,
+    output=None,
 ) -> None:
     run_dir = root / run_id
     run_dir.mkdir()
@@ -135,6 +205,7 @@ def _write_run(
         },
         "step_count": 2,
         "event_count": len(actual_events),
+        "output": output or {},
     }
     (run_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     (run_dir / "events.jsonl").write_text(

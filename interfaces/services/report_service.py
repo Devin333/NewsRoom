@@ -216,6 +216,9 @@ def _report_repository(
 def _quality_payload(report_json: Any) -> dict[str, Any]:
     if not isinstance(report_json, dict):
         return {}
+    quality_trace = report_json.get("quality_trace")
+    if isinstance(quality_trace, dict):
+        return dict(quality_trace)
     for key in ("quality", "quality_gate", "editor_review", "quality_metrics"):
         value = report_json.get(key)
         if isinstance(value, dict):
