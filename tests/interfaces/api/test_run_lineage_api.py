@@ -61,11 +61,11 @@ def test_run_lineage_api_reads_real_local_json_store(tmp_path) -> None:
     store.record(
         LineageRef(
             run_id="run-1",
-            source_type="source_item",
-            source_id="raw-1",
-            target_type="evidence",
-            target_id="ev-1",
-            relation_type="source_to_evidence",
+            source_type="claim",
+            source_id="claim-1",
+            target_type="report",
+            target_id="run-1:final",
+            relation_type="claim_to_report",
             created_at=datetime(2026, 5, 11, tzinfo=UTC),
         )
     )
@@ -74,13 +74,13 @@ def test_run_lineage_api_reads_real_local_json_store(tmp_path) -> None:
     )
 
     response = client.get(
-        "/api/v1/runs/run-1/lineage/upstream?target_type=evidence&target_id=ev-1"
+        "/api/v1/runs/run-1/lineage/upstream?target_type=report&target_id=run-1:final"
     )
     payload = response.json()
 
     assert response.status_code == 200
     assert payload["data"]["lineage_count"] == 1
-    assert payload["data"]["lineage_refs"][0]["source_id"] == "raw-1"
+    assert payload["data"]["lineage_refs"][0]["source_type"] == "claim"
 
 
 

@@ -104,6 +104,25 @@ def test_report_service_quality_prefers_quality_trace_payload(tmp_path) -> None:
                 },
             },
         },
+        quality_results=[
+            {
+                "quality_result_id": "run-blocked:quality",
+                "run_id": "run-blocked",
+                "decision": "blocked",
+                "passed": False,
+                "payload": {"quality_result": {"decision": "blocked"}},
+            }
+        ],
+        claims=[
+            {
+                "claim_id": "claim-1",
+                "run_id": "run-blocked",
+                "status": "rejected",
+                "text": "Unsupported claim",
+                "rejecting_evidence_ids": ["ev-2"],
+                "rejecting_sources": ["https://example.com/b"],
+            }
+        ],
     )
 
     result = ReportApplicationService(artifact_root=tmp_path).report_quality("run-blocked:final")
@@ -112,6 +131,8 @@ def test_report_service_quality_prefers_quality_trace_payload(tmp_path) -> None:
     assert result.to_dict()["quality"]["route"] == "human_review"
     assert result.to_dict()["quality"]["unsupported_sections"] == ["Summary"]
     assert result.to_dict()["quality"]["reviewer_trace"]["approval_id"] == "appr-1"
+    assert result.to_dict()["quality"]["quality_lineage"]["claim_count"] == 0
+    assert result.to_dict()["quality"]["quality_lineage"]["rejecting_evidence_ids"] == []
     assert "accepted_claims_count" not in result.to_dict()["quality"]
 
 
@@ -136,6 +157,16 @@ def test_report_service_quality_keeps_reviewer_artifact_refs_visible(tmp_path) -
                 },
             },
         },
+        claims=[
+            {
+                "claim_id": "claim-2",
+                "run_id": "run-review",
+                "status": "accepted",
+                "text": "Supported claim",
+                "supporting_evidence_ids": ["ev-1"],
+                "supporting_sources": ["https://example.com/a"],
+            }
+        ],
     )
 
     result = ReportApplicationService(artifact_root=tmp_path).report_quality("run-review:final")
@@ -144,12 +175,52 @@ def test_report_service_quality_keeps_reviewer_artifact_refs_visible(tmp_path) -
         "editor_review": "editor_review.json",
         "report_quality_summary": "report_quality_summary.json",
     }
+    assert result.to_dict()["quality"]["quality_lineage"]["supporting_evidence_ids"] == []
 
 
     service = ReportApplicationService(artifact_root=tmp_path)
 
     with pytest.raises(ValueError, match="query is required"):
         service.search_reports(query="")
+
+
+
+
+def test_report_service_quality_exposes_quality_lineage_from_repository(tmp_path) -> None:
+    _write_report_run(tmp_path, "run-lineage", "2026-05-11T00:00:00Z", "Lineage Daily")
+    repository = _FakeReportRepository(
+        record=ReportApplicationService(artifact_root=tmp_path).get_report("run-lineage:final"),
+        claims=[
+            {
+                "claim_id": "claim-1",
+                "status": "accepted",
+                "text": "Supported claim",
+                "supporting_evidence_ids": ["ev-1"],
+                "supporting_sources": ["https://example.com/a"],
+                "rejecting_evidence_ids": [],
+                "rejecting_sources": [],
+            },
+            {
+                "claim_id": "claim-2",
+                "status": "rejected",
+                "text": "Rejected claim",
+                "supporting_evidence_ids": [],
+                "supporting_sources": [],
+                "rejecting_evidence_ids": ["ev-2"],
+                "rejecting_sources": ["https://example.com/b"],
+            },
+        ],
+        quality_results=[{"quality_result_id": "run-lineage:quality"}],
+    )
+
+    result = ReportApplicationService(repository=repository).report_quality("run-lineage:final")
+
+    lineage = result.to_dict()["quality"]["quality_lineage"]
+    assert lineage["claim_count"] == 2
+    assert lineage["quality_result_count"] == 1
+    assert lineage["supporting_evidence_ids"] == ["ev-1"]
+    assert lineage["rejecting_evidence_ids"] == ["ev-2"]
+    assert lineage["claims"][0]["claim_id"] == "claim-1"
 
 
 def test_report_service_uses_postgres_when_database_dsn_is_configured(tmp_path) -> None:
@@ -161,6 +232,25 @@ def test_report_service_uses_postgres_when_database_dsn_is_configured(tmp_path) 
     assert service.repository.__class__.__name__ == "PostgresRepository"
 
 
+class _FakeReportRepository:
+    def __init__(self, *, record, claims, quality_results) -> None:
+        self.record = record
+        self.claims = claims
+        self.quality_results = quality_results
+
+    def get_report(self, report_id):
+        assert report_id == self.record.report_id
+        return self.record
+
+    def list_claims(self, run_id):
+        assert run_id == self.record.run_id
+        return self.claims
+
+    def list_quality_results(self, run_id):
+        assert run_id == self.record.run_id
+        return self.quality_results
+
+
 def _write_report_run(
     root,
     run_id: str,
@@ -169,6 +259,8 @@ def _write_report_run(
     *,
     workflow_id: str | None = None,
     report_json: dict | None = None,
+    claims: list[dict] | None = None,
+    quality_results: list[dict] | None = None,
 ) -> None:
     run_dir = root / run_id
     run_dir.mkdir(parents=True)

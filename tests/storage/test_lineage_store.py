@@ -63,18 +63,32 @@ def test_lineage_refs_from_evidence_bundle_extracts_source_lineage() -> None:
                 },
             )
         ],
+        metadata={"report_id": "run-1:final"},
     )
+    bundle_payload = bundle.to_dict()
+    bundle_payload["candidate_claims"] = [
+        {
+            "claim_id": "claim-1",
+            "text": "AI chips remain central.",
+            "source_evidence_ids": ["ev-1"],
+        }
+    ]
+    bundle_payload["report_id"] = "run-1:final"
 
-    refs = lineage_refs_from_evidence_bundle(bundle, run_id="run-1", workflow_id="daily")
+    refs = lineage_refs_from_evidence_bundle(bundle_payload, run_id="run-1", workflow_id="daily")
 
     source_pairs = {(ref.source_type, ref.source_id) for ref in refs}
-    assert source_pairs == {
+    assert source_pairs >= {
         ("source_url", "https://example.com/item"),
         ("source_item", "raw-1"),
         ("normalized_source_item", "norm-1"),
         ("ranked_source_item", "rank-1"),
+        ("evidence_bundle", "run-1"),
+        ("evidence", "ev-1"),
+        ("claim", "claim-1"),
     }
-    assert all(ref.target_type == "evidence" and ref.target_id == "ev-1" for ref in refs)
+    assert any(ref.target_type == "claim" and ref.target_id == "claim-1" for ref in refs)
+    assert any(ref.target_type == "report" and ref.target_id == "run-1:final" for ref in refs)
 
 
 def test_local_json_lineage_store_rejects_invalid_inputs(tmp_path) -> None:

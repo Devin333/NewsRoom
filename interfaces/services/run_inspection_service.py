@@ -451,7 +451,8 @@ def _manifest_output_preview(manifest: dict[str, Any]) -> dict[str, Any]:
         quality_result = output.get("quality_result") if isinstance(output.get("quality_result"), dict) else {}
         citation_check = output.get("citation_check_result") if isinstance(output.get("citation_check_result"), dict) else {}
         support_matrix = output.get("support_matrix") if isinstance(output.get("support_matrix"), dict) else {}
-        if quality_result or citation_check or support_matrix:
+        quality_lineage = _quality_lineage_preview(output)
+        if quality_result or citation_check or support_matrix or quality_lineage:
             preview["quality_trace"] = {
                 "decision": quality_result.get("decision"),
                 "route": quality_result.get("route") or output.get("quality_route"),
@@ -461,6 +462,7 @@ def _manifest_output_preview(manifest: dict[str, Any]) -> dict[str, Any]:
                 "unsupported_claims": citation_check.get("unsupported_claims", []),
                 "rejected_claim_usage": citation_check.get("rejected_claim_usage", []),
                 "unsupported_sections": support_matrix.get("unsupported_sections", []),
+                "quality_lineage": quality_lineage,
             }
         llm_route_manifest = output.get("llm_route_manifest") if isinstance(output.get("llm_route_manifest"), dict) else {}
         llm_router_events = output.get("llm_router_events") if isinstance(output.get("llm_router_events"), list) else []
@@ -484,6 +486,31 @@ def _manifest_output_preview(manifest: dict[str, Any]) -> dict[str, Any]:
             ],
         }
     return preview
+
+
+def _quality_lineage_preview(output: dict[str, Any]) -> dict[str, Any]:
+    evidence_bundle = output.get("evidence_bundle") if isinstance(output.get("evidence_bundle"), dict) else {}
+    candidate_claims = output.get("candidate_claims") if isinstance(output.get("candidate_claims"), list) else []
+    verified_findings = output.get("verified_findings") if isinstance(output.get("verified_findings"), dict) else {}
+    report = output.get("final_report") if isinstance(output.get("final_report"), dict) else output.get("blocked_report") if isinstance(output.get("blocked_report"), dict) else {}
+    supporting_evidence_ids = sorted(
+        {
+            str(evidence_id)
+            for claim in candidate_claims
+            if isinstance(claim, dict)
+            for evidence_id in claim.get("source_evidence_ids", [])
+            if evidence_id
+        }
+    )
+    return {
+        "report_id": str(output.get("report_id") or report.get("report_id") or output.get("run_id") or ""),
+        "evidence_bundle_id": evidence_bundle.get("bundle_id"),
+        "candidate_claim_count": len(candidate_claims),
+        "accepted_claim_count": len(verified_findings.get("accepted_claims", [])),
+        "rejected_claim_count": len(verified_findings.get("rejected_claims", [])),
+        "uncertain_claim_count": len(verified_findings.get("uncertain_claims", [])),
+        "supporting_evidence_ids": supporting_evidence_ids,
+    }
 
 
 def _manifest_error(manifest: dict[str, Any]) -> dict[str, Any] | None:

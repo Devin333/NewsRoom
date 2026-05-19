@@ -53,6 +53,22 @@ def test_run_inspection_get_run_reads_manifest(tmp_path) -> None:
             "started_at": "2026-05-11T00:00:00Z",
             "path": [],
             "steps": {},
+            "output": {
+                "quality_result": {
+                    "decision": "blocked",
+                    "route": "human_review",
+                    "metadata": {"citation_failure_categories": []},
+                },
+                "citation_check_result": {"unsupported_claims": [], "rejected_claim_usage": []},
+                "support_matrix": {"unsupported_sections": []},
+                "evidence_bundle": {"bundle_id": "bundle-1"},
+                "candidate_claims": [{"claim_id": "claim-1", "source_evidence_ids": ["ev-1"]}],
+                "verified_findings": {
+                    "accepted_claims": [{"claim_id": "claim-1"}],
+                    "rejected_claims": [],
+                    "uncertain_claims": [],
+                },
+            },
             "artifacts": {
                 "request": "request.json",
                 "workflow_spec": "workflow_spec.json",
@@ -81,6 +97,7 @@ def test_run_inspection_get_run_reads_manifest(tmp_path) -> None:
         "step_results",
         "manifest",
     ]
+    assert result.to_dict()["output_preview"]["quality_trace"]["quality_lineage"]["candidate_claim_count"] == 1
 
 
 def test_run_inspection_reads_events_jsonl(tmp_path) -> None:
