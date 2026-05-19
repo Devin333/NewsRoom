@@ -230,6 +230,70 @@ class QualityResultRecord:
 
 
 @dataclass(frozen=True)
+class ReportDetailRecord:
+    report_id: str
+    run_id: str
+    status: str
+    finished_at: str
+    title: str | None
+    quality_score: float | None
+    manifest_path: str | None
+    report_json_path: str | None = None
+    report_markdown_path: str | None = None
+    report_json: dict[str, Any] | None = None
+    report_markdown: str | None = None
+    citation_coverage_score: float | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "report_id": self.report_id,
+            "run_id": self.run_id,
+            "status": self.status,
+            "finished_at": self.finished_at,
+            "title": self.title,
+            "quality_score": self.quality_score,
+            "citation_coverage_score": self.citation_coverage_score,
+            "manifest_path": self.manifest_path,
+            "report_json_path": self.report_json_path,
+            "report_markdown_path": self.report_markdown_path,
+            "report_json": self.report_json,
+            "report_markdown": self.report_markdown,
+        }
+
+
+@dataclass(frozen=True)
+class ReportSummaryRecord:
+    report_id: str
+    run_id: str
+    status: str
+    finished_at: str
+    title: str | None
+    quality_score: float | None
+    manifest_path: str | None
+    report_json_path: str | None = None
+    report_markdown_path: str | None = None
+    citation_coverage_score: float | None = None
+    workflow_id: str | None = None
+    profile: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "report_id": self.report_id,
+            "run_id": self.run_id,
+            "status": self.status,
+            "finished_at": self.finished_at,
+            "title": self.title,
+            "quality_score": self.quality_score,
+            "citation_coverage_score": self.citation_coverage_score,
+            "workflow_id": self.workflow_id,
+            "profile": self.profile,
+            "manifest_path": self.manifest_path,
+            "report_json_path": self.report_json_path,
+            "report_markdown_path": self.report_markdown_path,
+        }
+
+
+@dataclass(frozen=True)
 class SearchResult:
     result_id: str
     result_type: str

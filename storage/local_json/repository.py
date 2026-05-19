@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from storage.records import ReportDetailRecord, ReportSummaryRecord
+
 
 class ReportNotFoundError(FileNotFoundError):
     """Raised when no local report artifact can be found."""
@@ -15,75 +17,11 @@ BLOCKED_REPORT_STATUS = "blocked"
 REPORT_ARTIFACT_KEYS = ("report_json", "blocked_report", "report_markdown")
 
 
-@dataclass(frozen=True)
-class LatestReportRecord:
-    report_id: str
-    run_id: str
-    status: str
-    finished_at: str
-    title: str | None
-    quality_score: float | None
-    manifest_path: Path
-    report_json_path: Path | None
-    report_markdown_path: Path | None
-    report_json: dict[str, Any] | None
-    report_markdown: str | None
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "report_id": self.report_id,
-            "run_id": self.run_id,
-            "status": self.status,
-            "finished_at": self.finished_at,
-            "title": self.title,
-            "quality_score": self.quality_score,
-            "manifest_path": str(self.manifest_path),
-            "report_json_path": str(self.report_json_path) if self.report_json_path else None,
-            "report_markdown_path": (
-                str(self.report_markdown_path) if self.report_markdown_path else None
-            ),
-            "report_json": self.report_json,
-            "report_markdown": self.report_markdown,
-        }
-
-
-@dataclass(frozen=True)
-class ReportSearchRecord:
-    report_id: str
-    run_id: str
-    status: str
-    finished_at: str
-    title: str | None
-    quality_score: float | None
-    workflow_id: str | None
-    profile: str | None
-    manifest_path: Path
-    report_json_path: Path | None
-    report_markdown_path: Path | None
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "report_id": self.report_id,
-            "run_id": self.run_id,
-            "status": self.status,
-            "finished_at": self.finished_at,
-            "title": self.title,
-            "quality_score": self.quality_score,
-            "workflow_id": self.workflow_id,
-            "profile": self.profile,
-            "manifest_path": str(self.manifest_path),
-            "report_json_path": str(self.report_json_path) if self.report_json_path else None,
-            "report_markdown_path": (
-                str(self.report_markdown_path) if self.report_markdown_path else None
-            ),
-        }
-
-
 class LocalJsonRepository:
     def __init__(self, artifact_root: str | Path = ".newsroom/runs") -> None:
         self.artifact_root = Path(artifact_root)
 
-    def latest_report(self) -> LatestReportRecord:
+    def latest_report(self) -> ReportDetailRecord:
         candidates = []
         for manifest_path in self.artifact_root.glob("*/manifest.json"):
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -100,7 +38,7 @@ class LocalJsonRepository:
         _, manifest_path, manifest = sorted(candidates, key=lambda item: item[0], reverse=True)[0]
         return _detail_from_manifest(manifest_path, manifest)
 
-    def get_report(self, report_id: str) -> LatestReportRecord:
+    def get_report(self, report_id: str) -> ReportDetailRecord:
         run_id, report_status = _parse_report_id(report_id)
         if report_status not in {FINAL_REPORT_STATUS, BLOCKED_REPORT_STATUS}:
             raise ReportNotFoundError(f"report not found: {report_id}")
@@ -123,7 +61,7 @@ class LocalJsonRepository:
         limit: int = 20,
         workflow_id: str | None = None,
         workflow_ids: tuple[str, ...] | None = None,
-    ) -> list[ReportSearchRecord]:
+    ) -> list[ReportSummaryRecord]:
         if limit <= 0:
             raise ValueError("limit must be greater than zero")
         records: list[ReportSearchRecord] = []
@@ -135,7 +73,7 @@ class LocalJsonRepository:
         records.sort(key=lambda item: item.finished_at, reverse=True)
         return records[:limit]
 
-    def search_reports(self, query: str, *, limit: int = 20) -> list[ReportSearchRecord]:
+    def search_reports(self, query: str, *, limit: int = 20) -> list[ReportSummaryRecord]:
         normalized_query = query.lower()
         matches: list[ReportSearchRecord] = []
         for manifest_path, manifest in self._iter_report_manifests():
@@ -200,7 +138,7 @@ def _report_status_from_artifacts(artifacts: dict[str, Any]) -> str:
     return FINAL_REPORT_STATUS
 
 
-def _detail_from_manifest(manifest_path: Path, manifest: dict[str, Any]) -> LatestReportRecord:
+def _detail_from_manifest(manifest_path: Path, manifest: dict[str, Any]) -> ReportDetailRecord:
     run_dir = manifest_path.parent
     artifacts = manifest.get("artifacts", {})
     report_status = _report_status_from_artifacts(artifacts)
@@ -209,7 +147,7 @@ def _detail_from_manifest(manifest_path: Path, manifest: dict[str, Any]) -> Late
     report_json = _read_optional_json(report_json_path)
     report_markdown = _read_optional_text(report_markdown_path)
     run_id = str(manifest["run_id"])
-    return LatestReportRecord(
+    return ReportDetailRecord(
         report_id=f"{run_id}:{report_status}",
         run_id=run_id,
         status=report_status,
@@ -224,7 +162,7 @@ def _detail_from_manifest(manifest_path: Path, manifest: dict[str, Any]) -> Late
     )
 
 
-def _summary_from_manifest(manifest_path: Path, manifest: dict[str, Any]) -> ReportSearchRecord:
+def _summary_from_manifest(manifest_path: Path, manifest: dict[str, Any]) -> ReportSummaryRecord:
     run_dir = manifest_path.parent
     artifacts = manifest.get("artifacts", {})
     report_status = _report_status_from_artifacts(artifacts)
@@ -232,7 +170,7 @@ def _summary_from_manifest(manifest_path: Path, manifest: dict[str, Any]) -> Rep
     report_markdown_path = _artifact_path(run_dir, artifacts.get("report_markdown"))
     report_json = _read_optional_json(report_json_path)
     run_id = str(manifest["run_id"])
-    return ReportSearchRecord(
+    return ReportSummaryRecord(
         report_id=f"{run_id}:{report_status}",
         run_id=run_id,
         status=report_status,

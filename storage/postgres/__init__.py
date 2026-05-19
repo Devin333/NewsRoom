@@ -6,15 +6,12 @@ from storage.postgres.event_store import PostgresEventStore
 from storage.postgres.lineage import PostgresLineageStore
 from storage.postgres.metrics import PostgresStorageMetricsCollector
 from storage.postgres.migrations import load_migration_sql
-from storage.postgres.repository import (
-    PostgresReportDetailRecord,
-    PostgresReportSearchRecord,
-    PostgresRepository,
-)
+from storage.postgres.repository import PostgresRepository
+from storage.records import ReportDetailRecord, ReportSummaryRecord
 
 __all__ = [
-    "PostgresReportDetailRecord",
-    "PostgresReportSearchRecord",
+    "ReportDetailRecord",
+    "ReportSummaryRecord",
     "PostgresArtifactIndexStore",
     "PostgresConversationStore",
     "PostgresEventStore",

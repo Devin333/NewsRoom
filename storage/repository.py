@@ -11,7 +11,14 @@ from typing import Any, Protocol
 
 from core.framework import RunResult
 from storage.local_json import LocalJsonRepository
-from storage.records import ClaimRecord, EvidenceItemRecord, QualityResultRecord, SourceItemRecord
+from storage.records import (
+    ClaimRecord,
+    EvidenceItemRecord,
+    QualityResultRecord,
+    ReportDetailRecord,
+    ReportSummaryRecord,
+    SourceItemRecord,
+)
 
 
 @dataclass(frozen=True)
@@ -118,6 +125,20 @@ class RunPersistenceBatch:
 class PersistenceRepository(Protocol):
     def migrate(self) -> None: ...
 
+    def latest_report(self) -> ReportDetailRecord: ...
+
+    def get_report(self, report_id: str) -> ReportDetailRecord: ...
+
+    def list_reports(
+        self,
+        *,
+        limit: int = 20,
+        workflow_id: str | None = None,
+        workflow_ids: tuple[str, ...] | None = None,
+    ) -> list[ReportSummaryRecord]: ...
+
+    def search_reports(self, query: str, *, limit: int = 20) -> list[ReportSummaryRecord]: ...
+
     def save_workflow_run(self, record: WorkflowRunRecord) -> None: ...
 
     def save_report(self, record: ReportRecord) -> None: ...
@@ -132,11 +153,47 @@ class PersistenceRepository(Protocol):
 
     def save_run_records(self, batch: RunPersistenceBatch) -> None: ...
 
+    def list_source_items(self, run_id: str) -> list[dict[str, Any]]: ...
+
+    def list_evidence_items(self, run_id: str) -> list[dict[str, Any]]: ...
+
+    def list_claims(self, run_id: str) -> list[dict[str, Any]]: ...
+
+    def list_quality_results(self, run_id: str) -> list[dict[str, Any]]: ...
+
 
 class LocalJsonPersistenceAdapter:
     def __init__(self, artifact_root: str | Path = ".newsroom/runs") -> None:
         self.artifact_root = Path(artifact_root)
         self.local_json = LocalJsonRepository(self.artifact_root)
+
+    def latest_report(self) -> ReportDetailRecord:
+        return _coerce_report_detail_record(self.local_json.latest_report())
+
+    def get_report(self, report_id: str) -> ReportDetailRecord:
+        return _coerce_report_detail_record(self.local_json.get_report(report_id))
+
+    def list_reports(
+        self,
+        *,
+        limit: int = 20,
+        workflow_id: str | None = None,
+        workflow_ids: tuple[str, ...] | None = None,
+    ) -> list[ReportSummaryRecord]:
+        return [
+            _coerce_report_summary_record(record)
+            for record in self.local_json.list_reports(
+                limit=limit,
+                workflow_id=workflow_id,
+                workflow_ids=workflow_ids,
+            )
+        ]
+
+    def search_reports(self, query: str, *, limit: int = 20) -> list[ReportSummaryRecord]:
+        return [
+            _coerce_report_summary_record(record)
+            for record in self.local_json.search_reports(query, limit=limit)
+        ]
 
     def migrate(self) -> None:
         (self.artifact_root / "_records" / "workflow_runs").mkdir(parents=True, exist_ok=True)
@@ -537,6 +594,46 @@ def _object_payload(value: Any) -> dict[str, Any]:
     if isinstance(value, dict):
         return value
     return dict(value)
+
+
+def _coerce_report_detail_record(record: Any) -> ReportDetailRecord:
+    if isinstance(record, ReportDetailRecord):
+        return record
+    payload = record.to_dict() if hasattr(record, "to_dict") else dict(record)
+    return ReportDetailRecord(
+        report_id=str(payload["report_id"]),
+        run_id=str(payload["run_id"]),
+        status=str(payload["status"]),
+        finished_at=str(payload.get("finished_at") or ""),
+        title=payload.get("title"),
+        quality_score=_optional_float(payload.get("quality_score")),
+        citation_coverage_score=_optional_float(payload.get("citation_coverage_score")),
+        manifest_path=payload.get("manifest_path"),
+        report_json_path=payload.get("report_json_path"),
+        report_markdown_path=payload.get("report_markdown_path"),
+        report_json=payload.get("report_json") if isinstance(payload.get("report_json"), dict) else None,
+        report_markdown=payload.get("report_markdown"),
+    )
+
+
+def _coerce_report_summary_record(record: Any) -> ReportSummaryRecord:
+    if isinstance(record, ReportSummaryRecord):
+        return record
+    payload = record.to_dict() if hasattr(record, "to_dict") else dict(record)
+    return ReportSummaryRecord(
+        report_id=str(payload["report_id"]),
+        run_id=str(payload["run_id"]),
+        status=str(payload["status"]),
+        finished_at=str(payload.get("finished_at") or ""),
+        title=payload.get("title"),
+        quality_score=_optional_float(payload.get("quality_score")),
+        citation_coverage_score=_optional_float(payload.get("citation_coverage_score")),
+        workflow_id=payload.get("workflow_id"),
+        profile=payload.get("profile"),
+        manifest_path=payload.get("manifest_path"),
+        report_json_path=payload.get("report_json_path"),
+        report_markdown_path=payload.get("report_markdown_path"),
+    )
 
 
 def _write_record_json(path: Path, payload: dict[str, Any]) -> None:

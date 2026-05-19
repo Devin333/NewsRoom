@@ -8,7 +8,14 @@ from core.framework.specs import WorkflowStatus
 from domain.reports import BlockedReport, FinalReport
 from evidence import EvidenceBundle, EvidenceItem, VerifiedClaim, VerifiedFindings
 from quality import QualityGateMetrics, ReportQualitySummary
-from storage.records import ClaimRecord, EvidenceItemRecord, QualityResultRecord, SourceItemRecord
+from storage.records import (
+    ClaimRecord,
+    EvidenceItemRecord,
+    QualityResultRecord,
+    ReportDetailRecord,
+    ReportSummaryRecord,
+    SourceItemRecord,
+)
 from storage.repository import (
     LocalJsonPersistenceAdapter,
     ReportRecord,
@@ -155,7 +162,37 @@ def test_workflow_and_report_record_contracts_roundtrip_with_stable_dict_output(
     }
 
 
-def test_workflow_run_record_from_result_extracts_metrics() -> None:
+
+
+def test_local_json_persistence_adapter_report_reads_return_canonical_contract(tmp_path) -> None:
+    repository = LocalJsonPersistenceAdapter(tmp_path)
+    run_dir = tmp_path / "run-1"
+    run_dir.mkdir()
+    (run_dir / "report.json").write_text(json.dumps({"title": "Daily"}), encoding="utf-8")
+    (run_dir / "report.md").write_text("# Daily\n", encoding="utf-8")
+    (run_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "run_id": "run-1",
+                "workflow_id": "daily",
+                "status": "succeeded",
+                "finished_at": "2026-05-11T00:00:00Z",
+                "quality_score": 0.9,
+                "artifacts": {"report_json": "report.json", "report_markdown": "report.md"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    detail = repository.get_report("run-1:final")
+    summary = repository.list_reports(limit=10)[0]
+
+    assert isinstance(detail, ReportDetailRecord)
+    assert isinstance(summary, ReportSummaryRecord)
+    assert detail.report_id == "run-1:final"
+    assert summary.report_id == "run-1:final"
+    assert detail.to_dict()["report_json"]["title"] == "Daily"
+    assert summary.to_dict()["workflow_id"] == "daily"
     result = RunResult(
         run_id="run-1",
         workflow_id="daily",

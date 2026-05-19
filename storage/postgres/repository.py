@@ -10,73 +10,11 @@ import psycopg
 from domain.sources import SourceError, SourceHealth
 from storage.local_json import ReportNotFoundError
 from storage.postgres.migrations import load_migration_sql
-from storage.records import ClaimRecord, EvidenceItemRecord, QualityResultRecord, SourceItemRecord
+from storage.records import ClaimRecord, EvidenceItemRecord, QualityResultRecord, ReportDetailRecord, ReportSummaryRecord, SourceItemRecord
 from storage.repository import ReportRecord, RunPersistenceBatch, WorkflowRunRecord
 
 
 ConnectionFactory = Callable[[], Any]
-
-
-@dataclass(frozen=True)
-class PostgresReportDetailRecord:
-    report_id: str
-    run_id: str
-    status: str
-    finished_at: str
-    title: str | None
-    report_json: dict[str, Any] | None
-    report_markdown: str | None
-    quality_score: float | None
-    citation_coverage_score: float | None
-    manifest_path: str | None
-    report_json_path: str | None = None
-    report_markdown_path: str | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "report_id": self.report_id,
-            "run_id": self.run_id,
-            "status": self.status,
-            "finished_at": self.finished_at,
-            "title": self.title,
-            "quality_score": self.quality_score,
-            "citation_coverage_score": self.citation_coverage_score,
-            "manifest_path": self.manifest_path,
-            "report_json_path": self.report_json_path,
-            "report_markdown_path": self.report_markdown_path,
-            "report_json": self.report_json,
-            "report_markdown": self.report_markdown,
-        }
-
-
-@dataclass(frozen=True)
-class PostgresReportSearchRecord:
-    report_id: str
-    run_id: str
-    status: str
-    finished_at: str
-    title: str | None
-    quality_score: float | None
-    citation_coverage_score: float | None
-    manifest_path: str | None
-    report_json_path: str | None = None
-    report_markdown_path: str | None = None
-    workflow_id: str | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "report_id": self.report_id,
-            "run_id": self.run_id,
-            "status": self.status,
-            "finished_at": self.finished_at,
-            "title": self.title,
-            "quality_score": self.quality_score,
-            "citation_coverage_score": self.citation_coverage_score,
-            "manifest_path": self.manifest_path,
-            "report_json_path": self.report_json_path,
-            "report_markdown_path": self.report_markdown_path,
-            "workflow_id": self.workflow_id,
-        }
 
 
 class PostgresRepository:
@@ -192,7 +130,7 @@ class PostgresRepository:
         """
         return [_source_health_from_row(row) for row in self._fetch_all(sql, params)]
 
-    def latest_report(self) -> PostgresReportDetailRecord:
+    def latest_report(self) -> ReportDetailRecord:
         sql = """
         SELECT
             r.report_id, r.run_id, r.status, r.title, r.report_json,
@@ -207,7 +145,7 @@ class PostgresRepository:
             raise ReportNotFoundError("no PostgreSQL report found")
         return _detail_from_row(row)
 
-    def get_report(self, report_id: str) -> PostgresReportDetailRecord:
+    def get_report(self, report_id: str) -> ReportDetailRecord:
         sql = """
         SELECT
             r.report_id, r.run_id, r.status, r.title, r.report_json,
@@ -227,7 +165,7 @@ class PostgresRepository:
         limit: int = 20,
         workflow_id: str | None = None,
         workflow_ids: tuple[str, ...] | None = None,
-    ) -> list[PostgresReportSearchRecord]:
+    ) -> list[ReportSummaryRecord]:
         if limit <= 0:
             raise ValueError("limit must be greater than zero")
         where = ""
@@ -255,7 +193,7 @@ class PostgresRepository:
         rows = self._fetch_all(sql, params)
         return [_list_record_from_row(row) for row in rows]
 
-    def search_reports(self, query: str, *, limit: int = 20) -> list[PostgresReportSearchRecord]:
+    def search_reports(self, query: str, *, limit: int = 20) -> list[ReportSummaryRecord]:
         sql = """
         SELECT
             r.report_id, r.run_id, r.status, r.title, r.quality_score,
@@ -598,8 +536,8 @@ def _json_or_none(value: Any) -> str | None:
     return json.dumps(value, ensure_ascii=False, sort_keys=True)
 
 
-def _detail_from_row(row: tuple[Any, ...]) -> PostgresReportDetailRecord:
-    return PostgresReportDetailRecord(
+def _detail_from_row(row: tuple[Any, ...]) -> ReportDetailRecord:
+    return ReportDetailRecord(
         report_id=str(row[0]),
         run_id=str(row[1]),
         status=str(row[2]),
@@ -613,8 +551,8 @@ def _detail_from_row(row: tuple[Any, ...]) -> PostgresReportDetailRecord:
     )
 
 
-def _search_record_from_row(row: tuple[Any, ...]) -> PostgresReportSearchRecord:
-    return PostgresReportSearchRecord(
+def _search_record_from_row(row: tuple[Any, ...]) -> ReportSummaryRecord:
+    return ReportSummaryRecord(
         report_id=str(row[0]),
         run_id=str(row[1]),
         status=str(row[2]),
@@ -626,8 +564,8 @@ def _search_record_from_row(row: tuple[Any, ...]) -> PostgresReportSearchRecord:
     )
 
 
-def _list_record_from_row(row: tuple[Any, ...]) -> PostgresReportSearchRecord:
-    return PostgresReportSearchRecord(
+def _list_record_from_row(row: tuple[Any, ...]) -> ReportSummaryRecord:
+    return ReportSummaryRecord(
         report_id=str(row[0]),
         run_id=str(row[1]),
         status=str(row[2]),
