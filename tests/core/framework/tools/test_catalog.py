@@ -17,11 +17,12 @@ def test_builtin_tool_registry_defaults_to_safe_core_tools() -> None:
     registry = build_builtin_tool_registry()
     names = {definition.name for definition in registry.list_tools()}
 
-    assert "source.parse_rss" in names
-    assert "source.extract_items" in names
-    assert "report.validate" in names
-    assert "quality.duplicate_check" in names
     assert "control.set_output" in names
+    assert "control.report_progress" in names
+    assert "source.parse_rss" not in names
+    assert "source.extract_items" not in names
+    assert "report.validate" not in names
+    assert "quality.duplicate_check" not in names
     assert "arxiv.search_papers" not in names
     assert "github.fetch_releases" not in names
     assert "web.search" not in names
@@ -56,8 +57,6 @@ def test_builtin_dangerous_registry_collects_explicit_risky_tools(tmp_path) -> N
         memory_ingestion_service=object(),
         qdrant_vector_store=object(),
         qdrant_document_store=object(),
-        persistence_repository=object(),
-        postgres_repository=object(),
         notification_options={
             "allowed_webhook_domains": ["example.com"],
             "rss_feed_path": tmp_path / "feed.xml",
@@ -68,17 +67,11 @@ def test_builtin_dangerous_registry_collects_explicit_risky_tools(tmp_path) -> N
     assert registry.validate_no_conflicts().ok is True
     assert {
         "artifact.write",
-        "arxiv.search_papers",
-        "github.fetch_releases",
         "local_json.save",
         "memory.index",
         "notification.rss_publish",
         "notification.webhook",
-        "postgres.save_report",
         "qdrant.upsert",
-        "report.export",
-        "report.publish",
-        "source.fetch_url",
         "web.search",
     }.issubset(names)
     assert "report.validate" not in names
@@ -98,42 +91,34 @@ def test_tool_catalog_applies_policy_and_groups_namespaces() -> None:
     payload = catalog.to_dict()
 
     assert catalog.registry_valid is True
-    assert [tool.name for tool in catalog.tools] == [
-        "quality.duplicate_check",
-        "report.validate",
-    ]
+    assert [tool.name for tool in catalog.tools] == []
     assert payload["agent_id"] == "analyst"
-    assert payload["tool_count"] == 2
-    assert payload["namespaces"] == [
-        {"namespace": "quality", "tool_count": 1},
-        {"namespace": "report", "tool_count": 1},
-    ]
+    assert payload["tool_count"] == 0
+    assert payload["namespaces"] == []
 
 
-def test_builtin_registry_executes_real_report_validation_tool() -> None:
+def test_builtin_registry_executes_real_control_tool() -> None:
     registry = build_builtin_tool_registry(include_network_tools=False)
     executor = ToolExecutor(registry)
 
     observation = executor.execute(
         ToolCall(
-            tool_name="report.validate",
+            tool_name="control.report_progress",
             arguments={
-                "report": {
-                    "title": "Daily Brief",
-                    "sections": [{"title": "Summary", "body": "Supported update"}],
-                    "source_urls": ["https://example.com/source"],
-                }
+                "message": "working",
+                "percent": 25,
+                "metadata": {"step": "collect"},
             },
         ),
-        ToolPolicy(allowed_tools=["report.validate"]),
+        ToolPolicy(allowed_tools=["control.report_progress"]),
     )
 
     assert observation.status == ToolStatus.SUCCEEDED
     assert observation.result.output == {
-        "valid": True,
-        "errors": [],
-        "section_count": 1,
-        "source_url_count": 1,
+        "control_action": "report_progress",
+        "message": "working",
+        "percent": 25.0,
+        "metadata": {"step": "collect"},
     }
 
 
@@ -142,4 +127,4 @@ def test_tool_catalog_payload_is_json_safe() -> None:
 
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True)
 
-    assert "source.parse_rss" in encoded
+    assert "control.set_output" in encoded

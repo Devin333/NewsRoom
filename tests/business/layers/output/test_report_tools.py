@@ -7,8 +7,8 @@ from core.framework.tools import (
     ToolPolicy,
     ToolRegistry,
     ToolStatus,
-    register_report_tools,
 )
+from business.layers.output.tools import register_report_tools
 from interfaces.services.report_service import ReportApplicationService
 from storage.repository import LocalJsonPersistenceAdapter
 

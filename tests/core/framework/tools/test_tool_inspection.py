@@ -276,13 +276,14 @@ def test_builtin_registry_inspection_stays_offline_and_marks_network_tools_optio
     inspection = inspect_tool_registry(registry)
     names = {tool.name for tool in inspection.tools}
 
-    assert "source.parse_rss" in names
-    assert "report.validate" in names
-    assert "quality.duplicate_check" in names
     assert "control.set_output" in names
+    assert "control.report_progress" in names
+    assert "source.parse_rss" not in names
+    assert "report.validate" not in names
+    assert "quality.duplicate_check" not in names
     assert "web.search" not in names
     assert "github.search_repositories" not in names
     assert inspection.registry_valid is True
-    assert inspection.namespace_count >= 4
+    assert inspection.namespace_count >= 1
     assert inspection.risk_summary.side_effect_tools == 0
     assert inspection.risk_summary.tools_without_timeout >= 1

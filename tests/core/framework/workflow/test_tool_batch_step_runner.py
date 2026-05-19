@@ -6,7 +6,7 @@ import pytest
 
 from core.framework.artifacts import ArtifactManager
 from core.framework.specs import StepSpec, StepStatus, StepType, WorkflowSpec, WorkflowStatus
-from core.framework.tools import build_builtin_tool_registry
+from core.framework.tools import ToolDefinition, ToolRegistry, build_builtin_tool_registry
 from core.framework.workflow import (
     FunctionStepRegistry,
     FunctionStepRunner,
@@ -18,7 +18,7 @@ from core.framework.workflow import (
 
 
 def test_tool_batch_step_runner_executes_real_builtin_tools(tmp_path) -> None:
-    tool_registry = build_builtin_tool_registry(include_network_tools=False)
+    tool_registry = _sample_tool_registry()
     step_runner_registry = StepRunnerRegistry.with_function_runner(
         FunctionStepRunner(FunctionStepRegistry())
     )
@@ -45,14 +45,14 @@ def test_tool_batch_step_runner_executes_real_builtin_tools(tmp_path) -> None:
                     metadata={
                         "tool_policy": {
                             "allowed_tools": [
-                                "report.validate",
-                                "quality.duplicate_check",
+                                "sample.validate",
+                                "sample.duplicate_check",
                             ],
                             "max_tool_calls_per_iteration": 2,
                         },
                         "tool_calls": [
                             {
-                                "tool_name": "report.validate",
+                                "tool_name": "sample.validate",
                                 "call_id": "validate-report",
                                 "arguments": {
                                     "report": {
@@ -63,7 +63,7 @@ def test_tool_batch_step_runner_executes_real_builtin_tools(tmp_path) -> None:
                                 },
                             },
                             {
-                                "tool_name": "quality.duplicate_check",
+                                "tool_name": "sample.duplicate_check",
                                 "call_id": "dedup-items",
                                 "arguments": {
                                     "items": [
@@ -131,7 +131,7 @@ def test_tool_batch_step_runner_fails_when_tool_is_blocked(tmp_path) -> None:
                     step_type=StepType.TOOL_BATCH,
                     write_keys=["tool_observations", "tool_results"],
                     metadata={
-                        "tool_policy": {"allowed_tools": ["report.validate"]},
+                        "tool_policy": {"allowed_tools": ["control.set_output"]},
                         "tool_calls": [
                             {
                                 "tool_name": "web.search",
@@ -184,3 +184,36 @@ def test_tool_batch_step_missing_runner_fails_before_run_creation(tmp_path) -> N
         executor.execute(spec, {"topic": "ai"}, profile="test", run_id="run-missing-tool-batch")
 
     assert not (tmp_path / "run-missing-tool-batch").exists()
+
+
+def _sample_tool_registry() -> ToolRegistry:
+    registry = ToolRegistry()
+    registry.register(
+        ToolDefinition(
+            name="sample.validate",
+            input_schema={
+                "required": ["report"],
+                "properties": {"report": {"type": "object"}},
+            },
+        ),
+        lambda args: {
+            "valid": bool(args["report"].get("title")),
+            "errors": [],
+            "section_count": len(args["report"].get("sections") or []),
+            "source_url_count": len(args["report"].get("source_urls") or []),
+        },
+    )
+    registry.register(
+        ToolDefinition(
+            name="sample.duplicate_check",
+            input_schema={
+                "required": ["items"],
+                "properties": {"items": {"type": "array"}},
+            },
+        ),
+        lambda args: {
+            "item_count": len(args["items"]),
+            "duplicate_group_count": 1,
+        },
+    )
+    return registry

@@ -7,7 +7,8 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from core.framework.specs import WorkflowStatus
-from core.framework.tools import ToolPolicy, build_builtin_tool_registry, build_tool_catalog
+from business.tools import build_business_tool_registry
+from core.framework.tools import ToolPolicy, build_tool_catalog
 from core.framework.workers import WorkerStatus
 from core.framework.workers.approval import ApprovalAlreadyDecidedError, ApprovalNotFoundError
 from core.framework.workers.schedule_store import ScheduleRecord
@@ -2971,7 +2972,7 @@ def _add_tool_policy_args(parser: argparse.ArgumentParser) -> None:
 
 
 def _tools_list(args: argparse.Namespace) -> int:
-    registry = build_builtin_tool_registry(include_dangerous_tools=bool(args.include_dangerous))
+    registry = build_business_tool_registry(include_dangerous_tools=bool(args.include_dangerous))
     catalog = build_tool_catalog(
         registry,
         agent_id="cli",
@@ -2991,7 +2992,7 @@ def _tools_list(args: argparse.Namespace) -> int:
 
 
 def _tools_schema(args: argparse.Namespace) -> int:
-    registry = build_builtin_tool_registry(include_dangerous_tools=bool(args.include_dangerous))
+    registry = build_business_tool_registry(include_dangerous_tools=bool(args.include_dangerous))
     policy = _tool_policy_from_args(args)
     tools = registry.export_schema_for_llm(args.agent_id, policy)
     payload = {

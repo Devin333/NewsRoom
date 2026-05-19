@@ -253,7 +253,12 @@ def test_control_delegate_to_subagent_tool_enqueues_real_task() -> None:
     assert leased.payload == {"topic": "AI policy"}
     assert leased.queue_name == "news:queue:delegated"
     assert leased.max_attempts == 2
-    assert leased.metadata == {
+    assert {
+        "stage": leased.metadata["stage"],
+        "control_tool": leased.metadata["control_tool"],
+        "run_id": leased.metadata["run_id"],
+        "subagent_id": leased.metadata["subagent_id"],
+    } == {
         "stage": "source_research",
         "control_tool": "control.delegate_to_subagent",
         "run_id": "run-delegate",

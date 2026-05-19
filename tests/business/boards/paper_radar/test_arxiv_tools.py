@@ -4,8 +4,8 @@ from core.framework.tools import (
     ToolPolicy,
     ToolRegistry,
     ToolStatus,
-    register_arxiv_tools,
 )
+from business.boards.paper_radar.tools import register_arxiv_tools
 from sources.connectors import ARXIV_API_URL, ArxivConnector
 
 

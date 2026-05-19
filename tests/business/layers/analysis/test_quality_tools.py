@@ -4,8 +4,8 @@ from core.framework.tools import (
     ToolPolicy,
     ToolRegistry,
     ToolStatus,
-    register_quality_tools,
 )
+from business.layers.analysis.tools import register_quality_tools
 
 
 def test_quality_citation_check_tool_passes_known_urls() -> None:

@@ -48,7 +48,7 @@ def test_tool_call_step_runner_executes_real_tool(tmp_path) -> None:
     registry = StepRunnerRegistry()
     registry.register(
         StepType.TOOL_CALL,
-        ToolCallStepRunner(build_builtin_tool_registry(include_network_tools=False)),
+        ToolCallStepRunner(_sample_tool_registry()),
     )
     spec = WorkflowSpec(
         workflow_id="tool-call",
@@ -63,7 +63,7 @@ def test_tool_call_step_runner_executes_real_tool(tmp_path) -> None:
                 write_keys=["validate_tool_observation", "validate_tool_result"],
                 required_output_keys=["validate_tool_observation", "validate_tool_result"],
                 metadata={
-                    "tool_name": "report.validate",
+                    "tool_name": "sample.validate",
                     "arguments": {
                         "report": {
                             "title": "Daily Brief",
@@ -71,7 +71,7 @@ def test_tool_call_step_runner_executes_real_tool(tmp_path) -> None:
                             "source_urls": ["https://example.com/source"],
                         }
                     },
-                    "tool_policy": {"allowed_tools": ["report.validate"]},
+                    "tool_policy": {"allowed_tools": ["sample.validate"]},
                 },
             )
         ],
@@ -87,7 +87,7 @@ def test_tool_call_step_runner_executes_real_tool(tmp_path) -> None:
     assert result.status == WorkflowStatus.SUCCEEDED
     assert result.output["validate_tool_result"]["status"] == "succeeded"
     assert result.output["validate_tool_result"]["output"]["valid"] is True
-    assert result.step_results["validate"].metrics["tool_name"] == "report.validate"
+    assert result.step_results["validate"].metrics["tool_name"] == "sample.validate"
     assert result.step_results["validate"].metrics["tool_status"] == "succeeded"
     assert result.step_results["validate"].metrics["approval_required"] is False
 
@@ -857,7 +857,7 @@ def test_tool_call_and_tool_batch_steps_route_to_next_steps(tmp_path) -> None:
     )
     registry = build_default_step_runner_registry(
         functions,
-        tool_registry=build_builtin_tool_registry(include_network_tools=False),
+        tool_registry=_sample_tool_registry(),
     )
     spec = WorkflowSpec(
         workflow_id="tool-routing",
@@ -872,7 +872,7 @@ def test_tool_call_and_tool_batch_steps_route_to_next_steps(tmp_path) -> None:
                 write_keys=["validate_tool_observation", "validate_tool_result"],
                 required_output_keys=["validate_tool_observation", "validate_tool_result"],
                 metadata={
-                    "tool_name": "report.validate",
+                    "tool_name": "sample.validate",
                     "arguments": {
                         "report": {
                             "title": "Daily Brief",
@@ -880,7 +880,7 @@ def test_tool_call_and_tool_batch_steps_route_to_next_steps(tmp_path) -> None:
                             "source_urls": ["https://example.com/source"],
                         }
                     },
-                    "tool_policy": {"allowed_tools": ["report.validate"]},
+                    "tool_policy": {"allowed_tools": ["sample.validate"]},
                 },
             ),
             StepSpec(
@@ -897,10 +897,10 @@ def test_tool_call_and_tool_batch_steps_route_to_next_steps(tmp_path) -> None:
                 write_keys=["tool_observations", "tool_results"],
                 required_output_keys=["tool_observations", "tool_results"],
                 metadata={
-                    "tool_policy": {"allowed_tools": ["quality.duplicate_check"]},
+                    "tool_policy": {"allowed_tools": ["sample.duplicate_check"]},
                     "tool_calls": [
                         {
-                            "tool_name": "quality.duplicate_check",
+                            "tool_name": "sample.duplicate_check",
                             "call_id": "dedup-items",
                             "arguments": {
                                 "items": [
@@ -1086,3 +1086,36 @@ class _FakeAgentRunner:
             }
         )
         return self._result
+
+
+def _sample_tool_registry() -> ToolRegistry:
+    registry = ToolRegistry()
+    registry.register(
+        ToolDefinition(
+            name="sample.validate",
+            input_schema={
+                "required": ["report"],
+                "properties": {"report": {"type": "object"}},
+            },
+        ),
+        lambda args: {
+            "valid": bool(args["report"].get("title")),
+            "errors": [],
+            "section_count": len(args["report"].get("sections") or []),
+            "source_url_count": len(args["report"].get("source_urls") or []),
+        },
+    )
+    registry.register(
+        ToolDefinition(
+            name="sample.duplicate_check",
+            input_schema={
+                "required": ["items"],
+                "properties": {"items": {"type": "array"}},
+            },
+        ),
+        lambda args: {
+            "item_count": len(args["items"]),
+            "duplicate_group_count": 1,
+        },
+    )
+    return registry

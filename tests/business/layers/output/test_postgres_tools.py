@@ -4,8 +4,8 @@ from core.framework.tools import (
     ToolPolicy,
     ToolRegistry,
     ToolStatus,
-    register_postgres_tools,
 )
+from business.layers.output.postgres_tools import register_postgres_tools
 
 
 def test_postgres_save_report_tool_writes_typed_report_record() -> None:

@@ -6,8 +6,8 @@ from core.framework.tools import (
     ToolPolicy,
     ToolRegistry,
     ToolStatus,
-    register_github_tools,
 )
+from business.boards.project_radar.tools import register_github_tools
 from sources.connectors import GITHUB_API_URL, GithubConnector
 
 

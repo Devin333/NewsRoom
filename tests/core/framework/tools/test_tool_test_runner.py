@@ -127,29 +127,25 @@ def test_tool_test_runner_runs_minimal_safe_registry_contract() -> None:
     reports = runner.run_cases(
         [
             ToolTestCase(
-                name="safe report validate",
-                tool_name="report.validate",
+                name="safe progress report",
+                tool_name="control.report_progress",
                 args={
-                    "report": {
-                        "title": "Daily Brief",
-                        "sections": [{"title": "Summary", "body": "Supported update"}],
-                        "source_urls": ["https://example.com/source"],
-                    }
+                    "message": "working",
+                    "percent": 50,
                 },
-                policy=ToolPolicy(allowed_tools=["report.validate"]),
+                policy=ToolPolicy(allowed_tools=["control.report_progress"]),
                 expected_status=ToolStatus.SUCCEEDED,
                 expected_output_keys=[
-                    "valid",
-                    "errors",
-                    "section_count",
-                    "source_url_count",
+                    "control_action",
+                    "message",
+                    "percent",
                 ],
             )
         ]
     )
 
     assert [report.passed for report in reports] == [True]
-    assert reports[0].observation.result.output["valid"] is True
+    assert reports[0].observation.result.output["control_action"] == "report_progress"
 
 
 def test_tool_test_runner_runs_minimal_dangerous_registry_default_deny_contract(

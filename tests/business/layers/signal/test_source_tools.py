@@ -7,8 +7,8 @@ from core.framework.tools import (
     ToolPolicy,
     ToolRegistry,
     ToolStatus,
-    register_source_tools,
 )
+from business.layers.signal.tools import register_source_tools
 from domain.sources import SourceDefinition, SourceError
 from sources import SourceRegistry
 from sources.connectors import SourceFetchPolicy
@@ -977,7 +977,7 @@ def test_source_fetch_url_tool_default_fetch_uses_source_fetch_policy(monkeypatc
         captured["max_redirects"] = policy.max_redirects
         return Response()
 
-    monkeypatch.setattr("core.framework.tools.source_tools.open_request_with_fetch_policy", fake_open_request)
+    monkeypatch.setattr("business.layers.signal.tools.open_request_with_fetch_policy", fake_open_request)
     registry = ToolRegistry()
     register_source_tools(
         registry,
