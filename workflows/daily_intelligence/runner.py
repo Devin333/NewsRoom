@@ -5,6 +5,8 @@ from pathlib import Path
 from core.framework import RunResult, WorkflowRunner
 from core.framework.llm import LLMClient
 from core.framework.workflow import FunctionStepRegistry
+from business.layers.relation.lineage import evidence_bundle_lineage_extractor
+from business.layers.signal.indexing import source_artifact_ref_extractor
 from sources import SourceRegistry
 from sources.connectors import (
     ArxivConnector,
@@ -174,6 +176,8 @@ class DailyIntelligenceRunner:
             artifact_root=self.artifact_root,
             function_registry=registry,
             artifact_publishers=[DailyIntelligenceArtifactPublisher()],
+            artifact_ref_extractors=[source_artifact_ref_extractor],
+            lineage_extractors=[evidence_bundle_lineage_extractor],
         )
         return runner.run(
             build_daily_intelligence_workflow(profile),

@@ -4,7 +4,6 @@ import pytest
 
 import core.framework.runner as runner_module
 from core.framework import WorkflowRunner
-from core.framework.artifacts.source_artifacts import SourceArtifactWriter
 from core.framework.specs import EdgeCondition, EdgeSpec, StepSpec, StepType, WorkflowSpec, WorkflowStatus
 from core.framework.workflow import (
     ArtifactPublishContext,
@@ -16,10 +15,11 @@ from core.framework.workflow import (
     build_default_step_runner_registry,
     register_manifest_artifact_once,
 )
-from domain.sources import SourceError
 from storage.artifacts import LocalJsonArtifactIndexStore
+from storage.artifacts import ArtifactRef as StoredArtifactRef
 from storage.checkpoint import LocalJsonCheckpointStore
 from storage.events import LocalJsonEventStore
+from storage.lineage import LineageRef
 from storage.security import REDACTED_VALUE
 
 
@@ -649,66 +649,46 @@ def test_workflow_runner_uses_artifact_index_factory_by_default(tmp_path, monkey
     assert manifest_ref.metadata["manifest_schema_version"] == RUN_MANIFEST_SCHEMA_VERSION
 
 
-def test_workflow_runner_indexes_expanded_source_artifact_refs(tmp_path) -> None:
+def test_workflow_runner_indexes_extracted_artifact_refs(tmp_path) -> None:
     registry = FunctionStepRegistry()
     registry.register(
-        "sample.sources",
+        "sample.extra_artifact",
         lambda buffer: {
-            "raw_items": [
-                {
-                    "source_id": "feed/source",
-                    "source_item_id": "item-1",
-                    "title": "Real source item",
-                    "url": "https://example.com/item",
-                    "raw_content": "<item>content</item>",
-                }
-            ],
-            "source_errors": [
-                SourceError(
-                    source_id="feed/source",
-                    source_name="Feed Source",
-                    error_type="fetch_timeout",
-                    error_message="timeout",
-                    url="https://example.com/feed",
-                )
-            ],
+            "extra_payload": {"status": "ready"},
         },
     )
     runner = WorkflowRunner(
         artifact_root=tmp_path,
         function_registry=registry,
-        artifact_publishers=[_SourceDiagnosticsArtifactPublisher()],
+        artifact_publishers=[_ExtraArtifactPublisher()],
+        artifact_ref_extractors=[_extract_extra_artifact_refs],
     )
     spec = WorkflowSpec(
-        workflow_id="source-artifacts",
-        name="Source Artifacts",
+        workflow_id="extra-artifacts",
+        name="Extra Artifacts",
         version="1.0",
-        start_step_id="sources",
+        start_step_id="extra",
         steps=[
             StepSpec(
-                step_id="sources",
-                implementation="sample.sources",
+                step_id="extra",
+                implementation="sample.extra_artifact",
                 read_keys=[],
-                write_keys=["raw_items", "source_errors"],
-                required_output_keys=["raw_items", "source_errors"],
+                write_keys=["extra_payload"],
+                required_output_keys=["extra_payload"],
             )
         ],
     )
 
-    result = runner.run(spec, {}, profile="test", run_id="runner-source-artifacts")
+    result = runner.run(spec, {}, profile="test", run_id="runner-extra-artifacts")
 
     assert result.status == WorkflowStatus.SUCCEEDED
     refs = LocalJsonArtifactIndexStore(tmp_path / "_records" / "artifact_index").list_by_run(
-        "runner-source-artifacts"
+        "runner-extra-artifacts"
     )
-    source_refs = {ref.artifact_type: ref for ref in refs if ref.artifact_type in {"source_item", "source_error"}}
-    assert set(source_refs) == {"source_item", "source_error"}
-    assert source_refs["source_item"].path == "sources/items/feed_source/item-1.json"
-    assert source_refs["source_item"].checksum is not None
-    assert source_refs["source_item"].metadata["source_id"] == "feed/source"
-    assert source_refs["source_error"].path.startswith("sources/errors/feed_source/")
-    assert source_refs["source_error"].checksum is not None
-    assert source_refs["source_error"].metadata["source_artifact_type"] == "source_error"
+    extra_ref = next(ref for ref in refs if ref.artifact_type == "extra_payload")
+    assert extra_ref.path == "extra/payload.json"
+    assert extra_ref.checksum is not None
+    assert extra_ref.metadata["extractor"] == "test"
 
 
 def test_workflow_runner_uses_lineage_store_factory_by_default(tmp_path, monkeypatch) -> None:
@@ -722,7 +702,7 @@ def test_workflow_runner_uses_lineage_store_factory_by_default(tmp_path, monkeyp
     registry.register(
         "sample.evidence",
         lambda buffer: {
-            "evidence_bundle": {
+            "items": {
                 "bundle_id": "bundle-1",
                 "items": [
                     {
@@ -735,7 +715,11 @@ def test_workflow_runner_uses_lineage_store_factory_by_default(tmp_path, monkeyp
             }
         },
     )
-    runner = WorkflowRunner(artifact_root=tmp_path, function_registry=registry)
+    runner = WorkflowRunner(
+        artifact_root=tmp_path,
+        function_registry=registry,
+        lineage_extractors=[_extract_item_lineage_refs],
+    )
     spec = WorkflowSpec(
         workflow_id="lineage-factory",
         name="Lineage Factory",
@@ -746,16 +730,16 @@ def test_workflow_runner_uses_lineage_store_factory_by_default(tmp_path, monkeyp
                 step_id="evidence",
                 implementation="sample.evidence",
                 read_keys=[],
-                write_keys=["evidence_bundle"],
-                required_output_keys=["evidence_bundle"],
+                write_keys=["items"],
+                required_output_keys=["items"],
             )
         ],
     )
 
     runner.run(spec, {}, profile="test", run_id="lineage-factory-run")
 
-    assert len(fake_lineage.refs) == 2
-    assert {ref.source_type for ref in fake_lineage.refs} == {"source_url", "source_item"}
+    assert len(fake_lineage.refs) == 1
+    assert fake_lineage.refs[0].source_type == "item"
     assert all(ref.run_id == "lineage-factory-run" for ref in fake_lineage.refs)
 
 
@@ -805,25 +789,57 @@ class _RunnerCustomArtifactPublisher:
         return []
 
 
-class _SourceDiagnosticsArtifactPublisher:
-    publisher_id = "test_source_diagnostics"
+class _ExtraArtifactPublisher:
+    publisher_id = "test_extra_artifact"
 
     def supports(self, context: ArtifactPublishContext) -> bool:
         return context.phase.value == "terminal"
 
     def publish(self, context: ArtifactPublishContext) -> list:
-        source_artifacts = SourceArtifactWriter(context.artifact_manager).write_source_artifacts(
-            context.run_id,
-            raw_items=context.output.get("raw_items") or [],
-            source_errors=context.output.get("source_errors") or [],
+        register_manifest_artifact_once(
+            context.manifest,
+            "extra_payload",
+            "extra/payload.json",
         )
-        if source_artifacts:
-            register_manifest_artifact_once(
-                context.manifest,
-                "source_artifacts",
-                "source_artifacts/index.json",
-            )
+        context.artifact_manager.write_json(
+            context.run_id,
+            "extra/payload.json",
+            context.output["extra_payload"],
+        )
         return []
+
+
+def _extract_extra_artifact_refs(*, run_dir, manifest, output):
+    path = run_dir / "extra" / "payload.json"
+    data = path.read_bytes()
+    return [
+        StoredArtifactRef(
+            artifact_id="extra_payload",
+            run_id=manifest["run_id"],
+            artifact_type="extra_payload",
+            path="extra/payload.json",
+            content_type="application/json",
+            size_bytes=len(data),
+            checksum="test-checksum",
+            redacted=True,
+            metadata={"extractor": "test"},
+        )
+    ]
+
+
+def _extract_item_lineage_refs(*, output, run_id, workflow_id):
+    items = output.get("items", {}).get("items") or []
+    return [
+        LineageRef(
+            run_id=run_id,
+            source_type="item",
+            source_id=str(item["evidence_id"]),
+            target_type="workflow",
+            target_id=workflow_id,
+            relation_type="item_to_workflow",
+        )
+        for item in items
+    ]
 
 
 def _resumable_two_step_spec() -> WorkflowSpec:

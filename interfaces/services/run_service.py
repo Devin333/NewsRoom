@@ -21,6 +21,8 @@ from workflows.daily_intelligence import build_test_agent_loop_workflow
 from workflows.daily_intelligence import build_test_no_llm_registry
 from workflows.daily_intelligence import build_test_no_llm_workflow
 from workflows.daily_intelligence.artifact_publisher import build_daily_intelligence_artifact_publishers
+from business.layers.relation.lineage import evidence_bundle_lineage_extractor
+from business.layers.signal.indexing import source_artifact_ref_extractor
 from workflows.daily_intelligence.profiles import (
     AGENTIC_DAILY_WORKFLOW_ID,
     LEGACY_DAILY_WORKFLOW_ID,
@@ -241,6 +243,12 @@ class RunApplicationService:
             function_registry=resolved.registry,
             checkpoint_store=LocalJsonCheckpointStore(checkpoint_store_path),
             artifact_publishers=build_daily_intelligence_artifact_publishers()
+            if resolved.workflow.workflow_id.startswith("daily-intelligence")
+            else None,
+            artifact_ref_extractors=[source_artifact_ref_extractor]
+            if resolved.workflow.workflow_id.startswith("daily-intelligence")
+            else None,
+            lineage_extractors=[evidence_bundle_lineage_extractor]
             if resolved.workflow.workflow_id.startswith("daily-intelligence")
             else None,
         )

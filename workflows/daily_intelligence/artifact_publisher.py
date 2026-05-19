@@ -4,7 +4,7 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
-from core.framework.artifacts.source_artifacts import SourceArtifactWriter
+from business.layers.signal.artifacts import SourceArtifactWriter
 from core.framework.workflow.artifact_publishers import (
     ArtifactPublishContext,
     ArtifactPublishPhase,

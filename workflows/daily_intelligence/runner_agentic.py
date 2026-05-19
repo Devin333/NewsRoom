@@ -6,6 +6,8 @@ from typing import Any
 from core.framework import RunResult, WorkflowRunner
 from core.framework.llm import LLMClient
 from core.framework.workflow import FunctionStepRegistry
+from business.layers.relation.lineage import evidence_bundle_lineage_extractor
+from business.layers.signal.indexing import source_artifact_ref_extractor
 from sources import SourceRegistry
 from sources.connectors import (
     ArxivConnector,
@@ -202,6 +204,8 @@ class AgenticDailyIntelligenceRunner:
             agent_runner=agent_runner,
             agent_registry=agent_registry,
             artifact_publishers=[DailyIntelligenceArtifactPublisher()],
+            artifact_ref_extractors=[source_artifact_ref_extractor],
+            lineage_extractors=[evidence_bundle_lineage_extractor],
         )
         return runner.run(
             build_agentic_daily_intelligence_workflow(profile),

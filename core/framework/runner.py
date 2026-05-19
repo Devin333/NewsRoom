@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -45,8 +46,12 @@ from storage.artifacts import ArtifactRef, artifact_index_store_from_env
 from storage.checkpoint import WorkflowCheckpoint
 from storage.events import EventRecord as StorageEventRecord
 from storage.events import event_store_from_env
-from storage.lineage import lineage_refs_from_evidence_bundle, lineage_store_from_env
+from storage.lineage import lineage_store_from_env
 from storage.security import StorageRedactor
+
+
+ArtifactRefExtractor = Callable[..., list[ArtifactRef]]
+LineageExtractor = Callable[..., list[Any]]
 
 
 class WorkflowRunner:
@@ -74,6 +79,8 @@ class WorkflowRunner:
         global_budget_policy: GlobalBudgetPolicy | None = None,
         global_budget_tracker: GlobalBudgetTracker | None = None,
         artifact_publishers: list[WorkflowArtifactPublisher] | None = None,
+        artifact_ref_extractors: list[ArtifactRefExtractor] | None = None,
+        lineage_extractors: list[LineageExtractor] | None = None,
         operation_service: WorkflowRunOperationService | None = None,
     ) -> None:
         self._artifact_root = Path(artifact_root)
@@ -101,6 +108,8 @@ class WorkflowRunner:
             event_store=event_store or event_store_from_env(artifact_root=self._artifact_root),
             lineage_store=lineage_store or lineage_store_from_env(artifact_root=self._artifact_root),
             redactor=redactor or StorageRedactor(),
+            artifact_ref_extractors=artifact_ref_extractors,
+            lineage_extractors=lineage_extractors,
         )
         self._checkpoint_store = checkpoint_store
         self._event_bus = event_bus
@@ -429,11 +438,15 @@ class WorkflowRunIndexer:
         event_store: Any,
         lineage_store: Any,
         redactor: StorageRedactor,
+        artifact_ref_extractors: list[ArtifactRefExtractor] | None = None,
+        lineage_extractors: list[LineageExtractor] | None = None,
     ) -> None:
         self._artifact_index_store = artifact_index_store
         self._event_store = event_store
         self._lineage_store = lineage_store
         self._redactor = redactor
+        self._artifact_ref_extractors = list(artifact_ref_extractors or [])
+        self._lineage_extractors = list(lineage_extractors or [])
 
     def index(self, result: WorkflowResult) -> None:
         self._index_artifacts(result)
@@ -469,8 +482,13 @@ class WorkflowRunIndexer:
                     },
                 )
             )
-        for artifact_ref in _source_artifact_refs(run_dir, result.manifest):
-            self._artifact_index_store.index_artifact(artifact_ref)
+        for extractor in self._artifact_ref_extractors:
+            for artifact_ref in extractor(
+                run_dir=run_dir,
+                manifest=result.manifest,
+                output=result.output,
+            ):
+                self._artifact_index_store.index_artifact(artifact_ref)
 
     def _index_events(self, result: WorkflowResult) -> None:
         if result.events_path is None:
@@ -507,15 +525,14 @@ class WorkflowRunIndexer:
                 self._event_store.append_event(event)
 
     def _index_lineage(self, result: WorkflowResult) -> None:
-        evidence_bundle = result.output.get("evidence_bundle")
-        if evidence_bundle is None:
-            return
-        refs = lineage_refs_from_evidence_bundle(
-            evidence_bundle,
-            run_id=result.run_id,
-            workflow_id=result.workflow_id,
-        )
-        self._lineage_store.record_many(refs)
+        for extractor in self._lineage_extractors:
+            refs = extractor(
+                output=result.output,
+                run_id=result.run_id,
+                workflow_id=result.workflow_id,
+            )
+            if refs:
+                self._lineage_store.record_many(refs)
 
 
 def _artifact_path(run_dir: Path, relative_path: str) -> Path:
@@ -547,38 +564,6 @@ def _artifact_id_from_key(key: str) -> str:
         return safe_key
     digest = sha256(str(key).encode("utf-8")).hexdigest()[:8]
     return f"{safe_key}-{digest}"
-
-
-def _source_artifact_refs(run_dir: Path, manifest: dict[str, Any]) -> list[ArtifactRef]:
-    artifact_paths = manifest.get("artifacts") or {}
-    source_index_path = artifact_paths.get("source_artifacts")
-    if not isinstance(source_index_path, str):
-        return []
-    try:
-        index_path = _artifact_path(run_dir, source_index_path)
-        payload = json.loads(index_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, ValueError):
-        return []
-    if not isinstance(payload, dict):
-        return []
-    entries = payload.get("entries")
-    if not isinstance(entries, list):
-        return []
-
-    refs: list[ArtifactRef] = []
-    for entry in entries:
-        if not isinstance(entry, dict):
-            continue
-        ref_payload = entry.get("artifact_ref")
-        if not isinstance(ref_payload, dict):
-            continue
-        try:
-            ref = ArtifactRef.from_dict(ref_payload)
-            _artifact_path(run_dir, ref.path)
-        except (KeyError, TypeError, ValueError, OSError):
-            continue
-        refs.append(ref)
-    return refs
 
 
 def _approval_context_payload(approval_context: Any) -> dict[str, Any]:

@@ -1,7 +1,8 @@
 import json
 from hashlib import sha256
 
-from core.framework.artifacts import ArtifactManager, SourceArtifactWriter
+from business.layers.signal.artifacts import SourceArtifactWriter
+from core.framework.artifacts import ArtifactManager
 from domain.sources import SourceError, SourceFetchRequest, SourceFetchResult
 
 
