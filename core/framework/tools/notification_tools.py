@@ -39,9 +39,9 @@ def register_notification_tools(
     smtp_use_tls: bool = False,
     smtp_use_starttls: bool = True,
     rss_feed_path: str | Path | None = None,
-    rss_feed_title: str = "NewsRoom Updates",
+    rss_feed_title: str = "Framework Updates",
     rss_feed_link: str = "https://localhost/",
-    rss_feed_description: str = "NewsRoom published updates",
+    rss_feed_description: str = "Framework published updates",
 ) -> None:
     allowed_domain_tuple = _allowed_domains(allowed_webhook_domains)
     sender = webhook_sender or _default_webhook_sender
@@ -338,7 +338,7 @@ def _default_webhook_sender(
         data=body,
         headers={
             "Content-Type": "application/json",
-            "User-Agent": "NewsRoomToolRuntime/1.0",
+            "User-Agent": "FrameworkToolRuntime/1.0",
             **headers,
         },
         method="POST",

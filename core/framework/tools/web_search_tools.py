@@ -47,7 +47,7 @@ class DuckDuckGoHtmlSearchProvider:
         endpoint: str = "https://html.duckduckgo.com/html/",
         allowed_domains: list[str] | None = None,
         fetcher: WebSearchFetcher | None = None,
-        user_agent: str = "NewsRoomToolRuntime/1.0",
+        user_agent: str = "FrameworkToolRuntime/1.0",
     ) -> None:
         self.endpoint = endpoint
         self.allowed_domains = _allowed_domains(
