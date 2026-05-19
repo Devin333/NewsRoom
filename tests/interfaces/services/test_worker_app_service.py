@@ -1,7 +1,7 @@
+from business.workers import SourceHealthCheckTaskHandler
 from core.framework.workers import (
     RedisQueueStatus,
     LeasedTask,
-    SourceHealthCheckTaskHandler,
     Task,
     TaskResult,
     TaskStatus,

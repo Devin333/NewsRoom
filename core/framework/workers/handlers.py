@@ -1,16 +1,16 @@
-"""Deprecated worker handler compatibility exports.
+"""Deprecated worker handler compatibility module.
 
-TODO(boundary-migration): legacy adapter, remove after business worker handlers are stable.
+Business task handlers live in :mod:`business.workers`.
 """
 
 from __future__ import annotations
 
-from business.workers.daily_intelligence_handler import DailyIntelligenceTaskHandler
-from business.workers.memory_reindex_handler import MemoryReindexTaskHandler
-from business.workers.source_health_handler import SourceHealthCheckTaskHandler
 
-__all__ = [
-    "DailyIntelligenceTaskHandler",
-    "MemoryReindexTaskHandler",
-    "SourceHealthCheckTaskHandler",
-]
+__all__: list[str] = []
+
+
+def __getattr__(name: str) -> object:
+    raise AttributeError(
+        f"module {__name__!r} has no attribute {name!r}; "
+        "business task handlers are exported from 'business.workers'"
+    )
