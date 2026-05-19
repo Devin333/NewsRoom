@@ -96,6 +96,11 @@ def _record_matches_query(record: MemoryRecord, query: MemoryQuery) -> bool:
         return False
     if query.kinds and record.kind not in query.kinds:
         return False
+    if query.time_window is not None:
+        if query.time_window.start is not None and record.created_at < query.time_window.start:
+            return False
+        if query.time_window.end is not None and record.created_at > query.time_window.end:
+            return False
     for key, value in query.filters.items():
         if key == "collection":
             continue
@@ -148,4 +153,3 @@ def _match_reasons(record: MemoryRecord, query_terms: set[str]) -> list[str]:
 def _terms(text: str) -> set[str]:
     normalized = "".join(ch.lower() if ch.isalnum() else " " for ch in str(text))
     return {part for part in normalized.split() if part}
-

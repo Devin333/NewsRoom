@@ -12,6 +12,7 @@ class MemoryScope(str, Enum):
     SESSION = "session"
     AGENT = "agent"
     WORKFLOW = "workflow"
+    USER = "user"
     GLOBAL = "global"
 
 
@@ -32,6 +33,33 @@ class MemoryWriteMode(str, Enum):
     APPEND = "append"
     UPSERT = "upsert"
     REPLACE = "replace"
+
+
+@dataclass(frozen=True)
+class TimeWindow:
+    start: datetime | None = None
+    end: datetime | None = None
+
+    def __post_init__(self) -> None:
+        start = _optional_datetime(self.start)
+        end = _optional_datetime(self.end)
+        object.__setattr__(self, "start", start)
+        object.__setattr__(self, "end", end)
+        if start is not None and end is not None and start > end:
+            raise ValueError("time_window start must be before end")
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "TimeWindow":
+        return cls(
+            start=_optional_datetime(payload.get("start")),
+            end=_optional_datetime(payload.get("end")),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "start": _datetime_to_json(self.start),
+            "end": _datetime_to_json(self.end),
+        }
 
 
 @dataclass(frozen=True)
@@ -61,6 +89,8 @@ class MemoryRecord:
         object.__setattr__(self, "memory_id", str(self.memory_id or uuid4().hex))
         object.__setattr__(self, "metadata", dict(self.metadata or {}))
         object.__setattr__(self, "refs", dict(self.refs or {}))
+        _validate_no_sensitive_keys(self.metadata, field_name="metadata")
+        _validate_no_sensitive_keys(self.refs, field_name="refs")
         object.__setattr__(self, "tags", [str(tag) for tag in (self.tags or [])])
         object.__setattr__(
             self,
@@ -71,6 +101,8 @@ class MemoryRecord:
             object.__setattr__(self, "updated_at", _coerce_datetime(self.updated_at))
         if self.expires_at is not None:
             object.__setattr__(self, "expires_at", _coerce_datetime(self.expires_at))
+        if self.expires_at is not None and self.expires_at <= self.created_at:
+            raise ValueError("expires_at must be after created_at")
         _validate_optional_score("confidence", self.confidence)
         _validate_optional_score("importance", self.importance)
 
@@ -130,23 +162,28 @@ class MemoryQuery:
     limit: int = 10
     min_score: float | None = None
     max_context_tokens: int | None = None
+    time_window: TimeWindow | None = None
 
     def __post_init__(self) -> None:
         text = str(self.query or "").strip()
-        if not text:
-            raise ValueError("query is required")
         object.__setattr__(self, "query", text)
         object.__setattr__(self, "scopes", _coerce_enum_list(MemoryScope, self.scopes))
         object.__setattr__(self, "kinds", _coerce_enum_list(MemoryKind, self.kinds))
         object.__setattr__(self, "filters", dict(self.filters or {}))
+        if not text and not self.filters and not self.kinds:
+            raise ValueError("query, filters, or kinds are required")
         object.__setattr__(self, "limit", max(1, min(int(self.limit or 10), 100)))
         if self.min_score is not None:
+            _validate_optional_score("min_score", self.min_score)
             object.__setattr__(self, "min_score", float(self.min_score))
         if self.max_context_tokens is not None:
             object.__setattr__(self, "max_context_tokens", max(1, int(self.max_context_tokens)))
+        if self.time_window is not None and not isinstance(self.time_window, TimeWindow):
+            object.__setattr__(self, "time_window", TimeWindow.from_dict(dict(self.time_window)))
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "MemoryQuery":
+        raw_time_window = payload.get("time_window")
         return cls(
             query=str(payload.get("query") or payload.get("text") or ""),
             scopes=list(payload.get("scopes") or []),
@@ -155,6 +192,7 @@ class MemoryQuery:
             limit=int(payload.get("limit") or 10),
             min_score=_optional_float(payload.get("min_score", payload.get("score_threshold"))),
             max_context_tokens=_optional_int(payload.get("max_context_tokens")),
+            time_window=TimeWindow.from_dict(raw_time_window) if isinstance(raw_time_window, dict) else None,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -166,6 +204,7 @@ class MemoryQuery:
             "limit": self.limit,
             "min_score": self.min_score,
             "max_context_tokens": self.max_context_tokens,
+            "time_window": self.time_window.to_dict() if self.time_window is not None else None,
         }
 
 
@@ -363,3 +402,24 @@ def _validate_optional_score(name: str, value: float | None) -> None:
     numeric = float(value)
     if numeric < 0.0 or numeric > 1.0:
         raise ValueError(f"{name} must be between 0 and 1")
+
+
+_SENSITIVE_KEY_TOKENS = (
+    "api_key",
+    "apikey",
+    "authorization",
+    "bearer",
+    "client_secret",
+    "credential",
+    "password",
+    "private_key",
+    "secret",
+    "token",
+)
+
+
+def _validate_no_sensitive_keys(value: dict[str, Any], *, field_name: str) -> None:
+    for key in value:
+        normalized = str(key).casefold()
+        if any(token in normalized for token in _SENSITIVE_KEY_TOKENS):
+            raise ValueError(f"memory {field_name} contains sensitive key: {key}")

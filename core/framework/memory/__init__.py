@@ -13,6 +13,7 @@ from core.framework.memory.models import (
     MemoryWriteMode,
     MemoryWriteRequest,
     MemoryWriteResult,
+    TimeWindow,
 )
 from core.framework.memory.policy import (
     DEFAULT_ADMIN_MEMORY_POLICY,
@@ -48,7 +49,7 @@ __all__ = [
     "MemoryWriteResult",
     "MemoryWriter",
     "SimpleMemoryRecallStrategy",
+    "TimeWindow",
     "WorkflowMemoryAdapter",
     "inspect_memory_runtime",
 ]
-

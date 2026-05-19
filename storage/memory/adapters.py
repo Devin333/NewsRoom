@@ -177,6 +177,11 @@ def _matches_scope_and_kind(record: MemoryRecord, query: MemoryQuery) -> bool:
         return False
     if query.kinds and record.kind not in query.kinds:
         return False
+    if query.time_window is not None:
+        if query.time_window.start is not None and record.created_at < query.time_window.start:
+            return False
+        if query.time_window.end is not None and record.created_at > query.time_window.end:
+            return False
     return True
 
 
@@ -205,4 +210,3 @@ def _optional_str(value: Any) -> str | None:
         return None
     text = str(value).strip()
     return text or None
-
