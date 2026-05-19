@@ -46,6 +46,9 @@ def test_workflow_contract_enums_cover_target_values() -> None:
         "human_review",
         "notification",
         "tool_batch",
+        "memory_recall",
+        "memory_write",
+        "memory_index",
     }
 
 

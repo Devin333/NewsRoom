@@ -10,6 +10,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from core.framework.artifacts import ArtifactManager
+from core.framework.memory import MemoryQuery
 from core.framework.specs import StepSpec, StepStatus, StepType
 from core.framework.workflow.artifacts import LocalArtifactPublisher
 from core.framework.workflow.buffer import DataBuffer, ScopedDataBuffer
@@ -71,6 +72,7 @@ def build_default_step_runner_registry(
     agent_registry: dict[str, Any] | None = None,
     workflow_registry: dict[str, Any] | None = None,
     artifact_manager: ArtifactManager | None = None,
+    memory_runtime: Any | None = None,
     run_id: str | None = None,
     approval_store: Any | None = None,
     secret_provider: Any | None = None,
@@ -98,6 +100,8 @@ def build_default_step_runner_registry(
         dependencies.add("workflow_executor")
     if artifact_manager is not None:
         dependencies.add("artifact_publisher")
+    if memory_runtime is not None:
+        dependencies.add("memory_runtime")
     if approval_store is not None:
         dependencies.add("human_review_store")
 
@@ -127,6 +131,8 @@ def build_default_step_runner_registry(
             max_workers=max_tool_batch_workers,
         ),
     )
+    registry.register(MemoryRecallStepRunner(memory_runtime))
+    registry.register(MemoryWriteStepRunner(memory_runtime, run_id=run_id))
 
     registry.register(
         AgentLoopStepRunner(
@@ -365,6 +371,256 @@ class ToolBatchStepRunner:
                 error_type=type(exc).__name__,
                 error_message=str(exc),
                 metrics=_contract_metrics(step, started=started),
+            )
+
+
+class MemoryRecallStepRunner:
+    capability = StepRunnerCapability(
+        step_type=StepType.MEMORY_RECALL,
+        runner_id="builtin.memory_recall",
+        version="1.0.0",
+        supports_checkpoint=True,
+        supports_resume=True,
+        supports_timeout=True,
+        supports_retry=True,
+        side_effect_level=StepRunnerSideEffectLevel.READ_ONLY,
+        required_dependencies=["memory_runtime"],
+        description="Runs a direct MemoryRuntime recall step.",
+    )
+
+    def __init__(self, memory_runtime: Any | None) -> None:
+        self._memory_runtime = memory_runtime
+        self._run_id: str | None = None
+
+    def can_resolve(self, step: StepSpec) -> bool:
+        return default_runner_can_resolve(self.capability, step)
+
+    def validate_step(self, step: StepSpec) -> list[ValidationErrorItem]:
+        if step.metadata.get("query") is not None or step.metadata.get("query_key") is not None:
+            return []
+        return [
+            ValidationErrorItem(
+                code="memory_recall_missing_query",
+                message="Memory recall step requires metadata.query or metadata.query_key.",
+                field="metadata.query",
+            )
+        ]
+
+    def configure_run_context(
+        self,
+        *,
+        artifact_manager: ArtifactManager,
+        run_id: str,
+    ) -> None:
+        _ = artifact_manager
+        self._run_id = run_id
+
+    def run(self, step: StepSpec, buffer: ScopedDataBuffer) -> StepOutcome:
+        started = time.perf_counter()
+        try:
+            if step.step_type != StepType.MEMORY_RECALL:
+                raise StepExecutionError(
+                    f"unsupported step type for MemoryRecallStepRunner: {step.step_type}"
+                )
+            if self._memory_runtime is None:
+                raise StepExecutionError("memory runtime is not configured")
+
+            query = _memory_query_from_step(step, buffer)
+            recall_result = self._memory_runtime.recall(query)
+            result_payload = recall_result.to_dict()
+            context_payload = recall_result.context_block.to_dict()
+            records_payload = [result.to_dict() for result in recall_result.results]
+            outputs = _validated_outputs(
+                step,
+                {
+                    _memory_recall_result_key(step): result_payload,
+                    _memory_context_key(step): context_payload,
+                    _memory_records_key(step): records_payload,
+                },
+                runner_name="memory_recall step",
+            )
+            for key, value in outputs.items():
+                buffer.write(
+                    key,
+                    value,
+                    lineage={
+                        "step_id": step.step_id,
+                        "runner_id": self.capability.runner_id,
+                        "run_id": self._run_id,
+                    },
+                )
+
+            return StepOutcome(
+                status=StepStatus.SUCCEEDED,
+                outputs=outputs,
+                metrics=_with_contract_metrics(
+                    {
+                        "memory_operation": {
+                            "operation": "recall",
+                            "result_count": recall_result.result_count,
+                            "memory_ids": list(recall_result.context_block.memory_ids),
+                            "context_token_estimate": recall_result.context_block.token_estimate,
+                        },
+                        "memory_result_count": recall_result.result_count,
+                        "memory_context_token_estimate": recall_result.context_block.token_estimate,
+                    },
+                    step,
+                    started=started,
+                    outputs=outputs,
+                ),
+                lineage=[
+                    {
+                        "event_type": "memory_recall",
+                        "step_id": step.step_id,
+                        "run_id": self._run_id,
+                        "memory_ids": list(recall_result.context_block.memory_ids),
+                        "result_count": recall_result.result_count,
+                    }
+                ],
+            )
+        except Exception as exc:
+            return _failed_outcome(
+                step,
+                exc,
+                started=started,
+                runner_name="MemoryRecallStepRunner",
+            )
+
+
+class MemoryWriteStepRunner:
+    capability = StepRunnerCapability(
+        step_type=StepType.MEMORY_WRITE,
+        runner_id="builtin.memory_write",
+        version="1.0.0",
+        supports_checkpoint=True,
+        supports_resume=True,
+        supports_timeout=True,
+        supports_retry=True,
+        side_effect_level=StepRunnerSideEffectLevel.EXTERNAL_WRITE,
+        required_dependencies=["memory_runtime"],
+        description="Runs a direct MemoryRuntime write step.",
+    )
+
+    def __init__(self, memory_runtime: Any | None, *, run_id: str | None = None) -> None:
+        self._memory_runtime = memory_runtime
+        self._run_id = run_id
+
+    def can_resolve(self, step: StepSpec) -> bool:
+        return default_runner_can_resolve(self.capability, step)
+
+    def validate_step(self, step: StepSpec) -> list[ValidationErrorItem]:
+        if step.metadata.get("records") is not None or step.metadata.get("records_key") is not None:
+            return []
+        return [
+            ValidationErrorItem(
+                code="memory_write_missing_records",
+                message="Memory write step requires metadata.records or metadata.records_key.",
+                field="metadata.records",
+            )
+        ]
+
+    def configure_run_context(
+        self,
+        *,
+        artifact_manager: ArtifactManager,
+        run_id: str,
+    ) -> None:
+        _ = artifact_manager
+        self._run_id = run_id
+
+    def run(self, step: StepSpec, buffer: ScopedDataBuffer) -> StepOutcome:
+        started = time.perf_counter()
+        try:
+            if step.step_type != StepType.MEMORY_WRITE:
+                raise StepExecutionError(
+                    f"unsupported step type for MemoryWriteStepRunner: {step.step_type}"
+                )
+            if self._memory_runtime is None:
+                raise StepExecutionError("memory runtime is not configured")
+
+            records = _memory_records_from_step(step, buffer)
+            write_result = self._memory_runtime.write(
+                records=records,
+                mode=str(step.metadata.get("mode") or "append"),
+                actor=_memory_actor_from_step(step, buffer),
+                run_id=self._run_id,
+            )
+            result_payload = write_result.to_dict()
+            outputs = _validated_outputs(
+                step,
+                {_memory_write_result_key(step): result_payload},
+                runner_name="memory_write step",
+            )
+            for key, value in outputs.items():
+                buffer.write(
+                    key,
+                    value,
+                    lineage={
+                        "step_id": step.step_id,
+                        "runner_id": self.capability.runner_id,
+                        "run_id": self._run_id,
+                    },
+                )
+
+            metrics = _with_contract_metrics(
+                {
+                    "memory_operation": {
+                        "operation": "write",
+                        "accepted_count": write_result.accepted_count,
+                        "written_count": write_result.written_count,
+                        "skipped_count": write_result.skipped_count,
+                        "memory_ids": list(write_result.memory_ids),
+                    },
+                    "memory_accepted_count": write_result.accepted_count,
+                    "memory_written_count": write_result.written_count,
+                    "memory_skipped_count": write_result.skipped_count,
+                },
+                step,
+                started=started,
+                outputs=outputs,
+            )
+            if not write_result.success:
+                return StepOutcome(
+                    status=StepStatus.FAILED,
+                    outputs=outputs,
+                    error_type="MemoryWriteFailed",
+                    error_message="memory write failed",
+                    error_details={"errors": list(write_result.errors)},
+                    metrics=metrics,
+                    lineage=[
+                        {
+                            "event_type": "memory_write",
+                            "step_id": step.step_id,
+                            "run_id": self._run_id,
+                            "memory_ids": list(write_result.memory_ids),
+                            "accepted_count": write_result.accepted_count,
+                            "written_count": write_result.written_count,
+                            "skipped_count": write_result.skipped_count,
+                        }
+                    ],
+                )
+            return StepOutcome(
+                status=StepStatus.SUCCEEDED,
+                outputs=outputs,
+                metrics=metrics,
+                lineage=[
+                    {
+                        "event_type": "memory_write",
+                        "step_id": step.step_id,
+                        "run_id": self._run_id,
+                        "memory_ids": list(write_result.memory_ids),
+                        "accepted_count": write_result.accepted_count,
+                        "written_count": write_result.written_count,
+                        "skipped_count": write_result.skipped_count,
+                    }
+                ],
+            )
+        except Exception as exc:
+            return _failed_outcome(
+                step,
+                exc,
+                started=started,
+                runner_name="MemoryWriteStepRunner",
             )
 
 
@@ -2456,6 +2712,79 @@ def _buffer_value(buffer: ScopedDataBuffer, key: Any, default: Any) -> Any:
     if key not in buffer.list_allowed_reads() or not buffer.exists(key):
         return default
     return buffer.read(key)
+
+
+def _memory_query_from_step(step: StepSpec, buffer: ScopedDataBuffer) -> MemoryQuery:
+    raw_query = step.metadata.get("query")
+    if raw_query is None and step.metadata.get("query_key") is not None:
+        raw_query = buffer.read(str(step.metadata["query_key"]))
+    if raw_query is None:
+        raise StepExecutionError(f"memory_recall step {step.step_id} requires a query")
+
+    if isinstance(raw_query, dict):
+        payload = dict(raw_query)
+    else:
+        payload = {"query": str(raw_query)}
+
+    for key in ("scopes", "kinds", "filters", "limit", "min_score", "max_context_tokens"):
+        if key in step.metadata:
+            payload[key] = step.metadata[key]
+
+    if step.metadata.get("filters_key") is not None:
+        raw_filters = buffer.read(str(step.metadata["filters_key"]))
+        if not isinstance(raw_filters, dict):
+            raise StepExecutionError(
+                f"memory_recall step {step.step_id} filters_key must reference an object"
+            )
+        payload["filters"] = {**dict(raw_filters), **dict(payload.get("filters") or {})}
+
+    return MemoryQuery.from_dict(payload)
+
+
+def _memory_records_from_step(step: StepSpec, buffer: ScopedDataBuffer) -> list[Any]:
+    raw_records = step.metadata.get("records")
+    if raw_records is None and step.metadata.get("records_key") is not None:
+        raw_records = buffer.read(str(step.metadata["records_key"]))
+    if raw_records is None:
+        raise StepExecutionError(f"memory_write step {step.step_id} requires records")
+    if isinstance(raw_records, dict):
+        nested_records = raw_records.get("records")
+        if isinstance(nested_records, list):
+            return list(nested_records)
+        return [dict(raw_records)]
+    if isinstance(raw_records, (list, tuple)):
+        return list(raw_records)
+    raise StepExecutionError(
+        f"memory_write step {step.step_id} records must be an object or list of objects"
+    )
+
+
+def _memory_actor_from_step(step: StepSpec, buffer: ScopedDataBuffer) -> str:
+    if step.metadata.get("actor_key") is not None:
+        actor = buffer.read(str(step.metadata["actor_key"]))
+    else:
+        actor = step.metadata.get("actor") or step.metadata.get("requested_by") or step.step_id
+    return str(actor or step.step_id)
+
+
+def _memory_recall_result_key(step: StepSpec) -> str:
+    return str(step.metadata.get("result_key") or "memory_recall_result")
+
+
+def _memory_context_key(step: StepSpec) -> str:
+    return str(step.metadata.get("context_key") or "memory_context")
+
+
+def _memory_records_key(step: StepSpec) -> str:
+    return str(
+        step.metadata.get("records_key")
+        or step.metadata.get("records_output_key")
+        or "memory_records"
+    )
+
+
+def _memory_write_result_key(step: StepSpec) -> str:
+    return str(step.metadata.get("result_key") or "memory_write_result")
 
 
 def _join_summary(step: StepSpec, inputs: dict[str, Any]) -> dict[str, Any]:

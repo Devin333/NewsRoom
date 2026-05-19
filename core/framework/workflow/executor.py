@@ -311,6 +311,7 @@ class WorkflowExecutor:
             )
             outcome = self._run_step_with_retries(step, buffer, recorder)
             _emit_agent_loop_stream_events(recorder, step, outcome)
+            _emit_memory_operation_events(recorder, step, outcome)
             outcome = self._write_llm_call_artifacts(actual_run_id, step, outcome)
             _sync_llm_call_artifacts_to_buffer(buffer, step, outcome)
             outcome = _finalize_step_outcome_contract(step, outcome)
@@ -575,6 +576,7 @@ class WorkflowExecutor:
             output=output,
             global_budget_tracker=self._global_budget_tracker,
         )
+        manifest["memory_operations"] = metrics_payload.get("memory_operations", {})
         redaction_report = _redaction_report(output)
         update_manifest_metrics(manifest, metrics_payload)
         events_path = recorder.write_jsonl(run_dir / "events.jsonl")
@@ -1342,6 +1344,27 @@ def _emit_agent_loop_stream_events(
         )
 
 
+def _emit_memory_operation_events(
+    recorder: EventRecorder,
+    step: StepSpec,
+    outcome: StepOutcome,
+) -> None:
+    if step.step_type not in {StepType.MEMORY_RECALL, StepType.MEMORY_WRITE}:
+        return
+    operation = outcome.metrics.get("memory_operation")
+    if not isinstance(operation, dict):
+        return
+    event_type = "memory_recall" if step.step_type == StepType.MEMORY_RECALL else "memory_write"
+    recorder.emit(
+        event_type,
+        {
+            "step_id": step.step_id,
+            "status": outcome.status.value,
+            **operation,
+        },
+    )
+
+
 def _record_step_artifacts(manifest: dict[str, Any], outcome: StepOutcome) -> None:
     if not outcome.artifacts:
         return
@@ -1532,6 +1555,7 @@ def _workflow_metrics_payload(
         budget_summary = budget_summary_from_tracker(global_budget_tracker)
         if budget_summary is not None:
             metrics["budget"] = budget_summary
+    metrics["memory_operations"] = _memory_operations_summary(step_results)
     if "budget" not in metrics:
         metrics["budget"] = {
             "total_tokens": 0,
@@ -1547,6 +1571,55 @@ def _workflow_metrics_payload(
             ),
         }
     return metrics
+
+
+def _memory_operations_summary(step_results: dict[str, StepOutcome]) -> dict[str, Any]:
+    operations: list[dict[str, Any]] = []
+    recall_count = 0
+    write_count = 0
+    recalled_memory_ids: set[str] = set()
+    written_memory_ids: set[str] = set()
+    total_recall_results = 0
+    total_written_records = 0
+
+    for step_id, outcome in step_results.items():
+        operation = outcome.metrics.get("memory_operation")
+        if not isinstance(operation, dict):
+            continue
+        operation_type = str(operation.get("operation") or "")
+        item = {
+            "step_id": step_id,
+            "operation": operation_type,
+            "status": outcome.status.value,
+            "memory_ids": [str(memory_id) for memory_id in operation.get("memory_ids") or []],
+        }
+        if operation_type == "recall":
+            recall_count += 1
+            result_count = int(operation.get("result_count") or 0)
+            total_recall_results += result_count
+            item["result_count"] = result_count
+            item["context_token_estimate"] = int(operation.get("context_token_estimate") or 0)
+            recalled_memory_ids.update(item["memory_ids"])
+        elif operation_type == "write":
+            write_count += 1
+            written_count = int(operation.get("written_count") or 0)
+            total_written_records += written_count
+            item["accepted_count"] = int(operation.get("accepted_count") or 0)
+            item["written_count"] = written_count
+            item["skipped_count"] = int(operation.get("skipped_count") or 0)
+            written_memory_ids.update(item["memory_ids"])
+        operations.append(item)
+
+    return {
+        "operation_count": len(operations),
+        "recall_count": recall_count,
+        "write_count": write_count,
+        "total_recall_results": total_recall_results,
+        "total_written_records": total_written_records,
+        "recalled_memory_ids": sorted(recalled_memory_ids),
+        "written_memory_ids": sorted(written_memory_ids),
+        "operations": operations,
+    }
 
 
 def _redaction_report(output: dict[str, Any]) -> dict[str, Any]:

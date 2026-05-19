@@ -238,6 +238,9 @@ class StepRunnerManifestItem:
     supports_resume: bool = False
     supports_timeout: bool = False
     supports_retry: bool = False
+    required_dependencies: list[str] = field(default_factory=list)
+    missing_dependencies: list[str] = field(default_factory=list)
+    available: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -251,6 +254,9 @@ class StepRunnerManifestItem:
             "supports_resume": self.supports_resume,
             "supports_timeout": self.supports_timeout,
             "supports_retry": self.supports_retry,
+            "required_dependencies": list(self.required_dependencies),
+            "missing_dependencies": list(self.missing_dependencies),
+            "available": self.available,
         }
 
 
@@ -271,6 +277,10 @@ def build_runner_manifest(
     registry: Any,
 ) -> WorkflowRunnerManifest:
     items: list[StepRunnerManifestItem] = []
+    descriptors = {
+        descriptor.runner_id: descriptor
+        for descriptor in getattr(registry, "describe", lambda: [])()
+    }
     for step in workflow.steps:
         runner = registry.resolve(step)
         if runner is None:
@@ -278,6 +288,7 @@ def build_runner_manifest(
         capability = getattr(runner, "capability", None)
         if capability is None:
             continue
+        descriptor = descriptors.get(capability.runner_id)
         items.append(
             StepRunnerManifestItem(
                 step_id=step.step_id,
@@ -290,6 +301,15 @@ def build_runner_manifest(
                 supports_resume=capability.supports_resume,
                 supports_timeout=capability.supports_timeout,
                 supports_retry=capability.supports_retry,
+                required_dependencies=(
+                    list(descriptor.required_dependencies)
+                    if descriptor is not None
+                    else list(getattr(capability, "required_dependencies", []))
+                ),
+                missing_dependencies=(
+                    list(descriptor.missing_dependencies) if descriptor is not None else []
+                ),
+                available=bool(descriptor.available) if descriptor is not None else True,
             )
         )
     return WorkflowRunnerManifest(workflow_id=workflow.workflow_id, runners=items)

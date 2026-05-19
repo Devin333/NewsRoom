@@ -57,6 +57,7 @@ class WorkflowRunner:
         function_registry: FunctionStepRegistry | None = None,
         step_runner_registry: StepRunnerRegistry | None = None,
         tool_registry: Any | None = None,
+        memory_runtime: Any | None = None,
         agent_runner: Any | None = None,
         agent_registry: dict[str, Any] | None = None,
         workflow_registry: dict[str, WorkflowSpec] | None = None,
@@ -83,6 +84,7 @@ class WorkflowRunner:
             step_runner_registry = build_default_step_runner_registry(
                 function_registry,
                 tool_registry=tool_registry,
+                memory_runtime=memory_runtime,
                 agent_runner=agent_runner,
                 agent_registry=agent_registry,
                 workflow_registry=workflow_registry,
