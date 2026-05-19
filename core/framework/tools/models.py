@@ -151,8 +151,6 @@ def is_default_dangerous_tool_name(tool_name: str) -> bool:
         "postgres.query",
         "http.request",
         "generic_http_request",
-        "report.publish",
-        "publish_report",
         "publish.external",
         "notification.send",
     }
