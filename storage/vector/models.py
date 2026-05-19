@@ -92,7 +92,12 @@ class VectorSearchResult:
         )
 
     def refs(self) -> dict[str, str]:
-        refs: dict[str, str] = {}
+        raw_refs = self.payload.get("refs")
+        refs: dict[str, str] = {
+            str(key): str(value)
+            for key, value in (raw_refs.items() if isinstance(raw_refs, dict) else [])
+            if value is not None
+        }
         if self.run_id:
             refs["run_id"] = self.run_id
         if self.report_id:

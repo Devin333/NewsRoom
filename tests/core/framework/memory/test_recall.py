@@ -88,6 +88,7 @@ def test_memory_context_assembler_uses_prd_prompt_format_and_safe_refs() -> None
         refs={
             "run_id": "run-1",
             "artifact_id": "artifact-1",
+            "reference_id": "ref-1",
             "unsafe_ref": "hidden",
         },
     )
@@ -101,6 +102,6 @@ def test_memory_context_assembler_uses_prd_prompt_format_and_safe_refs() -> None
     assert "Relevant memories:" in block.content
     assert "[semantic | confidence=0.82 | importance=0.70]" in block.content
     assert "summary: Stable runtime memory" in block.content
-    assert "refs: artifact_id=artifact-1, run_id=run-1" in block.content
+    assert "refs: artifact_id=artifact-1, reference_id=ref-1, run_id=run-1" in block.content
     assert "unsafe_ref" not in block.content
     assert block.content.endswith("</memory_context>")

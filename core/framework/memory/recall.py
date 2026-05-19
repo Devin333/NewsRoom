@@ -141,13 +141,12 @@ def _score_text(value: float | None) -> str:
 
 _SAFE_REF_KEYS = {
     "artifact_id",
-    "evidence_id",
-    "report_id",
+    "memory_id",
+    "record_id",
+    "reference_id",
+    "reference_ids",
     "run_id",
-    "section_id",
-    "source_id",
-    "source_item_id",
-    "source_item_ids",
+    "source_memory_ids",
     "step_id",
     "workflow_id",
 }

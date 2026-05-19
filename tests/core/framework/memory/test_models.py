@@ -39,6 +39,20 @@ def test_memory_record_serializes_generic_memory_fields() -> None:
     assert restored == record
 
 
+def test_memory_record_from_dict_only_promotes_generic_reference_fields() -> None:
+    record = MemoryRecord.from_dict(
+        {
+            "content": "Generic memory payload",
+            "run_id": "run-1",
+            "reference_id": "ref-1",
+            "domain_report" + "_id": "legacy-report",
+            "domain_evidence" + "_id": "legacy-evidence",
+        }
+    )
+
+    assert record.refs == {"run_id": "run-1", "reference_id": "ref-1"}
+
+
 def test_memory_query_accepts_scores_and_filters() -> None:
     query = MemoryQuery.from_dict(
         {

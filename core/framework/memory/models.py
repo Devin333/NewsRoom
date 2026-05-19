@@ -115,7 +115,7 @@ class MemoryRecord:
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "MemoryRecord":
         refs = dict(payload.get("refs") or {})
-        for key in ("run_id", "report_id", "evidence_id", "source_item_id", "section_id"):
+        for key in _GENERIC_REF_KEYS:
             value = payload.get(key)
             if value is not None:
                 refs.setdefault(key, value)
@@ -244,7 +244,7 @@ class MemorySearchResult:
             "embedding": list(self.record.embedding) if self.record.embedding is not None else None,
             "match_reasons": list(self.match_reasons),
         }
-        for key in ("run_id", "report_id", "evidence_id", "source_item_id", "section_id"):
+        for key in _GENERIC_REF_KEYS:
             value = refs.get(key) or self.record.metadata.get(key)
             if value is not None:
                 payload[key] = value
@@ -474,6 +474,18 @@ def coerce_memory_record(value: MemoryRecord | dict[str, Any]) -> MemoryRecord:
     if isinstance(value, dict):
         return MemoryRecord.from_dict(value)
     raise TypeError("memory record must be a MemoryRecord or object")
+
+
+_GENERIC_REF_KEYS = (
+    "artifact_id",
+    "record_id",
+    "reference_id",
+    "reference_ids",
+    "run_id",
+    "source_memory_ids",
+    "step_id",
+    "workflow_id",
+)
 
 
 def estimate_tokens(text: str) -> int:

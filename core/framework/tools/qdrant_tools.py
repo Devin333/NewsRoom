@@ -144,6 +144,12 @@ def _vector_document(value: Any, *, default_collection: str | None) -> VectorDoc
     payload = value.get("payload") or {}
     if not isinstance(payload, dict):
         raise ValueError("document payload must be an object")
+    refs = value.get("refs") or {}
+    if not isinstance(refs, dict):
+        raise ValueError("document refs must be an object")
+    payload.setdefault("refs", dict(refs))
+    for key, ref_value in refs.items():
+        payload.setdefault(str(key), ref_value)
     vector = _optional_vector(value.get("vector"))
     return VectorDocument(
         document_id=document_id,
@@ -152,10 +158,7 @@ def _vector_document(value: Any, *, default_collection: str | None) -> VectorDoc
         payload=dict(payload),
         source_type=source_type,
         vector=vector,
-        run_id=_optional_text(value.get("run_id")),
-        report_id=_optional_text(value.get("report_id")),
-        evidence_id=_optional_text(value.get("evidence_id")),
-        source_item_id=_optional_text(value.get("source_item_id")),
+        run_id=_optional_text(value.get("run_id") or refs.get("run_id")),
     )
 
 
