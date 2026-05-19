@@ -36,6 +36,11 @@ def test_memory_ingestion_builds_report_section_documents() -> None:
     assert first.payload["section_index"] == 0
     assert first.payload["topic"] == "AI"
     assert first.payload["source_urls"] == ["https://example.com/a"]
+    assert first.payload["refs"] == {
+        "run_id": "run-1",
+        "report_id": "report-1",
+        "section_id": "section_1",
+    }
     assert first.payload["section_id"] == "section_1"
     assert first.section_id == "section_1"
     assert "Summary" in first.text
@@ -71,6 +76,11 @@ def test_memory_ingestion_builds_evidence_documents() -> None:
     assert doc.payload["source_url"] == "https://example.com/a"
     assert doc.payload["source_urls"] == ["https://example.com/a"]
     assert doc.payload["source_item_ids"] == []
+    assert doc.payload["refs"] == {
+        "run_id": "run-1",
+        "evidence_id": "evidence-1",
+        "source_item_id": "source-1",
+    }
     assert doc.payload["confidence"] == 0.91
     assert doc.payload["topic"] == "AI"
 

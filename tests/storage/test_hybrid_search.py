@@ -52,6 +52,7 @@ def test_hybrid_search_merges_report_keyword_and_vector_results(tmp_path) -> Non
     assert any(result.semantic_score is not None for result in results)
     section_result = next(result for result in results if result.result_type == "section")
     assert section_result.refs["report_id"] == "run-1:final"
+    assert section_result.refs["run_id"] == "run-1"
 
 
 def test_hybrid_search_validates_limit() -> None:

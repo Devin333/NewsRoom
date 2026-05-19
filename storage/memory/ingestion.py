@@ -67,7 +67,7 @@ class MemoryIngestionService:
         topic: str | None = None,
     ) -> MemoryIngestionResult:
         docs: list[VectorDocument] = []
-        final_report = output.get("final_report")
+        final_report = output.get("final_report") or output.get("blocked_report")
         evidence_bundle = output.get("evidence_bundle")
         if final_report is not None:
             docs.extend(self.report_documents(final_report, run_id=run_id, report_id=report_id, topic=topic))
@@ -105,6 +105,11 @@ class MemoryIngestionService:
                 "evidence_ids": section_evidence_ids,
                 "report_title": payload.get("title"),
                 "report_metadata": metadata,
+                "refs": {
+                    "run_id": run_id,
+                    "report_id": resolved_report_id,
+                    "section_id": section_id,
+                },
             }
             if resolved_topic:
                 doc_payload["topic"] = resolved_topic
@@ -148,6 +153,11 @@ class MemoryIngestionService:
                 "source_item_ids": source_item_ids,
                 "confidence": item.get("confidence"),
                 "metadata": metadata,
+                "refs": {
+                    "run_id": run_id,
+                    "evidence_id": str(item["evidence_id"]),
+                    "source_item_id": source_item_id or str(item.get("source_id") or ""),
+                },
             }
             if topic:
                 doc_payload["topic"] = topic

@@ -25,31 +25,27 @@ class VectorDocument:
     def with_vector(self, vector: list[float]) -> "VectorDocument":
         return replace(self, vector=list(vector))
 
+    def canonical_payload(self) -> dict[str, Any]:
+        return {
+            "document_id": self.document_id,
+            "collection": self.collection,
+            "text": self.text,
+            "source_type": self.source_type,
+            "run_id": self.run_id,
+            "report_id": self.report_id,
+            "evidence_id": self.evidence_id,
+            "source_item_id": self.source_item_id,
+            "topic": self.topic,
+            "section_id": self.section_id,
+            "published_at": self.published_at.isoformat().replace("+00:00", "Z") if self.published_at else None,
+            "created_at": self.created_at.isoformat().replace("+00:00", "Z"),
+        }
+
     def to_payload(self) -> dict[str, Any]:
         payload = dict(self.payload)
         payload.update(
-            {
-                "document_id": self.document_id,
-                "collection": self.collection,
-                "text": self.text,
-                "source_type": self.source_type,
-                "created_at": self.created_at.isoformat().replace("+00:00", "Z"),
-            }
+            {key: value for key, value in self.canonical_payload().items() if value is not None}
         )
-        if self.run_id:
-            payload["run_id"] = self.run_id
-        if self.report_id:
-            payload["report_id"] = self.report_id
-        if self.evidence_id:
-            payload["evidence_id"] = self.evidence_id
-        if self.source_item_id:
-            payload["source_item_id"] = self.source_item_id
-        if self.topic:
-            payload["topic"] = self.topic
-        if self.section_id:
-            payload["section_id"] = self.section_id
-        if self.published_at:
-            payload["published_at"] = self.published_at.isoformat().replace("+00:00", "Z")
         return payload
 
 
@@ -95,6 +91,23 @@ class VectorSearchResult:
             published_at=payload.get("published_at"),
         )
 
+    def refs(self) -> dict[str, str]:
+        refs: dict[str, str] = {}
+        if self.run_id:
+            refs["run_id"] = self.run_id
+        if self.report_id:
+            refs["report_id"] = self.report_id
+        if self.evidence_id:
+            refs["evidence_id"] = self.evidence_id
+        if self.source_item_id:
+            refs["source_item_id"] = self.source_item_id
+        if self.section_id:
+            refs["section_id"] = self.section_id
+        source_item_ids = self.payload.get("source_item_ids")
+        if isinstance(source_item_ids, list) and source_item_ids:
+            refs["source_item_ids"] = ",".join(str(value) for value in source_item_ids)
+        return refs
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "document_id": self.document_id,
@@ -109,6 +122,7 @@ class VectorSearchResult:
             "topic": self.topic,
             "section_id": self.section_id,
             "published_at": self.published_at,
+            "refs": self.refs(),
         }
 
 

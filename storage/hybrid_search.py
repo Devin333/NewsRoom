@@ -82,22 +82,7 @@ def _search_result_from_vector(result: VectorSearchResult) -> SearchResult:
         "evidence_item": "evidence",
         "source_chunk": "source_item",
     }.get(result.source_type, result.source_type or "memory")
-    refs = {}
-    if result.run_id:
-        refs["run_id"] = result.run_id
-    if result.report_id:
-        refs["report_id"] = result.report_id
-    if result.evidence_id:
-        refs["evidence_id"] = result.evidence_id
-    if result.source_item_id:
-        refs["source_item_id"] = result.source_item_id
     payload = dict(result.payload)
-    if result.section_id:
-        refs["section_id"] = result.section_id
-    elif payload.get("section_id"):
-        refs["section_id"] = str(payload["section_id"])
-    if payload.get("source_item_ids"):
-        refs["source_item_ids"] = ",".join(str(value) for value in payload["source_item_ids"])
     return SearchResult(
         result_id=result.document_id,
         result_type=result_type,
@@ -105,7 +90,7 @@ def _search_result_from_vector(result: VectorSearchResult) -> SearchResult:
         snippet=result.text,
         score=round(float(result.score), 6),
         semantic_score=round(float(result.score), 6),
-        refs=refs,
+        refs=result.refs(),
         metadata=dict(result.payload),
     )
 
