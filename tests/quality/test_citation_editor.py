@@ -1,3 +1,4 @@
+from domain.sources import Lineage
 from evidence import EvidenceBundle, EvidenceItem, VerifiedClaim, VerifiedFindings
 from quality import CitationChecker, EditorDecision, EditorGate, EditorReview, RewritePolicy
 
@@ -13,6 +14,8 @@ def _bundle() -> EvidenceBundle:
                 summary="A summary",
                 confidence=0.9,
                 source_id="source",
+                source_item_id="source-item-1",
+                lineage=Lineage(source_id="source", source_item_id="source-item-1"),
             )
         ],
     )
@@ -83,19 +86,38 @@ def test_citation_checker_fails_unknown_urls_and_editor_blocks() -> None:
 
     assert citation_result.passed is False
     assert citation_result.unknown_urls == ["https://example.com/missing"]
+    assert citation_result.unsupported_urls == []
     assert citation_result.missing_section_sources == []
     assert citation_result.citation_coverage_score == 1.0
     assert review.decision == EditorDecision.BLOCKED
     assert "https://example.com/missing" in review.reasons
 
 
-def test_citation_checker_fails_unknown_evidence_ids() -> None:
-    report = {"sections": [{"title": "Summary", "evidence_ids": ["ev_missing"]}]}
 
-    result = CitationChecker().check(report, _bundle())
+
+def test_citation_checker_fails_non_publishable_urls() -> None:
+    bundle = EvidenceBundle(
+        bundle_id="bundle",
+        items=[
+            EvidenceItem(
+                evidence_id="ev_1",
+                source_url="https://example.com/a",
+                title="A",
+                summary="A summary",
+                confidence=0.9,
+                source_id="source",
+                source_item_id="source-item-1",
+                publishable=False,
+            )
+        ],
+    )
+    report = {"sections": [{"title": "Summary", "sources": ["https://example.com/a"]}]}
+
+    result = CitationChecker().check(report, bundle)
 
     assert result.passed is False
-    assert result.unsupported_evidence_ids == ["ev_missing"]
+    assert result.unknown_urls == []
+    assert result.unsupported_urls == ["https://example.com/a"]
 
 
 def test_citation_checker_fails_missing_section_sources_and_editor_blocks() -> None:
@@ -249,7 +271,6 @@ def test_citation_checker_exposes_failure_categories_and_section_results() -> No
     assert result.passed is False
     assert payload["failure_category_codes"] == [
         "unknown_urls",
-        "unsupported_urls",
         "unsupported_evidence_ids",
         "missing_section_sources",
         "unsupported_claims",
@@ -265,7 +286,6 @@ def test_citation_checker_exposes_failure_categories_and_section_results() -> No
     assert section_results["summary"]["passed"] is False
     assert section_results["summary"]["issue_codes"] == [
         "unknown_urls",
-        "unsupported_urls",
         "unsupported_evidence_ids",
         "unsupported_claims",
         "rejected_claim_usage",

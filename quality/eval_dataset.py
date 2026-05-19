@@ -3,6 +3,7 @@ from __future__ import annotations
 from hashlib import sha256
 from typing import Any
 
+from domain.sources import Lineage
 from evidence import EvidenceBundle, EvidenceItem, VerifiedClaim, VerifiedFindings
 from quality.citation_checker import CitationChecker
 from quality.editor_gate import EditorGate
@@ -187,6 +188,7 @@ def _bundle(*, title: str = "AI policy update", summary: str = "Policy summary."
                 source_item_ids=["raw-policy"],
                 source_urls=["https://example.com/ai-policy"],
                 source_reliability="high",
+                lineage=Lineage(source_id="fixture", source_item_id="raw-policy"),
             )
         ],
     )

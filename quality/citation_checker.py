@@ -18,6 +18,7 @@ class CitationCheckResult:
     passed: bool
     cited_urls: list[str] = field(default_factory=list)
     cited_evidence_ids: list[str] = field(default_factory=list)
+    unknown_urls: list[str] = field(default_factory=list)
     unsupported_urls: list[str] = field(default_factory=list)
     unsupported_evidence_ids: list[str] = field(default_factory=list)
     missing_section_sources: list[str] = field(default_factory=list)
@@ -31,18 +32,14 @@ class CitationCheckResult:
     notes: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
-    @property
-    def unknown_urls(self) -> list[str]:
-        return self.unsupported_urls
-
     def to_dict(self) -> dict:
         return {
             "passed": self.passed,
             "cited_urls": list(self.cited_urls),
             "cited_evidence_ids": list(self.cited_evidence_ids),
+            "unknown_urls": list(self.unknown_urls),
             "unsupported_urls": list(self.unsupported_urls),
             "unsupported_evidence_ids": list(self.unsupported_evidence_ids),
-            "unknown_urls": list(self.unsupported_urls),
             "missing_section_sources": list(self.missing_section_sources),
             "unsupported_claims": list(self.unsupported_claims),
             "rejected_claim_usage": list(self.rejected_claim_usage),
@@ -66,10 +63,26 @@ class CitationChecker:
     ) -> CitationCheckResult:
         cited_urls = sorted(_collect_cited_urls(report))
         cited_evidence_ids = sorted(_collect_cited_evidence_ids(report))
-        allowed_urls = {_canonical_url_or_raw(url) for url in evidence_bundle.source_urls}
+        publishable_urls = {
+            _canonical_url_or_raw(url)
+            for item in evidence_bundle.items
+            if item.publishable
+            for url in item.source_urls
+            if url
+        }
+        known_urls = {
+            _canonical_url_or_raw(url)
+            for url in evidence_bundle.source_urls
+        }
         allowed_evidence_ids = evidence_bundle.evidence_ids
+        unknown_urls = sorted(
+            url for url in cited_urls if _canonical_url_or_raw(url) not in known_urls
+        )
         unsupported_urls = sorted(
-            url for url in cited_urls if _canonical_url_or_raw(url) not in allowed_urls
+            url
+            for url in cited_urls
+            if _canonical_url_or_raw(url) in known_urls
+            and _canonical_url_or_raw(url) not in publishable_urls
         )
         unsupported_evidence_ids = sorted(
             evidence_id for evidence_id in cited_evidence_ids if evidence_id not in allowed_evidence_ids
@@ -86,12 +99,14 @@ class CitationChecker:
         claim_support_score = _claim_support_score(report, unsupported_claims)
         section_results = _section_results(
             report,
+            unknown_urls=unknown_urls,
             unsupported_urls=unsupported_urls,
             unsupported_evidence_ids=unsupported_evidence_ids,
             missing_section_sources=missing_section_sources,
             support_matrix=support_matrix,
         )
         failure_categories = _failure_categories(
+            unknown_urls=unknown_urls,
             unsupported_urls=unsupported_urls,
             unsupported_evidence_ids=unsupported_evidence_ids,
             missing_section_sources=missing_section_sources,
@@ -101,7 +116,8 @@ class CitationChecker:
         )
         return CitationCheckResult(
             passed=not (
-                unsupported_urls
+                unknown_urls
+                or unsupported_urls
                 or unsupported_evidence_ids
                 or missing_section_sources
                 or unsupported_claims
@@ -109,6 +125,7 @@ class CitationChecker:
             ),
             cited_urls=cited_urls,
             cited_evidence_ids=cited_evidence_ids,
+            unknown_urls=unknown_urls,
             unsupported_urls=unsupported_urls,
             unsupported_evidence_ids=unsupported_evidence_ids,
             missing_section_sources=missing_section_sources,
@@ -281,6 +298,7 @@ def _claim_support_score(report: dict, unsupported_claims: list[str]) -> float:
 
 def _failure_categories(
     *,
+    unknown_urls: list[str],
     unsupported_urls: list[str],
     unsupported_evidence_ids: list[str],
     missing_section_sources: list[str],
@@ -289,14 +307,15 @@ def _failure_categories(
     section_results: list[CitationSectionResult],
 ) -> list[CitationFailureCategory]:
     categories: list[CitationFailureCategory] = []
-    if unsupported_urls:
+    if unknown_urls:
         categories.append(
             CitationFailureCategory(
                 code="unknown_urls",
-                count=len(unsupported_urls),
-                items=list(unsupported_urls),
+                count=len(unknown_urls),
+                items=list(unknown_urls),
             )
         )
+    if unsupported_urls:
         categories.append(
             CitationFailureCategory(
                 code="unsupported_urls",
@@ -351,11 +370,13 @@ def _failure_categories(
 def _section_results(
     report: dict,
     *,
+    unknown_urls: list[str],
     unsupported_urls: list[str],
     unsupported_evidence_ids: list[str],
     missing_section_sources: list[str],
     support_matrix: SupportMatrix,
 ) -> list[CitationSectionResult]:
+    unknown_url_set = {_canonical_url_or_raw(url) for url in unknown_urls}
     unsupported_url_set = {_canonical_url_or_raw(url) for url in unsupported_urls}
     unsupported_evidence_id_set = set(unsupported_evidence_ids)
     missing_section_titles = set(missing_section_sources)
@@ -380,12 +401,18 @@ def _section_results(
         issue_codes: list[str] = []
 
         section_unknown_urls = [
-            url for url in cited_urls if _canonical_url_or_raw(url) in unsupported_url_set
+            url for url in cited_urls if _canonical_url_or_raw(url) in unknown_url_set
         ]
         if section_unknown_urls:
-            issue_codes.extend(["unknown_urls", "unsupported_urls"])
+            issue_codes.append("unknown_urls")
             issue_details["unknown_urls"] = section_unknown_urls
-            issue_details["unsupported_urls"] = section_unknown_urls
+
+        section_unsupported_urls = [
+            url for url in cited_urls if _canonical_url_or_raw(url) in unsupported_url_set
+        ]
+        if section_unsupported_urls:
+            issue_codes.append("unsupported_urls")
+            issue_details["unsupported_urls"] = section_unsupported_urls
 
         section_unsupported_evidence_ids = [
             evidence_id

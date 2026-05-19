@@ -4,6 +4,7 @@ from typing import Any
 
 from core.framework.tools.models import ToolDefinition
 from core.framework.tools.registry import ToolRegistry
+from domain.sources import Lineage
 from evidence.models import EvidenceBundle, EvidenceItem
 from quality import CitationChecker, EditorGate, QualityScorer, SupportMatrixBuilder
 from sources.processing.normalize import canonicalize_url, normalize_text
@@ -247,12 +248,18 @@ def _evidence_bundle(payload: Any) -> EvidenceBundle:
 def _evidence_item(payload: Any) -> EvidenceItem:
     if not isinstance(payload, dict):
         raise ValueError("evidence item must be an object")
+    source_id = str(payload.get("source_id") or "")
+    source_item_id = str(payload.get("source_item_id") or f"{source_id or 'source'}-item")
+    source_url = str(payload.get("source_url") or "")
     return EvidenceItem(
         evidence_id=str(payload.get("evidence_id") or ""),
-        source_url=str(payload.get("source_url") or ""),
+        source_url=source_url,
         title=str(payload.get("title") or ""),
         summary=str(payload.get("summary") or ""),
         confidence=float(payload.get("confidence", 0.0)),
-        source_id=str(payload.get("source_id") or ""),
+        source_id=source_id,
+        source_item_id=source_item_id,
+        source_urls=[source_url] if source_url else [],
+        lineage=Lineage(source_id=source_id or "source", source_item_id=source_item_id),
         metadata=dict(payload.get("metadata") or {}),
     )

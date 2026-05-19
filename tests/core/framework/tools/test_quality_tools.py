@@ -270,6 +270,7 @@ def _bundle(source_urls: list[str]) -> dict:
                 "summary": "Supported claim.",
                 "confidence": 0.9,
                 "source_id": "source-1",
+                "source_item_id": f"source-item-{index}",
             }
             for index, source_url in enumerate(source_urls)
         ],

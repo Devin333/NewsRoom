@@ -72,7 +72,8 @@ class RewritePolicy:
             evidence_bundle,
             verified_findings,
         )
-        new_source_urls = list(citation_check.unsupported_urls)
+        new_source_urls = list(citation_check.unknown_urls)
+        unsupported_source_urls = list(citation_check.unsupported_urls)
         uncertain_as_fact = []
         if verified_findings is not None:
             uncertain_as_fact = _uncertain_claims_as_fact(
@@ -82,6 +83,7 @@ class RewritePolicy:
         passed = (
             citation_check.passed
             and not new_source_urls
+            and not unsupported_source_urls
             and not citation_check.unsupported_claims
             and not uncertain_as_fact
         )
@@ -174,10 +176,18 @@ class EditorGate:
             if getattr(claim, "severity", "medium") == "high"
         ]
 
-        if citation_check.unsupported_urls:
+        if citation_check.unknown_urls:
             block_reasons.extend(
                 [
                     "report cites URLs outside the evidence bundle",
+                    *citation_check.unknown_urls,
+                ]
+            )
+            hallucination_risks.extend(citation_check.unknown_urls)
+        if citation_check.unsupported_urls:
+            block_reasons.extend(
+                [
+                    "report cites non-publishable evidence URLs",
                     *citation_check.unsupported_urls,
                 ]
             )
@@ -217,6 +227,7 @@ class EditorGate:
             rewrite_instructions.extend(citation_check.notes)
         if (
             not citation_check.passed
+            and not citation_check.unknown_urls
             and not citation_check.unsupported_urls
             and not citation_check.missing_section_sources
             and not citation_check.unsupported_claims

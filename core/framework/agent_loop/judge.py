@@ -158,6 +158,7 @@ class OutputJudge:
             result.unsupported_claims,
         )
         errors: list[str] = []
+        errors.extend(f"unknown citation URL: {url}" for url in result.unknown_urls)
         errors.extend(f"unsupported citation URL: {url}" for url in result.unsupported_urls)
         errors.extend(f"missing section sources: {title}" for title in result.missing_section_sources)
         errors.extend(f"unsupported claim outside evidence: {claim}" for claim in unsupported_claims)

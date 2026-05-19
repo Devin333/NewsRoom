@@ -1,3 +1,4 @@
+from domain.sources import Lineage
 from evidence import Claim, ClaimVerifier, EvidenceBundle, EvidenceItem
 
 
@@ -12,6 +13,8 @@ def _bundle() -> EvidenceBundle:
                 summary="Policy summary.",
                 confidence=0.9,
                 source_id="source",
+                source_item_id="source-item-1",
+                lineage=Lineage(source_id="source", source_item_id="source-item-1"),
             )
         ],
     )

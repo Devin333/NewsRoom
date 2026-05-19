@@ -53,7 +53,7 @@ def quality_gate_metrics(
 ) -> QualityGateMetrics:
     return QualityGateMetrics(
         evidence_items_count=len(evidence_bundle.items),
-        unsupported_urls_count=len(citation_check.unsupported_urls),
+        unsupported_urls_count=len(citation_check.unknown_urls) + len(citation_check.unsupported_urls),
         missing_section_sources_count=len(citation_check.missing_section_sources),
         unsupported_sections_count=len(support_matrix.unsupported_sections),
         blocked=review.decision != EditorDecision.PASS,

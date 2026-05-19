@@ -1,3 +1,4 @@
+from domain.sources import Lineage
 from evidence import EvidenceBundle, EvidenceItem, VerifiedClaim, VerifiedFindings
 from quality import (
     BlockedReport,
@@ -26,6 +27,8 @@ def _bundle() -> EvidenceBundle:
                 summary="A summary covers the main update.",
                 confidence=0.9,
                 source_id="source",
+                source_item_id="source-item-1",
+                lineage=Lineage(source_id="source", source_item_id="source-item-1"),
             )
         ],
     )
@@ -93,6 +96,8 @@ def test_support_matrix_prioritizes_explicit_claim_grounding() -> None:
     matrix = SupportMatrixBuilder().build(report, _bundle())
 
     assert matrix.section_claim_evidence_map == {"summary": {"claim_grounded": ["ev_1"]}}
+    assert matrix.supported_claim_count == 1
+    assert matrix.unsupported_claim_count == 0
     assert matrix.unsupported_claims == []
 
 
@@ -192,6 +197,8 @@ def test_support_matrix_exposes_verified_claim_aggregates() -> None:
     assert matrix.accepted_claim_ids == ["claim_supported"]
     assert matrix.rejected_claim_ids == ["claim_rejected"]
     assert matrix.uncertain_claim_ids == ["claim_uncertain"]
+    assert matrix.sections[0].claim_supports[0].support_level == "unsupported"
+    assert matrix.supported_claim_count == 0
     assert matrix.high_severity_unsupported_claims == []
 
 

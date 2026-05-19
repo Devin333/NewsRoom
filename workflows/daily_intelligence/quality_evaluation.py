@@ -35,7 +35,7 @@ def evaluate_report_quality(
     quality_events.append(
         quality_event(
             "citation_check_succeeded" if citation_check.passed else "citation_check_failed",
-            unsupported_urls_count=len(citation_check.unsupported_urls),
+            unsupported_urls_count=len(citation_check.unknown_urls) + len(citation_check.unsupported_urls),
             unknown_urls_count=len(citation_check.unknown_urls),
             unsupported_evidence_ids_count=len(citation_check.unsupported_evidence_ids),
             missing_section_sources_count=len(citation_check.missing_section_sources),

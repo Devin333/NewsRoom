@@ -5,6 +5,7 @@ from core.framework.agent_loop import (
     JudgeDecision,
     OutputJudge,
 )
+from domain.sources import Lineage
 from evidence.models import EvidenceBundle, EvidenceItem
 
 
@@ -200,6 +201,8 @@ def test_output_judge_retries_report_claim_outside_evidence_boundary() -> None:
                 summary="The update improves inference latency.",
                 confidence=0.9,
                 source_id="source-1",
+                source_item_id="source-item-1",
+                lineage=Lineage(source_id="source-1", source_item_id="source-item-1"),
             )
         ],
     )
@@ -242,6 +245,8 @@ def test_output_judge_retries_editor_claim_outside_evidence_boundary() -> None:
                 summary="The vendor released a model update that improves inference latency.",
                 confidence=0.9,
                 source_id="source-1",
+                source_item_id="source-item-1",
+                lineage=Lineage(source_id="source-1", source_item_id="source-item-1"),
             )
         ],
     )

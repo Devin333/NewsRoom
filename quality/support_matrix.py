@@ -59,12 +59,13 @@ class ClaimSupport:
     evidence_ids: list[str] = field(default_factory=list)
     cited_urls: list[str] = field(default_factory=list)
     support_type: str = "unsupported"
+    support_level: str = "unsupported"
     confidence: float = 0.0
     severity: str = "medium"
 
     @property
     def supported(self) -> bool:
-        return self.support_type == "supports" and bool(self.evidence_ids)
+        return self.support_level in {"accepted", "supported"} and bool(self.evidence_ids)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -74,6 +75,7 @@ class ClaimSupport:
             "evidence_ids": list(self.evidence_ids),
             "cited_urls": list(self.cited_urls),
             "support_type": self.support_type,
+            "support_level": self.support_level,
             "confidence": self.confidence,
             "severity": self.severity,
         }
@@ -125,6 +127,18 @@ class SupportMatrix:
         return [section for section in self.sections if not section.supported]
 
     @property
+    def supported_claim_count(self) -> int:
+        return sum(1 for section in self.sections for support in section.claim_supports if support.supported)
+
+    @property
+    def unsupported_claim_count(self) -> int:
+        return len(self.unsupported_claims)
+
+    @property
+    def rejected_claim_usage_count(self) -> int:
+        return len(self.rejected_claim_usage)
+
+    @property
     def coverage_ratio(self) -> float:
         if not self.sections:
             return 0.0
@@ -148,6 +162,9 @@ class SupportMatrix:
             "sections": [section.to_dict() for section in self.sections],
             "section_claim_evidence_map": self.section_claim_evidence_map,
             "coverage_ratio": self.coverage_ratio,
+            "supported_claim_count": self.supported_claim_count,
+            "unsupported_claim_count": self.unsupported_claim_count,
+            "rejected_claim_usage_count": self.rejected_claim_usage_count,
             "unsupported_sections": [
                 section.section_title for section in self.unsupported_sections
             ],
@@ -185,6 +202,9 @@ class SupportMatrixBuilder:
         }
         rejected_claims = verified_findings.rejected_claims if verified_findings else []
         uncertain_claims = verified_findings.uncertain_claims if verified_findings else []
+        accepted_claim_ids = set(accepted_by_claim_id)
+        rejected_claim_ids = {verified_claim.claim_id for verified_claim in rejected_claims}
+        uncertain_claim_ids = {verified_claim.claim_id for verified_claim in uncertain_claims}
         report_claims = ClaimExtractor().extract(report_draft=report)
         claims_by_section: dict[str, list[Claim]] = {}
         for claim in report_claims:
@@ -221,7 +241,14 @@ class SupportMatrixBuilder:
                     accepted_by_claim_id=accepted_by_claim_id,
                     grounded_claims=grounded_claims_by_section.get(section_id, {}),
                 )
-                support_type = "supports" if matched_items else "unsupported"
+                support_level = _claim_support_level(
+                    claim.claim_id,
+                    accepted_claim_ids=accepted_claim_ids,
+                    rejected_claim_ids=rejected_claim_ids,
+                    uncertain_claim_ids=uncertain_claim_ids,
+                    matched_items=matched_items,
+                )
+                support_type = "supports" if support_level in {"accepted", "supported"} else support_level
                 support = ClaimSupport(
                     claim_id=claim.claim_id,
                     text=claim.text,
@@ -229,6 +256,7 @@ class SupportMatrixBuilder:
                     evidence_ids=[item.evidence_id for item in matched_items],
                     cited_urls=cited_urls,
                     support_type=support_type,
+                    support_level=support_level,
                     confidence=round(
                         max([item.confidence for item in matched_items], default=0.0),
                         4,
@@ -236,7 +264,7 @@ class SupportMatrixBuilder:
                     severity=claim.severity,
                 )
                 claim_supports.append(support)
-                if not support.supported:
+                if support_level == "unsupported":
                     unsupported_claims.append(
                         UnsupportedClaim(
                             claim_id=claim.claim_id,
@@ -350,6 +378,23 @@ def _matched_items_for_claim(
     ]
 
 
+def _claim_support_level(
+    claim_id: str,
+    *,
+    accepted_claim_ids: set[str],
+    rejected_claim_ids: set[str],
+    uncertain_claim_ids: set[str],
+    matched_items: list[EvidenceItem],
+) -> str:
+    if claim_id in accepted_claim_ids:
+        return "accepted"
+    if claim_id in rejected_claim_ids:
+        return "rejected"
+    if claim_id in uncertain_claim_ids:
+        return "uncertain"
+    if matched_items:
+        return "supported"
+    return "unsupported"
 def _section_sources(section: dict) -> list[str]:
     sources = section.get("sources") or section.get("source_urls") or []
     if isinstance(sources, str):
