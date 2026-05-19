@@ -70,6 +70,7 @@ class VectorMemoryStoreAdapter(MemoryStore):
             MemorySearchResult(
                 record=_record_from_vector_result(result),
                 score=result.score,
+                source="vector",
                 match_reasons=["vector_search"],
             )
             for result in self.vector_store.search(vector_query)

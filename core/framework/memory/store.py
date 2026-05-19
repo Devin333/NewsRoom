@@ -66,6 +66,7 @@ class InMemoryMemoryStore:
                 MemorySearchResult(
                     record=record,
                     score=score,
+                    source="keyword",
                     match_reasons=_match_reasons(record, query_terms),
                 )
             )

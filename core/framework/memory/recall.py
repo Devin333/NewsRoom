@@ -22,14 +22,22 @@ class SimpleMemoryRecallStrategy:
         policy.validate_recall(query)
         effective_query = policy.filtered_query(query)
         results = store.search(effective_query)
+        context_budget = effective_query.max_context_tokens or policy.max_context_tokens
         context_block = MemoryContextAssembler().assemble(
             results,
-            max_context_tokens=effective_query.max_context_tokens or policy.max_context_tokens,
+            max_context_tokens=context_budget,
         )
         return MemoryRecallResult(
             query=effective_query,
             results=results,
             context_block=context_block,
+            diagnostics=_recall_diagnostics(
+                requested_query=query,
+                effective_query=effective_query,
+                results=results,
+                context_block=context_block,
+                context_budget=context_budget,
+            ),
         )
 
 
@@ -74,3 +82,20 @@ def _truncate_to_token_budget(text: str, max_context_tokens: int) -> str:
         return text
     return text[: char_budget - 3] + "..."
 
+
+def _recall_diagnostics(
+    *,
+    requested_query: MemoryQuery,
+    effective_query: MemoryQuery,
+    results: list[MemorySearchResult],
+    context_block: MemoryContextBlock,
+    context_budget: int,
+) -> dict[str, object]:
+    return {
+        "requested_query": requested_query.to_dict(),
+        "effective_query": effective_query.to_dict(),
+        "result_count": len(results),
+        "context_token_budget": context_budget,
+        "context_token_estimate": context_block.token_estimate,
+        "memory_ids": list(context_block.memory_ids),
+    }

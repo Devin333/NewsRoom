@@ -220,6 +220,7 @@ class MemoryQuery:
 class MemorySearchResult:
     record: MemoryRecord
     score: float = 0.0
+    source: str = "memory"
     match_reasons: list[str] = field(default_factory=list)
 
     @property
@@ -237,6 +238,7 @@ class MemorySearchResult:
             "content": self.record.content,
             "text": self.record.content,
             "score": self.score,
+            "source": self.source,
             "refs": refs,
             "metadata": dict(self.record.metadata),
             "embedding": list(self.record.embedding) if self.record.embedding is not None else None,
@@ -273,6 +275,7 @@ class MemoryRecallResult:
     query: MemoryQuery
     results: list[MemorySearchResult] = field(default_factory=list)
     context_block: MemoryContextBlock = field(default_factory=MemoryContextBlock.empty)
+    diagnostics: dict[str, Any] = field(default_factory=dict)
 
     @property
     def result_count(self) -> int:
@@ -288,6 +291,7 @@ class MemoryRecallResult:
             "result_count": self.result_count,
             "results": [result.to_dict() for result in self.results],
             "context_block": self.context_block.to_dict(),
+            "diagnostics": dict(self.diagnostics),
         }
 
 
