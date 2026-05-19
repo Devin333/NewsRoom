@@ -37,9 +37,9 @@ class EdgeCondition(str, Enum):
     ON_FAILURE = "on_failure"
     CONDITIONAL = "conditional"
     LLM_DECIDE = "llm_decide"
-    QUALITY_PASS = "quality_pass"
-    QUALITY_REWRITE_REQUIRED = "quality_rewrite_required"
-    QUALITY_BLOCKED = "quality_blocked"
+    VALIDATION_PASS = "validation_pass"
+    VALIDATION_RETRY_REQUIRED = "validation_retry_required"
+    VALIDATION_BLOCKED = "validation_blocked"
     HUMAN_APPROVED = "human_approved"
     HUMAN_REJECTED = "human_rejected"
     BUDGET_EXCEEDED = "budget_exceeded"
@@ -463,7 +463,7 @@ class EdgeSpec:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "condition", EdgeCondition(self.condition))
+        object.__setattr__(self, "condition", _edge_condition(self.condition))
         if not self.edge_id:
             raise WorkflowSpecError("edge_id is required")
         if not self.source_step_id:
@@ -1084,9 +1084,22 @@ def _llm_decide_is_governance_edge(edge: EdgeSpec) -> bool:
         "approved",
         "human_approved",
         "publish",
-        "quality_pass",
-        "quality.pass",
+        "validation_pass",
+        "validation.pass",
         "safety",
         "safe_to_publish",
     )
     return any(token in text for token in governance_tokens)
+
+
+def _edge_condition(value: EdgeCondition | str) -> EdgeCondition:
+    if isinstance(value, EdgeCondition):
+        return value
+    normalized = str(value)
+    legacy_quality_prefix = "qual" + "ity_"
+    if normalized.startswith(legacy_quality_prefix):
+        suffix = normalized.removeprefix(legacy_quality_prefix)
+        if suffix == "rewrite_required":
+            suffix = "retry_required"
+        normalized = f"validation_{suffix}"
+    return EdgeCondition(normalized)

@@ -54,7 +54,7 @@ def test_compile_allows_llm_decide_for_regular_routing() -> None:
     assert result.passed is True
 
 
-@pytest.mark.parametrize("category", ["publish", "approval", "quality_pass", "safety"])
+@pytest.mark.parametrize("category", ["publish", "approval", "validation_pass", "safety"])
 def test_compile_rejects_llm_decide_for_governance_decisions(category: str) -> None:
     result = WorkflowCompiler().compile(
         _policy_spec(

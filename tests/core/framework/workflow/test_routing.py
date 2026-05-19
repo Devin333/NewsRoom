@@ -81,7 +81,7 @@ def test_routing_engine_returns_multiple_next_steps_for_fan_out() -> None:
     assert next_steps == ["left", "right"]
 
 
-def test_routing_engine_supports_quality_human_and_budget_conditions() -> None:
+def test_routing_engine_supports_validation_human_and_budget_conditions() -> None:
     workflow = WorkflowSpec(
         workflow_id="target-conditions",
         name="Target Conditions",
@@ -91,7 +91,7 @@ def test_routing_engine_supports_quality_human_and_budget_conditions() -> None:
             StepSpec(
                 step_id="gate",
                 implementation="sample.gate",
-                write_keys=["quality_gate_metrics"],
+                write_keys=["validation_metrics"],
             ),
             StepSpec(step_id="rewrite", implementation="sample.rewrite"),
             StepSpec(step_id="approved", implementation="sample.approved"),
@@ -102,7 +102,7 @@ def test_routing_engine_supports_quality_human_and_budget_conditions() -> None:
                 "gate-rewrite",
                 "gate",
                 "rewrite",
-                condition=EdgeCondition.QUALITY_REWRITE_REQUIRED,
+                condition=EdgeCondition.VALIDATION_RETRY_REQUIRED,
                 priority=0,
             ),
             EdgeSpec(
@@ -123,7 +123,7 @@ def test_routing_engine_supports_quality_human_and_budget_conditions() -> None:
     )
     buffer = DataBuffer(
         {
-            "quality_gate_metrics": {"decision": "rewrite_required"},
+            "validation_metrics": {"decision": "retry_required"},
             "human_review_decision": {"decision": "approved"},
             "budget_exceeded": True,
         }

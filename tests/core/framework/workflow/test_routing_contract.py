@@ -59,10 +59,10 @@ def test_routing_contract_evaluates_governance_conditions_and_llm_hint() -> None
         name="Routing Governance Contract",
         version="1.0",
         start_step_id="gate",
-        terminal_step_ids=["quality", "human", "llm"],
-        steps=[make_step("gate"), make_step("quality"), make_step("human"), make_step("llm")],
+        terminal_step_ids=["validated", "human", "llm"],
+        steps=[make_step("gate"), make_step("validated"), make_step("human"), make_step("llm")],
         edges=[
-            make_edge("gate", "quality", condition=EdgeCondition.QUALITY_PASS, priority=0),
+            make_edge("gate", "validated", condition=EdgeCondition.VALIDATION_PASS, priority=0),
             make_edge("gate", "human", condition=EdgeCondition.HUMAN_REJECTED, priority=1),
             make_edge(
                 "gate",
@@ -80,7 +80,7 @@ def test_routing_contract_evaluates_governance_conditions_and_llm_hint() -> None
         StepOutcome(
             status=StepStatus.SUCCEEDED,
             outputs={
-                "quality_gate_metrics": {"decision": "pass"},
+                "validation_metrics": {"decision": "pass"},
                 "human_review_decision": {"decision": "needs_changes"},
                 "route": "llm",
             },
@@ -89,5 +89,5 @@ def test_routing_contract_evaluates_governance_conditions_and_llm_hint() -> None
         fan_out=True,
     )
 
-    assert decision.target_step_ids == ["quality", "human", "llm"]
+    assert decision.target_step_ids == ["validated", "human", "llm"]
     assert all(item.matched for item in decision.evaluations)

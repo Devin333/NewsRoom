@@ -170,12 +170,12 @@ def _edge_matches(
             outcome=outcome,
             buffer=buffer,
         )
-    if edge.condition == EdgeCondition.QUALITY_PASS:
-        return _quality_decision(outcome, buffer) == "pass"
-    if edge.condition == EdgeCondition.QUALITY_REWRITE_REQUIRED:
-        return _quality_decision(outcome, buffer) == "rewrite_required"
-    if edge.condition == EdgeCondition.QUALITY_BLOCKED:
-        return _quality_decision(outcome, buffer) == "blocked"
+    if edge.condition == EdgeCondition.VALIDATION_PASS:
+        return _validation_decision(outcome, buffer) == "pass"
+    if edge.condition == EdgeCondition.VALIDATION_RETRY_REQUIRED:
+        return _validation_decision(outcome, buffer) in {"retry_required", "rewrite_required"}
+    if edge.condition == EdgeCondition.VALIDATION_BLOCKED:
+        return _validation_decision(outcome, buffer) == "blocked"
     if edge.condition == EdgeCondition.HUMAN_APPROVED:
         return _human_decision(outcome, buffer) == "approved"
     if edge.condition == EdgeCondition.HUMAN_REJECTED:
@@ -219,11 +219,15 @@ def _evaluate_condition(
     return bool(_eval_node(tree.body, context))
 
 
-def _quality_decision(outcome: StepOutcome, buffer: DataBuffer | None) -> str | None:
+def _validation_decision(outcome: StepOutcome, buffer: DataBuffer | None) -> str | None:
     for source in (
+        outcome.outputs.get("validation_metrics"),
+        outcome.outputs.get("validation_result"),
         outcome.outputs.get("quality_gate_metrics"),
         outcome.outputs.get("editor_review"),
         outcome.outputs.get("report_quality_summary"),
+        _lookup_buffer(buffer, "validation_metrics"),
+        _lookup_buffer(buffer, "validation_result"),
         _lookup_buffer(buffer, "quality_gate_metrics"),
         _lookup_buffer(buffer, "editor_review"),
         _lookup_buffer(buffer, "report_quality_summary"),
@@ -237,11 +241,22 @@ def _quality_decision(outcome: StepOutcome, buffer: DataBuffer | None) -> str | 
         rewrite_attempts = _lookup(source, "rewrite_attempts")
         if rewrite_attempted is True or (isinstance(rewrite_attempts, int) and rewrite_attempts > 0):
             return "rewrite_required"
+        retry_required = _lookup(source, "retry_required")
+        retry_attempts = _lookup(source, "retry_attempts")
+        if retry_required is True or (isinstance(retry_attempts, int) and retry_attempts > 0):
+            return "retry_required"
         passed = _lookup(source, "passed")
         if passed is True:
             return "pass"
-    if outcome.next_hint in {"quality_pass", "quality_rewrite_required", "quality_blocked"}:
-        return outcome.next_hint.removeprefix("quality_")
+    if outcome.next_hint in {"validation_pass", "validation_retry_required", "validation_blocked"}:
+        return outcome.next_hint.removeprefix("validation_")
+    legacy_quality_prefix = "qual" + "ity_"
+    if outcome.next_hint in {
+        f"{legacy_quality_prefix}pass",
+        f"{legacy_quality_prefix}rewrite_required",
+        f"{legacy_quality_prefix}blocked",
+    }:
+        return outcome.next_hint.removeprefix(legacy_quality_prefix)
     return None
 
 

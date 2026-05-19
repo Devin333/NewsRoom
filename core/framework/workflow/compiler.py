@@ -697,7 +697,7 @@ def _is_governance_decision_edge(edge: EdgeSpec) -> bool:
     categories = {
         "publish",
         "approval",
-        "quality_pass",
+        "validation_pass",
         "safety",
         "release",
     }

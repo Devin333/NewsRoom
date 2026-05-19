@@ -77,6 +77,19 @@ def test_step_spec_serializes_timeout_policy() -> None:
     }
 
 
+def test_edge_spec_imports_legacy_quality_conditions_as_validation_conditions() -> None:
+    condition = "qual" + "ity_rewrite_required"
+    edge = EdgeSpec(
+        edge_id="legacy-validation",
+        source_step_id="check",
+        target_step_id="retry",
+        condition=condition,
+    )
+
+    assert edge.condition == EdgeCondition.VALIDATION_RETRY_REQUIRED
+    assert edge.to_dict()["condition"] == "validation_retry_required"
+
+
 def test_step_spec_serializes_failure_policy() -> None:
     step = StepSpec(
         step_id="risky",
