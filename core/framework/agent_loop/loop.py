@@ -653,7 +653,7 @@ class AgentLoop:
                     decision=JudgeDecision.RETRY,
                     confidence=0.2,
                     feedback=f"subagent delegation failed: {exc}",
-                    quality_errors=[f"subagent delegation failed: {child_agent_id}"],
+                    validation_errors=[f"subagent delegation failed: {child_agent_id}"],
                 )
                 trace.record_judge(iteration_trace, verdict)
                 return verdict.feedback or "subagent delegation failed"
@@ -676,7 +676,7 @@ class AgentLoop:
                 decision=JudgeDecision.RETRY,
                 confidence=0.2,
                 feedback=_failed_subagent_feedback(result_payload),
-                quality_errors=[f"subagent delegation failed: {result_payload}"],
+                validation_errors=[f"subagent delegation failed: {result_payload}"],
             )
             trace.record_judge(iteration_trace, verdict)
             return verdict.feedback or "subagent delegation failed"
@@ -685,7 +685,7 @@ class AgentLoop:
             confidence=1.0,
             feedback="subagent delegation accepted by policy but orchestration is deferred",
             policy_violations=[],
-            quality_errors=[f"delegation handoff: {metadata}"],
+            validation_errors=[f"delegation handoff: {metadata}"],
         )
         trace.record_judge(iteration_trace, verdict)
         return (

@@ -448,10 +448,10 @@ def _issues_from_verdict(verdict: JudgeVerdict, iteration: int) -> list[AgentLoo
                 iteration=iteration,
             )
         )
-    for error in verdict.quality_errors:
+    for error in verdict.validation_errors:
         issues.append(
             AgentLoopIssue(
-                code="quality_error",
+                code="validation_error",
                 message=error,
                 severity=AgentLoopDiagnosticSeverity.WARNING,
                 iteration=iteration,

@@ -21,7 +21,7 @@ class OutputNormalizer(Protocol):
 class OutputValidationResult:
     missing_output_keys: list[str] = field(default_factory=list)
     schema_errors: list[str] = field(default_factory=list)
-    quality_errors: list[str] = field(default_factory=list)
+    validation_errors: list[str] = field(default_factory=list)
     policy_violations: list[str] = field(default_factory=list)
     block: bool = False
     feedback: str | None = None
@@ -31,7 +31,7 @@ class OutputValidationResult:
         return bool(
             self.missing_output_keys
             or self.schema_errors
-            or self.quality_errors
+            or self.validation_errors
             or self.policy_violations
         )
 

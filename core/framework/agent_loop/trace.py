@@ -323,7 +323,7 @@ class JudgeTrace:
     feedback: str | None = None
     missing_output_keys: list[str] = field(default_factory=list)
     schema_errors: list[str] = field(default_factory=list)
-    quality_errors: list[str] = field(default_factory=list)
+    validation_errors: list[str] = field(default_factory=list)
     policy_violations: list[str] = field(default_factory=list)
 
     @classmethod
@@ -335,7 +335,7 @@ class JudgeTrace:
             feedback=verdict.feedback,
             missing_output_keys=list(verdict.missing_output_keys),
             schema_errors=list(verdict.schema_errors),
-            quality_errors=list(verdict.quality_errors),
+            validation_errors=list(verdict.validation_errors),
             policy_violations=list(verdict.policy_violations),
         )
 
@@ -348,7 +348,9 @@ class JudgeTrace:
             feedback=_optional_text(payload.get("feedback")),
             missing_output_keys=[str(item) for item in payload.get("missing_output_keys", [])],
             schema_errors=[str(item) for item in payload.get("schema_errors", [])],
-            quality_errors=[str(item) for item in payload.get("quality_errors", [])],
+            validation_errors=[
+                str(item) for item in payload.get("validation_errors", [])
+            ],
             policy_violations=[str(item) for item in payload.get("policy_violations", [])],
         )
 
@@ -360,7 +362,7 @@ class JudgeTrace:
             "feedback": self.feedback,
             "missing_output_keys": list(self.missing_output_keys),
             "schema_errors": list(self.schema_errors),
-            "quality_errors": list(self.quality_errors),
+            "validation_errors": list(self.validation_errors),
             "policy_violations": list(self.policy_violations),
         }
 

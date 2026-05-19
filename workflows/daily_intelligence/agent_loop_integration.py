@@ -41,10 +41,10 @@ class DailyEvidenceOutputValidator:
     ) -> OutputValidationResult:
         _ = called_tools
         output = action.output or {}
-        quality_errors = self._evidence_boundary_errors(output, agent, inputs)
+        validation_errors = self._evidence_boundary_errors(output, agent, inputs)
         policy_violations = self._evidence_id_violations(output, inputs)
         return OutputValidationResult(
-            quality_errors=quality_errors,
+            validation_errors=validation_errors,
             policy_violations=policy_violations,
             block=bool(policy_violations),
             feedback="unsupported evidence id referenced" if policy_violations else None,

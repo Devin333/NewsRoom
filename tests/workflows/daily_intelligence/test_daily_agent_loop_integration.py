@@ -106,7 +106,7 @@ def test_daily_judge_retries_report_claim_outside_evidence_boundary() -> None:
     )
 
     assert verdict.decision == JudgeDecision.RETRY
-    assert verdict.quality_errors == [
+    assert verdict.validation_errors == [
         "unsupported claim outside evidence: Unsupported: The vendor acquired a rival."
     ]
 
@@ -136,7 +136,7 @@ def test_daily_judge_retries_editor_claim_outside_evidence_boundary() -> None:
     )
 
     assert verdict.decision == JudgeDecision.RETRY
-    assert verdict.quality_errors == [
+    assert verdict.validation_errors == [
         (
             "unsupported claim outside evidence: "
             "Edit: The vendor released a model update and expanded into robotics."
@@ -168,10 +168,10 @@ def test_daily_judge_schema_pass_does_not_replace_quality_gate_for_citation_cove
 
     assert verdict.decision == JudgeDecision.RETRY
     assert verdict.schema_errors == []
-    assert "missing section sources: Latency" in verdict.quality_errors
+    assert "missing section sources: Latency" in verdict.validation_errors
     assert any(
         error.startswith("unsupported claim outside evidence:")
-        for error in verdict.quality_errors
+        for error in verdict.validation_errors
     )
 
 

@@ -47,7 +47,7 @@ class OutputJudge:
                 decision=JudgeDecision.ESCALATE,
                 confidence=1.0,
                 feedback="subagent delegation accepted by policy but orchestration is deferred",
-                quality_errors=[
+                validation_errors=[
                     (
                         "delegation handoff: "
                         f"parent_agent_id={agent.agent_id}; "
@@ -71,14 +71,13 @@ class OutputJudge:
             missing_output_keys.append(agent.output_key)
 
         schema_errors = self._schema_errors(output, agent.output_schema)
-        quality_errors: list[str] = []
+        validation_errors: list[str] = []
         tool_policy = agent.resolved_tool_policy()
         policy_violations = [
             f"tool not allowed: {tool_name}"
             for tool_name in called_tools
             if not tool_policy.allows(tool_name)
         ]
-        policy_violations.extend(self._source_violations(output, agent.allowed_sources))
         validator_results = [
             result
             for validator in self._output_validators
@@ -93,7 +92,7 @@ class OutputJudge:
         for result in validator_results:
             missing_output_keys.extend(result.missing_output_keys)
             schema_errors.extend(result.schema_errors)
-            quality_errors.extend(result.quality_errors)
+            validation_errors.extend(result.validation_errors)
             policy_violations.extend(result.policy_violations)
 
         if self._contains_secret(output):
@@ -112,18 +111,18 @@ class OutputJudge:
                 feedback=blocking_results[0].feedback or "output validation blocked",
                 missing_output_keys=missing_output_keys,
                 schema_errors=schema_errors,
-                quality_errors=quality_errors,
+                validation_errors=validation_errors,
                 policy_violations=policy_violations,
             )
 
-        if missing_output_keys or schema_errors or quality_errors or policy_violations:
+        if missing_output_keys or schema_errors or validation_errors or policy_violations:
             feedback_parts = []
             if missing_output_keys:
                 feedback_parts.append(f"missing output keys: {', '.join(missing_output_keys)}")
             if schema_errors:
                 feedback_parts.append(f"schema errors: {', '.join(schema_errors)}")
-            if quality_errors:
-                feedback_parts.append(f"quality errors: {', '.join(quality_errors)}")
+            if validation_errors:
+                feedback_parts.append(f"validation errors: {', '.join(validation_errors)}")
             if policy_violations:
                 feedback_parts.append(f"policy violations: {', '.join(policy_violations)}")
             return JudgeVerdict(
@@ -132,7 +131,7 @@ class OutputJudge:
                 feedback="; ".join(feedback_parts),
                 missing_output_keys=missing_output_keys,
                 schema_errors=schema_errors,
-                quality_errors=quality_errors,
+                validation_errors=validation_errors,
                 policy_violations=policy_violations,
             )
 
@@ -163,30 +162,3 @@ class OutputJudge:
         if isinstance(value, list):
             return any(self._contains_secret(item) for item in value)
         return False
-
-    def _source_violations(self, output: Any, allowed_sources: list[str]) -> list[str]:
-        if not allowed_sources:
-            return []
-        allowed = set(allowed_sources)
-        violations: list[str] = []
-
-        def inspect(value: Any) -> None:
-            if isinstance(value, dict):
-                for key, item in value.items():
-                    if key in {"source", "sources", "url", "urls"}:
-                        inspect_source_value(item)
-                    else:
-                        inspect(item)
-            elif isinstance(value, list):
-                for item in value:
-                    inspect(item)
-
-        def inspect_source_value(value: Any) -> None:
-            if isinstance(value, str) and value not in allowed:
-                violations.append(f"source outside boundary: {value}")
-            elif isinstance(value, list):
-                for item in value:
-                    inspect_source_value(item)
-
-        inspect(output)
-        return violations

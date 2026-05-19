@@ -132,10 +132,10 @@ class AgentSpec:
     loop_policy: AgentLoopPolicy = field(default_factory=AgentLoopPolicy)
     tool_policy: ToolPolicy | None = None
     model_policy: dict[str, Any] = field(default_factory=dict)
-    evidence_policy: dict[str, Any] = field(default_factory=dict)
+    validation_policy: dict[str, Any] = field(default_factory=dict)
     system_prompt_template: str = "{role}\n{instructions}"
     task_prompt_template: str = "Goal: {goal}\nInputs: {inputs}"
-    allowed_sources: list[str] = field(default_factory=list)
+    allowed_references: list[str] = field(default_factory=list)
     allowed_subagents: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -185,10 +185,10 @@ class AgentSpec:
                 else None
             ),
             "model_policy": dict(self.model_policy),
-            "evidence_policy": dict(self.evidence_policy),
+            "validation_policy": dict(self.validation_policy),
             "system_prompt_template": self.system_prompt_template,
             "task_prompt_template": self.task_prompt_template,
-            "allowed_sources": list(self.allowed_sources),
+            "allowed_references": list(self.allowed_references),
             "allowed_subagents": list(self.allowed_subagents),
             "metadata": dict(self.metadata),
         }
@@ -208,14 +208,16 @@ class AgentSpec:
             loop_policy=_agent_loop_policy_from_dict(payload.get("loop_policy")),
             tool_policy=_tool_policy_from_dict(payload.get("tool_policy")),
             model_policy=dict(payload.get("model_policy") or {}),
-            evidence_policy=dict(payload.get("evidence_policy") or {}),
+            validation_policy=dict(payload.get("validation_policy") or {}),
             system_prompt_template=str(
                 payload.get("system_prompt_template") or "{role}\n{instructions}"
             ),
             task_prompt_template=str(
                 payload.get("task_prompt_template") or "Goal: {goal}\nInputs: {inputs}"
             ),
-            allowed_sources=[str(item) for item in payload.get("allowed_sources", [])],
+            allowed_references=[
+                str(item) for item in payload.get("allowed_references", [])
+            ],
             allowed_subagents=[str(item) for item in payload.get("allowed_subagents", [])],
             metadata=dict(payload.get("metadata") or {}),
         )
@@ -250,7 +252,7 @@ class JudgeVerdict:
     feedback: str | None = None
     missing_output_keys: list[str] = field(default_factory=list)
     schema_errors: list[str] = field(default_factory=list)
-    quality_errors: list[str] = field(default_factory=list)
+    validation_errors: list[str] = field(default_factory=list)
     policy_violations: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -260,7 +262,7 @@ class JudgeVerdict:
             "feedback": self.feedback,
             "missing_output_keys": list(self.missing_output_keys),
             "schema_errors": list(self.schema_errors),
-            "quality_errors": list(self.quality_errors),
+            "validation_errors": list(self.validation_errors),
             "policy_violations": list(self.policy_violations),
         }
 

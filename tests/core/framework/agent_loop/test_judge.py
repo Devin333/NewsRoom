@@ -84,7 +84,7 @@ def test_output_judge_allows_listed_subagent_as_deferred_escalation_contract() -
 
     assert verdict.decision == JudgeDecision.ESCALATE
     assert verdict.policy_violations == []
-    assert verdict.quality_errors == [
+    assert verdict.validation_errors == [
         (
             "delegation handoff: parent_agent_id=writer; "
             "child_agent_id=citation_sanity_checker; handoff_reason=citation risk"
@@ -106,18 +106,24 @@ def test_output_judge_blocks_secret_like_output() -> None:
     assert verdict.decision == JudgeDecision.BLOCK
 
 
-def test_output_judge_retries_source_boundary_violation() -> None:
-    verdict = OutputJudge().judge(
-        agent=_agent(allowed_sources=["https://example.com/a"]),
+def test_output_judge_retries_custom_policy_validator_violation() -> None:
+    def validator(**kwargs) -> OutputValidationResult:
+        _ = kwargs
+        return OutputValidationResult(
+            policy_violations=["reference outside boundary: input://request/b"]
+        )
+
+    verdict = OutputJudge(output_validators=[validator]).judge(
+        agent=_agent(allowed_references=["input://request/a"]),
         action=AgentAction(
             action_type="final_output",
-            output={"analysis_result": {"sources": ["https://example.com/b"]}},
+            output={"analysis_result": {"references": ["input://request/b"]}},
         ),
         called_tools=[],
     )
 
     assert verdict.decision == JudgeDecision.RETRY
-    assert "source outside boundary" in verdict.policy_violations[0]
+    assert verdict.policy_violations == ["reference outside boundary: input://request/b"]
 
 
 def test_output_judge_retries_json_schema_violation() -> None:
@@ -189,10 +195,10 @@ def test_output_judge_retries_json_schema_constraint_violation() -> None:
     ]
 
 
-def test_output_judge_retries_custom_quality_validator_error() -> None:
+def test_output_judge_retries_custom_validation_error() -> None:
     def validator(**kwargs) -> OutputValidationResult:
         _ = kwargs
-        return OutputValidationResult(quality_errors=["custom quality issue"])
+        return OutputValidationResult(validation_errors=["custom validation issue"])
 
     verdict = OutputJudge(output_validators=[validator]).judge(
         agent=_agent(agent_id="writer", name="WriterAgent", output_key="final_report"),
@@ -215,7 +221,7 @@ def test_output_judge_retries_custom_quality_validator_error() -> None:
     )
 
     assert verdict.decision == JudgeDecision.RETRY
-    assert verdict.quality_errors == ["custom quality issue"]
+    assert verdict.validation_errors == ["custom validation issue"]
 
 
 def test_output_judge_blocks_custom_policy_validator_error() -> None:

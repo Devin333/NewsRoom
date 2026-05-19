@@ -33,8 +33,8 @@ def test_agent_spec_contract_exports_and_imports_stably() -> None:
         loop_policy=AgentLoopPolicy(max_iterations=3, allow_subagents=True),
         tool_policy=ToolPolicy(allowed_tools=["memory.search"], max_tool_calls_per_agent=4),
         model_policy={"provider": "fake", "model": "fake-llm"},
-        evidence_policy={"boundary": "input_only"},
-        allowed_sources=["https://example.com/a"],
+        validation_policy={"boundary": "input_only"},
+        allowed_references=["input://request/a"],
         allowed_subagents=["citation_sanity_checker"],
         metadata={"version": "v1"},
     )
