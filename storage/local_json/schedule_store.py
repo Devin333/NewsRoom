@@ -50,9 +50,16 @@ class LocalJsonScheduleStore:
         *,
         last_run_at: datetime | None,
         next_run_at: datetime | None,
+        last_misfire_reason: str | None = None,
+        last_evaluation_at: datetime | None = None,
     ) -> ScheduleRecord:
         record = self.get_schedule(schedule_id)
-        updated = record.with_state(last_run_at=last_run_at, next_run_at=next_run_at)
+        updated = record.with_state(
+            last_run_at=last_run_at,
+            next_run_at=next_run_at,
+            last_misfire_reason=last_misfire_reason,
+            last_evaluation_at=last_evaluation_at,
+        )
         self.upsert_schedule(updated)
         return updated
 

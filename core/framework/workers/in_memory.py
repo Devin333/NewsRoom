@@ -110,13 +110,6 @@ class InMemoryTaskQueue:
             )
             self.enqueue(task)
             return
-        if error.retryable and task.attempts < task.max_attempts:
-            task.status = TaskStatus.FAILED
-            task.leased_by = None
-            task.lease_expires_at = None
-            task.updated_at = self._now()
-            self._record_event("task_failed", task, worker_id=worker_id, payload=error.to_dict())
-            return
         self.move_to_dead_letter(task, error.error_message, error=error)
 
     def move_to_dead_letter(self, task: Task, reason: str, error: TaskError | None = None) -> None:
@@ -164,6 +157,7 @@ class InMemoryTaskQueue:
             del self.dead_letters[index]
             task = record.task
             task.metadata["dead_letter_reason"] = record.reason
+            task.metadata["dead_letter_attempts"] = record.attempts
             task.metadata["requeue_reason"] = reason
             task.status = TaskStatus.QUEUED
             task.leased_by = None

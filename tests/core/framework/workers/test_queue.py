@@ -126,7 +126,54 @@ def test_in_memory_queue_requeues_dead_letter_task() -> None:
     assert leased_again.task_id == "task-1"
     assert leased_again.metadata["requeue_reason"] == "operator_retry"
     assert leased_again.metadata["dead_letter_reason"] == "failed"
+    assert leased_again.metadata["dead_letter_attempts"] == 1
     assert queue.list_dead_letters() == []
+
+
+def test_in_memory_queue_retry_exhaustion_routes_directly_to_dead_letter() -> None:
+    clock = {"now": datetime(2026, 5, 11, 1, 0, tzinfo=UTC)}
+    queue = InMemoryTaskQueue(
+        retry_policy=TaskRetryPolicy(max_attempts=2, base_delay_seconds=0, max_delay_seconds=0),
+        now_fn=lambda: clock["now"],
+    )
+    task = Task(
+        task_type="daily_intelligence.run",
+        payload={"topic": "AI"},
+        task_id="exhaustion-task",
+        max_attempts=2,
+    )
+    queue.enqueue(task)
+    first = queue.lease("worker-1", ["news:queue:daily"])
+    queue.fail(first.task_id, "worker-1", TaskError("Timeout", "timeout"))
+    clock["now"] = clock["now"] + timedelta(minutes=1)
+    second = queue.lease("worker-1", ["news:queue:daily"])
+    queue.fail(second.task_id, "worker-1", TaskError("Timeout", "timeout"))
+
+    dead_letters = queue.list_dead_letters()
+    assert [record.task.task_id for record in dead_letters] == ["exhaustion-task"]
+    assert dead_letters[0].attempts == 2
+    assert dead_letters[0].task.status == TaskStatus.DEAD_LETTER
+
+
+def test_in_memory_queue_requeued_task_re_failure_returns_to_dead_letter() -> None:
+    queue = InMemoryTaskQueue(retry_policy=TaskRetryPolicy(max_attempts=1))
+    task = Task(
+        task_type="daily_intelligence.run",
+        payload={"topic": "AI"},
+        task_id="dl-task",
+        max_attempts=1,
+    )
+    queue.enqueue(task)
+    leased = queue.lease("worker-1", ["news:queue:daily"])
+    queue.fail(leased.task_id, "worker-1", TaskError("TaskFailed", "failed"))
+
+    queue.requeue_dead_letter("dl-task", reason="operator_retry")
+    leased_again = queue.lease("worker-2", ["news:queue:daily"])
+    queue.fail(leased_again.task_id, "worker-2", TaskError("TaskFailed", "failed"))
+
+    dead_letters = queue.list_dead_letters()
+    assert [record.task.task_id for record in dead_letters] == ["dl-task"]
+    assert dead_letters[0].task.metadata["requeue_reason"] == "operator_retry"
 
 
 def test_in_memory_queue_rejects_duplicate_unfinished_dedup_key() -> None:

@@ -153,9 +153,13 @@ class Scheduler:
         queue: TaskQueueWriter,
         *,
         now_fn: Callable[[], datetime] | None = None,
+        max_cron_catchup_minutes: int = 1440,
     ) -> None:
         self.queue = queue
         self.now_fn = now_fn or (lambda: datetime.now(UTC))
+        if max_cron_catchup_minutes < 1:
+            raise ValueError("max_cron_catchup_minutes must be greater than zero")
+        self.max_cron_catchup_minutes = max_cron_catchup_minutes
 
     def evaluate(
         self,
@@ -352,9 +356,11 @@ class Scheduler:
                 next_run_at=_next_cron_time(schedule.cron, current_minute),
                 reason="not_due",
             )
+        scanned_minutes = _minute_range(start, current_minute, max_minutes=self.max_cron_catchup_minutes)
+        catchup_bounded = (current_minute - start) > timedelta(minutes=self.max_cron_catchup_minutes - 1)
         due_times = [
             moment
-            for moment in _minute_range(start, current_minute, max_minutes=1440)
+            for moment in scanned_minutes
             if _cron_matches(schedule.cron, moment)
         ]
         if not due_times:
@@ -362,7 +368,7 @@ class Scheduler:
                 schedule_id=schedule.schedule_id,
                 trigger_type=schedule.trigger_type,
                 next_run_at=_next_cron_time(schedule.cron, current_minute),
-                reason="not_due",
+                reason="catchup_bounded" if catchup_bounded else "not_due",
             )
         if len(due_times) > 1 and schedule.misfire_policy == MisfirePolicy.SKIP:
             latest = due_times[-1]
@@ -371,18 +377,20 @@ class Scheduler:
                 trigger_type=schedule.trigger_type,
                 next_run_at=_next_cron_time(schedule.cron, latest),
                 state_update_at=latest,
-                reason="misfire_skipped",
+                reason="catchup_bounded_skipped" if catchup_bounded else "misfire_skipped",
             )
         if schedule.misfire_policy == MisfirePolicy.RUN_ONCE:
             due_times = [due_times[-1]]
         elif len(due_times) > schedule.max_catchup_runs:
             due_times = due_times[-schedule.max_catchup_runs :]
+        reason = "catchup_bounded" if catchup_bounded else None
         return ScheduleEvaluation(
             schedule_id=schedule.schedule_id,
             trigger_type=schedule.trigger_type,
             due_times=tuple(due_times),
             state_update_at=due_times[-1],
             next_run_at=_next_cron_time(schedule.cron, due_times[-1]),
+            reason=reason,
         )
 
     def _enqueue_schedule_task(self, schedule: ScheduleSpec, due_at: datetime) -> EnqueuedScheduleTask:

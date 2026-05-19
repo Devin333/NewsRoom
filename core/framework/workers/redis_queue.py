@@ -235,6 +235,7 @@ class RedisStreamTaskQueue:
                 continue
             task = Task.from_dict(payload)
             task.metadata["dead_letter_reason"] = payload.get("dead_letter_reason")
+            task.metadata["dead_letter_attempts"] = int(payload.get("attempts") or task.attempts)
             task.metadata["requeue_reason"] = reason
             task.status = TaskStatus.QUEUED
             task.scheduled_for = None

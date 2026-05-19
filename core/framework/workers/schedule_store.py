@@ -27,6 +27,8 @@ class ScheduleStore(Protocol):
         *,
         last_run_at: datetime | None,
         next_run_at: datetime | None,
+        last_misfire_reason: str | None = None,
+        last_evaluation_at: datetime | None = None,
     ) -> ScheduleRecord: ...
 
 
@@ -35,6 +37,8 @@ class ScheduleRecord:
     spec: ScheduleSpec
     last_run_at: datetime | None = None
     next_run_at: datetime | None = None
+    last_misfire_reason: str | None = None
+    last_evaluation_at: datetime | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
@@ -52,11 +56,15 @@ class ScheduleRecord:
         last_run_at: datetime | None,
         next_run_at: datetime | None,
         updated_at: datetime | None = None,
+        last_misfire_reason: str | None = None,
+        last_evaluation_at: datetime | None = None,
     ) -> ScheduleRecord:
         return ScheduleRecord(
             spec=self.spec,
             last_run_at=_normalize_datetime(last_run_at),
             next_run_at=_normalize_datetime(next_run_at),
+            last_misfire_reason=last_misfire_reason,
+            last_evaluation_at=_normalize_datetime(last_evaluation_at),
             created_at=self.created_at,
             updated_at=_normalize_datetime(updated_at) or datetime.now(UTC),
         )
@@ -66,6 +74,8 @@ class ScheduleRecord:
             "spec": self.spec.to_dict(),
             "last_run_at": _format_datetime(self.last_run_at),
             "next_run_at": _format_datetime(self.next_run_at),
+            "last_misfire_reason": self.last_misfire_reason,
+            "last_evaluation_at": _format_datetime(self.last_evaluation_at),
             "created_at": _format_datetime(self.created_at),
             "updated_at": _format_datetime(self.updated_at),
         }
@@ -76,6 +86,8 @@ class ScheduleRecord:
             spec=ScheduleSpec.from_dict(dict(data["spec"])),
             last_run_at=_parse_optional_datetime(data.get("last_run_at")),
             next_run_at=_parse_optional_datetime(data.get("next_run_at")),
+            last_misfire_reason=data.get("last_misfire_reason"),
+            last_evaluation_at=_parse_optional_datetime(data.get("last_evaluation_at")),
             created_at=_parse_optional_datetime(data.get("created_at")) or datetime.now(UTC),
             updated_at=_parse_optional_datetime(data.get("updated_at")) or datetime.now(UTC),
         )
@@ -116,11 +128,15 @@ class InMemoryScheduleStore:
         *,
         last_run_at: datetime | None,
         next_run_at: datetime | None,
+        last_misfire_reason: str | None = None,
+        last_evaluation_at: datetime | None = None,
     ) -> ScheduleRecord:
         record = self.get_schedule(schedule_id)
         updated = record.with_state(
             last_run_at=last_run_at,
             next_run_at=next_run_at,
+            last_misfire_reason=last_misfire_reason,
+            last_evaluation_at=last_evaluation_at,
             updated_at=self.now_fn(),
         )
         self.upsert_schedule(updated)

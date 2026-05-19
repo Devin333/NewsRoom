@@ -305,6 +305,36 @@ def test_task_serialization_preserves_schedule_metadata() -> None:
     assert round_tripped.metadata["schedule_id"] == "manual-daily"
 
 
+def test_cron_catchup_marks_evaluation_when_window_is_bounded() -> None:
+    scheduler = Scheduler(_FakeQueue(), max_cron_catchup_minutes=30)
+    schedule = ScheduleSpec(
+        schedule_id="cron-bounded",
+        name="Cron bounded",
+        trigger_type="cron",
+        task_type="daily_intelligence.run",
+        cron="*/10 * * * *",
+        misfire_policy="catch_up",
+        max_catchup_runs=2,
+    )
+
+    evaluation = scheduler.evaluate(
+        schedule,
+        now=_dt("2026-05-11T05:35:00Z"),
+        last_run_at=_dt("2026-05-11T00:00:00Z"),
+    )
+
+    assert evaluation.reason == "catchup_bounded"
+    assert evaluation.due_times == (
+        _dt("2026-05-11T00:20:00Z"),
+        _dt("2026-05-11T00:30:00Z"),
+    )
+
+
+def test_scheduler_rejects_invalid_max_cron_catchup_minutes() -> None:
+    with pytest.raises(ValueError, match="max_cron_catchup_minutes"):
+        Scheduler(_FakeQueue(), max_cron_catchup_minutes=0)
+
+
 class _FakeQueue:
     def __init__(self) -> None:
         self.enqueued = []

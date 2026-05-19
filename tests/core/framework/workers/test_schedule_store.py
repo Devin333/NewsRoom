@@ -39,6 +39,8 @@ def test_schedule_record_round_trips_state() -> None:
         spec=_schedule("daily"),
         last_run_at=_dt("2026-05-11T00:00:00Z"),
         next_run_at=_dt("2026-05-11T01:00:00Z"),
+        last_misfire_reason="catchup_bounded",
+        last_evaluation_at=_dt("2026-05-11T00:30:00Z"),
         created_at=_dt("2026-05-10T00:00:00Z"),
         updated_at=_dt("2026-05-11T00:00:00Z"),
     )
@@ -48,6 +50,8 @@ def test_schedule_record_round_trips_state() -> None:
     assert restored.schedule_id == "daily"
     assert restored.last_run_at == _dt("2026-05-11T00:00:00Z")
     assert restored.next_run_at == _dt("2026-05-11T01:00:00Z")
+    assert restored.last_misfire_reason == "catchup_bounded"
+    assert restored.last_evaluation_at == _dt("2026-05-11T00:30:00Z")
     assert restored.created_at == _dt("2026-05-10T00:00:00Z")
 
 
@@ -62,13 +66,19 @@ def test_in_memory_schedule_store_lists_enabled_only_and_updates_state() -> None
         "daily",
         last_run_at=_dt("2026-05-11T01:00:00Z"),
         next_run_at=_dt("2026-05-11T02:00:00Z"),
+        last_misfire_reason="catch_up",
+        last_evaluation_at=_dt("2026-05-11T01:01:00Z"),
     )
 
     assert [record.schedule_id for record in enabled] == ["daily"]
     assert updated.last_run_at == _dt("2026-05-11T01:00:00Z")
     assert updated.next_run_at == _dt("2026-05-11T02:00:00Z")
+    assert updated.last_misfire_reason == "catch_up"
+    assert updated.last_evaluation_at == _dt("2026-05-11T01:01:00Z")
     assert updated.updated_at == _dt("2026-05-11T01:01:00Z")
-    assert store.get_schedule("daily").last_run_at == _dt("2026-05-11T01:00:00Z")
+    fetched = store.get_schedule("daily")
+    assert fetched.last_run_at == _dt("2026-05-11T01:00:00Z")
+    assert fetched.last_misfire_reason == "catch_up"
 
 
 def test_in_memory_schedule_store_delete_and_missing() -> None:

@@ -127,20 +127,40 @@ class ScheduleApplicationService:
             for record in records
             if record.last_run_at is not None
         }
+        evaluation_now = now or self.scheduler.now_fn()
         tick_result = self.scheduler.enqueue_due(
             [record.spec for record in records],
-            now=now,
+            now=evaluation_now,
             last_run_at_by_schedule=last_run_at_by_schedule,
         )
         evaluation_by_id = {evaluation.schedule_id: evaluation for evaluation in tick_result.evaluations}
         updated_records = []
+        seen_schedule_ids: set[str] = set()
         for schedule_id, last_run_at in tick_result.state_updates.items():
             evaluation = evaluation_by_id.get(schedule_id)
+            seen_schedule_ids.add(schedule_id)
             updated_records.append(
                 self.store.update_run_state(
                     schedule_id,
                     last_run_at=last_run_at,
                     next_run_at=evaluation.next_run_at if evaluation else None,
+                    last_misfire_reason=evaluation.reason if evaluation else None,
+                    last_evaluation_at=evaluation_now,
+                )
+            )
+        for schedule_id, evaluation in evaluation_by_id.items():
+            if schedule_id in seen_schedule_ids or evaluation.reason is None:
+                continue
+            record = next((item for item in records if item.schedule_id == schedule_id), None)
+            if record is None:
+                continue
+            updated_records.append(
+                self.store.update_run_state(
+                    schedule_id,
+                    last_run_at=record.last_run_at,
+                    next_run_at=evaluation.next_run_at,
+                    last_misfire_reason=evaluation.reason,
+                    last_evaluation_at=evaluation_now,
                 )
             )
         return ScheduleServiceTickResult(tick=tick_result, updated_records=tuple(updated_records))
