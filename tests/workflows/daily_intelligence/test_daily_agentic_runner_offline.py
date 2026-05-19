@@ -41,7 +41,7 @@ def test_agentic_daily_runner_offline_runs_full_workflow(tmp_path) -> None:
     assert manifest["artifacts"]["report_markdown"] == "report.md"
     assert manifest["artifacts"]["report_json"] == "report.json"
     assert manifest["artifacts"]["quality_result"] == "quality_result.json"
-    assert manifest["quality_route"] == "publish"
+    assert manifest["quality_route"] == "final"
 
     runners_by_step = {runner["step_id"]: runner for runner in manifest["runners"]}
     for step_id in ("planner_agent", "analyst_agent", "writer_agent", "verifier_agent", "editor_agent"):

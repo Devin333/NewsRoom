@@ -6,20 +6,23 @@ from typing import Any
 
 from core.framework.workflow import ScopedDataBuffer
 from domain.reports import BlockedReport, FinalReport, render_markdown
+from quality import EditorDecision
 from workflows.daily_intelligence.evidence_step import quality_event
 
 
-PUBLISH_ROUTE = "publish"
+PUBLISH_ROUTE = "final"
 BLOCKED_ROUTE = "blocked"
 HUMAN_REVIEW_ROUTE = "human_review"
+REWRITE_ROUTE = "rewrite"
 
-PASS_DECISION = "pass"
-REWRITE_REQUIRED_DECISION = "rewrite_required"
-HUMAN_REVIEW_REQUIRED_DECISION = "human_review_required"
-BLOCK_DECISION = "block"
+PASS_DECISION = EditorDecision.PASS.value
+REWRITE_REQUIRED_DECISION = EditorDecision.REWRITE_REQUIRED.value
+HUMAN_REVIEW_REQUIRED_DECISION = EditorDecision.HUMAN_REVIEW.value
+BLOCK_DECISION = EditorDecision.BLOCKED.value
 
 _DECISION_ALIASES = {
     "blocked": BLOCK_DECISION,
+    "block": BLOCK_DECISION,
     "human_review": HUMAN_REVIEW_REQUIRED_DECISION,
     "human_review_required": HUMAN_REVIEW_REQUIRED_DECISION,
     "pass": PASS_DECISION,
@@ -67,6 +70,7 @@ def finalize_report(buffer: ScopedDataBuffer) -> dict[str, Any]:
             ],
             rewrite_attempts=0,
             rewrite_instructions=rewrite_instructions,
+            quality_route=PUBLISH_ROUTE,
         )
 
     if decision == REWRITE_REQUIRED_DECISION:
@@ -95,6 +99,7 @@ def finalize_report(buffer: ScopedDataBuffer) -> dict[str, Any]:
                     ],
                     rewrite_attempts=1,
                     rewrite_instructions=rewrite_instructions,
+                    quality_route=REWRITE_ROUTE,
                 )
             editor_decision = _append_editor_reason(
                 editor_decision,
@@ -129,14 +134,14 @@ def finalize_report(buffer: ScopedDataBuffer) -> dict[str, Any]:
             report_draft=report_draft,
             evidence_bundle=evidence_bundle,
             editor_decision=editor_decision,
-        verification_result=verification_result,
-        citation_check_result=citation_check_result,
-        support_matrix=support_matrix,
-        verified_findings=verified_findings,
-        quality_events=quality_events,
-        route=HUMAN_REVIEW_ROUTE,
-        rewrite_attempts=0,
-        human_review_required=True,
+            verification_result=verification_result,
+            citation_check_result=citation_check_result,
+            support_matrix=support_matrix,
+            verified_findings=verified_findings,
+            quality_events=quality_events,
+            route=HUMAN_REVIEW_ROUTE,
+            rewrite_attempts=0,
+            human_review_required=True,
             human_review_request=_human_review_request(
                 request=request,
                 report_draft=report_draft,
@@ -165,7 +170,7 @@ def finalize_report(buffer: ScopedDataBuffer) -> dict[str, Any]:
         verified_findings=verified_findings,
         quality_events=quality_events,
         route=BLOCKED_ROUTE,
-        rewrite_attempts=0,
+        rewrite_attempts=1 if decision == REWRITE_REQUIRED_DECISION else 0,
         human_review_required=False,
     )
 
@@ -213,6 +218,7 @@ def _publish_outputs(
     quality_events: list[Any],
     rewrite_attempts: int,
     rewrite_instructions: list[str],
+    quality_route: str,
 ) -> dict[str, Any]:
     final_report = _final_report(
         request=request,
@@ -227,7 +233,7 @@ def _publish_outputs(
         verification_result=verification_result,
         citation_check_result=citation_check_result,
         support_matrix=support_matrix,
-        route=PUBLISH_ROUTE,
+        route=quality_route,
     )
     quality_gate_metrics = _quality_gate_metrics(
         evidence_bundle=evidence_bundle,
@@ -236,13 +242,13 @@ def _publish_outputs(
         verification_result=verification_result,
         citation_check_result=citation_check_result,
         support_matrix=support_matrix,
-        route=PUBLISH_ROUTE,
+        route=quality_route,
         rewrite_attempts=rewrite_attempts,
         human_review_required=False,
     )
     quality_result = _quality_result(
         editor_decision=editor_decision,
-        route=PUBLISH_ROUTE,
+        route=quality_route,
         rewrite_attempts=rewrite_attempts,
         human_review_required=False,
         quality_gate_metrics=quality_gate_metrics,
@@ -253,7 +259,7 @@ def _publish_outputs(
         "quality_events": quality_events,
         "quality_gate_metrics": quality_gate_metrics,
         "quality_result": quality_result,
-        "quality_route": {"route": PUBLISH_ROUTE},
+        "quality_route": quality_route,
         "rewrite_instructions": rewrite_instructions,
         "final_report": final_report,
         "report_markdown": render_markdown(final_report),
@@ -326,7 +332,7 @@ def _blocked_outputs(
         "quality_events": quality_events,
         "quality_gate_metrics": quality_gate_metrics,
         "quality_result": quality_result,
-        "quality_route": {"route": route},
+        "quality_route": route,
         "rewrite_instructions": list(editor_decision["rewrite_instructions"]),
         "blocked_report": blocked_report,
     }
@@ -435,13 +441,13 @@ def _quality_gate_metrics(
             if isinstance(category, Mapping) and category.get("code")
         ],
         "unsupported_sections_count": len(unsupported_sections),
-        "blocked": route != PUBLISH_ROUTE,
+        "blocked": route in {BLOCKED_ROUTE, HUMAN_REVIEW_ROUTE},
         "decision": editor_decision["decision"],
         "route": route,
         "risk_level": verification_result.get("risk_level"),
         "quality_score": editor_decision["quality_score"],
         "rewrite_attempts": rewrite_attempts,
-        "rewrite_required": editor_decision["decision"] == REWRITE_REQUIRED_DECISION,
+        "rewrite_required": route == REWRITE_ROUTE or editor_decision["decision"] == REWRITE_REQUIRED_DECISION,
         "human_review_required": human_review_required,
     }
 
@@ -455,15 +461,15 @@ def _quality_result(
     quality_gate_metrics: dict[str, Any],
     citation_check_result: dict[str, Any],
 ) -> dict[str, Any]:
-    passed = route == PUBLISH_ROUTE
+    passed = route in {PUBLISH_ROUTE, REWRITE_ROUTE}
     return {
         "decision": editor_decision["decision"],
         "passed": passed,
         "route": route,
-        "blocked": not passed,
+        "blocked": route in {BLOCKED_ROUTE, HUMAN_REVIEW_ROUTE},
         "quality_score": editor_decision["quality_score"],
         "rewrite_attempts": rewrite_attempts,
-        "rewrite_required": editor_decision["decision"] == REWRITE_REQUIRED_DECISION,
+        "rewrite_required": route == REWRITE_ROUTE or editor_decision["decision"] == REWRITE_REQUIRED_DECISION,
         "human_review_required": human_review_required,
         "route_history": _route_history(
             route=route,
@@ -484,14 +490,20 @@ def _quality_result(
             "citation_failure_categories": _list_value(
                 citation_check_result.get("failure_categories")
             ),
-            "remediation": list(editor_decision["rewrite_instructions"])
-            or [
-                "human reviewer must approve, reject, or request rewrite"
-                if human_review_required
-                else None
-            ],
+            "remediation": _quality_remediation(
+                rewrite_instructions=editor_decision["rewrite_instructions"],
+                human_review_required=human_review_required,
+            ),
         },
     }
+
+
+def _quality_remediation(*, rewrite_instructions: list[str], human_review_required: bool) -> list[str]:
+    if rewrite_instructions:
+        return list(rewrite_instructions)
+    if human_review_required:
+        return ["human reviewer must approve, reject, or request rewrite"]
+    return []
 
 
 def _human_review_request(
@@ -508,10 +520,7 @@ def _human_review_request(
         "review_id": review_id,
         "run_id": _field_value(request, "run_id") or bundle_id,
         "draft_id": f"draft-{bundle_id}",
-        "reason": _first_or_default(
-            editor_decision["reasons"],
-            "editor requested human review before publication",
-        ),
+        "reason": _human_review_reason(editor_decision),
         "risk_level": verification_result.get("risk_level") or "medium",
         "status": "pending",
         "title": report_draft.get("title") or _request_title(request),
@@ -520,14 +529,25 @@ def _human_review_request(
         "rewrite_instructions": list(editor_decision["rewrite_instructions"]),
         "quality_artifact_refs": {
             "editor_review": "editor_review.json",
+            "report_quality_summary": "report_quality_summary.json",
             "quality_result": "quality_result.json",
             "quality_gate_metrics": "quality_gate_metrics.json",
         },
         "metadata": {
             "decision": editor_decision["decision"],
             "evidence_bundle_id": bundle_id,
+            "remediation": _quality_remediation(
+                rewrite_instructions=editor_decision["rewrite_instructions"],
+                human_review_required=True,
+            ),
         },
     }
+
+
+def _human_review_reason(editor_decision: dict[str, Any]) -> str:
+    if editor_decision["decision"] == BLOCK_DECISION:
+        return "quality gate blocked"
+    return "quality gate rewrite required"
 
 
 def _read_optional_draft(buffer: ScopedDataBuffer, key: str) -> dict[str, Any] | None:
@@ -604,12 +624,12 @@ def _route_history(
     human_review_required: bool,
 ) -> list[str]:
     history: list[str] = []
-    if rewrite_attempts > 0 or decision == REWRITE_REQUIRED_DECISION:
-        history.append("rewrite")
-    if human_review_required:
-        history.append(HUMAN_REVIEW_ROUTE)
+    if rewrite_attempts > 0 or route == REWRITE_ROUTE or decision == REWRITE_REQUIRED_DECISION:
+        history.append(REWRITE_ROUTE)
     if route == BLOCKED_ROUTE:
         history.append(BLOCKED_ROUTE)
+    if human_review_required or route == HUMAN_REVIEW_ROUTE:
+        history.append(HUMAN_REVIEW_ROUTE)
     if route == PUBLISH_ROUTE:
         history.append(PUBLISH_ROUTE)
     return history or [route]

@@ -12,7 +12,7 @@ def test_finalize_report_pass_publishes_final_report_and_markdown() -> None:
     output = finalize_report(_buffer(editor_review=_editor_review("pass")))
 
     assert output["quality_result"]["passed"] is True
-    assert output["quality_result"]["route"] == "publish"
+    assert output["quality_result"]["route"] == "final"
     assert output["quality_gate_metrics"]["blocked"] is False
     assert output["final_report"].title == "Daily Intelligence: AI policy"
     assert output["final_report"].metadata["accepted_claims_count"] == 1
@@ -37,6 +37,7 @@ def test_finalize_report_rewrite_required_with_edited_draft_publishes_edit() -> 
 
     assert output["quality_result"]["passed"] is True
     assert output["quality_result"]["decision"] == "rewrite_required"
+    assert output["quality_result"]["route"] == "rewrite"
     assert output["quality_result"]["rewrite_attempts"] == 1
     assert output["final_report"].title == "Edited Daily Intelligence"
     assert output["final_report"].sections[0]["claim_grounding"][0]["claim_id"] == "claim-1"
@@ -93,7 +94,7 @@ def test_finalize_report_human_review_required_creates_request_and_blocked_marke
     output = finalize_report(
         _buffer(
             editor_review=_editor_review(
-                "human_review_required",
+                "human_review",
                 reasons=["borderline high-risk topic"],
             )
         )
@@ -104,7 +105,10 @@ def test_finalize_report_human_review_required_creates_request_and_blocked_marke
     assert output["quality_result"]["human_review_required"] is True
     assert output["quality_gate_metrics"]["human_review_required"] is True
     assert output["human_review_request"]["status"] == "pending"
-    assert output["human_review_request"]["reason"] == "borderline high-risk topic"
+    assert output["human_review_request"]["reason"] == "quality gate rewrite required"
+    assert output["human_review_request"]["metadata"]["remediation"] == [
+        "human reviewer must approve, reject, or request rewrite"
+    ]
     assert output["blocked_report"].metadata["human_review_required"] is True
     assert output["quality_result"]["metadata"]["remediation"] == [
         "human reviewer must approve, reject, or request rewrite"
@@ -124,7 +128,7 @@ def test_finalize_report_block_decision_creates_blocked_report() -> None:
     )
 
     assert output["quality_result"]["passed"] is False
-    assert output["quality_result"]["decision"] == "block"
+    assert output["quality_result"]["decision"] == "blocked"
     assert output["quality_result"]["route"] == "blocked"
     assert output["quality_gate_metrics"]["blocked"] is True
     assert output["blocked_report"].reasons == ["source boundary violated"]

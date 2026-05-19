@@ -357,6 +357,7 @@ def test_editor_gate_human_review_for_high_risk_borderline_report() -> None:
     assert review.to_dict()["required_changes"] == [
         "human reviewer must approve, reject, or request rewrite"
     ]
+    assert review.final_notes == "quality review required before finalization"
 
 
 def test_blocked_report_payload_is_standardized() -> None:
@@ -406,6 +407,7 @@ def test_human_review_request_payload_and_decision_mapping() -> None:
     assert mapped.decision == "rewrite_required"
     assert mapped.route == "rewrite"
     assert mapped.rewrite_required is True
+    assert mapped.route_history == ["human_review", "rewrite"]
 
 
 

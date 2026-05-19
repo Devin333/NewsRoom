@@ -16,7 +16,7 @@ def test_agentic_rewrite_required_with_valid_edited_draft_succeeds(tmp_path) -> 
     assert result.status == WorkflowStatus.SUCCEEDED
     assert result.output["editor_review"]["decision"] == "rewrite_required"
     assert result.output["quality_result"]["passed"] is True
-    assert result.output["quality_result"]["route"] == "publish"
+    assert result.output["quality_result"]["route"] == "rewrite"
     assert result.output["quality_result"]["rewrite_attempts"] == 1
     assert result.output["quality_gate_metrics"]["rewrite_attempts"] == 1
     assert result.output["final_report"].metadata["rewrite_attempts"] == 1
