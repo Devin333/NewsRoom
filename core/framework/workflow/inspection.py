@@ -20,6 +20,9 @@ from core.framework.workflow.manifest import (
 )
 
 
+DEFAULT_ARTIFACT_INDEX_KEYS = ("artifact_index", "source_artifacts")
+
+
 class WorkflowRunInspectionError(RuntimeError):
     """Raised when a workflow run artifact directory cannot be inspected."""
 
@@ -1557,6 +1560,8 @@ class WorkflowRunInspector:
         *,
         run_dir: str | Path | None = None,
         redact: bool = True,
+        expand_artifact_indexes: bool = True,
+        artifact_index_keys: Iterable[str] | None = None,
         expand_source_artifacts: bool = True,
         max_artifact_bytes: int | None = None,
     ) -> WorkflowReplayContentBundle:
@@ -1593,11 +1598,12 @@ class WorkflowRunInspector:
             )
             for artifact_key, relative_path in sorted(artifact_paths.items())
         ]
-        if expand_source_artifacts:
+        if expand_artifact_indexes and expand_source_artifacts:
             artifacts.extend(
-                read_source_artifact_content_records(
+                read_artifact_index_content_records(
                     actual_run_dir,
                     artifact_paths,
+                    index_keys=artifact_index_keys,
                     redact=redact,
                     max_bytes=max_artifact_bytes,
                 )
@@ -1946,12 +1952,16 @@ def build_workflow_replay_content_bundle(
     run_dir: str | Path,
     *,
     redact: bool = True,
+    expand_artifact_indexes: bool = True,
+    artifact_index_keys: Iterable[str] | None = None,
     expand_source_artifacts: bool = True,
     max_artifact_bytes: int | None = None,
 ) -> WorkflowReplayContentBundle:
     return WorkflowRunInspector().build_replay_content_bundle(
         run_dir=run_dir,
         redact=redact,
+        expand_artifact_indexes=expand_artifact_indexes,
+        artifact_index_keys=artifact_index_keys,
         expand_source_artifacts=expand_source_artifacts,
         max_artifact_bytes=max_artifact_bytes,
     )
@@ -2137,18 +2147,22 @@ def read_workflow_artifact_content(
         )
 
 
-def read_source_artifact_content_records(
+def read_artifact_index_content_records(
     run_dir: str | Path,
     artifact_paths: dict[str, str],
     *,
+    index_keys: Iterable[str] | None = None,
     redact: bool = True,
     max_bytes: int | None = None,
 ) -> list[WorkflowArtifactContentRecord]:
-    source_index_path = artifact_paths.get("source_artifacts")
-    if not isinstance(source_index_path, str):
+    index_artifact_key, index_path_value = _first_artifact_index_path(
+        artifact_paths,
+        index_keys=index_keys,
+    )
+    if index_artifact_key is None or not isinstance(index_path_value, str):
         return []
     try:
-        index_path = _artifact_content_path(Path(run_dir), source_index_path)
+        index_path = _artifact_content_path(Path(run_dir), index_path_value)
         index_payload = _read_json_file(index_path)
     except (OSError, ValueError, WorkflowRunInspectionError):
         return []
@@ -2166,7 +2180,7 @@ def read_source_artifact_content_records(
             continue
         record = read_workflow_artifact_content(
             run_dir,
-            _source_artifact_key(entry),
+            _artifact_index_entry_key(index_artifact_key, entry),
             relative_path,
             redact=redact,
             max_bytes=max_bytes,
@@ -2176,14 +2190,32 @@ def read_source_artifact_content_records(
                 record,
                 metadata={
                     **dict(record.metadata),
-                    "source_artifact": True,
+                    "artifact_index": True,
+                    "index_artifact_key": index_artifact_key,
                     "source_id": entry.get("source_id"),
+                    "entity_id": entry.get("entity_id"),
                     "artifact_type": entry.get("artifact_type"),
                     "object_id": entry.get("object_id"),
                 },
             )
         )
     return records
+
+
+def read_source_artifact_content_records(
+    run_dir: str | Path,
+    artifact_paths: dict[str, str],
+    *,
+    redact: bool = True,
+    max_bytes: int | None = None,
+) -> list[WorkflowArtifactContentRecord]:
+    return read_artifact_index_content_records(
+        run_dir,
+        artifact_paths,
+        index_keys=("source_artifacts",),
+        redact=redact,
+        max_bytes=max_bytes,
+    )
 
 
 def redact_sensitive_values(value: Any) -> Any:
@@ -3456,11 +3488,23 @@ def _redact_if_needed(value: Any, *, redact: bool) -> Any:
     return redact_sensitive_values(value) if redact else value
 
 
-def _source_artifact_key(entry: dict[str, Any]) -> str:
+def _first_artifact_index_path(
+    artifact_paths: dict[str, str],
+    *,
+    index_keys: Iterable[str] | None,
+) -> tuple[str | None, str | None]:
+    for index_key in index_keys or DEFAULT_ARTIFACT_INDEX_KEYS:
+        path = artifact_paths.get(str(index_key))
+        if isinstance(path, str):
+            return str(index_key), path
+    return None, None
+
+
+def _artifact_index_entry_key(index_artifact_key: str, entry: dict[str, Any]) -> str:
     parts = [
-        "source_artifact",
+        str(index_artifact_key),
         str(entry.get("artifact_type") or "unknown"),
-        str(entry.get("source_id") or "unknown-source"),
+        str(entry.get("entity_id") or entry.get("source_id") or "unknown-entity"),
         str(entry.get("object_id") or "unknown-object"),
     ]
     return ".".join(_artifact_key_segment(part) for part in parts)

@@ -325,12 +325,16 @@ class WorkflowRunner:
         run_id: str,
         *,
         redact: bool = True,
+        expand_artifact_indexes: bool = True,
+        artifact_index_keys: list[str] | None = None,
         expand_source_artifacts: bool = True,
         max_artifact_bytes: int | None = None,
     ) -> WorkflowReplayContentBundle:
         return self._run_inspector.build_replay_content_bundle(
             run_id,
             redact=redact,
+            expand_artifact_indexes=expand_artifact_indexes,
+            artifact_index_keys=artifact_index_keys,
             expand_source_artifacts=expand_source_artifacts,
             max_artifact_bytes=max_artifact_bytes,
         )

@@ -34,6 +34,7 @@ from core.framework.workflow import (
     latest_workflow_run,
     list_workflow_runs,
     paused_run_items,
+    read_artifact_index_content_records,
     read_source_artifact_content_records,
     read_workflow_artifact_content,
     redact_sensitive_values,
@@ -383,7 +384,50 @@ def test_workflow_artifact_content_supports_limits_and_raw_redaction(tmp_path) -
     }
 
 
-def test_workflow_replay_content_expands_source_artifacts(tmp_path) -> None:
+def test_workflow_replay_content_expands_artifact_index_entries(tmp_path) -> None:
+    run_dir = tmp_path / "artifact-index-run"
+    item_dir = run_dir / "artifacts" / "items" / "feed"
+    item_dir.mkdir(parents=True)
+    (run_dir / "artifact_index").mkdir()
+    artifact_index = {
+        "entries": [
+            {
+                "artifact_type": "item",
+                "entity_id": "feed/source",
+                "object_id": "item-1",
+                "path": "artifacts/items/feed/item-1.json",
+            }
+        ]
+    }
+    manifest = {
+        "run_id": "artifact-index-run",
+        "status": "succeeded",
+        "artifacts": {"artifact_index": "artifact_index/index.json"},
+    }
+    (run_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    (run_dir / "artifact_index" / "index.json").write_text(
+        json.dumps(artifact_index),
+        encoding="utf-8",
+    )
+    (item_dir / "item-1.json").write_text(
+        json.dumps({"item": {"title": "Item", "metadata": {"api_key": "hidden-key"}}}),
+        encoding="utf-8",
+    )
+
+    records = read_artifact_index_content_records(
+        run_dir,
+        {"artifact_index": "artifact_index/index.json"},
+    )
+    bundle = WorkflowRunInspector().build_replay_content_bundle(run_dir=run_dir)
+
+    assert records[0].artifact_key == "artifact_index.item.feed_source.item-1"
+    assert records[0].metadata["artifact_index"] is True
+    assert records[0].metadata["index_artifact_key"] == "artifact_index"
+    assert records[0].content["item"]["metadata"]["api_key"] == "[redacted]"
+    assert bundle.artifact_by_key("artifact_index.item.feed_source.item-1") is not None
+
+
+def test_workflow_replay_content_keeps_source_artifacts_compatibility(tmp_path) -> None:
     run_dir = tmp_path / "source-content-run"
     item_dir = run_dir / "sources" / "items" / "feed"
     item_dir.mkdir(parents=True)
@@ -419,10 +463,11 @@ def test_workflow_replay_content_expands_source_artifacts(tmp_path) -> None:
     )
     bundle = WorkflowRunInspector().build_replay_content_bundle(run_dir=run_dir)
 
-    assert records[0].artifact_key == "source_artifact.source_item.feed_source.item-1"
-    assert records[0].metadata["source_artifact"] is True
+    assert records[0].artifact_key == "source_artifacts.source_item.feed_source.item-1"
+    assert records[0].metadata["artifact_index"] is True
+    assert records[0].metadata["index_artifact_key"] == "source_artifacts"
     assert records[0].content["item"]["metadata"]["api_key"] == "[redacted]"
-    assert bundle.artifact_by_key("source_artifact.source_item.feed_source.item-1") is not None
+    assert bundle.artifact_by_key("source_artifacts.source_item.feed_source.item-1") is not None
 
 
 def test_workflow_run_catalog_lists_filters_and_finds_latest(tmp_path) -> None:

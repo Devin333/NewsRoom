@@ -260,8 +260,8 @@ def test_run_inspection_replay_expands_source_artifacts(tmp_path) -> None:
 
     payload = result.to_dict()
     artifacts = {artifact["artifact_key"]: artifact for artifact in payload["artifacts"]}
-    item_key = "source_artifact.source_item.feed_source.item-1"
-    error_key = "source_artifact.source_error.feed_source.error-1"
+    item_key = "source_artifacts.source_item.feed_source.item-1"
+    error_key = "source_artifacts.source_error.feed_source.error-1"
     assert item_key in artifacts
     assert error_key in artifacts
     assert artifacts[item_key]["relative_path"] == "sources/items/feed/item-1.json"
