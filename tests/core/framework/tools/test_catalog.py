@@ -54,7 +54,6 @@ def test_builtin_dangerous_registry_collects_explicit_risky_tools(tmp_path) -> N
         run_id="run-tools",
         local_json_root=tmp_path / "local-json",
         vector_store=object(),
-        memory_ingestion_service=object(),
         qdrant_vector_store=object(),
         qdrant_document_store=object(),
         notification_options={
@@ -68,7 +67,7 @@ def test_builtin_dangerous_registry_collects_explicit_risky_tools(tmp_path) -> N
     assert {
         "artifact.write",
         "local_json.save",
-        "memory.index",
+        "memory.write",
         "notification.rss_publish",
         "notification.webhook",
         "qdrant.upsert",

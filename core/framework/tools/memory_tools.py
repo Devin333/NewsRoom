@@ -13,7 +13,7 @@ from core.framework.tools.models import ToolDefinition
 from core.framework.tools.registry import ToolRegistry
 
 
-DEFAULT_MEMORY_COLLECTION = "report_sections"
+DEFAULT_MEMORY_COLLECTION = "memories"
 
 
 def register_memory_tools(
@@ -21,7 +21,6 @@ def register_memory_tools(
     *,
     vector_store: Any | None = None,
     default_collection: str = DEFAULT_MEMORY_COLLECTION,
-    ingestion_service: Any | None = None,
     memory_runtime: MemoryRuntime | None = None,
 ) -> None:
     runtime = memory_runtime or _runtime_from_vector_store(
@@ -168,34 +167,6 @@ def register_memory_tools(
         ),
         lambda args: _forget_memory(args, runtime=runtime),
     )
-    if ingestion_service is not None:
-        registry.register(
-            ToolDefinition(
-                name="memory.index",
-                description="Deprecated: index report or evidence payloads into vector memory.",
-                input_schema={
-                    "required": ["run_id"],
-                    "properties": {
-                        "run_id": {"type": "string"},
-                        "report": {"type": "object"},
-                        "evidence_bundle": {"type": "object"},
-                        "run_output": {"type": "object"},
-                        "report_id": {"type": "string"},
-                        "topic": {"type": "string"},
-                    },
-                    "additionalProperties": False,
-                },
-                side_effect="writes_external_state",
-                concurrency_safe=False,
-                max_result_bytes=100_000,
-                metadata={
-                    "deprecated": True,
-                    "deprecated_replacement": "memory.write",
-                    "writes_vector_memory": True,
-                },
-            ),
-            lambda args: _index_memory(args, ingestion_service=ingestion_service),
-        )
 
 
 def _recall_memory(
@@ -269,7 +240,6 @@ def _explain_memory_runtime(args: dict[str, Any], *, runtime: MemoryRuntime) -> 
             "memory.recall": "available",
             "memory.write": "available",
             "memory.search": "deprecated alias for memory.recall",
-            "memory.index": "deprecated legacy ingestion path when configured",
             "memory.explain": "available",
             "memory.consolidate": "available",
             "memory.forget": "available",
@@ -289,48 +259,6 @@ def _forget_memory(args: dict[str, Any], *, runtime: MemoryRuntime) -> dict[str,
     if result is None:
         return {"success": True, "forgotten_count": 0, "memory_ids": request.memory_ids}
     return result.to_dict()
-
-
-def _index_memory(
-    args: dict[str, Any],
-    *,
-    ingestion_service: Any,
-) -> dict[str, Any]:
-    run_id = str(args["run_id"]).strip()
-    if not run_id:
-        raise ValueError("run_id is required")
-
-    output: dict[str, Any] = {}
-    indexed_inputs: list[str] = []
-    if args.get("run_output") is not None:
-        run_output = args["run_output"]
-        if not isinstance(run_output, dict):
-            raise ValueError("run_output must be an object")
-        output.update(run_output)
-        indexed_inputs.append("run_output")
-    if args.get("report") is not None:
-        output["final_report"] = args["report"]
-        indexed_inputs.append("report")
-    if args.get("evidence_bundle") is not None:
-        output["evidence_bundle"] = args["evidence_bundle"]
-        indexed_inputs.append("evidence_bundle")
-
-    if "final_report" not in output and "evidence_bundle" not in output:
-        raise ValueError("report, evidence_bundle, or run_output is required")
-
-    result = ingestion_service.ingest_run_output(
-        output,
-        run_id=run_id,
-        report_id=_optional_string(args.get("report_id")),
-        topic=_optional_string(args.get("topic")),
-    )
-    return {
-        "run_id": run_id,
-        "report_id": _optional_string(args.get("report_id")),
-        "topic": _optional_string(args.get("topic")),
-        "indexed_inputs": indexed_inputs,
-        **result.to_dict(),
-    }
 
 
 def _limit(value: Any) -> int:
@@ -383,7 +311,10 @@ def _legacy_search_result(result: dict[str, Any]) -> dict[str, Any]:
         "payload": payload,
         "refs": dict(result.get("refs") or {}),
     }
-    for key in ("run_id", "report_id", "evidence_id", "source_item_id", "topic", "section_id"):
+    for key, value in legacy["refs"].items():
+        if value is not None:
+            legacy.setdefault(str(key), value)
+    for key in ("run_id", "artifact_id", "record_id", "topic", "section_id"):
         value = result.get(key) or payload.get(key)
         if value is not None:
             legacy[key] = value

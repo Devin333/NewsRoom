@@ -6,6 +6,7 @@ from typing import Any
 from business.boards.paper_radar.tools import register_arxiv_tools
 from business.boards.project_radar.tools import register_github_tools
 from business.layers.analysis.tools import register_quality_tools
+from business.layers.output.memory_tools import register_memory_index_tools
 from business.layers.output.postgres_tools import register_postgres_tools
 from business.layers.output.tools import register_report_tools
 from business.layers.signal.tools import FetchText, register_source_tools
@@ -56,7 +57,6 @@ def build_business_tool_registry(
         run_id=run_id,
         local_json_root=local_json_root,
         vector_store=vector_store,
-        memory_ingestion_service=memory_ingestion_service,
         memory_runtime=memory_runtime,
         qdrant_vector_store=qdrant_vector_store,
         qdrant_document_store=qdrant_document_store,
@@ -82,6 +82,7 @@ def build_business_tool_registry(
         persistence_repository=persistence_repository,
         postgres_repository=postgres_repository,
         postgres_source_health_repository=postgres_source_health_repository,
+        memory_ingestion_service=memory_ingestion_service,
         include_network_tools=include_network_tools or include_dangerous_tools,
     )
     if include_dangerous_tools:
@@ -106,7 +107,6 @@ def build_business_dangerous_tool_registry(**kwargs: Any) -> ToolRegistry:
         run_id=options.get("run_id"),
         local_json_root=options.get("local_json_root"),
         vector_store=options.get("vector_store"),
-        memory_ingestion_service=options.get("memory_ingestion_service"),
         memory_runtime=options.get("memory_runtime"),
         qdrant_vector_store=options.get("qdrant_vector_store"),
         qdrant_document_store=options.get("qdrant_document_store"),
@@ -131,6 +131,7 @@ def build_business_dangerous_tool_registry(**kwargs: Any) -> ToolRegistry:
         persistence_repository=options.get("persistence_repository"),
         postgres_repository=options.get("postgres_repository"),
         postgres_source_health_repository=options.get("postgres_source_health_repository"),
+        memory_ingestion_service=options.get("memory_ingestion_service"),
         include_network_tools=include_network_tools,
     )
     return _filter_business_registry(registry, dangerous_only=True)
@@ -153,6 +154,7 @@ def register_business_tools(
     persistence_repository: Any | None = None,
     postgres_repository: Any | None = None,
     postgres_source_health_repository: Any | None = None,
+    memory_ingestion_service: Any | None = None,
     include_network_tools: bool = False,
 ) -> None:
     register_source_tools(
@@ -171,6 +173,8 @@ def register_business_tools(
         report_service=report_service,
     )
     register_quality_tools(registry)
+    if memory_ingestion_service is not None:
+        register_memory_index_tools(registry, ingestion_service=memory_ingestion_service)
     if include_network_tools:
         register_arxiv_tools(registry, connector=arxiv_connector)
         register_github_tools(registry, connector=github_connector)
