@@ -99,25 +99,24 @@ def test_tool_test_runner_dry_run_blocks_default_dangerous_named_tool() -> None:
     assert report.observation.result.error_message == "dangerous tool is not allowed: http.request"
 
 
-def test_tool_test_runner_dry_run_enforces_restricted_agent_boundary() -> None:
+def test_tool_test_runner_dry_run_uses_explicit_tool_policy() -> None:
     registry = ToolRegistry()
-    registry.register(ToolDefinition(name="source.fetch_url"), lambda args: {"body": "ok"})
+    registry.register(ToolDefinition(name="http.fetch"), lambda args: {"body": "ok"})
     runner = ToolTestRunner(registry)
 
     report = runner.run_case(
         ToolTestCase(
-            name="writer fetch dry run blocked",
-            tool_name="source.fetch_url",
-            requested_by_agent_id="WriterAgent",
-            policy=ToolPolicy(allowed_tools=["source.fetch_url"]),
-            expected_status=ToolStatus.BLOCKED,
-            expected_error_type="ToolPermissionError",
+            name="generic fetch dry run succeeds",
+            tool_name="http.fetch",
+            requested_by_agent_id="collector",
+            policy=ToolPolicy(allowed_tools=["http.fetch"]),
+            expected_status=ToolStatus.SUCCEEDED,
             dry_run=True,
         )
     )
 
     assert report.passed is True
-    assert "restricted agent" in (report.observation.result.error_message or "")
+    assert report.observation.status == ToolStatus.SUCCEEDED
 
 
 def test_tool_test_runner_runs_minimal_safe_registry_contract() -> None:

@@ -322,6 +322,9 @@ def inspect_tool_registry(
     agent_id: str | None = None,
     agent_tool_policies: dict[str, ToolPolicy | dict[str, Any] | list[str] | tuple[str, ...]]
     | None = None,
+    boundary_restricted_agent_ids: set[str] | None = None,
+    boundary_tool_prefixes: tuple[str, ...] = (),
+    boundary_tool_names: set[str] | None = None,
 ) -> ToolRegistryInspection:
     definitions = sorted(registry.list_tools(), key=lambda item: (item.namespace, item.name))
     validation = registry.validate_no_conflicts()
@@ -423,7 +426,12 @@ def inspect_tool_registry(
 
     boundary_report = None
     if agent_tool_policies is not None:
-        boundary_report = audit_agent_tool_boundary(agent_tool_policies)
+        boundary_report = audit_agent_tool_boundary(
+            agent_tool_policies,
+            restricted_agent_ids=boundary_restricted_agent_ids,
+            external_fetch_tool_prefixes=boundary_tool_prefixes,
+            external_fetch_tool_names=boundary_tool_names,
+        )
         for finding in boundary_report.findings:
             findings.append(
                 ToolInspectionFinding(
@@ -547,6 +555,9 @@ def inspect_tool_runtime(
     agent_id: str | None = None,
     agent_tool_policies: dict[str, ToolPolicy | dict[str, Any] | list[str] | tuple[str, ...]]
     | None = None,
+    boundary_restricted_agent_ids: set[str] | None = None,
+    boundary_tool_prefixes: tuple[str, ...] = (),
+    boundary_tool_names: set[str] | None = None,
     recent_limit: int = 20,
 ) -> ToolRuntimeInspectionReport:
     registry_report = inspect_tool_registry(
@@ -554,6 +565,9 @@ def inspect_tool_runtime(
         policy=policy,
         agent_id=agent_id,
         agent_tool_policies=agent_tool_policies,
+        boundary_restricted_agent_ids=boundary_restricted_agent_ids,
+        boundary_tool_prefixes=boundary_tool_prefixes,
+        boundary_tool_names=boundary_tool_names,
     )
     executor_report = (
         inspect_tool_executor(executor, recent_limit=recent_limit)

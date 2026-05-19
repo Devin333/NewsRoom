@@ -27,13 +27,13 @@ def _inspection_registry() -> ToolRegistry:
     )
     registry.register(
         ToolDefinition(
-            name="report.publish",
+            name="publish.record",
             side_effect="publishing",
             requires_approval=True,
-            input_schema={"required": ["report_id"], "properties": {"report_id": {"type": "string"}}},
+            input_schema={"required": ["item_id"], "properties": {"item_id": {"type": "string"}}},
             timeout_seconds=10,
         ),
-        lambda args: {"published": True, "report_id": args["report_id"]},
+        lambda args: {"published": True, "item_id": args["item_id"]},
     )
     registry.register(
         ToolDefinition(
@@ -67,7 +67,7 @@ def test_classify_tool_risk_is_deterministic() -> None:
     assert (
         classify_tool_risk(
             ToolDefinition(
-                name="report.publish",
+                name="publish.record",
                 side_effect="publishing",
                 requires_approval=True,
             )
@@ -91,7 +91,7 @@ def test_inspect_tool_policy_reports_exposure_and_unknown_tools() -> None:
     policy = ToolPolicy(
         allowed_tools=[
             "memory.search",
-            "report.publish",
+            "publish.record",
             "mcp.fixture.echo",
             "unknown.tool",
         ],
@@ -115,15 +115,15 @@ def test_inspect_tool_policy_reports_exposure_and_unknown_tools() -> None:
 def test_inspect_tool_policy_reports_dangerous_exposure_when_explicitly_enabled() -> None:
     registry = _inspection_registry()
     policy = ToolPolicy(
-        allowed_tools=["report.publish"],
+        allowed_tools=["publish.record"],
         allow_dangerous_tools=True,
     )
 
     inspection = inspect_tool_policy(registry, policy, agent_id="publisher")
 
     assert inspection.exposed_tool_count == 1
-    assert inspection.exposed_dangerous_tools == ["report.publish"]
-    assert inspection.exposed_side_effect_tools == ["report.publish"]
+    assert inspection.exposed_dangerous_tools == ["publish.record"]
+    assert inspection.exposed_side_effect_tools == ["publish.record"]
 
 
 def test_inspection_counts_default_dangerous_tool_names_without_marker() -> None:
@@ -156,17 +156,19 @@ def test_inspection_counts_default_dangerous_tool_names_without_marker() -> None
 def test_inspect_tool_registry_reports_risk_namespaces_and_findings() -> None:
     registry = _inspection_registry()
     policy = ToolPolicy(
-        allowed_tools=["memory.search", "report.publish", "system.command"],
+        allowed_tools=["memory.search", "publish.record", "system.command"],
         allow_dangerous_tools=True,
     )
 
     inspection = inspect_tool_registry(
         registry,
         policy=policy,
-        agent_id="writer",
+        agent_id="locked",
         agent_tool_policies={
-            "writer": ToolPolicy(allowed_tools=["source.fetch_url", "report.publish"])
+            "locked": ToolPolicy(allowed_tools=["http.fetch", "publish.record"])
         },
+        boundary_restricted_agent_ids={"locked"},
+        boundary_tool_prefixes=("http.",),
     )
     payload = inspection.to_dict()
     finding_codes = {finding.code for finding in inspection.findings}
@@ -181,8 +183,8 @@ def test_inspect_tool_registry_reports_risk_namespaces_and_findings() -> None:
         "high": 0,
         "critical": 2,
     }
-    assert namespaces["report"].side_effect_count == 1
-    assert namespaces["report"].dangerous_count == 1
+    assert namespaces["publish"].side_effect_count == 1
+    assert namespaces["publish"].dangerous_count == 1
     assert namespaces["system"].dangerous_count == 1
     assert "dangerous_tool_defined" in finding_codes
     assert "policy_exposes_dangerous_tool" in finding_codes
@@ -216,7 +218,7 @@ def test_inspect_tool_executor_summarizes_success_failed_and_blocked_calls() -> 
         policy,
     )
     blocked = executor.execute(
-        ToolCall(tool_name="report.publish", arguments={"report_id": "r1"}, call_id="blocked"),
+        ToolCall(tool_name="publish.record", arguments={"item_id": "r1"}, call_id="blocked"),
         policy,
     )
     failed = executor.execute(
@@ -241,7 +243,7 @@ def test_inspect_tool_executor_summarizes_success_failed_and_blocked_calls() -> 
     assert inspection.failed_or_blocked_count == 2
     assert len(inspection.recent_records) == 2
     assert len(inspection.recent_events) == 2
-    assert payload["metrics"]["calls_by_tool"] == {"memory.search": 2, "report.publish": 1}
+    assert payload["metrics"]["calls_by_tool"] == {"memory.search": 2, "publish.record": 1}
     assert payload["status_counts"]["blocked"] == 1
 
 

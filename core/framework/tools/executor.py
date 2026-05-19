@@ -357,7 +357,7 @@ def _restricted_agent_boundary_gate(call: ToolCall) -> ToolResult | None:
             status=ToolStatus.BLOCKED,
             error_type="ToolPermissionError",
             error_message=(
-                "restricted agent is not allowed to call external fetch/search "
+                "restricted agent is not allowed to call configured boundary "
                 f"tool: {call.tool_name}"
             ),
         )

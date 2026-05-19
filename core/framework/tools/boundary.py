@@ -7,21 +7,9 @@ from typing import Any
 from core.framework.tools.models import ToolPolicy
 
 
-DEFAULT_RESTRICTED_AGENT_IDS = {"writer", "writeragent", "editor", "editoragent"}
-DEFAULT_EXTERNAL_FETCH_TOOL_PREFIXES = (
-    "source.fetch",
-    "source.probe",
-    "source.extract",
-    "web.search",
-    "github.",
-    "arxiv.",
-)
-DEFAULT_EXTERNAL_FETCH_TOOL_NAMES = {
-    "source.fetch_url",
-    "source.fetch_official_blog",
-    "source.probe",
-    "web.search",
-}
+DEFAULT_RESTRICTED_AGENT_IDS: set[str] = set()
+DEFAULT_EXTERNAL_FETCH_TOOL_PREFIXES: tuple[str, ...] = ()
+DEFAULT_EXTERNAL_FETCH_TOOL_NAMES: set[str] = set()
 
 
 @dataclass(frozen=True)
@@ -88,7 +76,7 @@ def audit_agent_tool_boundary(
                         agent_id=agent_id,
                         tool_name=tool_name,
                         severity="blocking",
-                        message="Writer/Editor agents must not fetch or search external sources outside Source Pipeline.",
+                        message="agent is not allowed to call this tool by configured boundary",
                         action="remove_tool_from_agent_policy",
                     )
                 )

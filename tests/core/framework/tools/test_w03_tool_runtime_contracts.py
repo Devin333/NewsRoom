@@ -181,12 +181,12 @@ def test_observation_exposes_agent_loop_contract_fields_for_errors() -> None:
     assert payload["result"]["redaction_report"]["redacted"] is True
 
 
-def test_restricted_writer_agent_boundary_blocks_external_fetch_tool_even_allowlisted() -> None:
+def test_tool_executor_allows_allowlisted_generic_fetch_tool() -> None:
     calls = {"count": 0}
     registry = ToolRegistry()
     registry.register(
         ToolDefinition(
-            name="source.fetch_url",
+            name="http.fetch",
             input_schema={"required": [], "properties": {}, "additionalProperties": False},
         ),
         lambda args: calls.__setitem__("count", calls["count"] + 1),
@@ -194,16 +194,15 @@ def test_restricted_writer_agent_boundary_blocks_external_fetch_tool_even_allowl
 
     observation = ToolExecutor(registry).execute(
         ToolCall(
-            tool_name="source.fetch_url",
+            tool_name="http.fetch",
             arguments={},
-            requested_by_agent_id="WriterAgent",
+            requested_by_agent_id="collector",
         ),
-        ToolPolicy(allowed_tools=["source.fetch_url"]),
+        ToolPolicy(allowed_tools=["http.fetch"]),
     )
 
-    assert observation.status == ToolStatus.BLOCKED
-    assert calls["count"] == 0
-    assert "restricted agent" in (observation.result.error_message or "")
+    assert observation.status == ToolStatus.SUCCEEDED
+    assert calls["count"] == 1
 
 
 def test_mcp_adapter_namespaces_tools_and_wraps_transport_errors() -> None:
