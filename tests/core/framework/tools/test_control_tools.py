@@ -284,7 +284,7 @@ def test_control_delegate_to_subagent_tool_requires_approval_by_default() -> Non
     )
 
     assert observation.status == ToolStatus.APPROVAL_REQUIRED
-    assert task_queue.lease("worker-1", ["news:queue:daily"]) is None
+    assert task_queue.lease("worker-1", ["framework:queue:default"]) is None
 
 
 def test_control_delegate_to_subagent_tool_normalizes_queue_message_id() -> None:
@@ -328,7 +328,7 @@ def test_control_delegate_to_subagent_tool_rejects_blank_task_type_before_enqueu
 
     assert observation.status == ToolStatus.FAILED
     assert "task_type is required" in (observation.result.error_message or "")
-    assert task_queue.lease("worker-1", ["news:queue:daily"]) is None
+    assert task_queue.lease("worker-1", ["framework:queue:default"]) is None
 
 
 class _BytesMessageTaskQueue:

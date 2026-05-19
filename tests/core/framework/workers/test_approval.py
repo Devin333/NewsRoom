@@ -159,7 +159,7 @@ def test_approval_resume_context_includes_task_and_run_metadata() -> None:
                 requested_action="continue_agent",
                 task_id="task-paused",
                 run_id="run-paused",
-                metadata={"checkpoint_id": "ckpt-2", "queue_name": "news:queue:daily"},
+                metadata={"checkpoint_id": "ckpt-2", "queue_name": "framework:queue:default"},
             )
         ]
     )

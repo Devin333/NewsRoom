@@ -5,7 +5,7 @@ from typing import Any, Protocol
 from core.framework.tools.models import ToolDefinition
 from core.framework.tools.registry import ToolRegistry
 from core.framework.workers.approval import ApprovalRequest, ApprovalStore
-from core.framework.workers.models import Task
+from core.framework.workers.models import DEFAULT_TASK_QUEUE, Task
 
 
 class TaskQueueWriter(Protocol):
@@ -267,7 +267,7 @@ def _delegate_to_subagent(
     if not isinstance(metadata, dict):
         raise ValueError("metadata must be an object")
 
-    queue_name = str(args.get("queue_name") or "news:queue:daily").strip()
+    queue_name = str(args.get("queue_name") or DEFAULT_TASK_QUEUE).strip()
     if not queue_name:
         raise ValueError("queue_name is required")
 

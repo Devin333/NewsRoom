@@ -16,6 +16,7 @@ _EXPORT_MODULES = {
     "ApprovalStatus": "core.framework.workers.approval",
     "ApprovalStore": "core.framework.workers.approval",
     "BackpressurePolicy": "core.framework.workers.models",
+    "DEFAULT_TASK_QUEUE": "core.framework.workers.models",
     "DeadLetterRecord": "core.framework.workers.models",
     "EnqueuedScheduleTask": "core.framework.workers.scheduler",
     "InMemoryApprovalStore": "core.framework.workers.approval",

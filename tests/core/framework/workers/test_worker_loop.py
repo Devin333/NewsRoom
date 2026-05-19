@@ -48,7 +48,7 @@ def test_worker_loop_retries_handler_infrastructure_failure_without_raising() ->
         worker_id="worker-1",
         queue=queue,
         handlers={"unstable": _FailingHandler()},
-        queue_names=["news:queue:daily"],
+        queue_names=["framework:queue:default"],
     )
 
     result = worker.run_once()
@@ -69,7 +69,7 @@ def test_worker_loop_pauses_approval_task_without_acknowledging() -> None:
         worker_id="worker-1",
         queue=queue,
         handlers={"approval": _StaticHandler(TaskStatus.WAITING_FOR_APPROVAL)},
-        queue_names=["news:queue:daily"],
+        queue_names=["framework:queue:default"],
     )
 
     result = worker.run_once()
@@ -78,7 +78,7 @@ def test_worker_loop_pauses_approval_task_without_acknowledging() -> None:
     assert result.status == TaskStatus.WAITING_FOR_APPROVAL
     assert task.status == TaskStatus.WAITING_FOR_APPROVAL
     assert task.metadata["lease_count"] == 1
-    assert queue.queue_status("news:queue:daily").leased_count == 1
+    assert queue.queue_status("framework:queue:default").leased_count == 1
     assert worker.events[-1].event_type == "task_paused"
 
 
@@ -90,7 +90,7 @@ def test_worker_loop_does_not_retry_business_task_failure() -> None:
         worker_id="worker-1",
         queue=queue,
         handlers={"business-failure": _BusinessFailureHandler()},
-        queue_names=["news:queue:daily"],
+        queue_names=["framework:queue:default"],
     )
 
     result = worker.run_once()
@@ -109,7 +109,7 @@ def test_worker_loop_run_stops_on_max_tasks() -> None:
         worker_id="worker-1",
         queue=queue,
         handlers={"static": _StaticHandler(TaskStatus.SUCCEEDED)},
-        queue_names=["news:queue:daily"],
+        queue_names=["framework:queue:default"],
     )
 
     result = worker.run(max_tasks=2, idle_sleep_seconds=0)
@@ -125,7 +125,7 @@ def test_worker_loop_run_stops_on_max_idle_polls() -> None:
         worker_id="worker-1",
         queue=InMemoryTaskQueue(),
         handlers={},
-        queue_names=["news:queue:daily"],
+        queue_names=["framework:queue:default"],
         sleep_fn=slept.append,
     )
 

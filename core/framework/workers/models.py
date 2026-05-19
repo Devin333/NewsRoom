@@ -7,6 +7,9 @@ from typing import Any
 from uuid import uuid4
 
 
+DEFAULT_TASK_QUEUE = "framework:queue:default"
+
+
 class TaskStatus(str, Enum):
     CREATED = "created"
     QUEUED = "queued"
@@ -25,7 +28,7 @@ class TaskStatus(str, Enum):
 class Task:
     task_type: str
     payload: dict[str, Any]
-    queue_name: str = "news:queue:daily"
+    queue_name: str = DEFAULT_TASK_QUEUE
     task_id: str = field(default_factory=lambda: uuid4().hex)
     status: TaskStatus = TaskStatus.CREATED
     attempts: int = 0
@@ -80,7 +83,7 @@ class Task:
         return cls(
             task_id=str(data.get("task_id") or uuid4().hex),
             task_type=str(data["task_type"]),
-            queue_name=str(data.get("queue_name") or "news:queue:daily"),
+            queue_name=str(data.get("queue_name") or DEFAULT_TASK_QUEUE),
             payload=dict(data.get("payload") or {}),
             status=TaskStatus(data.get("status") or TaskStatus.CREATED.value),
             attempts=int(data.get("attempts", data.get("attempt", 0)) or 0),

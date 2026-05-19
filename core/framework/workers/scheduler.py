@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 from enum import Enum
 from typing import Any, Protocol
 
-from core.framework.workers.models import Task
+from core.framework.workers.models import DEFAULT_TASK_QUEUE, Task
 
 
 class ScheduleTriggerType(str, Enum):
@@ -38,7 +38,7 @@ class ScheduleSpec:
     trigger_type: ScheduleTriggerType | str
     task_type: str
     payload_template: dict[str, Any] = field(default_factory=dict)
-    queue_name: str = "news:queue:daily"
+    queue_name: str = DEFAULT_TASK_QUEUE
     enabled: bool = True
     timezone: str = "Asia/Tokyo"
     interval_seconds: int | None = None
@@ -101,7 +101,7 @@ class ScheduleSpec:
             trigger_type=str(data["trigger_type"]),
             task_type=str(data["task_type"]),
             payload_template=dict(data.get("payload_template") or {}),
-            queue_name=str(data.get("queue_name") or "news:queue:daily"),
+            queue_name=str(data.get("queue_name") or DEFAULT_TASK_QUEUE),
             enabled=bool(data.get("enabled", True)),
             timezone=str(data.get("timezone") or "Asia/Tokyo"),
             interval_seconds=trigger_config.get("interval_seconds"),

@@ -22,17 +22,17 @@ def test_in_memory_queue_enqueue_lease_ack() -> None:
     task = Task(task_type="daily_intelligence.run", payload={"topic": "AI"})
 
     queue.enqueue(task)
-    leased = queue.lease("worker-1", ["news:queue:daily"])
+    leased = queue.lease("worker-1", ["framework:queue:default"])
 
     assert leased is task
     assert leased.status == TaskStatus.LEASED
-    assert queue.queue_status("news:queue:daily").leased_count == 1
+    assert queue.queue_status("framework:queue:default").leased_count == 1
 
     queue.ack(leased.task_id, "worker-1")
 
     assert leased.status == TaskStatus.SUCCEEDED
     assert queue.events[-1].event_type == "task_succeeded"
-    assert queue.lease("worker-1", ["news:queue:daily"]) is None
+    assert queue.lease("worker-1", ["framework:queue:default"]) is None
 
 
 def test_in_memory_queue_backpressure_rejects_when_pending_limit_reached() -> None:
@@ -50,7 +50,7 @@ def test_in_memory_queue_backpressure_rejects_when_pending_limit_reached() -> No
     assert rejected.accepted is False
     assert rejected.reason == "backpressure"
     assert bool(rejected) is False
-    assert queue.queue_status("news:queue:daily").pending_count == 1
+    assert queue.queue_status("framework:queue:default").pending_count == 1
 
 
 def test_in_memory_queue_retry_delay_and_dead_letter_records_are_observable() -> None:
@@ -66,7 +66,7 @@ def test_in_memory_queue_retry_delay_and_dead_letter_records_are_observable() ->
         max_attempts=2,
     )
     queue.enqueue(retry_task)
-    leased = queue.lease("worker-1", ["news:queue:daily"])
+    leased = queue.lease("worker-1", ["framework:queue:default"])
 
     queue.fail(leased.task_id, "worker-1", TaskError("Timeout", "timeout"))
 
@@ -74,7 +74,7 @@ def test_in_memory_queue_retry_delay_and_dead_letter_records_are_observable() ->
     assert retry_task.scheduled_for == now + timedelta(seconds=30)
     assert queue.events[-1].event_type == "task_enqueued"
     assert any(event.event_type == "task_retry_scheduled" for event in queue.events)
-    status = queue.queue_status("news:queue:daily")
+    status = queue.queue_status("framework:queue:default")
     assert isinstance(status, QueueStatus)
     assert status.delayed_count == 1
 
@@ -85,7 +85,7 @@ def test_in_memory_queue_retry_delay_and_dead_letter_records_are_observable() ->
         max_attempts=1,
     )
     queue.enqueue(dead_letter_task)
-    leased_dead = queue.lease("worker-1", ["news:queue:daily"])
+    leased_dead = queue.lease("worker-1", ["framework:queue:default"])
     queue.fail(leased_dead.task_id, "worker-1", TaskError("TaskFailed", "failed"))
 
     dead_letters = queue.list_dead_letters()
@@ -104,7 +104,7 @@ def test_in_memory_queue_cancels_queued_task() -> None:
     assert cancelled is True
     assert task.status == TaskStatus.CANCELLED
     assert task.metadata["cancel_reason"] == "operator"
-    assert queue.lease("worker-1", ["news:queue:daily"]) is None
+    assert queue.lease("worker-1", ["framework:queue:default"]) is None
 
 
 def test_in_memory_queue_requeues_dead_letter_task() -> None:
@@ -116,11 +116,11 @@ def test_in_memory_queue_requeues_dead_letter_task() -> None:
         max_attempts=1,
     )
     queue.enqueue(task)
-    leased = queue.lease("worker-1", ["news:queue:daily"])
+    leased = queue.lease("worker-1", ["framework:queue:default"])
     queue.fail(leased.task_id, "worker-1", TaskError("TaskFailed", "failed"))
 
     requeued = queue.requeue_dead_letter("task-1", reason="operator_retry")
-    leased_again = queue.lease("worker-2", ["news:queue:daily"])
+    leased_again = queue.lease("worker-2", ["framework:queue:default"])
 
     assert requeued is True
     assert leased_again.task_id == "task-1"
@@ -143,10 +143,10 @@ def test_in_memory_queue_retry_exhaustion_routes_directly_to_dead_letter() -> No
         max_attempts=2,
     )
     queue.enqueue(task)
-    first = queue.lease("worker-1", ["news:queue:daily"])
+    first = queue.lease("worker-1", ["framework:queue:default"])
     queue.fail(first.task_id, "worker-1", TaskError("Timeout", "timeout"))
     clock["now"] = clock["now"] + timedelta(minutes=1)
-    second = queue.lease("worker-1", ["news:queue:daily"])
+    second = queue.lease("worker-1", ["framework:queue:default"])
     queue.fail(second.task_id, "worker-1", TaskError("Timeout", "timeout"))
 
     dead_letters = queue.list_dead_letters()
@@ -164,11 +164,11 @@ def test_in_memory_queue_requeued_task_re_failure_returns_to_dead_letter() -> No
         max_attempts=1,
     )
     queue.enqueue(task)
-    leased = queue.lease("worker-1", ["news:queue:daily"])
+    leased = queue.lease("worker-1", ["framework:queue:default"])
     queue.fail(leased.task_id, "worker-1", TaskError("TaskFailed", "failed"))
 
     queue.requeue_dead_letter("dl-task", reason="operator_retry")
-    leased_again = queue.lease("worker-2", ["news:queue:daily"])
+    leased_again = queue.lease("worker-2", ["framework:queue:default"])
     queue.fail(leased_again.task_id, "worker-2", TaskError("TaskFailed", "failed"))
 
     dead_letters = queue.list_dead_letters()
@@ -208,11 +208,11 @@ def test_in_memory_queue_reclaims_expired_lease() -> None:
         timeout_seconds=30,
     )
     queue.enqueue(task)
-    queue.lease("worker-1", ["news:queue:daily"])
+    queue.lease("worker-1", ["framework:queue:default"])
 
     reclaimed = queue.reclaim_stale(
         "worker-2",
-        ["news:queue:daily"],
+        ["framework:queue:default"],
         now=now + timedelta(seconds=31),
     )
 
@@ -233,7 +233,7 @@ def test_redis_stream_queue_enqueue_uses_xadd() -> None:
 
     assert message_id == "1-0"
     stream, payload = redis.xadd_calls[0]
-    assert stream == "news:queue:daily"
+    assert stream == "framework:queue:default"
     assert json.loads(payload["task"])["task_id"] == "task-1"
 
 
@@ -258,14 +258,14 @@ def test_redis_stream_queue_lease_one_decodes_task_payload() -> None:
     redis = _FakeRedisReader(task.to_dict())
     queue = RedisStreamTaskQueue(redis)
 
-    leased = queue.lease_one("worker-1", ["news:queue:daily"], block_ms=10)
+    leased = queue.lease_one("worker-1", ["framework:queue:default"], block_ms=10)
 
     assert leased.task.task_id == "task-1"
     assert leased.task.status == TaskStatus.LEASED
     assert leased.task.leased_by == "worker-1"
     assert leased.task.attempts == 1
     assert leased.task.metadata["lease_count"] == 1
-    assert leased.queue_name == "news:queue:daily"
+    assert leased.queue_name == "framework:queue:default"
     assert leased.message_id == "1-0"
 
 
@@ -278,7 +278,7 @@ def test_redis_stream_queue_reclaim_stale_one_claims_pending_payload() -> None:
 
     leased = queue.reclaim_stale_one(
         "worker-2",
-        ["news:queue:daily"],
+        ["framework:queue:default"],
         min_idle_ms=60_000,
     )
 
@@ -290,10 +290,10 @@ def test_redis_stream_queue_reclaim_stale_one_claims_pending_payload() -> None:
     assert leased.task.metadata["reclaimed"] is True
     assert leased.task.metadata["reclaimed_from_worker"] == "worker-1"
     assert leased.task.metadata["reclaimed_attempts_before"] == 1
-    assert leased.queue_name == "news:queue:daily"
+    assert leased.queue_name == "framework:queue:default"
     assert leased.message_id == "1-0"
     assert redis.xclaim_calls == [
-        ("news:queue:daily", "news-workers", "worker-2", 60_000, ["1-0"])
+        ("framework:queue:default", "framework-workers", "worker-2", 60_000, ["1-0"])
     ]
 
 
@@ -304,7 +304,7 @@ def test_redis_stream_queue_reclaim_stale_one_skips_fresh_pending_payload() -> N
 
     leased = queue.reclaim_stale_one(
         "worker-2",
-        ["news:queue:daily"],
+        ["framework:queue:default"],
         min_idle_ms=60_000,
     )
 
@@ -322,10 +322,10 @@ def test_redis_stream_queue_status_reads_pending_summary() -> None:
     )
     queue = RedisStreamTaskQueue(redis)
 
-    statuses = queue.status(["news:queue:daily"])
+    statuses = queue.status(["framework:queue:default"])
 
     payload = statuses[0].to_dict()
-    assert payload["queue_name"] == "news:queue:daily"
+    assert payload["queue_name"] == "framework:queue:default"
     assert payload["stream_length"] == 3
     assert payload["group_exists"] is True
     assert payload["pending_count"] == 2
@@ -336,7 +336,7 @@ def test_redis_stream_queue_status_reports_missing_group() -> None:
     redis = _FakeRedisStatus(stream_length=1, pending_error=Exception("NOGROUP missing"))
     queue = RedisStreamTaskQueue(redis)
 
-    statuses = queue.status(["news:queue:daily"])
+    statuses = queue.status(["framework:queue:default"])
 
     payload = statuses[0].to_dict()
     assert payload["stream_length"] == 1
@@ -356,7 +356,7 @@ def test_redis_stream_queue_fail_retries_and_acks_original_message() -> None:
 
     assert result.accepted is True
     assert result.status == TaskStatus.RETRYING
-    assert redis.xack_calls == [("news:queue:daily", "news-workers", "1-0")]
+    assert redis.xack_calls == [("framework:queue:default", "framework-workers", "1-0")]
     assert json.loads(redis.xadd_calls[0][1]["task"])["metadata"]["retry_next_run_at"]
 
 
@@ -374,7 +374,7 @@ def test_redis_stream_queue_fail_dead_letters_quality_gate_block_without_retry()
     )
 
     assert result.status == TaskStatus.DEAD_LETTER
-    assert redis.xack_calls == [("news:queue:daily", "news-workers", "1-0")]
+    assert redis.xack_calls == [("framework:queue:default", "framework-workers", "1-0")]
     assert queue.list_dead_letters()[0].error.error_type == "QualityGateBlocked"
 
 
@@ -392,8 +392,8 @@ def test_redis_stream_queue_fail_dead_letters_and_requeues_record() -> None:
     assert dead_letters[0].error.error_type == "ValidationError"
     assert dead_letters[0].last_event.event_type == "task_dead_lettered"
     assert requeued is True
-    assert redis.xack_calls == [("news:queue:daily", "news-workers", "1-0")]
-    assert redis.xdel_calls == [("news:queue:dead-letter", "1-0")]
+    assert redis.xack_calls == [("framework:queue:default", "framework-workers", "1-0")]
+    assert redis.xdel_calls == [("framework:queue:default:dead-letter", "1-0")]
     assert json.loads(redis.xadd_calls[-1][1]["task"])["metadata"]["requeue_reason"] == "operator_retry"
 
 
@@ -471,7 +471,7 @@ class _FakeRedisReader:
 
     def xreadgroup(self, group, consumer, streams, count, block):
         payload = json.dumps(self.task_payload).encode("utf-8")
-        return [(b"news:queue:daily", [(b"1-0", {b"task": payload})])]
+        return [(b"framework:queue:default", [(b"1-0", {b"task": payload})])]
 
 
 class _FakeRedisPending:
@@ -517,4 +517,4 @@ class _FakeRedisStatus:
 def _leased(task):
     from core.framework.workers import LeasedTask
 
-    return LeasedTask(queue_name="news:queue:daily", message_id="1-0", task=task)
+    return LeasedTask(queue_name="framework:queue:default", message_id="1-0", task=task)

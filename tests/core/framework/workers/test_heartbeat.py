@@ -13,7 +13,7 @@ from core.framework.workers import (
 def test_worker_heartbeat_round_trips_status() -> None:
     heartbeat = WorkerHeartbeat(
         worker_id="worker-1",
-        queue_names=["news:queue:daily"],
+        queue_names=["framework:queue:default"],
         status=WorkerStatus.RUNNING,
         started_at=_dt("2026-05-11T00:00:00Z"),
         last_heartbeat_at=_dt("2026-05-11T00:00:05Z"),
@@ -31,7 +31,7 @@ def test_worker_heartbeat_round_trips_status() -> None:
 def test_worker_heartbeat_status_marks_stale_as_unhealthy() -> None:
     heartbeat = WorkerHeartbeat(
         worker_id="worker-1",
-        queue_names=["news:queue:daily"],
+        queue_names=["framework:queue:default"],
         status=WorkerStatus.RUNNING,
         last_heartbeat_at=_dt("2026-05-11T00:00:00Z"),
     )
@@ -45,8 +45,8 @@ def test_worker_heartbeat_status_marks_stale_as_unhealthy() -> None:
     assert status.stale is True
     assert status.status == WorkerStatus.UNHEALTHY
     assert status.to_dict()["stored_status"] == "running"
-    assert heartbeat.queues == ["news:queue:daily"]
-    assert heartbeat.to_dict()["queues"] == ["news:queue:daily"]
+    assert heartbeat.queues == ["framework:queue:default"]
+    assert heartbeat.to_dict()["queues"] == ["framework:queue:default"]
 
 
 def test_redis_worker_registry_saves_gets_and_lists_workers() -> None:
@@ -54,7 +54,7 @@ def test_redis_worker_registry_saves_gets_and_lists_workers() -> None:
     registry = RedisWorkerRegistry(redis)
     heartbeat = WorkerHeartbeat(
         worker_id="worker-1",
-        queue_names=["news:queue:daily"],
+        queue_names=["framework:queue:default"],
         last_heartbeat_at=_dt("2026-05-11T00:00:00Z"),
     )
 
@@ -91,10 +91,10 @@ def test_stale_worker_pending_task_can_be_reclaimed() -> None:
         timeout_seconds=30,
     )
     queue.enqueue(task)
-    queue.lease("worker-1", ["news:queue:daily"])
+    queue.lease("worker-1", ["framework:queue:default"])
     heartbeat = WorkerHeartbeat(
         worker_id="worker-1",
-        queue_names=["news:queue:daily"],
+        queue_names=["framework:queue:default"],
         current_task_id="task-1",
         last_heartbeat_at=_dt("2026-05-11T00:00:00Z"),
     )
@@ -106,7 +106,7 @@ def test_stale_worker_pending_task_can_be_reclaimed() -> None:
     )
     reclaimed = queue.reclaim_stale(
         "worker-2",
-        ["news:queue:daily"],
+        ["framework:queue:default"],
         now=_dt("2026-05-11T00:02:00Z"),
     )
 

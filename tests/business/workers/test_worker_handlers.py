@@ -8,11 +8,15 @@ from core.framework.workers import InMemoryTaskQueue, Task, WorkerLoop
 from core.framework.workers.models import TaskStatus
 
 
+DAILY_QUEUE = "news:queue:daily"
+
+
 def test_worker_loop_runs_daily_handler_once() -> None:
     queue = InMemoryTaskQueue()
     task = Task(
         task_type="daily_intelligence.run",
         payload={"profile": "live-offline", "topic": "AI", "source_limit": 1, "run_id": "worker-run"},
+        queue_name=DAILY_QUEUE,
     )
     queue.enqueue(task)
     handler = DailyIntelligenceTaskHandler(run_service=_FakeRunService())
@@ -20,7 +24,7 @@ def test_worker_loop_runs_daily_handler_once() -> None:
         worker_id="worker-1",
         queue=queue,
         handlers={handler.task_type: handler},
-        queue_names=["news:queue:daily"],
+        queue_names=[DAILY_QUEUE],
     )
 
     result = worker.run_once()
@@ -33,7 +37,7 @@ def test_worker_loop_runs_daily_handler_once() -> None:
     assert result.output["summary"] == {"title": "Daily summary"}
     assert task.status == TaskStatus.SUCCEEDED
     assert [event.event_type for event in worker.events] == ["task_started", "task_succeeded"]
-    assert queue.lease("worker-1", ["news:queue:daily"]) is None
+    assert queue.lease("worker-1", [DAILY_QUEUE]) is None
 
 
 def test_daily_handler_maps_blocked_workflow_to_completed_task() -> None:

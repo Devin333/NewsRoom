@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from core.framework.workers.models import (
+    DEFAULT_TASK_QUEUE,
     DeadLetterRecord,
     LeasedTask,
     Task,
@@ -60,8 +61,8 @@ class RedisStreamTaskQueue:
         self,
         redis_client: Any,
         *,
-        group_name: str = "news-workers",
-        dead_letter_queue_name: str = "news:queue:dead-letter",
+        group_name: str = "framework-workers",
+        dead_letter_queue_name: str = f"{DEFAULT_TASK_QUEUE}:dead-letter",
         retry_policy: TaskRetryPolicy | None = None,
     ) -> None:
         self.redis = redis_client
