@@ -10,7 +10,12 @@ from core.framework.memory.models import (
     MemoryScope,
     MemoryWriteResult,
 )
-from core.framework.memory.policy import DEFAULT_AGENT_MEMORY_POLICY, DEFAULT_WORKFLOW_MEMORY_POLICY, MemoryPolicy
+from core.framework.memory.policy import (
+    DEFAULT_AGENT_MEMORY_POLICY,
+    DEFAULT_AGENT_MEMORY_WRITE_POLICY,
+    DEFAULT_WORKFLOW_MEMORY_POLICY,
+    MemoryPolicy,
+)
 from core.framework.memory.runtime import MemoryRuntime
 
 
@@ -50,6 +55,7 @@ class AgentMemoryAdapter:
         tool_name: str,
         observation: dict[str, Any],
         runtime: MemoryRuntime,
+        policy: MemoryPolicy = DEFAULT_AGENT_MEMORY_WRITE_POLICY,
     ) -> MemoryWriteResult:
         return runtime.write(
             records=[
@@ -64,6 +70,7 @@ class AgentMemoryAdapter:
             ],
             actor=agent_id,
             run_id=run_id,
+            policy=policy,
         )
 
     def after_final_output(
@@ -73,6 +80,7 @@ class AgentMemoryAdapter:
         run_id: str,
         output: dict[str, Any],
         runtime: MemoryRuntime,
+        policy: MemoryPolicy = DEFAULT_AGENT_MEMORY_WRITE_POLICY,
     ) -> MemoryWriteResult:
         return runtime.write(
             records=[
@@ -87,6 +95,7 @@ class AgentMemoryAdapter:
             ],
             actor=agent_id,
             run_id=run_id,
+            policy=policy,
         )
 
 

@@ -118,6 +118,24 @@ DEFAULT_AGENT_MEMORY_POLICY = MemoryPolicy(
     allow_global_write=False,
 )
 
+DEFAULT_AGENT_MEMORY_WRITE_POLICY = MemoryPolicy(
+    allowed_scopes=[
+        MemoryScope.SESSION,
+        MemoryScope.AGENT,
+        MemoryScope.WORKFLOW,
+    ],
+    allowed_kinds=[
+        MemoryKind.EPISODIC,
+        MemoryKind.OBSERVATION,
+    ],
+    allow_write=True,
+    allow_recall=False,
+    require_refs=True,
+    max_recall_results=1,
+    max_context_tokens=1,
+    allow_global_write=False,
+)
+
 DEFAULT_WORKFLOW_MEMORY_POLICY = MemoryPolicy(
     allowed_scopes=[
         MemoryScope.WORKFLOW,

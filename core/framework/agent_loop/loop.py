@@ -90,6 +90,7 @@ class AgentLoop:
         *,
         run_id: str | None = None,
     ) -> AgentLoopResult:
+        effective_run_id = run_id or _run_id_from_inputs(inputs)
         metrics = AgentLoopMetrics()
         events = AgentLoopEventRecorder(agent_id=agent.agent_id)
         trace = AgentLoopTrace(agent_id=agent.agent_id)
@@ -123,7 +124,7 @@ class AgentLoop:
             memory_context = self._memory_context_for_llm(
                 agent=agent,
                 inputs=inputs,
-                run_id=run_id,
+                run_id=effective_run_id,
             )
 
             request = self._prompt_builder.build(
@@ -328,6 +329,7 @@ class AgentLoop:
                     agent=agent,
                     inputs=inputs,
                     action=action,
+                    run_id=effective_run_id,
                     metrics=metrics,
                     events=events,
                     trace=trace,
@@ -377,6 +379,7 @@ class AgentLoop:
             verdict_result = self._handle_verdict(
                 agent=agent,
                 action=action,
+                run_id=effective_run_id,
                 metrics=metrics,
                 events=events,
                 trace=trace,
@@ -412,6 +415,7 @@ class AgentLoop:
         agent: AgentSpec,
         inputs: dict[str, Any],
         action: AgentAction,
+        run_id: str | None,
         metrics: AgentLoopMetrics,
         events: AgentLoopEventRecorder,
         trace: AgentLoopTrace,
@@ -442,7 +446,7 @@ class AgentLoop:
         observation = _prompt_safe_observation(observation, tool_policy)
         self._write_tool_observation_memory(
             agent=agent,
-            inputs=inputs,
+            run_id=run_id,
             observation=observation,
         )
 
@@ -542,6 +546,7 @@ class AgentLoop:
             result = self._handle_verdict(
                 agent=agent,
                 action=AgentAction(action_type="final_output", output=control_output),
+                run_id=run_id,
                 metrics=metrics,
                 events=events,
                 trace=trace,
@@ -686,6 +691,7 @@ class AgentLoop:
         *,
         agent: AgentSpec,
         action: AgentAction,
+        run_id: str | None,
         metrics: AgentLoopMetrics,
         events: AgentLoopEventRecorder,
         trace: AgentLoopTrace,
@@ -711,6 +717,7 @@ class AgentLoop:
                 diagnostics=diagnostics,
                 iterations=iteration,
                 output=action.output or {},
+                run_id=run_id,
                 verdict=verdict,
                 stop_reason=(
                     AgentLoopStopReason.CONTROL_OUTPUT_ACCEPTED
@@ -867,7 +874,7 @@ class AgentLoop:
         self,
         *,
         agent: AgentSpec,
-        inputs: dict[str, Any],
+        run_id: str | None,
         observation: ToolObservation,
     ) -> None:
         if self._memory_runtime is None:
@@ -877,9 +884,28 @@ class AgentLoop:
         try:
             self._memory_adapter.after_tool_observation(
                 agent_id=agent.agent_id,
-                run_id=_run_id_from_inputs(inputs) or "",
+                run_id=run_id or "",
                 tool_name=observation.tool_name,
                 observation=observation.to_dict(),
+                runtime=self._memory_runtime,
+            )
+        except Exception:
+            return
+
+    def _write_final_output_memory(
+        self,
+        *,
+        agent: AgentSpec,
+        run_id: str | None,
+        output: dict[str, Any],
+    ) -> None:
+        if self._memory_runtime is None:
+            return
+        try:
+            self._memory_adapter.after_final_output(
+                agent_id=agent.agent_id,
+                run_id=run_id or "",
+                output=output,
                 runtime=self._memory_runtime,
             )
         except Exception:
@@ -895,11 +921,17 @@ class AgentLoop:
         diagnostics: AgentLoopDiagnosticsBuilder,
         iterations: int,
         output: dict[str, Any],
+        run_id: str | None,
         verdict: JudgeVerdict,
         stop_reason: AgentLoopStopReason,
         via_tool: str | None,
         llm_call_artifacts: list[LLMCallArtifact],
     ) -> AgentLoopResult:
+        self._write_final_output_memory(
+            agent=agent,
+            run_id=run_id,
+            output=output,
+        )
         events.final_output(iteration=iterations, output_keys=sorted(output.keys()), via_tool=via_tool)
         result_diagnostics = diagnostics.accepted(
             metrics=metrics,
