@@ -9,6 +9,10 @@ from core.framework.llm import (
     build_openai_compatible_client_from_config,
 )
 from storage.conversation import LocalJsonConversationStore
+from workflows.daily_intelligence.agent_loop_integration import (
+    build_daily_output_judge,
+    normalize_daily_agent_output,
+)
 from workflows.daily_intelligence.agent_tools import build_daily_agent_tool_registry
 from workflows.daily_intelligence.agents import (
     ANALYST_AGENT_ID,
@@ -206,6 +210,8 @@ def build_daily_agent_runner(
         llm_client=resolved_llm_client,
         tool_registry=build_daily_agent_tool_registry(),
         conversation_store=conversation_store,
+        output_judge=build_daily_output_judge(),
+        output_normalizer=normalize_daily_agent_output,
     )
 
 

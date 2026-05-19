@@ -22,6 +22,12 @@ from core.framework.agent_loop.diagnostics import (
     StallDetection,
 )
 from core.framework.agent_loop.events import AgentLoopEvent, AgentLoopEventRecorder
+from core.framework.agent_loop.extensions import (
+    OutputNormalizer,
+    OutputValidationResult,
+    OutputValidator,
+    identity_output_normalizer,
+)
 from core.framework.agent_loop.parser import AgentActionParser, AgentActionParserError
 from core.framework.agent_loop.prompt import PromptBuilder
 from core.framework.agent_loop.judge import OutputJudge
@@ -56,6 +62,9 @@ __all__ = [
     "AgentLoopEventRecorder",
     "AgentLoopEventType",
     "AgentLoopIssue",
+    "OutputNormalizer",
+    "OutputValidationResult",
+    "OutputValidator",
     "AgentActionParser",
     "AgentActionParserError",
     "AgentLoopMetrics",
@@ -86,4 +95,5 @@ __all__ = [
     "SubAgentTask",
     "ToolCallSignature",
     "ToolCallTrace",
+    "identity_output_normalizer",
 ]

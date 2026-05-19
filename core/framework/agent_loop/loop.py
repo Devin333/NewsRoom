@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Any
 
-from evidence.models import VerifiedFindings
 from core.framework.agent_loop.diagnostics import (
     AgentLoopDiagnosticsBuilder,
     AgentLoopStallDetector,
@@ -11,6 +10,10 @@ from core.framework.agent_loop.diagnostics import (
     max_iterations_detection,
 )
 from core.framework.agent_loop.events import AgentLoopEventRecorder
+from core.framework.agent_loop.extensions import (
+    OutputNormalizer,
+    identity_output_normalizer,
+)
 from core.framework.agent_loop.judge import OutputJudge
 from core.framework.agent_loop.models import (
     AgentAction,
@@ -65,6 +68,7 @@ class AgentLoop:
         prompt_builder: PromptBuilder | None = None,
         action_parser: AgentActionParser | None = None,
         output_judge: OutputJudge | None = None,
+        output_normalizer: OutputNormalizer | None = None,
         global_budget_tracker: GlobalBudgetTracker | None = None,
         subagent_executor: SubAgentExecutor | None = None,
         memory_runtime: MemoryRuntime | None = None,
@@ -76,6 +80,7 @@ class AgentLoop:
         self._prompt_builder = prompt_builder or PromptBuilder()
         self._action_parser = action_parser or AgentActionParser()
         self._output_judge = output_judge or OutputJudge()
+        self._output_normalizer = output_normalizer or identity_output_normalizer
         self._global_budget_tracker = global_budget_tracker
         self._subagent_executor = subagent_executor
         self._memory_runtime = memory_runtime
@@ -362,7 +367,7 @@ class AgentLoop:
                 feedback = result
                 continue
 
-            normalized_output = _normalize_agent_output(
+            normalized_output = self._normalize_output(
                 agent=agent,
                 output=action.output or {},
                 inputs=inputs,
@@ -532,7 +537,11 @@ class AgentLoop:
             )
 
         if observation.status == ToolStatus.SUCCEEDED and _is_control_set_output(observation):
-            control_output = _control_output(observation)
+            control_output = self._normalize_output(
+                agent=agent,
+                output=_control_output(observation),
+                inputs=inputs,
+            )
             verdict = self._output_judge.judge(
                 agent=agent,
                 action=AgentAction(
@@ -869,6 +878,15 @@ class AgentLoop:
         except Exception:
             return None
         return recall.context_block.content or None
+
+    def _normalize_output(
+        self,
+        *,
+        agent: AgentSpec,
+        output: dict[str, Any],
+        inputs: dict[str, Any],
+    ) -> dict[str, Any]:
+        return self._output_normalizer(agent=agent, output=output, inputs=inputs)
 
     def _write_tool_observation_memory(
         self,
@@ -1460,26 +1478,6 @@ def _optional_float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
-
-
-def _normalize_agent_output(
-    *,
-    agent: AgentSpec,
-    output: dict[str, Any],
-    inputs: dict[str, Any],
-) -> dict[str, Any]:
-    if agent.agent_id != "daily.writer" or _request_profile(inputs) != "agentic-live":
-        return output
-    from workflows.daily_intelligence.grounded_writer import normalize_daily_writer_output
-
-    return normalize_daily_writer_output(output=output, output_key=agent.output_key, inputs=inputs)
-
-
-def _request_profile(inputs: dict[str, Any]) -> str | None:
-    request = inputs.get("request")
-    if isinstance(request, dict) and request.get("profile") is not None:
-        return str(request.get("profile"))
-    return None
 
 
 def _run_id_from_inputs(inputs: dict[str, Any]) -> str | None:

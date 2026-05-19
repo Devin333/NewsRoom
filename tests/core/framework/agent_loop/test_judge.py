@@ -4,9 +4,8 @@ from core.framework.agent_loop import (
     AgentSpec,
     JudgeDecision,
     OutputJudge,
+    OutputValidationResult,
 )
-from domain.sources import Lineage
-from evidence.models import EvidenceBundle, EvidenceItem
 
 
 def _agent(**kwargs) -> AgentSpec:
@@ -190,24 +189,12 @@ def test_output_judge_retries_json_schema_constraint_violation() -> None:
     ]
 
 
-def test_output_judge_retries_report_claim_outside_evidence_boundary() -> None:
-    bundle = EvidenceBundle(
-        bundle_id="bundle-1",
-        items=[
-            EvidenceItem(
-                evidence_id="ev-1",
-                source_url="https://example.com/a",
-                title="Vendor released a model update",
-                summary="The update improves inference latency.",
-                confidence=0.9,
-                source_id="source-1",
-                source_item_id="source-item-1",
-                lineage=Lineage(source_id="source-1", source_item_id="source-item-1"),
-            )
-        ],
-    )
+def test_output_judge_retries_custom_quality_validator_error() -> None:
+    def validator(**kwargs) -> OutputValidationResult:
+        _ = kwargs
+        return OutputValidationResult(quality_errors=["custom quality issue"])
 
-    verdict = OutputJudge().judge(
+    verdict = OutputJudge(output_validators=[validator]).judge(
         agent=_agent(agent_id="writer", name="WriterAgent", output_key="final_report"),
         action=AgentAction(
             action_type="final_output",
@@ -225,33 +212,22 @@ def test_output_judge_retries_report_claim_outside_evidence_boundary() -> None:
             },
         ),
         called_tools=[],
-        inputs={"evidence_bundle": bundle},
     )
 
     assert verdict.decision == JudgeDecision.RETRY
-    assert verdict.quality_errors == [
-        "unsupported claim outside evidence: Unsupported: The vendor acquired a rival."
-    ]
+    assert verdict.quality_errors == ["custom quality issue"]
 
 
-def test_output_judge_retries_editor_claim_outside_evidence_boundary() -> None:
-    bundle = EvidenceBundle(
-        bundle_id="bundle-1",
-        items=[
-            EvidenceItem(
-                evidence_id="ev-1",
-                source_url="https://example.com/a",
-                title="The model update improves inference latency",
-                summary="The vendor released a model update that improves inference latency.",
-                confidence=0.9,
-                source_id="source-1",
-                source_item_id="source-item-1",
-                lineage=Lineage(source_id="source-1", source_item_id="source-item-1"),
-            )
-        ],
-    )
+def test_output_judge_blocks_custom_policy_validator_error() -> None:
+    def validator(**kwargs) -> OutputValidationResult:
+        _ = kwargs
+        return OutputValidationResult(
+            policy_violations=["external reference outside boundary: ref-999"],
+            block=True,
+            feedback="custom policy block",
+        )
 
-    verdict = OutputJudge().judge(
+    verdict = OutputJudge(output_validators=[validator]).judge(
         agent=_agent(agent_id="editor", name="EditorAgent", output_key="edited_report"),
         action=AgentAction(
             action_type="final_output",
@@ -269,13 +245,8 @@ def test_output_judge_retries_editor_claim_outside_evidence_boundary() -> None:
             },
         ),
         called_tools=[],
-        inputs={"evidence_bundle": bundle},
     )
 
-    assert verdict.decision == JudgeDecision.RETRY
-    assert verdict.quality_errors == [
-        (
-            "unsupported claim outside evidence: "
-            "Edit: The vendor released a model update and expanded into robotics."
-        )
-    ]
+    assert verdict.decision == JudgeDecision.BLOCK
+    assert verdict.feedback == "custom policy block"
+    assert verdict.policy_violations == ["external reference outside boundary: ref-999"]

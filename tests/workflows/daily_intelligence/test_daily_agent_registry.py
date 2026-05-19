@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from core.framework.agent_loop import AgentLoopStatus
+from domain.sources import Lineage
 from evidence.models import EvidenceBundle, EvidenceItem
 from workflows.daily_intelligence.agent_registry import (
     PROFILE_AGENTIC_OFFLINE,
@@ -164,6 +165,7 @@ def _evidence_bundle() -> dict:
                 confidence=1.0,
                 source_id="source-1",
                 source_item_id="item-1",
+                lineage=Lineage(source_id="source-1", source_item_id="item-1"),
             )
         ],
     ).to_dict()

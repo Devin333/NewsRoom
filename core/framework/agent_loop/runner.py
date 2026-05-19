@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from core.framework.agent_loop.extensions import OutputNormalizer
 from core.framework.agent_loop.loop import AgentLoop
 from core.framework.agent_loop.models import AgentLoopResult, AgentSpec
 from core.framework.agent_loop.parser import AgentActionParser
@@ -31,6 +32,8 @@ class AgentRunner:
         subagent_executor: SubAgentExecutor | None = None,
         memory_runtime: MemoryRuntime | None = None,
         memory_policy: MemoryPolicy | None = None,
+        output_judge: OutputJudge | None = None,
+        output_normalizer: OutputNormalizer | None = None,
     ) -> None:
         self._llm_client = llm_client
         self._tool_registry = tool_registry
@@ -39,6 +42,8 @@ class AgentRunner:
         self._subagent_executor = subagent_executor
         self._memory_runtime = memory_runtime
         self._memory_policy = memory_policy
+        self._output_judge = output_judge or OutputJudge()
+        self._output_normalizer = output_normalizer
 
     def run(
         self,
@@ -79,7 +84,8 @@ class AgentRunner:
             tool_executor=ToolExecutor(self._tool_registry),
             prompt_builder=PromptBuilder(),
             action_parser=AgentActionParser(),
-            output_judge=OutputJudge(),
+            output_judge=self._output_judge,
+            output_normalizer=self._output_normalizer,
             global_budget_tracker=global_budget_tracker or self._global_budget_tracker,
             subagent_executor=self._subagent_executor,
             memory_runtime=self._memory_runtime,
