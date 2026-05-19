@@ -1,4 +1,9 @@
+from pathlib import Path
+
+import pytest
+
 from storage.postgres import load_migration_sql
+from storage.postgres import migrations as migrations_module
 
 
 def test_postgres_migration_sql_contains_required_tables() -> None:
@@ -61,3 +66,20 @@ def test_postgres_migration_sql_exposes_storage_contract_query_columns() -> None
         "updated_at TIMESTAMPTZ",
     ]:
         assert column in sql
+
+
+
+def test_postgres_migration_loader_rejects_missing_sql_files(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(migrations_module, "_MIGRATIONS_DIR", tmp_path)
+
+    with pytest.raises(FileNotFoundError, match="no SQL migrations"):
+        migrations_module.load_migration_sql()
+
+
+
+def test_postgres_migration_loader_rejects_empty_sql_files(monkeypatch, tmp_path) -> None:
+    (tmp_path / "001_empty.sql").write_text("\n\n", encoding="utf-8")
+    monkeypatch.setattr(migrations_module, "_MIGRATIONS_DIR", tmp_path)
+
+    with pytest.raises(ValueError, match="are empty"):
+        migrations_module.load_migration_sql()

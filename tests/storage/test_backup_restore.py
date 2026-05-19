@@ -83,3 +83,16 @@ def test_local_artifact_backup_service_refuses_restore_overwrite_by_default(tmp_
         restore_service.restore_backup(backup_path)
 
     restore_service.restore_backup(backup_path, overwrite=True)
+
+
+
+def test_local_artifact_backup_service_refuses_restore_into_source_root(tmp_path) -> None:
+    source_root = tmp_path / "runs"
+    backup_path = tmp_path / "runs.zip"
+    (source_root / "run-1").mkdir(parents=True)
+    (source_root / "run-1" / "manifest.json").write_text('{"status":"succeeded"}', encoding="utf-8")
+
+    LocalArtifactBackupService(source_root).create_backup(backup_path)
+
+    with pytest.raises(Exception, match="restore target must differ"):
+        LocalArtifactBackupService(source_root).restore_backup(backup_path, overwrite=True)

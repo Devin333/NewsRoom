@@ -18,7 +18,15 @@ _RAW_SOURCE_TYPES = {
 }
 _REPORT_TYPES = {"report", "report_json", "report_markdown", "blocked_report"}
 _EVIDENCE_TYPES = {"evidence", "evidence_bundle", "evidence_scores", "evidence_source_map"}
-_MANIFEST_TYPES = {"manifest", "workflow_spec", "request"}
+_MEMORY_TYPES = {"memory_document", "memory_documents", "report_sections", "evidence_items"}
+_EVENT_TYPES = {"events", "workflow_events", "quality_events", "source_events"}
+_CONVERSATION_TYPES = {
+    "agent_conversation",
+    "agent_conversations",
+    "agent_conversation_messages",
+    "agent_conversation_state",
+}
+_MANIFEST_TYPES = {"manifest", "workflow_spec", "request", "pause"}
 _LLM_TYPE_PARTS = ("llm", "model", "prompt", "completion")
 
 
@@ -34,6 +42,8 @@ class RetentionPolicy:
     report_retention_days: int | None = None
     evidence_retention_days: int | None = None
     vector_retention_days: int | None = None
+    event_retention_days: int | None = None
+    conversation_retention_days: int | None = None
 
     def __post_init__(self) -> None:
         for name, value in self.to_dict().items():
@@ -48,6 +58,8 @@ class RetentionPolicy:
             "report_retention_days": self.report_retention_days,
             "evidence_retention_days": self.evidence_retention_days,
             "vector_retention_days": self.vector_retention_days,
+            "event_retention_days": self.event_retention_days,
+            "conversation_retention_days": self.conversation_retention_days,
         }
 
     @classmethod
@@ -59,6 +71,8 @@ class RetentionPolicy:
             report_retention_days=_optional_int(payload.get("report_retention_days")),
             evidence_retention_days=_optional_int(payload.get("evidence_retention_days")),
             vector_retention_days=_optional_int(payload.get("vector_retention_days")),
+            event_retention_days=_optional_int(payload.get("event_retention_days")),
+            conversation_retention_days=_optional_int(payload.get("conversation_retention_days")),
         )
 
     def retention_days_for(self, artifact_type: str) -> int | None:
@@ -69,10 +83,14 @@ class RetentionPolicy:
             return self.report_retention_days
         if normalized in _EVIDENCE_TYPES:
             return self.evidence_retention_days
+        if normalized in _MEMORY_TYPES or normalized.startswith("vector_"):
+            return self.vector_retention_days
+        if normalized in _EVENT_TYPES:
+            return self.event_retention_days if self.event_retention_days is not None else self.run_artifact_retention_days
+        if normalized in _CONVERSATION_TYPES:
+            return self.conversation_retention_days if self.conversation_retention_days is not None else self.run_artifact_retention_days
         if normalized in _MANIFEST_TYPES:
             return None
-        if normalized.startswith("vector_"):
-            return self.vector_retention_days
         if any(part in normalized for part in _LLM_TYPE_PARTS):
             return self.llm_artifact_retention_days
         return self.run_artifact_retention_days

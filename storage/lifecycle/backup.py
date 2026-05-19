@@ -60,6 +60,10 @@ class BackupManifest:
     files: list[BackupFileEntry] = field(default_factory=list)
     schema_version: str = _SCHEMA_VERSION
 
+    def __post_init__(self) -> None:
+        if not str(self.source_artifact_root).strip():
+            raise ValueError("source_artifact_root is required")
+
     @property
     def file_count(self) -> int:
         return len(self.files)
@@ -158,6 +162,7 @@ class LocalArtifactBackupService:
                 )
             except KeyError as exc:
                 raise BackupValidationError("backup manifest is missing") from exc
+            _ensure_restore_target_allowed(self.artifact_root, manifest)
 
             restored_files = []
             for entry in manifest.files:
@@ -199,6 +204,13 @@ def _ensure_backup_target_allowed(artifact_root: Path, backup_path: Path) -> Non
     target = backup_path.resolve()
     if target == root or target.is_relative_to(root):
         raise ValueError("backup path must be outside artifact root")
+
+
+def _ensure_restore_target_allowed(artifact_root: Path, manifest: BackupManifest) -> None:
+    target = artifact_root.resolve()
+    source_root = Path(manifest.source_artifact_root).resolve()
+    if target == source_root:
+        raise BackupValidationError("restore target must differ from backup source artifact root")
 
 
 def _validate_entry_bytes(entry: BackupFileEntry, data: bytes) -> None:

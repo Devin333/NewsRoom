@@ -25,6 +25,8 @@ def test_retention_policy_round_trips() -> None:
         report_retention_days=None,
         evidence_retention_days=365,
         vector_retention_days=90,
+        event_retention_days=45,
+        conversation_retention_days=60,
     )
 
     restored = RetentionPolicy.from_dict(policy.to_dict())
@@ -36,6 +38,8 @@ def test_retention_policy_round_trips() -> None:
     assert restored.retention_days_for("report_json") is None
     assert restored.retention_days_for("evidence_bundle") == 365
     assert restored.retention_days_for("vector_memory") == 90
+    assert restored.retention_days_for("quality_events") == 45
+    assert restored.retention_days_for("agent_conversations") == 60
 
 
 def test_retention_policy_uses_run_default_for_quality_and_events() -> None:
@@ -46,11 +50,12 @@ def test_retention_policy_uses_run_default_for_quality_and_events() -> None:
         report_retention_days=None,
         evidence_retention_days=365,
         vector_retention_days=90,
+        event_retention_days=45,
     )
 
     assert policy.retention_days_for("quality_result") == 30
     assert policy.retention_days_for("quality_gate_metrics") == 30
-    assert policy.retention_days_for("events") == 30
+    assert policy.retention_days_for("events") == 45
 
 
     with pytest.raises(ValueError, match="raw_source_retention_days"):
@@ -144,3 +149,4 @@ def test_retention_policy_keeps_manifest_request_indefinitely() -> None:
     assert policy.retention_days_for("manifest") is None
     assert policy.retention_days_for("request") is None
     assert policy.retention_days_for("workflow_spec") is None
+    assert policy.retention_days_for("pause") is None
