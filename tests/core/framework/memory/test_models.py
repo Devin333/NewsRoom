@@ -15,6 +15,7 @@ def test_memory_record_serializes_generic_memory_fields() -> None:
         refs={"run_id": "run-1"},
         confidence=0.8,
         importance=0.7,
+        embedding=[0.1, 0.2, 0.3],
     )
 
     payload = record.to_dict()
@@ -24,6 +25,7 @@ def test_memory_record_serializes_generic_memory_fields() -> None:
     assert record.scope == MemoryScope.WORKFLOW
     assert payload["memory_id"] == "mem-1"
     assert payload["refs"] == {"run_id": "run-1"}
+    assert payload["embedding"] == [0.1, 0.2, 0.3]
     assert restored == record
 
 

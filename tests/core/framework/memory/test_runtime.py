@@ -1,10 +1,12 @@
 from core.framework.memory import (
     InMemoryMemoryStore,
     MemoryKind,
+    MemoryPolicy,
     MemoryQuery,
     MemoryRecord,
     MemoryRuntime,
     MemoryScope,
+    inspect_memory_runtime,
 )
 
 
@@ -45,3 +47,19 @@ def test_memory_runtime_writes_recalls_and_builds_context() -> None:
     assert "mem-agent-runtime" in recall.context_block.memory_ids
     assert "Agent runtime" in recall.context_block.content
 
+
+def test_memory_runtime_diagnostics_exposes_confidence_policy() -> None:
+    runtime = MemoryRuntime(
+        InMemoryMemoryStore(),
+        policy=MemoryPolicy(
+            allowed_scopes=[MemoryScope.WORKFLOW],
+            allowed_kinds=[MemoryKind.SEMANTIC],
+            min_confidence_to_write=0.4,
+            min_confidence_to_recall=0.5,
+        ),
+    )
+
+    payload = inspect_memory_runtime(runtime).to_dict()
+
+    assert payload["policy"]["min_confidence_to_write"] == 0.4
+    assert payload["policy"]["min_confidence_to_recall"] == 0.5

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from core.framework.memory.models import MemoryRecord, MemoryWriteRequest, MemoryWriteResult
+from core.framework.memory.models import MemoryRecord, MemoryWriteMode, MemoryWriteRequest, MemoryWriteResult
 from core.framework.memory.policy import MemoryPolicy
 from core.framework.memory.store import MemoryStore
 
@@ -15,6 +15,7 @@ class MemoryWriter:
         store: MemoryStore,
         policy: MemoryPolicy,
     ) -> MemoryWriteResult:
+        _validate_write_mode(request.mode)
         records: list[MemoryRecord] = []
         errors: list[str] = []
         for record in request.records:
@@ -35,7 +36,7 @@ class MemoryWriter:
                 skipped_count=len(errors),
                 errors=errors,
             )
-        if request.mode.value == "upsert":
+        if request.mode == MemoryWriteMode.UPSERT:
             result = _write_upsert(records, store=store)
         else:
             result = store.write_many(records)
@@ -46,6 +47,12 @@ class MemoryWriter:
             skipped_count=result.skipped_count + len(errors),
             errors=[*errors, *result.errors],
         )
+
+
+def _validate_write_mode(mode: MemoryWriteMode) -> None:
+    if mode in {MemoryWriteMode.APPEND, MemoryWriteMode.UPSERT}:
+        return
+    raise NotImplementedError(f"memory write mode is not implemented: {mode.value}")
 
 
 def _record_with_request_defaults(

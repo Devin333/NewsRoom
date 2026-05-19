@@ -13,6 +13,7 @@ def test_vector_memory_store_adapter_writes_and_searches_memory_records() -> Non
         scope=MemoryScope.WORKFLOW,
         refs={"run_id": "run-1"},
         metadata={"workflow_id": "wf-1"},
+        embedding=[0.1, 0.2, 0.3],
     )
 
     write = adapter.write(record)
@@ -33,3 +34,4 @@ def test_vector_memory_store_adapter_writes_and_searches_memory_records() -> Non
     assert fetched.memory_id == record.memory_id
     assert fetched.content == record.content
     assert fetched.refs["run_id"] == "run-1"
+    assert fetched.embedding == [0.1, 0.2, 0.3]

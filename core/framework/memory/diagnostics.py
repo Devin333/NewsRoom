@@ -26,6 +26,8 @@ def inspect_memory_runtime(runtime) -> MemoryRuntimeDiagnostics:
             "allow_write": policy.allow_write,
             "allow_recall": policy.allow_recall,
             "require_refs": policy.require_refs,
+            "min_confidence_to_write": policy.min_confidence_to_write,
+            "min_confidence_to_recall": policy.min_confidence_to_recall,
             "max_recall_results": policy.max_recall_results,
             "max_context_tokens": policy.max_context_tokens,
             "allow_global_write": policy.allow_global_write,
@@ -33,4 +35,3 @@ def inspect_memory_runtime(runtime) -> MemoryRuntimeDiagnostics:
             "allowed_kinds": [kind.value for kind in policy.allowed_kinds],
         },
     )
-

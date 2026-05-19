@@ -1,3 +1,5 @@
+import pytest
+
 from core.framework.memory import (
     InMemoryMemoryStore,
     MemoryKind,
@@ -74,6 +76,7 @@ def test_memory_writer_upserts_existing_and_new_records() -> None:
                     summary="updated",
                     scope=MemoryScope.WORKFLOW,
                     kind=MemoryKind.SEMANTIC,
+                    embedding=[0.2, 0.4],
                 ),
                 MemoryRecord(
                     memory_id="mem-new",
@@ -92,4 +95,42 @@ def test_memory_writer_upserts_existing_and_new_records() -> None:
     assert result.memory_ids == ["mem-existing", "mem-new"]
     assert store.get("mem-existing").content == "new content"
     assert store.get("mem-existing").summary == "updated"
+    assert store.get("mem-existing").embedding == [0.2, 0.4]
     assert store.get("mem-new").content == "new memory"
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [
+        MemoryWriteMode.MERGE,
+        MemoryWriteMode.PROMOTE,
+        MemoryWriteMode.INVALIDATE,
+        MemoryWriteMode.REPLACE,
+    ],
+)
+def test_memory_writer_rejects_unimplemented_write_modes(mode: MemoryWriteMode) -> None:
+    store = InMemoryMemoryStore()
+    writer = MemoryWriter()
+    policy = MemoryPolicy(
+        allowed_scopes=[MemoryScope.WORKFLOW],
+        allowed_kinds=[MemoryKind.SEMANTIC],
+    )
+
+    with pytest.raises(NotImplementedError, match=mode.value):
+        writer.write(
+            MemoryWriteRequest(
+                records=[
+                    MemoryRecord(
+                        memory_id="mem-merge",
+                        content="merge memory",
+                        scope=MemoryScope.WORKFLOW,
+                        kind=MemoryKind.SEMANTIC,
+                    )
+                ],
+                mode=mode,
+            ),
+            store=store,
+            policy=policy,
+        )
+
+    assert store.get("mem-merge") is None

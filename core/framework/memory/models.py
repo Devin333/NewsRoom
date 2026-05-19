@@ -32,6 +32,9 @@ class MemoryKind(str, Enum):
 class MemoryWriteMode(str, Enum):
     APPEND = "append"
     UPSERT = "upsert"
+    MERGE = "merge"
+    PROMOTE = "promote"
+    INVALIDATE = "invalidate"
     REPLACE = "replace"
 
 
@@ -74,6 +77,7 @@ class MemoryRecord:
     tags: list[str] = field(default_factory=list)
     confidence: float | None = None
     importance: float | None = None
+    embedding: list[float] | None = None
     actor: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime | None = None
@@ -105,6 +109,8 @@ class MemoryRecord:
             raise ValueError("expires_at must be after created_at")
         _validate_optional_score("confidence", self.confidence)
         _validate_optional_score("importance", self.importance)
+        if self.embedding is not None:
+            object.__setattr__(self, "embedding", [float(value) for value in self.embedding])
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "MemoryRecord":
@@ -128,6 +134,7 @@ class MemoryRecord:
             tags=[str(item) for item in payload.get("tags") or []],
             confidence=_optional_float(payload.get("confidence")),
             importance=_optional_float(payload.get("importance")),
+            embedding=_optional_float_list(payload.get("embedding")),
             actor=_optional_str(payload.get("actor")),
             created_at=_optional_datetime(payload.get("created_at")) or datetime.now(UTC),
             updated_at=_optional_datetime(payload.get("updated_at")),
@@ -146,6 +153,7 @@ class MemoryRecord:
             "tags": list(self.tags),
             "confidence": self.confidence,
             "importance": self.importance,
+            "embedding": list(self.embedding) if self.embedding is not None else None,
             "actor": self.actor,
             "created_at": _datetime_to_json(self.created_at),
             "updated_at": _datetime_to_json(self.updated_at),
@@ -231,6 +239,7 @@ class MemorySearchResult:
             "score": self.score,
             "refs": refs,
             "metadata": dict(self.record.metadata),
+            "embedding": list(self.record.embedding) if self.record.embedding is not None else None,
             "match_reasons": list(self.match_reasons),
         }
         for key in ("run_id", "report_id", "evidence_id", "source_item_id", "section_id"):
@@ -381,6 +390,12 @@ def _optional_float(value: Any) -> float | None:
     if value is None or value == "":
         return None
     return float(value)
+
+
+def _optional_float_list(value: Any) -> list[float] | None:
+    if value is None:
+        return None
+    return [float(item) for item in value]
 
 
 def _optional_int(value: Any) -> int | None:

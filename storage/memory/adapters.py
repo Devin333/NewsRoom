@@ -100,6 +100,7 @@ def _vector_document_from_record(record: MemoryRecord, *, collection: str) -> Ve
         "tags": list(record.tags),
         "confidence": record.confidence,
         "importance": record.importance,
+        "embedding": list(record.embedding) if record.embedding is not None else None,
         "actor": record.actor,
         "created_at": record.created_at.isoformat().replace("+00:00", "Z"),
         "updated_at": record.updated_at.isoformat().replace("+00:00", "Z") if record.updated_at else None,
@@ -120,6 +121,7 @@ def _vector_document_from_record(record: MemoryRecord, *, collection: str) -> Ve
         topic=_optional_str(record.metadata.get("topic")),
         section_id=_optional_str(record.refs.get("section_id") or record.metadata.get("section_id")),
         created_at=record.created_at,
+        vector=list(record.embedding) if record.embedding is not None else None,
     )
 
 
@@ -147,6 +149,7 @@ def _record_from_vector_result(result: VectorSearchResult) -> MemoryRecord:
                 "tags",
                 "confidence",
                 "importance",
+                "embedding",
                 "actor",
                 "created_at",
                 "updated_at",
@@ -165,6 +168,7 @@ def _record_from_vector_result(result: VectorSearchResult) -> MemoryRecord:
         tags=[str(item) for item in payload.get("tags") or []],
         confidence=_optional_float(payload.get("confidence")),
         importance=_optional_float(payload.get("importance")),
+        embedding=_optional_float_list(payload.get("embedding")),
         actor=_optional_str(payload.get("actor")),
         created_at=payload.get("created_at") or None,
         updated_at=payload.get("updated_at") or None,
@@ -203,6 +207,12 @@ def _optional_float(value: Any) -> float | None:
     if value is None or value == "":
         return None
     return float(value)
+
+
+def _optional_float_list(value: Any) -> list[float] | None:
+    if value is None:
+        return None
+    return [float(item) for item in value]
 
 
 def _optional_str(value: Any) -> str | None:

@@ -82,6 +82,7 @@ class InMemoryMemoryStore:
             content=str(patch.get("content", record.content)),
             metadata={**record.metadata, **dict(patch.get("metadata") or {})},
             refs={**record.refs, **dict(patch.get("refs") or {})},
+            embedding=patch.get("embedding", record.embedding),
             updated_at=patch.get("updated_at") if isinstance(patch.get("updated_at"), datetime) else None,
         )
         self._records[memory_id] = updated
