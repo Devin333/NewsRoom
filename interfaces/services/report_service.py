@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from interfaces.models.common import ApiActionResult
+from storage.lineage.evidence import quality_lineage_summary
 from storage.local_json import LocalJsonRepository
 from workflows.daily_intelligence.profiles import daily_workflow_ids
 
@@ -235,42 +236,12 @@ def _quality_lineage_payload(repository: Any, run_id: str, report_id: str) -> di
     list_quality_results = getattr(repository, "list_quality_results", None)
     claims = list_claims(run_id) if callable(list_claims) else []
     quality_results = list_quality_results(run_id) if callable(list_quality_results) else []
-    supporting_evidence_ids = sorted(
-        {
-            str(evidence_id)
-            for claim in claims
-            for evidence_id in claim.get("supporting_evidence_ids", [])
-            if evidence_id
-        }
+    return quality_lineage_summary(
+        run_id=run_id,
+        report_id=report_id,
+        claims=claims,
+        quality_results=quality_results,
     )
-    rejecting_evidence_ids = sorted(
-        {
-            str(evidence_id)
-            for claim in claims
-            for evidence_id in claim.get("rejecting_evidence_ids", [])
-            if evidence_id
-        }
-    )
-    return {
-        "report_id": report_id,
-        "claim_count": len(claims),
-        "quality_result_count": len(quality_results),
-        "claims": [_claim_lineage_view(claim) for claim in claims],
-        "supporting_evidence_ids": supporting_evidence_ids,
-        "rejecting_evidence_ids": rejecting_evidence_ids,
-    }
-
-
-def _claim_lineage_view(claim: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "claim_id": str(claim.get("claim_id") or ""),
-        "status": str(claim.get("status") or "unknown"),
-        "text": str(claim.get("text") or ""),
-        "supporting_evidence_ids": [str(value) for value in claim.get("supporting_evidence_ids", [])],
-        "supporting_sources": [str(value) for value in claim.get("supporting_sources", [])],
-        "rejecting_evidence_ids": [str(value) for value in claim.get("rejecting_evidence_ids", [])],
-        "rejecting_sources": [str(value) for value in claim.get("rejecting_sources", [])],
-    }
 
 
 def _workflow_ids_for_family(workflow_family: str | None) -> tuple[str, ...] | None:

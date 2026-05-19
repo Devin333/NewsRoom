@@ -91,7 +91,30 @@ def test_lineage_refs_from_evidence_bundle_extracts_source_lineage() -> None:
     assert any(ref.target_type == "report" and ref.target_id == "run-1:final" for ref in refs)
 
 
-def test_local_json_lineage_store_rejects_invalid_inputs(tmp_path) -> None:
+
+
+def test_local_json_lineage_store_retrieval_contract_is_stable(tmp_path) -> None:
+    store = LocalJsonLineageStore(tmp_path)
+    upstream_ref = _ref("source_item", "raw-1")
+    downstream_ref = LineageRef(
+        run_id="run-1",
+        source_type="claim",
+        source_id="claim-1",
+        target_type="report",
+        target_id="run-1:final",
+        relation_type="claim_to_report",
+        created_at=datetime(2026, 5, 11, 1, 0, tzinfo=UTC),
+        metadata={"workflow_id": "daily"},
+    )
+    store.record_many([upstream_ref, downstream_ref])
+
+    listed = store.list_by_run("run-1")
+    upstream = store.upstream("run-1", "evidence", "ev-1")
+    downstream = store.downstream("run-1", "claim", "claim-1")
+
+    assert [ref.lineage_id for ref in listed] == [upstream_ref.lineage_id, downstream_ref.lineage_id]
+    assert upstream == [upstream_ref]
+    assert downstream == [downstream_ref]
     store = LocalJsonLineageStore(tmp_path)
 
     with pytest.raises(ValueError, match="invalid run_id"):

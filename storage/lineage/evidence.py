@@ -113,6 +113,51 @@ def lineage_refs_from_evidence_bundle(
     return list(refs.values())
 
 
+def quality_lineage_summary(
+    *,
+    run_id: str,
+    report_id: str | None,
+    claims: list[dict[str, Any]],
+    quality_results: list[dict[str, Any]],
+) -> dict[str, Any]:
+    supporting_evidence_ids = sorted(
+        {
+            str(evidence_id)
+            for claim in claims
+            for evidence_id in claim.get("supporting_evidence_ids", [])
+            if evidence_id
+        }
+    )
+    rejecting_evidence_ids = sorted(
+        {
+            str(evidence_id)
+            for claim in claims
+            for evidence_id in claim.get("rejecting_evidence_ids", [])
+            if evidence_id
+        }
+    )
+    return {
+        "report_id": report_id or run_id,
+        "claim_count": len(claims),
+        "quality_result_count": len(quality_results),
+        "claims": [_claim_lineage_view(claim) for claim in claims],
+        "supporting_evidence_ids": supporting_evidence_ids,
+        "rejecting_evidence_ids": rejecting_evidence_ids,
+    }
+
+
+def _claim_lineage_view(claim: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "claim_id": str(claim.get("claim_id") or ""),
+        "status": str(claim.get("status") or "unknown"),
+        "text": str(claim.get("text") or claim.get("claim") or ""),
+        "supporting_evidence_ids": [str(value) for value in claim.get("supporting_evidence_ids", [])],
+        "supporting_sources": [str(value) for value in claim.get("supporting_sources", [])],
+        "rejecting_evidence_ids": [str(value) for value in claim.get("rejecting_evidence_ids", [])],
+        "rejecting_sources": [str(value) for value in claim.get("rejecting_sources", [])],
+    }
+
+
 def _string_list(value: Any) -> list[str]:
     if isinstance(value, str):
         return [value] if value else []

@@ -117,7 +117,22 @@ def test_local_json_event_store_redacts_payload_and_metadata(tmp_path) -> None:
     assert fake_secret not in str(restored.to_dict())
 
 
-def test_local_json_event_store_handles_missing_and_rejects_invalid_inputs(tmp_path) -> None:
+
+
+def test_local_json_event_store_retrieval_contract_is_stable(tmp_path) -> None:
+    store = LocalJsonEventStore(tmp_path)
+    first = _event("event-1", step_id="collect_sources", event_type="workflow_started")
+    second = _event("event-2", step_id="draft_report", event_type="workflow_step_completed")
+    store.append_event(first)
+    store.append_event(second)
+
+    by_run = store.list_by_run("run-1")
+    by_step = store.list_by_step("run-1", "draft_report")
+    by_type = store.filter_by_type("run-1", "workflow_started")
+
+    assert [event.event_id for event in by_run] == ["event-1", "event-2"]
+    assert [event.event_id for event in by_step] == ["event-2"]
+    assert [event.event_id for event in by_type] == ["event-1"]
     store = LocalJsonEventStore(tmp_path)
 
     assert store.list_by_run("missing") == []

@@ -97,7 +97,7 @@ def test_run_inspection_get_run_reads_manifest(tmp_path) -> None:
         "step_results",
         "manifest",
     ]
-    assert result.to_dict()["output_preview"]["quality_trace"]["quality_lineage"]["candidate_claim_count"] == 1
+    assert result.to_dict()["output_preview"]["quality_trace"]["quality_lineage"]["claim_count"] == 1
 
 
 def test_run_inspection_reads_events_jsonl(tmp_path) -> None:

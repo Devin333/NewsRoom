@@ -15,6 +15,7 @@ from core.framework.workflow.inspection import (
     resolve_run_dir,
 )
 from core.framework.workflow.manifest import normalize_legacy_run_manifest
+from storage.lineage.evidence import quality_lineage_summary
 
 
 @dataclass(frozen=True)
@@ -489,28 +490,26 @@ def _manifest_output_preview(manifest: dict[str, Any]) -> dict[str, Any]:
 
 
 def _quality_lineage_preview(output: dict[str, Any]) -> dict[str, Any]:
-    evidence_bundle = output.get("evidence_bundle") if isinstance(output.get("evidence_bundle"), dict) else {}
     candidate_claims = output.get("candidate_claims") if isinstance(output.get("candidate_claims"), list) else []
     verified_findings = output.get("verified_findings") if isinstance(output.get("verified_findings"), dict) else {}
-    report = output.get("final_report") if isinstance(output.get("final_report"), dict) else output.get("blocked_report") if isinstance(output.get("blocked_report"), dict) else {}
-    supporting_evidence_ids = sorted(
-        {
-            str(evidence_id)
-            for claim in candidate_claims
-            if isinstance(claim, dict)
-            for evidence_id in claim.get("source_evidence_ids", [])
-            if evidence_id
-        }
+    claims = [
+        *verified_findings.get("accepted_claims", []),
+        *verified_findings.get("rejected_claims", []),
+        *verified_findings.get("uncertain_claims", []),
+    ]
+    report = (
+        output.get("final_report")
+        if isinstance(output.get("final_report"), dict)
+        else output.get("blocked_report")
+        if isinstance(output.get("blocked_report"), dict)
+        else {}
     )
-    return {
-        "report_id": str(output.get("report_id") or report.get("report_id") or output.get("run_id") or ""),
-        "evidence_bundle_id": evidence_bundle.get("bundle_id"),
-        "candidate_claim_count": len(candidate_claims),
-        "accepted_claim_count": len(verified_findings.get("accepted_claims", [])),
-        "rejected_claim_count": len(verified_findings.get("rejected_claims", [])),
-        "uncertain_claim_count": len(verified_findings.get("uncertain_claims", [])),
-        "supporting_evidence_ids": supporting_evidence_ids,
-    }
+    return quality_lineage_summary(
+        run_id=str(output.get("run_id") or ""),
+        report_id=str(output.get("report_id") or report.get("report_id") or output.get("run_id") or ""),
+        claims=claims or candidate_claims,
+        quality_results=[output.get("quality_result")] if isinstance(output.get("quality_result"), dict) else [],
+    )
 
 
 def _manifest_error(manifest: dict[str, Any]) -> dict[str, Any] | None:

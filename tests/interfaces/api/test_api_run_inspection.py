@@ -67,7 +67,7 @@ def test_run_inspection_api_includes_quality_trace_preview(tmp_path) -> None:
                 {"claim_id": "claim-1", "source_evidence_ids": ["ev-1"]}
             ],
             "verified_findings": {
-                "accepted_claims": [{"claim_id": "claim-1"}],
+                "accepted_claims": [{"claim_id": "claim-1", "supporting_evidence_ids": ["ev-1"], "supporting_sources": ["https://example.com/a"]}],
                 "rejected_claims": [],
                 "uncertain_claims": [],
             },
@@ -82,7 +82,7 @@ def test_run_inspection_api_includes_quality_trace_preview(tmp_path) -> None:
     assert payload["data"]["output_preview"]["quality_trace"]["decision"] == "blocked"
     assert payload["data"]["output_preview"]["quality_trace"]["route"] == "human_review"
     assert payload["data"]["output_preview"]["quality_trace"]["unsupported_sections"] == ["Summary"]
-    assert payload["data"]["output_preview"]["quality_trace"]["quality_lineage"]["candidate_claim_count"] == 1
+    assert payload["data"]["output_preview"]["quality_trace"]["quality_lineage"]["claim_count"] == 1
     assert payload["data"]["output_preview"]["quality_trace"]["quality_lineage"]["supporting_evidence_ids"] == ["ev-1"]
 
 
