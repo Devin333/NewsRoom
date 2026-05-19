@@ -150,6 +150,7 @@ class RedisStreamTaskQueue:
                     message_id=message_id,
                     fields=fields,
                     worker_id=worker_id,
+                    reclaimed=True,
                 )
         return None
 
@@ -300,17 +301,21 @@ def _leased_task_from_message(
     message_id: Any,
     fields: dict[Any, Any],
     worker_id: str,
+    reclaimed: bool = False,
 ) -> LeasedTask:
     raw_task = _field_value(fields, "task")
     task = Task.from_dict(json.loads(_decode(raw_task)))
     previous_worker = task.leased_by
+    previous_attempts = task.attempts
     task.status = TaskStatus.LEASED
     task.leased_by = worker_id
     task.attempts += 1
     task.metadata["lease_count"] = task.attempts
-    if previous_worker and previous_worker != worker_id:
+    if reclaimed:
         task.metadata["reclaimed"] = True
-        task.metadata["reclaimed_from_worker"] = previous_worker
+        if previous_worker and previous_worker != worker_id:
+            task.metadata["reclaimed_from_worker"] = previous_worker
+        task.metadata["reclaimed_attempts_before"] = previous_attempts
     task.updated_at = datetime.now(UTC)
     if task.timeout_seconds is not None:
         task.lease_expires_at = task.updated_at + timedelta(seconds=task.timeout_seconds)

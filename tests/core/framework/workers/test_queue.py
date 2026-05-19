@@ -224,6 +224,8 @@ def test_redis_stream_queue_lease_one_decodes_task_payload() -> None:
 
 def test_redis_stream_queue_reclaim_stale_one_claims_pending_payload() -> None:
     task = Task(task_type="daily_intelligence.run", payload={"topic": "AI"}, task_id="task-1")
+    task.leased_by = "worker-1"
+    task.attempts = 1
     redis = _FakeRedisPending(task.to_dict(), idle_ms=120_000)
     queue = RedisStreamTaskQueue(redis)
 
@@ -236,9 +238,11 @@ def test_redis_stream_queue_reclaim_stale_one_claims_pending_payload() -> None:
     assert leased.task.task_id == "task-1"
     assert leased.task.status == TaskStatus.LEASED
     assert leased.task.leased_by == "worker-2"
-    assert leased.task.attempts == 1
-    assert leased.task.metadata["lease_count"] == 1
-    assert "reclaimed" not in leased.task.metadata
+    assert leased.task.attempts == 2
+    assert leased.task.metadata["lease_count"] == 2
+    assert leased.task.metadata["reclaimed"] is True
+    assert leased.task.metadata["reclaimed_from_worker"] == "worker-1"
+    assert leased.task.metadata["reclaimed_attempts_before"] == 1
     assert leased.queue_name == "news:queue:daily"
     assert leased.message_id == "1-0"
     assert redis.xclaim_calls == [

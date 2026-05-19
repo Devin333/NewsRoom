@@ -208,6 +208,9 @@ def test_worker_service_run_once_reclaims_stale_task_when_no_new_task() -> None:
     assert result.processed is True
     assert result.reclaimed is True
     assert result.success is True
+    assert task.attempts == 1
+    assert task.metadata["lease_count"] == 1
+    assert task.metadata["reclaimed"] is True
     assert queue.reclaim_calls == [("worker-1", [DEFAULT_DAILY_QUEUE], 60_000)]
     assert queue.acked == [(DEFAULT_DAILY_QUEUE, "1-0")]
 
@@ -336,6 +339,15 @@ class _FakeQueue:
 
     def reclaim_stale_one(self, worker_id, queue_names, *, min_idle_ms):
         self.reclaim_calls.append((worker_id, queue_names, min_idle_ms))
+        if self.reclaimed is not None:
+            task = self.reclaimed.task
+            previous_worker = task.leased_by
+            task.leased_by = worker_id
+            task.attempts += 1
+            task.metadata["lease_count"] = task.attempts
+            task.metadata["reclaimed"] = True
+            if previous_worker is not None and previous_worker != worker_id:
+                task.metadata["reclaimed_from_worker"] = previous_worker
         return self.reclaimed
 
     def ack(self, queue_name, message_id):
