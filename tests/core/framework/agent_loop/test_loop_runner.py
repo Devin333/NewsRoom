@@ -195,30 +195,30 @@ def test_agent_runner_excludes_blocked_tools_from_prompt_schema() -> None:
     assert [tool["name"] for tool in llm.requests[0].tools] == ["memory.search"]
 
 
-def test_writer_agent_cannot_fetch_even_when_policy_allows_fetch_tool() -> None:
+def test_agent_runner_blocks_tool_call_not_in_agent_allowlist() -> None:
     calls = {"count": 0}
     registry = ToolRegistry()
     registry.register(
-        ToolDefinition(name="source.fetch_url", input_schema={"required": ["url"]}),
+        ToolDefinition(name="http.fetch", input_schema={"required": ["url"]}),
         lambda args: calls.__setitem__("count", calls["count"] + 1) or {"content": "raw"},
     )
     llm = FakeLLMClient(
         [
             (
-                '{"action_type":"tool_call","tool_name":"source.fetch_url",'
+                '{"action_type":"tool_call","tool_name":"http.fetch",'
                 '"tool_args":{"url":"https://example.com/raw"}}'
             )
         ]
     )
     agent = AgentSpec(
-        agent_id="writer",
-        name="WriterAgent",
-        role="Write",
-        goal="Write only from provided evidence",
+        agent_id="analyst",
+        name="Analyst",
+        role="Analyze",
+        goal="Analyze provided input",
         instructions="Return JSON actions only.",
         input_keys=["request"],
-        output_key="final_report",
-        allowed_tools=["source.fetch_url"],
+        output_key="analysis_result",
+        allowed_tools=["memory.search"],
         loop_policy=AgentLoopPolicy(max_iterations=1),
     )
 
@@ -239,31 +239,31 @@ def test_writer_agent_cannot_fetch_even_when_policy_allows_fetch_tool() -> None:
     assert "not allowed" in observations[0]["result"]["error_message"]
 
 
-def test_editor_agent_cannot_fetch_even_when_policy_allows_fetch_tool() -> None:
+def test_agent_runner_allows_generic_fetch_tool_when_policy_allows_it() -> None:
     calls = {"count": 0}
     registry = ToolRegistry()
     registry.register(
-        ToolDefinition(name="source.fetch_url", input_schema={"required": ["url"]}),
+        ToolDefinition(name="http.fetch", input_schema={"required": ["url"]}),
         lambda args: calls.__setitem__("count", calls["count"] + 1) or {"content": "raw"},
     )
     llm = FakeLLMClient(
         [
             (
-                '{"action_type":"tool_call","tool_name":"source.fetch_url",'
+                '{"action_type":"tool_call","tool_name":"http.fetch",'
                 '"tool_args":{"url":"https://example.com/raw"}}'
-            )
+            ),
+            '{"action_type":"final_output","output":{"analysis_result":{"summary":"ok"}}}',
         ]
     )
     agent = AgentSpec(
-        agent_id="editor",
-        name="EditorAgent",
-        role="Edit",
-        goal="Edit only from provided evidence",
+        agent_id="collector",
+        name="Collector",
+        role="Collect",
+        goal="Collect generic input",
         instructions="Return JSON actions only.",
         input_keys=["request"],
-        output_key="edited_report",
-        allowed_tools=["source.fetch_url"],
-        loop_policy=AgentLoopPolicy(max_iterations=1),
+        output_key="analysis_result",
+        allowed_tools=["http.fetch"],
     )
 
     result = AgentRunner(llm_client=llm, tool_registry=registry).run(
@@ -276,11 +276,12 @@ def test_editor_agent_cannot_fetch_even_when_policy_allows_fetch_tool() -> None:
         for event in result.events
         if event["event_type"] == "tool_observation"
     ]
-    assert llm.requests[0].tools == []
-    assert calls["count"] == 0
-    assert result.metrics.tool_blocks == 1
-    assert observations[0]["status"] == "blocked"
-    assert "not allowed" in observations[0]["result"]["error_message"]
+    assert [tool["name"] for tool in llm.requests[0].tools] == ["http.fetch"]
+    assert llm.requests[0].tools[0]["input_schema"] == {"required": ["url"]}
+    assert calls["count"] == 1
+    assert result.success is True
+    assert result.metrics.tool_blocks == 0
+    assert observations[0]["status"] == "succeeded"
 
 
 def test_agent_runner_blocks_tool_call_after_agent_budget_is_exhausted() -> None:
@@ -1056,33 +1057,33 @@ def test_agent_runner_waits_for_tool_approval_with_diagnostics() -> None:
     registry = ToolRegistry()
     registry.register(
         ToolDefinition(
-            name="report.publish",
+            name="publish.record",
             side_effect="publishing",
             requires_approval=True,
         ),
         lambda args: {"published": True},
     )
     llm = FakeLLMClient(
-        ['{"action_type":"tool_call","tool_name":"report.publish","tool_args":{"report_id":"r1"}}']
+        ['{"action_type":"tool_call","tool_name":"publish.record","tool_args":{"item_id":"r1"}}']
     )
     agent = AgentSpec(
         agent_id="publisher",
         name="Publisher",
         role="Publish",
-        goal="Publish report",
+        goal="Publish item",
         instructions="Return JSON actions only.",
         input_keys=["request"],
         output_key="publish_result",
-        allowed_tools=["report.publish"],
+        allowed_tools=["publish.record"],
         tool_policy=ToolPolicy(
-            allowed_tools=["report.publish"],
+            allowed_tools=["publish.record"],
             allow_dangerous_tools=True,
         ),
     )
 
     result = AgentRunner(llm_client=llm, tool_registry=registry).run(
         agent,
-        {"request": {"report_id": "r1"}},
+        {"request": {"item_id": "r1"}},
     )
 
     assert result.success is False
@@ -1090,7 +1091,7 @@ def test_agent_runner_waits_for_tool_approval_with_diagnostics() -> None:
     assert result.metrics.tool_approval_requests == 1
     assert result.diagnostics is not None
     assert result.diagnostics.stop_reason == AgentLoopStopReason.TOOL_APPROVAL_REQUIRED
-    assert result.diagnostics.issues[0].tool_name == "report.publish"
+    assert result.diagnostics.issues[0].tool_name == "publish.record"
     assert result.events[-1]["event_type"] == "agent_waiting_for_approval"
 
 
@@ -1131,7 +1132,7 @@ def test_agent_runner_persists_waiting_for_approval_iteration_checkpoint(tmp_pat
         conversation_store=store,
     ).run(
         agent,
-        {"request": {"report_id": "r1"}},
+        {"request": {"item_id": "r1"}},
         conversation_id="conversation-approval",
         run_id="run-approval",
         step_id="publish",

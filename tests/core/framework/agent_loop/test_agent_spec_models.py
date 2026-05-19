@@ -54,28 +54,29 @@ def test_agent_spec_defaults_subagent_delegation_off() -> None:
     assert spec.allows_subagent("citation_sanity_checker") is False
 
 
-def test_restricted_writer_policy_removes_external_fetch_tools() -> None:
+def test_default_tool_policy_requires_explicit_allowlist() -> None:
     spec = _agent(
-        agent_id="writer",
-        allowed_tools=["source.fetch_url", "web.search", "memory.search"],
+        agent_id="collector",
+        allowed_tools=["http.fetch", "memory.search"],
     )
     policy = spec.resolved_tool_policy()
 
     assert policy.allows("memory.search") is True
-    assert policy.allows("source.fetch_url") is False
-    assert policy.allows("web.search") is False
-    assert "source.fetch_url" in policy.blocked_tools
+    assert policy.allows("http.fetch") is True
+    assert policy.allows("artifact.write") is False
+    assert policy.require_explicit_allowlist is True
 
 
-def test_restricted_editor_policy_removes_source_and_publish_tools() -> None:
+def test_explicit_tool_policy_is_preserved() -> None:
     spec = _agent(
-        agent_id="editor",
-        allowed_tools=["source.add_manual", "report.publish", "quality.check_citations"],
+        agent_id="reviewer",
+        tool_policy=ToolPolicy(
+            allowed_tools=["artifact.write", "score.compute"],
+            blocked_tools=["artifact.write"],
+        ),
     )
     policy = spec.resolved_tool_policy()
 
-    assert policy.allows("quality.check_citations") is True
-    assert policy.allows("source.add_manual") is False
-    assert policy.allows("report.publish") is False
-    assert "source.add_manual" in policy.blocked_tools
-    assert "report.publish" in policy.blocked_tools
+    assert policy.allows("score.compute") is True
+    assert policy.allows("artifact.write") is False
+    assert policy.blocked_tools == ["artifact.write"]

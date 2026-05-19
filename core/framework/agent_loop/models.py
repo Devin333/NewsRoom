@@ -5,7 +5,6 @@ from enum import Enum
 from typing import Any
 
 from core.framework.llm import TokenUsage
-from core.framework.tools.boundary import harden_restricted_agent_tool_policy
 from core.framework.tools.models import ToolPolicy
 
 
@@ -145,19 +144,10 @@ class AgentSpec:
 
     def resolved_tool_policy(self) -> ToolPolicy:
         if self.tool_policy:
-            return _harden_agent_loop_tool_policy(
-                self.agent_id,
-                harden_restricted_agent_tool_policy(self.agent_id, self.tool_policy),
-            )
-        return _harden_agent_loop_tool_policy(
-            self.agent_id,
-            harden_restricted_agent_tool_policy(
-                self.agent_id,
-                ToolPolicy(
-                    allowed_tools=list(self.allowed_tools),
-                    require_explicit_allowlist=True,
-                ),
-            ),
+            return self.tool_policy
+        return ToolPolicy(
+            allowed_tools=list(self.allowed_tools),
+            require_explicit_allowlist=True,
         )
 
     @property
@@ -508,47 +498,6 @@ def _tool_policy_from_dict(value: Any) -> ToolPolicy | None:
         raise TypeError("tool_policy must be an object")
     supported = _tool_policy_to_dict(ToolPolicy()).keys()
     return ToolPolicy(**{key: value[key] for key in supported if key in value})
-
-
-def _harden_agent_loop_tool_policy(agent_id: str, policy: ToolPolicy) -> ToolPolicy:
-    normalized_agent_id = "".join(ch for ch in agent_id.casefold() if ch.isalnum())
-    blocked_allowed_tools = set()
-    if normalized_agent_id in {"editor", "editoragent"}:
-        blocked_allowed_tools.update(
-            tool_name
-            for tool_name in policy.allowed_tools
-            if _is_editor_mutation_tool(tool_name)
-        )
-    if not blocked_allowed_tools:
-        return policy
-    return ToolPolicy(
-        allowed_tools=[
-            tool_name
-            for tool_name in policy.allowed_tools
-            if tool_name not in blocked_allowed_tools
-        ],
-        blocked_tools=sorted({*policy.blocked_tools, *blocked_allowed_tools}),
-        allow_mcp_tools=policy.allow_mcp_tools,
-        max_tool_calls_per_iteration=policy.max_tool_calls_per_iteration,
-        max_tool_calls_per_agent=policy.max_tool_calls_per_agent,
-        require_explicit_allowlist=True,
-        allow_dangerous_tools=policy.allow_dangerous_tools,
-        require_approval_for_side_effects=policy.require_approval_for_side_effects,
-        max_result_chars_inline=policy.max_result_chars_inline,
-        spill_large_results_to_artifact=policy.spill_large_results_to_artifact,
-        timeout_seconds_default=policy.timeout_seconds_default,
-        max_attempts_default=policy.max_attempts_default,
-    )
-
-
-def _is_editor_mutation_tool(tool_name: str) -> bool:
-    normalized = tool_name.strip()
-    return (
-        normalized.startswith("source.")
-        or normalized in {"report.publish", "postgres.save_report"}
-        or normalized.endswith(".publish")
-        or normalized.endswith(".save_report")
-    )
 
 
 def _copy_mapping(value: dict[str, Any] | None) -> dict[str, Any] | None:
