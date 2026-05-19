@@ -9,6 +9,7 @@ from core.framework.agent_loop.prompt import PromptBuilder
 from core.framework.agent_loop.judge import OutputJudge
 from core.framework.agent_loop.subagents import SubAgentExecutor
 from core.framework.llm import GlobalBudgetTracker, LLMClient
+from core.framework.memory import MemoryPolicy, MemoryRuntime
 from core.framework.tools.executor import ToolExecutor
 from core.framework.tools.registry import ToolRegistry
 from storage.conversation import (
@@ -28,12 +29,16 @@ class AgentRunner:
         conversation_store: LocalJsonConversationStore | None = None,
         global_budget_tracker: GlobalBudgetTracker | None = None,
         subagent_executor: SubAgentExecutor | None = None,
+        memory_runtime: MemoryRuntime | None = None,
+        memory_policy: MemoryPolicy | None = None,
     ) -> None:
         self._llm_client = llm_client
         self._tool_registry = tool_registry
         self._conversation_store = conversation_store
         self._global_budget_tracker = global_budget_tracker
         self._subagent_executor = subagent_executor
+        self._memory_runtime = memory_runtime
+        self._memory_policy = memory_policy
 
     def run(
         self,
@@ -77,8 +82,10 @@ class AgentRunner:
             output_judge=OutputJudge(),
             global_budget_tracker=global_budget_tracker or self._global_budget_tracker,
             subagent_executor=self._subagent_executor,
+            memory_runtime=self._memory_runtime,
+            memory_policy=self._memory_policy,
         )
-        result = loop.run(agent, loop_inputs, tools)
+        result = loop.run(agent, loop_inputs, tools, run_id=run_id)
         self._append_conversation_events(
             conversation_id,
             agent,

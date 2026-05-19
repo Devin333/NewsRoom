@@ -7,13 +7,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable
 
-from core.framework.workers import (
+from business.workers import (
     DailyIntelligenceTaskHandler,
     MemoryReindexTaskHandler,
+    SourceHealthCheckTaskHandler,
+)
+from core.framework.workers import (
     RedisQueueStatus,
     RedisStreamTaskQueue,
     RedisWorkerRegistry,
-    SourceHealthCheckTaskHandler,
     Task,
     TaskResult,
     TaskStatus,
@@ -21,6 +23,7 @@ from core.framework.workers import (
     WorkerHeartbeatStatus,
     WorkerStatus,
 )
+from core.framework.workers.handler import TaskHandler
 from core.framework.workers.models import LeasedTask
 from interfaces.services.run_service import RunApplicationService
 
@@ -154,7 +157,7 @@ class WorkerApplicationService:
         redis_url: str | None = None,
         queue: RedisStreamTaskQueue | None = None,
         worker_registry: RedisWorkerRegistry | None = None,
-        handlers: dict[str, DailyIntelligenceTaskHandler] | None = None,
+        handlers: dict[str, TaskHandler] | None = None,
     ) -> None:
         self.artifact_root = Path(artifact_root)
         redis_client = None

@@ -39,6 +39,12 @@ from core.framework.llm import (
     LLMResponse,
     LLMStreamAccumulator,
 )
+from core.framework.memory import (
+    AgentMemoryAdapter,
+    DEFAULT_AGENT_MEMORY_POLICY,
+    MemoryPolicy,
+    MemoryRuntime,
+)
 from core.framework.tools.executor import ToolExecutor
 from core.framework.tools.models import (
     ArtifactRef,
@@ -61,6 +67,9 @@ class AgentLoop:
         output_judge: OutputJudge | None = None,
         global_budget_tracker: GlobalBudgetTracker | None = None,
         subagent_executor: SubAgentExecutor | None = None,
+        memory_runtime: MemoryRuntime | None = None,
+        memory_policy: MemoryPolicy | None = None,
+        memory_adapter: AgentMemoryAdapter | None = None,
     ) -> None:
         self._llm_client = llm_client
         self._tool_executor = tool_executor
@@ -69,12 +78,17 @@ class AgentLoop:
         self._output_judge = output_judge or OutputJudge()
         self._global_budget_tracker = global_budget_tracker
         self._subagent_executor = subagent_executor
+        self._memory_runtime = memory_runtime
+        self._memory_policy = memory_policy or DEFAULT_AGENT_MEMORY_POLICY
+        self._memory_adapter = memory_adapter or AgentMemoryAdapter()
 
     def run(
         self,
         agent: AgentSpec,
         inputs: dict[str, Any],
         tools: list[dict[str, Any]],
+        *,
+        run_id: str | None = None,
     ) -> AgentLoopResult:
         metrics = AgentLoopMetrics()
         events = AgentLoopEventRecorder(agent_id=agent.agent_id)
@@ -106,6 +120,11 @@ class AgentLoop:
                 tool_observation_count=len(tool_observations),
                 tools_available=_tool_names(tools),
             )
+            memory_context = self._memory_context_for_llm(
+                agent=agent,
+                inputs=inputs,
+                run_id=run_id,
+            )
 
             request = self._prompt_builder.build(
                 agent,
@@ -116,6 +135,7 @@ class AgentLoop:
                     for observation in tool_observations
                 ],
                 tools=tools,
+                memory_context=memory_context,
             )
             trace.record_prompt(iteration_trace, request)
             try:
@@ -420,6 +440,11 @@ class AgentLoop:
         else:
             observation = self._execute_tool(tool_call, _execution_tool_policy(tool_policy))
         observation = _prompt_safe_observation(observation, tool_policy)
+        self._write_tool_observation_memory(
+            agent=agent,
+            inputs=inputs,
+            observation=observation,
+        )
 
         tool_observations.append(observation)
         called_tools.append(observation.call.tool_name)
@@ -816,6 +841,49 @@ class AgentLoop:
         )
         metrics.global_budget_check = check.to_dict()
         metrics.global_budget_usage = check.usage.to_dict()
+
+    def _memory_context_for_llm(
+        self,
+        *,
+        agent: AgentSpec,
+        inputs: dict[str, Any],
+        run_id: str | None,
+    ) -> str | None:
+        if self._memory_runtime is None:
+            return None
+        try:
+            recall = self._memory_adapter.before_llm_call(
+                agent_id=agent.agent_id,
+                run_id=run_id or _run_id_from_inputs(inputs) or "",
+                input_text=str(inputs),
+                runtime=self._memory_runtime,
+                policy=self._memory_policy,
+            )
+        except Exception:
+            return None
+        return recall.context_block.content or None
+
+    def _write_tool_observation_memory(
+        self,
+        *,
+        agent: AgentSpec,
+        inputs: dict[str, Any],
+        observation: ToolObservation,
+    ) -> None:
+        if self._memory_runtime is None:
+            return
+        if observation.status != ToolStatus.SUCCEEDED:
+            return
+        try:
+            self._memory_adapter.after_tool_observation(
+                agent_id=agent.agent_id,
+                run_id=_run_id_from_inputs(inputs) or "",
+                tool_name=observation.tool_name,
+                observation=observation.to_dict(),
+                runtime=self._memory_runtime,
+            )
+        except Exception:
+            return
 
     def _accepted_result(
         self,
@@ -1379,4 +1447,14 @@ def _request_profile(inputs: dict[str, Any]) -> str | None:
     request = inputs.get("request")
     if isinstance(request, dict) and request.get("profile") is not None:
         return str(request.get("profile"))
+    return None
+
+
+def _run_id_from_inputs(inputs: dict[str, Any]) -> str | None:
+    value = inputs.get("run_id")
+    if value:
+        return str(value)
+    request = inputs.get("request")
+    if isinstance(request, dict) and request.get("run_id"):
+        return str(request.get("run_id"))
     return None

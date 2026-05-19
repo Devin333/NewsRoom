@@ -17,6 +17,7 @@ class PromptBuilder:
         feedback: str | None = None,
         tool_observations: list[dict[str, Any]] | None = None,
         tools: list[dict[str, Any]] | None = None,
+        memory_context: str | None = None,
     ) -> LLMRequest:
         system = agent.system_prompt_template.format(
             role=agent.role,
@@ -26,6 +27,9 @@ class PromptBuilder:
             goal=agent.goal,
             inputs=json.dumps(to_json_safe(inputs), ensure_ascii=False, sort_keys=True),
         )
+        if memory_context:
+            user += "\nMemory context:\n"
+            user += memory_context
         if tool_observations:
             user += "\nTool observations: "
             user += json.dumps(

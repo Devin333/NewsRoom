@@ -4,7 +4,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from core.framework.workers.handlers import DailyIntelligenceTaskHandler
+from core.framework.workers.handler import TaskHandler
 from core.framework.workers.in_memory import InMemoryTaskQueue
 from core.framework.workers.models import TaskError, TaskEvent, TaskResult, TaskStatus
 
@@ -39,7 +39,7 @@ class WorkerLoop:
         *,
         worker_id: str,
         queue: InMemoryTaskQueue,
-        handlers: dict[str, DailyIntelligenceTaskHandler],
+        handlers: dict[str, TaskHandler],
         queue_names: list[str],
         idle_sleep_seconds: float = 1.0,
         sleep_fn: Callable[[float], None] | None = None,

@@ -1,9 +1,4 @@
-"""Deprecated worker handler compatibility exports.
-
-TODO(boundary-migration): legacy adapter, remove after business worker handlers are stable.
-"""
-
-from __future__ import annotations
+"""Business task handlers for worker queues."""
 
 from business.workers.daily_intelligence_handler import DailyIntelligenceTaskHandler
 from business.workers.memory_reindex_handler import MemoryReindexTaskHandler
@@ -14,3 +9,4 @@ __all__ = [
     "MemoryReindexTaskHandler",
     "SourceHealthCheckTaskHandler",
 ]
+

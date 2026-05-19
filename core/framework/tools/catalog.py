@@ -20,10 +20,10 @@ from core.framework.tools.report_tools import register_report_tools
 from core.framework.tools.source_tools import FetchText, register_source_tools
 from core.framework.tools.web_search_tools import WebSearchProvider, register_web_search_tools
 from core.framework.tools.models import ToolDefinition, ToolPolicy
+from core.framework.memory import MemoryRuntime
 from sources import SourceRegistry
 from sources.connectors import ArxivConnector, GithubConnector, SourceFetchPolicy
 from sources.health import BasicSourceHealthManager
-from storage.memory import MemoryIngestionService
 
 _SAFE_SIDE_EFFECTS = {"", "none", "read_only"}
 _DANGEROUS_TOOL_NAMES = {
@@ -33,6 +33,7 @@ _DANGEROUS_TOOL_NAMES = {
     "control.request_human_review",
     "local_json.save",
     "memory.index",
+    "memory.write",
     "qdrant.upsert",
     "report.export",
     "report.publish",
@@ -107,7 +108,8 @@ def build_builtin_tool_registry(
     github_connector: GithubConnector | None = None,
     web_search_provider: WebSearchProvider | None = None,
     vector_store: Any | None = None,
-    memory_ingestion_service: MemoryIngestionService | None = None,
+    memory_ingestion_service: Any | None = None,
+    memory_runtime: MemoryRuntime | None = None,
     qdrant_vector_store: Any | None = None,
     qdrant_document_store: Any | None = None,
     report_service: Any | None = None,
@@ -134,6 +136,7 @@ def build_builtin_tool_registry(
         web_search_provider=web_search_provider,
         vector_store=vector_store,
         memory_ingestion_service=memory_ingestion_service,
+        memory_runtime=memory_runtime,
         qdrant_vector_store=qdrant_vector_store,
         qdrant_document_store=qdrant_document_store,
         report_service=report_service,
@@ -190,7 +193,8 @@ def _build_unfiltered_builtin_tool_registry(
     github_connector: GithubConnector | None = None,
     web_search_provider: WebSearchProvider | None = None,
     vector_store: Any | None = None,
-    memory_ingestion_service: MemoryIngestionService | None = None,
+    memory_ingestion_service: Any | None = None,
+    memory_runtime: MemoryRuntime | None = None,
     qdrant_vector_store: Any | None = None,
     qdrant_document_store: Any | None = None,
     report_service: Any | None = None,
@@ -236,11 +240,12 @@ def _build_unfiltered_builtin_tool_registry(
         register_artifact_tools(registry, artifact_manager=artifact_manager, run_id=run_id)
     if local_json_root is not None:
         register_local_json_tools(registry, root=local_json_root)
-    if vector_store is not None:
+    if vector_store is not None or memory_runtime is not None:
         register_memory_tools(
             registry,
             vector_store=vector_store,
             ingestion_service=memory_ingestion_service,
+            memory_runtime=memory_runtime,
         )
     if qdrant_vector_store is not None:
         register_qdrant_tools(

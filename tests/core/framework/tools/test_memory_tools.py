@@ -6,6 +6,7 @@ from core.framework.tools import (
     ToolStatus,
     register_memory_tools,
 )
+from core.framework.memory import InMemoryMemoryStore, MemoryRecord, MemoryRuntime
 from storage.memory import MemoryIngestionService
 from storage.vector import InMemoryVectorStore, VectorDocument
 
@@ -111,6 +112,94 @@ def test_memory_search_tool_rejects_blank_query() -> None:
 
     assert observation.status == ToolStatus.FAILED
     assert "query is required" in (observation.result.error_message or "")
+
+
+def test_memory_recall_tool_uses_memory_runtime_context() -> None:
+    runtime = MemoryRuntime(
+        InMemoryMemoryStore(
+            [
+                MemoryRecord(
+                    memory_id="mem-1",
+                    content="Agent memory context is assembled before model calls.",
+                    scope="agent",
+                    kind="semantic",
+                    refs={"run_id": "run-1"},
+                )
+            ]
+        )
+    )
+    registry = ToolRegistry()
+    register_memory_tools(registry, memory_runtime=runtime)
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="memory.recall",
+            arguments={"query": "agent memory context", "limit": 1},
+        ),
+        ToolPolicy(allowed_tools=["memory.recall"]),
+    )
+
+    assert observation.status == ToolStatus.SUCCEEDED
+    assert observation.result.output["result_count"] == 1
+    assert observation.result.output["results"][0]["memory_id"] == "mem-1"
+    assert "mem-1" in observation.result.output["context_block"]["memory_ids"]
+
+
+def test_memory_write_tool_requires_side_effect_approval_by_default() -> None:
+    registry = ToolRegistry()
+    register_memory_tools(registry, memory_runtime=MemoryRuntime(InMemoryMemoryStore()))
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="memory.write",
+            arguments={
+                "records": [
+                    {
+                        "content": "Write through memory runtime.",
+                        "scope": "session",
+                        "kind": "semantic",
+                    }
+                ]
+            },
+        ),
+        ToolPolicy(allowed_tools=["memory.write"]),
+    )
+
+    assert observation.status == ToolStatus.APPROVAL_REQUIRED
+
+
+def test_memory_write_tool_persists_records_when_approved() -> None:
+    runtime = MemoryRuntime(InMemoryMemoryStore())
+    registry = ToolRegistry()
+    register_memory_tools(registry, memory_runtime=runtime)
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="memory.write",
+            arguments={
+                "run_id": "run-1",
+                "records": [
+                    {
+                        "memory_id": "mem-write",
+                        "content": "Memory write persists generic records.",
+                        "scope": "session",
+                        "kind": "semantic",
+                    }
+                ],
+            },
+        ),
+        ToolPolicy(
+            allowed_tools=["memory.write"],
+            require_approval_for_side_effects=False,
+        ),
+    )
+
+    assert observation.status == ToolStatus.SUCCEEDED
+    assert observation.result.output["written_count"] == 1
+    assert runtime.get("mem-write").refs["run_id"] == "run-1"
 
 
 def test_memory_index_tool_indexes_report_and_evidence_through_executor() -> None:
