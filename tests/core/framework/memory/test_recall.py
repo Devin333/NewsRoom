@@ -74,3 +74,33 @@ def test_memory_recall_result_includes_source_and_diagnostics() -> None:
     assert payload["diagnostics"]["context_token_budget"] == 20
     assert payload["diagnostics"]["context_token_estimate"] == result.context_block.token_estimate
     assert payload["diagnostics"]["memory_ids"] == result.context_block.memory_ids
+
+
+def test_memory_context_assembler_uses_prd_prompt_format_and_safe_refs() -> None:
+    record = MemoryRecord(
+        memory_id="mem-prompt",
+        content="Prompt context should include a stable runtime memory.",
+        summary="Stable runtime memory",
+        kind=MemoryKind.SEMANTIC,
+        scope=MemoryScope.WORKFLOW,
+        confidence=0.82,
+        importance=0.7,
+        refs={
+            "run_id": "run-1",
+            "artifact_id": "artifact-1",
+            "unsafe_ref": "hidden",
+        },
+    )
+
+    block = MemoryContextAssembler().assemble(
+        [MemorySearchResult(record=record, score=0.8, source="keyword")],
+        max_context_tokens=200,
+    )
+
+    assert block.content.startswith("<memory_context>")
+    assert "Relevant memories:" in block.content
+    assert "[semantic | confidence=0.82 | importance=0.70]" in block.content
+    assert "summary: Stable runtime memory" in block.content
+    assert "refs: artifact_id=artifact-1, run_id=run-1" in block.content
+    assert "unsafe_ref" not in block.content
+    assert block.content.endswith("</memory_context>")

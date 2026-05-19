@@ -339,6 +339,135 @@ class MemoryWriteResult:
         }
 
 
+@dataclass(frozen=True)
+class MemoryConsolidationRequest:
+    memory_ids: list[str] = field(default_factory=list)
+    query: MemoryQuery | None = None
+    filters: dict[str, Any] = field(default_factory=dict)
+    actor: str | None = None
+    run_id: str | None = None
+    reason: str | None = None
+
+    def __post_init__(self) -> None:
+        memory_ids = [str(memory_id).strip() for memory_id in self.memory_ids if str(memory_id).strip()]
+        query = self.query
+        if query is not None and not isinstance(query, MemoryQuery):
+            query = MemoryQuery.from_dict(dict(query))
+        filters = dict(self.filters or {})
+        if not memory_ids and query is None and not filters:
+            raise ValueError("memory_ids, query, or filters are required")
+        object.__setattr__(self, "memory_ids", memory_ids)
+        object.__setattr__(self, "query", query)
+        object.__setattr__(self, "filters", filters)
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "MemoryConsolidationRequest":
+        raw_query = payload.get("query")
+        query = MemoryQuery.from_dict(raw_query) if isinstance(raw_query, dict) else None
+        return cls(
+            memory_ids=[str(value) for value in payload.get("memory_ids") or []],
+            query=query,
+            filters=dict(payload.get("filters") or {}),
+            actor=_optional_str(payload.get("actor")),
+            run_id=_optional_str(payload.get("run_id")),
+            reason=_optional_str(payload.get("reason")),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "memory_ids": list(self.memory_ids),
+            "query": self.query.to_dict() if self.query is not None else None,
+            "filters": dict(self.filters),
+            "actor": self.actor,
+            "run_id": self.run_id,
+            "reason": self.reason,
+        }
+
+
+@dataclass(frozen=True)
+class MemoryConsolidationResult:
+    consolidated_count: int = 0
+    memory_ids: list[str] = field(default_factory=list)
+    source_memory_ids: list[str] = field(default_factory=list)
+    skipped_count: int = 0
+    warnings: list[str] = field(default_factory=list)
+
+    @property
+    def success(self) -> bool:
+        return not self.warnings
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "success": self.success,
+            "consolidated_count": self.consolidated_count,
+            "memory_ids": list(self.memory_ids),
+            "source_memory_ids": list(self.source_memory_ids),
+            "skipped_count": self.skipped_count,
+            "warnings": list(self.warnings),
+        }
+
+
+@dataclass(frozen=True)
+class MemoryForgetRequest:
+    memory_ids: list[str] = field(default_factory=list)
+    filters: dict[str, Any] = field(default_factory=dict)
+    actor: str | None = None
+    run_id: str | None = None
+    reason: str | None = None
+
+    def __post_init__(self) -> None:
+        memory_ids = [str(memory_id).strip() for memory_id in self.memory_ids if str(memory_id).strip()]
+        filters = dict(self.filters or {})
+        if not memory_ids and not filters:
+            raise ValueError("memory_ids or filters are required")
+        object.__setattr__(self, "memory_ids", memory_ids)
+        object.__setattr__(self, "filters", filters)
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "MemoryForgetRequest":
+        memory_id = _optional_str(payload.get("memory_id"))
+        memory_ids = [str(value) for value in payload.get("memory_ids") or []]
+        if memory_id is not None:
+            memory_ids.insert(0, memory_id)
+        return cls(
+            memory_ids=memory_ids,
+            filters=dict(payload.get("filters") or {}),
+            actor=_optional_str(payload.get("actor")),
+            run_id=_optional_str(payload.get("run_id")),
+            reason=_optional_str(payload.get("reason")),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "memory_ids": list(self.memory_ids),
+            "filters": dict(self.filters),
+            "actor": self.actor,
+            "run_id": self.run_id,
+            "reason": self.reason,
+        }
+
+
+@dataclass(frozen=True)
+class MemoryForgetResult:
+    forgotten_count: int = 0
+    memory_ids: list[str] = field(default_factory=list)
+    skipped_count: int = 0
+    warnings: list[str] = field(default_factory=list)
+
+    @property
+    def success(self) -> bool:
+        return not self.warnings
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "success": self.success,
+            "forgotten_count": self.forgotten_count,
+            "memory_ids": list(self.memory_ids),
+            "skipped_count": self.skipped_count,
+            "warnings": list(self.warnings),
+        }
+
+
 def coerce_memory_record(value: MemoryRecord | dict[str, Any]) -> MemoryRecord:
     if isinstance(value, MemoryRecord):
         return value

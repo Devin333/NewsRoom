@@ -166,6 +166,7 @@ def test_default_registry_can_report_dependency_bound_health() -> None:
     assert missing["builtin.agent_loop"] == ["agent_registry", "llm_client"]
     assert missing["builtin.artifact"] == ["artifact_publisher"]
     assert missing["builtin.human_review"] == ["human_review_store"]
+    assert missing["builtin.memory_consolidate"] == ["memory_runtime"]
     assert missing["builtin.memory_recall"] == ["memory_runtime"]
     assert missing["builtin.memory_write"] == ["memory_runtime"]
     assert missing["builtin.subworkflow"] == ["workflow_executor"]

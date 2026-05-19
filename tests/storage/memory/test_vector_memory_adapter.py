@@ -35,3 +35,35 @@ def test_vector_memory_store_adapter_writes_and_searches_memory_records() -> Non
     assert fetched.content == record.content
     assert fetched.refs["run_id"] == "run-1"
     assert fetched.embedding == [0.1, 0.2, 0.3]
+
+
+def test_vector_memory_store_adapter_updates_and_deletes_memory_records() -> None:
+    vector_store = InMemoryVectorStore()
+    adapter = VectorMemoryStoreAdapter(vector_store)
+    adapter.write(
+        MemoryRecord(
+            memory_id="mem-1",
+            content="old vector memory",
+            kind=MemoryKind.SEMANTIC,
+            scope=MemoryScope.WORKFLOW,
+            refs={"run_id": "run-1"},
+            metadata={"version": 1},
+        )
+    )
+
+    updated = adapter.update(
+        "mem-1",
+        {
+            "content": "updated vector memory",
+            "refs": {"run_id": "run-2"},
+            "metadata": {"version": 2},
+        },
+    )
+
+    assert updated.content == "updated vector memory"
+    assert adapter.get("mem-1").refs["run_id"] == "run-2"
+    assert adapter.get("mem-1").metadata["version"] == 2
+
+    adapter.delete("mem-1")
+
+    assert adapter.get("mem-1") is None

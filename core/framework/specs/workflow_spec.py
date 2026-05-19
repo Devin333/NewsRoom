@@ -27,6 +27,7 @@ class StepType(str, Enum):
     TOOL_CALL = "tool_call"  # Single tool call with tool-runtime policy enforcement.
     MEMORY_RECALL = "memory_recall"  # Direct MemoryRuntime recall step.
     MEMORY_WRITE = "memory_write"  # Direct MemoryRuntime write step.
+    MEMORY_CONSOLIDATE = "memory_consolidate"  # Direct MemoryRuntime consolidation step.
     MEMORY_INDEX = "memory_index"  # Memory indexing side-effect backed by the tool runtime.
 
 

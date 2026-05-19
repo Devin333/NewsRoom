@@ -1,6 +1,15 @@
 import pytest
 
-from core.framework.memory import MemoryKind, MemoryPolicy, MemoryQuery, MemoryRecord, MemoryScope
+from core.framework.memory import (
+    DEFAULT_AGENT_MEMORY_POLICY,
+    MemoryPolicyDenied,
+    MemoryKind,
+    MemoryPolicy,
+    MemoryQuery,
+    MemoryRecord,
+    MemoryScope,
+    MemoryValidationError,
+)
 
 
 def test_memory_policy_rejects_global_write_without_permission() -> None:
@@ -34,6 +43,24 @@ def test_memory_policy_requires_refs_when_enabled() -> None:
     with pytest.raises(ValueError, match="refs are required"):
         policy.validate_write(record)
 
+    with pytest.raises(MemoryValidationError, match="refs are required"):
+        policy.validate_write(record)
+
+
+def test_memory_policy_requires_refs_by_default() -> None:
+    policy = MemoryPolicy(
+        allowed_scopes=[MemoryScope.WORKFLOW],
+        allowed_kinds=[MemoryKind.OBSERVATION],
+    )
+    record = MemoryRecord(
+        content="Step observation",
+        kind=MemoryKind.OBSERVATION,
+        scope=MemoryScope.WORKFLOW,
+    )
+
+    with pytest.raises(ValueError, match="refs are required"):
+        policy.validate_write(record)
+
 
 def test_memory_policy_rejects_low_confidence_write() -> None:
     policy = MemoryPolicy(
@@ -45,10 +72,14 @@ def test_memory_policy_rejects_low_confidence_write() -> None:
         content="low confidence memory",
         kind=MemoryKind.SEMANTIC,
         scope=MemoryScope.WORKFLOW,
+        refs={"run_id": "run-1"},
         confidence=0.2,
     )
 
     with pytest.raises(PermissionError, match="confidence"):
+        policy.validate_write(record)
+
+    with pytest.raises(MemoryPolicyDenied, match="confidence"):
         policy.validate_write(record)
 
 
@@ -81,3 +112,16 @@ def test_memory_policy_filtered_query_applies_minimum_recall_score() -> None:
 
     assert query.limit == 5
     assert query.min_score == 0.4
+
+
+def test_default_agent_memory_policy_matches_final_prd_defaults() -> None:
+    assert DEFAULT_AGENT_MEMORY_POLICY.allow_write is False
+    assert DEFAULT_AGENT_MEMORY_POLICY.allow_recall is True
+    assert DEFAULT_AGENT_MEMORY_POLICY.require_refs is True
+    assert DEFAULT_AGENT_MEMORY_POLICY.max_recall_results == 5
+    assert DEFAULT_AGENT_MEMORY_POLICY.max_context_tokens == 1500
+    assert [scope.value for scope in DEFAULT_AGENT_MEMORY_POLICY.allowed_scopes] == [
+        "session",
+        "agent",
+        "workflow",
+    ]

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from core.framework.memory.exceptions import MemoryPolicyDenied, MemoryValidationError
 from core.framework.memory.models import MemoryKind, MemoryQuery, MemoryRecord, MemoryScope
 
 
@@ -11,8 +12,8 @@ class MemoryPolicy:
     allowed_kinds: list[MemoryKind] = field(default_factory=list)
     allow_write: bool = True
     allow_recall: bool = True
-    require_refs: bool = False
-    min_confidence_to_write: float = 0.0
+    require_refs: bool = True
+    min_confidence_to_write: float = 0.3
     min_confidence_to_recall: float = 0.0
     max_recall_results: int = 10
     max_context_tokens: int = 2000
@@ -28,31 +29,31 @@ class MemoryPolicy:
 
     def validate_recall(self, query: MemoryQuery) -> None:
         if not self.allow_recall:
-            raise PermissionError("memory recall is disabled by policy")
+            raise MemoryPolicyDenied("memory recall is disabled by policy")
         if query.scopes and self.allowed_scopes:
             denied = [scope.value for scope in query.scopes if scope not in self.allowed_scopes]
             if denied:
-                raise PermissionError(f"memory recall scope is not allowed: {', '.join(denied)}")
+                raise MemoryPolicyDenied(f"memory recall scope is not allowed: {', '.join(denied)}")
         if query.kinds and self.allowed_kinds:
             denied = [kind.value for kind in query.kinds if kind not in self.allowed_kinds]
             if denied:
-                raise PermissionError(f"memory recall kind is not allowed: {', '.join(denied)}")
+                raise MemoryPolicyDenied(f"memory recall kind is not allowed: {', '.join(denied)}")
         if query.min_score is not None and query.min_score < self.min_confidence_to_recall:
-            raise PermissionError("memory recall min_score is below policy minimum")
+            raise MemoryPolicyDenied("memory recall min_score is below policy minimum")
 
     def validate_write(self, record: MemoryRecord) -> None:
         if not self.allow_write:
-            raise PermissionError("memory write is disabled by policy")
+            raise MemoryPolicyDenied("memory write is disabled by policy")
         if self.allowed_scopes and record.scope not in self.allowed_scopes:
-            raise PermissionError(f"memory write scope is not allowed: {record.scope.value}")
+            raise MemoryPolicyDenied(f"memory write scope is not allowed: {record.scope.value}")
         if self.allowed_kinds and record.kind not in self.allowed_kinds:
-            raise PermissionError(f"memory write kind is not allowed: {record.kind.value}")
+            raise MemoryPolicyDenied(f"memory write kind is not allowed: {record.kind.value}")
         if record.scope == MemoryScope.GLOBAL and not self.allow_global_write:
-            raise PermissionError("global memory writes are disabled by policy")
+            raise MemoryPolicyDenied("global memory writes are disabled by policy")
         if self.require_refs and not record.refs:
-            raise ValueError("memory refs are required by policy")
+            raise MemoryValidationError("memory refs are required by policy")
         if record.confidence is not None and record.confidence < self.min_confidence_to_write:
-            raise PermissionError("memory write confidence is below policy minimum")
+            raise MemoryPolicyDenied("memory write confidence is below policy minimum")
 
     def filtered_query(self, query: MemoryQuery) -> MemoryQuery:
         scopes = query.scopes or list(self.allowed_scopes)
@@ -99,23 +100,21 @@ def _effective_min_score(query_min_score: float | None, policy_min_score: float)
 
 DEFAULT_AGENT_MEMORY_POLICY = MemoryPolicy(
     allowed_scopes=[
+        MemoryScope.SESSION,
         MemoryScope.AGENT,
         MemoryScope.WORKFLOW,
-        MemoryScope.SESSION,
-        MemoryScope.GLOBAL,
     ],
     allowed_kinds=[
         MemoryKind.CORE,
         MemoryKind.SEMANTIC,
         MemoryKind.EPISODIC,
         MemoryKind.OBSERVATION,
-        MemoryKind.ARTIFACT,
     ],
-    allow_write=True,
+    allow_write=False,
     allow_recall=True,
-    require_refs=False,
-    max_recall_results=10,
-    max_context_tokens=2000,
+    require_refs=True,
+    max_recall_results=5,
+    max_context_tokens=1500,
     allow_global_write=False,
 )
 

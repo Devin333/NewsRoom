@@ -10,7 +10,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from core.framework.artifacts import ArtifactManager
-from core.framework.memory import MemoryQuery
+from core.framework.memory import MemoryConsolidationRequest, MemoryQuery
 from core.framework.specs import StepSpec, StepStatus, StepType
 from core.framework.workflow.artifacts import LocalArtifactPublisher
 from core.framework.workflow.buffer import DataBuffer, ScopedDataBuffer
@@ -133,6 +133,7 @@ def build_default_step_runner_registry(
     )
     registry.register(MemoryRecallStepRunner(memory_runtime))
     registry.register(MemoryWriteStepRunner(memory_runtime, run_id=run_id))
+    registry.register(MemoryConsolidateStepRunner(memory_runtime, run_id=run_id))
 
     registry.register(
         AgentLoopStepRunner(
@@ -621,6 +622,152 @@ class MemoryWriteStepRunner:
                 exc,
                 started=started,
                 runner_name="MemoryWriteStepRunner",
+            )
+
+
+class MemoryConsolidateStepRunner:
+    capability = StepRunnerCapability(
+        step_type=StepType.MEMORY_CONSOLIDATE,
+        runner_id="builtin.memory_consolidate",
+        version="1.0.0",
+        supports_checkpoint=True,
+        supports_resume=True,
+        supports_timeout=True,
+        supports_retry=True,
+        side_effect_level=StepRunnerSideEffectLevel.EXTERNAL_WRITE,
+        required_dependencies=["memory_runtime"],
+        description="Runs a direct MemoryRuntime consolidation step.",
+    )
+
+    def __init__(self, memory_runtime: Any | None, *, run_id: str | None = None) -> None:
+        self._memory_runtime = memory_runtime
+        self._run_id = run_id
+
+    def can_resolve(self, step: StepSpec) -> bool:
+        return default_runner_can_resolve(self.capability, step)
+
+    def validate_step(self, step: StepSpec) -> list[ValidationErrorItem]:
+        if (
+            step.metadata.get("memory_ids") is not None
+            or step.metadata.get("memory_ids_key") is not None
+            or step.metadata.get("query") is not None
+            or step.metadata.get("query_key") is not None
+            or step.metadata.get("filters") is not None
+            or step.metadata.get("filters_key") is not None
+        ):
+            return []
+        return [
+            ValidationErrorItem(
+                code="memory_consolidate_missing_selection",
+                message=(
+                    "Memory consolidate step requires metadata.memory_ids, "
+                    "metadata.memory_ids_key, metadata.query, metadata.query_key, "
+                    "metadata.filters, or metadata.filters_key."
+                ),
+                field="metadata",
+            )
+        ]
+
+    def configure_run_context(
+        self,
+        *,
+        artifact_manager: ArtifactManager,
+        run_id: str,
+    ) -> None:
+        _ = artifact_manager
+        self._run_id = run_id
+
+    def run(self, step: StepSpec, buffer: ScopedDataBuffer) -> StepOutcome:
+        started = time.perf_counter()
+        try:
+            if step.step_type != StepType.MEMORY_CONSOLIDATE:
+                raise StepExecutionError(
+                    f"unsupported step type for MemoryConsolidateStepRunner: {step.step_type}"
+                )
+            if self._memory_runtime is None:
+                raise StepExecutionError("memory runtime is not configured")
+
+            request = _memory_consolidation_request_from_step(
+                step,
+                buffer,
+                run_id=self._run_id,
+            )
+            result = self._memory_runtime.consolidate(request)
+            result_payload = result.to_dict()
+            outputs = _validated_outputs(
+                step,
+                {_memory_consolidate_result_key(step): result_payload},
+                runner_name="memory_consolidate step",
+            )
+            for key, value in outputs.items():
+                buffer.write(
+                    key,
+                    value,
+                    lineage={
+                        "step_id": step.step_id,
+                        "runner_id": self.capability.runner_id,
+                        "run_id": self._run_id,
+                    },
+                )
+
+            metrics = _with_contract_metrics(
+                {
+                    "memory_operation": {
+                        "operation": "consolidate",
+                        "consolidated_count": result.consolidated_count,
+                        "skipped_count": result.skipped_count,
+                        "memory_ids": list(result.memory_ids),
+                        "source_memory_ids": list(result.source_memory_ids),
+                    },
+                    "memory_consolidated_count": result.consolidated_count,
+                    "memory_skipped_count": result.skipped_count,
+                },
+                step,
+                started=started,
+                outputs=outputs,
+            )
+            if not result.success:
+                return StepOutcome(
+                    status=StepStatus.FAILED,
+                    outputs=outputs,
+                    error_type="MemoryConsolidateFailed",
+                    error_message="memory consolidation failed",
+                    error_details={"warnings": list(result.warnings)},
+                    metrics=metrics,
+                    lineage=[
+                        {
+                            "event_type": "memory_consolidate",
+                            "step_id": step.step_id,
+                            "run_id": self._run_id,
+                            "memory_ids": list(result.memory_ids),
+                            "source_memory_ids": list(result.source_memory_ids),
+                            "consolidated_count": result.consolidated_count,
+                            "skipped_count": result.skipped_count,
+                        }
+                    ],
+                )
+            return StepOutcome(
+                status=StepStatus.SUCCEEDED,
+                outputs=outputs,
+                metrics=metrics,
+                lineage=[
+                    {
+                        "event_type": "memory_consolidate",
+                        "step_id": step.step_id,
+                        "run_id": self._run_id,
+                        "memory_ids": list(result.memory_ids),
+                        "source_memory_ids": list(result.source_memory_ids),
+                        "consolidated_count": result.consolidated_count,
+                        "skipped_count": result.skipped_count,
+                    }
+                ],
+            )
+        except Exception as exc:
+            return _failed_outcome(
+                step,
+                exc,
+                started=started,
+                runner_name="MemoryConsolidateStepRunner",
             )
 
 
@@ -2767,6 +2914,69 @@ def _memory_actor_from_step(step: StepSpec, buffer: ScopedDataBuffer) -> str:
     return str(actor or step.step_id)
 
 
+def _memory_consolidation_request_from_step(
+    step: StepSpec,
+    buffer: ScopedDataBuffer,
+    *,
+    run_id: str | None,
+) -> MemoryConsolidationRequest:
+    raw_memory_ids = step.metadata.get("memory_ids")
+    if raw_memory_ids is None and step.metadata.get("memory_ids_key") is not None:
+        raw_memory_ids = buffer.read(str(step.metadata["memory_ids_key"]))
+    raw_query = step.metadata.get("query")
+    if raw_query is None and step.metadata.get("query_key") is not None:
+        raw_query = buffer.read(str(step.metadata["query_key"]))
+    raw_filters = step.metadata.get("filters")
+    if raw_filters is None and step.metadata.get("filters_key") is not None:
+        raw_filters = buffer.read(str(step.metadata["filters_key"]))
+
+    memory_ids = _coerce_memory_ids_for_consolidation(raw_memory_ids, step=step)
+    query = _coerce_query_for_consolidation(raw_query, step=step)
+    filters = _coerce_filters_for_consolidation(raw_filters, step=step)
+    payload: dict[str, Any] = {
+        "memory_ids": memory_ids,
+        "filters": filters,
+        "actor": _memory_actor_from_step(step, buffer),
+        "run_id": run_id or step.metadata.get("run_id"),
+        "reason": step.metadata.get("reason"),
+    }
+    if query is not None:
+        payload["query"] = query.to_dict()
+    return MemoryConsolidationRequest.from_dict(payload)
+
+
+def _coerce_memory_ids_for_consolidation(value: Any, *, step: StepSpec) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, (list, tuple, set)):
+        return [str(item) for item in value]
+    raise StepExecutionError(
+        f"memory_consolidate step {step.step_id} memory_ids must be a string or list"
+    )
+
+
+def _coerce_query_for_consolidation(value: Any, *, step: StepSpec) -> MemoryQuery | None:
+    if value is None:
+        return None
+    if isinstance(value, MemoryQuery):
+        return value
+    if isinstance(value, dict):
+        return MemoryQuery.from_dict(dict(value))
+    return MemoryQuery(query=str(value))
+
+
+def _coerce_filters_for_consolidation(value: Any, *, step: StepSpec) -> dict[str, Any]:
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise StepExecutionError(
+            f"memory_consolidate step {step.step_id} filters must be an object"
+        )
+    return dict(value)
+
+
 def _memory_recall_result_key(step: StepSpec) -> str:
     return str(step.metadata.get("result_key") or "memory_recall_result")
 
@@ -2785,6 +2995,10 @@ def _memory_records_key(step: StepSpec) -> str:
 
 def _memory_write_result_key(step: StepSpec) -> str:
     return str(step.metadata.get("result_key") or "memory_write_result")
+
+
+def _memory_consolidate_result_key(step: StepSpec) -> str:
+    return str(step.metadata.get("result_key") or "memory_consolidate_result")
 
 
 def _join_summary(step: StepSpec, inputs: dict[str, Any]) -> dict[str, Any]:

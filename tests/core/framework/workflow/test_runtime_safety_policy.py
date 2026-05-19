@@ -90,6 +90,32 @@ def test_dangerous_persist_with_approval_can_continue(tmp_path) -> None:
     assert result.output["ok"] is True
 
 
+def test_memory_write_without_approval_is_blocked(tmp_path) -> None:
+    registry = StepRunnerRegistry()
+    registry.register(StepType.MEMORY_WRITE, _SuccessRunner())
+    executor = WorkflowExecutor(
+        function_step_runner=None,
+        step_runner_registry=registry,
+        artifact_manager=ArtifactManager(tmp_path),
+    )
+
+    result = executor.execute(
+        _workflow(
+            StepSpec(
+                "memory_write",
+                "memory.write",
+                step_type=StepType.MEMORY_WRITE,
+            )
+        ),
+        {},
+        profile="test",
+        run_id="run-memory-write-blocked",
+    )
+
+    assert result.status == WorkflowStatus.BLOCKED
+    assert result.error.details["policy"] == "runtime_safety.external_write_requires_approval"
+
+
 def test_notification_without_approval_is_blocked(tmp_path) -> None:
     registry = StepRunnerRegistry()
     registry.register(StepType.NOTIFICATION, _SuccessRunner())

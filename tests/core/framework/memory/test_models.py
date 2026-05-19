@@ -2,7 +2,17 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from core.framework.memory import MemoryKind, MemoryQuery, MemoryRecord, MemoryScope, TimeWindow
+from core.framework.memory import (
+    MemoryConsolidationRequest,
+    MemoryConsolidationResult,
+    MemoryForgetRequest,
+    MemoryForgetResult,
+    MemoryKind,
+    MemoryQuery,
+    MemoryRecord,
+    MemoryScope,
+    TimeWindow,
+)
 
 
 def test_memory_record_serializes_generic_memory_fields() -> None:
@@ -89,3 +99,50 @@ def test_memory_record_rejects_invalid_expiry_and_sensitive_keys() -> None:
 
     with pytest.raises(ValueError, match="sensitive key"):
         MemoryRecord(content="secret ref", refs={"token": "hidden"})
+
+
+def test_memory_forget_models_serialize_and_validate() -> None:
+    request = MemoryForgetRequest.from_dict(
+        {
+            "memory_id": "mem-1",
+            "memory_ids": ["mem-2"],
+            "actor": "agent-1",
+            "run_id": "run-1",
+            "reason": "test cleanup",
+        }
+    )
+    result = MemoryForgetResult(forgotten_count=1, memory_ids=["mem-1"])
+
+    assert request.memory_ids == ["mem-1", "mem-2"]
+    assert request.to_dict()["reason"] == "test cleanup"
+    assert result.success is True
+    assert result.to_dict()["forgotten_count"] == 1
+
+    with pytest.raises(ValueError, match="memory_ids or filters"):
+        MemoryForgetRequest()
+
+
+def test_memory_consolidation_models_serialize_and_validate() -> None:
+    request = MemoryConsolidationRequest.from_dict(
+        {
+            "memory_ids": ["mem-1"],
+            "query": {
+                "query": "runtime memory",
+                "scopes": ["workflow"],
+                "kinds": ["semantic"],
+            },
+            "actor": "workflow-1",
+            "run_id": "run-1",
+            "reason": "promote stable facts",
+        }
+    )
+    result = MemoryConsolidationResult(consolidated_count=1, memory_ids=["mem-1"])
+
+    assert request.memory_ids == ["mem-1"]
+    assert request.query.query == "runtime memory"
+    assert request.to_dict()["query"]["scopes"] == ["workflow"]
+    assert result.success is True
+    assert result.to_dict()["consolidated_count"] == 1
+
+    with pytest.raises(ValueError, match="memory_ids, query, or filters"):
+        MemoryConsolidationRequest()

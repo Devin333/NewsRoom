@@ -1349,12 +1349,20 @@ def _emit_memory_operation_events(
     step: StepSpec,
     outcome: StepOutcome,
 ) -> None:
-    if step.step_type not in {StepType.MEMORY_RECALL, StepType.MEMORY_WRITE}:
+    if step.step_type not in {
+        StepType.MEMORY_RECALL,
+        StepType.MEMORY_WRITE,
+        StepType.MEMORY_CONSOLIDATE,
+    }:
         return
     operation = outcome.metrics.get("memory_operation")
     if not isinstance(operation, dict):
         return
-    event_type = "memory_recall" if step.step_type == StepType.MEMORY_RECALL else "memory_write"
+    event_type = {
+        StepType.MEMORY_RECALL: "memory_recall",
+        StepType.MEMORY_WRITE: "memory_write",
+        StepType.MEMORY_CONSOLIDATE: "memory_consolidate",
+    }[step.step_type]
     recorder.emit(
         event_type,
         {
@@ -1577,10 +1585,14 @@ def _memory_operations_summary(step_results: dict[str, StepOutcome]) -> dict[str
     operations: list[dict[str, Any]] = []
     recall_count = 0
     write_count = 0
+    consolidate_count = 0
     recalled_memory_ids: set[str] = set()
     written_memory_ids: set[str] = set()
+    consolidated_memory_ids: set[str] = set()
+    consolidation_source_memory_ids: set[str] = set()
     total_recall_results = 0
     total_written_records = 0
+    total_consolidated_records = 0
 
     for step_id, outcome in step_results.items():
         operation = outcome.metrics.get("memory_operation")
@@ -1608,16 +1620,32 @@ def _memory_operations_summary(step_results: dict[str, StepOutcome]) -> dict[str
             item["written_count"] = written_count
             item["skipped_count"] = int(operation.get("skipped_count") or 0)
             written_memory_ids.update(item["memory_ids"])
+        elif operation_type == "consolidate":
+            consolidate_count += 1
+            consolidated_count = int(operation.get("consolidated_count") or 0)
+            total_consolidated_records += consolidated_count
+            source_memory_ids = [
+                str(memory_id) for memory_id in operation.get("source_memory_ids") or []
+            ]
+            item["consolidated_count"] = consolidated_count
+            item["skipped_count"] = int(operation.get("skipped_count") or 0)
+            item["source_memory_ids"] = source_memory_ids
+            consolidated_memory_ids.update(item["memory_ids"])
+            consolidation_source_memory_ids.update(source_memory_ids)
         operations.append(item)
 
     return {
         "operation_count": len(operations),
         "recall_count": recall_count,
         "write_count": write_count,
+        "consolidate_count": consolidate_count,
         "total_recall_results": total_recall_results,
         "total_written_records": total_written_records,
+        "total_consolidated_records": total_consolidated_records,
         "recalled_memory_ids": sorted(recalled_memory_ids),
         "written_memory_ids": sorted(written_memory_ids),
+        "consolidated_memory_ids": sorted(consolidated_memory_ids),
+        "consolidation_source_memory_ids": sorted(consolidation_source_memory_ids),
         "operations": operations,
     }
 

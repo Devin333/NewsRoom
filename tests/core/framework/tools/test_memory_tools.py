@@ -121,7 +121,7 @@ def test_memory_recall_tool_uses_memory_runtime_context() -> None:
                 MemoryRecord(
                     memory_id="mem-1",
                     content="Agent memory context is assembled before model calls.",
-                    scope="agent",
+                    scope="workflow",
                     kind="semantic",
                     refs={"run_id": "run-1"},
                 )
@@ -135,7 +135,11 @@ def test_memory_recall_tool_uses_memory_runtime_context() -> None:
     observation = executor.execute(
         ToolCall(
             tool_name="memory.recall",
-            arguments={"query": "agent memory context", "limit": 1},
+            arguments={
+                "query": "agent memory context",
+                "scopes": ["workflow"],
+                "limit": 1,
+            },
         ),
         ToolPolicy(allowed_tools=["memory.recall"]),
     )
@@ -200,6 +204,108 @@ def test_memory_write_tool_persists_records_when_approved() -> None:
     assert observation.status == ToolStatus.SUCCEEDED
     assert observation.result.output["written_count"] == 1
     assert runtime.get("mem-write").refs["run_id"] == "run-1"
+
+
+def test_memory_explain_tool_reports_runtime_policy_and_operations() -> None:
+    runtime = MemoryRuntime(InMemoryMemoryStore())
+    registry = ToolRegistry()
+    register_memory_tools(registry, memory_runtime=runtime)
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(tool_name="memory.explain", arguments={}),
+        ToolPolicy(allowed_tools=["memory.explain"]),
+    )
+
+    assert observation.status == ToolStatus.SUCCEEDED
+    assert observation.result.output["store_type"] == "InMemoryMemoryStore"
+    assert observation.result.output["operations"]["recall"] is True
+    assert observation.result.output["operations"]["consolidate"] is True
+    assert observation.result.output["tools"]["memory.search"] == "deprecated alias for memory.recall"
+
+
+def test_memory_consolidate_tool_writes_consolidated_memory_when_approved() -> None:
+    runtime = MemoryRuntime(
+        InMemoryMemoryStore(
+            [
+                MemoryRecord(
+                    memory_id="mem-a",
+                    content="Alpha memory.",
+                    summary="Alpha",
+                    scope="session",
+                    kind="semantic",
+                    refs={"run_id": "source-run"},
+                ),
+                MemoryRecord(
+                    memory_id="mem-b",
+                    content="Beta memory.",
+                    summary="Beta",
+                    scope="session",
+                    kind="semantic",
+                    refs={"run_id": "source-run"},
+                ),
+            ]
+        )
+    )
+    registry = ToolRegistry()
+    register_memory_tools(registry, memory_runtime=runtime)
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="memory.consolidate",
+            arguments={
+                "memory_ids": ["mem-a", "mem-b"],
+                "actor": "tool",
+                "run_id": "run-1",
+                "reason": "stable consolidation",
+            },
+        ),
+        ToolPolicy(
+            allowed_tools=["memory.consolidate"],
+            require_approval_for_side_effects=False,
+        ),
+    )
+
+    assert observation.status == ToolStatus.SUCCEEDED
+    assert observation.result.output["consolidated_count"] == 1
+    consolidated = runtime.get(observation.result.output["memory_ids"][0])
+    assert consolidated is not None
+    assert consolidated.refs["source_memory_ids"] == ["mem-a", "mem-b"]
+
+
+def test_memory_forget_tool_deletes_records_when_approved() -> None:
+    runtime = MemoryRuntime(
+        InMemoryMemoryStore(
+            [
+                MemoryRecord(
+                    memory_id="mem-forget",
+                    content="Forget me.",
+                    scope="session",
+                    kind="semantic",
+                    refs={"run_id": "run-1"},
+                )
+            ]
+        )
+    )
+    registry = ToolRegistry()
+    register_memory_tools(registry, memory_runtime=runtime)
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="memory.forget",
+            arguments={"memory_id": "mem-forget", "reason": "cleanup"},
+        ),
+        ToolPolicy(
+            allowed_tools=["memory.forget"],
+            require_approval_for_side_effects=False,
+        ),
+    )
+
+    assert observation.status == ToolStatus.SUCCEEDED
+    assert observation.result.output["forgotten_count"] == 1
+    assert runtime.get("mem-forget") is None
 
 
 def test_memory_index_tool_indexes_report_and_evidence_through_executor() -> None:

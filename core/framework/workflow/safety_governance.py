@@ -72,6 +72,8 @@ def _external_write_step(step: StepSpec) -> bool:
         return True
     if step.step_type == StepType.MEMORY_INDEX and bool(step.metadata.get("external")):
         return True
+    if step.step_type in {StepType.MEMORY_WRITE, StepType.MEMORY_CONSOLIDATE}:
+        return True
     return False
 
 

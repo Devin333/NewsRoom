@@ -2,7 +2,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from core.framework.memory import MemoryQuery, MemoryRuntime
+from core.framework.memory import (
+    MemoryConsolidationRequest,
+    MemoryForgetRequest,
+    MemoryQuery,
+    MemoryRuntime,
+    inspect_memory_runtime,
+)
 from core.framework.tools.models import ToolDefinition
 from core.framework.tools.registry import ToolRegistry
 
@@ -104,6 +110,64 @@ def register_memory_tools(
         ),
         lambda args: _write_memory(args, runtime=runtime),
     )
+    registry.register(
+        ToolDefinition(
+            name="memory.explain",
+            description="Describe the configured framework memory runtime and policy state.",
+            input_schema={
+                "properties": {},
+                "additionalProperties": False,
+            },
+            side_effect="read_only",
+            concurrency_safe=True,
+            max_result_bytes=100_000,
+        ),
+        lambda args: _explain_memory_runtime(args, runtime=runtime),
+    )
+    registry.register(
+        ToolDefinition(
+            name="memory.consolidate",
+            description="Consolidate matching memory records through the framework memory runtime.",
+            input_schema={
+                "properties": {
+                    "memory_ids": {"type": "array", "items": {"type": "string"}},
+                    "query": {"type": "object"},
+                    "filters": {"type": "object"},
+                    "actor": {"type": "string"},
+                    "run_id": {"type": "string"},
+                    "reason": {"type": "string"},
+                },
+                "additionalProperties": False,
+            },
+            side_effect="writes_external_state",
+            concurrency_safe=False,
+            max_result_bytes=100_000,
+            metadata={"writes_memory_runtime": True},
+        ),
+        lambda args: _consolidate_memory(args, runtime=runtime),
+    )
+    registry.register(
+        ToolDefinition(
+            name="memory.forget",
+            description="Forget matching memory records through the framework memory runtime.",
+            input_schema={
+                "properties": {
+                    "memory_id": {"type": "string"},
+                    "memory_ids": {"type": "array", "items": {"type": "string"}},
+                    "filters": {"type": "object"},
+                    "actor": {"type": "string"},
+                    "run_id": {"type": "string"},
+                    "reason": {"type": "string"},
+                },
+                "additionalProperties": False,
+            },
+            side_effect="writes_external_state",
+            concurrency_safe=False,
+            max_result_bytes=100_000,
+            metadata={"writes_memory_runtime": True},
+        ),
+        lambda args: _forget_memory(args, runtime=runtime),
+    )
     if ingestion_service is not None:
         registry.register(
             ToolDefinition(
@@ -192,6 +256,38 @@ def _write_memory(args: dict[str, Any], *, runtime: MemoryRuntime) -> dict[str, 
             "run_id": _optional_string(args.get("run_id")),
         }
     )
+    return result.to_dict()
+
+
+def _explain_memory_runtime(args: dict[str, Any], *, runtime: MemoryRuntime) -> dict[str, Any]:
+    if args:
+        raise ValueError("memory.explain does not accept arguments")
+    diagnostics = inspect_memory_runtime(runtime).to_dict()
+    return {
+        **diagnostics,
+        "tools": {
+            "memory.recall": "available",
+            "memory.write": "available",
+            "memory.search": "deprecated alias for memory.recall",
+            "memory.index": "deprecated legacy ingestion path when configured",
+            "memory.explain": "available",
+            "memory.consolidate": "available",
+            "memory.forget": "available",
+        },
+    }
+
+
+def _consolidate_memory(args: dict[str, Any], *, runtime: MemoryRuntime) -> dict[str, Any]:
+    request = MemoryConsolidationRequest.from_dict(args)
+    result = runtime.consolidate(request)
+    return result.to_dict()
+
+
+def _forget_memory(args: dict[str, Any], *, runtime: MemoryRuntime) -> dict[str, Any]:
+    request = MemoryForgetRequest.from_dict(args)
+    result = runtime.forget(request)
+    if result is None:
+        return {"success": True, "forgotten_count": 0, "memory_ids": request.memory_ids}
     return result.to_dict()
 
 

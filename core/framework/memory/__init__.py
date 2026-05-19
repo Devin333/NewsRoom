@@ -1,9 +1,23 @@
 """Framework-level memory runtime primitives."""
 
 from core.framework.memory.diagnostics import MemoryRuntimeDiagnostics, inspect_memory_runtime
+from core.framework.memory.exceptions import (
+    MemoryContextAssemblyError,
+    MemoryNotFound,
+    MemoryPolicyDenied,
+    MemoryRecallError,
+    MemoryRuntimeError,
+    MemoryStoreError,
+    MemoryValidationError,
+    MemoryWriteError,
+)
 from core.framework.memory.integrations import AgentMemoryAdapter, WorkflowMemoryAdapter
 from core.framework.memory.models import (
+    MemoryConsolidationRequest,
+    MemoryConsolidationResult,
     MemoryContextBlock,
+    MemoryForgetRequest,
+    MemoryForgetResult,
     MemoryKind,
     MemoryQuery,
     MemoryRecallResult,
@@ -21,9 +35,16 @@ from core.framework.memory.policy import (
     DEFAULT_WORKFLOW_MEMORY_POLICY,
     MemoryPolicy,
 )
-from core.framework.memory.recall import MemoryContextAssembler, SimpleMemoryRecallStrategy
+from core.framework.memory.recall import MemoryContextAssembler, MemoryRecallStrategy, SimpleMemoryRecallStrategy
 from core.framework.memory.runtime import MemoryRuntime
-from core.framework.memory.store import InMemoryMemoryStore, MemoryStore
+from core.framework.memory.store import (
+    GraphMemoryStore,
+    InMemoryMemoryStore,
+    KeywordMemoryStore,
+    MemoryStore,
+    TemporalMemoryStore,
+    VectorMemoryStore,
+)
 from core.framework.memory.writer import MemoryWriter
 
 __all__ = [
@@ -31,25 +52,42 @@ __all__ = [
     "DEFAULT_ADMIN_MEMORY_POLICY",
     "DEFAULT_AGENT_MEMORY_POLICY",
     "DEFAULT_WORKFLOW_MEMORY_POLICY",
+    "GraphMemoryStore",
     "InMemoryMemoryStore",
+    "KeywordMemoryStore",
+    "MemoryConsolidationRequest",
+    "MemoryConsolidationResult",
     "MemoryContextAssembler",
+    "MemoryContextAssemblyError",
     "MemoryContextBlock",
+    "MemoryForgetRequest",
+    "MemoryForgetResult",
     "MemoryKind",
+    "MemoryNotFound",
+    "MemoryPolicyDenied",
     "MemoryPolicy",
     "MemoryQuery",
+    "MemoryRecallError",
+    "MemoryRecallStrategy",
     "MemoryRecallResult",
     "MemoryRecord",
     "MemoryRuntime",
     "MemoryRuntimeDiagnostics",
+    "MemoryRuntimeError",
     "MemoryScope",
     "MemorySearchResult",
+    "MemoryStoreError",
     "MemoryStore",
+    "MemoryValidationError",
     "MemoryWriteMode",
     "MemoryWriteRequest",
     "MemoryWriteResult",
+    "MemoryWriteError",
     "MemoryWriter",
     "SimpleMemoryRecallStrategy",
+    "TemporalMemoryStore",
     "TimeWindow",
+    "VectorMemoryStore",
     "WorkflowMemoryAdapter",
     "inspect_memory_runtime",
 ]

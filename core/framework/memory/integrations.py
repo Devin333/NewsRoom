@@ -24,10 +24,16 @@ class AgentMemoryAdapter:
         runtime: MemoryRuntime,
         policy: MemoryPolicy = DEFAULT_AGENT_MEMORY_POLICY,
     ) -> MemoryRecallResult:
+        desired_scopes = [
+            MemoryScope.SESSION,
+            MemoryScope.AGENT,
+            MemoryScope.WORKFLOW,
+            MemoryScope.GLOBAL,
+        ]
         return runtime.recall(
             MemoryQuery(
                 query=input_text,
-                scopes=[MemoryScope.AGENT, MemoryScope.WORKFLOW, MemoryScope.GLOBAL],
+                scopes=_allowed_scopes(desired_scopes, policy=policy),
                 kinds=[MemoryKind.CORE, MemoryKind.SEMANTIC, MemoryKind.EPISODIC],
                 filters={"agent_id": agent_id, "run_id": run_id} if run_id else {"agent_id": agent_id},
                 limit=policy.max_recall_results,
@@ -148,3 +154,13 @@ class WorkflowMemoryAdapter:
             policy=DEFAULT_WORKFLOW_MEMORY_POLICY,
         )
 
+
+def _allowed_scopes(
+    desired_scopes: list[MemoryScope],
+    *,
+    policy: MemoryPolicy,
+) -> list[MemoryScope]:
+    if not policy.allowed_scopes:
+        return list(desired_scopes)
+    allowed = set(policy.allowed_scopes)
+    return [scope for scope in desired_scopes if scope in allowed]

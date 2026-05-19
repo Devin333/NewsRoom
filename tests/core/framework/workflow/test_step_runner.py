@@ -129,6 +129,7 @@ def test_build_default_step_runner_registry_registers_core_and_optional_runners(
         StepType.FUNCTION,
         StepType.HUMAN_REVIEW,
         StepType.JOIN,
+        StepType.MEMORY_CONSOLIDATE,
         StepType.MEMORY_INDEX,
         StepType.MEMORY_RECALL,
         StepType.MEMORY_WRITE,
@@ -151,6 +152,7 @@ def test_build_default_step_runner_registry_registers_dependency_bound_runners_w
     assert registry.is_registered(StepType.ARTIFACT)
     assert registry.is_registered(StepType.ROUTER)
     assert registry.is_registered(StepType.TOOL_CALL)
+    assert registry.is_registered(StepType.MEMORY_CONSOLIDATE)
     assert registry.is_registered(StepType.MEMORY_RECALL)
     assert registry.is_registered(StepType.MEMORY_WRITE)
     assert registry.is_registered(StepType.AGENT_LOOP)
@@ -158,6 +160,7 @@ def test_build_default_step_runner_registry_registers_dependency_bound_runners_w
 
     descriptors = {item.runner_id: item for item in registry.describe()}
     assert descriptors["builtin.tool"].missing_dependencies == ["tool_registry"]
+    assert descriptors["builtin.memory_consolidate"].missing_dependencies == ["memory_runtime"]
     assert descriptors["builtin.memory_recall"].missing_dependencies == ["memory_runtime"]
     assert descriptors["builtin.memory_write"].missing_dependencies == ["memory_runtime"]
     assert descriptors["builtin.agent_loop"].missing_dependencies == [

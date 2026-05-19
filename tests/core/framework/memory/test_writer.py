@@ -29,12 +29,14 @@ def test_memory_writer_appends_valid_records_and_reports_policy_skips() -> None:
                     content="valid workflow memory",
                     scope=MemoryScope.WORKFLOW,
                     kind=MemoryKind.SEMANTIC,
+                    refs={"run_id": "run-1"},
                 ),
                 MemoryRecord(
                     memory_id="mem-global",
                     content="blocked global memory",
                     scope=MemoryScope.GLOBAL,
                     kind=MemoryKind.SEMANTIC,
+                    refs={"run_id": "run-1"},
                 ),
             ]
         ),
@@ -58,6 +60,7 @@ def test_memory_writer_upserts_existing_and_new_records() -> None:
                 content="old content",
                 scope=MemoryScope.WORKFLOW,
                 kind=MemoryKind.SEMANTIC,
+                refs={"run_id": "run-1"},
             )
         ]
     )
@@ -76,6 +79,7 @@ def test_memory_writer_upserts_existing_and_new_records() -> None:
                     summary="updated",
                     scope=MemoryScope.WORKFLOW,
                     kind=MemoryKind.SEMANTIC,
+                    refs={"run_id": "run-2"},
                     embedding=[0.2, 0.4],
                 ),
                 MemoryRecord(
@@ -83,6 +87,7 @@ def test_memory_writer_upserts_existing_and_new_records() -> None:
                     content="new memory",
                     scope=MemoryScope.WORKFLOW,
                     kind=MemoryKind.SEMANTIC,
+                    refs={"run_id": "run-2"},
                 ),
             ],
             mode=MemoryWriteMode.UPSERT,
@@ -102,9 +107,6 @@ def test_memory_writer_upserts_existing_and_new_records() -> None:
 @pytest.mark.parametrize(
     "mode",
     [
-        MemoryWriteMode.MERGE,
-        MemoryWriteMode.PROMOTE,
-        MemoryWriteMode.INVALIDATE,
         MemoryWriteMode.REPLACE,
     ],
 )
@@ -125,6 +127,7 @@ def test_memory_writer_rejects_unimplemented_write_modes(mode: MemoryWriteMode) 
                         content="merge memory",
                         scope=MemoryScope.WORKFLOW,
                         kind=MemoryKind.SEMANTIC,
+                        refs={"run_id": "run-1"},
                     )
                 ],
                 mode=mode,
@@ -134,3 +137,120 @@ def test_memory_writer_rejects_unimplemented_write_modes(mode: MemoryWriteMode) 
         )
 
     assert store.get("mem-merge") is None
+
+
+def test_memory_writer_merges_existing_records() -> None:
+    store = InMemoryMemoryStore(
+        [
+            MemoryRecord(
+                memory_id="mem-merge",
+                content="old content",
+                scope=MemoryScope.WORKFLOW,
+                kind=MemoryKind.SEMANTIC,
+                metadata={"old": True},
+                refs={"run_id": "run-1"},
+                tags=["old"],
+                confidence=0.3,
+            )
+        ]
+    )
+    writer = MemoryWriter()
+    policy = MemoryPolicy(
+        allowed_scopes=[MemoryScope.WORKFLOW],
+        allowed_kinds=[MemoryKind.SEMANTIC],
+    )
+
+    result = writer.write(
+        MemoryWriteRequest(
+            records=[
+                MemoryRecord(
+                    memory_id="mem-merge",
+                    content="new content",
+                    scope=MemoryScope.WORKFLOW,
+                    kind=MemoryKind.SEMANTIC,
+                    metadata={"new": True},
+                    refs={"run_id": "run-2"},
+                    tags=["new"],
+                    confidence=0.8,
+                )
+            ],
+            mode=MemoryWriteMode.MERGE,
+        ),
+        store=store,
+        policy=policy,
+    )
+
+    merged = store.get("mem-merge")
+    assert result.written_count == 1
+    assert merged.content == "new content"
+    assert merged.metadata == {"old": True, "new": True}
+    assert merged.tags == ["new", "old"]
+    assert merged.confidence == 0.8
+
+
+def test_memory_writer_promotes_record_scope() -> None:
+    store = InMemoryMemoryStore()
+    writer = MemoryWriter()
+    policy = MemoryPolicy(
+        allowed_scopes=[MemoryScope.SESSION, MemoryScope.AGENT],
+        allowed_kinds=[MemoryKind.SEMANTIC],
+    )
+
+    result = writer.write(
+        MemoryWriteRequest(
+            records=[
+                MemoryRecord(
+                    memory_id="mem-promote",
+                    content="promote memory",
+                    scope=MemoryScope.SESSION,
+                    kind=MemoryKind.SEMANTIC,
+                    refs={"run_id": "run-1"},
+                )
+            ],
+            mode=MemoryWriteMode.PROMOTE,
+        ),
+        store=store,
+        policy=policy,
+    )
+
+    assert result.written_count == 1
+    assert store.get("mem-promote").scope == MemoryScope.AGENT
+
+
+def test_memory_writer_invalidates_existing_records() -> None:
+    store = InMemoryMemoryStore(
+        [
+            MemoryRecord(
+                memory_id="mem-invalidate",
+                content="invalidate memory",
+                scope=MemoryScope.WORKFLOW,
+                kind=MemoryKind.SEMANTIC,
+                refs={"run_id": "run-1"},
+            )
+        ]
+    )
+    writer = MemoryWriter()
+    policy = MemoryPolicy(
+        allowed_scopes=[MemoryScope.WORKFLOW],
+        allowed_kinds=[MemoryKind.SEMANTIC],
+    )
+
+    result = writer.write(
+        MemoryWriteRequest(
+            records=[
+                MemoryRecord(
+                    memory_id="mem-invalidate",
+                    content="invalidate memory",
+                    scope=MemoryScope.WORKFLOW,
+                    kind=MemoryKind.SEMANTIC,
+                    refs={"run_id": "run-2"},
+                )
+            ],
+            mode=MemoryWriteMode.INVALIDATE,
+        ),
+        store=store,
+        policy=policy,
+    )
+
+    assert result.written_count == 1
+    assert store.get("mem-invalidate").metadata["invalidated"] is True

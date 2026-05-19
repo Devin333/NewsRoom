@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import UTC, datetime
 
-from core.framework.memory.models import MemoryRecord, MemoryWriteMode, MemoryWriteRequest, MemoryWriteResult
+from core.framework.memory.models import MemoryRecord, MemoryScope, MemoryWriteMode, MemoryWriteRequest, MemoryWriteResult
 from core.framework.memory.policy import MemoryPolicy
 from core.framework.memory.store import MemoryStore
 
@@ -38,6 +39,12 @@ class MemoryWriter:
             )
         if request.mode == MemoryWriteMode.UPSERT:
             result = _write_upsert(records, store=store)
+        elif request.mode == MemoryWriteMode.MERGE:
+            result = _write_merge(records, store=store)
+        elif request.mode == MemoryWriteMode.PROMOTE:
+            result = _write_promote(records, store=store)
+        elif request.mode == MemoryWriteMode.INVALIDATE:
+            result = _write_invalidate(records, store=store)
         else:
             result = store.write_many(records)
         return MemoryWriteResult(
@@ -50,7 +57,13 @@ class MemoryWriter:
 
 
 def _validate_write_mode(mode: MemoryWriteMode) -> None:
-    if mode in {MemoryWriteMode.APPEND, MemoryWriteMode.UPSERT}:
+    if mode in {
+        MemoryWriteMode.APPEND,
+        MemoryWriteMode.UPSERT,
+        MemoryWriteMode.MERGE,
+        MemoryWriteMode.PROMOTE,
+        MemoryWriteMode.INVALIDATE,
+    }:
         return
     raise NotImplementedError(f"memory write mode is not implemented: {mode.value}")
 
@@ -99,3 +112,87 @@ def _write_upsert(records: list[MemoryRecord], *, store: MemoryStore) -> MemoryW
         skipped_count=skipped_count,
         errors=errors,
     )
+
+
+def _write_merge(records: list[MemoryRecord], *, store: MemoryStore) -> MemoryWriteResult:
+    merged: dict[str, MemoryRecord] = {}
+    for record in records:
+        existing = store.get(record.memory_id)
+        if existing is None:
+            merged[record.memory_id] = record
+            continue
+        merged[record.memory_id] = replace(
+            existing,
+            summary=record.summary or existing.summary,
+            content=record.content or existing.content,
+            metadata={**existing.metadata, **record.metadata},
+            refs={**existing.refs, **record.refs},
+            tags=sorted({*existing.tags, *record.tags}),
+            confidence=_max_optional(existing.confidence, record.confidence),
+            importance=_max_optional(existing.importance, record.importance),
+            actor=record.actor or existing.actor,
+            updated_at=datetime.now(UTC),
+        )
+    return _write_upsert(list(merged.values()), store=store)
+
+
+def _write_promote(records: list[MemoryRecord], *, store: MemoryStore) -> MemoryWriteResult:
+    promoted = [replace(record, scope=_promoted_scope(record.scope)) for record in records]
+    return _write_upsert(promoted, store=store)
+
+
+def _write_invalidate(records: list[MemoryRecord], *, store: MemoryStore) -> MemoryWriteResult:
+    written_count = 0
+    skipped_count = 0
+    memory_ids: list[str] = []
+    errors: list[str] = []
+    for record in records:
+        existing = store.get(record.memory_id)
+        if existing is None:
+            skipped_count += 1
+            continue
+        invalidated = replace(
+            existing,
+            metadata={**existing.metadata, "invalidated": True},
+            updated_at=datetime.now(UTC),
+        )
+        try:
+            store.update(existing.memory_id, invalidated.to_dict())
+        except NotImplementedError as exc:
+            skipped_count += 1
+            errors.append(str(exc))
+            continue
+        written_count += 1
+        memory_ids.append(existing.memory_id)
+    return MemoryWriteResult(
+        accepted_count=len(records),
+        written_count=written_count,
+        memory_ids=memory_ids,
+        skipped_count=skipped_count,
+        errors=errors,
+    )
+
+
+def _promoted_scope(scope: MemoryScope) -> MemoryScope:
+    order = [
+        MemoryScope.WORKING,
+        MemoryScope.SESSION,
+        MemoryScope.AGENT,
+        MemoryScope.WORKFLOW,
+        MemoryScope.GLOBAL,
+    ]
+    try:
+        index = order.index(scope)
+    except ValueError:
+        return scope
+    if index >= len(order) - 1:
+        return scope
+    return order[index + 1]
+
+
+def _max_optional(left: float | None, right: float | None) -> float | None:
+    if left is None:
+        return right
+    if right is None:
+        return left
+    return max(left, right)

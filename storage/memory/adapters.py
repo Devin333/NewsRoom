@@ -11,6 +11,7 @@ from core.framework.memory import (
     MemoryStore,
     MemoryWriteResult,
 )
+from core.framework.memory.exceptions import MemoryNotFound
 from storage.vector import VectorDocument, VectorSearchQuery, VectorSearchResult
 
 
@@ -25,6 +26,9 @@ class VectorDocumentStore(Protocol):
         ...
 
     def get_document(self, collection: str, document_id: str) -> VectorSearchResult | None:
+        ...
+
+    def delete_by_filter(self, collection: str, filters: dict[str, Any]) -> int:
         ...
 
 
@@ -83,10 +87,18 @@ class VectorMemoryStoreAdapter(MemoryStore):
         return filtered[: query.limit]
 
     def update(self, memory_id: str, patch: dict[str, Any]) -> MemoryRecord:
-        raise NotImplementedError("vector memory update is not implemented")
+        existing = self.get(memory_id)
+        if existing is None:
+            raise MemoryNotFound(memory_id)
+        updated = MemoryRecord.from_dict({**existing.to_dict(), **dict(patch), "memory_id": memory_id})
+        self.write(updated)
+        return updated
 
     def delete(self, memory_id: str) -> None:
-        raise NotImplementedError("vector memory delete is not implemented")
+        delete_by_filter = getattr(self.vector_store, "delete_by_filter", None)
+        if not callable(delete_by_filter):
+            raise NotImplementedError("vector memory delete is not implemented")
+        delete_by_filter(self.collection, {"document_id": memory_id})
 
 
 def _vector_document_from_record(record: MemoryRecord, *, collection: str) -> VectorDocument:

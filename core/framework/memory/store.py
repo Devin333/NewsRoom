@@ -4,6 +4,7 @@ from dataclasses import replace
 from datetime import datetime
 from typing import Any, Protocol
 
+from core.framework.memory.exceptions import MemoryNotFound
 from core.framework.memory.models import (
     MemoryQuery,
     MemoryRecord,
@@ -29,6 +30,29 @@ class MemoryStore(Protocol):
         ...
 
     def delete(self, memory_id: str) -> None:
+        ...
+
+
+class VectorMemoryStore(Protocol):
+    def vector_search(self, query: MemoryQuery) -> list[MemorySearchResult]:
+        ...
+
+    def upsert_vectors(self, records: list[MemoryRecord]) -> MemoryWriteResult:
+        ...
+
+
+class KeywordMemoryStore(Protocol):
+    def keyword_search(self, query: MemoryQuery) -> list[MemorySearchResult]:
+        ...
+
+
+class GraphMemoryStore(Protocol):
+    def relation_search(self, query: MemoryQuery) -> list[MemorySearchResult]:
+        ...
+
+
+class TemporalMemoryStore(Protocol):
+    def search_at_time(self, query: MemoryQuery, at: datetime) -> list[MemorySearchResult]:
         ...
 
 
@@ -76,21 +100,40 @@ class InMemoryMemoryStore:
     def update(self, memory_id: str, patch: dict[str, Any]) -> MemoryRecord:
         record = self._records.get(memory_id)
         if record is None:
-            raise KeyError(memory_id)
+            raise MemoryNotFound(memory_id)
         updated = replace(
             record,
+            kind=patch.get("kind", record.kind),
+            scope=patch.get("scope", record.scope),
             summary=patch.get("summary", record.summary),
             content=str(patch.get("content", record.content)),
             metadata={**record.metadata, **dict(patch.get("metadata") or {})},
             refs={**record.refs, **dict(patch.get("refs") or {})},
+            tags=[str(tag) for tag in patch.get("tags", record.tags)],
+            confidence=patch.get("confidence", record.confidence),
+            importance=patch.get("importance", record.importance),
             embedding=patch.get("embedding", record.embedding),
+            actor=patch.get("actor", record.actor),
             updated_at=patch.get("updated_at") if isinstance(patch.get("updated_at"), datetime) else None,
+            expires_at=patch.get("expires_at", record.expires_at),
         )
         self._records[memory_id] = updated
         return updated
 
     def delete(self, memory_id: str) -> None:
         self._records.pop(memory_id, None)
+
+    def delete_many(self, memory_ids: list[str]) -> list[str]:
+        deleted: list[str] = []
+        for memory_id in memory_ids:
+            if memory_id in self._records:
+                self.delete(memory_id)
+                deleted.append(memory_id)
+        return deleted
+
+    def delete_by_query(self, query: MemoryQuery) -> list[str]:
+        matches = [result.memory_id for result in self.search(query)]
+        return self.delete_many(matches)
 
 
 def _record_matches_query(record: MemoryRecord, query: MemoryQuery) -> bool:

@@ -24,6 +24,7 @@ def test_all_builtin_runners_declare_capabilities() -> None:
     assert "builtin.parallel_group" in runner_ids
     assert "builtin.tool" in runner_ids
     assert "builtin.tool_batch" in runner_ids
+    assert "builtin.memory_consolidate" in runner_ids
     assert "builtin.memory_recall" in runner_ids
     assert "builtin.memory_write" in runner_ids
     assert "builtin.agent_loop" in runner_ids
@@ -61,11 +62,16 @@ def test_default_registry_describe_reports_availability() -> None:
     descriptors = registry.describe()
     function = next(item for item in descriptors if item.runner_id == "builtin.function")
     tool = next(item for item in descriptors if item.runner_id == "builtin.tool")
+    memory_consolidate = next(
+        item for item in descriptors if item.runner_id == "builtin.memory_consolidate"
+    )
     memory_recall = next(item for item in descriptors if item.runner_id == "builtin.memory_recall")
 
     assert function.available is True
     assert function.missing_dependencies == []
     assert tool.available is False
     assert tool.missing_dependencies == ["tool_registry"]
+    assert memory_consolidate.available is False
+    assert memory_consolidate.missing_dependencies == ["memory_runtime"]
     assert memory_recall.available is False
     assert memory_recall.missing_dependencies == ["memory_runtime"]
