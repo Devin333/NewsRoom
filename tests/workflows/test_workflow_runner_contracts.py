@@ -1,4 +1,4 @@
-from core.framework.run_result import RunResult
+from framework.run_result import RunResult
 from core.framework.specs import StepType, WorkflowStatus
 from core.framework.workflow import FunctionStepRegistry
 import workflows.daily_intelligence.runner as daily_runner_module
@@ -51,10 +51,17 @@ def test_daily_and_weekly_wrappers_share_workflow_runner_assembly_contract(
 
     assert len(calls) == 2
     for call in calls:
-        assert set(call["init_kwargs"]) == {
+        assert {
             "artifact_root",
             "artifact_publishers",
             "function_registry",
+        }.issubset(call["init_kwargs"])
+        assert set(call["init_kwargs"]) <= {
+            "artifact_root",
+            "artifact_publishers",
+            "artifact_ref_extractors",
+            "function_registry",
+            "lineage_extractors",
         }
         assert call["init_kwargs"]["artifact_root"] == tmp_path
         assert isinstance(call["init_kwargs"]["function_registry"], FunctionStepRegistry)

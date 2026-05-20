@@ -1,6 +1,5 @@
-"""Framework primitives for workflow execution."""
+"""Compatibility bridge for legacy core.framework imports."""
 
-from core.framework.run_result import RunResult
-from core.framework.runner import WorkflowRunner
+from framework import RunResult, WorkflowRunner
 
 __all__ = ["RunResult", "WorkflowRunner"]

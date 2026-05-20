@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-import core.framework.runner as runner_module
+import framework.runner as runner_module
 from core.framework import WorkflowRunner
 from core.framework.specs import EdgeCondition, EdgeSpec, StepSpec, StepType, WorkflowSpec, WorkflowStatus
 from core.framework.workflow import (

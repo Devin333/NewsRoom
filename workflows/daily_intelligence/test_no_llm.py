@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from core.framework import RunResult, WorkflowRunner
+from framework import RunResult, WorkflowRunner
 from core.framework.specs import EdgeSpec, StepSpec, WorkflowSpec
 from core.framework.workflow import FunctionStepRegistry, ScopedDataBuffer
 from workflows.daily_intelligence.artifact_publisher import (

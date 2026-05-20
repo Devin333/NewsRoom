@@ -1,5 +1,5 @@
 from business.layers.memory.ingestion import MemoryIngestionResult
-from core.framework.run_result import RunResult
+from framework.run_result import RunResult
 from core.framework.specs import WorkflowStatus
 from interfaces.services.run_service import RunApplicationService
 

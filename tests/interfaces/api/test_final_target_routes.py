@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 
-from core.framework.run_result import RunResult
+from framework.run_result import RunResult
 from core.framework.specs import WorkflowStatus
 from core.framework.workers import Task, TaskStatus
 from interfaces.api import create_app

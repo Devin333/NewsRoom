@@ -5,7 +5,7 @@ from hashlib import sha256
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from core.framework.serialization import to_json_safe as _to_json_safe
+from framework.shared.json import to_jsonable as _to_json_safe
 from business.layers.signal.artifact_refs import SignalArtifactRef
 from framework.artifacts import ArtifactManager
 

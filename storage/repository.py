@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
-from core.framework import RunResult
+from framework import RunResult
 from storage.local_json import LocalJsonRepository
 from storage.records import (
     ClaimRecord,

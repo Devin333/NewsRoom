@@ -13,7 +13,7 @@ from business.boards.cross_board.profiles import (
     PROFILE_LIVE_OFFLINE,
     daily_agentic_enabled,
 )
-from core.framework import RunResult, WorkflowRunner
+from framework import RunResult, WorkflowRunner
 from core.framework.specs import WorkflowSpec
 from core.framework.specs import WorkflowStatus
 from core.framework.workflow import FunctionStepRegistry

@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from core.framework import RunResult, WorkflowRunner
+from framework import RunResult, WorkflowRunner
 from core.framework.specs import EdgeSpec, StepSpec, WorkflowSpec
 from core.framework.workflow import (
     ArtifactPublishContext,

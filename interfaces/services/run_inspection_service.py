@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from core.framework.serialization import to_json_safe
+from framework.shared.json import to_jsonable as to_json_safe
 from core.framework.workflow.inspection import (
     WorkflowArtifactContentRecord,
     WorkflowReplayContentBundle,

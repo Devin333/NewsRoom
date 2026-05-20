@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from core.framework import RunResult, WorkflowRunner
+from framework import RunResult, WorkflowRunner
 from core.framework.workflow import DataBuffer
 from core.framework.agent_loop import AgentRunner, AgentSpec
 from framework.llm import FakeLLMClient

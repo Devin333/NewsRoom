@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from core.framework import RunResult, WorkflowRunner
+from framework import RunResult, WorkflowRunner
 from framework.llm import LLMClient
 from core.framework.workflow import FunctionStepRegistry
 from business.layers.relation.lineage import evidence_bundle_lineage_extractor

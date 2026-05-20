@@ -1,9 +1,3 @@
-from __future__ import annotations
+"""Compatibility bridge for legacy core.framework.serialization imports."""
 
-from typing import Any
-
-from framework.shared.json import to_jsonable
-
-
-def to_json_safe(value: Any) -> Any:
-    return to_jsonable(value)
+from framework.shared.json import to_jsonable as to_json_safe

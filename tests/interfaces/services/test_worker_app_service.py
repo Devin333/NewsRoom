@@ -7,7 +7,7 @@ from core.framework.workers import (
     TaskStatus,
     WorkerStatus,
 )
-from core.framework import WorkflowRunner
+from framework import WorkflowRunner
 from core.framework.specs import StepSpec, WorkflowSpec, WorkflowStatus
 from core.framework.workflow import FunctionStepRegistry, WorkflowRunInspector
 from interfaces.services.worker_service import (
