@@ -7,7 +7,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from core.framework.artifacts.filesystem import ArtifactManager
 from core.framework.serialization import to_json_safe as _to_json_safe
-from storage.artifacts import ArtifactRef
+from business.layers.signal.artifact_refs import SignalArtifactRef
 
 
 _SAFE_SEGMENT_RE = re.compile(r"[^A-Za-z0-9_.-]+")
@@ -41,10 +41,10 @@ class SourceArtifactWriter:
         source_errors: list[Any] | None = None,
     ) -> dict[str, Any] | None:
         entries: list[dict[str, Any]] = []
-        request_refs_by_request_id: dict[str, ArtifactRef] = {}
-        request_refs_by_source_id: dict[str, list[ArtifactRef]] = {}
-        response_refs_by_request_id: dict[str, ArtifactRef] = {}
-        response_refs_by_source_id: dict[str, list[ArtifactRef]] = {}
+        request_refs_by_request_id: dict[str, SignalArtifactRef] = {}
+        request_refs_by_source_id: dict[str, list[SignalArtifactRef]] = {}
+        response_refs_by_request_id: dict[str, SignalArtifactRef] = {}
+        response_refs_by_source_id: dict[str, list[SignalArtifactRef]] = {}
         parsed_items_by_source: dict[str, list[dict[str, Any]]] = {}
 
         for raw_item in raw_items or []:
@@ -336,7 +336,7 @@ class SourceArtifactWriter:
         raw_item: Any,
         source_id: str,
         object_id: str,
-    ) -> tuple[dict[str, Any] | None, ArtifactRef | None]:
+    ) -> tuple[dict[str, Any] | None, SignalArtifactRef | None]:
         raw_content = _raw_content(raw_item)
         if raw_content is None:
             return None, None
@@ -372,7 +372,7 @@ class SourceArtifactWriter:
         fetch_result: Any,
         source_id: str,
         object_id: str,
-    ) -> tuple[dict[str, Any] | None, ArtifactRef | None]:
+    ) -> tuple[dict[str, Any] | None, SignalArtifactRef | None]:
         response_headers = _response_headers(fetch_result)
         if not response_headers:
             return None, None
@@ -425,9 +425,9 @@ def _artifact_ref(
     path: str,
     artifact_path: Any,
     content_type: str = "application/json",
-) -> ArtifactRef:
+) -> SignalArtifactRef:
     data = artifact_path.read_bytes()
-    return ArtifactRef(
+    return SignalArtifactRef(
         artifact_id=_artifact_id(artifact_type, source_id, object_id),
         run_id=run_id,
         artifact_type=artifact_type,
@@ -483,7 +483,7 @@ def _source_item_payload(
 def _parsed_item_entry(
     item_payload: Any,
     *,
-    item_artifact_ref: ArtifactRef,
+    item_artifact_ref: SignalArtifactRef,
     raw_artifact_ref: Any,
 ) -> dict[str, Any]:
     summary = _parsed_item_summary(item_payload)
@@ -557,7 +557,7 @@ def _planned_artifact_ref(
 
 def _entry_from_ref(
     *,
-    artifact_ref: ArtifactRef,
+    artifact_ref: SignalArtifactRef,
     source_id: str,
     object_id: str,
     artifact_path: Any,
@@ -577,10 +577,10 @@ def _entry_from_ref(
 
 
 def _remember_ref(
-    refs_by_request_id: dict[str, ArtifactRef],
-    refs_by_source_id: dict[str, list[ArtifactRef]],
+    refs_by_request_id: dict[str, SignalArtifactRef],
+    refs_by_source_id: dict[str, list[SignalArtifactRef]],
     *,
-    artifact_ref: ArtifactRef,
+    artifact_ref: SignalArtifactRef,
     source_id: str,
     request_id: str,
 ) -> None:
@@ -594,8 +594,8 @@ def _resolve_error_ref(
     *,
     request_id: str | None,
     source_id: str,
-    refs_by_request_id: dict[str, ArtifactRef],
-    refs_by_source_id: dict[str, list[ArtifactRef]],
+    refs_by_request_id: dict[str, SignalArtifactRef],
+    refs_by_source_id: dict[str, list[SignalArtifactRef]],
 ) -> Any:
     existing_ref = _existing_artifact_ref(source_error, field_name)
     if existing_ref is not None:

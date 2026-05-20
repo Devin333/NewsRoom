@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from core.framework.agent_loop import AgentAction, AgentLoopStatus, AgentSpec, JudgeDecision
-from core.framework.llm import FakeLLMClient
+from framework.llm import FakeLLMClient
 from domain.sources import Lineage
 from evidence.models import EvidenceBundle, EvidenceItem, VerifiedClaim, VerifiedFindings
 from workflows.daily_intelligence.agent_loop_integration import build_daily_output_judge
@@ -301,3 +301,4 @@ def test_daily_agent_runner_normalizes_agentic_live_writer_output_to_grounded_ca
         }
     ]
     assert result.output["report_draft"]["metadata"]["writer_normalized_from_verified_findings"] is True
+

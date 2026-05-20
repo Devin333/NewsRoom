@@ -15,9 +15,11 @@ from core.framework.workflow.operations import (
 
 
 COMPILE_PATHS = [
+    "business",
     "core",
     "domain",
     "evidence",
+    "infrastructure",
     "interfaces",
     "quality",
     "sources",

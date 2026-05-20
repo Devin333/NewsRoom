@@ -13,7 +13,7 @@ from core.framework.agent_loop import (
     SubAgentResult,
     SubAgentTask,
 )
-from core.framework.llm import (
+from framework.llm import (
     FakeLLMClient,
     GlobalBudgetPolicy,
     GlobalBudgetTracker,
@@ -22,10 +22,10 @@ from core.framework.llm import (
     LLMStreamEvent,
     TokenUsage,
 )
-from core.framework.tools.control_tools import register_control_tools
-from core.framework.tools.models import ToolDefinition, ToolPolicy
-from core.framework.tools.redaction import REDACTED_VALUE
-from core.framework.tools.registry import ToolRegistry
+from framework.tool.builtin.control import register_control_tools
+from framework.tool.models import ToolDefinition, ToolPolicy
+from framework.tool.governance.redaction import REDACTED_VALUE
+from framework.tool.registry import ToolRegistry
 from core.framework.workers import InMemoryApprovalStore
 from storage.conversation import (
     AgentIterationCheckpoint,
@@ -1629,3 +1629,4 @@ def test_agent_runner_persists_tool_and_judge_events_to_conversation(tmp_path) -
     assert messages[3].metadata["message_type"] == "agent_loop_diagnostics"
     assert messages[3].content["trace_summary"]["judge_retry_count"] == 1
     assert messages[4].content["output"] == {"analysis_result": {"summary": "ok"}}
+

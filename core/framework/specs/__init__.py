@@ -1,9 +1,10 @@
-"""Workflow specification models."""
+"""Compatibility exports for framework specification models."""
 
-from core.framework.specs.workflow_spec import (
-    EdgeCondition,
-    EdgeSpec,
+from framework.specs import (
     ArtifactPolicySpec,
+    EdgeCondition,
+    EdgeConditionSpec,
+    EdgeSpec,
     FailurePolicySpec,
     LineagePolicySpec,
     QualityPolicySpec,
@@ -20,13 +21,16 @@ from core.framework.specs.workflow_spec import (
     WorkflowSpec,
     WorkflowSpecError,
     WorkflowSpecRegistry,
+    WorkflowSpecValidator,
     WorkflowStatus,
     WorkflowTriggerSpec,
+    WorkflowTriggerType,
 )
 
 __all__ = [
     "ArtifactPolicySpec",
     "EdgeCondition",
+    "EdgeConditionSpec",
     "EdgeSpec",
     "FailurePolicySpec",
     "LineagePolicySpec",
@@ -44,6 +48,8 @@ __all__ = [
     "WorkflowSpec",
     "WorkflowSpecError",
     "WorkflowSpecRegistry",
+    "WorkflowSpecValidator",
     "WorkflowStatus",
     "WorkflowTriggerSpec",
+    "WorkflowTriggerType",
 ]

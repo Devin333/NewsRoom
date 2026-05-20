@@ -12,16 +12,15 @@ from business.layers.output.tools import register_report_tools
 from business.layers.signal.tools import FetchText, register_source_tools
 from core.framework.artifacts import ArtifactManager
 from core.framework.memory import MemoryRuntime
-from core.framework.tools import (
+from framework.tool import (
     ToolRegistry,
+)
+from infrastructure.tools import (
     build_builtin_dangerous_tool_registry,
     build_builtin_safe_tool_registry,
     build_builtin_tool_registry,
 )
-from core.framework.tools.web_search_tools import WebSearchProvider, register_web_search_tools
-from sources import SourceRegistry
-from sources.connectors import ArxivConnector, GithubConnector, SourceFetchPolicy
-from sources.health import BasicSourceHealthManager
+from infrastructure.tools.web_search_tools import WebSearchProvider, register_web_search_tools
 
 
 def build_business_tool_registry(
@@ -29,13 +28,13 @@ def build_business_tool_registry(
     artifact_manager: ArtifactManager | None = None,
     run_id: str | None = None,
     local_json_root: str | Path | None = None,
-    source_registry: SourceRegistry | None = None,
+    source_registry: Any | None = None,
     source_fetch_text: FetchText | None = None,
-    source_fetch_policy: SourceFetchPolicy | None = None,
+    source_fetch_policy: Any | None = None,
     allowed_source_domains: list[str] | None = None,
-    source_health_manager: BasicSourceHealthManager | None = None,
-    arxiv_connector: ArxivConnector | None = None,
-    github_connector: GithubConnector | None = None,
+    source_health_manager: Any | None = None,
+    arxiv_connector: Any | None = None,
+    github_connector: Any | None = None,
     web_search_provider: WebSearchProvider | None = None,
     vector_store: Any | None = None,
     memory_ingestion_service: Any | None = None,
@@ -142,13 +141,13 @@ def register_business_tools(
     *,
     artifact_manager: ArtifactManager | None = None,
     run_id: str | None = None,
-    source_registry: SourceRegistry | None = None,
+    source_registry: Any | None = None,
     source_fetch_text: FetchText | None = None,
-    source_fetch_policy: SourceFetchPolicy | None = None,
+    source_fetch_policy: Any | None = None,
     allowed_source_domains: list[str] | None = None,
-    source_health_manager: BasicSourceHealthManager | None = None,
-    arxiv_connector: ArxivConnector | None = None,
-    github_connector: GithubConnector | None = None,
+    source_health_manager: Any | None = None,
+    arxiv_connector: Any | None = None,
+    github_connector: Any | None = None,
     web_search_provider: WebSearchProvider | None = None,
     report_service: Any | None = None,
     persistence_repository: Any | None = None,

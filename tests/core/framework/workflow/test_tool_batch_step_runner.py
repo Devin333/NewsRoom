@@ -6,7 +6,8 @@ import pytest
 
 from core.framework.artifacts import ArtifactManager
 from core.framework.specs import StepSpec, StepStatus, StepType, WorkflowSpec, WorkflowStatus
-from core.framework.tools import ToolDefinition, ToolRegistry, build_builtin_tool_registry
+from framework.tool import ToolDefinition, ToolRegistry
+from infrastructure.tools import build_builtin_tool_registry
 from core.framework.workflow import (
     FunctionStepRegistry,
     FunctionStepRunner,
@@ -217,3 +218,4 @@ def _sample_tool_registry() -> ToolRegistry:
         },
     )
     return registry
+

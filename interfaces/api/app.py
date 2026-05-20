@@ -11,7 +11,7 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from core.framework.tools.redaction import redact_sensitive_values
+from framework.tool.governance.redaction import redact_sensitive_values
 from core.framework.workers.approval import ApprovalAlreadyDecidedError, ApprovalNotFoundError
 from interfaces.models import (
     ActorContext,
@@ -39,6 +39,7 @@ from interfaces.events import AuditEmitter, audit_emitter_from_env
 from interfaces.services.approval_service import ApprovalApplicationService
 from interfaces.services.diagnose_service import DiagnosticApplicationService
 from interfaces.services.entity_service import EntityTrackingApplicationService
+from interfaces.services.board_service import BoardApplicationService
 from interfaces.services.memory_service import MemoryApplicationService
 from interfaces.services.mcp_service import MCPApplicationService
 from interfaces.services.report_service import ReportApplicationService
@@ -68,6 +69,7 @@ ArtifactInspectionServiceFactory = Callable[[], ArtifactInspectionService]
 StorageServiceFactory = Callable[[], StorageApplicationService]
 ScheduleServiceFactory = Callable[[], ScheduleApplicationService]
 ApprovalServiceFactory = Callable[[], ApprovalApplicationService]
+BoardServiceFactory = Callable[[], BoardApplicationService]
 AuditEmitterFactory = Callable[[], AuditEmitter | None]
 ApiKeyRoles = Mapping[str, str | Sequence[str]]
 
@@ -89,6 +91,7 @@ def create_app(
     storage_service_factory: StorageServiceFactory = StorageApplicationService,
     schedule_service_factory: ScheduleServiceFactory = ScheduleApplicationService,
     approval_service_factory: ApprovalServiceFactory = ApprovalApplicationService,
+    board_service_factory: BoardServiceFactory = BoardApplicationService,
     audit_emitter_factory: AuditEmitterFactory | None = audit_emitter_from_env,
     api_token: str | None = None,
     api_keys: ApiKeyRoles | None = None,
@@ -237,6 +240,7 @@ def create_app(
         storage_service_factory=storage_service_factory,
         schedule_service_factory=schedule_service_factory,
         approval_service_factory=approval_service_factory,
+        board_service_factory=board_service_factory,
     )
     helpers = ApiRouteHelpers(
         success=_success,
@@ -696,6 +700,8 @@ def _required_api_permission(method: str, path: str) -> str | None:
         return "read:reports" if method == "GET" else "write:runs"
     if resource == "subscriptions":
         return "read:reports" if method == "GET" else "manage:schedules"
+    if resource == "boards":
+        return "read:reports" if method == "GET" else "write:runs"
     if resource == "storage":
         return "admin:storage"
     if resource == "artifacts":

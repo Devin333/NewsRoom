@@ -2,7 +2,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from core.framework.llm import (
+from framework.llm import (
     InMemoryLLMCooldownTracker,
     GlobalBudgetPolicy,
     GlobalBudgetTracker,
@@ -824,3 +824,4 @@ class FailingClient:
     def complete(self, request: LLMRequest) -> LLMResponse:
         self.call_count += 1
         raise self._error
+

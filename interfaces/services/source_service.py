@@ -5,21 +5,25 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from domain.sources import RawSourceItem, SourceDefinition, SourceError, SourceHealth
-from sources import SourceRegistry
-from sources.connectors import (
+from infrastructure.external.source_adapters import (
     ARXIV_API_URL,
     GITHUB_API_URL,
-    ArxivConnector,
-    DomainRateLimiter,
-    GithubConnector,
-    SourceFetchPolicy,
-)
-from sources.health import (
     BasicSourceHealthManager,
+    DomainRateLimiter,
+    RawSourceItem,
+    SourceDefinition,
+    SourceError,
+    SourceFetchPolicy,
+    SourceHealth,
     SourceHealthChecker,
     SourceHealthCheckResult,
     SourceHealthStore,
+    SourceRegistry,
+    build_default_source_fetch_policy,
+    build_default_source_registry,
+    default_arxiv_connector,
+    default_github_connector,
+    source_health_store_from_env,
 )
 
 
@@ -121,30 +125,26 @@ class SourceApplicationService:
         source_config_path: str | Path | None = None,
         fetch_policy: SourceFetchPolicy | None = None,
         rate_limiter: DomainRateLimiter | None = None,
-        arxiv_connector: ArxivConnector | None = None,
-        github_connector: GithubConnector | None = None,
+        arxiv_connector: Any | None = None,
+        github_connector: Any | None = None,
     ) -> None:
         if source_registry is None:
-            from workflows.daily_intelligence.runner import build_default_source_registry
-
             source_registry = build_default_source_registry(source_config_path=source_config_path)
         if fetch_policy is None:
-            from workflows.daily_intelligence.runner import build_default_source_fetch_policy
-
             fetch_policy = build_default_source_fetch_policy(source_config_path=source_config_path)
         self.source_registry = source_registry
         self.fetch_policy = fetch_policy
         self.rate_limiter = rate_limiter or DomainRateLimiter()
-        self.source_health_store = source_health_store or _source_health_store_from_env()
+        self.source_health_store = source_health_store or source_health_store_from_env()
         self.health_manager = health_manager or BasicSourceHealthManager(
             health_store=self.source_health_store
         )
         self.health_probe_fetcher = health_probe_fetcher
-        self.arxiv_connector = arxiv_connector or ArxivConnector(
+        self.arxiv_connector = arxiv_connector or default_arxiv_connector(
             fetch_policy=self.fetch_policy,
             rate_limiter=self.rate_limiter,
         )
-        self.github_connector = github_connector or GithubConnector(
+        self.github_connector = github_connector or default_github_connector(
             fetch_policy=self.fetch_policy,
             rate_limiter=self.rate_limiter,
         )
@@ -473,16 +473,3 @@ def _source_summary_model(source: SourceDefinition) -> SourceSummary:
         region=source.region,
         user_agent=source.user_agent,
     )
-
-
-def _source_health_store_from_env() -> SourceHealthStore | None:
-    import os
-
-    dsn = os.environ.get("NEWS_DATABASE_DSN")
-    if not dsn:
-        return None
-    from storage.postgres import PostgresRepository
-
-    repository = PostgresRepository(dsn)
-    repository.migrate()
-    return repository

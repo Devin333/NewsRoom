@@ -1,4 +1,4 @@
-from business.workers import SourceHealthCheckTaskHandler
+from business.layers.signal.worker_handlers import SourceHealthCheckTaskHandler
 from core.framework.workers import (
     RedisQueueStatus,
     LeasedTask,

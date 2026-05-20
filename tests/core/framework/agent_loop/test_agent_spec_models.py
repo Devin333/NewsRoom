@@ -1,7 +1,7 @@
 import pytest
 
 from core.framework.agent_loop import AgentLoopPolicy, AgentSpec
-from core.framework.tools.models import ToolPolicy
+from framework.tool.models import ToolPolicy
 
 
 def _agent(**kwargs) -> AgentSpec:

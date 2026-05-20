@@ -6,9 +6,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Sequence
 
+from business.boards.cross_board.profiles import DAILY_PROFILE_CHOICES
 from core.framework.specs import WorkflowStatus
 from business.tools import build_business_tool_registry
-from core.framework.tools import ToolPolicy, build_tool_catalog
+from framework.tool import ToolPolicy, build_tool_catalog
 from core.framework.workers import WorkerStatus
 from core.framework.workers.approval import ApprovalAlreadyDecidedError, ApprovalNotFoundError
 from core.framework.workers.schedule_store import ScheduleRecord
@@ -48,7 +49,6 @@ from interfaces.services.worker_service import (
     WorkerApplicationService,
 )
 from storage.lifecycle import RetentionPolicy
-from workflows.daily_intelligence.profiles import DAILY_PROFILE_CHOICES
 
 
 def build_parser() -> argparse.ArgumentParser:

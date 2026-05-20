@@ -1,0 +1,76 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from hashlib import sha256
+from typing import Any
+
+
+@dataclass(frozen=True)
+class RelationLineageRef:
+    run_id: str
+    source_type: str
+    source_id: str
+    target_type: str
+    target_id: str
+    relation_type: str = "derived_from"
+    lineage_id: str | None = None
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "created_at", _parse_datetime(self.created_at))
+        object.__setattr__(self, "metadata", dict(self.metadata or {}))
+        if self.lineage_id is None:
+            object.__setattr__(self, "lineage_id", _stable_lineage_id(self))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "lineage_id": self.lineage_id,
+            "run_id": self.run_id,
+            "source_type": self.source_type,
+            "source_id": self.source_id,
+            "target_type": self.target_type,
+            "target_id": self.target_id,
+            "relation_type": self.relation_type,
+            "created_at": self.created_at.isoformat().replace("+00:00", "Z"),
+            "metadata": dict(self.metadata),
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "RelationLineageRef":
+        return cls(
+            lineage_id=str(payload["lineage_id"]),
+            run_id=str(payload["run_id"]),
+            source_type=str(payload["source_type"]),
+            source_id=str(payload["source_id"]),
+            target_type=str(payload["target_type"]),
+            target_id=str(payload["target_id"]),
+            relation_type=str(payload.get("relation_type") or "derived_from"),
+            created_at=_parse_datetime(payload["created_at"]),
+            metadata=dict(payload.get("metadata") or {}),
+        )
+
+
+def _stable_lineage_id(ref: RelationLineageRef) -> str:
+    payload = "|".join(
+        [
+            ref.run_id,
+            ref.source_type,
+            ref.source_id,
+            ref.target_type,
+            ref.target_id,
+            ref.relation_type,
+        ]
+    )
+    return f"lin_{sha256(payload.encode('utf-8')).hexdigest()[:24]}"
+
+
+def _parse_datetime(value: datetime | str) -> datetime:
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)

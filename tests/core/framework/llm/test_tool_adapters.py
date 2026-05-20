@@ -1,7 +1,7 @@
 import pytest
 
-from core.framework.llm import LLMToolCallParseError, LLMToolSchemaError
-from core.framework.llm.tool_adapters import parse_openai_tool_calls, to_openai_tools
+from framework.llm import LLMToolCallParseError, LLMToolSchemaError
+from framework.llm.clients.tool_adapters import parse_openai_tool_calls, to_openai_tools
 
 
 def test_tool_definition_exports_openai_compatible_schema() -> None:
@@ -102,3 +102,4 @@ def test_parse_openai_tool_call_rejects_malformed_arguments() -> None:
             ],
             [{"name": "memory.search", "description": "Search memory"}],
         )
+

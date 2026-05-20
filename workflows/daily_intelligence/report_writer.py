@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from core.framework.llm import LLMClient, LLMRequest, build_openai_compatible_client_from_config
+from framework.llm import LLMClient, LLMRequest, build_openai_compatible_client_from_config
 from core.framework.workflow import ScopedDataBuffer
 from domain.sources import SourcePipelineMetrics
 from evidence import EvidenceBundle
@@ -141,5 +141,6 @@ def _validate_report_payload(payload: Any) -> dict[str, Any]:
     if "title" not in payload or "sections" not in payload:
         raise ValueError("LLM report output must include title and sections")
     return payload
+
 
 

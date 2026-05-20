@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from interfaces.api.deps import ApiRouteHelpers, ApiServices
 from interfaces.api.routers import (
     approvals,
+    boards,
     entities,
     health,
     mcp,
@@ -25,6 +26,7 @@ def include_routers(api: FastAPI, *, services: ApiServices, helpers: ApiRouteHel
         runs.create_router(services, helpers),
         workers.create_router(services, helpers),
         reports.create_router(services, helpers),
+        boards.create_router(services, helpers),
         memory.create_router(services, helpers),
         storage.create_router(services, helpers),
         sources.create_router(services, helpers),

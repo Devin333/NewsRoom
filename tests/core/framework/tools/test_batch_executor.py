@@ -1,7 +1,7 @@
 import time
 from threading import Lock
 
-from core.framework.tools import (
+from framework.tool import (
     ToolBatchExecutor,
     ToolCall,
     ToolDefinition,

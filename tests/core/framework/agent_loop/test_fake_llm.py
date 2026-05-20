@@ -1,4 +1,4 @@
-from core.framework.llm import FakeLLMClient, LLMRequest
+from framework.llm import FakeLLMClient, LLMRequest
 
 
 def test_fake_llm_returns_scripted_responses_and_usage() -> None:
@@ -12,3 +12,4 @@ def test_fake_llm_returns_scripted_responses_and_usage() -> None:
     assert response.usage.total_tokens == 20
     assert client.call_count == 1
     assert client.requests[0].messages[0]["content"] == "go"
+

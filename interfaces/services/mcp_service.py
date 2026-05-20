@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from typing import Any, Callable, Literal
 from urllib.parse import parse_qs, unquote, urlsplit
 
+from business.boards.cross_board.profiles import DAILY_PROFILE_CHOICES
 from interfaces.mcp.models import (
     MCPCatalog,
     MCPCapability,
@@ -17,7 +18,6 @@ from interfaces.mcp.models import (
     MCPToolCallResult,
 )
 from storage.lifecycle import RetentionPolicy
-from workflows.daily_intelligence.profiles import DAILY_PROFILE_CHOICES
 
 
 DEFAULT_DAILY_QUEUE = "news:queue:daily"

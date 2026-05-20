@@ -8,6 +8,7 @@ from fastapi import Request
 from interfaces.models import ActorContext, actor_context_from_headers
 from interfaces.services.approval_service import ApprovalApplicationService
 from interfaces.services.artifact_service import ArtifactInspectionService
+from interfaces.services.board_service import BoardApplicationService
 from interfaces.services.diagnose_service import DiagnosticApplicationService
 from interfaces.services.entity_service import EntityTrackingApplicationService
 from interfaces.services.memory_service import MemoryApplicationService
@@ -38,6 +39,7 @@ ArtifactInspectionServiceFactory = Callable[[], ArtifactInspectionService]
 StorageServiceFactory = Callable[[], StorageApplicationService]
 ScheduleServiceFactory = Callable[[], ScheduleApplicationService]
 ApprovalServiceFactory = Callable[[], ApprovalApplicationService]
+BoardServiceFactory = Callable[[], BoardApplicationService]
 
 
 @dataclass(frozen=True)
@@ -57,6 +59,7 @@ class ApiServices:
     storage_service_factory: StorageServiceFactory
     schedule_service_factory: ScheduleServiceFactory
     approval_service_factory: ApprovalServiceFactory
+    board_service_factory: BoardServiceFactory
 
 
 @dataclass(frozen=True)
@@ -89,6 +92,7 @@ def build_api_services(
     storage_service_factory: StorageServiceFactory = StorageApplicationService,
     schedule_service_factory: ScheduleServiceFactory = ScheduleApplicationService,
     approval_service_factory: ApprovalServiceFactory = ApprovalApplicationService,
+    board_service_factory: BoardServiceFactory = BoardApplicationService,
 ) -> ApiServices:
     return ApiServices(
         worker_service_factory=worker_service_factory,
@@ -106,6 +110,7 @@ def build_api_services(
         storage_service_factory=storage_service_factory,
         schedule_service_factory=schedule_service_factory,
         approval_service_factory=approval_service_factory,
+        board_service_factory=board_service_factory,
     )
 
 

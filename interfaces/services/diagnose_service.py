@@ -6,9 +6,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Literal
 
-from core.framework.llm import DEFAULT_MODELS_CONFIG_PATH, load_openai_compatible_deployment
-from core.framework.llm.openai_compatible import LLMConfigurationError
-from sources import SourceConfigError, load_source_registry
+from framework.llm import DEFAULT_MODELS_CONFIG_PATH, load_openai_compatible_deployment
+from framework.llm.clients.openai_compatible import LLMConfigurationError
+from infrastructure.external.source_adapters import SourceConfigError, build_default_source_registry
 
 
 CheckStatus = Literal["ok", "warning", "error", "skipped"]
@@ -122,7 +122,7 @@ class DiagnosticApplicationService:
         configured = bool(self.env.get("NEWS_SOURCES_CONFIG"))
         path = Path(self.env.get("NEWS_SOURCES_CONFIG") or "configs/sources.yaml")
         try:
-            registry = load_source_registry(path)
+            registry = build_default_source_registry(source_config_path=path)
         except SourceConfigError as exc:
             return DiagnoseCheck(
                 check_id="source_config",
@@ -256,3 +256,4 @@ class DiagnosticApplicationService:
             message="PostgreSQL connection check succeeded.",
             details={"configured": True},
         )
+

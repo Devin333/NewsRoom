@@ -1,7 +1,8 @@
 from business.layers.output.memory_tools import register_memory_index_tools
-from core.framework.tools import ToolCall, ToolExecutor, ToolPolicy, ToolRegistry, ToolStatus
-from core.framework.tools.memory_tools import register_memory_tools
-from storage.memory import MemoryIngestionService
+from business.layers.output.memory_ingestion import MemoryIngestionService
+from core.framework.memory import InMemoryMemoryStore, MemoryRuntime
+from framework.tool import ToolCall, ToolExecutor, ToolPolicy, ToolRegistry, ToolStatus
+from framework.tool.builtin.memory import register_memory_tools
 from storage.vector import InMemoryVectorStore
 
 
@@ -77,6 +78,61 @@ def test_memory_index_tool_indexes_report_and_evidence_through_executor() -> Non
     assert search_observation.status == ToolStatus.SUCCEEDED
     assert search_observation.result.output["result_count"] == 1
     assert search_observation.result.output["results"][0]["report_id"] == "report-1"
+
+
+def test_memory_index_tool_can_write_through_memory_runtime() -> None:
+    memory_runtime = MemoryRuntime(InMemoryMemoryStore())
+    registry = ToolRegistry()
+    register_memory_tools(registry, memory_runtime=memory_runtime)
+    register_memory_index_tools(
+        registry,
+        ingestion_service=MemoryIngestionService(memory_runtime=memory_runtime),
+    )
+    executor = ToolExecutor(registry)
+
+    index_observation = executor.execute(
+        ToolCall(
+            tool_name="memory.index",
+            arguments={
+                "run_id": "run-1",
+                "report_id": "report-1",
+                "topic": "AI",
+                "report": {
+                    "title": "Daily Intelligence",
+                    "sections": [
+                        {
+                            "title": "Summary",
+                            "content": "Agent runtime memory indexing shipped.",
+                        }
+                    ],
+                },
+            },
+        ),
+        ToolPolicy(
+            allowed_tools=["memory.index"],
+            require_approval_for_side_effects=False,
+        ),
+    )
+    recall_observation = executor.execute(
+        ToolCall(
+            tool_name="memory.recall",
+            arguments={
+                "query": "runtime memory indexing",
+                "kinds": ["artifact"],
+                "filters": {"topic": "AI"},
+                "limit": 5,
+            },
+        ),
+        ToolPolicy(allowed_tools=["memory.recall"]),
+    )
+
+    assert index_observation.status == ToolStatus.SUCCEEDED
+    assert index_observation.result.output["documents_indexed"] == 1
+    assert index_observation.result.output["memories_written"] == 1
+    assert index_observation.result.output["memory_ids"] == ["run-1:report_section:0"]
+    assert recall_observation.status == ToolStatus.SUCCEEDED
+    assert recall_observation.result.output["result_count"] == 1
+    assert recall_observation.result.output["results"][0]["memory_id"] == "run-1:report_section:0"
 
 
 def test_memory_index_tool_requires_side_effect_approval_by_default() -> None:

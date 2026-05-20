@@ -5,10 +5,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from business.boards.cross_board.profiles import daily_workflow_ids
 from interfaces.models.common import ApiActionResult
 from storage.lineage.evidence import quality_lineage_summary
 from storage.local_json import LocalJsonRepository
-from workflows.daily_intelligence.profiles import daily_workflow_ids
 
 
 @dataclass(frozen=True)

@@ -3,7 +3,7 @@ from business.tools import (
     build_business_tool_registry,
 )
 from core.framework.artifacts import ArtifactManager
-from core.framework.tools import ToolCall, ToolExecutor, ToolPolicy, ToolStatus, build_tool_catalog
+from framework.tool import ToolCall, ToolExecutor, ToolPolicy, ToolStatus, build_tool_catalog
 
 
 def test_business_tool_registry_includes_safe_business_tools() -> None:

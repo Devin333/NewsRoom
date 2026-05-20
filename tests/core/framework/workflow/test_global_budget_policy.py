@@ -5,7 +5,7 @@ import json
 import pytest
 
 from core.framework.artifacts import ArtifactManager
-from core.framework.llm import GlobalBudgetPolicy, GlobalBudgetTracker
+from framework.llm import GlobalBudgetPolicy, GlobalBudgetTracker
 from core.framework.specs import StepSpec, StepStatus, StepType, WorkflowSpec, WorkflowStatus
 from core.framework.workflow import (
     FunctionStepRegistry,
@@ -172,6 +172,7 @@ def test_budget_exceeded_run_writes_budget_summary_to_manifest(tmp_path) -> None
 
 
 def _usage(input_tokens: int, output_tokens: int):
-    from core.framework.llm import TokenUsage
+    from framework.llm import TokenUsage
 
     return TokenUsage(input_tokens=input_tokens, output_tokens=output_tokens)
+

@@ -1,0 +1,130 @@
+from __future__ import annotations
+
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any
+
+from framework.tool.models import (
+    ToolCall,
+    ToolDefinitionError,
+    ToolObservation,
+    ToolPolicy,
+    ToolResult,
+    ToolStatus,
+    is_default_dangerous_tool_name,
+)
+from framework.tool.registry.registry import ToolRegistry
+from framework.tool.runtime.executor import ToolExecutor
+
+
+_READ_ONLY_SIDE_EFFECTS = {"", "none", "read_only"}
+
+
+class ToolBatchExecutor:
+    def __init__(
+        self,
+        registry: ToolRegistry,
+        *,
+        artifact_manager: Any | None = None,
+        run_id: str | None = None,
+        secret_provider: Any | None = None,
+        max_workers: int = 4,
+    ) -> None:
+        self._registry = registry
+        self._artifact_manager = artifact_manager
+        self._run_id = run_id
+        self._secret_provider = secret_provider
+        self._max_workers = max(1, max_workers)
+
+    def execute_batch(
+        self,
+        calls: list[ToolCall],
+        policy: ToolPolicy | None = None,
+        *,
+        mode: str = "best_effort",
+        max_workers: int | None = None,
+    ) -> list[ToolObservation]:
+        policy = policy or ToolPolicy(require_explicit_allowlist=False)
+        if not calls:
+            return []
+        if mode not in {"best_effort", "strict"}:
+            raise ValueError(f"unsupported tool batch mode: {mode}")
+        if len(calls) > _max_tool_calls_per_iteration(policy):
+            return [
+                _blocked_budget_observation(
+                    call,
+                    "tool batch exceeds max_tool_calls_per_iteration "
+                    f"of {_max_tool_calls_per_iteration(policy)}",
+                )
+                for call in calls
+            ]
+        if mode == "best_effort" and self._can_execute_parallel(calls):
+            return self._execute_parallel(calls, policy, max_workers=max_workers)
+        return self._execute_serial(calls, policy, mode=mode)
+
+    def _execute_parallel(
+        self,
+        calls: list[ToolCall],
+        policy: ToolPolicy,
+        *,
+        max_workers: int | None = None,
+    ) -> list[ToolObservation]:
+        results: list[ToolObservation | None] = [None] * len(calls)
+        worker_count = min(max_workers or self._max_workers, len(calls))
+        with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="news-tool-batch") as pool:
+            future_to_index = {
+                pool.submit(self._execute_one, call, policy): index
+                for index, call in enumerate(calls)
+            }
+            for future in as_completed(future_to_index):
+                results[future_to_index[future]] = future.result()
+        return [result for result in results if result is not None]
+
+    def _execute_one(self, call: ToolCall, policy: ToolPolicy) -> ToolObservation:
+        executor = ToolExecutor(
+            self._registry,
+            artifact_manager=self._artifact_manager,
+            run_id=self._run_id,
+            secret_provider=self._secret_provider,
+        )
+        return executor.execute(call, policy)
+
+    def _execute_serial(self, calls: list[ToolCall], policy: ToolPolicy, *, mode: str) -> list[ToolObservation]:
+        observations: list[ToolObservation] = []
+        for call in calls:
+            observation = self._execute_one(call, policy)
+            observations.append(observation)
+            if mode == "strict" and observation.status != ToolStatus.SUCCEEDED:
+                break
+        return observations
+
+    def _can_execute_parallel(self, calls: list[ToolCall]) -> bool:
+        for call in calls:
+            try:
+                definition = self._registry.get(call.tool_name).definition
+            except ToolDefinitionError:
+                return False
+            if definition.is_dangerous or is_default_dangerous_tool_name(definition.name):
+                return False
+            if not definition.concurrency_safe:
+                return False
+            if definition.side_effect_value not in _READ_ONLY_SIDE_EFFECTS:
+                return False
+        return True
+
+
+def _max_tool_calls_per_iteration(policy: ToolPolicy) -> int:
+    return max(0, int(policy.max_tool_calls_per_iteration))
+
+
+def _blocked_budget_observation(call: ToolCall, message: str) -> ToolObservation:
+    return ToolObservation(
+        call=call,
+        result=ToolResult(
+            status=ToolStatus.BLOCKED,
+            error_type="ToolPermissionError",
+            error_message=message,
+            call_id=call.call_id,
+            tool_name=call.tool_name,
+        ),
+        elapsed_ms=0.0,
+    )

@@ -4,26 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from core.framework import RunResult, WorkflowRunner
-from core.framework.specs import WorkflowSpec
-from core.framework.specs import WorkflowStatus
-from core.framework.workflow import FunctionStepRegistry
-from interfaces.services.approval_service import ApprovalApplicationService
-from interfaces.services.diagnose_service import DiagnoseCheck, DiagnoseResult, DiagnosticApplicationService
-from interfaces.services.report_service import ReportApplicationService
-from storage.checkpoint import LocalJsonCheckpointStore
-from storage.memory import MemoryIngestionService, memory_ingestion_service_from_env
-from storage.repository import persist_run_result, repository_from_env
-from workflows.daily_intelligence import AgenticDailyIntelligenceRunner, DailyIntelligenceRunner
-from workflows.daily_intelligence import build_agentic_daily_intelligence_workflow, build_daily_intelligence_workflow
-from workflows.daily_intelligence import build_test_agent_loop_registry
-from workflows.daily_intelligence import build_test_agent_loop_workflow
-from workflows.daily_intelligence import build_test_no_llm_registry
-from workflows.daily_intelligence import build_test_no_llm_workflow
-from workflows.daily_intelligence.artifact_publisher import build_daily_intelligence_artifact_publishers
-from business.layers.relation.lineage import evidence_bundle_lineage_extractor
-from business.layers.signal.indexing import source_artifact_ref_extractor
-from workflows.daily_intelligence.profiles import (
+from business.boards.cross_board.profiles import (
     AGENTIC_DAILY_WORKFLOW_ID,
     LEGACY_DAILY_WORKFLOW_ID,
     PROFILE_AGENTIC_LIVE,
@@ -32,9 +13,29 @@ from workflows.daily_intelligence.profiles import (
     PROFILE_LIVE_OFFLINE,
     daily_agentic_enabled,
 )
+from core.framework import RunResult, WorkflowRunner
+from core.framework.specs import WorkflowSpec
+from core.framework.specs import WorkflowStatus
+from core.framework.workflow import FunctionStepRegistry
+from business.layers.output.memory_ingestion import MemoryIngestionService
+from business.layers.relation.lineage import evidence_bundle_lineage_extractor
+from business.layers.signal.indexing import source_artifact_ref_extractor
+from interfaces.services.board_service import BoardApplicationService
+from interfaces.services.approval_service import ApprovalApplicationService
+from interfaces.services.diagnose_service import DiagnoseCheck, DiagnoseResult, DiagnosticApplicationService
+from interfaces.services.memory_service import memory_ingestion_service_from_env
+from interfaces.services.report_service import ReportApplicationService
+from storage.checkpoint import LocalJsonCheckpointStore
+from storage.repository import persist_run_result, repository_from_env
+from workflows.daily_intelligence import AgenticDailyIntelligenceRunner, DailyIntelligenceRunner
+from workflows.daily_intelligence import build_agentic_daily_intelligence_workflow, build_daily_intelligence_workflow
+from workflows.daily_intelligence import build_test_agent_loop_registry
+from workflows.daily_intelligence import build_test_agent_loop_workflow
+from workflows.daily_intelligence import build_test_no_llm_registry
+from workflows.daily_intelligence import build_test_no_llm_workflow
+from workflows.daily_intelligence.artifact_publisher import build_daily_intelligence_artifact_publishers
 from workflows.daily_intelligence.test_agent_loop import run_test_agent_loop
 from workflows.daily_intelligence.test_no_llm import run_test_no_llm
-from workflows.daily_intelligence.runner import PROFILE_LIVE, PROFILE_LIVE_OFFLINE
 from workflows.weekly_intelligence import PROFILE_WEEKLY, WeeklyIntelligenceRunner
 
 
@@ -298,8 +299,20 @@ class RunApplicationService:
             profile=profile,
             migrate=False,
         )
+        # TODO(boundary-migration): legacy adapter, remove after business board services are stable.
+        self._attach_board_outputs_if_possible(result, topic=topic)
         self._index_memory_if_configured(result, topic=topic)
         return result
+
+    def _attach_board_outputs_if_possible(self, result: RunResult, *, topic: str) -> None:
+        if result.status != WorkflowStatus.SUCCEEDED:
+            return
+        if not isinstance(result.output, dict):
+            return
+        try:
+            BoardApplicationService().attach_run_board_outputs(result.output, topic=topic)
+        except (TypeError, ValueError):
+            return
 
 
 def _live_smoke_readiness_issues(diagnostics: DiagnoseResult) -> list[DiagnoseCheck]:

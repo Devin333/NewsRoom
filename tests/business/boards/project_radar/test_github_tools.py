@@ -1,6 +1,6 @@
 import json
 
-from core.framework.tools import (
+from framework.tool import (
     ToolCall,
     ToolExecutor,
     ToolPolicy,

@@ -1,7 +1,7 @@
 import pytest
 
 from core.framework.specs import StepSpec, StepStatus, StepType, WorkflowSpec
-from core.framework.tools import ToolRegistry
+from framework.tool import ToolRegistry
 from core.framework.workflow import (
     DataBuffer,
     FunctionStepRegistry,

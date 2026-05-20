@@ -1,6 +1,6 @@
 import pytest
 
-from core.framework.llm import (
+from framework.llm import (
     CostEstimator,
     GlobalBudgetExceededError,
     GlobalBudgetPolicy,
@@ -152,3 +152,4 @@ def test_global_budget_tracker_raises_after_total_token_violation() -> None:
 
     assert exc_info.value.check.violations == ("max_total_tokens",)
     assert tracker.usage.token_usage.total_tokens == 4
+

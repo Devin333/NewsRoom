@@ -1,7 +1,7 @@
 import time
 from typing import Any
 
-from core.framework.tools import (
+from framework.tool import (
     MCPServerConfig,
     MCPToolAdapter,
     REDACTED_VALUE,
@@ -17,7 +17,7 @@ from core.framework.tools import (
     ToolTimeoutError,
     build_tool_catalog,
 )
-from core.framework.tools.batch import ToolBatchExecutor
+from framework.tool.runtime.batch_executor import ToolBatchExecutor
 
 
 def test_duplicate_tool_error_includes_old_and_new_namespaces() -> None:

@@ -5,7 +5,7 @@ import pytest
 from core.framework.artifacts import ArtifactManager
 from core.framework.agent_loop import AgentLoopResult, AgentLoopStatus, AgentRunner, AgentSpec
 from core.framework.events import EventBus
-from core.framework.llm import (
+from framework.llm import (
     FakeLLMClient,
     GlobalBudgetPolicy,
     GlobalBudgetTracker,
@@ -23,7 +23,7 @@ from core.framework.specs import (
     WorkflowSpec,
     WorkflowStatus,
 )
-from core.framework.tools import ToolDefinition, ToolRegistry, build_builtin_tool_registry
+from framework.tool import ToolDefinition, ToolRegistry
 from core.framework.workflow import (
     AgentLoopStepRunner,
     ArtifactStepRunner,
@@ -1119,3 +1119,5 @@ def _sample_tool_registry() -> ToolRegistry:
         },
     )
     return registry
+
+

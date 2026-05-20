@@ -2,14 +2,14 @@ from typing import cast
 
 import pytest
 
-from core.framework.tools import (
+from framework.tool import (
     RegisteredTool,
     ToolDefinition,
     ToolDefinitionError,
     ToolPolicy,
     ToolRegistry,
 )
-from core.framework.tools.models import ToolExecutorFn
+from framework.tool.models import ToolExecutorFn
 
 
 def test_tool_registry_registers_namespaced_tool() -> None:

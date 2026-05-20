@@ -3,12 +3,14 @@ import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from xml.etree import ElementTree
 
-from core.framework.tools import (
+from framework.tool import (
     ToolCall,
     ToolExecutor,
     ToolPolicy,
     ToolRegistry,
     ToolStatus,
+)
+from infrastructure.tools import (
     register_notification_tools,
 )
 

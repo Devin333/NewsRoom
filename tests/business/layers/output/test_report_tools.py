@@ -1,7 +1,7 @@
 import json
 
 from core.framework.artifacts import ArtifactManager
-from core.framework.tools import (
+from framework.tool import (
     ToolCall,
     ToolExecutor,
     ToolPolicy,
@@ -257,7 +257,7 @@ def test_report_publish_tool_is_blocked_by_default(tmp_path) -> None:
         ToolPolicy(allowed_tools=["report.publish"]),
     )
 
-    assert observation.status == ToolStatus.BLOCKED
+    assert observation.status == ToolStatus.APPROVAL_REQUIRED
     assert not (tmp_path / "_records" / "reports" / "run-1_final.json").exists()
 
 

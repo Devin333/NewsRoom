@@ -5,7 +5,7 @@ from urllib.request import Request
 
 import pytest
 
-from core.framework.llm import (
+from framework.llm import (
     LLMConfigurationError,
     LLMProviderError,
     LLMRequest,
@@ -800,3 +800,4 @@ def _success_body(*, response_id: str = "chatcmpl-test", content: str = "{\"ok\"
 
 def _sse(payload: dict) -> bytes:
     return f"data: {json.dumps(payload)}\n\n".encode("utf-8")
+

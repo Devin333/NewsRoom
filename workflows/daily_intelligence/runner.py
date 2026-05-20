@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from core.framework import RunResult, WorkflowRunner
-from core.framework.llm import LLMClient
+from framework.llm import LLMClient
 from core.framework.workflow import FunctionStepRegistry
 from business.layers.relation.lineage import evidence_bundle_lineage_extractor
 from business.layers.signal.indexing import source_artifact_ref_extractor
@@ -185,3 +185,4 @@ class DailyIntelligenceRunner:
             profile=profile,
             run_id=run_id,
         )
+

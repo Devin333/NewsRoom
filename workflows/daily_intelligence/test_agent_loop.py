@@ -7,9 +7,9 @@ from typing import Any
 from core.framework import RunResult, WorkflowRunner
 from core.framework.workflow import DataBuffer
 from core.framework.agent_loop import AgentRunner, AgentSpec
-from core.framework.llm import FakeLLMClient
+from framework.llm import FakeLLMClient
 from core.framework.specs import StepSpec, WorkflowSpec
-from core.framework.tools import ToolDefinition, ToolRegistry
+from framework.tool import ToolDefinition, ToolRegistry
 from core.framework.workflow import FunctionStepRegistry, ScopedDataBuffer
 
 PROFILE = "test-agent-loop"
@@ -182,3 +182,4 @@ def test_agent_loop_smoke_workflow(tmp_path) -> None:
     assert output["agent_loop_metrics"]["tool_calls"] == 1
     assert output["agent_loop_diagnostics"]["stop_reason"] == "final_output_accepted"
     assert output["agent_loop_trace"]["summary"]["judge_retry_count"] == 1
+

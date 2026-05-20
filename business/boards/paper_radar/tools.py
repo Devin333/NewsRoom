@@ -1,20 +1,40 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from core.framework.tools.models import ToolDefinition
-from core.framework.tools.registry import ToolRegistry
-from domain.sources import RawSourceItem, SourceDefinition
-from sources.connectors import ARXIV_API_URL, ArxivConnector
+from framework.tool.models import ToolDefinition
+from framework.tool.registry import ToolRegistry
+from infrastructure.external.source_adapters import ARXIV_API_URL, default_arxiv_connector
+from business.foundation import SourceReliability, SourceType
+
+
+@dataclass(frozen=True)
+class ConnectorSourceDefinition:
+    source_id: str
+    name: str
+    source_type: SourceType
+    url: str
+    reliability: SourceReliability = SourceReliability.HIGH
+    authority_score: float = 0.95
+    enabled: bool = True
+    fetch_interval_seconds: int = 3600
+    respect_robots: bool = True
+    user_agent: str | None = None
+    topics: list[str] = field(default_factory=list)
+    category: str | None = None
+    language: str | None = "en"
+    region: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 def register_arxiv_tools(
     registry: ToolRegistry,
     *,
-    connector: ArxivConnector | None = None,
+    connector: Any | None = None,
 ) -> None:
-    connector = connector or ArxivConnector()
+    connector = connector or _default_arxiv_connector()
     registry.register(
         ToolDefinition(
             name="arxiv.search_papers",
@@ -36,7 +56,7 @@ def register_arxiv_tools(
     )
 
 
-def _search_papers(args: dict[str, Any], *, connector: ArxivConnector) -> dict[str, Any]:
+def _search_papers(args: dict[str, Any], *, connector: Any) -> dict[str, Any]:
     query = str(args["query"]).strip()
     if not query:
         raise ValueError("query is required")
@@ -53,25 +73,25 @@ def _search_papers(args: dict[str, Any], *, connector: ArxivConnector) -> dict[s
     }
 
 
-def _source_definition(payload: Any) -> SourceDefinition:
+def _source_definition(payload: Any) -> ConnectorSourceDefinition:
     if payload is None:
-        return SourceDefinition(
+        return ConnectorSourceDefinition(
             source_id="arxiv",
             name="arXiv",
-            source_type="arxiv",
+            source_type=SourceType.ARXIV,
             url=ARXIV_API_URL,
-            reliability="high",
+            reliability=SourceReliability.HIGH,
             authority_score=0.95,
             language="en",
         )
     if not isinstance(payload, dict):
         raise ValueError("source must be an object")
-    return SourceDefinition(
+    return ConnectorSourceDefinition(
         source_id=str(payload.get("source_id") or "arxiv"),
         name=str(payload.get("name") or "arXiv"),
-        source_type=str(payload.get("source_type") or "arxiv"),
+        source_type=_source_type(payload.get("source_type") or "arxiv"),
         url=str(payload.get("url") or ARXIV_API_URL),
-        reliability=str(payload.get("reliability") or "high"),
+        reliability=_source_reliability(payload.get("reliability") or "high"),
         authority_score=float(payload.get("authority_score", 0.95)),
         language=payload.get("language"),
         region=payload.get("region"),
@@ -85,12 +105,12 @@ def _limit(value: Any) -> int:
     return max(1, min(int(value), 50))
 
 
-def _raw_source_item_to_dict(item: RawSourceItem) -> dict[str, Any]:
+def _raw_source_item_to_dict(item: Any) -> dict[str, Any]:
     return {
         "source_item_id": item.source_item_id,
         "source_id": item.source_id,
         "source_name": item.source_name,
-        "source_type": item.source_type.value,
+        "source_type": _enum_value(item.source_type),
         "title": item.title,
         "url": item.url,
         "fetched_at": _dt(item.fetched_at),
@@ -102,6 +122,28 @@ def _raw_source_item_to_dict(item: RawSourceItem) -> dict[str, Any]:
         "language": item.language,
         "metadata": dict(item.metadata),
     }
+
+
+def _default_arxiv_connector() -> Any:
+    return default_arxiv_connector()
+
+
+def _source_type(value: Any) -> SourceType:
+    try:
+        return SourceType(str(getattr(value, "value", value)).strip().casefold())
+    except ValueError:
+        return SourceType.ARXIV
+
+
+def _source_reliability(value: Any) -> SourceReliability:
+    try:
+        return SourceReliability(str(getattr(value, "value", value)).strip().casefold())
+    except ValueError:
+        return SourceReliability.UNKNOWN
+
+
+def _enum_value(value: Any) -> str:
+    return str(getattr(value, "value", value))
 
 
 def _dt(value: datetime | None) -> str | None:

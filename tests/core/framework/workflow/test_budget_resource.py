@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from core.framework.artifacts import ArtifactManager
-from core.framework.llm import GlobalBudgetPolicy, GlobalBudgetTracker, TokenUsage
+from framework.llm import GlobalBudgetPolicy, GlobalBudgetTracker, TokenUsage
 from core.framework.specs import (
     ResourcePolicySpec,
     StepSpec,
@@ -95,3 +95,4 @@ def test_budget_exceeded_diagnostics_include_reason_and_action(tmp_path) -> None
 
     assert any("max_total_tokens" in issue for issue in health.issues)
     assert any("source_limit" in action for action in health.suggested_actions)
+

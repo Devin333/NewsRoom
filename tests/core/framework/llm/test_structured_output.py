@@ -1,6 +1,6 @@
 import pytest
 
-from core.framework.llm import (
+from framework.llm import (
     LLMStructuredOutputValidationError,
     validate_structured_output,
 )
@@ -146,3 +146,4 @@ def test_validate_structured_output_accepts_pydantic_like_schema() -> None:
 
     with pytest.raises(LLMStructuredOutputValidationError, match="missing required property"):
         validate_structured_output({}, ReportSchema)
+

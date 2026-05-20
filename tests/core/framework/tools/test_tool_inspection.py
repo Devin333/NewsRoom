@@ -1,16 +1,18 @@
-from core.framework.tools import (
+from framework.tool import (
     ToolCall,
     ToolDefinition,
     ToolExecutor,
     ToolPolicy,
     ToolRegistry,
     ToolStatus,
-    build_builtin_tool_registry,
     classify_tool_risk,
     inspect_tool_executor,
     inspect_tool_policy,
     inspect_tool_registry,
     inspect_tool_runtime,
+)
+from infrastructure.tools import (
+    build_builtin_tool_registry,
 )
 
 

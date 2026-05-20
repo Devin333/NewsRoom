@@ -1,15 +1,17 @@
 import json
 
 from core.framework.artifacts import ArtifactManager
-from core.framework.tools import (
+from framework.tool import (
     ToolCall,
     ToolExecutor,
     ToolPolicy,
     ToolStatus,
+    build_tool_catalog,
+)
+from infrastructure.tools import (
     build_builtin_dangerous_tool_registry,
     build_builtin_safe_tool_registry,
     build_builtin_tool_registry,
-    build_tool_catalog,
 )
 
 

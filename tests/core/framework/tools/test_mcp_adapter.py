@@ -1,6 +1,6 @@
 from typing import Any
 
-from core.framework.tools import (
+from framework.tool import (
     MappingSecretProvider,
     MCPServerConfig,
     MCPToolAdapter,

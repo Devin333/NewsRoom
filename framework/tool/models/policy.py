@@ -1,0 +1,159 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any
+
+from framework.tool.models.definition import ToolDefinition
+from framework.tool.models.status import ToolSideEffect
+
+
+@dataclass(frozen=True)
+class ToolPolicy:
+    allowed_tools: list[str] = field(default_factory=list)
+    blocked_tools: list[str] = field(default_factory=list)
+    denied_tools: list[str] = field(default_factory=list)
+    require_approval_for: list[str] = field(default_factory=list)
+    allow_network_access: bool = True
+    max_result_bytes: int = 1_000_000
+    default_timeout_seconds: float = 30.0
+    allow_mcp_tools: bool = False
+    max_tool_calls_per_iteration: int = 3
+    max_tool_calls_per_agent: int = 20
+    require_explicit_allowlist: bool = True
+    allow_dangerous_tools: bool = False
+    require_approval_for_side_effects: bool = True
+    max_result_chars_inline: int = 8000
+    spill_large_results_to_artifact: bool = True
+    timeout_seconds_default: float | None = 30.0
+    max_attempts_default: int = 1
+
+    def __post_init__(self) -> None:
+        blocked = sorted({*self.blocked_tools, *self.denied_tools})
+        object.__setattr__(self, "blocked_tools", blocked)
+        object.__setattr__(self, "denied_tools", blocked)
+        if self.timeout_seconds_default is None:
+            object.__setattr__(self, "timeout_seconds_default", self.default_timeout_seconds)
+        elif self.default_timeout_seconds == 30.0:
+            object.__setattr__(self, "default_timeout_seconds", float(self.timeout_seconds_default))
+
+    def allows(self, tool_name: str) -> bool:
+        if tool_name in self.blocked_tools:
+            return False
+        if str(tool_name).startswith("mcp.") and not self.allow_mcp_tools:
+            return False
+        if self.require_explicit_allowlist:
+            return tool_name in self.allowed_tools
+        return True
+
+    def exposes(self, definition: ToolDefinition) -> bool:
+        if not self.allows(definition.name):
+            return False
+        if _requires_network_access(definition) and not self.allow_network_access:
+            return False
+        if (
+            (definition.is_dangerous or is_default_dangerous_tool_name(definition.name))
+            and not self.allow_dangerous_tools
+        ):
+            return False
+        return True
+
+    def can_call(self, definition: ToolDefinition) -> tuple[bool, str | None]:
+        if not self.allows(definition.name):
+            return False, f"tool is not allowed: {definition.name}"
+        if _requires_network_access(definition) and not self.allow_network_access:
+            return False, f"network access is not allowed for tool: {definition.name}"
+        if (
+            (definition.is_dangerous or is_default_dangerous_tool_name(definition.name))
+            and not self.allow_dangerous_tools
+        ):
+            return False, f"dangerous tool is not allowed: {definition.name}"
+        if definition.max_result_bytes is not None and definition.max_result_bytes > self.max_result_bytes:
+            return False, f"tool max_result_bytes exceeds policy for: {definition.name}"
+        return True, None
+
+    def requires_approval(self, definition: ToolDefinition) -> bool:
+        if definition.name in self.require_approval_for:
+            return True
+        side_effect = definition.side_effect
+        if isinstance(side_effect, ToolSideEffect):
+            return side_effect.requires_approval()
+        return self.require_approval_for_side_effects and _has_side_effects(str(side_effect))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "allowed_tools": list(self.allowed_tools),
+            "blocked_tools": list(self.blocked_tools),
+            "denied_tools": list(self.denied_tools),
+            "require_approval_for": list(self.require_approval_for),
+            "allow_network_access": self.allow_network_access,
+            "allow_dangerous_tools": self.allow_dangerous_tools,
+            "max_result_bytes": self.max_result_bytes,
+            "default_timeout_seconds": self.default_timeout_seconds,
+            "allow_mcp_tools": self.allow_mcp_tools,
+            "max_tool_calls_per_iteration": self.max_tool_calls_per_iteration,
+            "max_tool_calls_per_agent": self.max_tool_calls_per_agent,
+            "require_explicit_allowlist": self.require_explicit_allowlist,
+            "require_approval_for_side_effects": self.require_approval_for_side_effects,
+            "max_result_chars_inline": self.max_result_chars_inline,
+            "spill_large_results_to_artifact": self.spill_large_results_to_artifact,
+            "timeout_seconds_default": self.timeout_seconds_default,
+            "max_attempts_default": self.max_attempts_default,
+        }
+
+    @classmethod
+    def from_any(cls, value: Any) -> "ToolPolicy":
+        if isinstance(value, cls):
+            return value
+        if value is None:
+            return cls()
+        data = value.to_dict() if hasattr(value, "to_dict") else value
+        if isinstance(data, dict):
+            supported = cls().to_dict().keys()
+            return cls(**{key: data[key] for key in supported if key in data})
+        return cls(
+            allowed_tools=[str(item) for item in getattr(value, "allowed_tools", [])],
+            blocked_tools=[str(item) for item in getattr(value, "blocked_tools", [])],
+            allow_mcp_tools=bool(getattr(value, "allow_mcp_tools", False)),
+            denied_tools=[str(item) for item in getattr(value, "denied_tools", [])],
+            require_approval_for=[str(item) for item in getattr(value, "require_approval_for", [])],
+            allow_network_access=bool(getattr(value, "allow_network_access", True)),
+            max_result_bytes=int(getattr(value, "max_result_bytes", 1_000_000)),
+            default_timeout_seconds=float(getattr(value, "default_timeout_seconds", 30.0)),
+            max_tool_calls_per_iteration=int(getattr(value, "max_tool_calls_per_iteration", 3)),
+            max_tool_calls_per_agent=int(getattr(value, "max_tool_calls_per_agent", 20)),
+            require_explicit_allowlist=bool(getattr(value, "require_explicit_allowlist", True)),
+            allow_dangerous_tools=bool(getattr(value, "allow_dangerous_tools", False)),
+            require_approval_for_side_effects=bool(getattr(value, "require_approval_for_side_effects", True)),
+            max_result_chars_inline=int(getattr(value, "max_result_chars_inline", 8000)),
+            spill_large_results_to_artifact=bool(getattr(value, "spill_large_results_to_artifact", True)),
+            timeout_seconds_default=getattr(value, "timeout_seconds_default", 30.0),
+            max_attempts_default=int(getattr(value, "max_attempts_default", 1)),
+        )
+
+
+def is_default_dangerous_tool_name(tool_name: str) -> bool:
+    normalized = str(tool_name).strip()
+    dangerous_names = {
+        "system.execute",
+        "system.execute_command",
+        "file.write",
+        "file.delete",
+        "postgres.query",
+        "http.request",
+        "generic_http_request",
+        "publish.external",
+        "notification.send",
+    }
+    dangerous_prefixes = ("postgres.", "notification.", "publish.")
+    return normalized in dangerous_names or normalized.startswith(dangerous_prefixes)
+
+
+def _requires_network_access(definition: ToolDefinition) -> bool:
+    side_effect = definition.side_effect
+    if side_effect == ToolSideEffect.NETWORK_ACCESS:
+        return True
+    return str(side_effect) == ToolSideEffect.NETWORK_ACCESS.value or definition.name.startswith(("web.", "mcp."))
+
+
+def _has_side_effects(side_effect: str) -> bool:
+    return side_effect not in {"", "none", "read_only", ToolSideEffect.READ_ONLY.value}

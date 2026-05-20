@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from core.framework.llm import (
+from framework.llm import (
     LLMConfigurationError,
     build_openai_compatible_client_from_config,
     load_openai_compatible_deployment,
@@ -326,3 +326,4 @@ def test_tracked_model_config_is_secret_free_and_loadable() -> None:
     assert deployment.deployment_id == "dashscope-deepseek-v4-flash"
     assert deployment.config.provider == "dashscope"
     assert deployment.config.api_key_env == "DASHSCOPE_API_KEY"
+

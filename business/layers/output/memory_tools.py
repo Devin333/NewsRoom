@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from core.framework.tools.models import ToolDefinition
-from core.framework.tools.registry import ToolRegistry
+from framework.tool.models import ToolDefinition
+from framework.tool.registry import ToolRegistry
 
 
 def register_memory_index_tools(

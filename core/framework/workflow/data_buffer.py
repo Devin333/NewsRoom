@@ -1,49 +1,6 @@
-from __future__ import annotations
+"""Compatibility wrapper for `framework.workflow.buffer.data_buffer`."""
 
-from core.framework.workflow.buffer import (
-    DEFAULT_SENSITIVE_KEY_PATTERNS,
-    REDACTED_VALUE,
-    BufferDiff,
-    BufferLineage,
-    BufferValueSchema,
-    BufferWriteRecord,
-    DataBuffer,
-    DataBufferDiff,
-    DataBufferKeyError,
-    DataBufferPermissionError,
-    DataBufferReadPermissionError,
-    DataBufferSchemaError,
-    DataBufferSnapshot,
-    DataBufferWritePermissionError,
-    RedactionStatus,
-    ScopedDataBuffer,
-    StepDataScope,
-    StepScopedDataBufferView,
-    stable_hash,
-    stable_json_dumps,
-    step_scope_from_spec,
-)
+from framework.workflow.buffer.data_buffer import *  # noqa: F401,F403
 
-__all__ = [
-    "DEFAULT_SENSITIVE_KEY_PATTERNS",
-    "REDACTED_VALUE",
-    "BufferDiff",
-    "BufferLineage",
-    "BufferValueSchema",
-    "BufferWriteRecord",
-    "DataBuffer",
-    "DataBufferDiff",
-    "DataBufferKeyError",
-    "DataBufferPermissionError",
-    "DataBufferReadPermissionError",
-    "DataBufferSchemaError",
-    "DataBufferSnapshot",
-    "DataBufferWritePermissionError",
-    "RedactionStatus",
-    "ScopedDataBuffer",
-    "StepDataScope",
-    "StepScopedDataBufferView",
-    "stable_hash",
-    "stable_json_dumps",
-    "step_scope_from_spec",
-]
+
+

@@ -4,7 +4,7 @@ from hashlib import sha256
 
 from core.framework.artifacts import ArtifactManager
 from core.framework.workers import InMemoryApprovalStore
-from core.framework.tools import (
+from framework.tool import (
     REDACTED_VALUE,
     ToolCall,
     ToolDefinition,
@@ -14,7 +14,7 @@ from core.framework.tools import (
     ToolResult,
     ToolStatus,
 )
-from core.framework.tools.redaction import contains_redacted_value, redact_sensitive_values
+from framework.tool.governance.redaction import contains_redacted_value, redact_sensitive_values
 
 
 def _registry() -> ToolRegistry:

@@ -1,4 +1,4 @@
-from core.framework.tools import REDACTED_VALUE, ToolApprovalRequest, ToolCall
+from framework.tool import REDACTED_VALUE, ToolApprovalRequest, ToolCall
 
 
 def test_tool_approval_request_serializes_redacted_tool_call() -> None:

@@ -1,5 +1,5 @@
 from core.framework.agent_loop import AgentRunner, AgentSpec
-from core.framework.llm import FakeLLMClient
+from framework.llm import FakeLLMClient
 from core.framework.memory import (
     DEFAULT_AGENT_MEMORY_POLICY,
     DEFAULT_AGENT_MEMORY_WRITE_POLICY,
@@ -8,8 +8,8 @@ from core.framework.memory import (
     MemoryRecord,
     MemoryRuntime,
 )
-from core.framework.tools.models import ToolDefinition
-from core.framework.tools.registry import ToolRegistry
+from framework.tool.models import ToolDefinition
+from framework.tool.registry import ToolRegistry
 
 
 def test_agent_runner_injects_memory_context_before_llm_call() -> None:
@@ -172,3 +172,4 @@ def test_default_agent_memory_write_policy_is_hook_only_and_ref_backed() -> None
         "episodic",
         "observation",
     ]
+

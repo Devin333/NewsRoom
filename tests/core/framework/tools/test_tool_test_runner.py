@@ -1,7 +1,7 @@
 import json
 
 from core.framework.artifacts import ArtifactManager
-from core.framework.tools import (
+from framework.tool import (
     REDACTED_VALUE,
     ToolCall,
     ToolDefinition,
@@ -10,6 +10,8 @@ from core.framework.tools import (
     ToolStatus,
     ToolTestCase,
     ToolTestRunner,
+)
+from infrastructure.tools import (
     build_builtin_dangerous_tool_registry,
     build_builtin_safe_tool_registry,
 )

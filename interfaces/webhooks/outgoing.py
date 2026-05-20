@@ -6,7 +6,7 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from core.framework.tools.redaction import redact_sensitive_values
+from framework.tool.governance.redaction import redact_sensitive_values
 from interfaces.webhooks.signatures import build_signature_header
 
 

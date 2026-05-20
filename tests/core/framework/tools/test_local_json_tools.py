@@ -1,11 +1,13 @@
 import json
 
-from core.framework.tools import (
+from framework.tool import (
     ToolCall,
     ToolExecutor,
     ToolPolicy,
     ToolRegistry,
     ToolStatus,
+)
+from infrastructure.tools import (
     register_local_json_tools,
 )
 

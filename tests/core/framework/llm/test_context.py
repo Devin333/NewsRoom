@@ -1,6 +1,6 @@
 import pytest
 
-from core.framework.llm import (
+from framework.llm import (
     ContextPolicy,
     LLMContextGuard,
     LLMContextWindowExceededError,
@@ -61,3 +61,4 @@ def test_context_policy_rejects_invalid_limits() -> None:
         ContextPolicy(max_context_tokens=0)
     with pytest.raises(ValueError, match="reserve_output_tokens"):
         ContextPolicy(max_context_tokens=10, reserve_output_tokens=-1)
+

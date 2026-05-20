@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from storage.artifacts import ArtifactRef
+from business.layers.signal.artifact_refs import SignalArtifactRef
 
 
 def source_artifact_ref_extractor(
@@ -12,7 +12,7 @@ def source_artifact_ref_extractor(
     run_dir: Path,
     manifest: dict[str, Any],
     output: dict[str, Any],
-) -> list[ArtifactRef]:
+) -> list[SignalArtifactRef]:
     artifact_paths = manifest.get("artifacts") or {}
     source_index_path = artifact_paths.get("source_artifacts")
     if not isinstance(source_index_path, str):
@@ -28,7 +28,7 @@ def source_artifact_ref_extractor(
     if not isinstance(entries, list):
         return []
 
-    refs: list[ArtifactRef] = []
+    refs: list[SignalArtifactRef] = []
     for entry in entries:
         if not isinstance(entry, dict):
             continue
@@ -36,7 +36,7 @@ def source_artifact_ref_extractor(
         if not isinstance(ref_payload, dict):
             continue
         try:
-            ref = ArtifactRef.from_dict(ref_payload)
+            ref = SignalArtifactRef.from_dict(ref_payload)
             _artifact_path(run_dir, ref.path)
         except (KeyError, TypeError, ValueError, OSError):
             continue

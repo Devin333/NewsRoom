@@ -2,7 +2,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from core.framework.llm import LLMResponse, TokenUsage
+from framework.llm import LLMResponse, TokenUsage
 from core.framework.specs import WorkflowStatus
 from domain.sources import RawSourceItem, SourceDefinition, SourceError
 from sources import SourceConfigError, SourceRegistry
@@ -2078,3 +2078,4 @@ class _UnsupportedClaimLLM:
 class _FailIfCalledLLM:
     def complete(self, request):
         raise AssertionError("LLM should not be called when all sources fail")
+

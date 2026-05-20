@@ -8,7 +8,7 @@ from uuid import uuid4
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from core.framework.tools.redaction import redact_sensitive_values
+from framework.tool.governance.redaction import redact_sensitive_values
 from interfaces.models import ApiError, ApiResponse
 
 

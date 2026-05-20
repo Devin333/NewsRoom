@@ -2,13 +2,15 @@ import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlsplit
 
-from core.framework.tools import (
-    DuckDuckGoHtmlSearchProvider,
+from framework.tool import (
     ToolCall,
     ToolExecutor,
     ToolPolicy,
     ToolRegistry,
     ToolStatus,
+)
+from infrastructure.tools import (
+    DuckDuckGoHtmlSearchProvider,
     WebSearchResult,
     register_web_search_tools,
 )

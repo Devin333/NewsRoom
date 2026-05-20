@@ -1,4 +1,4 @@
-from storage.memory import MemoryIngestionResult
+from business.layers.output.memory_ingestion import MemoryIngestionResult
 from core.framework.run_result import RunResult
 from core.framework.specs import WorkflowStatus
 from interfaces.services.run_service import RunApplicationService
@@ -53,6 +53,8 @@ def test_run_service_indexes_memory_when_injected(tmp_path, monkeypatch) -> None
         "documents_indexed": 3,
         "collections": ["evidence_items", "report_sections"],
         "document_ids": ["doc-1", "doc-2", "doc-3"],
+        "memories_written": 0,
+        "memory_ids": [],
     }
 
 

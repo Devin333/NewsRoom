@@ -7,11 +7,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable
 
-from business.workers import (
-    DailyIntelligenceTaskHandler,
-    MemoryReindexTaskHandler,
-    SourceHealthCheckTaskHandler,
-)
+from business.boards.cross_board.worker_handlers import DailyIntelligenceTaskHandler
+from business.layers.output.worker_handlers import MemoryReindexTaskHandler
+from business.layers.signal.worker_handlers import SourceHealthCheckTaskHandler
 from core.framework.workers import (
     RedisQueueStatus,
     RedisStreamTaskQueue,
@@ -25,7 +23,9 @@ from core.framework.workers import (
 )
 from core.framework.workers.handler import TaskHandler
 from core.framework.workers.models import LeasedTask
+from interfaces.services.memory_service import MemoryApplicationService
 from interfaces.services.run_service import RunApplicationService
+from interfaces.services.source_service import SourceApplicationService
 
 
 DEFAULT_REDIS_URL = "redis://127.0.0.1:6379/0"
@@ -172,8 +172,12 @@ class WorkerApplicationService:
                 DailyIntelligenceTaskHandler.task_type: DailyIntelligenceTaskHandler(
                     RunApplicationService(artifact_root=self.artifact_root)
                 ),
-                MemoryReindexTaskHandler.task_type: MemoryReindexTaskHandler(),
-                SourceHealthCheckTaskHandler.task_type: SourceHealthCheckTaskHandler(),
+                MemoryReindexTaskHandler.task_type: MemoryReindexTaskHandler(
+                    memory_service=MemoryApplicationService(artifact_root=self.artifact_root)
+                ),
+                SourceHealthCheckTaskHandler.task_type: SourceHealthCheckTaskHandler(
+                    source_service=SourceApplicationService()
+                ),
             }
         self.handlers = handlers
 

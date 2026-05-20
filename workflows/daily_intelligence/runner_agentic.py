@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from core.framework import RunResult, WorkflowRunner
-from core.framework.llm import LLMClient
+from framework.llm import LLMClient
 from core.framework.workflow import FunctionStepRegistry
 from business.layers.relation.lineage import evidence_bundle_lineage_extractor
 from business.layers.signal.indexing import source_artifact_ref_extractor
@@ -219,3 +219,4 @@ def _source_collection_profile(profile: str) -> str:
     if profile == PROFILE_AGENTIC_OFFLINE:
         return PROFILE_LIVE_OFFLINE
     return profile
+

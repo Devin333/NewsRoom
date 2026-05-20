@@ -1,4 +1,4 @@
-from core.framework.llm import (
+from framework.llm import (
     LLMProviderError,
     LLMRequest,
     LLMResponse,
@@ -107,3 +107,4 @@ def test_redactor_masks_password_bearing_dsn_in_free_text() -> None:
 
 def _secret() -> str:
     return "sk" + "-llm-redaction-secret"
+

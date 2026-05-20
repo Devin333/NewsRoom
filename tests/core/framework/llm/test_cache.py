@@ -1,4 +1,4 @@
-from core.framework.llm import (
+from framework.llm import (
     CachedLLMClient,
     InMemoryLLMCache,
     LLMCacheKey,
@@ -117,3 +117,4 @@ class CountingClient:
     def complete(self, request: LLMRequest) -> LLMResponse:
         self.call_count += 1
         return LLMResponse(content=f"response-{self.call_count}")
+

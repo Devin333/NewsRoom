@@ -1,5 +1,5 @@
 from core.framework.agent_loop import AgentSpec
-from core.framework.tools import ToolPolicy, audit_agent_spec_tool_boundary, audit_agent_tool_boundary
+from framework.tool import ToolPolicy, audit_agent_spec_tool_boundary, audit_agent_tool_boundary
 
 
 def test_agent_tool_boundary_blocks_configured_agent_tools() -> None:

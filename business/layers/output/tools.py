@@ -4,10 +4,9 @@ import re
 from typing import Any
 
 from core.framework.artifacts import ArtifactManager
-from core.framework.tools.models import ToolDefinition
-from core.framework.tools.registry import ToolRegistry
-from domain.reports import FinalReport, render_markdown
-from storage.repository import ReportRecord
+from framework.tool.models import ToolDefinition
+from framework.tool.registry import ToolRegistry
+from business.layers.output.records import OutputReport, OutputReportRecord, render_output_report_markdown
 
 
 def register_report_tools(
@@ -21,7 +20,7 @@ def register_report_tools(
     registry.register(
         ToolDefinition(
             name="report.render_markdown",
-            description="Render a FinalReport payload to markdown.",
+            description="Render an output report payload to markdown.",
             input_schema={
                 "required": ["report"],
                 "properties": {"report": {"type": "object"}},
@@ -30,12 +29,12 @@ def register_report_tools(
             side_effect="read_only",
             concurrency_safe=True,
         ),
-        lambda args: {"markdown": render_markdown(_final_report(args["report"]))},
+        lambda args: {"markdown": render_output_report_markdown(_final_report(args["report"]))},
     )
     registry.register(
         ToolDefinition(
             name="report.render_json",
-            description="Normalize a FinalReport payload to JSON.",
+            description="Normalize an output report payload to JSON.",
             input_schema={
                 "required": ["report"],
                 "properties": {"report": {"type": "object"}},
@@ -68,7 +67,7 @@ def register_report_tools(
     registry.register(
         ToolDefinition(
             name="report.validate",
-            description="Validate a FinalReport payload without rendering it.",
+            description="Validate an output report payload without rendering it.",
             input_schema={
                 "required": ["report"],
                 "properties": {"report": {"type": "object"}},
@@ -83,7 +82,7 @@ def register_report_tools(
         registry.register(
             ToolDefinition(
                 name="report.export",
-                description="Export a FinalReport payload to a run artifact.",
+                description="Export an output report payload to a run artifact.",
                 input_schema={
                     "required": ["report"],
                     "properties": {
@@ -108,7 +107,7 @@ def register_report_tools(
         registry.register(
             ToolDefinition(
                 name="report.publish",
-                description="Publish a FinalReport payload to the configured persistence repository.",
+                description="Publish an output report payload to the configured persistence repository.",
                 input_schema={
                     "required": ["run_id", "report"],
                     "properties": {
@@ -177,7 +176,7 @@ def _export_report(
         target = artifact_manager.write_json(run_id, relative_path, report.to_dict())
         content_type = "application/json"
     elif export_format == "markdown":
-        target = artifact_manager.write_text(run_id, relative_path, render_markdown(report))
+        target = artifact_manager.write_text(run_id, relative_path, render_output_report_markdown(report))
         content_type = "text/markdown"
     else:
         raise ValueError(f"unsupported report export format: {export_format}")
@@ -201,8 +200,8 @@ def _publish_report(
     report_id = _optional_text(args.get("report_id")) or f"{run_id}:{status}"
     report_markdown = args.get("report_markdown")
     if report_markdown is None:
-        report_markdown = render_markdown(report)
-    record = ReportRecord(
+        report_markdown = render_output_report_markdown(report)
+    record = OutputReportRecord(
         report_id=report_id,
         run_id=run_id,
         status=status,
@@ -227,7 +226,7 @@ def _publish_report(
     }
 
 
-def _default_export_path(report: FinalReport, export_format: str) -> str:
+def _default_export_path(report: OutputReport, export_format: str) -> str:
     extension = "json" if export_format == "json" else "md"
     slug = re.sub(r"[^a-z0-9]+", "-", report.title.casefold()).strip("-")
     if not slug:
@@ -235,7 +234,7 @@ def _default_export_path(report: FinalReport, export_format: str) -> str:
     return f"reports/{slug}.{extension}"
 
 
-def _final_report(payload: Any) -> FinalReport:
+def _final_report(payload: Any) -> OutputReport:
     if not isinstance(payload, dict):
         raise ValueError("report must be an object")
     title = str(payload.get("title") or "")
@@ -250,7 +249,7 @@ def _final_report(payload: Any) -> FinalReport:
     metadata = payload.get("metadata") or {}
     if not isinstance(metadata, dict):
         raise ValueError("report.metadata must be an object")
-    return FinalReport(
+    return OutputReport(
         title=title,
         sections=[dict(section) for section in sections],
         source_urls=[str(url) for url in source_urls],

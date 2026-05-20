@@ -6,24 +6,27 @@ from typing import Any
 from urllib.parse import urlsplit
 from urllib.request import Request
 
-from core.framework.tools.models import ToolDefinition
-from core.framework.tools.registry import ToolRegistry
-from domain.sources import RawSourceItem, SourceDefinition, SourceError, SourceReliability, SourceType
-from sources import SourceRegistry
-from sources.connectors import (
+from framework.tool.models import ToolDefinition
+from framework.tool.registry import ToolRegistry
+from infrastructure.external.source_adapters import (
+    BasicSourceHealthManager,
     DomainRateLimiter,
     FeedConnector,
     HtmlConnector,
     ManualConnector,
+    SourceDefinition,
+    SourceError,
     SourceFetchPolicy,
+    SourceRegistry,
+    SourceReliability,
+    SourceType,
     effective_fetch_policy,
     ensure_robots_allowed,
     open_request_with_fetch_policy,
+    rate_limited_source_error,
     run_with_fetch_retries,
 )
-from sources.connectors.fetch_policy import rate_limited_source_error
-from sources.health import BasicSourceHealthManager
-from sources.processing.normalize import canonicalize_url
+from business.layers.signal.records import canonicalize_source_url
 
 
 FetchText = Callable[[str], str]
@@ -272,7 +275,7 @@ def register_source_tools(
             concurrency_safe=True,
         ),
         lambda args: {
-            "canonical_url": canonicalize_url(
+            "canonical_url": canonicalize_source_url(
                 str(args["url"]),
                 base_url=str(args["base_url"]) if args.get("base_url") is not None else None,
             )
@@ -415,7 +418,7 @@ def _fetch_url(
         "source_name": source.name,
         "source_type": source.source_type.value,
         "url": source.url,
-        "canonical_url": canonicalize_url(source.url),
+        "canonical_url": canonicalize_source_url(source.url),
         "content": content,
         "content_bytes": content_bytes,
         "status_code": status_code,
@@ -457,7 +460,7 @@ def _probe_source(
             "ok": False,
             "source_id": source.source_id,
             "url": source.url,
-            "canonical_url": canonicalize_url(source.url),
+            "canonical_url": canonicalize_source_url(source.url),
             "error": rate_limit_error.to_dict(),
             "health": health_manager.get(
                 source.source_id,
@@ -486,7 +489,7 @@ def _probe_source(
             "ok": False,
             "source_id": source.source_id,
             "url": source.url,
-            "canonical_url": canonicalize_url(source.url),
+            "canonical_url": canonicalize_source_url(source.url),
             "error": error.to_dict(),
             "health": health.to_dict(),
         }
@@ -500,7 +503,7 @@ def _probe_source(
         "ok": True,
         "source_id": source.source_id,
         "url": source.url,
-        "canonical_url": canonicalize_url(source.url),
+        "canonical_url": canonicalize_source_url(source.url),
         "status_code": status_code,
         "content_type": content_type,
         "content_bytes": len(content.encode("utf-8")),
@@ -651,7 +654,7 @@ def _probe_blocked_result(
         "ok": False,
         "source_id": source.source_id,
         "url": source.url,
-        "canonical_url": canonicalize_url(source.url),
+        "canonical_url": canonicalize_source_url(source.url),
         "error": error.to_dict(),
         "health": health.to_dict(),
     }

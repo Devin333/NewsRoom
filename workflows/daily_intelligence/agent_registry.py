@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 from core.framework.agent_loop import AgentRunner, AgentSpec
-from core.framework.llm import (
+from framework.llm import (
     FakeLLMClient,
     LLMClient,
     build_openai_compatible_client_from_config,
@@ -341,3 +341,4 @@ def _fake_edited_report_draft(
             "source": "fake_llm_editor_rewrite",
         },
     }
+

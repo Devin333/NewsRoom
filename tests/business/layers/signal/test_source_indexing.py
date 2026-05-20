@@ -1,7 +1,7 @@
 import json
 
+from business.layers.signal.artifact_refs import SignalArtifactRef
 from business.layers.signal.indexing import source_artifact_ref_extractor
-from storage.artifacts import ArtifactRef
 
 
 def test_source_artifact_ref_extractor_reads_source_artifact_index(tmp_path) -> None:
@@ -11,7 +11,7 @@ def test_source_artifact_ref_extractor_reads_source_artifact_index(tmp_path) -> 
     artifact_path.parent.mkdir(parents=True)
     index_path.parent.mkdir(parents=True)
     artifact_path.write_text('{"title": "Item"}', encoding="utf-8")
-    ref = ArtifactRef(
+    ref = SignalArtifactRef(
         artifact_id="source-item-feed-item-1",
         run_id="run-1",
         artifact_type="source_item",

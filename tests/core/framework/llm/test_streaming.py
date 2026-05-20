@@ -1,6 +1,6 @@
 import pytest
 
-from core.framework.llm import (
+from framework.llm import (
     LLMStreamAccumulator,
     LLMStreamEvent,
     LLMToolCall,
@@ -119,3 +119,4 @@ def test_stream_event_to_dict_redacts_sensitive_values() -> None:
 def test_stream_event_rejects_unknown_event_type() -> None:
     with pytest.raises(ValueError, match="unsupported LLM stream event type"):
         LLMStreamEvent(event_type="unknown")
+

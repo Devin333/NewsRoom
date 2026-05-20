@@ -2,12 +2,19 @@ from __future__ import annotations
 
 from typing import Any
 
-from core.framework.tools.models import ToolDefinition
-from core.framework.tools.registry import ToolRegistry
-from domain.sources import Lineage
-from evidence.models import EvidenceBundle, EvidenceItem
-from quality import CitationChecker, EditorGate, QualityScorer, SupportMatrixBuilder
-from sources.processing.normalize import canonicalize_url, normalize_text
+from framework.tool.models import ToolDefinition
+from framework.tool.registry import ToolRegistry
+from business.foundation.primitives import canonicalize_url
+from business.layers.analysis.quality_records import (
+    AnalysisEvidenceBundle,
+    AnalysisEvidenceItem,
+    AnalysisLineage,
+    citation_check,
+    editor_review,
+    normalize_text,
+    quality_score,
+    support_matrix_for,
+)
 
 
 def register_quality_tools(registry: ToolRegistry) -> None:
@@ -79,7 +86,7 @@ def register_quality_tools(registry: ToolRegistry) -> None:
 
 
 def _citation_check(args: dict[str, Any]) -> dict[str, Any]:
-    return CitationChecker().check(
+    return citation_check(
         dict(args["report"]),
         _evidence_bundle(args["evidence_bundle"]),
     ).to_dict()
@@ -102,7 +109,7 @@ def _duplicate_check(args: dict[str, Any]) -> dict[str, Any]:
 
 def _claim_support_check(args: dict[str, Any]) -> dict[str, Any]:
     report = _report_payload(args["report"])
-    support_matrix = SupportMatrixBuilder().build(
+    support_matrix = support_matrix_for(
         report,
         _evidence_bundle(args["evidence_bundle"]),
     )
@@ -118,26 +125,18 @@ def _claim_support_check(args: dict[str, Any]) -> dict[str, Any]:
 def _editor_score(args: dict[str, Any]) -> dict[str, Any]:
     report = _report_payload(args["report"])
     evidence_bundle = _evidence_bundle(args["evidence_bundle"])
-    citation_check = CitationChecker().check(report, evidence_bundle)
-    support_matrix = SupportMatrixBuilder().build(report, evidence_bundle)
-    quality_summary = QualityScorer().score(
-        report=report,
-        citation_check=citation_check,
-        support_matrix=support_matrix,
-    )
-    editor_review = EditorGate().review(
-        citation_check,
-        support_matrix,
-        quality_summary,
-    )
+    check = citation_check(report, evidence_bundle)
+    support_matrix = support_matrix_for(report, evidence_bundle)
+    quality_summary = quality_score(report, check, support_matrix)
+    review = editor_review(check, support_matrix, quality_summary)
     return {
-        "passed": editor_review.decision.value == "pass",
-        "decision": editor_review.decision.value,
+        "passed": review.decision.value == "pass",
+        "decision": review.decision.value,
         "quality_score": quality_summary.quality_score,
-        "citation_check": citation_check.to_dict(),
+        "citation_check": check.to_dict(),
         "support_matrix": support_matrix.to_dict(),
         "quality_summary": quality_summary.to_dict(),
-        "editor_review": editor_review.to_dict(),
+        "editor_review": review.to_dict(),
     }
 
 
@@ -229,13 +228,13 @@ def _report_payload(payload: Any) -> dict[str, Any]:
     return dict(payload)
 
 
-def _evidence_bundle(payload: Any) -> EvidenceBundle:
+def _evidence_bundle(payload: Any) -> AnalysisEvidenceBundle:
     if not isinstance(payload, dict):
         raise ValueError("evidence_bundle must be an object")
     items = payload.get("items") or []
     if not isinstance(items, list):
         raise ValueError("evidence_bundle.items must be a list")
-    return EvidenceBundle(
+    return AnalysisEvidenceBundle(
         bundle_id=str(payload.get("bundle_id") or "tool-evidence-bundle"),
         items=[_evidence_item(item) for item in items],
         source_map={key: list(value) for key, value in dict(payload.get("source_map") or {}).items()},
@@ -245,13 +244,13 @@ def _evidence_bundle(payload: Any) -> EvidenceBundle:
     )
 
 
-def _evidence_item(payload: Any) -> EvidenceItem:
+def _evidence_item(payload: Any) -> AnalysisEvidenceItem:
     if not isinstance(payload, dict):
         raise ValueError("evidence item must be an object")
     source_id = str(payload.get("source_id") or "")
     source_item_id = str(payload.get("source_item_id") or f"{source_id or 'source'}-item")
     source_url = str(payload.get("source_url") or "")
-    return EvidenceItem(
+    return AnalysisEvidenceItem(
         evidence_id=str(payload.get("evidence_id") or ""),
         source_url=source_url,
         title=str(payload.get("title") or ""),
@@ -260,6 +259,6 @@ def _evidence_item(payload: Any) -> EvidenceItem:
         source_id=source_id,
         source_item_id=source_item_id,
         source_urls=[source_url] if source_url else [],
-        lineage=Lineage(source_id=source_id or "source", source_item_id=source_item_id),
+        lineage=AnalysisLineage(source_id=source_id or "source", source_item_id=source_item_id),
         metadata=dict(payload.get("metadata") or {}),
     )

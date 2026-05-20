@@ -1,16 +1,22 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
+from business.layers.output.memory_ingestion import (
+    MemoryIngestionResult,
+    MemoryIngestionService,
+    MemoryIndexDocument,
+)
 from interfaces.services.artifact_service import ArtifactInspectionService
-from storage.memory import MemoryIngestionResult, MemoryIngestionService
-from storage.vector import VectorCollectionStatus, VectorDocument, VectorSearchQuery, VectorSearchResult
+from storage.vector import VectorCollectionStatus, VectorSearchQuery, VectorSearchResult
 
 
 DEFAULT_MEMORY_COLLECTION = "report_sections"
 DEFAULT_BOOTSTRAP_COLLECTIONS = ("report_sections", "evidence_items")
+TRUE_VALUES = {"1", "true", "yes", "on"}
 
 
 class VectorSearchStore(Protocol):
@@ -20,7 +26,7 @@ class VectorSearchStore(Protocol):
 
 
 class VectorMemoryStore(VectorSearchStore, Protocol):
-    def upsert_documents(self, docs: list[VectorDocument]) -> None: ...
+    def upsert_documents(self, docs: list[MemoryIndexDocument]) -> None: ...
 
     def ensure_collections(self, collections: list[str]) -> list[VectorCollectionStatus]: ...
 
@@ -198,3 +204,20 @@ def _normalize_collections(collections: list[str]) -> list[str]:
             normalized.append(value)
             seen.add(value)
     return normalized
+
+
+def memory_ingestion_service_from_env(
+    *,
+    env: dict[str, str] | None = None,
+    vector_store: VectorMemoryStore | None = None,
+    memory_runtime: Any | None = None,
+) -> MemoryIngestionService | None:
+    values = env if env is not None else os.environ
+    enabled = values.get("NEWS_VECTOR_MEMORY_ENABLED", "").lower() in TRUE_VALUES
+    if not enabled:
+        return None
+    if vector_store is None and memory_runtime is None:
+        from storage.vector import qdrant_store_from_env
+
+        vector_store = qdrant_store_from_env(env=values)
+    return MemoryIngestionService(vector_store, memory_runtime=memory_runtime)

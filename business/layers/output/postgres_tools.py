@@ -2,18 +2,17 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
-from core.framework.tools.models import ToolDefinition
-from core.framework.tools.registry import ToolRegistry
-from domain.sources import SourceError, SourceHealth
-from storage.repository import ReportRecord
+from framework.tool.models import ToolDefinition
+from framework.tool.registry import ToolRegistry
+from business.layers.output.records import OutputReportRecord, OutputSourceError, OutputSourceHealth
 
 
 class PostgresReportRepository(Protocol):
-    def save_report(self, record: ReportRecord) -> None: ...
+    def save_report(self, record: OutputReportRecord) -> None: ...
 
 
 class PostgresSourceHealthRepository(Protocol):
-    def update_source_health(self, health: SourceHealth) -> None: ...
+    def update_source_health(self, health: OutputSourceHealth) -> None: ...
 
 
 def register_postgres_tools(
@@ -110,7 +109,7 @@ def _save_report(
     report_json = args["report_json"]
     if not isinstance(report_json, dict):
         raise ValueError("report_json must be an object")
-    record = ReportRecord(
+    record = OutputReportRecord(
         report_id=report_id,
         run_id=run_id,
         status=status,
@@ -139,7 +138,7 @@ def _update_source_health(
 ) -> dict[str, Any]:
     source_id = _required_text(args.get("source_id"), "source_id")
     last_error = _source_error(args.get("last_error"), source_id=source_id)
-    health = SourceHealth(
+    health = OutputSourceHealth(
         source_id=source_id,
         status=_required_text(args.get("status"), "status"),
         consecutive_failures=max(0, int(args.get("consecutive_failures") or 0)),
@@ -184,7 +183,7 @@ def _optional_float(value: Any) -> float | None:
     return float(value)
 
 
-def _source_error(value: Any, *, source_id: str) -> SourceError | None:
+def _source_error(value: Any, *, source_id: str) -> OutputSourceError | None:
     if value is None:
         return None
     if not isinstance(value, dict):
@@ -202,7 +201,7 @@ def _source_error(value: Any, *, source_id: str) -> SourceError | None:
     occurred_at = _optional_datetime(value.get("occurred_at"))
     if occurred_at is not None:
         kwargs["occurred_at"] = occurred_at
-    return SourceError(**kwargs)
+    return OutputSourceError(**kwargs)
 
 
 def _optional_datetime(value: Any):

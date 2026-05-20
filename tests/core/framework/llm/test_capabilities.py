@@ -1,4 +1,4 @@
-from core.framework.llm import ModelCapabilities
+from framework.llm import ModelCapabilities
 
 
 def test_model_capabilities_default_to_unsupported() -> None:
@@ -29,3 +29,4 @@ def test_model_capabilities_support_aliases() -> None:
     assert capabilities.supports("tools") is True
     assert capabilities.supports("supports_structured_output") is True
     assert capabilities.missing(("json_mode", "tools", "structured_output")) == ()
+
