@@ -3,12 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from framework.workers.models.task import Task
-from framework.workers.queue.in_memory import InMemoryTaskQueue
+from framework.workers.queue.base import TaskQueue
 
 
 @dataclass
 class LeaseManager:
-    queue: InMemoryTaskQueue
+    queue: TaskQueue
     worker_id: str
     queue_names: list[str]
 

@@ -1,6 +1,6 @@
 """Agent loop step runner."""
 
-from framework.workflow.runners.step_runner import AgentLoopStepRunner
+from framework.workflow.runners._step_runner_impl import AgentLoopStepRunner
 
 __all__ = ["AgentLoopStepRunner"]
 

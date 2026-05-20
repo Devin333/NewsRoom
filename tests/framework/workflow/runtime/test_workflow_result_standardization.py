@@ -1,0 +1,125 @@
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+from framework.specs import StepSpec, StepStatus, StepType, WorkflowSpec, WorkflowStatus
+from framework.workflow.runners.base import StepRunnerCapability, StepRunnerSideEffectLevel
+from framework.workflow.runners.registry import StepRunnerRegistry
+from framework.workflow.runtime.artifact_publishers import WorkflowArtifactPublisherRegistry
+from framework.workflow.runtime.artifacts import ArtifactManager
+from framework.workflow.runtime.execution_context import build_execution_context
+from framework.workflow.runtime.manifest_updater import ManifestUpdater
+from framework.workflow.runtime.outcome_finalizer import WorkflowOutcomeFinalizer
+from framework.workflow.runtime.result import StepOutcome, WorkflowResult
+from framework.workflow.runtime.runtime_event_bridge import RuntimeEventBridge
+
+
+class _Runner:
+    capability = StepRunnerCapability(
+        step_type=StepType.FUNCTION,
+        runner_id="test.function",
+        version="1.0",
+        supports_checkpoint=True,
+        supports_resume=True,
+        supports_timeout=True,
+        supports_retry=True,
+        side_effect_level=StepRunnerSideEffectLevel.NONE,
+    )
+
+    def can_resolve(self, step: StepSpec) -> bool:
+        return step.step_type == StepType.FUNCTION
+
+    def validate_step(self, step: StepSpec) -> list[Any]:
+        return []
+
+    def run(self, step: StepSpec, buffer: Any) -> StepOutcome:
+        return StepOutcome(status=StepStatus.SUCCEEDED, outputs={"ok": True})
+
+
+def test_workflow_result_supports_output_aliases_and_step_outcomes() -> None:
+    outcome = StepOutcome(status=StepStatus.SUCCEEDED, outputs={"ok": True}, step_id="s1")
+    result = WorkflowResult(
+        run_id="run-1",
+        workflow_id="wf-1",
+        workflow_version="1.0",
+        status="succeeded",
+        outputs={"done": True},
+        step_outcomes=[outcome],
+    )
+
+    payload = result.to_dict()
+    restored = WorkflowResult.from_dict(payload)
+
+    assert result.output == {"done": True}
+    assert payload["output"] == {"done": True}
+    assert payload["outputs"] == {"done": True}
+    assert restored.step_results["s1"].outputs == {"ok": True}
+    assert restored.step_outcomes[0].step_id == "s1"
+
+
+def test_outcome_finalizer_populates_standard_workflow_result_fields(tmp_path: Path) -> None:
+    artifact_manager = ArtifactManager(tmp_path)
+    step = StepSpec(step_id="s1", step_type=StepType.FUNCTION, write_keys=["ok"])
+    workflow = WorkflowSpec(
+        workflow_id="wf-standard",
+        name="Workflow",
+        version="1.0",
+        start_step_id="s1",
+        steps=[step],
+    )
+    registry = StepRunnerRegistry()
+    registry.register(StepType.FUNCTION, _Runner())
+    context = build_execution_context(
+        workflow=workflow,
+        request={},
+        profile="test",
+        artifact_manager=artifact_manager,
+        step_runner_registry=registry,
+        event_bus=None,
+        started_monotonic=0.0,
+        run_id="run-standard",
+    )
+    step_trace = context.trace_context.child(span_id="step:s1", step_id="s1")
+    updater = ManifestUpdater(
+        artifact_manager=artifact_manager,
+        run_id=context.run_id,
+        manifest=context.manifest,
+    )
+    outcome = updater.finalize_step_outcome_contract(
+        step,
+        StepOutcome(
+            status=StepStatus.SUCCEEDED,
+            outputs={"ok": True},
+            started_at="2026-05-21T00:00:00Z",
+            completed_at="2026-05-21T00:00:01Z",
+            warnings=["heads up"],
+        ),
+        trace_context=step_trace,
+    )
+    updater.record_step_outcome(
+        step=step,
+        outcome=outcome,
+        path=["s1"],
+        step_results=context.step_results,
+    )
+    context.status = WorkflowStatus.SUCCEEDED
+    context.path = ["s1"]
+
+    result = WorkflowOutcomeFinalizer(
+        artifact_manager=artifact_manager,
+        artifact_publishers=WorkflowArtifactPublisherRegistry([]),
+        event_bridge=RuntimeEventBridge(),
+    ).finalize(context)
+
+    assert result.outputs == result.output
+    assert result.trace_id == context.trace_context.trace_id
+    assert result.trace_ref and result.trace_ref.endswith("events.jsonl")
+    assert result.manifest_ref and result.manifest_ref.endswith("manifest.json")
+    assert result.metrics["step_count"] == 1
+    assert result.step_outcomes[0].step_id == "s1"
+    assert result.warnings == ["s1: heads up"]
+    summary = result.manifest["step_outcome_summary"]["s1"]
+    assert summary["duration_ms"] == 1000.0
+    assert summary["trace_id"] == context.trace_context.trace_id
+    assert summary["span_id"] == "step:s1"

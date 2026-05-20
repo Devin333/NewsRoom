@@ -5,6 +5,7 @@ from enum import StrEnum
 from typing import Any
 
 from framework.specs import StepStatus, WorkflowStatus
+from framework.workflow.runtime.status_classifier import RuntimeStatusClassifier
 
 
 class WorkflowRuntimeEventType(StrEnum):
@@ -196,9 +197,7 @@ STEP_TRANSITIONS: dict[
 
 class WorkflowStateMachine:
     terminal_statuses: set[WorkflowStatus] = {
-        WorkflowStatus.SUCCEEDED,
-        WorkflowStatus.FAILED,
-        WorkflowStatus.CANCELLED,
+        status for status in WorkflowStatus if RuntimeStatusClassifier.is_terminal_workflow(status)
     }
 
     def transition(
@@ -229,7 +228,7 @@ class WorkflowStateMachine:
         return target
 
     def is_terminal(self, status: WorkflowStatus) -> bool:
-        return WorkflowStatus(status) in self.terminal_statuses
+        return RuntimeStatusClassifier.is_terminal_workflow(status)
 
     def assert_can_schedule(self, status: WorkflowStatus) -> None:
         status = WorkflowStatus(status)
@@ -314,10 +313,7 @@ class WorkflowStateMachine:
 
 class StepStateMachine:
     terminal_statuses: set[StepStatus] = {
-        StepStatus.SUCCEEDED,
-        StepStatus.FAILED,
-        StepStatus.SKIPPED,
-        StepStatus.CANCELLED,
+        status for status in StepStatus if RuntimeStatusClassifier.is_terminal_step(status)
     }
 
     def transition(
@@ -350,7 +346,7 @@ class StepStateMachine:
         return target
 
     def is_terminal(self, status: StepStatus) -> bool:
-        return StepStatus(status) in self.terminal_statuses
+        return RuntimeStatusClassifier.is_terminal_step(status)
 
     def _validate_event_requirements(
         self,

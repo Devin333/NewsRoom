@@ -5,7 +5,7 @@ from typing import Any
 
 from framework.agent.models.action import AgentAction
 from framework.agent.models.status import AgentLoopDiagnosticSeverity, AgentLoopStatus, AgentLoopStopReason, JudgeDecision
-from framework.agent.runtime.llm import TokenUsage
+from framework.llm.models import TokenUsage
 from framework.shared.result import ErrorDetail
 
 

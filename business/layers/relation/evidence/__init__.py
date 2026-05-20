@@ -8,6 +8,7 @@ from business.layers.relation.evidence.models import (
     EvidenceBundle,
     EvidenceItem,
     EvidenceScore,
+    Lineage,
     VerifiedClaim,
     VerifiedFindings,
 )
@@ -21,6 +22,7 @@ __all__ = [
     "EvidenceBundle",
     "EvidenceItem",
     "EvidenceScore",
+    "Lineage",
     "VerifiedClaim",
     "VerifiedFindings",
 ]

@@ -6,6 +6,7 @@ from typing import Any
 from uuid import uuid4
 
 from framework.tool.governance.redaction import redact_sensitive_values
+from framework.events.trace import TraceContext, trace_fields
 from framework.tool.models.call import ToolCall
 from framework.tool.models.observation import ToolObservation
 from framework.tool.models.result import ToolResult
@@ -20,6 +21,44 @@ class ToolEvent:
     payload: dict[str, Any] = field(default_factory=dict)
     event_id: str = field(default_factory=lambda: uuid4().hex)
     occurred_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    trace_id: str | None = None
+    span_id: str | None = None
+    parent_span_id: str | None = None
+    run_id: str | None = None
+    workflow_id: str | None = None
+    step_id: str | None = None
+
+    @classmethod
+    def from_trace(
+        cls,
+        *,
+        event_type: str,
+        tool_name: str,
+        tool_call_id: str,
+        payload: dict[str, Any] | None = None,
+        trace_context: TraceContext | None = None,
+    ) -> "ToolEvent":
+        context = (
+            trace_context.child(
+                span_id=f"tool:{tool_call_id}",
+                tool_call_id=tool_call_id,
+            )
+            if trace_context is not None
+            else None
+        )
+        fields = trace_fields(context)
+        return cls(
+            event_type=event_type,
+            tool_name=tool_name,
+            tool_call_id=tool_call_id,
+            payload=dict(payload or {}),
+            trace_id=fields.get("trace_id"),
+            span_id=fields.get("span_id"),
+            parent_span_id=fields.get("parent_span_id"),
+            run_id=fields.get("run_id"),
+            workflow_id=fields.get("workflow_id"),
+            step_id=fields.get("step_id"),
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -29,6 +68,12 @@ class ToolEvent:
             "tool_call_id": self.tool_call_id,
             "occurred_at": self.occurred_at.isoformat().replace("+00:00", "Z"),
             "payload": redact_sensitive_values(self.payload),
+            "run_id": self.run_id,
+            "trace_id": self.trace_id,
+            "span_id": self.span_id,
+            "parent_span_id": self.parent_span_id,
+            "workflow_id": self.workflow_id,
+            "step_id": self.step_id,
         }
 
 
@@ -146,6 +191,9 @@ class ToolExecutionRecord:
     started_at: datetime
     finished_at: datetime
     events: list[str] = field(default_factory=list)
+    trace_id: str | None = None
+    span_id: str | None = None
+    parent_span_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -158,4 +206,7 @@ class ToolExecutionRecord:
             "started_at": self.started_at.isoformat().replace("+00:00", "Z"),
             "finished_at": self.finished_at.isoformat().replace("+00:00", "Z"),
             "events": list(self.events),
+            "trace_id": self.trace_id,
+            "span_id": self.span_id,
+            "parent_span_id": self.parent_span_id,
         }

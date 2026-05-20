@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from framework.agent.models import AgentLoopMetrics
-from framework.agent.runtime.llm import TokenUsage
+from framework.llm.models import TokenUsage
 
 
 def metrics_from_trace(trace: Any) -> AgentLoopMetrics:

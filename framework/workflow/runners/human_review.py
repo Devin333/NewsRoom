@@ -332,4 +332,12 @@ def _parse_iso_datetime(value: str) -> datetime:
     return parsed.astimezone(UTC)
 
 
+def __getattr__(name: str) -> Any:
+    if name == "HumanReviewStepRunner":
+        from framework.workflow.runners._step_runner_impl import HumanReviewStepRunner
+
+        return HumanReviewStepRunner
+    raise AttributeError(name)
+
+
 

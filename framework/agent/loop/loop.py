@@ -38,6 +38,8 @@ from framework.agent.models.trace import AgentLoopTrace, IterationTrace
 from framework.agent.runtime.llm import (
     GlobalBudgetExceededError,
     GlobalBudgetTracker,
+)
+from framework.llm.models import (
     LLMClient,
     LLMRequest,
     LLMResponse,

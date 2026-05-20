@@ -1,6 +1,6 @@
 """Subworkflow step runner."""
 
-from framework.workflow.runners.step_runner import SubworkflowStepRunner
+from framework.workflow.runners._step_runner_impl import SubworkflowStepRunner
 
 __all__ = ["SubworkflowStepRunner"]
 

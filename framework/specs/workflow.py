@@ -35,12 +35,9 @@ class WorkflowStatus(str, Enum):
     BUDGET_EXCEEDED = "budget_exceeded"
 
     def is_terminal(self) -> bool:
-        return self in {
-            WorkflowStatus.SUCCEEDED,
-            WorkflowStatus.FAILED,
-            WorkflowStatus.CANCELLED,
-            WorkflowStatus.BUDGET_EXCEEDED,
-        }
+        from framework.workflow.runtime.status_classifier import RuntimeStatusClassifier
+
+        return RuntimeStatusClassifier.is_terminal_workflow(self)
 
 
 @dataclass(frozen=True, init=False)

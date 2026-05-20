@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from framework.shared.json import to_jsonable
+from framework.events.trace import TraceContext
 from framework.tool.governance.approval import ToolApprovalRequest
 from framework.tool.governance.boundary import is_external_fetch_tool, is_restricted_agent_id
 from framework.tool.governance.redaction import (
@@ -48,12 +49,14 @@ class ToolExecutor:
         run_id: str | None = None,
         approval_store: Any | None = None,
         secret_provider: SecretProvider | None = None,
+        trace_context: TraceContext | None = None,
     ) -> None:
         self._registry = registry
         self._artifact_manager = artifact_manager
         self._run_id = run_id
         self._approval_store = approval_store
         self._secret_provider = secret_provider
+        self._trace_context = trace_context
         self._events: list[ToolEvent] = []
         self._metrics = ToolMetrics()
         self._records: list[ToolExecutionRecord] = []
@@ -164,7 +167,14 @@ class ToolExecutor:
         result = _with_duration(_with_call(result, call), elapsed_ms)
         observation = ToolObservation(call=call, result=result, elapsed_ms=elapsed_ms)
         self._record_observation(observation)
-        self._records.append(_execution_record(observation, self._events, started_at))
+        self._records.append(
+            _execution_record(
+                observation,
+                self._events,
+                started_at,
+                trace_context=self._trace_context,
+            )
+        )
         return observation
 
     def _tool_result(
@@ -271,11 +281,12 @@ class ToolExecutor:
         self._emit("tool_observation_created", observation.call, observation.to_dict())
 
     def _emit(self, event_type: str, call: ToolCall, payload: dict[str, Any] | None = None) -> ToolEvent:
-        event = ToolEvent(
+        event = ToolEvent.from_trace(
             event_type=event_type,
             tool_name=call.tool_name,
             tool_call_id=call.call_id,
             payload=payload or {},
+            trace_context=self._trace_context,
         )
         self._events.append(event)
         return event
@@ -326,6 +337,8 @@ def _execution_record(
     observation: ToolObservation,
     events: list[ToolEvent],
     started_at: datetime,
+    *,
+    trace_context: TraceContext | None = None,
 ) -> ToolExecutionRecord:
     call_events = [
         event.event_type
@@ -342,6 +355,9 @@ def _execution_record(
         started_at=started_at,
         finished_at=datetime.now(UTC),
         events=call_events,
+        trace_id=trace_context.trace_id if trace_context is not None else None,
+        span_id=f"tool:{observation.call.call_id}" if trace_context is not None else None,
+        parent_span_id=trace_context.span_id if trace_context is not None else None,
     )
 
 

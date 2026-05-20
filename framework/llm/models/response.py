@@ -25,6 +25,7 @@ class LLMResponse:
             "tool_calls",
             [LLMToolCall.from_dict(tool_call) for tool_call in self.tool_calls],
         )
+        object.__setattr__(self, "usage", TokenUsage.from_any(self.usage))
 
     def has_tool_calls(self) -> bool:
         return bool(self.tool_calls)
@@ -57,5 +58,34 @@ class LLMResponse:
             ],
             model=payload.get("model"),
             raw=dict(payload.get("raw") or {}),
+        )
+
+    @classmethod
+    def from_any(cls, value: Any) -> LLMResponse:
+        if isinstance(value, cls):
+            return value
+        if value is None:
+            raise TypeError("LLM response is required")
+        if isinstance(value, dict):
+            return cls.from_dict(value)
+        return cls(
+            content=getattr(value, "content", ""),
+            usage=TokenUsage.from_any(getattr(value, "usage", None)),
+            metadata=dict(getattr(value, "metadata", {}) or {}),
+            structured_output=(
+                dict(getattr(value, "structured_output"))
+                if isinstance(getattr(value, "structured_output", None), dict)
+                else None
+            ),
+            tool_calls=[
+                LLMToolCall.from_dict(tool_call)
+                for tool_call in getattr(value, "tool_calls", [])
+            ],
+            model=getattr(value, "model", None),
+            raw=(
+                dict(getattr(value, "raw"))
+                if isinstance(getattr(value, "raw", None), dict)
+                else {}
+            ),
         )
 

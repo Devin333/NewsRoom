@@ -4,30 +4,8 @@ from dataclasses import dataclass, field
 from time import perf_counter
 from typing import Any
 
+from framework.llm.models import TokenUsage
 from framework.shared.json import to_jsonable
-
-
-@dataclass(frozen=True)
-class TokenUsage:
-    input_tokens: int = 0
-    output_tokens: int = 0
-    reasoning_tokens: int = 0
-    cached_input_tokens: int = 0
-    estimated_cost_usd: float | None = None
-
-    @property
-    def total_tokens(self) -> int:
-        return self.input_tokens + self.output_tokens + self.reasoning_tokens
-
-    def to_dict(self) -> dict[str, int | float | None]:
-        return {
-            "input_tokens": self.input_tokens,
-            "output_tokens": self.output_tokens,
-            "reasoning_tokens": self.reasoning_tokens,
-            "cached_input_tokens": self.cached_input_tokens,
-            "total_tokens": self.total_tokens,
-            "estimated_cost_usd": self.estimated_cost_usd,
-        }
 
 
 @dataclass(frozen=True)

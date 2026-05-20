@@ -18,6 +18,7 @@ from framework.events.recorder import (
 )
 from framework.events.replay import EventReplay
 from framework.events.subscriber import EventSubscriber, FunctionEventSubscriber
+from framework.events.trace import TraceContext, TraceEvent, redact_trace_payload
 
 __all__ = [
     "Event",
@@ -39,4 +40,7 @@ __all__ = [
     "FunctionEventSubscriber",
     "InMemoryEventBus",
     "InMemoryEventRecorder",
+    "TraceContext",
+    "TraceEvent",
+    "redact_trace_payload",
 ]

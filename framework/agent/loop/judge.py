@@ -3,10 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from framework.agent.runtime.llm import (
-    LLMStructuredOutputValidationError,
-    validate_structured_output,
-)
+from framework.llm.structured_output import LLMStructuredOutputValidationError, validate_structured_output
 from framework.agent.loop.extensions import OutputValidationResult, OutputValidator
 from framework.agent.models import AgentAction, AgentSpec, JudgeDecision, JudgeVerdict
 

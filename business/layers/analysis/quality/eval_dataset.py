@@ -3,8 +3,8 @@ from __future__ import annotations
 from hashlib import sha256
 from typing import Any
 
-from business.foundation.models.source import Lineage
 from business.layers.relation.evidence import EvidenceBundle, EvidenceItem, VerifiedClaim, VerifiedFindings
+from business.layers.relation.evidence import Lineage
 from business.layers.analysis.quality.citation_checker import CitationChecker
 from business.layers.analysis.quality.editor_gate import EditorGate
 from business.layers.analysis.quality.models import QualityEvalCase, QualityEvalRecord

@@ -4,7 +4,7 @@ import json
 from typing import Any
 
 from framework.agent.models import AgentSpec
-from framework.agent.runtime.llm import LLMRequest
+from framework.llm.models import LLMRequest
 from framework.shared.json import to_jsonable as to_json_safe
 
 

@@ -62,6 +62,7 @@ def test_daily_and_weekly_wrappers_share_workflow_runner_assembly_contract(
             "artifact_ref_extractors",
             "function_registry",
             "lineage_extractors",
+            "routing_engine",
         }
         assert call["init_kwargs"]["artifact_root"] == tmp_path
         assert isinstance(call["init_kwargs"]["function_registry"], FunctionStepRegistry)

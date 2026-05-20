@@ -51,3 +51,14 @@ class TokenUsage:
             ),
         )
 
+    @classmethod
+    def from_any(cls, value: Any) -> TokenUsage:
+        if isinstance(value, cls):
+            return value
+        if value is None:
+            return cls()
+        data = value.to_dict() if hasattr(value, "to_dict") else value
+        if not isinstance(data, dict):
+            return cls()
+        return cls.from_dict(data)
+

@@ -12,6 +12,7 @@ from framework.shared.time import ensure_utc, format_datetime, parse_datetime
 from framework.events.envelope import EventEnvelope
 from framework.events.event import Event
 from framework.events.filters import EventFilter
+from framework.events.trace import TraceContext, trace_fields
 
 
 @dataclass(frozen=True)
@@ -21,6 +22,13 @@ class EventRecord:
     payload: dict[str, Any] = field(default_factory=dict)
     event_id: str = field(default_factory=lambda: uuid4().hex)
     occurred_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    trace_id: str | None = None
+    span_id: str | None = None
+    parent_span_id: str | None = None
+    workflow_id: str | None = None
+    step_id: str | None = None
+    component: str | None = None
+    schema_version: str = "newsroom.event_record.v1"
 
     def __post_init__(self) -> None:
         if not self.run_id:
@@ -37,6 +45,13 @@ class EventRecord:
             source="workflow",
             metadata={"run_id": self.run_id},
             created_at=self.occurred_at,
+            run_id=self.run_id,
+            trace_id=self.trace_id,
+            span_id=self.span_id,
+            parent_span_id=self.parent_span_id,
+            workflow_id=self.workflow_id,
+            step_id=self.step_id,
+            component=self.component,
         )
 
     def to_envelope(self) -> EventEnvelope:
@@ -44,15 +59,29 @@ class EventRecord:
             event_id=self.event_id,
             event=self.to_event(),
             correlation_id=self.run_id,
+            run_id=self.run_id,
+            trace_id=self.trace_id,
+            span_id=self.span_id,
+            parent_span_id=self.parent_span_id,
+            workflow_id=self.workflow_id,
+            step_id=self.step_id,
+            component=self.component,
         )
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "schema_version": self.schema_version,
             "event_id": self.event_id,
             "run_id": self.run_id,
             "event_type": self.event_type,
             "occurred_at": format_datetime(self.occurred_at),
             "payload": to_jsonable(self.payload),
+            "trace_id": self.trace_id,
+            "span_id": self.span_id,
+            "parent_span_id": self.parent_span_id,
+            "workflow_id": self.workflow_id,
+            "step_id": self.step_id,
+            "component": self.component,
         }
 
     @classmethod
@@ -63,6 +92,13 @@ class EventRecord:
             payload=dict(data.get("payload") or {}),
             event_id=str(data.get("event_id") or uuid4().hex),
             occurred_at=parse_datetime(data.get("occurred_at") or data.get("timestamp")) or datetime.now(UTC),
+            trace_id=data.get("trace_id"),
+            span_id=data.get("span_id"),
+            parent_span_id=data.get("parent_span_id"),
+            workflow_id=data.get("workflow_id"),
+            step_id=data.get("step_id"),
+            component=data.get("component"),
+            schema_version=str(data.get("schema_version") or "newsroom.event_record.v1"),
         )
 
 
@@ -92,16 +128,49 @@ class InMemoryEventRecorder:
 class EventRecorder:
     """Legacy workflow recorder with PRD record/list support."""
 
-    def __init__(self, run_id: str | None = None, event_bus: Any | None = None) -> None:
+    def __init__(
+        self,
+        run_id: str | None = None,
+        event_bus: Any | None = None,
+        trace_context: TraceContext | None = None,
+    ) -> None:
         self.run_id = run_id
         self._event_bus = event_bus
+        self._trace_context = trace_context
         self._records: list[EventRecord] = []
         self._envelopes: list[EventEnvelope] = []
 
-    def emit(self, event_type: str, payload: dict[str, Any] | None = None) -> EventRecord:
+    @property
+    def trace_context(self) -> TraceContext | None:
+        return self._trace_context
+
+    def with_trace_context(self, trace_context: TraceContext | None) -> "EventRecorder":
+        self._trace_context = trace_context
+        return self
+
+    def emit(
+        self,
+        event_type: str,
+        payload: dict[str, Any] | None = None,
+        *,
+        trace_context: TraceContext | None = None,
+        component: str | None = None,
+    ) -> EventRecord:
         if not self.run_id:
             raise ValueError("run_id is required for emit()")
-        event = EventRecord(run_id=self.run_id, event_type=event_type, payload=payload or {})
+        context = trace_context or self._trace_context
+        fields = trace_fields(context)
+        event = EventRecord(
+            run_id=str(fields.get("run_id") or self.run_id),
+            event_type=event_type,
+            payload=payload or {},
+            trace_id=fields.get("trace_id"),
+            span_id=fields.get("span_id"),
+            parent_span_id=fields.get("parent_span_id"),
+            workflow_id=fields.get("workflow_id"),
+            step_id=fields.get("step_id"),
+            component=component or fields.get("component") or "workflow",
+        )
         self._records.append(event)
         self._envelopes.append(event.to_envelope())
         if self._event_bus is not None:

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from framework.workers.models.result import TaskResult
 from framework.workers.models.status import TaskStatus
 from framework.workers.models.task import Task, TaskError, TaskEvent
-from framework.workers.queue.in_memory import InMemoryTaskQueue
+from framework.workers.queue.base import TaskQueue
 from framework.workers.registry.handler import TaskHandler
 from framework.workers.registry.registry import TaskHandlerRegistry, registry_from_handlers
 
@@ -41,7 +41,7 @@ class WorkerLoop:
         self,
         *,
         worker_id: str,
-        queue: InMemoryTaskQueue,
+        queue: TaskQueue,
         handlers: dict[str, TaskHandler] | None = None,
         queue_names: list[str] | None = None,
         handler_registry: TaskHandlerRegistry | None = None,

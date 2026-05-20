@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from framework.agent.models import AgentLoopEventType
+from framework.events.trace import TraceContext, trace_fields
 
 
 @dataclass(frozen=True)
@@ -12,6 +13,7 @@ class AgentLoopEvent:
     agent_id: str
     iteration: int | None = None
     payload: dict[str, Any] = field(default_factory=dict)
+    trace_context: TraceContext | None = None
 
     def to_dict(self) -> dict[str, Any]:
         result: dict[str, Any] = {
@@ -20,13 +22,19 @@ class AgentLoopEvent:
         }
         if self.iteration is not None:
             result["iteration"] = self.iteration
+        result.update(trace_fields(self.trace_context))
         result.update(dict(self.payload))
         return result
 
 
 class AgentLoopEventRecorder:
-    def __init__(self, *, agent_id: str) -> None:
+    def __init__(self, *, agent_id: str, trace_context: TraceContext | None = None) -> None:
         self.agent_id = agent_id
+        self.trace_context = (
+            trace_context.child(span_id=f"agent:{agent_id}", agent_id=agent_id)
+            if trace_context is not None
+            else None
+        )
         self._events: list[AgentLoopEvent] = []
 
     def emit(
@@ -41,6 +49,7 @@ class AgentLoopEventRecorder:
             agent_id=self.agent_id,
             iteration=iteration,
             payload=dict(payload or {}),
+            trace_context=self.trace_context,
         )
         self._events.append(event)
         return event.to_dict()

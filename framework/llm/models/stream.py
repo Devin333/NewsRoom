@@ -33,6 +33,10 @@ class LLMStreamEvent:
     def __post_init__(self) -> None:
         if self.event_type not in STREAM_EVENT_TYPES:
             raise ValueError(f"unsupported LLM stream event type: {self.event_type}")
+        if self.tool_call is not None:
+            object.__setattr__(self, "tool_call", LLMToolCall.from_dict(self.tool_call))
+        if self.usage_delta is not None:
+            object.__setattr__(self, "usage_delta", TokenUsage.from_any(self.usage_delta))
 
     def to_dict(self, *, redact: bool = True) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -46,6 +50,52 @@ class LLMStreamEvent:
         if redact:
             return redact_sensitive_values(payload)
         return payload
+
+    @classmethod
+    def from_any(cls, value: Any) -> LLMStreamEvent:
+        if isinstance(value, cls):
+            return value
+        if isinstance(value, dict):
+            return cls(
+                event_type=str(value.get("event_type") or ""),
+                text_delta=value.get("text_delta"),
+                tool_call=(
+                    LLMToolCall.from_dict(value["tool_call"])
+                    if value.get("tool_call") is not None
+                    else None
+                ),
+                tool_call_delta=(
+                    dict(value["tool_call_delta"])
+                    if isinstance(value.get("tool_call_delta"), dict)
+                    else None
+                ),
+                usage_delta=(
+                    TokenUsage.from_any(value.get("usage_delta"))
+                    if value.get("usage_delta") is not None
+                    else None
+                ),
+                metadata=dict(value.get("metadata") or {}),
+            )
+        return cls(
+            event_type=str(getattr(value, "event_type", "")),
+            text_delta=getattr(value, "text_delta", None),
+            tool_call=(
+                LLMToolCall.from_dict(getattr(value, "tool_call"))
+                if getattr(value, "tool_call", None) is not None
+                else None
+            ),
+            tool_call_delta=(
+                dict(getattr(value, "tool_call_delta"))
+                if isinstance(getattr(value, "tool_call_delta", None), dict)
+                else None
+            ),
+            usage_delta=(
+                TokenUsage.from_any(getattr(value, "usage_delta"))
+                if getattr(value, "usage_delta", None) is not None
+                else None
+            ),
+            metadata=dict(getattr(value, "metadata", {}) or {}),
+        )
 
 
 class LLMStreamAccumulator:

@@ -1,6 +1,6 @@
 """Quality gate step runner."""
 
-from framework.workflow.runners.step_runner import QualityGateStepRunner
+from framework.workflow.runners._step_runner_impl import QualityGateStepRunner
 
 __all__ = ["QualityGateStepRunner"]
 

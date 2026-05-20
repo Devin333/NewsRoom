@@ -1,6 +1,6 @@
 """Memory step runners."""
 
-from framework.workflow.runners.step_runner import (
+from framework.workflow.runners._step_runner_impl import (
     MemoryConsolidateStepRunner,
     MemoryRecallStepRunner,
     MemoryWriteStepRunner,

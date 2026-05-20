@@ -23,3 +23,16 @@ def test_prd_module_layout_imports() -> None:
     assert WorkflowScheduler is not None
 
 
+def test_step_runner_split_public_imports() -> None:
+    from framework.workflow.runners import build_default_step_runner_registry
+    from framework.workflow.runners.default_registry import (
+        build_default_step_runner_registry as direct_default_registry,
+    )
+    from framework.workflow.runners.step_runner import (
+        build_default_step_runner_registry as legacy_default_registry,
+    )
+
+    assert build_default_step_runner_registry is direct_default_registry
+    assert legacy_default_registry is direct_default_registry
+
+

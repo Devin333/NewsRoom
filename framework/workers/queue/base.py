@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Any, Protocol
 
 from framework.workers.models.result import TaskEnqueueResult
@@ -49,16 +48,12 @@ class QueueStatus:
 class TaskQueue(Protocol):
     def enqueue(self, task: Task) -> TaskEnqueueResult | str | None: ...
 
-    def lease(
-        self,
-        queue: str,
-        worker_id: str,
-        lease_seconds: int,
-        limit: int = 1,
-    ) -> list[LeasedTask]: ...
+    def lease(self, worker_id: str, queue_names: list[str]) -> Task | None: ...
 
-    def ack(self, task_id: str) -> None: ...
+    def ack(self, task_id: str, worker_id: str | None = None) -> None: ...
 
-    def nack(self, task_id: str, error: Exception | str, retry_at: datetime | None = None) -> None: ...
+    def fail(self, task_id: str, worker_id: str, error: Any) -> None: ...
+
+    def reclaim_stale(self, worker_id: str, queue_names: list[str]) -> Task | None: ...
 
     def status(self, queue: str | None = None) -> QueueStatus: ...

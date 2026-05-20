@@ -9,7 +9,8 @@ from framework.agent.runtime.redaction import redact_sensitive_values
 
 if TYPE_CHECKING:
     from framework.agent.models import AgentLoopResult, AgentSpec
-    from framework.agent.runtime.llm import GlobalBudgetTracker, LLMClient
+    from framework.agent.runtime.llm import GlobalBudgetTracker
+    from framework.llm.models import LLMClient
     from framework.tool import ToolRegistry
 
 

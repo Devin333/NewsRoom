@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from framework.agent.models import JudgeVerdict
-from framework.agent.runtime.llm import LLMRequest, LLMResponse, TokenUsage
+from framework.llm.models import LLMRequest, LLMResponse, TokenUsage
 from framework.shared.json import to_jsonable as to_json_safe
 from framework.tool import ToolObservation
 from framework.agent.runtime.redaction import redact_sensitive_values

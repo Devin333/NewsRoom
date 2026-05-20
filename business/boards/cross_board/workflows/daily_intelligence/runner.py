@@ -5,6 +5,7 @@ from pathlib import Path
 from framework import RunResult, WorkflowRunner
 from framework.llm import LLMClient
 from framework.workflow import FunctionStepRegistry
+from framework.workflow.routing import RoutingEngine
 from business.layers.relation.lineage import evidence_bundle_lineage_extractor
 from business.layers.signal.indexing import source_artifact_ref_extractor
 from business.foundation.registry.source_registry import SourceRegistry
@@ -31,6 +32,9 @@ from business.boards.cross_board.workflows.daily_intelligence.profiles import (
 from business.boards.cross_board.workflows.daily_intelligence.artifact_publisher import DailyIntelligenceArtifactPublisher
 from business.boards.cross_board.workflows.daily_intelligence.registry import build_daily_intelligence_registry
 from business.boards.cross_board.workflows.daily_intelligence.report_writer import ReportWriter
+from business.boards.cross_board.workflows.daily_intelligence.routing_predicates import (
+    build_daily_intelligence_routing_predicate_registry,
+)
 from business.boards.cross_board.workflows.daily_intelligence.source_collection import DailySourceCollector
 from business.boards.cross_board.workflows.daily_intelligence.source_config import (
     build_default_source_fetch_policy,
@@ -178,6 +182,9 @@ class DailyIntelligenceRunner:
             artifact_publishers=[DailyIntelligenceArtifactPublisher()],
             artifact_ref_extractors=[source_artifact_ref_extractor],
             lineage_extractors=[evidence_bundle_lineage_extractor],
+            routing_engine=RoutingEngine(
+                predicate_registry=build_daily_intelligence_routing_predicate_registry()
+            ),
         )
         return runner.run(
             build_daily_intelligence_workflow(profile),

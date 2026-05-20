@@ -39,13 +39,12 @@ from framework.workflow.operations import (
     WorkflowRunOperationService,
 )
 from framework.workflow.runtime.result import WorkflowResult
+from framework.workflow.routing import RoutingEngine
 from framework.workflow.checkpoint.checkpointing import WorkflowResumePlan
 from framework.workflow.checkpoint.model import WorkflowCheckpoint
-from framework.workflow.runners.step_runner import (
-    FunctionStepRegistry,
-    StepRunnerRegistry,
-    build_default_step_runner_registry,
-)
+from framework.workflow.runners.default_registry import build_default_step_runner_registry
+from framework.workflow.runners.function import FunctionStepRegistry
+from framework.workflow.runners.registry import StepRunnerRegistry
 
 
 ArtifactRefExtractor = Callable[..., list[Any]]
@@ -96,6 +95,7 @@ class WorkflowRunner:
         artifact_ref_extractors: Sequence[ArtifactRefExtractor] | None = None,
         lineage_extractors: Sequence[LineageExtractor] | None = None,
         operation_service: WorkflowRunOperationService | None = None,
+        routing_engine: RoutingEngine | None = None,
     ) -> None:
         self._artifact_root = Path(artifact_root)
         self._artifact_manager = ArtifactManager(self._artifact_root)
@@ -131,6 +131,7 @@ class WorkflowRunner:
         self._global_budget_policy = global_budget_policy
         self._global_budget_tracker = global_budget_tracker
         self._artifact_publishers = list(artifact_publishers or [])
+        self._routing_engine = routing_engine
         self._operation_service = operation_service or LocalWorkflowRunOperationService(
             artifact_root=self._artifact_root,
             runner=self,
@@ -153,6 +154,7 @@ class WorkflowRunner:
             event_bus=self._event_bus,
             global_budget_tracker=self._budget_tracker_for_run(),
             artifact_publishers=self._artifact_publishers,
+            routing_engine=self._routing_engine,
         )
         result = executor.execute(workflow, request, profile=profile, run_id=run_id)
         self._persist_storage_indexes(result)
@@ -173,6 +175,7 @@ class WorkflowRunner:
             event_bus=self._event_bus,
             global_budget_tracker=self._budget_tracker_for_run(),
             artifact_publishers=self._artifact_publishers,
+            routing_engine=self._routing_engine,
         )
         request = plan.initial_buffer_values.get("request")
         if not isinstance(request, dict):
@@ -210,6 +213,7 @@ class WorkflowRunner:
             event_bus=self._event_bus,
             global_budget_tracker=self._budget_tracker_for_run(),
             artifact_publishers=self._artifact_publishers,
+            routing_engine=self._routing_engine,
         )
         result = executor.resume_from_checkpoint(
             workflow,
