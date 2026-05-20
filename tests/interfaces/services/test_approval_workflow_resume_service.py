@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from framework import WorkflowRunner
-from core.framework.specs import WorkflowStatus
+from framework.specs import WorkflowStatus
 from interfaces.services.approval_service import ApprovalApplicationService
 import interfaces.services.run_service as run_service_module
 from interfaces.services.run_service import RunApplicationService

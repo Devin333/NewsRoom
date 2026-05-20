@@ -1,5 +1,5 @@
 from framework import RunResult
-from core.framework.specs import WorkflowStatus
+from framework.specs import WorkflowStatus
 from interfaces.services.diagnose_service import DiagnoseCheck, DiagnoseResult
 import interfaces.services.run_service as run_service_module
 from interfaces.services.run_service import RunApplicationService

@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-FRAMEWORK_ROOT = PROJECT_ROOT / "core" / "framework"
+FRAMEWORK_ROOT = PROJECT_ROOT / "framework"
 BUSINESS_ROOT = PROJECT_ROOT / "business"
 INTERFACES_ROOT = PROJECT_ROOT / "interfaces"
 WORKFLOWS_ROOT = PROJECT_ROOT / "workflows"
@@ -32,10 +32,9 @@ BUSINESS_FORBIDDEN_CONCRETE_CLIENTS = (
 )
 
 INTERFACE_FORBIDDEN_FLOW_PREFIXES = (
-    "core.framework.workflow.compiler",
-    "core.framework.workflow.executor",
-    "core.framework.workflow.runner",
-    "core.framework.workflow.step_runner",
+    "framework.workflow.compiler",
+    "framework.workflow.runtime.executor",
+    "framework.workflow.runtime.runner",
     "evidence",
     "quality",
     "sources",

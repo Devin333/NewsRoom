@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from core.framework.specs import WorkflowStatus
+from framework.specs import WorkflowStatus
 from framework.workers.models import TaskStatus
 
 

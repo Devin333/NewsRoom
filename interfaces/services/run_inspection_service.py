@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from framework.shared.json import to_jsonable as to_json_safe
-from core.framework.workflow.inspection import (
+from framework.workflow.inspection import (
     WorkflowArtifactContentRecord,
     WorkflowReplayContentBundle,
     WorkflowRunInspectionError,
@@ -14,7 +14,7 @@ from core.framework.workflow.inspection import (
     redact_sensitive_values,
     resolve_run_dir,
 )
-from core.framework.workflow.manifest import normalize_legacy_run_manifest
+from framework.workflow.runtime.manifest import normalize_legacy_run_manifest
 from storage.lineage.evidence import quality_lineage_summary
 
 

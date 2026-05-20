@@ -6,8 +6,8 @@ from pathlib import Path
 from typing import Any
 
 from framework import RunResult, WorkflowRunner
-from core.framework.specs import EdgeSpec, StepSpec, WorkflowSpec
-from core.framework.workflow import (
+from framework.specs import EdgeSpec, StepSpec, WorkflowSpec
+from framework.workflow import (
     ArtifactPublishContext,
     ArtifactPublishPhase,
     FunctionStepRegistry,
@@ -103,7 +103,7 @@ class WeeklyIntelligenceRunner:
             finished_at = _try_parse_datetime(candidate.finished_at)
             if finished_at is None:
                 continue
-            if finished_at < period_start or finished_at > period_end:
+            if not _is_within_period(finished_at, period_start, period_end):
                 continue
             detail = self.report_repository.get_report(candidate.report_id)
             source_report = _source_report_from_detail(detail)
@@ -416,6 +416,20 @@ def _try_parse_datetime(value: str | datetime) -> datetime | None:
         return _parse_datetime(value)
     except (TypeError, ValueError):
         return None
+
+
+def _is_within_period(value: datetime, start: datetime, end: datetime) -> bool:
+    if value < start:
+        return False
+    if value <= end:
+        return True
+    is_midnight_end = (
+        end.hour == 0
+        and end.minute == 0
+        and end.second == 0
+        and end.microsecond == 0
+    )
+    return is_midnight_end and value.date() == end.date()
 
 
 def _format_datetime(value: datetime) -> str:

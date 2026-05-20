@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from _helpers import PROJECT_ROOT
+from tests.architecture._helpers import PROJECT_ROOT
 
 
 REQUIRED_PACKAGES = (
@@ -26,3 +26,14 @@ def test_framework_required_package_layout_exists() -> None:
     ]
 
     assert missing == []
+
+
+def test_framework_root_has_no_runtime_modules() -> None:
+    allowed = {"__init__.py", "py.typed"}
+    unexpected = [
+        path.name
+        for path in (PROJECT_ROOT / "framework").glob("*.py*")
+        if path.name not in allowed
+    ]
+
+    assert unexpected == []

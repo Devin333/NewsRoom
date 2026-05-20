@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 
-from framework.run_result import RunResult
-from core.framework.specs import WorkflowStatus
+from framework.workflow.runtime.run_result import RunResult
+from framework.specs import WorkflowStatus
 from interfaces.api import create_app
 from interfaces.services.approval_service import ApprovalApplicationService
 

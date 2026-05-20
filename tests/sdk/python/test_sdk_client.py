@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from core.framework.workers import Task, TaskStatus
+from framework.workers import Task, TaskStatus
 from interfaces.api import create_app
 from interfaces.services.worker_service import EnqueuedTaskResult
 from newsroom_sdk import NewsRoomAPIError, NewsRoomClient

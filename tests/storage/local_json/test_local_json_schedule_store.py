@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from core.framework.workers import ScheduleNotFoundError, ScheduleRecord, ScheduleSpec
+from framework.workers import ScheduleNotFoundError, ScheduleRecord, ScheduleSpec
 from storage.local_json import LocalJsonScheduleStore
 
 

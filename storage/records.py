@@ -39,6 +39,10 @@ def _float_or_none(value: Any) -> float | None:
     return float(value) if value is not None else None
 
 
+def _path_or_none(value: Any) -> str | None:
+    return str(value) if value is not None else None
+
+
 @dataclass(frozen=True)
 class SourceItemRecord:
     source_item_id: str
@@ -253,9 +257,9 @@ class ReportDetailRecord:
             "title": self.title,
             "quality_score": self.quality_score,
             "citation_coverage_score": self.citation_coverage_score,
-            "manifest_path": self.manifest_path,
-            "report_json_path": self.report_json_path,
-            "report_markdown_path": self.report_markdown_path,
+            "manifest_path": _path_or_none(self.manifest_path),
+            "report_json_path": _path_or_none(self.report_json_path),
+            "report_markdown_path": _path_or_none(self.report_markdown_path),
             "report_json": self.report_json,
             "report_markdown": self.report_markdown,
         }
@@ -287,9 +291,9 @@ class ReportSummaryRecord:
             "citation_coverage_score": self.citation_coverage_score,
             "workflow_id": self.workflow_id,
             "profile": self.profile,
-            "manifest_path": self.manifest_path,
-            "report_json_path": self.report_json_path,
-            "report_markdown_path": self.report_markdown_path,
+            "manifest_path": _path_or_none(self.manifest_path),
+            "report_json_path": _path_or_none(self.report_json_path),
+            "report_markdown_path": _path_or_none(self.report_markdown_path),
         }
 
 

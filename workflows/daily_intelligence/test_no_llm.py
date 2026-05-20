@@ -4,8 +4,8 @@ from pathlib import Path
 from typing import Any
 
 from framework import RunResult, WorkflowRunner
-from core.framework.specs import EdgeSpec, StepSpec, WorkflowSpec
-from core.framework.workflow import FunctionStepRegistry, ScopedDataBuffer
+from framework.specs import EdgeSpec, StepSpec, WorkflowSpec
+from framework.workflow import FunctionStepRegistry, ScopedDataBuffer
 from workflows.daily_intelligence.artifact_publisher import (
     build_daily_intelligence_artifact_publishers,
 )

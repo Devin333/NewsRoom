@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from core.framework.workers import (
+from framework.workers import (
     InMemoryScheduleStore,
     ScheduleRecord,
     ScheduleSpec,

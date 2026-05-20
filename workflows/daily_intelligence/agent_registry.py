@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from core.framework.agent_loop import AgentRunner, AgentSpec
+from framework.agent import AgentRunner, AgentSpec
 from framework.llm import (
     FakeLLMClient,
     LLMClient,

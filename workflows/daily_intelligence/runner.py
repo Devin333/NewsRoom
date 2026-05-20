@@ -4,7 +4,7 @@ from pathlib import Path
 
 from framework import RunResult, WorkflowRunner
 from framework.llm import LLMClient
-from core.framework.workflow import FunctionStepRegistry
+from framework.workflow import FunctionStepRegistry
 from business.layers.relation.lineage import evidence_bundle_lineage_extractor
 from business.layers.signal.indexing import source_artifact_ref_extractor
 from sources import SourceRegistry

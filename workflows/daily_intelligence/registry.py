@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from core.framework.workflow import FunctionStepRegistry
+from framework.workflow import FunctionStepRegistry
 from workflows.daily_intelligence.evidence_step import build_evidence
 from workflows.daily_intelligence.profiles import validate_daily_profile
 from workflows.daily_intelligence.quality_gate_step import quality_gate

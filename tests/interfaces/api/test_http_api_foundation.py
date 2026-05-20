@@ -2,7 +2,7 @@ import json
 
 from fastapi.testclient import TestClient
 
-from core.framework.workers import Task, TaskStatus
+from framework.workers import Task, TaskStatus
 from interfaces.api import create_app
 from interfaces.events import AuditEmitter, InMemoryAuditSink
 from interfaces.services.run_inspection_service import RunInspectionService

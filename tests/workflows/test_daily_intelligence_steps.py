@@ -4,8 +4,8 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from core.framework.specs import WorkflowStatus
-from core.framework.workflow import DataBuffer
+from framework.specs import WorkflowStatus
+from framework.workflow import DataBuffer
 from domain.sources import RawSourceItem, SourceError, SourcePipelineMetrics, SourceType
 from workflows.daily_intelligence.spec import (
     PROFILE_LIVE,

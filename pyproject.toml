@@ -125,19 +125,6 @@ packages = [
   "framework.workflow.runners",
   "framework.workflow.runtime",
   "framework.workflow.scheduling",
-  "core",
-  "core.framework",
-  "core.framework.agent_loop",
-  "core.framework.artifacts",
-  "core.framework.events",
-  "core.framework.governance",
-  "core.framework.llm",
-  "core.framework.memory",
-  "core.framework.shared",
-  "core.framework.specs",
-  "core.framework.tools",
-  "core.framework.workers",
-  "core.framework.workflow",
   "business",
   "business.boards",
   "business.boards.ai_news",
@@ -206,3 +193,4 @@ packages = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = [".", "sdk/python"]
+addopts = ["--import-mode=importlib"]

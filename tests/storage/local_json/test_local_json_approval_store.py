@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from core.framework.workers import (
+from framework.workers import (
     ApprovalDecision,
     ApprovalNotFoundError,
     ApprovalRequest,

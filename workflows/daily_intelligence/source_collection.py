@@ -3,7 +3,7 @@ from __future__ import annotations
 from time import perf_counter
 from typing import Any
 
-from core.framework.workflow import ScopedDataBuffer
+from framework.workflow import ScopedDataBuffer
 from domain.sources import (
     SourceError,
     SourceFetchRequest,

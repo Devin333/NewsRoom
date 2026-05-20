@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from core.framework.workflow import ScopedDataBuffer
+from framework.workflow import ScopedDataBuffer
 from domain.reports import BlockedReport, FinalReport, render_markdown
 from quality import EditorDecision, RewritePolicy
 from workflows.daily_intelligence.evidence_step import quality_event

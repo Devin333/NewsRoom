@@ -3,8 +3,8 @@ from datetime import UTC, datetime
 
 import pytest
 
-from framework.run_result import RunResult
-from core.framework.specs import WorkflowStatus
+from framework.workflow.runtime.run_result import RunResult
+from framework.specs import WorkflowStatus
 from domain.reports import BlockedReport, FinalReport
 from evidence import EvidenceBundle, EvidenceItem, VerifiedClaim, VerifiedFindings
 from quality import QualityGateMetrics, ReportQualitySummary

@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 
-from core.framework.workflow.operations import (
+from framework.workflow.operations import (
     OperationResult,
     WorkflowOperationStatus,
     WorkflowOperationType,

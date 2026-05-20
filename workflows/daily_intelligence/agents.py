@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from core.framework.agent_loop import AgentSpec
+from framework.agent import AgentSpec
 
 
 PLANNER_AGENT_ID = "daily.planner"

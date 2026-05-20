@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 
-from core.framework.workers import ScheduleNotFoundError
+from framework.workers import ScheduleNotFoundError
 from interfaces.api import create_app
 
 

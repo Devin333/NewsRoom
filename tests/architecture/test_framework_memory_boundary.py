@@ -11,7 +11,6 @@ FORBIDDEN_IMPORT_PREFIXES = (
     "interfaces",
     "infrastructure",
     "storage",
-    "core.framework",
     "workflows",
     "workflows.daily_intelligence",
     "domain",

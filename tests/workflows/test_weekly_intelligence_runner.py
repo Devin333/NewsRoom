@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from core.framework.specs import WorkflowStatus
+from framework.specs import WorkflowStatus
 from workflows.daily_intelligence import DailyIntelligenceRunner
 from workflows.daily_intelligence.profiles import LEGACY_DAILY_WORKFLOW_ID
 from workflows.weekly_intelligence import WeeklyIntelligenceRunner

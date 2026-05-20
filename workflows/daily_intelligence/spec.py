@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from core.framework.specs import EdgeSpec, StepSpec, WorkflowSpec
+from framework.specs import EdgeSpec, StepSpec, WorkflowSpec
 from workflows.daily_intelligence.profiles import LEGACY_DAILY_WORKFLOW_ID, PROFILE_LIVE, PROFILE_LIVE_OFFLINE
 WORKFLOW_ID = LEGACY_DAILY_WORKFLOW_ID
 WORKFLOW_VERSION = "0.1.0"

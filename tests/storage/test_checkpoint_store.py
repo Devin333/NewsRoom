@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from core.framework.specs import WorkflowStatus
+from framework.specs import WorkflowStatus
 from storage.checkpoint import CheckpointNotFoundError, LocalJsonCheckpointStore, WorkflowCheckpoint
 
 

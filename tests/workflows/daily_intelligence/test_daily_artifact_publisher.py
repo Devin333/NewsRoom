@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import json
 
-from core.framework.artifacts import ArtifactManager
-from core.framework.specs import StepSpec, WorkflowSpec, WorkflowStatus
-from core.framework.workflow import ArtifactPublishContext, ArtifactPublishPhase
+from framework.artifacts import ArtifactManager
+from framework.specs import StepSpec, WorkflowSpec, WorkflowStatus
+from framework.workflow import ArtifactPublishContext, ArtifactPublishPhase
 from workflows.daily_intelligence.artifact_publisher import DailyIntelligenceArtifactPublisher
 from workflows.daily_intelligence.profiles import LEGACY_DAILY_WORKFLOW_ID
 

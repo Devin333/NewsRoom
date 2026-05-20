@@ -1,8 +1,8 @@
 from fastapi.testclient import TestClient
 
-from framework.run_result import RunResult
-from core.framework.specs import WorkflowStatus
-from core.framework.workers import Task, TaskStatus
+from framework.workflow.runtime.run_result import RunResult
+from framework.specs import WorkflowStatus
+from framework.workers import Task, TaskStatus
 from interfaces.api import create_app
 from interfaces.events import AuditEmitter, InMemoryAuditSink
 from interfaces.services.worker_service import EnqueuedTaskResult

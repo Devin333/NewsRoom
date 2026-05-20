@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from core.framework.specs import WorkflowStatus
+from framework.specs import WorkflowStatus
 from workflows.daily_intelligence import run_test_agent_loop
 
 

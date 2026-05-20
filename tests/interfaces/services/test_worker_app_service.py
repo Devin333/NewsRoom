@@ -1,6 +1,5 @@
 from business.layers.signal.worker_handlers import SourceHealthCheckTaskHandler
-from core.framework.workers import (
-    RedisQueueStatus,
+from framework.workers import (
     LeasedTask,
     Task,
     TaskResult,
@@ -8,8 +7,9 @@ from core.framework.workers import (
     WorkerStatus,
 )
 from framework import WorkflowRunner
-from core.framework.specs import StepSpec, WorkflowSpec, WorkflowStatus
-from core.framework.workflow import FunctionStepRegistry, WorkflowRunInspector
+from framework.specs import StepSpec, WorkflowSpec, WorkflowStatus
+from framework.workflow import FunctionStepRegistry, WorkflowRunInspector
+from infrastructure.storage.workers import RedisQueueStatus
 from interfaces.services.worker_service import (
     DEFAULT_DAILY_QUEUE,
     DEFAULT_DEAD_LETTER_QUEUE,

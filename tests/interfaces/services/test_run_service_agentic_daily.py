@@ -1,5 +1,5 @@
-from framework.run_result import RunResult
-from core.framework.specs import WorkflowStatus
+from framework.workflow.runtime.run_result import RunResult
+from framework.specs import WorkflowStatus
 from interfaces.services.report_service import ReportApplicationService
 from interfaces.services.run_service import RunApplicationService
 from workflows.daily_intelligence.profiles import (

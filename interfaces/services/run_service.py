@@ -14,9 +14,9 @@ from business.boards.cross_board.profiles import (
     daily_agentic_enabled,
 )
 from framework import RunResult, WorkflowRunner
-from core.framework.specs import WorkflowSpec
-from core.framework.specs import WorkflowStatus
-from core.framework.workflow import FunctionStepRegistry
+from framework.specs import WorkflowSpec
+from framework.specs import WorkflowStatus
+from framework.workflow import FunctionStepRegistry
 from business.layers.memory.ingestion import MemoryIngestionService
 from business.layers.relation.lineage import evidence_bundle_lineage_extractor
 from business.layers.signal.indexing import source_artifact_ref_extractor

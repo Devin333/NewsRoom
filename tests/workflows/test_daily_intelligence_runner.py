@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from framework.llm import LLMResponse, TokenUsage
-from core.framework.specs import WorkflowStatus
+from framework.specs import WorkflowStatus
 from domain.sources import RawSourceItem, SourceDefinition, SourceError
 from sources import SourceConfigError, SourceRegistry
 from workflows.daily_intelligence.profiles import LEGACY_DAILY_WORKFLOW_ID

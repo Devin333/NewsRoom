@@ -240,6 +240,7 @@ from framework.workflow.operations import (
 )
 from framework.workflow.routing import ConditionalExpressionError, EdgeEvaluation, RoutingDecision, RoutingEngine
 from framework.workflow.runtime import (
+    RunResult,
     StepRunContext,
     StepRuntimeState,
     WorkflowCancellationError,
@@ -249,6 +250,7 @@ from framework.workflow.runtime import (
     WorkflowRunContext,
     WorkflowRuntimeError,
     WorkflowRuntimeState,
+    WorkflowRunner,
 )
 from framework.workflow.runtime.artifacts import ArtifactManager, ArtifactRef
 from framework.workflow.runtime.events import EventBus, EventRecord, EventRecorder

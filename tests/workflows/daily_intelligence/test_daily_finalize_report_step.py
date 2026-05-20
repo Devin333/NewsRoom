@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from core.framework.workflow import DataBuffer
+from framework.workflow import DataBuffer
 from evidence.models import EvidenceBundle, EvidenceItem, VerifiedClaim, VerifiedFindings
 from quality import EditorDecision
 from workflows.daily_intelligence.finalize_report_step import finalize_report

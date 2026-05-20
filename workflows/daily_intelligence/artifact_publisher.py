@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from business.layers.signal.artifacts import SourceArtifactWriter
-from core.framework.workflow.artifact_publishers import (
+from framework.workflow.runtime.artifact_publishers import (
     ArtifactPublishContext,
     ArtifactPublishPhase,
     register_manifest_artifact_once,

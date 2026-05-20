@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from _helpers import PROJECT_ROOT, token_violations
+from tests.architecture._helpers import PROJECT_ROOT, token_violations
 
 
 FRAMEWORK_ROOT = PROJECT_ROOT / "framework"

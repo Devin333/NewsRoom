@@ -13,11 +13,11 @@ from framework.artifacts import ArtifactManager
 from framework.artifacts.models import ArtifactRef
 from framework.events import EventBus
 from framework.llm import GlobalBudgetPolicy, GlobalBudgetTracker
-from framework.run_result import RunResult
 from framework.shared.hashing import hash_text
 from framework.shared.time import ensure_utc
 from framework.specs import WorkflowSpec
 from framework.workflow.runtime.executor import WorkflowExecutor
+from framework.workflow.runtime.run_result import RunResult
 from framework.workflow.runtime.artifact_publishers import WorkflowArtifactPublisher
 from framework.workflow.inspection import (
     WorkflowReplayBundle,

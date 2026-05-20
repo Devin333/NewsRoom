@@ -33,9 +33,3 @@ def test_governance_public_imports() -> None:
     assert SandboxGuard
     assert SecurityRedactor
     assert TimeoutPolicy
-
-
-def test_core_governance_compat_imports() -> None:
-    from core.framework.governance import ExecutionPolicy
-
-    assert ExecutionPolicy().can_execute({}) == (True, None)

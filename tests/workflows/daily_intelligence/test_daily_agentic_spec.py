@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from core.framework.specs import StepType
-from core.framework.workflow import FunctionStepRegistry, WorkflowCompiler
-from core.framework.workflow.step_runner import build_default_step_runner_registry
+from framework.specs import StepType
+from framework.workflow import FunctionStepRegistry, WorkflowCompiler
+from framework.workflow.runners.step_runner import build_default_step_runner_registry
 from workflows.daily_intelligence import build_agentic_daily_intelligence_workflow
 from workflows.daily_intelligence.agent_registry import (
     PROFILE_AGENTIC_OFFLINE,

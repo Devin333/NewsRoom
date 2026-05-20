@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from core.framework.specs import WorkflowStatus
+from framework.specs import WorkflowStatus
 from workflows.daily_intelligence import AgenticDailyIntelligenceRunner
 from workflows.daily_intelligence.profiles import PROFILE_AGENTIC_OFFLINE
 

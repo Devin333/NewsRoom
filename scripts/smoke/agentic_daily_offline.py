@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 
-from core.framework.specs import WorkflowStatus
+from framework.specs import WorkflowStatus
 from interfaces.services.run_service import RunApplicationService
 from workflows.daily_intelligence.profiles import PROFILE_AGENTIC_OFFLINE
 

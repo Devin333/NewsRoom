@@ -1,6 +1,6 @@
 import json
 
-from core.framework.artifacts import ArtifactManager
+from framework.artifacts import ArtifactManager
 from framework.tool import (
     ToolCall,
     ToolExecutor,

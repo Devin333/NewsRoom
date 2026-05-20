@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from core.framework.workflow import ScopedDataBuffer
+from framework.workflow import ScopedDataBuffer
 from domain.sources import SourceError, SourcePipelineEvent
 from sources.errors import classify_source_exception
 from sources.processing import (

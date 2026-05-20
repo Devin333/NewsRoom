@@ -141,6 +141,7 @@ The interface layer exposes CLI, HTTP API, Web Console, and MCP entrypoints over
 docs/09-INTERFACES_CLI_API_MCP.md
 docs/api/README.md
 docs/api/openapi.json
+docs/sdk/python.md
 docs/web-console.md
 docs/mcp.md
 ```
@@ -159,5 +160,6 @@ Example clients live under:
 
 ```text
 examples/api/
+examples/sdk/
 examples/mcp/
 ```

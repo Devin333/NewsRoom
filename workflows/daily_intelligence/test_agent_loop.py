@@ -5,12 +5,12 @@ from pathlib import Path
 from typing import Any
 
 from framework import RunResult, WorkflowRunner
-from core.framework.workflow import DataBuffer
-from core.framework.agent_loop import AgentRunner, AgentSpec
+from framework.workflow import DataBuffer
+from framework.agent import AgentRunner, AgentSpec
 from framework.llm import FakeLLMClient
-from core.framework.specs import StepSpec, WorkflowSpec
+from framework.specs import StepSpec, WorkflowSpec
 from framework.tool import ToolDefinition, ToolRegistry
-from core.framework.workflow import FunctionStepRegistry, ScopedDataBuffer
+from framework.workflow import FunctionStepRegistry, ScopedDataBuffer
 
 PROFILE = "test-agent-loop"
 WORKFLOW_ID = "daily-intelligence-test-agent-loop"

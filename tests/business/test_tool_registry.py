@@ -2,7 +2,7 @@ from business.tools import (
     build_business_dangerous_tool_registry,
     build_business_tool_registry,
 )
-from core.framework.artifacts import ArtifactManager
+from framework.artifacts import ArtifactManager
 from framework.tool import ToolCall, ToolExecutor, ToolPolicy, ToolStatus, build_tool_catalog
 
 

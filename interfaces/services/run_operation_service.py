@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from core.framework.workflow.operations import (
+from framework.workflow.operations import (
     LocalWorkflowRunOperationService,
     OperationActor,
     OperationResult,

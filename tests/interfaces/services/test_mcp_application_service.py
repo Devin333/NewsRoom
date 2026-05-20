@@ -1,8 +1,8 @@
 import json
 from datetime import UTC, datetime
 
-from framework.run_result import RunResult
-from core.framework.specs import WorkflowStatus
+from framework.workflow.runtime.run_result import RunResult
+from framework.specs import WorkflowStatus
 from interfaces.services.approval_service import ApprovalApplicationService
 from interfaces.services.artifact_service import ArtifactInspectionService
 from interfaces.services.entity_service import EntityTrackingApplicationService

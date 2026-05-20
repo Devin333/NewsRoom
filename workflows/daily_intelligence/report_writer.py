@@ -4,7 +4,7 @@ import json
 from typing import Any
 
 from framework.llm import LLMClient, LLMRequest, build_openai_compatible_client_from_config
-from core.framework.workflow import ScopedDataBuffer
+from framework.workflow import ScopedDataBuffer
 from domain.sources import SourcePipelineMetrics
 from evidence import EvidenceBundle
 from workflows.daily_intelligence.profiles import PROFILE_LIVE, PROFILE_LIVE_OFFLINE

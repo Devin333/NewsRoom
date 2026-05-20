@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from core.framework.agent_loop import AgentAction, AgentLoopStatus, AgentSpec, JudgeDecision
+from framework.agent import AgentAction, AgentLoopStatus, AgentSpec, JudgeDecision
 from framework.llm import FakeLLMClient
 from domain.sources import Lineage
 from evidence.models import EvidenceBundle, EvidenceItem, VerifiedClaim, VerifiedFindings

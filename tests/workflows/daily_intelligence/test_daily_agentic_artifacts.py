@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from core.framework.specs import WorkflowStatus
+from framework.specs import WorkflowStatus
 from workflows.daily_intelligence import AgenticDailyIntelligenceRunner
 from workflows.daily_intelligence.profiles import PROFILE_AGENTIC_OFFLINE
 

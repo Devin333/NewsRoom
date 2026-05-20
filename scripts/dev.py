@@ -8,7 +8,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from core.framework.workflow.operations import (
+from framework.workflow.operations import (
     LocalWorkflowRunOperationService,
     OperationActor,
 )
@@ -16,9 +16,9 @@ from core.framework.workflow.operations import (
 
 COMPILE_PATHS = [
     "business",
-    "core",
     "domain",
     "evidence",
+    "framework",
     "infrastructure",
     "interfaces",
     "quality",
@@ -46,7 +46,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 sys.executable,
                 "-m",
                 "pytest",
-                "tests/core/framework/workflow",
+                "tests/framework/workflow",
                 "tests/workflows",
                 "-q",
             ],
@@ -58,7 +58,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 sys.executable,
                 "-m",
                 "pytest",
-                "tests/core/framework/workflow",
+                "tests/framework/workflow",
                 "-q",
             ],
             env=env,
@@ -85,14 +85,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run([sys.executable, "-m", "pytest", "tests/interfaces/api", "-q"], env=env)
     if args.command == "test-cli":
         return _run([sys.executable, "-m", "pytest", "tests/interfaces/cli", "-q"], env=env)
+    if args.command == "test-mcp":
+        return _run([sys.executable, "-m", "pytest", "tests/interfaces/mcp", "-q"], env=env)
+    if args.command == "test-sdk":
+        return _run([sys.executable, "-m", "pytest", "tests/sdk", "-q"], env=env)
     if args.command == "test-prd-daily":
         return _run(
             [
                 sys.executable,
                 "-m",
                 "pytest",
-                "tests/core/framework/agent_loop",
-                "tests/core/framework/llm/test_openai_compatible.py",
+                "tests/framework/agent",
+                "tests/framework/llm/test_clients_cache_prompt_redaction.py",
                 "tests/interfaces/services/test_run_service_agentic_daily.py",
                 "tests/interfaces/services/test_run_service_live_smoke.py",
                 "tests/interfaces/services/test_report_service.py",
@@ -134,6 +138,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             ],
             env=env,
         )
+    if args.command == "export-openapi":
+        return _run(_export_openapi_command(), env=env)
     if args.command == "web-check":
         return _run(_web_check_command(), env=env)
     if args.command == "interface-smoke":
@@ -224,6 +230,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("test-api", help="Run HTTP API interface tests")
     subparsers.add_parser("test-cli", help="Run CLI interface tests")
     subparsers.add_parser("test-mcp", help="Run MCP interface tests")
+    subparsers.add_parser("test-sdk", help="Run SDK tests")
     subparsers.add_parser("test-prd-daily", help="Run the PRD-aligned daily agentic regression sweep")
     subparsers.add_parser("export-openapi", help="Export docs/api/openapi.json")
     subparsers.add_parser("test-api-contracts", help="Run API contract tests")

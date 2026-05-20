@@ -9,6 +9,7 @@ from framework.workflow.runtime.errors import (
     WorkflowRuntimeError,
 )
 from framework.workflow.runtime.result import StepOutcome, WorkflowError, WorkflowResult
+from framework.workflow.runtime.run_result import RunResult
 from framework.workflow.runtime.state import StepRuntimeState, WorkflowRuntimeState
 
 __all__ = [
@@ -16,6 +17,7 @@ __all__ = [
     "StepOutcome",
     "StepRunContext",
     "StepRuntimeState",
+    "RunResult",
     "WorkflowCancellationError",
     "WorkflowError",
     "WorkflowExecutionError",
@@ -25,6 +27,7 @@ __all__ = [
     "WorkflowRunContext",
     "WorkflowRuntimeError",
     "WorkflowRuntimeState",
+    "WorkflowRunner",
 ]
 
 
@@ -33,6 +36,10 @@ def __getattr__(name: str):
         from framework.workflow.runtime.executor import WorkflowExecutor
 
         return WorkflowExecutor
+    if name == "WorkflowRunner":
+        from framework.workflow.runtime.runner import WorkflowRunner
+
+        return WorkflowRunner
     raise AttributeError(name)
 
 

@@ -16,3 +16,5 @@ def test_framework_public_api_imports() -> None:
     import framework.workers
 
     assert framework
+    assert framework.RunResult
+    assert framework.WorkflowRunner

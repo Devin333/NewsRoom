@@ -1,6 +1,6 @@
-from framework.run_result import RunResult
-from core.framework.specs import StepType, WorkflowStatus
-from core.framework.workflow import FunctionStepRegistry
+from framework.workflow.runtime.run_result import RunResult
+from framework.specs import StepType, WorkflowStatus
+from framework.workflow import FunctionStepRegistry
 import workflows.daily_intelligence.runner as daily_runner_module
 import workflows.weekly_intelligence.runner as weekly_runner_module
 

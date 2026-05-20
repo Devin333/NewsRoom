@@ -3,9 +3,9 @@ from business.workers import (
     MemoryReindexTaskHandler,
     SourceHealthCheckTaskHandler,
 )
-from core.framework.specs import WorkflowStatus
-from core.framework.workers import InMemoryTaskQueue, Task, WorkerLoop
-from core.framework.workers.models import TaskStatus
+from framework.specs import WorkflowStatus
+from framework.workers import InMemoryTaskQueue, Task, WorkerLoop
+from framework.workers.models import TaskStatus
 
 
 DAILY_QUEUE = "news:queue:daily"

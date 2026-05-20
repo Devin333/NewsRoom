@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from business.boards.cross_board.profiles import DAILY_PROFILE_CHOICES
-from core.framework.specs import WorkflowStatus
+from framework.specs import WorkflowStatus
 from business.tools import build_business_tool_registry
 from framework.tool import ToolPolicy, build_tool_catalog
 from framework.workers import WorkerStatus

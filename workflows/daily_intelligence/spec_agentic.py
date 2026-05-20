@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from core.framework.specs import EdgeSpec, StepSpec, StepType, WorkflowSpec
+from framework.specs import EdgeSpec, StepSpec, StepType, WorkflowSpec
 from workflows.daily_intelligence.agent_registry import PROFILE_AGENTIC_LIVE
 from workflows.daily_intelligence.agents import (
     ANALYST_AGENT_ID,

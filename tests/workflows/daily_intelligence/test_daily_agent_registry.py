@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from core.framework.agent_loop import AgentLoopStatus
+from framework.agent import AgentLoopStatus
 from domain.sources import Lineage
 from evidence.models import EvidenceBundle, EvidenceItem
 from workflows.daily_intelligence.agent_registry import (

@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-TOOLS_ROOT = PROJECT_ROOT / "core" / "framework" / "tools"
+TOOLS_ROOT = PROJECT_ROOT / "framework" / "tool"
 FORBIDDEN_IMPORT_PREFIXES = (
     "business",
     "interfaces",

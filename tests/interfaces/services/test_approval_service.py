@@ -1,4 +1,4 @@
-from core.framework.workers import ApprovalStatus, InMemoryApprovalStore
+from framework.workers import ApprovalStatus, InMemoryApprovalStore
 from interfaces.services.approval_service import ApprovalApplicationService
 
 
