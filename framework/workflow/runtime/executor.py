@@ -215,7 +215,7 @@ class WorkflowExecutor:
                 },
             )
         else:
-            resumed_payload = {
+            resumed_payload: dict[str, Any] = {
                 "workflow_id": workflow.workflow_id,
                 "workflow_version": workflow.version,
                 "profile": profile,

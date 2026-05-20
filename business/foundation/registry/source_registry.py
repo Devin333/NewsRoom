@@ -310,7 +310,7 @@ class SourceRegistry:
             sources,
             key=lambda source: (
                 -_topic_match_score(source, topic),
-                -_RELIABILITY_SCORE[source.reliability],
+                -_RELIABILITY_SCORE[SourceReliability(source.reliability)],
                 -source.authority_score,
                 source.source_id,
             ),
@@ -358,9 +358,9 @@ def _source_summary(source: SourceDefinition) -> dict[str, Any]:
     return {
         "source_id": source.source_id,
         "source_name": source.name,
-        "source_type": source.source_type.value,
+        "source_type": SourceType(source.source_type).value,
         "url": source.url,
-        "reliability": source.reliability.value,
+        "reliability": SourceReliability(source.reliability).value,
         "authority_score": source.authority_score,
         "enabled": source.enabled,
         "fetch_interval_seconds": source.fetch_interval_seconds,

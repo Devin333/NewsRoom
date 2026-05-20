@@ -16,6 +16,7 @@ from framework.memory.models import (
     MemoryWriteRequest,
     MemoryWriteResult,
 )
+from framework.memory.models.record import coerce_memory_record
 from framework.memory.policy import DEFAULT_WORKFLOW_MEMORY_POLICY, MemoryPolicy
 from framework.memory.runtime.context_assembler import MemoryContextAssembler
 from framework.memory.runtime.consolidation import MemoryConsolidator
@@ -169,8 +170,8 @@ def _coerce_write_request(
     if isinstance(request, dict):
         return MemoryWriteRequest.from_dict(request)
     return MemoryWriteRequest(
-        records=list(records or []),
-        mode=mode,
+        records=[coerce_memory_record(record) for record in (records or [])],
+        mode=MemoryWriteMode.from_value(mode),
         actor=actor,
         run_id=run_id,
         namespace=namespace,

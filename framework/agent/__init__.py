@@ -1,3 +1,4 @@
+# pyright: reportUnsupportedDunderAll=false
 """Agent runtime implementation."""
 
 from framework.agent.diagnostics import *  # noqa: F401,F403

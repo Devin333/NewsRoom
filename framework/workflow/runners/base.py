@@ -5,7 +5,7 @@ from enum import StrEnum
 from typing import Any, Protocol
 
 from framework.specs import StepSpec, StepType
-from framework.workflow.buffer.data_buffer import ScopedDataBuffer
+from framework.workflow.buffer.data_buffer import StepScopedDataBufferView
 from framework.workflow.runtime.result import StepOutcome
 
 
@@ -64,7 +64,7 @@ class StepRunnerCapability:
             "supports_resume": self.supports_resume,
             "supports_timeout": self.supports_timeout,
             "supports_retry": self.supports_retry,
-            "side_effect_level": self.side_effect_level.value,
+            "side_effect_level": str(self.side_effect_level),
             "required_dependencies": list(self.required_dependencies),
             "description": self.description,
             "supported_implementations": list(self.supported_implementations),
@@ -88,7 +88,7 @@ class StepRunner(Protocol):
     def validate_step(self, step: StepSpec) -> list[ValidationErrorItem]:
         ...
 
-    def run(self, step: StepSpec, buffer: ScopedDataBuffer) -> StepOutcome:
+    def run(self, step: StepSpec, buffer: StepScopedDataBufferView) -> StepOutcome:
         ...
 
 

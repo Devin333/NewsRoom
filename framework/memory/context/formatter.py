@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from framework.memory.models import MemorySearchResult
+from collections.abc import Mapping
+from typing import Any
+
+from framework.memory.models import MemoryReference, MemorySearchResult
+from framework.memory.models.reference import legacy_refs_from_references
 
 
 class MemoryContextFormatter:
@@ -32,7 +36,9 @@ def _score_text(value: float | None) -> str:
     return f"{float(value):.2f}"
 
 
-def _safe_refs_text(refs: dict[str, object]) -> str:
+def _safe_refs_text(refs: Mapping[str, Any] | list[MemoryReference | dict[str, Any]]) -> str:
+    if isinstance(refs, list):
+        refs = legacy_refs_from_references(refs)
     safe_items = [
         f"{key}={refs[key]}"
         for key in sorted(refs)

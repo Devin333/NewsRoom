@@ -4,7 +4,7 @@ import json
 import re
 from copy import deepcopy
 from dataclasses import is_dataclass, asdict
-from typing import Any
+from typing import Any, cast
 
 from framework.llm.models import LLMToolCall
 
@@ -166,7 +166,7 @@ def _tool_to_mapping(tool: Any) -> dict[str, Any]:
         if isinstance(payload, dict):
             return payload
     if is_dataclass(tool):
-        payload = asdict(tool)
+        payload = asdict(cast(Any, tool))
         if isinstance(payload, dict):
             return payload
     raise LLMToolSchemaError("tool schema must be an object")

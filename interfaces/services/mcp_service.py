@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
 from datetime import UTC, datetime
-from typing import Any, Callable, Literal
+from typing import Any, Callable, Literal, cast
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from business.boards.cross_board.profiles import DAILY_PROFILE_CHOICES
@@ -2320,7 +2320,7 @@ def _to_dict(value: Any) -> dict[str, Any]:
     if hasattr(value, "dict"):
         return value.dict()
     if is_dataclass(value):
-        return asdict(value)
+        return asdict(cast(Any, value))
     if isinstance(value, dict):
         return dict(value)
     raise TypeError(f"value is not JSON-safe: {type(value).__name__}")

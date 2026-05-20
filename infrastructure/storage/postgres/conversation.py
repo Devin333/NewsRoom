@@ -368,7 +368,8 @@ class PostgresConversationStore:
         with self._connection_factory() as connection:
             with connection.cursor() as cursor:
                 _upsert_conversation(cursor, conversation_id, None)
-                cursor.execute(
+                _cursor_execute(
+                    cursor,
                     f"""
                     INSERT INTO agent_conversation_state (
                         conversation_id, {insert_columns}
@@ -417,13 +418,13 @@ class PostgresConversationStore:
     def _fetch_one(self, sql: str, params: tuple[Any, ...]) -> tuple[Any, ...] | None:
         with self._connection_factory() as connection:
             with connection.cursor() as cursor:
-                cursor.execute(sql, params)
+                _cursor_execute(cursor, sql, params)
                 return cursor.fetchone()
 
     def _fetch_all(self, sql: str, params: tuple[Any, ...]) -> list[tuple[Any, ...]]:
         with self._connection_factory() as connection:
             with connection.cursor() as cursor:
-                cursor.execute(sql, params)
+                _cursor_execute(cursor, sql, params)
                 return list(cursor.fetchall())
 
 
@@ -453,6 +454,10 @@ def _upsert_conversation(
             _json_object({"conversation_id": conversation_id}),
         ),
     )
+
+
+def _cursor_execute(cursor: Any, sql: str, params: tuple[Any, ...]) -> Any:
+    return cursor.execute(sql, params)
 
 
 def _message_from_row(row: tuple[Any, ...]) -> AgentMessageRecord:

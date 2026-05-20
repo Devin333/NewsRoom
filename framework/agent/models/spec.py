@@ -129,14 +129,11 @@ class AgentSpec:
             input_keys=[str(item) for item in payload.get("input_keys", [])],
             output_key=str(payload.get("output_key") or "output"),
             output_schema=_optional_mapping(payload.get("output_schema")),
-            allowed_tools=[
-                str(item)
-                for item in (
-                    payload.get("allowed_tools")
-                    if payload.get("allowed_tools") is not None
-                    else payload.get("tool_names", [])
-                )
-            ],
+            allowed_tools=_string_list(
+                payload.get("allowed_tools")
+                if payload.get("allowed_tools") is not None
+                else payload.get("tool_names", [])
+            ),
             loop_policy=_agent_loop_policy_from_dict(payload.get("loop_policy")),
             tool_policy=_tool_policy_from_dict(payload.get("tool_policy")),
             model_route=_optional_str(payload.get("model_route")),
@@ -151,10 +148,8 @@ class AgentSpec:
             task_prompt_template=str(
                 payload.get("task_prompt_template") or "Goal: {goal}\nInputs: {inputs}"
             ),
-            allowed_references=[
-                str(item) for item in payload.get("allowed_references", [])
-            ],
-            allowed_subagents=[str(item) for item in payload.get("allowed_subagents", [])],
+            allowed_references=_string_list(payload.get("allowed_references", [])),
+            allowed_subagents=_string_list(payload.get("allowed_subagents", [])),
             metadata=dict(payload.get("metadata") or {}),
         )
 
@@ -208,6 +203,12 @@ def _optional_mapping(value: Any) -> dict[str, Any] | None:
     if not isinstance(value, dict):
         raise TypeError("output_schema must be an object")
     return dict(value)
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value]
 
 
 def _optional_str(value: Any) -> str | None:

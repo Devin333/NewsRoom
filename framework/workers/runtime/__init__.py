@@ -1,9 +1,21 @@
+# pyright: reportUnsupportedDunderAll=false
 from __future__ import annotations
 
 from importlib import import_module
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from framework.workers.runtime.backpressure import BackpressurePolicy
+
+if TYPE_CHECKING:
+    from framework.workers.runtime.dispatcher import TaskDispatcher
+    from framework.workers.runtime.heartbeat import (
+        InMemoryWorkerHeartbeatStore,
+        WorkerHeartbeat,
+        WorkerHeartbeatStatus,
+    )
+    from framework.workers.runtime.leasing import LeaseManager
+    from framework.workers.runtime.runner import WorkerRunner
+    from framework.workers.runtime.worker_loop import WorkerLoop, WorkerLoopRunResult
 
 
 _EXPORT_MODULES = {

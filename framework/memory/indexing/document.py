@@ -14,13 +14,14 @@ class MemoryDocument:
     refs: list[MemoryReference] = field(default_factory=list)
 
     def to_record(self, *, kind: MemoryKind = MemoryKind.SEMANTIC, scope: MemoryScope = MemoryScope.SESSION) -> MemoryRecord:
+        refs: list[MemoryReference | dict[str, Any]] = list(self.refs)
         return MemoryRecord(
             memory_id=self.document_id,
             content=self.text,
             kind=kind,
             scope=scope,
             metadata=self.metadata,
-            refs=self.refs,
+            refs=refs,
         )
 
     def to_dict(self) -> dict[str, Any]:

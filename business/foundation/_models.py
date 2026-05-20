@@ -30,9 +30,14 @@ from business.foundation.taxonomy import (
 
 
 class ObjectRef(PrimitiveModel):
-    object_type: ObjectType
+    object_type: ObjectType | str
     object_id: str
     label: str | None = None
+
+    @field_validator("object_type")
+    @classmethod
+    def _coerce_object_type(cls, value: ObjectType | str) -> ObjectType:
+        return ObjectType(value)
 
     @field_validator("object_id")
     @classmethod
@@ -402,7 +407,7 @@ class Report(PrimitiveModel):
         return self
 
 
-def make_object_ref(object_type: ObjectType, object_id: str, *, label: str | None = None) -> ObjectRef:
+def make_object_ref(object_type: ObjectType | str, object_id: str, *, label: str | None = None) -> ObjectRef:
     return ObjectRef(object_type=object_type, object_id=object_id, label=label)
 
 

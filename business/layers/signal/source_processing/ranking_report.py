@@ -6,7 +6,8 @@ from business.foundation.models.source import RankedSourceItem, SourceRankingSco
 def build_source_ranking_scores(ranked_items: list[RankedSourceItem]) -> list[SourceRankingScore]:
     scores: list[SourceRankingScore] = []
     for ranked in ranked_items:
-        lineage = ranked.metadata.get("lineage") if isinstance(ranked.metadata.get("lineage"), dict) else {}
+        raw_lineage = ranked.metadata.get("lineage")
+        lineage = raw_lineage if isinstance(raw_lineage, dict) else {}
         authority_score = float(lineage.get("authority_score", 0.0))
         scores.append(
             SourceRankingScore(

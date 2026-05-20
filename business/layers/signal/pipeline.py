@@ -394,8 +394,12 @@ def _raw_item_from_normalized(item: NormalizedSourceItem) -> RawSourceItem:
 def _coerce_raw_item_from_dict(value: dict[str, Any]) -> RawSourceItem | None:
     if {"signal_id", "signal_type", "board_type", "source"}.issubset(value):
         return None
-    metadata = value.get("metadata") if isinstance(value.get("metadata"), dict) else {}
-    source_payload = value.get("source") if isinstance(value.get("source"), dict) else {}
+    raw_metadata = value.get("metadata")
+    metadata: dict[str, Any] = dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
+    raw_source_payload = value.get("source")
+    source_payload: dict[str, Any] = (
+        dict(raw_source_payload) if isinstance(raw_source_payload, dict) else {}
+    )
     source_type = value.get("source_type") or metadata.get("source_type") or source_payload.get("source_type")
     if source_type is None and not any(key in value for key in ("source_item_id", "source_id", "title", "url")):
         return None
@@ -407,7 +411,6 @@ def _coerce_raw_item_from_dict(value: dict[str, Any]) -> RawSourceItem | None:
     url = str(value.get("url") or value.get("source_url") or value.get("canonical_url") or "https://example.com")
     fetched_at = _parse_datetime(value.get("fetched_at") or value.get("collected_at")) or datetime.now()
     published_at = _parse_datetime(value.get("published_at"))
-    metadata = dict(metadata)
     if "source_type" not in metadata and source_type is not None:
         metadata["source_type"] = _source_type_value(source_type)
     if "source_name" not in metadata:

@@ -94,9 +94,9 @@ class Lineage:
 class SourceDefinition:
     source_id: str
     name: str
-    source_type: SourceType
+    source_type: SourceType | str
     url: str
-    reliability: SourceReliability = SourceReliability.MEDIUM
+    reliability: SourceReliability | str = SourceReliability.MEDIUM
     authority_score: float = 0.5
     enabled: bool = True
     fetch_interval_seconds: int = 3600
@@ -130,7 +130,7 @@ class SourceDefinition:
 class SourceFetchRequest:
     request_id: str
     source_id: str
-    source_type: SourceType
+    source_type: SourceType | str
     url: str | None = None
     query: str | None = None
     timeout_seconds: int = 15
@@ -159,7 +159,7 @@ class SourceFetchRequest:
         return {
             "request_id": self.request_id,
             "source_id": self.source_id,
-            "source_type": self.source_type.value,
+            "source_type": SourceType(self.source_type).value,
             "url": self.url,
             "query": self.query,
             "timeout_seconds": self.timeout_seconds,
@@ -181,7 +181,7 @@ class SourceFetchResult:
     status_code: int | None = None
     content_type: str | None = None
     content_bytes: int | None = None
-    latency_ms: int | None = None
+    latency_ms: float | None = None
     raw_artifact_ref: Any | None = None
     error_type: str | None = None
     error_message: str | None = None
@@ -207,7 +207,7 @@ class SourceFetchResult:
             "latency_ms": self.latency_ms,
             "raw_artifact_ref": (
                 self.raw_artifact_ref.to_dict()
-                if hasattr(self.raw_artifact_ref, "to_dict")
+                if self.raw_artifact_ref is not None and hasattr(self.raw_artifact_ref, "to_dict")
                 else self.raw_artifact_ref
             ),
             "error_type": self.error_type,
@@ -224,7 +224,7 @@ class RawSourceItem:
     source_item_id: str
     source_id: str
     source_name: str
-    source_type: SourceType
+    source_type: SourceType | str
     title: str
     url: str
     fetched_at: datetime
@@ -261,7 +261,7 @@ class RawSourceItem:
             "source_item_id": self.source_item_id,
             "source_id": self.source_id,
             "source_name": self.source_name,
-            "source_type": self.source_type.value,
+            "source_type": SourceType(self.source_type).value,
             "title": self.title,
             "url": self.url,
             "fetched_at": _dt(self.fetched_at),

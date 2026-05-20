@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from copy import deepcopy
 from typing import Any
 
-from framework.workflow import ScopedDataBuffer
+from framework.workflow import StepScopedDataBufferView
 from business.foundation.models.report_output import BlockedReport, FinalReport, render_markdown
 from business.layers.analysis.quality import EditorDecision
 from business.boards.cross_board.workflows.daily_intelligence.evidence_step import quality_event
@@ -32,7 +32,7 @@ _DECISION_ALIASES = {
 }
 
 
-def finalize_report(buffer: ScopedDataBuffer) -> dict[str, Any]:
+def finalize_report(buffer: StepScopedDataBufferView) -> dict[str, Any]:
     """Assemble the agentic Daily report outputs without calling an LLM."""
 
     request = buffer.read("request")
@@ -550,7 +550,7 @@ def _human_review_reason(editor_decision: dict[str, Any]) -> str:
     return "quality gate rewrite required"
 
 
-def _read_optional_draft(buffer: ScopedDataBuffer, key: str) -> dict[str, Any] | None:
+def _read_optional_draft(buffer: StepScopedDataBufferView, key: str) -> dict[str, Any] | None:
     if not buffer.exists(key):
         return None
     value = buffer.read(key)

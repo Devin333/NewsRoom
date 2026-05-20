@@ -193,10 +193,11 @@ class ApprovalApplicationService:
 def _approval_decision_payload(approval: ApprovalRequest) -> dict[str, Any]:
     if approval.decision is None:
         raise ValueError(f"approval decision is not recorded: {approval.approval_id}")
-    decision_type = approval.decision.decision_type.value
+    decision_type = ApprovalDecisionType(approval.decision.decision_type).value
+    approval_status = ApprovalStatus(approval.status).value
     return {
         "decision": _resume_decision(decision_type),
-        "status": approval.status.value,
+        "status": approval_status,
         "decision_type": decision_type,
         "approval_id": approval.approval_id,
         "requested_action": approval.requested_action,
@@ -216,8 +217,8 @@ def _approval_resume_metadata(approval: ApprovalRequest) -> dict[str, Any]:
         raise ValueError(f"approval decision is not recorded: {approval.approval_id}")
     metadata: dict[str, Any] = {
         "approval_id": approval.approval_id,
-        "approval_status": approval.status.value,
-        "decision_type": approval.decision.decision_type.value,
+        "approval_status": ApprovalStatus(approval.status).value,
+        "decision_type": ApprovalDecisionType(approval.decision.decision_type).value,
         "requested_action": approval.requested_action,
         "risk_level": approval.risk_level,
         "decided_by": approval.decision.decided_by,
@@ -234,8 +235,8 @@ def _approval_reviewer_trace(approval: ApprovalRequest) -> dict[str, Any]:
         raise ValueError(f"approval decision is not recorded: {approval.approval_id}")
     return {
         "approval_id": approval.approval_id,
-        "approval_status": approval.status.value,
-        "decision_type": approval.decision.decision_type.value,
+        "approval_status": ApprovalStatus(approval.status).value,
+        "decision_type": ApprovalDecisionType(approval.decision.decision_type).value,
         "requested_action": approval.requested_action,
         "risk_level": approval.risk_level,
         "decided_by": approval.decision.decided_by,

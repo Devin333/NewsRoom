@@ -26,7 +26,7 @@ class VectorSearchStore(Protocol):
 
 
 class VectorMemoryStore(VectorSearchStore, Protocol):
-    def upsert_documents(self, docs: list[MemoryIndexDocument]) -> None: ...
+    def upsert_documents(self, docs: list[Any]) -> None: ...
 
     def ensure_collections(self, collections: list[str]) -> list[VectorCollectionStatus]: ...
 
@@ -110,6 +110,8 @@ class MemoryApplicationService:
             from infrastructure.storage.vector import qdrant_store_from_env
 
             vector_store = qdrant_store_from_env()
+        if vector_store is None:
+            raise ValueError("vector_store is required")
         self.vector_store = vector_store
         self.artifact_service = artifact_service or ArtifactInspectionService(artifact_root)
         self.ingestion_service = ingestion_service or MemoryIngestionService(self.vector_store)

@@ -449,15 +449,30 @@ def _manifest_output_preview(manifest: dict[str, Any]) -> dict[str, Any]:
             if len(preview) >= 12:
                 break
             preview[str(key)] = _preview_value(value)
-        quality_result = output.get("quality_result") if isinstance(output.get("quality_result"), dict) else {}
-        citation_check = output.get("citation_check_result") if isinstance(output.get("citation_check_result"), dict) else {}
-        support_matrix = output.get("support_matrix") if isinstance(output.get("support_matrix"), dict) else {}
+        raw_quality_result = output.get("quality_result")
+        raw_citation_check = output.get("citation_check_result")
+        raw_support_matrix = output.get("support_matrix")
+        quality_result: dict[str, Any] = (
+            dict(raw_quality_result) if isinstance(raw_quality_result, dict) else {}
+        )
+        citation_check: dict[str, Any] = (
+            dict(raw_citation_check) if isinstance(raw_citation_check, dict) else {}
+        )
+        support_matrix: dict[str, Any] = (
+            dict(raw_support_matrix) if isinstance(raw_support_matrix, dict) else {}
+        )
         quality_lineage = _quality_lineage_preview(output)
         if quality_result or citation_check or support_matrix or quality_lineage:
+            raw_quality_metadata = quality_result.get("metadata")
+            quality_metadata = (
+                dict(raw_quality_metadata)
+                if isinstance(raw_quality_metadata, dict)
+                else {}
+            )
             preview["quality_trace"] = {
                 "decision": quality_result.get("decision"),
                 "route": quality_result.get("route") or output.get("quality_route"),
-                "citation_failure_categories": quality_result.get("metadata", {}).get(
+                "citation_failure_categories": quality_metadata.get(
                     "citation_failure_categories", []
                 ),
                 "unsupported_claims": citation_check.get("unsupported_claims", []),
@@ -465,15 +480,27 @@ def _manifest_output_preview(manifest: dict[str, Any]) -> dict[str, Any]:
                 "unsupported_sections": support_matrix.get("unsupported_sections", []),
                 "quality_lineage": quality_lineage,
             }
-        llm_route_manifest = output.get("llm_route_manifest") if isinstance(output.get("llm_route_manifest"), dict) else {}
-        llm_router_events = output.get("llm_router_events") if isinstance(output.get("llm_router_events"), list) else []
+        raw_llm_route_manifest = output.get("llm_route_manifest")
+        raw_llm_router_events = output.get("llm_router_events")
+        llm_route_manifest: dict[str, Any] = (
+            dict(raw_llm_route_manifest) if isinstance(raw_llm_route_manifest, dict) else {}
+        )
+        llm_router_events: list[Any] = (
+            list(raw_llm_router_events) if isinstance(raw_llm_router_events, list) else []
+        )
         if llm_route_manifest or llm_router_events:
+            raw_llm_metrics = llm_route_manifest.get("metrics")
+            llm_metrics = (
+                dict(raw_llm_metrics)
+                if isinstance(raw_llm_metrics, dict)
+                else {}
+            )
             preview["llm_trace"] = {
                 "selected_deployment_id": llm_route_manifest.get("selected_deployment_id"),
                 "fallback_used": llm_route_manifest.get("fallback_used"),
                 "fallback_count": llm_route_manifest.get("fallback_count"),
-                "provider_error_count": (llm_route_manifest.get("metrics") or {}).get("provider_error_count"),
-                "cooldown_skip_count": (llm_route_manifest.get("metrics") or {}).get("cooldown_skip_count"),
+                "provider_error_count": llm_metrics.get("provider_error_count"),
+                "cooldown_skip_count": llm_metrics.get("cooldown_skip_count"),
                 "router_event_count": len(llm_router_events),
                 "budget_check": llm_route_manifest.get("budget_check"),
                 "global_budget_check": llm_route_manifest.get("global_budget_check"),
@@ -490,25 +517,33 @@ def _manifest_output_preview(manifest: dict[str, Any]) -> dict[str, Any]:
 
 
 def _quality_lineage_preview(output: dict[str, Any]) -> dict[str, Any]:
-    candidate_claims = output.get("candidate_claims") if isinstance(output.get("candidate_claims"), list) else []
-    verified_findings = output.get("verified_findings") if isinstance(output.get("verified_findings"), dict) else {}
+    raw_candidate_claims = output.get("candidate_claims")
+    candidate_claims = _dict_list(raw_candidate_claims)
+    raw_verified_findings = output.get("verified_findings")
+    verified_findings: dict[str, Any] = (
+        dict(raw_verified_findings) if isinstance(raw_verified_findings, dict) else {}
+    )
     claims = [
-        *verified_findings.get("accepted_claims", []),
-        *verified_findings.get("rejected_claims", []),
-        *verified_findings.get("uncertain_claims", []),
+        *_dict_list(verified_findings.get("accepted_claims")),
+        *_dict_list(verified_findings.get("rejected_claims")),
+        *_dict_list(verified_findings.get("uncertain_claims")),
     ]
+    raw_final_report = output.get("final_report")
+    raw_blocked_report = output.get("blocked_report")
     report = (
-        output.get("final_report")
-        if isinstance(output.get("final_report"), dict)
-        else output.get("blocked_report")
-        if isinstance(output.get("blocked_report"), dict)
+        dict(raw_final_report)
+        if isinstance(raw_final_report, dict)
+        else dict(raw_blocked_report)
+        if isinstance(raw_blocked_report, dict)
         else {}
     )
+    raw_quality_result = output.get("quality_result")
+    quality_results = [dict(raw_quality_result)] if isinstance(raw_quality_result, dict) else []
     return quality_lineage_summary(
         run_id=str(output.get("run_id") or ""),
         report_id=str(output.get("report_id") or report.get("report_id") or output.get("run_id") or ""),
         claims=claims or candidate_claims,
-        quality_results=[output.get("quality_result")] if isinstance(output.get("quality_result"), dict) else [],
+        quality_results=quality_results,
     )
 
 
@@ -547,7 +582,8 @@ def _event_matches(
         return False
     if step_id is None:
         return True
-    payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+    raw_payload = event.get("payload")
+    payload: dict[str, Any] = dict(raw_payload) if isinstance(raw_payload, dict) else {}
     return event.get("step_id") == step_id or payload.get("step_id") == step_id
 
 
@@ -558,7 +594,8 @@ def _step_view(
     sequence: int | None,
 ) -> dict[str, Any]:
     data = dict(payload) if isinstance(payload, dict) else {"value": payload}
-    outputs = data.get("outputs") if isinstance(data.get("outputs"), dict) else {}
+    raw_outputs = data.get("outputs")
+    outputs: dict[str, Any] = dict(raw_outputs) if isinstance(raw_outputs, dict) else {}
     error = data.get("error") if isinstance(data.get("error"), dict) else None
     return {
         "step_id": str(step_id),
@@ -574,6 +611,12 @@ def _step_view(
         ),
         "raw": to_json_safe(data),
     }
+
+
+def _dict_list(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [dict(item) for item in value if isinstance(item, dict)]
 
 
 def _preview_value(value: Any) -> Any:

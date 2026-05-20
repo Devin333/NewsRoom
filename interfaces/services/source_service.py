@@ -5,7 +5,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from business.foundation.models.source import SourceDefinition
+from business.foundation.models.source import (
+    SourceDefinition,
+    SourceError as BusinessSourceError,
+    SourceReliability as BusinessSourceReliability,
+    SourceType as BusinessSourceType,
+)
 from business.foundation.registry.source_registry import SourceRegistry
 from business.layers.signal.source_config import (
     build_default_source_fetch_policy,
@@ -27,6 +32,11 @@ from infrastructure.external.sources import (
     SourceFetchPolicy,
     default_arxiv_connector,
     default_github_connector,
+)
+from infrastructure.external.sources.models import (
+    SourceDefinition as InfraSourceDefinition,
+    SourceReliability as InfraSourceReliability,
+    SourceType as InfraSourceType,
 )
 from infrastructure.storage.source_health import source_health_store_from_env
 
@@ -169,9 +179,9 @@ class SourceApplicationService:
                 SourceSummary(
                     source_id=source.source_id,
                     name=source.name,
-                    source_type=source.source_type.value,
+                    source_type=BusinessSourceType(source.source_type).value,
                     url=source.url,
-                    reliability=source.reliability.value,
+                    reliability=BusinessSourceReliability(source.reliability).value,
                     authority_score=source.authority_score,
                     enabled=source.enabled,
                     respect_robots=source.respect_robots,
@@ -262,11 +272,11 @@ class SourceApplicationService:
         blocked_result = self._blocked_preview_result(source, query=query)
         if blocked_result is not None:
             return blocked_result
-        items, errors = self.arxiv_connector.fetch(source, query=query, limit=limit)
+        items, errors = self.arxiv_connector.fetch(_infra_source(source), query=query, limit=limit)
         self._record_preview_health(source, items=items, errors=errors)
         return SourceFetchPreviewResult(
             source_id=source.source_id,
-            source_type=source.source_type.value,
+            source_type=BusinessSourceType(source.source_type).value,
             query=query,
             items=items,
             errors=errors,
@@ -293,14 +303,14 @@ class SourceApplicationService:
         if blocked_result is not None:
             return blocked_result
         items, errors = self.github_connector.fetch_releases(
-            source,
+            _infra_source(source),
             repository=repository,
             limit=limit,
         )
         self._record_preview_health(source, items=items, errors=errors)
         return SourceFetchPreviewResult(
             source_id=source.source_id,
-            source_type=source.source_type.value,
+            source_type=BusinessSourceType(source.source_type).value,
             query=repository,
             items=items,
             errors=errors,
@@ -327,7 +337,7 @@ class SourceApplicationService:
             )
             return SourceFetchPreviewResult(
                 source_id=source.source_id,
-                source_type=source.source_type.value,
+                source_type=BusinessSourceType(source.source_type).value,
                 query=query,
                 items=[],
                 errors=[error],
@@ -350,7 +360,7 @@ class SourceApplicationService:
         )
         return SourceFetchPreviewResult(
             source_id=source.source_id,
-            source_type=source.source_type.value,
+            source_type=BusinessSourceType(source.source_type).value,
             query=query,
             items=[],
             errors=[error],
@@ -381,7 +391,7 @@ class SourceApplicationService:
         if health_error is not None:
             self.health_manager.record_failure(
                 source.source_id,
-                health_error,
+                _business_source_error(health_error),
                 source_name=source.name,
                 url=source.url,
             )
@@ -392,7 +402,7 @@ def _raw_item_to_dict(item: RawSourceItem) -> dict[str, Any]:
         "source_item_id": item.source_item_id,
         "source_id": item.source_id,
         "source_name": item.source_name,
-        "source_type": item.source_type.value,
+        "source_type": InfraSourceType(item.source_type).value,
         "title": item.title,
         "url": item.url,
         "fetched_at": _dt(item.fetched_at),
@@ -440,6 +450,38 @@ def _preview_skip_error(
     )
 
 
+def _infra_source(source: SourceDefinition) -> InfraSourceDefinition:
+    return InfraSourceDefinition(
+        source_id=source.source_id,
+        name=source.name,
+        source_type=InfraSourceType(BusinessSourceType(source.source_type).value),
+        url=source.url,
+        reliability=InfraSourceReliability(BusinessSourceReliability(source.reliability).value),
+        authority_score=source.authority_score,
+        enabled=source.enabled,
+        fetch_interval_seconds=source.fetch_interval_seconds,
+        respect_robots=source.respect_robots,
+        user_agent=source.user_agent,
+        topics=list(source.topics),
+        category=source.category,
+        language=source.language,
+        region=source.region,
+        metadata=dict(source.metadata),
+    )
+
+
+def _business_source_error(error: SourceError) -> BusinessSourceError:
+    return BusinessSourceError(
+        source_id=error.source_id,
+        source_name=error.source_name,
+        error_type=error.error_type,
+        error_message=error.error_message,
+        url=error.url,
+        retryable=error.retryable,
+        metadata=dict(error.metadata),
+    )
+
+
 def _metadata_bool(value: Any, *, default: bool) -> bool:
     if isinstance(value, bool):
         return value
@@ -464,9 +506,9 @@ def _source_summary_model(source: SourceDefinition) -> SourceSummary:
     return SourceSummary(
         source_id=source.source_id,
         name=source.name,
-        source_type=source.source_type.value,
+        source_type=BusinessSourceType(source.source_type).value,
         url=source.url,
-        reliability=source.reliability.value,
+        reliability=BusinessSourceReliability(source.reliability).value,
         authority_score=source.authority_score,
         enabled=source.enabled,
         respect_robots=source.respect_robots,

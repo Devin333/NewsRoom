@@ -21,7 +21,8 @@ def build_source_traceability_report(
     issues: list[SourceTraceabilityIssue] = []
 
     for ranked in ranked_items:
-        lineage = ranked.metadata.get("lineage") if isinstance(ranked.metadata.get("lineage"), dict) else {}
+        raw_lineage = ranked.metadata.get("lineage")
+        lineage = raw_lineage if isinstance(raw_lineage, dict) else {}
         expected = {
             "source_id": ranked.item.source_id,
             "source_item_id": ranked.item.source_item_id,

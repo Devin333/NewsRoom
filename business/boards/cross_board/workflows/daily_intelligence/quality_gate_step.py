@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from framework.workflow import ScopedDataBuffer
+from framework.workflow import StepScopedDataBufferView
 from business.foundation.models.report_output import BlockedReport, FinalReport, render_markdown
 from business.layers.analysis.quality import EditorDecision, RewritePolicy
 from business.boards.cross_board.workflows.daily_intelligence.evidence_step import quality_event
@@ -16,7 +16,7 @@ from business.boards.cross_board.workflows.daily_intelligence.quality_result_bui
 from business.boards.cross_board.workflows.daily_intelligence.quality_rewrite import rewrite_report_draft
 
 
-def quality_gate(buffer: ScopedDataBuffer) -> dict[str, Any]:
+def quality_gate(buffer: StepScopedDataBufferView) -> dict[str, Any]:
     report_draft = buffer.read("report_draft")
     evidence_bundle = buffer.read("evidence_bundle")
     verified_findings = buffer.read("verified_findings")

@@ -56,29 +56,30 @@ class Scheduler:
     ) -> ScheduleEvaluation:
         current = ensure_utc(now or self.now_fn())
         last = ensure_utc(last_run_at) if last_run_at is not None else None
+        trigger_type = ScheduleTriggerType(schedule.trigger_type)
 
         if not schedule.enabled:
             return ScheduleEvaluation(
                 schedule_id=schedule.schedule_id,
-                trigger_type=schedule.trigger_type,
+                trigger_type=trigger_type,
                 enabled=False,
                 reason="disabled",
             )
-        if schedule.trigger_type == ScheduleTriggerType.MANUAL:
+        if trigger_type == ScheduleTriggerType.MANUAL:
             return ScheduleEvaluation(
                 schedule_id=schedule.schedule_id,
-                trigger_type=schedule.trigger_type,
+                trigger_type=trigger_type,
                 reason="manual_trigger_required",
             )
-        if schedule.trigger_type == ScheduleTriggerType.DATE:
+        if trigger_type == ScheduleTriggerType.DATE:
             return self._evaluate_date(schedule, current, last)
-        if schedule.trigger_type == ScheduleTriggerType.INTERVAL:
+        if trigger_type == ScheduleTriggerType.INTERVAL:
             return self._evaluate_interval(schedule, current, last)
-        if schedule.trigger_type == ScheduleTriggerType.CRON:
+        if trigger_type == ScheduleTriggerType.CRON:
             return self._evaluate_cron(schedule, current, last)
         return ScheduleEvaluation(
             schedule_id=schedule.schedule_id,
-            trigger_type=schedule.trigger_type,
+            trigger_type=trigger_type,
             reason="unsupported_trigger",
         )
 
@@ -123,7 +124,7 @@ class Scheduler:
     ) -> EnqueuedScheduleTask:
         if not schedule.enabled:
             raise ValueError(f"schedule is disabled: {schedule.schedule_id}")
-        if schedule.trigger_type != ScheduleTriggerType.MANUAL:
+        if ScheduleTriggerType(schedule.trigger_type) != ScheduleTriggerType.MANUAL:
             raise ValueError(f"schedule is not manual: {schedule.schedule_id}")
         return self._enqueue_schedule_task(schedule, ensure_utc(now or self.now_fn()))
 
@@ -133,29 +134,30 @@ class Scheduler:
         now: datetime,
         last_run_at: datetime | None,
     ) -> ScheduleEvaluation:
+        trigger_type = ScheduleTriggerType(schedule.trigger_type)
         run_at = schedule.run_at
         if run_at is None:
             return ScheduleEvaluation(
                 schedule_id=schedule.schedule_id,
-                trigger_type=schedule.trigger_type,
+                trigger_type=trigger_type,
                 reason="missing_run_at",
             )
         if last_run_at is not None:
             return ScheduleEvaluation(
                 schedule_id=schedule.schedule_id,
-                trigger_type=schedule.trigger_type,
+                trigger_type=trigger_type,
                 reason="already_run",
             )
         if now < run_at:
             return ScheduleEvaluation(
                 schedule_id=schedule.schedule_id,
-                trigger_type=schedule.trigger_type,
+                trigger_type=trigger_type,
                 next_run_at=run_at,
                 reason="not_due",
             )
         return ScheduleEvaluation(
             schedule_id=schedule.schedule_id,
-            trigger_type=schedule.trigger_type,
+            trigger_type=trigger_type,
             due_times=(run_at,),
             state_update_at=run_at,
         )
@@ -166,6 +168,8 @@ class Scheduler:
         now: datetime,
         last_run_at: datetime | None,
     ) -> ScheduleEvaluation:
+        trigger_type = ScheduleTriggerType(schedule.trigger_type)
+        misfire_policy = MisfirePolicy(schedule.misfire_policy)
         interval = timedelta(seconds=schedule.interval_seconds or 0)
         first_due_at = schedule.run_at or now
         base_due_at = first_due_at if last_run_at is None else last_run_at + interval
@@ -173,7 +177,7 @@ class Scheduler:
         if now < base_due_at:
             return ScheduleEvaluation(
                 schedule_id=schedule.schedule_id,
-                trigger_type=schedule.trigger_type,
+                trigger_type=trigger_type,
                 next_run_at=base_due_at,
                 reason="not_due",
             )
@@ -181,10 +185,10 @@ class Scheduler:
         due_count = _interval_due_count(base_due_at, now, interval)
         latest_due_at = base_due_at + (due_count - 1) * interval
 
-        if due_count > 1 and schedule.misfire_policy == MisfirePolicy.SKIP:
+        if due_count > 1 and misfire_policy == MisfirePolicy.SKIP:
             return ScheduleEvaluation(
                 schedule_id=schedule.schedule_id,
-                trigger_type=schedule.trigger_type,
+                trigger_type=trigger_type,
                 next_run_at=latest_due_at + interval,
                 state_update_at=latest_due_at,
                 reason="misfire_skipped",
@@ -194,12 +198,12 @@ class Scheduler:
             base_due_at=base_due_at,
             interval=interval,
             due_count=due_count,
-            policy=schedule.misfire_policy,
+            policy=misfire_policy,
             max_catchup_runs=schedule.max_catchup_runs,
         )
         return ScheduleEvaluation(
             schedule_id=schedule.schedule_id,
-            trigger_type=schedule.trigger_type,
+            trigger_type=trigger_type,
             due_times=due_times,
             next_run_at=due_times[-1] + interval,
             state_update_at=due_times[-1],
@@ -211,10 +215,12 @@ class Scheduler:
         now: datetime,
         last_run_at: datetime | None,
     ) -> ScheduleEvaluation:
+        trigger_type = ScheduleTriggerType(schedule.trigger_type)
+        misfire_policy = MisfirePolicy(schedule.misfire_policy)
         if not schedule.cron:
             return ScheduleEvaluation(
                 schedule_id=schedule.schedule_id,
-                trigger_type=schedule.trigger_type,
+                trigger_type=trigger_type,
                 reason="missing_cron",
             )
         current_minute = now.replace(second=0, microsecond=0)
@@ -222,14 +228,14 @@ class Scheduler:
             if _cron_matches(schedule.cron, current_minute):
                 return ScheduleEvaluation(
                     schedule_id=schedule.schedule_id,
-                    trigger_type=schedule.trigger_type,
+                    trigger_type=trigger_type,
                     due_times=(current_minute,),
                     state_update_at=current_minute,
                     next_run_at=_next_cron_time(schedule.cron, current_minute),
                 )
             return ScheduleEvaluation(
                 schedule_id=schedule.schedule_id,
-                trigger_type=schedule.trigger_type,
+                trigger_type=trigger_type,
                 next_run_at=_next_cron_time(schedule.cron, current_minute),
                 reason="not_due",
             )
@@ -238,7 +244,7 @@ class Scheduler:
         if start > current_minute:
             return ScheduleEvaluation(
                 schedule_id=schedule.schedule_id,
-                trigger_type=schedule.trigger_type,
+                trigger_type=trigger_type,
                 next_run_at=_next_cron_time(schedule.cron, current_minute),
                 reason="not_due",
             )
@@ -248,26 +254,26 @@ class Scheduler:
         if not due_times:
             return ScheduleEvaluation(
                 schedule_id=schedule.schedule_id,
-                trigger_type=schedule.trigger_type,
+                trigger_type=trigger_type,
                 next_run_at=_next_cron_time(schedule.cron, current_minute),
                 reason="catchup_bounded" if catchup_bounded else "not_due",
             )
-        if len(due_times) > 1 and schedule.misfire_policy == MisfirePolicy.SKIP:
+        if len(due_times) > 1 and misfire_policy == MisfirePolicy.SKIP:
             latest = due_times[-1]
             return ScheduleEvaluation(
                 schedule_id=schedule.schedule_id,
-                trigger_type=schedule.trigger_type,
+                trigger_type=trigger_type,
                 next_run_at=_next_cron_time(schedule.cron, latest),
                 state_update_at=latest,
                 reason="catchup_bounded_skipped" if catchup_bounded else "misfire_skipped",
             )
-        if schedule.misfire_policy == MisfirePolicy.RUN_ONCE:
+        if misfire_policy == MisfirePolicy.RUN_ONCE:
             due_times = [due_times[-1]]
         elif len(due_times) > schedule.max_catchup_runs:
             due_times = due_times[-schedule.max_catchup_runs :]
         return ScheduleEvaluation(
             schedule_id=schedule.schedule_id,
-            trigger_type=schedule.trigger_type,
+            trigger_type=trigger_type,
             due_times=tuple(due_times),
             state_update_at=due_times[-1],
             next_run_at=_next_cron_time(schedule.cron, due_times[-1]),
@@ -284,7 +290,7 @@ class Scheduler:
                 **schedule.metadata,
                 "schedule_id": schedule.schedule_id,
                 "schedule_name": schedule.name,
-                "schedule_trigger_type": schedule.trigger_type.value,
+                "schedule_trigger_type": ScheduleTriggerType(schedule.trigger_type).value,
                 "schedule_due_at": due_at.isoformat().replace("+00:00", "Z"),
             },
         )

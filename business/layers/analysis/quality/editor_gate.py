@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
+from typing import Any
 
 from business.layers.analysis.quality.citation_checker import CitationCheckResult
 from business.layers.analysis.quality.scoring import ReportQualitySummary

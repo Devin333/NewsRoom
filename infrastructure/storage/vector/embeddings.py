@@ -121,7 +121,7 @@ class OpenAICompatibleEmbeddingConfig:
                 api_key_env=values.get("NEWS_EMBEDDING_API_KEY_ENV", "DASHSCOPE_API_KEY"),
                 vector_size=vector_size,
                 request_dimensions=_optional_int(values.get("NEWS_EMBEDDING_DIMENSIONS"), default=vector_size),
-                batch_size=_optional_int(values.get("NEWS_EMBEDDING_BATCH_SIZE"), default=10),
+                batch_size=_optional_int_required(values.get("NEWS_EMBEDDING_BATCH_SIZE"), default=10),
                 timeout_seconds=_optional_float(values.get("NEWS_EMBEDDING_TIMEOUT_SECONDS"), default=60.0),
             )
 
@@ -138,7 +138,7 @@ class OpenAICompatibleEmbeddingConfig:
             api_key_env=values.get("NEWS_EMBEDDING_API_KEY_ENV", "NEWS_EMBEDDING_API_KEY"),
             vector_size=vector_size,
             request_dimensions=_optional_int(values.get("NEWS_EMBEDDING_DIMENSIONS"), default=None),
-            batch_size=_optional_int(values.get("NEWS_EMBEDDING_BATCH_SIZE"), default=128),
+            batch_size=_optional_int_required(values.get("NEWS_EMBEDDING_BATCH_SIZE"), default=128),
             timeout_seconds=_optional_float(values.get("NEWS_EMBEDDING_TIMEOUT_SECONDS"), default=60.0),
         )
 
@@ -323,6 +323,11 @@ def _optional_int(value: str | None, *, default: int | None) -> int | None:
     if parsed <= 0:
         raise EmbeddingConfigurationError(f"integer environment value must be positive: {value}")
     return parsed
+
+
+def _optional_int_required(value: str | None, *, default: int) -> int:
+    parsed = _optional_int(value, default=default)
+    return default if parsed is None else parsed
 
 
 def _optional_float(value: str | None, *, default: float) -> float:

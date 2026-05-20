@@ -54,7 +54,7 @@ class ScheduleSpec:
         return {
             "schedule_id": self.schedule_id,
             "name": self.name,
-            "trigger_type": self.trigger_type.value,
+            "trigger_type": ScheduleTriggerType(self.trigger_type).value,
             "trigger_config": {
                 "cron": self.cron,
                 "interval_seconds": self.interval_seconds,
@@ -65,7 +65,7 @@ class ScheduleSpec:
             "queue_name": self.queue_name,
             "enabled": self.enabled,
             "timezone": self.timezone,
-            "misfire_policy": self.misfire_policy.value,
+            "misfire_policy": MisfirePolicy(self.misfire_policy).value,
             "max_catchup_runs": self.max_catchup_runs,
             "metadata": dict(self.metadata),
         }

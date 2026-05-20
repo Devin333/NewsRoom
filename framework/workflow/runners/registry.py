@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any
+from typing import Any, cast
 
 from framework.specs import StepSpec, StepType, WorkflowSpec
 from framework.workflow.runners.base import (
@@ -130,9 +130,9 @@ class StepRunnerRegistry:
         runner: StepRunner | None = None,
     ) -> None:
         if runner is None:
-            actual_runner = step_type_or_runner
-            if not _looks_like_runner(actual_runner):
+            if not _looks_like_runner(step_type_or_runner):
                 raise StepRunnerRegistryError("runner is required")
+            actual_runner = cast(StepRunner, step_type_or_runner)
             capability = _runner_capability(actual_runner)
             legacy_step_type: StepType | None = None
         else:
@@ -290,7 +290,7 @@ class StepRunnerRegistry:
                     supports_resume=capability.supports_resume,
                     supports_timeout=capability.supports_timeout,
                     supports_retry=capability.supports_retry,
-                    side_effect_level=capability.side_effect_level.value,
+                    side_effect_level=StepRunnerSideEffectLevel(capability.side_effect_level).value,
                     required_dependencies=list(capability.required_dependencies),
                     available=not missing,
                     missing_dependencies=missing,
@@ -475,7 +475,9 @@ def _runner_can_resolve(runner: StepRunner, step: StepSpec) -> bool:
 def _runner_validate_step(runner: StepRunner, step: StepSpec) -> list[ValidationErrorItem]:
     validate_step = getattr(runner, "validate_step", None)
     if callable(validate_step):
-        return list(validate_step(step))
+        raw_items = validate_step(step)
+        if isinstance(raw_items, list):
+            return [item for item in raw_items if isinstance(item, ValidationErrorItem)]
     return []
 
 

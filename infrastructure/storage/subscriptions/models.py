@@ -55,10 +55,11 @@ class TopicSubscription:
         )
 
     def to_dict(self) -> dict[str, Any]:
+        cadence = SubscriptionCadence(self.cadence)
         return {
             "subscription_id": self.subscription_id,
             "topic": self.topic,
-            "cadence": self.cadence.value,
+            "cadence": cadence.value,
             "profile": self.profile,
             "source_limit": self.source_limit,
             "enabled": self.enabled,

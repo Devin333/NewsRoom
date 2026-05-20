@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from framework.workflow import ScopedDataBuffer
+from framework.workflow import StepScopedDataBufferView
 from business.foundation.models.source import SourceError, SourcePipelineEvent
 from infrastructure.external.sources.errors import classify_source_exception
 from business.layers.signal.source_processing import (
@@ -30,7 +30,7 @@ def source_event(event_type: str, source_id: str | None = None, **metadata: Any)
     )
 
 
-def require_sources(buffer: ScopedDataBuffer) -> dict[str, Any]:
+def require_sources(buffer: StepScopedDataBufferView) -> dict[str, Any]:
     raw_items = buffer.read("raw_items")
     if raw_items:
         return {"source_collection_status": "ready"}
@@ -46,7 +46,7 @@ def require_sources(buffer: ScopedDataBuffer) -> dict[str, Any]:
     )
 
 
-def normalize_sources(buffer: ScopedDataBuffer) -> dict[str, Any]:
+def normalize_sources(buffer: StepScopedDataBufferView) -> dict[str, Any]:
     raw_items = buffer.read("raw_items")
     source_errors = list(buffer.read("source_errors"))
     normalized_items = []
@@ -83,7 +83,7 @@ def normalize_sources(buffer: ScopedDataBuffer) -> dict[str, Any]:
     }
 
 
-def deduplicate_sources(buffer: ScopedDataBuffer) -> dict[str, Any]:
+def deduplicate_sources(buffer: StepScopedDataBufferView) -> dict[str, Any]:
     normalized_items = buffer.read("normalized_items")
     source_errors = list(buffer.read("source_errors"))
     try:
@@ -125,7 +125,7 @@ def deduplicate_sources(buffer: ScopedDataBuffer) -> dict[str, Any]:
     }
 
 
-def rank_sources(buffer: ScopedDataBuffer) -> dict[str, Any]:
+def rank_sources(buffer: StepScopedDataBufferView) -> dict[str, Any]:
     request = buffer.read("request")
     deduplicated_items = buffer.read("deduplicated_items")
     source_errors = list(buffer.read("source_errors"))

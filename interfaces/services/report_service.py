@@ -234,8 +234,10 @@ def _quality_payload(report_json: Any) -> dict[str, Any]:
 def _quality_lineage_payload(repository: Any, run_id: str, report_id: str) -> dict[str, Any]:
     list_claims = getattr(repository, "list_claims", None)
     list_quality_results = getattr(repository, "list_quality_results", None)
-    claims = list_claims(run_id) if callable(list_claims) else []
-    quality_results = list_quality_results(run_id) if callable(list_quality_results) else []
+    raw_claims = list_claims(run_id) if callable(list_claims) else []
+    raw_quality_results = list_quality_results(run_id) if callable(list_quality_results) else []
+    claims = [dict(item) for item in raw_claims] if isinstance(raw_claims, list) else []
+    quality_results = [dict(item) for item in raw_quality_results] if isinstance(raw_quality_results, list) else []
     return quality_lineage_summary(
         run_id=run_id,
         report_id=report_id,

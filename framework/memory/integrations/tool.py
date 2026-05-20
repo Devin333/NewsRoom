@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from framework.memory.models import MemoryConsolidationRequest, MemoryForgetRequest, MemoryQuery, MemoryRecord
 from framework.memory.runtime import MemoryRuntime
@@ -20,7 +20,7 @@ class MemoryToolAdapter:
 
     def write_tool(self, args: dict[str, Any], *, runtime: MemoryRuntime) -> dict[str, Any]:
         records = [MemoryRecord.from_dict(item) for item in args.get("records") or []]
-        return runtime.write(records=records, actor=args.get("actor"), run_id=args.get("run_id")).to_dict()
+        return runtime.write(records=cast(Any, records), actor=args.get("actor"), run_id=args.get("run_id")).to_dict()
 
     def forget_tool(self, args: dict[str, Any], *, runtime: MemoryRuntime) -> dict[str, Any]:
         return runtime.forget(MemoryForgetRequest.from_dict(args)).to_dict()

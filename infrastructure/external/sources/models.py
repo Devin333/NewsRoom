@@ -195,6 +195,7 @@ class SourceFetchResult:
             raise ValueError("source_id is required")
 
     def to_dict(self) -> dict[str, Any]:
+        raw_artifact_ref = self.raw_artifact_ref
         return {
             "request_id": self.request_id,
             "source_id": self.source_id,
@@ -204,9 +205,9 @@ class SourceFetchResult:
             "content_bytes": self.content_bytes,
             "latency_ms": self.latency_ms,
             "raw_artifact_ref": (
-                self.raw_artifact_ref.to_dict()
-                if hasattr(self.raw_artifact_ref, "to_dict")
-                else self.raw_artifact_ref
+                raw_artifact_ref.to_dict()
+                if raw_artifact_ref is not None and hasattr(raw_artifact_ref, "to_dict")
+                else raw_artifact_ref
             ),
             "error_type": self.error_type,
             "error_message": self.error_message,

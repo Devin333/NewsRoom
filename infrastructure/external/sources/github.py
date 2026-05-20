@@ -893,7 +893,7 @@ def _raw_item_from_release(
     if not url or not title:
         return None
     item_hash = sha256(f"{source.source_id}|{repository.slug()}|{url}".encode("utf-8")).hexdigest()
-    author = release.get("author") if isinstance(release.get("author"), dict) else {}
+    author = _dict_or_empty(release.get("author"))
     return RawSourceItem(
         source_item_id=f"raw_{item_hash[:16]}",
         source_id=source.source_id,
@@ -932,12 +932,13 @@ def _raw_item_from_commit(
 ) -> RawSourceItem | None:
     sha = _optional_text(commit.get("sha"))
     html_url = _optional_text(commit.get("html_url"))
-    commit_payload = commit.get("commit") if isinstance(commit.get("commit"), dict) else {}
+    commit_payload = _dict_or_empty(commit.get("commit"))
     message = _optional_text(commit_payload.get("message"))
     if not sha or not html_url or not message:
         return None
-    author_payload = commit_payload.get("author") if isinstance(commit_payload.get("author"), dict) else {}
-    github_author = commit.get("author") if isinstance(commit.get("author"), dict) else {}
+    author_payload = _dict_or_empty(commit_payload.get("author"))
+    committer_payload = _dict_or_empty(commit_payload.get("committer"))
+    github_author = _dict_or_empty(commit.get("author"))
     title = message.splitlines()[0].strip()
     item_hash = sha256(f"{source.source_id}|{repository.slug()}|commit|{sha}".encode("utf-8")).hexdigest()
     return RawSourceItem(
@@ -948,7 +949,7 @@ def _raw_item_from_commit(
         title=title,
         url=html_url,
         fetched_at=fetched_at,
-        published_at=_parse_datetime(author_payload.get("date") or commit_payload.get("committer", {}).get("date")),
+        published_at=_parse_datetime(author_payload.get("date") or committer_payload.get("date")),
         summary=_normalize_text(message),
         raw_content=json.dumps(commit, ensure_ascii=False, sort_keys=True),
         authors=[_author for _author in [_optional_text(github_author.get("login")) or _optional_text(author_payload.get("name"))] if _author],
@@ -1014,7 +1015,7 @@ def _raw_item_from_issue_like(
     number = item.get("number")
     if not url or not title:
         return None
-    user = item.get("user") if isinstance(item.get("user"), dict) else {}
+    user = _dict_or_empty(item.get("user"))
     labels = [
         str(label.get("name"))
         for label in item.get("labels") or []
@@ -1139,10 +1140,10 @@ def _raw_item_from_discussion(
     url = _optional_text(discussion.get("url"))
     if not title or not url:
         return None
-    author = discussion.get("author") if isinstance(discussion.get("author"), dict) else {}
-    category = discussion.get("category") if isinstance(discussion.get("category"), dict) else {}
+    author = _dict_or_empty(discussion.get("author"))
+    category = _dict_or_empty(discussion.get("category"))
     category_name = _optional_text(category.get("name"))
-    comments = discussion.get("comments") if isinstance(discussion.get("comments"), dict) else {}
+    comments = _dict_or_empty(discussion.get("comments"))
     item_hash = sha256(f"{source.source_id}|{repository.slug()}|discussion|{discussion_id or url}".encode("utf-8")).hexdigest()
     tags = [tag for tag in ["discussion", category_name] if tag]
     return RawSourceItem(
@@ -1176,7 +1177,7 @@ def _raw_item_from_discussion(
 def _discussion_category_matches(discussion: dict[str, Any], expected_category: str | None) -> bool:
     if expected_category is None:
         return True
-    category = discussion.get("category") if isinstance(discussion.get("category"), dict) else {}
+    category = _dict_or_empty(discussion.get("category"))
     return str(category.get("name") or "").casefold() == expected_category
 
 
@@ -1291,6 +1292,10 @@ def _optional_text(value: Any) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _dict_or_empty(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
 
 
 def _optional_int(value: Any) -> int | None:

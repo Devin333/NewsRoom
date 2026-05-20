@@ -2101,10 +2101,12 @@ def _approvals_resume_workflow(args: argparse.Namespace) -> int:
         print(str(exc))
         return 1
     payload = result.to_dict()
+    approval_context = payload.get("approval_context")
+    approval_payload = approval_context if isinstance(approval_context, dict) else {}
     if args.json:
         print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
     else:
-        print(f"approval_id={payload['approval_context']['approval_id']}")
+        print(f"approval_id={approval_payload.get('approval_id')}")
         print(f"run_id={payload['run_id']}")
         print(f"workflow_id={payload['workflow_id']}")
         print(f"status={payload['status']}")
@@ -2620,7 +2622,9 @@ def _sources_validate(args: argparse.Namespace) -> int:
         print(f"is_valid={str(payload['is_valid']).lower()}")
         print(f"error_count={payload['error_count']}")
         print(f"warning_count={payload['warning_count']}")
-        for issue in payload["issues"]:
+        raw_issues = payload.get("issues")
+        issues = raw_issues if isinstance(raw_issues, list) else []
+        for issue in issues:
             print(
                 f"- {issue['severity']} {issue['source_id']}.{issue['field']}: "
                 f"{issue['message']}"

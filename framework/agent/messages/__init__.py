@@ -1,3 +1,4 @@
+# pyright: reportUnsupportedDunderAll=false
 from framework.agent.messages.formatter import AgentMessageFormatter
 from framework.agent.messages.history import MessageHistory
 from framework.agent.messages.message import (

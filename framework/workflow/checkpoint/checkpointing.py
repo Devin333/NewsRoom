@@ -1,3 +1,4 @@
+# pyright: reportUnsupportedDunderAll=false
 """Compatibility exports for workflow checkpoint helpers.
 
 The concrete implementation is split across envelope, checksum, migration,

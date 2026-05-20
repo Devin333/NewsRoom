@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from typing import Any
 
 from framework.memory.models import MemoryRecord, MemoryScope, MemoryWriteMode, MemoryWriteRequest, MemoryWriteResult
+from framework.memory.models.reference import legacy_refs_from_references
 from framework.memory.policy import MemoryPolicy
 from framework.memory.stores import MemoryStore
 from framework.shared.time import utc_now
@@ -78,7 +80,7 @@ def _record_with_request_defaults(
     namespace: str | None,
     tenant_id: str | None,
 ) -> MemoryRecord:
-    refs = dict(record.refs)
+    refs = _record_refs(record)
     if run_id:
         refs.setdefault("run_id", run_id)
     return replace(
@@ -132,7 +134,7 @@ def _write_merge(records: list[MemoryRecord], *, store: MemoryStore) -> MemoryWr
             summary=record.summary or existing.summary,
             content=record.content or existing.content,
             metadata={**existing.metadata, **record.metadata},
-            refs={**existing.refs, **record.refs},
+            refs={**_record_refs(existing), **_record_refs(record)},
             tags=sorted({*existing.tags, *record.tags}),
             confidence=_max_optional(existing.confidence, record.confidence),
             importance=_max_optional(existing.importance, record.importance),
@@ -201,3 +203,9 @@ def _max_optional(left: float | None, right: float | None) -> float | None:
     if right is None:
         return left
     return max(left, right)
+
+
+def _record_refs(record: MemoryRecord) -> dict[str, Any]:
+    if isinstance(record.refs, dict):
+        return dict(record.refs)
+    return legacy_refs_from_references(record.refs)

@@ -120,7 +120,7 @@ class MemoryRecord:
             "summary": self.summary,
             "content": self.content,
             "metadata": dict(self.metadata),
-            "refs": dict(self.refs),
+            "refs": dict(_normalize_refs(self.refs)),
             "tags": list(self.tags),
             "confidence": self.confidence,
             "importance": self.importance,
@@ -138,13 +138,13 @@ class MemoryRecord:
         }
 
     def references(self) -> list[MemoryReference]:
-        return references_from_legacy_refs(dict(self.refs))
+        return references_from_legacy_refs(_normalize_refs(self.refs))
 
     def with_metadata(self, **metadata: Any) -> "MemoryRecord":
         return replace(self, metadata={**self.metadata, **metadata})
 
     def with_refs(self, refs: list[MemoryReference] | dict[str, Any]) -> "MemoryRecord":
-        merged = {**self.refs, **_normalize_refs(refs)}
+        merged = {**_normalize_refs(self.refs), **_normalize_refs(refs)}
         return replace(self, refs=merged)
 
     def with_embedding(self, embedding: list[float]) -> "MemoryRecord":

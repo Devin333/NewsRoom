@@ -93,8 +93,8 @@ class InMemoryLLMCooldownTracker:
         state = self._states.get(deployment_id)
         if state is None or state.cooldown_until is None:
             return None
-        now = now or self._now_fn()
-        if _normalize_datetime(state.cooldown_until) <= _normalize_datetime(now):
+        actual_now: datetime = now or self._now_fn()
+        if _normalize_datetime(state.cooldown_until) <= _normalize_datetime(actual_now):
             self._states[deployment_id] = LLMCooldownState(
                 deployment_id=deployment_id,
                 consecutive_failures=state.consecutive_failures,

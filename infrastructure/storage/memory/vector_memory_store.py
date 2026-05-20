@@ -12,6 +12,8 @@ from framework.memory import (
     MemoryWriteResult,
 )
 from framework.memory.exceptions import MemoryNotFound
+from framework.memory.models.reference import legacy_refs_from_references
+from framework.shared.time import parse_datetime, utc_now
 from infrastructure.storage.vector import VectorDocument, VectorSearchQuery, VectorSearchResult
 
 
@@ -102,6 +104,7 @@ class VectorMemoryStoreAdapter(MemoryStore):
 
 
 def _vector_document_from_record(record: MemoryRecord, *, collection: str) -> VectorDocument:
+    refs = _record_refs(record)
     payload = {
         **record.metadata,
         "memory_id": record.memory_id,
@@ -109,7 +112,7 @@ def _vector_document_from_record(record: MemoryRecord, *, collection: str) -> Ve
         "scope": record.scope.value,
         "summary": record.summary,
         "metadata": dict(record.metadata),
-        "refs": dict(record.refs),
+        "refs": dict(refs),
         "tags": list(record.tags),
         "confidence": record.confidence,
         "importance": record.importance,
@@ -119,7 +122,7 @@ def _vector_document_from_record(record: MemoryRecord, *, collection: str) -> Ve
         "updated_at": record.updated_at.isoformat().replace("+00:00", "Z") if record.updated_at else None,
         "expires_at": record.expires_at.isoformat().replace("+00:00", "Z") if record.expires_at else None,
     }
-    for key, value in record.refs.items():
+    for key, value in refs.items():
         payload.setdefault(str(key), value)
     return VectorDocument(
         document_id=record.memory_id,
@@ -127,12 +130,12 @@ def _vector_document_from_record(record: MemoryRecord, *, collection: str) -> Ve
         text=record.content,
         payload=payload,
         source_type=record.kind.value,
-        run_id=_optional_str(record.refs.get("run_id") or record.metadata.get("run_id")),
-        report_id=_optional_str(record.refs.get("report_id") or record.metadata.get("report_id")),
-        evidence_id=_optional_str(record.refs.get("evidence_id") or record.metadata.get("evidence_id")),
-        source_item_id=_optional_str(record.refs.get("source_item_id") or record.metadata.get("source_item_id")),
+        run_id=_optional_str(refs.get("run_id") or record.metadata.get("run_id")),
+        report_id=_optional_str(refs.get("report_id") or record.metadata.get("report_id")),
+        evidence_id=_optional_str(refs.get("evidence_id") or record.metadata.get("evidence_id")),
+        source_item_id=_optional_str(refs.get("source_item_id") or record.metadata.get("source_item_id")),
         topic=_optional_str(record.metadata.get("topic")),
-        section_id=_optional_str(record.refs.get("section_id") or record.metadata.get("section_id")),
+        section_id=_optional_str(refs.get("section_id") or record.metadata.get("section_id")),
         created_at=record.created_at,
         vector=list(record.embedding) if record.embedding is not None else None,
     )
@@ -183,10 +186,16 @@ def _record_from_vector_result(result: VectorSearchResult) -> MemoryRecord:
         importance=_optional_float(payload.get("importance")),
         embedding=_optional_float_list(payload.get("embedding")),
         actor=_optional_str(payload.get("actor")),
-        created_at=payload.get("created_at") or None,
-        updated_at=payload.get("updated_at") or None,
-        expires_at=payload.get("expires_at") or None,
+        created_at=parse_datetime(payload.get("created_at")) or utc_now(),
+        updated_at=parse_datetime(payload.get("updated_at")),
+        expires_at=parse_datetime(payload.get("expires_at")),
     )
+
+
+def _record_refs(record: MemoryRecord) -> dict[str, Any]:
+    if isinstance(record.refs, dict):
+        return dict(record.refs)
+    return legacy_refs_from_references(record.refs)
 
 
 def _matches_scope_and_kind(record: MemoryRecord, query: MemoryQuery) -> bool:

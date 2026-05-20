@@ -100,14 +100,15 @@ class MemoryQuery:
 
 
 def _record_filter_value(record: MemoryRecord, key: str) -> Any:
+    refs = record.refs if isinstance(record.refs, dict) else {}
     if key == "memory_id":
         return record.memory_id
     if key == "scope":
         return record.scope.value
     if key == "kind":
         return record.kind.value
-    if key in record.refs:
-        return record.refs[key]
+    if key in refs:
+        return refs[key]
     if key in record.metadata:
         return record.metadata[key]
     return getattr(record, key, None)

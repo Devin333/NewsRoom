@@ -11,9 +11,9 @@ from framework.workflow import (
     ArtifactPublishContext,
     ArtifactPublishPhase,
     FunctionStepRegistry,
-    ScopedDataBuffer,
     register_manifest_artifact_once,
 )
+from framework.workflow.buffer.data_buffer import StepScopedDataBufferView
 from business.foundation.models.report_output import FinalReport, render_markdown
 from infrastructure.storage.artifacts import ArtifactRef
 from infrastructure.storage.local_json import LocalJsonRepository
@@ -83,7 +83,7 @@ class WeeklyIntelligenceRunner:
         registry.register("weekly.write_report", _write_weekly_report)
         return registry
 
-    def _collect_source_reports(self, buffer: ScopedDataBuffer) -> dict[str, Any]:
+    def _collect_source_reports(self, buffer: StepScopedDataBufferView) -> dict[str, Any]:
         request = buffer.read("request")
         source_limit = int(request.get("source_limit", 20))
         period_start = _parse_datetime(str(request["period_start"]))
@@ -236,7 +236,7 @@ def _weekly_artifact_publishers() -> list[WeeklyIntelligenceArtifactPublisher]:
     return [WeeklyIntelligenceArtifactPublisher()]
 
 
-def _write_weekly_report(buffer: ScopedDataBuffer) -> dict[str, Any]:
+def _write_weekly_report(buffer: StepScopedDataBufferView) -> dict[str, Any]:
     request = buffer.read("request")
     period = buffer.read("weekly_period")
     source_reports = buffer.read("source_reports")

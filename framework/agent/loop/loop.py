@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import replace
 from typing import Any
 
@@ -826,7 +827,9 @@ class AgentLoop:
 
         accumulator = LLMStreamAccumulator()
         stream_event_count = 0
-        for stream_event_count, stream_event in enumerate(stream(request), start=1):
+        raw_stream = stream(request)
+        stream_events = raw_stream if isinstance(raw_stream, Iterable) else []
+        for stream_event_count, stream_event in enumerate(stream_events, start=1):
             normalized_event = LLMStreamEvent.from_any(stream_event)
             accumulator.add_event(normalized_event)
             metrics.llm_stream_event_count += 1

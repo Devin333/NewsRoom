@@ -15,8 +15,13 @@ from business.foundation.models.source import (
     SourceHealth,
     SourceHealthStatus,
     SourcePipelineEvent,
+    SourceReliability,
+    SourceType,
 )
 from business.foundation.registry.source_registry import SourceRegistry
+from infrastructure.external.sources.models import SourceDefinition as InfraSourceDefinition
+from infrastructure.external.sources.models import SourceReliability as InfraSourceReliability
+from infrastructure.external.sources.models import SourceType as InfraSourceType
 from infrastructure.external.sources.fetch_policy import (
     DomainRateLimiter,
     RobotsDisallowedError,
@@ -195,7 +200,7 @@ class SourceHealthChecker:
                 ],
             )
 
-        policy = effective_fetch_policy(self.fetch_policy, source)
+        policy = effective_fetch_policy(self.fetch_policy, _infra_source(source))
         rate_limit_error = _rate_limit_error(source, policy, self.rate_limiter)
         if rate_limit_error is not None:
             health = self.health_manager.get(
@@ -382,7 +387,7 @@ def _event(event_type: str, source: SourceDefinition, **metadata: Any) -> Source
         source_id=source.source_id,
         metadata={
             "source_name": source.name,
-            "source_type": source.source_type.value,
+            "source_type": _source_type(source).value,
             "url": source.url,
             **{key: value for key, value in metadata.items() if value is not None},
         },
@@ -433,7 +438,52 @@ def _rate_limit_error(
     )
     if decision.allowed:
         return None
-    return rate_limited_source_error(source, decision, url=source.url)
+    return _business_source_error(
+        rate_limited_source_error(_infra_source(source), decision, url=source.url)
+    )
+
+
+def _source_type(source: SourceDefinition) -> SourceType:
+    return SourceType(source.source_type)
+
+
+def _source_reliability(source: SourceDefinition) -> SourceReliability:
+    return SourceReliability(source.reliability)
+
+
+def _infra_source(source: SourceDefinition) -> InfraSourceDefinition:
+    return InfraSourceDefinition(
+        source_id=source.source_id,
+        name=source.name,
+        source_type=InfraSourceType(_source_type(source).value),
+        url=source.url,
+        reliability=InfraSourceReliability(_source_reliability(source).value),
+        authority_score=source.authority_score,
+        enabled=source.enabled,
+        fetch_interval_seconds=source.fetch_interval_seconds,
+        respect_robots=source.respect_robots,
+        user_agent=source.user_agent,
+        topics=list(source.topics),
+        category=source.category,
+        language=source.language,
+        region=source.region,
+        metadata=dict(source.metadata),
+    )
+
+
+def _business_source_error(error: Any) -> SourceError:
+    return SourceError(
+        source_id=error.source_id,
+        source_name=error.source_name,
+        error_type=error.error_type,
+        error_message=error.error_message,
+        url=error.url,
+        retryable=error.retryable,
+        request_ref=error.request_ref,
+        response_ref=error.response_ref,
+        occurred_at=error.occurred_at,
+        metadata=dict(error.metadata),
+    )
 
 
 def _classify_probe_exception(exc: Exception) -> tuple[str, bool, bool]:

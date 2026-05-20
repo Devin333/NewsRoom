@@ -4,7 +4,7 @@ import hashlib
 import re
 from datetime import UTC, datetime, timedelta
 
-from business.foundation.models.source import Lineage, NormalizedSourceItem, RawSourceItem, SourceReliability
+from business.foundation.models.source import Lineage, NormalizedSourceItem, RawSourceItem, SourceReliability, SourceType
 from business.layers.signal.source_processing.language import detect_language
 from infrastructure.external.sources.url_utils import canonicalize_url
 
@@ -22,7 +22,7 @@ def normalize_item(item: RawSourceItem) -> NormalizedSourceItem:
     normalized_summary = normalize_text(item.summary) if item.summary else None
     reliability = SourceReliability(item.metadata.get("source_reliability", "medium"))
     metadata = dict(item.metadata)
-    metadata.setdefault("source_type", item.source_type.value)
+    metadata.setdefault("source_type", SourceType(item.source_type).value)
     metadata.setdefault("source_id", item.source_id)
     metadata.setdefault("source_name", item.source_name)
     metadata.setdefault("authors", list(item.authors))

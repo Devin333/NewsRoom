@@ -3,7 +3,7 @@ from __future__ import annotations
 from time import perf_counter
 from typing import Any
 
-from framework.workflow import ScopedDataBuffer
+from framework.workflow import StepScopedDataBufferView
 from business.foundation.models.source import (
     SourceError,
     SourceFetchRequest,
@@ -48,7 +48,7 @@ class DailySourceCollector:
         self.source_dispatcher = source_dispatcher
         self.source_health_manager = source_health_manager
 
-    def collect_sources(self, buffer: ScopedDataBuffer, profile: str) -> dict[str, Any]:
+    def collect_sources(self, buffer: StepScopedDataBufferView, profile: str) -> dict[str, Any]:
         request = buffer.read("request")
         limit = int(request.get("source_limit", 3))
         source_errors: list[SourceError] = []

@@ -29,6 +29,13 @@ from infrastructure.external.sources import (
     rate_limited_source_error,
     run_with_fetch_retries,
 )
+from infrastructure.external.sources.models import (
+    RawSourceItem as InfraRawSourceItem,
+    SourceDefinition as InfraSourceDefinition,
+    SourceError as InfraSourceError,
+    SourceReliability as InfraSourceReliability,
+    SourceType as InfraSourceType,
+)
 from business.layers.signal.records import canonicalize_source_url
 
 
@@ -302,7 +309,7 @@ def _parse_feed(args: dict[str, Any], *, default_source_type: SourceType) -> dic
     source = _source_definition(args["source"], default_source_type=default_source_type)
     limit = args.get("limit")
     items = FeedConnector().parse(
-        source,
+        _infra_source(source),
         str(args["xml"]),
         limit=int(limit) if limit is not None else None,
     )
@@ -314,7 +321,7 @@ def _parse_feed(args: dict[str, Any], *, default_source_type: SourceType) -> dic
 
 def _extract_items(args: dict[str, Any]) -> dict[str, Any]:
     source = _source_definition(args["source"], default_source_type=SourceType.RSS)
-    if _is_html_backed_source_type(source.source_type):
+    if _is_html_backed_source_type(SourceType(source.source_type)):
         return _parse_html(
             {"source": args["source"], "html": args["content"], "limit": args.get("limit")}
         )
@@ -330,11 +337,11 @@ def _extract_items(args: dict[str, Any]) -> dict[str, Any]:
 
 def _parse_html(args: dict[str, Any]) -> dict[str, Any]:
     source = _source_definition(args["source"], default_source_type=SourceType.HTML)
-    if not _is_html_backed_source_type(source.source_type):
+    if not _is_html_backed_source_type(SourceType(source.source_type)):
         raise ValueError("source.extract_html requires source_type=html, official_blog, or web_page")
     limit = args.get("limit")
     items = HtmlConnector().parse(
-        source,
+        _infra_source(source),
         str(args["html"]),
         limit=int(limit) if limit is not None else None,
     )
@@ -352,7 +359,7 @@ def _parse_manual(args: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(records, list):
         raise ValueError("source.extract_manual records must be an array")
     items, errors = ManualConnector().fetch(
-        source,
+        _infra_source(source),
         records=records,
         limit=_optional_limit(args.get("limit")),
     )
@@ -380,14 +387,15 @@ def _fetch_official_blog(
     _ensure_http_url(source.url)
     _ensure_allowed_domain(source.url, allowed_domains)
     _ensure_source_health_allows_fetch(source, health_manager, respect_interval=True)
-    policy = effective_fetch_policy(_fetch_policy(args, default_policy), source)
+    infra_source = _infra_source(source)
+    policy = effective_fetch_policy(_fetch_policy(args, default_policy), infra_source)
     connector = _official_blog_connector(
-        source,
+        infra_source,
         fetch_text=fetch_text,
         policy=policy,
         rate_limiter=rate_limiter,
     )
-    items, errors = connector.fetch(source, limit=_optional_limit(args.get("limit")))
+    items, errors = connector.fetch(infra_source, limit=_optional_limit(args.get("limit")))
     return {
         "source": _source_definition_to_dict(source),
         "item_count": len(items),
@@ -410,7 +418,8 @@ def _fetch_url(
     _ensure_http_url(source.url)
     _ensure_allowed_domain(source.url, allowed_domains)
     _ensure_source_health_allows_fetch(source, health_manager, respect_interval=True)
-    policy = effective_fetch_policy(_fetch_policy(args, default_policy), source)
+    infra_source = _infra_source(source)
+    policy = effective_fetch_policy(_fetch_policy(args, default_policy), infra_source)
     _ensure_source_rate_limit_allows_fetch(source, policy, rate_limiter)
     content, status_code, content_type = _fetch_text(source.url, policy, fetch_text)
     content_bytes = len(content.encode("utf-8"))
@@ -419,7 +428,7 @@ def _fetch_url(
     return {
         "source_id": source.source_id,
         "source_name": source.name,
-        "source_type": source.source_type.value,
+        "source_type": SourceType(source.source_type).value,
         "url": source.url,
         "canonical_url": canonicalize_source_url(source.url),
         "content": content,
@@ -449,7 +458,8 @@ def _probe_source(
     source = _source_definition(args["source"], default_source_type=SourceType.RSS)
     _ensure_http_url(source.url)
     _ensure_allowed_domain(source.url, allowed_domains)
-    policy = effective_fetch_policy(_fetch_policy(args, default_policy), source)
+    infra_source = _infra_source(source)
+    policy = effective_fetch_policy(_fetch_policy(args, default_policy), infra_source)
     blocked = _source_health_blocked_result(
         source,
         health_manager,
@@ -687,7 +697,7 @@ def _source_rate_limit_error(
     )
     if decision.allowed:
         return None
-    return rate_limited_source_error(source, decision, url=source.url)
+    return _business_source_error(rate_limited_source_error(_infra_source(source), decision, url=source.url))
 
 
 def _fetch_text(
@@ -814,7 +824,7 @@ def _ensure_official_blog_source_type(source: SourceDefinition) -> None:
 
 
 def _official_blog_connector(
-    source: SourceDefinition,
+    source: InfraSourceDefinition,
     *,
     fetch_text: FetchText | None,
     policy: SourceFetchPolicy,
@@ -839,8 +849,8 @@ def _truthy(value: Any) -> bool:
     return str(value).strip().casefold() in {"1", "true", "yes", "on"}
 
 
-def _is_html_backed_source_type(source_type: SourceType) -> bool:
-    return source_type in {SourceType.HTML, SourceType.OFFICIAL_BLOG, SourceType.WEB_PAGE}
+def _is_html_backed_source_type(source_type: SourceType | str) -> bool:
+    return SourceType(source_type) in {SourceType.HTML, SourceType.OFFICIAL_BLOG, SourceType.WEB_PAGE}
 
 
 def _optional_bool(value: Any, default: bool) -> bool:
@@ -880,6 +890,38 @@ def _source_definition(payload: Any, *, default_source_type: SourceType) -> Sour
     )
 
 
+def _infra_source(source: SourceDefinition) -> InfraSourceDefinition:
+    return InfraSourceDefinition(
+        source_id=source.source_id,
+        name=source.name,
+        source_type=InfraSourceType(SourceType(source.source_type).value),
+        url=source.url,
+        reliability=InfraSourceReliability(SourceReliability(source.reliability).value),
+        authority_score=source.authority_score,
+        enabled=source.enabled,
+        fetch_interval_seconds=source.fetch_interval_seconds,
+        respect_robots=source.respect_robots,
+        user_agent=source.user_agent,
+        topics=list(source.topics),
+        category=source.category,
+        language=source.language,
+        region=source.region,
+        metadata=dict(source.metadata),
+    )
+
+
+def _business_source_error(error: InfraSourceError) -> SourceError:
+    return SourceError(
+        source_id=error.source_id,
+        source_name=error.source_name,
+        error_type=error.error_type,
+        error_message=error.error_message,
+        url=error.url,
+        retryable=error.retryable,
+        metadata=dict(error.metadata),
+    )
+
+
 def _source_id(args: dict[str, Any]) -> str:
     source_id = args.get("source_id")
     if source_id:
@@ -914,9 +956,9 @@ def _source_definition_to_dict(source: SourceDefinition) -> dict[str, Any]:
     return {
         "source_id": source.source_id,
         "name": source.name,
-        "source_type": source.source_type.value,
+        "source_type": SourceType(source.source_type).value,
         "url": source.url,
-        "reliability": source.reliability.value,
+        "reliability": SourceReliability(source.reliability).value,
         "authority_score": source.authority_score,
         "enabled": source.enabled,
         "fetch_interval_seconds": source.fetch_interval_seconds,
@@ -930,12 +972,12 @@ def _source_definition_to_dict(source: SourceDefinition) -> dict[str, Any]:
     }
 
 
-def _raw_source_item_to_dict(item: RawSourceItem) -> dict[str, Any]:
+def _raw_source_item_to_dict(item: RawSourceItem | InfraRawSourceItem) -> dict[str, Any]:
     return {
         "source_item_id": item.source_item_id,
         "source_id": item.source_id,
         "source_name": item.source_name,
-        "source_type": item.source_type.value,
+        "source_type": SourceType(item.source_type).value,
         "title": item.title,
         "url": item.url,
         "fetched_at": _dt(item.fetched_at),

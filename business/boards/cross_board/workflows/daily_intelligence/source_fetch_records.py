@@ -9,6 +9,7 @@ from business.foundation.models.source import (
     SourceError,
     SourceFetchRequest,
     SourceFetchResult,
+    SourceReliability,
     SourceType,
 )
 from infrastructure.external.sources import SourceFetchPolicy
@@ -39,16 +40,17 @@ def source_fetch_request(
     connector_name: str | None = None,
 ) -> SourceFetchRequest:
     query = None
-    if source.source_type == SourceType.ARXIV:
+    source_type = SourceType(source.source_type)
+    if source_type == SourceType.ARXIV:
         query = str(source.metadata.get("query") or request.get("topic") or "")
     user_agent = fetch_policy.user_agent if fetch_policy is not None else source.user_agent
     return SourceFetchRequest(
         request_id=request_id,
         source_id=source.source_id,
-        source_type=source.source_type,
+        source_type=source_type,
         url=source.url,
         query=query,
-        timeout_seconds=fetch_policy.timeout_seconds if fetch_policy is not None else 15,
+        timeout_seconds=int(fetch_policy.timeout_seconds if fetch_policy is not None else 15),
         max_bytes=fetch_policy.max_bytes if fetch_policy is not None else 1_000_000,
         max_redirects=fetch_policy.max_redirects if fetch_policy is not None else 3,
         user_agent=user_agent,
@@ -58,7 +60,7 @@ def source_fetch_request(
             "profile": profile,
             "topic": request.get("topic"),
             "source_name": source.name,
-            "reliability": source.reliability.value,
+            "reliability": SourceReliability(source.reliability).value,
             "authority_score": source.authority_score,
             "fetch_interval_seconds": source.fetch_interval_seconds,
             "respect_robots": source.respect_robots,
@@ -132,7 +134,7 @@ def source_fetch_result(
     first_error = errors[0] if errors else None
     response_metadata = response_metadata_from_observations(items=items, errors=errors)
     metadata: dict[str, Any] = {
-        "source_type": source.source_type.value,
+        "source_type": SourceType(source.source_type).value,
         "url": source.url,
         "item_count": len(items),
         "error_count": len(errors),

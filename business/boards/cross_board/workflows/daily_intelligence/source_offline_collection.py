@@ -3,7 +3,7 @@ from __future__ import annotations
 from time import perf_counter
 from typing import Any
 
-from business.foundation.models.source import SourceError, SourceFetchRequest, SourceFetchResult, SourcePipelineEvent, SourcePipelineMetrics
+from business.foundation.models.source import SourceError, SourceFetchRequest, SourceFetchResult, SourcePipelineEvent, SourcePipelineMetrics, SourceType
 from business.foundation.registry.source_registry import SourceRegistry
 from infrastructure.external.sources import FeedConnector
 from business.layers.signal.source_health import BasicSourceHealthManager
@@ -11,6 +11,7 @@ from business.boards.cross_board.workflows.daily_intelligence.source_collection_
 from business.boards.cross_board.workflows.daily_intelligence.source_fetch_records import elapsed_ms, source_fetch_request, source_fetch_result
 from business.boards.cross_board.workflows.daily_intelligence.source_fixtures import fixture_feed, fixture_source
 from business.boards.cross_board.workflows.daily_intelligence.source_processing import source_event as _source_event
+from business.boards.cross_board.workflows.daily_intelligence.source_dispatcher import _infra_source
 
 
 def collect_offline_sources(
@@ -34,7 +35,7 @@ def collect_offline_sources(
         _source_event(
             "source_fetch_started",
             fixture.source_id,
-            source_type=fixture.source_type.value,
+            source_type=SourceType(fixture.source_type).value,
             url=fixture.url,
         )
     )
@@ -43,10 +44,10 @@ def collect_offline_sources(
         _source_event(
             "source_parse_started",
             fixture.source_id,
-            source_type=fixture.source_type.value,
+            source_type=SourceType(fixture.source_type).value,
         )
     )
-    raw_items = FeedConnector().parse(fixture, fixture_feed(), limit=limit)
+    raw_items = FeedConnector().parse(_infra_source(fixture), fixture_feed(), limit=limit)
     fetch_latency_ms = elapsed_ms(latency_start)
     request_id = "source-fetch-0001-fixture-ai"
     source_fetch_requests.append(

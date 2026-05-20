@@ -887,7 +887,8 @@ def _authority_score(item: NormalizedSourceItem) -> float:
 
 
 def _traceability_score(item: NormalizedSourceItem) -> float:
-    lineage = item.metadata.get("lineage") if isinstance(item.metadata.get("lineage"), dict) else {}
+    raw_lineage = item.metadata.get("lineage")
+    lineage = raw_lineage if isinstance(raw_lineage, dict) else {}
     score = 0.0
     if item.source_id and lineage.get("source_id"):
         score += 0.3

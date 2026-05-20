@@ -208,6 +208,8 @@ class AnalysisPipeline:
                 related_relations = [relation for relation in relations if relation.target_ref.object_id == technology.technology_id]
                 areas = _impact_areas_for_relations(related_relations)
                 score_value = _impact_score(related_relations, trend_map, quality_map, technology.technology_id)
+                trend = trend_map.get(technology.technology_id)
+                quality = quality_map.get(technology.technology_id)
                 impacts.append(
                     Impact(
                         target_ref=ObjectRef(object_type="technology", object_id=technology.technology_id, label=technology.name),
@@ -217,8 +219,8 @@ class AnalysisPipeline:
                                 _score_factor("source_authority", min(1.0, len({signal.source.source_id for signal in signals if signal.signal_id in {relation.source_ref.object_id for relation in related_relations}}) / 4.0)),
                                 _score_factor("cross_board_presence", min(1.0, len({signal.board_type.value for signal in signals if signal.signal_id in {relation.source_ref.object_id for relation in related_relations}}) / 4.0)),
                                 _score_factor("relation_centrality", min(1.0, len(related_relations) / 5.0)),
-                                _score_factor("trend_score", trend_map.get(technology.technology_id).score.value if trend_map.get(technology.technology_id) else 0.0),
-                                _score_factor("quality_score", quality_map.get(technology.technology_id).score.value if quality_map.get(technology.technology_id) else 0.5),
+                                _score_factor("trend_score", trend.score.value if trend else 0.0),
+                                _score_factor("quality_score", quality.score.value if quality else 0.5),
                                 _score_factor("affected_area_count", min(1.0, len(areas) / 4.0)),
                             ],
                         ),
@@ -248,6 +250,7 @@ class AnalysisPipeline:
                 trend = trend_map.get(technology.technology_id)
                 maturity = maturity_map.get(technology.technology_id)
                 impact = impact_map.get(technology.technology_id)
+                quality = quality_map.get(technology.technology_id)
                 related_relations = [relation for relation in relations if relation.target_ref.object_id == technology.technology_id]
                 paper_count = len([relation for relation in related_relations if relation.relation_type.value == "proposes"])
                 project_count = len([relation for relation in related_relations if relation.relation_type.value == "implements"])
@@ -264,7 +267,7 @@ class AnalysisPipeline:
                         maturity_stage=maturity.stage if maturity else MaturityStage.UNKNOWN,
                         maturity_score=maturity.score if maturity else Score(value=0.0, factors=[]),
                         impact_score=impact.score if impact else Score(value=0.0, factors=[]),
-                        quality_score=quality_map.get(technology.technology_id).score if quality_map.get(technology.technology_id) else Score(value=0.5, factors=[]),
+                        quality_score=quality.score if quality else Score(value=0.5, factors=[]),
                         paper_count=paper_count,
                         project_count=project_count,
                         community_discussion_count=community_count,
@@ -281,7 +284,7 @@ def _time_window(context: Any) -> TimeWindow:
     reference = getattr(context, "reference_time", None) or datetime.now(UTC)
     end = reference.astimezone(UTC) if reference.tzinfo else reference.replace(tzinfo=UTC)
     start = end - timedelta(days=7)
-    return TimeWindow(start=start, end=end, label="last_7_days")
+    return TimeWindow(start_at=start, end_at=end, label="last_7_days")
 
 
 def _signals_by_technology(
@@ -400,8 +403,10 @@ def _impact_score(relations: list[Relation], trend_map: dict[str, Trend], qualit
     source_authority = min(1.0, len(relations) / 4.0)
     cross_board_presence = min(1.0, len({relation.source_ref.object_type for relation in relations}) / 4.0)
     relation_centrality = min(1.0, len(relations) / 5.0)
-    trend_score = trend_map.get(technology_id).score.value if trend_map.get(technology_id) else 0.0
-    quality_score = quality_map.get(technology_id).score.value if quality_map.get(technology_id) else 0.5
+    trend = trend_map.get(technology_id)
+    quality = quality_map.get(technology_id)
+    trend_score = trend.score.value if trend else 0.0
+    quality_score = quality.score.value if quality else 0.5
     areas = _impact_areas_for_relations(relations)
     affected_area_count = min(1.0, len(areas) / 4.0)
     return round(

@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from framework.workflow import ScopedDataBuffer
+from framework.workflow import StepScopedDataBufferView
 from business.layers.relation.evidence import EvidenceBuilder
 from business.layers.analysis.quality import QualityEvent
 
 
-def build_evidence(buffer: ScopedDataBuffer) -> dict[str, Any]:
+def build_evidence(buffer: StepScopedDataBufferView) -> dict[str, Any]:
     build_result = EvidenceBuilder().build_with_scores(buffer.read("ranked_items"), bundle_id="daily")
     bundle = build_result.bundle
     if not bundle.items:

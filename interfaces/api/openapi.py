@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from fastapi import FastAPI
 from fastapi.routing import APIRoute
@@ -60,7 +61,7 @@ def configure_openapi_contract(api: FastAPI) -> None:
     for route in api.routes:
         if not isinstance(route, APIRoute):
             continue
-        route.tags = [_tag_for_path(route.path)]
+        route.tags = cast(list[str | Enum], [_tag_for_path(route.path)])
         route.operation_id = _operation_id(route)
         if _is_json_api_route(route) and route.response_model is None:
             route.response_model = ApiResponse

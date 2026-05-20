@@ -125,7 +125,12 @@ class ApprovalRequest:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        decision = self.decision.to_dict() if hasattr(self.decision, "to_dict") else self.decision
+        decision_value = self.decision
+        decision = (
+            decision_value.to_dict()
+            if decision_value is not None and hasattr(decision_value, "to_dict")
+            else decision_value
+        )
         status = getattr(self.status, "value", self.status)
         return {
             "approval_id": self.approval_id,

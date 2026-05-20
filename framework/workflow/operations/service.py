@@ -1259,7 +1259,7 @@ def append_operation_record(
     manifest: dict[str, Any],
     record: WorkflowOperationRecord | dict[str, Any],
 ) -> None:
-    payload = record.to_dict() if hasattr(record, "to_dict") else dict(record)
+    payload = _operation_record_payload(record)
     operations = manifest.setdefault("operations", [])
     if not isinstance(operations, list):
         operations = []
@@ -1269,6 +1269,12 @@ def append_operation_record(
     manifest["latest_operation_id"] = payload.get("operation_id")
     manifest["latest_operation_type"] = payload.get("operation_type")
     manifest["latest_operation_status"] = payload.get("status")
+
+
+def _operation_record_payload(record: WorkflowOperationRecord | dict[str, Any]) -> dict[str, Any]:
+    if isinstance(record, WorkflowOperationRecord):
+        return record.to_dict()
+    return dict(record)
 
 
 def operation_event(

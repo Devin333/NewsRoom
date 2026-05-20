@@ -5,7 +5,8 @@ from typing import Any
 
 from framework import RunResult, WorkflowRunner
 from framework.specs import EdgeSpec, StepSpec, WorkflowSpec
-from framework.workflow import FunctionStepRegistry, ScopedDataBuffer
+from framework.workflow import FunctionStepRegistry
+from framework.workflow.buffer.data_buffer import StepScopedDataBufferView
 from business.boards.cross_board.workflows.daily_intelligence.artifact_publisher import (
     build_daily_intelligence_artifact_publishers,
 )
@@ -93,7 +94,7 @@ def _topic_from_request(request: dict[str, Any]) -> str:
     return str(topic).strip() or "daily intelligence runtime smoke"
 
 
-def _plan(buffer: ScopedDataBuffer) -> dict[str, Any]:
+def _plan(buffer: StepScopedDataBufferView) -> dict[str, Any]:
     request = buffer.read("request")
     topic = _topic_from_request(request)
     return {
@@ -109,7 +110,7 @@ def _plan(buffer: ScopedDataBuffer) -> dict[str, Any]:
     }
 
 
-def _analyze(buffer: ScopedDataBuffer) -> dict[str, Any]:
+def _analyze(buffer: StepScopedDataBufferView) -> dict[str, Any]:
     plan = buffer.read("research_plan")
     topic = plan["topic"]
     return {
@@ -127,7 +128,7 @@ def _analyze(buffer: ScopedDataBuffer) -> dict[str, Any]:
     }
 
 
-def _write_report(buffer: ScopedDataBuffer) -> dict[str, Any]:
+def _write_report(buffer: StepScopedDataBufferView) -> dict[str, Any]:
     request = buffer.read("request")
     plan = buffer.read("research_plan")
     analysis = buffer.read("analysis_result")

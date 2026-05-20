@@ -41,7 +41,7 @@ class StepType(str, Enum):
     MEMORY_INDEX = "memory_index"
 
     @classmethod
-    def from_value(cls, value: str | "StepType") -> "StepType":
+    def from_value(cls, value: str | StepType) -> "StepType":
         if isinstance(value, StepType):
             return value
         return cls(str(value))

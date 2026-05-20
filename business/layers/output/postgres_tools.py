@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from framework.tool.models import ToolDefinition
 from framework.tool.registry import ToolRegistry
-from business.layers.output.records import OutputReportRecord, OutputSourceError, OutputSourceHealth
+from business.layers.output.records import OutputReportRecord, OutputSourceError, OutputSourceHealth, OutputSourceHealthStatus
 
 
 class PostgresReportRepository(Protocol):
@@ -39,8 +39,10 @@ def register_postgres_tools(
                 tool_name=tool_name,
             ),
         )
-    health_repository = source_health_repository or (
-        repository if hasattr(repository, "update_source_health") else None
+    health_repository: PostgresSourceHealthRepository | None = source_health_repository or (
+        cast(PostgresSourceHealthRepository, repository)
+        if hasattr(repository, "update_source_health")
+        else None
     )
     if health_repository is not None:
         registry.register(
@@ -140,7 +142,7 @@ def _update_source_health(
     last_error = _source_error(args.get("last_error"), source_id=source_id)
     health = OutputSourceHealth(
         source_id=source_id,
-        status=_required_text(args.get("status"), "status"),
+        status=OutputSourceHealthStatus(_required_text(args.get("status"), "status")),
         consecutive_failures=max(0, int(args.get("consecutive_failures") or 0)),
         success_count_24h=max(0, int(args.get("success_count_24h") or 0)),
         failure_count_24h=max(0, int(args.get("failure_count_24h") or 0)),

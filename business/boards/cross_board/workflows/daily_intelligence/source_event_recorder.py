@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from business.foundation.models.source import SourceDefinition, SourceError, SourceHealth, SourcePipelineEvent
+from business.foundation.models.source import SourceDefinition, SourceError, SourceHealth, SourcePipelineEvent, SourceType
 from business.boards.cross_board.workflows.daily_intelligence.source_fetch_records import dt
 from business.boards.cross_board.workflows.daily_intelligence.source_processing import source_event
 
@@ -47,7 +47,7 @@ class SourceEventRecorder:
         self._append(
             "source_fetch_started",
             source.source_id,
-            source_type=source.source_type.value,
+            source_type=SourceType(source.source_type).value,
             url=source.url,
         )
 
@@ -55,7 +55,7 @@ class SourceEventRecorder:
         self._append(
             "source_parse_started",
             source.source_id,
-            source_type=source.source_type.value,
+            source_type=SourceType(source.source_type).value,
         )
 
     def fetch_succeeded(
@@ -63,7 +63,7 @@ class SourceEventRecorder:
         source: SourceDefinition,
         *,
         item_count: int,
-        fetch_latency_ms: int,
+        fetch_latency_ms: float,
     ) -> None:
         self._append(
             "source_fetch_succeeded",
@@ -84,7 +84,7 @@ class SourceEventRecorder:
         source: SourceDefinition,
         *,
         item_count: int,
-        fetch_latency_ms: int,
+        fetch_latency_ms: float,
         health: SourceHealth,
     ) -> None:
         self._append(
@@ -101,7 +101,7 @@ class SourceEventRecorder:
         *,
         error_type: str,
         error_count: int,
-        fetch_latency_ms: int,
+        fetch_latency_ms: float,
     ) -> None:
         self._append(
             "source_probe_failed",
@@ -118,7 +118,7 @@ class SourceEventRecorder:
         error: SourceError,
         retryable: bool,
         source_health_affecting: bool,
-        fetch_latency_ms: int,
+        fetch_latency_ms: float,
     ) -> None:
         self._append(
             "source_fetch_failed",

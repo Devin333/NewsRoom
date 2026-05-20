@@ -81,7 +81,7 @@ class AnalysisContext(PrimitiveModel):
 def default_time_window(days: int = 7, *, reference_time: datetime | None = None) -> TimeWindow:
     anchor = ensure_utc(reference_time or datetime.now(UTC)) or datetime.now(UTC)
     return TimeWindow(
-        start=anchor - timedelta(days=days),
-        end=anchor,
+        start_at=anchor - timedelta(days=days),
+        end_at=anchor,
         label=f"last_{days}_days",
     )

@@ -78,9 +78,11 @@ class SubAgentResult:
 class SubAgentExecutor(Protocol):
     def execute(self, task: SubAgentTask) -> SubAgentResult:
         """Execute a child agent against a read-only parent snapshot."""
+        ...
 
     def run(self, task: SubAgentTask) -> SubAgentResult:
         """Run a child agent against a read-only parent snapshot."""
+        ...
 
 
 class LocalSubAgentExecutor:
@@ -185,7 +187,7 @@ def _result_to_subagent_result(
         status=status,
         output=dict(result.output),
         summary=str(diagnostics.get("summary") or result.error or ""),
-        error=result.error,
+        error=str(result.error) if result.error is not None else None,
         events=[dict(event) for event in result.events],
         metrics=result.metrics.to_dict(),
         artifact_refs=[artifact.to_dict() for artifact in result.llm_call_artifacts],

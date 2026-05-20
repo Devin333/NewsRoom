@@ -52,6 +52,7 @@ class InMemoryMemoryStore:
         record = self._records.get(memory_id)
         if record is None:
             raise MemoryNotFound(memory_id)
+        existing_refs = record.refs if isinstance(record.refs, dict) else {}
         updated = replace(
             record,
             kind=patch.get("kind", record.kind),
@@ -59,7 +60,7 @@ class InMemoryMemoryStore:
             summary=patch.get("summary", record.summary),
             content=str(patch.get("content", record.content)),
             metadata={**record.metadata, **dict(patch.get("metadata") or {})},
-            refs={**record.refs, **dict(patch.get("refs") or {})},
+            refs={**existing_refs, **dict(patch.get("refs") or {})},
             tags=[str(tag) for tag in patch.get("tags", record.tags)],
             confidence=patch.get("confidence", record.confidence),
             importance=patch.get("importance", record.importance),

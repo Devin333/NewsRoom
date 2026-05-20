@@ -81,7 +81,7 @@ class SourceHealthFlow:
         self,
         source: SourceDefinition,
         *,
-        fetch_latency_ms: int,
+        fetch_latency_ms: float,
         is_probe: bool,
         item_count: int,
     ) -> SourceHealth:
@@ -107,7 +107,7 @@ class SourceHealthFlow:
         source: SourceDefinition,
         error: SourceError,
         *,
-        fetch_latency_ms: int,
+        fetch_latency_ms: float,
     ) -> SourceHealth:
         health = self.health_manager.record_failure(
             source.source_id,

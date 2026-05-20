@@ -16,7 +16,7 @@ def memory_record_fixture(**overrides: Any) -> MemoryRecord:
 def memory_query_fixture(**overrides: Any) -> MemoryQuery:
     payload = {"query": "fixture"}
     payload.update(overrides)
-    return MemoryQuery(**payload)
+    return MemoryQuery.from_dict(payload)
 
 
 def memory_runtime_fixture(records: list[MemoryRecord] | None = None) -> MemoryRuntime:

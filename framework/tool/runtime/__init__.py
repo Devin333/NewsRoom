@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from framework.tool.runtime.errors import (
     ToolDefinitionError,
@@ -9,6 +9,14 @@ from framework.tool.runtime.errors import (
     ToolSecretError,
     ToolTimeoutError,
 )
+
+if TYPE_CHECKING:
+    from framework.tool.runtime.batch_executor import ToolBatchExecutor
+    from framework.tool.runtime.executor import ToolExecutor
+    from framework.tool.runtime.mcp_adapter import MCPServerConfig, MCPToolAdapter
+    from framework.tool.runtime.retry import ToolRetryController
+    from framework.tool.runtime.sandbox import ToolSandbox
+    from framework.tool.runtime.timeout import ToolTimeoutRunner, run_with_timeout
 
 _LAZY_EXPORTS = {
     "MCPServerConfig": "framework.tool.runtime.mcp_adapter",

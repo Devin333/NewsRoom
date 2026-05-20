@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from framework.tool.governance.redaction import (
     REDACTED_VALUE,
@@ -8,6 +8,30 @@ from framework.tool.governance.redaction import (
     contains_redacted_value,
     redact_sensitive_values,
 )
+
+if TYPE_CHECKING:
+    from framework.tool.governance.approval import (
+        ApprovalRequest,
+        ToolApprovalDecision,
+        ToolApprovalRequest,
+        ToolApprovalStore,
+    )
+    from framework.tool.governance.boundary import (
+        AgentToolBoundaryFinding,
+        AgentToolBoundaryReport,
+        audit_agent_spec_tool_boundary,
+        audit_agent_tool_boundary,
+        harden_restricted_agent_tool_policy,
+        is_external_fetch_tool,
+        is_restricted_agent_id,
+    )
+    from framework.tool.governance.guardrails import ToolGuardrail, ToolGuardrailChain
+    from framework.tool.governance.risk import ToolRiskClassifier, ToolRiskLevel
+    from framework.tool.governance.secrets import (
+        EnvironmentSecretProvider,
+        MappingSecretProvider,
+        SecretProvider,
+    )
 
 _LAZY_EXPORTS = {
     "ApprovalRequest": "framework.tool.governance.approval",

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from framework.tool.registry.registry import (
     DuplicateToolPolicy,
@@ -8,6 +8,22 @@ from framework.tool.registry.registry import (
     ToolRegistry,
     ToolRegistryValidationResult,
 )
+
+if TYPE_CHECKING:
+    from framework.tool.registry.catalog import (
+        ToolCatalog,
+        ToolCatalogEntry,
+        ToolCatalogNamespace,
+        build_builtin_dangerous_registry,
+        build_builtin_dangerous_tool_registry,
+        build_builtin_safe_registry,
+        build_builtin_safe_tool_registry,
+        build_builtin_tool_registry,
+        build_tool_catalog,
+    )
+    from framework.tool.registry.discovery import ToolDiscovery
+    from framework.tool.registry.namespace import ToolNamespace
+    from framework.tool.registry.resolver import ToolResolver
 
 _LAZY_EXPORTS = {
     "ToolCatalog": "framework.tool.registry.catalog",

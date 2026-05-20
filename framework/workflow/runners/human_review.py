@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 
 HumanReviewDecisionValue = Literal["approved", "rejected", "needs_changes"]
@@ -50,7 +50,7 @@ class HumanReviewDecision:
         if not isinstance(metadata, dict):
             raise ValueError("human review metadata must be an object")
         return cls(
-            decision=str(payload.get("decision") or ""),
+            decision=cast(HumanReviewDecisionValue, str(payload.get("decision") or "")),
             actor_id=str(payload.get("actor_id") or ""),
             reason=_optional_str(payload.get("reason")),
             patch=dict(patch) if patch is not None else None,

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from collections import defaultdict
-from typing import Any, Mapping
+from typing import Any, Mapping, cast
 from uuid import NAMESPACE_URL, uuid5
 
 from qdrant_client import QdrantClient, models
@@ -75,7 +75,8 @@ class QdrantVectorStore:
             with_payload=True,
             score_threshold=query.score_threshold,
         )
-        points = getattr(response, "points", response)
+        raw_points = getattr(response, "points", response)
+        points = cast(Any, raw_points[0] if isinstance(raw_points, tuple) else raw_points)
         return [
             VectorSearchResult.from_payload(score=point.score, payload=dict(point.payload or {}))
             for point in points
@@ -159,7 +160,7 @@ class QdrantVectorStore:
 def qdrant_store_from_env(
     *,
     embedding_model: EmbeddingModel | None = None,
-    env: dict[str, str] | None = None,
+    env: Mapping[str, str] | None = None,
 ) -> QdrantVectorStore:
     values = env if env is not None else os.environ
     vector_size = _vector_size_from_env(values)

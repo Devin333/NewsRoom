@@ -1,5 +1,7 @@
 """Workflow runtime execution primitives."""
 
+from typing import TYPE_CHECKING
+
 from framework.workflow.runtime.context import StepRunContext, WorkflowRunContext
 from framework.workflow.runtime.errors import (
     StepExecutionError,
@@ -11,6 +13,10 @@ from framework.workflow.runtime.errors import (
 from framework.workflow.runtime.result import StepOutcome, WorkflowError, WorkflowResult
 from framework.workflow.runtime.run_result import RunResult
 from framework.workflow.runtime.state import StepRuntimeState, WorkflowRuntimeState
+
+if TYPE_CHECKING:
+    from framework.workflow.runtime.executor import WorkflowExecutor
+    from framework.workflow.runtime.runner import WorkflowRunner
 
 __all__ = [
     "StepExecutionError",
@@ -41,5 +47,3 @@ def __getattr__(name: str):
 
         return WorkflowRunner
     raise AttributeError(name)
-
-

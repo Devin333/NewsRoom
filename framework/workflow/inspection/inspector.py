@@ -3062,7 +3062,7 @@ def compare_workflow_run_inspections(
     base_step_ids = set(base_steps)
     target_step_ids = set(target_steps)
     shared_step_ids = sorted(base_step_ids & target_step_ids)
-    changed_step_statuses = {
+    changed_step_statuses: dict[str, dict[str, str | None]] = {
         step_id: {
             "base": base_steps[step_id].status,
             "target": target_steps[step_id].status,
@@ -3336,9 +3336,11 @@ def _timeline_item_from_event(
     *,
     sequence: int,
 ) -> WorkflowTimelineItem:
-    payload = event.payload if isinstance(event.payload, dict) else {}
-    outcome = payload.get("outcome") if isinstance(payload.get("outcome"), dict) else {}
-    error = payload.get("error") if isinstance(payload.get("error"), dict) else {}
+    payload: dict[str, Any] = event.payload if isinstance(event.payload, dict) else {}
+    raw_outcome = payload.get("outcome")
+    raw_error = payload.get("error")
+    outcome: dict[str, Any] = raw_outcome if isinstance(raw_outcome, dict) else {}
+    error: dict[str, Any] = raw_error if isinstance(raw_error, dict) else {}
     step_id = (
         event.step_id
         or _optional_string(payload.get("step_id"))

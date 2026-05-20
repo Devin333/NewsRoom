@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any, cast
+
 from framework.memory.models import MemoryKind, MemoryQuery, MemoryRecord, MemoryRecallResult, MemoryScope, MemoryWriteResult
 from framework.memory.policy import DEFAULT_WORKFLOW_MEMORY_POLICY, MemoryPolicy
 from framework.memory.runtime import MemoryRuntime
@@ -44,7 +46,7 @@ class WorkflowMemoryAdapter:
             for record in records
         ]
         return runtime.write(
-            records=prepared,
+            records=cast(Any, prepared),
             actor=workflow_id,
             run_id=run_id,
             policy=policy or DEFAULT_WORKFLOW_MEMORY_POLICY,

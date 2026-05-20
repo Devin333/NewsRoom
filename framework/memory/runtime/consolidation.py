@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from typing import Any
 from uuid import uuid4
 
 from framework.memory.models import (
@@ -77,7 +78,7 @@ class MemoryConsolidator:
         }
         if request.reason:
             metadata["reason"] = request.reason
-        refs = {
+        refs: dict[str, Any] = {
             "source_memory_ids": source_ids,
         }
         if request.run_id:

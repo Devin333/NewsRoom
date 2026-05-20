@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
-from typing import Any
+from typing import Any, cast
 
 from pydantic import Field
 
@@ -229,7 +229,7 @@ def _item_from_evidence(item: Any) -> dict[str, Any]:
 
 def _ranked_item_payload(item: Any) -> Any:
     if is_dataclass(item):
-        payload = asdict(item)
+        payload = asdict(cast(Any, item))
     elif hasattr(item, "to_dict"):
         payload = item.to_dict()
     elif isinstance(item, dict):
@@ -243,7 +243,7 @@ def _ranked_item_payload(item: Any) -> Any:
 
 def _normalized_item_payload(item: Any) -> Any:
     if is_dataclass(item):
-        payload = asdict(item)
+        payload = asdict(cast(Any, item))
     elif hasattr(item, "to_dict"):
         payload = item.to_dict()
     elif isinstance(item, dict):

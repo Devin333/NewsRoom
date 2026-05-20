@@ -9,9 +9,14 @@ from business.foundation.models.source import (
     SourceError,
     SourceFetchRequest,
     SourceFetchResult,
+    SourceReliability,
     SourceType,
+    Lineage,
+    RawSourceItem,
 )
 from business.foundation.registry.source_registry import SourceRegistry
+from infrastructure.external import sources as infra_sources
+from infrastructure.external.sources.models import SourceDefinition as InfraSourceDefinition
 from infrastructure.external.sources import (
     ArxivConnector,
     FeedConnector,
@@ -26,6 +31,10 @@ from infrastructure.external.sources import (
     StackOverflowConnector,
     DevToConnector,
     effective_fetch_policy,
+)
+from infrastructure.external.sources.models import (
+    SourceReliability as InfraSourceReliability,
+    SourceType as InfraSourceType,
 )
 from business.boards.cross_board.workflows.daily_intelligence.source_connector_adapter import (
     connector_display_name,
@@ -112,7 +121,7 @@ class SourceDispatcher:
         if registered_result is not None:
             return registered_result
 
-        handler = self._fetch_handlers.get(source.source_type)
+        handler = self._fetch_handlers.get(_source_type(source))
         if handler is not None:
             return handler(source, request, fetch_request, profile, limit)
 
@@ -126,8 +135,7 @@ class SourceDispatcher:
         profile: str,
         limit: int,
     ) -> tuple[list[Any], list[SourceError], SourceFetchResult | None]:
-        items, errors = self.feed_connector.fetch(source, limit=limit)
-        return items, errors, None
+        return _connector_result(self.feed_connector.fetch(_infra_source(source), limit=limit))
 
     def _fetch_official_blog(
         self,
@@ -153,8 +161,7 @@ class SourceDispatcher:
         profile: str,
         limit: int,
     ) -> tuple[list[Any], list[SourceError], SourceFetchResult | None]:
-        items, errors = self.html_connector.fetch(source, limit=limit)
-        return items, errors, None
+        return _connector_result(self.html_connector.fetch(_infra_source(source), limit=limit))
 
     def _fetch_manual(
         self,
@@ -164,8 +171,7 @@ class SourceDispatcher:
         profile: str,
         limit: int,
     ) -> tuple[list[Any], list[SourceError], SourceFetchResult | None]:
-        items, errors = self.manual_connector.fetch(source, limit=limit)
-        return items, errors, None
+        return _connector_result(self.manual_connector.fetch(_infra_source(source), limit=limit))
 
     def _fetch_arxiv(
         self,
@@ -176,8 +182,7 @@ class SourceDispatcher:
         limit: int,
     ) -> tuple[list[Any], list[SourceError], SourceFetchResult | None]:
         query = str(source.metadata.get("query") or request["topic"])
-        items, errors = self.arxiv_connector.fetch(source, query=query, limit=limit)
-        return items, errors, None
+        return _connector_result(self.arxiv_connector.fetch(_infra_source(source), query=query, limit=limit))
 
     def _fetch_github(
         self,
@@ -189,13 +194,12 @@ class SourceDispatcher:
     ) -> tuple[list[Any], list[SourceError], SourceFetchResult | None]:
         repository = source.metadata.get("repository")
         query = source.metadata.get("query") or request.get("topic")
-        items, errors = self.github_connector.fetch(
-            source,
+        return _connector_result(self.github_connector.fetch(
+            _infra_source(source),
             repository=str(repository) if repository is not None else None,
             query=str(query) if query is not None else None,
             limit=limit,
-        )
-        return items, errors, None
+        ))
 
     def _fetch_hackernews(
         self,
@@ -206,12 +210,11 @@ class SourceDispatcher:
         limit: int,
     ) -> tuple[list[Any], list[SourceError], SourceFetchResult | None]:
         story_list = source.metadata.get("story_list")
-        items, errors = self.hackernews_connector.fetch(
-            source,
+        return _connector_result(self.hackernews_connector.fetch(
+            _infra_source(source),
             story_list=str(story_list) if story_list is not None else None,
             limit=limit,
-        )
-        return items, errors, None
+        ))
 
     def _fetch_reddit(
         self,
@@ -223,13 +226,12 @@ class SourceDispatcher:
     ) -> tuple[list[Any], list[SourceError], SourceFetchResult | None]:
         subreddit = source.metadata.get("subreddit")
         listing = source.metadata.get("listing")
-        items, errors = self.reddit_connector.fetch(
-            source,
+        return _connector_result(self.reddit_connector.fetch(
+            _infra_source(source),
             subreddit=str(subreddit) if subreddit is not None else None,
             listing=str(listing) if listing is not None else None,
             limit=limit,
-        )
-        return items, errors, None
+        ))
 
     def _fetch_lobsters(
         self,
@@ -240,12 +242,11 @@ class SourceDispatcher:
         limit: int,
     ) -> tuple[list[Any], list[SourceError], SourceFetchResult | None]:
         tag = source.metadata.get("tag")
-        items, errors = self.lobsters_connector.fetch(
-            source,
+        return _connector_result(self.lobsters_connector.fetch(
+            _infra_source(source),
             tag=str(tag) if tag is not None else None,
             limit=limit,
-        )
-        return items, errors, None
+        ))
 
     def _fetch_stackoverflow(
         self,
@@ -257,13 +258,12 @@ class SourceDispatcher:
     ) -> tuple[list[Any], list[SourceError], SourceFetchResult | None]:
         tag = source.metadata.get("tagged") or source.metadata.get("tag")
         site = source.metadata.get("site")
-        items, errors = self.stackoverflow_connector.fetch(
-            source,
+        return _connector_result(self.stackoverflow_connector.fetch(
+            _infra_source(source),
             tag=str(tag) if tag is not None else None,
             site=str(site) if site is not None else None,
             limit=limit,
-        )
-        return items, errors, None
+        ))
 
     def _fetch_devto(
         self,
@@ -274,12 +274,11 @@ class SourceDispatcher:
         limit: int,
     ) -> tuple[list[Any], list[SourceError], SourceFetchResult | None]:
         tag = source.metadata.get("tag")
-        items, errors = self.devto_connector.fetch(
-            source,
+        return _connector_result(self.devto_connector.fetch(
+            _infra_source(source),
             tag=str(tag) if tag is not None else None,
             limit=limit,
-        )
-        return items, errors, None
+        ))
 
     def _fetch_medium(
         self,
@@ -290,12 +289,11 @@ class SourceDispatcher:
         limit: int,
     ) -> tuple[list[Any], list[SourceError], SourceFetchResult | None]:
         tag = source.metadata.get("tag")
-        items, errors = self.medium_connector.fetch(
-            source,
+        return _connector_result(self.medium_connector.fetch(
+            _infra_source(source),
             tag=str(tag) if tag is not None else None,
             limit=limit,
-        )
-        return items, errors, None
+        ))
 
     def _unsupported_source_type(
         self,
@@ -308,7 +306,7 @@ class SourceDispatcher:
                     source_id=source.source_id,
                     source_name=source.name,
                     error_type="unsupported_source_type",
-                    error_message=f"unsupported source type: {source.source_type.value}",
+                    error_message=f"unsupported source type: {_source_type(source).value}",
                     url=source.url,
                     retryable=False,
                     metadata={
@@ -333,18 +331,85 @@ class SourceDispatcher:
     def fetch_policy_for_source(self, source: SourceDefinition) -> SourceFetchPolicy | None:
         connector = self._connector_for_source(source)
         policy = getattr(connector, "fetch_policy", None)
-        if policy is None and source.source_type == SourceType.MEDIUM:
+        if policy is None and _source_type(source) == SourceType.MEDIUM:
             feed_connector = getattr(connector, "feed_connector", None)
             policy = getattr(feed_connector, "fetch_policy", None)
         if isinstance(policy, SourceFetchPolicy):
-            return effective_fetch_policy(policy, source)
+            return effective_fetch_policy(policy, _infra_source(source))
         return None
 
     def _connector_for_source(self, source: SourceDefinition) -> Any:
         registered_connector = self._registered_connector_for_source(source)
         if registered_connector is not None:
             return registered_connector
-        handler = self._connector_handlers.get(source.source_type)
+        handler = self._connector_handlers.get(_source_type(source))
         return handler() if handler is not None else None
+
+
+def _source_type(source: SourceDefinition) -> SourceType:
+    return SourceType(source.source_type)
+
+
+def _source_reliability(source: SourceDefinition) -> SourceReliability:
+    return SourceReliability(source.reliability)
+
+
+def _infra_source(source: SourceDefinition) -> InfraSourceDefinition:
+    return InfraSourceDefinition(
+        source_id=source.source_id,
+        name=source.name,
+        source_type=InfraSourceType(_source_type(source).value),
+        url=source.url,
+        reliability=InfraSourceReliability(_source_reliability(source).value),
+        authority_score=source.authority_score,
+        enabled=source.enabled,
+        fetch_interval_seconds=source.fetch_interval_seconds,
+        respect_robots=source.respect_robots,
+        user_agent=source.user_agent,
+        topics=list(source.topics),
+        category=source.category,
+        language=source.language,
+        region=source.region,
+        metadata=dict(source.metadata),
+    )
+
+
+def _connector_result(
+    result: tuple[list[infra_sources.RawSourceItem], list[infra_sources.SourceError]],
+) -> tuple[list[Any], list[SourceError], SourceFetchResult | None]:
+    items, errors = result
+    return (
+        [_business_raw_item(item) for item in items],
+        [_business_source_error(error) for error in errors],
+        None,
+    )
+
+
+def _business_raw_item(item: infra_sources.RawSourceItem) -> Any:
+    payload = item.to_dict()
+    lineage_payload = payload.pop("lineage", None)
+    return RawSourceItem(
+        **payload,
+        lineage=(
+            Lineage.from_dict(lineage_payload)
+            if isinstance(lineage_payload, dict)
+            else None
+        ),
+    )
+
+
+def _business_source_error(error: infra_sources.SourceError) -> SourceError:
+    return SourceError(
+        source_id=error.source_id,
+        source_name=error.source_name,
+        error_type=error.error_type,
+        error_message=error.error_message,
+        url=error.url,
+        retryable=error.retryable,
+        request_ref=error.request_ref,
+        response_ref=error.response_ref,
+        occurred_at=error.occurred_at,
+        metadata=dict(error.metadata),
+    )
 
 

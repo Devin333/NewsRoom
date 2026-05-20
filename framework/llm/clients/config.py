@@ -341,24 +341,37 @@ def _capabilities_from_payload(payload: dict[str, Any]) -> ModelCapabilities:
     normalized = dict(capability_payload)
     context_window_tokens = normalized.pop("context_window_tokens", None)
     max_output_tokens = normalized.pop("max_output_tokens", None)
-    capability_values: dict[str, bool | int | None] = {}
+    bool_capability_values: dict[str, bool] = {}
     for key, value in normalized.items():
         if not isinstance(value, bool):
             raise LLMConfigurationError(f"capabilities.{key} must be a boolean")
         capability_name = _normalize_capability_name(key)
-        capability_values[capability_name] = value
+        bool_capability_values[capability_name] = value
+    context_window = None
+    max_output = None
     if context_window_tokens is not None:
-        capability_values["context_window_tokens"] = _positive_int(
+        context_window = _positive_int(
             context_window_tokens,
             field="capabilities.context_window_tokens",
         )
     if max_output_tokens is not None:
-        capability_values["max_output_tokens"] = _positive_int(
+        max_output = _positive_int(
             max_output_tokens,
             field="capabilities.max_output_tokens",
         )
     try:
-        return ModelCapabilities(**capability_values)
+        return ModelCapabilities(
+            supports_streaming=bool_capability_values.get("supports_streaming", False),
+            supports_tool_calling=bool_capability_values.get("supports_tool_calling", False),
+            supports_parallel_tool_calls=bool_capability_values.get("supports_parallel_tool_calls", False),
+            supports_structured_output=bool_capability_values.get("supports_structured_output", False),
+            supports_json_mode=bool_capability_values.get("supports_json_mode", False),
+            supports_multimodal_input=bool_capability_values.get("supports_multimodal_input", False),
+            supports_reasoning_tokens=bool_capability_values.get("supports_reasoning_tokens", False),
+            supports_prompt_cache=bool_capability_values.get("supports_prompt_cache", False),
+            context_window_tokens=context_window,
+            max_output_tokens=max_output,
+        )
     except TypeError as exc:
         raise LLMConfigurationError(f"invalid capabilities config: {exc}") from exc
 

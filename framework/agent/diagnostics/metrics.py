@@ -10,7 +10,8 @@ def metrics_from_trace(trace: Any) -> AgentLoopMetrics:
     payload = trace.to_dict() if hasattr(trace, "to_dict") else trace
     if not isinstance(payload, dict):
         return AgentLoopMetrics()
-    summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+    raw_summary = payload.get("summary")
+    summary: dict[str, Any] = dict(raw_summary) if isinstance(raw_summary, dict) else {}
     metrics = AgentLoopMetrics(
         iterations=int(summary.get("iterations") or 0),
         llm_calls=int(summary.get("llm_calls") or 0),

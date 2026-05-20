@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 from framework.workflow.runtime.artifacts import ArtifactManager
 from framework.specs import StepSpec, StepStatus, StepType
 from framework.workflow.runtime.workflow_artifacts import LocalArtifactPublisher
-from framework.workflow.buffer import DataBuffer, ScopedDataBuffer
+from framework.workflow.buffer import DataBuffer, StepScopedDataBufferView
 from framework.workflow.runners.human_review import (
     HumanReviewRequest,
     human_review_expires_at,
@@ -29,7 +29,10 @@ from framework.workflow.runners.base import (
     ValidationErrorItem,
     default_runner_can_resolve,
 )
-from framework.workflow.runners.memory_models import MemoryConsolidationRequest, MemoryQuery
+from framework.workflow.runners.memory_models import (
+    MemoryConsolidationRequest,
+    MemoryQuery,
+)
 from framework.tool import (
     ToolBatchExecutor,
     ToolCall,
@@ -42,7 +45,7 @@ from framework.workflow.runtime.artifacts import ArtifactRef as StorageArtifactR
 if TYPE_CHECKING:
     from framework.specs import WorkflowSpec
 
-FunctionStep = Callable[[ScopedDataBuffer], dict[str, Any] | None]
+FunctionStep = Callable[[StepScopedDataBufferView], dict[str, Any] | None]
 
 _BRANCH_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
 _PARALLEL_CONFLICT_STRATEGIES = {
@@ -115,7 +118,9 @@ def build_default_step_runner_registry(
 
     registry.register(FunctionStepRunner(effective_function_registry))
     registry.register(
-        ParallelGroupStepRunner(effective_function_registry, max_workers=max_parallel_workers),
+        ParallelGroupStepRunner(
+            effective_function_registry, max_workers=max_parallel_workers
+        ),
     )
 
     tool_call_runner = ToolCallStepRunner(
@@ -126,7 +131,9 @@ def build_default_step_runner_registry(
         secret_provider=secret_provider,
     )
     registry.register(tool_call_runner)
-    for step_type in sorted(_TOOL_CALL_STEP_TYPES - {StepType.TOOL_CALL}, key=lambda item: item.value):
+    for step_type in sorted(
+        _TOOL_CALL_STEP_TYPES - {StepType.TOOL_CALL}, key=lambda item: item.value
+    ):
         registry.register_alias(step_type, tool_call_runner)
     registry.register(
         ToolBatchStepRunner(
@@ -180,7 +187,9 @@ class FunctionStepRegistry:
         try:
             return self._functions[implementation]
         except KeyError as exc:
-            raise StepExecutionError(f"function step is not registered: {implementation}") from exc
+            raise StepExecutionError(
+                f"function step is not registered: {implementation}"
+            ) from exc
 
     def is_registered(self, implementation: str) -> bool:
         return implementation in self._functions
@@ -204,7 +213,9 @@ class FunctionStepRunner:
         self._registry = registry
 
     def can_resolve(self, step: StepSpec) -> bool:
-        return step.step_type == StepType.FUNCTION and self._registry.is_registered(step.implementation)
+        return step.step_type == StepType.FUNCTION and self._registry.is_registered(
+            step.implementation
+        )
 
     def validate_step(self, step: StepSpec) -> list[ValidationErrorItem]:
         if step.implementation:
@@ -217,11 +228,13 @@ class FunctionStepRunner:
             )
         ]
 
-    def run(self, step: StepSpec, buffer: ScopedDataBuffer) -> StepOutcome:
+    def run(self, step: StepSpec, buffer: StepScopedDataBufferView) -> StepOutcome:
         started = time.perf_counter()
         try:
             if step.step_type != StepType.FUNCTION:
-                raise StepExecutionError(f"unsupported step type for FunctionStepRunner: {step.step_type}")
+                raise StepExecutionError(
+                    f"unsupported step type for FunctionStepRunner: {step.step_type}"
+                )
 
             function = self._registry.get(step.implementation)
             raw_outputs = function(buffer)
@@ -284,7 +297,10 @@ class ToolBatchStepRunner:
         return default_runner_can_resolve(self.capability, step)
 
     def validate_step(self, step: StepSpec) -> list[ValidationErrorItem]:
-        if step.metadata.get("tool_calls") is not None or step.metadata.get("tool_calls_key") is not None:
+        if (
+            step.metadata.get("tool_calls") is not None
+            or step.metadata.get("tool_calls_key") is not None
+        ):
             return []
         return [
             ValidationErrorItem(
@@ -303,11 +319,13 @@ class ToolBatchStepRunner:
         self._artifact_manager = artifact_manager
         self._run_id = run_id
 
-    def run(self, step: StepSpec, buffer: ScopedDataBuffer) -> StepOutcome:
+    def run(self, step: StepSpec, buffer: StepScopedDataBufferView) -> StepOutcome:
         started = time.perf_counter()
         try:
             if step.step_type != StepType.TOOL_BATCH:
-                raise StepExecutionError(f"unsupported step type for ToolBatchStepRunner: {step.step_type}")
+                raise StepExecutionError(
+                    f"unsupported step type for ToolBatchStepRunner: {step.step_type}"
+                )
 
             tool_calls = _tool_calls_from_step(step, buffer)
             policy = _tool_policy_from_step(step)
@@ -319,8 +337,12 @@ class ToolBatchStepRunner:
                 max_workers=self._max_workers,
             )
             observations = executor.execute_batch(tool_calls, policy)
-            observation_payloads = [observation.to_dict() for observation in observations]
-            result_payloads = [observation.result.to_dict() for observation in observations]
+            observation_payloads = [
+                observation.to_dict() for observation in observations
+            ]
+            result_payloads = [
+                observation.result.to_dict() for observation in observations
+            ]
             outputs = _validated_outputs(
                 step,
                 {
@@ -338,7 +360,8 @@ class ToolBatchStepRunner:
                 started=started,
                 outputs=outputs,
                 artifact_count=sum(
-                    len(observation.result.artifact_refs) for observation in observations
+                    len(observation.result.artifact_refs)
+                    for observation in observations
                 ),
             )
             failed_observations = [
@@ -369,7 +392,9 @@ class ToolBatchStepRunner:
                     },
                     metrics=metrics,
                 )
-            return StepOutcome(status=StepStatus.SUCCEEDED, outputs=outputs, metrics=metrics)
+            return StepOutcome(
+                status=StepStatus.SUCCEEDED, outputs=outputs, metrics=metrics
+            )
         except Exception as exc:
             return StepOutcome(
                 status=StepStatus.FAILED,
@@ -401,7 +426,10 @@ class MemoryRecallStepRunner:
         return default_runner_can_resolve(self.capability, step)
 
     def validate_step(self, step: StepSpec) -> list[ValidationErrorItem]:
-        if step.metadata.get("query") is not None or step.metadata.get("query_key") is not None:
+        if (
+            step.metadata.get("query") is not None
+            or step.metadata.get("query_key") is not None
+        ):
             return []
         return [
             ValidationErrorItem(
@@ -420,7 +448,7 @@ class MemoryRecallStepRunner:
         _ = artifact_manager
         self._run_id = run_id
 
-    def run(self, step: StepSpec, buffer: ScopedDataBuffer) -> StepOutcome:
+    def run(self, step: StepSpec, buffer: StepScopedDataBufferView) -> StepOutcome:
         started = time.perf_counter()
         try:
             if step.step_type != StepType.MEMORY_RECALL:
@@ -506,7 +534,9 @@ class MemoryWriteStepRunner:
         description="Runs a direct MemoryRuntime write step.",
     )
 
-    def __init__(self, memory_runtime: Any | None, *, run_id: str | None = None) -> None:
+    def __init__(
+        self, memory_runtime: Any | None, *, run_id: str | None = None
+    ) -> None:
         self._memory_runtime = memory_runtime
         self._run_id = run_id
 
@@ -514,7 +544,10 @@ class MemoryWriteStepRunner:
         return default_runner_can_resolve(self.capability, step)
 
     def validate_step(self, step: StepSpec) -> list[ValidationErrorItem]:
-        if step.metadata.get("records") is not None or step.metadata.get("records_key") is not None:
+        if (
+            step.metadata.get("records") is not None
+            or step.metadata.get("records_key") is not None
+        ):
             return []
         return [
             ValidationErrorItem(
@@ -533,7 +566,7 @@ class MemoryWriteStepRunner:
         _ = artifact_manager
         self._run_id = run_id
 
-    def run(self, step: StepSpec, buffer: ScopedDataBuffer) -> StepOutcome:
+    def run(self, step: StepSpec, buffer: StepScopedDataBufferView) -> StepOutcome:
         started = time.perf_counter()
         try:
             if step.step_type != StepType.MEMORY_WRITE:
@@ -643,7 +676,9 @@ class MemoryConsolidateStepRunner:
         description="Runs a direct MemoryRuntime consolidation step.",
     )
 
-    def __init__(self, memory_runtime: Any | None, *, run_id: str | None = None) -> None:
+    def __init__(
+        self, memory_runtime: Any | None, *, run_id: str | None = None
+    ) -> None:
         self._memory_runtime = memory_runtime
         self._run_id = run_id
 
@@ -681,7 +716,7 @@ class MemoryConsolidateStepRunner:
         _ = artifact_manager
         self._run_id = run_id
 
-    def run(self, step: StepSpec, buffer: ScopedDataBuffer) -> StepOutcome:
+    def run(self, step: StepSpec, buffer: StepScopedDataBufferView) -> StepOutcome:
         started = time.perf_counter()
         try:
             if step.step_type != StepType.MEMORY_CONSOLIDATE:
@@ -819,7 +854,9 @@ class AgentLoopStepRunner:
             )
         ]
 
-    def configure_global_budget_tracker(self, global_budget_tracker: Any | None) -> None:
+    def configure_global_budget_tracker(
+        self, global_budget_tracker: Any | None
+    ) -> None:
         self._global_budget_tracker = global_budget_tracker
 
     def configure_run_context(
@@ -831,12 +868,14 @@ class AgentLoopStepRunner:
         _ = artifact_manager
         self._run_id = run_id
 
-    def run(self, step: StepSpec, buffer: ScopedDataBuffer) -> StepOutcome:
+    def run(self, step: StepSpec, buffer: StepScopedDataBufferView) -> StepOutcome:
         started = time.perf_counter()
         if step.step_type != StepType.AGENT_LOOP:
             return _failed_outcome(
                 step,
-                StepExecutionError(f"unsupported step type for AgentLoopStepRunner: {step.step_type}"),
+                StepExecutionError(
+                    f"unsupported step type for AgentLoopStepRunner: {step.step_type}"
+                ),
                 started=started,
                 runner_name="AgentLoopStepRunner",
             )
@@ -852,11 +891,7 @@ class AgentLoopStepRunner:
                 runner_name="AgentLoopStepRunner",
             )
 
-        inputs = {
-            key: buffer.read(key)
-            for key in step.read_keys
-            if buffer.exists(key)
-        }
+        inputs = {key: buffer.read(key) for key in step.read_keys if buffer.exists(key)}
         conversation_id = step.metadata.get("conversation_id")
         if "conversation_id_key" in step.metadata:
             conversation_id = buffer.read(str(step.metadata["conversation_id_key"]))
@@ -866,13 +901,14 @@ class AgentLoopStepRunner:
             "run_id": self._run_id,
             "step_id": step.step_id,
         }
-        if (
-            bool(step.metadata.get("resume_from_conversation_cursor"))
-            or bool(step.metadata.get("resume_from_cursor"))
+        if bool(step.metadata.get("resume_from_conversation_cursor")) or bool(
+            step.metadata.get("resume_from_cursor")
         ):
             run_kwargs["resume_from_cursor"] = True
         if "workflow_checkpoint_id" in step.metadata:
-            run_kwargs["workflow_checkpoint_id"] = str(step.metadata["workflow_checkpoint_id"])
+            run_kwargs["workflow_checkpoint_id"] = str(
+                step.metadata["workflow_checkpoint_id"]
+            )
         if self._global_budget_tracker is not None:
             run_kwargs["global_budget_tracker"] = self._global_budget_tracker
         result = self._agent_runner.run(agent, inputs, **run_kwargs)
@@ -883,9 +919,13 @@ class AgentLoopStepRunner:
         result_key = str(step.metadata.get("result_key") or "agent_loop_result")
         events_key = str(step.metadata.get("events_key") or "agent_loop_events")
         metrics_key = str(step.metadata.get("metrics_key") or "agent_loop_metrics")
-        diagnostics_key = str(step.metadata.get("diagnostics_key") or "agent_loop_diagnostics")
+        diagnostics_key = str(
+            step.metadata.get("diagnostics_key") or "agent_loop_diagnostics"
+        )
         trace_key = str(step.metadata.get("trace_key") or "agent_loop_trace")
-        llm_artifacts_key = str(step.metadata.get("llm_artifacts_key") or "llm_call_artifacts")
+        llm_artifacts_key = str(
+            step.metadata.get("llm_artifacts_key") or "llm_call_artifacts"
+        )
         outputs[result_key] = result_payload
         outputs[events_key] = result.events
         outputs[metrics_key] = result.metrics.to_dict()
@@ -906,7 +946,9 @@ class AgentLoopStepRunner:
 
         for key, value in outputs.items():
             if key in buffer.list_allowed_writes():
-                buffer.write(key, value, lineage={"step_id": step.step_id, "agent_id": agent_id})
+                buffer.write(
+                    key, value, lineage={"step_id": step.step_id, "agent_id": agent_id}
+                )
 
         status_value = str(result.status.value)
         if result.success:
@@ -926,7 +968,8 @@ class AgentLoopStepRunner:
                 status=StepStatus.PAUSED,
                 outputs=declared_outputs,
                 error_type="AgentLoopWaitingForApproval",
-                error_message=result.error or f"agent loop waiting for approval: {agent_id}",
+                error_message=result.error
+                or f"agent loop waiting for approval: {agent_id}",
                 error_details=_agent_loop_error_details(result_payload),
                 metrics=_with_contract_metrics(
                     result.metrics.to_dict(),
@@ -1038,11 +1081,13 @@ class ToolCallStepRunner:
         self._artifact_manager = artifact_manager
         self._run_id = run_id
 
-    def run(self, step: StepSpec, buffer: ScopedDataBuffer) -> StepOutcome:
+    def run(self, step: StepSpec, buffer: StepScopedDataBufferView) -> StepOutcome:
         started = time.perf_counter()
         try:
             if step.step_type not in _TOOL_CALL_STEP_TYPES:
-                raise StepExecutionError(f"unsupported step type for ToolCallStepRunner: {step.step_type}")
+                raise StepExecutionError(
+                    f"unsupported step type for ToolCallStepRunner: {step.step_type}"
+                )
 
             call = _single_tool_call_from_step(step, buffer)
             policy = _tool_policy_from_step(step)
@@ -1074,7 +1119,9 @@ class ToolCallStepRunner:
             )
 
             if observation.status == ToolStatus.SUCCEEDED:
-                return StepOutcome(status=StepStatus.SUCCEEDED, outputs=outputs, metrics=metrics)
+                return StepOutcome(
+                    status=StepStatus.SUCCEEDED, outputs=outputs, metrics=metrics
+                )
             if observation.status == ToolStatus.APPROVAL_REQUIRED:
                 return StepOutcome(
                     status=StepStatus.PAUSED,
@@ -1160,7 +1207,7 @@ class ParallelGroupStepRunner:
             )
         ]
 
-    def run(self, step: StepSpec, buffer: ScopedDataBuffer) -> StepOutcome:
+    def run(self, step: StepSpec, buffer: StepScopedDataBufferView) -> StepOutcome:
         started = time.perf_counter()
         try:
             if step.step_type != StepType.PARALLEL_GROUP:
@@ -1169,8 +1216,12 @@ class ParallelGroupStepRunner:
                 )
             branches = step.metadata.get("branches")
             if not isinstance(branches, list) or not branches:
-                raise StepExecutionError(f"parallel_group step {step.step_id} requires branches")
-            normalized_branches = _normalize_parallel_branches(branches, step_id=step.step_id)
+                raise StepExecutionError(
+                    f"parallel_group step {step.step_id} requires branches"
+                )
+            normalized_branches = _normalize_parallel_branches(
+                branches, step_id=step.step_id
+            )
 
             branch_results: list[dict[str, Any]] = []
             failed_branch_results: list[dict[str, Any]] = []
@@ -1178,10 +1229,18 @@ class ParallelGroupStepRunner:
             conflict_strategy = str(step.metadata.get("conflict_strategy") or "error")
             failure_strategy = str(step.metadata.get("failure_strategy") or "fail_fast")
             if conflict_strategy not in _PARALLEL_CONFLICT_STRATEGIES:
-                raise StepExecutionError(f"unsupported parallel conflict strategy: {conflict_strategy}")
+                raise StepExecutionError(
+                    f"unsupported parallel conflict strategy: {conflict_strategy}"
+                )
             if failure_strategy not in _PARALLEL_FAILURE_STRATEGIES:
-                raise StepExecutionError(f"unsupported parallel failure strategy: {failure_strategy}")
-            min_success = int(step.metadata.get("min_success") or step.metadata.get("success_threshold") or 1)
+                raise StepExecutionError(
+                    f"unsupported parallel failure strategy: {failure_strategy}"
+                )
+            min_success = int(
+                step.metadata.get("min_success")
+                or step.metadata.get("success_threshold")
+                or 1
+            )
             namespace_key = str(step.metadata.get("namespace_key") or "")
             max_workers = min(self._max_workers, len(normalized_branches))
             pool = ThreadPoolExecutor(
@@ -1189,12 +1248,14 @@ class ParallelGroupStepRunner:
                 thread_name_prefix="news-workflow-parallel",
             )
             try:
-                branch_results, failed_branch_results = _run_parallel_branches_with_policy(
-                    pool=pool,
-                    registry=self._function_registry,
-                    branches=normalized_branches,
-                    parent_buffer=buffer,
-                    failure_strategy=failure_strategy,
+                branch_results, failed_branch_results = (
+                    _run_parallel_branches_with_policy(
+                        pool=pool,
+                        registry=self._function_registry,
+                        branches=normalized_branches,
+                        parent_buffer=buffer,
+                        failure_strategy=failure_strategy,
+                    )
                 )
             finally:
                 pool.shutdown(wait=False, cancel_futures=True)
@@ -1230,10 +1291,16 @@ class ParallelGroupStepRunner:
                 failed_branch_results=failed_branch_results,
                 namespace_key=namespace_key,
             )
-            outputs = _validated_outputs(step, outputs, runner_name="parallel_group step")
+            outputs = _validated_outputs(
+                step, outputs, runner_name="parallel_group step"
+            )
             for key, value in outputs.items():
                 if key in buffer.list_allowed_writes():
-                    buffer.write(key, value, lineage={"step_id": step.step_id, "parallel_group": True})
+                    buffer.write(
+                        key,
+                        value,
+                        lineage={"step_id": step.step_id, "parallel_group": True},
+                    )
             metrics = _with_contract_metrics(
                 _parallel_group_metrics(
                     branches=normalized_branches,
@@ -1316,7 +1383,9 @@ class SubworkflowStepRunner:
         self._artifact_manager = artifact_manager
         self._run_id = run_id
 
-    def configure_global_budget_tracker(self, global_budget_tracker: Any | None) -> None:
+    def configure_global_budget_tracker(
+        self, global_budget_tracker: Any | None
+    ) -> None:
         self._global_budget_tracker = global_budget_tracker
 
     def can_resolve(self, step: StepSpec) -> bool:
@@ -1338,11 +1407,13 @@ class SubworkflowStepRunner:
             )
         ]
 
-    def run(self, step: StepSpec, buffer: ScopedDataBuffer) -> StepOutcome:
+    def run(self, step: StepSpec, buffer: StepScopedDataBufferView) -> StepOutcome:
         started = time.perf_counter()
         try:
             if step.step_type != StepType.SUBWORKFLOW:
-                raise StepExecutionError(f"unsupported step type for SubworkflowStepRunner: {step.step_type}")
+                raise StepExecutionError(
+                    f"unsupported step type for SubworkflowStepRunner: {step.step_type}"
+                )
             if self._artifact_manager is None or self._run_id is None:
                 raise StepExecutionError("SubworkflowStepRunner requires run context")
             parent_run_id = self._run_id
@@ -1351,7 +1422,9 @@ class SubworkflowStepRunner:
             try:
                 workflow = self._workflow_registry[workflow_id]
             except KeyError as exc:
-                raise StepExecutionError(f"subworkflow is not registered: {workflow_id}") from exc
+                raise StepExecutionError(
+                    f"subworkflow is not registered: {workflow_id}"
+                ) from exc
 
             request = _subworkflow_request(step, buffer)
 
@@ -1487,11 +1560,13 @@ class RouterStepRunner:
     def validate_step(self, step: StepSpec) -> list[ValidationErrorItem]:
         return []
 
-    def run(self, step: StepSpec, buffer: ScopedDataBuffer) -> StepOutcome:
+    def run(self, step: StepSpec, buffer: StepScopedDataBufferView) -> StepOutcome:
         started = time.perf_counter()
         try:
             if step.step_type != StepType.ROUTER:
-                raise StepExecutionError(f"unsupported step type for RouterStepRunner: {step.step_type}")
+                raise StepExecutionError(
+                    f"unsupported step type for RouterStepRunner: {step.step_type}"
+                )
 
             route = step.metadata.get("route")
             if route is None:
@@ -1499,7 +1574,9 @@ class RouterStepRunner:
                 route = buffer.read(route_key)
             route = str(route)
             output_key = str(step.metadata.get("output_key") or "route")
-            outputs = _validated_outputs(step, {output_key: route}, runner_name="router step")
+            outputs = _validated_outputs(
+                step, {output_key: route}, runner_name="router step"
+            )
             if output_key in buffer.list_allowed_writes():
                 buffer.write(output_key, route)
             return StepOutcome(
@@ -1537,11 +1614,13 @@ class JoinStepRunner:
     def validate_step(self, step: StepSpec) -> list[ValidationErrorItem]:
         return []
 
-    def run(self, step: StepSpec, buffer: ScopedDataBuffer) -> StepOutcome:
+    def run(self, step: StepSpec, buffer: StepScopedDataBufferView) -> StepOutcome:
         started = time.perf_counter()
         try:
             if step.step_type != StepType.JOIN:
-                raise StepExecutionError(f"unsupported step type for JoinStepRunner: {step.step_type}")
+                raise StepExecutionError(
+                    f"unsupported step type for JoinStepRunner: {step.step_type}"
+                )
 
             output_key = str(step.metadata.get("output_key") or "join_result")
             inputs = {
@@ -1591,11 +1670,13 @@ class QualityGateStepRunner:
     def validate_step(self, step: StepSpec) -> list[ValidationErrorItem]:
         return []
 
-    def run(self, step: StepSpec, buffer: ScopedDataBuffer) -> StepOutcome:
+    def run(self, step: StepSpec, buffer: StepScopedDataBufferView) -> StepOutcome:
         started = time.perf_counter()
         try:
             if step.step_type != StepType.QUALITY_GATE:
-                raise StepExecutionError(f"unsupported step type for QualityGateStepRunner: {step.step_type}")
+                raise StepExecutionError(
+                    f"unsupported step type for QualityGateStepRunner: {step.step_type}"
+                )
 
             policy = step.quality_policy
             min_citation_coverage = _metadata_float(
@@ -1608,9 +1689,13 @@ class QualityGateStepRunner:
                 "min_editor_score",
                 policy.min_editor_score if policy else None,
             )
-            citation_coverage = _buffer_metric(buffer, step, "citation_coverage", "citation_coverage_score")
+            citation_coverage = _buffer_metric(
+                buffer, step, "citation_coverage", "citation_coverage_score"
+            )
             editor_score = _buffer_metric(buffer, step, "editor_score", "editor_score")
-            unsupported_claims = _buffer_value(buffer, step.metadata.get("unsupported_claims_key"), [])
+            unsupported_claims = _buffer_value(
+                buffer, step.metadata.get("unsupported_claims_key"), []
+            )
 
             blocked_reasons: list[str] = []
             rewrite_reasons: list[str] = []
@@ -1622,7 +1707,11 @@ class QualityGateStepRunner:
                 editor_score is None or editor_score < min_editor_score
             ):
                 rewrite_reasons.append("editor_score_below_threshold")
-            if policy is not None and policy.block_on_unsupported_claims and unsupported_claims:
+            if (
+                policy is not None
+                and policy.block_on_unsupported_claims
+                and unsupported_claims
+            ):
                 blocked_reasons.append("unsupported_claims")
 
             if blocked_reasons:
@@ -1700,14 +1789,20 @@ class HumanReviewStepRunner:
     def validate_step(self, step: StepSpec) -> list[ValidationErrorItem]:
         return []
 
-    def run(self, step: StepSpec, buffer: ScopedDataBuffer) -> StepOutcome:
+    def run(self, step: StepSpec, buffer: StepScopedDataBufferView) -> StepOutcome:
         started = time.perf_counter()
         try:
             if step.step_type != StepType.HUMAN_REVIEW:
-                raise StepExecutionError(f"unsupported step type for HumanReviewStepRunner: {step.step_type}")
+                raise StepExecutionError(
+                    f"unsupported step type for HumanReviewStepRunner: {step.step_type}"
+                )
 
-            decision_key = str(step.metadata.get("decision_key") or "human_review_decision")
-            if decision_key in buffer.list_allowed_reads() and buffer.exists(decision_key):
+            decision_key = str(
+                step.metadata.get("decision_key") or "human_review_decision"
+            )
+            if decision_key in buffer.list_allowed_reads() and buffer.exists(
+                decision_key
+            ):
                 decision = buffer.read(decision_key)
                 outputs = _validated_outputs(
                     step,
@@ -1722,10 +1817,16 @@ class HumanReviewStepRunner:
                     next_hint=_human_next_hint(decision),
                 )
 
-            request_key = str(step.metadata.get("request_key") or "human_review_request")
+            request_key = str(
+                step.metadata.get("request_key") or "human_review_request"
+            )
             created_at = human_review_utc_now_iso()
             checkpoint_id = _optional_metadata_str(step.metadata.get("checkpoint_id"))
-            run_id = self._run_id or _optional_metadata_str(step.metadata.get("run_id")) or "unknown-run"
+            run_id = (
+                self._run_id
+                or _optional_metadata_str(step.metadata.get("run_id"))
+                or "unknown-run"
+            )
             request_id = human_review_request_id(
                 run_id=run_id,
                 step_id=step.step_id,
@@ -1752,7 +1853,9 @@ class HumanReviewStepRunner:
                 ),
                 checkpoint_id=checkpoint_id,
                 review_type=str(step.metadata.get("review_type") or "human_review"),
-                required_role=_optional_metadata_str(step.metadata.get("required_role")),
+                required_role=_optional_metadata_str(
+                    step.metadata.get("required_role")
+                ),
                 created_at=created_at,
                 expires_at=human_review_expires_at(
                     created_at=created_at,
@@ -1827,7 +1930,10 @@ class ArtifactStepRunner:
         return default_runner_can_resolve(self.capability, step)
 
     def validate_step(self, step: StepSpec) -> list[ValidationErrorItem]:
-        if step.metadata.get("content") is not None or step.metadata.get("content_key") is not None:
+        if (
+            step.metadata.get("content") is not None
+            or step.metadata.get("content_key") is not None
+        ):
             return []
         return [
             ValidationErrorItem(
@@ -1837,24 +1943,33 @@ class ArtifactStepRunner:
             )
         ]
 
-    def run(self, step: StepSpec, buffer: ScopedDataBuffer) -> StepOutcome:
+    def run(self, step: StepSpec, buffer: StepScopedDataBufferView) -> StepOutcome:
         started = time.perf_counter()
         try:
             if step.step_type != StepType.ARTIFACT:
-                raise StepExecutionError(f"unsupported step type for ArtifactStepRunner: {step.step_type}")
+                raise StepExecutionError(
+                    f"unsupported step type for ArtifactStepRunner: {step.step_type}"
+                )
             if self._artifact_manager is None or self._run_id is None:
                 raise StepExecutionError("ArtifactStepRunner requires run context")
             if self._artifact_publisher is None:
-                self._artifact_publisher = LocalArtifactPublisher(self._artifact_manager.root)
+                self._artifact_publisher = LocalArtifactPublisher(
+                    self._artifact_manager.root
+                )
 
             content = step.metadata.get("content")
             content_key = step.metadata.get("content_key")
             if content_key is not None:
                 content = buffer.read(str(content_key))
-            relative_path = str(step.metadata.get("relative_path") or f"steps/{step.step_id}/output.json")
+            relative_path = str(
+                step.metadata.get("relative_path")
+                or f"steps/{step.step_id}/output.json"
+            )
             content_type = str(step.metadata.get("content_type") or "application/json")
             artifact_type = str(step.metadata.get("artifact_type") or "step_output")
-            artifact_id = str(step.metadata.get("artifact_id") or f"{step.step_id}:{artifact_type}")
+            artifact_id = str(
+                step.metadata.get("artifact_id") or f"{step.step_id}:{artifact_type}"
+            )
             output_key = str(step.metadata.get("output_key") or "artifact_ref")
 
             if content_type == "text/plain" or relative_path.endswith((".md", ".txt")):
@@ -1876,7 +1991,9 @@ class ArtifactStepRunner:
                 },
             )
             if not publish_result.succeeded or publish_result.artifact_ref is None:
-                raise StepExecutionError(publish_result.error or "artifact publish failed")
+                raise StepExecutionError(
+                    publish_result.error or "artifact publish failed"
+                )
 
             workflow_artifact_ref = publish_result.artifact_ref
             artifact_ref = StorageArtifactRef(
@@ -1932,7 +2049,7 @@ _TOOL_CALL_STEP_TYPES = {
 def _run_parallel_branch(
     registry: FunctionStepRegistry,
     branch: Any,
-    parent_buffer: ScopedDataBuffer,
+    parent_buffer: StepScopedDataBufferView,
 ) -> dict[str, Any]:
     branch = _normalize_parallel_branch(branch, index=0)
     started_at = _utc_now_iso()
@@ -2046,8 +2163,12 @@ def _parallel_branch_failure_result(
     started_at: str | None = None,
     started: float | None = None,
 ) -> dict[str, Any]:
-    original_error = exc.original_error if isinstance(exc, _ParallelBranchExecutionError) else exc
-    actual_attempts = exc.attempts if isinstance(exc, _ParallelBranchExecutionError) else attempts
+    original_error = (
+        exc.original_error if isinstance(exc, _ParallelBranchExecutionError) else exc
+    )
+    actual_attempts = (
+        exc.attempts if isinstance(exc, _ParallelBranchExecutionError) else attempts
+    )
     branch_id = str(branch.get("branch_id") or "")
     return {
         "branch_id": branch_id,
@@ -2074,7 +2195,7 @@ def _run_parallel_branches_with_policy(
     pool: ThreadPoolExecutor,
     registry: FunctionStepRegistry,
     branches: list[dict[str, Any]],
-    parent_buffer: ScopedDataBuffer,
+    parent_buffer: StepScopedDataBufferView,
     failure_strategy: str,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     branch_results: list[dict[str, Any]] = []
@@ -2085,7 +2206,9 @@ def _run_parallel_branches_with_policy(
 
     for branch in branches:
         submitted_branch = _branch_with_attempt(branch, 1)
-        future = pool.submit(_run_parallel_branch_with_policy, registry, submitted_branch, parent_buffer)
+        future = pool.submit(
+            _run_parallel_branch_with_policy, registry, submitted_branch, parent_buffer
+        )
         pending[future] = submitted_branch
         start_times[future] = time.perf_counter()
         started_at_by_future[future] = _utc_now_iso()
@@ -2119,7 +2242,9 @@ def _run_parallel_branches_with_policy(
             except Exception as exc:
                 if failure_strategy in {"fail_fast", "all_success"}:
                     raise
-                failed_branch_results.append(_parallel_branch_failure_result(branch, exc))
+                failed_branch_results.append(
+                    _parallel_branch_failure_result(branch, exc)
+                )
                 continue
             branch_results.append(branch_result)
     return branch_results, failed_branch_results
@@ -2128,7 +2253,7 @@ def _run_parallel_branches_with_policy(
 def _run_parallel_branch_with_policy(
     registry: FunctionStepRegistry,
     branch: dict[str, Any],
-    parent_buffer: ScopedDataBuffer,
+    parent_buffer: StepScopedDataBufferView,
 ) -> dict[str, Any]:
     max_retries = _branch_max_retries(branch)
     retry_on_error_types = _branch_retry_on_error_types(branch)
@@ -2161,7 +2286,9 @@ def _branch_timeout_seconds(branch: dict[str, Any]) -> float | None:
         return None
     timeout = float(value)
     if timeout <= 0:
-        raise StepExecutionError("parallel_group branch timeout_seconds must be positive")
+        raise StepExecutionError(
+            "parallel_group branch timeout_seconds must be positive"
+        )
     return timeout
 
 
@@ -2178,7 +2305,9 @@ def _branch_max_retries(branch: dict[str, Any]) -> int:
     policy = _branch_retry_policy(branch)
     max_retries = int(policy.get("max_retries") or 0)
     if max_retries < 0:
-        raise StepExecutionError("parallel_group branch max_retries must be non-negative")
+        raise StepExecutionError(
+            "parallel_group branch max_retries must be non-negative"
+        )
     return max_retries
 
 
@@ -2186,13 +2315,17 @@ def _branch_retry_delay_seconds(branch: dict[str, Any], attempt: int) -> float:
     policy = _branch_retry_policy(branch)
     raw_delays = policy.get("retry_delay_seconds") or []
     if not isinstance(raw_delays, list):
-        raise StepExecutionError("parallel_group branch retry_delay_seconds must be a list")
+        raise StepExecutionError(
+            "parallel_group branch retry_delay_seconds must be a list"
+        )
     if not raw_delays:
         return 0.0
     index = min(max(attempt - 1, 0), len(raw_delays) - 1)
     delay = float(raw_delays[index])
     if delay < 0:
-        raise StepExecutionError("parallel_group branch retry delay must be non-negative")
+        raise StepExecutionError(
+            "parallel_group branch retry delay must be non-negative"
+        )
     return delay
 
 
@@ -2200,7 +2333,9 @@ def _branch_retry_on_error_types(branch: dict[str, Any]) -> set[str]:
     policy = _branch_retry_policy(branch)
     values = policy.get("retry_on_error_types") or []
     if not isinstance(values, list):
-        raise StepExecutionError("parallel_group branch retry_on_error_types must be a list")
+        raise StepExecutionError(
+            "parallel_group branch retry_on_error_types must be a list"
+        )
     return {str(value) for value in values}
 
 
@@ -2208,7 +2343,9 @@ def _branch_no_retry_on_error_types(branch: dict[str, Any]) -> set[str]:
     policy = _branch_retry_policy(branch)
     values = policy.get("no_retry_on_error_types") or []
     if not isinstance(values, list):
-        raise StepExecutionError("parallel_group branch no_retry_on_error_types must be a list")
+        raise StepExecutionError(
+            "parallel_group branch no_retry_on_error_types must be a list"
+        )
     return {str(value) for value in values}
 
 
@@ -2267,8 +2404,7 @@ def _parallel_group_outputs(
     outputs = dict(merged_outputs)
     if namespace_key:
         outputs[namespace_key] = {
-            str(result["branch_id"]): result["outputs"]
-            for result in branch_results
+            str(result["branch_id"]): result["outputs"] for result in branch_results
         }
     declared_write_keys = set(step.write_keys)
     result_key = str(
@@ -2277,7 +2413,11 @@ def _parallel_group_outputs(
     )
     failed_result_key = str(
         step.metadata.get("failed_branch_results_key")
-        or ("failed_branch_results" if "failed_branch_results" in declared_write_keys else "")
+        or (
+            "failed_branch_results"
+            if "failed_branch_results" in declared_write_keys
+            else ""
+        )
     )
     if result_key:
         result_items = (
@@ -2313,7 +2453,9 @@ def _parallel_group_outputs(
     return outputs
 
 
-def _subworkflow_request(step: StepSpec, buffer: ScopedDataBuffer) -> dict[str, Any]:
+def _subworkflow_request(
+    step: StepSpec, buffer: StepScopedDataBufferView
+) -> dict[str, Any]:
     input_map = step.metadata.get("input_map")
     if isinstance(input_map, dict):
         request = {}
@@ -2328,11 +2470,15 @@ def _subworkflow_request(step: StepSpec, buffer: ScopedDataBuffer) -> dict[str, 
     if request is None:
         request = {}
     if not isinstance(request, dict):
-        raise StepExecutionError(f"subworkflow step {step.step_id} request must be an object")
+        raise StepExecutionError(
+            f"subworkflow step {step.step_id} request must be an object"
+        )
     return dict(request)
 
 
-def _subworkflow_mapped_outputs(step: StepSpec, child_output: dict[str, Any]) -> dict[str, Any]:
+def _subworkflow_mapped_outputs(
+    step: StepSpec, child_output: dict[str, Any]
+) -> dict[str, Any]:
     output_map = step.metadata.get("output_map")
     if not isinstance(output_map, dict):
         return {}
@@ -2357,7 +2503,9 @@ def _subworkflow_optional_outputs(
     if "subworkflow_event_summary" in declared:
         outputs["subworkflow_event_summary"] = _subworkflow_event_summary(result)
     if "subworkflow_cancellation_policy" in declared:
-        outputs["subworkflow_cancellation_policy"] = _subworkflow_cancellation_policy(step)
+        outputs["subworkflow_cancellation_policy"] = _subworkflow_cancellation_policy(
+            step
+        )
     return outputs
 
 
@@ -2401,11 +2549,14 @@ def _subworkflow_child_run_record(
 
 
 def _subworkflow_event_summary(result: Any) -> dict[str, Any]:
-    manifest = result.manifest or {}
-    metrics = manifest.get("metrics") if isinstance(manifest.get("metrics"), dict) else {}
+    manifest = dict(result.manifest) if isinstance(result.manifest, dict) else {}
+    raw_metrics = manifest.get("metrics")
+    metrics = dict(raw_metrics) if isinstance(raw_metrics, dict) else {}
     failed_step_id = result.error.step_id if result.error else None
     return {
-        "event_count": int(metrics.get("event_count") or manifest.get("event_count") or 0),
+        "event_count": int(
+            metrics.get("event_count") or manifest.get("event_count") or 0
+        ),
         "failed_step_id": failed_step_id,
         "status": result.status.value,
         "path": list(result.path),
@@ -2421,7 +2572,10 @@ def _subworkflow_inherits_budget(step: StepSpec) -> bool:
 
 
 def _subworkflow_budget_scope(step: StepSpec) -> str:
-    return str(step.metadata.get("budget_scope") or ("shared" if _subworkflow_inherits_budget(step) else "isolated"))
+    return str(
+        step.metadata.get("budget_scope")
+        or ("shared" if _subworkflow_inherits_budget(step) else "isolated")
+    )
 
 
 def _subworkflow_cancellation_policy(step: StepSpec) -> dict[str, Any]:
@@ -2445,7 +2599,9 @@ def _subworkflow_failure_outcome(
 ) -> StepOutcome:
     policy = _subworkflow_failure_propagation(step)
     error_type = result.error.error_type if result.error else "SubworkflowFailed"
-    error_message = result.error.message if result.error else f"subworkflow failed: {workflow_id}"
+    error_message = (
+        result.error.message if result.error else f"subworkflow failed: {workflow_id}"
+    )
     error_details = {
         "child_run_id": metrics.get("child_run_id"),
         "child_status": result.status.value,
@@ -2569,7 +2725,9 @@ def _merge_parallel_outputs(
                 )
             merged[key] = {**merged[key], **value}
             continue
-        raise StepExecutionError(f"unsupported parallel conflict strategy: {conflict_strategy}")
+        raise StepExecutionError(
+            f"unsupported parallel conflict strategy: {conflict_strategy}"
+        )
 
 
 def _enforce_parallel_failure_strategy(
@@ -2582,9 +2740,7 @@ def _enforce_parallel_failure_strategy(
     failure_count = len(failed_branch_results)
     success_count = len(branch_results)
     if failure_strategy in {"fail_fast", "all_success"} and failure_count:
-        raise StepExecutionError(
-            f"{failure_count} parallel branch(es) failed"
-        )
+        raise StepExecutionError(f"{failure_count} parallel branch(es) failed")
     if failure_strategy == "min_success" and success_count < max(1, min_success):
         raise StepExecutionError(
             f"parallel_group requires at least {max(1, min_success)} successful branch(es); "
@@ -2656,8 +2812,7 @@ def _parallel_branch_artifacts_enabled(step: StepSpec) -> bool:
     if policy is None:
         return False
     return bool(
-        policy.write_step_output
-        or "parallel_branch" in set(policy.artifact_types)
+        policy.write_step_output or "parallel_branch" in set(policy.artifact_types)
     )
 
 
@@ -2711,12 +2866,16 @@ def _elapsed_ms(started: float | None) -> float:
     return round((time.perf_counter() - started) * 1000, 3)
 
 
-def _single_tool_call_from_step(step: StepSpec, buffer: ScopedDataBuffer) -> ToolCall:
+def _single_tool_call_from_step(
+    step: StepSpec, buffer: StepScopedDataBufferView
+) -> ToolCall:
     raw_call = step.metadata.get("tool_call")
     if raw_call is None:
         tool_name = step.metadata.get("tool_name")
         if tool_name is None:
-            raw_call = buffer.read(str(step.metadata.get("tool_call_key") or "tool_call"))
+            raw_call = buffer.read(
+                str(step.metadata.get("tool_call_key") or "tool_call")
+            )
         else:
             arguments = step.metadata.get("arguments")
             if "arguments_key" in step.metadata:
@@ -2790,7 +2949,9 @@ def _parallel_group_metrics(
         "failure_strategy": failure_strategy,
         "min_success": max(1, min_success),
         "max_workers": min(max_workers, len(branches)),
-        "branch_ids": sorted(str(result.get("branch_id") or "") for result in branch_results),
+        "branch_ids": sorted(
+            str(result.get("branch_id") or "") for result in branch_results
+        ),
         "failed_branch_ids": sorted(
             str(result.get("branch_id") or "") for result in failed_branch_results
         ),
@@ -2815,7 +2976,8 @@ def _subworkflow_metrics(
         "child_status": result.status.value,
         "child_step_count": int(manifest.get("step_count") or len(result.step_results)),
         "child_artifact_count": int(
-            workflow_metrics.get("artifact_count") or len(manifest.get("artifacts") or {})
+            workflow_metrics.get("artifact_count")
+            or len(manifest.get("artifacts") or {})
         ),
         "child_event_count": int(
             workflow_metrics.get("event_count") or manifest.get("event_count") or 0
@@ -2826,7 +2988,9 @@ def _subworkflow_metrics(
 
 
 def _observation_key(step: StepSpec) -> str:
-    return str(step.metadata.get("observation_key") or f"{step.step_id}_tool_observation")
+    return str(
+        step.metadata.get("observation_key") or f"{step.step_id}_tool_observation"
+    )
 
 
 def _result_key(step: StepSpec) -> str:
@@ -2841,7 +3005,7 @@ def _metadata_float(step: StepSpec, key: str, default: float | None) -> float | 
 
 
 def _buffer_metric(
-    buffer: ScopedDataBuffer,
+    buffer: StepScopedDataBufferView,
     step: StepSpec,
     metadata_key: str,
     default_key: str,
@@ -2854,7 +3018,7 @@ def _buffer_metric(
     return float(value)
 
 
-def _buffer_value(buffer: ScopedDataBuffer, key: Any, default: Any) -> Any:
+def _buffer_value(buffer: StepScopedDataBufferView, key: Any, default: Any) -> Any:
     if key is None:
         return default
     key = str(key)
@@ -2863,7 +3027,9 @@ def _buffer_value(buffer: ScopedDataBuffer, key: Any, default: Any) -> Any:
     return buffer.read(key)
 
 
-def _memory_query_from_step(step: StepSpec, buffer: ScopedDataBuffer) -> MemoryQuery:
+def _memory_query_from_step(
+    step: StepSpec, buffer: StepScopedDataBufferView
+) -> MemoryQuery:
     raw_query = step.metadata.get("query")
     if raw_query is None and step.metadata.get("query_key") is not None:
         raw_query = buffer.read(str(step.metadata["query_key"]))
@@ -2871,11 +3037,18 @@ def _memory_query_from_step(step: StepSpec, buffer: ScopedDataBuffer) -> MemoryQ
         raise StepExecutionError(f"memory_recall step {step.step_id} requires a query")
 
     if isinstance(raw_query, dict):
-        payload = dict(raw_query)
+        payload: dict[str, Any] = dict(raw_query)
     else:
         payload = {"query": str(raw_query)}
 
-    for key in ("scopes", "kinds", "filters", "limit", "min_score", "max_context_tokens"):
+    for key in (
+        "scopes",
+        "kinds",
+        "filters",
+        "limit",
+        "min_score",
+        "max_context_tokens",
+    ):
         if key in step.metadata:
             payload[key] = step.metadata[key]
 
@@ -2885,12 +3058,18 @@ def _memory_query_from_step(step: StepSpec, buffer: ScopedDataBuffer) -> MemoryQ
             raise StepExecutionError(
                 f"memory_recall step {step.step_id} filters_key must reference an object"
             )
-        payload["filters"] = {**dict(raw_filters), **dict(payload.get("filters") or {})}
+        existing_filters = payload.get("filters")
+        payload["filters"] = {
+            **dict(raw_filters),
+            **(dict(existing_filters) if isinstance(existing_filters, dict) else {}),
+        }
 
     return MemoryQuery.from_dict(payload)
 
 
-def _memory_records_from_step(step: StepSpec, buffer: ScopedDataBuffer) -> list[Any]:
+def _memory_records_from_step(
+    step: StepSpec, buffer: StepScopedDataBufferView
+) -> list[Any]:
     raw_records = step.metadata.get("records")
     if raw_records is None and step.metadata.get("records_key") is not None:
         raw_records = buffer.read(str(step.metadata["records_key"]))
@@ -2908,17 +3087,21 @@ def _memory_records_from_step(step: StepSpec, buffer: ScopedDataBuffer) -> list[
     )
 
 
-def _memory_actor_from_step(step: StepSpec, buffer: ScopedDataBuffer) -> str:
+def _memory_actor_from_step(step: StepSpec, buffer: StepScopedDataBufferView) -> str:
     if step.metadata.get("actor_key") is not None:
         actor = buffer.read(str(step.metadata["actor_key"]))
     else:
-        actor = step.metadata.get("actor") or step.metadata.get("requested_by") or step.step_id
+        actor = (
+            step.metadata.get("actor")
+            or step.metadata.get("requested_by")
+            or step.step_id
+        )
     return str(actor or step.step_id)
 
 
 def _memory_consolidation_request_from_step(
     step: StepSpec,
-    buffer: ScopedDataBuffer,
+    buffer: StepScopedDataBufferView,
     *,
     run_id: str | None,
 ) -> MemoryConsolidationRequest:
@@ -2959,7 +3142,9 @@ def _coerce_memory_ids_for_consolidation(value: Any, *, step: StepSpec) -> list[
     )
 
 
-def _coerce_query_for_consolidation(value: Any, *, step: StepSpec) -> MemoryQuery | None:
+def _coerce_query_for_consolidation(
+    value: Any, *, step: StepSpec
+) -> MemoryQuery | None:
     if value is None:
         return None
     if isinstance(value, MemoryQuery):
@@ -3017,26 +3202,30 @@ def _join_summary(step: StepSpec, inputs: dict[str, Any]) -> dict[str, Any]:
     succeeded_branches = [
         result
         for result in branch_results
-        if isinstance(result, dict) and result.get("status") == StepStatus.SUCCEEDED.value
+        if isinstance(result, dict)
+        and result.get("status") == StepStatus.SUCCEEDED.value
     ]
     failed_branches = [
         result
         for result in branch_results
-        if isinstance(result, dict) and result.get("status") != StepStatus.SUCCEEDED.value
+        if isinstance(result, dict)
+        and result.get("status") != StepStatus.SUCCEEDED.value
     ]
     required_upstreams = _join_required_upstream_step_ids(step)
     optional_upstreams = _join_optional_upstream_step_ids(step)
     upstream_statuses = _join_upstream_statuses(step, inputs, branch_results)
-    succeeded_upstreams = _join_upstreams_by_status(upstream_statuses, {StepStatus.SUCCEEDED.value})
+    succeeded_upstreams = _join_upstreams_by_status(
+        upstream_statuses, {StepStatus.SUCCEEDED.value}
+    )
     failed_upstreams = _join_upstreams_by_status(
         upstream_statuses,
         {StepStatus.FAILED.value, StepStatus.BLOCKED.value, StepStatus.TIMEOUT.value},
     )
-    skipped_upstreams = _join_upstreams_by_status(upstream_statuses, {StepStatus.SKIPPED.value})
+    skipped_upstreams = _join_upstreams_by_status(
+        upstream_statuses, {StepStatus.SKIPPED.value}
+    )
     missing_upstreams = sorted(
-        step_id
-        for step_id in required_upstreams
-        if step_id not in upstream_statuses
+        step_id for step_id in required_upstreams if step_id not in upstream_statuses
     )
     pending_upstreams = sorted(
         step_id
@@ -3044,13 +3233,20 @@ def _join_summary(step: StepSpec, inputs: dict[str, Any]) -> dict[str, Any]:
         if upstream_statuses.get(step_id)
         in {StepStatus.PENDING.value, StepStatus.READY.value, StepStatus.RUNNING.value}
     )
-    quorum = int(step.metadata.get("quorum") or step.metadata.get("join_quorum") or len(branch_results) or 0)
+    quorum = int(
+        step.metadata.get("quorum")
+        or step.metadata.get("join_quorum")
+        or len(branch_results)
+        or 0
+    )
     timed_out = _join_timeout_exceeded(step, inputs)
     on_timeout = str(step.metadata.get("on_timeout") or "fail")
 
     if not required_upstreams:
         if strategy == "all_success":
-            ready = not failed_branches and len(succeeded_branches) == len(branch_results)
+            ready = not failed_branches and len(succeeded_branches) == len(
+                branch_results
+            )
         elif strategy == "any_success":
             ready = bool(succeeded_branches)
         elif strategy == "quorum":
@@ -3058,7 +3254,11 @@ def _join_summary(step: StepSpec, inputs: dict[str, Any]) -> dict[str, Any]:
         elif strategy == "best_effort":
             ready = bool(branch_results) or bool(inputs)
         elif strategy == "timeout_join":
-            ready = bool(inputs) if not timed_out else on_timeout in {"best_effort", "partial"}
+            ready = (
+                bool(inputs)
+                if not timed_out
+                else on_timeout in {"best_effort", "partial"}
+            )
         else:
             raise StepExecutionError(f"unsupported join strategy: {strategy}")
     elif strategy == "all_success":
@@ -3070,9 +3270,9 @@ def _join_summary(step: StepSpec, inputs: dict[str, Any]) -> dict[str, Any]:
     elif strategy == "best_effort":
         ready = not missing_upstreams and not pending_upstreams
     elif strategy == "timeout_join":
-        ready = (
-            not missing_upstreams and not pending_upstreams
-        ) or (timed_out and on_timeout in {"best_effort", "partial"})
+        ready = (not missing_upstreams and not pending_upstreams) or (
+            timed_out and on_timeout in {"best_effort", "partial"}
+        )
     else:
         raise StepExecutionError(f"unsupported join strategy: {strategy}")
     if strategy == "timeout_join" and timed_out and on_timeout == "fail":
@@ -3110,7 +3310,11 @@ def _join_summary(step: StepSpec, inputs: dict[str, Any]) -> dict[str, Any]:
 
 
 def _join_required_upstream_step_ids(step: StepSpec) -> list[str]:
-    raw = step.metadata.get("required_upstream_step_ids") or step.metadata.get("upstream_step_ids") or []
+    raw = (
+        step.metadata.get("required_upstream_step_ids")
+        or step.metadata.get("upstream_step_ids")
+        or []
+    )
     if not isinstance(raw, list):
         raise StepExecutionError("join required_upstream_step_ids must be a list")
     return [str(item) for item in raw]
@@ -3129,10 +3333,15 @@ def _join_upstream_statuses(
     branch_results: list[dict[str, Any]],
 ) -> dict[str, str]:
     statuses: dict[str, str] = {}
-    raw_statuses = inputs.get(str(step.metadata.get("upstream_statuses_key") or "upstream_statuses"))
+    raw_statuses = inputs.get(
+        str(step.metadata.get("upstream_statuses_key") or "upstream_statuses")
+    )
     if isinstance(raw_statuses, dict):
         statuses.update({str(key): str(value) for key, value in raw_statuses.items()})
-    for step_id in [*_join_required_upstream_step_ids(step), *_join_optional_upstream_step_ids(step)]:
+    for step_id in [
+        *_join_required_upstream_step_ids(step),
+        *_join_optional_upstream_step_ids(step),
+    ]:
         key = f"{step_id}_status"
         if key in inputs:
             statuses[step_id] = str(inputs[key])
@@ -3151,19 +3360,22 @@ def _join_upstreams_by_status(
     statuses: set[str],
 ) -> list[str]:
     return sorted(
-        step_id
-        for step_id, status in upstream_statuses.items()
-        if status in statuses
+        step_id for step_id, status in upstream_statuses.items() if status in statuses
     )
 
 
 def _join_timeout_exceeded(step: StepSpec, inputs: dict[str, Any]) -> bool:
-    if str(step.metadata.get("join_policy") or step.metadata.get("strategy") or "") != "timeout_join":
+    if (
+        str(step.metadata.get("join_policy") or step.metadata.get("strategy") or "")
+        != "timeout_join"
+    ):
         return False
     timeout_seconds = step.metadata.get("timeout_seconds")
     if timeout_seconds is None:
         return False
-    started_at = inputs.get("join_wait_started_at", step.metadata.get("join_wait_started_at"))
+    started_at = inputs.get(
+        "join_wait_started_at", step.metadata.get("join_wait_started_at")
+    )
     if started_at is None:
         return False
     try:
@@ -3212,25 +3424,35 @@ def _human_next_hint(decision: Any) -> str | None:
     return value
 
 
-def _tool_calls_from_step(step: StepSpec, buffer: ScopedDataBuffer) -> list[ToolCall]:
+def _tool_calls_from_step(
+    step: StepSpec, buffer: StepScopedDataBufferView
+) -> list[ToolCall]:
     raw_calls = step.metadata.get("tool_calls")
     if raw_calls is None:
-        raw_calls = buffer.read(str(step.metadata.get("tool_calls_key") or "tool_calls"))
+        raw_calls = buffer.read(
+            str(step.metadata.get("tool_calls_key") or "tool_calls")
+        )
     if not isinstance(raw_calls, list):
-        raise StepExecutionError(f"tool_batch step {step.step_id} requires a list of tool calls")
+        raise StepExecutionError(
+            f"tool_batch step {step.step_id} requires a list of tool calls"
+        )
     return [_tool_call_from_payload(step, buffer, payload) for payload in raw_calls]
 
 
 def _tool_call_from_payload(
     step: StepSpec,
-    buffer: ScopedDataBuffer,
+    buffer: StepScopedDataBufferView,
     payload: Any,
 ) -> ToolCall:
     if not isinstance(payload, dict):
-        raise StepExecutionError(f"tool_batch step {step.step_id} tool call must be an object")
+        raise StepExecutionError(
+            f"tool_batch step {step.step_id} tool call must be an object"
+        )
     tool_name = str(payload.get("tool_name") or "")
     if not tool_name:
-        raise StepExecutionError(f"tool_batch step {step.step_id} tool_name is required")
+        raise StepExecutionError(
+            f"tool_batch step {step.step_id} tool_name is required"
+        )
     arguments = payload.get("arguments")
     if "arguments_key" in payload:
         arguments = buffer.read(str(payload["arguments_key"]))
@@ -3259,14 +3481,24 @@ def _tool_call_from_payload(
 def _tool_policy_from_step(step: StepSpec) -> ToolPolicy:
     payload = step.metadata.get("tool_policy") or {}
     if not isinstance(payload, dict):
-        raise StepExecutionError(f"tool_batch step {step.step_id} tool_policy must be an object")
+        raise StepExecutionError(
+            f"tool_batch step {step.step_id} tool_policy must be an object"
+        )
     return ToolPolicy(
-        allowed_tools=[str(tool_name) for tool_name in payload.get("allowed_tools", [])],
-        blocked_tools=[str(tool_name) for tool_name in payload.get("blocked_tools", [])],
+        allowed_tools=[
+            str(tool_name) for tool_name in payload.get("allowed_tools", [])
+        ],
+        blocked_tools=[
+            str(tool_name) for tool_name in payload.get("blocked_tools", [])
+        ],
         allow_mcp_tools=bool(payload.get("allow_mcp_tools", False)),
-        max_tool_calls_per_iteration=int(payload.get("max_tool_calls_per_iteration", 3)),
+        max_tool_calls_per_iteration=int(
+            payload.get("max_tool_calls_per_iteration", 3)
+        ),
         max_tool_calls_per_agent=int(payload.get("max_tool_calls_per_agent", 20)),
-        require_explicit_allowlist=bool(payload.get("require_explicit_allowlist", True)),
+        require_explicit_allowlist=bool(
+            payload.get("require_explicit_allowlist", True)
+        ),
         allow_dangerous_tools=bool(payload.get("allow_dangerous_tools", False)),
         require_approval_for_side_effects=bool(
             payload.get("require_approval_for_side_effects", True)
@@ -3406,6 +3638,3 @@ def _observations_key(step: StepSpec) -> str:
 
 def _results_key(step: StepSpec) -> str:
     return str(step.metadata.get("results_key") or "tool_results")
-
-
-

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from framework import RunResult, WorkflowRunner
 from framework.workflow import DataBuffer
@@ -10,7 +10,8 @@ from framework.agent import AgentRunner, AgentSpec
 from framework.llm import FakeLLMClient
 from framework.specs import StepSpec, WorkflowSpec
 from framework.tool import ToolDefinition, ToolRegistry
-from framework.workflow import FunctionStepRegistry, ScopedDataBuffer
+from framework.workflow import FunctionStepRegistry
+from framework.workflow.buffer.data_buffer import StepScopedDataBufferView
 
 PROFILE = "test-agent-loop"
 WORKFLOW_ID = "daily-intelligence-test-agent-loop"
@@ -77,7 +78,7 @@ def run_test_agent_loop(
     )
 
 
-def _run_agent_step(buffer: ScopedDataBuffer) -> dict[str, Any]:
+def _run_agent_step(buffer: StepScopedDataBufferView) -> dict[str, Any]:
     request = buffer.read("request")
     topic = str(request.get("topic") or "daily intelligence agent loop smoke")
     agent = AgentSpec(
@@ -91,7 +92,7 @@ def _run_agent_step(buffer: ScopedDataBuffer) -> dict[str, Any]:
         allowed_tools=["memory.search"],
     )
     result = AgentRunner(
-        llm_client=_build_fake_llm(topic),
+        llm_client=cast(Any, _build_fake_llm(topic)),
         tool_registry=_build_fake_tool_registry(),
     ).run(agent, {"request": request})
 
@@ -182,4 +183,3 @@ def test_agent_loop_smoke_workflow(tmp_path) -> None:
     assert output["agent_loop_metrics"]["tool_calls"] == 1
     assert output["agent_loop_diagnostics"]["stop_reason"] == "final_output_accepted"
     assert output["agent_loop_trace"]["summary"]["judge_retry_count"] == 1
-

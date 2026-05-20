@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import ItemsView
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -112,7 +113,9 @@ def _header_dict(headers: Any) -> dict[str, str]:
         return {}
     items = getattr(headers, "items", None)
     if callable(items):
-        return {str(key): str(value) for key, value in items()}
+        header_items = items()
+        if isinstance(header_items, ItemsView):
+            return {str(key): str(value) for key, value in header_items}
     return {}
 
 

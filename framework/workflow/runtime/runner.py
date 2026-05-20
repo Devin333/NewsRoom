@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -40,6 +40,7 @@ from framework.workflow.operations import (
 )
 from framework.workflow.runtime.result import WorkflowResult
 from framework.workflow.checkpoint.checkpointing import WorkflowResumePlan
+from framework.workflow.checkpoint.model import WorkflowCheckpoint
 from framework.workflow.runners.step_runner import (
     FunctionStepRegistry,
     StepRunnerRegistry,
@@ -47,14 +48,8 @@ from framework.workflow.runners.step_runner import (
 )
 
 
-ArtifactRefExtractor = Callable[..., list[ArtifactRef]]
+ArtifactRefExtractor = Callable[..., list[Any]]
 LineageExtractor = Callable[..., list[Any]]
-
-
-class WorkflowCheckpoint(Protocol):
-    run_id: str
-    current_step_ids: list[str]
-    data_buffer_snapshot: dict[str, Any]
 
 
 class ArtifactIndexStore(Protocol):
@@ -97,9 +92,9 @@ class WorkflowRunner:
         redactor: PayloadRedactor | None = None,
         global_budget_policy: GlobalBudgetPolicy | None = None,
         global_budget_tracker: GlobalBudgetTracker | None = None,
-        artifact_publishers: list[WorkflowArtifactPublisher] | None = None,
-        artifact_ref_extractors: list[ArtifactRefExtractor] | None = None,
-        lineage_extractors: list[LineageExtractor] | None = None,
+        artifact_publishers: Sequence[WorkflowArtifactPublisher] | None = None,
+        artifact_ref_extractors: Sequence[ArtifactRefExtractor] | None = None,
+        lineage_extractors: Sequence[LineageExtractor] | None = None,
         operation_service: WorkflowRunOperationService | None = None,
     ) -> None:
         self._artifact_root = Path(artifact_root)
@@ -461,8 +456,8 @@ class WorkflowRunIndexer:
         event_store: EventStore,
         lineage_store: LineageStore,
         redactor: PayloadRedactor,
-        artifact_ref_extractors: list[ArtifactRefExtractor] | None = None,
-        lineage_extractors: list[LineageExtractor] | None = None,
+        artifact_ref_extractors: Sequence[ArtifactRefExtractor] | None = None,
+        lineage_extractors: Sequence[LineageExtractor] | None = None,
     ) -> None:
         self._artifact_index_store = artifact_index_store
         self._event_store = event_store
@@ -802,9 +797,9 @@ def _approval_context_payload(approval_context: Any) -> dict[str, Any]:
         return dict(approval_context)
     to_dict = getattr(approval_context, "to_dict", None)
     if callable(to_dict):
-        payload = to_dict()
-        if isinstance(payload, dict):
-            return dict(payload)
+        raw_payload: Any = to_dict()
+        if isinstance(raw_payload, dict):
+            return dict(raw_payload)
     payload: dict[str, Any] = {}
     for key in ("buffer_updates", "resume_metadata", "decision_payload", "approval_id"):
         if hasattr(approval_context, key):
@@ -909,4 +904,3 @@ def _redact_string(value: str, *, path: str, fields: set[str], rules: set[str]) 
         fields.add(path)
         rules.add("secret_like_string")
     return redacted
-

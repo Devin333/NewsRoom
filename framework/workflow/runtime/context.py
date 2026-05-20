@@ -37,7 +37,7 @@ class WorkflowRunContext:
             run_id=str(payload["run_id"]),
             workflow_id=str(payload["workflow_id"]),
             profile=str(payload.get("profile") or "default"),
-            started_at=parse_datetime(str(payload["started_at"])),
+            started_at=parse_datetime(str(payload["started_at"])) or utc_now(),
             metadata=dict(payload.get("metadata") or {}),
         )
 

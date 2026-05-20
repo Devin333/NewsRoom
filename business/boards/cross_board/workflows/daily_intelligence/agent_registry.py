@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any, cast
 
 from framework.agent import AgentRunner, AgentSpec
 from framework.llm import (
@@ -207,7 +208,7 @@ def build_daily_agent_runner(
             route_id=DAILY_AGENTIC_MODEL_ROUTE_ID
         )
     return AgentRunner(
-        llm_client=resolved_llm_client,
+        llm_client=cast(Any, resolved_llm_client),
         tool_registry=build_daily_agent_tool_registry(),
         conversation_store=conversation_store,
         output_judge=build_daily_output_judge(),

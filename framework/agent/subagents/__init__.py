@@ -1,3 +1,4 @@
+# pyright: reportUnsupportedDunderAll=false
 from framework.agent.subagents.executor import (
     LocalSubAgentExecutor,
     SubAgentExecutor,

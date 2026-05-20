@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field, is_dataclass, replace
 from datetime import UTC, datetime
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from framework.memory import MemoryKind, MemoryRecord, MemoryRuntime, MemoryScope, MemoryWriteMode
 
@@ -340,7 +340,7 @@ def _to_dict(value: Any) -> dict[str, Any]:
     if hasattr(value, "to_dict"):
         return value.to_dict()
     if is_dataclass(value):
-        return asdict(value)
+        return asdict(cast(Any, value))
     return dict(value)
 
 

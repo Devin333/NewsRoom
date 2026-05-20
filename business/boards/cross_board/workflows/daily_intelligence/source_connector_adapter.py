@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+from collections.abc import Coroutine
 from typing import Any
 
 from business.foundation.models.source import SourceDefinition, SourceError, SourceFetchRequest, SourceFetchResult
@@ -184,10 +185,14 @@ def _run_maybe_awaitable(value: Any) -> Any:
     try:
         asyncio.get_running_loop()
     except RuntimeError:
-        return asyncio.run(value)
+        return asyncio.run(value if isinstance(value, Coroutine) else _await_value(value))
     raise RuntimeError(
         "registered source connector returned an awaitable while an event loop is running"
     )
+
+
+async def _await_value(value: Any) -> Any:
+    return await value
 
 
 def _callable_parameters(value: Any) -> set[str]:

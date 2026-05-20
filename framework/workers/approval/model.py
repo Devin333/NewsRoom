@@ -52,7 +52,7 @@ class ApprovalDecision:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "decision_type": self.decision_type.value,
+            "decision_type": ApprovalDecisionType(self.decision_type).value,
             "decided_by": self.decided_by,
             "reason": self.reason,
             "modifications": dict(self.modifications),
@@ -119,7 +119,7 @@ class ApprovalRequest:
             risk_level=self.risk_level,
             reason=self.reason,
             payload=self.payload,
-            status=status_by_decision[decision.decision_type],
+            status=status_by_decision[ApprovalDecisionType(decision.decision_type)],
             task_id=self.task_id,
             run_id=self.run_id,
             requested_by=self.requested_by,
@@ -136,7 +136,7 @@ class ApprovalRequest:
             "risk_level": self.risk_level,
             "reason": self.reason,
             "payload": dict(self.payload),
-            "status": self.status.value,
+            "status": ApprovalStatus(self.status).value,
             "task_id": self.task_id,
             "run_id": self.run_id,
             "requested_by": self.requested_by,

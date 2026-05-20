@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from framework.shared.result import ErrorDetail
 
 
 class FrameworkError(Exception):
@@ -16,7 +19,7 @@ class FrameworkError(Exception):
         self.code = code or self.__class__.__name__
         self.details = dict(details or {})
 
-    def to_error_detail(self) -> ErrorDetail:
+    def to_error_detail(self) -> "ErrorDetail":
         from framework.shared.result import ErrorDetail
 
         return ErrorDetail(

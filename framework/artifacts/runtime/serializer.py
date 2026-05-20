@@ -5,6 +5,7 @@ from typing import Any
 
 from framework.artifacts.models import Artifact
 from framework.shared.json import to_jsonable
+from framework.shared.time import parse_datetime, utc_now
 
 
 class ArtifactSerializer:
@@ -26,7 +27,7 @@ class ArtifactSerializer:
             content_type=content_type,
             content=content,
             metadata=dict(metadata.get("metadata") or {}),
-            created_at=metadata.get("created_at"),
+            created_at=parse_datetime(metadata.get("created_at")) or utc_now(),
         )
 
     def metadata_payload(self, artifact: Artifact) -> dict[str, Any]:

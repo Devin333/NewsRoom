@@ -24,14 +24,14 @@ class MemorySearchResult:
         if self.score_detail is None:
             object.__setattr__(self, "score_detail", MemoryScore(relevance=max(0.0, min(self.score, 1.0))))
         elif not isinstance(self.score_detail, MemoryScore):
-            object.__setattr__(self, "score_detail", MemoryScore.from_dict(dict(self.score_detail)))
+            object.__setattr__(self, "score_detail", MemoryScore.from_dict(_dict_or_empty(self.score_detail)))
 
     @property
     def memory_id(self) -> str:
         return self.record.memory_id
 
     def to_dict(self) -> dict[str, Any]:
-        refs = dict(self.record.refs)
+        refs = _dict_or_empty(self.record.refs)
         payload = {
             "memory_id": self.record.memory_id,
             "document_id": self.record.memory_id,
@@ -292,6 +292,10 @@ _GENERIC_REF_KEYS = (
     "step_id",
     "workflow_id",
 )
+
+
+def _dict_or_empty(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
 
 
 def _optional_str(value: Any) -> str | None:

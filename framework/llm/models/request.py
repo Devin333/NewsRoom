@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 from framework.llm.models.message import LLMMessage
 from framework.llm.redaction.redactor import redact_sensitive_values
@@ -24,11 +24,11 @@ class LLMRequest:
         object.__setattr__(self, "messages", [_message_to_dict(message) for message in self.messages])
 
     def estimated_prompt_text(self) -> str:
-        return "\n".join(str(message.get("content") or "") for message in self.messages)
+        return "\n".join(str(message.get("content") or "") for message in self._message_dicts())
 
     def to_dict(self, *, redact: bool = True) -> dict[str, Any]:
         payload: dict[str, Any] = {
-            "messages": [dict(message) for message in self.messages],
+            "messages": [dict(message) for message in self._message_dicts()],
             "tools": deepcopy(self.tools),
             "metadata": dict(self.metadata),
         }
@@ -62,6 +62,9 @@ class LLMRequest:
             output_schema=deepcopy(payload.get("output_schema")),
             output_schema_name=str(payload.get("output_schema_name") or "structured_output"),
         )
+
+    def _message_dicts(self) -> list[dict[str, Any]]:
+        return cast(list[dict[str, Any]], self.messages)
 
 
 def _message_to_dict(message: dict[str, Any] | LLMMessage) -> dict[str, Any]:

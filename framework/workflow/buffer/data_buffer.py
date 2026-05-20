@@ -147,7 +147,7 @@ DataBufferDiff = BufferDiff
 
 
 @dataclass(frozen=True)
-class DataBufferSnapshot(Mapping[str, Any]):
+class DataBufferSnapshot:
     values: dict[str, Any]
     lineage: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     snapshot_hash: str | None = None
@@ -324,7 +324,7 @@ class ScopedDataBuffer:
         }
         return DataBufferSnapshot(
             values=deepcopy(values),
-            lineage=self.lineage(),
+            lineage=self._lineage_snapshot(),
             snapshot_hash=stable_hash(values),
             redacted=redacted,
             snapshot_version=self._snapshot_version,
@@ -400,6 +400,9 @@ class ScopedDataBuffer:
         if key is None:
             return deepcopy(self._legacy_lineage)
         return deepcopy(self._legacy_lineage.get(key, []))
+
+    def _lineage_snapshot(self) -> dict[str, list[dict[str, Any]]]:
+        return deepcopy(self._legacy_lineage)
 
     def get_lineage(self, key: str) -> BufferLineage | None:
         lineage = self._lineage.get(key)

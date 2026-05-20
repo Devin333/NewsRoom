@@ -1,27 +1,15 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from hashlib import sha256
 from typing import Any
 
+from business.foundation.models.source import Lineage
 from business.layers.relation.evidence import EvidenceBundle, EvidenceItem, VerifiedClaim, VerifiedFindings
 from business.layers.analysis.quality.citation_checker import CitationChecker
 from business.layers.analysis.quality.editor_gate import EditorGate
 from business.layers.analysis.quality.models import QualityEvalCase, QualityEvalRecord
 from business.layers.analysis.quality.scoring import QualityScorer
 from business.layers.analysis.quality.support_matrix import SupportMatrixBuilder
-
-
-@dataclass(frozen=True)
-class _EvalLineage:
-    source_id: str
-    source_item_id: str | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "source_id": self.source_id,
-            "source_item_id": self.source_item_id,
-        }
 
 
 def golden_quality_eval_cases() -> list[QualityEvalCase]:
@@ -200,7 +188,7 @@ def _bundle(*, title: str = "AI policy update", summary: str = "Policy summary."
                 source_item_ids=["raw-policy"],
                 source_urls=["https://example.com/ai-policy"],
                 source_reliability="high",
-                lineage=_EvalLineage(source_id="fixture", source_item_id="raw-policy"),
+                lineage=Lineage(source_id="fixture", source_item_id="raw-policy"),
             )
         ],
     )

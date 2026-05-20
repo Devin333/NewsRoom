@@ -279,7 +279,7 @@ class BasicSourceHealthManager:
                 latency_ms=_latency(latency_ms),
             )
         )
-        return self._window_stats(source_id, now=now)
+        return self._window_stats(source_id, now=now) or _HealthWindowStats()
 
     def _window_stats(self, source_id: str, *, now: datetime) -> _HealthWindowStats | None:
         events = self._events.get(source_id)

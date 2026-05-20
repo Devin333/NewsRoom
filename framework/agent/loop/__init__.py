@@ -1,3 +1,4 @@
+# pyright: reportUnsupportedDunderAll=false
 from framework.agent.loop.events import AgentLoopEvent, AgentLoopEventRecorder, event_type_counts
 from framework.agent.loop.extensions import (
     OutputNormalizer,

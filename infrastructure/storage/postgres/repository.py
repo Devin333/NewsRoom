@@ -7,7 +7,7 @@ from typing import Any, Callable
 
 import psycopg
 
-from infrastructure.external.sources.models import SourceError, SourceHealth
+from infrastructure.external.sources.models import SourceError, SourceHealth, SourceHealthStatus
 from infrastructure.storage.local_json import ReportNotFoundError
 from infrastructure.storage.postgres.migrations import load_migration_sql
 from infrastructure.storage.records import ClaimRecord, EvidenceItemRecord, QualityResultRecord, ReportDetailRecord, ReportSummaryRecord, SourceItemRecord
@@ -26,7 +26,7 @@ class PostgresRepository:
         sql = load_migration_sql()
         with self._connection_factory() as connection:
             with connection.cursor() as cursor:
-                cursor.execute(sql)
+                _cursor_execute(cursor, sql)
             connection.commit()
 
     def save_workflow_run(self, record: WorkflowRunRecord) -> None:
@@ -502,24 +502,30 @@ class PostgresRepository:
     def _execute(self, sql: str, params: tuple[Any, ...]) -> None:
         with self._connection_factory() as connection:
             with connection.cursor() as cursor:
-                cursor.execute(sql, params)
+                _cursor_execute(cursor, sql, params)
             connection.commit()
 
     def _fetch_one(self, sql: str, params: tuple[Any, ...]) -> tuple[Any, ...] | None:
         with self._connection_factory() as connection:
             with connection.cursor() as cursor:
-                cursor.execute(sql, params)
+                _cursor_execute(cursor, sql, params)
                 return cursor.fetchone()
 
     def _fetch_all(self, sql: str, params: tuple[Any, ...]) -> list[tuple[Any, ...]]:
         with self._connection_factory() as connection:
             with connection.cursor() as cursor:
-                cursor.execute(sql, params)
+                _cursor_execute(cursor, sql, params)
                 return list(cursor.fetchall())
 
 
 def _json(value: Any) -> str:
     return json.dumps(value or {}, ensure_ascii=False, sort_keys=True)
+
+
+def _cursor_execute(cursor: Any, sql: str, params: tuple[Any, ...] | None = None) -> Any:
+    if params is None:
+        return cursor.execute(sql)
+    return cursor.execute(sql, params)
 
 
 def _json_list(value: Any) -> str:
@@ -583,7 +589,7 @@ def _source_health_from_row(row: tuple[Any, ...]) -> SourceHealth:
         source_id=str(row[0]),
         source_name=row[1],
         url=row[2],
-        status=str(row[3]),
+        status=SourceHealthStatus(str(row[3])),
         consecutive_failures=int(row[4] or 0),
         last_success_at=_datetime_or_none(row[5]),
         last_failure_at=_datetime_or_none(row[6]),

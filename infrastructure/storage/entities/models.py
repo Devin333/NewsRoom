@@ -53,10 +53,11 @@ class TrackedEntity:
         )
 
     def to_dict(self) -> dict[str, Any]:
+        kind = EntityKind(self.kind)
         return {
             "entity_id": self.entity_id,
             "name": self.name,
-            "kind": self.kind.value,
+            "kind": kind.value,
             "aliases": list(self.aliases),
             "enabled": self.enabled,
             "metadata": dict(self.metadata),

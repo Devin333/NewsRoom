@@ -57,11 +57,12 @@ class TaskResult:
         object.__setattr__(self, "task_status", TaskStatus(task_status))
 
     def to_dict(self) -> dict[str, Any]:
+        task_status = self.task_status or self.status
         return {
             "task_id": self.task_id,
             "success": self.success,
             "status": self.status.value,
-            "task_status": self.task_status.value,
+            "task_status": task_status.value,
             "run_status": self.run_status,
             "report_status": self.report_status,
             "workflow_run_id": self.workflow_run_id,

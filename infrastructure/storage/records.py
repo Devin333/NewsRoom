@@ -396,8 +396,9 @@ class StorageError:
         object.__setattr__(self, "error_type", StorageErrorType(self.error_type))
 
     def to_dict(self) -> dict[str, Any]:
+        error_type = StorageErrorType(self.error_type)
         return {
-            "error_type": self.error_type.value,
+            "error_type": error_type.value,
             "message": self.message,
             "retryable": self.retryable,
             "workflow_blocking": self.workflow_blocking,

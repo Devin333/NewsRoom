@@ -21,6 +21,7 @@ from business.foundation import (
     InsightType,
     MaturityStage,
     ObjectRef,
+    ObjectType,
     Report,
     ReportSection,
     ReportType,
@@ -308,7 +309,7 @@ def _analysis_time_window(signals: list[Signal], context: AnalysisContext) -> Ti
         return context.time_window
     start = min(published)
     end = max(published)
-    return TimeWindow(start=start, end=end, label="board_signals")
+    return TimeWindow(start_at=start, end_at=end, label="board_signals")
 
 
 def _primary_object(signal: Signal, extraction: ExtractionResult) -> ObjectRef:
@@ -393,7 +394,7 @@ def _dedupe_refs(refs: list[ObjectRef]) -> list[ObjectRef]:
     seen: set[tuple[str, str]] = set()
     result: list[ObjectRef] = []
     for ref in refs:
-        marker = (ref.object_type.value, ref.object_id)
+        marker = (ObjectType(ref.object_type).value, ref.object_id)
         if marker in seen:
             continue
         seen.add(marker)

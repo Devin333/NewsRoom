@@ -64,7 +64,7 @@ class LocalJsonRepository:
     ) -> list[ReportSummaryRecord]:
         if limit <= 0:
             raise ValueError("limit must be greater than zero")
-        records: list[ReportSearchRecord] = []
+        records: list[ReportSummaryRecord] = []
         for manifest_path, manifest in self._iter_report_manifests(
             workflow_id=workflow_id,
             workflow_ids=workflow_ids,
@@ -75,7 +75,7 @@ class LocalJsonRepository:
 
     def search_reports(self, query: str, *, limit: int = 20) -> list[ReportSummaryRecord]:
         normalized_query = query.lower()
-        matches: list[ReportSearchRecord] = []
+        matches: list[ReportSummaryRecord] = []
         for manifest_path, manifest in self._iter_report_manifests():
             artifacts = manifest.get("artifacts", {})
             run_dir = manifest_path.parent
@@ -154,9 +154,9 @@ def _detail_from_manifest(manifest_path: Path, manifest: dict[str, Any]) -> Repo
         finished_at=manifest.get("finished_at") or "",
         title=(report_json or {}).get("title"),
         quality_score=manifest.get("quality_score"),
-        manifest_path=manifest_path,
-        report_json_path=report_json_path,
-        report_markdown_path=report_markdown_path,
+        manifest_path=str(manifest_path),
+        report_json_path=str(report_json_path) if report_json_path is not None else None,
+        report_markdown_path=str(report_markdown_path) if report_markdown_path is not None else None,
         report_json=report_json,
         report_markdown=report_markdown,
     )
@@ -179,9 +179,9 @@ def _summary_from_manifest(manifest_path: Path, manifest: dict[str, Any]) -> Rep
         quality_score=manifest.get("quality_score"),
         workflow_id=manifest.get("workflow_id"),
         profile=manifest.get("profile"),
-        manifest_path=manifest_path,
-        report_json_path=report_json_path,
-        report_markdown_path=report_markdown_path,
+        manifest_path=str(manifest_path),
+        report_json_path=str(report_json_path) if report_json_path is not None else None,
+        report_markdown_path=str(report_markdown_path) if report_markdown_path is not None else None,
     )
 
 

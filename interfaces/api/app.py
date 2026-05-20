@@ -19,6 +19,7 @@ from interfaces.models import (
     RunResponse,
     actor_context_from_headers,
 )
+from interfaces.models.contracts import RunStatus
 from interfaces.api.deps import ApiRouteHelpers, build_api_services
 from interfaces.api.rate_limit import Clock, InMemoryRateLimiter
 from interfaces.api.openapi import configure_openapi_contract
@@ -322,10 +323,16 @@ def _run_response_from_payload(payload: dict[str, Any]) -> RunResponse:
     )
 
 
-def _interface_status(run_status: str) -> str:
+def _interface_status(run_status: str) -> RunStatus:
     normalized = run_status.strip().lower()
-    if normalized in {"succeeded", "failed", "blocked", "cancelled"}:
-        return normalized
+    if normalized == "succeeded":
+        return "succeeded"
+    if normalized == "failed":
+        return "failed"
+    if normalized == "blocked":
+        return "blocked"
+    if normalized == "cancelled":
+        return "cancelled"
     if normalized in {"running", "created", "pending"}:
         return "running"
     return "accepted"
@@ -805,17 +812,21 @@ def _optional_positive_int_env(name: str) -> int | None:
     return parsed
 
 
-def _validation_error_details(errors: list[dict[str, Any]]) -> dict[str, Any]:
+def _validation_error_details(errors: Sequence[Any]) -> dict[str, Any]:
     return {
         "errors": [
             {
-                "loc": [str(part) for part in error.get("loc", [])],
-                "message": str(error.get("msg") or "invalid value"),
-                "type": str(error.get("type") or "validation_error"),
+                "loc": [str(part) for part in _mapping_or_empty(error).get("loc", [])],
+                "message": str(_mapping_or_empty(error).get("msg") or "invalid value"),
+                "type": str(_mapping_or_empty(error).get("type") or "validation_error"),
             }
             for error in errors
         ]
     }
+
+
+def _mapping_or_empty(value: Any) -> Mapping[str, Any]:
+    return value if isinstance(value, Mapping) else {}
 
 
 def _http_error_code(status_code: int) -> str:

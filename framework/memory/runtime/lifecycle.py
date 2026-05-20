@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
+from framework.memory.models import MemoryRecord
 from framework.memory.policy import MemoryPolicy
 from framework.memory.stores import MemoryStore
 from framework.shared.time import parse_datetime, utc_now
@@ -36,8 +37,10 @@ class MemoryLifecycleManager:
         }
 
 
-def _store_records(store: MemoryStore):
+def _store_records(store: MemoryStore) -> list[MemoryRecord]:
     records = getattr(store, "records", None)
     if callable(records):
-        return records()
+        raw_records = records()
+        if isinstance(raw_records, list):
+            return [record for record in raw_records if isinstance(record, MemoryRecord)]
     return []

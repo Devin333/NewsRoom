@@ -115,7 +115,7 @@ def build_builtin_tool_registry(
 
 
 def build_builtin_safe_tool_registry(**kwargs: Any) -> ToolRegistry:
-    options = dict(kwargs)
+    options: dict[str, Any] = dict(kwargs)
     options["include_network_tools"] = False
     options["include_dangerous_tools"] = False
     return build_builtin_tool_registry(**options)
@@ -170,7 +170,6 @@ def _build_unfiltered_builtin_tool_registry(
     include_network_tools: bool = False,
     **_: Any,
 ) -> ToolRegistry:
-    _ = include_network_tools
     registry = ToolRegistry()
     register_control_tools(registry, approval_store=approval_store, task_queue=task_queue, run_id=run_id)
     if artifact_manager is not None and run_id is not None:

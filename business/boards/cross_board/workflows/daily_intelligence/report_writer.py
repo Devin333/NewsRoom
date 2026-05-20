@@ -4,7 +4,7 @@ import json
 from typing import Any
 
 from framework.llm import LLMClient, LLMRequest, build_openai_compatible_client_from_config
-from framework.workflow import ScopedDataBuffer
+from framework.workflow import StepScopedDataBufferView
 from business.foundation.models.source import SourcePipelineMetrics
 from business.layers.relation.evidence import EvidenceBundle
 from business.boards.cross_board.workflows.daily_intelligence.profiles import PROFILE_LIVE, PROFILE_LIVE_OFFLINE
@@ -14,7 +14,7 @@ class ReportWriter:
     def __init__(self, *, llm_client: LLMClient | None = None) -> None:
         self.llm_client = llm_client
 
-    def draft_report(self, buffer: ScopedDataBuffer, profile: str) -> dict[str, Any]:
+    def draft_report(self, buffer: StepScopedDataBufferView, profile: str) -> dict[str, Any]:
         request = buffer.read("request")
         evidence_bundle = buffer.read("evidence_bundle")
         source_errors = buffer.read("source_errors")
@@ -36,7 +36,7 @@ class ReportWriter:
         report_draft = (
             _validate_report_payload(response.structured_output)
             if response.structured_output is not None
-            else _parse_report_json(response.content)
+            else _parse_report_json(response.content or "{}")
         )
         report_draft = _with_source_notes(report_draft, evidence_bundle, source_errors, source_metrics)
         return {"report_draft": report_draft}

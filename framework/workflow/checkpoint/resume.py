@@ -378,8 +378,8 @@ def coerce_human_review_resume_decision(
         patch=dict(patch),
         approval_id=_optional_str(approval_id),
         request_id=_optional_str(request_id),
-        actor_roles=actor_roles,
-        actor_permissions=actor_permissions,
+        actor_roles=actor_roles or [],
+        actor_permissions=actor_permissions or [],
     )
 
 

@@ -112,19 +112,19 @@ class PostgresEventStore:
     def _execute(self, sql: str, params: tuple[Any, ...]) -> None:
         with self._connection_factory() as connection:
             with connection.cursor() as cursor:
-                cursor.execute(sql, params)
+                _cursor_execute(cursor, sql, params)
             connection.commit()
 
     def _fetch_one(self, sql: str, params: tuple[Any, ...]) -> tuple[Any, ...] | None:
         with self._connection_factory() as connection:
             with connection.cursor() as cursor:
-                cursor.execute(sql, params)
+                _cursor_execute(cursor, sql, params)
                 return cursor.fetchone()
 
     def _fetch_events(self, sql: str, params: tuple[Any, ...]) -> list[EventRecord]:
         with self._connection_factory() as connection:
             with connection.cursor() as cursor:
-                cursor.execute(sql, params)
+                _cursor_execute(cursor, sql, params)
                 return [_event_from_row(row) for row in cursor.fetchall()]
 
 
@@ -162,6 +162,10 @@ def _event_from_row(row: tuple[Any, ...]) -> EventRecord:
 
 def _json(value: Any) -> str:
     return json.dumps(value or {}, ensure_ascii=False, sort_keys=True)
+
+
+def _cursor_execute(cursor: Any, sql: str, params: tuple[Any, ...]) -> Any:
+    return cursor.execute(sql, params)
 
 
 def _dict(value: Any) -> dict[str, Any]:

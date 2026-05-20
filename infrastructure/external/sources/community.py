@@ -376,7 +376,8 @@ def _raw_stackoverflow_item(
     url = _optional_text(item.get("link"))
     if not title or not url:
         return None
-    owner = item.get("owner") if isinstance(item.get("owner"), dict) else {}
+    raw_owner = item.get("owner")
+    owner = raw_owner if isinstance(raw_owner, dict) else {}
     return _raw_item(
         source,
         title=title,
@@ -407,7 +408,8 @@ def _raw_devto_item(
     url = _optional_text(item.get("url") or item.get("canonical_url"))
     if not title or not url:
         return None
-    user = item.get("user") if isinstance(item.get("user"), dict) else {}
+    raw_user = item.get("user")
+    user = raw_user if isinstance(raw_user, dict) else {}
     return _raw_item(
         source,
         title=title,

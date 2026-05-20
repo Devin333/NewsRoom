@@ -1,3 +1,4 @@
+# pyright: reportUnsupportedDunderAll=false
 """Workflow checkpoint primitives."""
 
 from framework.workflow.checkpoint.checksum import *  # noqa: F401,F403

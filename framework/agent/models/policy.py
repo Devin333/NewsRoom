@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 
 __all__ = ["AgentLoopPolicy"]
@@ -92,8 +93,12 @@ class AgentLoopPolicy:
     def from_dict(cls, payload: dict[str, object]) -> "AgentLoopPolicy":
         if not isinstance(payload, dict):
             raise TypeError("AgentLoopPolicy payload must be an object")
-        supported = cls().to_dict().keys()
-        return cls(**{key: payload[key] for key in supported if key in payload})
+        values: dict[str, Any] = {
+            key: payload[key]
+            for key in cls().to_dict()
+            if key in payload
+        }
+        return cls(**values)
 
 
 def _validate_non_negative(name: str, value: int, *, minimum: int = 0) -> None:

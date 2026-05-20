@@ -30,7 +30,7 @@ class QualityError:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "error_type": self.error_type.value,
+            "error_type": QualityErrorType(self.error_type).value,
             "message": self.message,
             "workflow_blocking": self.workflow_blocking,
             "retryable": self.retryable,

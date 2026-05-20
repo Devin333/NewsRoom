@@ -83,11 +83,11 @@ def run_stdio(
     output_stream: TextIO | None = None,
     service: MCPApplicationService | None = None,
 ) -> None:
-    input_stream = input_stream or sys.stdin
-    output_stream = output_stream or sys.stdout
+    actual_input = input_stream if input_stream is not None else sys.stdin
+    actual_output = output_stream if output_stream is not None else sys.stdout
     service = service or MCPApplicationService()
 
-    for line in input_stream:
+    for line in actual_input:
         line = line.strip()
         if not line:
             continue
@@ -100,8 +100,8 @@ def run_stdio(
         except json.JSONDecodeError as exc:
             response = _error(None, -32700, f"parse error: {exc.msg}")
         if response is not None:
-            output_stream.write(json.dumps(response, ensure_ascii=False, sort_keys=True) + "\n")
-            output_stream.flush()
+            actual_output.write(json.dumps(response, ensure_ascii=False, sort_keys=True) + "\n")
+            actual_output.flush()
 
 
 def _success(request_id: Any, result: dict[str, Any]) -> dict[str, Any]:

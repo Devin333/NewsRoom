@@ -1,3 +1,4 @@
+# pyright: reportUnsupportedDunderAll=false
 from framework.agent.harness.evaluator import AgentHarnessEvaluator
 from framework.agent.harness.harness import AgentHarness
 from framework.agent.harness.scenario import AgentHarnessScenario

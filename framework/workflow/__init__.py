@@ -1,3 +1,4 @@
+# pyright: reportUnsupportedDunderAll=false
 """Workflow runtime implementation."""
 
 from framework.workflow.runtime.artifact_publishers import (
@@ -317,5 +318,4 @@ from framework.workflow.runtime.state_machine import (
 )
 
 __all__ = [name for name in globals() if not name.startswith("_")]
-
 

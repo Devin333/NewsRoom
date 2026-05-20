@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from framework.workers.approval.model import ApprovalDecisionType, ApprovalRequest
+from framework.workers.approval.model import ApprovalDecisionType, ApprovalRequest, ApprovalStatus
 
 
 @dataclass(frozen=True)
@@ -35,11 +35,11 @@ def build_approval_resume_context(request: ApprovalRequest) -> ApprovalResumeCon
         approval_id=request.approval_id,
         run_id=request.run_id,
         task_id=request.task_id,
-        decision_type=request.decision.decision_type,
+        decision_type=ApprovalDecisionType(request.decision.decision_type),
         modifications=dict(request.decision.modifications),
         metadata={
             **dict(request.metadata),
-            "approval_status": request.status.value,
+            "approval_status": ApprovalStatus(request.status).value,
             "requested_action": request.requested_action,
         },
     )
