@@ -1,5 +1,3 @@
-"""Workflow event recording helpers."""
+"""Compatibility bridge for legacy core.framework.events imports."""
 
-from core.framework.events.recorder import EventBus, EventRecord, EventRecorder
-
-__all__ = ["EventBus", "EventRecord", "EventRecorder"]
+from framework.events import *  # noqa: F401,F403

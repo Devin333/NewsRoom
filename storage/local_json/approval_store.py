@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from core.framework.workers.approval import (
+from framework.workers.approval import (
     ApprovalDecision,
     ApprovalNotFoundError,
     ApprovalRequest,

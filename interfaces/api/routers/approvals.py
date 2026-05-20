@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from core.framework.workers.approval import ApprovalNotFoundError
+from framework.workers.approval import ApprovalNotFoundError
 from interfaces.api.deps import ApiRouteHelpers, ApiServices
 from interfaces.models import (
     ApprovalDecisionRequest,

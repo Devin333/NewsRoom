@@ -8,7 +8,7 @@ from typing import Any, Callable
 
 import psycopg
 
-from storage.events.models import EventRecord
+from infrastructure.storage.events.models import EventRecord
 
 
 ConnectionFactory = Callable[[], Any]

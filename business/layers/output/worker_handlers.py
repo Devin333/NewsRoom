@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from business.layers._worker_utils import handler_output
-from core.framework.workers.models import Task, TaskResult, TaskStatus
+from framework.workers.models import Task, TaskResult, TaskStatus
 
 
 class MemoryReindexTaskHandler:

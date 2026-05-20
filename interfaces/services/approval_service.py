@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from core.framework.workers.approval import (
+from framework.workers.approval import (
     ApprovalDecision,
     ApprovalDecisionType,
     ApprovalRequest,
@@ -49,13 +49,15 @@ class ApprovalResumeContextResult:
     resume_metadata: dict[str, Any]
 
     def to_dict(self) -> dict[str, Any]:
+        resume_metadata = dict(self.resume_metadata)
+        resume_metadata.setdefault("reviewer_trace", _approval_reviewer_trace(self.approval))
         return {
             "approval_id": self.approval.approval_id,
             "approval": self.approval.to_dict(),
             "decision_key": self.decision_key,
             "decision_payload": dict(self.decision_payload),
             "buffer_updates": dict(self.buffer_updates),
-            "resume_metadata": dict(self.resume_metadata),
+            "resume_metadata": resume_metadata,
         }
 
 
@@ -219,22 +221,27 @@ def _approval_resume_metadata(approval: ApprovalRequest) -> dict[str, Any]:
         "requested_action": approval.requested_action,
         "risk_level": approval.risk_level,
         "decided_by": approval.decision.decided_by,
-        "reviewer_trace": {
-            "approval_id": approval.approval_id,
-            "approval_status": approval.status.value,
-            "decision_type": approval.decision.decision_type.value,
-            "requested_action": approval.requested_action,
-            "risk_level": approval.risk_level,
-            "decided_by": approval.decision.decided_by,
-            "reason": approval.decision.reason,
-            "modifications": dict(approval.decision.modifications),
-        },
     }
     if approval.task_id:
         metadata["task_id"] = approval.task_id
     if approval.run_id:
         metadata["approval_run_id"] = approval.run_id
     return metadata
+
+
+def _approval_reviewer_trace(approval: ApprovalRequest) -> dict[str, Any]:
+    if approval.decision is None:
+        raise ValueError(f"approval decision is not recorded: {approval.approval_id}")
+    return {
+        "approval_id": approval.approval_id,
+        "approval_status": approval.status.value,
+        "decision_type": approval.decision.decision_type.value,
+        "requested_action": approval.requested_action,
+        "risk_level": approval.risk_level,
+        "decided_by": approval.decision.decided_by,
+        "reason": approval.decision.reason,
+        "modifications": dict(approval.decision.modifications),
+    }
 
 
 def _resume_decision(decision_type: str) -> str:

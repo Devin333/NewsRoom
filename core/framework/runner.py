@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from core.framework.artifacts.filesystem import ArtifactManager
-from core.framework.events import EventBus
+from framework.events import EventBus
 from framework.llm import GlobalBudgetPolicy, GlobalBudgetTracker
 from core.framework.run_result import RunResult
 from core.framework.specs import WorkflowSpec
@@ -44,8 +44,8 @@ from core.framework.workflow.step_runner import (
 )
 from storage.artifacts import ArtifactRef, artifact_index_store_from_env
 from storage.checkpoint import WorkflowCheckpoint
-from storage.events import EventRecord as StorageEventRecord
-from storage.events import event_store_from_env
+from infrastructure.storage.events import EventRecord as StorageEventRecord
+from infrastructure.storage.events import event_store_from_env
 from storage.lineage import lineage_store_from_env
 from storage.security import StorageRedactor
 

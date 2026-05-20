@@ -12,7 +12,7 @@ from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from framework.tool.governance.redaction import redact_sensitive_values
-from core.framework.workers.approval import ApprovalAlreadyDecidedError, ApprovalNotFoundError
+from framework.workers.approval import ApprovalAlreadyDecidedError, ApprovalNotFoundError
 from interfaces.models import (
     ActorContext,
     ArtifactRef,

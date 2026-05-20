@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from core.framework.specs import WorkflowStatus
-from core.framework.workers.models import TaskStatus
+from framework.workers.models import TaskStatus
 
 
 def optional_int(value: Any) -> int | None:

@@ -8,7 +8,7 @@ from business.layers._worker_utils import (
     task_status_from_workflow_status,
     workflow_status_value,
 )
-from core.framework.workers.models import Task, TaskResult, TaskStatus
+from framework.workers.models import Task, TaskResult, TaskStatus
 
 
 class DailyIntelligenceTaskHandler:

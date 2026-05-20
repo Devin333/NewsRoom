@@ -10,10 +10,7 @@ from typing import Any, Callable
 from business.boards.cross_board.worker_handlers import DailyIntelligenceTaskHandler
 from business.layers.output.worker_handlers import MemoryReindexTaskHandler
 from business.layers.signal.worker_handlers import SourceHealthCheckTaskHandler
-from core.framework.workers import (
-    RedisQueueStatus,
-    RedisStreamTaskQueue,
-    RedisWorkerRegistry,
+from framework.workers import (
     Task,
     TaskResult,
     TaskStatus,
@@ -21,8 +18,13 @@ from core.framework.workers import (
     WorkerHeartbeatStatus,
     WorkerStatus,
 )
-from core.framework.workers.handler import TaskHandler
-from core.framework.workers.models import LeasedTask
+from framework.workers.models import LeasedTask
+from framework.workers.registry.handler import TaskHandler
+from infrastructure.storage.workers import (
+    RedisQueueStatus,
+    RedisStreamTaskQueue,
+    RedisWorkerRegistry,
+)
 from interfaces.services.memory_service import MemoryApplicationService
 from interfaces.services.run_service import RunApplicationService
 from interfaces.services.source_service import SourceApplicationService

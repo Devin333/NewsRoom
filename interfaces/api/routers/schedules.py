@@ -2,8 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from core.framework.workers.schedule_store import ScheduleNotFoundError, ScheduleRecord
-from core.framework.workers.scheduler import ScheduleSpec
+from framework.workers.scheduler import ScheduleNotFoundError, ScheduleRecord, ScheduleSpec
 from interfaces.api.deps import ApiRouteHelpers, ApiServices
 from interfaces.models import DailyScheduleRequest, ManualScheduleTriggerRequest, ScheduleTickRequest
 

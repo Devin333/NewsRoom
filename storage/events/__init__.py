@@ -1,7 +1,3 @@
-"""Storage-owned event models and stores."""
+"""Compatibility bridge for legacy storage.events imports."""
 
-from storage.events.factory import event_store_from_env
-from storage.events.local_json import LocalJsonEventStore
-from storage.events.models import EventRecord
-
-__all__ = ["EventRecord", "LocalJsonEventStore", "event_store_from_env"]
+from infrastructure.storage.events import *  # noqa: F401,F403

@@ -4,7 +4,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from core.framework.workers.schedule_store import (
+from framework.workers.scheduler import (
     ScheduleNotFoundError,
     ScheduleRecord,
 )

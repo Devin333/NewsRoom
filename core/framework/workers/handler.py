@@ -1,13 +1,3 @@
-from __future__ import annotations
+"""Compatibility bridge for legacy core.framework.workers.handler imports."""
 
-from typing import Protocol
-
-from core.framework.workers.models import Task, TaskResult
-
-
-class TaskHandler(Protocol):
-    task_type: str
-
-    def handle(self, task: Task) -> TaskResult:
-        ...
-
+from framework.workers.registry.handler import *  # noqa: F401,F403
