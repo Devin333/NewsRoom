@@ -1,7 +1,7 @@
 import json
 
 from interfaces.cli.news import main
-from workflows.daily_intelligence.profiles import LEGACY_DAILY_WORKFLOW_ID
+from business.boards.cross_board.workflows.daily_intelligence.profiles import LEGACY_DAILY_WORKFLOW_ID
 from interfaces.services.diagnose_service import DiagnoseCheck, DiagnoseResult
 from interfaces.services.run_service import LiveSmokeResult
 

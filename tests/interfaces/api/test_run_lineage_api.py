@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 
 from interfaces.api import create_app
 from interfaces.services.storage_service import StorageApplicationService
-from storage.lineage import LineageRef, LocalJsonLineageStore
+from infrastructure.storage.lineage import LineageRef, LocalJsonLineageStore
 
 
 def test_run_lineage_api_lists_lineage() -> None:

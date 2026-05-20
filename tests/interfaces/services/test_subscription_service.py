@@ -1,5 +1,5 @@
 from interfaces.services.subscription_service import SubscriptionApplicationService
-from storage.subscriptions import LocalJsonTopicSubscriptionStore
+from infrastructure.storage.subscriptions import LocalJsonTopicSubscriptionStore
 
 
 def test_subscription_service_creates_stable_id_and_lists(tmp_path) -> None:

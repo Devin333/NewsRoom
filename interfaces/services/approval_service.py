@@ -12,7 +12,7 @@ from framework.workers.approval import (
     ApprovalStatus,
     ApprovalStore,
 )
-from storage.local_json import LocalJsonApprovalStore
+from infrastructure.storage.local_json import LocalJsonApprovalStore
 
 
 DEFAULT_APPROVAL_STORE_PATH = ".newsroom/approvals/approvals.json"

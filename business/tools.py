@@ -20,6 +20,7 @@ from infrastructure.tools import (
     build_builtin_safe_tool_registry,
     build_builtin_tool_registry,
 )
+from infrastructure.external.sources import default_arxiv_connector, default_github_connector
 from infrastructure.tools.web_search_tools import WebSearchProvider, register_web_search_tools
 
 
@@ -175,8 +176,8 @@ def register_business_tools(
     if memory_ingestion_service is not None:
         register_memory_index_tools(registry, ingestion_service=memory_ingestion_service)
     if include_network_tools:
-        register_arxiv_tools(registry, connector=arxiv_connector)
-        register_github_tools(registry, connector=github_connector)
+        register_arxiv_tools(registry, connector=arxiv_connector or default_arxiv_connector())
+        register_github_tools(registry, connector=github_connector or default_github_connector())
         register_web_search_tools(registry, provider=web_search_provider)
     if postgres_repository is not None:
         register_postgres_tools(

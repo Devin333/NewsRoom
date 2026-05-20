@@ -63,7 +63,7 @@ def test_business_has_no_runtime_legacy_source_import_adapters() -> None:
 def test_signal_artifact_boundary_does_not_import_storage_artifacts() -> None:
     violations = _forbidden_imports(
         BUSINESS_ROOT / "layers" / "signal",
-        forbidden_prefixes=("storage.artifacts",),
+        forbidden_prefixes=("infrastructure.storage.artifacts",),
     )
 
     assert violations == []
@@ -76,7 +76,7 @@ def test_signal_pipeline_does_not_import_legacy_source_processing() -> None:
         BUSINESS_ROOT / "layers" / "signal" / "records.py",
     ):
         imported_modules = _imports_for_file(path)
-        for imported in _matching_forbidden(imported_modules, ("domain.sources", "sources.processing")):
+        for imported in _matching_forbidden(imported_modules, ("business.foundation.models.source", "business.layers.signal.source_processing")):
             violations.append(f"{path.relative_to(PROJECT_ROOT).as_posix()}: {imported}")
 
     assert violations == []
@@ -85,7 +85,7 @@ def test_signal_pipeline_does_not_import_legacy_source_processing() -> None:
 def test_relation_lineage_boundary_does_not_import_storage_lineage() -> None:
     violations = _forbidden_imports(
         BUSINESS_ROOT / "layers" / "relation",
-        forbidden_prefixes=("storage.lineage",),
+        forbidden_prefixes=("infrastructure.storage.lineage",),
     )
 
     assert violations == []
@@ -94,7 +94,7 @@ def test_relation_lineage_boundary_does_not_import_storage_lineage() -> None:
 def test_output_report_tools_do_not_import_storage_or_domain_report_models() -> None:
     violations = _forbidden_imports(
         BUSINESS_ROOT / "layers" / "output",
-        forbidden_prefixes=("domain.reports", "domain.sources", "storage.repository"),
+        forbidden_prefixes=("business.foundation.models.report_output", "business.foundation.models.source", "infrastructure.storage.repository"),
     )
 
     assert violations == []
@@ -103,7 +103,7 @@ def test_output_report_tools_do_not_import_storage_or_domain_report_models() -> 
 def test_analysis_quality_tools_do_not_import_legacy_quality_or_evidence_packages() -> None:
     violations = _forbidden_imports(
         BUSINESS_ROOT / "layers" / "analysis",
-        forbidden_prefixes=("domain.sources", "evidence", "quality", "sources"),
+        forbidden_prefixes=("business.foundation.models.source", "evidence", "quality", "sources"),
     )
 
     assert violations == []
@@ -113,9 +113,9 @@ def test_business_boards_do_not_import_concrete_storage() -> None:
     violations = _forbidden_imports(
         BUSINESS_ROOT / "boards",
         forbidden_prefixes=(
-            "storage.postgres",
-            "storage.qdrant",
-            "storage.redis",
+            "infrastructure.storage.postgres",
+            "infrastructure.storage.qdrant",
+            "infrastructure.storage.redis",
             "infrastructure.storage.postgres",
             "infrastructure.storage.qdrant",
             "infrastructure.storage.redis",
@@ -132,7 +132,7 @@ def test_board_radar_tools_do_not_import_legacy_source_modules() -> None:
         BUSINESS_ROOT / "boards" / "project_radar" / "tools.py",
     ):
         imported_modules = _imports_for_file(path)
-        for imported in _matching_forbidden(imported_modules, ("domain.sources", "sources.connectors")):
+        for imported in _matching_forbidden(imported_modules, ("business.foundation.models.source", "infrastructure.external.sources")):
             violations.append(f"{path.relative_to(PROJECT_ROOT).as_posix()}: {imported}")
 
     assert violations == []

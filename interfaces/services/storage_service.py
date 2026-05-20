@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from infrastructure.storage.artifacts import ArtifactRef, artifact_index_store_from_env
-from storage.lifecycle import (
+from infrastructure.storage.lifecycle import (
     ArtifactRetentionPlanner,
     BackupManifest,
     LocalArtifactBackupService,
@@ -16,9 +16,9 @@ from storage.lifecycle import (
     RetentionPlan,
     RetentionPolicy,
 )
-from storage.lineage import LineageRef, lineage_store_from_env
-from storage.metrics import StorageMetrics, storage_metrics_collector_from_env
-from storage.repository import repository_from_env
+from infrastructure.storage.lineage import LineageRef, lineage_store_from_env
+from infrastructure.storage.metrics import StorageMetrics, storage_metrics_collector_from_env
+from infrastructure.storage.repository import repository_from_env
 
 
 @dataclass(frozen=True)

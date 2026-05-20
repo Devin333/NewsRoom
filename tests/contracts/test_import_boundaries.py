@@ -8,8 +8,6 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 FRAMEWORK_ROOT = PROJECT_ROOT / "framework"
 BUSINESS_ROOT = PROJECT_ROOT / "business"
 INTERFACES_ROOT = PROJECT_ROOT / "interfaces"
-WORKFLOWS_ROOT = PROJECT_ROOT / "workflows"
-SOURCES_ROOT = PROJECT_ROOT / "sources"
 
 FRAMEWORK_FORBIDDEN_PREFIXES = (
     "business",
@@ -39,7 +37,7 @@ INTERFACE_FORBIDDEN_FLOW_PREFIXES = (
     "quality",
     "sources",
     "storage",
-    "workflows.daily_intelligence",
+    "business.boards.cross_board.workflows.daily_intelligence",
 )
 
 # TODO(boundary-migration): narrow this list as legacy interfaces are converted to
@@ -91,7 +89,7 @@ def test_business_has_no_concrete_external_client_imports() -> None:
 def test_business_memory_ingestion_does_not_depend_on_legacy_report_or_storage_models() -> None:
     imports = _imports_for_file(BUSINESS_ROOT / "layers" / "output" / "memory_ingestion.py")
 
-    assert _matching_forbidden(imports, ("domain.reports", "evidence", "storage.vector")) == []
+    assert _matching_forbidden(imports, ("business.foundation.models.report_output", "evidence", "infrastructure.storage.vector")) == []
 
 
 def test_new_board_interfaces_do_not_bypass_board_services() -> None:
@@ -120,29 +118,34 @@ def test_board_api_calls_interface_board_service_only() -> None:
 def test_source_application_service_uses_infrastructure_source_adapters() -> None:
     imports = _imports_for_file(INTERFACES_ROOT / "services" / "source_service.py")
 
-    assert "infrastructure.external.source_adapters" in imports
-    assert _matching_forbidden(imports, ("domain.sources", "sources", "storage.postgres", "workflows.daily_intelligence")) == []
+    assert "infrastructure.external.sources" in imports
+    assert "business.foundation.registry.source_registry" in imports
+    assert "business.layers.signal.source_config" in imports
+    assert _matching_forbidden(imports, ("domain.sources", "sources", "infrastructure.storage.postgres", "business.boards.cross_board.workflows.daily_intelligence")) == []
 
 
-def test_legacy_daily_source_config_uses_infrastructure_source_adapters() -> None:
-    imports = _imports_for_file(WORKFLOWS_ROOT / "daily_intelligence" / "source_config.py")
+def test_cross_board_daily_source_config_uses_infrastructure_source_adapters() -> None:
+    imports = _imports_for_file(
+        BUSINESS_ROOT / "boards" / "cross_board" / "workflows" / "daily_intelligence" / "source_config.py"
+    )
 
-    assert "infrastructure.external.source_adapters" in imports
+    assert "infrastructure.external.sources" in imports
+    assert "business.layers.signal.source_config" in imports
     assert _matching_forbidden(imports, ("domain.sources", "sources")) == []
 
 
-def test_legacy_sources_pipeline_is_thin_daily_adapter() -> None:
-    imports = _imports_for_file(SOURCES_ROOT / "pipeline.py")
+def test_cross_board_daily_source_processing_uses_business_signal_layer() -> None:
+    imports = _imports_for_file(
+        BUSINESS_ROOT / "boards" / "cross_board" / "workflows" / "daily_intelligence" / "source_processing.py"
+    )
 
-    assert "infrastructure.external.source_adapters" in imports
+    assert "business.layers.signal.source_processing" in imports
     assert _matching_forbidden(
         imports,
         (
-            "domain.sources",
             "evidence",
-            "sources.processing",
-            "workflows.daily_intelligence.steps",
-            "workflows.daily_intelligence.artifact_publisher",
+            "sources",
+            "domain.sources",
         ),
     ) == []
 
@@ -165,7 +168,7 @@ def test_interface_daily_profile_enums_come_from_cross_board_business_layer() ->
     ]
     for path in checked_paths:
         imports = _imports_for_file(path)
-        assert "workflows.daily_intelligence.profiles" not in imports
+        assert "business.boards.cross_board.workflows.daily_intelligence.profiles" not in imports
 
     assert "business.boards.cross_board.profiles" in _imports_for_file(
         INTERFACES_ROOT / "cli" / "news.py"
@@ -184,8 +187,8 @@ def test_interface_daily_profile_enums_come_from_cross_board_business_layer() ->
 def test_diagnostic_service_uses_infrastructure_source_adapters() -> None:
     imports = _imports_for_file(INTERFACES_ROOT / "services" / "diagnose_service.py")
 
-    assert "infrastructure.external.source_adapters" in imports
-    assert _matching_forbidden(imports, ("sources", "domain.sources")) == []
+    assert "business.layers.signal.source_config" in imports
+    assert _matching_forbidden(imports, ("domain.sources", "sources")) == []
 
 
 def _forbidden_imports(

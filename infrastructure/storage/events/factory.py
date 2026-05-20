@@ -15,7 +15,7 @@ def event_store_from_env(
     values = env if env is not None else os.environ
     dsn = values.get("NEWS_DATABASE_DSN")
     if dsn:
-        from storage.postgres import PostgresEventStore
+        from infrastructure.storage.postgres import PostgresEventStore
 
         return PostgresEventStore(dsn)
     return LocalJsonEventStore(Path(artifact_root) / "_records" / "events")

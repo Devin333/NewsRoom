@@ -4,10 +4,12 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from business.foundation import SourceReliability, SourceType
 from framework.tool.models import ToolDefinition
 from framework.tool.registry import ToolRegistry
-from infrastructure.external.source_adapters import ARXIV_API_URL, default_arxiv_connector
-from business.foundation import SourceReliability, SourceType
+
+
+ARXIV_API_URL = "https://export.arxiv.org/api/query"
 
 
 @dataclass(frozen=True)
@@ -34,7 +36,8 @@ def register_arxiv_tools(
     *,
     connector: Any | None = None,
 ) -> None:
-    connector = connector or _default_arxiv_connector()
+    if connector is None:
+        raise ValueError("arxiv connector is required")
     registry.register(
         ToolDefinition(
             name="arxiv.search_papers",
@@ -122,10 +125,6 @@ def _raw_source_item_to_dict(item: Any) -> dict[str, Any]:
         "language": item.language,
         "metadata": dict(item.metadata),
     }
-
-
-def _default_arxiv_connector() -> Any:
-    return default_arxiv_connector()
 
 
 def _source_type(value: Any) -> SourceType:

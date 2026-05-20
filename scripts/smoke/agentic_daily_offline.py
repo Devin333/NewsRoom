@@ -4,7 +4,7 @@ import argparse
 
 from framework.specs import WorkflowStatus
 from interfaces.services.run_service import RunApplicationService
-from workflows.daily_intelligence.profiles import PROFILE_AGENTIC_OFFLINE
+from business.boards.cross_board.workflows.daily_intelligence.profiles import PROFILE_AGENTIC_OFFLINE
 
 
 DEFAULT_TOPIC = "AI agents"

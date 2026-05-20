@@ -6,7 +6,7 @@ from framework.tool import (
     ToolStatus,
 )
 from business.boards.paper_radar.tools import register_arxiv_tools
-from sources.connectors import ARXIV_API_URL, ArxivConnector
+from infrastructure.external.sources import ARXIV_API_URL, ArxivConnector
 
 
 ARXIV_FIXTURE = """<?xml version="1.0" encoding="UTF-8"?>

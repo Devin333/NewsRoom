@@ -3,7 +3,7 @@ from business.layers.output.memory_ingestion import MemoryIngestionService
 from framework.memory import InMemoryMemoryStore, MemoryRuntime
 from framework.tool import ToolCall, ToolExecutor, ToolPolicy, ToolRegistry, ToolStatus
 from framework.tool.builtin.memory import register_memory_tools
-from storage.vector import InMemoryVectorStore
+from infrastructure.storage.vector import InMemoryVectorStore
 
 
 def test_memory_index_tool_indexes_report_and_evidence_through_executor() -> None:

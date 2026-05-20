@@ -13,10 +13,10 @@ from interfaces.services.run_inspection_service import RunInspectionService
 from interfaces.services.run_service import RunApplicationService
 from interfaces.services.storage_service import StorageApplicationService
 from interfaces.services.subscription_service import SubscriptionApplicationService
-from workflows.daily_intelligence.profiles import LEGACY_DAILY_WORKFLOW_ID
-from storage.artifacts import ArtifactWriteRequest, FilesystemArtifactStore, LocalJsonArtifactIndexStore
-from storage.lineage import LineageRef, LocalJsonLineageStore
-from storage.vector import InMemoryVectorStore
+from business.boards.cross_board.workflows.daily_intelligence.profiles import LEGACY_DAILY_WORKFLOW_ID
+from infrastructure.storage.artifacts import ArtifactWriteRequest, FilesystemArtifactStore, LocalJsonArtifactIndexStore
+from infrastructure.storage.lineage import LineageRef, LocalJsonLineageStore
+from infrastructure.storage.vector import InMemoryVectorStore
 
 
 def test_mcp_catalog_lists_tools_without_calling_factories() -> None:

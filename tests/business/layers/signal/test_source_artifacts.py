@@ -3,7 +3,7 @@ from hashlib import sha256
 
 from business.layers.signal.artifacts import SourceArtifactWriter
 from framework.artifacts import ArtifactManager
-from domain.sources import SourceError, SourceFetchRequest, SourceFetchResult
+from business.foundation.models.source import SourceError, SourceFetchRequest, SourceFetchResult
 
 
 def test_source_artifact_writer_writes_items_errors_and_redacts(tmp_path) -> None:

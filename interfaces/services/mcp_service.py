@@ -17,7 +17,7 @@ from interfaces.mcp.models import (
     MCPTool,
     MCPToolCallResult,
 )
-from storage.lifecycle import RetentionPolicy
+from infrastructure.storage.lifecycle import RetentionPolicy
 
 
 DEFAULT_DAILY_QUEUE = "news:queue:daily"
@@ -2090,7 +2090,7 @@ def _mcp_category(name: str) -> str:
         return "sources"
     if value.startswith("memory.") or value.startswith("memory/"):
         return "memory"
-    if value.startswith("storage.") or value.startswith("storage/"):
+    if value.startswith("infrastructure.storage.") or value.startswith("storage/"):
         return "storage"
     if value.startswith("worker.") or value.startswith("workers"):
         return "workers"

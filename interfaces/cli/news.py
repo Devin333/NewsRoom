@@ -47,7 +47,7 @@ from interfaces.services.worker_service import (
     DEFAULT_SOURCE_QUEUE,
     WorkerApplicationService,
 )
-from storage.lifecycle import RetentionPolicy
+from infrastructure.storage.lifecycle import RetentionPolicy
 
 
 def build_parser() -> argparse.ArgumentParser:

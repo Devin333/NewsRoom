@@ -17,7 +17,7 @@ from framework.workers.scheduler import (
     SchedulerTickResult,
 )
 from infrastructure.storage.workers import RedisStreamTaskQueue
-from storage.local_json import LocalJsonScheduleStore
+from infrastructure.storage.local_json import LocalJsonScheduleStore
 
 
 DEFAULT_REDIS_URL = "redis://127.0.0.1:6379/0"

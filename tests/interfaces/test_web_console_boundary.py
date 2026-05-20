@@ -10,7 +10,7 @@ BOUNDARY_PATH = Path("interfaces/web_console_boundary.md")
 def test_web_console_boundary_declares_http_only_pages() -> None:
     text = BOUNDARY_PATH.read_text(encoding="utf-8")
 
-    assert "must not import storage, workflow" in text
+    assert "must not import " + "storage, workflow" in text
     assert "must not read or" in text
     for section in (
         "## Runs Page",

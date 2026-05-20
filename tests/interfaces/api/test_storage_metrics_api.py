@@ -5,8 +5,8 @@ from fastapi.testclient import TestClient
 
 from interfaces.api import create_app
 from interfaces.services.storage_service import StorageApplicationService
-from storage.artifacts import ArtifactWriteRequest, FilesystemArtifactStore, LocalJsonArtifactIndexStore
-from storage.metrics import StorageMetrics
+from infrastructure.storage.artifacts import ArtifactWriteRequest, FilesystemArtifactStore, LocalJsonArtifactIndexStore
+from infrastructure.storage.metrics import StorageMetrics
 
 
 def test_storage_metrics_api_returns_metrics() -> None:

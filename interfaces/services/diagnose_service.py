@@ -8,7 +8,7 @@ from typing import Any, Callable, Literal
 
 from framework.llm import DEFAULT_MODELS_CONFIG_PATH, load_openai_compatible_deployment
 from framework.llm.clients.openai_compatible import LLMConfigurationError
-from infrastructure.external.source_adapters import SourceConfigError, build_default_source_registry
+from business.layers.signal.source_config import SourceConfigError, build_default_source_registry
 
 
 CheckStatus = Literal["ok", "warning", "error", "skipped"]

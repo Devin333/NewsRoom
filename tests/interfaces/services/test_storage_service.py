@@ -6,14 +6,14 @@ import pytest
 
 import interfaces.services.storage_service as storage_service_module
 from interfaces.services.storage_service import StorageApplicationService
-from storage.artifacts import (
+from infrastructure.storage.artifacts import (
     ArtifactRef,
     ArtifactWriteRequest,
     FilesystemArtifactStore,
     LocalJsonArtifactIndexStore,
 )
-from storage.lineage import LineageRef, LocalJsonLineageStore
-from storage.metrics import StorageMetrics
+from infrastructure.storage.lineage import LineageRef, LocalJsonLineageStore
+from infrastructure.storage.metrics import StorageMetrics
 
 
 def test_storage_service_plans_and_applies_retention_from_real_index(tmp_path) -> None:

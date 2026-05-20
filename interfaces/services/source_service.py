@@ -5,26 +5,30 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from infrastructure.external.source_adapters import (
-    ARXIV_API_URL,
-    GITHUB_API_URL,
+from business.foundation.models.source import SourceDefinition
+from business.foundation.registry.source_registry import SourceRegistry
+from business.layers.signal.source_config import (
+    build_default_source_fetch_policy,
+    build_default_source_registry,
+)
+from business.layers.signal.source_health import (
     BasicSourceHealthManager,
-    DomainRateLimiter,
-    RawSourceItem,
-    SourceDefinition,
-    SourceError,
-    SourceFetchPolicy,
-    SourceHealth,
     SourceHealthChecker,
     SourceHealthCheckResult,
     SourceHealthStore,
-    SourceRegistry,
-    build_default_source_fetch_policy,
-    build_default_source_registry,
+)
+from business.foundation.models.source import SourceHealth
+from infrastructure.external.sources import (
+    ARXIV_API_URL,
+    GITHUB_API_URL,
+    DomainRateLimiter,
+    RawSourceItem,
+    SourceError,
+    SourceFetchPolicy,
     default_arxiv_connector,
     default_github_connector,
-    source_health_store_from_env,
 )
+from infrastructure.storage.source_health import source_health_store_from_env
 
 
 @dataclass(frozen=True)

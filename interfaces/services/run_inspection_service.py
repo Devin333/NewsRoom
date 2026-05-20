@@ -15,7 +15,7 @@ from framework.workflow.inspection import (
     resolve_run_dir,
 )
 from framework.workflow.runtime.manifest import normalize_legacy_run_manifest
-from storage.lineage.evidence import quality_lineage_summary
+from infrastructure.storage.lineage.evidence import quality_lineage_summary
 
 
 @dataclass(frozen=True)

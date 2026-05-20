@@ -8,7 +8,7 @@ from framework.tool import (
     ToolStatus,
 )
 from business.boards.project_radar.tools import register_github_tools
-from sources.connectors import GITHUB_API_URL, GithubConnector
+from infrastructure.external.sources import GITHUB_API_URL, GithubConnector
 
 
 GITHUB_RELEASES = json.dumps(

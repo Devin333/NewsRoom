@@ -1,7 +1,7 @@
 import json
 
 from interfaces.cli.news import main
-from workflows.daily_intelligence.profiles import LEGACY_DAILY_WORKFLOW_ID
+from business.boards.cross_board.workflows.daily_intelligence.profiles import LEGACY_DAILY_WORKFLOW_ID
 
 
 def test_news_cli_entities_create_list_and_match_reports_json(tmp_path, capsys) -> None:

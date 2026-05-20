@@ -1,1 +1,0 @@
-"""Intelligence domain package."""

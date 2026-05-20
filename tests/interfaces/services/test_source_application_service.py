@@ -1,10 +1,10 @@
 from datetime import UTC, datetime
 
-from domain.sources import RawSourceItem, SourceDefinition, SourceError
+from business.foundation.models.source import RawSourceItem, SourceDefinition, SourceError
 from interfaces.services.source_service import SourceApplicationService
-from sources import SourceRegistry
-from sources.connectors import SourceFetchPolicy
-from sources.health import BasicSourceHealthManager, ProbeObservation
+from business.foundation.registry.source_registry import SourceRegistry
+from infrastructure.external.sources import SourceFetchPolicy
+from business.layers.signal.source_health import BasicSourceHealthManager, ProbeObservation
 
 
 def test_source_service_lists_enabled_sources() -> None:

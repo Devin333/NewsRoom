@@ -2,7 +2,7 @@ import json
 from datetime import UTC, datetime
 
 import interfaces.cli.news as news_cli
-from storage.lineage import LineageRef, LocalJsonLineageStore
+from infrastructure.storage.lineage import LineageRef, LocalJsonLineageStore
 
 
 def test_news_cli_storage_lineage_list_json(tmp_path, capsys) -> None:

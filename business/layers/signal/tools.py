@@ -8,18 +8,21 @@ from urllib.request import Request
 
 from framework.tool.models import ToolDefinition
 from framework.tool.registry import ToolRegistry
-from infrastructure.external.source_adapters import (
-    BasicSourceHealthManager,
+from business.foundation.models.source import (
+    RawSourceItem,
+    SourceDefinition,
+    SourceError,
+    SourceReliability,
+    SourceType,
+)
+from business.foundation.registry.source_registry import SourceRegistry
+from business.layers.signal.source_health import BasicSourceHealthManager
+from infrastructure.external.sources import (
     DomainRateLimiter,
     FeedConnector,
     HtmlConnector,
     ManualConnector,
-    SourceDefinition,
-    SourceError,
     SourceFetchPolicy,
-    SourceRegistry,
-    SourceReliability,
-    SourceType,
     effective_fetch_policy,
     ensure_robots_allowed,
     open_request_with_fetch_policy,

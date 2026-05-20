@@ -1,8 +1,8 @@
 import json
 
 from interfaces.services.entity_service import EntityTrackingApplicationService
-from storage.entities import LocalJsonTrackedEntityStore
-from workflows.daily_intelligence.profiles import LEGACY_DAILY_WORKFLOW_ID
+from infrastructure.storage.entities import LocalJsonTrackedEntityStore
+from business.boards.cross_board.workflows.daily_intelligence.profiles import LEGACY_DAILY_WORKFLOW_ID
 
 
 def test_entity_service_creates_stable_id_and_lists(tmp_path) -> None:

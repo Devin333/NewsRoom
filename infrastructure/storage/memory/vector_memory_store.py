@@ -12,7 +12,7 @@ from framework.memory import (
     MemoryWriteResult,
 )
 from framework.memory.exceptions import MemoryNotFound
-from storage.vector import VectorDocument, VectorSearchQuery, VectorSearchResult
+from infrastructure.storage.vector import VectorDocument, VectorSearchQuery, VectorSearchResult
 
 
 DEFAULT_MEMORY_COLLECTION = "memories"

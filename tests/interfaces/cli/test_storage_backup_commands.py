@@ -2,7 +2,7 @@ import json
 from datetime import UTC, datetime
 
 import interfaces.cli.news as news_cli
-from storage.artifacts import ArtifactWriteRequest, FilesystemArtifactStore, LocalJsonArtifactIndexStore
+from infrastructure.storage.artifacts import ArtifactWriteRequest, FilesystemArtifactStore, LocalJsonArtifactIndexStore
 
 
 def test_news_cli_storage_backup_create_and_restore_json(tmp_path, capsys) -> None:

@@ -11,7 +11,7 @@ from business.layers.memory.ingestion import (
     MemoryIndexDocument,
 )
 from interfaces.services.artifact_service import ArtifactInspectionService
-from storage.vector import VectorCollectionStatus, VectorSearchQuery, VectorSearchResult
+from infrastructure.storage.vector import VectorCollectionStatus, VectorSearchQuery, VectorSearchResult
 
 
 DEFAULT_MEMORY_COLLECTION = "report_sections"
@@ -107,7 +107,7 @@ class MemoryApplicationService:
         ingestion_service: MemoryIngestionService | None = None,
     ) -> None:
         if vector_store is None:
-            from storage.vector import qdrant_store_from_env
+            from infrastructure.storage.vector import qdrant_store_from_env
 
             vector_store = qdrant_store_from_env()
         self.vector_store = vector_store
@@ -217,7 +217,7 @@ def memory_ingestion_service_from_env(
     if not enabled:
         return None
     if vector_store is None and memory_runtime is None:
-        from storage.vector import qdrant_store_from_env
+        from infrastructure.storage.vector import qdrant_store_from_env
 
         vector_store = qdrant_store_from_env(env=values)
     return MemoryIngestionService(vector_store, memory_runtime=memory_runtime)

@@ -7,8 +7,8 @@ from typing import Any
 
 from business.boards.cross_board.profiles import daily_workflow_ids
 from interfaces.models.common import ApiActionResult
-from storage.lineage.evidence import quality_lineage_summary
-from storage.local_json import LocalJsonRepository
+from infrastructure.storage.lineage.evidence import quality_lineage_summary
+from infrastructure.storage.local_json import LocalJsonRepository
 
 
 @dataclass(frozen=True)
@@ -212,7 +212,7 @@ def _report_repository(
     values = env if env is not None else os.environ
     dsn = database_dsn or values.get("NEWS_DATABASE_DSN")
     if dsn:
-        from storage.postgres import PostgresRepository
+        from infrastructure.storage.postgres import PostgresRepository
 
         return PostgresRepository(dsn)
     return LocalJsonRepository(artifact_root)

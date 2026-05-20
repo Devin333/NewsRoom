@@ -12,10 +12,7 @@ SCAN_ROOTS = (
     "infrastructure",
     "interfaces",
     "scripts",
-    "sources",
-    "storage",
     "tests",
-    "workflows",
 )
 
 

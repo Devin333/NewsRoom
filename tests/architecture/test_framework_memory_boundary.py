@@ -12,7 +12,7 @@ FORBIDDEN_IMPORT_PREFIXES = (
     "infrastructure",
     "storage",
     "workflows",
-    "workflows.daily_intelligence",
+    "business.boards.cross_board.workflows.daily_intelligence",
     "domain",
     "evidence",
     "quality",

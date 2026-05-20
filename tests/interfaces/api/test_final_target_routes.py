@@ -6,7 +6,7 @@ from framework.workers import Task, TaskStatus
 from interfaces.api import create_app
 from interfaces.events import AuditEmitter, InMemoryAuditSink
 from interfaces.services.worker_service import EnqueuedTaskResult
-from workflows.daily_intelligence.profiles import LEGACY_DAILY_WORKFLOW_ID
+from business.boards.cross_board.workflows.daily_intelligence.profiles import LEGACY_DAILY_WORKFLOW_ID
 
 
 def test_generic_run_api_enqueues_daily_task() -> None:

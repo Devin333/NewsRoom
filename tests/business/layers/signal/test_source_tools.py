@@ -9,10 +9,10 @@ from framework.tool import (
     ToolStatus,
 )
 from business.layers.signal.tools import register_source_tools
-from domain.sources import SourceDefinition, SourceError
-from sources import SourceRegistry
-from sources.connectors import SourceFetchPolicy
-from sources.health import BasicSourceHealthManager
+from business.foundation.models.source import SourceDefinition, SourceError
+from business.foundation.registry.source_registry import SourceRegistry
+from infrastructure.external.sources import SourceFetchPolicy
+from business.layers.signal.source_health import BasicSourceHealthManager
 
 
 RSS_FIXTURE = """<?xml version="1.0"?>

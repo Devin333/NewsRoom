@@ -3,7 +3,7 @@ import json
 import pytest
 
 from interfaces.services.report_service import ReportApplicationService
-from workflows.daily_intelligence.profiles import LEGACY_DAILY_WORKFLOW_ID
+from business.boards.cross_board.workflows.daily_intelligence.profiles import LEGACY_DAILY_WORKFLOW_ID
 
 
 def test_report_service_searches_local_report_artifacts(tmp_path) -> None:

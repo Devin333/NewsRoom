@@ -2,7 +2,7 @@ from framework.workflow.runtime.run_result import RunResult
 from framework.specs import WorkflowStatus
 from interfaces.services.report_service import ReportApplicationService
 from interfaces.services.run_service import RunApplicationService
-from workflows.daily_intelligence.profiles import (
+from business.boards.cross_board.workflows.daily_intelligence.profiles import (
     NEWSROOM_DAILY_AGENTIC_ENABLED,
     PROFILE_AGENTIC_LIVE,
     PROFILE_AGENTIC_OFFLINE,

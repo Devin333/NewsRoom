@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from framework.workers import Task, TaskStatus
 from interfaces.api import create_app
 from interfaces.services.worker_service import EnqueuedTaskResult
-from storage.repository import ReportRecord
+from infrastructure.storage.repository import ReportRecord
 
 
 def test_create_app_builds_current_fastapi_app() -> None:

@@ -1,5 +1,5 @@
 from interfaces.services.memory_service import MemoryApplicationService
-from storage.vector import InMemoryVectorStore, VectorCollectionStatus, VectorSearchResult
+from infrastructure.storage.vector import InMemoryVectorStore, VectorCollectionStatus, VectorSearchResult
 import json
 
 

@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 
 from infrastructure.storage.events.models import EventRecord
-from storage.security import StorageRedactor
+from infrastructure.storage.security import StorageRedactor
 
 
 class LocalJsonEventStore:

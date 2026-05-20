@@ -15,7 +15,7 @@ def artifact_index_store_from_env(
     values = env if env is not None else os.environ
     dsn = values.get("NEWS_DATABASE_DSN")
     if dsn:
-        from storage.postgres import PostgresArtifactIndexStore
+        from infrastructure.storage.postgres import PostgresArtifactIndexStore
 
         return PostgresArtifactIndexStore(dsn)
     return LocalJsonArtifactIndexStore(Path(artifact_root) / "_records" / "artifact_index")

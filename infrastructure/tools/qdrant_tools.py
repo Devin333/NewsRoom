@@ -4,7 +4,7 @@ from typing import Any, Protocol
 
 from framework.tool.models import ToolDefinition
 from framework.tool.registry import ToolRegistry
-from storage.vector import VectorDocument, VectorSearchQuery, VectorSearchResult
+from infrastructure.storage.vector import VectorDocument, VectorSearchQuery, VectorSearchResult
 
 
 class QdrantSearchStore(Protocol):

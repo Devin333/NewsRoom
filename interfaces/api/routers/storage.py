@@ -5,7 +5,7 @@ from datetime import datetime
 from fastapi import APIRouter
 
 from interfaces.api.deps import ApiRouteHelpers, ApiServices
-from storage.lifecycle import RetentionPolicy
+from infrastructure.storage.lifecycle import RetentionPolicy
 
 
 def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:

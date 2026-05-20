@@ -4,10 +4,12 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from business.foundation import SourceReliability, SourceType
 from framework.tool.models import ToolDefinition
 from framework.tool.registry import ToolRegistry
-from infrastructure.external.source_adapters import GITHUB_API_URL, default_github_connector
-from business.foundation import SourceReliability, SourceType
+
+
+GITHUB_API_URL = "https://api.github.com"
 
 
 @dataclass(frozen=True)
@@ -34,7 +36,8 @@ def register_github_tools(
     *,
     connector: Any | None = None,
 ) -> None:
-    connector = connector or _default_github_connector()
+    if connector is None:
+        raise ValueError("github connector is required")
     registry.register(
         ToolDefinition(
             name="github.fetch_releases",
@@ -171,10 +174,6 @@ def _raw_source_item_to_dict(item: Any) -> dict[str, Any]:
         "language": item.language,
         "metadata": dict(item.metadata),
     }
-
-
-def _default_github_connector() -> Any:
-    return default_github_connector()
 
 
 def _source_type(value: Any) -> SourceType:

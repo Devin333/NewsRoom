@@ -7,8 +7,8 @@ from interfaces.api import create_app
 from interfaces.events import AuditEmitter, InMemoryAuditSink
 from interfaces.services.run_inspection_service import RunInspectionService
 from interfaces.services.worker_service import EnqueuedTaskResult
-from storage.repository import ReportRecord
-from workflows.daily_intelligence.profiles import LEGACY_DAILY_WORKFLOW_ID
+from infrastructure.storage.repository import ReportRecord
+from business.boards.cross_board.workflows.daily_intelligence.profiles import LEGACY_DAILY_WORKFLOW_ID
 
 
 def test_health_uses_common_envelope() -> None:

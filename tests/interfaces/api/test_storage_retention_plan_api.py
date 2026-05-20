@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 
 from interfaces.api import create_app
 from interfaces.services.storage_service import StorageApplicationService
-from storage.artifacts import ArtifactWriteRequest, FilesystemArtifactStore, LocalJsonArtifactIndexStore
+from infrastructure.storage.artifacts import ArtifactWriteRequest, FilesystemArtifactStore, LocalJsonArtifactIndexStore
 
 
 def test_storage_retention_plan_api_maps_query_overrides() -> None:

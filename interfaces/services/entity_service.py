@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from interfaces.services.report_service import ReportApplicationService
-from storage.entities import EntityKind, LocalJsonTrackedEntityStore, TrackedEntity
+from infrastructure.storage.entities import EntityKind, LocalJsonTrackedEntityStore, TrackedEntity
 
 
 DEFAULT_ENTITY_STORE_PATH = ".newsroom/entities/entities.json"
