@@ -9,7 +9,7 @@ from framework.tool.models.call import ToolCall
 from framework.tool.models.definition import ToolDefinition
 from framework.tool.models.observation import ToolObservation
 from framework.tool.models.policy import ToolPolicy, is_default_dangerous_tool_name
-from framework.tool.models.result import ToolResult
+from framework.tool.models.result import ToolPolicyTrace, ToolResult
 from framework.tool.models.status import ToolSideEffect, ToolStatus
 from framework.tool.runtime.errors import (
     ToolDefinitionError,
@@ -37,6 +37,7 @@ __all__ = [
     "ToolObservation",
     "ToolPermissionError",
     "ToolPolicy",
+    "ToolPolicyTrace",
     "ToolResult",
     "ToolRuntimeError",
     "ToolSecretError",

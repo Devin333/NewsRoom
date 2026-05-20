@@ -7,9 +7,10 @@ from framework.specs import WorkflowSpec
 from framework.workflow.buffer import DataBuffer
 from framework.workflow.checkpoint.envelope import envelope_from_checkpoint, envelope_to_checkpoint
 from framework.workflow.checkpoint.model import WorkflowCheckpoint
+from framework.workflow.checkpoint.reference import CheckpointReference
 from framework.events.trace import TraceContext
 from framework.workflow.runtime.events import EventRecorder
-from framework.workflow.runtime.manifest import add_manifest_checkpoint
+from framework.workflow.runtime.manifest import add_manifest_checkpoint, add_manifest_checkpoint_ref
 from framework.workflow.runtime.result import StepOutcome
 
 
@@ -78,6 +79,21 @@ class CheckpointCoordinator:
             checkpoint_ids.append(checkpoint_id)
         if manifest is not None:
             add_manifest_checkpoint(manifest, checkpoint_id)
+            add_manifest_checkpoint_ref(
+                manifest,
+                CheckpointReference(
+                    checkpoint_id=checkpoint_id,
+                    run_id=run_id,
+                    step_id=path[-1] if path else None,
+                    status="created",
+                    path=f"checkpoints/{checkpoint_id}.json",
+                    metadata={
+                        "event_offset": event_offset,
+                        "profile": profile,
+                        "current_step_ids": list(current_step_ids),
+                    },
+                ),
+            )
         if path and step_results:
             current_step_id = path[-1]
             outcome = step_results.get(current_step_id)
@@ -94,6 +110,9 @@ class CheckpointCoordinator:
                         summary["checkpoint_ref"] = checkpoint_id
                         manifest["step_outcome_summary"][current_step_id] = summary
         return checkpoint_id
+
+    def has_checkpoint_store(self) -> bool:
+        return self._checkpoint_store is not None
 
 
 def checkpoint_id_for(step_id: str, event_offset: int) -> str:

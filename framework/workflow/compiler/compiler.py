@@ -6,6 +6,7 @@ from itertools import combinations
 from typing import Any
 
 from framework.specs import EdgeCondition, EdgeSpec, StepSpec, StepType, WorkflowSpec
+from framework.specs.policy import GATE_POLICY_DIMENSIONS, GATE_POLICY_MODES, TRACE_POLICY_LEVELS
 from framework.workflow.runtime.manifest import WorkflowRunnerManifest, build_runner_manifest
 from framework.workflow.runners.registry import StepRunnerRegistry
 
@@ -38,6 +39,7 @@ class WorkflowCompileIssueCode(StrEnum):
     RUNNER_STEP_VALIDATION_FAILED = "runner_step_validation_failed"
     RUNNER_VALIDATION_WARNING = "runner_validation_warning"
     SPEC_VALIDATION_FAILED = "spec_validation_failed"
+    RUNTIME_QUALITY_POLICY_INVALID = "runtime_quality_policy_invalid"
 
 
 @dataclass(frozen=True)
@@ -144,6 +146,7 @@ class WorkflowCompiler:
         step_by_id = self._validate_unique_step_ids(spec, errors)
         edge_graph = self._validate_edge_endpoints(spec, step_by_id, errors)
         self._validate_start_and_terminals(spec, step_by_id, errors)
+        self._check_runtime_quality_policy(spec, errors)
 
         graph = self._build_compiled_graph(spec, step_by_id, edge_graph)
         if graph is not None:
@@ -572,6 +575,77 @@ class WorkflowCompiler:
                     )
                 )
 
+    def _check_runtime_quality_policy(
+        self,
+        spec: WorkflowSpec,
+        errors: list[WorkflowCompileError],
+    ) -> None:
+        for owner, policy, step in [
+            ("workflow", spec.policies.runtime_quality, None),
+            *[
+                ("step", step.runtime_quality, step)
+                for step in spec.steps
+                if step.runtime_quality is not None
+            ],
+        ]:
+            if policy is None:
+                continue
+            prefix = f"{owner} runtime_quality"
+            step_id = step.step_id if step is not None else None
+            if policy.trace.level not in TRACE_POLICY_LEVELS:
+                errors.append(
+                    WorkflowCompileError(
+                        code=WorkflowCompileIssueCode.RUNTIME_QUALITY_POLICY_INVALID,
+                        message=f"{prefix}.trace.level is invalid: {policy.trace.level}",
+                        step_id=step_id,
+                        details={"allowed": sorted(TRACE_POLICY_LEVELS)},
+                    )
+                )
+            if policy.trace.max_payload_bytes <= 0:
+                errors.append(
+                    WorkflowCompileError(
+                        code=WorkflowCompileIssueCode.RUNTIME_QUALITY_POLICY_INVALID,
+                        message=f"{prefix}.trace.max_payload_bytes must be positive.",
+                        step_id=step_id,
+                    )
+                )
+            if policy.gate.mode not in GATE_POLICY_MODES:
+                errors.append(
+                    WorkflowCompileError(
+                        code=WorkflowCompileIssueCode.RUNTIME_QUALITY_POLICY_INVALID,
+                        message=f"{prefix}.gate.mode is invalid: {policy.gate.mode}",
+                        step_id=step_id,
+                        details={"allowed": sorted(GATE_POLICY_MODES)},
+                    )
+                )
+            invalid_dimensions = sorted(set(policy.gate.dimensions) - GATE_POLICY_DIMENSIONS)
+            if invalid_dimensions:
+                errors.append(
+                    WorkflowCompileError(
+                        code=WorkflowCompileIssueCode.RUNTIME_QUALITY_POLICY_INVALID,
+                        message=f"{prefix}.gate.dimensions contains unsupported dimensions: {invalid_dimensions}",
+                        step_id=step_id,
+                        details={"allowed": sorted(GATE_POLICY_DIMENSIONS)},
+                    )
+                )
+            if step is not None:
+                missing_outputs = set(policy.evaluation.required_output_keys) - set(step.write_keys)
+                if missing_outputs:
+                    errors.append(
+                        WorkflowCompileError(
+                            code=WorkflowCompileIssueCode.RUNTIME_QUALITY_POLICY_INVALID,
+                            message=(
+                                "runtime_quality.evaluation.required_output_keys must be "
+                                f"declared in write_keys: {sorted(missing_outputs)}"
+                            ),
+                            step_id=step.step_id,
+                            details={
+                                "required_output_keys": sorted(policy.evaluation.required_output_keys),
+                                "write_keys": sorted(step.write_keys),
+                                "missing_keys": sorted(missing_outputs),
+                            },
+                        )
+                    )
     def _check_runner_registry_validation(
         self,
         spec: WorkflowSpec,

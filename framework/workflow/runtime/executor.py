@@ -45,6 +45,10 @@ from framework.workflow.runtime.step_invoker import (
     StepInvoker,
     is_budget_exceeded_outcome,
 )
+from framework.workflow.runtime.verification import (
+    RuntimeVerificationMode,
+    WorkflowRuntimeVerifier,
+)
 from framework.workflow.runners.base import StepExecutionError
 from framework.workflow.runners.function import FunctionStepRunner
 from framework.workflow.runners.registry import StepRunnerRegistry
@@ -76,6 +80,7 @@ class WorkflowExecutor:
         artifact_publishers: list[WorkflowArtifactPublisher]
         | WorkflowArtifactPublisherRegistry
         | None = None,
+        runtime_verification_mode: RuntimeVerificationMode = "off",
     ) -> None:
         if step_runner_registry is None:
             if function_step_runner is None:
@@ -90,6 +95,7 @@ class WorkflowExecutor:
         self._global_budget_tracker = global_budget_tracker
         self._artifact_publishers = _artifact_publisher_registry(artifact_publishers)
         self._workflow_state_machine = WorkflowStateMachine()
+        self._runtime_verifier = WorkflowRuntimeVerifier(runtime_verification_mode)
 
     def execute(
         self,
@@ -222,6 +228,7 @@ class WorkflowExecutor:
             manifest_updater=manifest_updater,
             is_run_cancelled=self._is_run_cancelled,
         ).run(context)
+        self._runtime_verifier.apply(context)
         return finalizer.finalize(context)
 
     def resume_from_checkpoint(

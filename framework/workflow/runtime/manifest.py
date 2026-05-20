@@ -51,10 +51,15 @@ _SENSITIVE_MANIFEST_METADATA_KEYS = {
 
 _LEGACY_MANIFEST_OPTIONAL_DEFAULTS: dict[str, Any] = {
     "artifact_refs": [],
+    "artifact_index": [],
     "checkpoints": [],
+    "checkpoint_refs": [],
     "operations": [],
     "runner_versions": {},
     "step_artifacts": [],
+    "step_summaries": [],
+    "warnings": [],
+    "errors": [],
 }
 
 
@@ -324,6 +329,7 @@ def build_run_manifest(
 ) -> dict[str, Any]:
     return {
         "schema_version": RUN_MANIFEST_SCHEMA_VERSION,
+        "run_type": "workflow",
         "run_id": run_id,
         "workflow_id": workflow.workflow_id,
         "workflow_version": workflow.version,
@@ -331,13 +337,24 @@ def build_run_manifest(
         "status": WorkflowStatus.RUNNING.value,
         "started_at": started_at,
         "finished_at": None,
+        "completed_at": None,
         "path": [],
         "steps": {},
         "artifacts": dict(REQUIRED_RUN_ARTIFACTS),
         "artifact_refs": [],
+        "artifact_index": [],
         "runner_versions": {},
         "checkpoints": [],
+        "checkpoint_refs": [],
+        "checkpoint_ref": None,
         "operations": [],
+        "trace_id": None,
+        "trace_ref": None,
+        "gate_result_ref": None,
+        "step_summaries": [],
+        "warnings": [],
+        "errors": [],
+        "run_history_ref": None,
     }
 
 
@@ -393,6 +410,32 @@ def register_manifest_artifact_ref(manifest: dict[str, Any], artifact_ref: Any) 
             if isinstance(existing, dict)
         ):
             artifact_refs.append(item)
+            append_manifest_artifact_index(manifest, item)
+
+
+def append_manifest_artifact_index(manifest: dict[str, Any], artifact_ref: dict[str, Any]) -> None:
+    artifact_index = manifest.setdefault("artifact_index", [])
+    if not isinstance(artifact_index, list):
+        raise RunManifestError("manifest artifact_index must be a list")
+    artifact_id = artifact_ref.get("artifact_id")
+    if artifact_id is not None and any(
+        isinstance(item, dict) and item.get("artifact_id") == artifact_id
+        for item in artifact_index
+    ):
+        return
+    artifact_index.append(
+        {
+            "artifact_id": artifact_id,
+            "run_id": artifact_ref.get("run_id") or manifest.get("run_id"),
+            "kind": artifact_ref.get("kind") or artifact_ref.get("artifact_type"),
+            "path": artifact_ref.get("path") or artifact_ref.get("uri"),
+            "content_type": artifact_ref.get("content_type") or artifact_ref.get("media_type"),
+            "size_bytes": artifact_ref.get("size_bytes"),
+            "checksum": artifact_ref.get("checksum") or artifact_ref.get("content_hash"),
+            "created_at": artifact_ref.get("created_at") or utc_now_iso(),
+            "metadata": redact_metadata(dict(artifact_ref.get("metadata") or {})),
+        }
+    )
 
 
 def update_manifest_runner_versions(manifest: dict[str, Any], runner_manifest: WorkflowRunnerManifest) -> None:
@@ -408,6 +451,24 @@ def add_manifest_checkpoint(manifest: dict[str, Any], checkpoint_id: str) -> Non
     if not isinstance(checkpoints, list):
         raise RunManifestError("manifest checkpoints must be a list")
     checkpoints.append(str(checkpoint_id))
+    manifest["checkpoint_ref"] = str(checkpoint_id)
+    manifest["latest_checkpoint_id"] = str(checkpoint_id)
+
+
+def add_manifest_checkpoint_ref(manifest: dict[str, Any], checkpoint_ref: Any) -> None:
+    payload = checkpoint_ref.to_dict() if hasattr(checkpoint_ref, "to_dict") else dict(checkpoint_ref)
+    checkpoint_refs = manifest.setdefault("checkpoint_refs", [])
+    if not isinstance(checkpoint_refs, list):
+        raise RunManifestError("manifest checkpoint_refs must be a list")
+    checkpoint_id = payload.get("checkpoint_id")
+    if checkpoint_id is None or not any(
+        isinstance(item, dict) and item.get("checkpoint_id") == checkpoint_id
+        for item in checkpoint_refs
+    ):
+        checkpoint_refs.append(payload)
+    if checkpoint_id is not None:
+        manifest["checkpoint_ref"] = str(checkpoint_id)
+        manifest["latest_checkpoint_id"] = str(checkpoint_id)
 
 
 def add_manifest_operation(manifest: dict[str, Any], operation_record: dict[str, Any]) -> None:
@@ -473,6 +534,13 @@ def normalize_legacy_run_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
         normalized["schema_version"] = RUN_MANIFEST_SCHEMA_VERSION
     if "finished_at" not in normalized:
         normalized["finished_at"] = None
+    normalized.setdefault("run_type", "workflow")
+    normalized.setdefault("completed_at", normalized.get("finished_at"))
+    normalized.setdefault("trace_ref", normalized.get("trace_events_ref"))
+    normalized.setdefault("checkpoint_ref", normalized.get("latest_checkpoint_id"))
+    normalized.setdefault("gate_result_ref", None)
+    normalized.setdefault("run_history_ref", None)
+    normalized["step_summaries"] = normalize_step_summaries(normalized)
     return normalized
 
 
@@ -492,6 +560,7 @@ def validate_run_manifest(
         raise RunManifestError(f"unsupported run manifest schema_version: {schema_version}")
     _validate_manifest_status(manifest.get("status"))
     _validate_manifest_shape(manifest)
+    _validate_q05_manifest_shape(manifest)
     artifacts = _validated_manifest_artifacts(manifest)
     missing_artifacts = [
         key for key in REQUIRED_RUN_ARTIFACTS if key not in artifacts
@@ -542,6 +611,18 @@ def _validate_manifest_shape(manifest: dict[str, Any]) -> None:
         raise RunManifestError("run manifest path must be a list")
     if not isinstance(manifest.get("steps"), dict):
         raise RunManifestError("run manifest steps must be an object")
+
+
+def _validate_q05_manifest_shape(manifest: dict[str, Any]) -> None:
+    for field in ("step_summaries", "artifact_index", "warnings", "errors", "checkpoint_refs"):
+        if not isinstance(manifest.get(field, []), list):
+            raise RunManifestError(f"run manifest {field} must be a list")
+    for field in ("run_type",):
+        if not isinstance(manifest.get(field), str) or not manifest[field]:
+            raise RunManifestError(f"run manifest field must be a non-empty string: {field}")
+    for field in ("completed_at", "trace_ref", "gate_result_ref", "checkpoint_ref", "run_history_ref"):
+        if manifest.get(field) is not None and not isinstance(manifest[field], str):
+            raise RunManifestError(f"run manifest {field} must be a string or null")
 
 
 def _validated_manifest_artifacts(manifest: dict[str, Any]) -> dict[str, str]:
@@ -686,6 +767,20 @@ def _normalize_artifact_ref_payload(payload: dict[str, Any]) -> dict[str, Any]:
         }
     normalized["metadata"] = redact_metadata(dict(normalized.get("metadata") or {}))
     return normalized
+
+
+def normalize_step_summaries(manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    raw = manifest.get("step_summaries")
+    if isinstance(raw, list) and raw:
+        return [dict(item) for item in raw if isinstance(item, dict)]
+    raw_summary = manifest.get("step_outcome_summary")
+    if isinstance(raw_summary, dict):
+        return [
+            {"step_id": str(step_id), **dict(summary)}
+            for step_id, summary in raw_summary.items()
+            if isinstance(summary, dict)
+        ]
+    return []
 
 
 def _redacted_manifest_payload(payload: dict[str, Any]) -> dict[str, Any]:

@@ -12,7 +12,11 @@ from framework.workflow.runtime.artifact_publishers import (
 )
 from framework.workflow.runtime.artifacts import ArtifactManager
 from framework.workflow.runtime.execution_context import WorkflowExecutionContext, utc_now
-from framework.workflow.runtime.manifest import register_manifest_artifact, update_manifest_metrics
+from framework.workflow.runtime.manifest import (
+    append_manifest_artifact_index,
+    register_manifest_artifact,
+    update_manifest_metrics,
+)
 from framework.workflow.runtime.manifest_updater import sensitive_key
 from framework.workflow.runtime.result import (
     StepOutcome,
@@ -46,12 +50,17 @@ class WorkflowOutcomeFinalizer:
         buffer_diff = context.buffer.diff(context.initial_buffer_snapshot)
         context.manifest["status"] = context.status.value
         context.manifest["finished_at"] = utc_now()
+        context.manifest["completed_at"] = context.manifest["finished_at"]
         context.manifest["event_count"] = len(context.recorder.list_events()) + 1
         context.manifest["step_count"] = len(context.step_results)
         context.manifest["current_step_ids"] = list(context.current_step_ids)
         context.manifest["checkpoint_count"] = len(context.checkpoint_ids)
         if context.checkpoint_ids:
             context.manifest["latest_checkpoint_id"] = context.checkpoint_ids[-1]
+            context.manifest["checkpoint_ref"] = context.checkpoint_ids[-1]
+        workflow_gate = workflow_gate_result(context.step_results)
+        if workflow_gate is not None:
+            context.manifest["workflow_gate_result"] = workflow_gate
         self._write_agent_loop_artifacts(context.run_id, context.manifest, output)
 
         self._event_bridge.emit_terminal_workflow_event(
@@ -77,6 +86,52 @@ class WorkflowOutcomeFinalizer:
         redaction_report = redaction_report_for_output(output)
         update_manifest_metrics(context.manifest, metrics_payload)
         events_path = context.recorder.write_jsonl(context.run_dir / "events.jsonl")
+        context.manifest["trace_ref"] = "events.jsonl"
+        context.manifest["warnings"] = [
+            *[
+                str(warning)
+                for warning in context.manifest.get("warnings", [])
+                if warning is not None
+            ],
+            *workflow_warnings(context.step_results),
+        ]
+        context.manifest["errors"] = workflow_errors(context.error, context.step_results)
+        if workflow_gate is not None:
+            self._artifact_manager.write_json(context.run_id, "gate_result.json", workflow_gate)
+            register_manifest_artifact(context.manifest, "gate_result", "gate_result.json")
+            append_manifest_artifact_index(
+                context.manifest,
+                {
+                    "artifact_id": "gate_result",
+                    "run_id": context.run_id,
+                    "kind": "gate_result",
+                    "path": "gate_result.json",
+                    "content_type": "application/json",
+                },
+            )
+            context.manifest["gate_result_ref"] = "gate_result.json"
+        run_history = run_history_records(
+            context=context,
+            metrics_payload=metrics_payload,
+            workflow_gate=workflow_gate,
+        )
+        self._artifact_manager.write_text(
+            context.run_id,
+            "run_history.jsonl",
+            "\n".join(stable_json_line(item) for item in run_history) + "\n",
+        )
+        register_manifest_artifact(context.manifest, "run_history", "run_history.jsonl")
+        append_manifest_artifact_index(
+            context.manifest,
+            {
+                "artifact_id": "run_history",
+                "run_id": context.run_id,
+                "kind": "run_history",
+                "path": "run_history.jsonl",
+                "content_type": "application/x-ndjson",
+            },
+        )
+        context.manifest["run_history_ref"] = "run_history.jsonl"
         self._artifact_publishers.publish_all(
             ArtifactPublishContext(
                 phase=ArtifactPublishPhase.TERMINAL,
@@ -124,6 +179,7 @@ class WorkflowOutcomeFinalizer:
             trace_ref=str(events_path),
             manifest_ref=str(manifest_path),
             checkpoint_ref=checkpoint_ref,
+            gate_result=workflow_gate,
             metrics=metrics_payload,
             artifacts=artifacts,
             warnings=workflow_warnings(context.step_results),
@@ -316,3 +372,103 @@ def workflow_warnings(step_results: dict[str, StepOutcome]) -> list[str]:
         for warning in outcome.warnings:
             warnings.append(f"{step_id}: {warning}")
     return warnings
+
+
+def workflow_errors(
+    error: WorkflowError | None,
+    step_results: dict[str, StepOutcome],
+) -> list[dict[str, Any]]:
+    errors: list[dict[str, Any]] = []
+    if error is not None:
+        errors.append(error.to_dict())
+    for step_id, outcome in step_results.items():
+        if outcome.error_type is None and outcome.error_message is None:
+            continue
+        errors.append(
+            {
+                "step_id": step_id,
+                "error_type": outcome.error_type,
+                "message": outcome.error_message,
+                "details": dict(outcome.error_details),
+            }
+        )
+    return errors
+
+
+def run_history_records(
+    *,
+    context: WorkflowExecutionContext,
+    metrics_payload: dict[str, Any],
+    workflow_gate: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = [
+        {
+            "event": "workflow_run_completed",
+            "run_id": context.run_id,
+            "workflow_id": context.workflow.workflow_id,
+            "status": context.status.value,
+            "trace_id": context.trace_context.trace_id,
+            "trace_ref": context.manifest.get("trace_ref"),
+            "checkpoint_ref": context.manifest.get("checkpoint_ref"),
+            "gate_result_ref": context.manifest.get("gate_result_ref"),
+            "metrics": metrics_payload,
+        }
+    ]
+    for step_id, outcome in context.step_results.items():
+        records.append(
+            {
+                "event": "step_outcome",
+                "run_id": context.run_id,
+                "step_id": step_id,
+                "status": outcome.status.value,
+                "duration_ms": outcome.duration_ms,
+                "trace_id": outcome.trace_id,
+                "span_id": outcome.span_id,
+                "checkpoint_ref": outcome.checkpoint_ref,
+                "gate_result": outcome.gate_result,
+            }
+        )
+    if workflow_gate is not None:
+        records.append(
+            {
+                "event": "workflow_gate_result",
+                "run_id": context.run_id,
+                "gate_result": workflow_gate,
+            }
+        )
+    return records
+
+
+def stable_json_line(payload: dict[str, Any]) -> str:
+    import json
+
+    from framework.shared.json import to_jsonable
+
+    return json.dumps(to_jsonable(payload), ensure_ascii=False, sort_keys=True)
+
+
+def workflow_gate_result(step_results: dict[str, StepOutcome]) -> dict[str, Any] | None:
+    gate_results = [
+        outcome.gate_result
+        for outcome in step_results.values()
+        if isinstance(outcome.gate_result, dict)
+    ]
+    if not gate_results:
+        return None
+    failed_dimensions = sorted(
+        {
+            str(dimension)
+            for result in gate_results
+            for dimension in result.get("failed_dimensions") or []
+        }
+    )
+    blocked = [result for result in gate_results if result.get("decision") == "block"]
+    warned = [result for result in gate_results if result.get("decision") == "warn"]
+    return {
+        "gate_id": "workflow:gate",
+        "passed": not blocked,
+        "decision": "block" if blocked else "warn" if warned else "pass",
+        "failed_dimensions": failed_dimensions,
+        "reason": "; ".join(str(result.get("reason") or "") for result in blocked or warned).strip("; "),
+        "step_gate_count": len(gate_results),
+    }

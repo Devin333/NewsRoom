@@ -923,6 +923,15 @@ class AgentLoopStepRunner:
             step.metadata.get("diagnostics_key") or "agent_loop_diagnostics"
         )
         trace_key = str(step.metadata.get("trace_key") or "agent_loop_trace")
+        trajectory_key = str(
+            step.metadata.get("trajectory_key") or "agent_loop_trajectory"
+        )
+        termination_key = str(
+            step.metadata.get("termination_key") or "agent_loop_termination_reason"
+        )
+        max_steps_key = str(
+            step.metadata.get("max_steps_key") or "agent_loop_max_steps_reached"
+        )
         llm_artifacts_key = str(
             step.metadata.get("llm_artifacts_key") or "llm_call_artifacts"
         )
@@ -933,6 +942,9 @@ class AgentLoopStepRunner:
             result.diagnostics.to_dict() if result.diagnostics is not None else None
         )
         outputs[trace_key] = result.trace
+        outputs[trajectory_key] = [dict(item) for item in result_payload.get("trajectory") or []]
+        outputs[termination_key] = result.termination_reason
+        outputs[max_steps_key] = result.max_steps_reached
         outputs[llm_artifacts_key] = [
             artifact.to_dict() for artifact in result.llm_call_artifacts
         ]
@@ -956,12 +968,13 @@ class AgentLoopStepRunner:
                 status=StepStatus.SUCCEEDED,
                 outputs=declared_outputs,
                 metrics=_with_contract_metrics(
-                    result.metrics.to_dict(),
+                    _agent_loop_metrics_payload(result),
                     step,
                     started=started,
                     outputs=declared_outputs,
                     artifact_count=len(result.llm_call_artifacts),
                 ),
+                trace_events=_agent_loop_trace_events(result),
             )
         if status_value == "waiting_for_approval":
             return StepOutcome(
@@ -972,12 +985,13 @@ class AgentLoopStepRunner:
                 or f"agent loop waiting for approval: {agent_id}",
                 error_details=_agent_loop_error_details(result_payload),
                 metrics=_with_contract_metrics(
-                    result.metrics.to_dict(),
+                    _agent_loop_metrics_payload(result),
                     step,
                     started=started,
                     outputs=declared_outputs,
                     artifact_count=len(result.llm_call_artifacts),
                 ),
+                trace_events=_agent_loop_trace_events(result),
             )
         if status_value == "stalled":
             return StepOutcome(
@@ -987,12 +1001,13 @@ class AgentLoopStepRunner:
                 error_message=result.error or f"agent loop stalled: {agent_id}",
                 error_details=_agent_loop_error_details(result_payload),
                 metrics=_with_contract_metrics(
-                    result.metrics.to_dict(),
+                    _agent_loop_metrics_payload(result),
                     step,
                     started=started,
                     outputs=declared_outputs,
                     artifact_count=len(result.llm_call_artifacts),
                 ),
+                trace_events=_agent_loop_trace_events(result),
             )
         if status_value == "blocked":
             return StepOutcome(
@@ -1002,12 +1017,13 @@ class AgentLoopStepRunner:
                 error_message=result.error or f"agent loop blocked: {agent_id}",
                 error_details=_agent_loop_error_details(result_payload),
                 metrics=_with_contract_metrics(
-                    result.metrics.to_dict(),
+                    _agent_loop_metrics_payload(result),
                     step,
                     started=started,
                     outputs=declared_outputs,
                     artifact_count=len(result.llm_call_artifacts),
                 ),
+                trace_events=_agent_loop_trace_events(result),
             )
         return StepOutcome(
             status=StepStatus.FAILED,
@@ -1016,12 +1032,13 @@ class AgentLoopStepRunner:
             error_message=result.error or f"agent loop failed: {agent_id}",
             error_details=_agent_loop_error_details(result_payload),
             metrics=_with_contract_metrics(
-                result.metrics.to_dict(),
+                _agent_loop_metrics_payload(result),
                 step,
                 started=started,
                 outputs=declared_outputs,
                 artifact_count=len(result.llm_call_artifacts),
             ),
+            trace_events=_agent_loop_trace_events(result),
         )
 
 
@@ -3532,6 +3549,33 @@ def _agent_loop_error_details(result_payload: dict[str, Any]) -> dict[str, Any]:
                 details["global_budget_usage"] = metrics.get("global_budget_usage")
         return details
     return {"agent_loop_status": result_payload.get("status")}
+
+
+def _agent_loop_metrics_payload(result: Any) -> dict[str, Any]:
+    metrics = result.metrics.to_dict()
+    trajectory = [dict(item) for item in getattr(result, "trajectory", [])]
+    metrics["trajectory_summary"] = {
+        "iteration_count": len(trajectory),
+        "tool_call_count": len(getattr(result, "tool_calls", []) or []),
+        "memory_op_count": len(getattr(result, "memory_ops", []) or []),
+        "termination_reason": getattr(result, "termination_reason", None),
+        "max_steps_reached": bool(getattr(result, "max_steps_reached", False)),
+        "trace_id": getattr(result, "trace_id", None),
+    }
+    return metrics
+
+
+def _agent_loop_trace_events(result: Any) -> list[dict[str, Any]]:
+    return [
+        {
+            "event_type": "agent_loop_trajectory",
+            "trace_id": getattr(result, "trace_id", None),
+            "trace_ref": getattr(result, "trace_ref", None),
+            "termination_reason": getattr(result, "termination_reason", None),
+            "max_steps_reached": bool(getattr(result, "max_steps_reached", False)),
+            "trajectory": [dict(item) for item in getattr(result, "trajectory", [])],
+        }
+    ]
 
 
 def _validated_outputs(

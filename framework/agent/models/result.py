@@ -195,6 +195,14 @@ class AgentLoopResult:
     diagnostics: AgentLoopDiagnostics | None = None
     llm_call_artifacts: list[LLMCallArtifact] = field(default_factory=list)
     error: str | ErrorDetail | None = None
+    trajectory: list[Any] = field(default_factory=list)
+    tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    memory_ops: list[dict[str, Any]] = field(default_factory=list)
+    termination_reason: str | None = None
+    max_steps_reached: bool = False
+    trace_id: str | None = None
+    trace_ref: str | None = None
+    warnings: list[str] = field(default_factory=list)
 
     @property
     def final_output(self) -> str | dict[str, Any] | None:
@@ -204,6 +212,13 @@ class AgentLoopResult:
         return self.output or None
 
     def to_dict(self) -> dict[str, Any]:
+        termination_reason = self.termination_reason
+        if termination_reason is None and self.diagnostics is not None:
+            termination_reason = self.diagnostics.stop_reason.value
+        trace_id = self.trace_id
+        if trace_id is None:
+            raw_trace_id = self.trace.get("trace_id")
+            trace_id = str(raw_trace_id) if raw_trace_id is not None else None
         return {
             "success": self.success,
             "status": self.status.value,
@@ -220,6 +235,14 @@ class AgentLoopResult:
                 artifact.to_dict() for artifact in self.llm_call_artifacts
             ],
             "error": self.error.to_dict() if isinstance(self.error, ErrorDetail) else self.error,
+            "trajectory": [_trace_item_to_dict(item) for item in self.trajectory],
+            "tool_calls": [dict(item) for item in self.tool_calls],
+            "memory_ops": [dict(item) for item in self.memory_ops],
+            "termination_reason": termination_reason,
+            "max_steps_reached": self.max_steps_reached,
+            "trace_id": trace_id,
+            "trace_ref": self.trace_ref,
+            "warnings": list(self.warnings),
         }
 
     @classmethod
@@ -273,3 +296,13 @@ class AgentLoopResult:
                 ],
             ),
         )
+
+
+def _trace_item_to_dict(item: Any) -> dict[str, Any]:
+    to_dict = getattr(item, "to_dict", None)
+    if callable(to_dict):
+        value = to_dict()
+        return dict(value) if isinstance(value, dict) else {"value": value}
+    if isinstance(item, dict):
+        return dict(item)
+    return {"value": item}

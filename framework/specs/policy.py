@@ -7,6 +7,18 @@ from typing import Any
 
 from framework.specs.validation import WorkflowSpecError
 
+TRACE_POLICY_LEVELS = {"minimal", "standard", "full"}
+GATE_POLICY_MODES = {"and", "warn_only"}
+GATE_POLICY_DIMENSIONS = {
+    "compatibility",
+    "safety",
+    "resource",
+    "correctness",
+    "checkpoint",
+    "trace",
+    "artifact",
+}
+
 
 @dataclass(frozen=True)
 class RetryPolicySpec:
@@ -238,6 +250,120 @@ class LineagePolicySpec:
         return payload
 
 
+@dataclass(frozen=True)
+class TracePolicySpec:
+    enabled: bool = True
+    level: str = "standard"
+    include_inputs: bool = False
+    include_outputs: bool = True
+    include_metrics: bool = True
+    include_tool_calls: bool = True
+    include_llm_calls: bool = True
+    include_memory_ops: bool = True
+    redact_secrets: bool = True
+    max_payload_bytes: int = 256_000
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "level", str(self.level))
+        object.__setattr__(self, "max_payload_bytes", int(self.max_payload_bytes))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "enabled": self.enabled,
+            "level": self.level,
+            "include_inputs": self.include_inputs,
+            "include_outputs": self.include_outputs,
+            "include_metrics": self.include_metrics,
+            "include_tool_calls": self.include_tool_calls,
+            "include_llm_calls": self.include_llm_calls,
+            "include_memory_ops": self.include_memory_ops,
+            "redact_secrets": self.redact_secrets,
+            "max_payload_bytes": self.max_payload_bytes,
+        }
+
+
+@dataclass(frozen=True)
+class EvaluationPolicySpec:
+    enabled: bool = False
+    required_output_keys: list[str] = field(default_factory=list)
+    required_artifact_kinds: list[str] = field(default_factory=list)
+    assertions: list[dict[str, Any]] = field(default_factory=list)
+    fail_on_missing_required_output: bool = True
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "required_output_keys", [str(key) for key in self.required_output_keys])
+        object.__setattr__(self, "required_artifact_kinds", [str(kind) for kind in self.required_artifact_kinds])
+        object.__setattr__(self, "assertions", [dict(assertion) for assertion in self.assertions])
+        object.__setattr__(self, "metadata", dict(self.metadata))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "enabled": self.enabled,
+            "required_output_keys": list(self.required_output_keys),
+            "required_artifact_kinds": list(self.required_artifact_kinds),
+            "assertions": [dict(assertion) for assertion in self.assertions],
+            "fail_on_missing_required_output": self.fail_on_missing_required_output,
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class GatePolicySpec:
+    enabled: bool = True
+    mode: str = "and"
+    require_trace: bool = False
+    require_manifest: bool = True
+    require_checkpoint_for_pause: bool = True
+    fail_on_safety_warning: bool = True
+    fail_on_policy_violation: bool = True
+    dimensions: list[str] = field(
+        default_factory=lambda: ["compatibility", "safety", "resource"]
+    )
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "mode", str(self.mode))
+        object.__setattr__(self, "dimensions", [str(dimension) for dimension in self.dimensions])
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "enabled": self.enabled,
+            "mode": self.mode,
+            "require_trace": self.require_trace,
+            "require_manifest": self.require_manifest,
+            "require_checkpoint_for_pause": self.require_checkpoint_for_pause,
+            "fail_on_safety_warning": self.fail_on_safety_warning,
+            "fail_on_policy_violation": self.fail_on_policy_violation,
+            "dimensions": list(self.dimensions),
+        }
+
+
+@dataclass(frozen=True)
+class RuntimeQualityPolicySpec:
+    trace: TracePolicySpec = field(default_factory=TracePolicySpec)
+    evaluation: EvaluationPolicySpec = field(default_factory=EvaluationPolicySpec)
+    gate: GatePolicySpec = field(default_factory=GatePolicySpec)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.trace, TracePolicySpec):
+            object.__setattr__(self, "trace", TracePolicySpec(**self.trace))
+        if not isinstance(self.evaluation, EvaluationPolicySpec):
+            object.__setattr__(self, "evaluation", EvaluationPolicySpec(**self.evaluation))
+        if not isinstance(self.gate, GatePolicySpec):
+            object.__setattr__(self, "gate", GatePolicySpec(**self.gate))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "trace": self.trace.to_dict(),
+            "evaluation": self.evaluation.to_dict(),
+            "gate": self.gate.to_dict(),
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "RuntimeQualityPolicySpec":
+        return cls(**payload)
+
+
 @dataclass(frozen=True, init=False)
 class WorkflowPolicySpec:
     retry_policy: RetryPolicySpec = field(default_factory=RetryPolicySpec)
@@ -247,6 +373,7 @@ class WorkflowPolicySpec:
     quality_policy: QualityPolicySpec | None = None
     artifact_policy: ArtifactPolicySpec | None = None
     lineage_policy: LineagePolicySpec | None = None
+    runtime_quality: RuntimeQualityPolicySpec = field(default_factory=RuntimeQualityPolicySpec)
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __init__(
@@ -258,6 +385,7 @@ class WorkflowPolicySpec:
         quality_policy: QualityPolicySpec | dict[str, Any] | None = None,
         artifact_policy: ArtifactPolicySpec | dict[str, Any] | None = None,
         lineage_policy: LineagePolicySpec | dict[str, Any] | None = None,
+        runtime_quality: RuntimeQualityPolicySpec | dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
         *,
         retry: RetryPolicySpec | dict[str, Any] | None = None,
@@ -299,6 +427,11 @@ class WorkflowPolicySpec:
             "lineage_policy",
             lineage if lineage is not None else lineage_policy,
         )
+        object.__setattr__(
+            self,
+            "runtime_quality",
+            runtime_quality if runtime_quality is not None else RuntimeQualityPolicySpec(),
+        )
         object.__setattr__(self, "metadata", dict(metadata or {}))
         self.__post_init__()
 
@@ -330,6 +463,12 @@ class WorkflowPolicySpec:
                 self,
                 "lineage_policy",
                 LineagePolicySpec(**self.lineage_policy),
+            )
+        if not isinstance(self.runtime_quality, RuntimeQualityPolicySpec):
+            object.__setattr__(
+                self,
+                "runtime_quality",
+                RuntimeQualityPolicySpec(**self.runtime_quality),
             )
 
     @property
@@ -375,6 +514,7 @@ class WorkflowPolicySpec:
             payload["artifact_policy"] = self.artifact_policy.to_dict()
         if self.lineage_policy is not None:
             payload["lineage_policy"] = self.lineage_policy.to_dict()
+        payload["runtime_quality"] = self.runtime_quality.to_dict()
         return payload
 
     @classmethod
@@ -392,9 +532,13 @@ __all__ = [
     "ArtifactPolicySpec",
     "FailurePolicySpec",
     "LineagePolicySpec",
+    "EvaluationPolicySpec",
+    "GatePolicySpec",
+    "RuntimeQualityPolicySpec",
     "QualityPolicySpec",
     "ResourcePolicySpec",
     "RetryPolicySpec",
     "TimeoutPolicySpec",
+    "TracePolicySpec",
     "WorkflowPolicySpec",
 ]

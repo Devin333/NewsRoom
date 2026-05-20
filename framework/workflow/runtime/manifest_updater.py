@@ -14,6 +14,7 @@ from framework.workflow.runtime.manifest import (
     register_manifest_step_artifact,
 )
 from framework.workflow.runtime.result import StepOutcome
+from framework.workflow.runtime.runtime_quality import apply_step_gate, record_gate_summary
 
 
 class ManifestUpdater:
@@ -169,12 +170,21 @@ class ManifestUpdater:
 
     def finalize_step_outcome_contract(
         self,
+        workflow: Any,
         step: StepSpec,
         outcome: StepOutcome,
         *,
         trace_context: TraceContext | None = None,
+        checkpoint_available: bool = False,
     ) -> StepOutcome:
-        return finalize_step_outcome_contract(step, outcome, trace_context=trace_context)
+        outcome = finalize_step_outcome_contract(step, outcome, trace_context=trace_context)
+        return apply_step_gate(
+            workflow=workflow,
+            step=step,
+            outcome=outcome,
+            manifest=self._manifest,
+            checkpoint_available=checkpoint_available,
+        )
 
     def record_step_outcome(
         self,
@@ -186,9 +196,10 @@ class ManifestUpdater:
     ) -> None:
         step_results[step.step_id] = outcome
         self._manifest["steps"][step.step_id] = outcome.to_dict()
-        self._manifest.setdefault("step_outcome_summary", {})[step.step_id] = (
-            step_outcome_summary(step.step_id, outcome)
-        )
+        summary = step_outcome_summary(step.step_id, outcome)
+        self._manifest.setdefault("step_outcome_summary", {})[step.step_id] = summary
+        sync_step_summaries(self._manifest, summary)
+        record_gate_summary(self._manifest, step.step_id, outcome.gate_result)
         record_step_artifacts(self._manifest, outcome)
         record_child_runs(self._manifest, outcome)
         self._manifest["path"] = list(path)
@@ -411,7 +422,23 @@ def step_outcome_summary(step_id: str, outcome: StepOutcome) -> dict[str, Any]:
         "checkpoint_ref": outcome.checkpoint_ref,
         "error_type": outcome.error_type,
         "warnings": list(outcome.warnings),
+        "gate_result": gate_summary_for_manifest(outcome.gate_result),
     }
+
+
+def sync_step_summaries(manifest: dict[str, Any], summary: dict[str, Any]) -> None:
+    step_id = summary.get("step_id")
+    if step_id is None:
+        return
+    summaries = manifest.setdefault("step_summaries", [])
+    if not isinstance(summaries, list):
+        return
+    replacement = dict(summary)
+    for index, item in enumerate(summaries):
+        if isinstance(item, dict) and item.get("step_id") == step_id:
+            summaries[index] = replacement
+            return
+    summaries.append(replacement)
 
 
 def to_summary_artifact_refs(artifact_refs: list[Any]) -> list[Any]:
@@ -437,6 +464,18 @@ def to_summary_artifact_refs(artifact_refs: list[Any]) -> list[Any]:
         else:
             summary.append(artifact_ref)
     return summary
+
+
+def gate_summary_for_manifest(gate_result: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(gate_result, dict):
+        return None
+    return {
+        "gate_id": gate_result.get("gate_id"),
+        "passed": gate_result.get("passed"),
+        "decision": gate_result.get("decision"),
+        "failed_dimensions": list(gate_result.get("failed_dimensions") or []),
+        "reason": gate_result.get("reason"),
+    }
 
 
 def sensitive_key(key: str) -> bool:

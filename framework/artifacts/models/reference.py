@@ -15,6 +15,10 @@ class ArtifactReference:
     content_type: str | None = None
     checksum: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    run_id: str | None = None
+    kind: str | None = None
+    size_bytes: int | None = None
+    created_at: datetime = field(default_factory=utc_now)
 
     def __post_init__(self) -> None:
         if not self.artifact_id:
@@ -22,13 +26,19 @@ class ArtifactReference:
         if not self.uri:
             raise ValueError("uri is required")
         object.__setattr__(self, "metadata", dict(self.metadata))
+        object.__setattr__(self, "created_at", parse_datetime(self.created_at) or utc_now())
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "artifact_id": self.artifact_id,
+            "run_id": self.run_id,
+            "kind": self.kind,
             "uri": self.uri,
+            "path": self.uri,
             "content_type": self.content_type,
             "checksum": self.checksum,
+            "size_bytes": self.size_bytes,
+            "created_at": format_datetime(self.created_at),
             "metadata": to_jsonable(self.metadata),
         }
 
@@ -40,6 +50,10 @@ class ArtifactReference:
             content_type=_optional_str(payload.get("content_type") or payload.get("media_type")),
             checksum=_optional_str(payload.get("checksum") or payload.get("content_hash")),
             metadata=dict(payload.get("metadata") or {}),
+            run_id=_optional_str(payload.get("run_id")),
+            kind=_optional_str(payload.get("kind") or payload.get("artifact_type")),
+            size_bytes=_optional_int(payload.get("size_bytes")),
+            created_at=parse_datetime(payload.get("created_at")) or utc_now(),
         )
 
 

@@ -1,13 +1,21 @@
 from __future__ import annotations
 
+from time import perf_counter
 from typing import Any
+from uuid import uuid4
 
+from dataclasses import replace
+
+from framework.governance import PolicyDecision
+from framework.events import TraceContext
+from framework.memory.diagnostics.trace import MemoryTraceEvent, MemoryTraceRecorder
 from framework.memory.models import (
     MemoryConsolidationRequest,
     MemoryConsolidationResult,
     MemoryForgetRequest,
     MemoryForgetResult,
     MemoryKind,
+    MemoryOperationTrace,
     MemoryQuery,
     MemoryRecallResult,
     MemoryRecord,
@@ -43,6 +51,8 @@ class MemoryRuntime:
         promotion_engine: MemoryPromotionEngine | None = None,
         invalidation_engine: MemoryInvalidationEngine | None = None,
         lifecycle_manager: MemoryLifecycleManager | None = None,
+        trace_context: TraceContext | None = None,
+        trace_recorder: MemoryTraceRecorder | None = None,
     ) -> None:
         self.store = store
         self.policy = policy or DEFAULT_WORKFLOW_MEMORY_POLICY
@@ -54,6 +64,8 @@ class MemoryRuntime:
         self.promotion_engine = promotion_engine or MemoryPromotionEngine()
         self.invalidation_engine = invalidation_engine or MemoryInvalidationEngine()
         self.lifecycle_manager = lifecycle_manager or MemoryLifecycleManager()
+        self.trace_context = trace_context
+        self.trace_recorder = trace_recorder
 
     def recall(
         self,
@@ -61,13 +73,58 @@ class MemoryRuntime:
         *,
         policy: MemoryPolicy | None = None,
     ) -> MemoryRecallResult:
+        started = perf_counter()
         memory_query = _coerce_query(query)
-        return self.recall_strategy.recall(
+        operation = self._start_operation_trace(
+            operation_type="recall",
+            namespace=getattr(memory_query, "namespace", None),
+            query=memory_query.query,
+            metadata={"limit": memory_query.limit},
+        )
+        decision = memory_policy_decision(
+            "memory.recall",
+            namespace=getattr(memory_query, "namespace", None),
+            tenant_id=getattr(memory_query, "tenant_id", None),
+        )
+        if not decision.allowed:
+            operation = self._finish_recall_trace(
+                operation,
+                started=started,
+                policy_decision=decision.to_dict(),
+                results=[],
+                candidate_count=0,
+                filtered_count=0,
+            )
+            result = MemoryRecallResult(
+                query=memory_query,
+                diagnostics={"errors": [decision.reason]},
+                policy_decision=decision.to_dict(),
+                operation_trace=operation,
+                error_envelope=_memory_error_envelope(
+                    "MemoryPolicyDenied",
+                    decision.reason,
+                    details={"policy_decision": decision.to_dict()},
+                ),
+            )
+            self._record_operation_trace(operation)
+            return result
+        result = self.recall_strategy.recall(
             memory_query,
             store=self.store,
             policy=policy or self.policy,
             assembler=self.assembler,
         )
+        operation = self._finish_recall_trace(
+            operation,
+            started=started,
+            policy_decision=decision.to_dict(),
+            results=result.results,
+            candidate_count=_recall_candidate_count(result),
+            filtered_count=_recall_filtered_count(result),
+        )
+        result = replace(result, policy_decision=decision.to_dict(), operation_trace=operation)
+        self._record_operation_trace(operation)
+        return result
 
     def write(
         self,
@@ -81,6 +138,7 @@ class MemoryRuntime:
         tenant_id: str | None = None,
         policy: MemoryPolicy | None = None,
     ) -> MemoryWriteResult:
+        started = perf_counter()
         write_request = _coerce_write_request(
             request,
             records=records,
@@ -90,11 +148,55 @@ class MemoryRuntime:
             namespace=namespace,
             tenant_id=tenant_id,
         )
-        return self.writer.write(
+        operation = self._start_operation_trace(
+            operation_type="write",
+            namespace=write_request.namespace,
+            metadata={
+                "accepted_count": len(write_request.records),
+                "mode": write_request.mode.value,
+                "memory_ids": [record.memory_id for record in write_request.records],
+            },
+        )
+        decision = memory_policy_decision(
+            "memory.write",
+            namespace=write_request.namespace,
+            tenant_id=write_request.tenant_id,
+        )
+        if not decision.allowed:
+            operation = self._finish_write_trace(
+                operation,
+                started=started,
+                policy_decision=decision.to_dict(),
+                accepted_count=len(write_request.records),
+                written_ids=[],
+                skipped_count=len(write_request.records),
+            )
+            result = MemoryWriteResult(
+                accepted_count=len(write_request.records),
+                written_count=0,
+                skipped_count=len(write_request.records),
+                errors=[decision.reason],
+                policy_decision=decision.to_dict(),
+                operation_trace=operation,
+            )
+            self._record_operation_trace(operation)
+            return result
+        result = self.writer.write(
             write_request,
             store=self.store,
             policy=policy or self.policy,
         )
+        operation = self._finish_write_trace(
+            operation,
+            started=started,
+            policy_decision=decision.to_dict(),
+            accepted_count=result.accepted_count,
+            written_ids=result.memory_ids,
+            skipped_count=result.skipped_count,
+        )
+        result = replace(result, policy_decision=decision.to_dict(), operation_trace=operation)
+        self._record_operation_trace(operation)
+        return result
 
     def get(self, memory_id: str) -> MemoryRecord | None:
         return self.store.get(memory_id)
@@ -146,6 +248,101 @@ class MemoryRuntime:
     def lifecycle(self) -> dict[str, Any]:
         return self.lifecycle_manager.run(store=self.store, policy=self.policy)
 
+    def _start_operation_trace(
+        self,
+        *,
+        operation_type: str,
+        namespace: str | None = None,
+        query: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> MemoryOperationTrace:
+        operation_id = uuid4().hex
+        context = self._operation_trace_context(operation_id)
+        return MemoryOperationTrace(
+            operation_id=operation_id,
+            operation_type=operation_type,
+            namespace=namespace,
+            query=query,
+            trace_id=context.trace_id if context is not None else None,
+            span_id=context.span_id if context is not None else None,
+            metadata=dict(metadata or {}),
+        )
+
+    def _finish_recall_trace(
+        self,
+        operation: MemoryOperationTrace,
+        *,
+        started: float,
+        policy_decision: dict[str, Any],
+        results: list[Any],
+        candidate_count: int,
+        filtered_count: int,
+    ) -> MemoryOperationTrace:
+        return MemoryOperationTrace(
+            operation_id=operation.operation_id,
+            operation_type=operation.operation_type,
+            namespace=operation.namespace,
+            query=operation.query,
+            policy_decision=policy_decision,
+            candidate_count=candidate_count,
+            selected_count=len(results),
+            filtered_count=filtered_count,
+            scores=_score_trace(results),
+            duration_ms=round((perf_counter() - started) * 1000, 3),
+            trace_id=operation.trace_id,
+            span_id=operation.span_id,
+            metadata={
+                **operation.metadata,
+                "selected_memory_ids": [getattr(result, "memory_id", "") for result in results],
+            },
+        )
+
+    def _finish_write_trace(
+        self,
+        operation: MemoryOperationTrace,
+        *,
+        started: float,
+        policy_decision: dict[str, Any],
+        accepted_count: int,
+        written_ids: list[str],
+        skipped_count: int,
+    ) -> MemoryOperationTrace:
+        return MemoryOperationTrace(
+            operation_id=operation.operation_id,
+            operation_type=operation.operation_type,
+            namespace=operation.namespace,
+            query=operation.query,
+            policy_decision=policy_decision,
+            candidate_count=accepted_count,
+            selected_count=len(written_ids),
+            filtered_count=skipped_count,
+            scores=[],
+            duration_ms=round((perf_counter() - started) * 1000, 3),
+            trace_id=operation.trace_id,
+            span_id=operation.span_id,
+            metadata={**operation.metadata, "written_ids": list(written_ids)},
+        )
+
+    def _operation_trace_context(self, operation_id: str) -> TraceContext | None:
+        if self.trace_context is None:
+            return None
+        return self.trace_context.child(
+            span_id=f"memory:{operation_id}",
+            memory_operation_id=operation_id,
+        )
+
+    def _record_operation_trace(self, operation: MemoryOperationTrace) -> None:
+        if self.trace_recorder is None:
+            return
+        context = self._operation_trace_context(operation.operation_id)
+        self.trace_recorder.record(
+            MemoryTraceEvent(
+                event_type="memory_operation",
+                payload=operation.to_dict(),
+                trace_context=context,
+            )
+        )
+
 
 def _coerce_query(value: MemoryQuery | dict[str, Any] | str) -> MemoryQuery:
     if isinstance(value, MemoryQuery):
@@ -153,6 +350,75 @@ def _coerce_query(value: MemoryQuery | dict[str, Any] | str) -> MemoryQuery:
     if isinstance(value, dict):
         return MemoryQuery.from_dict(value)
     return MemoryQuery(query=str(value))
+
+
+def memory_policy_decision(
+    policy_id: str,
+    *,
+    namespace: str | None = None,
+    tenant_id: str | None = None,
+) -> PolicyDecision:
+    for label, value in {"namespace": namespace, "tenant_id": tenant_id}.items():
+        if value is None:
+            continue
+        text = str(value)
+        if ".." in text or text.startswith("/") or text.startswith("\\"):
+            return PolicyDecision.block(
+                policy_id,
+                reason=f"invalid memory {label}: {text}",
+                risk_level="high",
+                metadata={label: text},
+            )
+    return PolicyDecision.allow(policy_id, reason="memory policy allowed")
+
+
+def _recall_candidate_count(result: MemoryRecallResult) -> int:
+    diagnostics = dict(result.diagnostics)
+    requested = diagnostics.get("requested_count")
+    if requested is not None:
+        try:
+            return int(requested)
+        except (TypeError, ValueError):
+            pass
+    return len(result.results)
+
+
+def _recall_filtered_count(result: MemoryRecallResult) -> int:
+    candidate_count = _recall_candidate_count(result)
+    return max(0, candidate_count - len(result.results))
+
+
+def _score_trace(results: list[Any]) -> list[dict[str, Any]]:
+    scores: list[dict[str, Any]] = []
+    for result in results:
+        scores.append(
+            {
+                "memory_id": str(getattr(result, "memory_id", "")),
+                "score": float(getattr(result, "score", 0.0) or 0.0),
+                "source": str(getattr(result, "source", "memory")),
+                "match_reasons": [
+                    str(item) for item in getattr(result, "match_reasons", []) or []
+                ],
+            }
+        )
+    return scores
+
+
+def _memory_error_envelope(
+    error_type: str,
+    message: str,
+    *,
+    details: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "error_code": error_type,
+        "error_type": error_type,
+        "message": message,
+        "domain": "memory",
+        "severity": "error",
+        "retryable": False,
+        "details": dict(details or {}),
+    }
 
 
 def _coerce_write_request(

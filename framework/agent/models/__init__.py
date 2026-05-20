@@ -18,6 +18,7 @@ from framework.agent.models.status import (
     JudgeDecision,
 )
 from framework.agent.models.trace import (
+    AgentIterationTrace,
     AgentLoopTrace,
     IterationTrace,
     JudgeTrace,

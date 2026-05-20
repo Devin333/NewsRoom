@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -370,6 +371,9 @@ class JudgeTrace:
 @dataclass
 class IterationTrace:
     iteration: int
+    trace_id: str | None = None
+    span_id: str | None = None
+    parent_span_id: str | None = None
     feedback: str | None = None
     prompt_hash: str | None = None
     llm_call_id: str | None = None
@@ -383,12 +387,17 @@ class IterationTrace:
     tool_call: ToolCallTrace | None = None
     judge: JudgeTrace | None = None
     stop_candidate: str | None = None
+    duration_ms: float | None = None
+    _started_monotonic: float | None = field(default=None, repr=False)
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> IterationTrace:
         llm_call = _optional_trace(payload.get("llm_call"), LLMCallTrace.from_dict)
         item = cls(
             iteration=int(payload.get("iteration") or 0),
+            trace_id=_optional_text(payload.get("trace_id")),
+            span_id=_optional_text(payload.get("span_id")),
+            parent_span_id=_optional_text(payload.get("parent_span_id")),
             feedback=_optional_text(payload.get("feedback")),
             prompt_hash=_optional_text(payload.get("prompt_hash")),
             llm_call_id=_optional_text(payload.get("llm_call_id")),
@@ -413,6 +422,7 @@ class IterationTrace:
                 JudgeTrace.from_dict,
             ),
             stop_candidate=_optional_text(payload.get("stop_candidate")),
+            duration_ms=_optional_float(payload.get("duration_ms")),
         )
         if item.llm_call_id is None and llm_call is not None:
             item.llm_call_id = llm_call.llm_call_id
@@ -421,6 +431,9 @@ class IterationTrace:
     def to_dict(self) -> dict[str, Any]:
         return {
             "iteration": self.iteration,
+            "trace_id": self.trace_id,
+            "span_id": self.span_id,
+            "parent_span_id": self.parent_span_id,
             "feedback": self.feedback,
             "prompt_hash": self.prompt_hash,
             "llm_call_id": self.llm_call_id,
@@ -436,12 +449,15 @@ class IterationTrace:
             "judge": self.judge.to_dict() if self.judge else None,
             "judge_result": self.judge.to_dict() if self.judge else None,
             "stop_candidate": self.stop_candidate,
+            "duration_ms": self.duration_ms,
         }
 
 
 @dataclass
 class AgentLoopTrace:
     agent_id: str
+    trace_id: str | None = None
+    root_span_id: str | None = None
     iterations: list[IterationTrace] = field(default_factory=list)
     llm_calls: list[LLMCallTrace] = field(default_factory=list)
     llm_errors: list[LLMErrorTrace] = field(default_factory=list)
@@ -458,14 +474,38 @@ class AgentLoopTrace:
         tool_observation_count_before: int,
         tools_available: list[str],
     ) -> IterationTrace:
+        trace_id = self.trace_id or f"agent:{self.agent_id}"
+        if self.trace_id is None:
+            self.trace_id = trace_id
+        root_span_id = self.root_span_id or f"agent:{self.agent_id}"
+        if self.root_span_id is None:
+            self.root_span_id = root_span_id
         item = IterationTrace(
             iteration=iteration,
+            trace_id=trace_id,
+            span_id=f"{root_span_id}:iteration:{iteration}",
+            parent_span_id=root_span_id,
             feedback=feedback,
             tool_observation_count_before=tool_observation_count_before,
             tools_available=list(tools_available),
+            _started_monotonic=time.perf_counter(),
         )
         self.iterations.append(item)
         return item
+
+    def finish_iteration(self, iteration: IterationTrace) -> None:
+        if iteration.duration_ms is not None:
+            return
+        if iteration._started_monotonic is None:
+            return
+        iteration.duration_ms = round(
+            (time.perf_counter() - iteration._started_monotonic) * 1000,
+            3,
+        )
+
+    def finish_open_iterations(self) -> None:
+        for iteration in self.iterations:
+            self.finish_iteration(iteration)
 
     def record_llm_call(self, iteration: IterationTrace, response: LLMResponse) -> LLMCallTrace:
         trace = LLMCallTrace.from_response(iteration.iteration, response)
@@ -594,6 +634,8 @@ class AgentLoopTrace:
         ]
         return {
             "agent_id": self.agent_id,
+            "trace_id": self.trace_id,
+            "root_span_id": self.root_span_id,
             "iteration_count": len(self.iterations),
             "llm_call_count": len(self.llm_calls),
             "llm_error_count": len(self.llm_errors),
@@ -615,13 +657,24 @@ class AgentLoopTrace:
     def to_dict(self) -> dict[str, Any]:
         return {
             "agent_id": self.agent_id,
+            "trace_id": self.trace_id,
+            "root_span_id": self.root_span_id,
             "iterations": [iteration.to_dict() for iteration in self.iterations],
+            "trajectory": [item.to_dict() for item in self.trajectory()],
             "summary": self.summary(),
         }
 
+    def trajectory(self) -> list["AgentIterationTrace"]:
+        self.finish_open_iterations()
+        return [AgentIterationTrace.from_iteration(item) for item in self.iterations]
+
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> AgentLoopTrace:
-        trace = cls(agent_id=str(payload.get("agent_id") or ""))
+        trace = cls(
+            agent_id=str(payload.get("agent_id") or ""),
+            trace_id=_optional_text(payload.get("trace_id")),
+            root_span_id=_optional_text(payload.get("root_span_id")),
+        )
         trace.iterations = [
             IterationTrace.from_dict(item)
             for item in payload.get("iterations", [])
@@ -646,6 +699,97 @@ class AgentLoopTrace:
         ]
         trace.judges = [item.judge for item in trace.iterations if item.judge is not None]
         return trace
+
+
+@dataclass(frozen=True)
+class AgentIterationTrace:
+    iteration: int
+    trace_id: str | None = None
+    span_id: str | None = None
+    parent_span_id: str | None = None
+    llm_request_ref: str | None = None
+    llm_response_ref: str | None = None
+    parsed_action: dict[str, Any] = field(default_factory=dict)
+    tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    observations: list[dict[str, Any]] = field(default_factory=list)
+    memory_ops: list[dict[str, Any]] = field(default_factory=list)
+    decision: str | None = None
+    error: dict[str, Any] | None = None
+    duration_ms: float | None = None
+
+    @classmethod
+    def from_iteration(cls, iteration: IterationTrace) -> "AgentIterationTrace":
+        tool_calls = [iteration.tool_call.to_dict()] if iteration.tool_call else []
+        observations = (
+            [_tool_observation_summary(iteration.tool_call)]
+            if iteration.tool_call is not None
+            else []
+        )
+        return cls(
+            iteration=iteration.iteration,
+            trace_id=iteration.trace_id,
+            span_id=iteration.span_id,
+            parent_span_id=iteration.parent_span_id,
+            llm_request_ref=iteration.llm_artifact_ref,
+            llm_response_ref=iteration.llm_artifact_ref,
+            parsed_action=(
+                iteration.parsed_action.to_dict()
+                if iteration.parsed_action is not None
+                else {}
+            ),
+            tool_calls=tool_calls,
+            observations=observations,
+            decision=_iteration_decision(iteration),
+            error=_iteration_error(iteration),
+            duration_ms=iteration.duration_ms,
+        )
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "AgentIterationTrace":
+        return cls(
+            iteration=int(payload.get("iteration") or 0),
+            trace_id=_optional_text(payload.get("trace_id")),
+            span_id=_optional_text(payload.get("span_id")),
+            parent_span_id=_optional_text(payload.get("parent_span_id")),
+            llm_request_ref=_optional_text(payload.get("llm_request_ref")),
+            llm_response_ref=_optional_text(payload.get("llm_response_ref")),
+            parsed_action=dict(payload.get("parsed_action") or {}),
+            tool_calls=[
+                dict(item)
+                for item in payload.get("tool_calls", [])
+                if isinstance(item, dict)
+            ],
+            observations=[
+                dict(item)
+                for item in payload.get("observations", [])
+                if isinstance(item, dict)
+            ],
+            memory_ops=[
+                dict(item)
+                for item in payload.get("memory_ops", [])
+                if isinstance(item, dict)
+            ],
+            decision=_optional_text(payload.get("decision")),
+            error=dict(payload["error"]) if isinstance(payload.get("error"), dict) else None,
+            duration_ms=_optional_float(payload.get("duration_ms")),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "iteration": self.iteration,
+            "trace_id": self.trace_id,
+            "span_id": self.span_id,
+            "parent_span_id": self.parent_span_id,
+            "llm_request_ref": self.llm_request_ref,
+            "llm_response_ref": self.llm_response_ref,
+            "parsed_action": dict(self.parsed_action),
+            "tool_calls": [dict(item) for item in self.tool_calls],
+            "observations": [dict(item) for item in self.observations],
+            "memory_ops": [dict(item) for item in self.memory_ops],
+            "decision": self.decision,
+            "error": dict(self.error) if self.error is not None else None,
+            "duration_ms": self.duration_ms,
+        }
 
 
 def _stable_json_bytes(value: Any) -> bytes:
@@ -728,7 +872,54 @@ def _optional_int(value: Any) -> int | None:
         return None
 
 
+def _optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _optional_trace(value: Any, factory: Any) -> Any:
     if not isinstance(value, dict):
         return None
     return factory(value)
+
+
+def _tool_observation_summary(call: ToolCallTrace) -> dict[str, Any]:
+    return {
+        "tool_call_id": call.tool_call_id,
+        "tool_name": call.tool_name,
+        "status": call.status,
+        "summary": call.summary,
+        "elapsed_ms": call.elapsed_ms,
+        "error_type": call.error_type,
+        "error_message": call.error_message,
+        "artifact_refs": [dict(ref) for ref in call.artifact_refs],
+        "safe_for_llm": call.safe_for_llm,
+    }
+
+
+def _iteration_decision(iteration: IterationTrace) -> str | None:
+    if iteration.judge is not None:
+        return iteration.judge.decision
+    if iteration.stop_candidate:
+        return iteration.stop_candidate
+    if iteration.parsed_action is not None:
+        return iteration.parsed_action.action_type
+    return None
+
+
+def _iteration_error(iteration: IterationTrace) -> dict[str, Any] | None:
+    if iteration.llm_error is not None:
+        return iteration.llm_error.to_dict()
+    if iteration.parser_error is not None:
+        return iteration.parser_error.to_dict()
+    if iteration.tool_call is not None and iteration.tool_call.error_type:
+        return {
+            "iteration": iteration.iteration,
+            "error_type": iteration.tool_call.error_type,
+            "error_message": iteration.tool_call.error_message,
+        }
+    return None

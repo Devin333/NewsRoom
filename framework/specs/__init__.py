@@ -3,12 +3,16 @@
 from framework.specs.edge import EdgeCondition, EdgeConditionSpec, EdgeSpec
 from framework.specs.policy import (
     ArtifactPolicySpec,
+    EvaluationPolicySpec,
     FailurePolicySpec,
+    GatePolicySpec,
     LineagePolicySpec,
     QualityPolicySpec,
     ResourcePolicySpec,
     RetryPolicySpec,
+    RuntimeQualityPolicySpec,
     TimeoutPolicySpec,
+    TracePolicySpec,
     WorkflowPolicySpec,
 )
 from framework.specs.registry import WorkflowSpecRegistry
@@ -25,18 +29,22 @@ from framework.specs.validation import WorkflowSpecError
 
 __all__ = [
     "ArtifactPolicySpec",
+    "EvaluationPolicySpec",
     "EdgeCondition",
     "EdgeConditionSpec",
     "EdgeSpec",
     "FailurePolicySpec",
+    "GatePolicySpec",
     "LineagePolicySpec",
     "QualityPolicySpec",
     "ResourcePolicySpec",
     "RetryPolicySpec",
+    "RuntimeQualityPolicySpec",
     "StepSpec",
     "StepStatus",
     "StepType",
     "TimeoutPolicySpec",
+    "TracePolicySpec",
     "ValidationErrorItem",
     "ValidationResult",
     "ValidationWarningItem",

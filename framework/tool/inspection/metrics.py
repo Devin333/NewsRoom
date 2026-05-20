@@ -194,6 +194,11 @@ class ToolExecutionRecord:
     trace_id: str | None = None
     span_id: str | None = None
     parent_span_id: str | None = None
+    gate_result: dict[str, Any] | None = None
+    policy_trace: dict[str, Any] | None = None
+    error_envelope: dict[str, Any] | None = None
+    retry_count: int = 0
+    timeout: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -209,4 +214,13 @@ class ToolExecutionRecord:
             "trace_id": self.trace_id,
             "span_id": self.span_id,
             "parent_span_id": self.parent_span_id,
+            "gate_result": dict(self.gate_result) if self.gate_result is not None else None,
+            "policy_trace": (
+                dict(self.policy_trace) if self.policy_trace is not None else None
+            ),
+            "error_envelope": (
+                dict(self.error_envelope) if self.error_envelope is not None else None
+            ),
+            "retry_count": self.retry_count,
+            "timeout": self.timeout,
         }

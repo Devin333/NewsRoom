@@ -159,9 +159,11 @@ class WorkflowExecutionLoop:
             outcome,
         )
         outcome = self._manifest_updater.finalize_step_outcome_contract(
+            context.workflow,
             step,
             outcome,
             trace_context=step_trace,
+            checkpoint_available=self._checkpoint_coordinator.has_checkpoint_store(),
         )
         self._manifest_updater.write_step_policy_terminal_artifact(step, outcome)
         self._manifest_updater.record_step_outcome(

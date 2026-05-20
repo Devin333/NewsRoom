@@ -333,7 +333,8 @@ class AgentLoop:
                         stop_reason=AgentLoopStopReason.PARSER_RETRY_EXHAUSTED,
                         detection=detection,
                         llm_call_artifacts=llm_call_artifacts,
-                    )
+                )
+                trace.finish_iteration(iteration_trace)
                 continue
 
             parser_errors = 0
@@ -369,6 +370,7 @@ class AgentLoop:
                 if isinstance(tool_result, AgentLoopResult):
                     return tool_result
                 feedback = tool_result
+                trace.finish_iteration(iteration_trace)
                 continue
 
             if _action_type_value(action.action_type) in {"delegate", "delegate_to_subagent"}:
@@ -386,6 +388,7 @@ class AgentLoop:
                 if isinstance(result, AgentLoopResult):
                     return result
                 feedback = result
+                trace.finish_iteration(iteration_trace)
                 continue
 
             normalized_output = self._normalize_output(
@@ -421,6 +424,7 @@ class AgentLoop:
             if isinstance(verdict_result, AgentLoopResult):
                 return verdict_result
             judge_retries, empty_output_retries, feedback = verdict_result
+            trace.finish_iteration(iteration_trace)
 
         detection = max_iterations_detection(metrics.iterations, agent.loop_policy)
         return self._stalled_result(
@@ -986,7 +990,9 @@ class AgentLoop:
             status=AgentLoopStatus.ACCEPTED.value,
             stop_reason=stop_reason.value,
         )
-        return AgentLoopResult(
+        return _agent_loop_result(
+            loop_trace=trace,
+            stop_reason=stop_reason,
             success=True,
             status=AgentLoopStatus.ACCEPTED,
             output=output,
@@ -1024,7 +1030,9 @@ class AgentLoop:
             stop_reason=stop_reason.value,
             verdict=verdict.to_dict(),
         )
-        return AgentLoopResult(
+        return _agent_loop_result(
+            loop_trace=trace,
+            stop_reason=stop_reason,
             success=False,
             status=AgentLoopStatus.BLOCKED,
             verdict=verdict,
@@ -1071,7 +1079,9 @@ class AgentLoop:
             stop_reason=AgentLoopStopReason.GLOBAL_BUDGET_EXCEEDED.value,
             verdict=verdict.to_dict(),
         )
-        return AgentLoopResult(
+        return _agent_loop_result(
+            loop_trace=trace,
+            stop_reason=AgentLoopStopReason.GLOBAL_BUDGET_EXCEEDED,
             success=False,
             status=AgentLoopStatus.BLOCKED,
             verdict=verdict,
@@ -1118,7 +1128,9 @@ class AgentLoop:
             control_action=control_action,
             escalation_type=escalation_type,
         )
-        return AgentLoopResult(
+        return _agent_loop_result(
+            loop_trace=trace,
+            stop_reason=AgentLoopStopReason.TOOL_APPROVAL_REQUIRED,
             success=False,
             status=AgentLoopStatus.WAITING_FOR_APPROVAL,
             iterations=iterations,
@@ -1156,7 +1168,9 @@ class AgentLoop:
             stop_reason=stop_reason.value,
             verdict=verdict.to_dict() if verdict else None,
         )
-        return AgentLoopResult(
+        return _agent_loop_result(
+            loop_trace=trace,
+            stop_reason=stop_reason,
             success=False,
             status=AgentLoopStatus.RETRY_EXHAUSTED,
             verdict=verdict,
@@ -1193,7 +1207,9 @@ class AgentLoop:
             stop_reason=result_diagnostics.stop_reason.value,
             summary=result_diagnostics.summary,
         )
-        return AgentLoopResult(
+        return _agent_loop_result(
+            loop_trace=trace,
+            stop_reason=result_diagnostics.stop_reason,
             success=False,
             status=AgentLoopStatus.STALLED,
             verdict=verdict,
@@ -1226,7 +1242,9 @@ class AgentLoop:
             error=error,
         )
         events.failed(iteration=iterations, stop_reason=stop_reason.value, error=error)
-        return AgentLoopResult(
+        return _agent_loop_result(
+            loop_trace=trace,
+            stop_reason=stop_reason,
             success=False,
             status=AgentLoopStatus.FAILED,
             iterations=iterations,
@@ -1240,9 +1258,34 @@ class AgentLoop:
 
 
 def _trace_payload(trace: AgentLoopTrace, agent: AgentSpec) -> dict[str, Any]:
+    trace.finish_open_iterations()
     if not agent.loop_policy.trace_enabled:
         return {"agent_id": agent.agent_id, "summary": trace.summary()}
     return trace.to_dict()
+
+
+def _agent_loop_result(
+    *,
+    loop_trace: AgentLoopTrace,
+    stop_reason: AgentLoopStopReason,
+    **kwargs: Any,
+) -> AgentLoopResult:
+    loop_trace.finish_open_iterations()
+    trajectory = [item.to_dict() for item in loop_trace.trajectory()]
+    return AgentLoopResult(
+        **kwargs,
+        trajectory=trajectory,
+        tool_calls=[item.to_dict() for item in loop_trace.tool_calls],
+        memory_ops=[],
+        termination_reason=stop_reason.value,
+        max_steps_reached=stop_reason
+        in {
+            AgentLoopStopReason.MAX_ITERATIONS,
+            AgentLoopStopReason.MAX_ITERATIONS_EXCEEDED,
+        },
+        trace_id=loop_trace.trace_id,
+        trace_ref="agent_loop_trace",
+    )
 
 
 def _prompt_safe_observation(

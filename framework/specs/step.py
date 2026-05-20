@@ -13,6 +13,7 @@ from framework.specs.policy import (
     QualityPolicySpec,
     ResourcePolicySpec,
     RetryPolicySpec,
+    RuntimeQualityPolicySpec,
     TimeoutPolicySpec,
 )
 from framework.specs.validation import WorkflowSpecError
@@ -94,6 +95,7 @@ class StepSpec:
     quality_policy: QualityPolicySpec | None = None
     artifact_policy: ArtifactPolicySpec | None = None
     lineage_policy: LineagePolicySpec | None = None
+    runtime_quality: RuntimeQualityPolicySpec | dict[str, Any] | None = None
     retry: RetryPolicySpec | dict[str, Any] | None = None
     timeout: TimeoutPolicySpec | dict[str, Any] | None = None
     resource: ResourcePolicySpec | dict[str, Any] | None = None
@@ -144,6 +146,14 @@ class StepSpec:
                 "lineage_policy",
                 LineagePolicySpec(**self.lineage_policy),
             )
+        if self.runtime_quality is not None and not isinstance(
+            self.runtime_quality, RuntimeQualityPolicySpec
+        ):
+            object.__setattr__(
+                self,
+                "runtime_quality",
+                RuntimeQualityPolicySpec(**self.runtime_quality),
+            )
         if not self.step_id:
             raise WorkflowSpecError("step_id is required")
         if not isinstance(self.input_schema, dict):
@@ -188,6 +198,9 @@ class StepSpec:
             ),
             "lineage_policy": (
                 self.lineage_policy.to_dict() if self.lineage_policy is not None else None
+            ),
+            "runtime_quality": (
+                self.runtime_quality.to_dict() if self.runtime_quality is not None else None
             ),
             "idempotent": self.idempotent,
             "cacheable": self.cacheable,

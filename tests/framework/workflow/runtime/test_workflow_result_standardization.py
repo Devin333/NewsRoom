@@ -87,6 +87,7 @@ def test_outcome_finalizer_populates_standard_workflow_result_fields(tmp_path: P
         manifest=context.manifest,
     )
     outcome = updater.finalize_step_outcome_contract(
+        workflow,
         step,
         StepOutcome(
             status=StepStatus.SUCCEEDED,

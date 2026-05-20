@@ -10,6 +10,7 @@ from typing import Any
 
 from framework.shared.json import to_jsonable
 from framework.events.trace import TraceContext
+from framework.governance import CompositeAndGate, GateCheckResult
 from framework.tool.governance.approval import ToolApprovalRequest
 from framework.tool.governance.boundary import is_external_fetch_tool, is_restricted_agent_id
 from framework.tool.governance.redaction import (
@@ -25,6 +26,7 @@ from framework.tool.models import (
     ToolObservation,
     ToolPermissionError,
     ToolPolicy,
+    ToolPolicyTrace,
     ToolResult,
     ToolRuntimeError,
     ToolSecretError,
@@ -74,48 +76,98 @@ class ToolExecutor:
     def execute(self, call: ToolCall, policy: ToolPolicy | None = None) -> ToolObservation:
         policy = policy or ToolPolicy(require_explicit_allowlist=False)
         started_at = datetime.now(UTC)
+        policy_trace = _ToolPolicyTraceBuilder(call.tool_name)
+        retry_count = 0
 
         def invoke() -> ToolResult:
+            nonlocal retry_count
             registered = self._registry.get(call.tool_name)
+            policy_trace.risk_level = _risk_level(registered.definition)
+            policy_trace.requires_approval = _requires_approval(registered.definition, policy)
+            policy_trace.add("tool.resolve", "compatibility", True, f"tool resolved: {call.tool_name}")
 
             if not policy.allows(call.tool_name):
+                policy_trace.add("tool.permission", "safety", False, f"tool is not allowed: {call.tool_name}")
                 raise ToolPermissionError(
                     f"agent {call.requested_by_agent_id} is not allowed to call {call.tool_name}"
                 )
+            policy_trace.add("tool.permission", "safety", True, "tool allowed by policy")
 
             restricted_agent_result = _restricted_agent_boundary_gate(call)
             if restricted_agent_result is not None:
+                policy_trace.add(
+                    "tool.boundary",
+                    "safety",
+                    False,
+                    restricted_agent_result.error_message or "restricted agent boundary blocked",
+                )
                 return restricted_agent_result
+            policy_trace.add("tool.boundary", "safety", True, "agent boundary passed")
 
             dangerous_result = _dangerous_gate(registered.definition, policy)
             if dangerous_result is not None:
+                policy_trace.add(
+                    "tool.risk",
+                    "safety",
+                    False,
+                    dangerous_result.error_message or "dangerous tool blocked",
+                )
                 return dangerous_result
+            policy_trace.add("tool.risk", "safety", True, "risk gate passed")
 
             if _RUNTIME_SECRETS_ARGUMENT in call.arguments:
+                policy_trace.add(
+                    "tool.arguments.reserved",
+                    "safety",
+                    False,
+                    f"reserved tool argument is not allowed: {_RUNTIME_SECRETS_ARGUMENT}",
+                )
                 raise ToolRuntimeError(
                     f"reserved tool argument is not allowed: {_RUNTIME_SECRETS_ARGUMENT}"
                 )
 
             arguments = normalize_tool_arguments(registered.definition, call.arguments)
             self._emit("tool_args_validated", call)
+            policy_trace.add("tool.arguments", "compatibility", True, "arguments validated")
 
             approval_result = self._approval_gate(call, registered.definition, policy)
             if approval_result is not None:
+                policy_trace.approval_granted = False
+                policy_trace.add(
+                    "tool.approval",
+                    "safety",
+                    False,
+                    approval_result.output_summary or "tool approval required",
+                    severity="warning",
+                )
                 return approval_result
+            if policy_trace.requires_approval:
+                policy_trace.approval_granted = True
+            policy_trace.add("tool.approval", "safety", True, "approval gate passed")
 
             arguments = _arguments_with_secrets(
                 arguments,
                 registered.definition,
                 self._secret_provider,
             )
+            policy_trace.add("tool.secrets", "safety", True, "secret injection passed")
 
             self._emit("tool_started", call)
+            max_attempts = _max_attempts(registered.definition, policy)
             raw_output = _invoke_with_retry(
                 registered.executor,
                 arguments,
                 _timeout_seconds(registered.definition, policy),
-                _max_attempts(registered.definition, policy),
+                max_attempts,
                 call.tool_name,
+            )
+            retry_count = max(0, max_attempts - 1)
+            policy_trace.add(
+                "tool.retry",
+                "resource",
+                True,
+                "retry policy completed",
+                metadata={"max_attempts": max_attempts, "retry_count": retry_count},
             )
             safe_output = restore_redacted_booleans(
                 redact_sensitive_values(raw_output),
@@ -123,6 +175,9 @@ class ToolExecutor:
             )
             if contains_redacted_value(safe_output):
                 self._emit("tool_result_redacted", call, {"redacted": True})
+                policy_trace.add("tool.redaction", "safety", True, "output redacted")
+            else:
+                policy_trace.add("tool.redaction", "safety", True, "output did not require redaction")
             output_bytes = _json_size_bytes(safe_output)
             output_guardrail_result = self._output_size_guard(
                 call,
@@ -130,13 +185,28 @@ class ToolExecutor:
                 output_bytes,
             )
             if output_guardrail_result is not None:
+                policy_trace.add(
+                    "tool.output_size",
+                    "resource",
+                    False,
+                    output_guardrail_result.error_message or "output size gate failed",
+                    metadata={"output_bytes": output_bytes},
+                )
                 return output_guardrail_result
+            policy_trace.add(
+                "tool.output_size",
+                "resource",
+                True,
+                "output size gate passed",
+                metadata={"output_bytes": output_bytes},
+            )
             return self._tool_result(call, safe_output, policy, output_bytes)
 
         self._emit("tool_call_requested", call, {"call": call.to_dict()})
         try:
             result, elapsed_ms = timed_tool_call(invoke)
         except ToolPermissionError as exc:
+            policy_trace.add("tool.permission.error", "safety", False, str(exc))
             result = ToolResult(
                 status=ToolStatus.BLOCKED,
                 error_type=type(exc).__name__,
@@ -146,6 +216,7 @@ class ToolExecutor:
             )
             elapsed_ms = 0.0
         except ToolTimeoutError as exc:
+            policy_trace.add("tool.timeout", "resource", False, str(exc))
             result = ToolResult(
                 status=ToolStatus.TIMEOUT,
                 error_type=type(exc).__name__,
@@ -155,6 +226,7 @@ class ToolExecutor:
             )
             elapsed_ms = 0.0
         except Exception as exc:
+            policy_trace.add("tool.execution", "compatibility", False, str(exc))
             result = ToolResult(
                 status=ToolStatus.FAILED,
                 error_type=type(exc).__name__,
@@ -164,7 +236,13 @@ class ToolExecutor:
             )
             elapsed_ms = 0.0
 
-        result = _with_duration(_with_call(result, call), elapsed_ms)
+        result = _standardize_tool_result(
+            _with_tool_gate(_with_duration(_with_call(result, call), elapsed_ms), call),
+            call=call,
+            policy_trace=policy_trace,
+            trace_context=self._trace_context,
+            retry_count=retry_count,
+        )
         observation = ToolObservation(call=call, result=result, elapsed_ms=elapsed_ms)
         self._record_observation(observation)
         self._records.append(
@@ -185,10 +263,12 @@ class ToolExecutor:
         output_bytes: int | None = None,
     ) -> ToolResult:
         output_bytes = output_bytes if output_bytes is not None else _json_size_bytes(safe_output)
+        artifact_spill = "inline"
         if (
             policy.spill_large_results_to_artifact
             and output_bytes > policy.max_result_chars_inline
         ):
+            artifact_spill = "missing_context"
             if self._artifact_manager is None or self._run_id is None:
                 self._emit(
                     "tool_output_guardrail_failed",
@@ -209,7 +289,9 @@ class ToolExecutor:
                     output_bytes=output_bytes,
                     call_id=call.call_id,
                     tool_name=call.tool_name,
+                    metadata={"artifact_spill": artifact_spill},
                 )
+            artifact_spill = "spilled"
             relative_path = f"tool_results/{call.call_id}.json"
             artifact_payload = {
                 "call": call.to_dict(),
@@ -233,6 +315,7 @@ class ToolExecutor:
                 output_bytes=output_bytes,
                 call_id=call.call_id,
                 tool_name=call.tool_name,
+                metadata={"artifact_spill": artifact_spill},
             )
         return ToolResult(
             status=ToolStatus.SUCCEEDED,
@@ -240,6 +323,7 @@ class ToolExecutor:
             output_bytes=output_bytes,
             call_id=call.call_id,
             tool_name=call.tool_name,
+            metadata={"artifact_spill": artifact_spill},
         )
 
     def _output_size_guard(self, call: ToolCall, definition: Any, output_bytes: int) -> ToolResult | None:
@@ -358,6 +442,15 @@ def _execution_record(
         trace_id=trace_context.trace_id if trace_context is not None else None,
         span_id=f"tool:{observation.call.call_id}" if trace_context is not None else None,
         parent_span_id=trace_context.span_id if trace_context is not None else None,
+        gate_result=observation.result.gate_result,
+        policy_trace=(
+            observation.result.policy_trace.to_dict()
+            if observation.result.policy_trace is not None
+            else None
+        ),
+        error_envelope=observation.result.error_envelope,
+        retry_count=observation.result.retry_count,
+        timeout=observation.result.timeout,
     )
 
 
@@ -405,24 +498,121 @@ def _with_duration(result: ToolResult, elapsed_ms: float) -> ToolResult:
 def _with_call(result: ToolResult, call: ToolCall) -> ToolResult:
     if result.call_id == call.call_id and result.tool_name == call.tool_name:
         return result
-    return ToolResult(
-        status=result.status,
-        output=result.output,
-        output_summary=result.output_summary,
-        artifact_refs=list(result.artifact_refs),
-        artifacts=list(result.artifacts),
-        error_type=result.error_type,
-        error_message=result.error_message,
-        approval_id=result.approval_id,
-        redacted=result.redacted,
-        output_bytes=result.output_bytes,
-        duration_ms=result.duration_ms,
-        metadata=dict(result.metadata),
+    return _copy_tool_result(
+        result,
         call_id=result.call_id or call.call_id,
         tool_name=result.tool_name or call.tool_name,
-        started_at=result.started_at,
-        finished_at=result.finished_at,
     )
+
+
+def _with_tool_gate(result: ToolResult, call: ToolCall) -> ToolResult:
+    if result.gate_result is not None:
+        return result
+    checks = [
+        GateCheckResult(
+            check_id="tool.status",
+            dimension="safety" if result.status in {ToolStatus.BLOCKED, ToolStatus.DENIED} else "compatibility",
+            passed=result.status not in {ToolStatus.BLOCKED, ToolStatus.DENIED},
+            reason=result.error_message or "",
+        )
+    ]
+    if result.status == ToolStatus.APPROVAL_REQUIRED:
+        checks.append(
+            GateCheckResult(
+                check_id="tool.approval",
+                dimension="safety",
+                passed=False,
+                severity="warning",
+                reason=result.output_summary or "tool approval required",
+            )
+        )
+    if result.status == ToolStatus.FAILED and result.error_type == "ToolRuntimeError":
+        checks.append(
+            GateCheckResult(
+                check_id="tool.output",
+                dimension="resource",
+                passed=False,
+                reason=result.error_message or "tool output gate failed",
+                metadata={"output_bytes": result.output_bytes},
+            )
+        )
+    gate = CompositeAndGate(f"tool:{call.call_id}:gate").evaluate(
+        checks,
+        metadata={"tool_name": call.tool_name, "call_id": call.call_id},
+    )
+    return _copy_tool_result(
+        result,
+        gate_result=gate.to_dict(),
+    )
+
+
+def _standardize_tool_result(
+    result: ToolResult,
+    *,
+    call: ToolCall,
+    policy_trace: "_ToolPolicyTraceBuilder",
+    trace_context: TraceContext | None,
+    retry_count: int,
+) -> ToolResult:
+    artifact_spill = result.metadata.get("artifact_spill")
+    if artifact_spill == "spilled":
+        policy_trace.add(
+            "tool.artifact_spill",
+            "artifact",
+            True,
+            "tool output spilled to artifact",
+            metadata={"artifact_refs": [ref.to_dict() for ref in result.artifact_refs]},
+        )
+    elif artifact_spill == "missing_context":
+        policy_trace.add(
+            "tool.artifact_spill",
+            "artifact",
+            False,
+            result.error_message or "artifact context required",
+        )
+    else:
+        policy_trace.add("tool.artifact_spill", "artifact", True, "inline output retained")
+    span_id = f"tool:{call.call_id}" if trace_context is not None else None
+    return _copy_tool_result(
+        result,
+        policy_trace=policy_trace.to_trace(result),
+        retry_count=retry_count,
+        timeout=result.status == ToolStatus.TIMEOUT,
+        trace_id=trace_context.trace_id if trace_context is not None else None,
+        span_id=span_id,
+        redacted_output=redact_sensitive_values(result.output),
+    )
+
+
+def _copy_tool_result(result: ToolResult, **overrides: Any) -> ToolResult:
+    values = {
+        "status": result.status,
+        "output": result.output,
+        "output_summary": result.output_summary,
+        "artifact_refs": list(result.artifact_refs),
+        "artifacts": list(result.artifacts),
+        "error_type": result.error_type,
+        "error_message": result.error_message,
+        "approval_id": result.approval_id,
+        "redacted": result.redacted,
+        "output_bytes": result.output_bytes,
+        "duration_ms": result.duration_ms,
+        "metadata": dict(result.metadata),
+        "call_id": result.call_id,
+        "tool_name": result.tool_name,
+        "started_at": result.started_at,
+        "finished_at": result.finished_at,
+        "gate_result": result.gate_result,
+        "redacted_output": result.redacted_output,
+        "policy_trace": result.policy_trace,
+        "retry_count": result.retry_count,
+        "timeout": result.timeout,
+        "trace_id": result.trace_id,
+        "span_id": result.span_id,
+        "error_envelope": result.error_envelope,
+    }
+    values.update(overrides)
+    return ToolResult(**values)
 
 
 def _has_side_effects(side_effect: str) -> bool:
@@ -448,6 +638,62 @@ def _risk_level(definition: Any) -> str:
     if definition.requires_approval:
         return "medium"
     return "low"
+
+
+def _requires_approval(definition: Any, policy: ToolPolicy) -> bool:
+    return bool(
+        policy.require_approval_for_side_effects
+        and (
+            getattr(definition, "requires_approval", False)
+            or _has_side_effects(_side_effect_value(definition))
+        )
+    )
+
+
+class _ToolPolicyTraceBuilder:
+    def __init__(self, tool_name: str) -> None:
+        self.tool_name = tool_name
+        self.risk_level = "unknown"
+        self.requires_approval = False
+        self.approval_granted: bool | None = None
+        self.checks: list[GateCheckResult] = []
+
+    def add(
+        self,
+        check_id: str,
+        dimension: str,
+        passed: bool,
+        reason: str,
+        *,
+        severity: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        self.checks.append(
+            GateCheckResult(
+                check_id=check_id,
+                dimension=dimension,
+                passed=passed,
+                severity=severity or ("info" if passed else "error"),
+                reason=reason,
+                metadata=dict(metadata or {}),
+            )
+        )
+
+    def to_trace(self, result: ToolResult) -> ToolPolicyTrace:
+        allowed = result.status not in {ToolStatus.BLOCKED, ToolStatus.DENIED}
+        failed_reasons = [check.reason for check in self.checks if not check.passed]
+        return ToolPolicyTrace(
+            tool_name=result.tool_name or self.tool_name,
+            allowed=allowed,
+            risk_level=self.risk_level,
+            requires_approval=self.requires_approval,
+            approval_granted=self.approval_granted,
+            checks=[check.to_dict() for check in self.checks],
+            reason="; ".join(reason for reason in failed_reasons if reason)
+            or result.error_message
+            or result.output_summary
+            or "tool execution completed",
+        )
 
 
 def _timeout_seconds(definition: Any, policy: ToolPolicy) -> float | None:

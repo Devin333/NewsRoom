@@ -3,11 +3,111 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from framework.shared.redaction import redact_sensitive_values
 from framework.memory.models.context import MemoryContextBlock
 from framework.memory.models.query import MemoryQuery
 from framework.memory.models.record import MemoryRecord, coerce_memory_record
 from framework.memory.models.score import MemoryScore
 from framework.memory.models.write_mode import MemoryWriteMode
+
+
+@dataclass(frozen=True)
+class MemoryOperationTrace:
+    operation_id: str
+    operation_type: str
+    namespace: str | None = None
+    query: str | None = None
+    policy_decision: dict[str, Any] | None = None
+    candidate_count: int = 0
+    selected_count: int = 0
+    filtered_count: int = 0
+    scores: list[dict[str, Any]] = field(default_factory=list)
+    duration_ms: float | None = None
+    trace_id: str | None = None
+    span_id: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "operation_id", str(self.operation_id))
+        object.__setattr__(self, "operation_type", str(self.operation_type))
+        object.__setattr__(
+            self,
+            "query",
+            _optional_str(redact_sensitive_values(self.query)) if self.query is not None else None,
+        )
+        object.__setattr__(
+            self,
+            "policy_decision",
+            (
+                redact_sensitive_values(dict(self.policy_decision))
+                if self.policy_decision is not None
+                else None
+            ),
+        )
+        object.__setattr__(self, "candidate_count", max(0, int(self.candidate_count or 0)))
+        object.__setattr__(self, "selected_count", max(0, int(self.selected_count or 0)))
+        object.__setattr__(self, "filtered_count", max(0, int(self.filtered_count or 0)))
+        object.__setattr__(
+            self,
+            "scores",
+            [
+                redact_sensitive_values(dict(item))
+                for item in self.scores
+                if isinstance(item, dict)
+            ],
+        )
+        object.__setattr__(
+            self,
+            "metadata",
+            redact_sensitive_values(dict(self.metadata or {})),
+        )
+
+    @classmethod
+    def from_any(cls, value: Any) -> "MemoryOperationTrace | None":
+        if value is None:
+            return None
+        if isinstance(value, cls):
+            return value
+        if isinstance(value, dict):
+            return cls(
+                operation_id=str(value.get("operation_id") or ""),
+                operation_type=str(value.get("operation_type") or ""),
+                namespace=_optional_str(value.get("namespace")),
+                query=_optional_str(value.get("query")),
+                policy_decision=(
+                    dict(value["policy_decision"])
+                    if isinstance(value.get("policy_decision"), dict)
+                    else None
+                ),
+                candidate_count=int(value.get("candidate_count") or 0),
+                selected_count=int(value.get("selected_count") or 0),
+                filtered_count=int(value.get("filtered_count") or 0),
+                scores=[dict(item) for item in value.get("scores", []) if isinstance(item, dict)],
+                duration_ms=_optional_float(value.get("duration_ms")),
+                trace_id=_optional_str(value.get("trace_id")),
+                span_id=_optional_str(value.get("span_id")),
+                metadata=dict(value.get("metadata") or {}),
+            )
+        return None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "operation_id": self.operation_id,
+            "operation_type": self.operation_type,
+            "namespace": self.namespace,
+            "query": self.query,
+            "policy_decision": (
+                dict(self.policy_decision) if self.policy_decision is not None else None
+            ),
+            "candidate_count": self.candidate_count,
+            "selected_count": self.selected_count,
+            "filtered_count": self.filtered_count,
+            "scores": [dict(item) for item in self.scores],
+            "duration_ms": self.duration_ms,
+            "trace_id": self.trace_id,
+            "span_id": self.span_id,
+            "metadata": dict(self.metadata),
+        }
 
 
 @dataclass(frozen=True)
@@ -66,6 +166,16 @@ class MemoryRecallResult:
     results: list[MemorySearchResult] = field(default_factory=list)
     context_block: MemoryContextBlock = field(default_factory=MemoryContextBlock.empty)
     diagnostics: dict[str, Any] = field(default_factory=dict)
+    policy_decision: dict[str, Any] | None = None
+    operation_trace: MemoryOperationTrace | dict[str, Any] | None = None
+    warnings: list[str] = field(default_factory=list)
+    error_envelope: dict[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "operation_trace", MemoryOperationTrace.from_any(self.operation_trace))
+        object.__setattr__(self, "warnings", [str(item) for item in self.warnings])
+        if self.error_envelope is not None:
+            object.__setattr__(self, "error_envelope", dict(self.error_envelope))
 
     @property
     def result_count(self) -> int:
@@ -83,6 +193,14 @@ class MemoryRecallResult:
             "results": [result.to_dict() for result in self.results],
             "context_block": self.context_block.to_dict(),
             "diagnostics": dict(self.diagnostics),
+            "policy_decision": dict(self.policy_decision) if self.policy_decision is not None else None,
+            "operation_trace": (
+                self.operation_trace.to_dict() if self.operation_trace is not None else None
+            ),
+            "warnings": list(self.warnings),
+            "error_envelope": (
+                dict(self.error_envelope) if self.error_envelope is not None else None
+            ),
         }
 
     def top_records(self, limit: int | None = None) -> list[MemoryRecord]:
@@ -134,6 +252,18 @@ class MemoryWriteResult:
     memory_ids: list[str] = field(default_factory=list)
     skipped_count: int = 0
     errors: list[str] = field(default_factory=list)
+    policy_decision: dict[str, Any] | None = None
+    operation_trace: MemoryOperationTrace | dict[str, Any] | None = None
+    warnings: list[str] = field(default_factory=list)
+    error_envelope: dict[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "operation_trace", MemoryOperationTrace.from_any(self.operation_trace))
+        object.__setattr__(self, "warnings", [str(item) for item in self.warnings])
+        if self.error_envelope is None:
+            object.__setattr__(self, "error_envelope", _memory_error_envelope(self.errors))
+        else:
+            object.__setattr__(self, "error_envelope", dict(self.error_envelope))
 
     @property
     def success(self) -> bool:
@@ -147,6 +277,14 @@ class MemoryWriteResult:
             "memory_ids": list(self.memory_ids),
             "skipped_count": self.skipped_count,
             "errors": list(self.errors),
+            "policy_decision": dict(self.policy_decision) if self.policy_decision is not None else None,
+            "operation_trace": (
+                self.operation_trace.to_dict() if self.operation_trace is not None else None
+            ),
+            "warnings": list(self.warnings),
+            "error_envelope": (
+                dict(self.error_envelope) if self.error_envelope is not None else None
+            ),
         }
 
 
@@ -303,3 +441,26 @@ def _optional_str(value: Any) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _memory_error_envelope(errors: list[str]) -> dict[str, Any] | None:
+    if not errors:
+        return None
+    return {
+        "error_code": "MemoryRuntimeError",
+        "error_type": "MemoryRuntimeError",
+        "message": "; ".join(str(error) for error in errors),
+        "domain": "memory",
+        "severity": "error",
+        "retryable": False,
+        "details": {"errors": list(errors)},
+    }

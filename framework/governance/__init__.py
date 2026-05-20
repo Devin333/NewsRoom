@@ -9,6 +9,9 @@ from framework.governance.diagnostics import (
     GovernanceHealthReport,
     GovernanceReportBuilder,
 )
+from framework.governance.checks import GateCheckResult
+from framework.governance.decisions import PolicyDecision
+from framework.governance.gate import CompositeAndGate, GateResult, gate_summary
 from framework.governance.policy import (
     CostPolicy,
     ExecutionPolicy,
@@ -40,14 +43,18 @@ __all__ = [
     "AuditRecorder",
     "AuditStore",
     "CostPolicy",
+    "CompositeAndGate",
     "EnvironmentSecretProvider",
     "ExecutionPolicy",
+    "GateCheckResult",
+    "GateResult",
     "GovernanceFinding",
     "GovernanceHealthReport",
     "GovernanceReportBuilder",
     "InMemoryAuditStore",
     "MappingSecretProvider",
     "PermissionChecker",
+    "PolicyDecision",
     "QualityDecision",
     "QualityEvaluator",
     "QualityGate",
@@ -62,4 +69,5 @@ __all__ = [
     "SecretProvider",
     "SecurityRedactor",
     "TimeoutPolicy",
+    "gate_summary",
 ]

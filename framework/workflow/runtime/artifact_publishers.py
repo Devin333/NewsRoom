@@ -11,6 +11,7 @@ from framework.specs import WorkflowSpec, WorkflowStatus
 from framework.workflow.runtime.manifest import (
     manifest_hash,
     register_manifest_artifact,
+    register_manifest_artifact_ref,
     validate_run_manifest,
 )
 from framework.workflow.runtime.result import StepOutcome, WorkflowError
@@ -250,6 +251,17 @@ def _write_manifest_artifact(context: ArtifactPublishContext) -> ArtifactRef:
     _populate_artifact_metadata(context.manifest, context.artifact_manager.run_dir(context.run_id))
     context.manifest["manifest_hash"] = manifest_hash(context.manifest)
     validate_run_manifest(context.manifest, require_terminal_artifact=True)
+    path = context.artifact_manager.write_json(context.run_id, "manifest.json", context.manifest)
+    manifest_ref = _artifact_ref(
+        context,
+        artifact_id="manifest",
+        artifact_type="manifest",
+        relative_path="manifest.json",
+        path=path,
+        content_type="application/json",
+    )
+    register_manifest_artifact_ref(context.manifest, manifest_ref)
+    context.manifest["manifest_hash"] = manifest_hash(context.manifest)
     path = context.artifact_manager.write_json(context.run_id, "manifest.json", context.manifest)
     return _artifact_ref(
         context,
