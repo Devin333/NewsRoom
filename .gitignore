@@ -213,6 +213,7 @@ tempCodeRunnerFile.py
 
 # NewsRoom local/generated files
 .newsroom/
+.tmp/
 openspec/
 .codex/
 .claude/
