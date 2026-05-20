@@ -15,7 +15,7 @@ from core.framework.workflow import (
     register_manifest_artifact_once,
 )
 from domain.reports import FinalReport, render_markdown
-from storage.artifacts import ArtifactRef
+from infrastructure.storage.artifacts import ArtifactRef
 from storage.local_json import LocalJsonRepository
 from workflows.daily_intelligence.profiles import (
     LEGACY_DAILY_WORKFLOW_ID,

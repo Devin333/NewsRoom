@@ -7,7 +7,7 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
-from storage.artifacts import ArtifactRef, artifact_index_store_from_env
+from infrastructure.storage.artifacts import ArtifactRef, artifact_index_store_from_env
 from storage.lifecycle import (
     ArtifactRetentionPlanner,
     BackupManifest,

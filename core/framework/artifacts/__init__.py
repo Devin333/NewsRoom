@@ -1,5 +1,3 @@
-"""Artifact storage helpers."""
+"""Compatibility bridge for legacy core.framework.artifacts imports."""
 
-from core.framework.artifacts.filesystem import ArtifactManager
-
-__all__ = ["ArtifactManager"]
+from framework.artifacts import ArtifactManager

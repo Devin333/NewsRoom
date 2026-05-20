@@ -9,7 +9,7 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
-from core.framework.artifacts.filesystem import ArtifactManager
+from framework.artifacts import ArtifactManager
 from framework.events import EventBus
 from framework.llm import GlobalBudgetPolicy, GlobalBudgetTracker
 from core.framework.run_result import RunResult
@@ -42,7 +42,7 @@ from core.framework.workflow.step_runner import (
     StepRunnerRegistry,
     build_default_step_runner_registry,
 )
-from storage.artifacts import ArtifactRef, artifact_index_store_from_env
+from infrastructure.storage.artifacts import ArtifactRef, artifact_index_store_from_env
 from storage.checkpoint import WorkflowCheckpoint
 from infrastructure.storage.events import EventRecord as StorageEventRecord
 from infrastructure.storage.events import event_store_from_env

@@ -7,8 +7,8 @@ from typing import Any, Callable
 
 import psycopg
 
-from storage.artifacts.local_json import ArtifactIndexNotFoundError
-from storage.artifacts.models import ArtifactRef
+from infrastructure.storage.artifacts.local_json import ArtifactIndexNotFoundError
+from infrastructure.storage.artifacts.models import ArtifactRef
 
 
 ConnectionFactory = Callable[[], Any]

@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from storage.artifacts import ArtifactRef, FilesystemArtifactStore
+from infrastructure.storage.artifacts import ArtifactRef, FilesystemArtifactStore
 
 
 _RAW_SOURCE_TYPES = {

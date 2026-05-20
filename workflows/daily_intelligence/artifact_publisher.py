@@ -10,7 +10,7 @@ from core.framework.workflow.artifact_publishers import (
     ArtifactPublishPhase,
     register_manifest_artifact_once,
 )
-from storage.artifacts import ArtifactRef
+from infrastructure.storage.artifacts import ArtifactRef
 
 
 AGENTIC_WORKFLOW_IDS = {"daily-intelligence-agentic"}

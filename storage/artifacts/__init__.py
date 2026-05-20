@@ -1,21 +1,3 @@
-"""Storage-owned artifact models and stores."""
+"""Compatibility bridge for legacy storage.artifacts imports."""
 
-from storage.artifacts.factory import artifact_index_store_from_env
-from storage.artifacts.filesystem import (
-    ArtifactChecksumMismatchError,
-    ArtifactNotFoundError,
-    FilesystemArtifactStore,
-)
-from storage.artifacts.local_json import ArtifactIndexNotFoundError, LocalJsonArtifactIndexStore
-from storage.artifacts.models import ArtifactRef, ArtifactWriteRequest
-
-__all__ = [
-    "ArtifactChecksumMismatchError",
-    "ArtifactIndexNotFoundError",
-    "ArtifactNotFoundError",
-    "ArtifactRef",
-    "ArtifactWriteRequest",
-    "FilesystemArtifactStore",
-    "LocalJsonArtifactIndexStore",
-    "artifact_index_store_from_env",
-]
+from infrastructure.storage.artifacts import *  # noqa: F401,F403

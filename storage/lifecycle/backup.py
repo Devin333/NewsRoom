@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 from zipfile import ZIP_DEFLATED, ZipFile
 
-from storage.artifacts.filesystem import _validate_relative_path
+from infrastructure.storage.artifacts.filesystem import _validate_relative_path
 
 
 _MANIFEST_PATH = "_backup/manifest.json"
