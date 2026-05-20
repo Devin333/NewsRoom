@@ -17,7 +17,7 @@ from core.framework import RunResult, WorkflowRunner
 from core.framework.specs import WorkflowSpec
 from core.framework.specs import WorkflowStatus
 from core.framework.workflow import FunctionStepRegistry
-from business.layers.output.memory_ingestion import MemoryIngestionService
+from business.layers.memory.ingestion import MemoryIngestionService
 from business.layers.relation.lineage import evidence_bundle_lineage_extractor
 from business.layers.signal.indexing import source_artifact_ref_extractor
 from interfaces.services.board_service import BoardApplicationService

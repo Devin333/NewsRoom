@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
-from business.layers.output.memory_ingestion import (
+from business.layers.memory.ingestion import (
     MemoryIngestionResult,
     MemoryIngestionService,
     MemoryIndexDocument,

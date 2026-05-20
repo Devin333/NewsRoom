@@ -1,6 +1,6 @@
 from business.layers.output.memory_tools import register_memory_index_tools
 from business.layers.output.memory_ingestion import MemoryIngestionService
-from core.framework.memory import InMemoryMemoryStore, MemoryRuntime
+from framework.memory import InMemoryMemoryStore, MemoryRuntime
 from framework.tool import ToolCall, ToolExecutor, ToolPolicy, ToolRegistry, ToolStatus
 from framework.tool.builtin.memory import register_memory_tools
 from storage.vector import InMemoryVectorStore

@@ -11,7 +11,7 @@ from business.layers.output.postgres_tools import register_postgres_tools
 from business.layers.output.tools import register_report_tools
 from business.layers.signal.tools import FetchText, register_source_tools
 from core.framework.artifacts import ArtifactManager
-from core.framework.memory import MemoryRuntime
+from framework.memory import MemoryRuntime
 from framework.tool import (
     ToolRegistry,
 )

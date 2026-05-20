@@ -1,5 +1,5 @@
 from business.layers.output.memory_ingestion import MemoryIngestionService
-from core.framework.memory import InMemoryMemoryStore, MemoryKind, MemoryRuntime, MemoryScope
+from framework.memory import InMemoryMemoryStore, MemoryKind, MemoryRuntime, MemoryScope
 
 
 def test_memory_ingestion_builds_report_section_documents() -> None:

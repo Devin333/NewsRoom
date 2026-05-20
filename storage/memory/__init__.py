@@ -1,6 +1,6 @@
-"""Memory storage adapters."""
+"""Compatibility bridge for memory storage adapters moved to infrastructure."""
 
-from storage.memory.adapters import DEFAULT_MEMORY_COLLECTION, VectorMemoryStoreAdapter
+from infrastructure.storage.memory import DEFAULT_MEMORY_COLLECTION, VectorMemoryStoreAdapter
 
 __all__ = [
     "DEFAULT_MEMORY_COLLECTION",

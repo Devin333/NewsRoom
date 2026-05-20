@@ -1,5 +1,5 @@
-from core.framework.memory import MemoryKind, MemoryQuery, MemoryRecord, MemoryScope
-from storage.memory import VectorMemoryStoreAdapter
+from framework.memory import MemoryKind, MemoryQuery, MemoryRecord, MemoryScope
+from infrastructure.storage.memory import VectorMemoryStoreAdapter
 from storage.vector import InMemoryVectorStore
 
 
