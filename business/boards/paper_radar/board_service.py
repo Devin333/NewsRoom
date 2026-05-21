@@ -14,8 +14,7 @@ class PaperRadarBoardService(BoardServiceBase):
     def _postprocess_board_output(self, output, **kwargs):
         return output.model_copy(update={"cards": present_paper_cards(list(output.cards))})
 
-    def build_board_run_result(self, signals, *, context=None):
-        result = super().build_board_run_result(signals, context=context)
+    def apply_board_specific_policy(self, result):
         return enhance_board_run_result(
             result,
             profile=PAPER_RADAR_PROFILE,

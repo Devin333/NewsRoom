@@ -82,31 +82,7 @@ class BoardServiceBase:
             signals,
             context=resolved_context,
         )
-        run_id = _run_id(resolved_context, self.board_type)
-        policy_snapshot = create_policy_snapshot(
-            run_id,
-            self.policy_loader.active_profiles(board_type=self.board_type),
-        )
-        report_payload = output.metadata.get("report")
-        reports = [Report.model_validate(_report_payload_for_validation(report_payload))] if isinstance(report_payload, dict) else []
-        quality_summary = self._quality_summary(output)
-        feedback_candidates = self._feedback_candidates(output, quality_summary, policy_snapshot)
-        result = BoardRunResult(
-            board_type=self.board_type,
-            run_id=run_id,
-            cards=list(output.cards),
-            detail_pages=list(output.detail_pages),
-            insights=list(output.insights),
-            reports=reports,
-            policy_snapshot=policy_snapshot,
-            quality_summary=quality_summary,
-            feedback_candidates=feedback_candidates,
-            trace_ref=None,
-            manifest_ref=None,
-            metadata={"board_output": output.to_dict()},
-        )
-        return self._postprocess_run_result(
-            result,
+        result = self._build_base_board_run_result(
             output=output,
             context=resolved_context,
             signals=selected_signals,
@@ -114,14 +90,14 @@ class BoardServiceBase:
             relation_result=relation_result,
             analysis=analysis,
         )
+        return self.apply_board_specific_policy(result)
 
-    def _run_pipeline_for_output(
+    def _run_pipeline_for_selected_signals(
         self,
-        signals: list[Any],
+        selected_signals: list[Signal],
         *,
         context: AnalysisContext,
-    ) -> tuple[list[Signal], list[ExtractionResult], RelationPipelineResult, AnalysisResult, BoardOutput]:
-        selected_signals = self._select_signals(signals, context=context)
+    ) -> tuple[list[ExtractionResult], RelationPipelineResult, AnalysisResult, BoardOutput]:
         extraction_results = self.extraction_pipeline.run(selected_signals, context)
         relation_result = self.relation_pipeline.run(
             selected_signals,
@@ -157,6 +133,65 @@ class BoardServiceBase:
             extraction_results=extraction_results,
             relation_result=relation_result,
             analysis=analysis,
+        )
+        return extraction_results, relation_result, analysis, output
+
+    def _build_base_board_run_result(
+        self,
+        *,
+        output: BoardOutput,
+        context: AnalysisContext,
+        signals: list[Signal],
+        extraction_results: list[ExtractionResult],
+        relation_result: RelationPipelineResult,
+        analysis: AnalysisResult,
+    ) -> BoardRunResult:
+        run_id = _run_id(context, self.board_type)
+        policy_snapshot = create_policy_snapshot(
+            run_id,
+            self.policy_loader.active_profiles(board_type=self.board_type),
+        )
+        report_payload = output.metadata.get("report")
+        reports = [Report.model_validate(_report_payload_for_validation(report_payload))] if isinstance(report_payload, dict) else []
+        quality_summary = self._quality_summary(output)
+        feedback_candidates = self._feedback_candidates(output, quality_summary, policy_snapshot)
+        result = BoardRunResult(
+            board_type=self.board_type,
+            run_id=run_id,
+            cards=list(output.cards),
+            detail_pages=list(output.detail_pages),
+            insights=list(output.insights),
+            reports=reports,
+            policy_snapshot=policy_snapshot,
+            quality_summary=quality_summary,
+            feedback_candidates=feedback_candidates,
+            trace_ref=None,
+            manifest_ref=None,
+            metadata={"board_output": output.to_dict()},
+        )
+        return self._postprocess_run_result(
+            result,
+            output=output,
+            context=context,
+            signals=signals,
+            extraction_results=extraction_results,
+            relation_result=relation_result,
+            analysis=analysis,
+        )
+
+    def apply_board_specific_policy(self, result: BoardRunResult) -> BoardRunResult:
+        return result
+
+    def _run_pipeline_for_output(
+        self,
+        signals: list[Any],
+        *,
+        context: AnalysisContext,
+    ) -> tuple[list[Signal], list[ExtractionResult], RelationPipelineResult, AnalysisResult, BoardOutput]:
+        selected_signals = self._select_signals(signals, context=context)
+        extraction_results, relation_result, analysis, output = self._run_pipeline_for_selected_signals(
+            selected_signals,
+            context=context,
         )
         return selected_signals, extraction_results, relation_result, analysis, output
 
