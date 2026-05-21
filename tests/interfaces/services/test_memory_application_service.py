@@ -1,6 +1,8 @@
+import json
+
+import interfaces.services.memory_service as memory_service_module
 from interfaces.services.memory_service import MemoryApplicationService
 from infrastructure.storage.vector import InMemoryVectorStore, VectorCollectionStatus, VectorSearchResult
-import json
 
 
 def test_memory_application_service_searches_vector_store() -> None:
@@ -93,6 +95,29 @@ def test_memory_application_service_reindex_topic_override(tmp_path) -> None:
     assert result.to_dict()["topic"] == "Override"
 
 
+def test_memory_application_service_reindex_uses_factory_ingestion(tmp_path, monkeypatch) -> None:
+    _write_run_artifacts(
+        tmp_path,
+        "run-1",
+        request={"topic": "AI policy"},
+        report={"title": "Daily", "sections": [{"title": "Summary", "content": "Memory."}]},
+        evidence_bundle={"bundle_id": "daily", "items": []},
+    )
+    ingestion = _FakeIngestionService()
+    monkeypatch.setattr(
+        memory_service_module,
+        "memory_ingestion_service_from_env",
+        lambda **kwargs: ingestion,
+    )
+    service = MemoryApplicationService(vector_store=InMemoryVectorStore(), artifact_root=tmp_path)
+
+    result = service.reindex_run("run-1")
+
+    assert result.ingestion is ingestion.result
+    assert ingestion.calls[0]["run_id"] == "run-1"
+    assert ingestion.calls[0]["topic"] == "AI policy"
+
+
 def test_memory_application_service_bootstraps_default_collections() -> None:
     store = _FakeBootstrapVectorStore()
     service = MemoryApplicationService(vector_store=store)
@@ -170,6 +195,22 @@ class _FakeBootstrapVectorStore(_FakeVectorStore):
                 created=True,
             ),
         ][: len(collections)]
+
+
+class _FakeIngestionService:
+    def __init__(self) -> None:
+        self.calls = []
+        self.result = _FakeIngestionResult()
+
+    def ingest_run_output(self, output, *, run_id, report_id=None, topic=None):
+        self.calls.append({"output": output, "run_id": run_id, "report_id": report_id, "topic": topic})
+        return self.result
+
+
+class _FakeIngestionResult:
+    documents_indexed = 0
+    collections = []
+    document_ids = []
 
 
 def _write_run_artifacts(root, run_id, *, request, report, evidence_bundle) -> None:

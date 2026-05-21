@@ -4,9 +4,17 @@ from dataclasses import asdict, dataclass, field, is_dataclass, replace
 from datetime import UTC, datetime
 from typing import Any, Protocol, cast
 
+from business.memory.claim_consolidation import ClaimConsolidator
+from business.memory.entity_resolver import EntityResolver
+from business.memory.event_builder import EventBuilder
 from business.memory.intelligence_builder import IntelligenceMemoryBuilder
+from business.memory.intelligence_ingestion import IntelligenceMemoryIngestionService
 from business.memory.intelligence_models import IntelligenceMemoryBundle
-from business.memory.intelligence_repository import IntelligenceMemoryRepository, IntelligenceMemoryVectorIndex
+from business.memory.intelligence_repository import (
+    IntelligenceMemoryQueryRepository,
+    IntelligenceMemoryRepository,
+    IntelligenceMemoryVectorIndex,
+)
 from framework.memory import MemoryKind, MemoryRecord, MemoryRuntime, MemoryScope, MemoryWriteMode
 
 
@@ -86,6 +94,7 @@ class MemoryIngestionResult:
     document_ids: list[str]
     memories_written: int = 0
     memory_ids: list[str]
+    metadata: dict[str, Any]
 
     def __init__(
         self,
@@ -99,6 +108,7 @@ class MemoryIngestionResult:
         run_id: str = "",
         topic: str | None = None,
         counts: dict[str, int] | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         resolved_indexed = indexed_documents if indexed_documents is not None else documents_indexed
         object.__setattr__(self, "run_id", run_id)
@@ -109,6 +119,7 @@ class MemoryIngestionResult:
         object.__setattr__(self, "document_ids", list(document_ids or []))
         object.__setattr__(self, "memories_written", int(memories_written or 0))
         object.__setattr__(self, "memory_ids", list(memory_ids or []))
+        object.__setattr__(self, "metadata", dict(metadata or {}))
 
     @property
     def documents_indexed(self) -> int:
@@ -125,6 +136,7 @@ class MemoryIngestionResult:
             "document_ids": list(self.document_ids),
             "memories_written": self.memories_written,
             "memory_ids": list(self.memory_ids),
+            "metadata": dict(self.metadata),
         }
 
 
@@ -135,14 +147,29 @@ class MemoryIngestionService:
         *,
         memory_runtime: MemoryRuntimeWriter | None = None,
         repository: IntelligenceMemoryRepository | None = None,
+        query_repository: IntelligenceMemoryQueryRepository | None = None,
         builder: IntelligenceMemoryBuilder | None = None,
+        entity_resolver: EntityResolver | None = None,
+        claim_consolidator: ClaimConsolidator | None = None,
+        event_builder: EventBuilder | None = None,
         vector_index: IntelligenceMemoryVectorIndex | None = None,
     ) -> None:
+        if vector_store is None and memory_runtime is None and repository is None and vector_index is None:
+            raise ValueError("at least one memory sink is required")
         self.vector_store = vector_store
         self.memory_runtime = memory_runtime
         self.repository = repository
-        self.builder = builder or IntelligenceMemoryBuilder()
         self.vector_index = vector_index
+        self.intelligence_ingestion = IntelligenceMemoryIngestionService(
+            repository=repository,
+            query_repository=query_repository,
+            builder=builder,
+            entity_resolver=entity_resolver,
+            claim_consolidator=claim_consolidator,
+            event_builder=event_builder,
+            vector_index=vector_index,
+        )
+        self.builder = self.intelligence_ingestion.builder
 
     def ingest_report(
         self,
@@ -153,7 +180,18 @@ class MemoryIngestionService:
         topic: str | None = None,
     ) -> MemoryIngestionResult:
         docs = self.report_documents(report, run_id=run_id, report_id=report_id, topic=topic)
-        return self._ingest_documents(docs, run_id=run_id, topic=topic)
+        intelligence_bundle = self.builder.build_from_run_output(
+            {"final_report": report},
+            run_id=run_id,
+            report_id=report_id,
+            topic=topic,
+        )
+        return self._ingest_documents(
+            docs,
+            run_id=run_id,
+            topic=topic,
+            intelligence_bundle=intelligence_bundle,
+        )
 
     def ingest_evidence_bundle(
         self,
@@ -343,13 +381,15 @@ class MemoryIngestionService:
         intelligence_collections: list[str] = []
         intelligence_document_ids: list[str] = []
         if intelligence_bundle is not None:
-            self._save_intelligence_bundle(intelligence_bundle)
-            if self.vector_index is not None:
-                (
-                    intelligence_indexed,
-                    intelligence_collections,
-                    intelligence_document_ids,
-                ) = self.vector_index.index_bundle(intelligence_bundle)
+            intelligence_result = self.intelligence_ingestion.ingest_bundle(intelligence_bundle)
+            intelligence_indexed = intelligence_result.indexed_documents
+            intelligence_collections = list(intelligence_result.collections)
+            intelligence_document_ids = list(intelligence_result.document_ids)
+            intelligence_counts = dict(intelligence_result.counts)
+            intelligence_metadata = dict(intelligence_result.metadata)
+        else:
+            intelligence_counts = _empty_counts()
+            intelligence_metadata = {}
         memory_ids: list[str] = []
         memories_written = 0
         if docs and self.memory_runtime is not None:
@@ -365,23 +405,14 @@ class MemoryIngestionService:
         return MemoryIngestionResult(
             run_id=run_id,
             topic=topic or (intelligence_bundle.topic if intelligence_bundle else None),
-            counts=intelligence_bundle.counts() if intelligence_bundle else _empty_counts(),
+            counts=intelligence_counts,
             indexed_documents=vector_result.documents_indexed + int(intelligence_indexed),
             collections=sorted({*vector_result.collections, *intelligence_collections}),
             document_ids=[*vector_result.document_ids, *intelligence_document_ids],
             memories_written=memories_written,
             memory_ids=memory_ids,
+            metadata=intelligence_metadata,
         )
-
-    def _save_intelligence_bundle(self, bundle: IntelligenceMemoryBundle) -> None:
-        if self.repository is None:
-            return
-        self.repository.save_evidence(bundle.evidence)
-        self.repository.save_claims(bundle.claims)
-        self.repository.save_entities(bundle.entities)
-        self.repository.save_events(bundle.events)
-        self.repository.save_decisions(bundle.decisions)
-        self.repository.save_preferences(bundle.preferences)
 
 
 def _result_from_documents(docs: list[MemoryIndexDocument]) -> MemoryIngestionResult:

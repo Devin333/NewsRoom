@@ -21,12 +21,19 @@ def test_memory_ingestion_factory_uses_injected_store_when_enabled() -> None:
     assert service.memory_runtime is None
 
 
-def test_memory_ingestion_factory_can_enable_object_only_memory() -> None:
+def test_memory_ingestion_factory_does_not_create_sinkless_service() -> None:
     service = memory_ingestion_service_from_env(env={"NEWS_MEMORY_ENABLED": "true"})
 
+    assert service is None
+
+
+def test_memory_ingestion_factory_uses_runtime_sink_when_enabled() -> None:
+    runtime = object()
+
+    service = memory_ingestion_service_from_env(env={"NEWS_MEMORY_ENABLED": "true"}, memory_runtime=runtime)
+
     assert isinstance(service, MemoryIngestionService)
-    assert service.vector_store is None
-    assert service.repository is None
+    assert service.memory_runtime is runtime
 
 
 def test_memory_ingestion_factory_builds_postgres_repository_when_enabled() -> None:

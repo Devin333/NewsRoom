@@ -62,6 +62,15 @@ def test_postgres_migration_sql_contains_required_tables() -> None:
     assert "idx_memory_preferences_owner" in sql
     assert "idx_memory_claim_history_claim" in sql
     assert "idx_memory_claim_history_evidence" in sql
+    assert "ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'mentioned'" in sql
+    assert "ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'supporting'" in sql
+    assert "ADD COLUMN IF NOT EXISTS support_type TEXT NOT NULL DEFAULT 'supporting'" in sql
+    assert "idx_memory_event_entities_role" in sql
+    assert "idx_memory_event_claims_role" in sql
+    assert "idx_memory_event_evidence_support_type" in sql
+    assert "ADD PRIMARY KEY (event_id, entity_id, role)" in sql
+    assert "ADD PRIMARY KEY (event_id, claim_id, role)" in sql
+    assert "ADD PRIMARY KEY (event_id, evidence_id, support_type)" in sql
 
 
 def test_postgres_migration_sql_exposes_storage_contract_query_columns() -> None:

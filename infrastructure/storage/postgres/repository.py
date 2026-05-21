@@ -500,18 +500,27 @@ class PostgresRepository:
             connection.commit()
 
     def _execute(self, sql: str, params: tuple[Any, ...]) -> None:
+        self.execute(sql, params)
+
+    def execute(self, sql: str, params: tuple[Any, ...]) -> None:
         with self._connection_factory() as connection:
             with connection.cursor() as cursor:
                 _cursor_execute(cursor, sql, params)
             connection.commit()
 
     def _fetch_one(self, sql: str, params: tuple[Any, ...]) -> tuple[Any, ...] | None:
+        return self.fetch_one(sql, params)
+
+    def fetch_one(self, sql: str, params: tuple[Any, ...]) -> tuple[Any, ...] | None:
         with self._connection_factory() as connection:
             with connection.cursor() as cursor:
                 _cursor_execute(cursor, sql, params)
                 return cursor.fetchone()
 
     def _fetch_all(self, sql: str, params: tuple[Any, ...]) -> list[tuple[Any, ...]]:
+        return self.fetch_all(sql, params)
+
+    def fetch_all(self, sql: str, params: tuple[Any, ...]) -> list[tuple[Any, ...]]:
         with self._connection_factory() as connection:
             with connection.cursor() as cursor:
                 _cursor_execute(cursor, sql, params)

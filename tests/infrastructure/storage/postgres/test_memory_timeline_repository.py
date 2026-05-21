@@ -86,15 +86,18 @@ def test_postgres_memory_repository_appends_claim_history_and_links() -> None:
             evidence_id="ev-2",
         )
     )
-    repository.link_event_entity("event-1", "entity-1")
-    repository.link_event_claim("event-1", "claim-1")
-    repository.link_event_evidence("event-1", "ev-1")
+    repository.link_event_entity("event-1", "entity-1", role="primary")
+    repository.link_event_claim("event-1", "claim-1", role="background")
+    repository.link_event_evidence("event-1", "ev-1", support_type="contradicting")
 
     executed_sql = "\n".join(sql for sql, _ in connection.calls)
     assert "INSERT INTO memory_claim_history" in executed_sql
-    assert "INSERT INTO memory_event_entities" in executed_sql
-    assert "INSERT INTO memory_event_claims" in executed_sql
-    assert "INSERT INTO memory_event_evidence" in executed_sql
+    assert "INSERT INTO memory_event_entities (event_id, entity_id, role)" in executed_sql
+    assert "INSERT INTO memory_event_claims (event_id, claim_id, role)" in executed_sql
+    assert "INSERT INTO memory_event_evidence (event_id, evidence_id, support_type)" in executed_sql
+    assert ("event-1", "entity-1", "primary") in [params for _, params in connection.calls]
+    assert ("event-1", "claim-1", "background") in [params for _, params in connection.calls]
+    assert ("event-1", "ev-1", "contradicting") in [params for _, params in connection.calls]
 
 
 def test_postgres_memory_repository_finds_similar_events() -> None:

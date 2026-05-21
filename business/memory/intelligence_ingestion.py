@@ -3,11 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import Any
 
+from business.memory.intelligence_builder import stable_id
 from business.memory.claim_consolidation import ClaimConsolidator
 from business.memory.entity_resolver import EntityResolver
 from business.memory.event_builder import EventBuilder
 from business.memory.intelligence_builder import IntelligenceMemoryBuilder
-from business.memory.intelligence_models import IntelligenceMemoryBundle
+from business.memory.intelligence_models import ClaimHistoryRecord, IntelligenceMemoryBundle
 from business.memory.intelligence_repository import (
     IntelligenceMemoryMutationRepository,
     IntelligenceMemoryQueryRepository,
@@ -115,6 +116,8 @@ class IntelligenceMemoryIngestionService:
         bundle: IntelligenceMemoryBundle,
     ) -> IntelligenceMemoryIngestionResult:
         final_bundle, metadata = self._prepare_bundle(bundle)
+        self._append_claim_history(metadata.get("_claim_history_records", []))
+        metadata.pop("_claim_history_records", None)
         self._save_bundle(final_bundle)
         indexed_documents, collections, document_ids = self._index_bundle(final_bundle)
         return IntelligenceMemoryIngestionResult(
@@ -141,12 +144,11 @@ class IntelligenceMemoryIngestionService:
             entities=entity_result.entities,
             existing_events=existing_events,
         )
-        final_events = event_result.events if event_result.events else bundle.events
         final_bundle = replace(
             bundle,
             claims=final_claims or bundle.claims,
             entities=entity_result.entities,
-            events=final_events,
+            events=event_result.events,
         )
         metadata = {
             "claim_consolidation": consolidation.counts(),
@@ -160,6 +162,7 @@ class IntelligenceMemoryIngestionService:
                 "duplicates": len(event_result.duplicate_event_ids),
                 "skipped": len(event_result.skipped_candidates),
             },
+            "_claim_history_records": _history_records_from_consolidation(consolidation.actions),
         }
         return final_bundle, metadata
 
@@ -190,6 +193,15 @@ class IntelligenceMemoryIngestionService:
         self.repository.save_events(bundle.events)
         self.repository.save_decisions(bundle.decisions)
         self.repository.save_preferences(bundle.preferences)
+
+    def _append_claim_history(self, records: list[ClaimHistoryRecord]) -> None:
+        if not records or self.repository is None:
+            return
+        append = getattr(self.repository, "append_claim_history", None)
+        if not callable(append):
+            return
+        for record in records:
+            append(record)
 
     def _index_bundle(self, bundle: IntelligenceMemoryBundle) -> tuple[int, list[str], list[str]]:
         if self.vector_index is None:
@@ -223,6 +235,45 @@ def _has_structured_query_methods(repository: object | None) -> bool:
         callable(getattr(repository, name, None))
         for name in ("list_claims_by_topic", "find_similar_claims", "list_events_by_topic")
     )
+
+
+def _history_records_from_consolidation(actions: list) -> list[ClaimHistoryRecord]:
+    records: list[ClaimHistoryRecord] = []
+    for action in actions:
+        existing = getattr(action, "existing_claim", None)
+        result = getattr(action, "result_claim", None)
+        if existing is None or result is None:
+            continue
+        if existing.status == result.status and existing.confidence == result.confidence:
+            continue
+        evidence_id = None
+        if result.contradicted_by:
+            evidence_id = result.contradicted_by[-1]
+        elif result.evidence_ids:
+            evidence_id = result.evidence_ids[-1]
+        records.append(
+            ClaimHistoryRecord(
+                history_id=stable_id(
+                    "claim-history",
+                    result.claim_id,
+                    existing.status,
+                    result.status,
+                    existing.confidence,
+                    result.confidence,
+                    evidence_id,
+                    prefix="claim-history",
+                ),
+                claim_id=result.claim_id,
+                old_status=existing.status,
+                new_status=result.status,
+                old_confidence=existing.confidence,
+                new_confidence=result.confidence,
+                reason=getattr(action, "reason", None),
+                evidence_id=evidence_id,
+                metadata={"action_type": getattr(action, "action_type", None)},
+            )
+        )
+    return records
 
 
 __all__ = [

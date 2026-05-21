@@ -1,4 +1,5 @@
 from business.layers.output.memory_ingestion import MemoryIngestionService
+from business.memory.intelligence_models import EventMemory
 from framework.memory import InMemoryMemoryStore, MemoryKind, MemoryRuntime, MemoryScope
 
 
@@ -124,6 +125,45 @@ def test_memory_ingestion_indexes_run_output_report_and_evidence() -> None:
     assert [doc.collection for doc in store.documents] == ["report_sections", "evidence_items"]
 
 
+def test_memory_ingestion_uses_phase2_intelligence_pipeline() -> None:
+    repository = _CapturingRepository()
+    query_repository = _QueryRepository(
+        existing_events=[
+            EventMemory(
+                event_id="event-existing",
+                event_type="general_news",
+                title="Agent runtime update",
+                summary="A runtime added vector memory.",
+                run_id="old-run",
+                topic="AI",
+            )
+        ]
+    )
+    service = MemoryIngestionService(
+        _CapturingVectorStore(),
+        repository=repository,
+        query_repository=query_repository,
+    )
+    bundle = {
+        "bundle_id": "daily",
+        "items": [
+            {
+                "evidence_id": "evidence-1",
+                "source_url": "https://example.com/a",
+                "title": "Agent runtime update",
+                "summary": "A runtime added vector memory.",
+                "confidence": 0.91,
+                "source_id": "source-1",
+            }
+        ],
+    }
+
+    result = service.ingest_run_output({"evidence_bundle": bundle}, run_id="run-1", topic="AI")
+
+    assert result.metadata["event_build"]["duplicates"] == 1
+    assert repository.saved["events"] == []
+
+
 def test_memory_ingestion_writes_memory_records_through_runtime() -> None:
     memory_store = InMemoryMemoryStore()
     runtime = MemoryRuntime(memory_store)
@@ -187,3 +227,48 @@ class _CapturingVectorStore:
 
     def upsert_documents(self, docs):
         self.documents.extend(docs)
+
+
+class _CapturingRepository:
+    def __init__(self) -> None:
+        self.saved = {
+            "evidence": [],
+            "claims": [],
+            "entities": [],
+            "events": [],
+            "decisions": [],
+            "preferences": [],
+        }
+
+    def save_evidence(self, items):
+        self.saved["evidence"].extend(items)
+
+    def save_claims(self, claims):
+        self.saved["claims"].extend(claims)
+
+    def save_entities(self, entities):
+        self.saved["entities"].extend(entities)
+
+    def save_events(self, events):
+        self.saved["events"].extend(events)
+
+    def save_decisions(self, decisions):
+        self.saved["decisions"].extend(decisions)
+
+    def save_preferences(self, preferences):
+        self.saved["preferences"].extend(preferences)
+
+
+class _QueryRepository:
+    def __init__(self, existing_claims=None, existing_events=None) -> None:
+        self.existing_claims = existing_claims or []
+        self.existing_events = existing_events or []
+
+    def list_claims_by_topic(self, topic, *, limit=50):
+        return self.existing_claims[:limit]
+
+    def find_similar_claims(self, claim, *, limit=10):
+        return self.existing_claims[:limit]
+
+    def list_events_by_topic(self, topic, *, limit=50):
+        return self.existing_events[:limit]

@@ -63,7 +63,7 @@ class PostgresIntelligenceMemoryRepository:
 
     def save_entities(self, entities: list[EntityMemory]) -> None:
         for entity in entities:
-            self.repository._execute(
+            self.repository.execute(
                 """
                 INSERT INTO memory_entities (
                     entity_id, entity_type, canonical_name, aliases, summary,
@@ -100,7 +100,7 @@ class PostgresIntelligenceMemoryRepository:
 
     def save_events(self, events: list[EventMemory]) -> None:
         for event in events:
-            self.repository._execute(
+            self.repository.execute(
                 """
                 INSERT INTO memory_events (
                     event_id, event_type, title, summary, run_id, event_time,
@@ -136,13 +136,34 @@ class PostgresIntelligenceMemoryRepository:
                     _json(event.metadata),
                 ),
             )
-            self._refresh_event_refs(event.event_id, "memory_event_entities", "entity_id", event.entity_ids)
-            self._refresh_event_refs(event.event_id, "memory_event_claims", "claim_id", event.claim_ids)
-            self._refresh_event_refs(event.event_id, "memory_event_evidence", "evidence_id", event.evidence_ids)
+            self._refresh_event_refs(
+                event.event_id,
+                "memory_event_entities",
+                "entity_id",
+                event.entity_ids,
+                role_column="role",
+                role_value="mentioned",
+            )
+            self._refresh_event_refs(
+                event.event_id,
+                "memory_event_claims",
+                "claim_id",
+                event.claim_ids,
+                role_column="role",
+                role_value="supporting",
+            )
+            self._refresh_event_refs(
+                event.event_id,
+                "memory_event_evidence",
+                "evidence_id",
+                event.evidence_ids,
+                role_column="support_type",
+                role_value="supporting",
+            )
 
     def save_decisions(self, decisions: list[DecisionMemory]) -> None:
         for decision in decisions:
-            self.repository._execute(
+            self.repository.execute(
                 """
                 INSERT INTO memory_decisions (
                     decision_id, decision_type, target_type, target_id, decision,
@@ -187,7 +208,7 @@ class PostgresIntelligenceMemoryRepository:
 
     def save_preferences(self, preferences: list[PreferenceMemory]) -> None:
         for preference in preferences:
-            self.repository._execute(
+            self.repository.execute(
                 """
                 INSERT INTO memory_preferences (
                     preference_id, owner_type, owner_id, preference_type, content,
@@ -237,7 +258,7 @@ class PostgresIntelligenceMemoryRepository:
     ) -> None:
         old_claim = self.get_claim(claim_id)
         if old_claim is None:
-            self.repository._execute(
+            self.repository.execute(
                 """
                 UPDATE claims
                 SET status = %s,
@@ -290,19 +311,23 @@ class PostgresIntelligenceMemoryRepository:
         self.save_events([event])
 
     def link_event_entity(self, event_id: str, entity_id: str, *, role: str = "mentioned") -> None:
-        del role
-        self._insert_event_ref("memory_event_entities", "entity_id", event_id, entity_id)
+        self._insert_event_ref("memory_event_entities", "entity_id", event_id, entity_id, role_column="role", role_value=role)
 
     def link_event_claim(self, event_id: str, claim_id: str, *, role: str = "supporting") -> None:
-        del role
-        self._insert_event_ref("memory_event_claims", "claim_id", event_id, claim_id)
+        self._insert_event_ref("memory_event_claims", "claim_id", event_id, claim_id, role_column="role", role_value=role)
 
     def link_event_evidence(self, event_id: str, evidence_id: str, *, support_type: str = "supporting") -> None:
-        del support_type
-        self._insert_event_ref("memory_event_evidence", "evidence_id", event_id, evidence_id)
+        self._insert_event_ref(
+            "memory_event_evidence",
+            "evidence_id",
+            event_id,
+            evidence_id,
+            role_column="support_type",
+            role_value=support_type,
+        )
 
     def append_claim_history(self, history: ClaimHistoryRecord) -> None:
-        self.repository._execute(
+        self.repository.execute(
             """
             INSERT INTO memory_claim_history (
                 history_id, claim_id, old_status, new_status,
@@ -342,7 +367,7 @@ class PostgresIntelligenceMemoryRepository:
             where.append("payload::text ILIKE %s")
             params.append(_pattern(topic))
         params.append(_limit(limit))
-        rows = self.repository._fetch_all(
+        rows = self.repository.fetch_all(
             f"""
             SELECT payload
             FROM evidence_items
@@ -361,7 +386,7 @@ class PostgresIntelligenceMemoryRepository:
             where.append("payload::text ILIKE %s")
             params.append(_pattern(topic))
         params.append(_limit(limit))
-        rows = self.repository._fetch_all(
+        rows = self.repository.fetch_all(
             f"""
             SELECT payload
             FROM claims
@@ -375,7 +400,7 @@ class PostgresIntelligenceMemoryRepository:
 
     def search_entities(self, *, query: str, topic: str | None = None, limit: int = 8) -> list[EntityMemory]:
         del topic
-        rows = self.repository._fetch_all(
+        rows = self.repository.fetch_all(
             """
             SELECT
                 entity_id, entity_type, canonical_name, aliases, summary,
@@ -401,7 +426,7 @@ class PostgresIntelligenceMemoryRepository:
             where.append("e.topic = %s")
             params.append(topic)
         params.append(_limit(limit))
-        rows = self.repository._fetch_all(
+        rows = self.repository.fetch_all(
             f"""
             {_EVENT_SELECT}
             FROM memory_events e
@@ -415,7 +440,7 @@ class PostgresIntelligenceMemoryRepository:
 
     def search_decisions(self, *, query: str, topic: str | None = None, limit: int = 8) -> list[DecisionMemory]:
         del topic
-        rows = self.repository._fetch_all(
+        rows = self.repository.fetch_all(
             """
             SELECT
                 decision_id, decision_type, target_type, target_id, decision,
@@ -436,7 +461,7 @@ class PostgresIntelligenceMemoryRepository:
 
     def search_preferences(self, *, query: str, topic: str | None = None, limit: int = 8) -> list[PreferenceMemory]:
         del topic
-        rows = self.repository._fetch_all(
+        rows = self.repository.fetch_all(
             """
             SELECT
                 preference_id, owner_type, owner_id, preference_type, content,
@@ -454,7 +479,7 @@ class PostgresIntelligenceMemoryRepository:
         return [_preference_from_row(row) for row in rows]
 
     def get_entity(self, entity_id: str) -> EntityMemory | None:
-        row = self.repository._fetch_one(
+        row = self.repository.fetch_one(
             """
             SELECT
                 entity_id, entity_type, canonical_name, aliases, summary,
@@ -468,7 +493,7 @@ class PostgresIntelligenceMemoryRepository:
         return _entity_from_row(row) if row is not None else None
 
     def find_entity_by_name(self, name: str) -> EntityMemory | None:
-        row = self.repository._fetch_one(
+        row = self.repository.fetch_one(
             """
             SELECT
                 entity_id, entity_type, canonical_name, aliases, summary,
@@ -484,7 +509,7 @@ class PostgresIntelligenceMemoryRepository:
         return _entity_from_row(row) if row is not None else None
 
     def list_entities_by_type(self, entity_type: str, *, limit: int = 20) -> list[EntityMemory]:
-        rows = self.repository._fetch_all(
+        rows = self.repository.fetch_all(
             """
             SELECT
                 entity_id, entity_type, canonical_name, aliases, summary,
@@ -500,12 +525,12 @@ class PostgresIntelligenceMemoryRepository:
         return [_entity_from_row(row) for row in rows]
 
     def get_claim(self, claim_id: str) -> ClaimMemory | None:
-        row = self.repository._fetch_one("SELECT payload FROM claims WHERE claim_id = %s", (claim_id,))
+        row = self.repository.fetch_one("SELECT payload FROM claims WHERE claim_id = %s", (claim_id,))
         return _claim_from_payload(row[0]) if row is not None else None
 
     def find_similar_claims(self, claim: ClaimMemory, *, limit: int = 10) -> list[ClaimMemory]:
         query = claim.text or claim.claim_id
-        rows = self.repository._fetch_all(
+        rows = self.repository.fetch_all(
             """
             SELECT payload
             FROM claims
@@ -524,7 +549,7 @@ class PostgresIntelligenceMemoryRepository:
         return [_claim_from_payload(row[0]) for row in rows]
 
     def list_claims_by_entity(self, entity_id: str, *, limit: int = 20) -> list[ClaimMemory]:
-        rows = self.repository._fetch_all(
+        rows = self.repository.fetch_all(
             """
             SELECT payload
             FROM claims
@@ -537,7 +562,7 @@ class PostgresIntelligenceMemoryRepository:
         return [_claim_from_payload(row[0]) for row in rows]
 
     def list_claims_by_topic(self, topic: str, *, limit: int = 20) -> list[ClaimMemory]:
-        rows = self.repository._fetch_all(
+        rows = self.repository.fetch_all(
             """
             SELECT payload
             FROM claims
@@ -550,7 +575,7 @@ class PostgresIntelligenceMemoryRepository:
         return [_claim_from_payload(row[0]) for row in rows]
 
     def list_evidence_for_claim(self, claim_id: str) -> list[EvidenceMemory]:
-        rows = self.repository._fetch_all(
+        rows = self.repository.fetch_all(
             """
             SELECT e.payload
             FROM claim_supports cs
@@ -563,7 +588,7 @@ class PostgresIntelligenceMemoryRepository:
         return [_evidence_from_payload(row[0]) for row in rows]
 
     def get_event(self, event_id: str) -> EventMemory | None:
-        row = self.repository._fetch_one(
+        row = self.repository.fetch_one(
             f"""
             {_EVENT_SELECT}
             FROM memory_events e
@@ -574,7 +599,7 @@ class PostgresIntelligenceMemoryRepository:
         return _event_from_row(row) if row is not None else None
 
     def find_similar_events(self, event: EventMemory, *, limit: int = 10) -> list[EventMemory]:
-        rows = self.repository._fetch_all(
+        rows = self.repository.fetch_all(
             f"""
             {_EVENT_SELECT}
             FROM memory_events e
@@ -594,7 +619,7 @@ class PostgresIntelligenceMemoryRepository:
         return [_event_from_row(row) for row in rows]
 
     def list_events_by_entity(self, entity_id: str, *, limit: int = 20) -> list[EventMemory]:
-        rows = self.repository._fetch_all(
+        rows = self.repository.fetch_all(
             f"""
             {_EVENT_SELECT}
             FROM memory_events e
@@ -608,7 +633,7 @@ class PostgresIntelligenceMemoryRepository:
         return [_event_from_row(row) for row in rows]
 
     def list_events_by_topic(self, topic: str, *, limit: int = 20) -> list[EventMemory]:
-        rows = self.repository._fetch_all(
+        rows = self.repository.fetch_all(
             f"""
             {_EVENT_SELECT}
             FROM memory_events e
@@ -627,7 +652,7 @@ class PostgresIntelligenceMemoryRepository:
         *,
         limit: int = 20,
     ) -> list[DecisionMemory]:
-        rows = self.repository._fetch_all(
+        rows = self.repository.fetch_all(
             """
             SELECT
                 decision_id, decision_type, target_type, target_id, decision,
@@ -656,7 +681,7 @@ class PostgresIntelligenceMemoryRepository:
             where.append("preference_type = %s")
             params.append(preference_type)
         params.append(_limit(limit))
-        rows = self.repository._fetch_all(
+        rows = self.repository.fetch_all(
             f"""
             SELECT
                 preference_id, owner_type, owner_id, preference_type, content,
@@ -670,19 +695,44 @@ class PostgresIntelligenceMemoryRepository:
         )
         return [_preference_from_row(row) for row in rows]
 
-    def _refresh_event_refs(self, event_id: str, table: str, column: str, values: list[str]) -> None:
-        self.repository._execute(f"DELETE FROM {table} WHERE event_id = %s", (event_id,))
+    def _refresh_event_refs(
+        self,
+        event_id: str,
+        table: str,
+        column: str,
+        values: list[str],
+        *,
+        role_column: str,
+        role_value: str,
+    ) -> None:
+        self.repository.execute(f"DELETE FROM {table} WHERE event_id = %s", (event_id,))
         for value in sorted({str(item) for item in values if str(item).strip()}):
-            self._insert_event_ref(table, column, event_id, value)
+            self._insert_event_ref(
+                table,
+                column,
+                event_id,
+                value,
+                role_column=role_column,
+                role_value=role_value,
+            )
 
-    def _insert_event_ref(self, table: str, column: str, event_id: str, value: str) -> None:
-        self.repository._execute(
+    def _insert_event_ref(
+        self,
+        table: str,
+        column: str,
+        event_id: str,
+        value: str,
+        *,
+        role_column: str,
+        role_value: str,
+    ) -> None:
+        self.repository.execute(
             f"""
-            INSERT INTO {table} (event_id, {column})
-            VALUES (%s, %s)
-            ON CONFLICT (event_id, {column}) DO NOTHING
+            INSERT INTO {table} (event_id, {column}, {role_column})
+            VALUES (%s, %s, %s)
+            ON CONFLICT DO NOTHING
             """,
-            (event_id, value),
+            (event_id, value, role_value),
         )
 
 

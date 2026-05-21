@@ -111,11 +111,15 @@ class MemoryApplicationService:
             from infrastructure.storage.vector import qdrant_store_from_env
 
             vector_store = qdrant_store_from_env()
-        if vector_store is None:
-            raise ValueError("vector_store is required")
         self.vector_store = vector_store
         self.artifact_service = artifact_service or ArtifactInspectionService(artifact_root)
-        self.ingestion_service = ingestion_service or MemoryIngestionService(self.vector_store)
+        self.ingestion_service = ingestion_service or memory_ingestion_service_from_env(
+            vector_store=self.vector_store,
+        )
+        if self.ingestion_service is None:
+            if self.vector_store is None:
+                raise ValueError("vector_store or memory ingestion sink is required")
+            self.ingestion_service = MemoryIngestionService(self.vector_store)
 
     def search(
         self,
@@ -125,6 +129,8 @@ class MemoryApplicationService:
         limit: int = 5,
         filters: dict[str, Any] | None = None,
     ) -> MemorySearchResultSet:
+        if self.vector_store is None:
+            raise ValueError("vector_store is required for memory search")
         query = VectorSearchQuery(
             collection=collection,
             text=text,
@@ -145,6 +151,8 @@ class MemoryApplicationService:
         *,
         collection: str = DEFAULT_MEMORY_COLLECTION,
     ) -> MemoryDocumentResult:
+        if self.vector_store is None:
+            raise ValueError("vector_store is required for memory document lookup")
         if not document_id:
             raise ValueError("document_id is required")
         document = self.vector_store.get_document(collection, document_id)
@@ -160,6 +168,8 @@ class MemoryApplicationService:
         self,
         collections: list[str] | None = None,
     ) -> MemoryBootstrapResult:
+        if self.vector_store is None:
+            raise ValueError("vector_store is required for memory bootstrap")
         requested = _normalize_collections(collections or list(DEFAULT_BOOTSTRAP_COLLECTIONS))
         return MemoryBootstrapResult(collections=self.vector_store.ensure_collections(requested))
 
@@ -221,6 +231,8 @@ def memory_ingestion_service_from_env(
     if vector_store is None:
         vector_store = _build_vector_index_from_env(env=values)
     repository = _build_intelligence_repository_from_env(env=values)
+    if vector_store is None and repository is None and memory_runtime is None:
+        return None
     return MemoryIngestionService(
         vector_store,
         memory_runtime=memory_runtime,
