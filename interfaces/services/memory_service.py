@@ -3,13 +3,14 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Mapping, Protocol
 
 from business.layers.memory.ingestion import (
     MemoryIngestionResult,
     MemoryIngestionService,
     MemoryIndexDocument,
 )
+from business.memory.intelligence_repository import IntelligenceMemoryRepository, IntelligenceMemoryVectorIndex
 from interfaces.services.artifact_service import ArtifactInspectionService
 from infrastructure.storage.vector import VectorCollectionStatus, VectorSearchQuery, VectorSearchResult
 
@@ -210,16 +211,55 @@ def _normalize_collections(collections: list[str]) -> list[str]:
 
 def memory_ingestion_service_from_env(
     *,
-    env: dict[str, str] | None = None,
+    env: Mapping[str, str] | None = None,
     vector_store: VectorMemoryStore | None = None,
     memory_runtime: Any | None = None,
 ) -> MemoryIngestionService | None:
     values = env if env is not None else os.environ
-    enabled = values.get("NEWS_VECTOR_MEMORY_ENABLED", "").lower() in TRUE_VALUES
-    if not enabled:
+    if not _memory_enabled(values):
         return None
-    if vector_store is None and memory_runtime is None:
-        from infrastructure.storage.vector import qdrant_store_from_env
+    if vector_store is None:
+        vector_store = _build_vector_index_from_env(env=values)
+    repository = _build_intelligence_repository_from_env(env=values)
+    return MemoryIngestionService(
+        vector_store,
+        memory_runtime=memory_runtime,
+        repository=repository,
+    )
 
-        vector_store = qdrant_store_from_env(env=values)
-    return MemoryIngestionService(vector_store, memory_runtime=memory_runtime)
+
+def _memory_enabled(env: Mapping[str, str] | None = None) -> bool:
+    values = env if env is not None else os.environ
+    return (
+        values.get("NEWS_MEMORY_ENABLED", "").lower() in TRUE_VALUES
+        or values.get("NEWS_VECTOR_MEMORY_ENABLED", "").lower() in TRUE_VALUES
+        or values.get("NEWS_MEMORY_POSTGRES_ENABLED", "").lower() in TRUE_VALUES
+    )
+
+
+def _build_intelligence_repository_from_env(
+    *,
+    env: Mapping[str, str] | None = None,
+) -> IntelligenceMemoryRepository | None:
+    values = env if env is not None else os.environ
+    if values.get("NEWS_MEMORY_POSTGRES_ENABLED", "").lower() not in TRUE_VALUES:
+        return None
+    dsn = values.get("NEWS_DATABASE_DSN")
+    if not dsn:
+        return None
+    from infrastructure.storage.postgres.memory_repository import PostgresIntelligenceMemoryRepository
+    from infrastructure.storage.postgres.repository import PostgresRepository
+
+    return PostgresIntelligenceMemoryRepository(PostgresRepository(dsn))
+
+
+def _build_vector_index_from_env(
+    *,
+    env: Mapping[str, str] | None = None,
+) -> VectorMemoryStore | IntelligenceMemoryVectorIndex | None:
+    values = env if env is not None else os.environ
+    if values.get("NEWS_VECTOR_MEMORY_ENABLED", "").lower() not in TRUE_VALUES:
+        return None
+    from infrastructure.storage.vector import qdrant_store_from_env
+
+    return qdrant_store_from_env(env=values)

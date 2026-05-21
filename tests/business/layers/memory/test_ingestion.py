@@ -23,6 +23,8 @@ def test_memory_ingestion_writes_through_framework_memory_runtime() -> None:
     )
 
     assert result.memories_written == 1
+    assert result.counts["evidence"] == 0
+    assert result.to_dict()["indexed_documents"] == 1
     memory = runtime.get("run-1:report_section:0")
     assert memory is not None
     assert memory.actor == "business.layers.memory.ingestion"

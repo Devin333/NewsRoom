@@ -25,6 +25,7 @@ def test_memory_ingestion_builds_report_section_documents() -> None:
     result = service.ingest_report(report, run_id="run-1", report_id="report-1", topic="AI")
 
     assert result.documents_indexed == 2
+    assert result.indexed_documents == 2
     assert result.collections == ["report_sections"]
     assert result.document_ids == ["run-1:report_section:0", "run-1:report_section:1"]
     first = store.documents[0]
@@ -46,6 +47,7 @@ def test_memory_ingestion_builds_report_section_documents() -> None:
     assert "Agent runtime" in first.text
     assert result.to_dict()["memories_written"] == 0
     assert result.to_dict()["memory_ids"] == []
+    assert result.to_dict()["counts"]["evidence"] == 0
 
 
 def test_memory_ingestion_builds_evidence_documents() -> None:
@@ -68,6 +70,8 @@ def test_memory_ingestion_builds_evidence_documents() -> None:
     result = service.ingest_evidence_bundle(bundle, run_id="run-1", topic="AI")
 
     assert result.documents_indexed == 1
+    assert result.counts["evidence"] == 1
+    assert result.counts["claims"] == 1
     assert result.collections == ["evidence_items"]
     doc = store.documents[0]
     assert doc.document_id == "run-1:evidence:evidence-1"
@@ -115,6 +119,7 @@ def test_memory_ingestion_indexes_run_output_report_and_evidence() -> None:
     )
 
     assert result.documents_indexed == 2
+    assert result.counts["evidence"] == 1
     assert result.collections == ["evidence_items", "report_sections"]
     assert [doc.collection for doc in store.documents] == ["report_sections", "evidence_items"]
 
@@ -155,6 +160,8 @@ def test_memory_ingestion_writes_memory_records_through_runtime() -> None:
     )
 
     assert result.documents_indexed == 2
+    assert result.to_dict()["indexed_documents"] == 2
+    assert result.to_dict()["counts"]["evidence"] == 1
     assert result.memories_written == 2
     assert result.memory_ids == ["run-1:report_section:0", "run-1:evidence:ev-1"]
     report_memory = memory_store.get("run-1:report_section:0")

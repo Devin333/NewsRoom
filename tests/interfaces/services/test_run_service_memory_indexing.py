@@ -49,13 +49,14 @@ def test_run_service_indexes_memory_when_injected(tmp_path, monkeypatch) -> None
     assert fake_memory.calls[0]["report_id"] == "memory-indexed:final"
     assert "final_report" in fake_memory.calls[0]["output"]
     assert "evidence_bundle" in fake_memory.calls[0]["output"]
-    assert result.output["memory_ingestion_result"] == {
-        "documents_indexed": 3,
-        "collections": ["evidence_items", "report_sections"],
-        "document_ids": ["doc-1", "doc-2", "doc-3"],
-        "memories_written": 0,
-        "memory_ids": [],
-    }
+    payload = result.output["memory_ingestion_result"]
+    assert payload["documents_indexed"] == 3
+    assert payload["collections"] == ["evidence_items", "report_sections"]
+    assert payload["document_ids"] == ["doc-1", "doc-2", "doc-3"]
+    assert payload["memories_written"] == 0
+    assert payload["memory_ids"] == []
+    assert "counts" in payload
+    assert "indexed_documents" in payload
 
 
 def test_run_service_migrates_repository_before_daily_workflow(tmp_path, monkeypatch) -> None:
@@ -99,6 +100,9 @@ class _FakeMemoryIngestionService:
             }
         )
         return MemoryIngestionResult(
+            run_id=run_id,
+            topic=topic,
+            counts={"evidence": 1},
             documents_indexed=3,
             collections=["evidence_items", "report_sections"],
             document_ids=["doc-1", "doc-2", "doc-3"],

@@ -4,6 +4,7 @@ from infrastructure.storage.postgres.artifact_index import PostgresArtifactIndex
 from infrastructure.storage.postgres.conversation import PostgresConversationStore
 from infrastructure.storage.postgres.event_store import PostgresEventStore
 from infrastructure.storage.postgres.lineage import PostgresLineageStore
+from infrastructure.storage.postgres.memory_repository import PostgresIntelligenceMemoryRepository
 from infrastructure.storage.postgres.metrics import PostgresStorageMetricsCollector
 from infrastructure.storage.postgres.migrations import load_migration_sql
 from infrastructure.storage.postgres.repository import PostgresRepository
@@ -16,6 +17,7 @@ __all__ = [
     "PostgresConversationStore",
     "PostgresEventStore",
     "PostgresLineageStore",
+    "PostgresIntelligenceMemoryRepository",
     "PostgresStorageMetricsCollector",
     "PostgresRepository",
     "load_migration_sql",

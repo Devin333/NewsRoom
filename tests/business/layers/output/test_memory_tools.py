@@ -67,6 +67,8 @@ def test_memory_index_tool_indexes_report_and_evidence_through_executor() -> Non
 
     assert index_observation.status == ToolStatus.SUCCEEDED
     assert index_observation.result.output["documents_indexed"] == 2
+    assert index_observation.result.output["indexed_documents"] == 2
+    assert index_observation.result.output["counts"]["evidence"] == 1
     assert index_observation.result.output["collections"] == [
         "evidence_items",
         "report_sections",
@@ -128,6 +130,7 @@ def test_memory_index_tool_can_write_through_memory_runtime() -> None:
 
     assert index_observation.status == ToolStatus.SUCCEEDED
     assert index_observation.result.output["documents_indexed"] == 1
+    assert index_observation.result.output["counts"]["evidence"] == 0
     assert index_observation.result.output["memories_written"] == 1
     assert index_observation.result.output["memory_ids"] == ["run-1:report_section:0"]
     assert recall_observation.status == ToolStatus.SUCCEEDED

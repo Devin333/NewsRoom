@@ -21,6 +21,14 @@ def test_postgres_migration_sql_contains_required_tables() -> None:
         "claim_supports",
         "quality_results",
         "memory_documents",
+        "memory_entities",
+        "memory_events",
+        "memory_event_entities",
+        "memory_event_claims",
+        "memory_event_evidence",
+        "memory_claim_history",
+        "memory_decisions",
+        "memory_preferences",
         "agent_conversations",
         "agent_conversation_messages",
         "agent_conversation_state",
@@ -48,6 +56,12 @@ def test_postgres_migration_sql_contains_required_tables() -> None:
     assert "success_count_24h INTEGER" in sql
     assert "failure_count_24h INTEGER" in sql
     assert "avg_latency_ms_24h DOUBLE PRECISION" in sql
+    assert "idx_memory_entities_type" in sql
+    assert "idx_memory_events_run" in sql
+    assert "idx_memory_decisions_target" in sql
+    assert "idx_memory_preferences_owner" in sql
+    assert "idx_memory_claim_history_claim" in sql
+    assert "idx_memory_claim_history_evidence" in sql
 
 
 def test_postgres_migration_sql_exposes_storage_contract_query_columns() -> None:
