@@ -5,7 +5,19 @@ from typing import Any, Generic, TypeVar
 from pydantic import Field
 
 from business.boards._service import BoardServiceBase
-from business.foundation import AnalysisContext, BoardRunResult, BoardType, PrimitiveModel
+from business.foundation import (
+    AnalysisContext,
+    BoardRunResult,
+    BoardType,
+    BusinessArtifactRef,
+    BusinessFeedbackEvent,
+    BusinessLearningSignal,
+    BusinessMemoryRef,
+    BusinessPolicyCandidate,
+    BusinessRegressionGuardResult,
+    PrimitiveModel,
+    build_runtime_quality_closure,
+)
 
 ServiceT = TypeVar("ServiceT", bound=BoardServiceBase)
 
@@ -23,6 +35,12 @@ class BoardWorkflowTrace(PrimitiveModel):
     quality_status: str = "unchecked"
     feedback_count: int
     policy_profile_ids: list[str] = Field(default_factory=list)
+    artifact_count: int = 0
+    evidence_count: int = 0
+    memory_ref_count: int = 0
+    policy_candidate_count: int = 0
+    learning_signal_count: int = 0
+    guard_status: str = "unchecked"
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -30,6 +48,12 @@ class BoardWorkflowResult(PrimitiveModel):
     result: BoardRunResult
     trace: BoardWorkflowTrace
     warnings: list[str] = Field(default_factory=list)
+    feedback_events: list[BusinessFeedbackEvent] = Field(default_factory=list)
+    learning_signals: list[BusinessLearningSignal] = Field(default_factory=list)
+    policy_candidates: list[BusinessPolicyCandidate] = Field(default_factory=list)
+    guard_results: list[BusinessRegressionGuardResult] = Field(default_factory=list)
+    artifact_refs: list[BusinessArtifactRef] = Field(default_factory=list)
+    memory_refs: list[BusinessMemoryRef] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -68,8 +92,10 @@ class BoardWorkflowBase(Generic[ServiceT]):
         )
         result = self.apply_board_specific_policy(base_result)
         warnings = self.collect_quality_feedback(result)
+        closure = self._build_runtime_closure(result)
         trace = self._build_trace(
             result=result,
+            closure=closure,
             input_count=len(input_items),
             selected_signal_count=len(selected_signals),
             extraction_count=len(extraction_results),
@@ -81,12 +107,21 @@ class BoardWorkflowBase(Generic[ServiceT]):
             result=result,
             trace=trace,
             warnings=warnings,
+            feedback_events=closure.feedback_events,
+            learning_signals=closure.learning_signals,
+            policy_candidates=closure.policy_candidates,
+            guard_results=closure.guard_results,
+            artifact_refs=list(result.artifact_refs),
+            memory_refs=list(result.memory_refs),
             metadata={
                 "board_type": self.board_type.value,
                 "board_focus": self.board_focus or _board_focus(result),
                 "stages": list(self.workflow_stages),
                 "quality_status": trace.quality_status,
                 "feedback_count": trace.feedback_count,
+                "learning_signal_count": trace.learning_signal_count,
+                "policy_candidate_count": trace.policy_candidate_count,
+                "guard_status": trace.guard_status,
             },
         )
 
@@ -134,6 +169,7 @@ class BoardWorkflowBase(Generic[ServiceT]):
         self,
         *,
         result: BoardRunResult,
+        closure,
         input_count: int,
         selected_signal_count: int,
         extraction_count: int,
@@ -153,14 +189,26 @@ class BoardWorkflowBase(Generic[ServiceT]):
             card_count=len(result.cards),
             insight_count=len(result.insights),
             quality_status=quality_status,
-            feedback_count=len(result.feedback_candidates),
+            feedback_count=len(closure.feedback_events),
             policy_profile_ids=policy_profile_ids,
+            artifact_count=len(result.artifact_refs),
+            evidence_count=len(result.evidence_refs),
+            memory_ref_count=len(result.memory_refs),
+            policy_candidate_count=len(closure.policy_candidates),
+            learning_signal_count=len(closure.learning_signals),
+            guard_status=_guard_status(closure.guard_results),
             metadata={
                 "board_focus": self.board_focus or _board_focus(result),
                 "policy_profile_count": len(policy_profile_ids),
                 "quality_score": result.quality_summary.score if result.quality_summary is not None else None,
+                "trace_ref": result.trace_ref.to_dict() if result.trace_ref is not None else None,
+                "manifest_ref": result.manifest_ref.to_dict() if result.manifest_ref is not None else None,
             },
         )
+
+    def _build_runtime_closure(self, result: BoardRunResult):
+        base_profile = result.policy_snapshot.profiles[0] if result.policy_snapshot is not None and result.policy_snapshot.profiles else None
+        return build_runtime_quality_closure(result.feedback_candidates, base_policy_profile=base_profile)
 
     def _validate_result(self, result: BoardRunResult, trace: BoardWorkflowTrace) -> None:
         if result.board_type != self.board_type:
@@ -207,6 +255,16 @@ def _dedupe_text(values: list[str]) -> list[str]:
         seen.add(text)
         result.append(text)
     return result
+
+
+def _guard_status(guards: list[BusinessRegressionGuardResult]) -> str:
+    if not guards:
+        return "unchecked"
+    if any(guard.status == "block" or not guard.passed for guard in guards):
+        return "block"
+    if any(guard.warnings for guard in guards):
+        return "warning"
+    return "pass"
 
 
 __all__ = ["BoardWorkflowBase", "BoardWorkflowResult", "BoardWorkflowTrace"]

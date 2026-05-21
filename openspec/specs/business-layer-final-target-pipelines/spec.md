@@ -11,7 +11,7 @@ Each business layer pipeline SHALL return standard result objects with stats, wa
 - **THEN** its result exposes accepted outputs plus stats and rejected or warning diagnostics
 
 ### Requirement: Output DTO evidence contract
-Output DTOs SHALL NOT expose raw payloads and MUST include ranking reason, ranking features, evidence refs, provenance, quality, and feedback references for board cards and run results.
+Output DTOs SHALL NOT expose raw payloads and MUST include ranking reason, ranking features, evidence refs, provenance, quality, feedback references, and semantic run refs for board cards and run results.
 
 #### Scenario: Board card serializes safely
 - **WHEN** a board card is serialized for interfaces

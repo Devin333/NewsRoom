@@ -4,9 +4,11 @@ from collections import Counter
 
 from business.boards.cross_board.models import TechnologyJourney
 from business.foundation import (
+    BoardType,
     BusinessQualityCheck,
     BusinessRegressionGuardResult,
     Relation,
+    RelationType,
     build_stable_id,
 )
 
@@ -16,6 +18,20 @@ ORDERED_STAGE_TYPES = (
     "community_discussion",
     "product_adoption",
 )
+
+_RELATION_STAGE_MAP = {
+    RelationType.PROPOSES: "research_origin",
+    RelationType.IMPLEMENTS: "project_implementation",
+    RelationType.DISCUSSES: "community_discussion",
+    RelationType.ADOPTS: "product_adoption",
+}
+
+_RELATION_BOARD_MAP = {
+    RelationType.PROPOSES: BoardType.PAPER_RADAR,
+    RelationType.IMPLEMENTS: BoardType.PROJECT_RADAR,
+    RelationType.DISCUSSES: BoardType.COMMUNITY_PULSE,
+    RelationType.ADOPTS: BoardType.AI_NEWS,
+}
 
 
 def guard_cross_board_insight(
@@ -116,9 +132,67 @@ def guard_technology_journey(journey: TechnologyJourney, relations: list[Relatio
     )
 
 
+def guard_cross_board_path(path) -> BusinessRegressionGuardResult:
+    chain = path.evidence_chain
+    evidence_count = chain.evidence_count if chain is not None else len(path.evidence_relation_ids)
+    board_support_count = chain.board_support_count if chain is not None else len(set(path.board_sequence))
+    confidence = path.confidence
+    duplicate_evidence_count = path.duplicate_evidence_count
+    contradictory_evidence_count = path.contradictory_evidence_count
+    missing_stage_count = len(path.missing_stage_types)
+    result = guard_cross_board_insight(
+        evidence_count=evidence_count,
+        board_support_count=board_support_count,
+        confidence=confidence,
+        duplicate_evidence_count=duplicate_evidence_count,
+        contradictory_evidence_count=contradictory_evidence_count,
+        missing_stage_count=missing_stage_count,
+    )
+    extra_checks = [
+        BusinessQualityCheck.create(
+            "cross_board_path_not_weak",
+            passed=path.path_score >= 0.55,
+            severity="warning",
+            reason="Weak cross-board path should not produce a strong insight.",
+            observed={"path_score": path.path_score},
+        )
+    ]
+    checks = [*result.checks, *extra_checks]
+    blocking = [check.reason for check in checks if not check.passed and check.severity == "block"]
+    warnings = [check.reason for check in checks if not check.passed and check.severity == "warning"]
+    passed = not blocking
+    return result.model_copy(
+        update={
+            "guard_id": build_stable_id("cross_path_guard", path.path_id, [(check.check_type, check.passed) for check in checks]),
+            "status": "pass" if passed else "block",
+            "passed": passed,
+            "checks": checks,
+            "blocking_reasons": blocking,
+            "warnings": warnings,
+            "metadata": {**dict(result.metadata), "path_id": path.path_id, "path_score": path.path_score},
+        }
+    )
+
+
 def ordered_stage_types(stage_types: list[str]) -> list[str]:
     order = {stage_type: index for index, stage_type in enumerate(ORDERED_STAGE_TYPES)}
     return sorted(stage_types, key=lambda stage_type: order.get(stage_type, len(order)))
+
+
+def stage_for_relation_type(relation_type: RelationType | str) -> str | None:
+    try:
+        key = relation_type if isinstance(relation_type, RelationType) else RelationType(str(relation_type))
+    except ValueError:
+        return None
+    return _RELATION_STAGE_MAP.get(key)
+
+
+def board_for_stage_relation(relation_type: RelationType | str) -> BoardType | None:
+    try:
+        key = relation_type if isinstance(relation_type, RelationType) else RelationType(str(relation_type))
+    except ValueError:
+        return None
+    return _RELATION_BOARD_MAP.get(key)
 
 
 def _duplicate_count(values: list[str]) -> int:

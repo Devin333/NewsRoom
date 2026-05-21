@@ -4,6 +4,9 @@ from typing import Any
 
 from business.foundation import (
     AnalysisContext,
+    BusinessArtifactRef,
+    BusinessEvidenceRef,
+    BusinessMemoryRef,
     BoardRegistry,
     BoardRunResult,
     BoardType,
@@ -14,6 +17,9 @@ from business.foundation import (
     PolicyLoader,
     Report,
     Signal,
+    SourceRef,
+    SourceReliability,
+    SourceType,
     create_policy_snapshot,
     quality_snapshot_from_checks,
 )
@@ -155,6 +161,11 @@ class BoardServiceBase:
         reports = [Report.model_validate(_report_payload_for_validation(report_payload))] if isinstance(report_payload, dict) else []
         quality_summary = self._quality_summary(output)
         feedback_candidates = self._feedback_candidates(output, quality_summary, policy_snapshot)
+        trace_ref = _run_source_ref(run_id, "workflow_trace", self.board_type)
+        manifest_ref = _run_source_ref(run_id, "run_manifest", self.board_type)
+        artifact_refs = _artifact_refs(run_id, self.board_type, trace_ref=trace_ref, manifest_ref=manifest_ref)
+        evidence_refs = _evidence_refs(signals, relation_result.relations)
+        memory_refs = _memory_refs(context, self.board_type)
         result = BoardRunResult(
             board_type=self.board_type,
             run_id=run_id,
@@ -165,9 +176,17 @@ class BoardServiceBase:
             policy_snapshot=policy_snapshot,
             quality_summary=quality_summary,
             feedback_candidates=feedback_candidates,
-            trace_ref=None,
-            manifest_ref=None,
-            metadata={"board_output": output.to_dict()},
+            trace_ref=trace_ref,
+            manifest_ref=manifest_ref,
+            artifact_refs=artifact_refs,
+            evidence_refs=evidence_refs,
+            memory_refs=memory_refs,
+            metadata={
+                "board_output": output.to_dict(),
+                "artifact_refs": [ref.to_dict() for ref in artifact_refs],
+                "evidence_refs": [ref.to_dict() for ref in evidence_refs],
+                "memory_refs": [ref.to_dict() for ref in memory_refs],
+            },
         )
         return self._postprocess_run_result(
             result,
@@ -371,3 +390,65 @@ def _drop_serialized_computed_fields(value: object) -> object:
     if isinstance(value, list):
         return [_drop_serialized_computed_fields(item) for item in value]
     return value
+
+
+def _run_source_ref(run_id: str, ref_type: str, board_type: BoardType) -> SourceRef:
+    return SourceRef(
+        source_name=f"{board_type.value}:{ref_type}",
+        source_type=SourceType.MANUAL,
+        url=f"business://{board_type.value}/{run_id}/{ref_type}",
+        reliability=SourceReliability.HIGH,
+        external_id=run_id,
+    )
+
+
+def _artifact_refs(
+    run_id: str,
+    board_type: BoardType,
+    *,
+    trace_ref: SourceRef,
+    manifest_ref: SourceRef,
+) -> list[BusinessArtifactRef]:
+    return [
+        BusinessArtifactRef.create(
+            "board_output",
+            label=f"{board_type.value} board output",
+            uri=f"business://{board_type.value}/{run_id}/board_output",
+            run_id=run_id,
+            trace_ref=trace_ref,
+            manifest_ref=manifest_ref,
+        )
+    ]
+
+
+def _evidence_refs(signals: list[Signal], relations) -> list[BusinessEvidenceRef]:
+    relation_ids_by_signal: dict[str, list[str]] = {}
+    for relation in relations:
+        for signal_id in relation.evidence_signal_ids:
+            relation_ids_by_signal.setdefault(signal_id, []).append(relation.relation_id)
+    refs: list[BusinessEvidenceRef] = []
+    for signal in signals:
+        refs.append(
+            BusinessEvidenceRef.from_source(
+                signal.source,
+                signal_ids=[signal.signal_id],
+                relation_ids=relation_ids_by_signal.get(signal.signal_id, []),
+                confidence=signal.confidence.value if signal.confidence is not None else None,
+                metadata={"board_type": signal.board_type.value, "signal_type": signal.signal_type.value},
+            )
+        )
+    return refs
+
+
+def _memory_refs(context: AnalysisContext, board_type: BoardType) -> list[BusinessMemoryRef]:
+    topic = context.metadata.get("topic") if isinstance(context.metadata, dict) else None
+    if not topic:
+        return []
+    return [
+        BusinessMemoryRef.create(
+            memory_type="analysis_context",
+            query=str(topic),
+            score=0.75,
+            metadata={"board_type": board_type.value},
+        )
+    ]

@@ -1,3 +1,4 @@
+from business.foundation.artifacts import BusinessArtifactRef
 from business.foundation.context import AnalysisContext, BoardContext, RunContext, default_time_window
 from business.foundation.contracts import (
     BoardService,
@@ -49,6 +50,9 @@ from business.foundation.models import (
     make_signal_identity,
     quality_snapshot_from_checks,
 )
+from business.foundation.evidence import BusinessEvidenceRef, BusinessRunManifestRef, BusinessTraceRef
+from business.foundation.feedback import RuntimeQualityClosure, build_feedback_events_from_quality, build_runtime_quality_closure
+from business.foundation.memory_refs import BusinessMemoryRef
 from business.foundation.policies import (
     BasePolicy,
     ConfidencePolicy,
@@ -127,8 +131,11 @@ __all__ = [
     "BusinessLLMResult",
     "BusinessFeedbackEvent",
     "BusinessFeedbackLink",
+    "BusinessArtifactRef",
+    "BusinessEvidenceRef",
     "Claim",
     "BusinessLearningSignal",
+    "BusinessMemoryRef",
     "BusinessPolicyCandidate",
     "BusinessPolicyProfile",
     "BusinessPolicySnapshot",
@@ -136,6 +143,8 @@ __all__ = [
     "BusinessQualityCheck",
     "BusinessQualitySnapshot",
     "BusinessRegressionGuardResult",
+    "BusinessRunManifestRef",
+    "BusinessTraceRef",
     "ClaimModality",
     "ClaimPolarity",
     "ClaimType",
@@ -169,8 +178,11 @@ __all__ = [
     "Quality",
     "QualityPolicy",
     "RegressionGuardRunner",
+    "RuntimeQualityClosure",
     "activate_policy_candidate",
+    "build_feedback_events_from_quality",
     "build_policy_candidate",
+    "build_runtime_quality_closure",
     "create_policy_snapshot",
     "default_policy_profiles",
     "RadarRecommendation",

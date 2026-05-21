@@ -3,6 +3,9 @@ from __future__ import annotations
 from pydantic import Field
 
 from business.foundation._models import BoardCard, DetailPage, Insight, Report
+from business.foundation.artifacts import BusinessArtifactRef
+from business.foundation.evidence import BusinessEvidenceRef
+from business.foundation.memory_refs import BusinessMemoryRef
 from business.foundation.primitives import PrimitiveModel, SourceRef
 from business.foundation.taxonomy import BoardType
 from business.foundation.models.quality_loop import (
@@ -24,6 +27,9 @@ class BoardRunResult(PrimitiveModel):
     feedback_candidates: list[BusinessFeedbackEvent] = Field(default_factory=list)
     trace_ref: SourceRef | None = None
     manifest_ref: SourceRef | None = None
+    artifact_refs: list[BusinessArtifactRef] = Field(default_factory=list)
+    evidence_refs: list[BusinessEvidenceRef] = Field(default_factory=list)
+    memory_refs: list[BusinessMemoryRef] = Field(default_factory=list)
     metadata: dict[str, object] = Field(default_factory=dict)
 
 

@@ -1,4 +1,18 @@
 from business.boards.cross_board.board_service import CrossBoardService
+from business.boards.cross_board.graph_builder import CrossBoardGraphBuilder
+from business.boards.cross_board.graph_models import (
+    CrossBoardEvidenceChain,
+    CrossBoardGraph,
+    CrossBoardGraphEdge,
+    CrossBoardGraphIntelligenceResult,
+    CrossBoardGraphNode,
+    CrossBoardGraphQualitySummary,
+    CrossBoardInsightCandidate,
+    CrossBoardPath,
+    CrossBoardPathSearchRequest,
+    CrossBoardPathSearchResult,
+)
+from business.boards.cross_board.path_finder import CrossBoardPathFinder
 from business.boards.cross_board.insight_service import CrossBoardInsightService
 from business.boards.cross_board.relation_view_service import RelationViewService
 from business.boards.cross_board.technology_journey_service import TechnologyJourneyService
@@ -23,7 +37,19 @@ from business.boards.cross_board.worker_handlers import DailyIntelligenceTaskHan
 __all__ = [
     "AGENTIC_DAILY_WORKFLOW_ID",
     "CrossBoardService",
+    "CrossBoardEvidenceChain",
+    "CrossBoardGraph",
+    "CrossBoardGraphBuilder",
+    "CrossBoardGraphEdge",
+    "CrossBoardGraphIntelligenceResult",
+    "CrossBoardGraphNode",
+    "CrossBoardGraphQualitySummary",
     "CrossBoardInsightService",
+    "CrossBoardInsightCandidate",
+    "CrossBoardPath",
+    "CrossBoardPathFinder",
+    "CrossBoardPathSearchRequest",
+    "CrossBoardPathSearchResult",
     "DAILY_PROFILE_CHOICES",
     "DailyIntelligenceTaskHandler",
     "LEGACY_DAILY_WORKFLOW_ID",
