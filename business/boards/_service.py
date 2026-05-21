@@ -2,7 +2,21 @@ from __future__ import annotations
 
 from typing import Any
 
-from business.foundation import AnalysisContext, BoardRegistry, BoardType, Report, Signal
+from business.foundation import (
+    AnalysisContext,
+    BoardRegistry,
+    BoardRunResult,
+    BoardType,
+    BusinessFeedbackEvent,
+    BusinessPolicySnapshot,
+    BusinessQualityCheck,
+    BusinessQualitySnapshot,
+    PolicyLoader,
+    Report,
+    Signal,
+    create_policy_snapshot,
+    quality_snapshot_from_checks,
+)
 from business.foundation.registry import default_board_registry
 from business.layers.analysis import AnalysisPipeline, AnalysisResult
 from business.layers.extraction import ExtractionPipeline, ExtractionResult
@@ -30,6 +44,7 @@ class BoardServiceBase:
         self.analysis_pipeline = analysis_pipeline or AnalysisPipeline()
         self.output_pipeline = output_pipeline or BoardOutputPipeline()
         self.signal_pipeline = SignalPipeline()
+        self.policy_loader = PolicyLoader()
 
     def build_board_output(
         self,
@@ -80,6 +95,38 @@ class BoardServiceBase:
         if not report_payload:
             raise ValueError("board output does not include a report payload")
         return Report.model_validate(report_payload)
+
+    def build_board_run_result(
+        self,
+        signals: list[Signal],
+        *,
+        context: AnalysisContext | None = None,
+    ) -> BoardRunResult:
+        resolved_context = self._resolve_context(context)
+        output = self.build_board_output(signals, context=resolved_context)
+        run_id = _run_id(resolved_context, self.board_type)
+        policy_snapshot = create_policy_snapshot(
+            run_id,
+            self.policy_loader.active_profiles(board_type=self.board_type),
+        )
+        report_payload = output.metadata.get("report")
+        reports = [Report.model_validate(_report_payload_for_validation(report_payload))] if isinstance(report_payload, dict) else []
+        quality_summary = self._quality_summary(output)
+        feedback_candidates = self._feedback_candidates(output, quality_summary, policy_snapshot)
+        return BoardRunResult(
+            board_type=self.board_type,
+            run_id=run_id,
+            cards=list(output.cards),
+            detail_pages=list(output.detail_pages),
+            insights=list(output.insights),
+            reports=reports,
+            policy_snapshot=policy_snapshot,
+            quality_summary=quality_summary,
+            feedback_candidates=feedback_candidates,
+            trace_ref=None,
+            manifest_ref=None,
+            metadata={"board_output": output.to_dict()},
+        )
 
     def _resolve_context(self, context: AnalysisContext | None) -> AnalysisContext:
         if context is None:
@@ -146,8 +193,83 @@ class BoardServiceBase:
         description = self.board_definition.description or self.board_definition.name
         return f"{description} generated from normalized signals."
 
+    def _quality_summary(self, output: BoardOutput) -> BusinessQualitySnapshot:
+        checks = [
+            BusinessQualityCheck.create(
+                "board_has_policy_compatible_cards",
+                passed=all(card.ranking_reason for card in output.cards),
+                severity="error",
+                reason="Every board card must include ranking_reason.",
+                observed={"card_count": len(output.cards)},
+            ),
+            BusinessQualityCheck.create(
+                "top_cards_have_evidence",
+                passed=all(card.evidence_refs for card in output.cards[:3]),
+                severity="error",
+                reason="Top cards must include evidence_refs.",
+                observed={"top_card_count": len(output.cards[:3])},
+            ),
+        ]
+        score = 1.0 if all(check.passed for check in checks) else 0.5
+        return quality_snapshot_from_checks(checks, score=score, confidence=0.8)
+
+    def _feedback_candidates(
+        self,
+        output: BoardOutput,
+        quality_summary: BusinessQualitySnapshot,
+        policy_snapshot: BusinessPolicySnapshot,
+    ) -> list[BusinessFeedbackEvent]:
+        events: list[BusinessFeedbackEvent] = []
+        for check in quality_summary.checks:
+            if check.passed:
+                continue
+            events.append(
+                BusinessFeedbackEvent.create(
+                    target_object_type="board_run",
+                    target_object_id=output.board_type.value,
+                    target_layer="board",
+                    board_type=output.board_type.value,
+                    feedback_type=check.check_type,
+                    severity=check.severity,
+                    observed=check.observed,
+                    expected=check.expected,
+                    error_tags=[check.check_type],
+                    evidence_refs=list(check.evidence_refs),
+                    related_policy_profile_id=policy_snapshot.profiles[0].profile_id if policy_snapshot.profiles else None,
+                    related_policy_profile_version=policy_snapshot.profiles[0].version if policy_snapshot.profiles else None,
+                )
+            )
+        return events
+
 
 def _signal_sort_key(signal: Signal) -> tuple[int, str, str]:
     published_at = signal.published_at
     timestamp = int(published_at.timestamp()) if published_at is not None else 0
     return timestamp, signal.signal_id, signal.title
+
+
+def _run_id(context: AnalysisContext, board_type: BoardType) -> str:
+    run_context = getattr(context, "run_context", None)
+    if run_context is not None and getattr(run_context, "run_id", None):
+        return str(run_context.run_id)
+    return f"{board_type.value}-run"
+
+
+def _report_payload_for_validation(payload: dict[str, object]) -> dict[str, object]:
+    cleaned = _drop_serialized_computed_fields(payload)
+    if isinstance(cleaned, dict):
+        cleaned.pop("board_name", None)
+        return cleaned
+    return dict(payload)
+
+
+def _drop_serialized_computed_fields(value: object) -> object:
+    if isinstance(value, dict):
+        return {
+            key: _drop_serialized_computed_fields(item)
+            for key, item in value.items()
+            if key != "level"
+        }
+    if isinstance(value, list):
+        return [_drop_serialized_computed_fields(item) for item in value]
+    return value

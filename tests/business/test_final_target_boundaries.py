@@ -1,0 +1,34 @@
+from __future__ import annotations
+
+import ast
+from pathlib import Path
+
+
+def test_final_target_dependency_boundaries() -> None:
+    root = Path(__file__).resolve().parents[2]
+
+    foundation_imports = _imports_under(root / "business" / "foundation")
+    assert not any(name.startswith("business.layers") or name.startswith("business.boards") or name.startswith("infrastructure") for name in foundation_imports)
+
+    layer_imports = _imports_under(root / "business" / "layers")
+    assert not any(name.startswith("business.boards") or name.startswith("infrastructure.storage.postgres") or name.startswith("infrastructure.storage.redis") or name.startswith("infrastructure.storage.vector") for name in layer_imports)
+
+    board_imports = _imports_under(root / "business" / "boards")
+    assert not any(name.startswith("infrastructure.storage.postgres") or name.startswith("infrastructure.storage.redis") or name.startswith("infrastructure.storage.vector") for name in board_imports)
+
+    interface_imports = _imports_under(root / "interfaces" / "web")
+    assert not any(name.startswith("infrastructure.storage.postgres") or name.startswith("infrastructure.storage.redis") or name.startswith("infrastructure.storage.vector") for name in interface_imports)
+
+
+def _imports_under(path: Path) -> set[str]:
+    imports: set[str] = set()
+    for file_path in path.rglob("*.py"):
+        if "__pycache__" in file_path.parts:
+            continue
+        module = ast.parse(file_path.read_text(encoding="utf-8"))
+        for node in ast.walk(module):
+            if isinstance(node, ast.Import):
+                imports.update(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                imports.add(node.module)
+    return imports

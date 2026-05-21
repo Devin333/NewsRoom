@@ -124,3 +124,45 @@ def test_outcome_finalizer_populates_standard_workflow_result_fields(tmp_path: P
     assert summary["duration_ms"] == 1000.0
     assert summary["trace_id"] == context.trace_context.trace_id
     assert summary["span_id"] == "step:s1"
+
+
+def test_llm_call_artifact_post_processing_preserves_standard_step_fields(tmp_path: Path) -> None:
+    artifact_manager = ArtifactManager(tmp_path)
+    artifact_manager.start_run("run-llm-standard")
+    updater = ManifestUpdater(
+        artifact_manager=artifact_manager,
+        run_id="run-llm-standard",
+        manifest={"artifacts": {}},
+    )
+    step = StepSpec(step_id="s1", write_keys=["llm_call_artifacts"])
+    outcome = StepOutcome(
+        status=StepStatus.SUCCEEDED,
+        outputs={
+            "llm_call_artifacts": [
+                {
+                    "artifact_id": "llm-1",
+                    "iteration": 1,
+                    "request": {},
+                    "response": {},
+                }
+            ]
+        },
+        step_id="s1",
+        trace_id="trace-1",
+        span_id="step:s1",
+        started_at="2026-05-21T00:00:00Z",
+        completed_at="2026-05-21T00:00:01Z",
+        warnings=["keep me"],
+        metadata={"source": "test"},
+        trace_events=[{"event": "agent"}],
+    )
+
+    updated = updater.write_llm_call_artifacts(step, outcome)
+
+    assert updated.trace_id == "trace-1"
+    assert updated.span_id == "step:s1"
+    assert updated.duration_ms == 1000.0
+    assert updated.warnings == ["keep me"]
+    assert updated.metadata == {"source": "test"}
+    assert updated.trace_events == [{"event": "agent"}]
+    assert updated.artifact_refs[0].artifact_type == "llm_call"

@@ -71,3 +71,48 @@ def test_tool_result_standard_fields_for_block_approval_failure_and_timeout() ->
     assert timeout["status"] == "timeout"
     assert timeout["timeout"] is True
     assert timeout["error_envelope"]["error_type"] == "ToolTimeoutError"
+
+
+def test_tool_retry_count_reports_actual_retries() -> None:
+    attempts = {"count": 0}
+
+    def flaky(args):
+        attempts["count"] += 1
+        if attempts["count"] < 3:
+            raise RuntimeError("try again")
+        return {"ok": True}
+
+    registry = ToolRegistry()
+    registry.register(ToolDefinition(name="sample.flaky", input_schema={}, max_attempts=3), flaky)
+
+    observation = ToolExecutor(registry).execute(
+        ToolCall(tool_name="sample.flaky", call_id="flaky"),
+        ToolPolicy(allowed_tools=["sample.flaky"]),
+    )
+    payload = observation.result.to_dict()
+    retry_check = [
+        check
+        for check in payload["policy_trace"]["checks"]
+        if check["check_id"] == "tool.retry"
+    ][0]
+
+    assert observation.status == ToolStatus.SUCCEEDED
+    assert attempts["count"] == 3
+    assert payload["retry_count"] == 2
+    assert retry_check["metadata"]["attempts"] == 3
+    assert retry_check["metadata"]["retry_count"] == 2
+
+
+def test_tool_retry_count_zero_when_first_attempt_succeeds() -> None:
+    registry = ToolRegistry()
+    registry.register(
+        ToolDefinition(name="sample.first", input_schema={}, max_attempts=3),
+        lambda args: {"ok": True},
+    )
+
+    result = ToolExecutor(registry).execute(
+        ToolCall(tool_name="sample.first", call_id="first"),
+        ToolPolicy(allowed_tools=["sample.first"]),
+    ).result
+
+    assert result.retry_count == 0

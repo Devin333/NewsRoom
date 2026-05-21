@@ -136,6 +136,7 @@ packages = [
   "business.boards.paper_radar",
   "business.boards.project_radar",
   "business.foundation",
+  "business.foundation.feedback",
   "business.layers",
   "business.layers.analysis",
   "business.layers.analysis.quality",

@@ -28,6 +28,13 @@ from business.layers.signal.records import (
     normalize_items,
     rank_items,
 )
+from business.layers.signal.models import (
+    RawSignalInput,
+    RejectedSignal,
+    SignalNormalizeResult,
+    SignalPipelineStats,
+)
+from business.layers.signal.source_mapper import raw_signal_input_to_source_item
 
 
 class SignalPipelineResult(PrimitiveModel):
@@ -40,6 +47,25 @@ class SignalPipelineResult(PrimitiveModel):
 
 
 class SignalPipeline:
+    def run(self, inputs: list[RawSignalInput], context: AnalysisContext) -> SignalNormalizeResult:
+        raw_items: list[RawSourceItem] = []
+        rejected: list[RejectedSignal] = []
+        for raw_input in inputs:
+            try:
+                raw_items.append(raw_signal_input_to_source_item(raw_input))
+            except Exception as exc:
+                rejected.append(
+                    RejectedSignal(raw_input=raw_input, reason="parse_error", detail=str(exc))
+                )
+        result = self.build_from_raw_items(raw_items, context=context, board_type=context.board_type)
+        stats = SignalPipelineStats.from_signals(
+            result.signals,
+            input_count=len(inputs),
+            rejected_count=len(rejected),
+            duplicate_count=max(0, len(raw_items) - len(result.signals)),
+        )
+        return SignalNormalizeResult(signals=result.signals, rejected=rejected, stats=stats)
+
     def build_from_raw_items(
         self,
         raw_items: list[RawSourceItem],

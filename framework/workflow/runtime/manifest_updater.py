@@ -141,16 +141,11 @@ class ManifestUpdater:
             return outcome
         outputs = dict(outcome.outputs)
         outputs["llm_call_artifacts"] = written_payloads
-        return StepOutcome(
-            status=outcome.status,
+        return replace(
+            outcome,
             outputs=outputs,
-            error_type=outcome.error_type,
-            error_message=outcome.error_message,
-            error_details=dict(outcome.error_details),
-            metrics=dict(outcome.metrics),
             artifacts=[*outcome.artifacts, *artifact_refs],
-            lineage=[dict(item) for item in outcome.lineage],
-            next_hint=outcome.next_hint,
+            artifact_refs=[*outcome.artifact_refs, *artifact_refs],
         )
 
     def sync_llm_call_artifacts_to_buffer(

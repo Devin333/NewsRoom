@@ -133,7 +133,7 @@ class SourceFetchRequest:
     source_type: SourceType | str
     url: str | None = None
     query: str | None = None
-    timeout_seconds: int = 15
+    timeout_seconds: float = 15.0
     max_bytes: int = 1_000_000
     max_redirects: int = 3
     user_agent: str | None = None
@@ -241,6 +241,10 @@ class RawSourceItem:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "source_type", SourceType(self.source_type))
+        object.__setattr__(self, "fetched_at", _parse_datetime_required(self.fetched_at, "fetched_at"))
+        object.__setattr__(self, "published_at", _parse_datetime_optional(self.published_at))
+        if isinstance(self.lineage, dict):
+            object.__setattr__(self, "lineage", Lineage.from_dict(self.lineage))
         if self.lineage is None:
             object.__setattr__(
                 self,
@@ -973,7 +977,11 @@ class SourceQualitySummaryReport:
 
 
 def _dt(value: datetime | None) -> str | None:
-    return value.isoformat().replace("+00:00", "Z") if value else None
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    return value.isoformat().replace("+00:00", "Z")
 
 
 def _metadata_bool(value: Any, *, default: bool) -> bool:
@@ -1016,3 +1024,10 @@ def _parse_datetime_optional(value: Any) -> datetime | None:
     if not text:
         return None
     return datetime.fromisoformat(text.replace("Z", "+00:00")).astimezone(UTC)
+
+
+def _parse_datetime_required(value: Any, label: str) -> datetime:
+    parsed = _parse_datetime_optional(value)
+    if parsed is None:
+        raise ValueError(f"{label} is required")
+    return parsed

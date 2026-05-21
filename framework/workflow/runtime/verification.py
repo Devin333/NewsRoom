@@ -90,7 +90,10 @@ class WorkflowRuntimeVerifier:
         if report.issues:
             warnings = context.manifest.setdefault("warnings", [])
             if isinstance(warnings, list):
-                warnings.extend(issue.message for issue in report.issues)
+                warnings.extend(
+                    f"runtime_verification:{issue.severity}:{issue.message}"
+                    for issue in report.issues
+                )
         if self.mode == "strict" and report.failed:
             context.status = WorkflowStatus.FAILED
             context.error = WorkflowError(

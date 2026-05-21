@@ -116,6 +116,8 @@ def _header_dict(headers: Any) -> dict[str, str]:
         header_items = items()
         if isinstance(header_items, ItemsView):
             return {str(key): str(value) for key, value in header_items}
+        if isinstance(header_items, list):
+            return {str(key): str(value) for key, value in header_items}
     return {}
 
 

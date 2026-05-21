@@ -326,6 +326,14 @@ class BoardCard(PrimitiveModel):
     confidence: Confidence
     published_at: datetime | None = None
     generated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    ranking_reason: str | None = None
+    ranking_features: dict[str, Any] = Field(default_factory=dict)
+    evidence_refs: list[SourceRef] = Field(default_factory=list)
+    relation_refs: list[SourceRef] = Field(default_factory=list)
+    insight_refs: list[SourceRef] = Field(default_factory=list)
+    provenance: Any | None = None
+    quality: Any | None = None
+    feedback_refs: list[Any] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("card_id", "title", "summary")

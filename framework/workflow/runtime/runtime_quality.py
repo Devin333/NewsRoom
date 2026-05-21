@@ -98,7 +98,10 @@ def step_gate_checks(
                 reason="" if outcome.trace_id and outcome.span_id else "step trace context is missing",
             )
         )
-    if "compatibility" in dimensions or "correctness" in dimensions:
+    if ("compatibility" in dimensions or "correctness" in dimensions) and (
+        outcome.status == StepStatus.SUCCEEDED
+        or outcome.error_type == "StepOutputContractViolation"
+    ):
         required_outputs = set(step.required_output_keys)
         if policy.evaluation.enabled:
             required_outputs |= set(policy.evaluation.required_output_keys)
@@ -124,9 +127,9 @@ def step_gate_checks(
     if "artifact" in dimensions:
         required_kinds = set(policy.evaluation.required_artifact_kinds)
         actual_kinds = {
-            str(getattr(ref, "artifact_type", "") or ref.get("artifact_type", ""))
+            _artifact_kind(ref)
             for ref in outcome.artifact_refs
-            if hasattr(ref, "artifact_type") or isinstance(ref, dict)
+            if _artifact_kind(ref)
         }
         missing_kinds = sorted(required_kinds - actual_kinds)
         checks.append(
@@ -180,6 +183,14 @@ def step_gate_checks(
             )
         )
     return checks
+
+
+def _artifact_kind(ref: Any) -> str:
+    if isinstance(ref, dict):
+        value = ref.get("artifact_type") or ref.get("kind")
+    else:
+        value = getattr(ref, "artifact_type", None) or getattr(ref, "kind", None)
+    return str(value or "")
 
 
 def record_gate_summary(manifest: dict[str, Any], step_id: str, gate_result: dict[str, Any] | None) -> None:

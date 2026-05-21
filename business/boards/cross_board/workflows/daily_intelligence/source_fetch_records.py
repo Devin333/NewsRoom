@@ -50,7 +50,7 @@ def source_fetch_request(
         source_type=source_type,
         url=source.url,
         query=query,
-        timeout_seconds=int(fetch_policy.timeout_seconds if fetch_policy is not None else 15),
+        timeout_seconds=fetch_policy.timeout_seconds if fetch_policy is not None else 15.0,
         max_bytes=fetch_policy.max_bytes if fetch_policy is not None else 1_000_000,
         max_redirects=fetch_policy.max_redirects if fetch_policy is not None else 3,
         user_agent=user_agent,

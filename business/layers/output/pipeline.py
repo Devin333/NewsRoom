@@ -11,6 +11,8 @@ from business.foundation import (
     Badge,
     BoardCard,
     BoardType,
+    BusinessProvenance,
+    BusinessQualityCheck,
     Claim,
     Confidence,
     DetailPage,
@@ -33,6 +35,7 @@ from business.foundation import (
     TimeWindow,
     TrendDirection,
     build_stable_id,
+    quality_snapshot_from_checks,
 )
 from business.foundation.primitives import PrimitiveModel
 from business.layers.analysis.pipeline import AnalysisResult, TechnologyRadarItem
@@ -104,6 +107,31 @@ class BoardCardBuilder:
             score=score,
             confidence=_card_confidence(signal, extraction, relations),
             published_at=signal.published_at,
+            ranking_reason=_ranking_reason(signal, score, relations),
+            ranking_features=_ranking_features(score),
+            evidence_refs=[signal.source],
+            provenance=BusinessProvenance(
+                source_refs=[signal.source],
+                evidence_refs=[signal.source],
+                upstream_object_refs=[signal.source],
+            ),
+            quality=quality_snapshot_from_checks(
+                [
+                    BusinessQualityCheck.create(
+                        "card_has_evidence_refs",
+                        passed=True,
+                        reason="Card includes source evidence.",
+                        evidence_refs=[signal.source],
+                    ),
+                    BusinessQualityCheck.create(
+                        "card_has_ranking_reason",
+                        passed=True,
+                        reason="Card includes deterministic ranking reason.",
+                    ),
+                ],
+                score=score.value,
+                confidence=signal.confidence.value if signal.confidence else None,
+            ),
             metadata={"signal_id": signal.signal_id, "board_type": board_type.value},
         )
 
@@ -388,6 +416,20 @@ def _board_score(signal: Signal, extraction: ExtractionResult, relations: list[R
         value += 0.2 * impact.score.value
         factors.extend(impact.score.factors)
     return Score(value=min(1.0, round(value, 4)), factors=factors)
+
+
+def _ranking_features(score: Score) -> dict[str, Any]:
+    features: dict[str, Any] = {"score": score.value}
+    for factor in score.factors:
+        features[factor.name] = factor.value
+    return features
+
+
+def _ranking_reason(signal: Signal, score: Score, relations: list[Relation]) -> str:
+    factor_names = [factor.name for factor in score.factors[:3]]
+    if factor_names:
+        return f"Ranked from {signal.signal_type.value} with score {score.value:.2f}; key factors: {', '.join(factor_names)}."
+    return f"Ranked from {signal.signal_type.value} with score {score.value:.2f} and {len(relations)} relation(s)."
 
 
 def _dedupe_refs(refs: list[ObjectRef]) -> list[ObjectRef]:

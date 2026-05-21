@@ -22,10 +22,35 @@ from business.foundation._models import (
     make_object_ref,
     make_signal_identity,
 )
+from business.foundation.models.board_run import BoardRunResult
+from business.foundation.models.quality_loop import (
+    BusinessFeedbackEvent,
+    BusinessFeedbackLink,
+    BusinessLearningSignal,
+    BusinessPolicyCandidate,
+    BusinessPolicyProfile,
+    BusinessPolicySnapshot,
+    BusinessProvenance,
+    BusinessQualityCheck,
+    BusinessQualitySnapshot,
+    BusinessRegressionGuardResult,
+    quality_snapshot_from_checks,
+)
 
 __all__ = [
     "Badge",
     "BoardCard",
+    "BoardRunResult",
+    "BusinessFeedbackEvent",
+    "BusinessFeedbackLink",
+    "BusinessLearningSignal",
+    "BusinessPolicyCandidate",
+    "BusinessPolicyProfile",
+    "BusinessPolicySnapshot",
+    "BusinessProvenance",
+    "BusinessQualityCheck",
+    "BusinessQualitySnapshot",
+    "BusinessRegressionGuardResult",
     "Claim",
     "DetailPage",
     "DetailSection",
@@ -46,4 +71,5 @@ __all__ = [
     "Trend",
     "make_object_ref",
     "make_signal_identity",
+    "quality_snapshot_from_checks",
 ]

@@ -1,4 +1,8 @@
 from business.boards.cross_board.board_service import CrossBoardService
+from business.boards.cross_board.insight_service import CrossBoardInsightService
+from business.boards.cross_board.relation_view_service import RelationViewService
+from business.boards.cross_board.technology_journey_service import TechnologyJourneyService
+from business.boards.cross_board.technology_radar_service import TechnologyRadarService
 from business.boards.cross_board.profiles import (
     AGENTIC_DAILY_WORKFLOW_ID,
     DAILY_PROFILE_CHOICES,
@@ -19,6 +23,7 @@ from business.boards.cross_board.worker_handlers import DailyIntelligenceTaskHan
 __all__ = [
     "AGENTIC_DAILY_WORKFLOW_ID",
     "CrossBoardService",
+    "CrossBoardInsightService",
     "DAILY_PROFILE_CHOICES",
     "DailyIntelligenceTaskHandler",
     "LEGACY_DAILY_WORKFLOW_ID",
@@ -31,5 +36,8 @@ __all__ = [
     "daily_agentic_enabled",
     "daily_workflow_ids",
     "is_daily_workflow_id",
+    "RelationViewService",
+    "TechnologyJourneyService",
+    "TechnologyRadarService",
     "validate_daily_profile",
 ]

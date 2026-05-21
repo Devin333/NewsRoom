@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from framework.specs import StepSpec, StepStatus, StepType, WorkflowSpec
+from framework.artifacts import ArtifactReference
 from framework.workflow.runners.base import StepRunnerCapability, StepRunnerSideEffectLevel
 from framework.workflow.runners.registry import StepRunnerRegistry
 from framework.workflow.runtime.artifacts import ArtifactManager
@@ -128,3 +129,46 @@ def test_warn_only_gate_does_not_block(tmp_path: Path) -> None:
     assert outcome.status == StepStatus.SUCCEEDED
     assert outcome.gate_result["decision"] == "warn"
     assert outcome.warnings
+
+
+def test_artifact_gate_accepts_artifact_reference_kind(tmp_path: Path) -> None:
+    step = StepSpec(
+        step_id="s1",
+        write_keys=["ok"],
+        runtime_quality={
+            "evaluation": {"enabled": True, "required_artifact_kinds": ["metrics"]},
+            "gate": {"dimensions": ["artifact"]},
+        },
+    )
+    workflow = WorkflowSpec(
+        workflow_id="wf-gate-artifact-kind",
+        name="Workflow",
+        version="1.0",
+        steps=[step],
+        terminal_step_ids=["s1"],
+    )
+
+    result = _executor(
+        tmp_path,
+        StepOutcome(
+            status=StepStatus.SUCCEEDED,
+            outputs={"ok": True},
+            artifact_refs=[
+                ArtifactReference(
+                    artifact_id="metrics",
+                    run_id="run-gate-artifact-kind",
+                    kind="metrics",
+                    uri="metrics.json",
+                )
+            ],
+        ),
+    ).execute(
+        workflow,
+        {},
+        profile="test",
+        run_id="run-gate-artifact-kind",
+    )
+
+    outcome = result.step_results["s1"]
+    assert outcome.status == StepStatus.SUCCEEDED
+    assert outcome.gate_result["decision"] == "pass"

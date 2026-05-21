@@ -150,4 +150,8 @@ def test_runtime_verification_warn_records_report_without_changing_status(tmp_pa
 
     assert result.status == WorkflowStatus.SUCCEEDED
     assert result.manifest["runtime_verification"]["passed"] is False
-    assert any("missing required output keys" in warning for warning in result.manifest["warnings"])
+    assert any(
+        warning.startswith("runtime_verification:error:")
+        and "missing required output keys" in warning
+        for warning in result.manifest["warnings"]
+    )

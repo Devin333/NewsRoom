@@ -77,10 +77,14 @@ class ToolExecutor:
         policy = policy or ToolPolicy(require_explicit_allowlist=False)
         started_at = datetime.now(UTC)
         policy_trace = _ToolPolicyTraceBuilder(call.tool_name)
-        retry_count = 0
+        attempts_used = 0
+
+        def record_attempt(attempt: int) -> None:
+            nonlocal attempts_used
+            attempts_used = max(attempts_used, int(attempt))
 
         def invoke() -> ToolResult:
-            nonlocal retry_count
+            nonlocal attempts_used
             registered = self._registry.get(call.tool_name)
             policy_trace.risk_level = _risk_level(registered.definition)
             policy_trace.requires_approval = _requires_approval(registered.definition, policy)
@@ -154,20 +158,24 @@ class ToolExecutor:
 
             self._emit("tool_started", call)
             max_attempts = _max_attempts(registered.definition, policy)
-            raw_output = _invoke_with_retry(
+            raw_output, attempts_used = _invoke_with_retry(
                 registered.executor,
                 arguments,
                 _timeout_seconds(registered.definition, policy),
                 max_attempts,
                 call.tool_name,
+                record_attempt,
             )
-            retry_count = max(0, max_attempts - 1)
             policy_trace.add(
                 "tool.retry",
                 "resource",
                 True,
                 "retry policy completed",
-                metadata={"max_attempts": max_attempts, "retry_count": retry_count},
+                metadata={
+                    "max_attempts": max_attempts,
+                    "attempts": attempts_used,
+                    "retry_count": max(0, attempts_used - 1),
+                },
             )
             safe_output = restore_redacted_booleans(
                 redact_sensitive_values(raw_output),
@@ -241,7 +249,7 @@ class ToolExecutor:
             call=call,
             policy_trace=policy_trace,
             trace_context=self._trace_context,
-            retry_count=retry_count,
+            retry_count=max(0, attempts_used - 1),
         )
         observation = ToolObservation(call=call, result=result, elapsed_ms=elapsed_ms)
         self._record_observation(observation)
@@ -739,10 +747,13 @@ def _invoke_with_retry(
     timeout_seconds: float | None,
     max_attempts: int,
     tool_name: str,
-) -> Any:
+    attempt_callback: Any | None = None,
+) -> tuple[Any, int]:
     for attempt in range(1, max_attempts + 1):
+        if callable(attempt_callback):
+            attempt_callback(attempt)
         try:
-            return _invoke_with_timeout(executor, arguments, timeout_seconds, tool_name)
+            return _invoke_with_timeout(executor, arguments, timeout_seconds, tool_name), attempt
         except Exception:
             if attempt == max_attempts:
                 raise
