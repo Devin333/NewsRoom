@@ -74,6 +74,8 @@ class BoardWorkflowBase(Generic[ServiceT]):
 
     def __init__(self, service: ServiceT | None = None) -> None:
         self.service = service or self.service_class()
+        # Debug/test convenience only. Production callers should read
+        # workflow_execution from BoardWorkflowResult.metadata.
         self.last_execution: BoardWorkflowExecution | None = None
 
     def run(self, items: list[Any], *, context: AnalysisContext | None = None) -> BoardWorkflowResult:
@@ -84,31 +86,36 @@ class BoardWorkflowBase(Generic[ServiceT]):
             metadata={"configured_stages": list(self.workflow_stages)},
         )
         self.last_execution = execution
+        current_stage_name = "resolve_context"
+        current_stage_started_at = _utc_now()
         try:
-            started = _utc_now()
+            current_stage_name = "resolve_context"
+            current_stage_started_at = _utc_now()
             resolved_context = self.resolve_context(context)
             execution = execution.add_stage(
                 stage_result(
                     "resolve_context",
-                    started_at=started,
+                    started_at=current_stage_started_at,
                     input_count=1 if context is not None else 0,
                     output_count=1,
                 )
             )
 
-            started = _utc_now()
+            current_stage_name = "select_signals"
+            current_stage_started_at = _utc_now()
             selected_signals = self.select_signals(input_items, context=resolved_context)
             execution = execution.add_stage(
                 stage_result(
                     "select_signals",
-                    started_at=started,
+                    started_at=current_stage_started_at,
                     input_count=len(input_items),
                     output_count=len(selected_signals),
                     warnings=[] if selected_signals else ["board workflow selected no signals"],
                 )
             )
 
-            started = _utc_now()
+            current_stage_name = "run_pipeline"
+            current_stage_started_at = _utc_now()
             extraction_results, relation_result, analysis, output = self.run_pipeline(
                 selected_signals,
                 context=resolved_context,
@@ -116,7 +123,7 @@ class BoardWorkflowBase(Generic[ServiceT]):
             execution = execution.add_stage(
                 stage_result(
                     "run_pipeline",
-                    started_at=started,
+                    started_at=current_stage_started_at,
                     input_count=len(selected_signals),
                     output_count=len(extraction_results),
                     metadata={
@@ -126,7 +133,8 @@ class BoardWorkflowBase(Generic[ServiceT]):
                 )
             )
 
-            started = _utc_now()
+            current_stage_name = "build_board_run_result"
+            current_stage_started_at = _utc_now()
             base_result = self.build_board_run_result(
                 output=output,
                 context=resolved_context,
@@ -138,31 +146,33 @@ class BoardWorkflowBase(Generic[ServiceT]):
             execution = execution.add_stage(
                 stage_result(
                     "build_board_run_result",
-                    started_at=started,
+                    started_at=current_stage_started_at,
                     input_count=len(extraction_results),
                     output_count=len(base_result.cards),
                     warnings=[] if base_result.cards else ["board run result has no cards"],
                 )
             )
 
-            started = _utc_now()
+            current_stage_name = "apply_board_specific_policy"
+            current_stage_started_at = _utc_now()
             result = self.apply_board_specific_policy(base_result)
             execution = execution.add_stage(
                 stage_result(
                     "apply_board_specific_policy",
-                    started_at=started,
+                    started_at=current_stage_started_at,
                     input_count=len(base_result.cards),
                     output_count=len(result.cards),
                     warnings=[] if result.cards else ["board policy produced no cards"],
                 )
             )
 
-            started = _utc_now()
+            current_stage_name = "collect_quality_feedback"
+            current_stage_started_at = _utc_now()
             warnings = self.collect_quality_feedback(result)
             execution = execution.add_stage(
                 stage_result(
                     "collect_quality_feedback",
-                    started_at=started,
+                    started_at=current_stage_started_at,
                     input_count=len(result.cards),
                     output_count=len(warnings),
                     warnings=warnings,
@@ -180,11 +190,12 @@ class BoardWorkflowBase(Generic[ServiceT]):
                 rejected_relation_count=len(relation_result.rejected_candidates),
             )
             self._validate_result(result, trace)
-            started = _utc_now()
+            current_stage_name = "return_workflow_result"
+            current_stage_started_at = _utc_now()
             execution = execution.add_stage(
                 stage_result(
                     "return_workflow_result",
-                    started_at=started,
+                    started_at=current_stage_started_at,
                     input_count=len(result.cards),
                     output_count=1,
                 )
@@ -213,8 +224,13 @@ class BoardWorkflowBase(Generic[ServiceT]):
                 },
             )
         except Exception as exc:
-            failed_stage = _first_missing_stage(execution, self.workflow_stages)
-            execution = execution.add_stage(stage_result(failed_stage, started_at=_utc_now(), error=exc)).finish()
+            execution = execution.add_stage(
+                stage_result(
+                    current_stage_name,
+                    started_at=current_stage_started_at,
+                    error=exc,
+                )
+            ).finish()
             self.last_execution = execution
             raise
 
@@ -364,11 +380,6 @@ def _utc_now():
     from datetime import UTC, datetime
 
     return datetime.now(UTC)
-
-
-def _first_missing_stage(execution: BoardWorkflowExecution, configured_stages: tuple[str, ...]) -> str:
-    recorded = {stage.stage_name for stage in execution.stages}
-    return next((stage for stage in configured_stages if stage not in recorded), "unknown")
 
 
 __all__ = ["BoardWorkflowBase", "BoardWorkflowResult", "BoardWorkflowTrace"]

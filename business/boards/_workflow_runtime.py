@@ -13,12 +13,16 @@ class WorkflowStageStatus(str, Enum):
     SUCCESS = "success"
     WARNING = "warning"
     FAILED = "failed"
+    SKIPPED = "skipped"
 
 
 class WorkflowRecoveryAction(str, Enum):
     NONE = "none"
     REVIEW = "review"
     BLOCK = "block"
+    RETRY = "retry"
+    FALLBACK = "fallback"
+    SKIP = "skip"
 
 
 class BoardWorkflowStageResult(PrimitiveModel):
@@ -33,6 +37,9 @@ class BoardWorkflowStageResult(PrimitiveModel):
     error_type: str | None = None
     error_message: str | None = None
     recovery_action: WorkflowRecoveryAction = WorkflowRecoveryAction.NONE
+    quality_checks: list[dict[str, Any]] = Field(default_factory=list)
+    feedback_events: list[dict[str, Any]] = Field(default_factory=list)
+    guard_results: list[dict[str, Any]] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
@@ -88,6 +95,9 @@ def stage_result(
     output_count: int | None = None,
     warnings: list[str] | None = None,
     error: BaseException | None = None,
+    quality_checks: list[dict[str, Any]] | None = None,
+    feedback_events: list[dict[str, Any]] | None = None,
+    guard_results: list[dict[str, Any]] | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> BoardWorkflowStageResult:
     finished_at = datetime.now(UTC)
@@ -106,6 +116,9 @@ def stage_result(
             error_type=type(error).__name__,
             error_message=str(error),
             recovery_action=WorkflowRecoveryAction.BLOCK,
+            quality_checks=list(quality_checks or []),
+            feedback_events=list(feedback_events or []),
+            guard_results=list(guard_results or []),
             metadata=metadata or {},
         )
     status = WorkflowStageStatus.WARNING if warning_values else WorkflowStageStatus.SUCCESS
@@ -120,6 +133,30 @@ def stage_result(
         output_count=output_count,
         warnings=warning_values,
         recovery_action=recovery,
+        quality_checks=list(quality_checks or []),
+        feedback_events=list(feedback_events or []),
+        guard_results=list(guard_results or []),
+        metadata=metadata or {},
+    )
+
+
+def skipped_stage_result(
+    stage_name: str,
+    *,
+    reason: str,
+    started_at: datetime | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> BoardWorkflowStageResult:
+    now = datetime.now(UTC)
+    started = started_at or now
+    return BoardWorkflowStageResult(
+        stage_name=stage_name,
+        status=WorkflowStageStatus.SKIPPED,
+        started_at=started,
+        finished_at=now,
+        duration_ms=max(0.0, (now - started).total_seconds() * 1000.0),
+        warnings=[str(reason)],
+        recovery_action=WorkflowRecoveryAction.SKIP,
         metadata=metadata or {},
     )
 
@@ -129,6 +166,8 @@ def _status_from_stages(stages: list[BoardWorkflowStageResult]) -> WorkflowStage
         return WorkflowStageStatus.FAILED
     if any(stage.status == WorkflowStageStatus.WARNING for stage in stages):
         return WorkflowStageStatus.WARNING
+    if stages and all(stage.status == WorkflowStageStatus.SKIPPED for stage in stages):
+        return WorkflowStageStatus.SKIPPED
     return WorkflowStageStatus.SUCCESS
 
 
@@ -137,5 +176,6 @@ __all__ = [
     "BoardWorkflowStageResult",
     "WorkflowRecoveryAction",
     "WorkflowStageStatus",
+    "skipped_stage_result",
     "stage_result",
 ]

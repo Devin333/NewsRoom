@@ -4,11 +4,8 @@ from dataclasses import dataclass
 
 from business.boards.cross_board.graph_models import CrossBoardPath
 from business.boards.cross_board.regression_guard import guard_cross_board_path
-from business.scoring import (
-    cross_board_path_feature_vector,
-    cross_board_path_scoring_recipe,
-    cross_board_path_scoring_target,
-)
+from business.scoring.adapters.cross_board_path_adapter import cross_board_path_feature_vector, cross_board_path_scoring_target
+from business.scoring.recipes.board_recipes import cross_board_path_scoring_recipe
 from framework.scoring import ScoringContext, ScoringRuntime
 
 
