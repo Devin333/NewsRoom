@@ -1,6 +1,15 @@
-from business.layers.relation.pipeline import RelationPipeline
+from __future__ import annotations
+
+from business.layers.extraction.models import ExtractionResult
+from business.layers.relation.candidate_rules import mention_candidates
 
 
 class MentionLinker:
-    def link(self, signals, extraction_results):
-        return [candidate for candidate in RelationPipeline()._build_candidates(signals, extraction_results) if candidate.relation_type.value in {"mentions", "same_topic"}]
+    def link(self, signals, extraction_results: list[ExtractionResult]):
+        by_signal = {result.signal_id: result for result in extraction_results}
+        candidates = []
+        for signal in signals:
+            extraction = by_signal.get(signal.signal_id)
+            if extraction is not None:
+                candidates.extend(mention_candidates(signal, extraction))
+        return candidates

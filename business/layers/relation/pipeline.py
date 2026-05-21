@@ -52,6 +52,23 @@ class RelationPipelineResult(PrimitiveModel):
 
 
 class RelationPipeline:
+    def __init__(self, *, linkers: list[Any] | None = None) -> None:
+        from business.layers.relation.adopt_linker import AdoptLinker
+        from business.layers.relation.compare_linker import CompareLinker
+        from business.layers.relation.discuss_linker import DiscussLinker
+        from business.layers.relation.implement_linker import ImplementLinker
+        from business.layers.relation.mention_linker import MentionLinker
+        from business.layers.relation.propose_linker import ProposeLinker
+
+        self.linkers = linkers or [
+            MentionLinker(),
+            ProposeLinker(),
+            ImplementLinker(),
+            DiscussLinker(),
+            AdoptLinker(),
+            CompareLinker(),
+        ]
+
     def run(
         self,
         signals: list[Signal],
@@ -118,13 +135,9 @@ class RelationPipeline:
         signals: list[Signal],
         extraction_results: list[ExtractionResult],
     ) -> list[RelationCandidate]:
-        by_signal = {result.signal_id: result for result in extraction_results}
         candidates: list[RelationCandidate] = []
-        for signal in signals:
-            extraction = by_signal.get(signal.signal_id)
-            if extraction is None:
-                continue
-            candidates.extend(self._signal_candidates(signal, extraction))
+        for linker in self.linkers:
+            candidates.extend(linker.link(signals, extraction_results))
         return candidates
 
     def _signal_candidates(self, signal: Signal, extraction: ExtractionResult) -> list[RelationCandidate]:

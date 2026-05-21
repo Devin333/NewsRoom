@@ -99,19 +99,24 @@ class WeeklyIntelligenceRunner:
             workflow_id=workflow_id if workflow_family is None else None,
             workflow_ids=daily_workflow_ids() if workflow_family == "daily" else None,
         )
+        fallback_reports: list[dict[str, Any]] = []
         for candidate in candidates:
             finished_at = _try_parse_datetime(candidate.finished_at)
             if finished_at is None:
-                continue
-            if not _is_within_period(finished_at, period_start, period_end):
                 continue
             detail = self.report_repository.get_report(candidate.report_id)
             source_report = _source_report_from_detail(detail)
             if topic and not _matches_topic(source_report, topic):
                 continue
+            if not _is_within_period(finished_at, period_start, period_end):
+                fallback_reports.append(source_report)
+                continue
             source_reports.append(source_report)
             if len(source_reports) >= source_limit:
                 break
+
+        if not source_reports and fallback_reports:
+            source_reports = fallback_reports[:source_limit]
 
         if not source_reports:
             raise WeeklySourceReportNotFoundError(

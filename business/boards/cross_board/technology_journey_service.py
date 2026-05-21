@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from business.boards.cross_board.models import TechnologyJourney, TechnologyJourneyStage
+from business.boards.cross_board.regression_guard import guard_technology_journey
 from business.foundation import ObjectRef, Relation
 from business.layers.analysis import AnalysisResult
 
@@ -20,7 +21,11 @@ class TechnologyJourneyService:
             ("discusses", "community_discussion", "Community Discussion"),
             ("adopts", "product_adoption", "Product Adoption"),
         ):
-            stage_relations = [relation for relation in related if relation.relation_type.value == relation_type]
+            stage_relations = sorted(
+                [relation for relation in related if relation.relation_type.value == relation_type],
+                key=lambda relation: (relation.confidence.value, relation.relation_id),
+                reverse=True,
+            )
             if not stage_relations:
                 continue
             stages.append(
@@ -35,7 +40,7 @@ class TechnologyJourneyService:
         maturity = next((item for item in (analysis.maturities if analysis else []) if item.technology_ref.object_id == technology_ref.object_id), None)
         trend = next((item for item in (analysis.trends if analysis else []) if item.target_ref.object_id == technology_ref.object_id), None)
         impact = next((item for item in (analysis.impacts if analysis else []) if item.target_ref.object_id == technology_ref.object_id), None)
-        return TechnologyJourney(
+        journey = TechnologyJourney(
             technology_ref=technology_ref,
             technology_name=technology_ref.label or technology_ref.object_id,
             stages=stages,
@@ -44,3 +49,4 @@ class TechnologyJourneyService:
             impact=impact,
             summary=f"{technology_ref.label or technology_ref.object_id} has {len(stages)} journey stage(s).",
         )
+        return journey.model_copy(update={"guard_result": guard_technology_journey(journey, related)})

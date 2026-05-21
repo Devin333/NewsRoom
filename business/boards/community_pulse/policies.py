@@ -3,4 +3,16 @@ from business.foundation import BoardType
 
 
 def community_pulse_policy_profile():
-    return default_board_policy(BoardType.COMMUNITY_PULSE)
+    profile = default_board_policy(BoardType.COMMUNITY_PULSE)
+    parameters = {
+        **dict(profile.parameters),
+        "feature_weights": {
+            "discussion_heat": 0.24,
+            "sentiment_divergence": 0.20,
+            "problem_signal": 0.20,
+            "source_diversity": 0.18,
+            "freshness": 0.18,
+        },
+        "minimum_discussion_heat": 0.4,
+    }
+    return profile.model_copy(update={"parameters": parameters})

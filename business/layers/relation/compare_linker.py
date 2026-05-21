@@ -1,6 +1,9 @@
-from business.layers.relation.pipeline import RelationPipeline
+from __future__ import annotations
+
+from business.layers.extraction.models import ExtractionResult
+from business.layers.relation.candidate_rules import compare_candidates
 
 
 class CompareLinker:
-    def link(self, signals, extraction_results):
-        return [candidate for candidate in RelationPipeline()._build_candidates(signals, extraction_results) if candidate.relation_type.value == "compares"]
+    def link(self, signals, extraction_results: list[ExtractionResult]):
+        return compare_candidates(list(signals), extraction_results)

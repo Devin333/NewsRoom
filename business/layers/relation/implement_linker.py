@@ -1,6 +1,20 @@
-from business.layers.relation.pipeline import RelationPipeline
+from __future__ import annotations
+
+from business.foundation import RelationType
+from business.layers.extraction.models import ExtractionResult
+from business.layers.relation.candidate_rules import claim_predicate_candidates, technology_candidates
 
 
 class ImplementLinker:
-    def link(self, signals, extraction_results):
-        return [candidate for candidate in RelationPipeline()._build_candidates(signals, extraction_results) if candidate.relation_type.value == "implements"]
+    def link(self, signals, extraction_results: list[ExtractionResult]):
+        by_signal = {result.signal_id: result for result in extraction_results}
+        candidates = []
+        for signal in signals:
+            if signal.signal_type.value != "github_project":
+                continue
+            extraction = by_signal.get(signal.signal_id)
+            if extraction is None:
+                continue
+            candidates.extend(technology_candidates(signal, extraction, RelationType.IMPLEMENTS, "ImplementLinker"))
+            candidates.extend(claim_predicate_candidates(signal, extraction, "implements", RelationType.IMPLEMENTS, "ImplementLinker"))
+        return candidates

@@ -66,6 +66,27 @@ class AnalysisResult(PrimitiveModel):
 
 
 class AnalysisPipeline:
+    def __init__(
+        self,
+        *,
+        trend_analyzer: Any | None = None,
+        quality_analyzer: Any | None = None,
+        maturity_analyzer: Any | None = None,
+        impact_analyzer: Any | None = None,
+        radar_analyzer: Any | None = None,
+    ) -> None:
+        from business.layers.analysis.impact_analyzer import ImpactAnalyzer
+        from business.layers.analysis.maturity_analyzer import MaturityAnalyzer
+        from business.layers.analysis.quality_analyzer import QualityAnalyzer
+        from business.layers.analysis.technology_radar import TechnologyRadarAnalyzer
+        from business.layers.analysis.trend_analyzer import TrendAnalyzer
+
+        self.trend_analyzer = trend_analyzer or TrendAnalyzer()
+        self.quality_analyzer = quality_analyzer or QualityAnalyzer()
+        self.maturity_analyzer = maturity_analyzer or MaturityAnalyzer()
+        self.impact_analyzer = impact_analyzer or ImpactAnalyzer()
+        self.radar_analyzer = radar_analyzer or TechnologyRadarAnalyzer()
+
     def run(
         self,
         signals: list[Signal],
@@ -73,11 +94,20 @@ class AnalysisPipeline:
         relations: list[Relation],
         context: Any,
     ) -> AnalysisResult:
-        trends = self._build_trends(signals, extraction_results, relations, context)
-        qualities = self._build_qualities(signals, extraction_results, relations)
-        maturities = self._build_maturities(signals, extraction_results, relations)
-        impacts = self._build_impacts(signals, extraction_results, relations, trends, qualities)
-        radar_items = self._build_radar_items(signals, extraction_results, relations, trends, qualities, maturities, impacts)
+        trends = self.trend_analyzer.analyze(signals, extraction_results, relations, context)
+        qualities = self.quality_analyzer.analyze(signals, extraction_results, relations, context)
+        maturities = self.maturity_analyzer.analyze(signals, extraction_results, relations, context)
+        impacts = self.impact_analyzer.analyze(signals, extraction_results, relations, context, trends=trends, qualities=qualities)
+        radar_items = self.radar_analyzer.analyze(
+            signals,
+            extraction_results,
+            relations,
+            context,
+            trends=trends,
+            qualities=qualities,
+            maturities=maturities,
+            impacts=impacts,
+        )
         return AnalysisResult(
             trends=trends,
             qualities=qualities,
@@ -92,6 +122,15 @@ class AnalysisPipeline:
         )
 
     def _build_trends(
+        self,
+        signals: list[Signal],
+        extraction_results: list[ExtractionResult],
+        relations: list[Relation],
+        context: Any,
+    ) -> list[Trend]:
+        return self.trend_analyzer.analyze(signals, extraction_results, relations, context)
+
+    def _legacy_build_trends(
         self,
         signals: list[Signal],
         extraction_results: list[ExtractionResult],
@@ -122,6 +161,14 @@ class AnalysisPipeline:
         return trends
 
     def _build_qualities(
+        self,
+        signals: list[Signal],
+        extraction_results: list[ExtractionResult],
+        relations: list[Relation],
+    ) -> list[Quality]:
+        return self.quality_analyzer.analyze(signals, extraction_results, relations)
+
+    def _legacy_build_qualities(
         self,
         signals: list[Signal],
         extraction_results: list[ExtractionResult],
@@ -158,6 +205,14 @@ class AnalysisPipeline:
         return qualities
 
     def _build_maturities(
+        self,
+        signals: list[Signal],
+        extraction_results: list[ExtractionResult],
+        relations: list[Relation],
+    ) -> list[Maturity]:
+        return self.maturity_analyzer.analyze(signals, extraction_results, relations)
+
+    def _legacy_build_maturities(
         self,
         signals: list[Signal],
         extraction_results: list[ExtractionResult],
@@ -200,6 +255,16 @@ class AnalysisPipeline:
         trends: list[Trend],
         qualities: list[Quality],
     ) -> list[Impact]:
+        return self.impact_analyzer.analyze(signals, extraction_results, relations, trends=trends, qualities=qualities)
+
+    def _legacy_build_impacts(
+        self,
+        signals: list[Signal],
+        extraction_results: list[ExtractionResult],
+        relations: list[Relation],
+        trends: list[Trend],
+        qualities: list[Quality],
+    ) -> list[Impact]:
         impacts: list[Impact] = []
         trend_map = {trend.target_ref.object_id: trend for trend in trends}
         quality_map = {quality.target_ref.object_id: quality for quality in qualities}
@@ -231,6 +296,26 @@ class AnalysisPipeline:
         return impacts
 
     def _build_radar_items(
+        self,
+        signals: list[Signal],
+        extraction_results: list[ExtractionResult],
+        relations: list[Relation],
+        trends: list[Trend],
+        qualities: list[Quality],
+        maturities: list[Maturity],
+        impacts: list[Impact],
+    ) -> list[TechnologyRadarItem]:
+        return self.radar_analyzer.analyze(
+            signals,
+            extraction_results,
+            relations,
+            trends=trends,
+            qualities=qualities,
+            maturities=maturities,
+            impacts=impacts,
+        )
+
+    def _legacy_build_radar_items(
         self,
         signals: list[Signal],
         extraction_results: list[ExtractionResult],

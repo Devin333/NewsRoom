@@ -15,6 +15,8 @@ from business.foundation import (
     PrimitiveModel,
     Relation,
     RelationType,
+    BusinessQualitySnapshot,
+    BusinessRegressionGuardResult,
     TimeWindow,
     Trend,
 )
@@ -65,6 +67,7 @@ class TechnologyJourney(PrimitiveModel):
     trend: Trend | None = None
     impact: Impact | None = None
     summary: str = ""
+    guard_result: BusinessRegressionGuardResult | None = None
 
 
 class CrossBoardInsight(PrimitiveModel):
@@ -73,6 +76,8 @@ class CrossBoardInsight(PrimitiveModel):
     primary_technology: ObjectRef | None = None
     board_support: dict[str, list[str]] = Field(default_factory=dict)
     evidence_refs: list[str] = Field(default_factory=list)
+    guard_result: BusinessRegressionGuardResult | None = None
+    quality_summary: BusinessQualitySnapshot | None = None
 
 
 class TechnologyRadarRequest(PrimitiveModel):
