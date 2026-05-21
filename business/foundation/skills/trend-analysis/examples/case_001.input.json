@@ -1,0 +1,19 @@
+{
+  "events": [
+    {
+      "event_id": "event-agent-framework-update",
+      "title": "Agent framework adds durable execution and benchmark harness",
+      "summary": "Official release notes, GitHub activity, and two technical blogs describe a durable execution update for an agent framework.",
+      "item_ids": ["official-release", "github-release", "tech-blog-1", "tech-blog-2"],
+      "source_count": 4,
+      "primary_source_count": 2,
+      "community_signal_count": 18,
+      "repo_signal": {
+        "stars_delta": 420,
+        "release_activity": "new minor release and active issue discussion"
+      },
+      "evidence_status": "supported",
+      "impact_hints": ["agent runtime", "developer tooling", "workflow reliability"]
+    }
+  ]
+}

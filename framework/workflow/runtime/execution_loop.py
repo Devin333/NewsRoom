@@ -186,6 +186,9 @@ class WorkflowExecutionLoop:
         if outcome.status == StepStatus.PAUSED:
             self._handle_pause(context, step, outcome)
             return True
+        if outcome.status == StepStatus.SKIPPED:
+            self._handle_skipped(context, step, outcome)
+            return False
         if is_budget_exceeded_outcome(outcome):
             self._handle_budget_exceeded(context, step, outcome)
             return False
@@ -254,6 +257,69 @@ class WorkflowExecutionLoop:
                 WorkflowRuntimeEvent(
                     event_type=WorkflowRuntimeEventType.SUCCEED,
                     reason="terminal_step_completed",
+                    step_id=step.step_id,
+                ),
+            )
+
+    def _handle_skipped(
+        self,
+        context: WorkflowExecutionContext,
+        step: StepSpec,
+        outcome: StepOutcome,
+    ) -> None:
+        context.recorder.emit(
+            "step_skipped",
+            {"step_id": step.step_id, "outputs": sorted(outcome.outputs.keys())},
+            trace_context=context.step_trace_contexts.get(step.step_id),
+        )
+        try:
+            routing_decision = self._routing_engine.decide(
+                context.workflow,
+                step,
+                outcome,
+                buffer=context.buffer,
+                fan_out=True,
+            )
+        except Exception as exc:
+            context.status = workflow_transition(
+                self._state_machine,
+                context.status,
+                WorkflowRuntimeEvent(
+                    event_type=WorkflowRuntimeEventType.FAIL,
+                    reason=str(exc),
+                    step_id=step.step_id,
+                    metadata={
+                        "phase": "routing",
+                        "exception": repr(exc),
+                    },
+                ),
+            )
+            context.error = WorkflowError(
+                error_type=type(exc).__name__,
+                message=str(exc),
+                step_id=step.step_id,
+                details={"phase": "routing"},
+            )
+            context.current_step_ids = []
+            return
+        self._event_bridge.emit_routing_events(
+            context.recorder,
+            routing_decision,
+            trace_context=context.step_trace_contexts.get(step.step_id),
+        )
+        context.current_step_ids = prepend_schedulable_steps(
+            workflow=context.workflow,
+            new_step_ids=routing_decision.target_step_ids,
+            existing_step_ids=context.current_step_ids,
+            step_results=context.step_results,
+        )
+        if not context.current_step_ids:
+            context.status = workflow_transition(
+                self._state_machine,
+                context.status,
+                WorkflowRuntimeEvent(
+                    event_type=WorkflowRuntimeEventType.SUCCEED,
+                    reason="terminal_step_skipped",
                     step_id=step.step_id,
                 ),
             )

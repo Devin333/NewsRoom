@@ -1,0 +1,30 @@
+{
+  "report": {
+    "title": "AI Technical Daily",
+    "audience": "engineering leadership",
+    "date": "2026-05-21",
+    "style": "concise briefing"
+  },
+  "items": [
+    {
+      "item_id": "item-agent-runtime",
+      "title": "Agent framework adds durable execution",
+      "summary": "The release adds durable execution and benchmark harness support for long-running agent workflows.",
+      "url": "https://example.test/agent-runtime",
+      "source_name": "Framework Release Notes",
+      "evidence_status": "supported",
+      "trend_score": 0.84,
+      "why_it_matters": "Durable execution can improve reliability for production agent workflows."
+    },
+    {
+      "item_id": "item-realtime-model",
+      "title": "Realtime speech model released",
+      "summary": "The release adds a realtime speech model for interactive applications.",
+      "url": "https://example.test/realtime-model",
+      "source_name": "Official Blog",
+      "evidence_status": "supported",
+      "trend_score": 0.72,
+      "why_it_matters": "Realtime speech support can unlock lower-latency product interfaces."
+    }
+  ]
+}

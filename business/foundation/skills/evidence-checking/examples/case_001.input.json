@@ -1,0 +1,18 @@
+{
+  "claims": [
+    {
+      "claim_id": "claim-001",
+      "text": "The release adds a realtime speech model for interactive applications.",
+      "citation_source_ids": ["src-openai"]
+    }
+  ],
+  "sources": [
+    {
+      "source_id": "src-openai",
+      "source_name": "OpenAI Blog",
+      "url": "https://example.test/openai-realtime",
+      "published_at": "2026-05-20",
+      "text": "OpenAI released a realtime speech model for interactive applications and published developer guidance."
+    }
+  ]
+}

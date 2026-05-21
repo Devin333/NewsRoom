@@ -1,0 +1,16 @@
+{
+  "reliability_score": 0.96,
+  "source_tier": "primary",
+  "risk_flags": [],
+  "reasoning_summary": "The item is an official publisher announcement with direct product details, an available date, and an identifiable organizational author.",
+  "evidence": [
+    {
+      "field": "source.publisher_type",
+      "observation": "The source is categorized as an official blog."
+    },
+    {
+      "field": "content.published_at",
+      "observation": "The item includes a publication date."
+    }
+  ]
+}

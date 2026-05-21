@@ -9,7 +9,7 @@ from framework.agent.loop.extensions import (
 from framework.agent.loop.judge import OutputJudge
 from framework.agent.loop.loop import AgentLoop
 from framework.agent.loop.observation import ObservationBuilder
-from framework.agent.loop.parser import AgentActionParser, AgentActionParserError
+from framework.agent.loop.parser import AgentActionParser, AgentActionParserError, parse_skill_call
 from framework.agent.loop.planner import AgentPlanner
 from framework.agent.loop.prompt import PromptBuilder
 from framework.agent.loop.runner import AgentRunner

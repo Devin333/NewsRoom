@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EventDeduplicationOutput",
+  "type": "object",
+  "required": ["event_groups"],
+  "properties": {
+    "event_groups": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["event_id", "item_ids", "canonical_item_id", "confidence"],
+        "properties": {
+          "event_id": {"type": "string"},
+          "item_ids": {"type": "array", "items": {"type": "string"}},
+          "canonical_item_id": {"type": "string"},
+          "merge_reason": {"type": "string"},
+          "confidence": {"type": "number", "minimum": 0, "maximum": 1}
+        },
+        "additionalProperties": false
+      }
+    },
+    "duplicate_pairs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["left_item_id", "right_item_id", "same_event", "confidence"],
+        "properties": {
+          "left_item_id": {"type": "string"},
+          "right_item_id": {"type": "string"},
+          "same_event": {"type": "boolean"},
+          "confidence": {"type": "number"},
+          "reason": {"type": "string"}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

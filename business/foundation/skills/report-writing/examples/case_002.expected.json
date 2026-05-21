@@ -1,0 +1,21 @@
+{
+  "markdown_report": "# AI Watchlist Briefing\n\n## Enterprise Automation Claim\n\nA vendor blog claims a broad office automation agent, but the supplied evidence does not include independent benchmarks or secondary coverage. Treat this as a watchlist item rather than a verified trend. [Vendor Blog](https://example.test/vendor-office-agent)\n",
+  "summary": "One enterprise automation claim is worth monitoring, but the evidence is unclear and should not be treated as verified.",
+  "sections": [
+    {
+      "title": "Enterprise Automation Claim",
+      "content": "A vendor blog claims a broad office automation agent, but the supplied evidence does not include independent benchmarks or secondary coverage.",
+      "item_ids": ["item-office-agent-claim"]
+    }
+  ],
+  "citations": [
+    {
+      "item_id": "item-office-agent-claim",
+      "url": "https://example.test/vendor-office-agent",
+      "source_name": "Vendor Blog"
+    }
+  ],
+  "warnings": [
+    "item-office-agent-claim has unclear evidence; avoid presenting it as a verified trend."
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "claims": [
+    {
+      "claim_id": "claim-002",
+      "text": "The benchmark proves the agent framework is the best option for every enterprise workflow.",
+      "citation_source_ids": ["src-bench"]
+    }
+  ],
+  "sources": [
+    {
+      "source_id": "src-bench",
+      "source_name": "Project README",
+      "url": "https://github.com/example/open-agent-bench",
+      "published_at": "2026-05-18",
+      "text": "The benchmark reports higher SWE-bench Lite pass rate for one LangGraph configuration in the included test harness."
+    }
+  ]
+}

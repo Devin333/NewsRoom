@@ -1,0 +1,26 @@
+{
+  "items": [
+    {
+      "id": "openai-realtime",
+      "title": "OpenAI releases a realtime speech model",
+      "summary": "OpenAI announced a realtime speech model for interactive applications.",
+      "source_name": "OpenAI Blog",
+      "published_at": "2026-05-20",
+      "entities": [
+        {"name": "OpenAI", "type": "company"},
+        {"name": "Realtime Speech Model", "type": "model"}
+      ]
+    },
+    {
+      "id": "openai-embedding",
+      "title": "OpenAI updates embedding model for retrieval",
+      "summary": "OpenAI announced a separate embedding model update focused on retrieval quality.",
+      "source_name": "OpenAI Blog",
+      "published_at": "2026-05-20",
+      "entities": [
+        {"name": "OpenAI", "type": "company"},
+        {"name": "Embedding Model", "type": "model"}
+      ]
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SourceReliabilityInput",
+  "type": "object",
+  "required": ["source", "content"],
+  "properties": {
+    "source": {
+      "type": "object",
+      "required": ["name", "url", "publisher_type"],
+      "properties": {
+        "name": {"type": "string"},
+        "url": {"type": "string"},
+        "publisher_type": {
+          "type": "string",
+          "enum": ["official_blog", "research_platform", "github", "news_media", "community", "social", "unknown"]
+        },
+        "known_reputation": {
+          "type": "string",
+          "enum": ["high", "medium", "low", "unknown"],
+          "default": "unknown"
+        }
+      },
+      "additionalProperties": true
+    },
+    "content": {
+      "type": "object",
+      "required": ["title"],
+      "properties": {
+        "title": {"type": "string"},
+        "url": {"type": "string"},
+        "published_at": {"type": "string"},
+        "author": {"type": "string"},
+        "raw_text": {"type": "string"}
+      },
+      "additionalProperties": true
+    },
+    "historical_context": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

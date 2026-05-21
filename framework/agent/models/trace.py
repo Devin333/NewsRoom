@@ -215,6 +215,7 @@ class ParsedActionTrace:
     iteration: int
     action_type: str
     tool_name: str | None = None
+    skill_name: str | None = None
     output_keys: list[str] = field(default_factory=list)
 
     @classmethod
@@ -223,6 +224,7 @@ class ParsedActionTrace:
             iteration=int(payload.get("iteration") or 0),
             action_type=str(payload.get("action_type") or ""),
             tool_name=_optional_text(payload.get("tool_name")),
+            skill_name=_optional_text(payload.get("skill_name")),
             output_keys=[str(item) for item in payload.get("output_keys", [])],
         )
 
@@ -231,6 +233,7 @@ class ParsedActionTrace:
             "iteration": self.iteration,
             "action_type": self.action_type,
             "tool_name": self.tool_name,
+            "skill_name": self.skill_name,
             "output_keys": list(self.output_keys),
         }
 
@@ -562,6 +565,7 @@ class AgentLoopTrace:
             iteration=iteration.iteration,
             action_type=action_type,
             tool_name=tool_name,
+            skill_name=tool_name if action_type == "skill_call" else None,
             output_keys=sorted((output or {}).keys()),
         )
         iteration.parsed_action = trace

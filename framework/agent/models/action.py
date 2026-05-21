@@ -9,6 +9,7 @@ from typing import Any
 class AgentActionType(str, Enum):
     FINAL = "final"
     TOOL_CALL = "tool_call"
+    SKILL_CALL = "skill_call"
     ASK_CLARIFICATION = "ask_clarification"
     DELEGATE = "delegate"
     THINK = "think"

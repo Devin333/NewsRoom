@@ -1,0 +1,29 @@
+{
+  "entities": [
+    {
+      "name": "Anthropic",
+      "normalized_name": "Anthropic",
+      "type": "company",
+      "aliases": [],
+      "evidence_span": "Anthropic launches Claude Sonnet 4.5",
+      "confidence": 0.98
+    },
+    {
+      "name": "Claude Sonnet 4.5",
+      "normalized_name": "Claude Sonnet 4.5",
+      "type": "model",
+      "aliases": [],
+      "evidence_span": "Claude Sonnet 4.5",
+      "confidence": 0.98
+    },
+    {
+      "name": "Claude Sonnet 4.5 launch",
+      "normalized_name": "Claude Sonnet 4.5 launch",
+      "type": "event",
+      "aliases": ["model update"],
+      "evidence_span": "Anthropic announced Claude Sonnet 4.5",
+      "confidence": 0.9
+    }
+  ],
+  "warnings": []
+}

@@ -1,0 +1,15 @@
+{
+  "events": [
+    {
+      "event_id": "event-marketing-agent-claim",
+      "title": "Vendor blog claims a universal autonomous office agent",
+      "summary": "A single marketing post claims broad automation benefits but provides no benchmark, repository, or independent coverage.",
+      "item_ids": ["vendor-blog"],
+      "source_count": 1,
+      "primary_source_count": 1,
+      "community_signal_count": 0,
+      "evidence_status": "unclear",
+      "impact_hints": ["enterprise automation"]
+    }
+  ]
+}

@@ -21,6 +21,7 @@ from framework.workflow.runners.human_review import (
 )
 from framework.workflow.runners.registry import StepRunnerRegistry
 from framework.workflow.runtime.result import StepOutcome
+from framework.workflow.runners.skill_step_runner import SkillStepRunner
 from framework.workflow.runners.base import (
     StepExecutionError,
     StepRunner,  # noqa: F401 - re-exported from framework.workflow
@@ -86,6 +87,7 @@ def build_default_step_runner_registry(
     approval_store: Any | None = None,
     secret_provider: Any | None = None,
     global_budget_tracker: Any | None = None,
+    skill_runner: Any | None = None,
     max_parallel_workers: int = 4,
     max_tool_batch_workers: int = 4,
     available_dependencies: set[str] | None = None,
@@ -113,6 +115,8 @@ def build_default_step_runner_registry(
         dependencies.add("memory_runtime")
     if approval_store is not None:
         dependencies.add("human_review_store")
+    if skill_runner is not None:
+        dependencies.add("SkillRunner")
 
     registry = StepRunnerRegistry(available_dependencies=dependencies)
 
@@ -161,6 +165,8 @@ def build_default_step_runner_registry(
     registry.register(QualityGateStepRunner())
     registry.register(HumanReviewStepRunner())
     registry.register(ArtifactStepRunner(artifact_manager, run_id=run_id))
+    if skill_runner is not None:
+        registry.register(SkillStepRunner(skill_runner=skill_runner))
 
     registry.register(
         SubworkflowStepRunner(

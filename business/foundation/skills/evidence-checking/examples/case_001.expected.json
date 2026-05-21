@@ -1,0 +1,24 @@
+{
+  "claim_results": [
+    {
+      "claim_id": "claim-001",
+      "status": "supported",
+      "supporting_source_ids": ["src-openai"],
+      "contradicting_source_ids": [],
+      "evidence_spans": [
+        {
+          "source_id": "src-openai",
+          "span": "released a realtime speech model for interactive applications",
+          "relation": "supports"
+        }
+      ],
+      "explanation": "The claim matches the source text about a realtime speech model for interactive applications.",
+      "suggested_rewrite": ""
+    }
+  ],
+  "summary": {
+    "supported_count": 1,
+    "contradicted_count": 0,
+    "unclear_count": 0
+  }
+}

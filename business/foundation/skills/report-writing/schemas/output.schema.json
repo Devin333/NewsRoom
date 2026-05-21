@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ReportWritingOutput",
+  "type": "object",
+  "required": ["markdown_report", "summary", "sections", "citations", "warnings"],
+  "properties": {
+    "markdown_report": {"type": "string"},
+    "summary": {"type": "string"},
+    "sections": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["title", "content", "item_ids"],
+        "properties": {
+          "title": {"type": "string"},
+          "content": {"type": "string"},
+          "item_ids": {"type": "array", "items": {"type": "string"}}
+        },
+        "additionalProperties": false
+      }
+    },
+    "citations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["item_id", "url", "source_name"],
+        "properties": {
+          "item_id": {"type": "string"},
+          "url": {"type": "string"},
+          "source_name": {"type": "string"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "warnings": {"type": "array", "items": {"type": "string"}}
+  },
+  "additionalProperties": false
+}

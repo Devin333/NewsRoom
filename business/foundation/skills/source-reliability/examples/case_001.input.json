@@ -1,0 +1,18 @@
+{
+  "source": {
+    "name": "OpenAI Blog",
+    "url": "https://openai.com/blog",
+    "publisher_type": "official_blog",
+    "known_reputation": "high"
+  },
+  "content": {
+    "title": "OpenAI introduces a new realtime model for developers",
+    "url": "https://openai.com/blog/realtime-model",
+    "published_at": "2026-05-20",
+    "author": "OpenAI",
+    "raw_text": "OpenAI announced a new realtime model, described supported modalities, and linked implementation guidance for developers."
+  },
+  "historical_context": {
+    "previous_accuracy": "official product announcements usually match shipped product docs"
+  }
+}

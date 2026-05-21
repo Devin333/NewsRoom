@@ -1,0 +1,11 @@
+{
+  "item": {
+    "id": "item-model-001",
+    "title": "Anthropic launches Claude Sonnet 4.5 for agent coding",
+    "summary": "Anthropic announced Claude Sonnet 4.5, a model update focused on long-running coding agents.",
+    "content": "The launch post says Claude Sonnet 4.5 improves agent coding workflows and tool-use reliability.",
+    "url": "https://example.test/anthropic-claude-sonnet-45",
+    "source_name": "Anthropic Blog",
+    "published_at": "2026-05-19"
+  }
+}

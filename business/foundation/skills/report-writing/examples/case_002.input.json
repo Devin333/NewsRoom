@@ -1,0 +1,20 @@
+{
+  "report": {
+    "title": "AI Watchlist Briefing",
+    "audience": "product strategy",
+    "date": "2026-05-21",
+    "style": "cautious briefing"
+  },
+  "items": [
+    {
+      "item_id": "item-office-agent-claim",
+      "title": "Vendor claims universal office agent",
+      "summary": "A vendor blog claims a broad office automation agent but provides no independent benchmark or secondary coverage.",
+      "url": "https://example.test/vendor-office-agent",
+      "source_name": "Vendor Blog",
+      "evidence_status": "unclear",
+      "trend_score": 0.32,
+      "why_it_matters": "If supported, it could affect enterprise automation, but current evidence is thin."
+    }
+  ]
+}

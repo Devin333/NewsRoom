@@ -1,0 +1,29 @@
+{
+  "markdown_report": "# AI Technical Daily\n\n## Runtime Reliability\n\nAgent framework release notes add durable execution and benchmark harness support for long-running agent workflows. This matters for production reliability. [Framework Release Notes](https://example.test/agent-runtime)\n\n## Realtime Interfaces\n\nAn official release adds a realtime speech model for interactive applications, which may help lower-latency product interfaces. [Official Blog](https://example.test/realtime-model)\n",
+  "summary": "Two supported technical updates stand out: durable execution for agent workflows and a realtime speech model for interactive applications.",
+  "sections": [
+    {
+      "title": "Runtime Reliability",
+      "content": "Agent framework release notes add durable execution and benchmark harness support for long-running agent workflows.",
+      "item_ids": ["item-agent-runtime"]
+    },
+    {
+      "title": "Realtime Interfaces",
+      "content": "An official release adds a realtime speech model for interactive applications.",
+      "item_ids": ["item-realtime-model"]
+    }
+  ],
+  "citations": [
+    {
+      "item_id": "item-agent-runtime",
+      "url": "https://example.test/agent-runtime",
+      "source_name": "Framework Release Notes"
+    },
+    {
+      "item_id": "item-realtime-model",
+      "url": "https://example.test/realtime-model",
+      "source_name": "Official Blog"
+    }
+  ],
+  "warnings": []
+}

@@ -1,0 +1,24 @@
+{
+  "claim_results": [
+    {
+      "claim_id": "claim-002",
+      "status": "unclear",
+      "supporting_source_ids": ["src-bench"],
+      "contradicting_source_ids": [],
+      "evidence_spans": [
+        {
+          "source_id": "src-bench",
+          "span": "higher SWE-bench Lite pass rate for one LangGraph configuration",
+          "relation": "context"
+        }
+      ],
+      "explanation": "The source supports a narrower benchmark result, but not the broad claim that the framework is best for every enterprise workflow.",
+      "suggested_rewrite": "The benchmark reports a higher SWE-bench Lite pass rate for one LangGraph configuration in its test harness."
+    }
+  ],
+  "summary": {
+    "supported_count": 0,
+    "contradicted_count": 0,
+    "unclear_count": 1
+  }
+}

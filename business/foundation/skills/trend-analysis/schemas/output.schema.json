@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TrendAnalysisOutput",
+  "type": "object",
+  "required": ["event_analyses"],
+  "properties": {
+    "event_analyses": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "event_id",
+          "trend_score",
+          "momentum",
+          "novelty",
+          "impact_area",
+          "why_it_matters",
+          "watchlist_recommendation",
+          "reasoning_summary"
+        ],
+        "properties": {
+          "event_id": {"type": "string"},
+          "trend_score": {"type": "number", "minimum": 0, "maximum": 1},
+          "momentum": {"type": "string", "enum": ["low", "medium", "high", "surging"]},
+          "novelty": {"type": "string", "enum": ["incremental", "notable", "novel", "breakthrough_claim"]},
+          "impact_area": {"type": "array", "items": {"type": "string"}},
+          "why_it_matters": {"type": "string"},
+          "watchlist_recommendation": {"type": "string", "enum": ["ignore", "monitor", "track", "escalate"]},
+          "reasoning_summary": {"type": "string"}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

@@ -27,6 +27,13 @@ from framework.agent.models import (
     JudgeVerdict,
     LLMCallArtifact,
 )
+from framework.agent.skill_call import SkillCall
+from framework.agent.skill_context import (
+    AgentSkillRuntime,
+    SkillRunnerProtocol,
+)
+from framework.agent.skill_observation import SkillObservation
+from framework.agent.skill_selection import SkillSelectionPolicy
 from framework.agent.loop.parser import AgentActionParser
 from framework.agent.loop.prompt import PromptBuilder
 from framework.agent.subagents import (
@@ -78,6 +85,10 @@ class AgentLoop:
         memory_runtime: MemoryRuntime | None = None,
         memory_policy: MemoryPolicy | None = None,
         memory_adapter: AgentMemoryAdapter | None = None,
+        skill_registry: Any | None = None,
+        skill_runner: SkillRunnerProtocol | None = None,
+        skill_selection_policy: SkillSelectionPolicy | None = None,
+        agent_skill_runtime: AgentSkillRuntime | None = None,
     ) -> None:
         self._llm_client = llm_client
         self._tool_executor = tool_executor
@@ -90,6 +101,16 @@ class AgentLoop:
         self._memory_runtime = memory_runtime
         self._memory_policy = memory_policy or DEFAULT_AGENT_MEMORY_POLICY
         self._memory_adapter = memory_adapter or AgentMemoryAdapter()
+        if agent_skill_runtime is not None:
+            self._skill_runtime = agent_skill_runtime
+        elif skill_registry is not None and skill_runner is not None:
+            self._skill_runtime = AgentSkillRuntime(
+                registry=skill_registry,
+                runner=skill_runner,
+                selection_policy=skill_selection_policy,
+            )
+        else:
+            self._skill_runtime = None
 
     def run(
         self,
@@ -109,6 +130,7 @@ class AgentLoop:
         events.started()
         feedback: str | None = None
         tool_observations: list[ToolObservation] = []
+        skill_observations: list[SkillObservation] = []
         called_tools: list[str] = []
         last_verdict: JudgeVerdict | None = None
         llm_call_artifacts: list[LLMCallArtifact] = []
@@ -135,6 +157,7 @@ class AgentLoop:
                 inputs=inputs,
                 run_id=effective_run_id,
             )
+            skill_prompt_section = self._skill_prompt_section(agent=agent, inputs=inputs)
 
             request = self._prompt_builder.build(
                 agent,
@@ -143,9 +166,11 @@ class AgentLoop:
                 tool_observations=[
                     _prompt_safe_observation(observation, agent.resolved_tool_policy()).to_dict()
                     for observation in tool_observations
-                ],
+                ]
+                + [observation.to_agent_message() for observation in skill_observations],
                 tools=tools,
                 memory_context=memory_context,
+                skill_prompt_section=skill_prompt_section,
             )
             trace.record_prompt(iteration_trace, request)
             try:
@@ -340,9 +365,9 @@ class AgentLoop:
             parser_errors = 0
             action_trace = trace.record_action(
                 iteration_trace,
-                action_type=_action_type_value(action.action_type),
-                tool_name=action.tool_name,
-                output=action.output,
+                action_type=_parsed_action_type(action),
+                tool_name=_parsed_tool_name(action),
+                output=_parsed_output(action),
             )
             events.action_parsed(
                 iteration=iteration,
@@ -350,6 +375,15 @@ class AgentLoop:
                 tool_name=action_trace.tool_name,
                 output_keys=action_trace.output_keys,
             )
+
+            if isinstance(action, SkillCall):
+                feedback = self._handle_skill_action(
+                    action=action,
+                    agent_run_id=effective_run_id or agent.agent_id,
+                    skill_observations=skill_observations,
+                )
+                trace.finish_iteration(iteration_trace)
+                continue
 
             if action.is_tool_call():
                 tool_result = self._handle_tool_action(
@@ -604,6 +638,30 @@ class AgentLoop:
         if observation.status == ToolStatus.TIMEOUT:
             return observation.result.error_message or "tool call timed out"
         return None
+
+    def _handle_skill_action(
+        self,
+        *,
+        action: SkillCall,
+        agent_run_id: str,
+        skill_observations: list[SkillObservation],
+    ) -> str:
+        if self._skill_runtime is None:
+            observation = SkillObservation(
+                call_id=action.ensure_call_id().call_id or "",
+                skill_name=action.skill_name,
+                status="failed",
+                errors=["Skill runtime is not configured"],
+            )
+        else:
+            observation = self._skill_runtime.execute_call(
+                action,
+                agent_run_id=agent_run_id,
+            )
+        skill_observations.append(observation)
+        if observation.errors:
+            return f"skill observation: {observation.skill_name} {observation.status}: {observation.errors[0]}"
+        return f"skill observation: {observation.skill_name} {observation.status}: {observation.output_summary}"
 
     def _handle_delegate_action(
         self,
@@ -906,6 +964,20 @@ class AgentLoop:
         except Exception:
             return None
         return recall.context_block.content or None
+
+    def _skill_prompt_section(
+        self,
+        *,
+        agent: AgentSpec,
+        inputs: dict[str, Any],
+    ) -> str | None:
+        if self._skill_runtime is None:
+            return None
+        task = _skill_selection_task(agent=agent, inputs=inputs)
+        return self._skill_runtime.build_prompt_section(
+            task,
+            context={"agent_id": agent.agent_id, "inputs": inputs},
+        )
 
     def _normalize_output(
         self,
@@ -1403,6 +1475,16 @@ def _tool_names(tools: list[dict[str, Any]]) -> list[str]:
     return sorted(names)
 
 
+def _skill_selection_task(*, agent: AgentSpec, inputs: dict[str, Any]) -> str:
+    return "\n".join(
+        [
+            agent.goal or "",
+            agent.instructions or "",
+            str(inputs),
+        ]
+    )
+
+
 def _max_tool_calls_per_agent(policy: ToolPolicy) -> int:
     return max(0, int(policy.max_tool_calls_per_agent))
 
@@ -1560,6 +1642,24 @@ def _optional_float(value: Any) -> float | None:
 
 def _action_type_value(action_type: Any) -> str:
     return action_type.value if hasattr(action_type, "value") else str(action_type)
+
+
+def _parsed_action_type(action: AgentAction | SkillCall) -> str:
+    if isinstance(action, SkillCall):
+        return action.type
+    return _action_type_value(action.action_type)
+
+
+def _parsed_tool_name(action: AgentAction | SkillCall) -> str | None:
+    if isinstance(action, SkillCall):
+        return action.skill_name
+    return action.tool_name
+
+
+def _parsed_output(action: AgentAction | SkillCall) -> dict[str, Any] | None:
+    if isinstance(action, SkillCall):
+        return {"skill_name": action.skill_name}
+    return action.output
 
 
 def _run_id_from_inputs(inputs: dict[str, Any]) -> str | None:

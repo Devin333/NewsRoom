@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EntityExtractionOutput",
+  "type": "object",
+  "required": ["entities"],
+  "properties": {
+    "entities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "type", "evidence_span"],
+        "properties": {
+          "name": {"type": "string"},
+          "normalized_name": {"type": "string"},
+          "type": {
+            "type": "string",
+            "enum": ["company", "product", "model", "paper", "repo", "person", "institution", "framework", "metric", "event"]
+          },
+          "aliases": {"type": "array", "items": {"type": "string"}},
+          "evidence_span": {"type": "string"},
+          "confidence": {"type": "number", "minimum": 0, "maximum": 1}
+        },
+        "additionalProperties": false
+      }
+    },
+    "warnings": {"type": "array", "items": {"type": "string"}}
+  },
+  "additionalProperties": false
+}

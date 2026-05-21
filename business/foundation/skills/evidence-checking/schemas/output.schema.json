@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EvidenceCheckingOutput",
+  "type": "object",
+  "required": ["claim_results", "summary"],
+  "properties": {
+    "claim_results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "claim_id",
+          "status",
+          "supporting_source_ids",
+          "contradicting_source_ids",
+          "evidence_spans",
+          "explanation",
+          "suggested_rewrite"
+        ],
+        "properties": {
+          "claim_id": {"type": "string"},
+          "status": {"type": "string", "enum": ["supported", "contradicted", "unclear"]},
+          "supporting_source_ids": {"type": "array", "items": {"type": "string"}},
+          "contradicting_source_ids": {"type": "array", "items": {"type": "string"}},
+          "evidence_spans": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["source_id", "span"],
+              "properties": {
+                "source_id": {"type": "string"},
+                "span": {"type": "string"},
+                "relation": {"type": "string", "enum": ["supports", "contradicts", "context"]}
+              },
+              "additionalProperties": false
+            }
+          },
+          "explanation": {"type": "string"},
+          "suggested_rewrite": {"type": "string"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "summary": {
+      "type": "object",
+      "required": ["supported_count", "contradicted_count", "unclear_count"],
+      "properties": {
+        "supported_count": {"type": "integer", "minimum": 0},
+        "contradicted_count": {"type": "integer", "minimum": 0},
+        "unclear_count": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

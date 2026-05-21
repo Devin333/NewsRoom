@@ -1,0 +1,29 @@
+{
+  "entities": [
+    {
+      "name": "open-agent-bench",
+      "normalized_name": "open-agent-bench",
+      "type": "repo",
+      "aliases": [],
+      "evidence_span": "open-agent-bench repository",
+      "confidence": 0.96
+    },
+    {
+      "name": "LangGraph",
+      "normalized_name": "LangGraph",
+      "type": "framework",
+      "aliases": [],
+      "evidence_span": "LangGraph agent workflows",
+      "confidence": 0.94
+    },
+    {
+      "name": "SWE-bench Lite pass rate",
+      "normalized_name": "SWE-bench Lite pass rate",
+      "type": "metric",
+      "aliases": ["SWE-bench Lite"],
+      "evidence_span": "SWE-bench Lite pass rate",
+      "confidence": 0.9
+    }
+  ],
+  "warnings": []
+}

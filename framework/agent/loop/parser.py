@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import re
 
 from framework.agent.models import AgentAction
+from framework.agent.skill_call import SkillCall, SkillCallParseError
 
 
 class AgentActionParserError(ValueError):
@@ -10,17 +12,23 @@ class AgentActionParserError(ValueError):
 
 
 class AgentActionParser:
-    def parse(self, content: str) -> AgentAction:
+    def parse(self, content: str) -> AgentAction | SkillCall:
         try:
-            payload = json.loads(content)
+            payload = json.loads(_strip_fenced_json(content))
         except json.JSONDecodeError as exc:
             raise AgentActionParserError(f"LLM response is not valid JSON: {exc.msg}") from exc
 
         if not isinstance(payload, dict):
             raise AgentActionParserError("LLM response must be a JSON object")
+        skill_call = parse_skill_call(payload)
+        if skill_call is not None:
+            return skill_call
         return self.parse_json_action(payload)
 
     def parse_json_action(self, payload: dict[str, object]) -> AgentAction:
+        skill_call = parse_skill_call(payload)
+        if skill_call is not None:
+            raise AgentActionParserError("skill_call action is not an AgentAction")
         action_type = payload.get("action_type")
         if action_type is None:
             return AgentAction(action_type="final_output", output=payload)
@@ -79,3 +87,38 @@ class AgentActionParser:
         if not isinstance(output, dict):
             raise AgentActionParserError("final_output action requires object output")
         return AgentAction(action_type=str(action_type), output=output)
+
+
+def parse_skill_call(payload: dict[str, object]) -> SkillCall | None:
+    """
+    Return SkillCall when payload.type == skill_call.
+    Return None for other action types.
+    Raise SkillCallParseError for invalid skill_call payload.
+    """
+    if payload.get("type") != "skill_call":
+        return None
+    if "skill_name" not in payload:
+        raise SkillCallParseError("skill_call payload requires skill_name")
+    arguments = payload.get("arguments", {})
+    if arguments is None:
+        arguments = {}
+    if not isinstance(arguments, dict):
+        raise SkillCallParseError("skill_call arguments must be an object")
+    try:
+        return SkillCall(
+            type="skill_call",
+            skill_name=payload.get("skill_name"),
+            arguments=arguments,
+            call_id=payload.get("call_id"),
+            reason=payload.get("reason"),
+        ).ensure_call_id()
+    except Exception as exc:
+        raise SkillCallParseError(str(exc)) from exc
+
+
+def _strip_fenced_json(content: str) -> str:
+    text = str(content or "").strip()
+    match = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", text, flags=re.DOTALL | re.IGNORECASE)
+    if not match:
+        return text
+    return match.group(1).strip()

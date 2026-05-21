@@ -1,0 +1,14 @@
+{
+  "event_analyses": [
+    {
+      "event_id": "event-marketing-agent-claim",
+      "trend_score": 0.32,
+      "momentum": "low",
+      "novelty": "breakthrough_claim",
+      "impact_area": ["enterprise automation"],
+      "why_it_matters": "If supported, a broad office agent would matter to enterprise automation, but the current evidence is only a single unclear marketing claim.",
+      "watchlist_recommendation": "monitor",
+      "reasoning_summary": "The event has one source, no independent pickup, no repository or benchmark signal, and unclear evidence, so it should not be escalated."
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "source": {
+    "name": "AI Watchers Forum",
+    "url": "https://community.example.test/ai-watchers",
+    "publisher_type": "community",
+    "known_reputation": "unknown"
+  },
+  "content": {
+    "title": "Rumor: a frontier lab is about to replace its flagship model",
+    "raw_text": "A commenter says a friend heard the model is coming soon, but no official link, author, or date is included."
+  }
+}

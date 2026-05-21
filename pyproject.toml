@@ -11,6 +11,7 @@ requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
 authors = [{ name = "NewsRoom" }]
 dependencies = [
+  "jsonschema>=4.0",
   "PyYAML>=6.0.1",
   "pydantic>=2.6",
 ]
@@ -109,6 +110,7 @@ packages = [
   "framework.scoring.recipes",
   "framework.scoring.registry",
   "framework.scoring.runtime",
+  "framework.skills",
   "framework.workers",
   "framework.workers.approval",
   "framework.workers.diagnostics",
@@ -138,6 +140,7 @@ packages = [
   "framework.workflow.runners",
   "framework.workflow.runtime",
   "framework.workflow.scheduling",
+  "framework.workflow.specs",
   "business",
   "business.boards",
   "business.boards.ai_news",

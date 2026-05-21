@@ -30,6 +30,9 @@ def to_jsonable(value: Any) -> Any:
         return format_datetime(value)
     if isinstance(value, Path):
         return value.as_posix()
+    model_dump = getattr(value, "model_dump", None)
+    if callable(model_dump):
+        return to_jsonable(model_dump(mode="json"))
     to_dict = getattr(value, "to_dict", None)
     if callable(to_dict):
         return to_jsonable(to_dict())

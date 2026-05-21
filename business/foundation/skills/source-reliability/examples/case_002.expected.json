@@ -1,0 +1,16 @@
+{
+  "reliability_score": 0.28,
+  "source_tier": "community",
+  "risk_flags": ["missing_author", "missing_date", "community_rumor", "low_evidence"],
+  "reasoning_summary": "The item is a community rumor without an author, publication date, or original supporting source.",
+  "evidence": [
+    {
+      "field": "source.publisher_type",
+      "observation": "The source is categorized as community content."
+    },
+    {
+      "field": "content.raw_text",
+      "observation": "The text describes hearsay and lacks an original citation."
+    }
+  ]
+}

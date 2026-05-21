@@ -18,6 +18,7 @@ class PromptBuilder:
         tool_observations: list[dict[str, Any]] | None = None,
         tools: list[dict[str, Any]] | None = None,
         memory_context: str | None = None,
+        skill_prompt_section: str | None = None,
     ) -> LLMRequest:
         system = agent.system_prompt_template.format(
             role=agent.role,
@@ -30,6 +31,9 @@ class PromptBuilder:
         if memory_context:
             user += "\nMemory context:\n"
             user += memory_context
+        if skill_prompt_section:
+            user += "\n"
+            user += skill_prompt_section
         if tool_observations:
             user += "\nTool observations: "
             user += json.dumps(

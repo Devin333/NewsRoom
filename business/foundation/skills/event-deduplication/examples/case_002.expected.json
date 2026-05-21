@@ -1,0 +1,27 @@
+{
+  "event_groups": [
+    {
+      "event_id": "event-openai-realtime-speech-model",
+      "item_ids": ["openai-realtime"],
+      "canonical_item_id": "openai-realtime",
+      "merge_reason": "The item describes the realtime speech model release.",
+      "confidence": 0.88
+    },
+    {
+      "event_id": "event-openai-embedding-model-update",
+      "item_ids": ["openai-embedding"],
+      "canonical_item_id": "openai-embedding",
+      "merge_reason": "The item describes a separate embedding model update.",
+      "confidence": 0.88
+    }
+  ],
+  "duplicate_pairs": [
+    {
+      "left_item_id": "openai-realtime",
+      "right_item_id": "openai-embedding",
+      "same_event": false,
+      "confidence": 0.91,
+      "reason": "The items share a company and date but describe different model products and different release purposes."
+    }
+  ]
+}

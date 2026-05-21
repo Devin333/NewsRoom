@@ -1,0 +1,20 @@
+{
+  "event_groups": [
+    {
+      "event_id": "event-claude-sonnet-45-launch",
+      "item_ids": ["official-claude-launch", "media-claude-launch"],
+      "canonical_item_id": "official-claude-launch",
+      "merge_reason": "Both items describe the same Anthropic Claude Sonnet 4.5 model launch on the same date, with the media item citing the announcement.",
+      "confidence": 0.94
+    }
+  ],
+  "duplicate_pairs": [
+    {
+      "left_item_id": "official-claude-launch",
+      "right_item_id": "media-claude-launch",
+      "same_event": true,
+      "confidence": 0.94,
+      "reason": "Same company, same model, same launch action, and same publication date."
+    }
+  ]
+}

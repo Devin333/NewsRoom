@@ -637,6 +637,9 @@ def _stable_json_value(value: Any) -> Any:
             str(key): _stable_json_value(item)
             for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
         }
+    model_dump = getattr(value, "model_dump", None)
+    if callable(model_dump):
+        return _stable_json_value(model_dump(mode="json"))
     if isinstance(value, (list, tuple)):
         return [_stable_json_value(item) for item in value]
     if isinstance(value, set):

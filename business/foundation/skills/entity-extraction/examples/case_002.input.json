@@ -1,0 +1,11 @@
+{
+  "item": {
+    "id": "item-repo-001",
+    "title": "GitHub project open-agent-bench adds LangGraph benchmark harness",
+    "summary": "The open-agent-bench repository now reports SWE-bench Lite pass rate for LangGraph agent workflows.",
+    "content": "Maintainers say the repo includes a harness for measuring SWE-bench Lite on multi-step LangGraph agents.",
+    "url": "https://github.com/example/open-agent-bench",
+    "source_name": "GitHub",
+    "published_at": "2026-05-18"
+  }
+}

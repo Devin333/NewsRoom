@@ -8,7 +8,7 @@ from typing import Any
 
 from framework.specs.edge import EdgeCondition, EdgeSpec
 from framework.specs.policy import WorkflowPolicySpec
-from framework.specs.step import StepSpec, StepType
+from framework.specs.step import StepSpec, StepType, normalize_step_payload
 from framework.specs.trigger import WorkflowTriggerSpec
 from framework.specs.validation import (
     ValidationErrorItem,
@@ -125,7 +125,10 @@ class WorkflowSpec:
         object.__setattr__(
             self,
             "steps",
-            [step if isinstance(step, StepSpec) else StepSpec(**step) for step in self.steps],
+            [
+                step if isinstance(step, StepSpec) else StepSpec(**normalize_step_payload(step))
+                for step in self.steps
+            ],
         )
         object.__setattr__(
             self,
@@ -244,6 +247,11 @@ class WorkflowSpec:
                 )
 
         for step in self.steps:
+            if step.step_type == StepType.SKILL:
+                _validate_skill_step(
+                    step,
+                    add_error=add_error,
+                )
             if strict and step.step_type == StepType.HUMAN_REVIEW:
                 has_pause_strategy = (
                     allow_pause_artifact_strategy
@@ -662,6 +670,51 @@ def _human_review_has_pause_artifact_strategy(step: StepSpec) -> bool:
         return True
     policy = step.artifact_policy
     return bool(policy is not None and policy.write_step_output)
+
+
+def _validate_skill_step(step: StepSpec, *, add_error: Any) -> None:
+    skill_name = step.metadata.get("skill") or step.implementation
+    if not isinstance(skill_name, str) or not skill_name.strip():
+        add_error(
+            "skill_step_missing_skill",
+            f"skill step requires skill for step {step.step_id}",
+            step_id=step.step_id,
+            metadata={"field": "skill"},
+        )
+    input_spec = step.metadata.get("input", {})
+    if not isinstance(input_spec, dict):
+        add_error(
+            "skill_step_input_invalid",
+            f"skill step input must be an object for step {step.step_id}",
+            step_id=step.step_id,
+            metadata={"field": "input"},
+        )
+    output_key = step.metadata.get("output_key")
+    if output_key is not None and not isinstance(output_key, str):
+        add_error(
+            "skill_step_output_key_invalid",
+            f"skill step output_key must be a string for step {step.step_id}",
+            step_id=step.step_id,
+            metadata={"field": "output_key"},
+        )
+    timeout_seconds = step.metadata.get("timeout_seconds")
+    if timeout_seconds is not None and (
+        type(timeout_seconds) is not int or timeout_seconds <= 0
+    ):
+        add_error(
+            "skill_step_timeout_invalid",
+            f"skill step timeout_seconds must be a positive integer for step {step.step_id}",
+            step_id=step.step_id,
+            metadata={"field": "timeout_seconds"},
+        )
+    fail_workflow_on_error = step.metadata.get("fail_workflow_on_error", True)
+    if not isinstance(fail_workflow_on_error, bool):
+        add_error(
+            "skill_step_fail_policy_invalid",
+            f"skill step fail_workflow_on_error must be a bool for step {step.step_id}",
+            step_id=step.step_id,
+            metadata={"field": "fail_workflow_on_error"},
+        )
 
 
 def _llm_decide_is_governance_edge(edge: EdgeSpec) -> bool:

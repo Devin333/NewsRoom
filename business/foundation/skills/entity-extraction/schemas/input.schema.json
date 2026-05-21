@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EntityExtractionInput",
+  "type": "object",
+  "required": ["item"],
+  "properties": {
+    "item": {
+      "type": "object",
+      "required": ["title"],
+      "properties": {
+        "id": {"type": "string"},
+        "title": {"type": "string"},
+        "summary": {"type": "string"},
+        "content": {"type": "string"},
+        "url": {"type": "string"},
+        "source_name": {"type": "string"},
+        "published_at": {"type": "string"}
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

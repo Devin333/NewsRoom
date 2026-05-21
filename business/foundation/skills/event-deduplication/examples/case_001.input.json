@@ -1,0 +1,28 @@
+{
+  "items": [
+    {
+      "id": "official-claude-launch",
+      "title": "Anthropic launches Claude Sonnet 4.5",
+      "summary": "Anthropic announced Claude Sonnet 4.5 for coding agents.",
+      "url": "https://example.test/anthropic-launch",
+      "source_name": "Anthropic Blog",
+      "published_at": "2026-05-19",
+      "entities": [
+        {"name": "Anthropic", "type": "company"},
+        {"name": "Claude Sonnet 4.5", "type": "model"}
+      ]
+    },
+    {
+      "id": "media-claude-launch",
+      "title": "New Claude Sonnet 4.5 model targets agentic coding",
+      "summary": "A media report covers Anthropic's Claude Sonnet 4.5 launch and cites the official announcement.",
+      "url": "https://example.test/media-claude",
+      "source_name": "AI News Daily",
+      "published_at": "2026-05-19",
+      "entities": [
+        {"name": "Anthropic", "type": "company"},
+        {"name": "Claude Sonnet 4.5", "type": "model"}
+      ]
+    }
+  ]
+}

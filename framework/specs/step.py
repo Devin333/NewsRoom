@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+import re
 from typing import Any
 
 from framework.specs.policy import (
@@ -40,6 +41,7 @@ class StepType(str, Enum):
     MEMORY_WRITE = "memory_write"
     MEMORY_CONSOLIDATE = "memory_consolidate"
     MEMORY_INDEX = "memory_index"
+    SKILL = "skill"
 
     @classmethod
     def from_value(cls, value: str | StepType) -> "StepType":
@@ -166,6 +168,8 @@ class StepSpec:
             raise WorkflowSpecError(f"inputs must be an object for step {self.step_id}")
         if not isinstance(self.outputs, dict):
             raise WorkflowSpecError(f"outputs must be an object for step {self.step_id}")
+        if self.step_type == StepType.SKILL:
+            _normalize_skill_step_instance(self)
 
     def input_keys(self) -> set[str]:
         return {*self.read_keys, *self.inputs.keys()}
@@ -217,7 +221,137 @@ class StepSpec:
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "StepSpec":
-        return cls(**payload)
+        return cls(**_normalize_step_payload(payload))
+
+
+_TEMPLATE_REF_PATTERN = re.compile(r"^\s*\{\{\s*(?P<key>[^{}]+?)\s*\}\}\s*$")
+
+
+def normalize_step_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Normalize external workflow step aliases into the canonical StepSpec shape."""
+
+    return _normalize_step_payload(payload)
+
+
+def _normalize_step_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(payload)
+    if "step_id" not in normalized and "id" in normalized:
+        normalized["step_id"] = normalized.pop("id")
+    else:
+        normalized.pop("id", None)
+    if "step_type" not in normalized and "type" in normalized:
+        normalized["step_type"] = normalized.pop("type")
+    else:
+        normalized.pop("type", None)
+
+    try:
+        step_type = StepType.from_value(normalized.get("step_type", StepType.FUNCTION))
+    except ValueError:
+        return normalized
+
+    if step_type == StepType.SKILL:
+        _normalize_skill_step_payload(normalized)
+
+    return normalized
+
+
+def _normalize_skill_step_payload(payload: dict[str, Any]) -> None:
+    metadata = dict(payload.get("metadata") or {})
+
+    if "skill" in payload:
+        skill_name = payload.pop("skill")
+        metadata.setdefault("skill", skill_name)
+        payload.setdefault("implementation", str(skill_name or ""))
+
+    if "input" in payload:
+        metadata.setdefault("input", payload.pop("input"))
+    metadata.setdefault("input", {})
+
+    for field_name in (
+        "output_key",
+        "store_full_result",
+        "store_output",
+        "fail_workflow_on_error",
+        "timeout_seconds",
+    ):
+        if field_name in payload:
+            metadata.setdefault(field_name, payload.pop(field_name))
+
+    if "retry" in payload:
+        payload.setdefault("retry", payload.pop("retry"))
+
+    timeout_seconds = metadata.get("timeout_seconds")
+    if _is_positive_int(timeout_seconds) and "timeout" not in payload and "timeout_policy" not in payload:
+        payload["timeout"] = {"timeout_seconds": timeout_seconds}
+
+    step_id = str(payload.get("step_id") or "")
+    read_keys = set(str(key) for key in payload.get("read_keys") or [])
+    read_keys.update(_template_keys(metadata.get("input") or {}))
+    payload["read_keys"] = sorted(read_keys)
+
+    write_keys = set(str(key) for key in payload.get("write_keys") or [])
+    if step_id and metadata.get("store_full_result", True):
+        write_keys.add(f"{step_id}.result")
+    if step_id and metadata.get("store_output", True):
+        write_keys.add(f"{step_id}.output")
+    output_key = metadata.get("output_key")
+    if output_key is not None:
+        write_keys.add(str(output_key))
+    payload["write_keys"] = sorted(write_keys)
+    payload["metadata"] = metadata
+
+
+def _normalize_skill_step_instance(step: StepSpec) -> None:
+    metadata = dict(step.metadata)
+    if not step.implementation and metadata.get("skill") is not None:
+        object.__setattr__(step, "implementation", str(metadata["skill"] or ""))
+    metadata.setdefault("input", {})
+
+    timeout_seconds = metadata.get("timeout_seconds")
+    if _is_positive_int(timeout_seconds) and step.timeout is None and step.timeout_policy.timeout_seconds is None:
+        object.__setattr__(
+            step,
+            "timeout_policy",
+            TimeoutPolicySpec(timeout_seconds=float(timeout_seconds)),
+        )
+
+    read_keys = set(str(key) for key in step.read_keys)
+    read_keys.update(_template_keys(metadata.get("input") or {}))
+    object.__setattr__(step, "read_keys", sorted(read_keys))
+
+    write_keys = set(str(key) for key in step.write_keys)
+    if metadata.get("store_full_result", True):
+        write_keys.add(f"{step.step_id}.result")
+    if metadata.get("store_output", True):
+        write_keys.add(f"{step.step_id}.output")
+    output_key = metadata.get("output_key")
+    if output_key is not None:
+        write_keys.add(str(output_key))
+    object.__setattr__(step, "write_keys", sorted(write_keys))
+    object.__setattr__(step, "metadata", metadata)
+
+
+def _template_keys(value: Any) -> set[str]:
+    if isinstance(value, str):
+        match = _TEMPLATE_REF_PATTERN.match(value)
+        if match is None:
+            return set()
+        return {match.group("key").strip()}
+    if isinstance(value, dict):
+        keys: set[str] = set()
+        for item in value.values():
+            keys.update(_template_keys(item))
+        return keys
+    if isinstance(value, list):
+        keys = set()
+        for item in value:
+            keys.update(_template_keys(item))
+        return keys
+    return set()
+
+
+def _is_positive_int(value: Any) -> bool:
+    return type(value) is int and value > 0
 
 
 def _coerce_policy(owner: Any, field_name: str, model: type) -> None:
@@ -226,4 +360,4 @@ def _coerce_policy(owner: Any, field_name: str, model: type) -> None:
         object.__setattr__(owner, field_name, model(**value))
 
 
-__all__ = ["StepSpec", "StepStatus", "StepType"]
+__all__ = ["StepSpec", "StepStatus", "StepType", "normalize_step_payload"]
