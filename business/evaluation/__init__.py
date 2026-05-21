@@ -1,4 +1,4 @@
-from business.evaluation.evaluator import BusinessRunEvaluator
+from business.evaluation.evaluator import BusinessRunEvaluator, FinalRunLike
 from business.evaluation.memory_metrics import memory_decision_impact, memory_hit_rate, memory_metrics
 from business.evaluation.models import BusinessEvaluationResult, EvaluationMetricResult, RankingEvaluationCase
 from business.evaluation.path_metrics import (
@@ -20,6 +20,7 @@ __all__ = [
     "BusinessEvaluationResult",
     "BusinessRunEvaluator",
     "EvaluationMetricResult",
+    "FinalRunLike",
     "RankingEvaluationCase",
     "contradiction_block_rate",
     "cross_board_path_metrics",

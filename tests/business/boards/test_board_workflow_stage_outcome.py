@@ -74,6 +74,37 @@ def test_workflow_stage_status_supports_skipped() -> None:
     assert execution.to_dict()["stages"][0]["status"] == "skipped"
 
 
+def test_workflow_stage_status_supports_partial_for_success_and_skipped() -> None:
+    success = stage_result("collect", started_at=_now(), output_count=1)
+    skipped = skipped_stage_result("optional_enrichment", reason="optional stage disabled")
+
+    execution = (
+        BoardWorkflowExecution(workflow_id="wf", board_type="ai_news")
+        .add_stage(success)
+        .add_stage(skipped)
+        .finish()
+    )
+
+    assert execution.status == WorkflowStageStatus.PARTIAL
+    assert execution.to_dict()["status"] == "partial"
+
+
+def test_failed_and_warning_stage_statuses_take_precedence_over_partial() -> None:
+    skipped = skipped_stage_result("optional_enrichment", reason="optional stage disabled")
+    warning = stage_result("quality", started_at=_now(), warnings=["weak signal"])
+    failed = stage_result("publish", started_at=_now(), error=RuntimeError("boom"))
+
+    warning_execution = (
+        BoardWorkflowExecution(workflow_id="wf", board_type="ai_news")
+        .add_stage(skipped)
+        .add_stage(warning)
+    )
+    failed_execution = warning_execution.add_stage(failed)
+
+    assert warning_execution.status == WorkflowStageStatus.WARNING
+    assert failed_execution.status == WorkflowStageStatus.FAILED
+
+
 def test_failed_stage_duration_uses_current_stage_start_time() -> None:
     workflow = _SlowFailingWorkflow()
 

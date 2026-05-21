@@ -53,6 +53,14 @@ def test_skill_step_runner_can_resolve_skill_step() -> None:
     assert runner.can_resolve(step) is True
 
 
+def test_skill_step_runner_describes_actual_capability() -> None:
+    runner = SkillStepRunner(FakeSkillRunner(_success_result()))
+
+    assert runner.capability.supports_timeout is False
+    assert runner.capability.supports_retry is False
+    assert runner.describe_capability() == runner.capability.to_dict()
+
+
 def test_skill_step_runner_validate_step_finds_missing_skill() -> None:
     runner = SkillStepRunner(FakeSkillRunner(_success_result()))
     step = StepSpec(step_id="extract_entities", step_type=StepType.SKILL)

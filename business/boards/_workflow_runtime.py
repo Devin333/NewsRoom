@@ -14,6 +14,7 @@ class WorkflowStageStatus(str, Enum):
     WARNING = "warning"
     FAILED = "failed"
     SKIPPED = "skipped"
+    PARTIAL = "partial"
 
 
 class WorkflowRecoveryAction(str, Enum):
@@ -168,6 +169,8 @@ def _status_from_stages(stages: list[BoardWorkflowStageResult]) -> WorkflowStage
         return WorkflowStageStatus.WARNING
     if stages and all(stage.status == WorkflowStageStatus.SKIPPED for stage in stages):
         return WorkflowStageStatus.SKIPPED
+    if any(stage.status == WorkflowStageStatus.SKIPPED for stage in stages):
+        return WorkflowStageStatus.PARTIAL
     return WorkflowStageStatus.SUCCESS
 
 

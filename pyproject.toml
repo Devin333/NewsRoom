@@ -138,6 +138,7 @@ packages = [
   "framework.workflow.operations",
   "framework.workflow.routing",
   "framework.workflow.runners",
+  "framework.workflow.runners.skill",
   "framework.workflow.runtime",
   "framework.workflow.scheduling",
   "framework.workflow.specs",
@@ -203,6 +204,14 @@ packages = [
   "infrastructure.storage.vector",
   "infrastructure.storage.workers",
   "infrastructure.tools",
+]
+
+[tool.setuptools.package-data]
+"business.foundation" = [
+  "skills/**/*.md",
+  "skills/**/*.json",
+  "skills/**/*.yaml",
+  "skills/**/*.yml",
 ]
 
 [tool.pytest.ini_options]

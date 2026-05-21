@@ -1,10 +1,24 @@
 from __future__ import annotations
 
+from typing import Any, Protocol
+
 from business.evaluation.memory_metrics import memory_metrics
 from business.evaluation.models import BusinessEvaluationResult, EvaluationMetricResult, RankingEvaluationCase
 from business.evaluation.path_metrics import cross_board_path_metrics
 from business.evaluation.quality_metrics import quality_metrics
 from business.evaluation.ranking_metrics import ranking_metrics
+
+
+class WorkflowResultLike(Protocol):
+    result: Any
+
+
+class FinalRunLike(Protocol):
+    board_workflow_results: dict[str, WorkflowResultLike]
+    quality_summary: Any
+    feedback_events: list[Any]
+    cross_board_paths: list[Any]
+    metadata: dict[str, Any]
 
 
 class BusinessRunEvaluator:
@@ -50,7 +64,7 @@ class BusinessRunEvaluator:
             metadata={"card_count": len(cards)},
         )
 
-    def evaluate_final_run(self, final_run: object) -> BusinessEvaluationResult:
+    def evaluate_final_run(self, final_run: FinalRunLike) -> BusinessEvaluationResult:
         board_cards = [
             card
             for workflow_result in getattr(final_run, "board_workflow_results", {}).values()
