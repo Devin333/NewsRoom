@@ -148,6 +148,7 @@ packages = [
   "business.boards.cross_board.workflows.weekly_intelligence",
   "business.boards.paper_radar",
   "business.boards.project_radar",
+  "business.evaluation",
   "business.memory",
   "business.scoring",
   "business.scoring.adapters",
