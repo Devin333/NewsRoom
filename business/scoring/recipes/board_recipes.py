@@ -33,6 +33,7 @@ def cross_board_path_scoring_recipe() -> ScoringRecipe:
         recipe_id="cross_board_path_scoring_v1",
         version="1.0",
         target_type="cross_board_path",
+        gates=["block_contradiction", "duplicate_penalty", "required_stages_complete"],
         scorers=["graph_path_score"],
         rankers=["priority"],
         calibrators=["noop"],
@@ -46,6 +47,18 @@ def cross_board_path_scoring_recipe() -> ScoringRecipe:
         channels={
             "coverage": ["stage_completeness", "board_support"],
             "evidence": ["evidence_chain_confidence", "evidence_diversity"],
+        },
+        params={
+            "gate_specs": {
+                "required_stages_complete": {
+                    "action": "block",
+                    "feature": "missing_stage_count",
+                    "operator": "eq",
+                    "threshold": 0.0,
+                    "severity": "error",
+                    "reason": "required cross-board stages are missing",
+                }
+            }
         },
         metadata={"board_type": "cross_board", "source": "business_scoring_recipe"},
     )

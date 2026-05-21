@@ -6,7 +6,11 @@ from business.foundation import build_stable_id
 
 class CrossBoardInsightRanker:
     def rank(self, paths: list[CrossBoardPath]) -> list[CrossBoardInsightCandidate]:
-        candidates = [self._candidate(path) for path in paths if path.evidence_chain is not None and path.guard_result is not None]
+        candidates = [
+            self._candidate(path)
+            for path in paths
+            if path.evidence_chain is not None and path.guard_result is not None and not _is_runtime_blocked(path)
+        ]
         return sorted(candidates, key=lambda candidate: (candidate.score, candidate.confidence), reverse=True)
 
     def _candidate(self, path: CrossBoardPath) -> CrossBoardInsightCandidate:
@@ -29,6 +33,9 @@ class CrossBoardInsightRanker:
                 "board_sequence": path.board_sequence,
                 "blocking_reasons": path.blocking_reasons,
                 "warnings": guard.warnings,
+                "scoring_result": path.metadata.get("scoring_result"),
+                "scoring_recipe_id": path.metadata.get("scoring_recipe_id"),
+                "scoring_blocked": path.metadata.get("scoring_blocked", False),
             },
         )
 
@@ -40,6 +47,10 @@ def _candidate_score(path: CrossBoardPath) -> float:
     warning_penalty = 0.05 if path.guard_result and path.guard_result.warnings else 0.0
     block_penalty = 0.4 if path.blocking_reasons else 0.0
     return round(max(0.0, min(1.0, path.path_score - duplicate_penalty - warning_penalty - block_penalty)), 4)
+
+
+def _is_runtime_blocked(path: CrossBoardPath) -> bool:
+    return bool(path.metadata.get("scoring_blocked")) or bool(path.blocking_reasons)
 
 
 __all__ = ["CrossBoardInsightRanker"]

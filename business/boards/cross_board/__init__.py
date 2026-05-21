@@ -12,6 +12,7 @@ from business.boards.cross_board.graph_models import (
     CrossBoardPathSearchRequest,
     CrossBoardPathSearchResult,
 )
+from business.boards.cross_board.path_scorer import CrossBoardPathScoringService
 from business.boards.cross_board.path_finder import CrossBoardPathFinder
 from business.boards.cross_board.insight_service import CrossBoardInsightService
 from business.boards.cross_board.relation_view_service import RelationViewService
@@ -48,6 +49,7 @@ __all__ = [
     "CrossBoardInsightCandidate",
     "CrossBoardPath",
     "CrossBoardPathFinder",
+    "CrossBoardPathScoringService",
     "CrossBoardPathSearchRequest",
     "CrossBoardPathSearchResult",
     "DAILY_PROFILE_CHOICES",
