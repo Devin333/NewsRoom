@@ -18,6 +18,13 @@ from business.foundation import (
     Score,
     quality_snapshot_from_checks,
 )
+from framework.scoring import (
+    FeatureValue,
+    FeatureVector,
+    ScoringRecipe,
+    ScoringResult,
+    ScoringTarget,
+)
 
 
 @dataclass(frozen=True)
@@ -69,6 +76,112 @@ def enhance_board_cards(
 ) -> list[BoardCard]:
     enhanced = [_enhance_card(card, profile=profile, policy=policy, feature_builder=feature_builder) for card in cards]
     return sorted(enhanced, key=lambda card: (card.score.value, card.confidence.value, card.title), reverse=True)
+
+
+def scoring_recipe_from_board_profile(profile: BoardScoringProfile) -> ScoringRecipe:
+    return ScoringRecipe(
+        recipe_id=f"{profile.board_type.value}_board_scoring_v1",
+        version="1.0",
+        target_type="board_card",
+        scorers=["weighted_linear"],
+        rankers=["priority"],
+        calibrators=["noop"],
+        explainer="template",
+        weights=dict(profile.feature_weights),
+        metadata={
+            "board_type": profile.board_type.value,
+            "focus": profile.focus,
+            "source": "board_scoring_profile_adapter",
+        },
+    )
+
+
+def feature_vector_from_board_card(
+    card: BoardCard,
+    *,
+    features: dict[str, float],
+) -> FeatureVector:
+    evidence_refs = [_source_ref_id(ref) for ref in card.evidence_refs]
+    return FeatureVector(
+        values={
+            str(name): FeatureValue(name=str(name), value=float(value), source="board_card")
+            for name, value in features.items()
+        },
+        evidence_refs=evidence_refs,
+        metadata={
+            "card_id": card.card_id,
+            "board_type": card.board_type.value,
+            "evidence_refs": evidence_refs,
+        },
+    )
+
+
+def scoring_target_from_board_card(card: BoardCard) -> ScoringTarget:
+    return ScoringTarget.from_object(
+        card,
+        target_id=card.card_id,
+        target_type="board_card",
+        metadata={
+            "board_type": card.board_type.value,
+            "primary_object_ref": card.primary_object_ref.model_dump(mode="json"),
+        },
+    )
+
+
+def apply_scoring_result_to_card(
+    card: BoardCard,
+    result: ScoringResult,
+    *,
+    profile: BoardScoringProfile,
+    policy: BusinessPolicyProfile,
+) -> BoardCard:
+    score = Score(
+        value=result.final_score,
+        factors=[
+            {
+                "name": factor.name,
+                "value": factor.value,
+                "weight": factor.weight,
+                "explanation": factor.explanation,
+                "metadata": dict(factor.metadata),
+            }
+            for factor in result.score.factors
+        ],
+        explanation=result.explanation or None,
+    )
+    ranking_features = {
+        **dict(card.ranking_features),
+        "board_focus": profile.focus,
+        "policy_profile_id": policy.profile_id,
+        "scoring_recipe_id": result.recipe_id,
+        "scoring_final_score": result.final_score,
+        "scoring_blocked": result.blocked,
+        "scoring_review_required": result.review_required,
+        "scoring_gates": [gate.to_dict() if hasattr(gate, "to_dict") else dict(gate) for gate in result.gates],
+        **{
+            factor.name: factor.value
+            for factor in result.score.factors
+        },
+    }
+    return card.model_copy(
+        update={
+            "score": score,
+            "ranking_features": ranking_features,
+            "ranking_reason": result.explanation or card.ranking_reason,
+            "metadata": {
+                **dict(card.metadata),
+                "board_focus": profile.focus,
+                "policy_profile_id": policy.profile_id,
+                "policy_profile_version": policy.version,
+                "scoring_runtime": {
+                    "recipe_id": result.recipe_id,
+                    "final_score": result.final_score,
+                    "blocked": result.blocked,
+                    "review_required": result.review_required,
+                },
+            },
+        }
+    )
 
 
 def text_signal_score(card: BoardCard, keywords: tuple[str, ...]) -> float:
@@ -330,6 +443,14 @@ def _card_text(card: BoardCard) -> str:
         " ".join(str(value) for value in card.metadata.values() if isinstance(value, (str, int, float))),
     ]
     return " ".join(parts).casefold()
+
+
+def _source_ref_id(ref: Any) -> str:
+    for attr in ("source_id", "url", "source_url", "external_id", "source_name"):
+        value = getattr(ref, attr, None)
+        if value:
+            return str(value)
+    return str(ref)
 
 
 def _clamp(value: float) -> float:
