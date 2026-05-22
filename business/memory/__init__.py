@@ -1,9 +1,20 @@
 from business.memory.duplicate_detection import estimate_historical_duplicate_score
+from business.memory.adaptive_thresholds import AdaptiveThresholdSet, MemoryPolicyProposal
+from business.memory.consolidation import MemoryConsolidationResult, MemoryConsolidationService, MemoryConsolidationTask
+from business.memory.evaluation import MemoryEvaluationReport, MemoryEvaluationRequest, MemoryEvaluator
 from business.memory.features import build_memory_feature_vector, merge_memory_features
-from business.memory.feedback_memory import estimate_previous_misrank_penalty
+from business.memory.feedback_memory import (
+    FeedbackIngestionResult,
+    FeedbackMemory,
+    FeedbackMemoryService,
+    estimate_previous_misrank_penalty,
+)
 from business.memory.claim_consolidation import ClaimConsolidationAction, ClaimConsolidationResult, ClaimConsolidator
 from business.memory.entity_resolver import EntityCandidate, EntityResolutionResult, EntityResolver
 from business.memory.event_builder import EventBuildCandidate, EventBuildResult, EventBuilder
+from business.memory.graph_memory import GraphMemoryPort, GraphMemoryProjectionResult, GraphMemoryService
+from business.memory.graph_models import GraphEdge, GraphExpansion, GraphNode, GraphPath, GraphQuery
+from business.memory.historical_context import HistoricalContext, HistoricalContextRequest, HistoricalContextService
 from business.memory.intelligence_builder import IntelligenceMemoryBuilder
 from business.memory.intelligence_context import IntelligenceMemoryContext
 from business.memory.intelligence_ingestion import IntelligenceMemoryIngestionResult, IntelligenceMemoryIngestionService
@@ -20,7 +31,10 @@ from business.memory.intelligence_models import (
 from business.memory.intelligence_recall import IntelligenceMemoryRecallService, RecallPlan
 from business.memory.intelligence_reranker import IntelligenceMemoryReranker, MemoryRerankFeatures
 from business.memory.memory_features import MemoryFeatureComputer, MemoryFeatureInput, MemoryRankingFeatures
+from business.memory.memory_metrics import MemoryEvaluationMetrics, MemoryMetric
 from business.memory.models import BusinessMemoryContext, BusinessMemoryHit
+from business.memory.policy_learning import MemoryPolicyLearningService
+from business.memory.preference_learning import PreferenceLearningService
 from business.memory.quality_memory_checks import QualityMemoryCheckResult, QualityMemoryChecker, QualityMemoryIssue
 from business.memory.recall import BusinessMemoryRecallService, BusinessMemorySearchPort
 from business.memory.recall_planner import RecallPlanner
@@ -39,6 +53,7 @@ __all__ = [
     "BusinessMemoryHit",
     "BusinessMemoryRecallService",
     "BusinessMemorySearchPort",
+    "AdaptiveThresholdSet",
     "ClaimConsolidationAction",
     "ClaimConsolidationResult",
     "ClaimConsolidator",
@@ -54,6 +69,20 @@ __all__ = [
     "EventBuilder",
     "EventMemory",
     "EvidenceMemory",
+    "FeedbackIngestionResult",
+    "FeedbackMemory",
+    "FeedbackMemoryService",
+    "GraphEdge",
+    "GraphExpansion",
+    "GraphMemoryPort",
+    "GraphMemoryProjectionResult",
+    "GraphMemoryService",
+    "GraphNode",
+    "GraphPath",
+    "GraphQuery",
+    "HistoricalContext",
+    "HistoricalContextRequest",
+    "HistoricalContextService",
     "IntelligenceMemoryBuilder",
     "IntelligenceMemoryBundle",
     "IntelligenceMemoryContext",
@@ -63,9 +92,20 @@ __all__ = [
     "IntelligenceMemoryReranker",
     "MemoryFeatureComputer",
     "MemoryFeatureInput",
+    "MemoryConsolidationResult",
+    "MemoryConsolidationService",
+    "MemoryConsolidationTask",
+    "MemoryEvaluationMetrics",
+    "MemoryEvaluationReport",
+    "MemoryEvaluationRequest",
+    "MemoryEvaluator",
+    "MemoryMetric",
+    "MemoryPolicyLearningService",
+    "MemoryPolicyProposal",
     "MemoryRankingFeatures",
     "MemoryRerankFeatures",
     "PreferenceMemory",
+    "PreferenceLearningService",
     "QualityMemoryCheckResult",
     "QualityMemoryChecker",
     "QualityMemoryIssue",
