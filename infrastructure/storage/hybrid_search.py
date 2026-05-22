@@ -82,7 +82,6 @@ def _search_result_from_vector(result: VectorSearchResult) -> SearchResult:
         "evidence_item": "evidence",
         "source_chunk": "source_item",
     }.get(result.source_type, result.source_type or "memory")
-    payload = dict(result.payload)
     return SearchResult(
         result_id=result.document_id,
         result_type=result_type,

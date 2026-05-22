@@ -5,7 +5,6 @@ from business.boards._intelligence import (
     relation_strength,
     text_signal_score,
 )
-from business.boards.paper_radar.policies import paper_radar_policy_profile
 from business.foundation import BoardCard, BoardType
 
 
@@ -46,7 +45,6 @@ def paper_radar_features(card: BoardCard) -> dict[str, float]:
 
 
 def rank_paper_card(card: BoardCard):
-    policy = paper_radar_policy_profile()
     features = paper_radar_features(card)
     score = sum(features[name] * PAPER_RADAR_PROFILE.feature_weights[name] for name in PAPER_RADAR_PROFILE.feature_weights)
     reason = f"Paper radar ranking emphasizes method novelty/evaluation/implementation path; score={score:.2f}."

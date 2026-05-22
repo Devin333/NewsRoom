@@ -13,7 +13,6 @@ from business.foundation import (
     Maturity,
     ObjectRef,
     PrimitiveModel,
-    Relation,
     RelationType,
     BusinessQualitySnapshot,
     BusinessRegressionGuardResult,

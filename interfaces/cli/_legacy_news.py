@@ -1,8 +1,9 @@
+# pyright: reportUnsupportedDunderAll=false
 from __future__ import annotations
 
 from interfaces.cli.news import *  # noqa: F403
 from interfaces.cli.news import __all__ as _news_all
-from interfaces.cli.news import build_parser, main, print_json
+from interfaces.cli.news import main
 from interfaces.cli.commands import (
     api as _api_commands,
     approvals as _approval_commands,

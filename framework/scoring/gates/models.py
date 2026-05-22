@@ -138,4 +138,6 @@ def _threshold_value(value: Any) -> float | tuple[float, float] | None:
         return None
     if isinstance(value, (list, tuple)) and len(value) == 2:
         return (float(value[0]), float(value[1]))
+    if isinstance(value, (list, tuple)):
+        raise ValueError("gate threshold range must have exactly two values")
     return float(value)

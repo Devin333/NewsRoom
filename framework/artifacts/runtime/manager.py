@@ -15,7 +15,6 @@ from framework.workflow.runtime.manifest import (
     normalize_legacy_run_manifest,
     register_manifest_artifact,
     register_manifest_artifact_ref,
-    stable_json_dumps,
 )
 
 
@@ -117,7 +116,7 @@ class ArtifactManager:
                 uri=relative_path,
             )
         register_manifest_artifact_ref(manifest, artifact_ref)
-        payload = artifact_ref.to_dict() if hasattr(artifact_ref, "to_dict") else dict(artifact_ref)
+        payload = artifact_ref.to_dict() if isinstance(artifact_ref, ArtifactReference) else dict(artifact_ref)
         append_manifest_artifact_index(manifest, payload)
         manifest["manifest_hash"] = manifest_hash(manifest)
         self.write_json(run_id, "manifest.json", manifest)

@@ -7,7 +7,6 @@ from business.boards._intelligence import (
     relation_strength,
     text_signal_score,
 )
-from business.boards.community_pulse.policies import community_pulse_policy_profile
 from business.foundation import BoardCard, BoardType
 
 
@@ -50,7 +49,6 @@ def community_pulse_features(card: BoardCard) -> dict[str, float]:
 
 
 def rank_community_card(card: BoardCard):
-    policy = community_pulse_policy_profile()
     features = community_pulse_features(card)
     score = sum(features[name] * COMMUNITY_PULSE_PROFILE.feature_weights[name] for name in COMMUNITY_PULSE_PROFILE.feature_weights)
     reason = f"Community pulse ranking emphasizes discussion heat/sentiment/problem signals; score={score:.2f}."

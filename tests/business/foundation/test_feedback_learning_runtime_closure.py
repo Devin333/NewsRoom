@@ -6,7 +6,6 @@ from business.foundation import (
     BusinessFeedbackEvent,
     BusinessQualityCheck,
     PolicyLoader,
-    RegressionGuardRunner,
     activate_policy_candidate,
     build_feedback_events_from_quality,
     build_runtime_quality_closure,

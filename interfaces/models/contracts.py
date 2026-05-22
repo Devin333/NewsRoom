@@ -5,7 +5,6 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from interfaces.models.common import PageResult, Pagination
 
 
 SCHEMA_VERSION = "1.0"

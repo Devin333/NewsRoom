@@ -1,19 +1,19 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable, Protocol
 
+from business.boards.cross_board.daily_intelligence import (
+    AgenticDailyIntelligenceRunner,
+    DailyIntelligenceRunner,
+    run_test_agent_loop,
+    run_test_no_llm,
+)
 from business.boards.cross_board.profiles import (
     PROFILE_LIVE,
     PROFILE_LIVE_OFFLINE,
     daily_agentic_enabled,
 )
-from business.boards.cross_board.workflows.daily_intelligence import (
-    AgenticDailyIntelligenceRunner,
-    DailyIntelligenceRunner,
-)
-from business.boards.cross_board.workflows.daily_intelligence.test_agent_loop import run_test_agent_loop
-from business.boards.cross_board.workflows.daily_intelligence.test_no_llm import run_test_no_llm
 from business.layers.memory.ingestion import MemoryIngestionService
 from framework import RunResult
 from framework.specs import WorkflowStatus
@@ -21,6 +21,11 @@ from framework.specs import WorkflowStatus
 from interfaces.services.board_service import BoardApplicationService
 from interfaces.services.memory_service import memory_ingestion_service_from_env
 from interfaces.services.run_persistence_service import RunPersistenceApplicationService
+
+
+class BoardOutputService(Protocol):
+    def attach_run_board_outputs(self, output: dict[str, Any], *, topic: str) -> None:
+        ...
 
 
 class DailyRunApplicationService:
@@ -31,7 +36,7 @@ class DailyRunApplicationService:
         persistence_service: RunPersistenceApplicationService,
         memory_ingestion_service: MemoryIngestionService | None = None,
         memory_ingestion_service_factory: Callable[[], MemoryIngestionService | None] | None = None,
-        board_service_factory: Callable[[], object] | None = None,
+        board_service_factory: Callable[[], BoardOutputService] | None = None,
         runner_cls_resolver: Callable[[str], Callable] | None = None,
         agentic_runner_cls: Callable | None = None,
         test_no_llm_runner: Callable | None = None,

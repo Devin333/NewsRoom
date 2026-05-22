@@ -1,14 +1,12 @@
 from __future__ import annotations
 
-from collections import Counter, defaultdict
+from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from pydantic import Field
 
 from business.foundation import (
-    BoardType,
-    Confidence,
     Impact,
     ImpactArea,
     Maturity,
@@ -24,7 +22,6 @@ from business.foundation import (
     TimeWindow,
     Trend,
     TrendDirection,
-    build_stable_id,
 )
 from business.foundation.primitives import PrimitiveModel
 from business.layers.extraction.models import ExtractionResult

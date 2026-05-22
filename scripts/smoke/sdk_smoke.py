@@ -6,10 +6,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "sdk" / "python"))
 
-from newsroom_sdk import NewsRoomClient
-
 
 def main() -> int:
+    from newsroom_sdk import NewsRoomClient
+
     client = NewsRoomClient(
         "http://testserver",
         request_func=_request_func,

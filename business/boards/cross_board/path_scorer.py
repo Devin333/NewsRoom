@@ -24,7 +24,10 @@ class CrossBoardPathScoringService:
         context: ScoringContext | None = None,
     ) -> CrossBoardPath:
         recipe = cross_board_path_scoring_recipe()
-        result = self.runtime.score_path(
+        runtime = self.runtime
+        if runtime is None:
+            raise RuntimeError("scoring runtime is not configured")
+        result = runtime.score_path(
             cross_board_path_scoring_target(path),
             features=cross_board_path_feature_vector(path),
             recipe=recipe,

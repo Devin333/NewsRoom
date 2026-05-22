@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import Any
+from typing import Any, cast
 
 from framework.workflow import DataBufferReadPermissionError, StepScopedDataBufferView
 from business.foundation.models.report_output import BlockedReport, FinalReport, render_markdown
@@ -16,7 +16,16 @@ from business.boards.cross_board.workflows.daily_intelligence.quality_result_bui
 )
 from business.boards.cross_board.workflows.daily_intelligence.quality_rewrite import rewrite_report_draft
 from business.memory.intelligence_context import IntelligenceMemoryContext
-from business.memory.intelligence_models import ClaimMemory, EventMemory
+from business.memory.intelligence_models import (
+    ClaimMemory,
+    ClaimStatus,
+    DecisionMemory,
+    EntityMemory,
+    EventMemory,
+    EventType,
+    EvidenceMemory,
+    PreferenceMemory,
+)
 from business.memory.quality_memory_checks import QualityMemoryChecker
 
 
@@ -277,8 +286,9 @@ def _historian_metadata(
     report_metadata = report_draft.get("metadata") if isinstance(report_draft, dict) else None
     if isinstance(report_metadata, dict) and isinstance(report_metadata.get("historian"), dict):
         return dict(report_metadata["historian"])
-    if memory_context and isinstance((memory_context.get("metadata") or {}).get("historian"), dict):
-        return dict((memory_context.get("metadata") or {})["historian"])
+    memory_metadata = memory_context.get("metadata") if memory_context else None
+    if isinstance(memory_metadata, dict) and isinstance(memory_metadata.get("historian"), dict):
+        return dict(memory_metadata["historian"])
     return None
 
 
@@ -290,7 +300,8 @@ def _with_historian_quality_metadata(
         return memory_quality_result
     payload = dict(memory_quality_result)
     metadata = dict(payload.get("metadata") or {})
-    output = historian_metadata.get("output") if isinstance(historian_metadata.get("output"), dict) else {}
+    raw_output = historian_metadata.get("output")
+    output = dict(raw_output) if isinstance(raw_output, dict) else {}
     repeated_claims = list(output.get("repeated_claims") or [])
     contradictions = list(output.get("contradictions") or [])
     metadata["historian"] = historian_metadata
@@ -319,7 +330,7 @@ def _claim_from_payload(payload: dict[str, Any]) -> ClaimMemory:
         claim_id=str(payload.get("claim_id") or payload.get("id") or "memory-claim"),
         run_id=str(payload.get("run_id") or "memory-context"),
         text=str(payload.get("text") or payload.get("claim") or ""),
-        status=str(payload.get("status") or "active"),
+        status=cast(ClaimStatus, str(payload.get("status") or "active")),
         confidence=float(payload.get("confidence") or 0.5),
         evidence_ids=[str(item) for item in payload.get("evidence_ids") or [] if item is not None],
         contradicted_by=[str(item) for item in payload.get("contradicted_by") or [] if item is not None],
@@ -330,7 +341,7 @@ def _claim_from_payload(payload: dict[str, Any]) -> ClaimMemory:
 def _event_from_payload(payload: dict[str, Any]) -> EventMemory:
     return EventMemory(
         event_id=str(payload.get("event_id") or payload.get("id") or "memory-event"),
-        event_type=str(payload.get("event_type") or "general_news"),
+        event_type=cast(EventType, str(payload.get("event_type") or "general_news")),
         title=str(payload.get("title") or ""),
         summary=str(payload.get("summary") or ""),
         run_id=str(payload.get("run_id") or "memory-context"),
@@ -354,10 +365,77 @@ def _has_critical_memory_issue(memory_quality_result: dict[str, Any]) -> bool:
 
 
 class _NoopMemoryQualityRepository:
-    def list_evidence_for_claim(self, claim_id: str):
+    def search_evidence(self, *, query: str, topic: str | None = None, limit: int = 8) -> list[EvidenceMemory]:
         return []
 
-    def find_similar_events(self, event: EventMemory, *, limit: int = 3):
+    def search_claims(self, *, query: str, topic: str | None = None, limit: int = 8) -> list[ClaimMemory]:
+        return []
+
+    def search_entities(self, *, query: str, topic: str | None = None, limit: int = 8) -> list[EntityMemory]:
+        return []
+
+    def search_events(self, *, query: str, topic: str | None = None, limit: int = 8) -> list[EventMemory]:
+        return []
+
+    def search_decisions(self, *, query: str, topic: str | None = None, limit: int = 8) -> list[DecisionMemory]:
+        return []
+
+    def search_preferences(self, *, query: str, topic: str | None = None, limit: int = 8) -> list[PreferenceMemory]:
+        return []
+
+    def get_entity(self, entity_id: str) -> EntityMemory | None:
+        return None
+
+    def find_entity_by_name(self, name: str) -> EntityMemory | None:
+        return None
+
+    def list_entities_by_type(self, entity_type: str, *, limit: int = 20) -> list[EntityMemory]:
+        return []
+
+    def get_claim(self, claim_id: str) -> ClaimMemory | None:
+        return None
+
+    def find_similar_claims(self, claim: ClaimMemory, *, limit: int = 10) -> list[ClaimMemory]:
+        return []
+
+    def list_claims_by_entity(self, entity_id: str, *, limit: int = 20) -> list[ClaimMemory]:
+        return []
+
+    def list_claims_by_topic(self, topic: str, *, limit: int = 20) -> list[ClaimMemory]:
+        return []
+
+    def list_evidence_for_claim(self, claim_id: str) -> list[EvidenceMemory]:
+        return []
+
+    def get_event(self, event_id: str) -> EventMemory | None:
+        return None
+
+    def find_similar_events(self, event: EventMemory, *, limit: int = 10) -> list[EventMemory]:
+        return []
+
+    def list_events_by_entity(self, entity_id: str, *, limit: int = 20) -> list[EventMemory]:
+        return []
+
+    def list_events_by_topic(self, topic: str, *, limit: int = 20) -> list[EventMemory]:
+        return []
+
+    def list_decisions_for_target(
+        self,
+        target_type: str,
+        target_id: str,
+        *,
+        limit: int = 20,
+    ) -> list[DecisionMemory]:
+        return []
+
+    def list_preferences(
+        self,
+        *,
+        owner_type: str,
+        owner_id: str,
+        preference_type: str | None = None,
+        limit: int = 20,
+    ) -> list[PreferenceMemory]:
         return []
 
 

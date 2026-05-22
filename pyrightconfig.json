@@ -1,0 +1,6 @@
+{
+  "extraPaths": ["sdk/python"],
+  "include": ["business", "framework", "infrastructure", "interfaces", "scripts", "sdk/python"],
+  "exclude": ["build", ".tmp", ".newsroom", "**/__pycache__"],
+  "ignore": ["build", "tests"]
+}

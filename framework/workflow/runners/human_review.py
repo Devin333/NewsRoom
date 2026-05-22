@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -420,11 +421,11 @@ class HumanReviewStepRunner:
             request_key = str(
                 step.metadata.get("request_key") or "human_review_request"
             )
-            created_at = human_review_utc_now_iso()
-            checkpoint_id = _optional_metadata_str(step.metadata.get("checkpoint_id"))
+            created_at = utc_now_iso()
+            checkpoint_id = _optional_str(step.metadata.get("checkpoint_id"))
             run_id = (
                 self._run_id
-                or _optional_metadata_str(step.metadata.get("run_id"))
+                or _optional_str(step.metadata.get("run_id"))
                 or "unknown-run"
             )
             request_id = human_review_request_id(
@@ -443,17 +444,17 @@ class HumanReviewStepRunner:
                 step_id=step.step_id,
                 workflow_id=(
                     self._workflow_id
-                    or _optional_metadata_str(step.metadata.get("workflow_id"))
+                    or _optional_str(step.metadata.get("workflow_id"))
                     or "unknown-workflow"
                 ),
                 workflow_version=(
                     self._workflow_version
-                    or _optional_metadata_str(step.metadata.get("workflow_version"))
+                    or _optional_str(step.metadata.get("workflow_version"))
                     or "unknown-version"
                 ),
                 checkpoint_id=checkpoint_id,
                 review_type=str(step.metadata.get("review_type") or "human_review"),
-                required_role=_optional_metadata_str(
+                required_role=_optional_str(
                     step.metadata.get("required_role")
                 ),
                 created_at=created_at,

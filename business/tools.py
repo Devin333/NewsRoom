@@ -17,7 +17,6 @@ from framework.tool import (
 )
 from infrastructure.tools import (
     build_builtin_dangerous_tool_registry,
-    build_builtin_safe_tool_registry,
     build_builtin_tool_registry,
 )
 from infrastructure.external.sources import default_arxiv_connector, default_github_connector

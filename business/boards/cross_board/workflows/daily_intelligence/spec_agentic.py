@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from framework.specs import EdgeSpec, StepSpec, StepType, WorkflowSpec
-from business.boards.cross_board.workflows.daily_intelligence.agent_registry import PROFILE_AGENTIC_LIVE
+from business.boards.cross_board.workflows.daily_intelligence.profiles import PROFILE_AGENTIC_LIVE
 from business.boards.cross_board.workflows.daily_intelligence.agents import (
     ANALYST_AGENT_ID,
     EDITOR_AGENT_ID,

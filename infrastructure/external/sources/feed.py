@@ -10,7 +10,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request
 from xml.etree import ElementTree
 
-from infrastructure.external.sources.models import RawSourceItem, SourceDefinition, SourceError, SourceType
+from infrastructure.external.sources.models import RawSourceItem, SourceDefinition, SourceError
 from infrastructure.external.sources.diagnostics import (
     SourceFetchResponseMetadata,
     attach_response_metadata_to_error,

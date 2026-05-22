@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from business.foundation._primitives import SourceRef
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime

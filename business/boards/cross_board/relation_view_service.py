@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from business.boards.cross_board.models import CrossBoardRelationView, RelationView
 from business.foundation import BoardType, Relation
 
@@ -11,8 +13,8 @@ class RelationViewService:
     def _view(self, relation: Relation) -> CrossBoardRelationView:
         explanation = _explain_relation(relation)
         return CrossBoardRelationView(
-            source_board=_board_from_object(relation.source_ref.object_type.value),
-            target_board=_board_from_object(relation.target_ref.object_type.value),
+            source_board=_board_from_object(_object_type_value(relation.source_ref.object_type)),
+            target_board=_board_from_object(_object_type_value(relation.target_ref.object_type)),
             relation=RelationView(
                 relation_id=relation.relation_id,
                 relation_type=relation.relation_type,
@@ -48,3 +50,7 @@ def _board_from_object(object_type: str) -> BoardType:
     if object_type == "news_item":
         return BoardType.AI_NEWS
     return BoardType.CROSS_BOARD
+
+
+def _object_type_value(value: Any) -> str:
+    return str(value.value) if hasattr(value, "value") else str(value)

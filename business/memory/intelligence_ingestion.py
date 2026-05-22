@@ -1,16 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import Any, cast
 
 from business.memory.intelligence_builder import stable_id
 from business.memory.claim_consolidation import ClaimConsolidator
 from business.memory.entity_resolver import EntityResolver
 from business.memory.event_builder import EventBuilder
 from business.memory.intelligence_builder import IntelligenceMemoryBuilder
-from business.memory.intelligence_models import ClaimHistoryRecord, IntelligenceMemoryBundle
+from business.memory.intelligence_models import ClaimHistoryRecord, ClaimMemory, EventMemory, IntelligenceMemoryBundle
 from business.memory.intelligence_repository import (
-    IntelligenceMemoryMutationRepository,
     IntelligenceMemoryQueryRepository,
     IntelligenceMemoryRepository,
     IntelligenceMemoryVectorIndex,
@@ -87,7 +86,9 @@ class IntelligenceMemoryIngestionService:
     ) -> None:
         self.repository = repository
         self.query_repository = query_repository or (
-            repository if _has_structured_query_methods(repository) else None
+            cast(IntelligenceMemoryQueryRepository, repository)
+            if _has_structured_query_methods(repository)
+            else None
         )
         self.builder = builder or IntelligenceMemoryBuilder()
         self.entity_resolver = entity_resolver or EntityResolver()
@@ -166,23 +167,20 @@ class IntelligenceMemoryIngestionService:
         }
         return final_bundle, metadata
 
-    def _load_existing_claims(self, bundle: IntelligenceMemoryBundle) -> list:
+    def _load_existing_claims(self, bundle: IntelligenceMemoryBundle) -> list[ClaimMemory]:
         if self.query_repository is None:
             return []
-        claims = []
-        if bundle.topic and hasattr(self.query_repository, "list_claims_by_topic"):
+        claims: list[ClaimMemory] = []
+        if bundle.topic:
             claims.extend(self.query_repository.list_claims_by_topic(bundle.topic, limit=50))
         for claim in bundle.claims:
-            if hasattr(self.query_repository, "find_similar_claims"):
-                claims.extend(self.query_repository.find_similar_claims(claim, limit=10))
+            claims.extend(self.query_repository.find_similar_claims(claim, limit=10))
         return _dedupe_claims(claims)
 
-    def _load_existing_events(self, bundle: IntelligenceMemoryBundle) -> list:
+    def _load_existing_events(self, bundle: IntelligenceMemoryBundle) -> list[EventMemory]:
         if self.query_repository is None or not bundle.topic:
             return []
-        if hasattr(self.query_repository, "list_events_by_topic"):
-            return list(self.query_repository.list_events_by_topic(bundle.topic, limit=50))
-        return []
+        return list(self.query_repository.list_events_by_topic(bundle.topic, limit=50))
 
     def _save_bundle(self, bundle: IntelligenceMemoryBundle) -> None:
         if self.repository is None:
@@ -221,8 +219,8 @@ def _empty_counts() -> dict[str, int]:
     }
 
 
-def _dedupe_claims(claims: list) -> list:
-    result = {}
+def _dedupe_claims(claims: list[ClaimMemory]) -> list[ClaimMemory]:
+    result: dict[str, ClaimMemory] = {}
     for claim in claims:
         result[claim.claim_id] = claim
     return list(result.values())

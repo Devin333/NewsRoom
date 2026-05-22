@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from framework.shared.json import to_jsonable
 
-if False:  # pragma: no cover
+if TYPE_CHECKING:
     from framework.scoring.recipes import ScoringRecipe
 
 

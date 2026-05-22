@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import json
-import socket
 import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
 from dataclasses import dataclass
-from typing import Any, Callable, Protocol
+from typing import Any, Protocol
 
 from newsroom_sdk.config import NewsRoomConfig
 from newsroom_sdk.errors import (
@@ -83,8 +82,6 @@ class HttpTransport:
                 )
             return self._urllib_request(method, path, headers=headers, json_body=json, params=params)
         except TimeoutError as exc:
-            raise NewsRoomTimeoutError(str(exc)) from exc
-        except socket.timeout as exc:
             raise NewsRoomTimeoutError(str(exc)) from exc
         except urllib.error.URLError as exc:
             reason = getattr(exc, "reason", exc)

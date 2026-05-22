@@ -12,7 +12,6 @@ from framework.shared.json import to_jsonable as to_json_safe
 from framework.specs import StepStatus, WorkflowStatus
 from framework.workflow.runtime.manifest import (
     REQUIRED_RUN_ARTIFACTS,
-    RUN_MANIFEST_SCHEMA_VERSION,
     RunManifestError,
     manifest_schema_version,
     manifest_step_artifact_key,

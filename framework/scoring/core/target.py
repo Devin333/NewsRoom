@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from collections.abc import Mapping
 from typing import Any
 
 from framework.shared.json import to_jsonable
@@ -134,10 +135,12 @@ def _object_payload(obj: Any) -> dict[str, Any]:
         return dict(obj)
     model_dump = getattr(obj, "model_dump", None)
     if callable(model_dump):
-        return dict(model_dump(mode="json"))
+        payload = model_dump(mode="json")
+        return dict(payload) if isinstance(payload, Mapping) else {}
     to_dict = getattr(obj, "to_dict", None)
     if callable(to_dict):
-        return dict(to_dict())
+        payload = to_dict()
+        return dict(payload) if isinstance(payload, Mapping) else {}
     return {
         name: to_jsonable(value)
         for name, value in vars(obj).items()

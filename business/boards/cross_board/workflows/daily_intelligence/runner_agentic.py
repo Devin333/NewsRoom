@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 from framework import RunResult, WorkflowRunner
 from framework.llm import LLMClient
@@ -29,6 +28,7 @@ from business.boards.cross_board.workflows.daily_intelligence.runtime_assembly i
     apply_daily_source_runtime_assembly,
     build_daily_source_runtime_assembly,
 )
+from business.boards.cross_board.workflows.daily_intelligence.source_collection import DailySourceCollector
 from business.boards.cross_board.workflows.daily_intelligence.agent_registry import (
     build_daily_agent_registry,
     build_daily_agent_runner,
@@ -110,6 +110,7 @@ class AgenticDailyIntelligenceRunner:
             source_rate_limiter=source_rate_limiter,
         )
         apply_daily_source_runtime_assembly(self, self.source_runtime_assembly)
+        self.source_collector: DailySourceCollector = self.source_runtime_assembly.source_collector
         self.llm_client = llm_client
 
     def _function_registry(self, profile: str) -> FunctionStepRegistry:

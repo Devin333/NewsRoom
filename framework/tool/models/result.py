@@ -204,6 +204,7 @@ class ToolResult:
         return replace(self, duration_ms=duration_ms)
 
     def to_dict(self) -> dict[str, Any]:
+        policy_trace = ToolPolicyTrace.from_any(self.policy_trace)
         return {
             "call_id": self.call_id,
             "tool_name": self.tool_name,
@@ -227,7 +228,7 @@ class ToolResult:
             "finished_at": format_datetime(self.finished_at),
             "gate_result": dict(self.gate_result) if self.gate_result is not None else None,
             "policy_trace": (
-                self.policy_trace.to_dict() if self.policy_trace is not None else None
+                policy_trace.to_dict() if policy_trace is not None else None
             ),
             "retry_count": self.retry_count,
             "timeout": self.timeout,

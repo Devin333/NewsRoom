@@ -4,7 +4,6 @@ from pathlib import Path
 from typing import Any
 
 from framework.specs import StepSpec, StepStatus, StepType, WorkflowSpec, WorkflowStatus
-from framework.workflow.buffer import DataBuffer
 from framework.workflow.checkpoint.model import WorkflowCheckpoint
 from framework.workflow.routing import RoutingDecision
 from framework.workflow.runners.base import StepRunnerCapability, StepRunnerSideEffectLevel

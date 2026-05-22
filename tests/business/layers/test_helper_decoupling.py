@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from business.foundation import AnalysisContext, BoardType
-from business.layers.analysis import AnalysisPipeline
 from business.layers.analysis.trend_analyzer import TrendAnalyzer
 from business.layers.extraction import ExtractionPipeline
 from business.layers.extraction.entity_extractor import EntityExtractor

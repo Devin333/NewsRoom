@@ -51,9 +51,9 @@ class SkillPackage(BaseModel):
 
     def manifest(self) -> SkillManifest:
         """Build SkillManifest."""
-        files = sorted(
+        files: list[str] = sorted(
             {
-                self.metadata.entry_file,
+                str(self.metadata.entry_file),
                 *self.prompt_paths,
                 *self.schema_paths,
                 *self.reference_paths,

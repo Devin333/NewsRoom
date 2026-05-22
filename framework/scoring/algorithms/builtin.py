@@ -1,12 +1,27 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Protocol
 
 from framework.scoring.core.context import ScoringContext
 from framework.scoring.core.models import ScoreBundle, ScoreFactor, clamp_score, normalize_weights
 from framework.scoring.core.target import ScoringTarget
 from framework.scoring.features import FeatureVector
 from framework.scoring.recipes import ScoringRecipe
+
+
+class ScoringAlgorithmProtocol(Protocol):
+    @property
+    def scorer_id(self) -> str: ...
+
+    def score(
+        self,
+        *,
+        target: ScoringTarget,
+        features: FeatureVector,
+        recipe: ScoringRecipe,
+        context: ScoringContext,
+    ) -> ScoreBundle: ...
 
 
 @dataclass(frozen=True)
@@ -211,7 +226,7 @@ class GraphPathScoringAlgorithm:
 @dataclass(frozen=True)
 class CompositeScoringAlgorithm:
     algorithm_id: str = "composite"
-    algorithms: tuple[object, ...] = ()
+    algorithms: tuple[ScoringAlgorithmProtocol, ...] = ()
     weights: dict[str, float] | None = None
 
     @property

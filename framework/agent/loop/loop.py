@@ -312,8 +312,9 @@ class AgentLoop:
                 router_event_count=llm_trace.router_event_count,
             )
 
+            response_content = response.content or ""
             try:
-                action = self._action_parser.parse(response.content)
+                action = self._action_parser.parse(response_content)
             except Exception as exc:
                 parser_errors += 1
                 metrics.parser_errors += 1
@@ -321,7 +322,7 @@ class AgentLoop:
                 parser_error = trace.record_parser_error(
                     iteration_trace,
                     exc=exc,
-                    content=response.content,
+                    content=response_content,
                     max_preview_chars=agent.loop_policy.max_trace_preview_chars,
                 )
                 last_verdict = JudgeVerdict(

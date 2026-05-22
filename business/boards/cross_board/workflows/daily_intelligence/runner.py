@@ -37,7 +37,6 @@ from business.boards.cross_board.workflows.daily_intelligence.profiles import (
 )
 from business.boards.cross_board.workflows.daily_intelligence.artifact_publisher import DailyIntelligenceArtifactPublisher
 from business.boards.cross_board.workflows.daily_intelligence.registry import build_daily_intelligence_registry
-from business.boards.cross_board.workflows.daily_intelligence.report_writer import ReportWriter
 from business.boards.cross_board.workflows.daily_intelligence.routing_predicates import (
     build_daily_intelligence_routing_predicate_registry,
 )

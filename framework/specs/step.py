@@ -207,9 +207,7 @@ class StepSpec:
             "lineage_policy": (
                 self.lineage_policy.to_dict() if self.lineage_policy is not None else None
             ),
-            "runtime_quality": (
-                self.runtime_quality.to_dict() if self.runtime_quality is not None else None
-            ),
+            "runtime_quality": _runtime_quality_to_dict(self.runtime_quality),
             "idempotent": self.idempotent,
             "cacheable": self.cacheable,
             "client_facing": self.client_facing,
@@ -312,7 +310,12 @@ def _normalize_skill_step_instance(step: StepSpec) -> None:
     metadata.setdefault("input", {})
 
     timeout_seconds = metadata.get("timeout_seconds")
-    if _is_positive_int(timeout_seconds) and step.timeout is None and step.timeout_policy.timeout_seconds is None:
+    if (
+        isinstance(timeout_seconds, int)
+        and timeout_seconds > 0
+        and step.timeout is None
+        and step.timeout_policy.timeout_seconds is None
+    ):
         object.__setattr__(
             step,
             "timeout_policy",
@@ -356,6 +359,14 @@ def _template_keys(value: Any) -> set[str]:
 
 def _is_positive_int(value: Any) -> bool:
     return type(value) is int and value > 0
+
+
+def _runtime_quality_to_dict(value: RuntimeQualityPolicySpec | dict[str, Any] | None) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    if isinstance(value, RuntimeQualityPolicySpec):
+        return value.to_dict()
+    return dict(value)
 
 
 def _coerce_policy(owner: Any, field_name: str, model: type) -> None:

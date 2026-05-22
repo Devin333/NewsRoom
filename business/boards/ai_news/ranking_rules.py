@@ -6,7 +6,6 @@ from business.boards._intelligence import (
     source_authority_strength,
     text_signal_score,
 )
-from business.boards.ai_news.policies import ai_news_policy_profile
 from business.foundation import BoardCard, BoardType
 
 
@@ -50,7 +49,6 @@ def ai_news_features(card: BoardCard) -> dict[str, float]:
 
 
 def rank_ai_news_card(card: BoardCard):
-    policy = ai_news_policy_profile()
     features = ai_news_features(card)
     score = sum(features[name] * AI_NEWS_PROFILE.feature_weights[name] for name in AI_NEWS_PROFILE.feature_weights)
     reason = f"AI news ranking emphasizes release/adoption/vendor authority; score={score:.2f}."

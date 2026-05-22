@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from business.boards._intelligence import (
     apply_scoring_result_to_card,
@@ -10,7 +10,7 @@ from business.boards._intelligence import (
 from business.foundation import BoardCard, BusinessPolicyProfile
 from framework.scoring import FeatureVector, ScoringResult, ScoringTarget
 
-if False:  # pragma: no cover
+if TYPE_CHECKING:
     from business.boards._intelligence import BoardScoringProfile
 
 

@@ -65,6 +65,11 @@ class GateRunner:
     ) -> bool:
         if value is None or threshold is None:
             return False
+        if isinstance(threshold, tuple):
+            if operator != "between":
+                return False
+            lower, upper = threshold
+            return float(lower) <= float(value) <= float(upper)
         numeric = float(value)
         if operator == "eq":
             return numeric == float(threshold)
@@ -79,10 +84,7 @@ class GateRunner:
         if operator == "gte":
             return numeric >= float(threshold)
         if operator == "between":
-            if not isinstance(threshold, tuple):
-                return False
-            lower, upper = threshold
-            return float(lower) <= numeric <= float(upper)
+            return False
         raise ValueError(f"unsupported gate operator: {operator}")
 
     def _observed(self, gate: GateSpec, features: FeatureVector) -> dict[str, Any]:

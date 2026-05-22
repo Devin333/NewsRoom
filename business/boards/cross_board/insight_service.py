@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from business.boards.cross_board.models import CrossBoardInsight
 from business.boards.cross_board.regression_guard import guard_cross_board_insight
 from business.boards.cross_board.relation_view_service import RelationViewService
@@ -19,7 +21,7 @@ class CrossBoardInsightService:
                 board_support.setdefault(view.source_board.value, []).append(view.relation.relation_id)
                 board_support.setdefault(view.target_board.value, []).append(view.relation.relation_id)
             primary_technology = next(
-                (ref for ref in insight.related_object_refs if ref.object_type.value == "technology"),
+                (ref for ref in insight.related_object_refs if _object_type_value(ref.object_type) == "technology"),
                 None,
             )
             confidence = insight.confidence.value if insight.confidence else 0.0
@@ -85,3 +87,7 @@ def _missing_stage_count(relation_views) -> int:
     if highest < 0:
         return 0
     return len(set(order[: highest + 1]) - seen)
+
+
+def _object_type_value(value: Any) -> str:
+    return str(value.value) if hasattr(value, "value") else str(value)

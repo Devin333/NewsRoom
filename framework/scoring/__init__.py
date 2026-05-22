@@ -74,7 +74,7 @@ for _legacy_name, _module_name in _COMPAT_MODULE_ALIASES.items():
     _sys.modules[f"{__name__}.{_legacy_name}"] = _module
     globals()[_legacy_name] = _module
 
-del _COMPAT_MODULE_ALIASES, _import_module, _legacy_name, _module, _module_name, _sys
+del _COMPAT_MODULE_ALIASES, _import_module, _sys
 
 __all__ = [
     "BayesianScorer",

@@ -6,7 +6,6 @@ from typing import Any
 from pydantic import Field
 
 from business.foundation import (
-    Claim,
     Confidence,
     Entity,
     ObjectRef,
@@ -14,7 +13,6 @@ from business.foundation import (
     RelationDirection,
     RelationType,
     Signal,
-    Technology,
     build_stable_id,
 )
 from business.layers.extraction.models import ExtractionResult

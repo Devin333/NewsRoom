@@ -15,7 +15,7 @@ from business.memory.intelligence_repository import (
     IntelligenceMemoryRepository,
     IntelligenceMemoryVectorIndex,
 )
-from framework.memory import MemoryKind, MemoryRecord, MemoryRuntime, MemoryScope, MemoryWriteMode
+from framework.memory import MemoryKind, MemoryRecord, MemoryScope, MemoryWriteMode
 
 
 REPORT_SECTIONS_COLLECTION = "report_sections"

@@ -79,3 +79,9 @@ exclude = [
 testpaths = ["tests"]
 pythonpath = [".", "sdk/python"]
 addopts = ["--import-mode=importlib"]
+
+[tool.pyright]
+extraPaths = ["sdk/python"]
+
+[tool.ruff.lint.per-file-ignores]
+"**/__init__.py" = ["F401", "F403"]

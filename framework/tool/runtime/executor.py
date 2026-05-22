@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from datetime import UTC, datetime
@@ -451,15 +452,24 @@ def _execution_record(
         span_id=f"tool:{observation.call.call_id}" if trace_context is not None else None,
         parent_span_id=trace_context.span_id if trace_context is not None else None,
         gate_result=observation.result.gate_result,
-        policy_trace=(
-            observation.result.policy_trace.to_dict()
-            if observation.result.policy_trace is not None
-            else None
-        ),
+        policy_trace=_tool_policy_trace_to_dict(observation.result.policy_trace),
         error_envelope=observation.result.error_envelope,
         retry_count=observation.result.retry_count,
         timeout=observation.result.timeout,
-    )
+)
+
+
+def _tool_policy_trace_to_dict(policy_trace: Any) -> dict[str, Any] | None:
+    if policy_trace is None:
+        return None
+    to_dict = getattr(policy_trace, "to_dict", None)
+    if callable(to_dict):
+        payload = to_dict()
+        if isinstance(payload, Mapping):
+            return {str(key): value for key, value in payload.items()}
+    if isinstance(policy_trace, Mapping):
+        return {str(key): value for key, value in policy_trace.items()}
+    return None
 
 
 def _dangerous_gate(definition: Any, policy: ToolPolicy) -> ToolResult | None:

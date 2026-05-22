@@ -1,4 +1,3 @@
-from infrastructure.storage.records import ReportDetailRecord, ReportSummaryRecord
 from infrastructure.storage.repository import LocalJsonPersistenceAdapter, repository_from_env
 
 

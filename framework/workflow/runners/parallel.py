@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from datetime import UTC, datetime
 from hashlib import sha256

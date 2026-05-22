@@ -4,7 +4,6 @@ from interfaces.cli.news import main
 from framework.specs import WorkflowStatus
 from interfaces.cli.commands import dev as dev_commands
 from interfaces.cli.commands import run as run_commands
-from business.boards.cross_board.workflows.daily_intelligence.profiles import LEGACY_DAILY_WORKFLOW_ID
 from interfaces.services.diagnose_service import DiagnoseCheck, DiagnoseResult
 from interfaces.services.run_service import LiveSmokeResult
 
@@ -243,7 +242,6 @@ def test_news_cli_run_daily_accepts_agentic_profile(monkeypatch, tmp_path, capsy
 
 
 def test_news_cli_run_live_smoke_json_output(monkeypatch, tmp_path, capsys) -> None:
-    import interfaces.cli.news as news_cli
 
     class FakeRunApplicationService:
         def __init__(self, artifact_root):
@@ -291,7 +289,6 @@ def test_news_cli_run_live_smoke_json_output(monkeypatch, tmp_path, capsys) -> N
 
 
 def test_news_cli_run_live_smoke_fail_if_unready_returns_failure(monkeypatch, tmp_path, capsys) -> None:
-    import interfaces.cli.news as news_cli
 
     class FakeRunApplicationService:
         def __init__(self, artifact_root):

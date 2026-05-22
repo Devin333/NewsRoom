@@ -40,7 +40,10 @@ class BoardScoringService:
         features, memory_used = self._features_with_memory(card, profile=profile, base_features=base_features)
         if memory_used:
             recipe = _recipe_with_memory_weight(recipe, features)
-        result = self.runtime.score_object(
+        runtime = self.runtime
+        if runtime is None:
+            raise RuntimeError("scoring runtime is not configured")
+        result = runtime.score_object(
             board_card_scoring_target(card),
             features=features,
             recipe=recipe,

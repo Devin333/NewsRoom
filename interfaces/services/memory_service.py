@@ -8,7 +8,6 @@ from typing import Any, Mapping, Protocol
 from business.layers.memory.ingestion import (
     MemoryIngestionResult,
     MemoryIngestionService,
-    MemoryIndexDocument,
 )
 from business.memory.intelligence_repository import IntelligenceMemoryRepository, IntelligenceMemoryVectorIndex
 from interfaces.services.artifact_service import ArtifactInspectionService
@@ -189,7 +188,10 @@ class MemoryApplicationService:
         if evidence_bundle is not None:
             output["evidence_bundle"] = evidence_bundle
         resolved_topic = topic or _request_topic(request)
-        ingestion = self.ingestion_service.ingest_run_output(
+        ingestion_service = self.ingestion_service
+        if ingestion_service is None:
+            raise ValueError("ingestion_service is required for memory reindex")
+        ingestion = ingestion_service.ingest_run_output(
             output,
             run_id=run_id,
             report_id=f"{run_id}:final",
@@ -301,7 +303,7 @@ def _build_intelligence_repository_from_env(
 def _build_vector_index_from_env(
     *,
     env: Mapping[str, str] | None = None,
-) -> VectorMemoryStore | IntelligenceMemoryVectorIndex | None:
+) -> VectorMemoryStore | None:
     values = env if env is not None else os.environ
     if values.get("NEWS_VECTOR_MEMORY_ENABLED", "").lower() not in TRUE_VALUES:
         return None

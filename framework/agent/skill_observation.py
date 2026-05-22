@@ -131,7 +131,8 @@ def _model_to_dict(value: Any) -> dict[str, Any]:
         return dict(value)
     model_dump = getattr(value, "model_dump", None)
     if callable(model_dump):
-        return dict(model_dump(mode="json"))
+        payload = model_dump(mode="json")
+        return dict(payload) if isinstance(payload, dict) else {}
     to_dict = getattr(value, "to_dict", None)
     if callable(to_dict):
         payload = to_dict()

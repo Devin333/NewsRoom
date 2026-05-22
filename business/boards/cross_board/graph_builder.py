@@ -4,7 +4,7 @@ from typing import Any, Iterable
 
 from business.boards.cross_board.graph_models import CrossBoardGraph, CrossBoardGraphEdge, CrossBoardGraphNode
 from business.boards.cross_board.regression_guard import board_for_stage_relation, stage_for_relation_type
-from business.foundation import BoardType, ObjectRef, Relation, Signal, build_stable_id
+from business.foundation import ObjectRef, Relation, Signal, build_stable_id
 
 
 class CrossBoardGraphBuilder:
@@ -105,7 +105,11 @@ def _technology_refs(extraction_results: Iterable[Any], relations: list[Relation
 
 
 def _node_key(ref: ObjectRef) -> str:
-    return build_stable_id("cross_node", ref.object_type.value if hasattr(ref.object_type, "value") else str(ref.object_type), ref.object_id)
+    return build_stable_id("cross_node", _object_type_value(ref.object_type), ref.object_id)
+
+
+def _object_type_value(value: Any) -> str:
+    return str(value.value) if hasattr(value, "value") else str(value)
 
 
 __all__ = ["CrossBoardGraphBuilder"]

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from business.boards.cross_board.evidence_chain import CrossBoardEvidenceChainBuilder
 from business.boards.cross_board.graph_models import CrossBoardGraph, CrossBoardPath, CrossBoardPathSearchRequest, CrossBoardPathSearchResult
 from business.boards.cross_board.path_scorer import CrossBoardPathScoringService
@@ -64,7 +66,7 @@ class CrossBoardPathFinder:
 def _technology_refs(graph: CrossBoardGraph) -> list[ObjectRef]:
     refs: dict[str, ObjectRef] = {}
     for node in graph.nodes:
-        object_type = node.object_ref.object_type.value if hasattr(node.object_ref.object_type, "value") else str(node.object_ref.object_type)
+        object_type = _object_type_value(node.object_ref.object_type)
         if object_type == "technology":
             refs[node.object_ref.object_id] = node.object_ref
     return sorted(refs.values(), key=lambda ref: ref.object_id)
@@ -94,6 +96,10 @@ def _dedupe_nodes(nodes):
         seen.add(node.node_id)
         result.append(node)
     return result
+
+
+def _object_type_value(value: Any) -> str:
+    return str(value.value) if hasattr(value, "value") else str(value)
 
 
 __all__ = ["CrossBoardPathFinder"]

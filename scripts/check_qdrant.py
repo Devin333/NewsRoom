@@ -47,7 +47,7 @@ def main() -> int:
         return 0
 
     try:
-        client = QdrantClient(url=url, timeout=_timeout_seconds())
+        client = QdrantClient(url=url, timeout=int(_timeout_seconds()))
         collections = _collections_from_env()
         collection_statuses = [
             {

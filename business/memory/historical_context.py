@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 from business.memory.graph_models import GraphExpansion
 from business.memory.intelligence_context import IntelligenceMemoryContext
-from business.memory.intelligence_models import ClaimMemory, EntityMemory, EventMemory, EvidenceMemory
+from business.memory.intelligence_models import ClaimMemory, EntityMemory, EventMemory, EventType, EvidenceMemory
 
 
 @dataclass(frozen=True)
@@ -212,7 +212,7 @@ def _unresolved_questions(context: IntelligenceMemoryContext) -> list[str]:
 def _event_from_timeline_item(item: Any) -> EventMemory:
     return EventMemory(
         event_id=str(item.event_id),
-        event_type=str(item.event_type),
+        event_type=cast(EventType, str(item.event_type)),
         title=str(item.title),
         summary=str(item.summary),
         run_id="timeline",

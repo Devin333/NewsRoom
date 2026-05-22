@@ -6,7 +6,6 @@ from business.boards._intelligence import (
     relation_strength,
     text_signal_score,
 )
-from business.boards.project_radar.policies import project_radar_policy_profile
 from business.foundation import BoardCard, BoardType
 
 
@@ -48,7 +47,6 @@ def project_radar_features(card: BoardCard) -> dict[str, float]:
 
 
 def rank_project_card(card: BoardCard):
-    policy = project_radar_policy_profile()
     features = project_radar_features(card)
     score = sum(features[name] * PROJECT_RADAR_PROFILE.feature_weights[name] for name in PROJECT_RADAR_PROFILE.feature_weights)
     reason = f"Project radar ranking emphasizes repo health/activity/implementation evidence; score={score:.2f}."

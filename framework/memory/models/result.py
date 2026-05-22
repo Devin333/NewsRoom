@@ -183,6 +183,7 @@ class MemoryRecallResult:
 
     def to_dict(self) -> dict[str, Any]:
         query_payload = self.query.to_dict()
+        operation_trace = MemoryOperationTrace.from_any(self.operation_trace)
         return {
             "query": self.query.query,
             "scopes": query_payload["scopes"],
@@ -195,7 +196,7 @@ class MemoryRecallResult:
             "diagnostics": dict(self.diagnostics),
             "policy_decision": dict(self.policy_decision) if self.policy_decision is not None else None,
             "operation_trace": (
-                self.operation_trace.to_dict() if self.operation_trace is not None else None
+                operation_trace.to_dict() if operation_trace is not None else None
             ),
             "warnings": list(self.warnings),
             "error_envelope": (
@@ -270,6 +271,7 @@ class MemoryWriteResult:
         return not self.errors
 
     def to_dict(self) -> dict[str, Any]:
+        operation_trace = MemoryOperationTrace.from_any(self.operation_trace)
         return {
             "success": self.success,
             "accepted_count": self.accepted_count,
@@ -279,7 +281,7 @@ class MemoryWriteResult:
             "errors": list(self.errors),
             "policy_decision": dict(self.policy_decision) if self.policy_decision is not None else None,
             "operation_trace": (
-                self.operation_trace.to_dict() if self.operation_trace is not None else None
+                operation_trace.to_dict() if operation_trace is not None else None
             ),
             "warnings": list(self.warnings),
             "error_envelope": (

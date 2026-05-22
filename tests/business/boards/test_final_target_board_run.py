@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import importlib
+
 from business.foundation import BoardRunResult, BoardType
 from interfaces.services.board_service import BoardApplicationService
 
@@ -22,15 +24,18 @@ def test_board_run_result_has_policy_quality_feedback_contract() -> None:
 
 
 def test_required_board_modules_are_importable() -> None:
-    import business.boards.ai_news.models
-    import business.boards.ai_news.policies
-    import business.boards.ai_news.presenter
-    import business.boards.ai_news.ranking_rules
-    import business.boards.ai_news.workflow
-    import business.boards.community_pulse.discussion_quality_rules
-    import business.boards.community_pulse.hot_topic_rules
-    import business.boards.project_radar.project_quality_rules
-    import business.boards.paper_radar.technology_mapping_rules
+    for module_name in (
+        "business.boards.ai_news.models",
+        "business.boards.ai_news.policies",
+        "business.boards.ai_news.presenter",
+        "business.boards.ai_news.ranking_rules",
+        "business.boards.ai_news.workflow",
+        "business.boards.community_pulse.discussion_quality_rules",
+        "business.boards.community_pulse.hot_topic_rules",
+        "business.boards.project_radar.project_quality_rules",
+        "business.boards.paper_radar.technology_mapping_rules",
+    ):
+        importlib.import_module(module_name)
 
 
 def _sample_raw_item() -> dict[str, object]:

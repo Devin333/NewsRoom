@@ -12,6 +12,11 @@ from business.layers.extraction.rules import (
 )
 
 
+def _context_board_value(signal: Signal, context: AnalysisContext | None) -> str:
+    board_type = context.board_type if context and context.board_type is not None else signal.board_type
+    return board_type.value
+
+
 class EntityExtractor:
     def extract(self, signal: Signal, context: AnalysisContext | None = None) -> list[Entity]:
         text = signal_text(signal)
@@ -27,7 +32,7 @@ class EntityExtractor:
                         url=signal.url,
                         aliases=[signal.source.source_name, signal.title],
                         confidence=0.95,
-                        metadata={"extraction_method": "github_repo_rule", "context_board": (context.board_type.value if context else signal.board_type.value)},
+                        metadata={"extraction_method": "github_repo_rule", "context_board": _context_board_value(signal, context)},
                     )
                 )
         if signal.signal_type.value == "paper":
@@ -41,7 +46,7 @@ class EntityExtractor:
                         url=signal.url,
                         aliases=[signal.title],
                         confidence=0.95,
-                        metadata={"extraction_method": "paper_id_rule", "context_board": (context.board_type.value if context else signal.board_type.value)},
+                        metadata={"extraction_method": "paper_id_rule", "context_board": _context_board_value(signal, context)},
                     )
                 )
         if signal.signal_type.value == "ai_news":

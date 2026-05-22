@@ -99,18 +99,27 @@ def parse_skill_call(payload: dict[str, object]) -> SkillCall | None:
         return None
     if "skill_name" not in payload:
         raise SkillCallParseError("skill_call payload requires skill_name")
+    skill_name = payload.get("skill_name")
+    if not isinstance(skill_name, str) or not skill_name.strip():
+        raise SkillCallParseError("skill_call skill_name must be a non-empty string")
     arguments = payload.get("arguments", {})
     if arguments is None:
         arguments = {}
     if not isinstance(arguments, dict):
         raise SkillCallParseError("skill_call arguments must be an object")
+    call_id = payload.get("call_id")
+    if call_id is not None and not isinstance(call_id, str):
+        raise SkillCallParseError("skill_call call_id must be a string")
+    reason = payload.get("reason")
+    if reason is not None and not isinstance(reason, str):
+        raise SkillCallParseError("skill_call reason must be a string")
     try:
         return SkillCall(
             type="skill_call",
-            skill_name=payload.get("skill_name"),
+            skill_name=skill_name,
             arguments=arguments,
-            call_id=payload.get("call_id"),
-            reason=payload.get("reason"),
+            call_id=call_id,
+            reason=reason,
         ).ensure_call_id()
     except Exception as exc:
         raise SkillCallParseError(str(exc)) from exc

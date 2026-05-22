@@ -1,3 +1,4 @@
+# pyright: reportUnsupportedDunderAll=false
 """Workflow step runners."""
 
 from framework.workflow.runners.agent_loop import AgentLoopStepRunner

@@ -96,18 +96,18 @@ class ApprovalResumeApplicationService:
 
 
 def build_default_approval_resume_service(*, artifact_root: str | Path) -> ApprovalResumeApplicationService:
-    from business.boards.cross_board.workflows.daily_intelligence.artifact_publisher import (
+    from business.boards.cross_board.daily_intelligence import (
         build_daily_intelligence_artifact_publishers,
+        daily_artifact_ref_extractors,
+        daily_lineage_extractors,
     )
-    from business.layers.relation.lineage import evidence_bundle_lineage_extractor
-    from business.layers.signal.indexing import source_artifact_ref_extractor
 
     return ApprovalResumeApplicationService(
         artifact_root=artifact_root,
         resolution_service=RunResolutionApplicationService(),
         artifact_publishers_factory=build_daily_intelligence_artifact_publishers,
-        artifact_ref_extractors=[source_artifact_ref_extractor],
-        lineage_extractors=[evidence_bundle_lineage_extractor],
+        artifact_ref_extractors=daily_artifact_ref_extractors(),
+        lineage_extractors=daily_lineage_extractors(),
     )
 
 

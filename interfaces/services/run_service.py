@@ -1,3 +1,4 @@
+# pyright: reportUnsupportedDunderAll=false
 from __future__ import annotations
 
 from pathlib import Path
@@ -171,6 +172,7 @@ class RunApplicationService:
     def _attach_board_outputs_if_possible(self, result: RunResult, *, topic: str) -> None:
         self._daily_service()._attach_board_outputs_if_possible(result, topic=topic)
 
+
 def __getattr__(name: str) -> Any:
     if name in {
         "ResolvedWorkflow",
@@ -203,7 +205,7 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-__all__ = [
+__all__ = [  # noqa: F822 - several compatibility exports are resolved lazily by __getattr__.
     "ApprovalResumeApplicationService",
     "ApprovalWorkflowResumeResult",
     "DEFAULT_CHECKPOINT_STORE_PATH",

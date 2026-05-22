@@ -107,11 +107,14 @@ class AgentSkillRuntime:
         list_all = getattr(self.registry, "list_all", None)
         if callable(list_all):
             try:
-                return list(list_all(include_disabled=True))
+                skills = list_all(include_disabled=True)
             except TypeError:
-                return list(list_all())
+                skills = list_all()
+            if isinstance(skills, (list, tuple, set)):
+                return list(skills)
+            return []
         skills = getattr(self.registry, "skills", None)
-        if skills is not None:
+        if isinstance(skills, list):
             return list(skills)
         return []
 

@@ -94,60 +94,71 @@ class IntelligenceMemoryRecallService:
         return self.recall(RecallPlan(query=entity_id, intent="entity_history", entity_id=entity_id, limit_per_layer=limit))
 
     def _recall_evidence(self, plan: RecallPlan) -> list[EvidenceMemory]:
+        repository = self._repository()
         if plan.claim_text:
-            claims = self.repository.search_claims(query=plan.claim_text, topic=plan.topic, limit=plan.limit_per_layer)
+            claims = repository.search_claims(query=plan.claim_text, topic=plan.topic, limit=plan.limit_per_layer)
             evidence: list[EvidenceMemory] = []
             for claim in claims:
-                evidence.extend(_call_or_empty(self.repository, "list_evidence_for_claim", claim.claim_id))
+                evidence.extend(repository.list_evidence_for_claim(claim.claim_id))
             if evidence:
                 return evidence[: plan.limit_per_layer]
-        return self.repository.search_evidence(query=plan.query, topic=plan.topic, limit=plan.limit_per_layer)
+        return repository.search_evidence(query=plan.query, topic=plan.topic, limit=plan.limit_per_layer)
 
     def _recall_claims(self, plan: RecallPlan) -> list[ClaimMemory]:
-        if plan.entity_id and _has_method(self.repository, "list_claims_by_entity"):
-            return self.repository.list_claims_by_entity(plan.entity_id, limit=plan.limit_per_layer)
-        if plan.topic and _has_method(self.repository, "list_claims_by_topic"):
-            return self.repository.list_claims_by_topic(plan.topic, limit=plan.limit_per_layer)
+        repository = self._repository()
+        if plan.entity_id:
+            return repository.list_claims_by_entity(plan.entity_id, limit=plan.limit_per_layer)
+        if plan.topic:
+            return repository.list_claims_by_topic(plan.topic, limit=plan.limit_per_layer)
         if plan.claim_text:
             probe = ClaimMemory(claim_id="probe", run_id="recall", text=plan.claim_text)
-            similar = _call_or_empty(self.repository, "find_similar_claims", probe, limit=plan.limit_per_layer)
+            similar = repository.find_similar_claims(probe, limit=plan.limit_per_layer)
             if similar:
                 return similar
-        return self.repository.search_claims(query=plan.claim_text or plan.query, topic=plan.topic, limit=plan.limit_per_layer)
+        return repository.search_claims(query=plan.claim_text or plan.query, topic=plan.topic, limit=plan.limit_per_layer)
 
     def _recall_entities(self, plan: RecallPlan) -> list[EntityMemory]:
-        if plan.entity_id and _has_method(self.repository, "get_entity"):
-            entity = self.repository.get_entity(plan.entity_id)
+        repository = self._repository()
+        if plan.entity_id:
+            entity = repository.get_entity(plan.entity_id)
             return [entity] if entity is not None else []
-        found = _call_or_none(self.repository, "find_entity_by_name", plan.query)
+        found = repository.find_entity_by_name(plan.query)
         if found is not None:
             return [found]
-        return self.repository.search_entities(query=plan.query, topic=plan.topic, limit=plan.limit_per_layer)
+        return repository.search_entities(query=plan.query, topic=plan.topic, limit=plan.limit_per_layer)
 
     def _recall_events(self, plan: RecallPlan) -> list[EventMemory]:
-        if plan.entity_id and _has_method(self.repository, "list_events_by_entity"):
-            return self.repository.list_events_by_entity(plan.entity_id, limit=plan.limit_per_layer)
-        if plan.topic and _has_method(self.repository, "list_events_by_topic"):
-            return self.repository.list_events_by_topic(plan.topic, limit=plan.limit_per_layer)
-        return self.repository.search_events(query=plan.query, topic=plan.topic, limit=plan.limit_per_layer)
+        repository = self._repository()
+        if plan.entity_id:
+            return repository.list_events_by_entity(plan.entity_id, limit=plan.limit_per_layer)
+        if plan.topic:
+            return repository.list_events_by_topic(plan.topic, limit=plan.limit_per_layer)
+        return repository.search_events(query=plan.query, topic=plan.topic, limit=plan.limit_per_layer)
 
     def _recall_decisions(self, plan: RecallPlan) -> list[DecisionMemory]:
-        if plan.target_type and plan.target_id and _has_method(self.repository, "list_decisions_for_target"):
-            return self.repository.list_decisions_for_target(
+        repository = self._repository()
+        if plan.target_type and plan.target_id:
+            return repository.list_decisions_for_target(
                 plan.target_type,
                 plan.target_id,
                 limit=plan.limit_per_layer,
             )
-        return self.repository.search_decisions(query=plan.query, topic=plan.topic, limit=plan.limit_per_layer)
+        return repository.search_decisions(query=plan.query, topic=plan.topic, limit=plan.limit_per_layer)
 
     def _recall_preferences(self, plan: RecallPlan) -> list[PreferenceMemory]:
-        if plan.target_type and plan.target_id and _has_method(self.repository, "list_preferences"):
-            return self.repository.list_preferences(
+        repository = self._repository()
+        if plan.target_type and plan.target_id:
+            return repository.list_preferences(
                 owner_type=plan.target_type,
                 owner_id=plan.target_id,
                 limit=plan.limit_per_layer,
             )
-        return self.repository.search_preferences(query=plan.query, topic=plan.topic, limit=plan.limit_per_layer)
+        return repository.search_preferences(query=plan.query, topic=plan.topic, limit=plan.limit_per_layer)
+
+    def _repository(self) -> IntelligenceMemoryQueryRepository:
+        if self.repository is None:
+            raise RuntimeError("memory query repository is not configured")
+        return self.repository
 
     def _detect_conflicts(self, claims: list[ClaimMemory]) -> list[dict[str, Any]]:
         conflicts: list[dict[str, Any]] = []
@@ -170,25 +181,6 @@ class IntelligenceMemoryRecallService:
                         }
                     )
         return conflicts
-
-
-def _has_method(repository: object, name: str) -> bool:
-    return callable(getattr(repository, name, None))
-
-
-def _call_or_empty(repository: object, name: str, *args: Any, **kwargs: Any) -> list[Any]:
-    method = getattr(repository, name, None)
-    if not callable(method):
-        return []
-    result = method(*args, **kwargs)
-    return list(result or [])
-
-
-def _call_or_none(repository: object, name: str, *args: Any, **kwargs: Any) -> Any | None:
-    method = getattr(repository, name, None)
-    if not callable(method):
-        return None
-    return method(*args, **kwargs)
 
 
 __all__ = ["IntelligenceMemoryRecallService", "RecallPlan"]

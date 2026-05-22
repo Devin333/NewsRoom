@@ -410,10 +410,10 @@ def _to_dict(value: Any) -> dict[str, Any]:
     if callable(model_dump):
         payload = model_dump(mode="json")
         return dict(payload) if isinstance(payload, dict) else {}
-    if is_dataclass(value):
+    if is_dataclass(value) and not isinstance(value, type):
         return asdict(value)
     try:
-        return dict(value)
+        return dict(cast(Any, value))
     except (TypeError, ValueError):
         return {}
 

@@ -30,15 +30,21 @@ class BusinessMemoryHit:
     @classmethod
     def from_any(cls, value: Any) -> "BusinessMemoryHit":
         payload = _payload_from_any(value)
-        nested_payload = payload.get("payload") if isinstance(payload.get("payload"), dict) else {}
-        record = payload.get("record") if isinstance(payload.get("record"), dict) else {}
-        record_metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+        raw_nested_payload = payload.get("payload")
+        nested_payload = dict(raw_nested_payload) if isinstance(raw_nested_payload, dict) else {}
+        raw_record = payload.get("record")
+        record = dict(raw_record) if isinstance(raw_record, dict) else {}
+        raw_record_metadata = record.get("metadata")
+        record_metadata = dict(raw_record_metadata) if isinstance(raw_record_metadata, dict) else {}
+        raw_metadata = payload.get("metadata")
+        payload_metadata = dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
+        raw_refs = payload.get("refs")
+        refs = dict(raw_refs) if isinstance(raw_refs, dict) else {}
         metadata = {
-            **dict(nested_payload),
-            **dict(record_metadata),
-            **dict(payload.get("metadata") or {}),
+            **nested_payload,
+            **record_metadata,
+            **payload_metadata,
         }
-        refs = payload.get("refs") if isinstance(payload.get("refs"), dict) else {}
         return cls(
             hit_id=str(
                 payload.get("document_id")
@@ -110,7 +116,7 @@ class BusinessMemoryContext:
 
     @classmethod
     def empty(cls, query: str = "", *, reason: str | None = None) -> "BusinessMemoryContext":
-        metadata = {"memory_available": False}
+        metadata: dict[str, Any] = {"memory_available": False}
         if reason:
             metadata["reason"] = reason
         return cls(
@@ -186,10 +192,12 @@ def _payload_from_any(value: Any) -> dict[str, Any]:
         return dict(value)
     to_dict = getattr(value, "to_dict", None)
     if callable(to_dict):
-        return dict(to_dict())
+        payload = to_dict()
+        return dict(payload) if isinstance(payload, dict) else {}
     model_dump = getattr(value, "model_dump", None)
     if callable(model_dump):
-        return dict(model_dump(mode="json"))
+        payload = model_dump(mode="json")
+        return dict(payload) if isinstance(payload, dict) else {}
     try:
         return {
             name: item

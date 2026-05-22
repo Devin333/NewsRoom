@@ -168,17 +168,17 @@ def test_worker_application_service_uses_target_business_handler_modules() -> No
 
 def test_interface_daily_profile_enums_come_from_cross_board_business_layer() -> None:
     checked_paths = [
-        INTERFACES_ROOT / "cli" / "news.py",
+        INTERFACES_ROOT / "cli" / "commands" / "run.py",
         INTERFACES_ROOT / "services" / "mcp_service.py",
         INTERFACES_ROOT / "services" / "report_service.py",
-        INTERFACES_ROOT / "services" / "run_service.py",
+        INTERFACES_ROOT / "services" / "daily_run_service.py",
     ]
     for path in checked_paths:
         imports = _imports_for_file(path)
         assert "business.boards.cross_board.workflows.daily_intelligence.profiles" not in imports
 
     assert "business.boards.cross_board.profiles" in _imports_for_file(
-        INTERFACES_ROOT / "cli" / "news.py"
+        INTERFACES_ROOT / "cli" / "commands" / "run.py"
     )
     assert "business.boards.cross_board.profiles" in _imports_for_file(
         INTERFACES_ROOT / "services" / "mcp_service.py"
@@ -187,7 +187,7 @@ def test_interface_daily_profile_enums_come_from_cross_board_business_layer() ->
         INTERFACES_ROOT / "services" / "report_service.py"
     )
     assert "business.boards.cross_board.profiles" in _imports_for_file(
-        INTERFACES_ROOT / "services" / "run_service.py"
+        INTERFACES_ROOT / "services" / "daily_run_service.py"
     )
 
 

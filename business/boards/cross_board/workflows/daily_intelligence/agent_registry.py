@@ -28,7 +28,6 @@ from business.boards.cross_board.workflows.daily_intelligence.agents import (
     build_writer_agent,
 )
 from business.boards.cross_board.workflows.daily_intelligence.profiles import (
-    PROFILE_AGENTIC_LIVE,
     PROFILE_AGENTIC_OFFLINE,
     PROFILE_LIVE_OFFLINE,
 )

@@ -1,4 +1,4 @@
-from business.memory.evaluation import MemoryEvaluationReport, MemoryEvaluationRequest
+from business.memory.evaluation import MemoryEvaluationReport
 from business.memory.memory_metrics import MemoryEvaluationMetrics
 from interfaces.services.memory_evaluation_service import MemoryEvaluationApplicationService
 

@@ -5,7 +5,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from hashlib import sha256
 from typing import Any, Callable
-from urllib.error import HTTPError, URLError
+from urllib.error import HTTPError
 from urllib.parse import quote, urlencode
 from urllib.request import Request
 

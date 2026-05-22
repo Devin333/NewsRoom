@@ -7,7 +7,7 @@ from framework.events.envelope import EventEnvelope
 from framework.events.errors import EventSubscriberError
 from framework.events.event import Event
 from framework.events.recorder import EventRecord
-from framework.events.subscriber import EventSubscriber, FunctionEventSubscriber
+from framework.events.subscriber import EventSubscriber
 
 
 @dataclass

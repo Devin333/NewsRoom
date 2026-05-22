@@ -90,7 +90,7 @@ def graph_memory_service_from_env(
     repository = _build_intelligence_repository_from_env(env=env)
     if repository is None:
         return None
-    return GraphMemoryApplicationService(GraphMemoryService(PostgresGraphMemoryStore(repository)))
+    return GraphMemoryApplicationService(GraphMemoryService(PostgresGraphMemoryStore(cast(Any, repository))))
 
 
 __all__ = [

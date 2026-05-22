@@ -16,6 +16,7 @@ from business.foundation import (
     Confidence,
     DisplayMetric,
     Score,
+    ScoreFactor,
     quality_snapshot_from_checks,
 )
 from framework.scoring import (
@@ -138,13 +139,13 @@ def apply_scoring_result_to_card(
     score = Score(
         value=result.final_score,
         factors=[
-            {
-                "name": factor.name,
-                "value": factor.value,
-                "weight": factor.weight,
-                "explanation": factor.explanation,
-                "metadata": dict(factor.metadata),
-            }
+            ScoreFactor(
+                name=factor.name,
+                value=factor.value,
+                weight=factor.weight,
+                explanation=factor.explanation,
+                metadata=dict(factor.metadata),
+            )
             for factor in result.score.factors
         ],
         explanation=result.explanation or None,
@@ -233,7 +234,7 @@ def relation_strength(card: BoardCard) -> float:
 
 
 def related_type_strength(card: BoardCard, object_type: str) -> float:
-    return normalized_count(sum(1 for ref in card.related_refs if ref.object_type.value == object_type), 3.0)
+    return normalized_count(sum(1 for ref in card.related_refs if _object_type_value(ref.object_type) == object_type), 3.0)
 
 
 def freshness_strength(card: BoardCard) -> float:
@@ -264,7 +265,7 @@ def _enhance_card(
     score = Score(
         value=weighted_score,
         factors=[
-            {"name": key, "value": value, "weight": profile.feature_weights.get(key, 0.0)}
+            ScoreFactor(name=key, value=value, weight=profile.feature_weights.get(key, 0.0))
             for key, value in sorted(features.items())
         ],
     )
@@ -451,6 +452,10 @@ def _source_ref_id(ref: Any) -> str:
         if value:
             return str(value)
     return str(ref)
+
+
+def _object_type_value(value: Any) -> str:
+    return str(value.value) if hasattr(value, "value") else str(value)
 
 
 def _clamp(value: float) -> float:

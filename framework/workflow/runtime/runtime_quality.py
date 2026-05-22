@@ -16,6 +16,8 @@ def effective_runtime_quality_policy(
     override = step.runtime_quality
     if override is None:
         return base
+    if isinstance(override, dict):
+        override = RuntimeQualityPolicySpec(**override)
     return RuntimeQualityPolicySpec(
         trace=override.trace if override.trace is not None else base.trace,
         evaluation=override.evaluation if override.evaluation is not None else base.evaluation,

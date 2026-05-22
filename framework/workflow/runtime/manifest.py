@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
 from pathlib import Path
 from dataclasses import dataclass, field
 from hashlib import sha256
@@ -528,8 +527,8 @@ def manifest_schema_version(manifest: dict[str, Any]) -> str | None:
 
 def normalize_legacy_run_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
     normalized = dict(manifest)
-    for field, default in _LEGACY_MANIFEST_OPTIONAL_DEFAULTS.items():
-        normalized.setdefault(field, list(default) if isinstance(default, list) else dict(default) if isinstance(default, dict) else default)
+    for field_name, default in _LEGACY_MANIFEST_OPTIONAL_DEFAULTS.items():
+        normalized.setdefault(field_name, list(default) if isinstance(default, list) else dict(default) if isinstance(default, dict) else default)
     if normalized.get("schema_version") is None:
         normalized["schema_version"] = RUN_MANIFEST_SCHEMA_VERSION
     if "finished_at" not in normalized:
@@ -602,9 +601,9 @@ def _validate_manifest_status(status: Any) -> None:
 
 
 def _validate_manifest_shape(manifest: dict[str, Any]) -> None:
-    for field in ("run_id", "workflow_id", "workflow_version", "profile", "started_at"):
-        if not isinstance(manifest.get(field), str) or not manifest[field]:
-            raise RunManifestError(f"run manifest field must be a non-empty string: {field}")
+    for field_name in ("run_id", "workflow_id", "workflow_version", "profile", "started_at"):
+        if not isinstance(manifest.get(field_name), str) or not manifest[field_name]:
+            raise RunManifestError(f"run manifest field must be a non-empty string: {field_name}")
     if manifest.get("finished_at") is not None and not isinstance(manifest["finished_at"], str):
         raise RunManifestError("run manifest finished_at must be a string or null")
     if not isinstance(manifest.get("path"), list):
@@ -614,15 +613,15 @@ def _validate_manifest_shape(manifest: dict[str, Any]) -> None:
 
 
 def _validate_q05_manifest_shape(manifest: dict[str, Any]) -> None:
-    for field in ("step_summaries", "artifact_index", "warnings", "errors", "checkpoint_refs"):
-        if not isinstance(manifest.get(field, []), list):
-            raise RunManifestError(f"run manifest {field} must be a list")
-    for field in ("run_type",):
-        if not isinstance(manifest.get(field), str) or not manifest[field]:
-            raise RunManifestError(f"run manifest field must be a non-empty string: {field}")
-    for field in ("completed_at", "trace_ref", "gate_result_ref", "checkpoint_ref", "run_history_ref"):
-        if manifest.get(field) is not None and not isinstance(manifest[field], str):
-            raise RunManifestError(f"run manifest {field} must be a string or null")
+    for field_name in ("step_summaries", "artifact_index", "warnings", "errors", "checkpoint_refs"):
+        if not isinstance(manifest.get(field_name, []), list):
+            raise RunManifestError(f"run manifest {field_name} must be a list")
+    for field_name in ("run_type",):
+        if not isinstance(manifest.get(field_name), str) or not manifest[field_name]:
+            raise RunManifestError(f"run manifest field must be a non-empty string: {field_name}")
+    for field_name in ("completed_at", "trace_ref", "gate_result_ref", "checkpoint_ref", "run_history_ref"):
+        if manifest.get(field_name) is not None and not isinstance(manifest[field_name], str):
+            raise RunManifestError(f"run manifest {field_name} must be a string or null")
 
 
 def _validated_manifest_artifacts(manifest: dict[str, Any]) -> dict[str, str]:
