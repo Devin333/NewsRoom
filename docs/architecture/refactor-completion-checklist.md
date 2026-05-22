@@ -6,11 +6,12 @@
 - Switched package configuration to setuptools package auto discovery.
 - Split CLI command registration into `interfaces/cli/commands`.
 - Split `RunApplicationService` into daily, weekly, live smoke, approval resume, persistence, and resolution services.
+- Slimmed `RunApplicationService` facade so business workflow runner selection and approval resume resolution live in focused services.
 - Extracted daily intelligence connector bundle, connector factory, dependency bundle, and runtime assembly.
 - Added `infrastructure/storage/persistence` and kept old repository import compatibility.
 - Cleaned `interfaces.cli.news` so it only owns parser construction, command registration, dispatch, and `print_json`.
 - Added architecture boundary documents for project, framework, interface, business, and persistence layers.
-- Added targeted CLI entrypoint and static boundary tests.
+- Added targeted CLI entrypoint, package, and static boundary tests.
 
 ## Compatibility Exports
 
@@ -23,8 +24,13 @@
 ## Final Acceptance Items
 
 - `news.py` import cleanup complete.
+- `run_service.py` facade slimming complete.
 - Architecture boundary documentation complete.
-- Targeted CLI and architecture tests added.
+- Targeted CLI, service, package, and architecture tests added.
+
+## Remaining Items
+
+- No known architecture cleanup items remain in this package.
 
 ## Test Commands
 

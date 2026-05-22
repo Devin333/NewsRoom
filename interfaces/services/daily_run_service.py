@@ -3,10 +3,23 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable
 
+from business.boards.cross_board.profiles import (
+    PROFILE_LIVE,
+    PROFILE_LIVE_OFFLINE,
+    daily_agentic_enabled,
+)
+from business.boards.cross_board.workflows.daily_intelligence import (
+    AgenticDailyIntelligenceRunner,
+    DailyIntelligenceRunner,
+)
+from business.boards.cross_board.workflows.daily_intelligence.test_agent_loop import run_test_agent_loop
+from business.boards.cross_board.workflows.daily_intelligence.test_no_llm import run_test_no_llm
 from business.layers.memory.ingestion import MemoryIngestionService
 from framework import RunResult
 from framework.specs import WorkflowStatus
 
+from interfaces.services.board_service import BoardApplicationService
+from interfaces.services.memory_service import memory_ingestion_service_from_env
 from interfaces.services.run_persistence_service import RunPersistenceApplicationService
 
 
@@ -136,4 +149,33 @@ class DailyRunApplicationService:
             return
 
 
-__all__ = ["DailyRunApplicationService"]
+def resolve_daily_runner_cls(profile: str):
+    if profile in {PROFILE_LIVE, PROFILE_LIVE_OFFLINE}:
+        return AgenticDailyIntelligenceRunner
+    return AgenticDailyIntelligenceRunner if daily_agentic_enabled(profile) else DailyIntelligenceRunner
+
+
+def build_default_daily_run_service(
+    *,
+    artifact_root: str | Path,
+    persistence_service: RunPersistenceApplicationService,
+    memory_ingestion_service: MemoryIngestionService | None = None,
+) -> DailyRunApplicationService:
+    return DailyRunApplicationService(
+        artifact_root=artifact_root,
+        persistence_service=persistence_service,
+        memory_ingestion_service=memory_ingestion_service,
+        memory_ingestion_service_factory=memory_ingestion_service_from_env,
+        board_service_factory=BoardApplicationService,
+        runner_cls_resolver=resolve_daily_runner_cls,
+        agentic_runner_cls=AgenticDailyIntelligenceRunner,
+        test_no_llm_runner=run_test_no_llm,
+        test_agent_loop_runner=run_test_agent_loop,
+    )
+
+
+__all__ = [
+    "DailyRunApplicationService",
+    "build_default_daily_run_service",
+    "resolve_daily_runner_cls",
+]

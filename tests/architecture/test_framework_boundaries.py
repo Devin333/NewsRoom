@@ -12,3 +12,7 @@ def test_framework_does_not_import_business() -> None:
 
 def test_framework_does_not_import_interfaces() -> None:
     assert forbidden_imports(FRAMEWORK_ROOT, ("interfaces",)) == []
+
+
+def test_framework_does_not_import_infrastructure() -> None:
+    assert forbidden_imports(FRAMEWORK_ROOT, ("infrastructure",)) == []

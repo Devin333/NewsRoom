@@ -95,8 +95,25 @@ class ApprovalResumeApplicationService:
         )
 
 
+def build_default_approval_resume_service(*, artifact_root: str | Path) -> ApprovalResumeApplicationService:
+    from business.boards.cross_board.workflows.daily_intelligence.artifact_publisher import (
+        build_daily_intelligence_artifact_publishers,
+    )
+    from business.layers.relation.lineage import evidence_bundle_lineage_extractor
+    from business.layers.signal.indexing import source_artifact_ref_extractor
+
+    return ApprovalResumeApplicationService(
+        artifact_root=artifact_root,
+        resolution_service=RunResolutionApplicationService(),
+        artifact_publishers_factory=build_daily_intelligence_artifact_publishers,
+        artifact_ref_extractors=[source_artifact_ref_extractor],
+        lineage_extractors=[evidence_bundle_lineage_extractor],
+    )
+
+
 __all__ = [
     "ApprovalResumeApplicationService",
     "ApprovalWorkflowResumeResult",
     "DEFAULT_CHECKPOINT_STORE_PATH",
+    "build_default_approval_resume_service",
 ]

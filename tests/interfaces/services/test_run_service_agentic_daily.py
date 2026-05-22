@@ -70,6 +70,7 @@ def test_run_service_agentic_uses_agentic_runner_without_changing_explicit_agent
     monkeypatch,
 ) -> None:
     import interfaces.services.run_service as run_service_module
+    import interfaces.services.daily_run_service as daily_run_service_module
 
     calls = []
     fake_repository = _FakePersistenceRepository()
@@ -79,12 +80,12 @@ def test_run_service_agentic_uses_agentic_runner_without_changing_explicit_agent
         lambda artifact_root: fake_repository,
     )
     monkeypatch.setattr(
-        run_service_module,
+        daily_run_service_module,
         "DailyIntelligenceRunner",
         lambda artifact_root: _RecordingRunner(calls, workflow_id="legacy-daily"),
     )
     monkeypatch.setattr(
-        run_service_module,
+        daily_run_service_module,
         "AgenticDailyIntelligenceRunner",
         lambda artifact_root: _RecordingRunner(calls, workflow_id="agentic-daily"),
     )
@@ -127,6 +128,7 @@ def test_run_daily_routes_agentic_profiles_to_agentic_runner(
     monkeypatch,
 ) -> None:
     import interfaces.services.run_service as run_service_module
+    import interfaces.services.daily_run_service as daily_run_service_module
 
     calls = []
     fake_repository = _FakePersistenceRepository()
@@ -136,12 +138,12 @@ def test_run_daily_routes_agentic_profiles_to_agentic_runner(
         lambda artifact_root: fake_repository,
     )
     monkeypatch.setattr(
-        run_service_module,
+        daily_run_service_module,
         "DailyIntelligenceRunner",
         lambda artifact_root: _RecordingRunner(calls, workflow_id="legacy-daily"),
     )
     monkeypatch.setattr(
-        run_service_module,
+        daily_run_service_module,
         "AgenticDailyIntelligenceRunner",
         lambda artifact_root: _RecordingRunner(calls, workflow_id="agentic-daily"),
     )
@@ -184,6 +186,7 @@ def test_run_daily_keeps_legacy_profiles_on_legacy_runner_by_default(
     monkeypatch,
 ) -> None:
     import interfaces.services.run_service as run_service_module
+    import interfaces.services.daily_run_service as daily_run_service_module
 
     calls = []
     fake_repository = _FakePersistenceRepository()
@@ -194,12 +197,12 @@ def test_run_daily_keeps_legacy_profiles_on_legacy_runner_by_default(
         lambda artifact_root: fake_repository,
     )
     monkeypatch.setattr(
-        run_service_module,
+        daily_run_service_module,
         "DailyIntelligenceRunner",
         lambda artifact_root: _RecordingRunner(calls, workflow_id="legacy-daily"),
     )
     monkeypatch.setattr(
-        run_service_module,
+        daily_run_service_module,
         "AgenticDailyIntelligenceRunner",
         lambda artifact_root: _RecordingRunner(calls, workflow_id="agentic-daily"),
     )
@@ -242,6 +245,7 @@ def test_run_daily_env_flag_routes_legacy_profiles_to_agentic_runner(
     monkeypatch,
 ) -> None:
     import interfaces.services.run_service as run_service_module
+    import interfaces.services.daily_run_service as daily_run_service_module
 
     calls = []
     fake_repository = _FakePersistenceRepository()
@@ -252,12 +256,12 @@ def test_run_daily_env_flag_routes_legacy_profiles_to_agentic_runner(
         lambda artifact_root: fake_repository,
     )
     monkeypatch.setattr(
-        run_service_module,
+        daily_run_service_module,
         "DailyIntelligenceRunner",
         lambda artifact_root: _RecordingRunner(calls, workflow_id="legacy-daily"),
     )
     monkeypatch.setattr(
-        run_service_module,
+        daily_run_service_module,
         "AgenticDailyIntelligenceRunner",
         lambda artifact_root: _RecordingRunner(calls, workflow_id="agentic-daily"),
     )

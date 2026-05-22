@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable, Literal
 
+from business.boards.cross_board.profiles import PROFILE_AGENTIC_LIVE
 from framework import RunResult
 from framework.specs import WorkflowStatus
 from interfaces.services.diagnose_service import DiagnoseCheck, DiagnoseResult
@@ -102,10 +103,21 @@ def readiness_message(readiness_issues: list[DiagnoseCheck]) -> str:
     return f"live smoke readiness checks are not ready: {issue_ids}"
 
 
+def build_default_live_smoke_service(*, run_daily_agentic: Callable) -> LiveSmokeApplicationService:
+    from interfaces.services.diagnose_service import DiagnosticApplicationService
+
+    return LiveSmokeApplicationService(
+        diagnostic_service_factory=DiagnosticApplicationService,
+        run_daily_agentic=run_daily_agentic,
+        live_profile=PROFILE_AGENTIC_LIVE,
+    )
+
+
 __all__ = [
     "LiveSmokeApplicationService",
     "LiveSmokeResult",
     "LiveSmokeStatus",
+    "build_default_live_smoke_service",
     "live_smoke_readiness_issues",
     "readiness_message",
 ]

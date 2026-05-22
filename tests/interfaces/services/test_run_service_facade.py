@@ -8,14 +8,15 @@ def test_run_service_facade_delegates_daily(monkeypatch, tmp_path) -> None:
     calls = []
 
     class FakeDailyService:
-        def __init__(self, **kwargs):
-            calls.append(("init", kwargs["artifact_root"]))
-
         def run_daily(self, **kwargs):
             calls.append(("run_daily", kwargs))
             return "daily-result"
 
-    monkeypatch.setattr(run_service_module, "DailyRunApplicationService", FakeDailyService)
+    def fake_daily_service(**kwargs):
+        calls.append(("init", kwargs["artifact_root"]))
+        return FakeDailyService()
+
+    monkeypatch.setattr(run_service_module, "build_default_daily_run_service", fake_daily_service)
 
     result = RunApplicationService(artifact_root=tmp_path).run_daily(
         profile="live-offline",

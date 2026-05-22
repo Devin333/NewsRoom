@@ -3,8 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable
 
+from business.boards.cross_board.workflows.weekly_intelligence import (
+    PROFILE_WEEKLY,
+    WeeklyIntelligenceRunner,
+)
 from framework import RunResult
 
+from interfaces.services.report_service import ReportApplicationService
 from interfaces.services.run_persistence_service import RunPersistenceApplicationService
 
 
@@ -51,4 +56,21 @@ class WeeklyRunApplicationService:
         return result
 
 
-__all__ = ["WeeklyRunApplicationService"]
+def build_default_weekly_run_service(
+    *,
+    artifact_root: str | Path,
+    persistence_service: RunPersistenceApplicationService,
+) -> WeeklyRunApplicationService:
+    return WeeklyRunApplicationService(
+        artifact_root=artifact_root,
+        persistence_service=persistence_service,
+        report_service_factory=ReportApplicationService,
+        weekly_runner_cls=WeeklyIntelligenceRunner,
+        profile=PROFILE_WEEKLY,
+    )
+
+
+__all__ = [
+    "WeeklyRunApplicationService",
+    "build_default_weekly_run_service",
+]

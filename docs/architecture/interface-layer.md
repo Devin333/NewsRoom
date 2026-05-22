@@ -20,3 +20,5 @@ CLI command modules parse arguments, format output, and call `interfaces.service
 ## Service Rule
 
 Services are application services, not bottom-level runtime packages. They may coordinate business workflows and infrastructure adapters, but complex business runtime assembly should live with the business workflow package, not in CLI handlers.
+
+`interfaces/services/run_service.py` is a facade. It keeps the stable `RunApplicationService` public API and delegates daily, weekly, live smoke, approval resume, persistence, and workflow resolution concerns to focused application services. Business workflow runner selection and approval resume workflow resolution belong in those focused services, not in the facade.

@@ -61,6 +61,7 @@ def test_run_service_indexes_memory_when_injected(tmp_path, monkeypatch) -> None
 
 def test_run_service_migrates_repository_before_daily_workflow(tmp_path, monkeypatch) -> None:
     import interfaces.services.run_service as run_service_module
+    import interfaces.services.daily_run_service as daily_run_service_module
 
     order = []
     fake_repository = _RecordingPersistenceRepository(order)
@@ -70,8 +71,8 @@ def test_run_service_migrates_repository_before_daily_workflow(tmp_path, monkeyp
         lambda artifact_root: fake_repository,
     )
     monkeypatch.setattr(
-        run_service_module,
-        "_daily_runner_cls",
+        daily_run_service_module,
+        "resolve_daily_runner_cls",
         lambda profile: (lambda artifact_root: _RecordingDailyRunner(order)),
     )
 

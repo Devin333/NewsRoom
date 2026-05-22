@@ -1,13 +1,13 @@
 from framework import RunResult
 from framework.specs import WorkflowStatus
 from interfaces.services.diagnose_service import DiagnoseCheck, DiagnoseResult
-import interfaces.services.run_service as run_service_module
+import interfaces.services.diagnose_service as diagnose_service_module
 from interfaces.services.run_service import RunApplicationService
 
 
 def test_run_live_smoke_skips_when_live_readiness_missing(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(
-        run_service_module,
+        diagnose_service_module,
         "DiagnosticApplicationService",
         lambda: _FakeDiagnosticService(
             [
@@ -19,7 +19,7 @@ def test_run_live_smoke_skips_when_live_readiness_missing(monkeypatch, tmp_path)
     )
 
     class Service(RunApplicationService):
-        def run_daily(self, **kwargs):
+        def run_daily_agentic(self, **kwargs):
             raise AssertionError("live smoke must not run daily when readiness is missing")
 
     result = Service(artifact_root=tmp_path).run_live_smoke(topic="AI", source_limit=3)
@@ -30,7 +30,7 @@ def test_run_live_smoke_skips_when_live_readiness_missing(monkeypatch, tmp_path)
 
 def test_run_live_smoke_ignores_non_mvp_dependency_warnings(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(
-        run_service_module,
+        diagnose_service_module,
         "DiagnosticApplicationService",
         lambda: _FakeDiagnosticService(
             [
