@@ -92,6 +92,13 @@ def test_business_memory_ingestion_does_not_depend_on_legacy_report_or_storage_m
     assert _matching_forbidden(imports, ("business.foundation.models.report_output", "evidence", "infrastructure.storage.vector")) == []
 
 
+def test_graph_memory_port_has_single_canonical_definition() -> None:
+    from business.memory.graph_memory import GraphMemoryPort as BusinessGraphMemoryPort
+    from infrastructure.storage.graph.ports import GraphMemoryPort as InfrastructureGraphMemoryPort
+
+    assert InfrastructureGraphMemoryPort is BusinessGraphMemoryPort
+
+
 def test_new_board_interfaces_do_not_bypass_board_services() -> None:
     violations = _forbidden_imports(
         INTERFACES_ROOT,

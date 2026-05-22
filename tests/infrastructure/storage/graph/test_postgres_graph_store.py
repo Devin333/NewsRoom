@@ -13,6 +13,10 @@ def test_postgres_graph_store_expands_entity_to_events_claims_and_evidence() -> 
     assert {"event-1", "claim-1", "ev-1"}.issubset(node_ids)
     assert {"involves", "has_claim", "supported_by"}.issubset(edge_types)
     assert expansion.root.label == "OpenAI"
+    involves_edge = next(edge for edge in expansion.edges if edge.edge_type == "involves")
+    assert involves_edge.source_id == "event-1"
+    assert involves_edge.target_id == "entity-openai"
+    assert involves_edge.metadata["traversal_direction"] == "incoming"
 
 
 def test_postgres_graph_store_finds_path_between_entity_and_evidence() -> None:
@@ -24,6 +28,26 @@ def test_postgres_graph_store_finds_path_between_entity_and_evidence() -> None:
     assert paths[0].nodes[0].node_id == "entity-openai"
     assert paths[0].nodes[-1].node_id == "ev-1"
     assert paths[0].length() <= 3
+
+
+def test_postgres_graph_store_returns_empty_expansion_for_unknown_root() -> None:
+    store = PostgresGraphMemoryStore(_GraphRepository())
+
+    expansion = store.neighbors("missing-entity", depth=2)
+
+    assert expansion.nodes == []
+    assert expansion.edges == []
+    assert expansion.root.metadata["missing"] is True
+    assert expansion.metadata["missing_root"] == "missing-entity"
+
+
+def test_postgres_graph_store_returns_no_paths_for_unknown_endpoint() -> None:
+    store = PostgresGraphMemoryStore(_GraphRepository())
+
+    assert store.paths_between("entity-openai", "missing-evidence", max_depth=3) == []
+    assert store.last_path_metadata["missing_target"] == "missing-evidence"
+    assert store.paths_between("missing-entity", "ev-1", max_depth=3) == []
+    assert store.last_path_metadata["missing_source"] == "missing-entity"
 
 
 def test_postgres_graph_store_searches_nodes_by_type() -> None:

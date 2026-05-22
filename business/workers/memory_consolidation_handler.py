@@ -40,7 +40,7 @@ def parse_memory_consolidation_task(payload: dict[str, Any]) -> MemoryConsolidat
         task_type=payload["task_type"],
         topic=payload.get("topic"),
         entity_id=payload.get("entity_id"),
-        dry_run=bool(payload.get("dry_run", True)),
+        dry_run=_parse_bool(payload.get("dry_run", True), field_name="dry_run"),
         limit=int(payload.get("limit", 100)),
         metadata=dict(payload.get("metadata") or {}),
     )
@@ -56,6 +56,20 @@ def build_memory_consolidation_service() -> MemoryConsolidationService:
     from infrastructure.storage.postgres.repository import PostgresRepository
 
     return MemoryConsolidationService(PostgresIntelligenceMemoryRepository(PostgresRepository(dsn)))
+
+
+def _parse_bool(value: Any, *, field_name: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().casefold()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    if isinstance(value, int) and value in {0, 1}:
+        return bool(value)
+    raise ValueError(f"{field_name} must be a boolean")
 
 
 __all__ = [

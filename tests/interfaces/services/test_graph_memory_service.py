@@ -2,6 +2,7 @@ from business.memory.graph_memory import GraphMemoryService
 from business.memory.graph_models import GraphEdge, GraphExpansion, GraphNode, GraphPath
 from interfaces.services import graph_memory_service as graph_memory_service_module
 from interfaces.services.graph_memory_service import GraphMemoryApplicationService, graph_memory_service_from_env
+import pytest
 
 
 def test_graph_memory_application_service_serializes_expansion_paths_and_search() -> None:
@@ -14,11 +15,19 @@ def test_graph_memory_application_service_serializes_expansion_paths_and_search(
     assert expansion["target_id"] == "entity-1"
     assert expansion["expansion"]["root"]["node_id"] == "entity-1"
     assert paths["paths"][0]["nodes"][-1]["node_id"] == "claim-1"
+    assert paths["metadata"]["path_count"] == 1
     assert search["nodes"][0]["label"] == "OpenAI"
 
 
 def test_graph_memory_service_from_env_returns_none_without_repository() -> None:
     assert graph_memory_service_from_env(env={}) is None
+
+
+def test_graph_memory_application_service_rejects_invalid_node_type() -> None:
+    service = GraphMemoryApplicationService(GraphMemoryService(_GraphStore()))
+
+    with pytest.raises(ValueError, match="invalid graph node_type"):
+        service.search_nodes(query="OpenAI", node_type="bogus")
 
 
 def test_graph_memory_service_from_env_builds_with_repository(monkeypatch) -> None:
@@ -49,6 +58,7 @@ class _GraphStore:
         return GraphExpansion(root=self.root, nodes=[self.claim], edges=[self.edge], depth=depth)
 
     def paths_between(self, source_id, target_id, *, max_depth=3, limit=10):
+        self.last_path_metadata = {"path_count": 1}
         return [GraphPath(nodes=[self.root, self.claim], edges=[self.edge], score=1.0)]
 
     def search_nodes(self, query):

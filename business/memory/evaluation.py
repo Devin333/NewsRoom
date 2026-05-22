@@ -162,17 +162,21 @@ class MemoryEvaluator:
 
     def _claims(self, request: MemoryEvaluationRequest) -> list[ClaimMemory]:
         if request.entity_id:
-            return list(self.repository.list_claims_by_entity(request.entity_id, limit=request.limit))
+            claims = list(self.repository.list_claims_by_entity(request.entity_id, limit=request.limit))
+            return _filter_by_time_window(claims, request)
         if request.topic:
-            return list(self.repository.list_claims_by_topic(request.topic, limit=request.limit))
-        return list(self.repository.search_claims(query="", limit=request.limit))
+            claims = list(self.repository.list_claims_by_topic(request.topic, limit=request.limit))
+            return _filter_by_time_window(claims, request)
+        return _filter_by_time_window(list(self.repository.search_claims(query="", limit=request.limit)), request)
 
     def _events(self, request: MemoryEvaluationRequest) -> list[EventMemory]:
         if request.entity_id:
-            return list(self.repository.list_events_by_entity(request.entity_id, limit=request.limit))
+            events = list(self.repository.list_events_by_entity(request.entity_id, limit=request.limit))
+            return _filter_by_time_window(events, request)
         if request.topic:
-            return list(self.repository.list_events_by_topic(request.topic, limit=request.limit))
-        return list(self.repository.search_events(query="", limit=request.limit))
+            events = list(self.repository.list_events_by_topic(request.topic, limit=request.limit))
+            return _filter_by_time_window(events, request)
+        return _filter_by_time_window(list(self.repository.search_events(query="", limit=request.limit)), request)
 
     def _evidence(self, request: MemoryEvaluationRequest, claims: list[ClaimMemory]) -> list[EvidenceMemory]:
         by_id: dict[str, EvidenceMemory] = {}
@@ -182,11 +186,35 @@ class MemoryEvaluator:
         if not by_id and request.topic:
             for item in self.repository.search_evidence(query=request.topic, topic=request.topic, limit=request.limit):
                 by_id[item.evidence_id] = item
-        return list(by_id.values())
+        return _filter_by_time_window(list(by_id.values()), request)
 
 
 def _dt(value: datetime | None) -> str | None:
     return value.isoformat().replace("+00:00", "Z") if value is not None else None
+
+
+def _filter_by_time_window(items: list[Any], request: MemoryEvaluationRequest) -> list[Any]:
+    if request.since is None and request.until is None:
+        return items
+    return [item for item in items if _within_time_window(_item_timestamp(item), request)]
+
+
+def _within_time_window(value: datetime | None, request: MemoryEvaluationRequest) -> bool:
+    if value is None:
+        return True
+    if request.since is not None and value < request.since:
+        return False
+    if request.until is not None and value > request.until:
+        return False
+    return True
+
+
+def _item_timestamp(item: Any) -> datetime | None:
+    for name in ("event_time", "detected_at", "published_at", "fetched_at", "last_seen_at", "first_seen_at", "created_at"):
+        value = getattr(item, name, None)
+        if isinstance(value, datetime):
+            return value
+    return None
 
 
 __all__ = ["MemoryEvaluationReport", "MemoryEvaluationRequest", "MemoryEvaluator"]

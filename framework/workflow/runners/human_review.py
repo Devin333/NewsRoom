@@ -2,7 +2,27 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
+
+from framework.specs import StepSpec, StepStatus, StepType
+from framework.workflow.buffer import StepScopedDataBufferView
+from framework.workflow.runtime.artifacts import ArtifactManager
+from framework.workflow.runtime.result import StepOutcome
+from framework.workflow.runners._utils import (
+    contract_metrics as _contract_metrics,
+    failed_outcome as _failed_outcome,
+    validated_outputs as _validated_outputs,
+)
+from framework.workflow.runners.base import (
+    StepExecutionError,
+    StepRunnerCapability,
+    StepRunnerSideEffectLevel,
+    ValidationErrorItem,
+    default_runner_can_resolve,
+)
+
+if TYPE_CHECKING:
+    from framework.specs import WorkflowSpec
 
 
 HumanReviewDecisionValue = Literal["approved", "rejected", "needs_changes"]
@@ -331,13 +351,154 @@ def _parse_iso_datetime(value: str) -> datetime:
         return parsed.replace(tzinfo=UTC)
     return parsed.astimezone(UTC)
 
+class HumanReviewStepRunner:
+    capability = StepRunnerCapability(
+        step_type=StepType.HUMAN_REVIEW,
+        runner_id="builtin.human_review",
+        version="1.0.0",
+        supports_checkpoint=True,
+        supports_resume=True,
+        supports_timeout=True,
+        supports_retry=False,
+        side_effect_level=StepRunnerSideEffectLevel.EXTERNAL_WRITE,
+        required_dependencies=["human_review_store"],
+        description="Creates or consumes a human review pause boundary.",
+    )
 
-def __getattr__(name: str) -> Any:
-    if name == "HumanReviewStepRunner":
-        from framework.workflow.runners._step_runner_impl import HumanReviewStepRunner
+    def __init__(self) -> None:
+        self._run_id: str | None = None
+        self._workflow_id: str | None = None
+        self._workflow_version: str | None = None
 
-        return HumanReviewStepRunner
-    raise AttributeError(name)
+    def configure_run_context(
+        self,
+        *,
+        artifact_manager: ArtifactManager,
+        run_id: str,
+    ) -> None:
+        _ = artifact_manager
+        self._run_id = run_id
+
+    def configure_workflow_context(self, *, workflow: WorkflowSpec) -> None:
+        self._workflow_id = workflow.workflow_id
+        self._workflow_version = workflow.version
+
+    def can_resolve(self, step: StepSpec) -> bool:
+        return default_runner_can_resolve(self.capability, step)
+
+    def validate_step(self, step: StepSpec) -> list[ValidationErrorItem]:
+        return []
+
+    def run(self, step: StepSpec, buffer: StepScopedDataBufferView) -> StepOutcome:
+        started = time.perf_counter()
+        try:
+            if step.step_type != StepType.HUMAN_REVIEW:
+                raise StepExecutionError(
+                    f"unsupported step type for HumanReviewStepRunner: {step.step_type}"
+                )
+
+            decision_key = str(
+                step.metadata.get("decision_key") or "human_review_decision"
+            )
+            if decision_key in buffer.list_allowed_reads() and buffer.exists(
+                decision_key
+            ):
+                decision = buffer.read(decision_key)
+                outputs = _validated_outputs(
+                    step,
+                    {decision_key: decision},
+                    runner_name="human_review step",
+                    allow_extra=True,
+                )
+                return StepOutcome(
+                    status=StepStatus.SUCCEEDED,
+                    outputs=outputs,
+                    metrics=_contract_metrics(step, started=started, outputs=outputs),
+                    next_hint=_human_next_hint(decision),
+                )
+
+            request_key = str(
+                step.metadata.get("request_key") or "human_review_request"
+            )
+            created_at = human_review_utc_now_iso()
+            checkpoint_id = _optional_metadata_str(step.metadata.get("checkpoint_id"))
+            run_id = (
+                self._run_id
+                or _optional_metadata_str(step.metadata.get("run_id"))
+                or "unknown-run"
+            )
+            request_id = human_review_request_id(
+                run_id=run_id,
+                step_id=step.step_id,
+                checkpoint_id=checkpoint_id,
+            )
+            request_metadata = {
+                **dict(step.metadata.get("request_metadata") or {}),
+                "approval_id": str(step.metadata.get("approval_id") or request_id),
+                "implementation": step.implementation,
+            }
+            request = HumanReviewRequest(
+                request_id=request_id,
+                run_id=run_id,
+                step_id=step.step_id,
+                workflow_id=(
+                    self._workflow_id
+                    or _optional_metadata_str(step.metadata.get("workflow_id"))
+                    or "unknown-workflow"
+                ),
+                workflow_version=(
+                    self._workflow_version
+                    or _optional_metadata_str(step.metadata.get("workflow_version"))
+                    or "unknown-version"
+                ),
+                checkpoint_id=checkpoint_id,
+                review_type=str(step.metadata.get("review_type") or "human_review"),
+                required_role=_optional_metadata_str(
+                    step.metadata.get("required_role")
+                ),
+                created_at=created_at,
+                expires_at=human_review_expires_at(
+                    created_at=created_at,
+                    timeout_seconds=step.metadata.get("review_timeout_seconds"),
+                ),
+                inputs={
+                    key: buffer.read(key)
+                    for key in buffer.list_allowed_reads()
+                    if key != decision_key and buffer.exists(key)
+                },
+                metadata=request_metadata,
+            ).to_dict()
+            outputs = _validated_outputs(
+                step,
+                {request_key: request},
+                runner_name="human_review step",
+            )
+            if request_key in buffer.list_allowed_writes():
+                buffer.write(request_key, request)
+            return StepOutcome(
+                status=StepStatus.PAUSED,
+                outputs=outputs,
+                metrics=_contract_metrics(step, started=started, outputs=outputs),
+                next_hint="human_review",
+            )
+        except Exception as exc:
+            return _failed_outcome(
+                step,
+                exc,
+                started=started,
+                runner_name="HumanReviewStepRunner",
+            )
 
 
+def _human_next_hint(decision: Any) -> str | None:
+    if isinstance(decision, dict):
+        value = decision.get("decision") or decision.get("status")
+    else:
+        value = decision
+    if value is None:
+        return None
+    value = str(value)
+    if value in {"approved", "rejected", "needs_changes"}:
+        return f"human_{value}"
+    return value
 

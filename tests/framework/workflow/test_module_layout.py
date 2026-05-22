@@ -36,3 +36,67 @@ def test_step_runner_split_public_imports() -> None:
     assert legacy_default_registry is direct_default_registry
 
 
+def test_focused_runner_modules_match_legacy_exports() -> None:
+    from framework.workflow.runners import _step_runner_impl as legacy
+    from framework.workflow.runners.agent_loop import AgentLoopStepRunner
+    from framework.workflow.runners.artifact import ArtifactStepRunner
+    from framework.workflow.runners.function import (
+        FunctionStepRegistry,
+        FunctionStepRunner,
+    )
+    from framework.workflow.runners.join import JoinStepRunner
+    from framework.workflow.runners.memory import (
+        MemoryConsolidateStepRunner,
+        MemoryRecallStepRunner,
+        MemoryWriteStepRunner,
+    )
+    from framework.workflow.runners.parallel import ParallelGroupStepRunner
+    from framework.workflow.runners.quality_gate import QualityGateStepRunner
+    from framework.workflow.runners.router import RouterStepRunner
+    from framework.workflow.runners.subworkflow import SubworkflowStepRunner
+    from framework.workflow.runners.tool import ToolCallStepRunner
+    from framework.workflow.runners.tool_batch import ToolBatchStepRunner
+
+    assert FunctionStepRegistry is legacy.FunctionStepRegistry
+    assert FunctionStepRunner is legacy.FunctionStepRunner
+    assert AgentLoopStepRunner is legacy.AgentLoopStepRunner
+    assert ArtifactStepRunner is legacy.ArtifactStepRunner
+    assert JoinStepRunner is legacy.JoinStepRunner
+    assert MemoryConsolidateStepRunner is legacy.MemoryConsolidateStepRunner
+    assert MemoryRecallStepRunner is legacy.MemoryRecallStepRunner
+    assert MemoryWriteStepRunner is legacy.MemoryWriteStepRunner
+    assert ParallelGroupStepRunner is legacy.ParallelGroupStepRunner
+    assert QualityGateStepRunner is legacy.QualityGateStepRunner
+    assert RouterStepRunner is legacy.RouterStepRunner
+    assert SubworkflowStepRunner is legacy.SubworkflowStepRunner
+    assert ToolBatchStepRunner is legacy.ToolBatchStepRunner
+    assert ToolCallStepRunner is legacy.ToolCallStepRunner
+
+
+def test_default_runner_registry_builtin_capabilities() -> None:
+    from framework.workflow.runners import build_default_step_runner_registry
+
+    registry = build_default_step_runner_registry()
+    runner_ids = {
+        descriptor.runner_id
+        for descriptor in registry.describe()
+    }
+
+    assert {
+        "builtin.function",
+        "builtin.parallel_group",
+        "builtin.tool",
+        "builtin.tool_batch",
+        "builtin.memory_recall",
+        "builtin.memory_write",
+        "builtin.memory_consolidate",
+        "builtin.agent_loop",
+        "builtin.router",
+        "builtin.join",
+        "builtin.quality_gate",
+        "builtin.human_review",
+        "builtin.artifact",
+        "builtin.subworkflow",
+    }.issubset(runner_ids)
+
+

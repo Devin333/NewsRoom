@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any, Mapping, cast
 
 from business.memory.graph_memory import GraphMemoryService
-from business.memory.graph_models import GraphQuery
+from business.memory.graph_models import GraphNodeType, GraphQuery
 from interfaces.services.memory_service import _build_intelligence_repository_from_env
 from infrastructure.storage.graph import PostgresGraphMemoryStore
 
@@ -26,12 +26,14 @@ class GraphPathResult:
     source_id: str
     target_id: str
     paths: list[Any]
+    metadata: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "source_id": self.source_id,
             "target_id": self.target_id,
             "paths": [path.to_dict() for path in self.paths],
+            "metadata": dict(self.metadata or {}),
         }
 
 
@@ -63,11 +65,13 @@ class GraphMemoryApplicationService:
             source_id=source_id,
             target_id=target_id,
             paths=self.graph_service.paths_between(source_id, target_id, max_depth=max_depth, limit=limit),
+            metadata=dict(getattr(self.graph_service.store, "last_path_metadata", {}) or {}),
         )
 
     def search_nodes(self, *, query: str, node_type: str | None = None, limit: int = 20) -> dict[str, Any]:
+        resolved_node_type = _validate_node_type(node_type)
         graph_query = GraphQuery(
-            node_type=node_type,  # type: ignore[arg-type]
+            node_type=resolved_node_type,
             limit=limit,
             metadata={"query": query},
         )
@@ -95,3 +99,24 @@ __all__ = [
     "GraphPathResult",
     "graph_memory_service_from_env",
 ]
+
+
+def _validate_node_type(node_type: str | None) -> GraphNodeType | None:
+    if node_type is None:
+        return None
+    allowed = {
+        "entity",
+        "event",
+        "claim",
+        "evidence",
+        "decision",
+        "preference",
+        "topic",
+        "source",
+        "report",
+        "unknown",
+    }
+    if node_type not in allowed:
+        valid = ", ".join(sorted(allowed))
+        raise ValueError(f"invalid graph node_type: {node_type}; expected one of: {valid}")
+    return cast(GraphNodeType, node_type)

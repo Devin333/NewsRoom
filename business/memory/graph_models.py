@@ -15,6 +15,7 @@ GraphNodeType = Literal[
     "topic",
     "source",
     "report",
+    "unknown",
 ]
 
 GraphEdgeType = Literal[

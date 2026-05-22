@@ -19,6 +19,26 @@ def test_parse_memory_consolidation_task_defaults_to_dry_run() -> None:
     assert task.limit == 100
 
 
+@pytest.mark.parametrize(
+    ("raw_value", "expected"),
+    [
+        ("false", False),
+        ("0", False),
+        (True, True),
+        ("yes", True),
+    ],
+)
+def test_parse_memory_consolidation_task_parses_dry_run_bool_values(raw_value, expected) -> None:
+    task = parse_memory_consolidation_task({"task_type": "event_dedupe", "dry_run": raw_value})
+
+    assert task.dry_run is expected
+
+
+def test_parse_memory_consolidation_task_rejects_invalid_dry_run_string() -> None:
+    with pytest.raises(ValueError, match="dry_run must be a boolean"):
+        parse_memory_consolidation_task({"task_type": "event_dedupe", "dry_run": "maybe"})
+
+
 def test_memory_consolidation_handler_uses_injected_service() -> None:
     service = _Service()
 

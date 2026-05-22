@@ -3,13 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-from business.memory.graph_models import GraphExpansion, GraphNode, GraphPath, GraphQuery
+from business.memory.graph_models import GraphEdge, GraphExpansion, GraphNode, GraphPath, GraphQuery
 
 
 class GraphMemoryPort(Protocol):
     def upsert_node(self, node: GraphNode) -> None: ...
 
-    def upsert_edge(self, edge) -> None: ...
+    def upsert_edge(self, edge: GraphEdge) -> None: ...
 
     def get_node(self, node_id: str) -> GraphNode | None: ...
 
