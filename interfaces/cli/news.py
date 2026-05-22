@@ -60,6 +60,7 @@ from interfaces.services.subscription_service import (
     DEFAULT_SUBSCRIPTION_STORE_PATH,
     SubscriptionApplicationService,
 )
+from interfaces.services.tool_service import ToolApplicationService
 from interfaces.services.worker_service import (
     DEFAULT_DAILY_QUEUE,
     DEFAULT_DEAD_LETTER_QUEUE,
@@ -143,6 +144,7 @@ __all__ = [
     "SourceApplicationService",
     "StorageApplicationService",
     "SubscriptionApplicationService",
+    "ToolApplicationService",
     "ToolPolicy",
     "UTC",
     "WorkerApplicationService",

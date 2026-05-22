@@ -12,6 +12,7 @@ from framework.workers.scheduler import (
     EnqueuedScheduleTask,
     ScheduleEvaluation,
     ScheduleRecord,
+    ScheduleSpec,
     ScheduleStore,
     Scheduler,
     SchedulerTickResult,
@@ -21,6 +22,7 @@ from infrastructure.storage.local_json import LocalJsonScheduleStore
 
 
 DEFAULT_REDIS_URL = "redis://127.0.0.1:6379/0"
+DEFAULT_DAILY_QUEUE = "news:queue:daily"
 DEFAULT_SCHEDULE_STORE_PATH = ".newsroom/schedules/schedules.json"
 
 
@@ -115,6 +117,38 @@ class ScheduleApplicationService:
 
     def upsert_schedule(self, record: ScheduleRecord) -> ScheduleUpsertResult:
         return ScheduleUpsertResult(self.store.upsert_schedule(record))
+
+    def upsert_daily_schedule(
+        self,
+        *,
+        schedule_id: str = "daily-intelligence",
+        name: str = "Daily intelligence",
+        trigger_type: str = "interval",
+        interval_seconds: int | None = 86400,
+        run_at: datetime | None = None,
+        profile: str = "live-offline",
+        topic: str = "AI",
+        source_limit: int = 3,
+        queue_name: str = DEFAULT_DAILY_QUEUE,
+    ) -> ScheduleUpsertResult:
+        effective_interval_seconds = interval_seconds if interval_seconds is not None else 86400
+        if trigger_type == "interval" and effective_interval_seconds <= 0:
+            raise ValueError("interval_seconds must be greater than zero")
+        spec = ScheduleSpec(
+            schedule_id=schedule_id,
+            name=name,
+            trigger_type=trigger_type,
+            task_type="daily_intelligence.run",
+            payload_template={
+                "profile": profile,
+                "topic": topic,
+                "source_limit": source_limit,
+            },
+            queue_name=queue_name,
+            interval_seconds=effective_interval_seconds if trigger_type == "interval" else None,
+            run_at=run_at if trigger_type == "interval" else None,
+        )
+        return self.upsert_schedule(ScheduleRecord(spec=spec, next_run_at=spec.run_at))
 
     def tick(
         self,

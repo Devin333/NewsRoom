@@ -4,13 +4,14 @@ import argparse
 import json
 
 from business.boards.cross_board.profiles import DAILY_PROFILE_CHOICES
-from framework.workers import WorkerStatus
 from interfaces.cli.commands.dispatch import CommandHandler, call_handler
 from interfaces.services.worker_service import (
+    DEFAULT_WORKER_STATUS,
     DEFAULT_DAILY_QUEUE,
     DEFAULT_DEAD_LETTER_QUEUE,
     DEFAULT_MEMORY_QUEUE,
     DEFAULT_SOURCE_QUEUE,
+    WORKER_STATUS_CHOICES,
 )
 
 
@@ -122,8 +123,8 @@ def _register_worker_tree(subparsers: argparse._SubParsersAction, command_name: 
     _add_queue_names(heartbeat_parser)
     heartbeat_parser.add_argument(
         "--status",
-        choices=[status.value for status in WorkerStatus],
-        default=WorkerStatus.RUNNING.value,
+        choices=WORKER_STATUS_CHOICES,
+        default=DEFAULT_WORKER_STATUS,
         help="Worker lifecycle status",
     )
     heartbeat_parser.add_argument("--current-task-id", default=None, help="Current task id, if any")

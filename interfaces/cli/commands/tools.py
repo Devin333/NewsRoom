@@ -3,8 +3,6 @@ from __future__ import annotations
 import argparse
 import json
 
-from business.tools import build_business_tool_registry
-from framework.tool import ToolPolicy, build_tool_catalog
 from interfaces.cli.commands.dispatch import CommandHandler, call_handler
 
 
@@ -55,13 +53,13 @@ def add_tool_policy_args(parser: argparse.ArgumentParser) -> None:
 
 
 def list_tools(args: argparse.Namespace) -> int:
-    registry = build_business_tool_registry(include_dangerous_tools=bool(args.include_dangerous))
-    catalog = build_tool_catalog(
-        registry,
-        agent_id="cli",
-        policy=tool_policy_from_args(args),
+    result = _tool_service().list_tools(
+        allowed_tools=args.allowed_tools,
+        blocked_tools=args.blocked_tools,
+        allow_mcp=bool(args.allow_mcp),
+        include_dangerous=bool(args.include_dangerous),
     )
-    payload = catalog.to_dict()
+    payload = result.to_dict()
     if args.json:
         _print_json(payload)
     else:
@@ -71,17 +69,18 @@ def list_tools(args: argparse.Namespace) -> int:
             print(f"- {namespace['namespace']} tools={namespace['tool_count']}")
         for tool in payload["tools"]:
             print(f"{tool['name']}@{tool['version']} side_effect={tool['side_effect']}")
-    return 0 if catalog.registry_valid else 1
+    return 0 if result.registry_valid else 1
 
 
 def schema(args: argparse.Namespace) -> int:
-    registry = build_business_tool_registry(include_dangerous_tools=bool(args.include_dangerous))
-    tools = registry.export_schema_for_llm(args.agent_id, tool_policy_from_args(args))
-    payload = {
-        "agent_id": args.agent_id,
-        "tool_count": len(tools),
-        "tools": tools,
-    }
+    result = _tool_service().export_schema(
+        agent_id=args.agent_id,
+        allowed_tools=args.allowed_tools,
+        blocked_tools=args.blocked_tools,
+        allow_mcp=bool(args.allow_mcp),
+        include_dangerous=bool(args.include_dangerous),
+    )
+    payload = result.to_dict()
     if args.json:
         _print_json(payload)
     else:
@@ -92,15 +91,19 @@ def schema(args: argparse.Namespace) -> int:
     return 0
 
 
-def tool_policy_from_args(args: argparse.Namespace) -> ToolPolicy:
-    allowed_tools = list(args.allowed_tools or [])
-    return ToolPolicy(
-        allowed_tools=allowed_tools,
-        blocked_tools=list(args.blocked_tools or []),
-        allow_mcp_tools=bool(args.allow_mcp),
-        allow_dangerous_tools=bool(args.include_dangerous),
-        require_explicit_allowlist=bool(allowed_tools),
+def tool_policy_from_args(args: argparse.Namespace):
+    return _tool_service().tool_policy(
+        allowed_tools=args.allowed_tools,
+        blocked_tools=args.blocked_tools,
+        allow_mcp=bool(args.allow_mcp),
+        include_dangerous=bool(args.include_dangerous),
     )
+
+
+def _tool_service():
+    from interfaces.cli import news as news_cli
+
+    return news_cli.ToolApplicationService()
 
 
 def _print_json(payload: dict) -> None:

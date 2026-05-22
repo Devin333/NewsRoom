@@ -6,7 +6,6 @@ from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from business.boards.cross_board.profiles import DAILY_PROFILE_CHOICES
-from framework.workers.scheduler import ScheduleRecord, ScheduleSpec
 from interfaces.cli.commands.dispatch import CommandHandler, call_handler
 from interfaces.services.schedule_service import DEFAULT_SCHEDULE_STORE_PATH
 from interfaces.services.worker_service import DEFAULT_DAILY_QUEUE
@@ -177,22 +176,17 @@ def add_daily_schedule(
     if args.trigger_type == "interval" and args.interval_seconds <= 0:
         raise SystemExit("--interval-seconds must be greater than zero")
     run_at = parse_cli_datetime(args.run_at)
-    spec = ScheduleSpec(
+    result = schedule_service_factory(store_path=args.store_path).upsert_daily_schedule(
         schedule_id=args.schedule_id,
         name=args.name,
         trigger_type=args.trigger_type,
-        task_type="daily_intelligence.run",
-        payload_template={
-            "profile": args.profile,
-            "topic": args.topic,
-            "source_limit": args.source_limit,
-        },
-        queue_name=args.queue_name,
         interval_seconds=args.interval_seconds if args.trigger_type == "interval" else None,
         run_at=run_at if args.trigger_type == "interval" else None,
+        profile=args.profile,
+        topic=args.topic,
+        source_limit=args.source_limit,
+        queue_name=args.queue_name,
     )
-    record = ScheduleRecord(spec=spec, next_run_at=spec.run_at)
-    result = schedule_service_factory(store_path=args.store_path).upsert_schedule(record)
     payload = result.to_dict()
     if args.json:
         print(json.dumps(payload, ensure_ascii=False, sort_keys=True))

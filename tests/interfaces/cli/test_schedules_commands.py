@@ -42,18 +42,16 @@ def test_news_cli_schedules_add_daily_interval_json(monkeypatch, capsys) -> None
 
     captured = capsys.readouterr()
     payload = json.loads(captured.out)
-    record = _FakeScheduleService.last_instance.upserted_record
+    upsert_call = _FakeScheduleService.last_instance.upsert_daily_calls[0]
     assert exit_code == 0
     assert payload["schedule_id"] == "daily"
-    assert record.spec.schedule_id == "daily"
-    assert record.spec.trigger_type.value == "interval"
-    assert record.spec.interval_seconds == 3600
-    assert record.spec.run_at.isoformat().replace("+00:00", "Z") == "2026-05-11T00:00:00Z"
-    assert record.spec.payload_template == {
-        "profile": "live-offline",
-        "topic": "AI policy",
-        "source_limit": 2,
-    }
+    assert upsert_call["schedule_id"] == "daily"
+    assert upsert_call["trigger_type"] == "interval"
+    assert upsert_call["interval_seconds"] == 3600
+    assert upsert_call["run_at"].isoformat().replace("+00:00", "Z") == "2026-05-11T00:00:00Z"
+    assert upsert_call["profile"] == "live-offline"
+    assert upsert_call["topic"] == "AI policy"
+    assert upsert_call["source_limit"] == 2
 
 
 def test_news_cli_schedules_tick_json(monkeypatch, capsys) -> None:
@@ -139,7 +137,7 @@ class _FakeScheduleService:
         self.tick_calls = []
         self.trigger_calls = []
         self.run_loop_calls = []
-        self.upserted_record = None
+        self.upsert_daily_calls = []
         _FakeScheduleService.last_instance = self
 
     def list_schedules(self, *, enabled_only=False):
@@ -161,9 +159,21 @@ class _FakeScheduleService:
             }
         )
 
-    def upsert_schedule(self, record):
-        self.upserted_record = record
-        return _Result({"schedule_id": record.schedule_id, "schedule": record.to_dict()})
+    def upsert_daily_schedule(self, **kwargs):
+        self.upsert_daily_calls.append(kwargs)
+        return _Result(
+            {
+                "schedule_id": kwargs["schedule_id"],
+                "schedule": {
+                    "spec": {
+                        "schedule_id": kwargs["schedule_id"],
+                        "trigger_type": kwargs["trigger_type"],
+                        "task_type": "daily_intelligence.run",
+                        "queue_name": kwargs["queue_name"],
+                    }
+                },
+            }
+        )
 
     def tick(self, *, now=None, enabled_only=True):
         self.tick_calls.append({"now": now, "enabled_only": enabled_only})

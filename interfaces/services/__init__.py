@@ -16,6 +16,7 @@ from interfaces.services.source_service import SourceApplicationService
 from interfaces.services.schedule_service import ScheduleApplicationService
 from interfaces.services.storage_service import StorageApplicationService
 from interfaces.services.subscription_service import SubscriptionApplicationService
+from interfaces.services.tool_service import ToolApplicationService
 
 __all__ = [
     "ApprovalApplicationService",
@@ -35,4 +36,5 @@ __all__ = [
     "SourceApplicationService",
     "StorageApplicationService",
     "SubscriptionApplicationService",
+    "ToolApplicationService",
 ]

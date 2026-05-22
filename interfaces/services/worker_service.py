@@ -35,6 +35,8 @@ DEFAULT_DAILY_QUEUE = "news:queue:daily"
 DEFAULT_MEMORY_QUEUE = "news:queue:memory"
 DEFAULT_SOURCE_QUEUE = "news:queue:sources"
 DEFAULT_DEAD_LETTER_QUEUE = "news:queue:dead-letter"
+WORKER_STATUS_CHOICES = tuple(status.value for status in WorkerStatus)
+DEFAULT_WORKER_STATUS = WorkerStatus.RUNNING.value
 
 
 @dataclass(frozen=True)

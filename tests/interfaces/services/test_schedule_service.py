@@ -32,6 +32,34 @@ def test_schedule_service_upserts_schedule_record() -> None:
     assert store.get_schedule("daily").schedule_id == "daily"
 
 
+def test_schedule_service_upserts_daily_schedule_from_application_args() -> None:
+    store = InMemoryScheduleStore()
+    service = ScheduleApplicationService(store=store, queue=_FakeQueue())
+
+    result = service.upsert_daily_schedule(
+        schedule_id="daily",
+        trigger_type="interval",
+        interval_seconds=3600,
+        run_at=_dt("2026-05-11T00:00:00Z"),
+        profile="live-offline",
+        topic="AI policy",
+        source_limit=2,
+        queue_name="news:queue:custom",
+    )
+
+    record = store.get_schedule("daily")
+    assert result.to_dict()["schedule_id"] == "daily"
+    assert record.spec.trigger_type.value == "interval"
+    assert record.spec.interval_seconds == 3600
+    assert record.spec.run_at == _dt("2026-05-11T00:00:00Z")
+    assert record.spec.queue_name == "news:queue:custom"
+    assert record.spec.payload_template == {
+        "profile": "live-offline",
+        "topic": "AI policy",
+        "source_limit": 2,
+    }
+
+
 def test_schedule_service_tick_enqueues_due_schedule_and_updates_state() -> None:
     store = InMemoryScheduleStore(
         [
