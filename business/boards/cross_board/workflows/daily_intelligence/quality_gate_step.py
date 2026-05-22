@@ -26,7 +26,8 @@ def quality_gate(buffer: StepScopedDataBufferView) -> dict[str, Any]:
     verified_findings = buffer.read("verified_findings")
     quality_events = list(buffer.read("quality_events"))
     memory_context = _read_memory_context(buffer)
-    historian_metadata = _historian_metadata(report_draft, memory_context)
+    historian_context = _read_historian_context(buffer)
+    historian_metadata = _historian_metadata(historian_context, report_draft, memory_context)
     memory_quality_result = _memory_quality_result(memory_context)
     memory_quality_result = _with_historian_quality_metadata(memory_quality_result, historian_metadata)
     if memory_quality_result["memory_available"]:
@@ -230,6 +231,16 @@ def _read_memory_context(buffer: StepScopedDataBufferView) -> dict[str, Any] | N
     return dict(value) if isinstance(value, dict) else None
 
 
+def _read_historian_context(buffer: StepScopedDataBufferView) -> dict[str, Any] | None:
+    try:
+        if not buffer.exists("historian_context"):
+            return None
+        value = buffer.read("historian_context", required=False)
+    except DataBufferReadPermissionError:
+        return None
+    return dict(value) if isinstance(value, dict) else None
+
+
 def _memory_quality_result(memory_context: dict[str, Any] | None) -> dict[str, Any]:
     if not memory_context:
         return {
@@ -257,9 +268,12 @@ def _memory_quality_result(memory_context: dict[str, Any] | None) -> dict[str, A
 
 
 def _historian_metadata(
+    historian_context: dict[str, Any] | None,
     report_draft: dict[str, Any],
     memory_context: dict[str, Any] | None,
 ) -> dict[str, Any] | None:
+    if historian_context:
+        return dict(historian_context)
     report_metadata = report_draft.get("metadata") if isinstance(report_draft, dict) else None
     if isinstance(report_metadata, dict) and isinstance(report_metadata.get("historian"), dict):
         return dict(report_metadata["historian"])

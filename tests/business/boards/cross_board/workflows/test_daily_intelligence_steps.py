@@ -54,6 +54,10 @@ def test_daily_intelligence_workflow_spec_is_valid_and_profile_aware() -> None:
     ]
     assert live.metadata["product_path"] is True
     assert offline.metadata["product_path"] is False
+    draft_step = next(step for step in live.steps if step.step_id == "draft_report")
+    quality_step = next(step for step in live.steps if step.step_id == "quality_gate")
+    assert "historian_context" in draft_step.write_keys
+    assert "historian_context" in quality_step.metadata["optional_read_keys"]
 
 
 def test_require_sources_fails_with_source_error_summary() -> None:

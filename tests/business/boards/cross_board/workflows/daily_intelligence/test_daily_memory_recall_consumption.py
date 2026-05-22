@@ -97,14 +97,44 @@ def test_quality_gate_records_memory_quality_metadata_without_blocking() -> None
     assert any(event.event_type == "memory_quality_checked" for event in output["quality_events"])
 
 
-def test_quality_gate_records_historian_advisory_metadata_without_blocking() -> None:
+def test_quality_gate_reads_explicit_historian_context_without_blocking() -> None:
+    historian_context = {
+        "output": {
+            "repeated_claims": ["Known historical claim"],
+            "contradictions": ["Contradicted historical claim"],
+        },
+        "metadata": {"contradiction_count": 1},
+    }
+    buffer = DataBuffer(
+        {
+            "report_draft": _report_draft(),
+            "evidence_bundle": _evidence_bundle(),
+            "verified_findings": VerifiedFindings(),
+            "quality_events": [],
+            "historian_context": historian_context,
+        }
+    )
+
+    output = quality_gate(
+        buffer.scope(
+            read_keys=["report_draft", "evidence_bundle", "verified_findings", "quality_events"],
+            optional_read_keys=["memory_context", "historian_context"],
+            write_keys=[],
+        )
+    )
+
+    assert output["quality_result"].decision == "pass"
+    metadata = output["quality_result"].metadata["memory_quality_result"]["metadata"]
+    assert metadata["historian_contradictions"] == ["Contradicted historical claim"]
+    assert metadata["historian_repeated_claims"] == ["Known historical claim"]
+    assert output["final_report"].metadata["historian"] == historian_context
+
+
+def test_quality_gate_keeps_historian_report_metadata_fallback() -> None:
     report = _report_draft()
     report["metadata"] = {
         "historian": {
-            "output": {
-                "repeated_claims": ["Known historical claim"],
-                "contradictions": ["Contradicted historical claim"],
-            },
+            "output": {"contradictions": ["Metadata fallback contradiction"]},
             "metadata": {"contradiction_count": 1},
         }
     }
@@ -120,15 +150,13 @@ def test_quality_gate_records_historian_advisory_metadata_without_blocking() -> 
     output = quality_gate(
         buffer.scope(
             read_keys=["report_draft", "evidence_bundle", "verified_findings", "quality_events"],
-            optional_read_keys=["memory_context"],
+            optional_read_keys=["memory_context", "historian_context"],
             write_keys=[],
         )
     )
 
-    assert output["quality_result"].decision == "pass"
     metadata = output["quality_result"].metadata["memory_quality_result"]["metadata"]
-    assert metadata["historian_contradictions"] == ["Contradicted historical claim"]
-    assert output["final_report"].metadata["historian"]["metadata"]["contradiction_count"] == 1
+    assert metadata["historian_contradictions"] == ["Metadata fallback contradiction"]
 
 
 class _RecallService:
