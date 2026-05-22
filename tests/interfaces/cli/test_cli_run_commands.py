@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 import interfaces.cli.news as news_cli
+from interfaces.cli.commands import run as run_commands
 from framework.specs import WorkflowStatus
 
 
@@ -17,7 +18,7 @@ def test_cli_run_daily_uses_facade_compat_path(monkeypatch, tmp_path, capsys) ->
             calls.append({"artifact_root": self.artifact_root, **kwargs})
             return _FakeRunResult(kwargs["run_id"])
 
-    monkeypatch.setattr(news_cli, "RunApplicationService", FakeRunApplicationService)
+    monkeypatch.setattr(run_commands, "RunApplicationService", FakeRunApplicationService)
 
     exit_code = news_cli.main(
         [

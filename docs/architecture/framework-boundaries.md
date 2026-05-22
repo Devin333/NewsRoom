@@ -2,7 +2,7 @@
 
 `framework/` is the domain-neutral runtime layer. Its fixed top-level modules are:
 
-- `agent`: owns `AgentLoop`, Action/Observation, ToolCall/SkillCall models, agent runtime, harness, and subagent support. It may call Skill runtime through contracts but must not execute Skill Runtime internals itself.
+- `agent`: owns `AgentLoop`, Action/Observation, ToolCall/SkillCall models, agent runtime, harness, and subagent support. It may call Skill Runtime through contracts but must not embed Skill Runtime internals.
 - `artifacts`: owns artifact model, manifest, resolver, serializer, validator, store protocol, replay, and inspection.
 - `events`: owns event model, event bus, filters, ordering, and replay.
 - `governance`: owns safety policy, timeout policy, audit, human review, and security policy. It must not carry scoring algorithms.
@@ -18,4 +18,8 @@
 
 ## Forbidden Dependencies
 
-`framework` must not import from `business`, `interfaces`, or concrete infrastructure adapter modules. Protocols and neutral model contracts are allowed; implementation binding belongs in business assembly or interface services.
+`framework` must not import from `business`, `interfaces`, or concrete infrastructure adapter modules. Protocols and neutral model contracts are allowed; implementation binding belongs in business assembly, infrastructure adapters, or application services.
+
+## Stability Rule
+
+Framework code defines reusable runtime behavior only. NewsRoom business concepts such as sources, reports, boards, evidence, claims, and daily intelligence profiles belong outside `framework`.

@@ -4,6 +4,8 @@ import argparse
 import json
 from typing import Any, Protocol
 
+from interfaces.services.report_service import ReportApplicationService
+
 
 class ReportServiceFactory(Protocol):
     def __call__(self, *, artifact_root: str) -> Any:
@@ -53,27 +55,19 @@ add_reports_commands = register
 
 
 def latest_report_from_cli(args: argparse.Namespace) -> int:
-    from interfaces.cli import news as news_cli
-
-    return latest_report(args, report_service_factory=news_cli.ReportApplicationService)
+    return latest_report(args, report_service_factory=ReportApplicationService)
 
 
 def search_reports_from_cli(args: argparse.Namespace) -> int:
-    from interfaces.cli import news as news_cli
-
-    return search_reports(args, report_service_factory=news_cli.ReportApplicationService)
+    return search_reports(args, report_service_factory=ReportApplicationService)
 
 
 def list_reports_from_cli(args: argparse.Namespace) -> int:
-    from interfaces.cli import news as news_cli
-
-    return list_reports(args, report_service_factory=news_cli.ReportApplicationService)
+    return list_reports(args, report_service_factory=ReportApplicationService)
 
 
 def show_report_from_cli(args: argparse.Namespace) -> int:
-    from interfaces.cli import news as news_cli
-
-    return show_report(args, report_service_factory=news_cli.ReportApplicationService)
+    return show_report(args, report_service_factory=ReportApplicationService)
 
 
 def _add_latest_report_arguments(parser: argparse.ArgumentParser) -> None:

@@ -11,6 +11,7 @@ from interfaces.services.worker_service import (
     DEFAULT_DEAD_LETTER_QUEUE,
     DEFAULT_MEMORY_QUEUE,
     DEFAULT_SOURCE_QUEUE,
+    WorkerApplicationService,
     WORKER_STATUS_CHOICES,
 )
 
@@ -359,9 +360,7 @@ def queues(args: argparse.Namespace) -> int:
 
 
 def _worker_service(*args, **kwargs):
-    from interfaces.cli import news as news_cli
-
-    return news_cli.WorkerApplicationService(*args, **kwargs)
+    return WorkerApplicationService(*args, **kwargs)
 
 
 def _add_queue_names(parser: argparse.ArgumentParser) -> None:

@@ -4,6 +4,7 @@ import argparse
 import json
 
 from interfaces.cli.commands.dispatch import CommandHandler, call_handler
+from interfaces.services.mcp_service import MCPApplicationService
 
 
 def register(subparsers: argparse._SubParsersAction) -> None:
@@ -226,9 +227,7 @@ def mcp_serve_stdio(args: argparse.Namespace) -> int:
 
 
 def _mcp_service():
-    from interfaces.cli import news as news_cli
-
-    return news_cli.MCPApplicationService()
+    return MCPApplicationService()
 
 
 add_mcp_commands = register

@@ -1,6 +1,7 @@
 import json
 
 from interfaces.cli import news as news_cli
+from interfaces.cli.commands import approvals as approval_commands
 
 
 def test_news_cli_approval_lifecycle_uses_local_json_store(tmp_path, capsys) -> None:
@@ -196,7 +197,7 @@ def test_news_cli_approval_resume_workflow_uses_run_service(tmp_path, capsys, mo
                 run_id=kwargs["run_id"],
             )
 
-    monkeypatch.setattr(news_cli, "RunApplicationService", FakeRunApplicationService)
+    monkeypatch.setattr(approval_commands, "RunApplicationService", FakeRunApplicationService)
     news_cli.main(
         [
             "approvals",

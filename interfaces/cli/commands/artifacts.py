@@ -4,6 +4,7 @@ import argparse
 import json
 
 from interfaces.cli.commands.dispatch import CommandHandler, call_handler
+from interfaces.services.artifact_service import ArtifactInspectionService
 
 
 def register(subparsers: argparse._SubParsersAction) -> None:
@@ -64,9 +65,7 @@ def show_artifact(args: argparse.Namespace) -> int:
 
 
 def _artifact_service(*args, **kwargs):
-    from interfaces.cli import news as news_cli
-
-    return news_cli.ArtifactInspectionService(*args, **kwargs)
+    return ArtifactInspectionService(*args, **kwargs)
 
 
 def _add_artifact_root(parser: argparse.ArgumentParser) -> None:

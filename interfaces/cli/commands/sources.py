@@ -4,6 +4,7 @@ import argparse
 import json
 
 from interfaces.cli.commands.dispatch import CommandHandler, call_handler
+from interfaces.services.source_service import SourceApplicationService
 
 
 def register(subparsers: argparse._SubParsersAction) -> None:
@@ -166,9 +167,7 @@ def validate_sources(args: argparse.Namespace) -> int:
 
 
 def _source_service():
-    from interfaces.cli import news as news_cli
-
-    return news_cli.SourceApplicationService()
+    return SourceApplicationService()
 
 
 def _print_source_fetch_result(payload: dict) -> None:

@@ -1,10 +1,11 @@
 import json
 
 import interfaces.cli.news as news_cli
+from interfaces.cli.commands import storage as storage_commands
 
 
 def test_news_cli_storage_retention_plan_json(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(news_cli, "StorageApplicationService", _FakeStorageService)
+    monkeypatch.setattr(storage_commands, "StorageApplicationService", _FakeStorageService)
 
     exit_code = news_cli.main(
         [
@@ -28,7 +29,7 @@ def test_news_cli_storage_retention_plan_json(monkeypatch, capsys) -> None:
 
 
 def test_news_cli_storage_retention_plan_text(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(news_cli, "StorageApplicationService", _FakeStorageService)
+    monkeypatch.setattr(storage_commands, "StorageApplicationService", _FakeStorageService)
 
     exit_code = news_cli.main(["storage", "retention", "plan", "--artifact-root", "runs"])
 
@@ -40,7 +41,7 @@ def test_news_cli_storage_retention_plan_text(monkeypatch, capsys) -> None:
 
 
 def test_news_cli_storage_retention_apply_requires_yes(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(news_cli, "StorageApplicationService", _FakeStorageService)
+    monkeypatch.setattr(storage_commands, "StorageApplicationService", _FakeStorageService)
 
     exit_code = news_cli.main(["storage", "retention", "apply", "--artifact-root", "runs"])
 
@@ -51,7 +52,7 @@ def test_news_cli_storage_retention_apply_requires_yes(monkeypatch, capsys) -> N
 
 
 def test_news_cli_storage_retention_apply_json(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(news_cli, "StorageApplicationService", _FakeStorageService)
+    monkeypatch.setattr(storage_commands, "StorageApplicationService", _FakeStorageService)
 
     exit_code = news_cli.main(
         ["storage", "retention", "apply", "--artifact-root", "runs", "--yes", "--json"]

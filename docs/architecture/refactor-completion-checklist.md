@@ -2,21 +2,29 @@
 
 ## Completed Items
 
-- Documented project and framework boundaries.
+- Skill Runtime subpackaged under `framework/skills`.
+- Switched package configuration to setuptools package auto discovery.
 - Split CLI command registration into `interfaces/cli/commands`.
-- Kept `interfaces.cli.news` as the parser and dispatch facade.
 - Split `RunApplicationService` into daily, weekly, live smoke, approval resume, persistence, and resolution services.
 - Extracted daily intelligence connector bundle, connector factory, dependency bundle, and runtime assembly.
 - Added `infrastructure/storage/persistence` and kept old repository import compatibility.
-- Switched package configuration to setuptools package auto discovery.
+- Cleaned `interfaces.cli.news` so it only owns parser construction, command registration, dispatch, and `print_json`.
+- Added architecture boundary documents for project, framework, interface, business, and persistence layers.
+- Added targeted CLI entrypoint and static boundary tests.
 
 ## Compatibility Exports
 
-- `interfaces.cli.news` still exports legacy service symbols used by tests and scripts.
-- `interfaces.cli.commands.reports` and `interfaces.cli.commands.subscriptions` keep their handler helpers.
+- `interfaces.cli.news` intentionally does not export service, framework, business, or infrastructure symbols.
+- `interfaces.cli.commands.reports` and `interfaces.cli.commands.subscriptions` keep their handler helpers for focused command tests.
 - `interfaces.services.run_service` still exports `RunApplicationService`, `LiveSmokeResult`, approval resume helpers, workflow builders, `repository_from_env`, and `persist_run_result`.
 - `business.boards.cross_board.workflows.daily_intelligence.runtime_assembly` still exports `DailySourceRuntimeAssembly`, `build_daily_source_runtime_assembly`, and `apply_daily_source_runtime_assembly`.
 - `infrastructure.storage.repository` still exports persistence records, repository factory, local JSON adapter, and run-result persistence helpers.
+
+## Final Acceptance Items
+
+- `news.py` import cleanup complete.
+- Architecture boundary documentation complete.
+- Targeted CLI and architecture tests added.
 
 ## Test Commands
 

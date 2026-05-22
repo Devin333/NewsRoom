@@ -4,7 +4,7 @@ import argparse
 import json
 
 from interfaces.cli.commands.dispatch import CommandHandler, call_handler
-from interfaces.services.memory_service import DEFAULT_MEMORY_COLLECTION
+from interfaces.services.memory_service import DEFAULT_MEMORY_COLLECTION, MemoryApplicationService
 
 
 def register(subparsers: argparse._SubParsersAction) -> None:
@@ -139,9 +139,7 @@ def parse_filters(values: list[str]) -> dict[str, str]:
 
 
 def _memory_service(*args, **kwargs):
-    from interfaces.cli import news as news_cli
-
-    return news_cli.MemoryApplicationService(*args, **kwargs)
+    return MemoryApplicationService(*args, **kwargs)
 
 
 def _print_json(payload: dict) -> None:

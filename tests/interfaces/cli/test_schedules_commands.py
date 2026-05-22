@@ -1,10 +1,11 @@
 import json
 
 from interfaces.cli import news as news_cli
+from interfaces.cli.commands import schedules as schedule_commands
 
 
 def test_news_cli_schedules_list_json(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(news_cli, "ScheduleApplicationService", _FakeScheduleService)
+    monkeypatch.setattr(schedule_commands, "ScheduleApplicationService", _FakeScheduleService)
 
     exit_code = news_cli.main(["schedules", "list", "--enabled-only", "--json"])
 
@@ -16,7 +17,7 @@ def test_news_cli_schedules_list_json(monkeypatch, capsys) -> None:
 
 
 def test_news_cli_schedules_add_daily_interval_json(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(news_cli, "ScheduleApplicationService", _FakeScheduleService)
+    monkeypatch.setattr(schedule_commands, "ScheduleApplicationService", _FakeScheduleService)
 
     exit_code = news_cli.main(
         [
@@ -55,7 +56,7 @@ def test_news_cli_schedules_add_daily_interval_json(monkeypatch, capsys) -> None
 
 
 def test_news_cli_schedules_tick_json(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(news_cli, "ScheduleApplicationService", _FakeScheduleService)
+    monkeypatch.setattr(schedule_commands, "ScheduleApplicationService", _FakeScheduleService)
 
     exit_code = news_cli.main(
         [
@@ -79,7 +80,7 @@ def test_news_cli_schedules_tick_json(monkeypatch, capsys) -> None:
 
 
 def test_news_cli_schedules_run_json(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(news_cli, "ScheduleApplicationService", _FakeScheduleService)
+    monkeypatch.setattr(schedule_commands, "ScheduleApplicationService", _FakeScheduleService)
 
     exit_code = news_cli.main(
         [
@@ -106,7 +107,7 @@ def test_news_cli_schedules_run_json(monkeypatch, capsys) -> None:
 
 
 def test_news_cli_schedules_trigger_json(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(news_cli, "ScheduleApplicationService", _FakeScheduleService)
+    monkeypatch.setattr(schedule_commands, "ScheduleApplicationService", _FakeScheduleService)
 
     exit_code = news_cli.main(
         [

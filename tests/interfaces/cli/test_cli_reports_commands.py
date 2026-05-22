@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 import interfaces.cli.news as news_cli
+from interfaces.cli.commands import reports as reports_commands
 
 
 def test_cli_reports_list_uses_report_service_compat_path(monkeypatch, tmp_path, capsys) -> None:
@@ -21,7 +22,7 @@ def test_cli_reports_list_uses_report_service_compat_path(monkeypatch, tmp_path,
                 }
             )
 
-    monkeypatch.setattr(news_cli, "ReportApplicationService", FakeReportService)
+    monkeypatch.setattr(reports_commands, "ReportApplicationService", FakeReportService)
 
     exit_code = news_cli.main(["reports", "list", "--artifact-root", str(tmp_path), "--json"])
 

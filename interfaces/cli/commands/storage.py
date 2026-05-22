@@ -5,7 +5,9 @@ import json
 from datetime import UTC, datetime
 from typing import Any
 
+from infrastructure.storage.lifecycle import RetentionPolicy
 from interfaces.cli.commands.dispatch import CommandHandler, call_handler
+from interfaces.services.storage_service import StorageApplicationService
 
 
 def register(subparsers: argparse._SubParsersAction) -> None:
@@ -312,8 +314,7 @@ def retention_policy_from_args(args: argparse.Namespace):
         value = getattr(args, name)
         if value is not None:
             payload[name] = value
-    news_cli = _news_cli()
-    return news_cli.RetentionPolicy.from_dict(payload)
+    return RetentionPolicy.from_dict(payload)
 
 
 def parse_cli_datetime(value: str | None) -> datetime | None:
@@ -326,15 +327,7 @@ def parse_cli_datetime(value: str | None) -> datetime | None:
 
 
 def _storage_service(artifact_root: str):
-    news_cli = _news_cli()
-
-    return news_cli.StorageApplicationService(artifact_root)
-
-
-def _news_cli():
-    from interfaces.cli import news as news_cli
-
-    return news_cli
+    return StorageApplicationService(artifact_root)
 
 
 def _add_artifact_root_argument(parser: argparse.ArgumentParser, *, help_text: str) -> None:

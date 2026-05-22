@@ -1,10 +1,11 @@
 import json
 
 import interfaces.cli.news as news_cli
+from interfaces.cli.commands import memory as memory_commands
 
 
 def test_news_cli_memory_search_json(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(news_cli, "MemoryApplicationService", _FakeMemoryService)
+    monkeypatch.setattr(memory_commands, "MemoryApplicationService", _FakeMemoryService)
 
     exit_code = news_cli.main(
         [
@@ -32,7 +33,7 @@ def test_news_cli_memory_search_json(monkeypatch, capsys) -> None:
 
 
 def test_news_cli_memory_reindex_json(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(news_cli, "MemoryApplicationService", _FakeMemoryService)
+    monkeypatch.setattr(memory_commands, "MemoryApplicationService", _FakeMemoryService)
 
     exit_code = news_cli.main(
         [
@@ -59,7 +60,7 @@ def test_news_cli_memory_reindex_json(monkeypatch, capsys) -> None:
 
 
 def test_news_cli_memory_reindex_missing_run_returns_error(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(news_cli, "MemoryApplicationService", _FakeMemoryService)
+    monkeypatch.setattr(memory_commands, "MemoryApplicationService", _FakeMemoryService)
 
     exit_code = news_cli.main(["memory", "reindex", "--run-id", "missing", "--json"])
 
@@ -70,7 +71,7 @@ def test_news_cli_memory_reindex_missing_run_returns_error(monkeypatch, capsys) 
 
 
 def test_news_cli_memory_bootstrap_json(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(news_cli, "MemoryApplicationService", _FakeMemoryService)
+    monkeypatch.setattr(memory_commands, "MemoryApplicationService", _FakeMemoryService)
 
     exit_code = news_cli.main(
         [

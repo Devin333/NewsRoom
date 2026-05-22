@@ -4,6 +4,7 @@ import argparse
 import json
 
 from interfaces.cli.commands.dispatch import CommandHandler, call_handler
+from interfaces.services.tool_service import ToolApplicationService
 
 
 def register(subparsers: argparse._SubParsersAction) -> None:
@@ -101,9 +102,7 @@ def tool_policy_from_args(args: argparse.Namespace):
 
 
 def _tool_service():
-    from interfaces.cli import news as news_cli
-
-    return news_cli.ToolApplicationService()
+    return ToolApplicationService()
 
 
 def _print_json(payload: dict) -> None:

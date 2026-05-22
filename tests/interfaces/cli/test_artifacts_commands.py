@@ -1,10 +1,11 @@
 import json
 
 import interfaces.cli.news as news_cli
+from interfaces.cli.commands import artifacts as artifact_commands
 
 
 def test_news_cli_artifacts_list_json(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(news_cli, "ArtifactInspectionService", _FakeArtifactService)
+    monkeypatch.setattr(artifact_commands, "ArtifactInspectionService", _FakeArtifactService)
 
     exit_code = news_cli.main(["artifacts", "list", "--run-id", "run-1", "--json"])
 
@@ -17,7 +18,7 @@ def test_news_cli_artifacts_list_json(monkeypatch, capsys) -> None:
 
 
 def test_news_cli_artifacts_show_json(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(news_cli, "ArtifactInspectionService", _FakeArtifactService)
+    monkeypatch.setattr(artifact_commands, "ArtifactInspectionService", _FakeArtifactService)
 
     exit_code = news_cli.main(
         ["artifacts", "show", "--run-id", "run-1", "--artifact-key", "output", "--json"]

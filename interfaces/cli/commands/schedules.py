@@ -7,7 +7,7 @@ from typing import Any, Protocol
 
 from business.boards.cross_board.profiles import DAILY_PROFILE_CHOICES
 from interfaces.cli.commands.dispatch import CommandHandler, call_handler
-from interfaces.services.schedule_service import DEFAULT_SCHEDULE_STORE_PATH
+from interfaces.services.schedule_service import DEFAULT_SCHEDULE_STORE_PATH, ScheduleApplicationService
 from interfaces.services.worker_service import DEFAULT_DAILY_QUEUE
 
 
@@ -116,33 +116,23 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 
 
 def list_schedules_from_cli(args: argparse.Namespace) -> int:
-    from interfaces.cli import news as news_cli
-
-    return list_schedules(args, schedule_service_factory=news_cli.ScheduleApplicationService)
+    return list_schedules(args, schedule_service_factory=ScheduleApplicationService)
 
 
 def add_daily_schedule_from_cli(args: argparse.Namespace) -> int:
-    from interfaces.cli import news as news_cli
-
-    return add_daily_schedule(args, schedule_service_factory=news_cli.ScheduleApplicationService)
+    return add_daily_schedule(args, schedule_service_factory=ScheduleApplicationService)
 
 
 def tick_schedules_from_cli(args: argparse.Namespace) -> int:
-    from interfaces.cli import news as news_cli
-
-    return tick_schedules(args, schedule_service_factory=news_cli.ScheduleApplicationService)
+    return tick_schedules(args, schedule_service_factory=ScheduleApplicationService)
 
 
 def run_schedules_from_cli(args: argparse.Namespace) -> int:
-    from interfaces.cli import news as news_cli
-
-    return run_schedules(args, schedule_service_factory=news_cli.ScheduleApplicationService)
+    return run_schedules(args, schedule_service_factory=ScheduleApplicationService)
 
 
 def trigger_schedule_from_cli(args: argparse.Namespace) -> int:
-    from interfaces.cli import news as news_cli
-
-    return trigger_schedule(args, schedule_service_factory=news_cli.ScheduleApplicationService)
+    return trigger_schedule(args, schedule_service_factory=ScheduleApplicationService)
 
 
 def list_schedules(

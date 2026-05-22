@@ -15,3 +15,10 @@ Business skill packages live under `business/foundation/skills`. Framework Skill
 ## Workflow Boundary
 
 Daily and weekly cross-board workflows own NewsRoom-specific source selection, evidence construction, report writing, quality policy, and artifact publishing. Workflow runners should be thin orchestration surfaces; dependency creation belongs in runtime assembly modules.
+
+## Daily Intelligence Boundary
+
+- Runtime assembly modules build NewsRoom-specific dependency bundles, source connector bundles, and connector factories.
+- Runners orchestrate an already-assembled business workflow and should not become service locators.
+- Registries bind workflow step IDs to deterministic business functions or agent-shaped runtime functions.
+- Specs define workflow shape, steps, edges, triggers, and policies without owning infrastructure adapters.

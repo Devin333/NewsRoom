@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 import interfaces.cli.news as news_cli
+from interfaces.cli.commands import workers as worker_commands
 
 
 def test_cli_worker_and_workers_alias_use_worker_service(monkeypatch, capsys) -> None:
@@ -22,7 +23,7 @@ def test_cli_worker_and_workers_alias_use_worker_service(monkeypatch, capsys) ->
                 }
             )
 
-    monkeypatch.setattr(news_cli, "WorkerApplicationService", FakeWorkerService)
+    monkeypatch.setattr(worker_commands, "WorkerApplicationService", FakeWorkerService)
 
     assert news_cli.main(["worker", "status", "--stale-after-seconds", "5", "--json"]) == 0
     assert json.loads(capsys.readouterr().out)["stale_after_seconds"] == 5

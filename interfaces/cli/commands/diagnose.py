@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import json
 
+from interfaces.services.diagnose_service import DiagnosticApplicationService
+
 
 def register(subparsers: argparse._SubParsersAction) -> None:
     diagnose_parser = subparsers.add_parser("diagnose", help="Run local diagnostics")
@@ -11,9 +13,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 
 
 def diagnose(args: argparse.Namespace) -> int:
-    from interfaces.cli import news as news_cli
-
-    result = news_cli.DiagnosticApplicationService().run()
+    result = DiagnosticApplicationService().run()
     payload = result.to_dict()
 
     if args.json:

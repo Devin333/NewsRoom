@@ -5,6 +5,9 @@ import json
 from typing import Any
 
 from interfaces.cli.commands.dispatch import CommandHandler, call_handler
+from interfaces.services.artifact_service import ArtifactInspectionService
+from interfaces.services.run_inspection_service import RunInspectionService
+from interfaces.services.run_operation_service import RunOperationApplicationService
 
 
 def register(subparsers: argparse._SubParsersAction) -> None:
@@ -362,27 +365,15 @@ def print_run_operation_result(payload: dict[str, Any], *, json_output: bool) ->
 
 
 def _run_inspection_service(artifact_root: str):
-    news_cli = _news_cli()
-
-    return news_cli.RunInspectionService(artifact_root=artifact_root)
+    return RunInspectionService(artifact_root=artifact_root)
 
 
 def _artifact_service(artifact_root: str):
-    news_cli = _news_cli()
-
-    return news_cli.ArtifactInspectionService(artifact_root=artifact_root)
+    return ArtifactInspectionService(artifact_root=artifact_root)
 
 
 def _run_operation_service(artifact_root: str):
-    news_cli = _news_cli()
-
-    return news_cli.RunOperationApplicationService(artifact_root=artifact_root)
-
-
-def _news_cli():
-    from interfaces.cli import news as news_cli
-
-    return news_cli
+    return RunOperationApplicationService(artifact_root=artifact_root)
 
 
 def _add_artifact_root_argument(parser: argparse.ArgumentParser) -> None:

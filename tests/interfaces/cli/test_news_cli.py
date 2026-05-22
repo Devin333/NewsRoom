@@ -1,6 +1,9 @@
 import json
 
 from interfaces.cli.news import main
+from framework.specs import WorkflowStatus
+from interfaces.cli.commands import dev as dev_commands
+from interfaces.cli.commands import run as run_commands
 from business.boards.cross_board.workflows.daily_intelligence.profiles import LEGACY_DAILY_WORKFLOW_ID
 from interfaces.services.diagnose_service import DiagnoseCheck, DiagnoseResult
 from interfaces.services.run_service import LiveSmokeResult
@@ -131,7 +134,7 @@ def test_news_cli_run_daily_uses_run_application_service(monkeypatch, tmp_path, 
     class FakeRunResult:
         def __init__(self, run_id: str) -> None:
             self.run_id = run_id
-            self.status = news_cli.WorkflowStatus.SUCCEEDED
+            self.status = WorkflowStatus.SUCCEEDED
             self.output = {"final_report": {"title": "Daily Intelligence"}}
             self.error = None
             self.artifact_dir = str(tmp_path / run_id)
@@ -153,7 +156,7 @@ def test_news_cli_run_daily_uses_run_application_service(monkeypatch, tmp_path, 
             calls.append({"artifact_root": self.artifact_root, **kwargs})
             return FakeRunResult(str(kwargs["run_id"]))
 
-    monkeypatch.setattr(news_cli, "RunApplicationService", FakeRunApplicationService)
+    monkeypatch.setattr(run_commands, "RunApplicationService", FakeRunApplicationService)
 
     exit_code = news_cli.main(
         [
@@ -195,7 +198,7 @@ def test_news_cli_run_daily_accepts_agentic_profile(monkeypatch, tmp_path, capsy
     class FakeRunResult:
         def __init__(self, run_id: str) -> None:
             self.run_id = run_id
-            self.status = news_cli.WorkflowStatus.SUCCEEDED
+            self.status = WorkflowStatus.SUCCEEDED
             self.output = {"final_report": {"title": "Daily Intelligence"}}
             self.error = None
             self.artifact_dir = str(tmp_path / run_id)
@@ -217,7 +220,7 @@ def test_news_cli_run_daily_accepts_agentic_profile(monkeypatch, tmp_path, capsy
             calls.append({"artifact_root": self.artifact_root, **kwargs})
             return FakeRunResult(str(kwargs["run_id"]))
 
-    monkeypatch.setattr(news_cli, "RunApplicationService", FakeRunApplicationService)
+    monkeypatch.setattr(run_commands, "RunApplicationService", FakeRunApplicationService)
 
     exit_code = news_cli.main(
         [
@@ -264,7 +267,7 @@ def test_news_cli_run_live_smoke_json_output(monkeypatch, tmp_path, capsys) -> N
                 source_limit=3,
             )
 
-    monkeypatch.setattr(news_cli, "RunApplicationService", FakeRunApplicationService)
+    monkeypatch.setattr(dev_commands, "RunApplicationService", FakeRunApplicationService)
 
     exit_code = main(
         [
@@ -306,7 +309,7 @@ def test_news_cli_run_live_smoke_fail_if_unready_returns_failure(monkeypatch, tm
                 source_limit=kwargs["source_limit"],
             )
 
-    monkeypatch.setattr(news_cli, "RunApplicationService", FakeRunApplicationService)
+    monkeypatch.setattr(dev_commands, "RunApplicationService", FakeRunApplicationService)
 
     exit_code = main(
         [

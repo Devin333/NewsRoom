@@ -4,7 +4,7 @@ import argparse
 import json
 from typing import Any, Protocol
 
-from interfaces.services.entity_service import DEFAULT_ENTITY_STORE_PATH
+from interfaces.services.entity_service import DEFAULT_ENTITY_STORE_PATH, EntityTrackingApplicationService
 
 
 ENTITY_KIND_CHOICES = ["company", "project", "person", "organization"]
@@ -78,20 +78,16 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 
 
 def create_entity_from_cli(args: argparse.Namespace) -> int:
-    from interfaces.cli import news as news_cli
-
     return create_entity(
         args,
-        entity_service_factory=news_cli.EntityTrackingApplicationService,
+        entity_service_factory=EntityTrackingApplicationService,
     )
 
 
 def list_entities_from_cli(args: argparse.Namespace) -> int:
-    from interfaces.cli import news as news_cli
-
     return list_entities(
         args,
-        entity_service_factory=news_cli.EntityTrackingApplicationService,
+        entity_service_factory=EntityTrackingApplicationService,
     )
 
 
@@ -104,30 +100,24 @@ def disable_entity_from_cli(args: argparse.Namespace) -> int:
 
 
 def set_entity_enabled_from_cli(args: argparse.Namespace, *, enabled: bool) -> int:
-    from interfaces.cli import news as news_cli
-
     return set_entity_enabled(
         args,
         enabled=enabled,
-        entity_service_factory=news_cli.EntityTrackingApplicationService,
+        entity_service_factory=EntityTrackingApplicationService,
     )
 
 
 def delete_entity_from_cli(args: argparse.Namespace) -> int:
-    from interfaces.cli import news as news_cli
-
     return delete_entity(
         args,
-        entity_service_factory=news_cli.EntityTrackingApplicationService,
+        entity_service_factory=EntityTrackingApplicationService,
     )
 
 
 def match_entity_reports_from_cli(args: argparse.Namespace) -> int:
-    from interfaces.cli import news as news_cli
-
     return match_entity_reports(
         args,
-        entity_service_factory=news_cli.EntityTrackingApplicationService,
+        entity_service_factory=EntityTrackingApplicationService,
     )
 
 

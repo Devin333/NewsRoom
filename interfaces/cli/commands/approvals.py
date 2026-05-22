@@ -5,9 +5,10 @@ import json
 from datetime import UTC, datetime
 from typing import Any, Callable
 
+from framework.workers.approval import ApprovalAlreadyDecidedError, ApprovalNotFoundError
 from interfaces.cli.commands.dispatch import CommandHandler, call_handler
-from interfaces.services.approval_service import DEFAULT_APPROVAL_STORE_PATH
-from interfaces.services.run_service import DEFAULT_CHECKPOINT_STORE_PATH
+from interfaces.services.approval_service import DEFAULT_APPROVAL_STORE_PATH, ApprovalApplicationService
+from interfaces.services.run_service import DEFAULT_CHECKPOINT_STORE_PATH, RunApplicationService
 
 
 APPROVAL_STATUS_CHOICES = ["pending", "approved", "rejected", "modified", "expired", "cancelled"]
@@ -149,10 +150,9 @@ def submit_approval(args: argparse.Namespace) -> int:
 
 
 def show_approval(args: argparse.Namespace) -> int:
-    news_cli = _news_cli()
     try:
         result = _approval_service(args.store_path).get_approval(args.approval_id)
-    except news_cli.ApprovalNotFoundError as exc:
+    except ApprovalNotFoundError as exc:
         print(str(exc))
         return 1
     print_approval_detail(result.to_dict(), json_output=args.json)
@@ -160,13 +160,12 @@ def show_approval(args: argparse.Namespace) -> int:
 
 
 def resume_context(args: argparse.Namespace) -> int:
-    news_cli = _news_cli()
     try:
         result = _approval_service(args.store_path).build_resume_context(
             args.approval_id,
             decision_key=args.decision_key,
         )
-    except (news_cli.ApprovalNotFoundError, ValueError) as exc:
+    except (ApprovalNotFoundError, ValueError) as exc:
         print(str(exc))
         return 1
     payload = result.to_dict()
@@ -184,10 +183,9 @@ def resume_context(args: argparse.Namespace) -> int:
 
 
 def resume_workflow(args: argparse.Namespace) -> int:
-    news_cli = _news_cli()
-    approval_service = news_cli.ApprovalApplicationService(store_path=args.store_path)
+    approval_service = ApprovalApplicationService(store_path=args.store_path)
     try:
-        result = news_cli.RunApplicationService(artifact_root=args.artifact_root).resume_from_approval(
+        result = RunApplicationService(artifact_root=args.artifact_root).resume_from_approval(
             args.approval_id,
             workflow_id=args.workflow_id,
             profile=args.profile,
@@ -196,7 +194,7 @@ def resume_workflow(args: argparse.Namespace) -> int:
             approval_service=approval_service,
             checkpoint_store_path=args.checkpoint_store_path,
         )
-    except (news_cli.ApprovalNotFoundError, ValueError) as exc:
+    except (ApprovalNotFoundError, ValueError) as exc:
         print(str(exc))
         return 1
     payload = result.to_dict()
@@ -248,10 +246,9 @@ def modify(args: argparse.Namespace) -> int:
 
 
 def approval_decision(args: argparse.Namespace, call: Callable[[Any], Any]) -> int:
-    news_cli = _news_cli()
     try:
         result = call(_approval_service(args.store_path))
-    except (news_cli.ApprovalNotFoundError, news_cli.ApprovalAlreadyDecidedError, ValueError) as exc:
+    except (ApprovalNotFoundError, ApprovalAlreadyDecidedError, ValueError) as exc:
         print(str(exc))
         return 1
     print_approval_detail(result.to_dict(), json_output=args.json)
@@ -286,15 +283,7 @@ def parse_cli_datetime(value: str | None) -> datetime | None:
 
 
 def _approval_service(store_path: str):
-    news_cli = _news_cli()
-
-    return news_cli.ApprovalApplicationService(store_path=store_path)
-
-
-def _news_cli():
-    from interfaces.cli import news as news_cli
-
-    return news_cli
+    return ApprovalApplicationService(store_path=store_path)
 
 
 def _add_store_path(parser: argparse.ArgumentParser) -> None:

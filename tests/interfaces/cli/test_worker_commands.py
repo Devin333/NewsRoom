@@ -1,10 +1,11 @@
 import json
 
 import interfaces.cli.news as news_cli
+from interfaces.cli.commands import workers as worker_commands
 
 
 def test_news_cli_worker_enqueue_daily_json(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(news_cli, "WorkerApplicationService", _FakeWorkerService)
+    monkeypatch.setattr(worker_commands, "WorkerApplicationService", _FakeWorkerService)
 
     exit_code = news_cli.main(
         [
@@ -32,7 +33,7 @@ def test_news_cli_worker_enqueue_daily_json(monkeypatch, capsys) -> None:
 
 
 def test_news_cli_worker_enqueue_memory_reindex_json(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(news_cli, "WorkerApplicationService", _FakeWorkerService)
+    monkeypatch.setattr(worker_commands, "WorkerApplicationService", _FakeWorkerService)
 
     exit_code = news_cli.main(
         [
@@ -58,7 +59,7 @@ def test_news_cli_worker_enqueue_memory_reindex_json(monkeypatch, capsys) -> Non
 
 
 def test_news_cli_worker_enqueue_source_health_json(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(news_cli, "WorkerApplicationService", _FakeWorkerService)
+    monkeypatch.setattr(worker_commands, "WorkerApplicationService", _FakeWorkerService)
 
     exit_code = news_cli.main(
         [
@@ -84,7 +85,7 @@ def test_news_cli_worker_enqueue_source_health_json(monkeypatch, capsys) -> None
 
 def test_news_cli_worker_run_once_json(monkeypatch, capsys) -> None:
     _FakeWorkerService.run_once_calls = []
-    monkeypatch.setattr(news_cli, "WorkerApplicationService", _FakeWorkerService)
+    monkeypatch.setattr(worker_commands, "WorkerApplicationService", _FakeWorkerService)
 
     exit_code = news_cli.main(
         [
@@ -111,7 +112,7 @@ def test_news_cli_worker_run_once_json(monkeypatch, capsys) -> None:
 
 def test_news_cli_worker_run_once_reclaim_stale_json(monkeypatch, capsys) -> None:
     _FakeWorkerService.run_once_calls = []
-    monkeypatch.setattr(news_cli, "WorkerApplicationService", _FakeWorkerService)
+    monkeypatch.setattr(worker_commands, "WorkerApplicationService", _FakeWorkerService)
 
     exit_code = news_cli.main(
         [
@@ -138,7 +139,7 @@ def test_news_cli_worker_run_once_reclaim_stale_json(monkeypatch, capsys) -> Non
 
 def test_news_cli_worker_run_json(monkeypatch, capsys) -> None:
     _FakeWorkerService.run_loop_calls = []
-    monkeypatch.setattr(news_cli, "WorkerApplicationService", _FakeWorkerService)
+    monkeypatch.setattr(worker_commands, "WorkerApplicationService", _FakeWorkerService)
 
     exit_code = news_cli.main(
         [
@@ -164,7 +165,7 @@ def test_news_cli_worker_run_json(monkeypatch, capsys) -> None:
 
 
 def test_news_cli_worker_heartbeat_json(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(news_cli, "WorkerApplicationService", _FakeWorkerService)
+    monkeypatch.setattr(worker_commands, "WorkerApplicationService", _FakeWorkerService)
 
     exit_code = news_cli.main(
         [
@@ -190,7 +191,7 @@ def test_news_cli_worker_heartbeat_json(monkeypatch, capsys) -> None:
 
 
 def test_news_cli_worker_status_json(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(news_cli, "WorkerApplicationService", _FakeWorkerService)
+    monkeypatch.setattr(worker_commands, "WorkerApplicationService", _FakeWorkerService)
 
     exit_code = news_cli.main(
         [
@@ -214,7 +215,7 @@ def test_news_cli_worker_status_json(monkeypatch, capsys) -> None:
 
 
 def test_news_cli_worker_queues_json(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(news_cli, "WorkerApplicationService", _FakeWorkerService)
+    monkeypatch.setattr(worker_commands, "WorkerApplicationService", _FakeWorkerService)
 
     exit_code = news_cli.main(
         [

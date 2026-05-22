@@ -3,7 +3,9 @@ from __future__ import annotations
 import argparse
 import json
 
+from framework.specs import WorkflowStatus
 from interfaces.cli.commands.dispatch import CommandHandler, call_handler
+from interfaces.services.run_service import RunApplicationService
 
 
 def register(subparsers: argparse._SubParsersAction) -> None:
@@ -53,9 +55,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 
 
 def run_test_no_llm(args: argparse.Namespace) -> int:
-    from interfaces.cli import news as news_cli
-
-    service = news_cli.RunApplicationService(artifact_root=args.artifact_root)
+    service = RunApplicationService(artifact_root=args.artifact_root)
     result = service.run_test_no_llm(topic=args.topic, run_id=args.run_id)
 
     if args.json:
@@ -67,13 +67,11 @@ def run_test_no_llm(args: argparse.Namespace) -> int:
         print(f"manifest={result.manifest_path}")
         print(f"events={result.events_path}")
 
-    return 0 if result.status == news_cli.WorkflowStatus.SUCCEEDED else 1
+    return 0 if result.status == WorkflowStatus.SUCCEEDED else 1
 
 
 def run_test_agent_loop(args: argparse.Namespace) -> int:
-    from interfaces.cli import news as news_cli
-
-    service = news_cli.RunApplicationService(artifact_root=args.artifact_root)
+    service = RunApplicationService(artifact_root=args.artifact_root)
     result = service.run_test_agent_loop(topic=args.topic, run_id=args.run_id)
     metrics = result.output.get("agent_loop_metrics", {})
 
@@ -88,13 +86,11 @@ def run_test_agent_loop(args: argparse.Namespace) -> int:
         print(f"llm_calls={metrics.get('llm_calls', 0)}")
         print(f"tool_calls={metrics.get('tool_calls', 0)}")
 
-    return 0 if result.status == news_cli.WorkflowStatus.SUCCEEDED else 1
+    return 0 if result.status == WorkflowStatus.SUCCEEDED else 1
 
 
 def run_live_smoke(args: argparse.Namespace) -> int:
-    from interfaces.cli import news as news_cli
-
-    service = news_cli.RunApplicationService(artifact_root=args.artifact_root)
+    service = RunApplicationService(artifact_root=args.artifact_root)
     result = service.run_live_smoke(
         topic=args.topic,
         source_limit=args.source_limit,

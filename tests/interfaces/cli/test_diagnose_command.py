@@ -1,10 +1,11 @@
 import json
 
 import interfaces.cli.news as news_cli
+from interfaces.cli.commands import diagnose as diagnose_commands
 
 
 def test_news_cli_diagnose_json(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(news_cli, "DiagnosticApplicationService", _FakeDiagnosticService)
+    monkeypatch.setattr(diagnose_commands, "DiagnosticApplicationService", _FakeDiagnosticService)
 
     exit_code = news_cli.main(["diagnose", "--json"])
 

@@ -1,11 +1,12 @@
 import json
 
 import interfaces.cli.news as news_cli
+from interfaces.cli.commands import mcp as mcp_commands
 from interfaces.services.mcp_service import MCPApplicationService
 
 
 def test_news_cli_mcp_catalog_json(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(news_cli, "MCPApplicationService", _FakeMCPService)
+    monkeypatch.setattr(mcp_commands, "MCPApplicationService", _FakeMCPService)
 
     exit_code = news_cli.main(["mcp", "catalog", "--json"])
 
@@ -17,7 +18,7 @@ def test_news_cli_mcp_catalog_json(monkeypatch, capsys) -> None:
 
 
 def test_news_cli_mcp_capabilities_json(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(news_cli, "MCPApplicationService", _FakeMCPService)
+    monkeypatch.setattr(mcp_commands, "MCPApplicationService", _FakeMCPService)
 
     exit_code = news_cli.main(["mcp", "capabilities", "--json"])
 
@@ -35,7 +36,7 @@ def test_news_cli_mcp_capabilities_json(monkeypatch, capsys) -> None:
 
 
 def test_news_cli_mcp_manifest_alias_json(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(news_cli, "MCPApplicationService", _FakeMCPService)
+    monkeypatch.setattr(mcp_commands, "MCPApplicationService", _FakeMCPService)
 
     exit_code = news_cli.main(["mcp", "manifest", "--json"])
 
@@ -48,7 +49,7 @@ def test_news_cli_mcp_manifest_alias_json(monkeypatch, capsys) -> None:
 
 
 def test_news_cli_mcp_call_json(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(news_cli, "MCPApplicationService", _FakeMCPService)
+    monkeypatch.setattr(mcp_commands, "MCPApplicationService", _FakeMCPService)
 
     exit_code = news_cli.main(
         [
@@ -71,7 +72,7 @@ def test_news_cli_mcp_call_json(monkeypatch, capsys) -> None:
 
 
 def test_news_cli_mcp_tools_list_json(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(news_cli, "MCPApplicationService", _FakeMCPService)
+    monkeypatch.setattr(mcp_commands, "MCPApplicationService", _FakeMCPService)
 
     exit_code = news_cli.main(["mcp", "tools", "list", "--json"])
 
@@ -84,7 +85,7 @@ def test_news_cli_mcp_tools_list_json(monkeypatch, capsys) -> None:
 
 
 def test_news_cli_mcp_tools_call_json(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(news_cli, "MCPApplicationService", _FakeMCPService)
+    monkeypatch.setattr(mcp_commands, "MCPApplicationService", _FakeMCPService)
 
     exit_code = news_cli.main(
         [
@@ -108,7 +109,7 @@ def test_news_cli_mcp_tools_call_json(monkeypatch, capsys) -> None:
 
 
 def test_news_cli_mcp_read_resource_json(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(news_cli, "MCPApplicationService", _FakeMCPService)
+    monkeypatch.setattr(mcp_commands, "MCPApplicationService", _FakeMCPService)
 
     exit_code = news_cli.main(
         [
@@ -129,7 +130,7 @@ def test_news_cli_mcp_read_resource_json(monkeypatch, capsys) -> None:
 
 
 def test_news_cli_mcp_resources_read_json(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(news_cli, "MCPApplicationService", _FakeMCPService)
+    monkeypatch.setattr(mcp_commands, "MCPApplicationService", _FakeMCPService)
 
     exit_code = news_cli.main(
         [
@@ -150,7 +151,7 @@ def test_news_cli_mcp_resources_read_json(monkeypatch, capsys) -> None:
 
 
 def test_news_cli_mcp_get_prompt_json(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(news_cli, "MCPApplicationService", _FakeMCPService)
+    monkeypatch.setattr(mcp_commands, "MCPApplicationService", _FakeMCPService)
 
     exit_code = news_cli.main(
         [
@@ -173,7 +174,7 @@ def test_news_cli_mcp_get_prompt_json(monkeypatch, capsys) -> None:
 
 
 def test_news_cli_mcp_prompts_list_json(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(news_cli, "MCPApplicationService", _FakeMCPService)
+    monkeypatch.setattr(mcp_commands, "MCPApplicationService", _FakeMCPService)
 
     exit_code = news_cli.main(["mcp", "prompts", "list", "--json"])
 
@@ -186,7 +187,7 @@ def test_news_cli_mcp_prompts_list_json(monkeypatch, capsys) -> None:
 
 
 def test_news_cli_mcp_prompts_get_json(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(news_cli, "MCPApplicationService", _FakeMCPService)
+    monkeypatch.setattr(mcp_commands, "MCPApplicationService", _FakeMCPService)
 
     exit_code = news_cli.main(
         [

@@ -1,10 +1,11 @@
 import json
 
 import interfaces.cli.news as news_cli
+from interfaces.cli.commands import storage as storage_commands
 
 
 def test_news_cli_storage_metrics_json(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(news_cli, "StorageApplicationService", _FakeStorageService)
+    monkeypatch.setattr(storage_commands, "StorageApplicationService", _FakeStorageService)
 
     exit_code = news_cli.main(["storage", "metrics", "--artifact-root", "runs", "--json"])
 
@@ -18,7 +19,7 @@ def test_news_cli_storage_metrics_json(monkeypatch, capsys) -> None:
 
 
 def test_news_cli_storage_metrics_text(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(news_cli, "StorageApplicationService", _FakeStorageService)
+    monkeypatch.setattr(storage_commands, "StorageApplicationService", _FakeStorageService)
 
     exit_code = news_cli.main(["storage", "metrics", "--artifact-root", "runs"])
 
@@ -30,7 +31,7 @@ def test_news_cli_storage_metrics_text(monkeypatch, capsys) -> None:
 
 
 def test_news_cli_storage_migrate_json(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(news_cli, "StorageApplicationService", _FakeStorageService)
+    monkeypatch.setattr(storage_commands, "StorageApplicationService", _FakeStorageService)
 
     exit_code = news_cli.main(
         ["storage", "migrate", "--artifact-root", "runs", "--require-postgres", "--json"]
@@ -47,7 +48,7 @@ def test_news_cli_storage_migrate_json(monkeypatch, capsys) -> None:
 
 
 def test_news_cli_storage_migrate_require_postgres_failure(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(news_cli, "StorageApplicationService", _RejectingStorageService)
+    monkeypatch.setattr(storage_commands, "StorageApplicationService", _RejectingStorageService)
 
     exit_code = news_cli.main(["storage", "migrate", "--artifact-root", "runs", "--require-postgres"])
 

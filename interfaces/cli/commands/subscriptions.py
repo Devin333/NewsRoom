@@ -5,7 +5,7 @@ import json
 from typing import Any, Callable, Protocol
 
 from business.boards.cross_board.profiles import DAILY_PROFILE_CHOICES
-from interfaces.services.subscription_service import DEFAULT_SUBSCRIPTION_STORE_PATH
+from interfaces.services.subscription_service import DEFAULT_SUBSCRIPTION_STORE_PATH, SubscriptionApplicationService
 
 
 class SubscriptionServiceFactory(Protocol):
@@ -73,22 +73,18 @@ ParseKeyValues = Callable[[list[str]], dict[str, str]]
 
 
 def create_subscription_from_cli(args: argparse.Namespace) -> int:
-    from interfaces.cli import news as news_cli
-
     return create_subscription(
         args,
-        subscription_service_factory=news_cli.SubscriptionApplicationService,
+        subscription_service_factory=SubscriptionApplicationService,
         parse_key_values=parse_key_values,
         print_subscription=print_subscription,
     )
 
 
 def list_subscriptions_from_cli(args: argparse.Namespace) -> int:
-    from interfaces.cli import news as news_cli
-
     return list_subscriptions(
         args,
-        subscription_service_factory=news_cli.SubscriptionApplicationService,
+        subscription_service_factory=SubscriptionApplicationService,
     )
 
 
@@ -101,22 +97,18 @@ def disable_subscription_from_cli(args: argparse.Namespace) -> int:
 
 
 def set_subscription_enabled_from_cli(args: argparse.Namespace, *, enabled: bool) -> int:
-    from interfaces.cli import news as news_cli
-
     return set_subscription_enabled(
         args,
         enabled=enabled,
-        subscription_service_factory=news_cli.SubscriptionApplicationService,
+        subscription_service_factory=SubscriptionApplicationService,
         print_subscription=print_subscription,
     )
 
 
 def delete_subscription_from_cli(args: argparse.Namespace) -> int:
-    from interfaces.cli import news as news_cli
-
     return delete_subscription(
         args,
-        subscription_service_factory=news_cli.SubscriptionApplicationService,
+        subscription_service_factory=SubscriptionApplicationService,
     )
 
 

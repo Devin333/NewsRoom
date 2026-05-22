@@ -4,7 +4,9 @@ import argparse
 import json
 
 from business.boards.cross_board.profiles import DAILY_PROFILE_CHOICES
+from framework.specs import WorkflowStatus
 from interfaces.cli.commands.dispatch import CommandHandler, call_handler
+from interfaces.services.run_service import RunApplicationService
 
 
 def register(subparsers: argparse._SubParsersAction) -> None:
@@ -46,9 +48,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 
 
 def run_daily(args: argparse.Namespace) -> int:
-    from interfaces.cli import news as news_cli
-
-    service = news_cli.RunApplicationService(artifact_root=args.artifact_root)
+    service = RunApplicationService(artifact_root=args.artifact_root)
     result = service.run_daily(
         profile=args.profile,
         topic=args.topic,
@@ -68,13 +68,11 @@ def run_daily(args: argparse.Namespace) -> int:
         if result.error:
             print(f"error={result.error.get('message')}")
 
-    return 0 if result.status == news_cli.WorkflowStatus.SUCCEEDED else 1
+    return 0 if result.status == WorkflowStatus.SUCCEEDED else 1
 
 
 def run_weekly(args: argparse.Namespace) -> int:
-    from interfaces.cli import news as news_cli
-
-    service = news_cli.RunApplicationService(artifact_root=args.artifact_root)
+    service = RunApplicationService(artifact_root=args.artifact_root)
     try:
         result = service.run_weekly(
             language=args.language,
@@ -100,7 +98,7 @@ def run_weekly(args: argparse.Namespace) -> int:
         if result.error:
             print(f"error={result.error.get('message')}")
 
-    return 0 if result.status == news_cli.WorkflowStatus.SUCCEEDED else 1
+    return 0 if result.status == WorkflowStatus.SUCCEEDED else 1
 
 
 add_run_commands = register

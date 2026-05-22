@@ -19,8 +19,12 @@ The old `infrastructure.storage.repository` path remains as a compatibility expo
 
 ## Business Records
 
-Business report, evidence, claim, quality, and source records remain business concepts. Persistence adapters serialize them without changing business semantics.
+Business report, evidence, claim, quality, and source records remain business concepts. Storage adapters serialize, index, back up, retain, and query those records without changing business semantics.
 
 ## Storage Types
 
 Local JSON is the offline fallback and keeps the existing path/data format. PostgreSQL is the relational persistence adapter. Vector storage is for memory recall and indexing. Checkpoint storage is for workflow resumption and is not the same thing as run/report persistence.
+
+## Adapter Rule
+
+Business workflows and interface services may request persistence through application services or repository factories. Framework artifact runtime remains generic and must not learn NewsRoom report, evidence, claim, or source semantics.
