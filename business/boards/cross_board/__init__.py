@@ -15,6 +15,7 @@ from business.boards.cross_board.graph_models import (
 from business.boards.cross_board.path_scorer import CrossBoardPathScoringService
 from business.boards.cross_board.path_finder import CrossBoardPathFinder
 from business.boards.cross_board.insight_service import CrossBoardInsightService
+from business.boards.cross_board.intelligence_service import CrossBoardIntelligenceService
 from business.boards.cross_board.relation_view_service import RelationViewService
 from business.boards.cross_board.technology_journey_service import TechnologyJourneyService
 from business.boards.cross_board.technology_radar_service import TechnologyRadarService
@@ -47,6 +48,7 @@ __all__ = [
     "CrossBoardGraphQualitySummary",
     "CrossBoardInsightService",
     "CrossBoardInsightCandidate",
+    "CrossBoardIntelligenceService",
     "CrossBoardPath",
     "CrossBoardPathFinder",
     "CrossBoardPathScoringService",

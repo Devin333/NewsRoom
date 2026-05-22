@@ -51,7 +51,22 @@ from business.foundation.models import (
     quality_snapshot_from_checks,
 )
 from business.foundation.evidence import BusinessEvidenceRef, BusinessRunManifestRef, BusinessTraceRef
-from business.foundation.feedback import RuntimeQualityClosure, build_feedback_events_from_quality, build_runtime_quality_closure
+from business.foundation.feedback import (
+    BoardImprovementContext,
+    ImprovementApplier,
+    ImprovementMeasurement,
+    ImprovementMeasurementBuilder,
+    ImprovementOverride,
+    ImprovementProposal,
+    ImprovementRecommendation,
+    ImprovementRecommendationBuilder,
+    InMemoryImprovementProposalStore,
+    LocalJsonImprovementProposalStore,
+    RuntimeQualityClosure,
+    SelfImprovementReport,
+    build_feedback_events_from_quality,
+    build_runtime_quality_closure,
+)
 from business.foundation.memory_refs import BusinessMemoryRef
 from business.foundation.policies import (
     BasePolicy,
@@ -89,6 +104,14 @@ from business.foundation.registry import (
     TaxonomyDefinition,
     TaxonomyRegistry,
 )
+from business.foundation.subscription import (
+    DeliveryPlan,
+    DeliveryPlanBuilder,
+    SubscriptionPayload,
+    SubscriptionPayloadBuilder,
+    SubscriptionTarget,
+    aggregate_payloads,
+)
 from business.foundation.taxonomy import (
     BoardType,
     ClaimModality,
@@ -123,6 +146,7 @@ __all__ = [
     "BoardRunResult",
     "BoardContext",
     "BoardDefinition",
+    "BoardImprovementContext",
     "BoardRegistry",
     "BoardService",
     "BoardType",
@@ -151,6 +175,8 @@ __all__ = [
     "Confidence",
     "ConfidenceMethod",
     "ConfidencePolicy",
+    "DeliveryPlan",
+    "DeliveryPlanBuilder",
     "PolicyLoader",
     "DetailPageRepository",
     "DetailPage",
@@ -168,8 +194,17 @@ __all__ = [
     "Insight",
     "InsightRepository",
     "InsightType",
+    "ImprovementApplier",
+    "ImprovementMeasurement",
+    "ImprovementMeasurementBuilder",
+    "ImprovementOverride",
+    "ImprovementProposal",
+    "ImprovementRecommendation",
+    "ImprovementRecommendationBuilder",
+    "InMemoryImprovementProposalStore",
     "LLMGateway",
     "LLMPort",
+    "LocalJsonImprovementProposalStore",
     "Maturity",
     "MaturityStage",
     "ObjectRef",
@@ -179,7 +214,9 @@ __all__ = [
     "QualityPolicy",
     "RegressionGuardRunner",
     "RuntimeQualityClosure",
+    "SelfImprovementReport",
     "activate_policy_candidate",
+    "aggregate_payloads",
     "build_feedback_events_from_quality",
     "build_policy_candidate",
     "build_runtime_quality_closure",
@@ -207,6 +244,9 @@ __all__ = [
     "SourceRef",
     "SourceReliability",
     "SourceType",
+    "SubscriptionPayload",
+    "SubscriptionPayloadBuilder",
+    "SubscriptionTarget",
     "TaxonomyDefinition",
     "TaxonomyRegistry",
     "TaxonomyType",

@@ -17,6 +17,11 @@ from framework.workflow.buffer.data_buffer import StepScopedDataBufferView
 from business.foundation.models.report_output import FinalReport, render_markdown
 from infrastructure.storage.artifacts import ArtifactRef
 from infrastructure.storage.local_json import LocalJsonRepository
+from business.boards.cross_board.workflows.weekly_intelligence.trend_analyzer import WeeklyTrendAnalyzer
+from business.boards.cross_board.workflows.weekly_intelligence.weekly_historian import WeeklyHistorian
+from business.boards.cross_board.workflows.weekly_intelligence.weekly_improvement import WeeklyImprovementBuilder
+from business.boards.cross_board.workflows.weekly_intelligence.weekly_quality import WeeklyQualityBuilder
+from business.boards.cross_board.workflows.weekly_intelligence.weekly_subscription import WeeklySubscriptionBuilder
 from business.boards.cross_board.workflows.daily_intelligence.profiles import (
     LEGACY_DAILY_WORKFLOW_ID,
     daily_workflow_ids,
@@ -72,6 +77,7 @@ class WeeklyIntelligenceRunner:
                 "source_workflow_family": "daily",
                 "period_start": _format_datetime(period[0]),
                 "period_end": _format_datetime(period[1]),
+                "run_id": run_id or "weekly-intelligence-run",
             },
             profile=PROFILE_WEEKLY,
             run_id=run_id,
@@ -80,6 +86,11 @@ class WeeklyIntelligenceRunner:
     def _function_registry(self) -> FunctionStepRegistry:
         registry = FunctionStepRegistry()
         registry.register("weekly.collect_source_reports", self._collect_source_reports)
+        registry.register("weekly.analyze_trends", _analyze_weekly_trends)
+        registry.register("weekly.build_timeline", _build_weekly_timeline)
+        registry.register("weekly.build_quality", _build_weekly_quality)
+        registry.register("weekly.build_subscription", _build_weekly_subscription)
+        registry.register("weekly.build_improvement", _build_weekly_improvement)
         registry.register("weekly.write_report", _write_weekly_report)
         return registry
 
@@ -152,10 +163,59 @@ def build_weekly_intelligence_workflow() -> WorkflowSpec:
                 required_output_keys=["weekly_period", "source_reports"],
             ),
             StepSpec(
+                step_id="analyze_weekly_trends",
+                name="Analyze weekly trends",
+                implementation="weekly.analyze_trends",
+                read_keys=["source_reports"],
+                write_keys=["weekly_trends"],
+                required_output_keys=["weekly_trends"],
+            ),
+            StepSpec(
+                step_id="build_weekly_timeline",
+                name="Build weekly timeline",
+                implementation="weekly.build_timeline",
+                read_keys=["source_reports", "weekly_trends"],
+                write_keys=["weekly_timeline"],
+                required_output_keys=["weekly_timeline"],
+            ),
+            StepSpec(
+                step_id="build_weekly_quality",
+                name="Build weekly quality",
+                implementation="weekly.build_quality",
+                read_keys=["source_reports", "weekly_trends"],
+                write_keys=["weekly_quality"],
+                required_output_keys=["weekly_quality"],
+            ),
+            StepSpec(
+                step_id="build_weekly_subscription",
+                name="Build weekly subscription",
+                implementation="weekly.build_subscription",
+                read_keys=["request", "source_reports", "weekly_trends", "weekly_quality"],
+                write_keys=["weekly_subscription_payload"],
+                required_output_keys=["weekly_subscription_payload"],
+            ),
+            StepSpec(
+                step_id="build_weekly_improvement",
+                name="Build weekly improvement",
+                implementation="weekly.build_improvement",
+                read_keys=["weekly_trends", "weekly_quality"],
+                write_keys=["weekly_improvement_report"],
+                required_output_keys=["weekly_improvement_report"],
+            ),
+            StepSpec(
                 step_id="write_weekly_report",
                 name="Write weekly report",
                 implementation="weekly.write_report",
-                read_keys=["request", "weekly_period", "source_reports"],
+                read_keys=[
+                    "request",
+                    "weekly_period",
+                    "source_reports",
+                    "weekly_trends",
+                    "weekly_timeline",
+                    "weekly_quality",
+                    "weekly_subscription_payload",
+                    "weekly_improvement_report",
+                ],
                 write_keys=["final_report", "report_markdown", "weekly_metrics"],
                 required_output_keys=["final_report", "report_markdown", "weekly_metrics"],
             ),
@@ -164,6 +224,31 @@ def build_weekly_intelligence_workflow() -> WorkflowSpec:
             EdgeSpec(
                 edge_id="collect_to_write",
                 source_step_id="collect_source_reports",
+                target_step_id="analyze_weekly_trends",
+            ),
+            EdgeSpec(
+                edge_id="analyze_to_timeline",
+                source_step_id="analyze_weekly_trends",
+                target_step_id="build_weekly_timeline",
+            ),
+            EdgeSpec(
+                edge_id="timeline_to_quality",
+                source_step_id="build_weekly_timeline",
+                target_step_id="build_weekly_quality",
+            ),
+            EdgeSpec(
+                edge_id="quality_to_subscription",
+                source_step_id="build_weekly_quality",
+                target_step_id="build_weekly_subscription",
+            ),
+            EdgeSpec(
+                edge_id="subscription_to_improvement",
+                source_step_id="build_weekly_subscription",
+                target_step_id="build_weekly_improvement",
+            ),
+            EdgeSpec(
+                edge_id="improvement_to_write",
+                source_step_id="build_weekly_improvement",
                 target_step_id="write_weekly_report",
             )
         ],
@@ -234,6 +319,33 @@ class WeeklyIntelligenceArtifactPublisher:
                     metadata={"workflow_id": context.workflow.workflow_id},
                 )
             )
+        for artifact_key, relative_path in {
+            "weekly_trends": "weekly_trends.json",
+            "weekly_timeline": "weekly_timeline.json",
+            "weekly_quality": "weekly_quality.json",
+            "weekly_subscription_payload": "weekly_subscription_payload.json",
+            "weekly_improvement_report": "weekly_improvement_report.json",
+        }.items():
+            if artifact_key not in context.output:
+                continue
+            register_manifest_artifact_once(context.manifest, artifact_key, relative_path)
+            path = context.artifact_manager.write_json(
+                context.run_id,
+                relative_path,
+                context.output[artifact_key],
+            )
+            refs.append(
+                ArtifactRef(
+                    artifact_id=artifact_key,
+                    run_id=context.run_id,
+                    artifact_type=artifact_key,
+                    path=relative_path,
+                    content_type="application/json",
+                    size_bytes=path.stat().st_size,
+                    redacted=True,
+                    metadata={"workflow_id": context.workflow.workflow_id},
+                )
+            )
         return refs
 
 
@@ -245,6 +357,11 @@ def _write_weekly_report(buffer: StepScopedDataBufferView) -> dict[str, Any]:
     request = buffer.read("request")
     period = buffer.read("weekly_period")
     source_reports = buffer.read("source_reports")
+    weekly_trends = buffer.read("weekly_trends")
+    weekly_timeline = buffer.read("weekly_timeline")
+    weekly_quality = buffer.read("weekly_quality")
+    weekly_subscription = buffer.read("weekly_subscription_payload")
+    weekly_improvement = buffer.read("weekly_improvement_report")
     topic = request.get("topic")
     topic_label = topic or "all tracked topics"
     source_urls = _unique_url_list(source_reports)
@@ -271,6 +388,16 @@ def _write_weekly_report(buffer: StepScopedDataBufferView) -> dict[str, Any]:
             "content": _render_coverage(source_reports, average_quality),
             "sources": [],
         },
+        {
+            "title": "Weekly Trend Intelligence",
+            "content": _render_weekly_trends(weekly_trends),
+            "sources": source_urls,
+        },
+        {
+            "title": "Weekly Improvement",
+            "content": _render_weekly_improvement(weekly_improvement),
+            "sources": [],
+        },
     ]
     final_report = FinalReport(
         title=f"Weekly Intelligence: {topic_label}",
@@ -286,6 +413,11 @@ def _write_weekly_report(buffer: StepScopedDataBufferView) -> dict[str, Any]:
             "source_report_count": len(source_reports),
             "source_report_ids": source_report_ids,
             "average_quality_score": average_quality,
+            "weekly_trends": weekly_trends,
+            "weekly_timeline": weekly_timeline,
+            "weekly_quality": weekly_quality,
+            "weekly_subscription_payload": weekly_subscription,
+            "weekly_improvement_report": weekly_improvement,
         },
     )
     return {
@@ -295,7 +427,54 @@ def _write_weekly_report(buffer: StepScopedDataBufferView) -> dict[str, Any]:
             "source_report_count": len(source_reports),
             "source_url_count": len(source_urls),
             "average_quality_score": average_quality,
+            "high_confidence_trend_count": len(weekly_trends.get("high_confidence_trends") or []),
+            "weekly_quality_score": weekly_quality.get("score"),
+            "weekly_recommendation_count": len(weekly_improvement.get("recommendations") or []),
         },
+    }
+
+
+def _analyze_weekly_trends(buffer: StepScopedDataBufferView) -> dict[str, Any]:
+    return {"weekly_trends": WeeklyTrendAnalyzer().analyze(buffer.read("source_reports"))}
+
+
+def _build_weekly_timeline(buffer: StepScopedDataBufferView) -> dict[str, Any]:
+    return {
+        "weekly_timeline": WeeklyHistorian().build(
+            buffer.read("source_reports"),
+            buffer.read("weekly_trends"),
+        )
+    }
+
+
+def _build_weekly_quality(buffer: StepScopedDataBufferView) -> dict[str, Any]:
+    return {
+        "weekly_quality": WeeklyQualityBuilder().build(
+            buffer.read("source_reports"),
+            buffer.read("weekly_trends"),
+        )
+    }
+
+
+def _build_weekly_subscription(buffer: StepScopedDataBufferView) -> dict[str, Any]:
+    request = buffer.read("request")
+    return {
+        "weekly_subscription_payload": WeeklySubscriptionBuilder().build(
+            run_id=str(request.get("run_id") or "weekly-intelligence-run"),
+            topic=request.get("topic"),
+            source_reports=buffer.read("source_reports"),
+            weekly_trends=buffer.read("weekly_trends"),
+            weekly_quality=buffer.read("weekly_quality"),
+        )
+    }
+
+
+def _build_weekly_improvement(buffer: StepScopedDataBufferView) -> dict[str, Any]:
+    return {
+        "weekly_improvement_report": WeeklyImprovementBuilder().build(
+            buffer.read("weekly_quality"),
+            buffer.read("weekly_trends"),
+        )
     }
 
 
@@ -347,6 +526,28 @@ def _render_coverage(source_reports: list[dict[str, Any]], average_quality: floa
         f"Source reports: {len(source_reports)}. "
         f"Source URLs: {sum(source_counts)}. "
         f"Average quality score: {quality}."
+    )
+
+
+def _render_weekly_trends(weekly_trends: dict[str, Any]) -> str:
+    trends = weekly_trends.get("high_confidence_trends") or []
+    if not trends:
+        return "No high-confidence weekly trends detected."
+    return "\n".join(
+        f"- {trend.get('topic')}: confidence {float(trend.get('confidence') or 0):.2f}"
+        for trend in trends
+        if isinstance(trend, dict)
+    )
+
+
+def _render_weekly_improvement(weekly_improvement: dict[str, Any]) -> str:
+    recommendations = weekly_improvement.get("recommendations") or []
+    if not recommendations:
+        return "No weekly improvement actions required."
+    return "\n".join(
+        f"- {item.get('severity', 'info')}: {item.get('suggested_action')}"
+        for item in recommendations
+        if isinstance(item, dict)
     )
 
 

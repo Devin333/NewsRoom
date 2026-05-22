@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from business.boards._workflow import BoardWorkflowBase
+from business.boards._productized_steps import build_productized_board_workflow
 from business.boards.community_pulse.board_service import CommunityPulseBoardService
 from business.boards.community_pulse.ranking_rules import COMMUNITY_PULSE_PROFILE
 from business.foundation import BoardType
@@ -21,4 +22,8 @@ class CommunityPulseWorkflow(BoardWorkflowBase[CommunityPulseBoardService]):
     )
 
 
-__all__ = ["CommunityPulseWorkflow"]
+def build_community_pulse_workflow():
+    return build_productized_board_workflow(BoardType.COMMUNITY_PULSE)
+
+
+__all__ = ["CommunityPulseWorkflow", "build_community_pulse_workflow"]

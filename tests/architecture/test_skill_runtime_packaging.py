@@ -96,12 +96,12 @@ def test_agent_skill_call_model_does_not_import_skill_runtime() -> None:
     assert all(not imported.startswith("framework.skills") for imported in _imports_for_file(path))
 
 
-def test_business_foundation_skills_contains_only_skill_package_assets() -> None:
+def test_business_foundation_skills_contains_only_skill_package_assets_and_business_wrappers() -> None:
     root = PROJECT_ROOT / "business" / "foundation" / "skills"
 
-    python_files = [path.relative_to(root).as_posix() for path in root.rglob("*.py")]
+    python_files = sorted(path.relative_to(root).as_posix() for path in root.rglob("*.py"))
 
-    assert python_files == []
+    assert python_files == ["__init__.py", "fallbacks.py", "runtime.py"]
 
 
 def _imports_for_file(path: Path) -> list[str]:

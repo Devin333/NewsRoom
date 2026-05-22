@@ -1,10 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
+from pathlib import Path
 from typing import Any, cast
 
 from pydantic import Field
 
+from framework import RunResult
+
+from business.boards._feedback import BoardFeedbackService
+from business.boards._improvement import BoardImprovementService
+from business.boards._runner import runner_for_board_type
 from business.boards._workflow import BoardWorkflowResult
 from business.boards import (
     AINewsBoardService,
@@ -32,7 +38,17 @@ from business.foundation import (
     Report,
     Signal,
 )
+from business.foundation.subscription import SubscriptionPayloadBuilder
+from business.boards.cross_board.intelligence_service import CrossBoardIntelligenceService
 from business.layers.output import BoardOutput
+
+
+PRIMARY_PRODUCTIZED_BOARD_TYPES = (
+    BoardType.AI_NEWS,
+    BoardType.PROJECT_RADAR,
+    BoardType.PAPER_RADAR,
+    BoardType.COMMUNITY_PULSE,
+)
 
 
 class BoardBuildResult(PrimitiveModel):
@@ -192,6 +208,65 @@ class BoardApplicationService:
         }
         output["cross_board_output"] = cross_board_result.output.to_dict()
 
+    def run_board(
+        self,
+        board_type: str,
+        signals: list[dict],
+        *,
+        topic: str | None = None,
+        run_id: str | None = None,
+        artifact_root: str | Path = ".newsroom/runs",
+    ) -> RunResult:
+        resolved_board_type = _board_type(board_type)
+        if resolved_board_type not in PRIMARY_PRODUCTIZED_BOARD_TYPES:
+            raise ValueError(f"productized board run is not supported for {resolved_board_type.value}")
+        return runner_for_board_type(
+            resolved_board_type,
+            artifact_root=artifact_root,
+            board_service=self._services[resolved_board_type],
+        ).run(signals=list(signals), topic=topic, run_id=run_id)
+
+    def run_all_boards(
+        self,
+        signals: list[dict],
+        *,
+        topic: str | None = None,
+        run_id_prefix: str | None = None,
+        artifact_root: str | Path = ".newsroom/runs",
+    ) -> dict[str, RunResult]:
+        results: dict[str, RunResult] = {}
+        for board_type in PRIMARY_PRODUCTIZED_BOARD_TYPES:
+            run_id = f"{run_id_prefix}-{board_type.value}" if run_id_prefix else None
+            results[board_type.value] = self.run_board(
+                board_type.value,
+                list(signals),
+                topic=topic,
+                run_id=run_id,
+                artifact_root=artifact_root,
+            )
+        return results
+
+    def build_productized_cross_board_output(
+        self,
+        signals: list[dict],
+        *,
+        topic: str | None = None,
+        include_improvement: bool = True,
+    ) -> dict[str, Any]:
+        board_payloads = {
+            board_type.value: _build_productized_board_payload(
+                self._services[board_type],
+                signals=list(signals),
+                topic=topic,
+            )
+            for board_type in PRIMARY_PRODUCTIZED_BOARD_TYPES
+        }
+        return CrossBoardIntelligenceService().build(
+            board_payloads,
+            topic=topic,
+            include_improvement=include_improvement,
+        )
+
 
 class BoardWorkflowApplicationService:
     def __init__(self) -> None:
@@ -307,6 +382,88 @@ def _items_from_run_output(output: dict[str, Any]) -> list[Any]:
     if isinstance(evidence_items, list):
         return [_item_from_evidence(item) for item in evidence_items]
     return []
+
+
+def _build_productized_board_payload(
+    service: Any,
+    *,
+    signals: list[dict],
+    topic: str | None,
+) -> dict[str, Any]:
+    context = _context_for_board(service.board_type, context=None, topic=topic)
+    result = service.build_board_run_result(list(signals), context=context)
+    board_output = dict(result.metadata.get("board_output") or {})
+    cards = [card.to_dict() for card in result.cards]
+    detail_pages = [page.to_dict() for page in result.detail_pages]
+    insights = [insight.to_dict() for insight in result.insights]
+    quality_summary = result.quality_summary.to_dict() if result.quality_summary is not None else {"status": "unchecked", "score": None}
+    report = board_output.get("metadata", {}).get("report", {}) if isinstance(board_output.get("metadata"), dict) else {}
+    summary = str(report.get("summary") or f"{service.board_type.value} summary")
+    quality_score = quality_summary.get("score") if isinstance(quality_summary, dict) else None
+    subscription = SubscriptionPayloadBuilder().build(
+        run_id=result.run_id,
+        board_type=service.board_type.value,
+        topic=topic,
+        cards=result.cards,
+        summary=summary,
+        quality_score=float(quality_score) if quality_score is not None else None,
+    )
+    feedback_service = BoardFeedbackService()
+    improvement_service = BoardImprovementService()
+    feedback_events = improvement_service.collect_feedback(
+        feedback_service.collect(board_run_result=result, quality_summary=result.quality_summary)
+    )
+    learning_signals = improvement_service.build_learning_signals(feedback_events)
+    recommendations = improvement_service.build_recommendations(
+        learning_signals,
+        board_type=service.board_type.value,
+        quality_summary=quality_summary,
+    )
+    proposals = improvement_service.build_proposals(recommendations)
+    improvement_context = improvement_service.apply_approved_overrides(
+        run_id=result.run_id,
+        board_type=service.board_type.value,
+    )
+    measurement = improvement_service.measure(
+        None,
+        {
+            "quality_score": quality_score,
+            "card_count": len(cards),
+            "evidence_coverage": _card_evidence_coverage(cards),
+            "duplicate_rate": 0.0,
+            "empty_output": len(cards) == 0,
+            "subscription_match": 1.0 if subscription.targets else 0.0,
+        },
+    )
+    report_payload = improvement_service.build_report(
+        feedback_events=feedback_events,
+        learning_signals=learning_signals,
+        recommendations=recommendations,
+        proposals=proposals,
+        applied_overrides=improvement_context.applied_overrides,
+        measurement=measurement,
+    )
+    return {
+        "board_output": board_output,
+        "cards": cards,
+        "detail_pages": detail_pages,
+        "insights": insights,
+        "quality_summary": quality_summary,
+        "subscription_payload": subscription.to_dict(),
+        "feedback_events": [event.to_dict() for event in feedback_events],
+        "learning_signals": [signal.to_dict() for signal in learning_signals],
+        "improvement_recommendations": [recommendation.to_dict() for recommendation in recommendations],
+        "improvement_proposals": [proposal.to_dict() for proposal in proposals],
+        "applied_overrides": improvement_context.applied_overrides,
+        "improvement_measurement": measurement.to_dict(),
+        "self_improvement_report": report_payload.to_dict(),
+    }
+
+
+def _card_evidence_coverage(cards: list[dict[str, Any]]) -> float:
+    if not cards:
+        return 0.0
+    return round(sum(1 for card in cards if card.get("evidence_refs")) / len(cards), 4)
 
 
 def _item_from_evidence(item: Any) -> dict[str, Any]:

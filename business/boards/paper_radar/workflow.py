@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from business.boards._workflow import BoardWorkflowBase
+from business.boards._productized_steps import build_productized_board_workflow
 from business.boards.paper_radar.board_service import PaperRadarBoardService
 from business.boards.paper_radar.ranking_rules import PAPER_RADAR_PROFILE
 from business.foundation import BoardType
@@ -21,4 +22,8 @@ class PaperRadarWorkflow(BoardWorkflowBase[PaperRadarBoardService]):
     )
 
 
-__all__ = ["PaperRadarWorkflow"]
+def build_paper_radar_workflow():
+    return build_productized_board_workflow(BoardType.PAPER_RADAR)
+
+
+__all__ = ["PaperRadarWorkflow", "build_paper_radar_workflow"]
