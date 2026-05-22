@@ -21,6 +21,11 @@ from business.memory.historian_context_adapter import (
     HistorianContextRequest,
     HistorianContextResult,
 )
+from business.memory.historian_quality_checks import (
+    HistorianQualityChecker,
+    HistorianQualityIssue,
+    HistorianQualityResult,
+)
 from business.memory.intelligence_builder import IntelligenceMemoryBuilder
 from business.memory.intelligence_context import IntelligenceMemoryContext
 from business.memory.intelligence_ingestion import IntelligenceMemoryIngestionResult, IntelligenceMemoryIngestionService
@@ -95,6 +100,9 @@ __all__ = [
     "HistorianContextAdapter",
     "HistorianContextRequest",
     "HistorianContextResult",
+    "HistorianQualityChecker",
+    "HistorianQualityIssue",
+    "HistorianQualityResult",
     "IntelligenceMemoryBuilder",
     "IntelligenceMemoryBundle",
     "IntelligenceMemoryContext",
