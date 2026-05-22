@@ -81,6 +81,9 @@ def test_memory_application_service_reindexes_run_from_real_artifacts(tmp_path, 
     assert "events" in payload["collections"]
     assert "run-1:report_section:0" in payload["document_ids"]
     assert "run-1:evidence:ev-1" in payload["document_ids"]
+    assert payload["counts"]["claims"] >= 1
+    assert payload["metadata"]["claim_consolidation"]
+    assert payload["ingestion"]["documents_indexed"] == payload["documents_indexed"]
     claim_search = service.search(text="Agent runtime memory", collection="claims", filters={"topic": "AI policy"})
     assert claim_search.to_dict()["result_count"] >= 1
     assert search.to_dict()["result_count"] == 2
@@ -217,6 +220,18 @@ class _FakeIngestionResult:
     documents_indexed = 0
     collections = []
     document_ids = []
+    counts = {}
+    metadata = {}
+
+    def to_dict(self):
+        return {
+            "documents_indexed": self.documents_indexed,
+            "indexed_documents": self.documents_indexed,
+            "collections": list(self.collections),
+            "document_ids": list(self.document_ids),
+            "counts": dict(self.counts),
+            "metadata": dict(self.metadata),
+        }
 
 
 def _write_run_artifacts(root, run_id, *, request, report, evidence_bundle) -> None:

@@ -73,12 +73,16 @@ class MemoryReindexResult:
     ingestion: MemoryIngestionResult
 
     def to_dict(self) -> dict[str, Any]:
+        ingestion_payload = _ingestion_to_dict(self.ingestion)
         return {
             "run_id": self.run_id,
             "topic": self.topic,
             "documents_indexed": self.ingestion.documents_indexed,
             "collections": list(self.ingestion.collections),
             "document_ids": list(self.ingestion.document_ids),
+            "counts": dict(ingestion_payload.get("counts") or {}),
+            "metadata": dict(ingestion_payload.get("metadata") or {}),
+            "ingestion": ingestion_payload,
         }
 
 
@@ -218,6 +222,30 @@ def _normalize_collections(collections: list[str]) -> list[str]:
             normalized.append(value)
             seen.add(value)
     return normalized
+
+
+def _ingestion_to_dict(ingestion: Any) -> dict[str, Any]:
+    if hasattr(ingestion, "to_dict"):
+        return dict(ingestion.to_dict())
+    return {
+        "run_id": getattr(ingestion, "run_id", ""),
+        "topic": getattr(ingestion, "topic", None),
+        "counts": dict(getattr(ingestion, "counts", {}) or {}),
+        "indexed_documents": int(
+            getattr(
+                ingestion,
+                "indexed_documents",
+                getattr(ingestion, "documents_indexed", 0),
+            )
+            or 0
+        ),
+        "documents_indexed": int(getattr(ingestion, "documents_indexed", 0) or 0),
+        "collections": list(getattr(ingestion, "collections", []) or []),
+        "document_ids": list(getattr(ingestion, "document_ids", []) or []),
+        "memories_written": int(getattr(ingestion, "memories_written", 0) or 0),
+        "memory_ids": list(getattr(ingestion, "memory_ids", []) or []),
+        "metadata": dict(getattr(ingestion, "metadata", {}) or {}),
+    }
 
 
 def memory_ingestion_service_from_env(

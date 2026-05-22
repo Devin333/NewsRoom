@@ -489,6 +489,9 @@ def test_memory_reindex_returns_result() -> None:
     assert payload["success"] is True
     assert payload["data"]["run_id"] == "run-1"
     assert payload["data"]["documents_indexed"] == 3
+    assert payload["data"]["counts"]["claims"] == 2
+    assert payload["data"]["metadata"]["claim_consolidation"]["merged"] == 1
+    assert payload["data"]["ingestion"]["documents_indexed"] == 3
 
 
 def test_memory_reindex_missing_run_uses_unified_error() -> None:
@@ -1136,6 +1139,14 @@ class _FakeMemoryService:
                     "run-1:report_section:1",
                     "run-1:evidence:ev-1",
                 ],
+                "counts": {"evidence": 1, "claims": 2, "entities": 1, "events": 1, "decisions": 0, "preferences": 0},
+                "metadata": {"claim_consolidation": {"merged": 1}},
+                "ingestion": {
+                    "documents_indexed": 3,
+                    "indexed_documents": 3,
+                    "counts": {"claims": 2},
+                    "metadata": {"claim_consolidation": {"merged": 1}},
+                },
             }
         )
 

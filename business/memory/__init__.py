@@ -24,6 +24,11 @@ from business.memory.models import BusinessMemoryContext, BusinessMemoryHit
 from business.memory.quality_memory_checks import QualityMemoryCheckResult, QualityMemoryChecker, QualityMemoryIssue
 from business.memory.recall import BusinessMemoryRecallService, BusinessMemorySearchPort
 from business.memory.recall_planner import RecallPlanner
+from business.memory.report_memory_context import (
+    ReportMemoryContextRequest,
+    ReportMemoryContextResult,
+    ReportMemoryContextService,
+)
 from business.memory.service import BusinessMemoryDecisionService
 from business.memory.source_reliability import estimate_source_reliability, source_noise_penalty
 from business.memory.topic_momentum import estimate_topic_momentum
@@ -66,6 +71,9 @@ __all__ = [
     "QualityMemoryIssue",
     "RecallPlan",
     "RecallPlanner",
+    "ReportMemoryContextRequest",
+    "ReportMemoryContextResult",
+    "ReportMemoryContextService",
     "build_memory_feature_vector",
     "estimate_historical_duplicate_score",
     "estimate_previous_misrank_penalty",

@@ -571,6 +571,9 @@ def test_mcp_memory_reindex_reads_real_artifacts_and_indexes(tmp_path) -> None:
     assert result.data["topic"] == "AI policy"
     assert result.data["documents_indexed"] == 2
     assert result.data["collections"] == ["evidence_items", "report_sections"]
+    assert "counts" in result.data
+    assert "metadata" in result.data
+    assert "ingestion" in result.data
     assert "memory-run:report_section:0" in result.data["document_ids"]
     assert search.success is True
     assert search.data["result_count"] == 1

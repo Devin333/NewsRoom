@@ -15,6 +15,9 @@ from business.boards.cross_board.workflows.daily_intelligence.quality_result_bui
     quality_route as build_quality_route,
 )
 from business.boards.cross_board.workflows.daily_intelligence.quality_rewrite import rewrite_report_draft
+from business.memory.intelligence_context import IntelligenceMemoryContext
+from business.memory.intelligence_models import ClaimMemory, EventMemory
+from business.memory.quality_memory_checks import QualityMemoryChecker
 
 
 def quality_gate(buffer: StepScopedDataBufferView) -> dict[str, Any]:
@@ -99,6 +102,16 @@ def quality_gate(buffer: StepScopedDataBufferView) -> dict[str, Any]:
         review=review,
         quality_summary=quality_summary,
     )
+    if _has_critical_memory_issue(memory_quality_result):
+        review = replace(
+            review,
+            decision=EditorDecision.BLOCKED,
+            reasons=[*review.reasons, "blocked by critical memory quality issue"],
+            required_changes=[*review.required_changes, "resolve critical memory quality issue before publishing"],
+            block_reasons=[*review.block_reasons, "critical memory quality issue"],
+            final_notes="blocked by memory quality",
+        )
+        human_review_request = None
     human_review_required = human_review_request is not None
     if human_review_request:
         quality_events.append(
@@ -221,34 +234,81 @@ def _memory_quality_result(memory_context: dict[str, Any] | None) -> dict[str, A
             "memory_available": False,
             "metadata": {"reason": "memory_context_missing"},
         }
-    conflicts = [
-        dict(conflict)
-        for conflict in memory_context.get("conflicts") or []
-        if isinstance(conflict, dict)
-    ]
-    issues = [
+    context = _memory_context_from_payload(memory_context)
+    result = QualityMemoryChecker(_NoopMemoryQualityRepository()).check_report_context(context)
+    payload = result.to_dict()
+    metadata = dict(payload.get("metadata") or {})
+    metadata.update(
         {
-            "issue_type": str(conflict.get("issue_type") or "memory_conflict"),
-            "severity": "high",
-            "target_type": "memory_context",
-            "target_id": str(memory_context.get("query") or memory_context.get("topic") or ""),
-            "message": str(conflict.get("message") or "Memory conflict detected"),
-            "metadata": conflict,
+            "memory_available": bool((memory_context.get("metadata") or {}).get("memory_available", True)),
+            "claim_count": len(context.claims),
+            "event_count": len(context.events),
+            "conflict_count": len(context.conflicts),
+            "critical_issue_count": len(result.critical_issues()),
         }
-        for conflict in conflicts
-    ]
-    return {
-        "passed": not any(issue["severity"] in {"critical", "high"} for issue in issues),
-        "issues": issues,
-        "memory_available": bool((memory_context.get("metadata") or {}).get("memory_available", True)),
-        "metadata": {
-            "query": memory_context.get("query"),
-            "topic": memory_context.get("topic"),
-            "claim_count": len(memory_context.get("claims") or []),
-            "event_count": len(memory_context.get("events") or []),
-            "conflict_count": len(conflicts),
-        },
-    }
+    )
+    payload["metadata"] = metadata
+    payload["memory_available"] = metadata["memory_available"]
+    return payload
+
+
+def _memory_context_from_payload(payload: dict[str, Any]) -> IntelligenceMemoryContext:
+    query = str(payload.get("query") or payload.get("topic") or "")
+    return IntelligenceMemoryContext(
+        query=query,
+        topic=str(payload["topic"]) if payload.get("topic") else None,
+        claims=[_claim_from_payload(item) for item in _dict_items(payload.get("claims"))],
+        events=[_event_from_payload(item) for item in _dict_items(payload.get("events"))],
+        conflicts=[dict(item) for item in _dict_items(payload.get("conflicts"))],
+        metadata=dict(payload.get("metadata") or {}),
+    )
+
+
+def _claim_from_payload(payload: dict[str, Any]) -> ClaimMemory:
+    return ClaimMemory(
+        claim_id=str(payload.get("claim_id") or payload.get("id") or "memory-claim"),
+        run_id=str(payload.get("run_id") or "memory-context"),
+        text=str(payload.get("text") or payload.get("claim") or ""),
+        status=str(payload.get("status") or "active"),
+        confidence=float(payload.get("confidence") or 0.5),
+        evidence_ids=[str(item) for item in payload.get("evidence_ids") or [] if item is not None],
+        contradicted_by=[str(item) for item in payload.get("contradicted_by") or [] if item is not None],
+        metadata=dict(payload.get("metadata") or {}),
+    )
+
+
+def _event_from_payload(payload: dict[str, Any]) -> EventMemory:
+    return EventMemory(
+        event_id=str(payload.get("event_id") or payload.get("id") or "memory-event"),
+        event_type=str(payload.get("event_type") or "general_news"),
+        title=str(payload.get("title") or ""),
+        summary=str(payload.get("summary") or ""),
+        run_id=str(payload.get("run_id") or "memory-context"),
+        topic=str(payload["topic"]) if payload.get("topic") else None,
+        entity_ids=[str(item) for item in payload.get("entity_ids") or [] if item is not None],
+        claim_ids=[str(item) for item in payload.get("claim_ids") or [] if item is not None],
+        evidence_ids=[str(item) for item in payload.get("evidence_ids") or [] if item is not None],
+        metadata=dict(payload.get("metadata") or {}),
+    )
+
+
+def _dict_items(value: Any) -> list[dict[str, Any]]:
+    return [dict(item) for item in value or [] if isinstance(item, dict)]
+
+
+def _has_critical_memory_issue(memory_quality_result: dict[str, Any]) -> bool:
+    return any(
+        isinstance(issue, dict) and issue.get("severity") == "critical"
+        for issue in memory_quality_result.get("issues") or []
+    )
+
+
+class _NoopMemoryQualityRepository:
+    def list_evidence_for_claim(self, claim_id: str):
+        return []
+
+    def find_similar_events(self, event: EventMemory, *, limit: int = 3):
+        return []
 
 
 def _with_memory_quality_metadata(

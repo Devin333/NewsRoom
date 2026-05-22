@@ -39,7 +39,7 @@ class BoardScoringService:
         base_features = feature_builder(card)
         features, memory_used = self._features_with_memory(card, profile=profile, base_features=base_features)
         if memory_used:
-            recipe = _recipe_with_memory_weight(recipe)
+            recipe = _recipe_with_memory_weight(recipe, features)
         result = self.runtime.score_object(
             board_card_scoring_target(card),
             features=features,
@@ -64,7 +64,9 @@ class BoardScoringService:
                     **dict(scored.metadata),
                     "memory_features_used": memory_used,
                     "memory_feature_names": [
-                        name for name in features.names() if name.endswith("_score") or name.endswith("_penalty")
+                        name
+                        for name in features.names()
+                        if name.startswith("memory_") or name.endswith("_score") or name.endswith("_penalty")
                     ],
                 }
             }
@@ -123,14 +125,19 @@ def _memory_decision_overlay(
     )
 
 
-def _recipe_with_memory_weight(recipe: ScoringRecipe) -> ScoringRecipe:
-    if "memory_decision_score" in recipe.weights:
+def _recipe_with_memory_weight(recipe: ScoringRecipe, features: FeatureVector) -> ScoringRecipe:
+    extra_weights = {}
+    if "memory_decision_score" in features.names() and "memory_decision_score" not in recipe.weights:
+        extra_weights["memory_decision_score"] = 0.08
+    if "memory_structured_adjustment" in features.names() and "memory_structured_adjustment" not in recipe.weights:
+        extra_weights["memory_structured_adjustment"] = 0.04
+    if not extra_weights:
         return recipe
     return replace(
         recipe,
         weights={
             **dict(recipe.weights),
-            "memory_decision_score": 0.08,
+            **extra_weights,
         },
         metadata={
             **dict(recipe.metadata),

@@ -5,6 +5,11 @@ from typing import Any
 
 from business.memory.intelligence_context import IntelligenceMemoryContext
 from business.memory.intelligence_recall import IntelligenceMemoryRecallService
+from business.memory.report_memory_context import (
+    ReportMemoryContextRequest,
+    ReportMemoryContextResult,
+    ReportMemoryContextService,
+)
 from framework.llm import LLMClient, LLMRequest, build_openai_compatible_client_from_config
 from framework.workflow import StepScopedDataBufferView
 from business.foundation.models.source import SourcePipelineMetrics
@@ -18,19 +23,23 @@ class ReportWriter:
         *,
         llm_client: LLMClient | None = None,
         recall_service: IntelligenceMemoryRecallService | None = None,
+        memory_context_service: ReportMemoryContextService | None = None,
     ) -> None:
         self.llm_client = llm_client
-        self.recall_service = recall_service
+        self.memory_context_service = memory_context_service or (
+            ReportMemoryContextService(recall_service) if recall_service is not None else None
+        )
 
     def draft_report(self, buffer: StepScopedDataBufferView, profile: str) -> dict[str, Any]:
         request = buffer.read("request")
         evidence_bundle = buffer.read("evidence_bundle")
         source_errors = buffer.read("source_errors")
         source_metrics = buffer.read("source_pipeline_metrics")
-        memory_context = self._memory_context(str(request["topic"]))
+        memory_result = self._memory_context(str(request["topic"]))
+        memory_context = memory_result.context if memory_result is not None else None
         if profile == PROFILE_LIVE_OFFLINE:
             report = _deterministic_report(request["topic"], evidence_bundle)
-            report = _with_memory_metadata(report, memory_context)
+            report = _with_memory_metadata(report, memory_result)
             return {
                 "report_draft": _with_source_notes(
                     report,
@@ -50,20 +59,22 @@ class ReportWriter:
             if response.structured_output is not None
             else _parse_report_json(response.content or "{}")
         )
-        report_draft = _with_memory_metadata(report_draft, memory_context)
+        report_draft = _with_memory_metadata(report_draft, memory_result)
         report_draft = _with_source_notes(report_draft, evidence_bundle, source_errors, source_metrics)
         return {
             "report_draft": report_draft,
             "memory_context": memory_context.to_dict() if memory_context is not None else None,
         }
 
-    def _memory_context(self, topic: str) -> IntelligenceMemoryContext | None:
-        if self.recall_service is None:
+    def _memory_context(self, topic: str) -> ReportMemoryContextResult | None:
+        if self.memory_context_service is None:
             return None
-        context = self.recall_service.recall_for_topic(topic, limit=5)
-        if context.is_empty():
+        result = self.memory_context_service.build_context(
+            ReportMemoryContextRequest(topic=topic, limit=5)
+        )
+        if result.context.is_empty():
             return None
-        return context
+        return result
 
 
 def _deterministic_report(topic: str, evidence_bundle: EvidenceBundle) -> dict[str, Any]:
@@ -184,15 +195,15 @@ def _validate_report_payload(payload: Any) -> dict[str, Any]:
 
 def _with_memory_metadata(
     report_draft: dict[str, Any],
-    memory_context: IntelligenceMemoryContext | None,
+    memory_result: ReportMemoryContextResult | None,
 ) -> dict[str, Any]:
-    if memory_context is None:
+    if memory_result is None:
         return report_draft
     updated = dict(report_draft)
     metadata = dict(updated.get("metadata") or {})
     metadata["memory_context_used"] = True
-    metadata["memory_context"] = memory_context.to_dict()
-    metadata["memory_prompt_context"] = memory_context.to_prompt_context(limit=5)
+    metadata["memory_context"] = memory_result.context.to_dict()
+    metadata["memory_prompt_context"] = memory_result.prompt_context
     updated["metadata"] = metadata
     return updated
 
