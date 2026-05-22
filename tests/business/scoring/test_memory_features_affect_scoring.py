@@ -14,6 +14,7 @@ from business.foundation import (
     SourceType,
 )
 from business.memory import BusinessMemoryDecisionService, BusinessMemoryRecallService
+from business.memory.intelligence_models import DecisionMemory, EntityMemory, EventMemory
 from business.scoring import BoardScoringService, ai_news_feature_vector
 
 
@@ -143,6 +144,39 @@ def test_duplicate_or_misrank_memory_features_lower_scoring() -> None:
     assert with_memory.score.value < baseline.score.value
 
 
+def test_structured_memory_features_are_used_only_when_repository_is_injected() -> None:
+    card = _card()
+    service = BoardScoringService(
+        memory_decision_service=BusinessMemoryDecisionService(
+            BusinessMemoryRecallService(
+                _SearchPort(
+                    [
+                        {
+                            "document_id": "doc-1",
+                            "score": 0.8,
+                            "text": card.title,
+                            "metadata": {"topic": "agents"},
+                        }
+                    ]
+                )
+            ),
+            intelligence_repository=_StructuredMemoryRepository(),
+        )
+    )
+
+    scored = service.score_card(
+        card.model_copy(update={"metadata": {"topic": "agents", "entity_ids": ["entity-openai"]}}),
+        profile=AI_NEWS_PROFILE,
+        policy=_policy(),
+        feature_builder=ai_news_feature_vector,
+    )
+
+    assert scored.metadata["memory_features_used"] is True
+    assert scored.ranking_features["memory_source_reliability"] == 1.0
+    assert scored.ranking_features["memory_entity_importance"] > 0.0
+    assert scored.ranking_features["memory_structured_adjustment"] > 0.0
+
+
 class _SearchPort:
     def __init__(self, results: list[dict[str, object]]) -> None:
         self.results = results
@@ -153,6 +187,53 @@ class _SearchPort:
 
 def _memory_service(results: list[dict[str, object]]) -> BusinessMemoryDecisionService:
     return BusinessMemoryDecisionService(BusinessMemoryRecallService(_SearchPort(results)))
+
+
+class _StructuredMemoryRepository:
+    def list_decisions_for_target(self, target_type, target_id, *, limit=20):
+        if target_type == "source":
+            return [
+                DecisionMemory(
+                    decision_id="decision-1",
+                    decision_type="source_reliability",
+                    target_type=target_type,
+                    target_id=target_id,
+                    decision="pass",
+                    run_id="run-1",
+                )
+            ]
+        return []
+
+    def list_events_by_topic(self, topic, *, limit=20):
+        return [
+            EventMemory(
+                event_id="event-1",
+                event_type="general_news",
+                title="Memory adoption",
+                summary="Agent memory adoption increased.",
+                run_id="run-1",
+                topic=topic,
+                novelty_score=0.8,
+            )
+        ]
+
+    def get_entity(self, entity_id):
+        return EntityMemory(
+            entity_id=entity_id,
+            entity_type="organization",
+            canonical_name="OpenAI",
+            importance_score=0.7,
+            trend_score=0.8,
+        )
+
+    def get_event(self, event_id):
+        return None
+
+    def find_similar_events(self, event, *, limit=2):
+        return []
+
+    def get_claim(self, claim_id):
+        return None
 
 
 def _policy() -> BusinessPolicyProfile:

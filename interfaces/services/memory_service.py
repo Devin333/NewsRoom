@@ -12,6 +12,7 @@ from business.layers.memory.ingestion import (
 )
 from business.memory.intelligence_repository import IntelligenceMemoryRepository, IntelligenceMemoryVectorIndex
 from interfaces.services.artifact_service import ArtifactInspectionService
+from infrastructure.storage.memory import IntelligenceVectorIndexAdapter
 from infrastructure.storage.vector import VectorCollectionStatus, VectorSearchQuery, VectorSearchResult
 
 
@@ -228,8 +229,11 @@ def memory_ingestion_service_from_env(
     values = env if env is not None else os.environ
     if not _memory_enabled(values):
         return None
+    vector_index: IntelligenceMemoryVectorIndex | None = None
     if vector_store is None:
         vector_store = _build_vector_index_from_env(env=values)
+    if vector_store is not None:
+        vector_index = IntelligenceVectorIndexAdapter(vector_store)
     repository = _build_intelligence_repository_from_env(env=values)
     if vector_store is None and repository is None and memory_runtime is None:
         return None
@@ -237,6 +241,7 @@ def memory_ingestion_service_from_env(
         vector_store,
         memory_runtime=memory_runtime,
         repository=repository,
+        vector_index=vector_index,
     )
 
 

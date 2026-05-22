@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from business.memory.intelligence_context import IntelligenceMemoryContext
+from business.memory.intelligence_recall import IntelligenceMemoryRecallService
 from framework.llm import LLMClient, LLMRequest, build_openai_compatible_client_from_config
 from framework.workflow import StepScopedDataBufferView
 from business.foundation.models.source import SourcePipelineMetrics
@@ -11,35 +13,57 @@ from business.boards.cross_board.workflows.daily_intelligence.profiles import PR
 
 
 class ReportWriter:
-    def __init__(self, *, llm_client: LLMClient | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        llm_client: LLMClient | None = None,
+        recall_service: IntelligenceMemoryRecallService | None = None,
+    ) -> None:
         self.llm_client = llm_client
+        self.recall_service = recall_service
 
     def draft_report(self, buffer: StepScopedDataBufferView, profile: str) -> dict[str, Any]:
         request = buffer.read("request")
         evidence_bundle = buffer.read("evidence_bundle")
         source_errors = buffer.read("source_errors")
         source_metrics = buffer.read("source_pipeline_metrics")
+        memory_context = self._memory_context(str(request["topic"]))
         if profile == PROFILE_LIVE_OFFLINE:
+            report = _deterministic_report(request["topic"], evidence_bundle)
+            report = _with_memory_metadata(report, memory_context)
             return {
                 "report_draft": _with_source_notes(
-                    _deterministic_report(request["topic"], evidence_bundle),
+                    report,
                     evidence_bundle,
                     source_errors,
                     source_metrics,
-                )
+                ),
+                "memory_context": memory_context.to_dict() if memory_context is not None else None,
             }
 
         llm_client = self.llm_client or build_openai_compatible_client_from_config(
             route_id="daily-intelligence-writer"
         )
-        response = llm_client.complete(_report_request(request["topic"], evidence_bundle))
+        response = llm_client.complete(_report_request(request["topic"], evidence_bundle, memory_context))
         report_draft = (
             _validate_report_payload(response.structured_output)
             if response.structured_output is not None
             else _parse_report_json(response.content or "{}")
         )
+        report_draft = _with_memory_metadata(report_draft, memory_context)
         report_draft = _with_source_notes(report_draft, evidence_bundle, source_errors, source_metrics)
-        return {"report_draft": report_draft}
+        return {
+            "report_draft": report_draft,
+            "memory_context": memory_context.to_dict() if memory_context is not None else None,
+        }
+
+    def _memory_context(self, topic: str) -> IntelligenceMemoryContext | None:
+        if self.recall_service is None:
+            return None
+        context = self.recall_service.recall_for_topic(topic, limit=5)
+        if context.is_empty():
+            return None
+        return context
 
 
 def _deterministic_report(topic: str, evidence_bundle: EvidenceBundle) -> dict[str, Any]:
@@ -107,20 +131,35 @@ def _needs_source_notes(source_errors: list[Any], source_metrics: SourcePipeline
     return bool(source_errors)
 
 
-def _report_request(topic: str, evidence_bundle: EvidenceBundle) -> LLMRequest:
+def _report_request(
+    topic: str,
+    evidence_bundle: EvidenceBundle,
+    memory_context: IntelligenceMemoryContext | None = None,
+) -> LLMRequest:
     evidence_payload = [item.to_dict() for item in evidence_bundle.items]
+    memory_prompt = memory_context.to_prompt_context(limit=5) if memory_context is not None else ""
     user = (
         "Create a concise daily intelligence report as JSON with keys title and sections. "
         "Each section must include title, content, and sources. "
         "Only cite source URLs present in the evidence. "
         f"Topic: {topic}. Evidence: {json.dumps(evidence_payload, ensure_ascii=False)}"
     )
+    if memory_prompt:
+        user += (
+            " Historical memory context is for background and conflict awareness only; "
+            "do not cite it as new evidence. "
+            f"Memory context: {memory_prompt}"
+        )
     return LLMRequest(
         messages=[
             {"role": "system", "content": "You write source-grounded intelligence reports."},
             {"role": "user", "content": user},
         ],
-        metadata={"profile": PROFILE_LIVE},
+        metadata={
+            "profile": PROFILE_LIVE,
+            "memory_context_used": memory_context is not None,
+            "memory_context": memory_context.to_dict() if memory_context is not None else None,
+        },
         response_format="json_object",
     )
 
@@ -141,6 +180,21 @@ def _validate_report_payload(payload: Any) -> dict[str, Any]:
     if "title" not in payload or "sections" not in payload:
         raise ValueError("LLM report output must include title and sections")
     return payload
+
+
+def _with_memory_metadata(
+    report_draft: dict[str, Any],
+    memory_context: IntelligenceMemoryContext | None,
+) -> dict[str, Any]:
+    if memory_context is None:
+        return report_draft
+    updated = dict(report_draft)
+    metadata = dict(updated.get("metadata") or {})
+    metadata["memory_context_used"] = True
+    metadata["memory_context"] = memory_context.to_dict()
+    metadata["memory_prompt_context"] = memory_context.to_prompt_context(limit=5)
+    updated["metadata"] = metadata
+    return updated
 
 
 

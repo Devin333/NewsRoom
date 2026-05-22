@@ -25,7 +25,7 @@ def test_memory_application_service_searches_vector_store() -> None:
     assert result.to_dict()["results"][0]["document_id"] == "doc-1"
 
 
-def test_memory_application_service_reindexes_run_from_real_artifacts(tmp_path) -> None:
+def test_memory_application_service_reindexes_run_from_real_artifacts(tmp_path, monkeypatch) -> None:
     _write_run_artifacts(
         tmp_path,
         "run-1",
@@ -60,6 +60,7 @@ def test_memory_application_service_reindexes_run_from_real_artifacts(tmp_path) 
             ],
         },
     )
+    monkeypatch.setenv("NEWS_VECTOR_MEMORY_ENABLED", "1")
     store = InMemoryVectorStore()
     service = MemoryApplicationService(vector_store=store, artifact_root=tmp_path)
 
@@ -73,10 +74,15 @@ def test_memory_application_service_reindexes_run_from_real_artifacts(tmp_path) 
     payload = result.to_dict()
     assert payload["run_id"] == "run-1"
     assert payload["topic"] == "AI policy"
-    assert payload["documents_indexed"] == 3
-    assert payload["collections"] == ["evidence_items", "report_sections"]
+    assert payload["documents_indexed"] > 3
+    assert "report_sections" in payload["collections"]
+    assert "evidence_items" in payload["collections"]
+    assert "claims" in payload["collections"]
+    assert "events" in payload["collections"]
     assert "run-1:report_section:0" in payload["document_ids"]
     assert "run-1:evidence:ev-1" in payload["document_ids"]
+    claim_search = service.search(text="Agent runtime memory", collection="claims", filters={"topic": "AI policy"})
+    assert claim_search.to_dict()["result_count"] >= 1
     assert search.to_dict()["result_count"] == 2
 
 

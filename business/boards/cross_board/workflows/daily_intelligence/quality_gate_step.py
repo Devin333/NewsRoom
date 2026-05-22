@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
-from framework.workflow import StepScopedDataBufferView
+from framework.workflow import DataBufferReadPermissionError, StepScopedDataBufferView
 from business.foundation.models.report_output import BlockedReport, FinalReport, render_markdown
 from business.layers.analysis.quality import EditorDecision, RewritePolicy
 from business.boards.cross_board.workflows.daily_intelligence.evidence_step import quality_event
@@ -21,6 +22,16 @@ def quality_gate(buffer: StepScopedDataBufferView) -> dict[str, Any]:
     evidence_bundle = buffer.read("evidence_bundle")
     verified_findings = buffer.read("verified_findings")
     quality_events = list(buffer.read("quality_events"))
+    memory_context = _read_memory_context(buffer)
+    memory_quality_result = _memory_quality_result(memory_context)
+    if memory_quality_result["memory_available"]:
+        quality_events.append(
+            quality_event(
+                "memory_quality_checked",
+                passed=memory_quality_result["passed"],
+                issue_count=len(memory_quality_result["issues"]),
+            )
+        )
     rewrite_policy = RewritePolicy()
     evaluation = evaluate_report_quality(
         report_draft,
@@ -123,6 +134,11 @@ def quality_gate(buffer: StepScopedDataBufferView) -> dict[str, Any]:
         rewrite_attempts=rewrite_attempts,
         human_review_required=human_review_required,
     )
+    quality_result = _with_memory_quality_metadata(
+        quality_result,
+        memory_context=memory_context,
+        memory_quality_result=memory_quality_result,
+    )
     outputs: dict[str, Any] = {
         "citation_check_result": citation_check,
         "editor_review": review,
@@ -134,6 +150,7 @@ def quality_gate(buffer: StepScopedDataBufferView) -> dict[str, Any]:
         "quality_route": quality_route,
         "rewrite_policy": rewrite_policy,
         "rewrite_instructions": review.rewrite_instructions,
+        "memory_quality_result": memory_quality_result,
     }
     if rewritten_report_draft is not None:
         outputs["rewritten_report_draft"] = rewritten_report_draft
@@ -151,6 +168,8 @@ def quality_gate(buffer: StepScopedDataBufferView) -> dict[str, Any]:
                 "rejected_claims_count": len(verified_findings.rejected_claims),
                 "uncertain_claims_count": len(verified_findings.uncertain_claims),
                 "rewrite_attempts": rewrite_attempts,
+                "memory_context": memory_context,
+                "memory_quality_result": memory_quality_result,
             },
         )
         outputs["final_report"] = final_report
@@ -177,6 +196,68 @@ def quality_gate(buffer: StepScopedDataBufferView) -> dict[str, Any]:
                 "rewrite_attempts": rewrite_attempts,
                 "human_review_required": human_review_required,
                 "remediation": list(review.required_changes),
+                "memory_context": memory_context,
+                "memory_quality_result": memory_quality_result,
             },
         )
     return outputs
+
+
+def _read_memory_context(buffer: StepScopedDataBufferView) -> dict[str, Any] | None:
+    try:
+        if not buffer.exists("memory_context"):
+            return None
+        value = buffer.read("memory_context", required=False)
+    except DataBufferReadPermissionError:
+        return None
+    return dict(value) if isinstance(value, dict) else None
+
+
+def _memory_quality_result(memory_context: dict[str, Any] | None) -> dict[str, Any]:
+    if not memory_context:
+        return {
+            "passed": True,
+            "issues": [],
+            "memory_available": False,
+            "metadata": {"reason": "memory_context_missing"},
+        }
+    conflicts = [
+        dict(conflict)
+        for conflict in memory_context.get("conflicts") or []
+        if isinstance(conflict, dict)
+    ]
+    issues = [
+        {
+            "issue_type": str(conflict.get("issue_type") or "memory_conflict"),
+            "severity": "high",
+            "target_type": "memory_context",
+            "target_id": str(memory_context.get("query") or memory_context.get("topic") or ""),
+            "message": str(conflict.get("message") or "Memory conflict detected"),
+            "metadata": conflict,
+        }
+        for conflict in conflicts
+    ]
+    return {
+        "passed": not any(issue["severity"] in {"critical", "high"} for issue in issues),
+        "issues": issues,
+        "memory_available": bool((memory_context.get("metadata") or {}).get("memory_available", True)),
+        "metadata": {
+            "query": memory_context.get("query"),
+            "topic": memory_context.get("topic"),
+            "claim_count": len(memory_context.get("claims") or []),
+            "event_count": len(memory_context.get("events") or []),
+            "conflict_count": len(conflicts),
+        },
+    }
+
+
+def _with_memory_quality_metadata(
+    quality_result: Any,
+    *,
+    memory_context: dict[str, Any] | None,
+    memory_quality_result: dict[str, Any],
+) -> Any:
+    metadata = dict(getattr(quality_result, "metadata", {}) or {})
+    metadata["memory_context"] = memory_context
+    metadata["memory_quality_result"] = memory_quality_result
+    return replace(quality_result, metadata=metadata)

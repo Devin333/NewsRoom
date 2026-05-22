@@ -6,6 +6,7 @@ from framework import RunResult, WorkflowRunner
 from framework.llm import LLMClient
 from framework.workflow import FunctionStepRegistry
 from framework.workflow.routing import RoutingEngine
+from business.memory.intelligence_recall import IntelligenceMemoryRecallService
 from business.layers.relation.lineage import evidence_bundle_lineage_extractor
 from business.layers.signal.indexing import source_artifact_ref_extractor
 from business.foundation.registry.source_registry import SourceRegistry
@@ -81,6 +82,7 @@ class DailyIntelligenceRunner:
         devto_connector: DevToConnector | None = None,
         medium_connector: MediumConnector | None = None,
         llm_client: LLMClient | None = None,
+        recall_service: IntelligenceMemoryRecallService | None = None,
         source_health_manager: BasicSourceHealthManager | None = None,
         source_config_path: str | Path | None = None,
         source_rate_limiter: DomainRateLimiter | None = None,
@@ -137,6 +139,7 @@ class DailyIntelligenceRunner:
             )
         )
         self.llm_client = llm_client
+        self.recall_service = recall_service
         self.source_health_manager = source_health_manager or BasicSourceHealthManager()
         self.source_dispatcher = SourceDispatcher(
             source_registry=self.source_registry,
@@ -157,7 +160,7 @@ class DailyIntelligenceRunner:
             source_dispatcher=self.source_dispatcher,
             source_health_manager=self.source_health_manager,
         )
-        self.report_writer = ReportWriter(llm_client=self.llm_client)
+        self.report_writer = ReportWriter(llm_client=self.llm_client, recall_service=self.recall_service)
 
     def _function_registry(self, profile: str) -> FunctionStepRegistry:
         return build_daily_intelligence_registry(

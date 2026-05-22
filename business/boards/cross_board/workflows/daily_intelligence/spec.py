@@ -150,7 +150,7 @@ def build_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
                 step_id="draft_report",
                 implementation="daily.draft_report",
                 read_keys=["request", "evidence_bundle", "source_errors", "source_pipeline_metrics"],
-                write_keys=["report_draft"],
+                write_keys=["report_draft", "memory_context"],
                 required_output_keys=["report_draft"],
             ),
             StepSpec(
@@ -168,6 +168,7 @@ def build_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
                     "quality_route",
                     "rewrite_policy",
                     "rewrite_instructions",
+                    "memory_quality_result",
                     "rewritten_report_draft",
                     "human_review_request",
                     "final_report",
@@ -183,6 +184,7 @@ def build_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
                     "quality_gate_metrics",
                     "quality_result",
                 ],
+                metadata={"optional_read_keys": ["memory_context"]},
             ),
         ],
         edges=[

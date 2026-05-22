@@ -18,6 +18,8 @@ def test_memory_ingestion_factory_uses_injected_store_when_enabled() -> None:
 
     assert isinstance(service, MemoryIngestionService)
     assert service.vector_store is store
+    assert service.vector_index is not None
+    assert service.vector_index.__class__.__name__ == "IntelligenceVectorIndexAdapter"
     assert service.memory_runtime is None
 
 
