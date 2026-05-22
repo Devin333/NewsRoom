@@ -46,6 +46,18 @@ def test_news_business_acceptance_all_boards_json(monkeypatch, tmp_path, capsys)
     assert payload["summary"]["area"] == "all_boards"
 
 
+def test_news_business_acceptance_final_json(monkeypatch, tmp_path, capsys) -> None:
+    calls = []
+    monkeypatch.setattr(business_commands, "BusinessAcceptanceService", lambda: _FakeAcceptanceService(calls))
+
+    exit_code = news_cli.main(["business", "acceptance", "--final", "--artifact-root", str(tmp_path), "--json"])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert calls == [("final", str(tmp_path), None)]
+    assert payload["summary"]["area"] == "final-business"
+
+
 def test_news_business_acceptance_cross_board_json(monkeypatch, tmp_path, capsys) -> None:
     calls = []
     monkeypatch.setattr(business_commands, "BusinessAcceptanceService", lambda: _FakeAcceptanceService(calls))
@@ -103,6 +115,10 @@ class _FakeAcceptanceService:
     def run_board_acceptance(self, board_type, *, artifact_root, run_id=None):
         self.calls.append(("board", str(artifact_root), board_type, run_id))
         return _result(run_id or f"fake-{board_type}", str(artifact_root), {"board_type": board_type})
+
+    def run_final_business_acceptance(self, *, artifact_root, run_id=None):
+        self.calls.append(("final", str(artifact_root), run_id))
+        return _result(run_id or "fake-final", str(artifact_root), {"area": "final-business"})
 
     def run_all_board_acceptance(self, *, artifact_root, run_id_prefix=None):
         self.calls.append(("all_boards", str(artifact_root), run_id_prefix))

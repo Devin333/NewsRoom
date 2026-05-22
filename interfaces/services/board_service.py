@@ -49,6 +49,15 @@ PRIMARY_PRODUCTIZED_BOARD_TYPES = (
     BoardType.PAPER_RADAR,
     BoardType.COMMUNITY_PULSE,
 )
+FORBIDDEN_PUBLIC_FIELD_NAMES = {
+    "raw_payload",
+    "raw_content",
+    "raw_html",
+    "full_text",
+    "secret",
+    "api_key",
+    "token",
+}
 
 
 class BoardBuildResult(PrimitiveModel):
@@ -468,37 +477,39 @@ def _card_evidence_coverage(cards: list[dict[str, Any]]) -> float:
 
 def _item_from_evidence(item: Any) -> dict[str, Any]:
     if isinstance(item, Signal):
-        return item.to_dict()
-    if hasattr(item, "to_dict"):
+        payload = item.to_dict()
+    elif hasattr(item, "to_dict"):
         payload = item.to_dict()
     elif isinstance(item, dict):
         payload = dict(item)
     else:
         payload = {}
-    return {
-        "source_item_id": str(payload.get("source_item_id") or payload.get("evidence_id") or payload.get("id") or payload.get("title") or "evidence"),
-        "source_id": str(payload.get("source_id") or payload.get("source_name") or "evidence"),
-        "source_name": str(payload.get("source_name") or payload.get("source_id") or "Evidence"),
-        "source_type": str(payload.get("source_type") or "manual"),
-        "title": str(payload.get("title") or payload.get("headline") or payload.get("summary") or "Evidence item"),
-        "url": str(payload.get("source_url") or payload.get("url") or "manual://evidence"),
-        "fetched_at": payload.get("fetched_at") or payload.get("collected_at"),
-        "published_at": payload.get("published_at"),
-        "summary": payload.get("summary") or payload.get("text"),
-        "raw_content": payload.get("raw_content") or payload.get("content"),
-        "authors": payload.get("authors") or [],
-        "tags": payload.get("tags") or [],
-        "language": payload.get("language"),
-        "metadata": {
+    source = payload.get("source") if isinstance(payload.get("source"), dict) else {}
+    summary = payload.get("summary") or payload.get("text") or payload.get("description")
+    content_excerpt = _content_excerpt(
+        payload.get("content")
+        or payload.get("sanitized_content")
+        or payload.get("content_excerpt")
+        or payload.get("raw_content")
+        or payload.get("raw_html")
+        or payload.get("full_text")
+        or summary
+    )
+    metadata = _sanitize_public_payload(
+        {
             key: value
             for key, value in payload.items()
             if key
             not in {
                 "source_item_id",
+                "evidence_id",
+                "id",
                 "source_id",
+                "source",
                 "source_name",
                 "source_type",
                 "title",
+                "headline",
                 "url",
                 "source_url",
                 "fetched_at",
@@ -506,14 +517,61 @@ def _item_from_evidence(item: Any) -> dict[str, Any]:
                 "published_at",
                 "summary",
                 "text",
-                "raw_content",
+                "description",
                 "content",
+                "sanitized_content",
+                "content_excerpt",
                 "authors",
                 "tags",
                 "language",
             }
-        },
+        }
+    )
+    if content_excerpt:
+        metadata.setdefault("content_excerpt", content_excerpt)
+    result = {
+        "source_item_id": str(payload.get("source_item_id") or payload.get("evidence_id") or payload.get("id") or payload.get("title") or "evidence"),
+        "source_id": str(payload.get("source_id") or source.get("source_id") or payload.get("source_name") or "evidence"),
+        "source_name": str(payload.get("source_name") or source.get("source_name") or payload.get("source_id") or "Evidence"),
+        "source_type": str(payload.get("source_type") or source.get("source_type") or "manual"),
+        "title": str(payload.get("title") or payload.get("headline") or summary or "Evidence item"),
+        "url": str(payload.get("source_url") or payload.get("url") or source.get("source_url") or source.get("url") or "manual://evidence"),
+        "fetched_at": payload.get("fetched_at") or payload.get("collected_at"),
+        "published_at": payload.get("published_at"),
+        "summary": summary or content_excerpt,
+        "authors": payload.get("authors") or [],
+        "tags": payload.get("tags") or [],
+        "language": payload.get("language"),
+        "metadata": metadata,
     }
+    if content_excerpt:
+        result["content_excerpt"] = content_excerpt
+    return result
+
+
+def _sanitize_public_payload(value: Any) -> Any:
+    if isinstance(value, dict):
+        cleaned = {}
+        for key, item in value.items():
+            key_text = str(key)
+            if key_text.casefold() in FORBIDDEN_PUBLIC_FIELD_NAMES:
+                continue
+            cleaned[key] = _sanitize_public_payload(item)
+        return cleaned
+    if isinstance(value, list):
+        return [_sanitize_public_payload(item) for item in value]
+    return value
+
+
+def _content_excerpt(value: Any, *, max_length: int = 500) -> str | None:
+    if value is None:
+        return None
+    text = " ".join(str(value).split())
+    if not text:
+        return None
+    if len(text) <= max_length:
+        return text
+    return f"{text[: max_length - 3].rstrip()}..."
 
 
 def _ranked_item_payload(item: Any) -> Any:

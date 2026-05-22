@@ -22,9 +22,21 @@ def test_final_business_run_outputs_do_not_expose_raw_or_secret_fields() -> None
     final_run = BoardWorkflowApplicationService().build_final_business_run(sample_raw_items())
     surfaces = [
         ("final_run", final_run),
+        ("final_run.model_dump", final_run.model_dump(mode="json", exclude_none=True)),
+        ("cross_board_result", final_run.cross_board_result),
+        ("quality_summary", final_run.quality_summary),
+        ("artifacts", [artifact.metadata for artifact in final_run.artifacts]),
+        ("feedback_events", final_run.feedback_events),
+        ("learning_signals", final_run.learning_signals),
+        ("policy_candidates", final_run.policy_candidates),
+        ("regression_guard_results", final_run.regression_guard_results),
         *[
             (f"workflow_result.{board_type}", workflow_result)
             for board_type, workflow_result in final_run.board_workflow_results.items()
+        ],
+        *[
+            (f"artifact.{artifact.artifact_id}", artifact)
+            for artifact in final_run.artifacts
         ],
         *[
             (f"board_card.{board_type}.{card.card_id}", card)

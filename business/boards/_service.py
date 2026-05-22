@@ -417,6 +417,11 @@ def _artifact_refs(
             run_id=run_id,
             trace_ref=trace_ref,
             manifest_ref=manifest_ref,
+            metadata={
+                "board_type": board_type.value,
+                "run_id": run_id,
+                "artifact_type": "board_output",
+            },
         )
     ]
 

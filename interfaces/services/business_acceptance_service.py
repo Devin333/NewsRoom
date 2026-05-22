@@ -10,11 +10,13 @@ from uuid import uuid4
 from framework.specs import WorkflowStatus
 
 from business.boards._artifact_publisher import BOARD_ARTIFACTS
+from business.boards.final_runtime_fixtures import sample_raw_items
 from business.boards._runner import runner_for_board_type
 from business.boards.cross_board.intelligence_service import CrossBoardIntelligenceService
 from business.boards.cross_board.profiles import LEGACY_DAILY_WORKFLOW_ID
 from business.boards.cross_board.workflows.weekly_intelligence.runner import WeeklyIntelligenceRunner
 from business.evaluation import BoardEvalRunner, board_eval_cases
+from interfaces.services.board_service import BoardWorkflowApplicationService
 from interfaces.models.business_acceptance import AcceptanceCheck, AcceptanceResult
 
 
@@ -51,9 +53,159 @@ WEEKLY_ARTIFACTS = (
     "weekly_subscription_payload.json",
     "weekly_improvement_report.json",
 )
+FORBIDDEN_PUBLIC_FIELD_NAMES = {
+    "raw_payload",
+    "raw_content",
+    "raw_html",
+    "full_text",
+    "secret",
+    "api_key",
+    "token",
+}
 
 
 class BusinessAcceptanceService:
+    def run_final_business_acceptance(
+        self,
+        *,
+        artifact_root: str | Path | None = None,
+        run_id: str | None = None,
+    ) -> AcceptanceResult:
+        resolved_run_id = run_id or f"accept-final-{_short_id()}"
+        checks: list[AcceptanceCheck] = []
+        try:
+            final_run = BoardWorkflowApplicationService().build_final_business_run(sample_raw_items())
+            dumped = final_run.model_dump(mode="json", exclude_none=True)
+            forbidden_paths = _forbidden_paths(dumped)
+            artifact_refs = list(final_run.artifacts)
+            artifact_payloads = [_plain(artifact) for artifact in artifact_refs]
+            artifact_metadata_ok = all(
+                isinstance(payload, dict)
+                and payload.get("artifact_type")
+                and payload.get("run_id")
+                and isinstance(payload.get("metadata"), dict)
+                and payload["metadata"].get("board_type")
+                and payload["metadata"].get("run_id")
+                and payload["metadata"].get("artifact_type")
+                for payload in artifact_payloads
+            )
+            checks.extend(
+                [
+                    _check(
+                        "final_business_run_surface",
+                        "final business",
+                        set(final_run.board_workflow_results) == set(BOARD_TYPES)
+                        and final_run.cross_board_graph == final_run.cross_board_result.graph
+                        and final_run.cross_board_paths == final_run.cross_board_result.paths
+                        and final_run.cross_board_insights == final_run.cross_board_result.insights,
+                        "final business run exposes expected public surfaces",
+                        {"board_count": len(final_run.board_workflow_results)},
+                    ),
+                    _check(
+                        "no_raw_payload",
+                        "raw payload safety",
+                        not forbidden_paths,
+                        "final business run serialization contains no forbidden raw or secret field names",
+                        {"violations": forbidden_paths},
+                    ),
+                    _check(
+                        "four_board_workflows",
+                        "final business",
+                        len(final_run.board_workflow_results) == 4
+                        and all(result.result.cards for result in final_run.board_workflow_results.values()),
+                        "final business run contains four populated board workflows",
+                        {"boards": sorted(final_run.board_workflow_results)},
+                    ),
+                    _check(
+                        "cross_board_graph",
+                        "cross-board",
+                        bool(final_run.cross_board_graph.nodes),
+                        "cross-board graph has nodes",
+                        {"node_count": len(final_run.cross_board_graph.nodes)},
+                    ),
+                    _check(
+                        "cross_board_paths",
+                        "cross-board",
+                        bool(final_run.cross_board_paths)
+                        and all(path.metadata.get("scoring_result") for path in final_run.cross_board_paths),
+                        "cross-board paths are present and scored",
+                        {"path_count": len(final_run.cross_board_paths)},
+                    ),
+                    _check(
+                        "cross_board_insights",
+                        "cross-board",
+                        bool(final_run.cross_board_insights)
+                        and all(insight.metadata.get("scoring_result") for insight in final_run.cross_board_insights),
+                        "cross-board insights are present and scored",
+                        {"insight_count": len(final_run.cross_board_insights)},
+                    ),
+                    _check(
+                        "feedback_events",
+                        "feedback",
+                        bool(final_run.feedback_events),
+                        "feedback events are present",
+                        {"feedback_count": len(final_run.feedback_events)},
+                    ),
+                    _check(
+                        "learning_signals",
+                        "feedback",
+                        bool(final_run.learning_signals),
+                        "learning signals are present",
+                        {"learning_signal_count": len(final_run.learning_signals)},
+                    ),
+                    _check(
+                        "policy_candidates",
+                        "policy",
+                        bool(final_run.policy_candidates),
+                        "policy candidates are present",
+                        {"policy_candidate_count": len(final_run.policy_candidates)},
+                    ),
+                    _check(
+                        "regression_guards",
+                        "quality",
+                        bool(final_run.regression_guard_results),
+                        "regression guard results are present",
+                        {"guard_result_count": len(final_run.regression_guard_results)},
+                    ),
+                    _check(
+                        "artifacts_present",
+                        "artifacts",
+                        bool(artifact_refs)
+                        and final_run.metadata.get("artifact_count") == len(artifact_refs)
+                        and artifact_metadata_ok
+                        and not _forbidden_paths(artifact_payloads),
+                        "artifact refs are present, counted, serializable, and metadata-complete",
+                        {
+                            "artifact_count": len(artifact_refs),
+                            "metadata_artifact_count": final_run.metadata.get("artifact_count"),
+                        },
+                    ),
+                    _check(
+                        "serializable_model_dump",
+                        "serialization",
+                        isinstance(dumped, dict) and bool(dumped),
+                        "final business run model_dump(mode='json') is serializable",
+                        {"top_level_keys": sorted(dumped)[:20]},
+                    ),
+                ]
+            )
+        except Exception as exc:
+            checks.append(
+                _check(
+                    "final_business_run_surface",
+                    "final business",
+                    False,
+                    f"final business acceptance failed: {type(exc).__name__}: {exc}",
+                    {"run_id": resolved_run_id},
+                )
+            )
+        return AcceptanceResult.from_checks(
+            run_id=resolved_run_id,
+            checks=checks,
+            artifact_root=str(artifact_root) if artifact_root is not None else None,
+            summary={"area": "final-business"},
+        )
+
     def run_board_acceptance(
         self,
         board_type: str,
@@ -357,6 +509,7 @@ class BusinessAcceptanceService:
         root = Path(artifact_root)
         resolved_run_id = run_id or f"accept-full-{_short_id()}"
         results = [
+            self.run_final_business_acceptance(artifact_root=root, run_id=f"{resolved_run_id}-final"),
             self.run_all_board_acceptance(artifact_root=root, run_id_prefix=f"{resolved_run_id}-boards"),
             self.run_cross_board_acceptance(artifact_root=root, run_id=f"{resolved_run_id}-cross-board"),
             self.run_weekly_acceptance(artifact_root=root, run_id=f"{resolved_run_id}-weekly"),
@@ -702,6 +855,42 @@ def _has_skill_trace(output: dict[str, Any]) -> bool:
         return True
     metadata = _dict(_dict(output.get("board_output")).get("metadata"))
     return bool(metadata.get("skill_trace_metadata"))
+
+
+def _forbidden_paths(value: Any, *, root: str = "payload") -> list[str]:
+    violations: list[str] = []
+    _walk_forbidden(_plain(value), path=root, violations=violations)
+    return violations
+
+
+def _walk_forbidden(value: Any, *, path: str, violations: list[str]) -> None:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            key_text = str(key)
+            next_path = f"{path}.{key_text}"
+            if key_text.casefold() in FORBIDDEN_PUBLIC_FIELD_NAMES:
+                violations.append(next_path)
+            _walk_forbidden(item, path=next_path, violations=violations)
+        return
+    if isinstance(value, list):
+        for index, item in enumerate(value):
+            _walk_forbidden(item, path=f"{path}[{index}]", violations=violations)
+
+
+def _plain(value: Any) -> Any:
+    model_dump = getattr(value, "model_dump", None)
+    if callable(model_dump):
+        return model_dump(mode="json", exclude_none=True)
+    to_dict = getattr(value, "to_dict", None)
+    if callable(to_dict):
+        return to_dict()
+    if isinstance(value, dict):
+        return {key: _plain(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_plain(item) for item in value]
+    if isinstance(value, tuple):
+        return [_plain(item) for item in value]
+    return value
 
 
 def _check(

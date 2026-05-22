@@ -21,7 +21,7 @@ class AcceptanceResult:
     run_id: str
     status: str
     checks: list[AcceptanceCheck]
-    artifact_root: str
+    artifact_root: str | None
     summary: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -30,7 +30,7 @@ class AcceptanceResult:
         *,
         run_id: str,
         checks: list[AcceptanceCheck],
-        artifact_root: str,
+        artifact_root: str | None,
         summary: dict[str, Any] | None = None,
     ) -> "AcceptanceResult":
         return cls(

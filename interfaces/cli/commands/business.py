@@ -22,6 +22,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         help="Run offline business runtime acceptance",
     )
     selection = acceptance_parser.add_mutually_exclusive_group()
+    selection.add_argument("--final", action="store_true")
     selection.add_argument("--board", choices=["ai_news", "project_radar", "paper_radar", "community_pulse"])
     selection.add_argument("--all-boards", action="store_true")
     selection.add_argument("--cross-board", action="store_true")
@@ -57,7 +58,9 @@ def run_acceptance(
     service = business_acceptance_service_factory()
     artifact_root = Path(args.artifact_root)
     try:
-        if args.board:
+        if args.final:
+            result = service.run_final_business_acceptance(artifact_root=artifact_root, run_id=args.run_id)
+        elif args.board:
             result = service.run_board_acceptance(args.board, artifact_root=artifact_root, run_id=args.run_id)
         elif args.all_boards:
             result = service.run_all_board_acceptance(artifact_root=artifact_root, run_id_prefix=args.run_id)

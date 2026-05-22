@@ -90,6 +90,7 @@ class FinalBusinessRunBuilder:
                 "learning_signal_count": len(learning_signals),
                 "policy_candidate_count": len(policy_candidates),
                 "guard_result_count": len(guard_results),
+                "artifact_count": len(artifacts),
             },
         )
 
