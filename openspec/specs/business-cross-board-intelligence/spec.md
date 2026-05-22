@@ -25,3 +25,14 @@ Cross-board insights MUST require evidence relations, multi-board support, order
 - **WHEN** a path is missing required stages, has contradictory evidence, has duplicate evidence, or has low confidence
 - **THEN** missing stages and contradictions produce blocking reasons while duplicate or low-confidence evidence produces warnings and does not inflate path score
 
+### Requirement: Daily intelligence workflows preserve runtime behavior
+The system SHALL keep daily and agentic cross-board intelligence workflow outputs, artifact keys, profiles, and quality decisions behavior-compatible while refactoring internal runtime assembly.
+
+#### Scenario: Daily runner execution
+- **WHEN** `DailyIntelligenceRunner` runs an existing supported profile
+- **THEN** the workflow result, output fields, and artifacts remain compatible
+
+#### Scenario: Agentic runner execution
+- **WHEN** `AgenticDailyIntelligenceRunner` runs an existing supported profile
+- **THEN** the workflow result, output fields, and agentic artifacts remain compatible
+

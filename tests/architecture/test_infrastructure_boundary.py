@@ -7,13 +7,30 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 INFRASTRUCTURE_ROOT = PROJECT_ROOT / "infrastructure"
 
+# TODO(architecture-p2-memory-port-migration): remove these exceptions when
+# infrastructure memory/vector/graph adapters use storage-facing port DTOs.
+ALLOWED_BUSINESS_MEMORY_IMPORTS = {
+    "infrastructure/storage/graph/ports.py": {"business.memory.graph_memory"},
+    "infrastructure/storage/graph/postgres_graph_store.py": {"business.memory.graph_models"},
+    "infrastructure/storage/memory/intelligence_vector_index.py": {
+        "business.memory.intelligence_models",
+    },
+    "infrastructure/storage/postgres/memory_repository.py": {
+        "business.memory.intelligence_builder",
+        "business.memory.intelligence_models",
+    },
+}
+
 
 def test_infrastructure_does_not_import_business_or_interfaces() -> None:
     violations: list[str] = []
     for path in INFRASTRUCTURE_ROOT.rglob("*.py"):
+        relative_path = path.relative_to(PROJECT_ROOT).as_posix()
+        allowed_imports = ALLOWED_BUSINESS_MEMORY_IMPORTS.get(relative_path, set())
         for imported in _imports_for_file(path):
             if imported in {"business", "interfaces"} or imported.startswith(("business.", "interfaces.")):
-                violations.append(f"{path.relative_to(PROJECT_ROOT).as_posix()}: {imported}")
+                if imported not in allowed_imports:
+                    violations.append(f"{relative_path}: {imported}")
 
     assert violations == []
 

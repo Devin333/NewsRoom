@@ -16,6 +16,7 @@ from framework.specs.policy import (
     WorkflowPolicySpec,
 )
 from framework.specs.registry import WorkflowSpecRegistry
+from framework.specs.skill_step import SkillStepSpec
 from framework.specs.step import StepSpec, StepStatus, StepType, normalize_step_payload
 from framework.specs.trigger import WorkflowTriggerSpec, WorkflowTriggerType
 from framework.specs.validation import (
@@ -40,6 +41,7 @@ __all__ = [
     "ResourcePolicySpec",
     "RetryPolicySpec",
     "RuntimeQualityPolicySpec",
+    "SkillStepSpec",
     "StepSpec",
     "StepStatus",
     "StepType",

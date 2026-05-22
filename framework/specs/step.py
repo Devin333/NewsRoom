@@ -69,9 +69,13 @@ class StepStatus(str, Enum):
     CANCELLED = "cancelled"
 
     def is_terminal(self) -> bool:
-        from framework.workflow.runtime.status_classifier import RuntimeStatusClassifier
-
-        return RuntimeStatusClassifier.is_terminal_step(self)
+        return self in {
+            StepStatus.SUCCEEDED,
+            StepStatus.FAILED,
+            StepStatus.SKIPPED,
+            StepStatus.CANCELLED,
+            StepStatus.TIMEOUT,
+        }
 
 
 @dataclass(frozen=True)

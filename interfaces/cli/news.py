@@ -48,6 +48,8 @@ from interfaces.services.worker_service import (
     WorkerApplicationService,
 )
 from infrastructure.storage.lifecycle import RetentionPolicy
+from interfaces.cli.commands import reports as reports_commands
+from interfaces.cli.commands import subscriptions as subscription_commands
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1419,111 +1421,50 @@ def _run_weekly(args: argparse.Namespace) -> int:
 
 
 def _latest_report(args: argparse.Namespace) -> int:
-    service = ReportApplicationService(artifact_root=args.artifact_root)
-    try:
-        record = service.latest_report()
-    except FileNotFoundError as exc:
-        print(str(exc))
-        return 1
-
-    if args.format == "json":
-        print(json.dumps(record.to_dict(), ensure_ascii=False, sort_keys=True))
-    else:
-        print(record.report_markdown or json.dumps(record.report_json, ensure_ascii=False, indent=2))
-    return 0
+    return reports_commands.latest_report(
+        args,
+        report_service_factory=ReportApplicationService,
+    )
 
 
 def _reports_search(args: argparse.Namespace) -> int:
-    try:
-        result = ReportApplicationService(artifact_root=args.artifact_root).search_reports(
-            query=args.query,
-            limit=args.limit,
-        )
-    except ValueError as exc:
-        print(str(exc))
-        return 1
-    payload = result.to_dict()
-    if args.json:
-        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
-    else:
-        print(f"report_count={payload['report_count']}")
-        for report in payload["reports"]:
-            print(f"- {report['run_id']} title={report['title']} finished_at={report['finished_at']}")
-    return 0
+    return reports_commands.search_reports(
+        args,
+        report_service_factory=ReportApplicationService,
+    )
 
 
 def _reports_list(args: argparse.Namespace) -> int:
-    try:
-        result = ReportApplicationService(artifact_root=args.artifact_root).list_reports(
-            limit=args.limit,
-            workflow_id=args.workflow_id,
-            workflow_family=args.workflow_family,
-        )
-    except ValueError as exc:
-        print(str(exc))
-        return 1
-    payload = result.to_dict()
-    if args.json:
-        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
-    else:
-        print(f"report_count={payload['report_count']}")
-        for report in payload["reports"]:
-            print(
-                f"- {report['run_id']} workflow={report.get('workflow_id')} "
-                f"title={report['title']} finished_at={report['finished_at']}"
-            )
-    return 0
+    return reports_commands.list_reports(
+        args,
+        report_service_factory=ReportApplicationService,
+    )
 
 
 def _reports_show(args: argparse.Namespace) -> int:
-    try:
-        record = ReportApplicationService(artifact_root=args.artifact_root).get_report(args.report_id)
-    except (FileNotFoundError, ValueError) as exc:
-        print(str(exc))
-        return 1
-    payload = record.to_dict()
-    if args.format == "json":
-        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
-    else:
-        print(record.report_markdown or json.dumps(record.report_json, ensure_ascii=False, indent=2))
-    return 0
+    return reports_commands.show_report(
+        args,
+        report_service_factory=ReportApplicationService,
+    )
 
 
 def _subscriptions_create(args: argparse.Namespace) -> int:
-    try:
-        subscription = SubscriptionApplicationService(store_path=args.store_path).create_topic_subscription(
-            topic=args.topic,
-            cadence=args.cadence,
-            profile=args.profile,
-            source_limit=args.source_limit,
-            subscription_id=args.subscription_id,
-            enabled=not args.disabled,
-            metadata=_parse_key_values(args.metadata or []),
-        )
-    except ValueError as exc:
-        print(str(exc))
-        return 1
-    return _print_subscription(subscription.to_dict(), json_output=args.json)
+    return subscription_commands.create_subscription(
+        args,
+        subscription_service_factory=SubscriptionApplicationService,
+        parse_key_values=_parse_key_values,
+        print_subscription=lambda payload, json_output: _print_subscription(
+            payload,
+            json_output=json_output,
+        ),
+    )
 
 
 def _subscriptions_list(args: argparse.Namespace) -> int:
-    try:
-        result = SubscriptionApplicationService(store_path=args.store_path).list_topic_subscriptions(
-            enabled_only=args.enabled_only,
-            cadence=args.cadence,
-        )
-    except ValueError as exc:
-        print(str(exc))
-        return 1
-    payload = result.to_dict()
-    if args.json:
-        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
-    else:
-        print(f"subscription_count={payload['subscription_count']}")
-        for item in payload["subscriptions"]:
-            state = "enabled" if item["enabled"] else "disabled"
-            print(f"- {item['subscription_id']} {state} cadence={item['cadence']} topic={item['topic']}")
-    return 0
+    return subscription_commands.list_subscriptions(
+        args,
+        subscription_service_factory=SubscriptionApplicationService,
+    )
 
 
 def _subscriptions_enable(args: argparse.Namespace) -> int:
@@ -1535,27 +1476,22 @@ def _subscriptions_disable(args: argparse.Namespace) -> int:
 
 
 def _subscriptions_set_enabled(args: argparse.Namespace, *, enabled: bool) -> int:
-    try:
-        subscription = SubscriptionApplicationService(store_path=args.store_path).set_enabled(
-            args.subscription_id,
-            enabled=enabled,
-        )
-    except (KeyError, ValueError) as exc:
-        print(str(exc))
-        return 1
-    return _print_subscription(subscription.to_dict(), json_output=args.json)
+    return subscription_commands.set_subscription_enabled(
+        args,
+        enabled=enabled,
+        subscription_service_factory=SubscriptionApplicationService,
+        print_subscription=lambda payload, json_output: _print_subscription(
+            payload,
+            json_output=json_output,
+        ),
+    )
 
 
 def _subscriptions_delete(args: argparse.Namespace) -> int:
-    deleted = SubscriptionApplicationService(store_path=args.store_path).delete_topic_subscription(
-        args.subscription_id,
+    return subscription_commands.delete_subscription(
+        args,
+        subscription_service_factory=SubscriptionApplicationService,
     )
-    payload = {"subscription_id": args.subscription_id, "deleted": deleted}
-    if args.json:
-        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
-    else:
-        print(f"deleted={str(deleted).lower()}")
-    return 0
 
 
 def _print_subscription(payload: dict, *, json_output: bool) -> int:

@@ -11,6 +11,9 @@ from framework.workflow.runtime.artifact_publishers import (
     register_manifest_artifact_once,
 )
 from infrastructure.storage.artifacts import ArtifactRef
+from business.boards.cross_board.workflows.daily_intelligence.artifact_sections import (
+    publish_daily_artifact_sections,
+)
 
 
 AGENTIC_WORKFLOW_IDS = {"daily-intelligence-agentic"}
@@ -59,13 +62,14 @@ class DailyIntelligenceArtifactPublisher:
         return _is_daily_workflow_id(context.workflow.workflow_id)
 
     def publish(self, context: ArtifactPublishContext) -> list[ArtifactRef]:
-        refs: list[ArtifactRef] = []
-        refs.extend(self._publish_source_diagnostics(context))
-        refs.extend(self._publish_evidence_artifacts(context))
-        refs.extend(self._publish_quality_artifacts(context))
-        refs.extend(self._publish_agentic_artifacts(context))
-        refs.extend(self._publish_report_artifacts(context))
-        return refs
+        return publish_daily_artifact_sections(
+            context,
+            source_diagnostics=self._publish_source_diagnostics,
+            evidence=self._publish_evidence_artifacts,
+            quality=self._publish_quality_artifacts,
+            agentic=self._publish_agentic_artifacts,
+            report=self._publish_report_artifacts,
+        )
 
     def _publish_evidence_artifacts(self, context: ArtifactPublishContext) -> list[ArtifactRef]:
         refs: list[ArtifactRef] = []

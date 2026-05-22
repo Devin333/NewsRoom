@@ -25,6 +25,10 @@ from infrastructure.external.sources import (
     StackOverflowConnector,
 )
 from business.layers.signal.source_health import BasicSourceHealthManager
+from business.boards.cross_board.workflows.daily_intelligence.runtime_assembly import (
+    apply_daily_source_runtime_assembly,
+    build_daily_source_runtime_assembly,
+)
 from business.boards.cross_board.workflows.daily_intelligence.agent_registry import (
     build_daily_agent_registry,
     build_daily_agent_runner,
@@ -41,12 +45,6 @@ from business.boards.cross_board.workflows.daily_intelligence.profiles import (
 from business.boards.cross_board.workflows.daily_intelligence.routing_predicates import (
     build_daily_intelligence_routing_predicate_registry,
 )
-from business.boards.cross_board.workflows.daily_intelligence.source_collection import DailySourceCollector
-from business.boards.cross_board.workflows.daily_intelligence.source_config import (
-    build_default_source_fetch_policy,
-    build_default_source_registry,
-)
-from business.boards.cross_board.workflows.daily_intelligence.source_dispatcher import SourceDispatcher
 from business.boards.cross_board.workflows.daily_intelligence.source_processing import (
     AllSourcesFailedError,
     deduplicate_sources,
@@ -94,77 +92,25 @@ class AgenticDailyIntelligenceRunner:
         source_rate_limiter: DomainRateLimiter | None = None,
     ) -> None:
         self.artifact_root = Path(artifact_root)
-        self.source_registry = source_registry or build_default_source_registry(
-            source_config_path=source_config_path
+        self.source_runtime_assembly = build_daily_source_runtime_assembly(
+            source_registry=source_registry,
+            feed_connector=feed_connector,
+            html_connector=html_connector,
+            manual_connector=manual_connector,
+            arxiv_connector=arxiv_connector,
+            github_connector=github_connector,
+            hackernews_connector=hackernews_connector,
+            reddit_connector=reddit_connector,
+            lobsters_connector=lobsters_connector,
+            stackoverflow_connector=stackoverflow_connector,
+            devto_connector=devto_connector,
+            medium_connector=medium_connector,
+            source_health_manager=source_health_manager,
+            source_config_path=source_config_path,
+            source_rate_limiter=source_rate_limiter,
         )
-        default_fetch_policy = build_default_source_fetch_policy(
-            source_config_path=source_config_path
-        )
-        default_rate_limiter = source_rate_limiter or DomainRateLimiter()
-        self.feed_connector = feed_connector or FeedConnector(
-            fetch_policy=default_fetch_policy,
-            rate_limiter=default_rate_limiter,
-        )
-        self.html_connector = html_connector or HtmlConnector(
-            fetch_policy=default_fetch_policy,
-            rate_limiter=default_rate_limiter,
-        )
-        self.manual_connector = manual_connector or ManualConnector()
-        self.arxiv_connector = arxiv_connector or ArxivConnector(
-            fetch_policy=default_fetch_policy,
-            rate_limiter=default_rate_limiter,
-        )
-        self.github_connector = github_connector or GithubConnector(
-            fetch_policy=default_fetch_policy,
-            rate_limiter=default_rate_limiter,
-        )
-        self.hackernews_connector = hackernews_connector or HackerNewsConnector(
-            fetch_policy=default_fetch_policy,
-            rate_limiter=default_rate_limiter,
-        )
-        self.reddit_connector = reddit_connector or RedditConnector(
-            fetch_policy=default_fetch_policy,
-            rate_limiter=default_rate_limiter,
-        )
-        self.lobsters_connector = lobsters_connector or LobstersConnector(
-            fetch_policy=default_fetch_policy,
-            rate_limiter=default_rate_limiter,
-        )
-        self.stackoverflow_connector = stackoverflow_connector or StackOverflowConnector(
-            fetch_policy=default_fetch_policy,
-            rate_limiter=default_rate_limiter,
-        )
-        self.devto_connector = devto_connector or DevToConnector(
-            fetch_policy=default_fetch_policy,
-            rate_limiter=default_rate_limiter,
-        )
-        self.medium_connector = medium_connector or MediumConnector(
-            feed_connector=FeedConnector(
-                fetch_policy=default_fetch_policy,
-                rate_limiter=default_rate_limiter,
-            )
-        )
+        apply_daily_source_runtime_assembly(self, self.source_runtime_assembly)
         self.llm_client = llm_client
-        self.source_health_manager = source_health_manager or BasicSourceHealthManager()
-        self.source_dispatcher = SourceDispatcher(
-            source_registry=self.source_registry,
-            feed_connector=self.feed_connector,
-            html_connector=self.html_connector,
-            manual_connector=self.manual_connector,
-            arxiv_connector=self.arxiv_connector,
-            github_connector=self.github_connector,
-            hackernews_connector=self.hackernews_connector,
-            reddit_connector=self.reddit_connector,
-            lobsters_connector=self.lobsters_connector,
-            stackoverflow_connector=self.stackoverflow_connector,
-            devto_connector=self.devto_connector,
-            medium_connector=self.medium_connector,
-        )
-        self.source_collector = DailySourceCollector(
-            source_registry=self.source_registry,
-            source_dispatcher=self.source_dispatcher,
-            source_health_manager=self.source_health_manager,
-        )
 
     def _function_registry(self, profile: str) -> FunctionStepRegistry:
         validate_daily_profile(profile)
