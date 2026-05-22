@@ -7,11 +7,11 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from framework.skills.context import SkillRunContext
-from framework.skills.package import SkillPackage
-from framework.skills.registry import SkillRegistry
-from framework.skills.result import SkillFailureReason
-from framework.skills.runner import SkillRunner
+from framework.skills.core.context import SkillRunContext
+from framework.skills.core.result import SkillFailureReason
+from framework.skills.package.loader import SkillPackage
+from framework.skills.package.registry import SkillRegistry
+from framework.skills.runtime.runner import SkillRunner
 
 
 class SkillEvalCase(BaseModel):

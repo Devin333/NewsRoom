@@ -6,9 +6,9 @@ from typing import Protocol
 
 from pydantic import BaseModel, Field
 
-from framework.skills.context import SkillRunContext
-from framework.skills.package import SkillPackage
-from framework.skills.schema import SkillSchemaValidator
+from framework.skills.core.context import SkillRunContext
+from framework.skills.package.loader import SkillPackage
+from framework.skills.validation.schema import SkillSchemaValidator
 
 
 class SkillQualityGateResult(BaseModel):

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from framework.skills.metadata import SkillMetadata
+from framework.skills.core.metadata import SkillMetadata
 
 
 class SkillManifest(BaseModel):

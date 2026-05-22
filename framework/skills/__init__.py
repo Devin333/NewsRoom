@@ -1,7 +1,7 @@
 """Framework skill package discovery, metadata contracts, and runtime APIs."""
 
-from framework.skills.context import SkillRunContext
-from framework.skills.errors import (
+from framework.skills.core.context import SkillRunContext
+from framework.skills.core.errors import (
     SkillDuplicateError,
     SkillError,
     SkillExecutionError,
@@ -10,11 +10,9 @@ from framework.skills.errors import (
     SkillPackageError,
     SkillValidationError,
 )
-from framework.skills.evaluator import SkillEvalCase, SkillEvalCaseResult, SkillEvalResult, SkillEvaluator
-from framework.skills.executor import LLMSkillExecutor, MockSkillExecutor, SkillExecutor
-from framework.skills.io import SkillInput, SkillOutput
-from framework.skills.manifest import SkillCatalog, SkillManifest
-from framework.skills.metadata import (
+from framework.skills.core.io import SkillInput, SkillOutput
+from framework.skills.core.manifest import SkillCatalog, SkillManifest
+from framework.skills.core.metadata import (
     SkillCapability,
     SkillCategory,
     SkillMetadata,
@@ -23,19 +21,7 @@ from framework.skills.metadata import (
     SkillToolPermission,
     SkillVersion,
 )
-from framework.skills.package import SkillPackage, SkillPackageLoader
-from framework.skills.prompt import SkillPromptBuilder, SkillPromptBundle
-from framework.skills.quality import (
-    EvidenceRequiredGate,
-    NoEmptyOutputGate,
-    NoErrorStatusGate,
-    SchemaValidGate,
-    SkillQualityGate,
-    SkillQualityGateResult,
-    SkillQualityGateRunner,
-)
-from framework.skills.registry import SkillRegistry
-from framework.skills.result import (
+from framework.skills.core.result import (
     SkillCost,
     SkillErrorDetail,
     SkillEvidence,
@@ -44,11 +30,25 @@ from framework.skills.result import (
     SkillRunStatus,
     SkillWarningDetail,
 )
-from framework.skills.runner import SkillRunner
-from framework.skills.scanner import SkillScanner
-from framework.skills.schema import SchemaValidationIssue, SchemaValidationResult, SkillSchemaValidator
-from framework.skills.trace import SkillTraceEvent, SkillTraceRecorder
-from framework.skills.validator import SkillPackageValidator, SkillValidationIssue, SkillValidationResult
+from framework.skills.evaluation.evaluator import SkillEvalCase, SkillEvalCaseResult, SkillEvalResult, SkillEvaluator
+from framework.skills.package.loader import SkillPackage, SkillPackageLoader
+from framework.skills.package.registry import SkillRegistry
+from framework.skills.package.scanner import SkillScanner
+from framework.skills.package.validator import SkillPackageValidator, SkillValidationIssue, SkillValidationResult
+from framework.skills.quality.gates import (
+    EvidenceRequiredGate,
+    NoEmptyOutputGate,
+    NoErrorStatusGate,
+    SchemaValidGate,
+    SkillQualityGate,
+    SkillQualityGateResult,
+    SkillQualityGateRunner,
+)
+from framework.skills.runtime.executor import LLMSkillExecutor, MockSkillExecutor, SkillExecutor
+from framework.skills.runtime.prompt import SkillPromptBuilder, SkillPromptBundle
+from framework.skills.runtime.runner import SkillRunner
+from framework.skills.tracing.trace import SkillTraceEvent, SkillTraceRecorder
+from framework.skills.validation.schema import SchemaValidationIssue, SchemaValidationResult, SkillSchemaValidator
 
 __all__ = [
     "EvidenceRequiredGate",

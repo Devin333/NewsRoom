@@ -10,8 +10,8 @@ from jsonschema.exceptions import SchemaError
 from jsonschema.validators import validator_for
 from pydantic import BaseModel, Field
 
-from framework.skills.package import SkillPackage
-from framework.skills.result import SkillErrorDetail
+from framework.skills.core.result import SkillErrorDetail
+from framework.skills.package.loader import SkillPackage
 
 
 class SchemaValidationIssue(BaseModel):

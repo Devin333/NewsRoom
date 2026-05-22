@@ -9,9 +9,9 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, Field, ValidationError
 
-from framework.skills.errors import SkillMetadataError, SkillPackageError
-from framework.skills.manifest import SkillManifest
-from framework.skills.metadata import SkillMetadata
+from framework.skills.core.errors import SkillMetadataError, SkillPackageError
+from framework.skills.core.manifest import SkillManifest
+from framework.skills.core.metadata import SkillMetadata
 
 
 class SkillPackage(BaseModel):

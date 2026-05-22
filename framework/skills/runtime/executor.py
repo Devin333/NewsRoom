@@ -5,10 +5,10 @@ from __future__ import annotations
 import json
 from typing import Protocol
 
-from framework.skills.context import SkillRunContext
-from framework.skills.io import SkillOutput
-from framework.skills.package import SkillPackage
-from framework.skills.prompt import SkillPromptBundle
+from framework.skills.core.context import SkillRunContext
+from framework.skills.core.io import SkillOutput
+from framework.skills.package.loader import SkillPackage
+from framework.skills.runtime.prompt import SkillPromptBundle
 
 
 class SkillExecutor(Protocol):

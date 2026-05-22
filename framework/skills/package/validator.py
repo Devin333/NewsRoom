@@ -6,15 +6,15 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from framework.skills.errors import SkillValidationError
-from framework.skills.metadata import (
+from framework.skills.core.errors import SkillValidationError
+from framework.skills.core.metadata import (
     SkillCategory,
     SkillMetadata,
     SkillRiskLevel,
     SkillToolPermission,
     SkillVersion,
 )
-from framework.skills.package import SkillPackage
+from framework.skills.package.loader import SkillPackage
 
 
 DANGEROUS_TOOLS = {

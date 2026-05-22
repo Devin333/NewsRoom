@@ -5,7 +5,7 @@ from typing import Any, Protocol
 from pydantic import BaseModel, Field
 
 try:  # pragma: no cover - exercised when framework.skills is present.
-    from framework.skills.context import SkillRunContext as SkillRunContext
+    from framework.skills.core.context import SkillRunContext as SkillRunContext
 except ModuleNotFoundError:  # pragma: no cover - fallback is covered through behavior.
 
     class SkillRunContext(BaseModel):

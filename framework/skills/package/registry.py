@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from framework.skills.errors import SkillDuplicateError, SkillNotFoundError
-from framework.skills.metadata import SkillCategory, SkillMetadata, SkillStatus, SkillToolPermission
-from framework.skills.package import SkillPackage, SkillPackageLoader
-from framework.skills.scanner import SkillScanner
+from framework.skills.core.errors import SkillDuplicateError, SkillNotFoundError
+from framework.skills.core.metadata import SkillCategory, SkillMetadata, SkillStatus, SkillToolPermission
+from framework.skills.package.loader import SkillPackage, SkillPackageLoader
+from framework.skills.package.scanner import SkillScanner
 
 
 class SkillRegistry:

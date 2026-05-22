@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from framework.skills.metadata import SkillMetadata
-from framework.skills.package import SkillPackage, SkillPackageLoader
+from framework.skills.core.metadata import SkillMetadata
+from framework.skills.package.loader import SkillPackage, SkillPackageLoader
 
 
 class SkillScanner:

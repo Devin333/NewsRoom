@@ -7,8 +7,8 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from framework.skills.context import SkillRunContext
-from framework.skills.package import SkillPackage
+from framework.skills.core.context import SkillRunContext
+from framework.skills.package.loader import SkillPackage
 
 
 class SkillPromptBundle(BaseModel):

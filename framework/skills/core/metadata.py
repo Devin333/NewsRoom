@@ -7,7 +7,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
-from framework.skills.errors import SkillMetadataError
+from framework.skills.core.errors import SkillMetadataError
 
 
 class SkillRiskLevel(str, Enum):

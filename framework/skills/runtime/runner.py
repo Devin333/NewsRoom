@@ -4,16 +4,16 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-from framework.skills.context import SkillRunContext
-from framework.skills.errors import SkillMetadataError, SkillNotFoundError, SkillPackageError
-from framework.skills.executor import MockSkillExecutor, SkillExecutor
-from framework.skills.package import SkillPackage, SkillPackageLoader
-from framework.skills.prompt import SkillPromptBuilder
-from framework.skills.quality import SchemaValidGate, SkillQualityGateRunner
-from framework.skills.registry import SkillRegistry
-from framework.skills.result import SkillCost, SkillFailureReason, SkillResult, SkillRunStatus
-from framework.skills.schema import SkillSchemaValidator
-from framework.skills.trace import SkillTraceRecorder
+from framework.skills.core.context import SkillRunContext
+from framework.skills.core.errors import SkillMetadataError, SkillNotFoundError, SkillPackageError
+from framework.skills.core.result import SkillCost, SkillFailureReason, SkillResult, SkillRunStatus
+from framework.skills.package.loader import SkillPackage, SkillPackageLoader
+from framework.skills.package.registry import SkillRegistry
+from framework.skills.quality.gates import SchemaValidGate, SkillQualityGateRunner
+from framework.skills.runtime.executor import MockSkillExecutor, SkillExecutor
+from framework.skills.runtime.prompt import SkillPromptBuilder
+from framework.skills.tracing.trace import SkillTraceRecorder
+from framework.skills.validation.schema import SkillSchemaValidator
 
 
 class SkillRunner:

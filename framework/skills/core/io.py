@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from framework.skills.context import SkillRunContext
-from framework.skills.errors import SkillExecutionError
-from framework.skills.result import SkillEvidence, SkillWarningDetail
+from framework.skills.core.context import SkillRunContext
+from framework.skills.core.errors import SkillExecutionError
+from framework.skills.core.result import SkillEvidence, SkillWarningDetail
 
 
 class SkillInput(BaseModel):
