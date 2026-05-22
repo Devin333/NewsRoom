@@ -1,6 +1,22 @@
 from business.memory.consolidation import MemoryConsolidationResult
-from business.workers.memory_consolidation_handler import MemoryConsolidationTaskHandler, handle_memory_consolidation_task
+import pytest
+
+from business.workers.memory_consolidation_handler import (
+    MemoryConsolidationTaskHandler,
+    build_memory_consolidation_service,
+    handle_memory_consolidation_task,
+    parse_memory_consolidation_task,
+)
 from framework.workers.models import Task
+
+
+def test_parse_memory_consolidation_task_defaults_to_dry_run() -> None:
+    task = parse_memory_consolidation_task({"task_type": "event_dedupe", "topic": "AI"})
+
+    assert task.task_type == "event_dedupe"
+    assert task.topic == "AI"
+    assert task.dry_run is True
+    assert task.limit == 100
 
 
 def test_memory_consolidation_handler_uses_injected_service() -> None:
@@ -22,6 +38,14 @@ def test_memory_consolidation_task_handler_returns_task_result() -> None:
 
     assert result.success is True
     assert result.output["changed"] == 1
+
+
+def test_memory_consolidation_service_builder_requires_explicit_postgres_env(monkeypatch) -> None:
+    monkeypatch.delenv("NEWS_MEMORY_POSTGRES_ENABLED", raising=False)
+    monkeypatch.delenv("NEWS_DATABASE_DSN", raising=False)
+
+    with pytest.raises(ValueError, match="NEWS_MEMORY_POSTGRES_ENABLED"):
+        build_memory_consolidation_service()
 
 
 class _Service:

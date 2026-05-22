@@ -30,7 +30,13 @@ def handle_memory_consolidation_task(
     *,
     service: MemoryConsolidationService | None = None,
 ) -> dict[str, Any]:
-    task = MemoryConsolidationTask(
+    task = parse_memory_consolidation_task(payload)
+    resolved_service = service or build_memory_consolidation_service()
+    return resolved_service.run_task(task).to_dict()
+
+
+def parse_memory_consolidation_task(payload: dict[str, Any]) -> MemoryConsolidationTask:
+    return MemoryConsolidationTask(
         task_type=payload["task_type"],
         topic=payload.get("topic"),
         entity_id=payload.get("entity_id"),
@@ -38,11 +44,9 @@ def handle_memory_consolidation_task(
         limit=int(payload.get("limit", 100)),
         metadata=dict(payload.get("metadata") or {}),
     )
-    resolved_service = service or _build_memory_consolidation_service()
-    return resolved_service.run_task(task).to_dict()
 
 
-def _build_memory_consolidation_service() -> MemoryConsolidationService:
+def build_memory_consolidation_service() -> MemoryConsolidationService:
     if os.environ.get("NEWS_MEMORY_POSTGRES_ENABLED", "").lower() not in {"1", "true", "yes", "on"}:
         raise ValueError("NEWS_MEMORY_POSTGRES_ENABLED is required for memory consolidation")
     dsn = os.environ.get("NEWS_DATABASE_DSN")
@@ -54,4 +58,9 @@ def _build_memory_consolidation_service() -> MemoryConsolidationService:
     return MemoryConsolidationService(PostgresIntelligenceMemoryRepository(PostgresRepository(dsn)))
 
 
-__all__ = ["MemoryConsolidationTaskHandler", "handle_memory_consolidation_task"]
+__all__ = [
+    "MemoryConsolidationTaskHandler",
+    "build_memory_consolidation_service",
+    "handle_memory_consolidation_task",
+    "parse_memory_consolidation_task",
+]

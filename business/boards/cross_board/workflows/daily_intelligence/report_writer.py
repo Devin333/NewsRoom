@@ -5,6 +5,11 @@ from typing import Any
 
 from business.memory.intelligence_context import IntelligenceMemoryContext
 from business.memory.intelligence_recall import IntelligenceMemoryRecallService
+from business.memory.historian_context_adapter import (
+    HistorianContextAdapter,
+    HistorianContextRequest,
+    HistorianContextResult,
+)
 from business.memory.report_memory_context import (
     ReportMemoryContextRequest,
     ReportMemoryContextResult,
@@ -24,11 +29,13 @@ class ReportWriter:
         llm_client: LLMClient | None = None,
         recall_service: IntelligenceMemoryRecallService | None = None,
         memory_context_service: ReportMemoryContextService | None = None,
+        historian_context_adapter: HistorianContextAdapter | None = None,
     ) -> None:
         self.llm_client = llm_client
         self.memory_context_service = memory_context_service or (
             ReportMemoryContextService(recall_service) if recall_service is not None else None
         )
+        self.historian_context_adapter = historian_context_adapter
 
     def draft_report(self, buffer: StepScopedDataBufferView, profile: str) -> dict[str, Any]:
         request = buffer.read("request")
@@ -37,9 +44,11 @@ class ReportWriter:
         source_metrics = buffer.read("source_pipeline_metrics")
         memory_result = self._memory_context(str(request["topic"]))
         memory_context = memory_result.context if memory_result is not None else None
+        historian_result = self._historian_context(str(request["topic"]))
         if profile == PROFILE_LIVE_OFFLINE:
             report = _deterministic_report(request["topic"], evidence_bundle)
             report = _with_memory_metadata(report, memory_result)
+            report = _with_historian_metadata(report, historian_result)
             return {
                 "report_draft": _with_source_notes(
                     report,
@@ -48,22 +57,32 @@ class ReportWriter:
                     source_metrics,
                 ),
                 "memory_context": memory_context.to_dict() if memory_context is not None else None,
+                "historian_context": historian_result.to_dict() if historian_result is not None else None,
             }
 
         llm_client = self.llm_client or build_openai_compatible_client_from_config(
             route_id="daily-intelligence-writer"
         )
-        response = llm_client.complete(_report_request(request["topic"], evidence_bundle, memory_context))
+        response = llm_client.complete(
+            _report_request(
+                request["topic"],
+                evidence_bundle,
+                memory_context,
+                historian_result,
+            )
+        )
         report_draft = (
             _validate_report_payload(response.structured_output)
             if response.structured_output is not None
             else _parse_report_json(response.content or "{}")
         )
         report_draft = _with_memory_metadata(report_draft, memory_result)
+        report_draft = _with_historian_metadata(report_draft, historian_result)
         report_draft = _with_source_notes(report_draft, evidence_bundle, source_errors, source_metrics)
         return {
             "report_draft": report_draft,
             "memory_context": memory_context.to_dict() if memory_context is not None else None,
+            "historian_context": historian_result.to_dict() if historian_result is not None else None,
         }
 
     def _memory_context(self, topic: str) -> ReportMemoryContextResult | None:
@@ -73,6 +92,16 @@ class ReportWriter:
             ReportMemoryContextRequest(topic=topic, limit=5)
         )
         if result.context.is_empty():
+            return None
+        return result
+
+    def _historian_context(self, topic: str) -> HistorianContextResult | None:
+        if self.historian_context_adapter is None:
+            return None
+        result = self.historian_context_adapter.build_context(
+            HistorianContextRequest(topic=topic, limit=5)
+        )
+        if result.output.historical_context.is_empty():
             return None
         return result
 
@@ -146,6 +175,7 @@ def _report_request(
     topic: str,
     evidence_bundle: EvidenceBundle,
     memory_context: IntelligenceMemoryContext | None = None,
+    historian_result: HistorianContextResult | None = None,
 ) -> LLMRequest:
     evidence_payload = [item.to_dict() for item in evidence_bundle.items]
     memory_prompt = memory_context.to_prompt_context(limit=5) if memory_context is not None else ""
@@ -161,6 +191,12 @@ def _report_request(
             "do not cite it as new evidence. "
             f"Memory context: {memory_prompt}"
         )
+    if historian_result is not None:
+        user += (
+            " Historical analysis is advisory background only; "
+            "do not cite it as new evidence. "
+            f"{historian_result.prompt_context}"
+        )
     return LLMRequest(
         messages=[
             {"role": "system", "content": "You write source-grounded intelligence reports."},
@@ -170,6 +206,8 @@ def _report_request(
             "profile": PROFILE_LIVE,
             "memory_context_used": memory_context is not None,
             "memory_context": memory_context.to_dict() if memory_context is not None else None,
+            "historian_context_used": historian_result is not None,
+            "historian": historian_result.to_dict() if historian_result is not None else None,
         },
         response_format="json_object",
     )
@@ -204,6 +242,21 @@ def _with_memory_metadata(
     metadata["memory_context_used"] = True
     metadata["memory_context"] = memory_result.context.to_dict()
     metadata["memory_prompt_context"] = memory_result.prompt_context
+    updated["metadata"] = metadata
+    return updated
+
+
+def _with_historian_metadata(
+    report_draft: dict[str, Any],
+    historian_result: HistorianContextResult | None,
+) -> dict[str, Any]:
+    if historian_result is None:
+        return report_draft
+    updated = dict(report_draft)
+    metadata = dict(updated.get("metadata") or {})
+    metadata["historian_context_used"] = True
+    metadata["historian"] = historian_result.to_dict()
+    metadata["historian_prompt_context"] = historian_result.prompt_context
     updated["metadata"] = metadata
     return updated
 

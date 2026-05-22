@@ -26,7 +26,9 @@ def quality_gate(buffer: StepScopedDataBufferView) -> dict[str, Any]:
     verified_findings = buffer.read("verified_findings")
     quality_events = list(buffer.read("quality_events"))
     memory_context = _read_memory_context(buffer)
+    historian_metadata = _historian_metadata(report_draft, memory_context)
     memory_quality_result = _memory_quality_result(memory_context)
+    memory_quality_result = _with_historian_quality_metadata(memory_quality_result, historian_metadata)
     if memory_quality_result["memory_available"]:
         quality_events.append(
             quality_event(
@@ -182,6 +184,7 @@ def quality_gate(buffer: StepScopedDataBufferView) -> dict[str, Any]:
                 "uncertain_claims_count": len(verified_findings.uncertain_claims),
                 "rewrite_attempts": rewrite_attempts,
                 "memory_context": memory_context,
+                "historian": historian_metadata,
                 "memory_quality_result": memory_quality_result,
             },
         )
@@ -210,6 +213,7 @@ def quality_gate(buffer: StepScopedDataBufferView) -> dict[str, Any]:
                 "human_review_required": human_review_required,
                 "remediation": list(review.required_changes),
                 "memory_context": memory_context,
+                "historian": historian_metadata,
                 "memory_quality_result": memory_quality_result,
             },
         )
@@ -249,6 +253,38 @@ def _memory_quality_result(memory_context: dict[str, Any] | None) -> dict[str, A
     )
     payload["metadata"] = metadata
     payload["memory_available"] = metadata["memory_available"]
+    return payload
+
+
+def _historian_metadata(
+    report_draft: dict[str, Any],
+    memory_context: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    report_metadata = report_draft.get("metadata") if isinstance(report_draft, dict) else None
+    if isinstance(report_metadata, dict) and isinstance(report_metadata.get("historian"), dict):
+        return dict(report_metadata["historian"])
+    if memory_context and isinstance((memory_context.get("metadata") or {}).get("historian"), dict):
+        return dict((memory_context.get("metadata") or {})["historian"])
+    return None
+
+
+def _with_historian_quality_metadata(
+    memory_quality_result: dict[str, Any],
+    historian_metadata: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if not historian_metadata:
+        return memory_quality_result
+    payload = dict(memory_quality_result)
+    metadata = dict(payload.get("metadata") or {})
+    output = historian_metadata.get("output") if isinstance(historian_metadata.get("output"), dict) else {}
+    repeated_claims = list(output.get("repeated_claims") or [])
+    contradictions = list(output.get("contradictions") or [])
+    metadata["historian"] = historian_metadata
+    metadata["historian_repeated_claims"] = repeated_claims
+    metadata["historian_contradictions"] = contradictions
+    metadata["historian_repeated_claim_count"] = len(repeated_claims)
+    metadata["historian_contradiction_count"] = len(contradictions)
+    payload["metadata"] = metadata
     return payload
 
 

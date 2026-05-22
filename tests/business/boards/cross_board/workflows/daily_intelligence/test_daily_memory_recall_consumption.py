@@ -7,6 +7,9 @@ from business.foundation.models.source import Lineage, SourcePipelineMetrics
 from business.layers.relation.evidence.models import EvidenceBundle, EvidenceItem, VerifiedFindings
 from business.memory.intelligence_context import IntelligenceMemoryContext
 from business.memory.intelligence_models import ClaimMemory, EventMemory
+from business.memory.historian_context_adapter import HistorianContextAdapter
+from business.agents.historian_agent import HistorianAgent
+from business.memory.historical_context import HistoricalContext
 from framework.workflow import DataBuffer
 
 
@@ -37,6 +40,23 @@ def test_report_writer_without_recall_keeps_memory_metadata_absent() -> None:
 
     assert output["memory_context"] is None
     assert "metadata" not in output["report_draft"]
+
+
+def test_report_writer_attaches_historian_context_when_available() -> None:
+    writer = ReportWriter(historian_context_adapter=HistorianContextAdapter(HistorianAgent(_HistorianContextService())))
+
+    output = writer.draft_report(
+        _writer_buffer().scope(
+            read_keys=["request", "evidence_bundle", "source_errors", "source_pipeline_metrics"],
+            write_keys=[],
+        ),
+        PROFILE_LIVE_OFFLINE,
+    )
+
+    metadata = output["report_draft"]["metadata"]
+    assert output["historian_context"]["metadata"]["contradiction_count"] == 1
+    assert metadata["historian_context_used"] is True
+    assert "Historical analysis:" in metadata["historian_prompt_context"]
 
 
 def test_quality_gate_records_memory_quality_metadata_without_blocking() -> None:
@@ -77,6 +97,40 @@ def test_quality_gate_records_memory_quality_metadata_without_blocking() -> None
     assert any(event.event_type == "memory_quality_checked" for event in output["quality_events"])
 
 
+def test_quality_gate_records_historian_advisory_metadata_without_blocking() -> None:
+    report = _report_draft()
+    report["metadata"] = {
+        "historian": {
+            "output": {
+                "repeated_claims": ["Known historical claim"],
+                "contradictions": ["Contradicted historical claim"],
+            },
+            "metadata": {"contradiction_count": 1},
+        }
+    }
+    buffer = DataBuffer(
+        {
+            "report_draft": report,
+            "evidence_bundle": _evidence_bundle(),
+            "verified_findings": VerifiedFindings(),
+            "quality_events": [],
+        }
+    )
+
+    output = quality_gate(
+        buffer.scope(
+            read_keys=["report_draft", "evidence_bundle", "verified_findings", "quality_events"],
+            optional_read_keys=["memory_context"],
+            write_keys=[],
+        )
+    )
+
+    assert output["quality_result"].decision == "pass"
+    metadata = output["quality_result"].metadata["memory_quality_result"]["metadata"]
+    assert metadata["historian_contradictions"] == ["Contradicted historical claim"]
+    assert output["final_report"].metadata["historian"]["metadata"]["contradiction_count"] == 1
+
+
 class _RecallService:
     def recall_for_topic(self, topic: str, *, limit: int = 5) -> IntelligenceMemoryContext:
         return IntelligenceMemoryContext(
@@ -94,6 +148,23 @@ class _RecallService:
                 )
             ],
             metadata={"memory_available": True},
+        )
+
+
+class _HistorianContextService:
+    def build_context(self, request):
+        return HistoricalContext(
+            query=request.topic,
+            topic=request.topic,
+            contradictions=[
+                ClaimMemory(
+                    claim_id="claim-hist-1",
+                    run_id="run-1",
+                    text="Contradicted historical claim",
+                    status="contradicted",
+                )
+            ],
+            timeline_summary="AI policy timeline",
         )
 
 

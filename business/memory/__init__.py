@@ -14,7 +14,13 @@ from business.memory.entity_resolver import EntityCandidate, EntityResolutionRes
 from business.memory.event_builder import EventBuildCandidate, EventBuildResult, EventBuilder
 from business.memory.graph_memory import GraphMemoryPort, GraphMemoryProjectionResult, GraphMemoryService
 from business.memory.graph_models import GraphEdge, GraphExpansion, GraphNode, GraphPath, GraphQuery
+from business.memory.graph_projection import GraphProjectionRequest, GraphProjectionService, GraphProjectionSummary
 from business.memory.historical_context import HistoricalContext, HistoricalContextRequest, HistoricalContextService
+from business.memory.historian_context_adapter import (
+    HistorianContextAdapter,
+    HistorianContextRequest,
+    HistorianContextResult,
+)
 from business.memory.intelligence_builder import IntelligenceMemoryBuilder
 from business.memory.intelligence_context import IntelligenceMemoryContext
 from business.memory.intelligence_ingestion import IntelligenceMemoryIngestionResult, IntelligenceMemoryIngestionService
@@ -79,10 +85,16 @@ __all__ = [
     "GraphMemoryService",
     "GraphNode",
     "GraphPath",
+    "GraphProjectionRequest",
+    "GraphProjectionService",
+    "GraphProjectionSummary",
     "GraphQuery",
     "HistoricalContext",
     "HistoricalContextRequest",
     "HistoricalContextService",
+    "HistorianContextAdapter",
+    "HistorianContextRequest",
+    "HistorianContextResult",
     "IntelligenceMemoryBuilder",
     "IntelligenceMemoryBundle",
     "IntelligenceMemoryContext",
