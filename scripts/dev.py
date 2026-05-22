@@ -16,15 +16,9 @@ from framework.workflow.operations import (
 
 COMPILE_PATHS = [
     "business",
-    "domain",
-    "evidence",
     "framework",
     "infrastructure",
     "interfaces",
-    "quality",
-    "sources",
-    "storage",
-    "workflows",
     "scripts",
 ]
 

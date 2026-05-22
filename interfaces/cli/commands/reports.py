@@ -4,8 +4,6 @@ import argparse
 import json
 from typing import Any, Protocol
 
-from interfaces.cli.commands._legacy_mount import register_legacy_command
-
 
 class ReportServiceFactory(Protocol):
     def __call__(self, *, artifact_root: str) -> Any:
@@ -13,11 +11,87 @@ class ReportServiceFactory(Protocol):
 
 
 def register(subparsers: argparse._SubParsersAction) -> None:
-    register_legacy_command(subparsers, "latest")
-    register_legacy_command(subparsers, "reports")
+    latest_parser = subparsers.add_parser("latest", help="Show latest local report")
+    _add_latest_report_arguments(latest_parser)
+    latest_parser.set_defaults(handler=latest_report_from_cli)
+
+    reports_parser = subparsers.add_parser("reports", help="Inspect persisted reports")
+    reports_subparsers = reports_parser.add_subparsers(dest="reports_command", required=True)
+
+    reports_list_parser = reports_subparsers.add_parser("list", help="List persisted reports")
+    reports_list_parser.add_argument("--limit", type=int, default=20, help="Maximum reports")
+    reports_list_parser.add_argument("--workflow-id", default=None, help="Optional workflow id filter")
+    reports_list_parser.add_argument("--workflow-family", default=None, help="Optional workflow family filter")
+    _add_artifact_root_argument(reports_list_parser)
+    reports_list_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    reports_list_parser.set_defaults(handler=list_reports_from_cli)
+
+    reports_show_parser = reports_subparsers.add_parser("show", help="Show one persisted report")
+    reports_show_parser.add_argument("report_id", help="Report id")
+    _add_artifact_root_argument(reports_show_parser)
+    reports_show_parser.add_argument(
+        "--format",
+        choices=["markdown", "json"],
+        default="markdown",
+        help="Output format",
+    )
+    reports_show_parser.set_defaults(handler=show_report_from_cli)
+
+    reports_search_parser = reports_subparsers.add_parser("search", help="Search persisted reports")
+    reports_search_parser.add_argument("query", help="Search query")
+    reports_search_parser.add_argument("--limit", type=int, default=20, help="Maximum reports")
+    _add_artifact_root_argument(reports_search_parser)
+    reports_search_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    reports_search_parser.set_defaults(handler=search_reports_from_cli)
+
+    reports_latest_parser = reports_subparsers.add_parser("latest", help="Show latest persisted report")
+    _add_latest_report_arguments(reports_latest_parser)
+    reports_latest_parser.set_defaults(handler=latest_report_from_cli)
 
 
 add_reports_commands = register
+
+
+def latest_report_from_cli(args: argparse.Namespace) -> int:
+    from interfaces.cli import news as news_cli
+
+    return latest_report(args, report_service_factory=news_cli.ReportApplicationService)
+
+
+def search_reports_from_cli(args: argparse.Namespace) -> int:
+    from interfaces.cli import news as news_cli
+
+    return search_reports(args, report_service_factory=news_cli.ReportApplicationService)
+
+
+def list_reports_from_cli(args: argparse.Namespace) -> int:
+    from interfaces.cli import news as news_cli
+
+    return list_reports(args, report_service_factory=news_cli.ReportApplicationService)
+
+
+def show_report_from_cli(args: argparse.Namespace) -> int:
+    from interfaces.cli import news as news_cli
+
+    return show_report(args, report_service_factory=news_cli.ReportApplicationService)
+
+
+def _add_latest_report_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--format",
+        choices=["markdown", "json"],
+        default="markdown",
+        help="Output format",
+    )
+    _add_artifact_root_argument(parser)
+
+
+def _add_artifact_root_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--artifact-root",
+        default=".newsroom/runs",
+        help="Directory where run artifacts are stored",
+    )
 
 
 def latest_report(
@@ -110,8 +184,12 @@ __all__ = [
     "ReportServiceFactory",
     "add_reports_commands",
     "latest_report",
+    "latest_report_from_cli",
     "list_reports",
+    "list_reports_from_cli",
     "register",
     "search_reports",
+    "search_reports_from_cli",
     "show_report",
+    "show_report_from_cli",
 ]
