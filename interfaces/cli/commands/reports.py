@@ -4,10 +4,20 @@ import argparse
 import json
 from typing import Any, Protocol
 
+from interfaces.cli.commands._legacy_mount import register_legacy_command
+
 
 class ReportServiceFactory(Protocol):
     def __call__(self, *, artifact_root: str) -> Any:
         ...
+
+
+def register(subparsers: argparse._SubParsersAction) -> None:
+    register_legacy_command(subparsers, "latest")
+    register_legacy_command(subparsers, "reports")
+
+
+add_reports_commands = register
 
 
 def latest_report(
@@ -94,3 +104,14 @@ def show_report(
     else:
         print(record.report_markdown or json.dumps(record.report_json, ensure_ascii=False, indent=2))
     return 0
+
+
+__all__ = [
+    "ReportServiceFactory",
+    "add_reports_commands",
+    "latest_report",
+    "list_reports",
+    "register",
+    "search_reports",
+    "show_report",
+]

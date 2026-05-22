@@ -25,9 +25,10 @@ from infrastructure.external.sources import (
     StackOverflowConnector,
 )
 from business.layers.signal.source_health import BasicSourceHealthManager
+from business.boards.cross_board.workflows.daily_intelligence.dependency_bundle import DailyIntelligenceRuntime
 from business.boards.cross_board.workflows.daily_intelligence.runtime_assembly import (
-    apply_daily_source_runtime_assembly,
-    build_daily_source_runtime_assembly,
+    DailySourceRuntimeAssembly,
+    build_daily_intelligence_runtime,
 )
 from business.boards.cross_board.workflows.daily_intelligence.profiles import (
     PROFILE_LIVE,
@@ -44,6 +45,7 @@ from business.boards.cross_board.workflows.daily_intelligence.source_config impo
     build_default_source_fetch_policy,
     build_default_source_registry,
 )
+from business.boards.cross_board.workflows.daily_intelligence.source_connector_bundle import CONNECTOR_FIELD_NAMES
 from business.boards.cross_board.workflows.daily_intelligence.spec import (
     WORKFLOW_ID,
     WORKFLOW_VERSION,
@@ -88,9 +90,10 @@ class DailyIntelligenceRunner:
         source_health_manager: BasicSourceHealthManager | None = None,
         source_config_path: str | Path | None = None,
         source_rate_limiter: DomainRateLimiter | None = None,
+        runtime: DailyIntelligenceRuntime | None = None,
     ) -> None:
-        self.artifact_root = Path(artifact_root)
-        self.source_runtime_assembly = build_daily_source_runtime_assembly(
+        self.runtime = runtime or build_daily_intelligence_runtime(
+            artifact_root=artifact_root,
             source_registry=source_registry,
             feed_connector=feed_connector,
             html_connector=html_connector,
@@ -103,14 +106,29 @@ class DailyIntelligenceRunner:
             stackoverflow_connector=stackoverflow_connector,
             devto_connector=devto_connector,
             medium_connector=medium_connector,
+            llm_client=llm_client,
+            recall_service=recall_service,
             source_health_manager=source_health_manager,
             source_config_path=source_config_path,
             source_rate_limiter=source_rate_limiter,
         )
-        apply_daily_source_runtime_assembly(self, self.source_runtime_assembly)
-        self.llm_client = llm_client
-        self.recall_service = recall_service
-        self.report_writer = ReportWriter(llm_client=self.llm_client, recall_service=self.recall_service)
+        self.artifact_root = self.runtime.artifact_root
+        self.source_registry = self.runtime.source_registry
+        self.source_dispatcher = self.runtime.source_dispatcher
+        self.source_collector = self.runtime.source_collector
+        self.source_health_manager = self.runtime.source_health_manager
+        self.llm_client = self.runtime.llm_client
+        self.recall_service = self.runtime.recall_service
+        self.report_writer = self.runtime.report_writer
+        for field_name in CONNECTOR_FIELD_NAMES:
+            setattr(self, field_name, getattr(self.source_dispatcher, field_name))
+        self.source_runtime_assembly = DailySourceRuntimeAssembly(
+            source_registry=self.source_registry,
+            **{field_name: getattr(self, field_name) for field_name in CONNECTOR_FIELD_NAMES},
+            source_health_manager=self.source_health_manager,
+            source_dispatcher=self.source_dispatcher,
+            source_collector=self.source_collector,
+        )
 
     def _function_registry(self, profile: str) -> FunctionStepRegistry:
         return build_daily_intelligence_registry(

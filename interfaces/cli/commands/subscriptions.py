@@ -4,10 +4,19 @@ import argparse
 import json
 from typing import Any, Callable, Protocol
 
+from interfaces.cli.commands._legacy_mount import register_legacy_command
+
 
 class SubscriptionServiceFactory(Protocol):
     def __call__(self, *, store_path: str) -> Any:
         ...
+
+
+def register(subparsers: argparse._SubParsersAction) -> None:
+    register_legacy_command(subparsers, "subscriptions")
+
+
+add_subscriptions_commands = register
 
 
 PrintSubscription = Callable[[dict, bool], int]
@@ -93,3 +102,16 @@ def delete_subscription(
     else:
         print(f"deleted={str(deleted).lower()}")
     return 0
+
+
+__all__ = [
+    "ParseKeyValues",
+    "PrintSubscription",
+    "SubscriptionServiceFactory",
+    "add_subscriptions_commands",
+    "create_subscription",
+    "delete_subscription",
+    "list_subscriptions",
+    "register",
+    "set_subscription_enabled",
+]

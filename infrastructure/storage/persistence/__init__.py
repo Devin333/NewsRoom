@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import json
-
 from infrastructure.storage.persistence.local_json_adapter import LocalJsonPersistenceAdapter
 from infrastructure.storage.persistence.records import (
     ReportRecord,
@@ -30,7 +28,6 @@ __all__ = [
     "WorkflowRunRecord",
     "claim_records_from_result",
     "evidence_item_records_from_result",
-    "json",
     "persist_run_result",
     "quality_result_record_from_result",
     "report_record_from_result",

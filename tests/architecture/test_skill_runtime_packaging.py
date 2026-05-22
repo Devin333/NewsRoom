@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import tomllib
 from pathlib import Path
 
 
@@ -27,6 +28,7 @@ LEGACY_SKILL_MODULES = {
 
 def test_pyproject_declares_skill_subpackages() -> None:
     content = (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    pyproject = tomllib.loads(content)
 
     required_packages = {
         "framework.skills.core",
@@ -37,6 +39,17 @@ def test_pyproject_declares_skill_subpackages() -> None:
         "framework.skills.evaluation",
         "framework.skills.tracing",
     }
+
+    package_find = (
+        pyproject.get("tool", {})
+        .get("setuptools", {})
+        .get("packages", {})
+        .get("find")
+    )
+    if package_find is not None:
+        assert "framework*" in package_find.get("include", [])
+        assert "tests*" in package_find.get("exclude", [])
+        return
 
     for package_name in required_packages:
         assert f'"{package_name}"' in content

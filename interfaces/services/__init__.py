@@ -2,7 +2,9 @@
 
 from interfaces.services.approval_service import ApprovalApplicationService
 from interfaces.services.board_service import BoardApplicationService
+from interfaces.services.daily_run_service import DailyRunApplicationService
 from interfaces.services.run_service import LiveSmokeResult, RunApplicationService
+from interfaces.services.weekly_run_service import WeeklyRunApplicationService
 from interfaces.services.artifact_service import ArtifactInspectionService
 from interfaces.services.diagnose_service import DiagnosticApplicationService
 from interfaces.services.entity_service import EntityTrackingApplicationService
@@ -18,6 +20,7 @@ from interfaces.services.subscription_service import SubscriptionApplicationServ
 __all__ = [
     "ApprovalApplicationService",
     "BoardApplicationService",
+    "DailyRunApplicationService",
     "DiagnosticApplicationService",
     "EntityTrackingApplicationService",
     "ArtifactInspectionService",
@@ -26,6 +29,7 @@ __all__ = [
     "ReportApplicationService",
     "RunInspectionService",
     "RunApplicationService",
+    "WeeklyRunApplicationService",
     "LiveSmokeResult",
     "ScheduleApplicationService",
     "SourceApplicationService",
