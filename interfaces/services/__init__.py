@@ -2,6 +2,7 @@
 
 from interfaces.services.approval_service import ApprovalApplicationService
 from interfaces.services.board_service import BoardApplicationService
+from interfaces.services.business_acceptance_service import BusinessAcceptanceService
 from interfaces.services.daily_run_service import DailyRunApplicationService
 from interfaces.services.run_service import LiveSmokeResult, RunApplicationService
 from interfaces.services.weekly_run_service import WeeklyRunApplicationService
@@ -21,6 +22,7 @@ from interfaces.services.tool_service import ToolApplicationService
 __all__ = [
     "ApprovalApplicationService",
     "BoardApplicationService",
+    "BusinessAcceptanceService",
     "DailyRunApplicationService",
     "DiagnosticApplicationService",
     "EntityTrackingApplicationService",

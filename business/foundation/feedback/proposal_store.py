@@ -43,10 +43,15 @@ class InMemoryImprovementProposalStore:
 
 
 class LocalJsonImprovementProposalStore(InMemoryImprovementProposalStore):
-    def __init__(self, root: str | Path) -> None:
+    def __init__(self, path: str | Path) -> None:
         super().__init__()
-        self.root = Path(root)
-        self.path = self.root / "improvement_proposals.json"
+        resolved = Path(path)
+        if resolved.suffix.lower() == ".json":
+            self.root = resolved.parent
+            self.path = resolved
+        else:
+            self.root = resolved
+            self.path = self.root / "improvement_proposals.json"
         self._load()
 
     def save(self, proposal: ImprovementProposal) -> ImprovementProposal:

@@ -2,6 +2,7 @@
 
 from interfaces.models.actor import ActorContext, actor_context_from_headers
 from interfaces.models.audit import AuditRecord
+from interfaces.models.business_acceptance import AcceptanceCheck, AcceptanceResult
 from interfaces.models.common import ApiActionResult, PageResult, Pagination
 from interfaces.models.contracts import (
     SCHEMA_VERSION,
@@ -60,6 +61,8 @@ __all__ = [
     "AuditRecord",
     "ApiActionResult",
     "ApiResponse",
+    "AcceptanceCheck",
+    "AcceptanceResult",
     "ApprovalView",
     "ApprovalDecisionRequest",
     "ApprovalModifyRequest",

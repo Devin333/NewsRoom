@@ -24,11 +24,18 @@ class BoardEvalReport:
     def case_count(self) -> int:
         return len(self.results)
 
+    @property
+    def pass_rate(self) -> float:
+        if not self.results:
+            return 0.0
+        return round(sum(1 for result in self.results if result.passed) / len(self.results), 4)
+
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
         payload["passed"] = self.passed
         payload["score"] = self.score
         payload["case_count"] = self.case_count
+        payload["pass_rate"] = self.pass_rate
         return payload
 
 
