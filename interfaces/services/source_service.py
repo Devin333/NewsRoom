@@ -22,14 +22,25 @@ from business.layers.signal.source_health import (
     SourceHealthCheckResult,
     SourceHealthStore,
 )
+from business.layers.signal.source_router import SourceConnectorRouter
+from business.layers.signal.source_catalog import SOURCE_CATEGORIES, SOURCE_PRIORITIES
 from business.foundation.models.source import SourceHealth
 from infrastructure.external.sources import (
     ARXIV_API_URL,
     GITHUB_API_URL,
     DomainRateLimiter,
+    FeedConnector,
+    HackerNewsConnector,
+    HtmlConnector,
+    LobstersConnector,
+    ManualConnector,
+    MediumConnector,
+    RedditConnector,
     RawSourceItem,
     SourceError,
     SourceFetchPolicy,
+    StackOverflowConnector,
+    DevToConnector,
     default_arxiv_connector,
     default_github_connector,
 )
@@ -128,6 +139,31 @@ class SourceFetchPreviewResult:
         }
 
 
+@dataclass(frozen=True)
+class SourceBatchFetchResult:
+    source_count: int
+    item_count: int
+    error_count: int
+    skipped_count: int
+    results: list[SourceFetchPreviewResult]
+    selection_report: Any | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "ok": self.error_count == 0,
+            "source_count": self.source_count,
+            "item_count": self.item_count,
+            "error_count": self.error_count,
+            "skipped_count": self.skipped_count,
+            "results": [result.to_dict() for result in self.results],
+            "selection_report": (
+                self.selection_report.to_dict()
+                if self.selection_report is not None and hasattr(self.selection_report, "to_dict")
+                else self.selection_report
+            ),
+        }
+
+
 class SourceApplicationService:
     def __init__(
         self,
@@ -141,6 +177,7 @@ class SourceApplicationService:
         rate_limiter: DomainRateLimiter | None = None,
         arxiv_connector: Any | None = None,
         github_connector: Any | None = None,
+        source_router: SourceConnectorRouter | None = None,
     ) -> None:
         if source_registry is None:
             source_registry = build_default_source_registry(source_config_path=source_config_path)
@@ -159,6 +196,47 @@ class SourceApplicationService:
             rate_limiter=self.rate_limiter,
         )
         self.github_connector = github_connector or default_github_connector(
+            fetch_policy=self.fetch_policy,
+            rate_limiter=self.rate_limiter,
+        )
+        self.source_router = source_router or SourceConnectorRouter(
+            feed_connector=FeedConnector(
+                fetch_policy=self.fetch_policy,
+                rate_limiter=self.rate_limiter,
+            ),
+            arxiv_connector=self.arxiv_connector,
+            github_connector=self.github_connector,
+            hackernews_connector=HackerNewsConnector(
+                fetch_policy=self.fetch_policy,
+                rate_limiter=self.rate_limiter,
+            ),
+            reddit_connector=RedditConnector(
+                fetch_policy=self.fetch_policy,
+                rate_limiter=self.rate_limiter,
+            ),
+            lobsters_connector=LobstersConnector(
+                fetch_policy=self.fetch_policy,
+                rate_limiter=self.rate_limiter,
+            ),
+            stackoverflow_connector=StackOverflowConnector(
+                fetch_policy=self.fetch_policy,
+                rate_limiter=self.rate_limiter,
+            ),
+            devto_connector=DevToConnector(
+                fetch_policy=self.fetch_policy,
+                rate_limiter=self.rate_limiter,
+            ),
+            medium_connector=MediumConnector(
+                feed_connector=FeedConnector(
+                    fetch_policy=self.fetch_policy,
+                    rate_limiter=self.rate_limiter,
+                )
+            ),
+            html_connector=HtmlConnector(
+                fetch_policy=self.fetch_policy,
+                rate_limiter=self.rate_limiter,
+            ),
+            manual_connector=ManualConnector(),
             fetch_policy=self.fetch_policy,
             rate_limiter=self.rate_limiter,
         )
@@ -207,6 +285,12 @@ class SourceApplicationService:
 
     def validate_sources(self):
         return self.source_registry.validate()
+
+    def source_categories(self) -> dict[str, Any]:
+        return {"categories": list(SOURCE_CATEGORIES), "category_count": len(SOURCE_CATEGORIES)}
+
+    def source_priorities(self) -> dict[str, Any]:
+        return {"priorities": list(SOURCE_PRIORITIES), "priority_count": len(SOURCE_PRIORITIES)}
 
     def source_health(self, *, enabled_only: bool = True) -> SourceHealthResult:
         return SourceHealthResult(
@@ -316,11 +400,180 @@ class SourceApplicationService:
             errors=errors,
         )
 
+    def fetch_source(
+        self,
+        *,
+        source_id: str,
+        limit: int = 10,
+        query: str | None = None,
+        force: bool = False,
+    ) -> SourceFetchPreviewResult:
+        if not source_id:
+            raise ValueError("source_id is required")
+        _validate_limit(limit, field_name="limit")
+        try:
+            source = self.source_registry.get(source_id)
+        except KeyError as exc:
+            raise KeyError(f"source not found: {source_id}") from exc
+        return self._fetch_configured_source(source, limit=limit, query=query, force=force)
+
+    def fetch_category(
+        self,
+        *,
+        category: str,
+        limit_per_source: int = 5,
+        enabled_only: bool = True,
+        priority: str | None = None,
+        language: str | None = None,
+        region: str | None = None,
+        force: bool = False,
+    ) -> SourceBatchFetchResult:
+        if not category:
+            raise ValueError("category is required")
+        _validate_limit(limit_per_source, field_name="limit_per_source")
+        sources = self.source_registry.list_by_category(category, enabled_only=enabled_only)
+        sources = _filter_sources(sources, priority=priority, language=language, region=region)
+        return self._fetch_batch(sources, limit_per_source=limit_per_source, force=force)
+
+    def fetch_priority(
+        self,
+        *,
+        priority: str,
+        limit_per_source: int = 5,
+        enabled_only: bool = True,
+        force: bool = False,
+    ) -> SourceBatchFetchResult:
+        if not priority:
+            raise ValueError("priority is required")
+        _validate_limit(limit_per_source, field_name="limit_per_source")
+        sources = _filter_sources(
+            self.source_registry.list_sources(enabled_only=enabled_only),
+            priority=priority,
+        )
+        return self._fetch_batch(sources, limit_per_source=limit_per_source, force=force)
+
+    def fetch_topic_sources(
+        self,
+        *,
+        topic: str,
+        limit_per_source: int = 5,
+        enabled_only: bool = True,
+        category: str | None = None,
+        priority: str | None = None,
+        language: str | None = None,
+        region: str | None = None,
+        force: bool = False,
+    ) -> SourceBatchFetchResult:
+        topic = topic.strip()
+        if not topic:
+            raise ValueError("topic is required")
+        _validate_limit(limit_per_source, field_name="limit_per_source")
+        selected, report = self.source_registry.select_sources_with_report(
+            topic=topic,
+            enabled_only=enabled_only,
+            language=language,
+            region=region,
+            category=category,
+        )
+        filtered = _filter_sources(selected, priority=priority)
+        if priority is not None:
+            report = self.source_registry.selection_report(
+                topic=topic,
+                selected_sources=filtered,
+                filters={
+                    "enabled_only": enabled_only,
+                    "language": language,
+                    "region": region,
+                    "category": category,
+                    "priority": priority,
+                    "fallback_to_enabled": True,
+                },
+                matched_source_count=len(filtered),
+                fallback_used=report.fallback_used,
+                fallback_reason=report.fallback_reason,
+            )
+        return self._fetch_batch(
+            filtered,
+            limit_per_source=limit_per_source,
+            force=force,
+            selection_report=report,
+        )
+
+    def _fetch_batch(
+        self,
+        sources: list[SourceDefinition],
+        *,
+        limit_per_source: int,
+        force: bool,
+        selection_report: Any | None = None,
+    ) -> SourceBatchFetchResult:
+        results = [
+            self._fetch_configured_source(
+                source,
+                limit=limit_per_source,
+                query=None,
+                force=force,
+            )
+            for source in sources
+        ]
+        item_count = sum(len(result.items) for result in results)
+        error_count = sum(len(result.errors) for result in results)
+        skipped_count = sum(1 for result in results if _preview_result_skipped(result))
+        return SourceBatchFetchResult(
+            source_count=len(sources),
+            item_count=item_count,
+            error_count=error_count,
+            skipped_count=skipped_count,
+            results=results,
+            selection_report=selection_report,
+        )
+
+    def _fetch_configured_source(
+        self,
+        source: SourceDefinition,
+        *,
+        limit: int,
+        query: str | None,
+        force: bool,
+    ) -> SourceFetchPreviewResult:
+        actual_query = _query_for_source(source, query=query)
+        blocked_result = self._blocked_preview_result(source, query=actual_query, force=force)
+        if blocked_result is not None:
+            return blocked_result
+        try:
+            items, errors = self.source_router.fetch(source, query=query, limit=limit)
+        except ValueError as exc:
+            items = []
+            errors = [
+                SourceError(
+                    source_id=source.source_id,
+                    source_name=source.name,
+                    error_type="unsupported_source_type",
+                    error_message=str(exc),
+                    url=source.url,
+                    retryable=False,
+                    metadata={
+                        "phase": "fetch",
+                        "retryable": False,
+                        "source_health_affecting": False,
+                    },
+                )
+            ]
+        self._record_preview_health(source, items=items, errors=errors)
+        return SourceFetchPreviewResult(
+            source_id=source.source_id,
+            source_type=BusinessSourceType(source.source_type).value,
+            query=actual_query,
+            items=items,
+            errors=errors,
+        )
+
     def _blocked_preview_result(
         self,
         source: SourceDefinition,
         *,
         query: str,
+        force: bool = False,
     ) -> SourceFetchPreviewResult | None:
         if not source.enabled:
             health = self.health_manager.record_disabled(
@@ -342,6 +595,8 @@ class SourceApplicationService:
                 items=[],
                 errors=[error],
             )
+        if force:
+            return None
         decision = self.health_manager.fetch_decision(
             source.source_id,
             source_name=source.name,
@@ -519,3 +774,51 @@ def _source_summary_model(source: SourceDefinition) -> SourceSummary:
         region=source.region,
         user_agent=source.user_agent,
     )
+
+
+def _validate_limit(value: int, *, field_name: str) -> None:
+    if value <= 0:
+        raise ValueError(f"{field_name} must be greater than zero")
+
+
+def _filter_sources(
+    sources: list[SourceDefinition],
+    *,
+    priority: str | None = None,
+    language: str | None = None,
+    region: str | None = None,
+) -> list[SourceDefinition]:
+    filtered = list(sources)
+    if priority is not None:
+        expected = _normalize_catalog_value(priority)
+        filtered = [
+            source
+            for source in filtered
+            if _normalize_catalog_value(source.metadata.get("priority")) == expected
+        ]
+    if language is not None:
+        filtered = [source for source in filtered if source.language == language]
+    if region is not None:
+        filtered = [source for source in filtered if source.region == region]
+    return filtered
+
+
+def _normalize_catalog_value(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip().casefold().replace("-", "_").replace(" ", "_")
+    return text or None
+
+
+def _query_for_source(source: SourceDefinition, *, query: str | None) -> str:
+    if query is not None and query.strip():
+        return query.strip()
+    for key in ("query", "repository", "subreddit", "tagged", "tag", "story_list"):
+        value = source.metadata.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _preview_result_skipped(result: SourceFetchPreviewResult) -> bool:
+    return any(error.error_type == "source_fetch_skipped" for error in result.errors)

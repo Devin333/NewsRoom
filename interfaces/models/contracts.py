@@ -262,6 +262,41 @@ class GithubReleaseFetchRequest(BaseModel):
     limit: int = Field(default=5, ge=1)
 
 
+class SourceFetchRequest(BaseModel):
+    source_id: str = Field(min_length=1)
+    limit: int = Field(default=10, ge=1)
+    query: str | None = None
+    force: bool = False
+
+
+class SourceCategoryFetchRequest(BaseModel):
+    category: str = Field(min_length=1)
+    limit_per_source: int = Field(default=5, ge=1)
+    enabled_only: bool = True
+    priority: str | None = None
+    language: str | None = None
+    region: str | None = None
+    force: bool = False
+
+
+class SourcePriorityFetchRequest(BaseModel):
+    priority: str = Field(min_length=1)
+    limit_per_source: int = Field(default=5, ge=1)
+    enabled_only: bool = True
+    force: bool = False
+
+
+class SourceTopicFetchRequest(BaseModel):
+    topic: str = Field(min_length=1)
+    limit_per_source: int = Field(default=5, ge=1)
+    enabled_only: bool = True
+    category: str | None = None
+    priority: str | None = None
+    language: str | None = None
+    region: str | None = None
+    force: bool = False
+
+
 class EntityCreateRequest(BaseModel):
     name: str = Field(min_length=1)
     kind: Literal["company", "project", "person", "organization"] = "company"

@@ -2,7 +2,7 @@ import type { CredibilityLevel, SourceType } from "@/types/common"
 
 export type { CredibilityLevel, SourceType }
 
-export type SourceHealthStatus = "healthy" | "degraded" | "failed" | "disabled"
+export type SourceHealthStatus = "healthy" | "degraded" | "failed" | "down" | "cooling_down" | "disabled"
 
 export type SourceHealth = {
   id: string

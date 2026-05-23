@@ -27,7 +27,7 @@ def test_load_source_registry_reads_json_sources_payload(tmp_path) -> None:
                         "fetch_interval_seconds": 1800,
                         "user_agent": "NewsRoomTest/1.0",
                         "topics": ["ai", "models"],
-                        "category": "official",
+                        "category": "official_blog",
                         "language": "en",
                         "metadata": {"source_kind": "official_blog"},
                     },
@@ -53,7 +53,7 @@ def test_load_source_registry_reads_json_sources_payload(tmp_path) -> None:
     assert openai.authority_score == 0.9
     assert openai.fetch_interval_seconds == 1800
     assert openai.user_agent == "NewsRoomTest/1.0"
-    assert openai.category == "official"
+    assert openai.category == "official_blog"
     assert openai.metadata["source_kind"] == "official_blog"
 
 

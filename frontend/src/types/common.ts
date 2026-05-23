@@ -20,10 +20,18 @@ export type ApiError = {
 export type SourceType =
   | "official_blog"
   | "rss"
+  | "atom"
   | "github"
   | "hackernews"
   | "reddit"
   | "arxiv"
+  | "lobsters"
+  | "stackoverflow"
+  | "devto"
+  | "medium"
+  | "html"
+  | "web_page"
+  | "manual"
   | "media"
   | "custom"
 

@@ -1,7 +1,7 @@
 import type { ApiError } from "@/types/common"
 import { resolveMockPath } from "@/lib/api/mock-data"
 
-const DEFAULT_API_BASE_URL = "http://localhost:8000"
+const DEFAULT_API_BASE_URL = ""
 
 export class ApiRequestError extends Error {
   code: string
@@ -36,6 +36,25 @@ export async function apiGet<T>(path: string, init?: RequestInit): Promise<T> {
   return parseJsonResponse<T>(response)
 }
 
+export async function apiPost<T>(path: string, body?: unknown, init?: RequestInit): Promise<T> {
+  if (shouldUseMock()) {
+    return resolveMockPath(path) as T
+  }
+
+  const response = await fetch(apiUrl(path), {
+    ...init,
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      ...init?.headers
+    },
+    body: body === undefined ? undefined : JSON.stringify(body)
+  })
+
+  return parseJsonResponse<T>(response)
+}
+
 async function parseJsonResponse<T>(response: Response): Promise<T> {
   const requestId = response.headers.get("x-request-id") ?? undefined
   const contentType = response.headers.get("content-type") ?? ""
@@ -60,11 +79,12 @@ async function parseJsonResponse<T>(response: Response): Promise<T> {
 
 function apiUrl(path: string): string {
   if (path.startsWith("http://") || path.startsWith("https://")) return path
-  const baseUrl = process.env.NEXT_PUBLIC_NEWSROOM_API_BASE_URL ?? DEFAULT_API_BASE_URL
   const suffix = path.startsWith("/") ? path : `/${path}`
+  const baseUrl = process.env.NEXT_PUBLIC_NEWSROOM_API_BASE_URL ?? DEFAULT_API_BASE_URL
+  if (!baseUrl) return suffix
   return `${baseUrl.replace(/\/$/, "")}${suffix}`
 }
 
 function shouldUseMock(): boolean {
-  return process.env.NEXT_PUBLIC_NEWSROOM_USE_MOCKS !== "false"
+  return process.env.NEXT_PUBLIC_NEWSROOM_USE_MOCKS === "true"
 }

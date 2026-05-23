@@ -15,6 +15,8 @@ export const queryKeys = {
   },
   studio: {
     runs: ["studio", "runs"] as const,
-    runDetail: (id: string) => ["studio", "runs", id] as const
+    runDetail: (id: string) => ["studio", "runs", id] as const,
+    sources: ["studio", "sources"] as const,
+    sourcePreview: (id: string) => ["studio", "sources", id, "preview"] as const
   }
 }

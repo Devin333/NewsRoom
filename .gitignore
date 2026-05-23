@@ -226,6 +226,16 @@ apps/web/tsconfig.tsbuildinfo
 apps/web/.next-dev*.log
 apps/web/.next-dev.pid
 
+# Reader Portal frontend local/generated files
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/tsconfig.tsbuildinfo
+frontend/.next-dev*.log
+frontend/.next-dev.pid
+!frontend/src/lib/
+!frontend/src/lib/**
+
 # Marimo
 marimo/_static/
 marimo/_lsp/

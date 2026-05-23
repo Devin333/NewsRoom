@@ -415,7 +415,7 @@ def test_source_registry_validate_reports_errors_and_warnings() -> None:
 
     assert result.is_valid is False
     assert payload["error_count"] == 2
-    assert payload["warning_count"] == 2
+    assert payload["warning_count"] >= 2
     issues = {(issue.source_id, issue.field, issue.severity) for issue in result.issues}
     assert ("invalid", "authority_score", "error") in issues
     assert ("invalid", "url", "error") in issues

@@ -72,3 +72,7 @@ __all__ = [
     "main",
     "print_json",
 ]
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

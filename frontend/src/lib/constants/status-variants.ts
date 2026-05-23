@@ -11,6 +11,8 @@ export const sourceHealthStatusVariants: Record<SourceHealthStatus, BadgeVariant
   healthy: "success",
   degraded: "warning",
   failed: "danger",
+  down: "danger",
+  cooling_down: "warning",
   disabled: "muted",
 }
 
@@ -75,8 +77,10 @@ export function getStatusVariant(status: string): BadgeVariant {
     needs_changes: "warning",
     partially_failed: "warning",
     failed: "danger",
+    down: "danger",
     rejected: "danger",
     unavailable: "danger",
+    cooling_down: "warning",
     disabled: "muted",
     cancelled: "muted",
     pending: "muted",

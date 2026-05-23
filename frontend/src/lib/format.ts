@@ -130,10 +130,12 @@ export function titleCase(value: string) {
 const labelMap: Record<string, string> = {
   agent_run: "智能体运行",
   arxiv: "arXiv",
+  atom: "Atom",
   approved: "已批准",
   citationQuality: "引用质量",
   collected: "已采集",
   custom: "自定义",
+  devto: "dev.to",
   daily: "日报",
   dataset: "数据集",
   degraded: "降级",
@@ -162,6 +164,7 @@ const labelMap: Record<string, string> = {
   mature: "成熟",
   media: "媒体",
   medium: "中",
+  manual: "手动",
   memory: "记忆",
   method: "方法",
   news: "新闻",
@@ -180,6 +183,7 @@ const labelMap: Record<string, string> = {
   review_required: "需要复核",
   rising: "上升",
   rss: "RSS",
+  stackoverflow: "StackOverflow",
   running: "运行中",
   source: "数据源",
   source_health: "数据源健康",
@@ -190,7 +194,8 @@ const labelMap: Record<string, string> = {
   tech: "技术",
   topic: "主题",
   weekly: "周报",
-  warning: "警告"
+  warning: "警告",
+  web_page: "网页",
 };
 
 function trimNumber(value: number) {

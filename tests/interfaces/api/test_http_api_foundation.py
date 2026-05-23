@@ -552,6 +552,45 @@ def test_sources_validation_returns_registry_validation() -> None:
     assert payload["data"]["error_count"] == 0
 
 
+def test_sources_categories_and_priorities_return_catalogs() -> None:
+    client = TestClient(create_app(source_service_factory=lambda: _FakeSourceService()))
+
+    categories_response = client.get("/api/v1/sources/categories")
+    priorities_response = client.get("/api/v1/sources/priorities")
+
+    assert categories_response.status_code == 200
+    assert categories_response.json()["data"]["categories"] == ["research"]
+    assert priorities_response.status_code == 200
+    assert priorities_response.json()["data"]["priorities"] == ["p0"]
+
+
+def test_source_fetch_returns_configured_source_items() -> None:
+    client = TestClient(create_app(source_service_factory=lambda: _FakeSourceService()))
+
+    response = client.post("/api/v1/sources/fetch", json={"source_id": "source-1", "limit": 1, "force": True})
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["success"] is True
+    assert payload["data"]["source_id"] == "source-1"
+    assert payload["data"]["items"][0]["title"] == "Source item"
+
+
+def test_source_batch_fetch_routes_return_payloads() -> None:
+    client = TestClient(create_app(source_service_factory=lambda: _FakeSourceService()))
+
+    category_response = client.post("/api/v1/sources/fetch-category", json={"category": "research", "limit_per_source": 1})
+    priority_response = client.post("/api/v1/sources/fetch-priority", json={"priority": "p0", "limit_per_source": 1})
+    topic_response = client.post("/api/v1/sources/fetch-topic", json={"topic": "AI agents", "limit_per_source": 1})
+
+    assert category_response.status_code == 200
+    assert category_response.json()["data"]["source_count"] == 1
+    assert priority_response.status_code == 200
+    assert priority_response.json()["data"]["source_count"] == 1
+    assert topic_response.status_code == 200
+    assert topic_response.json()["data"]["selection_report"]["topic"] == "AI agents"
+
+
 def test_source_arxiv_fetch_returns_items() -> None:
     client = TestClient(create_app(source_service_factory=lambda: _FakeSourceService()))
 
@@ -1229,6 +1268,100 @@ class _FakeSourceService:
                 "error_count": 0,
                 "warning_count": 0,
                 "issues": [],
+            }
+        )
+
+    def source_categories(self):
+        return {"categories": ["research"], "category_count": 1}
+
+    def source_priorities(self):
+        return {"priorities": ["p0"], "priority_count": 1}
+
+    def fetch_source(self, *, source_id, limit, query=None, force=False):
+        return _FakeResult(
+            {
+                "source_id": source_id,
+                "source_type": "rss",
+                "query": query or "",
+                "item_count": 1,
+                "error_count": 0,
+                "items": [
+                    {
+                        "source_item_id": "raw-source",
+                        "source_id": source_id,
+                        "source_name": "Source",
+                        "source_type": "rss",
+                        "title": "Source item",
+                        "url": "https://example.com/item",
+                        "fetched_at": "2026-05-11T00:00:00Z",
+                        "published_at": "2026-05-10T00:00:00Z",
+                        "summary": "Source summary",
+                        "raw_content": None,
+                        "authors": [],
+                        "tags": [],
+                        "language": "en",
+                        "metadata": {},
+                    }
+                ],
+                "errors": [],
+            }
+        )
+
+    def fetch_category(
+        self,
+        *,
+        category,
+        limit_per_source,
+        enabled_only=True,
+        priority=None,
+        language=None,
+        region=None,
+        force=False,
+    ):
+        return _FakeResult(
+            {
+                "ok": True,
+                "source_count": 1,
+                "item_count": 1,
+                "error_count": 0,
+                "skipped_count": 0,
+                "results": [],
+            }
+        )
+
+    def fetch_priority(self, *, priority, limit_per_source, enabled_only=True, force=False):
+        return _FakeResult(
+            {
+                "ok": True,
+                "source_count": 1,
+                "item_count": 1,
+                "error_count": 0,
+                "skipped_count": 0,
+                "results": [],
+            }
+        )
+
+    def fetch_topic_sources(
+        self,
+        *,
+        topic,
+        limit_per_source,
+        enabled_only=True,
+        category=None,
+        priority=None,
+        language=None,
+        region=None,
+        force=False,
+    ):
+        return _FakeResult(
+            {
+                "ok": True,
+                "source_count": 1,
+                "item_count": 1,
+                "error_count": 0,
+                "skipped_count": 0,
+                "results": [],
+                "selection_report": {"topic": topic},
             }
         )
 

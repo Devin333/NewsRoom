@@ -3,15 +3,40 @@
 import type { SourceFilters, SourceHealthStatus } from "@/types/source";
 import type { SourceType } from "@/types/common";
 
-const sourceTypes: SourceType[] = ["official_blog", "rss", "github", "hackernews", "reddit", "arxiv", "media", "custom"];
-const healthStatuses: SourceHealthStatus[] = ["healthy", "degraded", "failed", "disabled"];
+const sourceTypes: SourceType[] = [
+  "official_blog",
+  "rss",
+  "atom",
+  "github",
+  "hackernews",
+  "reddit",
+  "arxiv",
+  "lobsters",
+  "stackoverflow",
+  "devto",
+  "medium",
+  "html",
+  "web_page",
+  "manual",
+  "media",
+  "custom",
+];
+const healthStatuses: SourceHealthStatus[] = ["healthy", "degraded", "failed", "down", "cooling_down", "disabled"];
 const sourceLabels: Record<SourceType, string> = {
   official_blog: "官方博客",
   rss: "RSS",
+  atom: "Atom",
   github: "GitHub",
   hackernews: "Hacker News",
   reddit: "Reddit",
   arxiv: "arXiv",
+  lobsters: "Lobsters",
+  stackoverflow: "StackOverflow",
+  devto: "dev.to",
+  medium: "Medium",
+  html: "HTML",
+  web_page: "网页",
+  manual: "手动",
   media: "媒体",
   custom: "自定义",
 };
@@ -19,6 +44,8 @@ const healthLabels: Record<SourceHealthStatus, string> = {
   healthy: "健康",
   degraded: "降级",
   failed: "失败",
+  down: "不可用",
+  cooling_down: "冷却中",
   disabled: "已停用",
 };
 

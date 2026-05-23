@@ -28,6 +28,16 @@ FETCHABLE_SOURCE_TYPES = {
     SourceType.DEVTO,
     SourceType.MEDIUM,
 }
+AI_COMMUNITY_SOURCE_CATEGORIES = {
+    "research",
+    "open_source",
+    "model_platform",
+    "official_blog",
+    "agent_framework",
+    "developer_discussion",
+    "engineering_practice",
+}
+AI_COMMUNITY_SOURCE_PRIORITIES = {"p0", "p1", "p2", "p3"}
 _SAFE_SOURCE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 _SENSITIVE_METADATA_KEY_PARTS = (
     "authorization",
@@ -441,6 +451,58 @@ def _validate_source(source: SourceDefinition) -> list[SourceRegistryValidationI
                 message="source metadata must not contain secrets or credentials",
             )
         )
+    category = _normalize_source_catalog_value(source.category)
+    if category == "chinese_ai_media":
+        issues.append(
+            SourceRegistryValidationIssue(
+                severity="error",
+                source_id=source.source_id,
+                field="category",
+                message="chinese_ai_media is not a supported category; use the semantic category with language=zh and region=cn",
+            )
+        )
+    elif category is not None and category not in AI_COMMUNITY_SOURCE_CATEGORIES:
+        issues.append(
+            SourceRegistryValidationIssue(
+                severity="error",
+                source_id=source.source_id,
+                field="category",
+                message=(
+                    "source category must be one of: "
+                    + ", ".join(sorted(AI_COMMUNITY_SOURCE_CATEGORIES))
+                ),
+            )
+        )
+    priority = _normalize_source_catalog_value(source.metadata.get("priority"))
+    if priority is not None and priority not in AI_COMMUNITY_SOURCE_PRIORITIES:
+        issues.append(
+            SourceRegistryValidationIssue(
+                severity="error",
+                source_id=source.source_id,
+                field="metadata.priority",
+                message="source metadata.priority must be one of: p0, p1, p2, p3",
+            )
+        )
+    metadata_group = _normalize_source_catalog_value(source.metadata.get("group"))
+    if category is not None and metadata_group is not None and metadata_group != category:
+        issues.append(
+            SourceRegistryValidationIssue(
+                severity="warning",
+                source_id=source.source_id,
+                field="metadata.group",
+                message="source metadata.group should match source category",
+            )
+        )
+    signal_kind = _optional_metadata_text(source.metadata.get("signal_kind"))
+    if signal_kind is None:
+        issues.append(
+            SourceRegistryValidationIssue(
+                severity="warning",
+                source_id=source.source_id,
+                field="metadata.signal_kind",
+                message="source metadata.signal_kind is recommended for AI community sources",
+            )
+        )
     issues.extend(_validate_url_is_secret_free(source))
     if not source.topics:
         issues.append(
@@ -516,3 +578,15 @@ def _normalize_category(category: str | None) -> str | None:
     if category is None:
         return None
     return " ".join(str(category).casefold().replace("-", " ").replace("_", " ").split())
+
+
+def _normalize_source_catalog_value(value: Any) -> str | None:
+    text = _optional_metadata_text(value)
+    return text.casefold().replace("-", "_").replace(" ", "_") if text is not None else None
+
+
+def _optional_metadata_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None

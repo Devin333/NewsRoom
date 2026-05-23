@@ -2,17 +2,136 @@ fetch:
   timeout_seconds: 15
   max_bytes: 1000000
   respect_robots: true
+  rate_limit_per_domain_per_minute: 30
+  retry_times: 2
+  retry_on_status_codes: [429, 500, 502, 503, 504]
 
 official_blogs:
   - source_id: openai-news
     name: OpenAI News
     url: https://openai.com/news/rss.xml
     reliability: high
-    authority_score: 0.9
-    topics: [ai, models, product, research]
-    category: official
+    authority_score: 0.95
+    topics: [ai, models, product, research, agent]
+    category: official_blog
     language: en
     region: global
+    fetch_interval_seconds: 3600
+    metadata:
+      group: official_blog
+      priority: p0
+      organization: openai
+      signal_kind: official_release
+      dedup_strategy: canonical_url
+      trust_policy: official
+
+  - source_id: anthropic-news
+    name: Anthropic News
+    url: https://www.anthropic.com/news/rss.xml
+    reliability: high
+    authority_score: 0.94
+    topics: [ai, claude, models, safety, agent]
+    category: official_blog
+    language: en
+    region: global
+    fetch_interval_seconds: 3600
+    metadata:
+      group: official_blog
+      priority: p0
+      organization: anthropic
+      signal_kind: official_release
+      dedup_strategy: canonical_url
+      trust_policy: official
+
+  - source_id: google-deepmind-blog
+    name: Google DeepMind Blog
+    url: https://deepmind.google/discover/blog/rss.xml
+    reliability: high
+    authority_score: 0.94
+    topics: [ai, research, models, science]
+    category: official_blog
+    language: en
+    region: global
+    fetch_interval_seconds: 7200
+    metadata:
+      group: official_blog
+      priority: p0
+      organization: google_deepmind
+      signal_kind: official_research
+      dedup_strategy: canonical_url
+      trust_policy: official
+
+  - source_id: meta-ai-blog
+    name: Meta AI Blog
+    url: https://ai.meta.com/blog/rss/
+    reliability: high
+    authority_score: 0.90
+    topics: [ai, models, research, open_source]
+    category: official_blog
+    language: en
+    region: us
+    fetch_interval_seconds: 7200
+    metadata:
+      group: official_blog
+      priority: p0
+      organization: meta
+      signal_kind: official_research
+      dedup_strategy: canonical_url
+      trust_policy: official
+
+  - source_id: microsoft-research-ai
+    name: Microsoft Research AI Blog
+    url: https://www.microsoft.com/en-us/research/feed/
+    reliability: high
+    authority_score: 0.88
+    topics: [ai, research, models, systems]
+    category: official_blog
+    language: en
+    region: us
+    fetch_interval_seconds: 7200
+    metadata:
+      group: official_blog
+      priority: p0
+      organization: microsoft
+      signal_kind: official_research
+      dedup_strategy: canonical_url
+      trust_policy: official
+
+  - source_id: aliyun-ai-official
+    name: Alibaba Cloud AI Official
+    url: https://www.alibabacloud.com/blog
+    reliability: high
+    authority_score: 0.78
+    topics: [ai, cloud, models, product]
+    category: official_blog
+    language: en
+    region: cn
+    fetch_interval_seconds: 10800
+    metadata:
+      group: official_blog
+      priority: p1
+      organization: aliyun
+      signal_kind: official_release
+      dedup_strategy: canonical_url
+      trust_policy: official
+
+rss_feeds:
+  - source_id: huggingface-blog
+    name: Hugging Face Blog
+    url: https://huggingface.co/blog/feed.xml
+    reliability: high
+    authority_score: 0.86
+    topics: [ai, open_source, models, datasets, spaces]
+    category: model_platform
+    language: en
+    region: global
+    fetch_interval_seconds: 3600
+    metadata:
+      group: model_platform
+      priority: p0
+      signal_kind: model_platform_update
+      dedup_strategy: canonical_url
+      trust_policy: mixed
 
   - source_id: google-ai-blog
     name: Google AI Blog
@@ -20,61 +139,582 @@ official_blogs:
     reliability: high
     authority_score: 0.85
     topics: [ai, research, models, product]
-    category: official
+    category: official_blog
     language: en
     region: global
+    fetch_interval_seconds: 7200
+    metadata:
+      group: official_blog
+      priority: p1
+      organization: google
+      signal_kind: official_research
+      dedup_strategy: canonical_url
+      trust_policy: official
 
-rss_feeds:
-  - source_id: huggingface-blog
-    name: Hugging Face Blog
-    url: https://huggingface.co/blog/feed.xml
-    reliability: high
-    authority_score: 0.82
-    topics: [ai, open source, models, research]
-    category: community
-    language: en
-    region: global
-
-  - source_id: verge-ai
-    name: The Verge AI
-    url: https://www.theverge.com/rss/ai-artificial-intelligence/index.xml
+  - source_id: paperweekly
+    name: PaperWeekly
+    url: https://www.jiqizhixin.com/columns/paperweekly
     reliability: medium
-    authority_score: 0.72
-    topics: [ai, industry, policy, product]
-    category: industry_news
-    language: en
-    region: us
+    authority_score: 0.70
+    topics: [ai, research, papers, paper_digest]
+    category: research
+    language: zh
+    region: cn
+    fetch_interval_seconds: 21600
+    metadata:
+      group: research
+      priority: p1
+      signal_kind: paper_digest
+      dedup_strategy: canonical_url
+      trust_policy: curated_media
+      quality_filter_required: true
 
-  - source_id: hn-ai
-    name: Hacker News AI RSS
-    url: https://hnrss.org/newest?q=AI
-    reliability: medium
-    authority_score: 0.62
-    topics: [ai, engineering, open source]
-    category: community
-    language: en
-    region: global
-
-  - source_id: lobsters-ai
-    name: Lobsters AI RSS
-    url: https://lobste.rs/t/ai.rss
-    reliability: medium
-    authority_score: 0.6
-    topics: [ai, engineering, open source]
-    category: community
-    language: en
-    region: global
+atom_feeds: []
 
 arxiv_categories:
   - source_id: arxiv-cs-ai
     name: arXiv cs.AI
     url: https://export.arxiv.org/api/query
     reliability: high
-    authority_score: 0.88
+    authority_score: 0.90
     topics: [ai, research, papers]
     category: research
     language: en
     region: global
+    fetch_interval_seconds: 7200
     query: cat:cs.AI
+    metadata:
+      group: research
+      priority: p0
+      signal_kind: paper
+      dedup_strategy: paper_id
+      trust_policy: research
 
-github_lists: []
+  - source_id: arxiv-cs-lg
+    name: arXiv cs.LG
+    url: https://export.arxiv.org/api/query
+    reliability: high
+    authority_score: 0.90
+    topics: [machine_learning, research, papers]
+    category: research
+    language: en
+    region: global
+    fetch_interval_seconds: 7200
+    query: cat:cs.LG
+    metadata:
+      group: research
+      priority: p0
+      signal_kind: paper
+      dedup_strategy: paper_id
+      trust_policy: research
+
+  - source_id: arxiv-cs-cl
+    name: arXiv cs.CL
+    url: https://export.arxiv.org/api/query
+    reliability: high
+    authority_score: 0.90
+    topics: [nlp, llm, research, papers]
+    category: research
+    language: en
+    region: global
+    fetch_interval_seconds: 7200
+    query: cat:cs.CL
+    metadata:
+      group: research
+      priority: p0
+      signal_kind: paper
+      dedup_strategy: paper_id
+      trust_policy: research
+
+github_lists:
+  - source_id: github-trending-ai
+    name: GitHub AI Trending Search
+    url: https://api.github.com
+    reliability: high
+    authority_score: 0.86
+    topics: [ai, open_source, llm, agent]
+    category: open_source
+    language: en
+    region: global
+    fetch_interval_seconds: 3600
+    metadata:
+      group: open_source
+      priority: p0
+      mode: trending
+      query: "topic:artificial-intelligence OR topic:llm OR topic:agents"
+      signal_kind: repository_trend
+      dedup_strategy: repository_name
+      trust_policy: community
+
+  - source_id: github-langchain-releases
+    name: LangChain Releases
+    url: https://api.github.com
+    reliability: high
+    authority_score: 0.86
+    topics: [agent, langchain, framework, open_source]
+    category: agent_framework
+    language: en
+    region: global
+    fetch_interval_seconds: 3600
+    metadata:
+      group: agent_framework
+      priority: p0
+      mode: releases
+      repository: langchain-ai/langchain
+      signal_kind: framework_release
+      dedup_strategy: canonical_url
+      trust_policy: official_project
+
+  - source_id: github-llamaindex-releases
+    name: LlamaIndex Releases
+    url: https://api.github.com
+    reliability: high
+    authority_score: 0.84
+    topics: [agent, llamaindex, framework, rag]
+    category: agent_framework
+    language: en
+    region: global
+    fetch_interval_seconds: 3600
+    metadata:
+      group: agent_framework
+      priority: p0
+      mode: releases
+      repository: run-llama/llama_index
+      signal_kind: framework_release
+      dedup_strategy: canonical_url
+      trust_policy: official_project
+
+  - source_id: github-crewai-releases
+    name: CrewAI Releases
+    url: https://api.github.com
+    reliability: high
+    authority_score: 0.82
+    topics: [agent, crewai, framework, multi_agent]
+    category: agent_framework
+    language: en
+    region: global
+    fetch_interval_seconds: 3600
+    metadata:
+      group: agent_framework
+      priority: p0
+      mode: releases
+      repository: crewAIInc/crewAI
+      signal_kind: framework_release
+      dedup_strategy: canonical_url
+      trust_policy: official_project
+
+  - source_id: github-autogen-discussions
+    name: AutoGen Discussions
+    url: https://api.github.com
+    reliability: high
+    authority_score: 0.82
+    topics: [agent, multi_agent, framework, discussion]
+    category: agent_framework
+    language: en
+    region: global
+    fetch_interval_seconds: 7200
+    metadata:
+      group: agent_framework
+      priority: p0
+      mode: discussions
+      repository: microsoft/autogen
+      signal_kind: framework_discussion
+      dedup_strategy: canonical_url
+      trust_policy: official_project
+
+  - source_id: github-huggingface-transformers-releases
+    name: Transformers Releases
+    url: https://api.github.com
+    reliability: high
+    authority_score: 0.86
+    topics: [ai, open_source, models, transformers]
+    category: open_source
+    language: en
+    region: global
+    fetch_interval_seconds: 3600
+    metadata:
+      group: open_source
+      priority: p0
+      mode: releases
+      repository: huggingface/transformers
+      signal_kind: release
+      dedup_strategy: canonical_url
+      trust_policy: official_project
+
+hackernews_sources:
+  - source_id: hackernews-ai
+    name: Hacker News AI
+    url: https://hacker-news.firebaseio.com/v0
+    reliability: medium
+    authority_score: 0.68
+    topics: [ai, startup, engineering, open_source]
+    category: developer_discussion
+    language: en
+    region: global
+    fetch_interval_seconds: 1800
+    story_list: topstories
+    metadata:
+      group: developer_discussion
+      priority: p1
+      query_terms: [ai, llm, agent, openai, anthropic, huggingface]
+      signal_kind: community_trend
+      dedup_strategy: canonical_url
+      trust_policy: community
+
+reddit_sources:
+  - source_id: reddit-machinelearning
+    name: Reddit r/MachineLearning
+    url: https://www.reddit.com/r/MachineLearning
+    reliability: medium
+    authority_score: 0.65
+    topics: [machine_learning, research, papers, discussion]
+    category: developer_discussion
+    language: en
+    region: global
+    fetch_interval_seconds: 3600
+    subreddit: MachineLearning
+    listing: hot
+    metadata:
+      group: developer_discussion
+      priority: p1
+      signal_kind: community_discussion
+      dedup_strategy: canonical_url
+      trust_policy: community
+
+  - source_id: reddit-localllama
+    name: Reddit r/LocalLLaMA
+    url: https://www.reddit.com/r/LocalLLaMA
+    reliability: medium
+    authority_score: 0.68
+    topics: [local_llm, open_source, inference, quantization]
+    category: developer_discussion
+    language: en
+    region: global
+    fetch_interval_seconds: 3600
+    subreddit: LocalLLaMA
+    listing: hot
+    metadata:
+      group: developer_discussion
+      priority: p1
+      signal_kind: community_discussion
+      dedup_strategy: canonical_url
+      trust_policy: community
+
+stackoverflow_tags:
+  - source_id: stackoverflow-langchain
+    name: Stack Overflow LangChain
+    url: https://api.stackexchange.com/2.3
+    reliability: medium
+    authority_score: 0.60
+    topics: [langchain, agent, engineering, troubleshooting]
+    category: engineering_practice
+    language: en
+    region: global
+    fetch_interval_seconds: 21600
+    tagged: langchain
+    metadata:
+      group: engineering_practice
+      priority: p2
+      signal_kind: troubleshooting
+      dedup_strategy: canonical_url
+      trust_policy: community
+      quality_filter_required: true
+
+  - source_id: stackoverflow-openai
+    name: Stack Overflow OpenAI
+    url: https://api.stackexchange.com/2.3
+    reliability: medium
+    authority_score: 0.58
+    topics: [openai, api, engineering, troubleshooting]
+    category: engineering_practice
+    language: en
+    region: global
+    fetch_interval_seconds: 21600
+    tagged: openai-api
+    metadata:
+      group: engineering_practice
+      priority: p2
+      signal_kind: troubleshooting
+      dedup_strategy: canonical_url
+      trust_policy: community
+      quality_filter_required: true
+
+devto_tags:
+  - source_id: devto-ai
+    name: dev.to AI
+    url: https://dev.to/api
+    reliability: medium
+    authority_score: 0.58
+    topics: [ai, engineering, tutorial, llm_app]
+    category: engineering_practice
+    language: en
+    region: global
+    fetch_interval_seconds: 21600
+    tag: ai
+    metadata:
+      group: engineering_practice
+      priority: p2
+      signal_kind: tutorial
+      dedup_strategy: canonical_url
+      trust_policy: community
+      quality_filter_required: true
+
+  - source_id: devto-machine-learning
+    name: dev.to Machine Learning
+    url: https://dev.to/api
+    reliability: medium
+    authority_score: 0.56
+    topics: [machine_learning, engineering, tutorial]
+    category: engineering_practice
+    language: en
+    region: global
+    fetch_interval_seconds: 21600
+    tag: machinelearning
+    metadata:
+      group: engineering_practice
+      priority: p2
+      signal_kind: tutorial
+      dedup_strategy: canonical_url
+      trust_policy: community
+      quality_filter_required: true
+
+medium_feeds:
+  - source_id: medium-ai
+    name: Medium AI
+    url: https://medium.com/tag/artificial-intelligence
+    reliability: low
+    authority_score: 0.50
+    topics: [ai, engineering, tutorial]
+    category: engineering_practice
+    language: en
+    region: global
+    fetch_interval_seconds: 43200
+    tag: artificial-intelligence
+    metadata:
+      group: engineering_practice
+      priority: p2
+      signal_kind: tutorial
+      dedup_strategy: canonical_url
+      trust_policy: low_confidence
+      quality_filter_required: true
+
+web_pages:
+  - source_id: papers-with-code-ai
+    name: Papers with Code AI
+    url: https://paperswithcode.com/area/artificial-intelligence
+    reliability: high
+    authority_score: 0.82
+    topics: [ai, research, papers, code, benchmark]
+    category: research
+    language: en
+    region: global
+    fetch_interval_seconds: 10800
+    metadata:
+      group: research
+      priority: p1
+      signal_kind: benchmark
+      dedup_strategy: canonical_url
+      trust_policy: research
+      connector_todo: paperswithcode
+
+  - source_id: huggingface-models
+    name: Hugging Face Models
+    url: https://huggingface.co/models
+    reliability: high
+    authority_score: 0.88
+    topics: [ai, models, open_source, llm]
+    category: model_platform
+    language: en
+    region: global
+    fetch_interval_seconds: 3600
+    metadata:
+      group: model_platform
+      priority: p0
+      signal_kind: model_release
+      dedup_strategy: model_id
+      trust_policy: mixed
+      connector_todo: huggingface
+
+  - source_id: huggingface-spaces
+    name: Hugging Face Spaces
+    url: https://huggingface.co/spaces
+    reliability: high
+    authority_score: 0.80
+    topics: [ai, demo, spaces, app]
+    category: model_platform
+    language: en
+    region: global
+    fetch_interval_seconds: 3600
+    metadata:
+      group: model_platform
+      priority: p0
+      signal_kind: demo_release
+      dedup_strategy: canonical_url
+      trust_policy: mixed
+      connector_todo: huggingface
+
+  - source_id: modelscope-models
+    name: ModelScope Models
+    url: https://modelscope.cn/models
+    reliability: high
+    authority_score: 0.82
+    topics: [ai, models, open_source, deployment]
+    category: model_platform
+    language: zh
+    region: cn
+    fetch_interval_seconds: 3600
+    metadata:
+      group: model_platform
+      priority: p0
+      signal_kind: model_release
+      dedup_strategy: model_id
+      trust_policy: mixed
+      connector_todo: modelscope
+
+  - source_id: producthunt-ai
+    name: Product Hunt AI
+    url: https://www.producthunt.com/categories/artificial-intelligence
+    reliability: medium
+    authority_score: 0.58
+    topics: [ai, product, startup]
+    category: developer_discussion
+    language: en
+    region: global
+    fetch_interval_seconds: 10800
+    metadata:
+      group: developer_discussion
+      priority: p1
+      signal_kind: product_trend
+      dedup_strategy: canonical_url
+      trust_policy: community
+      connector_todo: producthunt
+      quality_filter_required: true
+
+  - source_id: zhihu-ai
+    name: Zhihu AI Topic
+    url: https://www.zhihu.com/topic/19551275
+    reliability: low
+    authority_score: 0.42
+    topics: [ai, discussion, opinion]
+    category: developer_discussion
+    language: zh
+    region: cn
+    fetch_interval_seconds: 21600
+    metadata:
+      group: developer_discussion
+      priority: p2
+      signal_kind: community_discussion
+      dedup_strategy: canonical_url
+      trust_policy: low_confidence
+      quality_filter_required: true
+
+  - source_id: v2ex-ai
+    name: V2EX AI
+    url: https://www.v2ex.com/go/ai
+    reliability: low
+    authority_score: 0.40
+    topics: [ai, discussion, engineering]
+    category: developer_discussion
+    language: zh
+    region: cn
+    fetch_interval_seconds: 21600
+    metadata:
+      group: developer_discussion
+      priority: p2
+      signal_kind: community_discussion
+      dedup_strategy: canonical_url
+      trust_policy: low_confidence
+      quality_filter_required: true
+
+  - source_id: juejin-ai
+    name: Juejin AI
+    url: https://juejin.cn/tag/AI
+    reliability: low
+    authority_score: 0.45
+    topics: [ai, engineering, tutorial, llm_app]
+    category: engineering_practice
+    language: zh
+    region: cn
+    fetch_interval_seconds: 43200
+    metadata:
+      group: engineering_practice
+      priority: p2
+      signal_kind: developer_article
+      dedup_strategy: canonical_url
+      trust_policy: low_confidence
+      quality_filter_required: true
+
+  - source_id: csdn-ai
+    name: CSDN AI
+    url: https://www.csdn.net/nav/ai
+    reliability: low
+    authority_score: 0.42
+    topics: [ai, engineering, tutorial]
+    category: engineering_practice
+    language: zh
+    region: cn
+    fetch_interval_seconds: 43200
+    metadata:
+      group: engineering_practice
+      priority: p2
+      signal_kind: developer_article
+      dedup_strategy: canonical_url
+      trust_policy: low_confidence
+      quality_filter_required: true
+
+  - source_id: aliyun-developer-ai
+    name: Alibaba Cloud Developer AI
+    url: https://developer.aliyun.com/label/sc/ai
+    reliability: medium
+    authority_score: 0.58
+    topics: [ai, cloud, engineering, tutorial, deployment]
+    category: engineering_practice
+    language: zh
+    region: cn
+    fetch_interval_seconds: 43200
+    metadata:
+      group: engineering_practice
+      priority: p2
+      signal_kind: engineering_case
+      dedup_strategy: canonical_url
+      trust_policy: curated_media
+      quality_filter_required: true
+
+  - source_id: tencent-cloud-developer-ai
+    name: Tencent Cloud Developer AI
+    url: https://cloud.tencent.com/developer/tag/AI
+    reliability: medium
+    authority_score: 0.56
+    topics: [ai, cloud, engineering, tutorial, deployment]
+    category: engineering_practice
+    language: zh
+    region: cn
+    fetch_interval_seconds: 43200
+    metadata:
+      group: engineering_practice
+      priority: p2
+      signal_kind: engineering_case
+      dedup_strategy: canonical_url
+      trust_policy: curated_media
+      quality_filter_required: true
+
+manual_sources:
+  - source_id: ai-researcher-watchlist
+    name: AI Researcher Watchlist
+    url: https://example.com/manual/ai-researcher-watchlist
+    reliability: low
+    authority_score: 0.35
+    enabled: false
+    topics: [ai, research, discussion]
+    category: developer_discussion
+    language: multi
+    region: global
+    fetch_interval_seconds: 86400
+    metadata:
+      group: developer_discussion
+      priority: p3
+      signal_kind: user_feedback
+      dedup_strategy: canonical_url
+      trust_policy: low_confidence
+      quality_filter_required: true
+      records: []

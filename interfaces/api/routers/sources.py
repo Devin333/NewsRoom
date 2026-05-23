@@ -3,7 +3,15 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from interfaces.api.deps import ApiRouteHelpers, ApiServices
-from interfaces.models import ArxivSourceFetchRequest, GithubReleaseFetchRequest, SourceProbeRequest
+from interfaces.models import (
+    ArxivSourceFetchRequest,
+    GithubReleaseFetchRequest,
+    SourceCategoryFetchRequest,
+    SourceFetchRequest,
+    SourcePriorityFetchRequest,
+    SourceProbeRequest,
+    SourceTopicFetchRequest,
+)
 
 
 def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
@@ -24,6 +32,14 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
     @router.get("/api/v1/sources/validation")
     def validate_sources():
         return helpers.success(services.source_service_factory().validate_sources().to_dict())
+
+    @router.get("/api/v1/sources/categories")
+    def source_categories():
+        return helpers.success(services.source_service_factory().source_categories())
+
+    @router.get("/api/v1/sources/priorities")
+    def source_priorities():
+        return helpers.success(services.source_service_factory().source_priorities())
 
     @router.get("/api/v1/sources/{source_id}")
     def get_source(source_id: str):
@@ -78,6 +94,72 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
             )
         except ValueError as exc:
             return helpers.error(status_code=400, code="invalid_github_source_request", message=str(exc))
+        return helpers.success(result.to_dict())
+
+    @router.post("/api/v1/sources/fetch")
+    def fetch_source(request: SourceFetchRequest):
+        try:
+            result = services.source_service_factory().fetch_source(
+                source_id=request.source_id,
+                limit=request.limit,
+                query=request.query,
+                force=request.force,
+            )
+        except KeyError as exc:
+            return helpers.error(
+                status_code=404,
+                code="source_not_found",
+                message=str(exc),
+                user_action_required=True,
+            )
+        except ValueError as exc:
+            return helpers.error(status_code=400, code="invalid_source_fetch_request", message=str(exc))
+        return helpers.success(result.to_dict())
+
+    @router.post("/api/v1/sources/fetch-category")
+    def fetch_category(request: SourceCategoryFetchRequest):
+        try:
+            result = services.source_service_factory().fetch_category(
+                category=request.category,
+                limit_per_source=request.limit_per_source,
+                enabled_only=request.enabled_only,
+                priority=request.priority,
+                language=request.language,
+                region=request.region,
+                force=request.force,
+            )
+        except ValueError as exc:
+            return helpers.error(status_code=400, code="invalid_source_category_fetch_request", message=str(exc))
+        return helpers.success(result.to_dict())
+
+    @router.post("/api/v1/sources/fetch-priority")
+    def fetch_priority(request: SourcePriorityFetchRequest):
+        try:
+            result = services.source_service_factory().fetch_priority(
+                priority=request.priority,
+                limit_per_source=request.limit_per_source,
+                enabled_only=request.enabled_only,
+                force=request.force,
+            )
+        except ValueError as exc:
+            return helpers.error(status_code=400, code="invalid_source_priority_fetch_request", message=str(exc))
+        return helpers.success(result.to_dict())
+
+    @router.post("/api/v1/sources/fetch-topic")
+    def fetch_topic(request: SourceTopicFetchRequest):
+        try:
+            result = services.source_service_factory().fetch_topic_sources(
+                topic=request.topic,
+                limit_per_source=request.limit_per_source,
+                enabled_only=request.enabled_only,
+                category=request.category,
+                priority=request.priority,
+                language=request.language,
+                region=request.region,
+                force=request.force,
+            )
+        except ValueError as exc:
+            return helpers.error(status_code=400, code="invalid_source_topic_fetch_request", message=str(exc))
         return helpers.success(result.to_dict())
 
     return router
