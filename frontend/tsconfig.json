@@ -1,0 +1,41 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["dom", "dom.iterable", "es2022"],
+    "allowJs": false,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "preserve",
+    "incremental": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  },
+  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
+  "exclude": [
+    "node_modules",
+    "src/app/topics/topics-page-client.tsx",
+    "src/app/reports/reports-page-client.tsx",
+    "src/app/search/search-page-client.tsx",
+    "src/app/tech/tech-page-client.tsx",
+    "src/features/**/*",
+    "src/lib/mock-data.ts",
+    "src/lib/search.ts",
+    "src/components/common/badge.tsx",
+    "src/components/common/badges.tsx",
+    "src/components/common/evidence-card.tsx",
+    "src/components/common/evidence-list.tsx",
+    "src/components/common/source-health-badge.tsx"
+  ]
+}
