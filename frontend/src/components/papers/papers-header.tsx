@@ -39,7 +39,7 @@ export function PapersHeader({
 
   return (
     <header className="sticky top-0 z-40 border-b border-[#dfe5df] bg-white/90 backdrop-blur dark:border-border dark:bg-card/95">
-      <div className="mx-auto flex min-h-[64px] max-w-[1480px] items-center gap-5 px-4 py-2 sm:px-6">
+      <div className="mx-auto flex min-h-[64px] max-w-[1920px] items-center gap-5 px-0 py-2">
         <Link href="/papers" className="flex shrink-0 items-center gap-3" aria-label="NewsRoom Research">
           <span className="flex size-9 items-center justify-center rounded-full bg-[#0f172a] text-sm font-black text-white">
             N
@@ -48,7 +48,7 @@ export function PapersHeader({
             <span className="block text-base font-semibold leading-5">
               NewsRoom <span className="text-emerald-600">Research</span>
             </span>
-            <span className="block text-xs text-slate-500 dark:text-muted-foreground">{t(papersCopy.brandSubline, locale)}</span>
+            <span className="block text-xs text-[#334155]/55 dark:text-muted-foreground">{t(papersCopy.brandSubline, locale)}</span>
           </span>
         </Link>
 
@@ -65,7 +65,7 @@ export function PapersHeader({
         >
           <button
             type="button"
-            className="inline-flex h-9 items-center gap-1 rounded-full bg-[#eef3ef] px-4 text-sm font-medium text-slate-800 transition-colors hover:bg-[#e3ece5] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:bg-secondary dark:text-foreground"
+            className="inline-flex h-9 items-center gap-1 rounded-full bg-[#eef3ef] px-4 text-sm font-medium text-[#334155] transition-colors hover:bg-[#e3ece5] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:bg-secondary dark:text-foreground"
             aria-expanded={dropdownOpen}
             onFocus={() => setDropdownOpen(true)}
             onMouseEnter={() => setDropdownOpen(true)}

@@ -2,7 +2,7 @@ import { PapersHero } from "@/components/papers/papers-hero"
 import { PapersMicrobar } from "@/components/papers/papers-microbar"
 import { TaskSection } from "@/components/papers/tasks/task-section"
 import { papersCopy, taskGroupLabels, t } from "@/lib/papers/copy"
-import { benchmarks, papers, paperTasks } from "@/lib/papers/mock-data"
+import { benchmarks, papers, paperTasks } from "@/lib/papers/catalog"
 import type { Locale } from "@/lib/papers/types"
 
 const taskGroups = ["general", "vision", "video", "language", "audio", "robotics", "infra"]

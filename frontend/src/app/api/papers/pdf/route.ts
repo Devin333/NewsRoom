@@ -32,25 +32,43 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "unsupported pdf source" }, { status: 400 })
   }
 
+  const range = request.headers.get("range")
   const response = await fetch(parsedUrl.toString(), {
     headers: {
-      "User-Agent": "NewsRoomResearch/0.1 (+https://localhost)"
+      "User-Agent": "NewsRoomResearch/0.1 (+https://localhost)",
+      ...(range ? { Range: range } : {})
     },
     cache: "no-store"
   })
 
-  if (!response.ok || !response.body || !isPdfResponse(parsedUrl, response)) {
+  if (!isSuccessfulPdfResponse(response) || !response.body || !isPdfResponse(parsedUrl, response)) {
     return NextResponse.json({ error: "pdf fetch failed" }, { status: 502 })
   }
 
   return new NextResponse(response.body, {
-    headers: {
-      "Cache-Control": "public, max-age=3600",
+    headers: responseHeaders(response),
+    status: response.status
+  })
+}
+
+function responseHeaders(response: Response) {
+  const headers: Record<string, string> = {
+    "Accept-Ranges": response.headers.get("accept-ranges") ?? "bytes",
+      "Cache-Control": "no-store",
       "Content-Disposition": "inline",
       "Content-Type": response.headers.get("content-type") ?? "application/pdf"
-    },
-    status: 200
-  })
+  }
+
+  const contentLength = response.headers.get("content-length")
+  const contentRange = response.headers.get("content-range")
+  if (contentLength) {
+    headers["Content-Length"] = contentLength
+  }
+  if (contentRange) {
+    headers["Content-Range"] = contentRange
+  }
+
+  return headers
 }
 
 function isAllowedPaperPdfUrl(url: URL) {
@@ -87,4 +105,8 @@ function isAllowedPaperPdfUrl(url: URL) {
 function isPdfResponse(url: URL, response: Response) {
   const contentType = response.headers.get("content-type")?.toLowerCase() ?? ""
   return contentType.includes("application/pdf") || contentType.includes("octet-stream") || url.pathname.toLowerCase().endsWith(".pdf")
+}
+
+function isSuccessfulPdfResponse(response: Response) {
+  return response.status === 200 || response.status === 206
 }

@@ -30,8 +30,8 @@ export function PapersLanguageToggle({
           className={cn(
             "rounded-full px-2 py-0.5 transition-colors",
             locale === "zh"
-              ? "bg-[#0f172a] text-white dark:bg-foreground dark:text-background"
-              : "text-slate-500 dark:text-muted-foreground"
+              ? "bg-[#334155] text-white dark:bg-foreground dark:text-background"
+              : "text-[#334155]/55 dark:text-muted-foreground"
           )}
         >
           中
@@ -40,8 +40,8 @@ export function PapersLanguageToggle({
           className={cn(
             "rounded-full px-2 py-0.5 transition-colors",
             locale === "en"
-              ? "bg-[#0f172a] text-white dark:bg-foreground dark:text-background"
-              : "text-slate-500 dark:text-muted-foreground"
+              ? "bg-[#334155] text-white dark:bg-foreground dark:text-background"
+              : "text-[#334155]/55 dark:text-muted-foreground"
           )}
         >
           EN

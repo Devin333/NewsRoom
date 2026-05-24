@@ -47,6 +47,8 @@ export interface Paper {
   publishedAt: string
   venue?: string
   citationCount?: number
+  citationDoi?: string
+  githubMomentum?: number
   thumbnailUrl?: string
   tags: string[]
   taskRefs: TaskRef[]

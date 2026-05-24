@@ -39,6 +39,10 @@ export function formatCompactNumber(value?: number) {
   return new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(value)
 }
 
+export function formatWholeNumber(value: number, locale: Locale) {
+  return new Intl.NumberFormat(locale === "zh" ? "zh-CN" : "en-US").format(value)
+}
+
 export function paperPdfUrl(paper: Pick<Paper, "pdfUrl" | "arxivUrl" | "paperUrl">) {
   return normalizePdfUrl(paper.pdfUrl) ?? paperPdfUrlFromSource(paper.arxivUrl) ?? paperPdfUrlFromSource(paper.paperUrl)
 }
@@ -225,8 +229,8 @@ export function sortPapers(papers: Paper[], sort: PaperSort) {
   }
 
   return sorted.sort((left, right) => {
-    const rightMomentum = (right.githubStars ?? 0) + (right.starsPerHour ?? 0) * 100
-    const leftMomentum = (left.githubStars ?? 0) + (left.starsPerHour ?? 0) * 100
+    const rightMomentum = (right.githubStars ?? 0) + (right.githubMomentum ?? 0) * 100 + (right.citationCount ?? 0) * 2
+    const leftMomentum = (left.githubStars ?? 0) + (left.githubMomentum ?? 0) * 100 + (left.citationCount ?? 0) * 2
     return rightMomentum - leftMomentum
   })
 }

@@ -1,5 +1,6 @@
 "use client"
 
+import type { MouseEvent } from "react"
 import { BookOpen, Github } from "lucide-react"
 import { PaperMetrics } from "@/components/papers/paper-metrics"
 import { PaperTags } from "@/components/papers/paper-tags"
@@ -19,10 +20,23 @@ export function PaperRow({
   onPreview: (paper: Paper) => void
 }) {
   const paperHref = paperPdfUrl(paper) ?? paper.paperUrl ?? paper.arxivUrl
+  const repoHref = paper.repoUrl?.startsWith("https://github.com/") && paper.repoUrl !== "https://github.com/" ? paper.repoUrl : undefined
+
+  function handleRowClick(event: MouseEvent<HTMLElement>) {
+    const target = event.target
+    if (target instanceof Element && target.closest("a, button")) {
+      return
+    }
+    onPreview(paper)
+  }
 
   return (
-    <article className="py-7 transition-colors first:pt-2 last:pb-3">
-      <div className="grid gap-6 lg:grid-cols-[9rem_minmax(0,1fr)_9.25rem]">
+    <article
+      data-testid="paper-row"
+      className="cursor-pointer py-7 transition-colors first:pt-6 last:pb-3"
+      onClick={handleRowClick}
+    >
+      <div className="grid gap-7 lg:grid-cols-[11rem_minmax(0,1fr)_10rem] 2xl:grid-cols-[12rem_minmax(0,1fr)_10rem]">
         <div
           role="button"
           tabIndex={0}
@@ -36,17 +50,17 @@ export function PaperRow({
           }}
           aria-label={`Preview ${paper.title}`}
         >
-          <PaperThumbnail paper={paper} />
+          <PaperThumbnail paper={paper} locale={locale} />
         </div>
 
         <div className="min-w-0">
           <button type="button" className="block text-left" onClick={() => onPreview(paper)}>
-            <h2 className="text-balance font-serif text-xl font-black leading-7 text-[#101827] sm:text-2xl dark:text-foreground">
+            <h2 className="text-balance text-xl font-black leading-7 text-[#334155] sm:text-2xl dark:text-foreground">
               {paperTitle(paper, locale)}
             </h2>
           </button>
 
-          <p className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-slate-500 dark:text-muted-foreground">
+          <p className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-[#334155]/55 dark:text-muted-foreground">
             <span>{paper.authors.slice(0, 3).join(", ")}</span>
             <span aria-hidden="true">·</span>
             <span>{formatPaperDate(paper.publishedAt, locale)}</span>
@@ -58,7 +72,7 @@ export function PaperRow({
             ) : null}
           </p>
 
-          <p className="mt-3 line-clamp-2 text-base leading-7 text-[#243044] dark:text-muted-foreground">
+          <p className="mt-3 line-clamp-4 max-w-[90rem] text-base leading-7 text-[#334155]/70 dark:text-muted-foreground">
             {paperSnippet(paper, locale)}
           </p>
 
@@ -75,9 +89,9 @@ export function PaperRow({
                 </a>
               </Button>
             ) : null}
-            {paper.repoUrl ? (
+            {repoHref ? (
               <Button asChild variant="outline" size="sm" aria-label={t(papersCopy.openCode, locale)} className="rounded-full bg-white dark:bg-card">
-                <a href={paper.repoUrl} target="_blank" rel="noreferrer">
+                <a href={repoHref} target="_blank" rel="noreferrer">
                   <Github className="size-4" />
                   <span>GitHub</span>
                 </a>
@@ -96,9 +110,9 @@ export function PaperRow({
                 </a>
               </Button>
             ) : null}
-            {paper.repoUrl ? (
+            {repoHref ? (
               <Button asChild variant="outline" size="icon" aria-label={t(papersCopy.openCode, locale)} className="rounded-full bg-white dark:bg-card">
-                <a href={paper.repoUrl} target="_blank" rel="noreferrer">
+                <a href={repoHref} target="_blank" rel="noreferrer">
                   <Github className="size-4" />
                 </a>
               </Button>

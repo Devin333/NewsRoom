@@ -161,6 +161,10 @@ select {
 }
 
 @layer utilities {
+  .font-papers-research {
+    font-family: "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", Arial, sans-serif;
+  }
+
   .scrollbar-thin-dark {
     scrollbar-color: var(--border) transparent;
     scrollbar-width: thin;

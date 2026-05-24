@@ -62,6 +62,7 @@ def test_api_router_parity_keeps_current_paths_registered() -> None:
         "/api/v1/sources/fetch-topic",
         "/api/v1/sources/arxiv/fetch",
         "/api/v1/sources/github/releases",
+        "/api/v1/papers",
         "/api/v1/workers",
         "/api/v1/workers/{worker_id}",
         "/api/v1/queues",

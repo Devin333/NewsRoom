@@ -4,17 +4,17 @@ import { useState } from "react"
 import { PapersDomainSidebar } from "@/components/papers/papers-domain-sidebar"
 import { PapersHero } from "@/components/papers/papers-hero"
 import { PapersMicrobar } from "@/components/papers/papers-microbar"
-import { InlineNotice } from "@/components/papers/shared/inline-notice"
+import { PaperDetailDrawer } from "@/components/papers/shared/paper-detail-drawer"
 import { PaperStream } from "@/components/papers/shared/paper-stream"
 import { papersCopy, t } from "@/lib/papers/copy"
-import { topDomains, trendingDomains } from "@/lib/papers/mock-data"
+import { paperTasks, topDomains, trendingDomains } from "@/lib/papers/catalog"
 import type { Locale, Paper } from "@/lib/papers/types"
 
 export function TrendingPapersPage({ locale, papers }: { locale: Locale; papers: Paper[] }) {
-  const [notice, setNotice] = useState<string | null>(null)
+  const [selectedPaper, setSelectedPaper] = useState<Paper | null>(null)
 
   function previewPaper(paper: Paper) {
-    setNotice(`${paper.title}: ${t(papersCopy.paperPreview, locale)}`)
+    setSelectedPaper(paper)
   }
 
   return (
@@ -25,21 +25,29 @@ export function TrendingPapersPage({ locale, papers }: { locale: Locale; papers:
         locale={locale}
       />
       <PapersHero
-        eyebrow="Papers / Trending"
         title={t(papersCopy.researchPapers, locale)}
         subtitle={t(papersCopy.researchSubtitle, locale)}
         variant="editorial"
         stats={[
-          { label: t(papersCopy.papers, locale), value: "2.4k" },
-          { label: t(papersCopy.repositories, locale), value: "1.1k" },
-          { label: t(papersCopy.tasks, locale), value: "318" }
+          { label: t(papersCopy.papers, locale), value: papers.length },
+          { label: t(papersCopy.tasks, locale), value: paperTasks.length },
+          { label: t(papersCopy.repositories, locale), value: papers.filter((paper) => paper.repoUrl).length }
         ]}
       />
-      <InlineNotice message={notice} locale={locale} onDismiss={() => setNotice(null)} />
-      <div className="mt-6 grid gap-7 xl:grid-cols-[15rem_minmax(0,1fr)]">
-        <PapersDomainSidebar topDomains={topDomains} trendingDomains={trendingDomains} locale={locale} />
+      <div className="mt-8 grid gap-12 xl:grid-cols-[15rem_minmax(0,1fr)] 2xl:grid-cols-[16rem_minmax(0,1fr)] 2xl:gap-16">
+        <PapersDomainSidebar topDomains={topDomains} trendingDomains={trendingDomains} papers={papers} locale={locale} />
         <PaperStream papers={papers} locale={locale} title="" onPreview={previewPaper} />
       </div>
+      <PaperDetailDrawer
+        paper={selectedPaper}
+        locale={locale}
+        open={Boolean(selectedPaper)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSelectedPaper(null)
+          }
+        }}
+      />
     </div>
   )
 }

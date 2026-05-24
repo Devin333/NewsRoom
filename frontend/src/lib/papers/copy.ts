@@ -5,7 +5,7 @@ export type Localized<T = string> = Record<Locale, T>
 export const papersCopy = {
   brand: { zh: "NewsRoom Research", en: "NewsRoom Research" },
   brandSubline: { zh: "Papers · Tasks · Methods", en: "Papers · Tasks · Methods" },
-  papersNav: { zh: "Papers", en: "Papers" },
+  papersNav: { zh: "Research", en: "Research" },
   trendingPapers: { zh: "热门论文", en: "Trending Papers" },
   tasks: { zh: "Tasks 任务", en: "Tasks" },
   methods: { zh: "Methods 方法", en: "Methods" },
@@ -17,15 +17,15 @@ export const papersCopy = {
   darkMode: { zh: "深色", en: "Dark" },
   languageToggle: { zh: "切换语言", en: "Switch language" },
   dropdownTrendingDescription: {
-    zh: "论文流：缩略图、摘要、标签、代码热度。",
-    en: "Paper stream with thumbnails, abstracts, tags, and code momentum."
+    zh: "论文流：PDF 首页、摘要、标签、代码与引用指标。",
+    en: "Paper stream with PDF first pages, abstracts, tags, code, and citation signals."
   },
   dropdownTasksDescription: {
     zh: "Papers 分支下的研究任务和领域目录。",
     en: "Research tasks and domain catalog inside Papers."
   },
   dropdownMethodsDescription: {
-    zh: "论文相关方法、模型结构、技术路线。",
+    zh: "论文相关方法、模型结构与技术路线。",
     en: "Methods, model structures, and technical routes tied to papers."
   },
   frontendView: {
@@ -44,8 +44,8 @@ export const papersCopy = {
   },
   researchPapers: { zh: "Research Papers 研究论文", en: "Research Papers" },
   researchSubtitle: {
-    zh: "通过任务、方法、代码热度和证据型元数据快速浏览已发布的 AI 研究。",
-    en: "Scan published AI research through task and method signals, code momentum, and evidence-oriented metadata."
+    zh: "浏览带有真实 PDF、GitHub 仓库和 OpenAlex 引用数据的已发布 AI 研究。",
+    en: "Scan published AI research with real PDFs, GitHub repositories, and OpenAlex citation signals."
   },
   tasksSubtitle: {
     zh: "按研究问题和任务领域浏览 Papers 模块下的论文。",
@@ -56,13 +56,13 @@ export const papersCopy = {
     en: "Explore model structures, reasoning patterns, and technical routes found in papers."
   },
   papers: { zh: "论文", en: "papers" },
-  repositories: { zh: "仓库", en: "repos" },
+  repositories: { zh: "代码仓库", en: "repos" },
   benchmarks: { zh: "评测", en: "benchmarks" },
   implementations: { zh: "实现", en: "implementations" },
   methodsUsed: { zh: "使用方法", en: "methods used" },
   topDomains: { zh: "Top Domains 热门方向", en: "Top Domains" },
   trendingDomains: { zh: "Trending Domains 趋势方向", en: "Trending Domains" },
-  contentPanel: { zh: "Content Panel", en: "Content Panel" },
+  contentPanel: { zh: "内容面板", en: "Content Panel" },
   benchmarksTitle: { zh: "Benchmarks", en: "Benchmarks" },
   papersUnderTask: { zh: "该任务下的论文", en: "Papers under this task" },
   papersUsingMethod: { zh: "使用该方法的论文", en: "Papers using this method" },
@@ -71,13 +71,13 @@ export const papersCopy = {
   commonMethods: { zh: "常用方法", en: "Common Methods" },
   relatedMethods: { zh: "相关方法", en: "Related Methods" },
   commonBenchmarks: { zh: "常见评测", en: "Common Benchmarks" },
-  noPapers: { zh: "暂无匹配论文", en: "No matching papers" },
-  openPaper: { zh: "打开论文", en: "Open paper" },
-  openCode: { zh: "打开代码仓库", en: "Open code repository" },
+  noPapers: { zh: "暂无可验证论文", en: "No verified papers yet" },
+  openPaper: { zh: "打开论文 PDF", en: "Open paper PDF" },
+  openCode: { zh: "打开 GitHub 仓库", en: "Open GitHub repository" },
   githubStars: { zh: "GitHub stars", en: "GitHub stars" },
-  starsPerHour: { zh: "stars / 小时", en: "stars / hr" },
-  citations: { zh: "引用", en: "citations" },
-  paperRecord: { zh: "论文", en: "paper" },
+  githubMomentum: { zh: "GitHub momentum", en: "GitHub momentum" },
+  citations: { zh: "OpenAlex citations", en: "OpenAlex citations" },
+  paperRecord: { zh: "PDF", en: "PDF" },
   paperPreview: {
     zh: "当前 v0.5 先使用论文预览提示，后续版本可加入独立论文详情页。",
     en: "Paper detail is mocked in this v0.5 scope. A future version can add a dedicated paper detail route."

@@ -114,8 +114,9 @@ function requestHeaders(): HeadersInit {
   const headers: Record<string, string> = {
     Accept: "application/json"
   }
-  if (process.env.NEWSROOM_API_TOKEN) {
-    headers.Authorization = `Bearer ${process.env.NEWSROOM_API_TOKEN}`
+  const apiToken = process.env.NEWSROOM_API_TOKEN ?? process.env.NEWS_API_TOKEN
+  if (apiToken) {
+    headers.Authorization = `Bearer ${apiToken}`
   }
   return headers
 }

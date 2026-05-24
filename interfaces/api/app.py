@@ -697,6 +697,8 @@ def _required_api_permission(method: str, path: str) -> str | None:
         return "read:reports"
     if resource == "sources":
         return "read:reports"
+    if resource == "papers":
+        return "read:reports"
     if resource in {"workers", "queues"}:
         return "read:reports"
     if resource == "schedules":

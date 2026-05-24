@@ -2,7 +2,7 @@ import { MethodCard } from "@/components/papers/methods/method-card"
 import { PapersHero } from "@/components/papers/papers-hero"
 import { PapersMicrobar } from "@/components/papers/papers-microbar"
 import { papersCopy, t } from "@/lib/papers/copy"
-import { papers, paperMethods, paperTasks } from "@/lib/papers/mock-data"
+import { papers, paperMethods, paperTasks } from "@/lib/papers/catalog"
 import type { Locale } from "@/lib/papers/types"
 
 export function MethodsPage({ locale }: { locale: Locale }) {

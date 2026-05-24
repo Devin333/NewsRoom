@@ -16,14 +16,16 @@ export function PaperSortTabs({
   onChange: (sort: PaperSort) => void
 }) {
   return (
-    <div className="inline-flex rounded-xl bg-[#eef3ef] p-1 dark:bg-secondary">
+    <div className="inline-flex gap-5">
       {sorts.map((sort) => (
         <button
           key={sort}
           type="button"
           className={cn(
-            "h-8 rounded-full px-4 text-sm font-medium transition-colors",
-            value === sort ? "bg-[#0f172a] text-white shadow-sm dark:bg-background dark:text-foreground" : "text-slate-500 hover:text-foreground dark:text-muted-foreground"
+            "relative h-8 text-sm font-medium transition-colors after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:origin-left after:scale-x-0 after:bg-emerald-600 after:transition-transform",
+            value === sort
+              ? "text-[#334155] after:scale-x-100 dark:text-foreground"
+              : "text-[#334155]/55 hover:text-[#334155] dark:text-muted-foreground"
           )}
           onClick={() => onChange(sort)}
         >

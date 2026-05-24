@@ -36,3 +36,17 @@ for (const route of routes) {
     await expect(page.locator("body")).toBeVisible()
   })
 }
+
+test("/papers uses one breadcrumb and real paper actions", async ({ page }) => {
+  await page.goto("/papers")
+
+  await expect(page.locator("nav[aria-label='Papers breadcrumb']")).toHaveCount(1)
+  await expect(page.getByText("stars / hr")).toHaveCount(0)
+
+  const githubHref = await page.locator("a[href^='https://github.com/']").first().getAttribute("href")
+  expect(githubHref).toMatch(/^https:\/\/github\.com\/[^/]+\/[^/]+/)
+  expect(githubHref).not.toBe("https://github.com/")
+
+  const pdfHref = await page.locator("a[href*='/pdf/'], a[href$='.pdf']").first().getAttribute("href")
+  expect(pdfHref).toMatch(/\/pdf\/|\.pdf($|\?)/)
+})

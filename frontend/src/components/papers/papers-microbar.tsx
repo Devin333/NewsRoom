@@ -14,7 +14,7 @@ export function PapersMicrobar({
 }) {
   return (
     <div className="flex flex-col gap-2 py-6 text-sm sm:flex-row sm:items-center sm:justify-between">
-      <nav className="flex flex-wrap items-center gap-2 text-xs uppercase tracking-[0.16em] text-slate-500" aria-label="Papers breadcrumb">
+      <nav className="flex flex-wrap items-center gap-2 text-xs uppercase tracking-[0.16em] text-[#334155]/55" aria-label="Papers breadcrumb">
         <Link href="/papers" className="font-medium hover:text-primary">
           Papers
         </Link>
@@ -31,7 +31,7 @@ export function PapersMicrobar({
           </span>
         ))}
       </nav>
-      <span className="inline-flex w-fit items-center gap-2 rounded-full border border-[#dbe5dd] bg-white/90 px-3 py-1 text-xs text-slate-600 shadow-sm dark:border-border dark:bg-card dark:text-muted-foreground">
+      <span className="inline-flex w-fit items-center gap-2 rounded-full border border-[#dbe5dd] bg-white/90 px-3 py-1 text-xs text-[#334155]/70 shadow-sm dark:border-border dark:bg-card dark:text-muted-foreground">
         <span className="size-2 rounded-full bg-emerald-500" />
         {meta || t(papersCopy.frontendView, locale)}
       </span>

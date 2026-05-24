@@ -8,7 +8,7 @@ import type { Locale } from "@/lib/papers/types"
 
 export function PapersDropdown({ locale }: { locale: Locale }) {
   return (
-    <div className="absolute left-1/2 top-full w-[min(30rem,calc(100vw-2rem))] -translate-x-1/2 pt-2">
+    <div className="absolute left-0 top-full w-[min(30rem,calc(100vw-2rem))] pt-2">
       <div className="rounded-md border border-border bg-popover p-3 text-popover-foreground shadow-soft">
         <div className="grid gap-1">
           {papersDropdownItems.map((item) => {

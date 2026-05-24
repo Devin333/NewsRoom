@@ -3,8 +3,8 @@ import { getPublishedPapers } from "@/lib/papers/real-data"
 
 export const dynamic = "force-dynamic"
 
-export default function PapersPageRoute() {
-  const papers = getPublishedPapers()
+export default async function PapersPageRoute() {
+  const papers = await getPublishedPapers()
 
   return <PapersPageClient papers={papers} />
 }

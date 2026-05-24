@@ -1,7 +1,9 @@
 import fs from "node:fs"
 import path from "node:path"
+import { safeApiGet } from "@/lib/api/server"
 import { normalizePdfUrl, paperPdfUrlFromSource } from "@/lib/papers/format"
-import { papers as mockPapers, paperMethods, paperTasks } from "@/lib/papers/mock-data"
+import { papers as catalogPapers, paperMethods, paperTasks } from "@/lib/papers/catalog"
+import { arxivIdFromUrl, enrichPapersForPublicStream, normalizeDoi, normalizeGithubRepoUrl } from "@/lib/papers/enrichment"
 import type { MethodRef, Paper, TaskRef } from "@/lib/papers/types"
 
 type SourceSignal = {
@@ -48,6 +50,18 @@ type PaperRadarArtifact = {
   ranked_signals?: Array<{ item?: SourceSignal; final_score?: unknown }>
 }
 
+type PaperCollectionCache = {
+  source?: unknown
+  query?: unknown
+  collectedAt?: unknown
+  count?: unknown
+  papers?: unknown
+}
+
+type PapersApiResponse = {
+  papers?: unknown
+}
+
 const ARTIFACT_FILE_NAMES = [
   "data_buffer.final.json",
   "output.json",
@@ -58,10 +72,93 @@ const ARTIFACT_FILE_NAMES = [
 const MAX_ARTIFACT_BYTES = 8_000_000
 const PAPER_SOURCE_TYPES = new Set(["arxiv", "paper_index"])
 const BLOCKED_SOURCE_TYPES = new Set(["official_blog", "ai_news", "rss", "blog", "press_release"])
+const LOCAL_PAPER_CACHE_PATH = path.resolve(process.cwd(), "data", "papers", "arxiv-papers.json")
 
-export function getPublishedPapers() {
-  const realPapers = loadLatestExtractedPapers()
-  return realPapers.length ? realPapers : mockPapers
+export async function getPublishedPapers() {
+  const apiPapers = await loadApiPapers()
+  if (apiPapers.length) {
+    return apiPapers
+  }
+
+  const cachedPapers = loadCachedPapers()
+  if (cachedPapers.length) {
+    return cachedPapers
+  }
+
+  const extractedPapers = loadLatestExtractedPapers()
+  const candidates = extractedPapers.length ? extractedPapers : catalogPapers
+  return enrichPapersForPublicStream(candidates)
+}
+
+export async function loadApiPapers(): Promise<Paper[]> {
+  const result = await safeApiGet<PapersApiResponse>("/api/v1/papers?limit=1000")
+  if (!result.ok) {
+    return []
+  }
+
+  const rawPapers = Array.isArray(result.data?.papers) ? result.data.papers : []
+  return rawPapers.map(cachedPaperToPaper).filter(isPaper)
+}
+
+export function loadCachedPapers(): Paper[] {
+  const cache = readPaperCollectionCache(LOCAL_PAPER_CACHE_PATH)
+  const rawPapers = Array.isArray(cache?.papers) ? cache.papers : []
+  return rawPapers.map(cachedPaperToPaper).filter(isPaper)
+}
+
+function readPaperCollectionCache(filePath: string): PaperCollectionCache | null {
+  if (!fs.existsSync(filePath)) {
+    return null
+  }
+
+  try {
+    return JSON.parse(fs.readFileSync(filePath, "utf8")) as PaperCollectionCache
+  } catch {
+    return null
+  }
+}
+
+function cachedPaperToPaper(value: unknown): Paper | null {
+  if (!isRecord(value)) {
+    return null
+  }
+
+  const title = text(value.title)
+  const abstractSnippet = stripHtml(text(value.abstractSnippet) || text(value.summary))
+  const id = text(value.id)
+  const paperUrl = text(value.paperUrl)
+  const arxivUrl = text(value.arxivUrl) || paperUrl
+  const pdfUrl = normalizePdfUrl(text(value.pdfUrl)) ?? paperPdfUrlFromSource(arxivUrl)
+
+  if (!id || !title || !abstractSnippet || !paperUrl) {
+    return null
+  }
+
+  const tags = cachedTags(value.tags)
+  const taskRefs = inferTasks(title, `${abstractSnippet} ${tags.join(" ")}`, "arxiv")
+  const methodRefs = inferMethods(title, `${abstractSnippet} ${tags.join(" ")}`)
+  const repoUrl = normalizeGithubRepoUrl(text(value.repoUrl))
+
+  return {
+    id,
+    slug: text(value.slug) || slugify(title) || id,
+    title,
+    abstractSnippet,
+    authors: cachedAuthors(value.authors),
+    publishedAt: text(value.publishedAt) || new Date().toISOString(),
+    venue: text(value.venue) || "arXiv",
+    citationDoi: normalizeDoi(text(value.citationDoi)),
+    tags,
+    taskRefs,
+    methodRefs,
+    paperUrl,
+    arxivUrl,
+    pdfUrl,
+    repoUrl,
+    githubStars: numberValue(value.githubStars),
+    citationCount: numberValue(value.citationCount),
+    isPublished: value.isPublished !== false
+  }
 }
 
 function loadLatestExtractedPapers(): Paper[] {
@@ -192,9 +289,9 @@ function signalToPaper(signal: SourceSignal, index: number): Paper | null {
   const publishedAt = text(signal.published_at) || text(raw.published_at) || text(signal.collected_at) || new Date().toISOString()
   const taskRefs = inferTasks(title, summary, sourceType)
   const methodRefs = inferMethods(title, summary)
-  const metrics = isRecord(signal.metrics) ? signal.metrics : {}
-  const score = number(metrics.final_score) ?? number(metrics.relevance_score) ?? 0.5
-  const starsPerHour = Math.max(0.1, Math.round(score * 120) / 10)
+  const pdfUrl = realPdfUrl(signal, raw, urls)
+  const repoUrl = realRepoUrl(signal, raw, urls)
+  const citationDoi = realCitationDoi(signal, raw, urls)
 
   return {
     id: text(signal.signal_id) || text(raw.source_item_id) || `real-paper-${index + 1}`,
@@ -204,16 +301,14 @@ function signalToPaper(signal: SourceSignal, index: number): Paper | null {
     authors: authors(raw.authors ?? signal.authors, sourceName),
     publishedAt,
     venue: sourceLabel(sourceName, sourceType),
-    citationCount: Math.round((number(metrics.source_quality_score) ?? score) * 100),
+    citationDoi,
     tags: tags(raw.tags ?? signal.tags, sourceType),
     taskRefs,
     methodRefs,
-    githubStars: estimateStars(score, sourceType),
-    starsPerHour,
     paperUrl: url,
     arxivUrl: sourceType === "arxiv" || url.includes("arxiv.org") ? url : undefined,
-    pdfUrl: realPdfUrl(signal, raw, urls),
-    repoUrl: undefined,
+    pdfUrl,
+    repoUrl,
     isPublished: true
   }
 }
@@ -316,6 +411,73 @@ function realPdfUrl(signal: SourceSignal, raw: SourceSignal, urls: string[]) {
   return normalizePdfUrl(explicitPdfUrl) ?? urls.map((url) => paperPdfUrlFromSource(url)).find(Boolean)
 }
 
+function realRepoUrl(signal: SourceSignal, raw: SourceSignal, urls: string[]) {
+  const metadata = isRecord(signal.metadata) ? signal.metadata : {}
+  const rawMetadata = isRecord(raw.metadata) ? raw.metadata : {}
+
+  const candidates = uniqueStrings([
+    text((signal as Record<string, unknown>).repoUrl),
+    text((signal as Record<string, unknown>).repo_url),
+    text((signal as Record<string, unknown>).githubUrl),
+    text((signal as Record<string, unknown>).github_url),
+    text((signal as Record<string, unknown>).codeUrl),
+    text((signal as Record<string, unknown>).code_url),
+    text((raw as Record<string, unknown>).repoUrl),
+    text((raw as Record<string, unknown>).repo_url),
+    text((raw as Record<string, unknown>).githubUrl),
+    text((raw as Record<string, unknown>).github_url),
+    text((raw as Record<string, unknown>).codeUrl),
+    text((raw as Record<string, unknown>).code_url),
+    text(metadata.repository_url),
+    text(metadata.repo_url),
+    text(metadata.github_url),
+    text(metadata.code_url),
+    text(metadata.repository),
+    text(rawMetadata.repository_url),
+    text(rawMetadata.repo_url),
+    text(rawMetadata.github_url),
+    text(rawMetadata.code_url),
+    text(rawMetadata.repository),
+    ...urls
+  ].filter(Boolean))
+
+  return candidates.map((value) => normalizeGithubRepoUrl(value)).find(Boolean)
+}
+
+function realCitationDoi(signal: SourceSignal, raw: SourceSignal, urls: string[]) {
+  const metadata = isRecord(signal.metadata) ? signal.metadata : {}
+  const rawMetadata = isRecord(raw.metadata) ? raw.metadata : {}
+
+  const explicitDoi = uniqueStrings([
+    text((signal as Record<string, unknown>).doi),
+    text((signal as Record<string, unknown>).citationDoi),
+    text((signal as Record<string, unknown>).citation_doi),
+    text((raw as Record<string, unknown>).doi),
+    text((raw as Record<string, unknown>).citationDoi),
+    text((raw as Record<string, unknown>).citation_doi),
+    text(metadata.doi),
+    text(metadata.citationDoi),
+    text(metadata.citation_doi),
+    text(rawMetadata.doi),
+    text(rawMetadata.citationDoi),
+    text(rawMetadata.citation_doi)
+  ].filter(Boolean)).map((value) => normalizeDoi(value)).find(Boolean)
+
+  if (explicitDoi) {
+    return explicitDoi
+  }
+
+  const arxivId = uniqueStrings([
+    text(metadata.arxiv_id),
+    text(rawMetadata.arxiv_id),
+    text((signal as Record<string, unknown>).arxivId),
+    text((raw as Record<string, unknown>).arxivId),
+    ...urls.map((url) => arxivIdFromUrl(url) ?? "")
+  ].filter(Boolean)).map((value) => value.replace(/v\d+$/i, "")).find(Boolean)
+
+  return arxivId ? `10.48550/arxiv.${arxivId}` : undefined
+}
+
 function candidateUrls(signal: SourceSignal, raw: SourceSignal, lineage: Record<string, unknown>) {
   return uniqueStrings([
     text(signal.url),
@@ -337,10 +499,6 @@ function urlArray(value: unknown) {
   return Array.isArray(value) ? value.map((item) => text(item)).filter(Boolean) : []
 }
 
-function number(value: unknown) {
-  return typeof value === "number" && Number.isFinite(value) ? value : null
-}
-
 function authors(value: unknown, sourceName: string) {
   if (Array.isArray(value)) {
     const names = value.map((item) => text(item)).filter(Boolean)
@@ -351,12 +509,30 @@ function authors(value: unknown, sourceName: string) {
   return [sourceName || "NewsRoom Extracted Source"]
 }
 
+function cachedAuthors(value: unknown) {
+  if (Array.isArray(value)) {
+    const names = value.map((item) => text(item)).filter(Boolean)
+    if (names.length) {
+      return names
+    }
+  }
+  return ["arXiv"]
+}
+
 function tags(value: unknown, sourceType: string) {
   const values = Array.isArray(value)
     ? value.map((item) => text(item)).filter(Boolean)
     : text(value).split(/\s+/).filter(Boolean)
 
   return uniqueStrings([sourceType, ...values].filter(Boolean)).slice(0, 4)
+}
+
+function cachedTags(value: unknown) {
+  const values = Array.isArray(value)
+    ? value.map((item) => text(item)).filter(Boolean)
+    : text(value).split(/\s+/).filter(Boolean)
+
+  return uniqueStrings(values).slice(0, 4)
 }
 
 function sourceLabel(sourceName: string, sourceType: string) {
@@ -369,11 +545,6 @@ function sourceLabel(sourceName: string, sourceType: string) {
   return sourceType || "Extracted"
 }
 
-function estimateStars(score: number, sourceType: string) {
-  const base = sourceType === "arxiv" ? 420 : 260
-  return Math.max(20, Math.round(base + score * 1800))
-}
-
 function stripHtml(value: string) {
   return value.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim()
 }
@@ -384,6 +555,10 @@ function slugify(value: string) {
 
 function uniqueStrings(values: string[]) {
   return values.filter((value, index, all) => all.indexOf(value) === index)
+}
+
+function numberValue(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined
 }
 
 function arraySignals(value: unknown): SourceSignal[] {

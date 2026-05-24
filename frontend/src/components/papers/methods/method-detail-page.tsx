@@ -7,21 +7,23 @@ import { RelatedTasksPanel } from "@/components/papers/methods/related-tasks-pan
 import { PapersHero } from "@/components/papers/papers-hero"
 import { PapersMicrobar } from "@/components/papers/papers-microbar"
 import { InlineNotice } from "@/components/papers/shared/inline-notice"
+import { PaperDetailDrawer } from "@/components/papers/shared/paper-detail-drawer"
 import { PaperStream } from "@/components/papers/shared/paper-stream"
 import { papersCopy, t } from "@/lib/papers/copy"
 import { methodDescription, methodName } from "@/lib/papers/format"
-import { getBenchmarksForMethod, getPapersForMethod } from "@/lib/papers/mock-data"
+import { getBenchmarksForMethod, getPapersForMethod } from "@/lib/papers/catalog"
 import { papersRoutes } from "@/lib/papers/routes"
 import type { Benchmark, BenchmarkRef, Locale, Paper, PaperMethod } from "@/lib/papers/types"
 
 export function MethodDetailPage({ method, locale, papers }: { method: PaperMethod; locale: Locale; papers?: Paper[] }) {
   const [notice, setNotice] = useState<string | null>(null)
+  const [selectedPaper, setSelectedPaper] = useState<Paper | null>(null)
   const methodPapers = papers?.filter((paper) => paper.methodRefs.some((methodRef) => methodRef.slug === method.slug)) ?? getPapersForMethod(method.slug)
   const methodBenchmarks = getBenchmarksForMethod(method.slug)
   const commonBenchmarks = method.commonBenchmarks?.length ? method.commonBenchmarks : methodBenchmarks
 
   function previewPaper(paper: Paper) {
-    setNotice(`${paper.title}: ${t(papersCopy.paperPreview, locale)}`)
+    setSelectedPaper(paper)
   }
 
   function previewBenchmark(benchmark: BenchmarkRef | Benchmark) {
@@ -56,6 +58,16 @@ export function MethodDetailPage({ method, locale, papers }: { method: PaperMeth
           <CommonBenchmarksPanel benchmarks={commonBenchmarks} locale={locale} onSelect={previewBenchmark} />
         </aside>
       </div>
+      <PaperDetailDrawer
+        paper={selectedPaper}
+        locale={locale}
+        open={Boolean(selectedPaper)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSelectedPaper(null)
+          }
+        }}
+      />
     </div>
   )
 }
