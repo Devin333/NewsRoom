@@ -4,6 +4,11 @@ const routes = [
   "/",
   "/news",
   "/news/news-1-a",
+  "/papers",
+  "/papers/tasks",
+  "/papers/tasks/agents",
+  "/papers/methods",
+  "/papers/methods/react",
   "/topics",
   "/topics/agent-runtime-observability",
   "/tech",
@@ -21,6 +26,7 @@ const routes = [
   "/studio/memory",
   "/studio/quality",
   "/studio/artifacts",
+  "/admin",
 ]
 
 for (const route of routes) {

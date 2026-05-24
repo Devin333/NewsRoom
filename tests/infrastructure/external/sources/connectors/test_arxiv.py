@@ -20,6 +20,7 @@ ARXIV_FIXTURE = """<?xml version="1.0" encoding="UTF-8"?>
     <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
     <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
     <link href="http://arxiv.org/abs/2605.00001v1" rel="alternate" type="text/html"/>
+    <link href="http://arxiv.org/pdf/2605.00001v1" rel="related" type="application/pdf" title="pdf"/>
     <arxiv:comment>12 pages</arxiv:comment>
     <arxiv:doi>10.0000/example</arxiv:doi>
   </entry>
@@ -41,6 +42,7 @@ def test_arxiv_connector_parses_atom_entries() -> None:
     assert item.authors == ["Alice Example", "Bob Example"]
     assert item.tags == ["cs.AI", "cs.LG"]
     assert item.metadata["arxiv_id"] == "2605.00001v1"
+    assert item.metadata["pdf_url"] == "https://arxiv.org/pdf/2605.00001v1.pdf"
     assert item.metadata["primary_category"] == "cs.AI"
     assert item.metadata["doi"] == "10.0000/example"
     assert item.metadata["comment"] == "12 pages"

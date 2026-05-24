@@ -7,12 +7,17 @@ import { useUiStore } from "@/stores/ui-store"
 
 function ThemeBridge() {
   const theme = useUiStore((state) => state.theme)
+  const locale = useUiStore((state) => state.locale)
 
   React.useEffect(() => {
     const root = document.documentElement
     root.classList.toggle("dark", theme === "dark")
     root.dataset.theme = theme
   }, [theme])
+
+  React.useEffect(() => {
+    document.documentElement.lang = locale === "zh" ? "zh-CN" : "en"
+  }, [locale])
 
   return null
 }

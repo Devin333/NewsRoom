@@ -194,6 +194,7 @@ def _raw_item_from_entry(
     arxiv_id = _child_text(entry, "id") or url
     categories = _category_terms(entry)
     item_hash = sha256(f"{source.source_id}|{arxiv_id}".encode("utf-8")).hexdigest()
+    arxiv_item_id = arxiv_id.rsplit("/", 1)[-1]
     return RawSourceItem(
         source_item_id=f"raw_{item_hash[:16]}",
         source_id=source.source_id,
@@ -211,7 +212,8 @@ def _raw_item_from_entry(
         metadata=source_item_metadata(
             source,
             extra={
-                "arxiv_id": arxiv_id.rsplit("/", 1)[-1],
+                "arxiv_id": arxiv_item_id,
+                "pdf_url": _entry_pdf_url(entry, arxiv_item_id),
                 "primary_category": _primary_category(entry),
                 "doi": _arxiv_child_text(entry, "doi"),
                 "journal_ref": _arxiv_child_text(entry, "journal_ref"),
@@ -236,6 +238,21 @@ def _entry_url(entry: ElementTree.Element) -> str | None:
         if href and child.attrib.get("rel", "alternate") == "alternate":
             return href.strip()
     return _child_text(entry, "id")
+
+
+def _entry_pdf_url(entry: ElementTree.Element, arxiv_id: str) -> str:
+    for child in _children(entry, "link"):
+        href = child.attrib.get("href")
+        title = child.attrib.get("title", "")
+        content_type = child.attrib.get("type", "")
+        if href and (title.casefold() == "pdf" or content_type == "application/pdf"):
+            return _normalize_arxiv_pdf_url(href.strip())
+    return f"https://arxiv.org/pdf/{arxiv_id}.pdf"
+
+
+def _normalize_arxiv_pdf_url(url: str) -> str:
+    normalized = url.replace("http://", "https://", 1)
+    return normalized if normalized.endswith(".pdf") else f"{normalized}.pdf"
 
 
 def _category_terms(entry: ElementTree.Element) -> list[str]:
