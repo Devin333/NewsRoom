@@ -5,7 +5,47 @@ import { PaperPdfViewer } from "@/components/papers/shared/paper-pdf-viewer"
 const pdfjsMock = vi.hoisted(() => {
   const GlobalWorkerOptions = { workerSrc: "" }
   const renderCancel = vi.fn()
-  const render = vi.fn(() => ({ promise: Promise.resolve(), cancel: renderCancel }))
+  const thumbnailRenderStarts: number[] = []
+  const thumbnailRenderCancels: number[] = []
+  const pendingThumbnailRenders: Array<{ pageNumber: number; resolve: () => void }> = []
+  let activeThumbnailRenderCount = 0
+  let holdThumbnailRenders = false
+  let maxActiveThumbnailRenderCount = 0
+  const finishThumbnailRender = (done: { current: boolean }, resolve: () => void) => {
+    if (done.current) {
+      return
+    }
+    done.current = true
+    activeThumbnailRenderCount = Math.max(0, activeThumbnailRenderCount - 1)
+    resolve()
+  }
+  const render = vi.fn((pageNumber: number, params: { viewport: { width: number } }) => {
+    const isThumbnail = params.viewport.width <= 120
+    if (!isThumbnail) {
+      return { promise: Promise.resolve(), cancel: renderCancel }
+    }
+
+    thumbnailRenderStarts.push(pageNumber)
+    activeThumbnailRenderCount += 1
+    maxActiveThumbnailRenderCount = Math.max(maxActiveThumbnailRenderCount, activeThumbnailRenderCount)
+    const done = { current: false }
+    let resolvePromise: () => void = () => undefined
+    const promise = new Promise<void>((resolve) => {
+      resolvePromise = resolve
+    })
+    const resolveThumbnail = () => finishThumbnailRender(done, resolvePromise)
+    if (holdThumbnailRenders) {
+      pendingThumbnailRenders.push({ pageNumber, resolve: resolveThumbnail })
+    } else {
+      queueMicrotask(resolveThumbnail)
+    }
+    const cancel = vi.fn(() => {
+      renderCancel()
+      thumbnailRenderCancels.push(pageNumber)
+      resolveThumbnail()
+    })
+    return { promise, cancel }
+  })
   const getViewport = vi.fn(({ scale }: { scale: number }) => ({ width: 600 * scale, height: 800 * scale }))
   const getTextContent = vi.fn(async (pageNumber: number) => ({
     items: (pageTexts.get(pageNumber) ?? "").split(/\s+/).filter(Boolean).map((str) => ({ str }))
@@ -25,12 +65,12 @@ const pdfjsMock = vi.hoisted(() => {
       return getTextContent(pageNumber)
     }),
     getViewport,
-    render
+    render: vi.fn((params: { viewport: { width: number } }) => render(pageNumber, params))
   })
   const page = {
     getTextContent: vi.fn(async () => getTextContent(1)),
     getViewport,
-    render
+    render: vi.fn((params: { viewport: { width: number } }) => render(1, params))
   }
   const pdf = {
     numPages: 3,
@@ -51,14 +91,23 @@ const pdfjsMock = vi.hoisted(() => {
     loadingDestroy,
     page,
     pdf,
+    pendingThumbnailRenders,
     render,
     renderCancel,
+    thumbnailRenderCancels,
+    thumbnailRenderStarts,
     resolveDocument: () => resolveDocument(pdf),
     rejectDocument: () => rejectDocument(new Error("pdf failed")),
     reset: () => {
       GlobalWorkerOptions.workerSrc = ""
       renderCancel.mockReset()
       render.mockClear()
+      thumbnailRenderStarts.length = 0
+      thumbnailRenderCancels.length = 0
+      pendingThumbnailRenders.length = 0
+      activeThumbnailRenderCount = 0
+      holdThumbnailRenders = false
+      maxActiveThumbnailRenderCount = 0
       getViewport.mockClear()
       getTextContent.mockClear()
       page.getTextContent.mockClear()
@@ -87,6 +136,13 @@ const pdfjsMock = vi.hoisted(() => {
     failTextContent: () => {
       textContentFailure = true
     },
+    getMaxActiveThumbnailRenderCount: () => maxActiveThumbnailRenderCount,
+    holdThumbnailRenders: () => {
+      holdThumbnailRenders = true
+    },
+    releaseNextThumbnailRender: () => {
+      pendingThumbnailRenders.shift()?.resolve()
+    },
     setPageText: (pageNumber: number, text: string) => {
       pageTexts.set(pageNumber, text)
     }
@@ -114,6 +170,74 @@ function renderViewer(props: Partial<Parameters<typeof PaperPdfViewer>[0]> = {})
   )
 }
 
+function installIntersectionObserverMock() {
+  const previousIntersectionObserver = globalThis.IntersectionObserver
+  const instances: MockIntersectionObserver[] = []
+
+  class MockIntersectionObserver {
+    readonly callback: IntersectionObserverCallback
+    readonly options?: IntersectionObserverInit
+    readonly targets = new Set<Element>()
+
+    constructor(callback: IntersectionObserverCallback, options?: IntersectionObserverInit) {
+      this.callback = callback
+      this.options = options
+      instances.push(this)
+    }
+
+    disconnect = vi.fn(() => {
+      this.targets.clear()
+    })
+
+    observe = vi.fn((target: Element) => {
+      this.targets.add(target)
+    })
+
+    takeRecords = vi.fn(() => [])
+
+    unobserve = vi.fn((target: Element) => {
+      this.targets.delete(target)
+    })
+  }
+
+  Object.defineProperty(globalThis, "IntersectionObserver", {
+    configurable: true,
+    value: MockIntersectionObserver,
+    writable: true
+  })
+
+  return {
+    getInstances: () => instances,
+    restore: () => {
+      if (previousIntersectionObserver) {
+        Object.defineProperty(globalThis, "IntersectionObserver", {
+          configurable: true,
+          value: previousIntersectionObserver,
+          writable: true
+        })
+      } else {
+        Reflect.deleteProperty(globalThis, "IntersectionObserver")
+      }
+    },
+    trigger: (target: Element, isIntersecting: boolean) => {
+      for (const instance of instances) {
+        if (!instance.targets.has(target)) {
+          continue
+        }
+        instance.callback(
+          [
+            {
+              isIntersecting,
+              target
+            } as IntersectionObserverEntry
+          ],
+          instance as unknown as IntersectionObserver
+        )
+      }
+    }
+  }
+}
+
 async function resolveViewerDocument() {
   await waitFor(() => expect(pdfjsMock.getDocument).toHaveBeenCalled())
   await act(async () => {
@@ -132,6 +256,7 @@ describe("PaperPdfViewer", () => {
 
   afterEach(() => {
     vi.restoreAllMocks()
+    Reflect.deleteProperty(globalThis, "IntersectionObserver")
   })
 
   it("shows loading state and loads only through the PDF proxy", async () => {
@@ -217,6 +342,77 @@ describe("PaperPdfViewer", () => {
     expect(await screen.findByText("Page 3 of 3")).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Go to page 3" })).toHaveAttribute("aria-current", "page")
     expect(await screen.findByLabelText("Reader Paper PDF thumbnail page 3")).toBeInTheDocument()
+  })
+
+  it("lazily renders thumbnails when they enter the observer margin", async () => {
+    const intersection = installIntersectionObserverMock()
+    renderViewer()
+    await resolveViewerDocument()
+
+    await waitFor(() => expect(intersection.getInstances()).toHaveLength(3))
+    expect(intersection.getInstances()[0]?.options?.rootMargin).toBe("240px")
+    expect(pdfjsMock.thumbnailRenderStarts).toEqual([])
+
+    const firstPage = screen.getByRole("button", { name: "Go to page 1" })
+    act(() => {
+      intersection.trigger(firstPage, true)
+    })
+
+    await waitFor(() => expect(pdfjsMock.thumbnailRenderStarts).toContain(1))
+    expect(await screen.findByLabelText("Reader Paper PDF thumbnail page 1")).toBeInTheDocument()
+    intersection.restore()
+  })
+
+  it("limits concurrent thumbnail renders to two jobs", async () => {
+    const intersection = installIntersectionObserverMock()
+    pdfjsMock.holdThumbnailRenders()
+    renderViewer()
+    await resolveViewerDocument()
+    await waitFor(() => expect(intersection.getInstances()).toHaveLength(3))
+
+    for (const button of screen.getAllByRole("button", { name: /Go to page/ })) {
+      act(() => {
+        intersection.trigger(button, true)
+      })
+    }
+
+    await waitFor(() => expect(pdfjsMock.thumbnailRenderStarts).toEqual([1, 2]))
+    expect(pdfjsMock.getMaxActiveThumbnailRenderCount()).toBe(2)
+
+    act(() => {
+      pdfjsMock.releaseNextThumbnailRender()
+    })
+
+    await waitFor(() => expect(pdfjsMock.thumbnailRenderStarts).toEqual([1, 2, 3]))
+    expect(pdfjsMock.getMaxActiveThumbnailRenderCount()).toBe(2)
+    intersection.restore()
+  })
+
+  it("cancels active and pending thumbnail renders when thumbnails leave view", async () => {
+    const intersection = installIntersectionObserverMock()
+    pdfjsMock.holdThumbnailRenders()
+    renderViewer()
+    await resolveViewerDocument()
+    await waitFor(() => expect(intersection.getInstances()).toHaveLength(3))
+
+    const buttons = screen.getAllByRole("button", { name: /Go to page/ })
+    for (const button of buttons) {
+      act(() => {
+        intersection.trigger(button, true)
+      })
+    }
+    await waitFor(() => expect(pdfjsMock.thumbnailRenderStarts).toEqual([1, 2]))
+
+    act(() => {
+      intersection.trigger(buttons[0]!, false)
+      intersection.trigger(buttons[2]!, false)
+      pdfjsMock.releaseNextThumbnailRender()
+      pdfjsMock.releaseNextThumbnailRender()
+    })
+
+    await waitFor(() => expect(pdfjsMock.thumbnailRenderCancels).toContain(1))
+    expect(pdfjsMock.thumbnailRenderStarts).not.toContain(3)
+    intersection.restore()
   })
 
   it("keeps the main viewer usable when a thumbnail render fails", async () => {

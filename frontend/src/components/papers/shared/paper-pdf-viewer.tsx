@@ -62,7 +62,24 @@ const MIN_SCALE = 0.75
 const MAX_SCALE = 2
 const SCALE_STEP = 0.25
 const THUMBNAIL_WIDTH = 88
+const THUMBNAIL_INTERSECTION_ROOT_MARGIN = "240px"
+const MAX_THUMBNAIL_RENDER_CONCURRENCY = 2
 const MIN_SEARCH_LENGTH = 2
+
+type ThumbnailRenderJob = {
+  activeCancel?: () => void
+  cancelled: boolean
+  run: (context: ThumbnailRenderJobContext) => Promise<void>
+  started: boolean
+}
+
+type ThumbnailRenderJobContext = {
+  isCancelled: () => boolean
+  setActiveCancel: (cancel: () => void) => void
+}
+
+const thumbnailRenderQueue: ThumbnailRenderJob[] = []
+let activeThumbnailRenderJobs = 0
 
 export function PaperPdfViewer({
   pdfUrl,
@@ -640,20 +657,61 @@ function PdfThumbnailButton({
   pdfDocument: PdfDocument
   title: string
 }) {
+  const buttonRef = useRef<HTMLButtonElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const renderTaskRef = useRef<PdfRenderTask | null>(null)
+  const cancelQueuedRenderRef = useRef<(() => void) | null>(null)
+  const renderedForRef = useRef<{ pageNumber: number; pdfDocument: PdfDocument } | null>(null)
+  const [isNearViewport, setIsNearViewport] = useState(false)
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading")
 
   useEffect(() => {
-    let cancelled = false
+    const target = buttonRef.current
+    if (!target || typeof IntersectionObserver === "undefined") {
+      setIsNearViewport(true)
+      return
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries.some((entry) => entry.isIntersecting)
+        setIsNearViewport(visible)
+      },
+      { rootMargin: THUMBNAIL_INTERSECTION_ROOT_MARGIN }
+    )
+    observer.observe(target)
+
+    return () => {
+      observer.disconnect()
+    }
+  }, [])
+
+  useEffect(() => {
+    cancelQueuedRenderRef.current?.()
+    cancelQueuedRenderRef.current = null
     renderTaskRef.current?.cancel()
     renderTaskRef.current = null
-    setStatus("loading")
 
-    async function renderThumbnail() {
+    const alreadyRendered =
+      renderedForRef.current?.pdfDocument === pdfDocument && renderedForRef.current.pageNumber === pageNumber
+
+    if (!isNearViewport) {
+      if (!alreadyRendered) {
+        setStatus("loading")
+      }
+      return
+    }
+
+    if (alreadyRendered) {
+      setStatus("ready")
+      return
+    }
+
+    setStatus("loading")
+    const cancelQueuedRender = scheduleThumbnailRender(async ({ isCancelled, setActiveCancel }) => {
       try {
         const page = await pdfDocument.getPage(pageNumber)
-        if (cancelled) {
+        if (isCancelled()) {
           return
         }
         const viewport = page.getViewport({ scale: 1 })
@@ -661,7 +719,7 @@ function PdfThumbnailButton({
         const thumbnailViewport = page.getViewport({ scale: thumbnailScale })
         const canvas = canvasRef.current
         const context = canvas?.getContext("2d")
-        if (!canvas || !context) {
+        if (!canvas || !context || isCancelled()) {
           throw new Error("thumbnail canvas context unavailable")
         }
         canvas.width = Math.floor(thumbnailViewport.width)
@@ -670,28 +728,36 @@ function PdfThumbnailButton({
         canvas.style.height = `${Math.floor(thumbnailViewport.height)}px`
         const renderTask = page.render({ canvasContext: context, viewport: thumbnailViewport })
         renderTaskRef.current = renderTask
+        setActiveCancel(() => {
+          renderTask.cancel()
+          renderTaskRef.current = null
+        })
         await renderTask.promise
-        if (!cancelled) {
+        if (!isCancelled()) {
+          renderedForRef.current = { pageNumber, pdfDocument }
           setStatus("ready")
         }
       } catch {
-        if (!cancelled) {
+        if (!isCancelled()) {
           setStatus("error")
         }
+      } finally {
+        renderTaskRef.current = null
       }
-    }
-
-    void renderThumbnail()
+    })
+    cancelQueuedRenderRef.current = cancelQueuedRender
 
     return () => {
-      cancelled = true
+      cancelQueuedRenderRef.current?.()
+      cancelQueuedRenderRef.current = null
       renderTaskRef.current?.cancel()
       renderTaskRef.current = null
     }
-  }, [pageNumber, pdfDocument])
+  }, [isNearViewport, pageNumber, pdfDocument])
 
   return (
     <button
+      ref={buttonRef}
       type="button"
       aria-current={active ? "page" : undefined}
       aria-label={`Go to page ${pageNumber}`}
@@ -727,6 +793,53 @@ function PdfThumbnailButton({
 
 function pdfProxyUrl(pdfUrl: string) {
   return `/api/papers/pdf?url=${encodeURIComponent(pdfUrl)}`
+}
+
+function scheduleThumbnailRender(run: ThumbnailRenderJob["run"]) {
+  const job: ThumbnailRenderJob = {
+    cancelled: false,
+    run,
+    started: false,
+  }
+  thumbnailRenderQueue.push(job)
+  drainThumbnailRenderQueue()
+
+  return () => {
+    job.cancelled = true
+    job.activeCancel?.()
+    if (!job.started) {
+      const index = thumbnailRenderQueue.indexOf(job)
+      if (index >= 0) {
+        thumbnailRenderQueue.splice(index, 1)
+      }
+    }
+    drainThumbnailRenderQueue()
+  }
+}
+
+function drainThumbnailRenderQueue() {
+  while (activeThumbnailRenderJobs < MAX_THUMBNAIL_RENDER_CONCURRENCY && thumbnailRenderQueue.length > 0) {
+    const job = thumbnailRenderQueue.shift()
+    if (!job || job.cancelled) {
+      continue
+    }
+    job.started = true
+    activeThumbnailRenderJobs += 1
+    void (async () => {
+      try {
+        await job.run({
+          isCancelled: () => job.cancelled,
+          setActiveCancel: (cancel) => {
+            job.activeCancel = cancel
+          },
+        })
+      } finally {
+        activeThumbnailRenderJobs = Math.max(0, activeThumbnailRenderJobs - 1)
+        job.activeCancel = undefined
+        drainThumbnailRenderQueue()
+      }
+    })()
+  }
 }
 
 function buildSearchResults(pageTexts: PdfPageText[], query: string): PdfSearchResult[] {
