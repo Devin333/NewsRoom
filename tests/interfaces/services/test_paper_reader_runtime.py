@@ -113,3 +113,48 @@ def test_reader_payload_returns_sections_and_quality(tmp_path) -> None:
     assert reader["paper"]["id"] == "reader-paper"
     assert reader["sections"][0]["sectionType"] == "abstract"
     assert reader["quality"]["pdfAvailable"] is True
+
+
+def test_reader_agent_answers_with_citations_cache_and_redaction(tmp_path) -> None:
+    cache_path = tmp_path / "papers.json"
+    cache_path.write_text(
+        json.dumps(
+            {
+                "papers": [
+                    {
+                        "id": "ask-paper",
+                        "slug": "ask-paper",
+                        "title": "Harness Paper",
+                        "abstractSnippet": "The paper introduces a trial harness for autonomous research agents.",
+                        "authors": ["A"],
+                        "publishedAt": "2026-05-24T00:00:00Z",
+                        "paperUrl": "https://arxiv.org/abs/2605.00004",
+                        "evidenceRefs": [
+                            {
+                                "evidenceId": "ev-1",
+                                "sourceId": "arxiv",
+                                "summary": "Harness evidence.",
+                                "raw_payload": {"token": "secret"},
+                            }
+                        ],
+                        "isPublished": True,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    service = PapersApplicationService(papers_data_path=cache_path)
+
+    first = service.ask_paper("ask-paper", question="What harness does it introduce?", locale="en").to_dict()
+    second = service.ask_paper("ask-paper", question="What harness does it introduce?", locale="en").to_dict()
+
+    assert "trial harness" in first["answer"]
+    assert first["citations"][0]["sourceType"] == "section"
+    assert any(citation["sourceType"] == "evidence" for citation in first["citations"])
+    assert first["cached"] is False
+    assert second["cached"] is True
+    serialized = json.dumps(first)
+    assert "raw_payload" not in serialized
+    assert "token" not in serialized
+    assert "secret" not in serialized

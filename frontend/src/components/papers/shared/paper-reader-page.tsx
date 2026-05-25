@@ -1,4 +1,6 @@
-import type { ReactNode } from "react"
+"use client"
+
+import { FormEvent, useEffect, useState, type ReactNode } from "react"
 import { ArrowLeft, Brain, ExternalLink, FileText, Github, MessageSquare, Quote, Sparkles, ThermometerSun } from "lucide-react"
 import Link from "next/link"
 import { Badge } from "@/components/ui/badge"
@@ -12,7 +14,8 @@ import {
   paperTitle,
   taskName
 } from "@/lib/papers/format"
-import type { Locale, Paper, PaperAISummary, PaperReaderPayload } from "@/lib/papers/types"
+import { askPaper } from "@/lib/papers/api"
+import type { Locale, Paper, PaperAISummary, PaperReaderAnswer, PaperReaderPayload } from "@/lib/papers/types"
 
 export function PaperReaderPage({ reader, locale }: { reader: PaperReaderPayload; locale: Locale }) {
   const paper = reader.paper
@@ -131,20 +134,99 @@ function ReaderPanel({ summary, paper, locale }: { summary: PaperAISummary | nul
           AI summary is not cached yet. Open the preview drawer to generate it on demand.
         </p>
       )}
-      <div className="mt-5 rounded-md border border-dashed border-[#d8dfd8] p-4 text-sm text-[#334155]/58 dark:border-border dark:text-muted-foreground">
-        <div className="flex items-center gap-2 font-semibold text-[#334155] dark:text-foreground">
-          <MessageSquare className="size-4" />
-          Ask this paper
-        </div>
-        <p className="mt-2">
-          {locale === "zh" ? "Reader Agent Q&A is not enabled in this phase." : "Reader Agent Q&A is not enabled in this phase."}
-        </p>
-      </div>
+      <AskPaperPanel paperId={paper.id} locale={locale} />
       <div className="mt-5 grid grid-cols-3 gap-2 text-sm">
         <Metric icon={<ThermometerSun className="size-4" />} value={paper.newsroomHeatScore?.toFixed(1) ?? "N/A"} label="Heat" />
         <Metric icon={<Github className="size-4" />} value={paper.githubStars ? formatCompactNumber(paper.githubStars) : "N/A"} label="Stars" />
         <Metric icon={<Quote className="size-4" />} value={paper.citationCount ? formatCompactNumber(paper.citationCount) : "N/A"} label="Cites" />
       </div>
+    </section>
+  )
+}
+
+function AskPaperPanel({ paperId, locale }: { paperId: string; locale: Locale }) {
+  const [question, setQuestion] = useState("")
+  const [answer, setAnswer] = useState<PaperReaderAnswer | null>(null)
+  const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle")
+  const [error, setError] = useState<string | null>(null)
+  const [isHydrated, setIsHydrated] = useState(false)
+
+  useEffect(() => {
+    setIsHydrated(true)
+  }, [])
+
+  async function submitQuestion(event?: FormEvent<HTMLFormElement>) {
+    event?.preventDefault()
+    const trimmed = question.trim()
+    if (!trimmed) {
+      setStatus("error")
+      setError(locale === "zh" ? "请输入一个问题。" : "Enter a question first.")
+      return
+    }
+    setStatus("loading")
+    setError(null)
+    try {
+      const result = await askPaper(paperId, trimmed, locale)
+      setAnswer(result)
+      setStatus("success")
+    } catch (requestError) {
+      setStatus("error")
+      setError(requestError instanceof Error ? requestError.message : "Reader Agent request failed")
+    }
+  }
+
+  return (
+    <section className="mt-5 rounded-md border border-[#d8dfd8] p-4 text-sm dark:border-border">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 font-semibold text-[#334155] dark:text-foreground">
+          <MessageSquare className="size-4" />
+          Ask this paper
+        </div>
+        {answer?.cached ? (
+          <Badge variant="muted" className="rounded-sm">
+            cached
+          </Badge>
+        ) : null}
+      </div>
+      <form className="mt-3 space-y-3" onSubmit={submitQuestion}>
+        <textarea
+          value={question}
+          onChange={(event) => setQuestion(event.target.value)}
+          placeholder={locale === "zh" ? "问一个关于这篇论文的问题..." : "Ask a question about this paper..."}
+          className="min-h-20 w-full resize-y rounded-md border border-[#d8dfd8] bg-white px-3 py-2 text-sm outline-none transition focus:border-[#315d8a] focus:ring-2 focus:ring-[#315d8a]/15 dark:border-border dark:bg-background"
+          maxLength={1000}
+        />
+        <Button type="button" className="w-full rounded-md" disabled={!isHydrated || status === "loading"} onClick={() => submitQuestion()}>
+          {!isHydrated ? "Loading..." : status === "loading" ? "Asking..." : "Ask"}
+        </Button>
+      </form>
+      {status === "error" ? (
+        <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-amber-900">
+          {error ?? "Reader Agent is unavailable."}
+        </div>
+      ) : null}
+      {answer ? (
+        <div className="mt-4 space-y-3 border-t border-[#d8dfd8] pt-4 dark:border-border">
+          <p className="text-sm leading-6 text-[#334155] dark:text-foreground">{answer.answer}</p>
+          <div className="flex items-center justify-between text-xs text-[#334155]/58 dark:text-muted-foreground">
+            <span>Confidence {Math.round(answer.confidence * 100)}%</span>
+            <span>{new Date(answer.generatedAt).toLocaleString(locale === "zh" ? "zh-CN" : "en-US")}</span>
+          </div>
+          {answer.citations.length ? (
+            <div className="space-y-2">
+              <h3 className="text-xs font-semibold uppercase tracking-[0.16em] text-[#334155]/52">Citations</h3>
+              {answer.citations.map((citation) => (
+                <div key={citation.id} className="rounded-md bg-[#eef4ef] px-3 py-2 text-xs leading-5 text-[#334155]/70 dark:bg-secondary dark:text-muted-foreground">
+                  <div className="font-semibold text-[#334155] dark:text-foreground">
+                    {citation.label} / {citation.sourceType}
+                  </div>
+                  {citation.textExcerpt ? <p className="mt-1">{citation.textExcerpt}</p> : null}
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </section>
   )
 }

@@ -361,3 +361,39 @@ def test_papers_summary_api_returns_non_blocking_error(monkeypatch, tmp_path) ->
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "paper_summary_unavailable"
     assert response.json()["error"]["retryable"] is True
+
+
+def test_papers_ask_api_returns_grounded_answer_and_not_found(monkeypatch, tmp_path) -> None:
+    cache_path = tmp_path / "papers.json"
+    cache_path.write_text(
+        json.dumps(
+            {
+                "papers": [
+                    {
+                        "id": "paper-ask",
+                        "slug": "paper-ask",
+                        "title": "Askable Paper",
+                        "abstractSnippet": "This paper studies agent memory and tool use for research workflows.",
+                        "authors": ["A"],
+                        "publishedAt": "2026-05-24T00:00:00Z",
+                        "paperUrl": "https://arxiv.org/abs/2605.00008",
+                        "isPublished": True,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("NEWSROOM_PAPERS_DATA_PATH", str(cache_path))
+
+    client = TestClient(create_app(audit_emitter_factory=None))
+    response = client.post("/api/v1/papers/paper-ask/ask", json={"question": "What does it study?", "locale": "en"})
+    missing = client.post("/api/v1/papers/missing/ask", json={"question": "What does it study?", "locale": "en"})
+
+    assert response.status_code == 200
+    answer = response.json()["data"]["answer"]
+    assert "agent memory" in answer["answer"]
+    assert answer["citations"][0]["sectionId"] == "paper-ask:abstract"
+    assert answer["confidence"] > 0
+    assert missing.status_code == 404
+    assert missing.json()["error"]["code"] == "paper_not_found"

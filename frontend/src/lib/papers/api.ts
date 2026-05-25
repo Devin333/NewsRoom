@@ -1,5 +1,14 @@
 import { apiGet, apiPost } from "@/lib/api/client"
-import type { Locale, Paper, PaperAISummary, PaperListResult, PaperPeriod, PaperReaderPayload, PaperSort } from "@/lib/papers/types"
+import type {
+  Locale,
+  Paper,
+  PaperAISummary,
+  PaperListResult,
+  PaperPeriod,
+  PaperReaderAnswer,
+  PaperReaderPayload,
+  PaperSort
+} from "@/lib/papers/types"
 
 type ApiEnvelope<T> = {
   success: boolean
@@ -73,6 +82,20 @@ export async function fetchPaperReaderPayload(
     init
   )
   return unwrapEnvelope(envelope).reader
+}
+
+export async function askPaper(
+  paperId: string,
+  question: string,
+  locale: Locale,
+  init?: RequestInit
+): Promise<PaperReaderAnswer> {
+  const envelope = await apiPost<ApiEnvelope<{ answer: PaperReaderAnswer }>>(
+    `/api/papers/${encodeURIComponent(paperId)}/ask`,
+    { question, locale },
+    init
+  )
+  return unwrapEnvelope(envelope).answer
 }
 
 function unwrapEnvelope<T>(envelope: ApiEnvelope<T>): T {

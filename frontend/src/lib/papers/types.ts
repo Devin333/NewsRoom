@@ -176,6 +176,28 @@ export interface PaperReaderPayload {
   quality: PaperReaderQuality
 }
 
+export interface PaperReaderCitation {
+  id: string
+  label: string
+  sourceType: "section" | "evidence" | "source" | string
+  sectionId?: string
+  evidenceId?: string
+  sourceId?: string
+  textExcerpt?: string
+  url?: string
+}
+
+export interface PaperReaderAnswer {
+  paperId: string
+  locale: Locale
+  question: string
+  answer: string
+  citations: PaperReaderCitation[]
+  confidence: number
+  generatedAt: string
+  cached: boolean
+}
+
 export interface PaperTask {
   id: string
   slug: string

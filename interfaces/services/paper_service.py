@@ -19,6 +19,13 @@ from framework.llm import (
     build_openai_compatible_client_from_config,
 )
 from business.boards.paper_radar.public_mapper import map_paper_radar_artifact_to_public_papers, sanitize_public_payload
+from business.boards.paper_radar.reader_agent import (
+    PaperReaderAnswer,
+    answer_cache_key,
+    answer_from_payload,
+    answer_reader_question,
+    copy_answer,
+)
 from business.boards.paper_radar.reader_payload_builder import PaperReaderPayload, build_reader_payload
 from interfaces.services.paper_artifact_repository import PaperArtifactRepository
 
@@ -271,6 +278,7 @@ class PapersApplicationService:
         self.artifact_repository = artifact_repository or PaperArtifactRepository()
         self.llm_client_factory = llm_client_factory or _default_llm_client_factory
         self.clock = clock or (lambda: datetime.now(timezone.utc))
+        self._reader_answer_cache: dict[str, dict[str, Any]] = {}
 
     def list_papers(self, query: PaperListQuery) -> PaperListResult:
         cache = self._load_cache()
@@ -324,6 +332,24 @@ class PapersApplicationService:
         if summary is None and paper.aiSummary is not None and paper.aiSummary.locale == locale:
             summary = paper.aiSummary
         return build_reader_payload(paper, ai_summary=summary)
+
+    def ask_paper(self, paper_id: str, *, question: str, locale: PaperLocale) -> PaperReaderAnswer:
+        normalized_question = " ".join(question.strip().split())
+        if not normalized_question:
+            raise ValueError("question is required")
+        reader = self.get_reader_payload(paper_id, locale=locale)
+        cache_key = answer_cache_key(reader, question=normalized_question, locale=locale)
+        cached = answer_from_payload(self._reader_answer_cache.get(cache_key, {}))
+        if cached is not None:
+            return copy_answer(cached, cached=True)
+        answer = answer_reader_question(
+            reader,
+            question=normalized_question,
+            locale=locale,
+            generated_at=self.clock(),
+        )
+        self._reader_answer_cache[cache_key] = answer.to_dict() | {"cached": False}
+        return answer
 
     def _published_papers(self, cache: Mapping[str, Any]) -> list[PublicPaper]:
         raw_papers = cache.get("papers")

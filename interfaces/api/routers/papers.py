@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pydantic import BaseModel, Field
 from fastapi import APIRouter, Query
 
 from interfaces.api.deps import ApiRouteHelpers, ApiServices
@@ -14,6 +15,11 @@ from interfaces.services.paper_service import (
     PaperSort,
     PaperSummaryUnavailableError,
 )
+
+
+class PaperAskRequest(BaseModel):
+    question: str = Field(..., min_length=1, max_length=1000)
+    locale: str = Field("en", pattern="^(zh|en)$")
 
 
 def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
@@ -155,6 +161,46 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
                 user_action_required=True,
             )
         return helpers.success({"reader": reader.to_dict()})
+
+    @router.post("/api/v1/papers/{paper_id}/ask")
+    def ask_paper(paper_id: str, request: PaperAskRequest):
+        try:
+            answer = services.papers_service_factory().ask_paper(
+                paper_id,
+                question=request.question,
+                locale=request.locale,  # type: ignore[arg-type]
+            )
+        except ValueError as exc:
+            return helpers.error(
+                status_code=400,
+                code="paper_question_invalid",
+                message="paper question is invalid",
+                details={"reason": str(exc)},
+                user_action_required=True,
+            )
+        except PaperCacheNotFoundError:
+            return helpers.error(
+                status_code=404,
+                code="papers_cache_not_found",
+                message="papers data cache was not found",
+                user_action_required=True,
+            )
+        except PaperCacheInvalidError as exc:
+            return helpers.error(
+                status_code=500,
+                code="papers_cache_invalid",
+                message="papers data cache could not be read",
+                details={"reason": str(exc)},
+                retryable=True,
+            )
+        except PaperNotFoundError:
+            return helpers.error(
+                status_code=404,
+                code="paper_not_found",
+                message="paper was not found",
+                user_action_required=True,
+            )
+        return helpers.success({"answer": answer.to_dict()})
 
     return router
 
