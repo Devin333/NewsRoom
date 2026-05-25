@@ -1,6 +1,11 @@
 import path from "node:path"
 import react from "@vitejs/plugin-react"
 import { defineConfig } from "vitest/config"
+import { loadRootEnv } from "./root-env"
+
+const configDir = process.cwd()
+
+loadRootEnv(configDir)
 
 export default defineConfig({
   plugins: [react()],
@@ -13,7 +18,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      "@": path.resolve(__dirname, "./src"),
+      "@": path.resolve(configDir, "./src"),
     },
   },
 })

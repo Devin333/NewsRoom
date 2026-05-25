@@ -1,7 +1,9 @@
-"use client";
+"use client"
 
-import type { SourceFilters, SourceHealthStatus } from "@/types/source";
-import type { SourceType } from "@/types/common";
+import { Search } from "lucide-react"
+import { StudioToolbar } from "@/features/studio/shared/components/studio-dashboard"
+import type { SourceType } from "@/types/common"
+import type { SourceFilters, SourceHealthStatus } from "@/types/source"
 
 const sourceTypes: SourceType[] = [
   "official_blog",
@@ -19,62 +21,52 @@ const sourceTypes: SourceType[] = [
   "web_page",
   "manual",
   "media",
-  "custom",
-];
-const healthStatuses: SourceHealthStatus[] = ["healthy", "degraded", "failed", "down", "cooling_down", "disabled"];
-const sourceLabels: Record<SourceType, string> = {
-  official_blog: "官方博客",
-  rss: "RSS",
-  atom: "Atom",
-  github: "GitHub",
-  hackernews: "Hacker News",
-  reddit: "Reddit",
-  arxiv: "arXiv",
-  lobsters: "Lobsters",
-  stackoverflow: "StackOverflow",
-  devto: "dev.to",
-  medium: "Medium",
-  html: "HTML",
-  web_page: "网页",
-  manual: "手动",
-  media: "媒体",
-  custom: "自定义",
-};
-const healthLabels: Record<SourceHealthStatus, string> = {
-  healthy: "健康",
-  degraded: "降级",
-  failed: "失败",
-  down: "不可用",
-  cooling_down: "冷却中",
-  disabled: "已停用",
-};
+  "custom"
+]
+
+const healthStatuses: SourceHealthStatus[] = ["healthy", "degraded", "failed", "down", "cooling_down", "disabled"]
 
 export function SourceToolbar({ filters, onChange }: { filters: SourceFilters; onChange: (filters: SourceFilters) => void }) {
   return (
-    <section className="grid gap-3 rounded-lg border border-border bg-card p-4 lg:grid-cols-[1fr_12rem_12rem_12rem]">
-      <input
-        className="h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground"
-        placeholder="搜索数据源"
-        value={filters.keyword}
-        onChange={(event) => onChange({ ...filters, keyword: event.target.value })}
-      />
-      <select className="h-10 rounded-md border border-input bg-background px-3 text-sm" value={filters.type} onChange={(event) => onChange({ ...filters, type: event.target.value as SourceFilters["type"] })}>
-        <option value="all">全部类型</option>
-        {sourceTypes.map((type) => (
-          <option key={type} value={type}>{sourceLabels[type]}</option>
+    <StudioToolbar>
+      <div className="grid gap-3 lg:grid-cols-[minmax(260px,1fr)_12rem_12rem_12rem]">
+        <label className="relative">
+          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <input
+            className="h-10 w-full rounded-md border border-input bg-background px-3 pl-9 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            placeholder="Search sources"
+            value={filters.keyword}
+            onChange={(event) => onChange({ ...filters, keyword: event.target.value })}
+          />
+        </label>
+        <Select label="Type" value={filters.type} options={["all", ...sourceTypes]} onChange={(value) => onChange({ ...filters, type: value as SourceFilters["type"] })} />
+        <Select label="Health" value={filters.healthStatus} options={["all", ...healthStatuses]} onChange={(value) => onChange({ ...filters, healthStatus: value as SourceFilters["healthStatus"] })} />
+        <Select label="Enabled" value={filters.enabled} options={["all", "enabled", "disabled"]} onChange={(value) => onChange({ ...filters, enabled: value as SourceFilters["enabled"] })} />
+      </div>
+    </StudioToolbar>
+  )
+}
+
+function Select({ label, value, options, onChange }: { label: string; value: string; options: string[]; onChange: (value: string) => void }) {
+  return (
+    <label className="grid gap-1 text-xs text-muted-foreground">
+      {label}
+      <select className="h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground" value={value} onChange={(event) => onChange(event.target.value)}>
+        {options.map((option) => (
+          <option key={option} value={option}>
+            {formatOption(option)}
+          </option>
         ))}
       </select>
-      <select className="h-10 rounded-md border border-input bg-background px-3 text-sm" value={filters.healthStatus} onChange={(event) => onChange({ ...filters, healthStatus: event.target.value as SourceFilters["healthStatus"] })}>
-        <option value="all">全部健康状态</option>
-        {healthStatuses.map((status) => (
-          <option key={status} value={status}>{healthLabels[status]}</option>
-        ))}
-      </select>
-      <select className="h-10 rounded-md border border-input bg-background px-3 text-sm" value={filters.enabled} onChange={(event) => onChange({ ...filters, enabled: event.target.value as SourceFilters["enabled"] })}>
-        <option value="all">全部状态</option>
-        <option value="enabled">已启用</option>
-        <option value="disabled">已停用</option>
-      </select>
-    </section>
-  );
+    </label>
+  )
+}
+
+function formatOption(value: string): string {
+  if (value === "all") return "All"
+  return value
+    .split("_")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ")
 }

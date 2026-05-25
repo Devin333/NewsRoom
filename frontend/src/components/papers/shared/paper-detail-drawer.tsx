@@ -1,9 +1,10 @@
 "use client"
 
 import { useEffect, useState, type ReactNode } from "react"
-import { ExternalLink, FileText, Github, Globe2, Quote, X } from "lucide-react"
+import { Brain, ExternalLink, FileText, Github, Globe2, Quote, RefreshCw, ThermometerSun, X } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { fetchPaperDetail, requestPaperSummary } from "@/lib/papers/api"
 import { papersCopy, t } from "@/lib/papers/copy"
 import {
   formatCompactNumber,
@@ -14,33 +15,101 @@ import {
   paperTitle,
   taskName
 } from "@/lib/papers/format"
-import type { Locale, Paper } from "@/lib/papers/types"
+import type { Locale, Paper, PaperAISummary } from "@/lib/papers/types"
 import { cn } from "@/lib/utils"
 
 const CLOSE_ANIMATION_MS = 420
 
 export function PaperDetailDrawer({
   paper,
+  paperId,
   locale,
   open,
   onOpenChange
 }: {
   paper: Paper | null
+  paperId?: string | null
   locale: Locale
   open: boolean
   onOpenChange: (open: boolean) => void
 }) {
   const [activePaper, setActivePaper] = useState<Paper | null>(paper)
+  const [detailError, setDetailError] = useState<string | null>(null)
+  const [summary, setSummary] = useState<PaperAISummary | null>(paper?.aiSummary ?? null)
+  const [summaryStatus, setSummaryStatus] = useState<"idle" | "loading" | "success" | "error">("idle")
+  const [summaryError, setSummaryError] = useState<string | null>(null)
+  const [summaryRetry, setSummaryRetry] = useState(0)
 
   useEffect(() => {
     if (paper) {
       setActivePaper(paper)
+      setSummary(paper.aiSummary ?? null)
+      setDetailError(null)
+      return
+    }
+    if (open && paperId) {
       return
     }
 
     const timeout = window.setTimeout(() => setActivePaper(null), CLOSE_ANIMATION_MS)
     return () => window.clearTimeout(timeout)
-  }, [paper])
+  }, [open, paper, paperId])
+
+  useEffect(() => {
+    if (!open || !paperId) {
+      return
+    }
+    if (paper && (paper.id === paperId || paper.slug === paperId)) {
+      return
+    }
+
+    let cancelled = false
+    setDetailError(null)
+    fetchPaperDetail(paperId)
+      .then((detail) => {
+        if (!cancelled) {
+          setActivePaper(detail)
+          setSummary(detail.aiSummary ?? null)
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setDetailError(error instanceof Error ? error.message : "Paper detail request failed")
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [open, paper, paperId])
+
+  useEffect(() => {
+    if (!open || !activePaper) {
+      return
+    }
+    if (summary && summary.locale === locale && summary.paperId === activePaper.id) {
+      setSummaryStatus("success")
+      return
+    }
+    let cancelled = false
+    setSummaryStatus("loading")
+    setSummaryError(null)
+    requestPaperSummary(activePaper.id, locale)
+      .then((result) => {
+        if (!cancelled) {
+          setSummary(result)
+          setSummaryStatus("success")
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setSummaryStatus("error")
+          setSummaryError(error instanceof Error ? error.message : "AI summary request failed")
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [activePaper, locale, open, summary, summaryRetry])
 
   useEffect(() => {
     if (!open) {
@@ -61,16 +130,19 @@ export function PaperDetailDrawer({
     return null
   }
 
-  const isVisible = open && Boolean(paper)
+  const isVisible = open && Boolean(activePaper)
   const title = paperTitle(activePaper, locale)
   const pdfHref = paperPdfUrl(activePaper)
   const arxivHref = activePaper.arxivUrl
   const repoHref = validGithubRepoUrl(activePaper.repoUrl)
   const projectHref =
-    activePaper.paperUrl && activePaper.paperUrl !== pdfHref && activePaper.paperUrl !== arxivHref
+    activePaper.projectUrl ??
+    (activePaper.paperUrl && activePaper.paperUrl !== pdfHref && activePaper.paperUrl !== arxivHref
       ? activePaper.paperUrl
-      : undefined
+      : undefined)
   const citationCount = activePaper.citationCount
+  const implementations = activePaper.implementations ?? []
+  const benchmarks = activePaper.benchmarks ?? []
 
   return (
     <>
@@ -107,6 +179,11 @@ export function PaperDetailDrawer({
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-7 py-7">
+          {detailError ? (
+            <div className="mb-5 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">
+              {detailError}
+            </div>
+          ) : null}
           <header>
             <h2 className="max-w-4xl text-3xl font-black leading-tight text-[#334155] dark:text-foreground sm:text-4xl">
               {title}
@@ -167,16 +244,93 @@ export function PaperDetailDrawer({
             </div>
           </header>
 
-          <DetailSection title="TL;DR" meta="AI-generated">
-            <div className="border-l-4 border-[#315d8a] bg-white px-5 py-4 text-base leading-7 text-[#334155] shadow-sm dark:bg-card dark:text-foreground">
-              {buildTldr(activePaper, locale)}
-            </div>
+          <DetailSection title="NewsRoom AI" meta={summary?.cached ? "cached" : "on demand"}>
+            <AISummaryBlock
+              status={summaryStatus}
+              summary={summary}
+              error={summaryError}
+              locale={locale}
+              onRetry={() => {
+                setSummary(null)
+                setSummaryStatus("idle")
+                setSummaryRetry((count) => count + 1)
+              }}
+            />
           </DetailSection>
 
           <DetailSection title="Abstract">
             <p className="max-w-5xl text-base leading-8 text-[#334155]/74 dark:text-muted-foreground">
               {paperSnippet(activePaper, locale)}
             </p>
+          </DetailSection>
+
+          <DetailSection title="Implementations" meta={`${implementations.length} repositories`}>
+            {implementations.length ? (
+              <div className="divide-y divide-[#d8dfd8] rounded-md border border-[#d8dfd8] bg-white dark:divide-border dark:border-border dark:bg-card">
+                {implementations.map((implementation) => (
+                  <a
+                    key={implementation.id}
+                    href={implementation.repoUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center justify-between gap-4 px-4 py-3 text-sm text-[#334155] transition-colors hover:bg-[#eef4ef] dark:text-foreground dark:hover:bg-secondary"
+                  >
+                    <span className="inline-flex min-w-0 items-center gap-2">
+                      <Github className="size-4 shrink-0" />
+                      <span className="truncate font-semibold">{implementation.name}</span>
+                    </span>
+                    {typeof implementation.githubStars === "number" ? (
+                      <span className="shrink-0 text-[#334155]/58">{formatCompactNumber(implementation.githubStars)} stars</span>
+                    ) : null}
+                  </a>
+                ))}
+              </div>
+            ) : (
+              <EmptyState text={locale === "zh" ? "暂无可验证实现仓库。" : "No verified implementation repository yet."} />
+            )}
+          </DetailSection>
+
+          <DetailSection title="Benchmarks / SOTA" meta={`${benchmarks.length} results`}>
+            {benchmarks.length ? (
+              <div className="divide-y divide-[#d8dfd8] rounded-md border border-[#d8dfd8] bg-white dark:divide-border dark:border-border dark:bg-card">
+                {benchmarks.map((benchmark) => (
+                  <a
+                    key={benchmark.id}
+                    href={benchmark.url ?? "#"}
+                    target={benchmark.url ? "_blank" : undefined}
+                    rel={benchmark.url ? "noreferrer" : undefined}
+                    className="flex items-center justify-between gap-4 px-4 py-3 text-sm text-[#334155] dark:text-foreground"
+                  >
+                    <span className="font-semibold">{benchmark.name}</span>
+                    <span className="text-[#334155]/58">
+                      {[benchmark.metric, benchmark.value].filter(Boolean).join(" · ") || "reported"}
+                    </span>
+                  </a>
+                ))}
+              </div>
+            ) : (
+              <EmptyState text={locale === "zh" ? "暂无真实 Benchmark / SOTA 字段。" : "No real Benchmark / SOTA fields are recorded yet."} />
+            )}
+          </DetailSection>
+
+          <DetailSection title="Heat" meta="real signals only">
+            <div className="flex flex-wrap gap-3 text-sm text-[#334155]/72 dark:text-muted-foreground">
+              <MetricPill
+                icon={<ThermometerSun className="size-4" />}
+                label="NewsRoom heat"
+                value={typeof activePaper.newsroomHeatScore === "number" ? activePaper.newsroomHeatScore.toFixed(1) : "N/A"}
+              />
+              <MetricPill
+                icon={<Github className="size-4" />}
+                label="GitHub stars"
+                value={typeof activePaper.githubStars === "number" ? formatCompactNumber(activePaper.githubStars) : "N/A"}
+              />
+              <MetricPill
+                icon={<Quote className="size-4" />}
+                label="OpenAlex citations"
+                value={typeof citationCount === "number" ? formatCompactNumber(citationCount) : "N/A"}
+              />
+            </div>
           </DetailSection>
 
           <DetailSection title="Tasks" meta={`${activePaper.taskRefs.length} tagged`}>
@@ -198,15 +352,73 @@ export function PaperDetailDrawer({
               ))}
             </div>
           </DetailSection>
-
-          <DetailSection title="Results" meta="0 benchmarks">
-            <p className="text-sm text-[#334155]/58 dark:text-muted-foreground">
-              No benchmark results recorded yet.
-            </p>
-          </DetailSection>
         </div>
       </aside>
     </>
+  )
+}
+
+function AISummaryBlock({
+  status,
+  summary,
+  error,
+  locale,
+  onRetry
+}: {
+  status: "idle" | "loading" | "success" | "error"
+  summary: PaperAISummary | null
+  error: string | null
+  locale: Locale
+  onRetry: () => void
+}) {
+  if (summary) {
+    return (
+      <div className="space-y-4 border-l-4 border-[#315d8a] bg-white px-5 py-4 text-base leading-7 text-[#334155] shadow-sm dark:bg-card dark:text-foreground">
+        <p>{summary.summary}</p>
+        {summary.keyInsights.length ? (
+          <ul className="list-disc space-y-1 pl-5 text-sm leading-6 text-[#334155]/72 dark:text-muted-foreground">
+            {summary.keyInsights.map((insight) => (
+              <li key={insight}>{insight}</li>
+            ))}
+          </ul>
+        ) : null}
+      </div>
+    )
+  }
+  if (status === "loading" || status === "idle") {
+    return (
+      <div className="flex items-center gap-3 rounded-md border border-[#d8dfd8] bg-white px-4 py-4 text-sm text-[#334155]/68 dark:border-border dark:bg-card dark:text-muted-foreground">
+        <Brain className="size-4 animate-pulse" />
+        {locale === "zh" ? "正在生成 NewsRoom AI 解读..." : "Generating NewsRoom AI summary..."}
+      </div>
+    )
+  }
+  return (
+    <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-900">
+      <p>{error ?? (locale === "zh" ? "AI 解读暂不可用。" : "AI summary is unavailable.")}</p>
+      <button type="button" className="mt-3 inline-flex items-center gap-2 font-semibold" onClick={onRetry}>
+        <RefreshCw className="size-4" />
+        {locale === "zh" ? "重试" : "Retry"}
+      </button>
+    </div>
+  )
+}
+
+function EmptyState({ text }: { text: string }) {
+  return (
+    <div className="rounded-md border border-dashed border-[#d8dfd8] px-4 py-5 text-sm text-[#334155]/58 dark:border-border dark:text-muted-foreground">
+      {text}
+    </div>
+  )
+}
+
+function MetricPill({ icon, label, value }: { icon: ReactNode; label: string; value: string }) {
+  return (
+    <span className="inline-flex items-center gap-2 rounded-full border border-[#d8dfd8] bg-white px-3 py-1.5 dark:border-border dark:bg-card">
+      {icon}
+      <span className="font-semibold text-[#334155] dark:text-foreground">{value}</span>
+      <span>{label}</span>
+    </span>
   )
 }
 
@@ -228,11 +440,6 @@ function DetailSection({
       {children}
     </section>
   )
-}
-
-function buildTldr(paper: Paper, locale: Locale) {
-  const snippet = paperSnippet(paper, locale).split(/[.!?]/).find(Boolean)?.trim()
-  return snippet ? `${snippet}.` : `${paperTitle(paper, locale)} summarizes a verified research item in the Papers stream.`
 }
 
 function arxivIdFromUrl(value: string) {

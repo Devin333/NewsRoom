@@ -27,6 +27,10 @@ describe("PaperRow", () => {
 
     expect(screen.getAllByRole("link", { name: /open paper pdf/i })[0]).toHaveAttribute("href", "https://arxiv.org/pdf/2405.15793.pdf")
     expect(screen.getAllByRole("link", { name: /open github repository/i })[0]).toHaveAttribute("href", "https://github.com/SWE-agent/SWE-agent")
+    expect(screen.getAllByText("24 citations")).toHaveLength(1)
+    expect(screen.getByText("CITATIONS")).toBeInTheDocument()
+    expect(screen.getAllByText("19.3K stars")).toHaveLength(1)
+    expect(screen.getByText("STARS")).toBeInTheDocument()
     expect(screen.queryByText(/stars \/ hr/i)).not.toBeInTheDocument()
     expect(screen.queryByText(/github momentum/i)).not.toBeInTheDocument()
   })

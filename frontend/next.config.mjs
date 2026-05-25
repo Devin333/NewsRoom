@@ -1,3 +1,11 @@
+import { fileURLToPath } from "node:url"
+import path from "node:path"
+import { loadRootEnv } from "./root-env.mjs"
+
+const configDir = path.dirname(fileURLToPath(import.meta.url))
+
+loadRootEnv(configDir)
+
 const apiBaseUrl =
   process.env.NEWSROOM_API_BASE_URL ??
   process.env.NEXT_PUBLIC_NEWSROOM_API_BASE_URL ??

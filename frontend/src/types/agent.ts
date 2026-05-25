@@ -7,8 +7,9 @@ export type AgentRunStatus =
   | "cancelled"
   | "partially_failed"
   | "blocked"
+  | "waiting_for_human"
 
-export type StepStatus = "pending" | "running" | "success" | "failed" | "skipped"
+export type StepStatus = "pending" | "running" | "success" | "failed" | "skipped" | "blocked" | "cancelled"
 
 export type AgentStepType =
   | "collect"
@@ -24,7 +25,9 @@ export type AgentStepType =
 export type AgentRun = {
   id: string
   agentName: string
+  workflowId?: string
   workflowName?: string
+  workflowVersion?: string
   profile: string
   status: AgentRunStatus
   startedAt: string
@@ -34,8 +37,14 @@ export type AgentRun = {
   inputCount: number
   outputCount: number
   artifactCount: number
+  artifactDir?: string
   qualityScore?: number
   errorCount: number
+  eventCount?: number
+  reportId?: string
+  manifestPath?: string
+  dataState?: "ready" | "partial" | "fallback"
+  notices?: string[]
   stepCount?: number
   steps?: Array<{
     id: string
@@ -58,6 +67,7 @@ export type AgentStep = {
   outputPreview?: unknown
   errorMessage?: string
   artifactIds?: string[]
+  raw?: unknown
 }
 
 export type WorkflowDagNode = {
@@ -85,6 +95,8 @@ export type RunLogItem = {
   level: "debug" | "info" | "warning" | "error"
   message: string
   stepId?: string
+  eventType?: string
+  payload?: unknown
 }
 
 export type ToolCall = {
@@ -151,6 +163,7 @@ export type RunErrorTrace = {
 export type AgentRunFilters = {
   keyword?: string
   agentName?: string[]
+  workflowId?: string[]
   status?: AgentRunStatus[]
   profile?: string[]
   dateRange?: "today" | "week" | "month" | "custom"
@@ -185,4 +198,54 @@ export type AgentRunDetail = {
   errors: RunErrorTrace[]
   dataState: "ready" | "partial" | "fallback"
   notices: string[]
+}
+
+export type StudioDataState = "ready" | "partial" | "fallback"
+
+export type StudioRunListItem = AgentRun & {
+  workflowId?: string
+  workflowVersion?: string
+  reportId?: string
+  artifactDir?: string
+  eventCount?: number
+  manifestPath?: string
+  dataState: StudioDataState
+  notices: string[]
+}
+
+export type StudioRunOperations = {
+  canCancel: boolean
+  canRerunFromStep: boolean
+  canSkipStep: boolean
+  canResolveBlocked: boolean
+}
+
+export type StudioRunDetail = AgentRunDetail & {
+  run: StudioRunListItem
+  events: RunLogItem[]
+  diagnostics?: Record<string, unknown>
+  health?: Record<string, unknown>
+  operations: StudioRunOperations
+  dataState: StudioDataState
+  notices: string[]
+}
+
+export type RunOperationType = "cancel" | "rerun-from-step" | "skip-step" | "mark-blocked-resolved"
+
+export type RunOperationPayload = {
+  reason: string
+  stepId?: string
+  actorId?: string
+  resolvedBy?: string
+  resolutionType?: string
+  metadata?: Record<string, unknown>
+}
+
+export type RunOperationResult = {
+  ok: boolean
+  operationType?: string
+  status?: string
+  message?: string
+  requestId?: string
+  raw?: unknown
 }

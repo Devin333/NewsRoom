@@ -15,6 +15,7 @@ export type PaperModuleRoute =
   | `/papers/methods/${string}`
 
 export type PaperSort = "trending" | "newest" | "most_cited"
+export type PaperPeriod = "daily" | "weekly" | "monthly" | "all"
 
 export interface TaskRef {
   id: string
@@ -36,6 +37,35 @@ export interface BenchmarkRef {
   name: string
 }
 
+export interface PaperImplementation {
+  id: string
+  name: string
+  repoUrl: string
+  provider?: string
+  githubStars?: number
+}
+
+export interface PaperBenchmarkResult {
+  id: string
+  name: string
+  metric?: string
+  value?: string | number
+  taskSlug?: string
+  url?: string
+}
+
+export interface PaperAISummary {
+  paperId: string
+  locale: Locale
+  modelRoute: string
+  abstractHash: string
+  summary: string
+  keyInsights: string[]
+  limitations: string[]
+  generatedAt: string
+  cached: boolean
+}
+
 export interface Paper {
   id: string
   slug: string
@@ -55,11 +85,34 @@ export interface Paper {
   methodRefs: MethodRef[]
   githubStars?: number
   starsPerHour?: number
+  newsroomHeatScore?: number
+  arxivId?: string
   paperUrl?: string
   arxivUrl?: string
   pdfUrl?: string
   repoUrl?: string
+  projectUrl?: string
+  implementations?: PaperImplementation[]
+  benchmarks?: PaperBenchmarkResult[]
+  aiSummary?: PaperAISummary
   isPublished: boolean
+}
+
+export interface PaperListResult {
+  source?: string
+  query: string
+  period: PaperPeriod
+  sort: PaperSort
+  task?: string
+  method?: string
+  collectedAt?: string
+  paper_count: number
+  total_count: number
+  source_count: number
+  limit: number
+  offset: number
+  has_next?: boolean
+  papers: Paper[]
 }
 
 export interface PaperTask {

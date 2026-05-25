@@ -32,6 +32,7 @@ def test_finalize_report_rewrite_required_with_edited_draft_publishes_edit() -> 
                 rewrite_instructions=["remove unsupported wording"],
             ),
             edited_report_draft=edited_draft,
+            social_evidence=True,
         )
     )
 
@@ -57,6 +58,7 @@ def test_finalize_report_rewrite_required_with_invalid_source_blocks() -> None:
                 rewrite_instructions=["remove unsupported wording"],
             ),
             edited_report_draft=edited_draft,
+            social_evidence=True,
         )
     )
 
@@ -77,7 +79,8 @@ def test_finalize_report_rewrite_required_without_edit_blocks() -> None:
                 "rewrite_required",
                 reasons=["unsupported claim remains"],
                 rewrite_instructions=["remove unsupported claim"],
-            )
+            ),
+            social_evidence=True,
         )
     )
 
@@ -96,7 +99,8 @@ def test_finalize_report_human_review_required_creates_request_and_blocked_marke
             editor_review=_editor_review(
                 "human_review",
                 reasons=["borderline high-risk topic"],
-            )
+            ),
+            social_evidence=True,
         )
     )
 
@@ -123,7 +127,8 @@ def test_finalize_report_block_decision_creates_blocked_report() -> None:
                 quality_score=0.2,
                 reasons=["source boundary violated"],
                 rewrite_instructions=[],
-            )
+            ),
+            social_evidence=True,
         )
     )
 
@@ -133,6 +138,26 @@ def test_finalize_report_block_decision_creates_blocked_report() -> None:
     assert output["quality_gate_metrics"]["blocked"] is True
     assert output["blocked_report"].reasons == ["source boundary violated"]
     assert output["blocked_report"].metadata["quality_score"] == 0.2
+
+
+def test_finalize_report_non_social_media_bypasses_blocking_decision() -> None:
+    output = finalize_report(
+        _buffer(
+            editor_review=_EditorReviewObject(
+                decision=EditorDecision.BLOCKED,
+                quality_score=0.2,
+                reasons=["source boundary violated"],
+                rewrite_instructions=[],
+            )
+        )
+    )
+
+    assert output["quality_result"]["passed"] is True
+    assert output["quality_result"]["decision"] == "pass"
+    assert output["quality_result"]["route"] == "final"
+    assert output["final_report"].title == "Daily Intelligence: AI policy"
+    assert output["quality_events"][0].event_type == "finalize_report_bypassed_non_social_media"
+    assert "blocked_report" not in output
 
 
 @dataclass(frozen=True)
@@ -147,6 +172,7 @@ def _buffer(
     *,
     editor_review: dict | _EditorReviewObject,
     edited_report_draft: dict | None = None,
+    social_evidence: bool = False,
 ) -> DataBuffer:
     values = {
         "request": {"topic": "AI policy", "run_id": "run-1"},
@@ -171,7 +197,7 @@ def _buffer(
         },
         "citation_check_result": {"passed": True, "unsupported_claims": []},
         "support_matrix": {"coverage_ratio": 1.0, "unsupported_sections": []},
-        "evidence_bundle": _evidence_bundle(),
+        "evidence_bundle": _evidence_bundle(social=social_evidence),
         "verified_findings": _verified_findings(),
         "quality_events": [],
     }
@@ -233,7 +259,7 @@ def _report_draft(*, title: str = "Daily Intelligence: AI policy") -> dict:
     }
 
 
-def _evidence_bundle() -> EvidenceBundle:
+def _evidence_bundle(*, social: bool = False) -> EvidenceBundle:
     return EvidenceBundle(
         bundle_id="bundle-1",
         topic="AI policy",
@@ -246,6 +272,7 @@ def _evidence_bundle() -> EvidenceBundle:
                 confidence=1.0,
                 source_id="source-1",
                 source_item_id="item-1",
+                metadata={"source_type": "reddit"} if social else {"source_type": "rss"},
             )
         ],
     )

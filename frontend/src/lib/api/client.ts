@@ -1,5 +1,7 @@
-import type { ApiError } from "@/types/common"
+import { normalizeApiError } from "@/lib/api/api-errors"
+import { unwrapApiEnvelope } from "@/lib/api/api-envelope"
 import { resolveMockPath } from "@/lib/api/mock-data"
+import type { StudioApiError } from "@/types/studio"
 
 const DEFAULT_API_BASE_URL = ""
 
@@ -8,14 +10,18 @@ export class ApiRequestError extends Error {
   detail?: unknown
   requestId?: string
   status?: number
+  retryable?: boolean
+  userActionRequired?: boolean
 
-  constructor(error: ApiError, status?: number) {
+  constructor(error: StudioApiError, status?: number) {
     super(error.message)
     this.name = "ApiRequestError"
     this.code = error.code
-    this.detail = error.detail
+    this.detail = error.details
     this.requestId = error.requestId
-    this.status = status
+    this.status = status ?? error.status
+    this.retryable = error.retryable
+    this.userActionRequired = error.userActionRequired
   }
 }
 
@@ -61,14 +67,26 @@ async function parseJsonResponse<T>(response: Response): Promise<T> {
   const payload = contentType.includes("application/json") ? await response.json() : await response.text()
 
   if (!response.ok) {
-    const message =
-      typeof payload === "object" && payload && "message" in payload ? String(payload.message) : response.statusText
+    const normalized = normalizeApiError(payload)
     throw new ApiRequestError(
       {
-        code: `http_${response.status}`,
-        message,
-        detail: payload,
-        requestId
+        ...normalized,
+        code: normalized.code === "request_failed" ? `http_${response.status}` : normalized.code,
+        message: normalized.message || response.statusText || "API request failed",
+        details: normalized.details ?? payload,
+        requestId: normalized.requestId ?? requestId,
+        status: response.status
+      },
+      response.status
+    )
+  }
+
+  const result = unwrapApiEnvelope<unknown>(payload)
+  if (!result.ok) {
+    throw new ApiRequestError(
+      {
+        ...result.error,
+        requestId: result.error.requestId ?? requestId
       },
       response.status
     )

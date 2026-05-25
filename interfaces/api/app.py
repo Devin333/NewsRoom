@@ -37,12 +37,14 @@ from interfaces.api.responses import (
 )
 from interfaces.api.errors import http_error_code
 from interfaces.events import AuditEmitter, audit_emitter_from_env
+from interfaces.env import load_root_env
 from interfaces.services.approval_service import ApprovalApplicationService
 from interfaces.services.diagnose_service import DiagnosticApplicationService
 from interfaces.services.entity_service import EntityTrackingApplicationService
 from interfaces.services.board_service import BoardApplicationService
 from interfaces.services.memory_service import MemoryApplicationService
 from interfaces.services.mcp_service import MCPApplicationService
+from interfaces.services.paper_service import PapersApplicationService
 from interfaces.services.report_service import ReportApplicationService
 from interfaces.services.run_inspection_service import RunInspectionService
 from interfaces.services.run_operation_service import RunOperationApplicationService
@@ -71,6 +73,7 @@ StorageServiceFactory = Callable[[], StorageApplicationService]
 ScheduleServiceFactory = Callable[[], ScheduleApplicationService]
 ApprovalServiceFactory = Callable[[], ApprovalApplicationService]
 BoardServiceFactory = Callable[[], BoardApplicationService]
+PapersServiceFactory = Callable[[], PapersApplicationService]
 AuditEmitterFactory = Callable[[], AuditEmitter | None]
 ApiKeyRoles = Mapping[str, str | Sequence[str]]
 
@@ -93,6 +96,7 @@ def create_app(
     schedule_service_factory: ScheduleServiceFactory = ScheduleApplicationService,
     approval_service_factory: ApprovalServiceFactory = ApprovalApplicationService,
     board_service_factory: BoardServiceFactory = BoardApplicationService,
+    papers_service_factory: PapersServiceFactory = PapersApplicationService,
     audit_emitter_factory: AuditEmitterFactory | None = audit_emitter_from_env,
     api_token: str | None = None,
     api_keys: ApiKeyRoles | None = None,
@@ -242,6 +246,7 @@ def create_app(
         schedule_service_factory=schedule_service_factory,
         approval_service_factory=approval_service_factory,
         board_service_factory=board_service_factory,
+        papers_service_factory=papers_service_factory,
     )
     helpers = ApiRouteHelpers(
         success=_success,
@@ -834,6 +839,8 @@ def _mapping_or_empty(value: Any) -> Mapping[str, Any]:
 def _http_error_code(status_code: int) -> str:
     return http_error_code(status_code)
 
+
+load_root_env()
 
 app = create_app(
     api_token=os.environ.get("NEWS_API_TOKEN"),

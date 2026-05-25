@@ -13,6 +13,7 @@ from interfaces.services.diagnose_service import DiagnosticApplicationService
 from interfaces.services.entity_service import EntityTrackingApplicationService
 from interfaces.services.memory_service import MemoryApplicationService
 from interfaces.services.mcp_service import MCPApplicationService
+from interfaces.services.paper_service import PapersApplicationService
 from interfaces.services.report_service import ReportApplicationService
 from interfaces.services.run_inspection_service import RunInspectionService
 from interfaces.services.run_operation_service import RunOperationApplicationService
@@ -40,6 +41,7 @@ StorageServiceFactory = Callable[[], StorageApplicationService]
 ScheduleServiceFactory = Callable[[], ScheduleApplicationService]
 ApprovalServiceFactory = Callable[[], ApprovalApplicationService]
 BoardServiceFactory = Callable[[], BoardApplicationService]
+PapersServiceFactory = Callable[[], PapersApplicationService]
 
 
 @dataclass(frozen=True)
@@ -60,6 +62,7 @@ class ApiServices:
     schedule_service_factory: ScheduleServiceFactory
     approval_service_factory: ApprovalServiceFactory
     board_service_factory: BoardServiceFactory
+    papers_service_factory: PapersServiceFactory
 
 
 @dataclass(frozen=True)
@@ -93,6 +96,7 @@ def build_api_services(
     schedule_service_factory: ScheduleServiceFactory = ScheduleApplicationService,
     approval_service_factory: ApprovalServiceFactory = ApprovalApplicationService,
     board_service_factory: BoardServiceFactory = BoardApplicationService,
+    papers_service_factory: PapersServiceFactory = PapersApplicationService,
 ) -> ApiServices:
     return ApiServices(
         worker_service_factory=worker_service_factory,
@@ -111,6 +115,7 @@ def build_api_services(
         schedule_service_factory=schedule_service_factory,
         approval_service_factory=approval_service_factory,
         board_service_factory=board_service_factory,
+        papers_service_factory=papers_service_factory,
     )
 
 

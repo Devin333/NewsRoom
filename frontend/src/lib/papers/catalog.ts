@@ -6,7 +6,7 @@ const taskRefs = {
   computerUseAgents: { id: "task-computer-use-agents", slug: "computer-use-agents", name: "Computer Use Agents", nameZh: "计算机操作智能体" },
   documentUnderstanding: { id: "task-document-understanding", slug: "document-understanding", name: "Document Understanding", nameZh: "文档理解" },
   visualQuestionAnswering: { id: "task-visual-question-answering", slug: "visual-question-answering", name: "Visual QA", nameZh: "视觉问答" },
-  languageModeling: { id: "task-language-modeling", slug: "language-modeling", name: "Language Modeling", nameZh: "语言建模" },
+  languageModeling: { id: "task-language-modeling", slug: "language-modeling", name: "Language Modeling", nameZh: "语言模型" },
   reasoning: { id: "task-reasoning", slug: "reasoning", name: "Reasoning", nameZh: "推理" },
   inferenceServing: { id: "task-inference-serving", slug: "inference-serving", name: "Inference Serving", nameZh: "推理服务" }
 } satisfies Record<string, TaskRef>

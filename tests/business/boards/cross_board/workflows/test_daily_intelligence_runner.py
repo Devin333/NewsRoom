@@ -170,7 +170,7 @@ def test_daily_intelligence_runner_live_offline_writes_report_artifacts(tmp_path
     assert manifest["artifacts"]["rewrite_policy"] == "rewrite_policy.json"
     assert manifest["artifacts"]["rewrite_instructions"] == "rewrite_instructions.json"
     assert manifest["quality_score"] == 1.0
-    assert manifest["quality_event_count"] == 6
+    assert manifest["quality_event_count"] == 7
     assert manifest["artifacts"]["report_json"] == "report.json"
     assert manifest["artifacts"]["report_markdown"] == "report.md"
     assert manifest["artifacts"]["source_events"] == "source_events.json"
@@ -344,6 +344,7 @@ def test_daily_intelligence_runner_live_offline_writes_report_artifacts(tmp_path
         "citation_check_succeeded",
         "editor_gate_started",
         "editor_gate_passed",
+        "quality_gate_bypassed_non_social_media",
     ]
     quality_metrics = json.loads((run_dir / "quality_gate_metrics.json").read_text())
     assert quality_metrics["blocked"] is False
@@ -429,7 +430,7 @@ def test_daily_intelligence_runner_live_with_injected_llm_succeeds(tmp_path) -> 
     assert source_fetch_requests[0]["metadata"]["respect_robots"] is True
 
 
-def test_daily_intelligence_runner_rewrites_duplicate_supported_report(tmp_path) -> None:
+def test_daily_intelligence_runner_allows_duplicate_non_social_report(tmp_path) -> None:
     registry = SourceRegistry(
         [
             SourceDefinition(
@@ -451,19 +452,21 @@ def test_daily_intelligence_runner_rewrites_duplicate_supported_report(tmp_path)
 
     assert result.status == WorkflowStatus.SUCCEEDED
     assert result.output["editor_review"].decision == EditorDecision.PASS
-    assert result.output["quality_gate_metrics"].rewrite_attempts == 1
-    assert "rewritten_report_draft" in result.output
-    assert len(result.output["final_report"].sections) == 1
+    assert result.output["quality_gate_metrics"].rewrite_attempts == 0
+    assert result.output["quality_result"].route == "final"
+    assert "rewritten_report_draft" not in result.output
+    assert len(result.output["final_report"].sections) == 2
 
     run_dir = Path(result.artifact_dir)
     manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
-    assert manifest["artifacts"]["rewritten_report_draft"] == "rewritten_report_draft.json"
+    assert "rewritten_report_draft" not in manifest["artifacts"]
     event_types = [
         event["event_type"]
         for event in json.loads((run_dir / "quality_events.json").read_text(encoding="utf-8"))
     ]
     assert "editor_gate_rewrite_required" in event_types
-    assert "rewrite_succeeded" in event_types
+    assert "quality_gate_bypassed_non_social_media" in event_types
+    assert "rewrite_succeeded" not in event_types
 
 
 def test_daily_intelligence_runner_live_prefers_structured_llm_output(tmp_path) -> None:
@@ -490,7 +493,7 @@ def test_daily_intelligence_runner_live_prefers_structured_llm_output(tmp_path) 
     assert result.output["final_report"].title == "Structured Live Report"
 
 
-def test_daily_intelligence_runner_blocks_uncited_live_report(tmp_path) -> None:
+def test_daily_intelligence_runner_allows_uncited_non_social_live_report(tmp_path) -> None:
     registry = SourceRegistry(
         [
             SourceDefinition(
@@ -511,26 +514,30 @@ def test_daily_intelligence_runner_blocks_uncited_live_report(tmp_path) -> None:
     ).run(profile="live", topic="AI policy", source_limit=1, run_id="daily-live-uncited")
 
     assert result.status == WorkflowStatus.SUCCEEDED
-    assert "blocked_report" in result.output
-    assert "final_report" not in result.output
-    assert result.output["quality_gate_metrics"].blocked is True
-    assert result.output["quality_gate_metrics"].decision == "blocked"
+    assert "final_report" in result.output
+    assert "blocked_report" not in result.output
+    assert result.output["quality_gate_metrics"].blocked is False
+    assert result.output["quality_gate_metrics"].decision == "pass"
     assert result.output["quality_gate_metrics"].missing_section_sources_count == 1
-    assert result.output["quality_result"].route == "human_review"
-    assert result.output["quality_result"].route_history == ["blocked", "human_review"]
+    assert result.output["quality_result"].route == "final"
+    assert result.output["quality_result"].route_history == ["final"]
     assert any(event.event_type == "editor_gate_blocked" for event in result.output["quality_events"])
+    assert any(
+        event.event_type == "quality_gate_bypassed_non_social_media"
+        for event in result.output["quality_events"]
+    )
 
     run_dir = Path(result.artifact_dir)
     manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["artifacts"]["quality_events"] == "quality_events.json"
     assert manifest["artifacts"]["quality_gate_metrics"] == "quality_gate_metrics.json"
     assert manifest["artifacts"]["quality_result"] == "quality_result.json"
-    assert manifest["quality_route"] == "human_review"
-    assert manifest["artifacts"]["blocked_report"] == "blocked_report.json"
-    assert manifest["artifacts"]["human_review_request"] == "human_review_request.json"
+    assert manifest["quality_route"] == "final"
+    assert "blocked_report" not in manifest["artifacts"]
+    assert "human_review_request" not in manifest["artifacts"]
 
 
-def test_daily_intelligence_runner_rewrites_unsupported_claim_before_final_report(tmp_path) -> None:
+def test_daily_intelligence_runner_allows_unsupported_non_social_claim(tmp_path) -> None:
     registry = SourceRegistry(
         [
             SourceDefinition(
@@ -552,19 +559,19 @@ def test_daily_intelligence_runner_rewrites_unsupported_claim_before_final_repor
 
     assert result.status == WorkflowStatus.SUCCEEDED
     assert result.output["editor_review"].decision == EditorDecision.PASS
-    assert result.output["quality_result"].route == "rewrite"
-    assert result.output["quality_result"].route_history == ["rewrite"]
-    assert result.output["quality_gate_metrics"].rewrite_attempts == 1
+    assert result.output["quality_result"].route == "final"
+    assert result.output["quality_result"].route_history == ["final"]
+    assert result.output["quality_gate_metrics"].rewrite_attempts == 0
     assert "final_report" in result.output
     final_content = " ".join(
         str(section.get("content", "")) for section in result.output["final_report"].sections
     )
-    assert "quantum chip acquisition" not in final_content
+    assert "quantum chip acquisition" in final_content
 
     run_dir = Path(result.artifact_dir)
     quality_result = json.loads((run_dir / "quality_result.json").read_text(encoding="utf-8"))
-    assert quality_result["route"] == "rewrite"
-    assert quality_result["rewrite_attempts"] == 1
+    assert quality_result["route"] == "final"
+    assert quality_result["rewrite_attempts"] == 0
     manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["artifacts"]["quality_result"] == "quality_result.json"
 

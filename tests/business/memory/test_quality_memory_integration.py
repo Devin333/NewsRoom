@@ -4,7 +4,7 @@ from business.layers.relation.evidence.models import EvidenceBundle, EvidenceIte
 from framework.workflow import DataBuffer
 
 
-def test_daily_quality_gate_blocks_critical_memory_issue() -> None:
+def test_daily_quality_gate_blocks_critical_memory_issue_for_social_media() -> None:
     buffer = DataBuffer(
         {
             "report_draft": {
@@ -17,7 +17,7 @@ def test_daily_quality_gate_blocks_critical_memory_issue() -> None:
                     }
                 ],
             },
-            "evidence_bundle": _evidence_bundle(),
+            "evidence_bundle": _evidence_bundle(source_type="reddit"),
             "verified_findings": VerifiedFindings(),
             "quality_events": [],
             "memory_context": {
@@ -55,7 +55,57 @@ def test_daily_quality_gate_blocks_critical_memory_issue() -> None:
     assert "final_report" not in output
 
 
-def _evidence_bundle() -> EvidenceBundle:
+def test_daily_quality_gate_allows_critical_memory_issue_for_non_social_media() -> None:
+    buffer = DataBuffer(
+        {
+            "report_draft": {
+                "title": "Daily Intelligence: AI policy",
+                "sections": [
+                    {
+                        "title": "Summary",
+                        "content": "AI policy update: Policy summary.",
+                        "sources": ["https://example.com/ai-policy"],
+                    }
+                ],
+            },
+            "evidence_bundle": _evidence_bundle(source_type="rss"),
+            "verified_findings": VerifiedFindings(),
+            "quality_events": [],
+            "memory_context": {
+                "query": "AI policy",
+                "topic": "AI policy",
+                "claims": [
+                    {
+                        "claim_id": "claim-1",
+                        "run_id": "old-run",
+                        "text": "Unsupported historical claim",
+                        "status": "active",
+                        "evidence_ids": [],
+                    }
+                ],
+                "events": [],
+                "conflicts": [],
+                "metadata": {"memory_available": True},
+            },
+        }
+    )
+
+    output = quality_gate(
+        buffer.scope(
+            read_keys=["report_draft", "evidence_bundle", "verified_findings", "quality_events"],
+            optional_read_keys=["memory_context"],
+            write_keys=[],
+        )
+    )
+
+    assert output["quality_result"].decision == "pass"
+    assert output["quality_result"].blocked is False
+    assert output["memory_quality_result"]["metadata"]["critical_issue_count"] == 1
+    assert "final_report" in output
+    assert "blocked_report" not in output
+
+
+def _evidence_bundle(*, source_type: str) -> EvidenceBundle:
     return EvidenceBundle(
         bundle_id="daily",
         items=[
@@ -68,6 +118,7 @@ def _evidence_bundle() -> EvidenceBundle:
                 source_id="source-1",
                 source_item_id="item-1",
                 lineage=Lineage(source_id="source-1", source_item_id="item-1"),
+                metadata={"source_type": source_type},
             )
         ],
     )

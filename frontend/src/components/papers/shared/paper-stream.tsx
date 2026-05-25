@@ -14,24 +14,38 @@ export function PaperStream({
   papers,
   locale,
   title,
+  sort: controlledSort,
+  onSortChange,
   onPreview
 }: {
   papers: Paper[]
   locale: Locale
   title: string
+  sort?: PaperSort
+  onSortChange?: (sort: PaperSort) => void
   onPreview: (paper: Paper) => void
 }) {
-  const [sort, setSort] = useState<PaperSort>("trending")
+  const [localSort, setLocalSort] = useState<PaperSort>("trending")
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
-  const sortedPapers = useMemo(() => sortPapers(papers, sort), [papers, sort])
+  const sort = controlledSort ?? localSort
+  const sortedPapers = useMemo(() => (controlledSort ? papers : sortPapers(papers, sort)), [controlledSort, papers, sort])
   const visiblePapers = sortedPapers.slice(0, visibleCount)
   const hasMore = visiblePapers.length < sortedPapers.length
+
+  function handleSortChange(nextSort: PaperSort) {
+    setVisibleCount(PAGE_SIZE)
+    if (controlledSort !== undefined) {
+      onSortChange?.(nextSort)
+      return
+    }
+    setLocalSort(nextSort)
+  }
 
   return (
     <section className="border-t border-[#d7dfd8] dark:border-border">
       <div className="flex flex-col gap-3 border-b border-[#d7dfd8] py-4 sm:flex-row sm:items-center sm:justify-between dark:border-border">
         {title ? <h2 className="text-sm font-semibold">{title}</h2> : <div className="hidden sm:block" />}
-        <PaperSortTabs value={sort} locale={locale} onChange={setSort} />
+        <PaperSortTabs value={sort} locale={locale} onChange={handleSortChange} />
       </div>
       {sortedPapers.length ? (
         <>

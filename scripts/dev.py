@@ -12,6 +12,7 @@ from framework.workflow.operations import (
     LocalWorkflowRunOperationService,
     OperationActor,
 )
+from interfaces.env import env_values_from_root
 
 
 COMPILE_PATHS = [
@@ -482,7 +483,7 @@ def _quote(part: str) -> str:
 
 
 def _command_env() -> dict[str, str]:
-    env = dict(os.environ)
+    env = env_values_from_root()
     env.setdefault("PYTHONUNBUFFERED", "1")
     return env
 

@@ -1,7 +1,8 @@
-import { AgentRunDetailPage } from "@/features/studio/runs/components/agent-run-detail-page";
-import { getStudioAgentRunDetail } from "@/features/studio/runs/lib/agent-run-adapter";
+import { RunCenterDetailPage } from "@/features/studio/runs/components/run-center-detail-page";
+import { fetchRunCenterDetail } from "@/features/studio/runs/api/run-center-api";
+import { adaptRunDetail } from "@/features/studio/runs/lib/run-center-adapter";
 
 export default async function StudioRunDetailPage({ params }: { params: { runId: string } }) {
-  const detail = await getStudioAgentRunDetail(params.runId);
-  return <AgentRunDetailPage runId={params.runId} detail={detail} />;
+  const detail = adaptRunDetail(params.runId, await fetchRunCenterDetail(params.runId));
+  return <RunCenterDetailPage runId={params.runId} detail={detail} />;
 }

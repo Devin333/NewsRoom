@@ -1,13 +1,12 @@
 "use client"
 
-import type { MouseEvent } from "react"
+import type { MouseEvent, ReactNode } from "react"
 import { BookOpen, Github } from "lucide-react"
-import { PaperMetrics } from "@/components/papers/paper-metrics"
 import { PaperTags } from "@/components/papers/paper-tags"
 import { PaperThumbnail } from "@/components/papers/paper-thumbnail"
 import { Button } from "@/components/ui/button"
 import { papersCopy, t } from "@/lib/papers/copy"
-import { formatPaperDate, paperPdfUrl, paperSnippet, paperTitle } from "@/lib/papers/format"
+import { formatCompactNumber, formatPaperDate, paperPdfUrl, paperSnippet, paperTitle } from "@/lib/papers/format"
 import type { Locale, Paper } from "@/lib/papers/types"
 
 export function PaperRow({
@@ -85,7 +84,7 @@ export function PaperRow({
               <Button asChild variant="outline" size="sm" aria-label={t(papersCopy.openPaper, locale)} className="rounded-full bg-white dark:bg-card">
                 <a href={paperHref} target="_blank" rel="noreferrer">
                   <BookOpen className="size-4" />
-                  <span>{t(papersCopy.paperRecord, locale)}</span>
+                  <span>{paperMetricValue(paper.citationCount)} citations</span>
                 </a>
               </Button>
             ) : null}
@@ -93,33 +92,70 @@ export function PaperRow({
               <Button asChild variant="outline" size="sm" aria-label={t(papersCopy.openCode, locale)} className="rounded-full bg-white dark:bg-card">
                 <a href={repoHref} target="_blank" rel="noreferrer">
                   <Github className="size-4" />
-                  <span>GitHub</span>
+                  <span>{paperMetricValue(paper.githubStars)} stars</span>
                 </a>
               </Button>
             ) : null}
           </div>
         </div>
 
-        <div className="hidden border-l border-[#e2e7e2] pl-6 lg:flex lg:flex-col lg:items-start lg:justify-center dark:border-border">
-          <PaperMetrics paper={paper} locale={locale} />
-          <div className="mt-5 flex gap-2">
-            {paperHref ? (
-              <Button asChild variant="outline" size="icon" aria-label={t(papersCopy.openPaper, locale)} className="rounded-full bg-white dark:bg-card">
-                <a href={paperHref} target="_blank" rel="noreferrer">
-                  <BookOpen className="size-4" />
-                </a>
-              </Button>
-            ) : null}
-            {repoHref ? (
-              <Button asChild variant="outline" size="icon" aria-label={t(papersCopy.openCode, locale)} className="rounded-full bg-white dark:bg-card">
-                <a href={repoHref} target="_blank" rel="noreferrer">
-                  <Github className="size-4" />
-                </a>
-              </Button>
-            ) : null}
-          </div>
+        <div className="hidden border-l border-[#e2e7e2] pl-6 lg:flex lg:flex-col lg:items-center lg:justify-center lg:gap-5 dark:border-border">
+          {paperHref ? (
+            <PaperActionMetric
+              href={paperHref}
+              ariaLabel={t(papersCopy.openPaper, locale)}
+              icon={<BookOpen className="size-4" />}
+              value={paperMetricValue(paper.citationCount)}
+              label="CITATIONS"
+            />
+          ) : null}
+          {repoHref ? (
+            <PaperActionMetric
+              href={repoHref}
+              ariaLabel={t(papersCopy.openCode, locale)}
+              icon={<Github className="size-4" />}
+              value={paperMetricValue(paper.githubStars)}
+              label="STARS"
+            />
+          ) : null}
         </div>
       </div>
     </article>
   )
+}
+
+function PaperActionMetric({
+  href,
+  ariaLabel,
+  icon,
+  value,
+  label
+}: {
+  href: string
+  ariaLabel: string
+  icon: ReactNode
+  value: string
+  label: string
+}) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      aria-label={ariaLabel}
+      className="group flex min-h-16 w-20 flex-col items-center justify-center rounded-md text-center text-[#334155] transition-colors hover:bg-[#eef4ef] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/50 dark:text-foreground dark:hover:bg-secondary"
+    >
+      <span className="flex items-center justify-center gap-1.5 text-base font-black leading-5">
+        <span className="text-[#334155]/80 dark:text-muted-foreground">{icon}</span>
+        <span>{value}</span>
+      </span>
+      <span className="mt-1 text-[0.65rem] font-semibold uppercase tracking-[0.12em] text-[#334155]/55 dark:text-muted-foreground">
+        {label}
+      </span>
+    </a>
+  )
+}
+
+function paperMetricValue(value?: number) {
+  return typeof value === "number" ? formatCompactNumber(value) : "N/A"
 }

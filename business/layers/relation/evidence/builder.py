@@ -71,6 +71,7 @@ class EvidenceBuilder:
                     "ranked_item_id": ranked.ranked_item_id,
                     "final_score": ranked.final_score,
                     "rank_reason": ranked.rank_reason,
+                    "source_type": str(item.metadata.get("source_type") or ""),
                     "source_lineage": source_lineage_payload,
                     "content_completeness_score": content_completeness,
                     "source_extraction_confidence_score": extraction_signal["score"],

@@ -5,6 +5,8 @@ import os
 import sys
 from typing import Any
 
+from interfaces.env import load_root_env
+
 
 DEFAULT_COLLECTIONS = [
     "source_chunks",
@@ -27,6 +29,8 @@ DEFAULT_PAYLOAD_INDEXES = [
 
 
 def main() -> int:
+    load_root_env()
+
     url = os.environ.get("NEWS_QDRANT_URL")
     if not url:
         _emit(

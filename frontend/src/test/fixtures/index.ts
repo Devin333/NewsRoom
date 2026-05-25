@@ -1,0 +1,6 @@
+export * from "@/test/fixtures/studio-approvals"
+export * from "@/test/fixtures/studio-artifacts"
+export * from "@/test/fixtures/studio-boards"
+export * from "@/test/fixtures/studio-evidence"
+export * from "@/test/fixtures/studio-reports"
+export * from "@/test/fixtures/studio-runs"

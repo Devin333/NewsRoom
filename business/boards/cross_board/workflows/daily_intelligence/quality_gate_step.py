@@ -5,7 +5,7 @@ from typing import Any, cast
 
 from framework.workflow import DataBufferReadPermissionError, StepScopedDataBufferView
 from business.foundation.models.report_output import BlockedReport, FinalReport, render_markdown
-from business.layers.analysis.quality import EditorDecision, RewritePolicy
+from business.layers.analysis.quality import EditorDecision, EditorReview, RewritePolicy
 from business.boards.cross_board.workflows.daily_intelligence.evidence_step import quality_event
 from business.boards.cross_board.workflows.daily_intelligence.quality_evaluation import evaluate_report_quality
 from business.boards.cross_board.workflows.daily_intelligence.quality_result_builder import (
@@ -15,6 +15,9 @@ from business.boards.cross_board.workflows.daily_intelligence.quality_result_bui
     quality_route as build_quality_route,
 )
 from business.boards.cross_board.workflows.daily_intelligence.quality_rewrite import rewrite_report_draft
+from business.boards.cross_board.workflows.daily_intelligence.source_gate_policy import (
+    contains_social_media_evidence,
+)
 from business.memory.intelligence_context import IntelligenceMemoryContext
 from business.memory.intelligence_models import (
     ClaimMemory,
@@ -60,11 +63,23 @@ def quality_gate(buffer: StepScopedDataBufferView) -> dict[str, Any]:
     support_matrix = evaluation["support_matrix"]
     quality_summary = evaluation["quality_summary"]
     review = evaluation["review"]
+    social_media_gate_required = contains_social_media_evidence(evidence_bundle)
+    if not social_media_gate_required:
+        quality_events.append(
+            quality_event(
+                "quality_gate_bypassed_non_social_media",
+                evidence_items_count=len(evidence_bundle.items),
+            )
+        )
+        review = _non_social_media_pass_review(
+            citation_check=citation_check,
+            quality_summary=quality_summary,
+        )
     final_report_draft = report_draft
     rewritten_report_draft = None
     rewrite_attempts = 0
 
-    if review.decision == EditorDecision.REWRITE_REQUIRED:
+    if social_media_gate_required and review.decision == EditorDecision.REWRITE_REQUIRED:
         quality_events.append(
             quality_event(
                 "rewrite_started",
@@ -109,12 +124,16 @@ def quality_gate(buffer: StepScopedDataBufferView) -> dict[str, Any]:
                 )
             )
 
-    human_review_request = build_human_review_request(
-        evidence_bundle=evidence_bundle,
-        review=review,
-        quality_summary=quality_summary,
+    human_review_request = (
+        build_human_review_request(
+            evidence_bundle=evidence_bundle,
+            review=review,
+            quality_summary=quality_summary,
+        )
+        if social_media_gate_required
+        else None
     )
-    if _has_critical_memory_issue(memory_quality_result):
+    if social_media_gate_required and _has_critical_memory_issue(memory_quality_result):
         review = replace(
             review,
             decision=EditorDecision.BLOCKED,
@@ -248,6 +267,27 @@ def _read_historian_context(buffer: StepScopedDataBufferView) -> dict[str, Any] 
     except DataBufferReadPermissionError:
         return None
     return dict(value) if isinstance(value, dict) else None
+
+
+def _non_social_media_pass_review(*, citation_check: Any, quality_summary: Any) -> EditorReview:
+    return EditorReview(
+        decision=EditorDecision.PASS,
+        reasons=["non-social media source bypassed strict quality gate"],
+        quality_score=quality_summary.quality_score,
+        citation_score=citation_check.citation_coverage_score,
+        evidence_alignment_score=quality_summary.evidence_alignment_score,
+        readability_score=quality_summary.readability_score,
+        duplication_score=quality_summary.duplication_score,
+        unsupported_claims=list(citation_check.unsupported_claims),
+        hallucination_risks=[
+            *citation_check.unknown_urls,
+            *citation_check.unsupported_urls,
+            *citation_check.unsupported_evidence_ids,
+            *citation_check.unsupported_claims,
+        ],
+        missing_sections=list(citation_check.missing_section_sources),
+        final_notes="strict quality gate skipped for non-social media evidence",
+    )
 
 
 def _memory_quality_result(memory_context: dict[str, Any] | None) -> dict[str, Any]:

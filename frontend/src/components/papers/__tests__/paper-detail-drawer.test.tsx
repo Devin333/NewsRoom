@@ -1,7 +1,13 @@
 import { fireEvent, render, screen } from "@testing-library/react"
-import { describe, expect, it, vi } from "vitest"
+import { beforeEach, describe, expect, it, vi } from "vitest"
 import { PaperDetailDrawer } from "@/components/papers/shared/paper-detail-drawer"
+import { fetchPaperDetail, requestPaperSummary } from "@/lib/papers/api"
 import type { Paper } from "@/lib/papers/types"
+
+vi.mock("@/lib/papers/api", () => ({
+  fetchPaperDetail: vi.fn(),
+  requestPaperSummary: vi.fn()
+}))
 
 const paper: Paper = {
   id: "paper-segment-anything",
@@ -20,19 +26,46 @@ const paper: Paper = {
   pdfUrl: "https://arxiv.org/pdf/2304.02643.pdf",
   repoUrl: "https://github.com/facebookresearch/segment-anything",
   paperUrl: "https://openaccess.thecvf.com/content/ICCV2023/html/Kirillov_Segment_Anything_ICCV_2023_paper.html",
+  implementations: [
+    {
+      id: "primary-repository",
+      name: "facebookresearch/segment-anything",
+      repoUrl: "https://github.com/facebookresearch/segment-anything",
+      githubStars: 54200
+    }
+  ],
+  benchmarks: [],
   isPublished: true
 }
 
 describe("PaperDetailDrawer", () => {
+  beforeEach(() => {
+    vi.mocked(fetchPaperDetail).mockReset()
+    vi.mocked(requestPaperSummary).mockReset()
+    vi.mocked(requestPaperSummary).mockResolvedValue({
+      paperId: paper.id,
+      locale: "en",
+      modelRoute: "writer-primary",
+      abstractHash: "abc",
+      summary: "Segment Anything introduces a promptable segmentation foundation model.",
+      keyInsights: ["Promptable segmentation"],
+      limitations: [],
+      generatedAt: "2026-05-24T00:00:00Z",
+      cached: false
+    })
+  })
+
   it("renders paper detail sections and real actions", () => {
     render(<PaperDetailDrawer paper={paper} locale="en" open onOpenChange={vi.fn()} />)
 
     expect(screen.getByRole("dialog", { name: /paper detail/i })).toBeInTheDocument()
     expect(screen.getByRole("heading", { name: "Segment Anything" })).toBeInTheDocument()
-    expect(screen.getByText("TL;DR")).toBeInTheDocument()
+    expect(screen.getByText("NewsRoom AI")).toBeInTheDocument()
     expect(screen.getByText("Abstract")).toBeInTheDocument()
     expect(screen.getByText("Tasks")).toBeInTheDocument()
     expect(screen.getByText("Methods")).toBeInTheDocument()
+    expect(screen.getByText("Benchmarks / SOTA")).toBeInTheDocument()
+    expect(screen.getByText("No real Benchmark / SOTA fields are recorded yet.")).toBeInTheDocument()
     expect(screen.getByRole("link", { name: /view pdf/i })).toHaveAttribute("href", "https://arxiv.org/pdf/2304.02643.pdf")
     expect(screen.getByRole("link", { name: /code/i })).toHaveAttribute("href", "https://github.com/facebookresearch/segment-anything")
   })
@@ -44,5 +77,28 @@ describe("PaperDetailDrawer", () => {
     fireEvent.click(screen.getByRole("button", { name: /dismiss/i }))
 
     expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
+  it("loads a deep-linked paper detail by id", async () => {
+    vi.mocked(fetchPaperDetail).mockResolvedValue(paper)
+    render(<PaperDetailDrawer paper={null} paperId="paper-segment-anything" locale="en" open onOpenChange={vi.fn()} />)
+
+    expect(await screen.findByRole("heading", { name: "Segment Anything" })).toBeInTheDocument()
+    expect(fetchPaperDetail).toHaveBeenCalledWith("paper-segment-anything")
+  })
+
+  it("renders summary loading and success states", async () => {
+    render(<PaperDetailDrawer paper={paper} locale="en" open onOpenChange={vi.fn()} />)
+
+    expect(screen.getByText("Generating NewsRoom AI summary...")).toBeInTheDocument()
+    expect(await screen.findByText("Segment Anything introduces a promptable segmentation foundation model.")).toBeInTheDocument()
+  })
+
+  it("renders retryable summary error state", async () => {
+    vi.mocked(requestPaperSummary).mockRejectedValue(new Error("provider unavailable"))
+    render(<PaperDetailDrawer paper={paper} locale="en" open onOpenChange={vi.fn()} />)
+
+    expect(await screen.findByText("provider unavailable")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /retry/i })).toBeInTheDocument()
   })
 })

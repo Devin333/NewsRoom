@@ -8,6 +8,9 @@ from framework.workflow import StepScopedDataBufferView
 from business.foundation.models.report_output import BlockedReport, FinalReport, render_markdown
 from business.layers.analysis.quality import EditorDecision
 from business.boards.cross_board.workflows.daily_intelligence.evidence_step import quality_event
+from business.boards.cross_board.workflows.daily_intelligence.source_gate_policy import (
+    contains_social_media_evidence,
+)
 
 
 PUBLISH_ROUTE = "final"
@@ -49,6 +52,18 @@ def finalize_report(buffer: StepScopedDataBufferView) -> dict[str, Any]:
     decision = editor_decision["decision"]
     rewrite_instructions = list(editor_decision["rewrite_instructions"])
     quality_score = editor_decision["quality_score"]
+    if not contains_social_media_evidence(evidence_bundle) and decision != PASS_DECISION:
+        original_decision = decision
+        editor_decision = _non_social_media_editor_pass(editor_decision)
+        decision = PASS_DECISION
+        rewrite_instructions = []
+        quality_events.append(
+            quality_event(
+                "finalize_report_bypassed_non_social_media",
+                original_decision=original_decision,
+                quality_score=quality_score,
+            )
+        )
 
     if decision == PASS_DECISION:
         return _publish_outputs(
@@ -202,6 +217,14 @@ def _append_editor_reason(editor_decision: dict[str, Any], reason: str) -> dict[
     reasons = list(next_decision.get("reasons") or [])
     reasons.append(reason)
     next_decision["reasons"] = reasons
+    return next_decision
+
+
+def _non_social_media_editor_pass(editor_decision: dict[str, Any]) -> dict[str, Any]:
+    next_decision = dict(editor_decision)
+    next_decision["decision"] = PASS_DECISION
+    next_decision["reasons"] = ["non-social media source bypassed strict quality gate"]
+    next_decision["rewrite_instructions"] = []
     return next_decision
 
 

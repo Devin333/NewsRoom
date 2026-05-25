@@ -162,6 +162,7 @@ def test_daily_evidence_and_quality_gate_steps_produce_final_report() -> None:
         "citation_check_succeeded",
         "editor_gate_started",
         "editor_gate_passed",
+        "quality_gate_bypassed_non_social_media",
     ]
 
 

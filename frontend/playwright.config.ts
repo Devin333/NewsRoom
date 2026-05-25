@@ -1,4 +1,10 @@
+import path from "node:path"
 import { defineConfig, devices } from "@playwright/test"
+import { loadRootEnv } from "./root-env"
+
+const configDir = process.cwd()
+
+loadRootEnv(configDir)
 
 const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "http://127.0.0.1:3000"
 const webServerCommand = process.env.PLAYWRIGHT_WEB_SERVER_COMMAND ?? "npm run dev"
@@ -6,6 +12,7 @@ const webServerCommand = process.env.PLAYWRIGHT_WEB_SERVER_COMMAND ?? "npm run d
 export default defineConfig({
   testDir: "./tests/e2e",
   fullyParallel: true,
+  workers: process.env.PLAYWRIGHT_WORKERS ? Number(process.env.PLAYWRIGHT_WORKERS) : 1,
   reporter: "list",
   use: {
     baseURL,

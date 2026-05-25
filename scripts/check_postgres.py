@@ -5,6 +5,8 @@ import os
 import sys
 from typing import Any
 
+from interfaces.env import load_root_env
+
 
 REQUIRED_TABLES = [
     "workflow_runs",
@@ -39,6 +41,8 @@ REQUIRED_INDEXES = [
 
 
 def main() -> int:
+    load_root_env()
+
     dsn = os.environ.get("NEWS_DATABASE_DSN")
     if not dsn:
         _emit(

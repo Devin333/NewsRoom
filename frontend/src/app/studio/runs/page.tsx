@@ -1,7 +1,8 @@
-import { AgentRunListPage } from "@/features/studio/runs/components/agent-run-list-page"
-import { getStudioAgentRuns } from "@/features/studio/runs/lib/agent-run-adapter"
+import { RunCenterPage } from "@/features/studio/runs/components/run-center-page"
+import { fetchRunCenterList } from "@/features/studio/runs/api/run-center-api"
+import { adaptRunList } from "@/features/studio/runs/lib/run-center-adapter"
 
 export default async function StudioRunsPage() {
-  const { runs, notices } = await getStudioAgentRuns()
-  return <AgentRunListPage runs={runs} notices={notices} />
+  const { runs, notices } = adaptRunList(await fetchRunCenterList())
+  return <RunCenterPage runs={runs} notices={notices} />
 }

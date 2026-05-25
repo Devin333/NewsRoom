@@ -4,6 +4,7 @@ import argparse
 import json
 from typing import Any, Sequence
 
+from interfaces.env import load_root_env
 from interfaces.cli.commands import (
     api,
     approvals,
@@ -57,6 +58,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    load_root_env()
     parser = build_parser()
     args = parser.parse_args(argv)
     return args.handler(args)

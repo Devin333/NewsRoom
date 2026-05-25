@@ -14,7 +14,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const setTheme = useUiStore((state) => state.setTheme)
   const setLocale = useUiStore((state) => state.setLocale)
 
-  if (pathname.startsWith("/admin")) {
+  if (pathname.startsWith("/admin") || pathname.startsWith("/studio")) {
     return <div className="min-h-screen bg-background text-foreground">{children}</div>
   }
 

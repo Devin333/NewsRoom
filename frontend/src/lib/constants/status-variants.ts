@@ -32,6 +32,7 @@ export const agentRunStatusVariants: Record<AgentRunStatus, BadgeVariant> = {
   cancelled: "muted",
   partially_failed: "warning",
   blocked: "warning",
+  waiting_for_human: "warning",
 }
 
 export const stepStatusVariants: Record<StepStatus, BadgeVariant> = {
@@ -40,6 +41,8 @@ export const stepStatusVariants: Record<StepStatus, BadgeVariant> = {
   success: "success",
   failed: "danger",
   skipped: "muted",
+  blocked: "warning",
+  cancelled: "muted",
 }
 
 export const credibilityVariants: Record<CredibilityLevel, BadgeVariant> = {
@@ -72,6 +75,7 @@ export function getStatusVariant(status: string): BadgeVariant {
     review_required: "info",
     review: "warning",
     warning: "warning",
+    waiting_for_human: "warning",
     degraded: "warning",
     blocked: "warning",
     needs_changes: "warning",

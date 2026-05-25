@@ -82,10 +82,19 @@ def build_source_governance_report(
     governance_policy = _policy(policy)
     findings: list[SourceGovernanceFinding] = []
     strict_source_ids: set[str] = set()
+    selected_sources = _selected_sources(source_selection_report)
+    social_source_ids = {
+        source_id
+        for source in selected_sources
+        if (source_id := str(source.get("source_id") or ""))
+        and _is_community_source(source, governance_policy)
+    }
 
     for score in source_quality_scores:
         source_id = str(score.get("source_id") or "")
         if not source_id:
+            continue
+        if source_id not in social_source_ids and not _is_community_source(score, governance_policy):
             continue
         reliability_score = _float(score.get("reliability_score"), default=0.0)
         traceability_score = _float(score.get("traceability_score"), default=0.0)
@@ -138,21 +147,13 @@ def build_source_governance_report(
                 )
             )
 
-    for source in _selected_sources(source_selection_report):
+    for source in selected_sources:
         source_id = str(source.get("source_id") or "")
         if not source_id:
             continue
         source_type = str(source.get("source_type") or "").casefold()
         category = _normalize_category(source.get("category"))
-        is_community = (
-            source_type in governance_policy.community_source_types
-            or category in governance_policy.community_categories
-        )
-        is_official = (
-            source_type in governance_policy.official_source_types
-            or category in governance_policy.official_categories
-        )
-        if is_community and governance_policy.require_strict_verification_for_community:
+        if _is_community_source(source, governance_policy) and governance_policy.require_strict_verification_for_community:
             strict_source_ids.add(source_id)
             findings.append(
                 SourceGovernanceFinding(
@@ -164,24 +165,6 @@ def build_source_governance_report(
                     metadata={"source_type": source_type, "category": category},
                 )
             )
-        if is_official and governance_policy.official_priority_bonus_expected:
-            authority_score = _float(source.get("authority_score"), default=0.0)
-            if authority_score < 0.75:
-                findings.append(
-                    SourceGovernanceFinding(
-                        finding_type="official_source_low_authority",
-                        severity="warning",
-                        source_id=source_id,
-                        message="Official or primary source should carry a high authority score.",
-                        action="review_source_authority",
-                        metadata={
-                            "source_type": source_type,
-                            "category": category,
-                            "authority_score": authority_score,
-                            "threshold": 0.75,
-                        },
-                    )
-                )
 
     return SourceGovernanceReport(
         finding_count=len(findings),
@@ -201,6 +184,12 @@ def _selected_sources(source_selection_report: Any | None) -> list[dict[str, Any
     else:
         values = []
     return [dict(value) for value in values if isinstance(value, dict)]
+
+
+def _is_community_source(source: dict[str, Any], policy: SourceGovernancePolicy) -> bool:
+    source_type = str(source.get("source_type") or "").casefold()
+    category = _normalize_category(source.get("category"))
+    return source_type in policy.community_source_types or category in policy.community_categories
 
 
 def _normalize_category(value: Any) -> str | None:

@@ -364,6 +364,33 @@ def test_build_source_governance_report_flags_policy_findings() -> None:
     assert report.to_dict()["findings"][1]["severity"] == "blocking"
 
 
+def test_source_governance_report_passes_non_social_sources() -> None:
+    report = build_source_governance_report(
+        source_quality_scores=[
+            {
+                "source_id": "official-low",
+                "quality_score": 0.2,
+                "reliability_score": 0.1,
+                "traceability_score": 0.0,
+            }
+        ],
+        source_selection_report={
+            "selected_sources": [
+                {
+                    "source_id": "official-low",
+                    "source_type": "official_blog",
+                    "category": "official",
+                    "authority_score": 0.1,
+                }
+            ]
+        },
+    )
+
+    assert report.finding_count == 0
+    assert report.blocking_finding_count == 0
+    assert report.requires_strict_verification_source_ids == []
+
+
 def test_source_governance_report_uses_configurable_policy() -> None:
     report = build_source_governance_report(
         source_quality_scores=[

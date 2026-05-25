@@ -6,12 +6,22 @@ import type { Locale, TaskRef } from "@/lib/papers/types"
 
 export function SisterTasksPanel({ tasks, locale }: { tasks: TaskRef[]; locale: Locale }) {
   return (
-    <section className="rounded-md border border-border bg-card p-4">
-      <h2 className="text-sm font-semibold">{t(papersCopy.sisterTasks, locale)}</h2>
-      <div className="mt-3 grid gap-2">
-        {tasks.map((task) => (
-          <Link key={task.id} href={papersRoutes.taskDetail(task.slug)} className="rounded-md bg-secondary/60 px-3 py-2 text-sm hover:bg-secondary">
-            {taskName(task, locale)}
+    <section className="border-t border-[#d7dfd8] pt-5 dark:border-border">
+      <p className="text-[0.68rem] font-black text-emerald-700 dark:text-emerald-400">02/</p>
+      <h2 className="mt-2 text-[0.72rem] font-black uppercase tracking-[0.18em] text-[#334155] dark:text-foreground">
+        {t(papersCopy.sisterTasks, locale)}
+      </h2>
+      <div className="mt-5 grid gap-3">
+        {tasks.map((task, index) => (
+          <Link
+            key={task.id}
+            href={papersRoutes.taskDetail(task.slug)}
+            className="group grid grid-cols-[1.5rem_minmax(0,1fr)] items-baseline gap-3 text-sm text-[#334155]/72 transition-colors hover:text-emerald-700 dark:text-muted-foreground dark:hover:text-foreground"
+          >
+            <span className="text-[0.66rem] font-black text-[#334155]/42 dark:text-muted-foreground">
+              {String(index + 1).padStart(2, "0")}
+            </span>
+            <span className="font-semibold leading-5">{taskName(task, locale)}</span>
           </Link>
         ))}
       </div>
