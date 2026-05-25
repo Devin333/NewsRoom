@@ -7,7 +7,7 @@ const statusLabels: Record<AdminStatus, { zh: string; en: string }> = {
   failed: { zh: "失败", en: "Failed" },
   review: { zh: "复核", en: "Review" },
   running: { zh: "运行中", en: "Running" },
-  blocked: { zh: "已拦截", en: "Blocked" }
+  blocked: { zh: "已阻塞", en: "Blocked" }
 }
 
 const statusClasses: Record<AdminStatus, string> = {

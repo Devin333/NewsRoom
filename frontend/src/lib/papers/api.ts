@@ -1,4 +1,4 @@
-import { apiGet, apiPatch, apiPost } from "@/lib/api/client"
+import { apiDelete, apiGet, apiPatch, apiPost } from "@/lib/api/client"
 import type {
   Locale,
   Paper,
@@ -7,6 +7,9 @@ import type {
   PaperMethod,
   PaperPeriod,
   PaperReaderAnswer,
+  PaperReaderNote,
+  PaperReaderNoteCreate,
+  PaperReaderNotePatch,
   PaperReaderPayload,
   PaperRelationGraph,
   PaperSection,
@@ -173,6 +176,53 @@ export type PaperUserStatePatch = {
   readingStatus?: ReadingStatus
   currentPage?: number | null
   progressPercent?: number
+}
+
+export async function fetchPaperReaderNotes(paperId: string, init?: RequestInit): Promise<PaperReaderNote[]> {
+  const envelope = await apiGet<ApiEnvelope<{ notes: PaperReaderNote[] }>>(
+    `/api/papers/${encodeURIComponent(paperId)}/notes`,
+    init
+  )
+  return unwrapEnvelope(envelope).notes
+}
+
+export async function createPaperReaderNote(
+  paperId: string,
+  note: PaperReaderNoteCreate,
+  init?: RequestInit
+): Promise<PaperReaderNote> {
+  const envelope = await apiPost<ApiEnvelope<{ note: PaperReaderNote }>>(
+    `/api/papers/${encodeURIComponent(paperId)}/notes`,
+    note,
+    init
+  )
+  return unwrapEnvelope(envelope).note
+}
+
+export async function patchPaperReaderNote(
+  paperId: string,
+  noteId: string,
+  patch: PaperReaderNotePatch,
+  init?: RequestInit
+): Promise<PaperReaderNote> {
+  const envelope = await apiPatch<ApiEnvelope<{ note: PaperReaderNote }>>(
+    `/api/papers/${encodeURIComponent(paperId)}/notes/${encodeURIComponent(noteId)}`,
+    patch,
+    init
+  )
+  return unwrapEnvelope(envelope).note
+}
+
+export async function deletePaperReaderNote(
+  paperId: string,
+  noteId: string,
+  init?: RequestInit
+): Promise<boolean> {
+  const envelope = await apiDelete<ApiEnvelope<{ deleted: boolean }>>(
+    `/api/papers/${encodeURIComponent(paperId)}/notes/${encodeURIComponent(noteId)}`,
+    init
+  )
+  return unwrapEnvelope(envelope).deleted
 }
 
 export async function fetchPaperUserState(paperId: string, init?: RequestInit): Promise<PaperUserState> {

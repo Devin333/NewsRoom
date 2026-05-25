@@ -80,6 +80,23 @@ export async function apiPatch<T>(path: string, body?: unknown, init?: RequestIn
   return parseJsonResponse<T>(response)
 }
 
+export async function apiDelete<T>(path: string, init?: RequestInit): Promise<T> {
+  if (shouldUseMock()) {
+    return resolveMockPath(path) as T
+  }
+
+  const response = await fetch(apiUrl(path), {
+    ...init,
+    method: "DELETE",
+    headers: {
+      Accept: "application/json",
+      ...init?.headers
+    }
+  })
+
+  return parseJsonResponse<T>(response)
+}
+
 async function parseJsonResponse<T>(response: Response): Promise<T> {
   const requestId = response.headers.get("x-request-id") ?? undefined
   const contentType = response.headers.get("content-type") ?? ""

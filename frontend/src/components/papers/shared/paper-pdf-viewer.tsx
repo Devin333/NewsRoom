@@ -4,14 +4,17 @@ import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEven
 import { ChevronLeft, ChevronRight, FileWarning, Loader2, Search, ZoomIn, ZoomOut } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import type { Locale } from "@/lib/papers/types"
+import type { Locale, PaperReaderNote, PaperReaderNoteCreate, PaperReaderNoteRect } from "@/lib/papers/types"
 
 type PaperPdfViewerProps = {
   pdfUrl: string
   title: string
   locale: Locale
   fallback: ReactNode
+  paperId?: string
   initialPage?: number
+  notes?: PaperReaderNote[]
+  onCreateReaderNote?: (note: PaperReaderNoteCreate) => void
   onPageChange?: (pageNumber: number, numPages: number) => void
 }
 
@@ -23,6 +26,11 @@ type PdfViewport = {
 type PdfRenderTask = {
   promise: Promise<void>
   cancel: () => void
+}
+
+type PdfTextLayer = {
+  cancel: () => void
+  render: () => Promise<void>
 }
 
 type PdfPage = {
@@ -58,6 +66,12 @@ type PdfSearchResult = {
   matchIndex: number
 }
 
+type PdfTextSelection = {
+  pageNumber: number
+  quote: string
+  rects: PaperReaderNoteRect[]
+}
+
 const MIN_SCALE = 0.75
 const MAX_SCALE = 2
 const SCALE_STEP = 0.25
@@ -65,6 +79,10 @@ const THUMBNAIL_WIDTH = 88
 const THUMBNAIL_INTERSECTION_ROOT_MARGIN = "240px"
 const MAX_THUMBNAIL_RENDER_CONCURRENCY = 2
 const MIN_SEARCH_LENGTH = 2
+const SEARCH_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000
+const SEARCH_CACHE_MAX_BYTES = 2 * 1024 * 1024
+const SEARCH_CACHE_MAX_ITEMS = 20
+const SEARCH_CACHE_INDEX_KEY = "newsroom:paper-pdf-search:index:v1"
 
 type ThumbnailRenderJob = {
   activeCancel?: () => void
@@ -86,11 +104,17 @@ export function PaperPdfViewer({
   title,
   locale,
   fallback,
+  paperId,
   initialPage,
+  notes = [],
+  onCreateReaderNote,
   onPageChange,
 }: PaperPdfViewerProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const pageLayerRef = useRef<HTMLDivElement | null>(null)
+  const textLayerRef = useRef<HTMLDivElement | null>(null)
   const renderTaskRef = useRef<PdfRenderTask | null>(null)
+  const textLayerRenderRef = useRef<PdfTextLayer | null>(null)
   const initialPageRef = useRef(initialPage)
   const initialPageAppliedRef = useRef(false)
   const userNavigatedRef = useRef(false)
@@ -105,7 +129,14 @@ export function PaperPdfViewer({
   const [searchQuery, setSearchQuery] = useState("")
   const [searchStatus, setSearchStatus] = useState<"idle" | "indexing" | "ready" | "error">("idle")
   const [activeSearchIndex, setActiveSearchIndex] = useState(0)
+  const [textLayerStatus, setTextLayerStatus] = useState<"idle" | "rendering" | "ready" | "error">("idle")
+  const [selectionDraft, setSelectionDraft] = useState<PdfTextSelection | null>(null)
+  const [selectionNoteText, setSelectionNoteText] = useState("")
   const searchResults = useMemo(() => buildSearchResults(pageTexts, searchQuery), [pageTexts, searchQuery])
+  const currentPageNotes = useMemo(
+    () => notes.filter((note) => note.pageNumber === pageNumber && note.anchor?.rects?.length),
+    [notes, pageNumber]
+  )
 
   useEffect(() => {
     initialPageRef.current = initialPage
@@ -127,8 +158,13 @@ export function PaperPdfViewer({
     setSearchQuery("")
     setSearchStatus("idle")
     setActiveSearchIndex(0)
+    setTextLayerStatus("idle")
+    setSelectionDraft(null)
+    setSelectionNoteText("")
     initialPageAppliedRef.current = false
     userNavigatedRef.current = false
+    textLayerRenderRef.current?.cancel()
+    textLayerRenderRef.current = null
     renderTaskRef.current?.cancel()
     renderTaskRef.current = null
 
@@ -169,6 +205,8 @@ export function PaperPdfViewer({
       cancelled = true
       renderTaskRef.current?.cancel()
       renderTaskRef.current = null
+      textLayerRenderRef.current?.cancel()
+      textLayerRenderRef.current = null
       void loadingTask?.destroy()
       void loadedDocument?.destroy()
     }
@@ -185,6 +223,13 @@ export function PaperPdfViewer({
 
     async function indexPdfText() {
       try {
+        const cacheKey = searchCacheKey({ paperId, pdfUrl })
+        const cachedPages = readSearchCache(cacheKey, numPages)
+        if (cachedPages) {
+          setPageTexts(cachedPages)
+          setSearchStatus("ready")
+          return
+        }
         const indexedPages: PdfPageText[] = []
         for (let index = 1; index <= numPages; index += 1) {
           const page = await pdfDocument!.getPage(index)
@@ -201,6 +246,7 @@ export function PaperPdfViewer({
           })
         }
         if (!cancelled) {
+          writeSearchCache(cacheKey, indexedPages)
           setPageTexts(indexedPages)
           setSearchStatus("ready")
         }
@@ -217,7 +263,7 @@ export function PaperPdfViewer({
     return () => {
       cancelled = true
     }
-  }, [numPages, pdfDocument, status])
+  }, [numPages, paperId, pdfDocument, pdfUrl, status])
 
   useEffect(() => {
     if (
@@ -244,6 +290,10 @@ export function PaperPdfViewer({
     let cancelled = false
     renderTaskRef.current?.cancel()
     renderTaskRef.current = null
+    textLayerRenderRef.current?.cancel()
+    textLayerRenderRef.current = null
+    setTextLayerStatus("rendering")
+    setSelectionDraft(null)
 
     async function renderPage() {
       setIsRendering(true)
@@ -267,6 +317,9 @@ export function PaperPdfViewer({
         const renderTask = page.render({ canvasContext: context, viewport })
         renderTaskRef.current = renderTask
         await renderTask.promise
+        if (!cancelled) {
+          await renderTextLayerForPage({ page, viewport })
+        }
       } catch {
         if (!cancelled) {
           setStatus("error")
@@ -278,12 +331,50 @@ export function PaperPdfViewer({
       }
     }
 
+    async function renderTextLayerForPage({ page, viewport }: { page: PdfPage; viewport: PdfViewport }) {
+      const layer = textLayerRef.current
+      if (!layer || !page.getTextContent) {
+        setTextLayerStatus("error")
+        return
+      }
+      layer.replaceChildren()
+      layer.style.width = `${Math.floor(viewport.width)}px`
+      layer.style.height = `${Math.floor(viewport.height)}px`
+      try {
+        const content = await page.getTextContent()
+        if (cancelled) {
+          return
+        }
+        const pdfjs = await import("pdfjs-dist")
+        const TextLayer = (pdfjs as unknown as {
+          TextLayer?: new (params: { textContentSource: PdfTextContent; container: HTMLElement; viewport: PdfViewport }) => PdfTextLayer
+        }).TextLayer
+        if (TextLayer) {
+          const textLayer = new TextLayer({ textContentSource: content, container: layer, viewport })
+          textLayerRenderRef.current = textLayer
+          await textLayer.render()
+        } else {
+          renderSimpleTextLayer(layer, content)
+        }
+        if (!cancelled) {
+          setTextLayerStatus("ready")
+        }
+      } catch {
+        if (!cancelled) {
+          layer.replaceChildren()
+          setTextLayerStatus("error")
+        }
+      }
+    }
+
     void renderPage()
 
     return () => {
       cancelled = true
       renderTaskRef.current?.cancel()
       renderTaskRef.current = null
+      textLayerRenderRef.current?.cancel()
+      textLayerRenderRef.current = null
     }
   }, [pageNumber, pdfDocument, scale, status])
 
@@ -297,13 +388,17 @@ export function PaperPdfViewer({
     setActiveSearchIndex((current) => clampSearchIndex(current, searchResults.length))
   }, [searchResults.length])
 
+  useEffect(() => {
+    applySearchHighlights(textLayerRef.current, pageNumber, searchQuery, searchResults, activeSearchIndex)
+  }, [activeSearchIndex, pageNumber, searchQuery, searchResults, textLayerStatus])
+
   if (status === "error") {
     return (
       <div className="min-h-[42rem]">
         <div className="border-b border-[#d8dfd8] bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-border dark:bg-amber-950/30 dark:text-amber-100">
           <div className="flex items-center gap-2 font-semibold">
             <FileWarning className="size-4" />
-            {locale === "zh" ? "PDF could not be rendered; showing text fallback." : "PDF could not be rendered; showing text fallback."}
+            {locale === "zh" ? "PDF 无法渲染，已切换到文本阅读。" : "PDF could not be rendered; showing text fallback."}
           </div>
         </div>
         {fallback}
@@ -344,6 +439,34 @@ export function PaperPdfViewer({
     goToPage(searchResults[clamped].pageNumber)
   }
 
+  function handleTextSelection() {
+    const draft = readCurrentTextSelection(pageLayerRef.current, textLayerRef.current, pageNumber)
+    setSelectionDraft(draft)
+    setSelectionNoteText("")
+  }
+
+  function createSelectionNote(kind: "highlight" | "note") {
+    if (!selectionDraft || !onCreateReaderNote) {
+      return
+    }
+    const trimmedNote = selectionNoteText.trim()
+    onCreateReaderNote({
+      kind,
+      pageNumber: selectionDraft.pageNumber,
+      color: kind === "highlight" ? "yellow" : "blue",
+      quote: selectionDraft.quote,
+      noteText: kind === "note" ? trimmedNote || selectionDraft.quote : undefined,
+      anchor: {
+        pageNumber: selectionDraft.pageNumber,
+        quote: selectionDraft.quote,
+        rects: selectionDraft.rects,
+      },
+    })
+    setSelectionDraft(null)
+    setSelectionNoteText("")
+    clearWindowSelection()
+  }
+
   function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     if (status !== "ready") {
       return
@@ -373,7 +496,7 @@ export function PaperPdfViewer({
 
   return (
     <div
-      aria-label={`${title} PDF viewer`}
+      aria-label={locale === "zh" ? `${title} PDF 阅读器` : `${title} PDF viewer`}
       className="flex min-h-[42rem] flex-col bg-[#f8faf9] outline-none focus-visible:ring-2 focus-visible:ring-[#315d8a]/35 dark:bg-background"
       tabIndex={0}
       onKeyDown={handleKeyDown}
@@ -382,7 +505,13 @@ export function PaperPdfViewer({
         <div className="min-w-0">
           <h2 className="truncate text-sm font-semibold text-[#334155] dark:text-foreground">{title}</h2>
           <p className="mt-1 text-xs text-[#334155]/55 dark:text-muted-foreground">
-            {status === "ready" ? `Page ${pageNumber} of ${numPages}` : locale === "zh" ? "Loading PDF" : "Loading PDF"}
+            {status === "ready"
+              ? locale === "zh"
+                ? `第 ${pageNumber} / ${numPages} 页`
+                : `Page ${pageNumber} of ${numPages}`
+              : locale === "zh"
+                ? "正在加载 PDF"
+                : "Loading PDF"}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -390,7 +519,7 @@ export function PaperPdfViewer({
             type="button"
             variant="outline"
             size="icon"
-            aria-label="Previous page"
+            aria-label={locale === "zh" ? "上一页" : "Previous page"}
             disabled={!canGoPrevious}
             onClick={() => goToPage(pageNumber - 1)}
           >
@@ -398,7 +527,7 @@ export function PaperPdfViewer({
           </Button>
           <form className="flex items-center gap-2" onSubmit={handlePageSubmit}>
             <Input
-              aria-label="Page number"
+              aria-label={locale === "zh" ? "页码" : "Page number"}
               className="h-9 w-20 bg-white text-center dark:bg-background"
               disabled={status !== "ready"}
               min={1}
@@ -413,7 +542,7 @@ export function PaperPdfViewer({
             type="button"
             variant="outline"
             size="icon"
-            aria-label="Next page"
+            aria-label={locale === "zh" ? "下一页" : "Next page"}
             disabled={!canGoNext}
             onClick={() => goToPage(pageNumber + 1)}
           >
@@ -424,7 +553,7 @@ export function PaperPdfViewer({
             type="button"
             variant="outline"
             size="icon"
-            aria-label="Zoom out"
+            aria-label={locale === "zh" ? "缩小" : "Zoom out"}
             disabled={!canZoomOut}
             onClick={() => changeScale(scale - SCALE_STEP)}
           >
@@ -437,7 +566,7 @@ export function PaperPdfViewer({
             type="button"
             variant="outline"
             size="icon"
-            aria-label="Zoom in"
+            aria-label={locale === "zh" ? "放大" : "Zoom in"}
             disabled={!canZoomIn}
             onClick={() => changeScale(scale + SCALE_STEP)}
           >
@@ -473,23 +602,92 @@ export function PaperPdfViewer({
             <div className="absolute inset-0 flex items-center justify-center bg-white/80 dark:bg-background/80">
               <div className="inline-flex items-center gap-2 rounded-md border border-[#d8dfd8] bg-white px-4 py-3 text-sm font-semibold text-[#334155]/70 shadow-sm dark:border-border dark:bg-card dark:text-muted-foreground">
                 <Loader2 className="size-4 animate-spin" />
-                {locale === "zh" ? "Loading PDF" : "Loading PDF"}
+                {locale === "zh" ? "正在加载 PDF" : "Loading PDF"}
               </div>
             </div>
           ) : null}
           {isRendering && status === "ready" ? (
             <div className="absolute right-4 top-4 inline-flex items-center gap-2 rounded-md bg-white px-3 py-2 text-xs font-semibold text-[#334155]/65 shadow-sm dark:bg-card dark:text-muted-foreground">
               <Loader2 className="size-3 animate-spin" />
-              {locale === "zh" ? "Rendering" : "Rendering"}
+              {locale === "zh" ? "正在渲染" : "Rendering"}
             </div>
           ) : null}
-          <canvas
-            ref={canvasRef}
-            aria-label={`${title} PDF page ${pageNumber}`}
-            className="block self-start bg-white shadow-lg"
-          />
+          <div ref={pageLayerRef} className="relative self-start bg-white shadow-lg">
+            <canvas
+              ref={canvasRef}
+              aria-label={locale === "zh" ? `${title} PDF 第 ${pageNumber} 页` : `${title} PDF page ${pageNumber}`}
+              className="block bg-white"
+            />
+            <div
+              ref={textLayerRef}
+              aria-label={locale === "zh" ? `${title} PDF 第 ${pageNumber} 页可选择文本` : `${title} selectable PDF text page ${pageNumber}`}
+              className="paper-pdf-text-layer absolute left-0 top-0 z-10 overflow-hidden text-transparent"
+              onMouseUp={handleTextSelection}
+              onKeyUp={handleTextSelection}
+            />
+            <PdfNoteOverlay notes={currentPageNotes} />
+            {selectionDraft && onCreateReaderNote ? (
+              <div className="absolute left-3 top-3 z-30 w-[min(22rem,calc(100%-1.5rem))] rounded-md border border-[#d8dfd8] bg-white p-3 text-xs shadow-lg dark:border-border dark:bg-card">
+                <div className="font-semibold text-[#334155] dark:text-foreground">
+                  {locale === "zh" ? "已选文本" : "Selected text"}
+                </div>
+                <p className="mt-1 line-clamp-2 leading-5 text-[#334155]/65 dark:text-muted-foreground">
+                  {selectionDraft.quote}
+                </p>
+                <Input
+                  aria-label={locale === "zh" ? "批注内容" : "Note text"}
+                  className="mt-2 h-8 bg-white dark:bg-background"
+                  placeholder={locale === "zh" ? "批注内容" : "Note text"}
+                  value={selectionNoteText}
+                  onChange={(event) => setSelectionNoteText(event.target.value)}
+                />
+                <div className="mt-2 flex gap-2">
+                  <Button type="button" size="sm" className="h-8 rounded-md" onClick={() => createSelectionNote("highlight")}>
+                    {locale === "zh" ? "高亮" : "Highlight"}
+                  </Button>
+                  <Button type="button" size="sm" variant="outline" className="h-8 rounded-md" onClick={() => createSelectionNote("note")}>
+                    {locale === "zh" ? "添加批注" : "Add note"}
+                  </Button>
+                  <Button type="button" size="sm" variant="ghost" className="h-8 rounded-md" onClick={() => setSelectionDraft(null)}>
+                    {locale === "zh" ? "取消" : "Cancel"}
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+          </div>
+          {textLayerStatus === "error" && status === "ready" ? (
+            <div className="absolute bottom-4 right-4 rounded-md bg-white px-3 py-2 text-xs font-semibold text-[#334155]/65 shadow-sm dark:bg-card dark:text-muted-foreground">
+              {locale === "zh" ? "文本选择不可用" : "Text selection unavailable"}
+            </div>
+          ) : null}
         </div>
       </div>
+    </div>
+  )
+}
+
+function PdfNoteOverlay({ notes }: { notes: PaperReaderNote[] }) {
+  return (
+    <div className="pointer-events-none absolute left-0 top-0 z-20 size-full">
+      {notes.flatMap((note) =>
+        (note.anchor?.rects ?? []).map((rect, index) => (
+          <span
+            key={`${note.noteId}-${index}`}
+            className={[
+              "absolute rounded-[2px] border",
+              note.kind === "note" ? "border-blue-500/50" : "border-transparent",
+              noteColorClass(note.color),
+            ].join(" ")}
+            title={note.noteText ?? note.quote ?? note.label}
+            style={{
+              left: `${rect.left}%`,
+              top: `${rect.top}%`,
+              width: `${rect.width}%`,
+              height: `${rect.height}%`,
+            }}
+          />
+        ))
+      )}
     </div>
   )
 }
@@ -516,14 +714,24 @@ function PdfSearchPanel({
   const canUseResults = results.length > 0
   const statusText =
     searchStatus === "indexing"
-      ? "Indexing PDF text"
+      ? locale === "zh"
+        ? "正在索引 PDF 文本"
+        : "Indexing PDF text"
       : searchStatus === "error"
-        ? "PDF search text is unavailable."
+        ? locale === "zh"
+          ? "PDF 搜索文本不可用。"
+          : "PDF search text is unavailable."
         : queryTooShort
-          ? "Enter at least 2 characters."
+          ? locale === "zh"
+            ? "至少输入 2 个字符。"
+            : "Enter at least 2 characters."
           : trimmedQuery.length >= MIN_SEARCH_LENGTH
-            ? `${results.length} result${results.length === 1 ? "" : "s"}`
-            : "Search this PDF"
+            ? locale === "zh"
+              ? `${results.length} 个结果`
+              : `${results.length} result${results.length === 1 ? "" : "s"}`
+            : locale === "zh"
+              ? "搜索此 PDF"
+              : "Search this PDF"
 
   return (
     <section className="border-b border-[#d8dfd8] bg-white px-4 py-3 dark:border-border dark:bg-card">
@@ -531,10 +739,10 @@ function PdfSearchPanel({
         <label className="relative min-w-0 flex-1">
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[#334155]/45" />
           <Input
-            aria-label="Search PDF text"
+            aria-label={locale === "zh" ? "搜索 PDF 文本" : "Search PDF text"}
             className="h-9 bg-white pl-9 dark:bg-background"
             disabled={searchStatus === "indexing"}
-            placeholder={locale === "zh" ? "Search PDF" : "Search PDF"}
+            placeholder={locale === "zh" ? "搜索 PDF" : "Search PDF"}
             type="search"
             value={query}
             onChange={(event) => onQueryChange(event.target.value)}
@@ -548,7 +756,7 @@ function PdfSearchPanel({
             type="button"
             variant="outline"
             size="icon"
-            aria-label="Previous search result"
+            aria-label={locale === "zh" ? "上一个搜索结果" : "Previous search result"}
             disabled={!canUseResults || activeIndex <= 0}
             onClick={() => onSelectResult(activeIndex - 1)}
           >
@@ -558,7 +766,7 @@ function PdfSearchPanel({
             type="button"
             variant="outline"
             size="icon"
-            aria-label="Next search result"
+            aria-label={locale === "zh" ? "下一个搜索结果" : "Next search result"}
             disabled={!canUseResults || activeIndex >= results.length - 1}
             onClick={() => onSelectResult(activeIndex + 1)}
           >
@@ -582,7 +790,7 @@ function PdfSearchPanel({
               onClick={() => onSelectResult(index)}
             >
               <span className="block font-semibold text-[#334155] dark:text-foreground">
-                Page {result.pageNumber}
+                {locale === "zh" ? `第 ${result.pageNumber} 页` : `Page ${result.pageNumber}`}
               </span>
               <span className="line-clamp-2">{result.snippet}</span>
             </button>
@@ -614,7 +822,7 @@ function PdfThumbnailRail({
     return (
       <aside className="hidden border-r border-[#d8dfd8] bg-white p-3 dark:border-border dark:bg-card lg:block">
         <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#334155]/45 dark:text-muted-foreground">
-          {locale === "zh" ? "Pages" : "Pages"}
+          {locale === "zh" ? "页面" : "Pages"}
         </p>
       </aside>
     )
@@ -623,7 +831,7 @@ function PdfThumbnailRail({
   return (
     <aside className="hidden max-h-[78vh] overflow-y-auto border-r border-[#d8dfd8] bg-white p-3 dark:border-border dark:bg-card lg:block">
       <p className="mb-3 text-xs font-semibold uppercase tracking-[0.16em] text-[#334155]/45 dark:text-muted-foreground">
-        {locale === "zh" ? "Pages" : "Pages"}
+        {locale === "zh" ? "页面" : "Pages"}
       </p>
       <div className="space-y-2">
         {Array.from({ length: numPages }, (_, index) => {
@@ -635,6 +843,7 @@ function PdfThumbnailRail({
               onSelect={() => onSelectPage(thumbnailPage)}
               pageNumber={thumbnailPage}
               pdfDocument={pdfDocument}
+              locale={locale}
               title={title}
             />
           )
@@ -649,12 +858,14 @@ function PdfThumbnailButton({
   onSelect,
   pageNumber,
   pdfDocument,
+  locale,
   title,
 }: {
   active: boolean
   onSelect: () => void
   pageNumber: number
   pdfDocument: PdfDocument
+  locale: Locale
   title: string
 }) {
   const buttonRef = useRef<HTMLButtonElement | null>(null)
@@ -760,7 +971,7 @@ function PdfThumbnailButton({
       ref={buttonRef}
       type="button"
       aria-current={active ? "page" : undefined}
-      aria-label={`Go to page ${pageNumber}`}
+      aria-label={locale === "zh" ? `跳转到第 ${pageNumber} 页` : `Go to page ${pageNumber}`}
       className={[
         "block w-full rounded-md border p-1 text-left text-xs transition",
         active
@@ -772,7 +983,7 @@ function PdfThumbnailButton({
       <span className="flex min-h-28 items-center justify-center rounded-sm bg-[#eef4ef] dark:bg-secondary/60">
         {status === "error" ? (
           <span className="px-2 text-center text-[0.68rem] font-semibold text-[#334155]/55 dark:text-muted-foreground">
-            Page {pageNumber}
+            {locale === "zh" ? `第 ${pageNumber} 页` : `Page ${pageNumber}`}
           </span>
         ) : null}
         {status === "loading" ? (
@@ -780,7 +991,7 @@ function PdfThumbnailButton({
         ) : null}
         <canvas
           ref={canvasRef}
-          aria-label={`${title} PDF thumbnail page ${pageNumber}`}
+          aria-label={locale === "zh" ? `${title} PDF 第 ${pageNumber} 页缩略图` : `${title} PDF thumbnail page ${pageNumber}`}
           className={status === "ready" ? "block bg-white shadow-sm" : "hidden"}
         />
       </span>
@@ -793,6 +1004,198 @@ function PdfThumbnailButton({
 
 function pdfProxyUrl(pdfUrl: string) {
   return `/api/papers/pdf?url=${encodeURIComponent(pdfUrl)}`
+}
+
+function renderSimpleTextLayer(container: HTMLElement, content: PdfTextContent) {
+  const text = content.items.map((item) => item.str ?? "").filter(Boolean).join(" ")
+  const span = document.createElement("span")
+  span.textContent = text
+  span.style.position = "absolute"
+  span.style.left = "0"
+  span.style.top = "0"
+  span.style.width = "100%"
+  span.style.whiteSpace = "pre-wrap"
+  container.appendChild(span)
+}
+
+function applySearchHighlights(
+  container: HTMLElement | null,
+  pageNumber: number,
+  query: string,
+  results: PdfSearchResult[],
+  activeIndex: number
+) {
+  if (!container) {
+    return
+  }
+  const normalizedQuery = query.trim().toLowerCase()
+  const matchingPage = normalizedQuery.length >= MIN_SEARCH_LENGTH && results.some((result) => result.pageNumber === pageNumber)
+  const activePage = results[activeIndex]?.pageNumber === pageNumber
+  let firstMatched = true
+
+  for (const element of Array.from(container.querySelectorAll<HTMLElement>("span, div"))) {
+    element.classList.remove("paper-pdf-search-hit", "paper-pdf-search-hit-active")
+    if (!matchingPage || !element.textContent?.toLowerCase().includes(normalizedQuery)) {
+      continue
+    }
+    element.classList.add("paper-pdf-search-hit")
+    if (activePage && firstMatched) {
+      element.classList.add("paper-pdf-search-hit-active")
+      firstMatched = false
+    }
+  }
+}
+
+function readCurrentTextSelection(
+  pageLayer: HTMLElement | null,
+  textLayer: HTMLElement | null,
+  pageNumber: number
+): PdfTextSelection | null {
+  if (!pageLayer || !textLayer || typeof window === "undefined") {
+    return null
+  }
+  const selection = window.getSelection()
+  const quote = selection?.toString().trim().replace(/\s+/g, " ")
+  if (!selection || !quote || selection.rangeCount <= 0) {
+    return null
+  }
+  const range = selection.getRangeAt(0)
+  if (!selectionIntersectsNode(range, textLayer)) {
+    return null
+  }
+  const layerRect = pageLayer.getBoundingClientRect()
+  const rects = Array.from(range.getClientRects())
+    .map((rect) => toRelativeRect(rect, layerRect))
+    .filter((rect) => rect.width > 0 && rect.height > 0)
+    .slice(0, 20)
+  return {
+    pageNumber,
+    quote: quote.slice(0, 2000),
+    rects: rects.length ? rects : [{ left: 0, top: 0, width: 100, height: 3 }],
+  }
+}
+
+function selectionIntersectsNode(range: Range, node: Node) {
+  if (typeof range.intersectsNode === "function") {
+    return range.intersectsNode(node)
+  }
+  const container = range.commonAncestorContainer
+  return node === container || node.contains(container)
+}
+
+function toRelativeRect(rect: DOMRect, layerRect: DOMRect): PaperReaderNoteRect {
+  const width = Math.max(layerRect.width, 1)
+  const height = Math.max(layerRect.height, 1)
+  return {
+    left: clampPercent(((rect.left - layerRect.left) / width) * 100),
+    top: clampPercent(((rect.top - layerRect.top) / height) * 100),
+    width: clampPercent((rect.width / width) * 100),
+    height: clampPercent((rect.height / height) * 100),
+  }
+}
+
+function clearWindowSelection() {
+  if (typeof window !== "undefined") {
+    window.getSelection()?.removeAllRanges()
+  }
+}
+
+function noteColorClass(color: PaperReaderNote["color"]) {
+  switch (color) {
+    case "green":
+      return "bg-emerald-300/35"
+    case "blue":
+      return "bg-sky-300/35"
+    case "pink":
+      return "bg-rose-300/35"
+    case "yellow":
+    default:
+      return "bg-yellow-300/40"
+  }
+}
+
+function searchCacheKey({ paperId, pdfUrl }: { paperId?: string; pdfUrl: string }) {
+  const stableId = paperId?.trim() || `pdf-${stableHash(pdfUrl)}`
+  return `newsroom:paper-pdf-search:v1:${encodeURIComponent(stableId)}`
+}
+
+function readSearchCache(cacheKey: string, numPages: number): PdfPageText[] | null {
+  if (typeof window === "undefined") {
+    return null
+  }
+  try {
+    const raw = window.localStorage.getItem(cacheKey)
+    if (!raw || raw.length > SEARCH_CACHE_MAX_BYTES) {
+      return null
+    }
+    const payload = JSON.parse(raw) as { createdAt?: number; numPages?: number; pageTexts?: PdfPageText[] }
+    if (!payload.createdAt || Date.now() - payload.createdAt > SEARCH_CACHE_TTL_MS || payload.numPages !== numPages) {
+      return null
+    }
+    if (!Array.isArray(payload.pageTexts) || payload.pageTexts.length !== numPages) {
+      return null
+    }
+    return payload.pageTexts.map((page) => ({
+      pageNumber: Number(page.pageNumber),
+      text: String(page.text ?? ""),
+    }))
+  } catch {
+    return null
+  }
+}
+
+function writeSearchCache(cacheKey: string, pageTexts: PdfPageText[]) {
+  if (typeof window === "undefined") {
+    return
+  }
+  try {
+    const payload = JSON.stringify({
+      createdAt: Date.now(),
+      numPages: pageTexts.length,
+      pageTexts,
+    })
+    if (payload.length > SEARCH_CACHE_MAX_BYTES) {
+      return
+    }
+    window.localStorage.setItem(cacheKey, payload)
+    updateSearchCacheIndex(cacheKey)
+  } catch {
+    // Browser storage is best-effort only.
+  }
+}
+
+function updateSearchCacheIndex(cacheKey: string) {
+  try {
+    const rawIndex = window.localStorage.getItem(SEARCH_CACHE_INDEX_KEY)
+    const index = rawIndex ? (JSON.parse(rawIndex) as Array<{ key: string; updatedAt: number }>) : []
+    const nextIndex = [
+      { key: cacheKey, updatedAt: Date.now() },
+      ...index.filter((item) => item.key !== cacheKey),
+    ].slice(0, SEARCH_CACHE_MAX_ITEMS)
+    for (const stale of index.slice(SEARCH_CACHE_MAX_ITEMS - 1)) {
+      if (stale.key !== cacheKey) {
+        window.localStorage.removeItem(stale.key)
+      }
+    }
+    window.localStorage.setItem(SEARCH_CACHE_INDEX_KEY, JSON.stringify(nextIndex))
+  } catch {
+    // Ignore local cache pruning failures.
+  }
+}
+
+function stableHash(value: string) {
+  let hash = 5381
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 33) ^ value.charCodeAt(index)
+  }
+  return (hash >>> 0).toString(36)
+}
+
+function clampPercent(value: number) {
+  if (!Number.isFinite(value)) {
+    return 0
+  }
+  return Math.min(Math.max(Number(value.toFixed(4)), 0), 100)
 }
 
 function scheduleThumbnailRender(run: ThumbnailRenderJob["run"]) {

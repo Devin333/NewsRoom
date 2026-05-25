@@ -1,3 +1,5 @@
+"use client"
+
 import Link from "next/link"
 import { ArrowRight } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
@@ -5,9 +7,11 @@ import {
   studioStatusLabel,
   studioStatusTone
 } from "@/features/studio/shared/lib/studio-navigation"
+import { useI18n } from "@/lib/i18n/use-i18n"
 import type { StudioModuleEntry } from "@/types/studio"
 
 export function StudioSectionCard({ entry }: { entry: StudioModuleEntry }) {
+  const { locale } = useI18n()
   const Icon = entry.icon
 
   return (
@@ -27,19 +31,19 @@ export function StudioSectionCard({ entry }: { entry: StudioModuleEntry }) {
             <p className="mt-1 text-xs text-muted-foreground">{entry.coreObject}</p>
           </div>
         </div>
-        <Badge variant={studioStatusTone(entry.status)}>{studioStatusLabel(entry.status)}</Badge>
+        <Badge variant={studioStatusTone(entry.status)}>{studioStatusLabel(entry.status, locale)}</Badge>
       </div>
 
       <div className="mt-4 space-y-3">
         <p className="text-sm leading-6 text-muted-foreground">{entry.description}</p>
         <div>
-          <p className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">Target API</p>
+          <p className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">{locale === "zh" ? "目标 API" : "Target API"}</p>
           <p className="mt-1 break-all font-mono text-xs text-foreground">{entry.targetApi}</p>
         </div>
       </div>
 
       <div className="mt-4 flex items-center justify-between gap-3 border-t border-border pt-3 text-sm font-medium text-accent">
-        <span>{entry.actionLabel ?? "Open module"}</span>
+        <span>{entry.actionLabel ?? (locale === "zh" ? "打开模块" : "Open module")}</span>
         <ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5" />
       </div>
     </Link>

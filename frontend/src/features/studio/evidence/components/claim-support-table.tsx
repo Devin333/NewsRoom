@@ -6,16 +6,10 @@ import { EmptyState } from "@/components/common/empty-state"
 import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { filterClaimsByStatus } from "@/features/studio/evidence/lib/evidence-adapter"
+import { useI18n } from "@/lib/i18n/use-i18n"
 import type { ClaimSupportStatus, StudioClaimEvidence } from "@/types/evidence"
 
 const FILTERS: Array<ClaimSupportStatus | "all"> = ["all", "accepted", "rejected", "uncertain", "unsupported"]
-
-const STATUS_LABEL: Record<ClaimSupportStatus, string> = {
-  accepted: "Accepted",
-  rejected: "Rejected",
-  uncertain: "Uncertain",
-  unsupported: "Unsupported"
-}
 
 const STATUS_TONE: Record<ClaimSupportStatus, "success" | "danger" | "warning" | "info"> = {
   accepted: "success",
@@ -25,16 +19,17 @@ const STATUS_TONE: Record<ClaimSupportStatus, "success" | "danger" | "warning" |
 }
 
 export function ClaimSupportTable({ claims }: { claims: StudioClaimEvidence[] }) {
+  const { t, status } = useI18n()
   const [statusFilter, setStatusFilter] = useState<ClaimSupportStatus | "all">("all")
   const filteredClaims = useMemo(() => filterClaimsByStatus(claims, statusFilter), [claims, statusFilter])
 
   if (!claims.length) {
-    return <EmptyState title="No evidence matrix" description="This run did not generate claim-level evidence rows." />
+    return <EmptyState title={t("studio.evidence.noMatrix")} description={t("studio.evidence.noMatrixDescription")} />
   }
 
   return (
     <section className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2" aria-label="Claim status filters">
+      <div className="flex flex-wrap items-center gap-2" aria-label={t("studio.evidence.claimStatusFilters")}>
         {FILTERS.map((filter) => (
           <Button
             key={filter}
@@ -43,21 +38,21 @@ export function ClaimSupportTable({ claims }: { claims: StudioClaimEvidence[] })
             size="sm"
             onClick={() => setStatusFilter(filter)}
           >
-            {filter === "all" ? "All" : STATUS_LABEL[filter]}
+            {filter === "all" ? t("common.all") : status(filter)}
           </Button>
         ))}
       </div>
       {!filteredClaims.length ? (
-        <EmptyState title="No matching claims" description="No claims match the selected evidence status." />
+        <EmptyState title={t("studio.evidence.noMatchingClaims")} description={t("studio.evidence.noMatchingClaimsDescription")} />
       ) : (
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Claim</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Sources</TableHead>
-              <TableHead>Evidence</TableHead>
-              <TableHead>Section</TableHead>
+              <TableHead>{t("studio.evidence.claim")}</TableHead>
+              <TableHead>{t("common.status")}</TableHead>
+              <TableHead>{t("studio.evidence.sources")}</TableHead>
+              <TableHead>{t("studio.evidence.evidence")}</TableHead>
+              <TableHead>{t("studio.evidence.section")}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -69,8 +64,8 @@ export function ClaimSupportTable({ claims }: { claims: StudioClaimEvidence[] })
                   {claim.failureReason ? <p className="mt-2 text-xs text-muted-foreground">{claim.failureReason}</p> : null}
                 </TableCell>
                 <TableCell>
-                  <Badge tone={STATUS_TONE[claim.status]}>{STATUS_LABEL[claim.status]}</Badge>
-                  {claim.confidence !== undefined ? <p className="mt-2 text-xs text-muted-foreground">{formatConfidence(claim.confidence)} confidence</p> : null}
+                  <Badge tone={STATUS_TONE[claim.status]}>{status(claim.status)}</Badge>
+                  {claim.confidence !== undefined ? <p className="mt-2 text-xs text-muted-foreground">{formatConfidence(claim.confidence)} {t("studio.evidence.confidence")}</p> : null}
                 </TableCell>
                 <TableCell className="min-w-[220px]">
                   {claim.sourceRefs.length ? (
@@ -82,7 +77,7 @@ export function ClaimSupportTable({ claims }: { claims: StudioClaimEvidence[] })
                       ))}
                     </div>
                   ) : (
-                    <span className="text-xs text-muted-foreground">No sources</span>
+                    <span className="text-xs text-muted-foreground">{t("studio.evidence.noSources")}</span>
                   )}
                 </TableCell>
                 <TableCell className="min-w-[180px]">
@@ -95,10 +90,10 @@ export function ClaimSupportTable({ claims }: { claims: StudioClaimEvidence[] })
                       ))}
                     </div>
                   ) : (
-                    <span className="text-xs text-muted-foreground">No evidence</span>
+                    <span className="text-xs text-muted-foreground">{t("studio.evidence.noEvidence")}</span>
                   )}
                 </TableCell>
-                <TableCell>{claim.reportSection ? <span className="text-sm">{claim.reportSection}</span> : <span className="text-xs text-muted-foreground">No section</span>}</TableCell>
+                <TableCell>{claim.reportSection ? <span className="text-sm">{claim.reportSection}</span> : <span className="text-xs text-muted-foreground">{t("studio.evidence.noSection")}</span>}</TableCell>
               </TableRow>
             ))}
           </TableBody>

@@ -15,6 +15,7 @@ from interfaces.services.entity_service import EntityTrackingApplicationService
 from interfaces.services.memory_service import MemoryApplicationService
 from interfaces.services.mcp_service import MCPApplicationService
 from interfaces.services.paper_service import PapersApplicationService
+from interfaces.services.paper_reader_notes_service import PaperReaderNotesApplicationService
 from interfaces.services.paper_user_state_service import PaperUserStateApplicationService
 from interfaces.services.report_service import ReportApplicationService
 from interfaces.services.run_inspection_service import RunInspectionService
@@ -45,6 +46,7 @@ ApprovalServiceFactory = Callable[[], ApprovalApplicationService]
 BoardServiceFactory = Callable[[], BoardApplicationService]
 PapersServiceFactory = Callable[[], PapersApplicationService]
 AuthServiceFactory = Callable[[], AuthApplicationService]
+PaperReaderNotesServiceFactory = Callable[[], PaperReaderNotesApplicationService]
 PaperUserStateServiceFactory = Callable[[], PaperUserStateApplicationService]
 
 
@@ -68,6 +70,7 @@ class ApiServices:
     board_service_factory: BoardServiceFactory
     papers_service_factory: PapersServiceFactory
     auth_service_factory: AuthServiceFactory
+    paper_reader_notes_service_factory: PaperReaderNotesServiceFactory
     paper_user_state_service_factory: PaperUserStateServiceFactory
 
 
@@ -104,6 +107,7 @@ def build_api_services(
     board_service_factory: BoardServiceFactory = BoardApplicationService,
     papers_service_factory: PapersServiceFactory = PapersApplicationService,
     auth_service_factory: AuthServiceFactory = AuthApplicationService,
+    paper_reader_notes_service_factory: PaperReaderNotesServiceFactory = PaperReaderNotesApplicationService,
     paper_user_state_service_factory: PaperUserStateServiceFactory = PaperUserStateApplicationService,
 ) -> ApiServices:
     return ApiServices(
@@ -125,6 +129,7 @@ def build_api_services(
         board_service_factory=board_service_factory,
         papers_service_factory=papers_service_factory,
         auth_service_factory=auth_service_factory,
+        paper_reader_notes_service_factory=paper_reader_notes_service_factory,
         paper_user_state_service_factory=paper_user_state_service_factory,
     )
 

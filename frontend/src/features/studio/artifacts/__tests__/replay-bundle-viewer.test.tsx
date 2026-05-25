@@ -21,7 +21,7 @@ describe("ReplayBundleViewer", () => {
     render(<ReplayBundleViewer replay={replay} />)
 
     expect(screen.getByText("可复盘")).toBeInTheDocument()
-    expect(screen.getByText("valid")).toBeInTheDocument()
+    expect(screen.getByText("有效")).toBeInTheDocument()
   })
 
   it("shows events_error and not-ready state", () => {
@@ -47,6 +47,6 @@ describe("ReplayBundleViewer", () => {
   it("shows empty lineage state", () => {
     render(<LineageViewer lineage={[]} />)
 
-    expect(screen.getByText("No lineage")).toBeInTheDocument()
+    expect(screen.getByText("暂无血缘")).toBeInTheDocument()
   })
 })

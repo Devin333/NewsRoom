@@ -16,7 +16,7 @@ describe("BoardCenterPage", () => {
     const list = adaptBoardList(undefined)
     render(<BoardCenterPage initialData={list} />)
 
-    expect(screen.getByRole("heading", { name: "Board Center" })).toBeInTheDocument()
+    expect(screen.getByRole("heading", { name: "业务板中心" })).toBeInTheDocument()
     expect(screen.getByText("AI News")).toBeInTheDocument()
     expect(screen.getByText("Project Radar")).toBeInTheDocument()
     expect(screen.getByText("Paper Radar")).toBeInTheDocument()
@@ -42,8 +42,8 @@ describe("BoardCenterPage", () => {
     const detail = buildBoardDetailViewModel("ai_news", list, fallbackOutputForBoard("ai_news"))
     render(<BoardDetailPage detail={detail} />)
 
-    fireEvent.change(screen.getByLabelText("Sample items JSON"), { target: { value: "{nope" } })
-    fireEvent.click(screen.getByRole("button", { name: /Build output/i }))
+    fireEvent.change(screen.getByLabelText("样例条目 JSON"), { target: { value: "{nope" } })
+    fireEvent.click(screen.getByRole("button", { name: /构建输出/ }))
 
     expect(screen.getByRole("alert")).toHaveTextContent(/Expected property name|JSON/i)
   })

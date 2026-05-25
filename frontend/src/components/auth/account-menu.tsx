@@ -4,9 +4,11 @@ import { useEffect, useState } from "react"
 import { LogOut, UserCircle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { fetchAuthSession, logout } from "@/lib/auth/api"
+import { useI18n } from "@/lib/i18n/use-i18n"
 import type { CurrentUser } from "@/lib/papers/types"
 
 export function AccountMenu() {
+  const { t } = useI18n()
   const [user, setUser] = useState<CurrentUser | null>(null)
   const [loading, setLoading] = useState(false)
 
@@ -47,7 +49,7 @@ export function AccountMenu() {
         <UserCircle className="mr-1 size-4" />
         {user.username}
       </span>
-      <Button type="button" variant="ghost" size="icon" aria-label="Sign out" disabled={loading} onClick={signOut}>
+      <Button type="button" variant="ghost" size="icon" aria-label={t("auth.signOut")} disabled={loading} onClick={signOut}>
         <LogOut className="size-4" />
       </Button>
     </div>

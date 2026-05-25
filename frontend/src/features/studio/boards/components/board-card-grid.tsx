@@ -2,6 +2,8 @@ import Link from "next/link"
 import { ArrowRight, Boxes, Clock, FileInput, FileOutput } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { formatDataState } from "@/lib/i18n"
+import { useI18n } from "@/lib/i18n/use-i18n"
 import type {
   StudioBoardDefinition,
   StudioBoardSummary,
@@ -20,6 +22,7 @@ type BoardCardGridProps = {
 }
 
 export function BoardCardGrid({ summaries, definitions }: BoardCardGridProps) {
+  const { locale, t } = useI18n()
   return (
     <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
       {summaries.map((summary) => {
@@ -42,7 +45,7 @@ export function BoardCardGrid({ summaries, definitions }: BoardCardGridProps) {
                       <p className="mt-1 font-mono text-xs text-muted-foreground">{summary.boardType}</p>
                     </div>
                   </div>
-                  <Badge variant={statusVariant[summary.status]}>{summary.status}</Badge>
+                  <Badge variant={statusVariant[summary.status]}>{formatDataState(locale, summary.status)}</Badge>
                 </div>
                 {summary.description ? (
                   <p className="text-sm leading-6 text-muted-foreground">{summary.description}</p>
@@ -50,23 +53,23 @@ export function BoardCardGrid({ summaries, definitions }: BoardCardGridProps) {
               </CardHeader>
 
               <CardContent className="space-y-4 text-sm">
-                <InfoLine icon={FileInput} label="Input object" value={definition.inputObject} />
-                <InfoLine icon={FileOutput} label="Output object" value={definition.outputObject} />
+                <InfoLine icon={FileInput} label={t("studio.boards.inputObject")} value={definition.inputObject} />
+                <InfoLine icon={FileOutput} label={t("studio.boards.outputObject")} value={definition.outputObject} />
                 <InfoLine
                   icon={Clock}
-                  label="Last run"
-                  value={summary.lastRunId ?? "placeholder: waiting for board run index"}
+                  label={t("studio.boards.lastRun")}
+                  value={summary.lastRunId ?? t("studio.boards.waitingRunIndex")}
                 />
                 <div>
-                  <p className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">Quality status</p>
+                  <p className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">{t("studio.boards.qualityStatus")}</p>
                   <p className="mt-1 text-foreground">
-                    {summary.qualityScore !== undefined ? `${summary.qualityScore}/100` : summary.status}
+                    {summary.qualityScore !== undefined ? `${summary.qualityScore}/100` : formatDataState(locale, summary.status)}
                   </p>
                 </div>
               </CardContent>
 
               <div className="flex items-center justify-between gap-3 border-t border-border px-4 py-3 text-sm font-medium text-accent">
-                <span>Open board</span>
+                <span>{t("studio.boards.openBoard")}</span>
                 <ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5" />
               </div>
             </Card>

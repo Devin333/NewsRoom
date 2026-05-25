@@ -1,3 +1,5 @@
+"use client"
+
 import Link from "next/link"
 import { Archive, Eye, RotateCcw } from "lucide-react"
 import { EmptyState } from "@/components/common/empty-state"
@@ -17,22 +19,24 @@ import {
   StudioTableFrame
 } from "@/features/studio/shared/components/studio-dashboard"
 import { formatDateTime, formatNumber } from "@/lib/format"
+import { useI18n } from "@/lib/i18n/use-i18n"
 import type { StudioArtifactRunDetail, StudioArtifactRunSummary, StudioLineageRef, StudioReplayBundle } from "@/types/artifact"
 
 export function ArtifactReplayHomePage({ runs, notices }: { runs: StudioArtifactRunSummary[]; notices: string[] }) {
+  const { locale, t } = useI18n()
   return (
     <main className="space-y-6">
       <StudioPageHeader
-        eyebrow="Runtime"
-        title="Artifact / Replay"
-        description="Inspect run manifests, events, step results, artifacts, replay bundles, and lineage."
+        eyebrow={locale === "zh" ? "运行时" : "Runtime"}
+        title={t("studio.module.artifactReplay.title")}
+        description={t("studio.module.artifactReplay.description")}
       />
       <ArtifactNotice notices={notices} />
 
-      <StudioPanel title="Recent runs" description="Runs with artifact or replay material." contentClassName="p-0">
+      <StudioPanel title={t("studio.artifacts.recentRuns")} description={t("studio.artifacts.recentRunsDescription")} contentClassName="p-0">
         {!runs.length ? (
           <div className="p-4">
-            <EmptyState title="No runs" description="The backend did not return inspectable runs." />
+            <EmptyState title={t("studio.artifacts.noRuns")} description={t("studio.artifacts.noRunsDescription")} />
           </div>
         ) : (
           <StudioTableFrame className="border-0 shadow-none">
@@ -40,14 +44,14 @@ export function ArtifactReplayHomePage({ runs, notices }: { runs: StudioArtifact
               <table className="w-full min-w-[1080px] border-collapse text-left text-sm">
                 <thead className="border-b border-border bg-secondary/80 text-xs uppercase text-muted-foreground">
                   <tr>
-                    <th className="px-4 py-3 font-medium">Run</th>
-                    <th className="px-4 py-3 font-medium">Status</th>
-                    <th className="px-4 py-3 font-medium">Artifacts</th>
-                    <th className="px-4 py-3 font-medium">Events</th>
-                    <th className="px-4 py-3 font-medium">Step results</th>
-                    <th className="px-4 py-3 font-medium">Manifest</th>
-                    <th className="px-4 py-3 font-medium">Started</th>
-                    <th className="px-4 py-3 font-medium">Actions</th>
+                    <th className="px-4 py-3 font-medium">{t("studio.runs.runId")}</th>
+                    <th className="px-4 py-3 font-medium">{t("common.status")}</th>
+                    <th className="px-4 py-3 font-medium">{t("studio.quality.artifacts")}</th>
+                    <th className="px-4 py-3 font-medium">{t("studio.artifacts.events")}</th>
+                    <th className="px-4 py-3 font-medium">{t("studio.artifacts.stepResults")}</th>
+                    <th className="px-4 py-3 font-medium">{t("studio.artifacts.manifest")}</th>
+                    <th className="px-4 py-3 font-medium">{t("studio.runs.started")}</th>
+                    <th className="px-4 py-3 font-medium">{t("common.actions")}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -55,7 +59,7 @@ export function ArtifactReplayHomePage({ runs, notices }: { runs: StudioArtifact
                     <tr key={run.runId} className="border-b border-border/70 last:border-b-0 hover:bg-secondary/40">
                       <td className="max-w-[16rem] px-4 py-3">
                         <p className="truncate font-medium">{run.runId}</p>
-                        <p className="truncate text-xs text-muted-foreground">{run.workflowId ?? "unknown workflow"}</p>
+                        <p className="truncate text-xs text-muted-foreground">{run.workflowId ?? t("studio.artifacts.unknownWorkflow")}</p>
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex flex-wrap gap-2">
@@ -66,20 +70,20 @@ export function ArtifactReplayHomePage({ runs, notices }: { runs: StudioArtifact
                       <td className="px-4 py-3">{formatNumber(run.artifactCount)}</td>
                       <td className="px-4 py-3">{formatNumber(run.eventCount)}</td>
                       <td className="px-4 py-3">{formatNumber(run.stepResultCount)}</td>
-                      <td className="max-w-[18rem] truncate px-4 py-3">{run.manifestPath ?? "No manifest path"}</td>
+                      <td className="max-w-[18rem] truncate px-4 py-3">{run.manifestPath ?? t("studio.artifacts.noManifestPath")}</td>
                       <td className="px-4 py-3">{formatDateTime(run.startedAt)}</td>
                       <td className="px-4 py-3">
                         <div className="flex flex-wrap gap-2">
                           <Button asChild variant="outline" size="sm">
                             <Link href={`/studio/artifacts/runs/${encodeURIComponent(run.runId)}`}>
                               <Eye className="size-4" />
-                              View
+                              {t("studio.artifacts.view")}
                             </Link>
                           </Button>
                           <Button asChild variant="ghost" size="sm">
                             <Link href={`/studio/artifacts/runs/${encodeURIComponent(run.runId)}/replay`}>
                               <RotateCcw className="size-4" />
-                              Replay
+                              {t("studio.artifacts.replay")}
                             </Link>
                           </Button>
                         </div>
@@ -103,20 +107,21 @@ export function ArtifactRunDetailPage({
   detail: StudioArtifactRunDetail
   selectedArtifactKey?: string
 }) {
+  const { t } = useI18n()
   const selectedArtifact =
     detail.artifacts.find((artifact) => artifact.artifactKey === selectedArtifactKey) ?? detail.selectedArtifact
 
   return (
     <main className="space-y-6">
       <StudioPageHeader
-        eyebrow="Artifact Replay"
-        title="Run artifacts"
-        description="Inspect artifacts, manifest, events, step results, previews, and lineage for this run."
+        eyebrow={t("studio.module.artifactReplay.title")}
+        title={t("studio.artifacts.runArtifacts")}
+        description={t("studio.artifacts.runArtifactsDescription")}
         actions={
           <Button asChild variant="outline">
             <Link href={`/studio/artifacts/runs/${encodeURIComponent(detail.run.runId)}/replay`}>
               <RotateCcw className="size-4" />
-              Replay bundle
+              {t("studio.artifacts.replayBundle")}
             </Link>
           </Button>
         }
@@ -125,12 +130,12 @@ export function ArtifactRunDetailPage({
       <ArtifactNotice notices={[...detail.run.notices, ...detail.notices]} />
       <ArtifactRunSummaryGrid run={detail.run} />
 
-      <StudioPanel title="Run metadata" description={detail.run.runId} actions={<ArtifactStatusBadge status={detail.run.artifactStatus} />}>
+      <StudioPanel title={t("studio.artifacts.runMetadata")} description={detail.run.runId} actions={<ArtifactStatusBadge status={detail.run.artifactStatus} />}>
         <StudioFieldGrid>
-          <StudioField label="Workflow" value={detail.run.workflowId ?? "unknown"} />
-          <StudioField label="Profile" value={detail.run.profile ?? "unknown"} />
-          <StudioField label="Manifest path" value={detail.run.manifestPath ?? "No manifest path"} />
-          <StudioField label="Finished" value={formatDateTime(detail.run.finishedAt)} />
+          <StudioField label={t("studio.artifacts.workflow")} value={detail.run.workflowId ?? t("common.unknown")} />
+          <StudioField label={t("studio.artifacts.profile")} value={detail.run.profile ?? t("common.unknown")} />
+          <StudioField label={t("studio.artifacts.manifest")} value={detail.run.manifestPath ?? t("studio.artifacts.noManifestPath")} />
+          <StudioField label={t("studio.artifacts.finished")} value={formatDateTime(detail.run.finishedAt)} />
         </StudioFieldGrid>
       </StudioPanel>
 
@@ -142,7 +147,7 @@ export function ArtifactRunDetailPage({
       {detail.replay ? (
         <ReplayDigest replay={detail.replay} />
       ) : (
-        <EmptyState title="No replay digest" description="This run did not return a replay bundle." />
+        <EmptyState title={t("studio.artifacts.noReplayDigest")} description={t("studio.artifacts.noReplayDigestDescription")} />
       )}
       <LineageViewer lineage={detail.lineage} />
     </main>
@@ -156,17 +161,18 @@ export function ArtifactRunReplayPage({
   replay: StudioReplayBundle
   lineage: StudioLineageRef[]
 }) {
+  const { t } = useI18n()
   return (
     <main className="space-y-6">
       <StudioPageHeader
-        eyebrow="Artifact Replay"
-        title="Replay bundle"
-        description="Review the manifest, events, artifacts, step results, integrity payload, and events errors for replay."
+        eyebrow={t("studio.module.artifactReplay.title")}
+        title={t("studio.artifacts.replayBundle")}
+        description={t("studio.artifacts.replayBundleDescription")}
         actions={
           <Button asChild variant="outline">
             <Link href={`/studio/artifacts/runs/${encodeURIComponent(replay.runId)}`}>
               <Archive className="size-4" />
-              Back to artifacts
+              {t("studio.artifacts.backToArtifacts")}
             </Link>
           </Button>
         }
@@ -179,24 +185,25 @@ export function ArtifactRunReplayPage({
 }
 
 function ReplayDigest({ replay }: { replay: StudioReplayBundle }) {
+  const { t } = useI18n()
   return (
     <StudioPanel
-      title="Replay digest"
-      description={replay.manifestPath ?? "No manifest path"}
+      title={t("studio.artifacts.replayDigest")}
+      description={replay.manifestPath ?? t("studio.artifacts.noManifestPath")}
       actions={
         <Button asChild variant="ghost" size="sm">
           <Link href={`/studio/artifacts/runs/${encodeURIComponent(replay.runId)}/replay`}>
             <RotateCcw className="size-4" />
-            Open Replay
+            {t("studio.artifacts.openReplay")}
           </Link>
         </Button>
       }
     >
       <StudioFieldGrid>
-        <StudioField label="Events" value={formatNumber(replay.eventCount)} />
-        <StudioField label="Artifacts" value={formatNumber(replay.artifactCount)} />
-        <StudioField label="Step results" value={formatNumber(replay.stepResultCount)} />
-        <StudioField label="Readiness" value={replay.readinessLabel} />
+        <StudioField label={t("studio.artifacts.events")} value={formatNumber(replay.eventCount)} />
+        <StudioField label={t("studio.quality.artifacts")} value={formatNumber(replay.artifactCount)} />
+        <StudioField label={t("studio.artifacts.stepResults")} value={formatNumber(replay.stepResultCount)} />
+        <StudioField label={t("studio.artifacts.readiness")} value={replay.readinessLabel} />
       </StudioFieldGrid>
     </StudioPanel>
   )

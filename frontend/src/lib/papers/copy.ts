@@ -1,21 +1,30 @@
+import { translate } from "@/lib/i18n"
+import type { TranslationKey } from "@/lib/i18n/translations"
 import type { Locale, PaperPeriod, PaperSort } from "@/lib/papers/types"
 
 export type Localized<T = string> = Record<Locale, T>
 
+function copy(key: TranslationKey): Localized {
+  return {
+    zh: translate("zh", key),
+    en: translate("en", key)
+  }
+}
+
 export const papersCopy = {
-  brand: { zh: "NewsRoom Research", en: "NewsRoom Research" },
-  brandSubline: { zh: "论文 · 任务 · 方法", en: "Papers · Tasks · Methods" },
-  papersNav: { zh: "研究", en: "Research" },
-  trendingPapers: { zh: "热门论文", en: "Trending Papers" },
-  tasks: { zh: "任务", en: "Tasks" },
-  methods: { zh: "方法", en: "Methods" },
-  searchPlaceholder: { zh: "搜索论文、任务、方法...", en: "Search papers, tasks, methods..." },
-  openNavigation: { zh: "打开 Papers 导航", en: "Open Papers navigation" },
-  themeLight: { zh: "切换到浅色模式", en: "Switch to light mode" },
-  themeDark: { zh: "切换到深色模式", en: "Switch to dark mode" },
-  lightMode: { zh: "浅色", en: "Light" },
-  darkMode: { zh: "深色", en: "Dark" },
-  languageToggle: { zh: "切换语言", en: "Switch language" },
+  brand: copy("papers.brand"),
+  brandSubline: copy("papers.brandSubline"),
+  papersNav: copy("papers.papersNav"),
+  trendingPapers: copy("papers.trendingPapers"),
+  tasks: copy("papers.tasks"),
+  methods: copy("papers.methods"),
+  searchPlaceholder: copy("papers.searchPlaceholder"),
+  openNavigation: copy("papers.openNavigation"),
+  themeLight: copy("preference.theme.switchLight"),
+  themeDark: copy("preference.theme.switchDark"),
+  lightMode: copy("preference.theme.light"),
+  darkMode: copy("preference.theme.dark"),
+  languageToggle: copy("preference.language.switch"),
   dropdownTrendingDescription: {
     zh: "论文流：PDF 首页、摘要、标签、代码与引用指标。",
     en: "Paper stream with PDF first pages, abstracts, tags, code, and citation signals."
@@ -28,12 +37,9 @@ export const papersCopy = {
     zh: "论文相关方法、模型结构与技术路线。",
     en: "Methods, model structures, and technical routes tied to papers."
   },
-  frontendView: {
-    zh: "前台用户视图 · 已发布研究内容",
-    en: "Frontend user view · approved research content"
-  },
-  taskBranch: { zh: "Papers 分支 · Tasks", en: "Papers branch · Tasks" },
-  methodBranch: { zh: "Papers 分支 · Methods", en: "Papers branch · Methods" },
+  frontendView: copy("papers.frontendView"),
+  taskBranch: copy("papers.taskBranch"),
+  methodBranch: copy("papers.methodBranch"),
   taskDetailMeta: {
     zh: "公开任务详情 · Benchmarks + Papers",
     en: "Public task detail · benchmarks + papers"
@@ -42,74 +48,69 @@ export const papersCopy = {
     zh: "公开方法详情 · Papers + Tasks",
     en: "Public method detail · papers + tasks"
   },
-  researchPapers: { zh: "论文研究", en: "Research Papers" },
-  researchSubtitle: {
-    zh: "浏览带有真实 PDF、GitHub 仓库和 OpenAlex 引用数据的已发布 AI 研究。",
-    en: "Scan published AI research with real PDFs, GitHub repositories, and OpenAlex citation signals."
-  },
-  tasksSubtitle: {
-    zh: "按研究问题和任务领域浏览 Papers 模块下的论文。",
-    en: "Browse research problems and task areas under the Papers module."
-  },
-  methodsSubtitle: {
-    zh: "探索论文中的模型结构、推理范式和技术路线。",
-    en: "Explore model structures, reasoning patterns, and technical routes found in papers."
-  },
-  papers: { zh: "论文", en: "papers" },
-  repositories: { zh: "代码仓库", en: "repos" },
-  benchmarks: { zh: "评测", en: "benchmarks" },
-  implementations: { zh: "实现", en: "implementations" },
-  methodsUsed: { zh: "使用方法", en: "methods used" },
-  topDomains: { zh: "热门方向", en: "Top Domains" },
-  trendingDomains: { zh: "趋势方向", en: "Trending Domains" },
-  contentPanel: { zh: "内容面板", en: "Content Panel" },
-  benchmarksTitle: { zh: "Benchmarks", en: "Benchmarks" },
-  papersUnderTask: { zh: "该任务下的论文", en: "Papers under this task" },
-  papersUsingMethod: { zh: "使用该方法的论文", en: "Papers using this method" },
-  relatedTasks: { zh: "相关任务", en: "Related Tasks" },
-  sisterTasks: { zh: "相邻任务", en: "Sister Tasks" },
-  commonMethods: { zh: "常用方法", en: "Common Methods" },
-  relatedMethods: { zh: "相关方法", en: "Related Methods" },
-  commonBenchmarks: { zh: "常见评测", en: "Common Benchmarks" },
-  noPapers: { zh: "暂无可验证论文", en: "No verified papers yet" },
-  openPaper: { zh: "打开论文 PDF", en: "Open paper PDF" },
-  openCode: { zh: "打开 GitHub 仓库", en: "Open GitHub repository" },
-  githubStars: { zh: "GitHub stars", en: "GitHub stars" },
-  githubMomentum: { zh: "GitHub momentum", en: "GitHub momentum" },
-  citations: { zh: "OpenAlex 引用", en: "OpenAlex citations" },
-  paperRecord: { zh: "PDF", en: "PDF" },
+  researchPapers: copy("papers.researchPapers"),
+  researchSubtitle: copy("papers.researchSubtitle"),
+  tasksSubtitle: copy("papers.tasksSubtitle"),
+  methodsSubtitle: copy("papers.methodsSubtitle"),
+  loadingTasks: copy("papers.loadingTasks"),
+  loadingMethods: copy("papers.loadingMethods"),
+  taskApiFallback: copy("papers.taskApiFallback"),
+  methodApiFallback: copy("papers.methodApiFallback"),
+  papers: copy("papers.papers"),
+  repositories: copy("papers.repositories"),
+  benchmarks: copy("papers.benchmarks"),
+  implementations: copy("papers.implementations"),
+  methodsUsed: copy("papers.methodsUsed"),
+  topDomains: copy("papers.topDomains"),
+  trendingDomains: copy("papers.trendingDomains"),
+  contentPanel: copy("papers.contentPanel"),
+  benchmarksTitle: copy("papers.benchmarksTitle"),
+  papersUnderTask: copy("papers.papersUnderTask"),
+  papersUsingMethod: copy("papers.papersUsingMethod"),
+  relatedTasks: copy("papers.relatedTasks"),
+  sisterTasks: copy("papers.sisterTasks"),
+  commonMethods: copy("papers.commonMethods"),
+  relatedMethods: copy("papers.relatedMethods"),
+  commonBenchmarks: copy("papers.commonBenchmarks"),
+  noPapers: copy("papers.noPapers"),
+  openPaper: copy("papers.openPaper"),
+  openCode: copy("papers.openCode"),
+  githubStars: copy("papers.githubStars"),
+  githubMomentum: copy("papers.githubMomentum"),
+  citations: copy("papers.citations"),
+  paperRecord: copy("papers.paperRecord"),
   paperPreview: {
-    zh: "当前版本使用论文详情抽屉预览，暂不新增独立论文详情页。",
-    en: "Paper detail opens in the drawer in this version; no dedicated paper detail route is added."
+    zh: "当前版本使用论文详情抽屉预览；独立 Reader 页面会在有数据时打开。",
+    en: "Paper detail opens in the drawer; the dedicated Reader route opens when data is available."
   },
   benchmarkPreview: {
     zh: "当前版本 Benchmark 详情先作为占位操作处理。",
     en: "Benchmark detail is a placeholder action for this version."
   },
-  dismiss: { zh: "关闭", en: "Dismiss" }
+  dismiss: copy("papers.dismiss")
 } satisfies Record<string, Localized>
 
 export const sortLabels: Record<PaperSort, Localized> = {
-  trending: { zh: "趋势", en: "trending" },
-  newest: { zh: "最新", en: "newest" },
-  most_cited: { zh: "高引用", en: "most cited" }
+  trending: copy("papers.sort.trending"),
+  newest: copy("papers.sort.newest"),
+  most_cited: copy("papers.sort.most_cited")
 }
 
 export const periodLabels: Record<PaperPeriod, Localized> = {
-  daily: { zh: "今日", en: "Daily" },
-  weekly: { zh: "本周", en: "Weekly" },
-  monthly: { zh: "本月", en: "Monthly" },
-  all: { zh: "全部", en: "All" }
+  daily: copy("papers.period.daily"),
+  weekly: copy("papers.period.weekly"),
+  monthly: copy("papers.period.monthly"),
+  all: copy("papers.period.all")
 }
 
 export const taskGroupLabels: Record<string, Localized> = {
-  general: { zh: "通用", en: "General" },
-  vision: { zh: "视觉", en: "Vision" },
-  video: { zh: "视频", en: "Video" },
-  language: { zh: "语言", en: "Language" },
-  audio: { zh: "音频", en: "Audio" },
-  robotics: { zh: "机器人", en: "Robotics" },
-  infra: { zh: "基础设施", en: "Infra" }
+  general: copy("papers.group.general"),
+  vision: copy("papers.group.vision"),
+  video: copy("papers.group.video"),
+  language: copy("papers.group.language"),
+  audio: copy("papers.group.audio"),
+  robotics: copy("papers.group.robotics"),
+  infra: copy("papers.group.infra")
 }
 
 export function t(value: Localized | undefined, locale: Locale, fallback = "") {

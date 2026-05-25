@@ -8,9 +8,11 @@ const pdfjsMock = vi.hoisted(() => {
   const thumbnailRenderStarts: number[] = []
   const thumbnailRenderCancels: number[] = []
   const pendingThumbnailRenders: Array<{ pageNumber: number; resolve: () => void }> = []
+  const textLayerRender = vi.fn()
   let activeThumbnailRenderCount = 0
   let holdThumbnailRenders = false
   let maxActiveThumbnailRenderCount = 0
+  let textLayerFailure = false
   const finishThumbnailRender = (done: { current: boolean }, resolve: () => void) => {
     if (done.current) {
       return
@@ -83,6 +85,40 @@ const pdfjsMock = vi.hoisted(() => {
   let resolveDocument: (value: typeof pdf) => void = () => undefined
   let rejectDocument: (reason: Error) => void = () => undefined
   const loadingDestroy = vi.fn()
+  class TextLayer {
+    readonly container: HTMLElement
+    readonly textContentSource: { items: Array<{ str?: string }> }
+
+    constructor({
+      container,
+      textContentSource
+    }: {
+      container: HTMLElement
+      textContentSource: { items: Array<{ str?: string }> }
+    }) {
+      this.container = container
+      this.textContentSource = textContentSource
+    }
+
+    cancel = vi.fn()
+
+    render = vi.fn(async () => {
+      textLayerRender()
+      if (textLayerFailure) {
+        throw new Error("text layer failed")
+      }
+      this.container.replaceChildren()
+      for (const item of this.textContentSource.items) {
+        if (!item.str) {
+          continue
+        }
+        const span = document.createElement("span")
+        span.textContent = item.str
+        span.style.position = "absolute"
+        this.container.appendChild(span)
+      }
+    })
+  }
 
   return {
     GlobalWorkerOptions,
@@ -94,6 +130,8 @@ const pdfjsMock = vi.hoisted(() => {
     pendingThumbnailRenders,
     render,
     renderCancel,
+    TextLayer,
+    textLayerRender,
     thumbnailRenderCancels,
     thumbnailRenderStarts,
     resolveDocument: () => resolveDocument(pdf),
@@ -110,6 +148,7 @@ const pdfjsMock = vi.hoisted(() => {
       maxActiveThumbnailRenderCount = 0
       getViewport.mockClear()
       getTextContent.mockClear()
+      textLayerRender.mockClear()
       page.getTextContent.mockClear()
       page.getViewport.mockClear()
       pageTexts.clear()
@@ -117,6 +156,7 @@ const pdfjsMock = vi.hoisted(() => {
         pageTexts.set(pageNumber, text)
       }
       textContentFailure = false
+      textLayerFailure = false
       pdf.getPage.mockReset()
       pdf.getPage.mockImplementation(async (pageNumber: number) => {
         return createPage(pageNumber)
@@ -136,6 +176,9 @@ const pdfjsMock = vi.hoisted(() => {
     failTextContent: () => {
       textContentFailure = true
     },
+    failTextLayer: () => {
+      textLayerFailure = true
+    },
     getMaxActiveThumbnailRenderCount: () => maxActiveThumbnailRenderCount,
     holdThumbnailRenders: () => {
       holdThumbnailRenders = true
@@ -152,10 +195,12 @@ const pdfjsMock = vi.hoisted(() => {
 vi.mock("pdfjs-dist", () => ({
   default: {
     GlobalWorkerOptions: pdfjsMock.GlobalWorkerOptions,
-    getDocument: pdfjsMock.getDocument
+    getDocument: pdfjsMock.getDocument,
+    TextLayer: pdfjsMock.TextLayer
   },
   GlobalWorkerOptions: pdfjsMock.GlobalWorkerOptions,
-  getDocument: pdfjsMock.getDocument
+  getDocument: pdfjsMock.getDocument,
+  TextLayer: pdfjsMock.TextLayer
 }))
 
 function renderViewer(props: Partial<Parameters<typeof PaperPdfViewer>[0]> = {}) {
@@ -246,9 +291,47 @@ async function resolveViewerDocument() {
   expect(await screen.findByText("Page 1 of 3")).toBeInTheDocument()
 }
 
+function installSelectionMock(quote = "Diffusion model") {
+  const previousGetSelection = window.getSelection
+  const range = {
+    commonAncestorContainer: document.body,
+    getClientRects: () => [
+      {
+        bottom: 56,
+        height: 16,
+        left: 60,
+        right: 220,
+        top: 40,
+        width: 160,
+        x: 60,
+        y: 40,
+        toJSON: () => ({})
+      } as DOMRect
+    ],
+    intersectsNode: () => true
+  }
+  Object.defineProperty(window, "getSelection", {
+    configurable: true,
+    value: () => ({
+      rangeCount: 1,
+      getRangeAt: () => range,
+      removeAllRanges: vi.fn(),
+      toString: () => quote
+    })
+  })
+
+  return () => {
+    Object.defineProperty(window, "getSelection", {
+      configurable: true,
+      value: previousGetSelection
+    })
+  }
+}
+
 describe("PaperPdfViewer", () => {
   beforeEach(() => {
     pdfjsMock.reset()
+    window.localStorage.clear()
     vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
       setTransform: vi.fn()
     } as unknown as CanvasRenderingContext2D)
@@ -569,5 +652,152 @@ describe("PaperPdfViewer", () => {
     expect(await screen.findByText("PDF search text is unavailable.")).toBeInTheDocument()
     expect(screen.getByLabelText("Reader Paper PDF page 1")).toBeInTheDocument()
     expect(screen.queryByText("Text fallback content")).not.toBeInTheDocument()
+  })
+
+  it("renders selectable text layer and keeps canvas usable when the text layer fails", async () => {
+    const { rerender } = renderViewer()
+    await resolveViewerDocument()
+
+    expect(await screen.findByLabelText("Reader Paper selectable PDF text page 1")).toBeInTheDocument()
+    await waitFor(() => expect(pdfjsMock.textLayerRender).toHaveBeenCalled())
+    expect(screen.getByText("Diffusion")).toBeInTheDocument()
+
+    pdfjsMock.reset()
+    window.localStorage.clear()
+    pdfjsMock.failTextLayer()
+    rerender(
+      <PaperPdfViewer
+        pdfUrl="https://arxiv.org/pdf/2605.00001.pdf?text-layer-fail=1"
+        title="Reader Paper"
+        locale="en"
+        fallback={<div>Text fallback content</div>}
+      />
+    )
+    await waitFor(() => expect(pdfjsMock.getDocument).toHaveBeenCalled())
+    await act(async () => {
+      pdfjsMock.resolveDocument()
+    })
+
+    expect(await screen.findByText("Text selection unavailable")).toBeInTheDocument()
+    expect(screen.getByLabelText("Reader Paper PDF page 1")).toBeInTheDocument()
+    expect(screen.queryByText("Text fallback content")).not.toBeInTheDocument()
+  })
+
+  it("marks search hits and the active search result on the text layer", async () => {
+    renderViewer()
+    await resolveViewerDocument()
+
+    await waitFor(() => expect(pdfjsMock.getTextContent).toHaveBeenCalledWith(3))
+    fireEvent.change(screen.getByLabelText("Search PDF text"), { target: { value: "diffusion" } })
+
+    const hit = await screen.findByText("Diffusion")
+    await waitFor(() => expect(hit).toHaveClass("paper-pdf-search-hit"))
+    expect(hit).toHaveClass("paper-pdf-search-hit-active")
+  })
+
+  it("uses valid local search cache and safely rebuilds corrupt cache", async () => {
+    const cacheKey = "newsroom:paper-pdf-search:v1:reader-paper"
+    window.localStorage.setItem(
+      cacheKey,
+      JSON.stringify({
+        createdAt: Date.now(),
+        numPages: 3,
+        pageTexts: [
+          { pageNumber: 1, text: "Cached context appears on page one." },
+          { pageNumber: 2, text: "Cached latent result appears on page two." },
+          { pageNumber: 3, text: "Cached benchmark detail appears on page three." }
+        ]
+      })
+    )
+    const firstRender = renderViewer({ paperId: "reader-paper" })
+    await resolveViewerDocument()
+
+    fireEvent.change(screen.getByLabelText("Search PDF text"), { target: { value: "cached" } })
+    expect(await screen.findByText("3 results")).toBeInTheDocument()
+    expect(pdfjsMock.getTextContent).not.toHaveBeenCalledWith(3)
+
+    firstRender.unmount()
+    pdfjsMock.reset()
+    window.localStorage.setItem(cacheKey, "{not json")
+    renderViewer({ paperId: "reader-paper", pdfUrl: "https://arxiv.org/pdf/2605.00001v2.pdf" })
+    await resolveViewerDocument()
+
+    await waitFor(() => expect(pdfjsMock.getTextContent).toHaveBeenCalledWith(3))
+  })
+
+  it("creates highlights and notes from selected text", async () => {
+    const onCreateReaderNote = vi.fn()
+    const restoreSelection = installSelectionMock()
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
+      bottom: 800,
+      height: 800,
+      left: 0,
+      right: 600,
+      top: 0,
+      width: 600,
+      x: 0,
+      y: 0,
+      toJSON: () => ({})
+    } as DOMRect)
+
+    renderViewer({ onCreateReaderNote })
+    await resolveViewerDocument()
+
+    fireEvent.mouseUp(await screen.findByLabelText("Reader Paper selectable PDF text page 1"))
+    expect(await screen.findByText("Selected text")).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "Highlight" }))
+    expect(onCreateReaderNote).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "highlight",
+        pageNumber: 1,
+        quote: "Diffusion model",
+        anchor: expect.objectContaining({
+          rects: [expect.objectContaining({ left: 10, top: 5, width: expect.any(Number), height: expect.any(Number) })]
+        })
+      })
+    )
+
+    fireEvent.mouseUp(screen.getByLabelText("Reader Paper selectable PDF text page 1"))
+    fireEvent.change(await screen.findByLabelText("Note text"), { target: { value: "Important quote" } })
+    fireEvent.click(screen.getByRole("button", { name: "Add note" }))
+    expect(onCreateReaderNote).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        kind: "note",
+        noteText: "Important quote",
+        quote: "Diffusion model"
+      })
+    )
+    restoreSelection()
+  })
+
+  it("renders saved highlights over the current page after scale changes", async () => {
+    renderViewer({
+      notes: [
+        {
+          noteId: "note-1",
+          userId: "user-1",
+          paperId: "reader-paper",
+          kind: "highlight",
+          pageNumber: 1,
+          color: "green",
+          quote: "Diffusion model",
+          anchor: {
+            pageNumber: 1,
+            quote: "Diffusion model",
+            rects: [{ left: 12, top: 14, width: 28, height: 3 }]
+          },
+          createdAt: "2026-05-24T00:00:00Z",
+          updatedAt: "2026-05-24T00:00:00Z"
+        }
+      ]
+    })
+    await resolveViewerDocument()
+
+    const highlight = await screen.findByTitle("Diffusion model")
+    expect(highlight).toHaveStyle({ left: "12%", top: "14%", width: "28%", height: "3%" })
+
+    fireEvent.click(screen.getByRole("button", { name: "Zoom in" }))
+    expect(await screen.findByText("125%")).toBeInTheDocument()
+    expect(screen.getByTitle("Diffusion model")).toBeInTheDocument()
   })
 })

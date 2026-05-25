@@ -25,21 +25,21 @@ describe("RunOperationPanel", () => {
   it("requires reason and confirmation before submitting", () => {
     render(<RunOperationPanel detail={detail()} selectedStep={step} />)
 
-    expect(screen.getByRole("button", { name: "Cancel run" })).toBeDisabled()
-    fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "stop it" } })
-    expect(screen.getByRole("button", { name: "Cancel run" })).toBeDisabled()
-    fireEvent.click(screen.getByLabelText(/I confirm/))
-    expect(screen.getByRole("button", { name: "Cancel run" })).not.toBeDisabled()
+    expect(screen.getByRole("button", { name: "取消运行" })).toBeDisabled()
+    fireEvent.change(screen.getByLabelText("原因"), { target: { value: "stop it" } })
+    expect(screen.getByRole("button", { name: "取消运行" })).toBeDisabled()
+    fireEvent.click(screen.getByLabelText(/我确认/))
+    expect(screen.getByRole("button", { name: "取消运行" })).not.toBeDisabled()
   })
 
   it("sends reason and selected step id for rerun operations", async () => {
     vi.mocked(postRunOperation).mockResolvedValue({ ok: true, message: "accepted" })
     render(<RunOperationPanel detail={detail()} selectedStep={step} />)
 
-    fireEvent.click(screen.getByRole("button", { name: /Rerun from selected step/ }))
-    fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "try again" } })
-    fireEvent.click(screen.getByLabelText(/I confirm/))
-    fireEvent.click(screen.getAllByRole("button", { name: "Rerun from selected step" }).at(-1)!)
+    fireEvent.click(screen.getByRole("button", { name: /从选中步骤重跑/ }))
+    fireEvent.change(screen.getByLabelText("原因"), { target: { value: "try again" } })
+    fireEvent.click(screen.getByLabelText(/我确认/))
+    fireEvent.click(screen.getAllByRole("button", { name: "从选中步骤重跑" }).at(-1)!)
 
     await waitFor(() => {
       expect(postRunOperation).toHaveBeenCalledWith("run-1", "rerun-from-step", expect.objectContaining({ reason: "try again", stepId: "collect" }))
@@ -50,9 +50,9 @@ describe("RunOperationPanel", () => {
     vi.mocked(postRunOperation).mockResolvedValue({ ok: false, message: "nope", requestId: "req-123" })
     render(<RunOperationPanel detail={detail()} selectedStep={step} />)
 
-    fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "stop it" } })
-    fireEvent.click(screen.getByLabelText(/I confirm/))
-    fireEvent.click(screen.getByRole("button", { name: "Cancel run" }))
+    fireEvent.change(screen.getByLabelText("原因"), { target: { value: "stop it" } })
+    fireEvent.click(screen.getByLabelText(/我确认/))
+    fireEvent.click(screen.getByRole("button", { name: "取消运行" }))
 
     expect(await screen.findByText("requestId: req-123")).toBeInTheDocument()
   })

@@ -3,9 +3,11 @@ import { ScoreMeter } from "@/components/common/score-meter"
 import { AgentRunStatusBadge } from "@/features/studio/runs/components/agent-run-status-badge"
 import { formatDuration, shortRunId } from "@/features/studio/runs/lib/run-format"
 import { formatDateTime } from "@/lib/format"
+import { useI18n } from "@/lib/i18n/use-i18n"
 import type { AgentRun } from "@/types/agent"
 
 export function RunDetailHeader({ run }: { run: AgentRun }) {
+  const { t } = useI18n()
   return (
     <header className="rounded-lg border border-border bg-card p-5">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -21,16 +23,16 @@ export function RunDetailHeader({ run }: { run: AgentRun }) {
           </div>
         </div>
         <div className="w-full max-w-xs">
-          <ScoreMeter label="质量" value={run.qualityScore ?? 0} />
+          <ScoreMeter label={t("studio.quality.qualityScore")} value={run.qualityScore ?? 0} />
         </div>
       </div>
 
       <dl className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-        <Metric label="开始" value={formatDateTime(run.startedAt)} />
-        <Metric label="完成" value={formatDateTime(run.finishedAt)} />
-        <Metric label="耗时" value={formatDuration(run.durationMs)} />
-        <Metric label="输入 / 输出" value={`${run.inputCount} / ${run.outputCount}`} />
-        <Metric label="步骤 / 产物" value={`${run.stepCount ?? 0} / ${run.artifactCount}`} />
+        <Metric label={t("studio.runs.started")} value={formatDateTime(run.startedAt)} />
+        <Metric label={t("studio.runs.finished")} value={formatDateTime(run.finishedAt)} />
+        <Metric label={t("studio.runs.duration")} value={formatDuration(run.durationMs)} />
+        <Metric label={t("studio.runs.inputsOutputs")} value={`${run.inputCount} / ${run.outputCount}`} />
+        <Metric label={t("studio.runs.stepsArtifacts")} value={`${run.stepCount ?? 0} / ${run.artifactCount}`} />
       </dl>
     </header>
   )

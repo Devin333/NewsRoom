@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { formatBytes } from "@/lib/format"
+import { useI18n } from "@/lib/i18n/use-i18n"
 import type { StudioArtifact } from "@/types/artifact"
 
 export function ArtifactListPanel({
@@ -19,6 +20,7 @@ export function ArtifactListPanel({
   artifacts: StudioArtifact[]
   selectedArtifactKey?: string
 }) {
+  const { t } = useI18n()
   const [query, setQuery] = useState("")
   const filtered = useMemo(() => {
     const normalized = query.trim().toLowerCase()
@@ -35,16 +37,16 @@ export function ArtifactListPanel({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Artifact 列表</CardTitle>
+        <CardTitle>{t("studio.artifacts.list")}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
         <label className="relative block">
           <Search className="pointer-events-none absolute left-3 top-2.5 size-4 text-muted-foreground" />
-          <Input className="pl-9" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索 key、路径或类型" />
+          <Input className="pl-9" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("studio.artifacts.searchPlaceholder")} />
         </label>
 
         {!filtered.length ? (
-          <EmptyState title="暂无 artifact" description="该 run 没有可展示的产物，或当前筛选没有匹配项。" />
+          <EmptyState title={t("studio.artifacts.empty")} description={t("studio.artifacts.emptyDescription")} />
         ) : (
           <div className="space-y-2">
             {filtered.map((artifact) => (
@@ -59,15 +61,15 @@ export function ArtifactListPanel({
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium text-foreground">{artifact.artifactKey}</p>
-                    <p className="mt-1 truncate text-xs text-muted-foreground">{artifact.relativePath ?? "无路径"}</p>
+                    <p className="mt-1 truncate text-xs text-muted-foreground">{artifact.relativePath ?? t("studio.artifacts.noPath")}</p>
                   </div>
                   <Badge variant={artifact.readError ? "danger" : "info"}>{artifact.previewKind}</Badge>
                 </div>
                 <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
                   <span>{artifact.contentType ?? "unknown"}</span>
                   <span>{formatBytes(artifact.sizeBytes)}</span>
-                  {artifact.truncated ? <span>已截断</span> : null}
-                  {artifact.redacted ? <span>已脱敏</span> : null}
+                  {artifact.truncated ? <span>{t("studio.artifacts.truncated")}</span> : null}
+                  {artifact.redacted ? <span>{t("studio.artifacts.redacted")}</span> : null}
                 </div>
               </Link>
             ))}

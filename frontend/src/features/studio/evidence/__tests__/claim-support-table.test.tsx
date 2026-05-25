@@ -41,16 +41,16 @@ describe("ClaimSupportTable", () => {
   it("renders all claim statuses", () => {
     render(<ClaimSupportTable claims={claims} />)
 
-    expect(screen.getAllByText("Accepted").length).toBeGreaterThan(0)
-    expect(screen.getAllByText("Rejected").length).toBeGreaterThan(0)
-    expect(screen.getAllByText("Uncertain").length).toBeGreaterThan(0)
-    expect(screen.getAllByText("Unsupported").length).toBeGreaterThan(0)
+    expect(screen.getAllByText("已接受").length).toBeGreaterThan(0)
+    expect(screen.getAllByText("已拒绝").length).toBeGreaterThan(0)
+    expect(screen.getAllByText("不确定").length).toBeGreaterThan(0)
+    expect(screen.getAllByText("未支撑").length).toBeGreaterThan(0)
   })
 
   it("filters unsupported claims", () => {
     render(<ClaimSupportTable claims={claims} />)
 
-    fireEvent.click(screen.getByRole("button", { name: "Unsupported" }))
+    fireEvent.click(screen.getByRole("button", { name: "未支撑" }))
 
     expect(screen.getByText("Unsupported claim")).toBeInTheDocument()
     expect(screen.queryByText("Accepted claim")).not.toBeInTheDocument()
@@ -60,8 +60,8 @@ describe("ClaimSupportTable", () => {
   it("renders missing source, evidence, and section states", () => {
     render(<ClaimSupportTable claims={[claims[1]]} />)
 
-    expect(screen.getByText("No sources")).toBeInTheDocument()
-    expect(screen.getByText("No evidence")).toBeInTheDocument()
-    expect(screen.getByText("No section")).toBeInTheDocument()
+    expect(screen.getByText("暂无来源")).toBeInTheDocument()
+    expect(screen.getByText("暂无证据")).toBeInTheDocument()
+    expect(screen.getByText("暂无章节")).toBeInTheDocument()
   })
 })

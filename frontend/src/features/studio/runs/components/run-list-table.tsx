@@ -4,13 +4,16 @@ import { ScoreMeter } from "@/components/common/score-meter"
 import { AgentRunStatusBadge } from "@/features/studio/runs/components/agent-run-status-badge"
 import { formatDuration, shortRunId } from "@/features/studio/runs/lib/run-format"
 import { StudioTableFrame } from "@/features/studio/shared/components/studio-dashboard"
+import { formatDataState } from "@/lib/i18n"
+import { useI18n } from "@/lib/i18n/use-i18n"
 import { cn } from "@/lib/utils"
 import { formatDateTime } from "@/lib/format"
 import type { StudioRunListItem } from "@/types/agent"
 
 export function RunListTable({ runs }: { runs: StudioRunListItem[] }) {
+  const { locale, t } = useI18n()
   if (!runs.length) {
-    return <EmptyState title="No runs found" description="Adjust the filters or wait for the next workflow run." />
+    return <EmptyState title={t("studio.runs.noRuns")} description={t("studio.runs.noRunsDescription")} />
   }
 
   return (
@@ -19,17 +22,17 @@ export function RunListTable({ runs }: { runs: StudioRunListItem[] }) {
       <table className="w-full min-w-[1180px] border-collapse text-left text-sm">
         <thead className="border-b border-border bg-secondary/80 text-xs uppercase text-muted-foreground">
           <tr>
-            <th className="px-4 py-3 font-medium">Run ID</th>
-            <th className="px-4 py-3 font-medium">Workflow</th>
-            <th className="px-4 py-3 font-medium">Profile</th>
-            <th className="px-4 py-3 font-medium">Status</th>
-            <th className="px-4 py-3 font-medium">Started</th>
-            <th className="px-4 py-3 font-medium">Duration</th>
-            <th className="px-4 py-3 font-medium">Steps</th>
-            <th className="px-4 py-3 font-medium">Events</th>
-            <th className="px-4 py-3 font-medium">Artifacts</th>
-            <th className="px-4 py-3 font-medium">Quality</th>
-            <th className="px-4 py-3 font-medium">Errors</th>
+            <th className="px-4 py-3 font-medium">{t("studio.runs.runId")}</th>
+            <th className="px-4 py-3 font-medium">{t("studio.runs.workflow")}</th>
+            <th className="px-4 py-3 font-medium">{t("studio.runs.profile")}</th>
+            <th className="px-4 py-3 font-medium">{t("common.status")}</th>
+            <th className="px-4 py-3 font-medium">{t("studio.runs.started")}</th>
+            <th className="px-4 py-3 font-medium">{t("studio.runs.duration")}</th>
+            <th className="px-4 py-3 font-medium">{t("studio.runs.steps")}</th>
+            <th className="px-4 py-3 font-medium">{t("studio.runs.events")}</th>
+            <th className="px-4 py-3 font-medium">{t("studio.quality.artifacts")}</th>
+            <th className="px-4 py-3 font-medium">{t("studio.boards.quality")}</th>
+            <th className="px-4 py-3 font-medium">{t("studio.runs.errors")}</th>
           </tr>
         </thead>
         <tbody>
@@ -46,7 +49,7 @@ export function RunListTable({ runs }: { runs: StudioRunListItem[] }) {
                 <Link className="font-mono text-xs font-medium text-accent hover:underline" href={`/studio/runs/${encodeURIComponent(run.id)}`}>
                   {shortRunId(run.id)}
                 </Link>
-                {run.dataState === "fallback" ? <p className="mt-1 text-xs text-warning">fallback</p> : null}
+                {run.dataState === "fallback" ? <p className="mt-1 text-xs text-warning">{formatDataState(locale, "fallback")}</p> : null}
               </td>
               <td className="px-4 py-3">
                 <p className="font-medium text-foreground">{run.workflowName ?? run.workflowId ?? run.agentName}</p>

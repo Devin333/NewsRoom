@@ -3,6 +3,7 @@ import { render, screen } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { PaperPdfProxyStatsPanel } from "@/features/studio/shared/components/paper-pdf-proxy-stats-panel"
 import { fetchPaperPdfProxyStats } from "@/features/studio/shared/api/pdf-proxy-stats-api"
+import { useUiStore } from "@/stores/ui-store"
 import type { PaperPdfProxyStats } from "@/types/studio"
 
 vi.mock("@/features/studio/shared/api/pdf-proxy-stats-api", () => ({
@@ -60,6 +61,7 @@ function renderPanel() {
 describe("PaperPdfProxyStatsPanel", () => {
   beforeEach(() => {
     vi.mocked(fetchPaperPdfProxyStats).mockReset()
+    useUiStore.setState({ locale: "zh" })
   })
 
   it("renders loading state", () => {
@@ -67,7 +69,7 @@ describe("PaperPdfProxyStatsPanel", () => {
 
     renderPanel()
 
-    expect(screen.getByText("Loading PDF proxy request statistics.")).toBeInTheDocument()
+    expect(screen.getByText("正在加载 PDF 代理请求统计。")).toBeInTheDocument()
   })
 
   it("renders error state", async () => {
@@ -75,7 +77,7 @@ describe("PaperPdfProxyStatsPanel", () => {
 
     renderPanel()
 
-    expect(await screen.findByText("PDF proxy stats unavailable")).toBeInTheDocument()
+    expect(await screen.findByText("PDF 代理统计不可用")).toBeInTheDocument()
     expect(screen.getByText("stats down")).toBeInTheDocument()
   })
 
@@ -93,7 +95,7 @@ describe("PaperPdfProxyStatsPanel", () => {
 
     renderPanel()
 
-    expect(await screen.findByText("No PDF proxy events")).toBeInTheDocument()
+    expect(await screen.findByText("暂无 PDF 代理事件")).toBeInTheDocument()
   })
 
   it("renders ready stats", async () => {
@@ -101,10 +103,20 @@ describe("PaperPdfProxyStatsPanel", () => {
 
     renderPanel()
 
-    expect(await screen.findByText("Requests")).toBeInTheDocument()
+    expect(await screen.findByText("请求数")).toBeInTheDocument()
     expect(screen.getByText("12")).toBeInTheDocument()
     expect(screen.getByText("pdf_timeout (1)")).toBeInTheDocument()
     expect(screen.getAllByText("arxiv.org").length).toBeGreaterThan(0)
     expect(screen.getByText("pdf_timeout")).toBeInTheDocument()
+  })
+
+  it("renders English copy after locale switching", async () => {
+    useUiStore.setState({ locale: "en" })
+    vi.mocked(fetchPaperPdfProxyStats).mockResolvedValue(readyStats)
+
+    renderPanel()
+
+    expect(await screen.findByText("Requests")).toBeInTheDocument()
+    useUiStore.setState({ locale: "zh" })
   })
 })

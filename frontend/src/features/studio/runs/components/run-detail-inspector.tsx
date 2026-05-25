@@ -8,22 +8,24 @@ import { RunEventStream } from "@/features/studio/runs/components/run-event-stre
 import { RunOperationPanel } from "@/features/studio/runs/components/run-operation-panel"
 import { RunQualityPanel } from "@/features/studio/runs/components/run-quality-panel"
 import { ToolCallList } from "@/features/studio/runs/components/tool-call-list"
+import { useI18n } from "@/lib/i18n/use-i18n"
 import type { AgentStep, StudioRunDetail } from "@/types/agent"
 
 type RunCenterTab = "events" | "artifacts" | "quality" | "errors" | "diagnostics" | "health" | "operations" | "tools"
 
-const tabs: Array<{ id: RunCenterTab; label: string }> = [
-  { id: "events", label: "Events" },
-  { id: "artifacts", label: "Artifacts" },
-  { id: "quality", label: "Quality" },
-  { id: "errors", label: "Errors" },
-  { id: "diagnostics", label: "Diagnostics" },
-  { id: "health", label: "Health" },
-  { id: "operations", label: "Operations" },
-  { id: "tools", label: "Tools" }
+const tabs: Array<{ id: RunCenterTab; labelKey: string }> = [
+  { id: "events", labelKey: "studio.runs.tab.events" },
+  { id: "artifacts", labelKey: "studio.runs.tab.artifacts" },
+  { id: "quality", labelKey: "studio.runs.tab.quality" },
+  { id: "errors", labelKey: "studio.runs.tab.errors" },
+  { id: "diagnostics", labelKey: "studio.runs.tab.diagnostics" },
+  { id: "health", labelKey: "studio.runs.tab.health" },
+  { id: "operations", labelKey: "studio.runs.tab.operations" },
+  { id: "tools", labelKey: "studio.runs.tab.tools" }
 ]
 
 export function RunDetailInspector({ detail, selectedStep }: { detail: StudioRunDetail; selectedStep?: AgentStep }) {
+  const { t } = useI18n()
   const [activeTab, setActiveTab] = useState<RunCenterTab>(() => {
     if (detail.dataState === "fallback") return "events"
     if (detail.run.status === "blocked" || detail.run.status === "waiting_for_human") return "operations"
@@ -43,7 +45,7 @@ export function RunDetailInspector({ detail, selectedStep }: { detail: StudioRun
             }`}
             onClick={() => setActiveTab(tab.id)}
           >
-            {tab.label}
+            {t(tab.labelKey)}
           </button>
         ))}
       </div>
@@ -52,8 +54,8 @@ export function RunDetailInspector({ detail, selectedStep }: { detail: StudioRun
         {activeTab === "artifacts" ? <ArtifactViewer artifacts={detail.artifacts} /> : null}
         {activeTab === "quality" ? <RunQualityPanel quality={detail.quality} /> : null}
         {activeTab === "errors" ? <ErrorTracePanel errors={detail.errors} /> : null}
-        {activeTab === "diagnostics" ? <JsonPreview label="Diagnostics" value={detail.diagnostics} defaultOpen /> : null}
-        {activeTab === "health" ? <JsonPreview label="Health" value={detail.health} defaultOpen /> : null}
+        {activeTab === "diagnostics" ? <JsonPreview label={t("studio.runs.tab.diagnostics")} value={detail.diagnostics} defaultOpen /> : null}
+        {activeTab === "health" ? <JsonPreview label={t("studio.runs.tab.health")} value={detail.health} defaultOpen /> : null}
         {activeTab === "operations" ? <RunOperationPanel detail={detail} selectedStep={selectedStep} /> : null}
         {activeTab === "tools" ? <ToolCallList calls={detail.toolCalls} /> : null}
       </div>

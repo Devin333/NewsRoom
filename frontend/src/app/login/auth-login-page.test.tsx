@@ -43,10 +43,10 @@ describe("LoginPage", () => {
 
     render(<LoginPage />)
 
-    expect(await screen.findByRole("heading", { name: "Create the first NewsRoom account" })).toBeInTheDocument()
-    fireEvent.change(screen.getByLabelText(/username/i), { target: { value: "admin" } })
-    fireEvent.change(screen.getByLabelText(/password/i), { target: { value: "correct horse" } })
-    fireEvent.submit(screen.getByRole("button", { name: "Create account" }).closest("form")!)
+    expect(await screen.findByRole("heading", { name: "创建第一个 NewsRoom 账号" })).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText("用户名"), { target: { value: "admin" } })
+    fireEvent.change(screen.getByLabelText("密码"), { target: { value: "correct horse" } })
+    fireEvent.submit(screen.getByRole("button", { name: "创建账号" }).closest("form")!)
 
     await waitFor(() => {
       expect(bootstrapAccount).toHaveBeenCalledWith("admin", "correct horse")
@@ -66,10 +66,10 @@ describe("LoginPage", () => {
 
     render(<LoginPage />)
 
-    expect(await screen.findByRole("heading", { name: "Sign in to NewsRoom" })).toBeInTheDocument()
-    fireEvent.change(screen.getByLabelText(/username/i), { target: { value: "admin" } })
-    fireEvent.change(screen.getByLabelText(/password/i), { target: { value: "correct horse" } })
-    fireEvent.submit(screen.getByRole("button", { name: "Sign in" }).closest("form")!)
+    expect(await screen.findByRole("heading", { name: "登录 NewsRoom" })).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText("用户名"), { target: { value: "admin" } })
+    fireEvent.change(screen.getByLabelText("密码"), { target: { value: "correct horse" } })
+    fireEvent.submit(screen.getByRole("button", { name: "登录" }).closest("form")!)
 
     await waitFor(() => {
       expect(login).toHaveBeenCalledWith("admin", "correct horse")

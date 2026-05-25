@@ -4,13 +4,15 @@ import { EmptyState } from "@/components/common/empty-state"
 import { Badge } from "@/components/ui/badge"
 import { QualityStatusBadge } from "@/features/studio/quality/components/quality-check-table"
 import { StudioPanel } from "@/features/studio/shared/components/studio-dashboard"
+import { useI18n } from "@/lib/i18n/use-i18n"
 import type { StudioBlockedRun, StudioQualityReportSummary } from "@/types/quality"
 
 export function RecentFailedReports({ reports }: { reports: StudioQualityReportSummary[] }) {
+  const { t } = useI18n()
   return (
-    <StudioPanel title="Recent failed reports" description="Reports blocked by failed checks or review requirements." contentClassName="space-y-3">
+    <StudioPanel title={t("studio.quality.recentFailedReports")} description={t("studio.quality.recentFailedReportsDescription")} contentClassName="space-y-3">
       {!reports.length ? (
-        <EmptyState title="No failed reports" description="Quality Gate has no failed or review-required reports in the current window." />
+        <EmptyState title={t("studio.quality.noFailedReports")} description={t("studio.quality.noFailedReportsDescription")} />
       ) : (
         reports.map((report) => (
           <Link
@@ -39,15 +41,16 @@ export function RecentFailedReports({ reports }: { reports: StudioQualityReportS
 }
 
 export function BlockedRunPanel({ runs }: { runs: StudioBlockedRun[] }) {
+  const { t } = useI18n()
   return (
-    <StudioPanel title="Blocked runs" description="Runs that need intervention before downstream publishing." contentClassName="space-y-3">
+    <StudioPanel title={t("studio.quality.blockedRuns")} description={t("studio.quality.blockedRunsDescription")} contentClassName="space-y-3">
       {!runs.length ? (
         <div className="rounded-md border border-success/30 bg-success/10 p-4">
           <div className="flex items-start gap-3">
             <Ban className="mt-0.5 size-5 text-success" />
             <div>
-              <p className="text-sm font-medium text-success">No blocked runs</p>
-              <p className="mt-1 text-sm text-muted-foreground">Catalog health did not return blocked run evidence.</p>
+              <p className="text-sm font-medium text-success">{t("studio.quality.noBlockedRuns")}</p>
+              <p className="mt-1 text-sm text-muted-foreground">{t("studio.quality.noBlockedRunsDescription")}</p>
             </div>
           </div>
         </div>
@@ -64,7 +67,7 @@ export function BlockedRunPanel({ runs }: { runs: StudioBlockedRun[] }) {
             <div className="mt-3 flex flex-wrap gap-2">
               <QualityStatusBadge status={run.status} />
               {run.severity ? <Badge variant="warning">{run.severity}</Badge> : null}
-              {run.latestEventCount !== undefined ? <Badge variant="muted">{run.latestEventCount} events</Badge> : null}
+              {run.latestEventCount !== undefined ? <Badge variant="muted">{t("studio.quality.events", { count: run.latestEventCount })}</Badge> : null}
             </div>
           </div>
         ))
@@ -74,10 +77,11 @@ export function BlockedRunPanel({ runs }: { runs: StudioBlockedRun[] }) {
 }
 
 export function FailureReasonPanel({ reasons }: { reasons: string[] }) {
+  const { t } = useI18n()
   return (
-    <StudioPanel title="Failure reasons">
+    <StudioPanel title={t("studio.quality.failureReasons")}>
       {!reasons.length ? (
-        <p className="text-sm text-muted-foreground">No explicit failure reason was returned by the quality payload.</p>
+        <p className="text-sm text-muted-foreground">{t("studio.quality.noFailureReason")}</p>
       ) : (
         <ul className="space-y-2">
           {reasons.map((reason) => (

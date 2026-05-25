@@ -11,10 +11,12 @@ import { StepDetailPanel } from "@/features/studio/runs/components/step-detail-p
 import { StepTimeline } from "@/features/studio/runs/components/step-timeline"
 import { WorkflowDag } from "@/features/studio/runs/components/workflow-dag"
 import { useRunDetail } from "@/features/studio/runs/hooks/use-run-detail"
+import { useI18n } from "@/lib/i18n/use-i18n"
 import { useRunInspectorStore } from "@/stores/run-inspector-store"
 import type { StudioRunDetail } from "@/types/agent"
 
 export function RunCenterDetailPage({ runId, detail }: { runId: string; detail?: StudioRunDetail }) {
+  const { t } = useI18n()
   const { data, isError, error } = useRunDetail(runId, detail)
   const selectedStepId = useRunInspectorStore((state) => state.selectedStepId)
   const selectStep = useRunInspectorStore((state) => state.selectStep)
@@ -31,7 +33,7 @@ export function RunCenterDetailPage({ runId, detail }: { runId: string; detail?:
   }, [data?.steps, defaultStep, selectStep, selectedStepId])
 
   if (isError || !data) {
-    return <ErrorState message={error instanceof Error ? error.message : "Run detail failed to load."} />
+    return <ErrorState message={error instanceof Error ? error.message : t("studio.runs.detailFailed")} />
   }
 
   const selectedStep = data.steps.find((step) => step.id === selectedStepId) ?? defaultStep
@@ -39,9 +41,9 @@ export function RunCenterDetailPage({ runId, detail }: { runId: string; detail?:
   return (
     <main className="space-y-6">
       <PageHeader
-        eyebrow="Studio Run"
-        title="Run Observability"
-        description="Inspect steps, events, diagnostics, health, artifacts, errors, and runtime operations for this workflow run."
+        eyebrow={t("studio.runs.detailEyebrow")}
+        title={t("studio.runs.observability")}
+        description={t("studio.runs.observabilityDescription")}
       />
       <RunDetailHeader run={data.run} />
 
@@ -55,14 +57,14 @@ export function RunCenterDetailPage({ runId, detail }: { runId: string; detail?:
 
       {data.run.artifactDir || data.run.manifestPath || data.run.reportId ? (
         <section className="grid gap-3 rounded-lg border border-border bg-card p-4 text-sm md:grid-cols-3">
-          <Meta label="Report" value={data.run.reportId} />
-          <Meta label="Artifact directory" value={data.run.artifactDir} />
-          <Meta label="Manifest" value={data.run.manifestPath} />
+          <Meta label={t("studio.runs.report")} value={data.run.reportId} empty={t("common.none")} />
+          <Meta label={t("studio.runs.artifactDirectory")} value={data.run.artifactDir} empty={t("common.none")} />
+          <Meta label={t("studio.runs.manifest")} value={data.run.manifestPath} empty={t("common.none")} />
         </section>
       ) : null}
 
       {!data.steps.length ? (
-        <EmptyState title="No steps" description="This run does not include step records." />
+        <EmptyState title={t("studio.runs.noSteps")} description={t("studio.runs.noStepsDescription")} />
       ) : (
         <section className="grid gap-6 2xl:grid-cols-[minmax(300px,0.9fr)_minmax(360px,1fr)_minmax(420px,1.1fr)]">
           <div className="hidden 2xl:block">
@@ -79,11 +81,11 @@ export function RunCenterDetailPage({ runId, detail }: { runId: string; detail?:
   )
 }
 
-function Meta({ label, value }: { label: string; value?: string }) {
+function Meta({ label, value, empty }: { label: string; value?: string; empty: string }) {
   return (
     <div className="min-w-0">
       <p className="text-xs font-medium uppercase tracking-normal text-muted-foreground">{label}</p>
-      <p className="mt-1 truncate font-mono text-xs text-foreground">{value ?? "None"}</p>
+      <p className="mt-1 truncate font-mono text-xs text-foreground">{value ?? empty}</p>
     </div>
   )
 }

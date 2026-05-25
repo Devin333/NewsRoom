@@ -45,6 +45,57 @@ export interface PaperUserState {
   updatedAt: string
 }
 
+export type PaperReaderNoteKind = "bookmark" | "highlight" | "note"
+export type PaperReaderNoteColor = "yellow" | "green" | "blue" | "pink"
+
+export interface PaperReaderNoteRect {
+  left: number
+  top: number
+  width: number
+  height: number
+}
+
+export interface PaperReaderNoteAnchor {
+  pageNumber: number
+  quote?: string
+  rects?: PaperReaderNoteRect[]
+  textStart?: number
+  textEnd?: number
+}
+
+export interface PaperReaderNote {
+  noteId: string
+  userId: string
+  paperId: string
+  kind: PaperReaderNoteKind
+  pageNumber: number
+  color: PaperReaderNoteColor
+  quote?: string
+  noteText?: string
+  label?: string
+  anchor?: PaperReaderNoteAnchor
+  createdAt: string
+  updatedAt: string
+}
+
+export interface PaperReaderNoteCreate {
+  kind: PaperReaderNoteKind
+  pageNumber: number
+  color?: PaperReaderNoteColor
+  quote?: string
+  noteText?: string
+  label?: string
+  anchor?: PaperReaderNoteAnchor
+}
+
+export interface PaperReaderNotePatch {
+  color?: PaperReaderNoteColor
+  quote?: string
+  noteText?: string
+  label?: string
+  anchor?: PaperReaderNoteAnchor
+}
+
 export interface TaskRef {
   id: string
   slug: string
@@ -274,7 +325,7 @@ export interface PaperReaderPayload {
   paper: Paper
   sections: PaperSection[]
   aiSummary: PaperAISummary | null
-  readerNotes: unknown[]
+  readerNotes: PaperReaderNote[]
   relatedPapers: RelatedPaper[]
   relatedProjects: RelatedProject[]
   relatedNews: RelatedNews[]

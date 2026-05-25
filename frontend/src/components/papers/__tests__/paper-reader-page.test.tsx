@@ -1,31 +1,66 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { PaperReaderPage } from "@/components/papers/shared/paper-reader-page"
-import { askPaper, fetchPaperUserState, patchPaperUserState } from "@/lib/papers/api"
-import type { PaperReaderPayload } from "@/lib/papers/types"
+import {
+  askPaper,
+  createPaperReaderNote,
+  deletePaperReaderNote,
+  fetchPaperReaderNotes,
+  fetchPaperUserState,
+  patchPaperReaderNote,
+  patchPaperUserState
+} from "@/lib/papers/api"
+import type { PaperReaderNote, PaperReaderNoteCreate, PaperReaderPayload } from "@/lib/papers/types"
+import { useUiStore } from "@/stores/ui-store"
 
 vi.mock("@/lib/papers/api", () => ({
   askPaper: vi.fn(),
+  createPaperReaderNote: vi.fn(),
+  deletePaperReaderNote: vi.fn(),
+  fetchPaperReaderNotes: vi.fn(),
   fetchPaperUserState: vi.fn(),
+  patchPaperReaderNote: vi.fn(),
   patchPaperUserState: vi.fn()
 }))
 
 vi.mock("@/components/papers/shared/paper-pdf-viewer", () => ({
   PaperPdfViewer: ({
     initialPage,
+    notes,
+    onCreateReaderNote,
     pdfUrl,
     title,
     onPageChange,
   }: {
     initialPage?: number
+    notes?: PaperReaderNote[]
+    onCreateReaderNote?: (note: PaperReaderNoteCreate) => void
     pdfUrl: string
     title: string
     onPageChange?: (pageNumber: number, numPages: number) => void
   }) => (
-    <div data-testid="paper-pdf-viewer" data-initial-page={initialPage ?? ""} data-pdf-url={pdfUrl}>
+    <div data-testid="paper-pdf-viewer" data-initial-page={initialPage ?? ""} data-note-count={notes?.length ?? 0} data-pdf-url={pdfUrl}>
       {title} PDF viewer
       <button type="button" onClick={() => onPageChange?.(2, 4)}>
         mock page 2
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          onCreateReaderNote?.({
+            kind: "highlight",
+            pageNumber: 2,
+            color: "yellow",
+            quote: "Selected text",
+            anchor: {
+              pageNumber: 2,
+              quote: "Selected text",
+              rects: [{ left: 10, top: 12, width: 24, height: 3 }]
+            }
+          })
+        }
+      >
+        mock highlight
       </button>
     </div>
   )
@@ -91,9 +126,42 @@ const reader: PaperReaderPayload = {
 
 describe("PaperReaderPage", () => {
   beforeEach(() => {
+    useUiStore.setState({ locale: "en" })
     vi.mocked(askPaper).mockReset()
+    vi.mocked(createPaperReaderNote).mockReset()
+    vi.mocked(deletePaperReaderNote).mockReset()
+    vi.mocked(fetchPaperReaderNotes).mockReset()
     vi.mocked(fetchPaperUserState).mockReset()
+    vi.mocked(patchPaperReaderNote).mockReset()
     vi.mocked(patchPaperUserState).mockReset()
+    vi.mocked(fetchPaperReaderNotes).mockResolvedValue([])
+    vi.mocked(createPaperReaderNote).mockImplementation(async (_paperId, note) => ({
+      noteId: `created-${note.kind}`,
+      userId: "user-1",
+      paperId: "reader-paper",
+      kind: note.kind,
+      pageNumber: note.pageNumber,
+      color: note.color ?? "yellow",
+      quote: note.quote,
+      noteText: note.noteText,
+      label: note.label,
+      anchor: note.anchor,
+      createdAt: "2026-05-24T00:02:00Z",
+      updatedAt: "2026-05-24T00:02:00Z"
+    }))
+    vi.mocked(patchPaperReaderNote).mockImplementation(async (_paperId, noteId, patch) => ({
+      noteId,
+      userId: "user-1",
+      paperId: "reader-paper",
+      kind: "note",
+      pageNumber: 2,
+      color: patch.color ?? "blue",
+      quote: "Selected text",
+      noteText: patch.noteText ?? "Updated note",
+      createdAt: "2026-05-24T00:00:00Z",
+      updatedAt: "2026-05-24T00:03:00Z"
+    }))
+    vi.mocked(deletePaperReaderNote).mockResolvedValue(true)
     vi.mocked(fetchPaperUserState).mockResolvedValue({
       userId: "user-1",
       paperId: "reader-paper",
@@ -236,6 +304,98 @@ describe("PaperReaderPage", () => {
         progressPercent: 50
       })
     })
+  })
+
+  it("loads notes, creates bookmarks and highlights, and edits/deletes notes", async () => {
+    vi.mocked(fetchPaperUserState).mockResolvedValueOnce({
+      userId: "user-1",
+      paperId: "reader-paper",
+      favorite: false,
+      subscribed: false,
+      readingStatus: "reading",
+      currentPage: 2,
+      progressPercent: 50,
+      updatedAt: "2026-05-24T00:00:00Z"
+    })
+    vi.mocked(fetchPaperReaderNotes).mockResolvedValueOnce([
+      {
+        noteId: "note-1",
+        userId: "user-1",
+        paperId: "reader-paper",
+        kind: "note",
+        pageNumber: 2,
+        color: "blue",
+        quote: "Selected text",
+        noteText: "Initial note",
+        createdAt: "2026-05-24T00:00:00Z",
+        updatedAt: "2026-05-24T00:00:00Z"
+      }
+    ])
+
+    render(
+      <PaperReaderPage
+        reader={{
+          ...reader,
+          paper: {
+            ...reader.paper,
+            pdfUrl: "https://arxiv.org/pdf/2605.00001.pdf"
+          },
+          quality: {
+            ...reader.quality,
+            pdfAvailable: true
+          }
+        }}
+        locale="en"
+      />
+    )
+
+    expect(await screen.findByText("Initial note")).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.getByTestId("paper-pdf-viewer")).toHaveAttribute("data-note-count", "1")
+    })
+
+    fireEvent.click(screen.getByRole("button", { name: "Bookmark" }))
+    await waitFor(() => {
+      expect(createPaperReaderNote).toHaveBeenCalledWith("reader-paper", {
+        kind: "bookmark",
+        pageNumber: 2,
+        color: "yellow",
+        label: "Page 2"
+      })
+    })
+
+    fireEvent.click(screen.getByRole("button", { name: /mock highlight/i }))
+    await waitFor(() => {
+      expect(createPaperReaderNote).toHaveBeenCalledWith(
+        "reader-paper",
+        expect.objectContaining({
+          kind: "highlight",
+          pageNumber: 2,
+          quote: "Selected text"
+        })
+      )
+    })
+
+    fireEvent.change(screen.getByLabelText("Edit note on page 2"), { target: { value: "Updated note" } })
+    fireEvent.click(screen.getByRole("button", { name: "Save note" }))
+    await waitFor(() => {
+      expect(patchPaperReaderNote).toHaveBeenCalledWith("reader-paper", "note-1", { noteText: "Updated note" })
+    })
+
+    fireEvent.click(screen.getByRole("button", { name: /Delete Note/i }))
+    await waitFor(() => {
+      expect(deletePaperReaderNote).toHaveBeenCalledWith("reader-paper", "note-1")
+    })
+  })
+
+  it("keeps reader visible when notes API fails", async () => {
+    vi.mocked(fetchPaperReaderNotes).mockRejectedValueOnce(new Error("notes unavailable"))
+
+    render(<PaperReaderPage reader={reader} locale="en" />)
+
+    expect(await screen.findByText("notes unavailable")).toBeInTheDocument()
+    expect(screen.getByRole("heading", { name: "Reader Paper" })).toBeInTheDocument()
+    expect(screen.getByText("No bookmarks or notes yet.")).toBeInTheDocument()
   })
 
   it("renders text extraction quality state", () => {

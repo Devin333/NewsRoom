@@ -5,6 +5,7 @@ import { Bell, BookOpen, Github, Heart } from "lucide-react"
 import { PaperTags } from "@/components/papers/paper-tags"
 import { PaperThumbnail } from "@/components/papers/paper-thumbnail"
 import { Button } from "@/components/ui/button"
+import { translate } from "@/lib/i18n"
 import { papersCopy, t } from "@/lib/papers/copy"
 import { formatCompactNumber, formatPaperDate, paperPdfUrl, paperSnippet, paperTitle } from "@/lib/papers/format"
 import type { Locale, Paper } from "@/lib/papers/types"
@@ -87,13 +88,13 @@ export function PaperRow({
               {paper.userState.favorite ? (
                 <span className="inline-flex items-center gap-1 rounded-sm bg-[#eef4ef] px-2 py-1 dark:bg-secondary">
                   <Heart className="size-3 fill-current" />
-                  Favorite
+                  {translate(locale, "papers.reader.favorite")}
                 </span>
               ) : null}
               {paper.userState.subscribed ? (
                 <span className="inline-flex items-center gap-1 rounded-sm bg-[#eef4ef] px-2 py-1 dark:bg-secondary">
                   <Bell className="size-3" />
-                  Subscribed
+                  {translate(locale, "papers.reader.subscribed")}
                 </span>
               ) : null}
             </div>
@@ -104,7 +105,7 @@ export function PaperRow({
               <Button asChild variant="outline" size="sm" aria-label={t(papersCopy.openPaper, locale)} className="rounded-full bg-white dark:bg-card">
                 <a href={paperHref} target="_blank" rel="noreferrer">
                   <BookOpen className="size-4" />
-                  <span>{paperMetricValue(paper.citationCount)} citations</span>
+                  <span>{paperMetricValue(paper.citationCount)} {translate(locale, "papers.reader.cites")}</span>
                 </a>
               </Button>
             ) : null}
@@ -112,7 +113,7 @@ export function PaperRow({
               <Button asChild variant="outline" size="sm" aria-label={t(papersCopy.openCode, locale)} className="rounded-full bg-white dark:bg-card">
                 <a href={repoHref} target="_blank" rel="noreferrer">
                   <Github className="size-4" />
-                  <span>{paperMetricValue(paper.githubStars)} stars</span>
+                  <span>{paperMetricValue(paper.githubStars)} {translate(locale, "papers.reader.stars")}</span>
                 </a>
               </Button>
             ) : null}
@@ -126,7 +127,7 @@ export function PaperRow({
               ariaLabel={t(papersCopy.openPaper, locale)}
               icon={<BookOpen className="size-4" />}
               value={paperMetricValue(paper.citationCount)}
-              label="CITATIONS"
+              label={translate(locale, "papers.reader.cites").toUpperCase()}
             />
           ) : null}
           {repoHref ? (
@@ -135,7 +136,7 @@ export function PaperRow({
               ariaLabel={t(papersCopy.openCode, locale)}
               icon={<Github className="size-4" />}
               value={paperMetricValue(paper.githubStars)}
-              label="STARS"
+              label={translate(locale, "papers.reader.stars").toUpperCase()}
             />
           ) : null}
         </div>

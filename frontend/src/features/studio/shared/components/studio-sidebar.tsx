@@ -6,12 +6,16 @@ import { Layers3 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
 import {
-  studioNavigationGroups,
+  getLocalizedStudioNavigationGroups,
+  studioStatusLabel,
   studioStatusTone
 } from "@/features/studio/shared/lib/studio-navigation"
+import { useI18n } from "@/lib/i18n/use-i18n"
 
 export function StudioSidebar() {
   const pathname = usePathname()
+  const { locale, t } = useI18n()
+  const navigationGroups = getLocalizedStudioNavigationGroups(locale)
 
   return (
     <aside className="hidden w-60 shrink-0 border-r border-border bg-card lg:block">
@@ -20,13 +24,13 @@ export function StudioSidebar() {
           <Layers3 className="size-5" />
         </span>
         <div className="min-w-0">
-          <p className="truncate text-sm font-semibold text-foreground">Operations Studio</p>
-          <p className="truncate text-xs text-muted-foreground">Runtime console</p>
+          <p className="truncate text-sm font-semibold text-foreground">{t("studio.title")}</p>
+          <p className="truncate text-xs text-muted-foreground">{t("studio.subtitle")}</p>
         </div>
       </div>
 
-      <nav className="space-y-5 px-3 py-4" aria-label="Studio navigation">
-        {studioNavigationGroups.map((group) => (
+      <nav className="space-y-5 px-3 py-4" aria-label={t("studio.title")}>
+        {navigationGroups.map((group) => (
           <div key={group.label} className="space-y-2">
             <p className="px-2 text-[10px] font-semibold uppercase tracking-normal text-muted-foreground">
               {group.label}
@@ -47,7 +51,7 @@ export function StudioSidebar() {
                   >
                     {Icon ? <Icon className="size-4 shrink-0" /> : null}
                     <span className="min-w-0 flex-1 truncate">{item.label}</span>
-                    {item.status ? <Badge className="min-h-5 px-1.5 py-0 text-[10px]" variant={studioStatusTone(item.status)}>{item.status}</Badge> : null}
+                    {item.status ? <Badge className="min-h-5 px-1.5 py-0 text-[10px]" variant={studioStatusTone(item.status)}>{studioStatusLabel(item.status, locale)}</Badge> : null}
                   </Link>
                 )
               })}

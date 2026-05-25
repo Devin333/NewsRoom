@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest"
 import {
+  getLocalizedStudioModuleEntries,
+  getLocalizedStudioNavigationGroups,
   getStudioNavigationItems,
   studioModuleEntries,
   studioNavigationGroups
@@ -45,5 +47,12 @@ describe("studio navigation", () => {
       "/studio/review",
       "/studio/sources"
     ])
+  })
+
+  it("localizes Studio navigation and module cards", () => {
+    expect(getLocalizedStudioNavigationGroups("zh")[0]?.label).toBe("运行时")
+    expect(getLocalizedStudioNavigationGroups("zh")[0]?.items[0]?.label).toBe("运行中心")
+    expect(getLocalizedStudioModuleEntries("zh")[0]?.actionLabel).toBe("打开运行")
+    expect(getLocalizedStudioModuleEntries("en")[0]?.title).toBe("Run Center")
   })
 })

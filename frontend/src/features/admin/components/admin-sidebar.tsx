@@ -1,5 +1,6 @@
 "use client"
 
+import type { ComponentType } from "react"
 import {
   BarChart3,
   Bot,
@@ -14,7 +15,7 @@ import {
   ShieldCheck
 } from "lucide-react"
 import { adminNavItems } from "@/features/admin/lib/mock-data"
-import { pick } from "@/features/admin/lib/i18n"
+import { pick, ui } from "@/features/admin/lib/i18n"
 import type { AdminLang, AdminPage } from "@/features/admin/types"
 import { cn } from "@/lib/utils"
 
@@ -30,7 +31,7 @@ const pageIcons = {
   gates: CheckCircle2,
   publishing: Send,
   settings: Settings
-} satisfies Record<AdminPage, React.ComponentType<{ className?: string }>>
+} satisfies Record<AdminPage, ComponentType<{ className?: string }>>
 
 export function AdminSidebar({
   activePage,
@@ -51,12 +52,12 @@ export function AdminSidebar({
             </span>
             <div>
               <p className="text-base font-semibold text-foreground">NewsRoom</p>
-              <p className="text-xs text-muted-foreground">情报控制台 / Intelligence Console</p>
+              <p className="text-xs text-muted-foreground">{ui[lang].console}</p>
             </div>
           </div>
         </div>
 
-        <nav className="flex gap-2 overflow-x-auto px-3 py-3 lg:block lg:flex-1 lg:space-y-1 lg:overflow-y-auto" aria-label="Admin navigation">
+        <nav className="flex gap-2 overflow-x-auto px-3 py-3 lg:block lg:flex-1 lg:space-y-1 lg:overflow-y-auto" aria-label={ui[lang].admin}>
           {adminNavItems.map((item) => {
             const Icon = pageIcons[item.id]
             const active = activePage === item.id

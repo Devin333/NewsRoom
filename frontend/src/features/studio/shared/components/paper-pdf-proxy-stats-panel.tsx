@@ -4,6 +4,8 @@ import { useQuery } from "@tanstack/react-query"
 import { AlertTriangle, Ban, Clock3, FileText, Gauge } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { ApiRequestError } from "@/lib/api/client"
+import { formatDataState } from "@/lib/i18n"
+import { useI18n } from "@/lib/i18n/use-i18n"
 import { queryKeys } from "@/lib/query/query-keys"
 import { fetchPaperPdfProxyStats } from "@/features/studio/shared/api/pdf-proxy-stats-api"
 import {
@@ -16,6 +18,7 @@ import {
 import type { PaperPdfProxyStats } from "@/types/studio"
 
 export function PaperPdfProxyStatsPanel({ windowHours = 24 }: { windowHours?: number }) {
+  const { locale, t, dateTime } = useI18n()
   const { data, error, isError, isLoading } = useQuery({
     queryKey: queryKeys.studio.pdfProxyStats(windowHours),
     queryFn: () => fetchPaperPdfProxyStats(windowHours),
@@ -25,7 +28,7 @@ export function PaperPdfProxyStatsPanel({ windowHours = 24 }: { windowHours?: nu
 
   if (isLoading) {
     return (
-      <StudioPanel title="Paper Reader PDF Proxy" description="Loading PDF proxy request statistics.">
+      <StudioPanel title={t("studio.pdfProxy.title")} description={t("studio.pdfProxy.loading")}>
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {[0, 1, 2, 3].map((item) => (
             <div key={item} className="h-24 animate-pulse rounded-md border border-border bg-secondary/50" />
@@ -37,8 +40,8 @@ export function PaperPdfProxyStatsPanel({ windowHours = 24 }: { windowHours?: nu
 
   if (isError) {
     return (
-      <StudioNotice tone="danger" title="PDF proxy stats unavailable">
-        <p>{error instanceof Error ? error.message : "PDF proxy stats request failed."}</p>
+      <StudioNotice tone="danger" title={t("studio.pdfProxy.errorTitle")}>
+        <p>{error instanceof Error ? error.message : t("studio.pdfProxy.errorMessage")}</p>
         {error instanceof ApiRequestError && error.requestId ? (
           <p className="mt-1 font-mono text-xs">requestId={error.requestId}</p>
         ) : null}
@@ -48,10 +51,10 @@ export function PaperPdfProxyStatsPanel({ windowHours = 24 }: { windowHours?: nu
 
   if (!data || data.dataState === "empty") {
     return (
-      <StudioPanel title="Paper Reader PDF Proxy" description={`${windowHours}h request window`}>
+      <StudioPanel title={t("studio.pdfProxy.title")} description={t("studio.pdfProxy.window", { hours: windowHours })}>
         <StudioEmptyBlock
-          title="No PDF proxy events"
-          description="Open a paper PDF or thumbnail through the Reader to populate proxy statistics."
+          title={t("studio.pdfProxy.emptyTitle")}
+          description={t("studio.pdfProxy.emptyDescription")}
         />
       </StudioPanel>
     )
@@ -59,9 +62,9 @@ export function PaperPdfProxyStatsPanel({ windowHours = 24 }: { windowHours?: nu
 
   return (
     <StudioPanel
-      title="Paper Reader PDF Proxy"
-      description={`${data.windowHours}h request window ending ${formatDateTime(data.windowEndedAt)}`}
-      actions={<Badge variant={data.dataState === "ready" ? "success" : "warning"}>{data.dataState}</Badge>}
+      title={t("studio.pdfProxy.title")}
+      description={t("studio.pdfProxy.windowEnding", { hours: data.windowHours, time: dateTime(data.windowEndedAt) })}
+      actions={<Badge variant={data.dataState === "ready" ? "success" : "warning"}>{formatDataState(locale, data.dataState)}</Badge>}
     >
       <PdfProxyStatsContent stats={data} />
     </StudioPanel>
@@ -69,12 +72,13 @@ export function PaperPdfProxyStatsPanel({ windowHours = 24 }: { windowHours?: nu
 }
 
 function PdfProxyStatsContent({ stats }: { stats: PaperPdfProxyStats }) {
+  const { t, dateTime } = useI18n()
   const topError = Object.entries(stats.errorsByCode).sort(([, left], [, right]) => right - left)[0]
   const topHost = stats.topHosts[0]
   return (
     <div className="space-y-4">
       {stats.dataState === "partial" || stats.notices.length ? (
-        <StudioNotice tone={stats.dataState === "partial" ? "warning" : "info"} title="PDF proxy stats notice">
+        <StudioNotice tone={stats.dataState === "partial" ? "warning" : "info"} title={t("studio.pdfProxy.notice")}>
           <div className="space-y-1">
             {stats.notices.map((notice) => (
               <p key={notice}>{notice}</p>
@@ -84,17 +88,17 @@ function PdfProxyStatsContent({ stats }: { stats: PaperPdfProxyStats }) {
       ) : null}
 
       <StudioMetricGrid className="xl:grid-cols-4 2xl:grid-cols-4">
-        <StudioMetricCard label="Requests" value={stats.totalRequests} detail={`${stats.successCount} streamed`} icon={FileText} tone="accent" />
-        <StudioMetricCard label="Errors" value={stats.errorCount} detail={topError ? `${topError[0]} (${topError[1]})` : "No errors"} icon={AlertTriangle} tone={stats.errorCount ? "warning" : "success"} />
-        <StudioMetricCard label="Timeouts" value={stats.timeoutCount} detail={`${stats.oversizedCount} oversized`} icon={Clock3} tone={stats.timeoutCount ? "danger" : "neutral"} />
-        <StudioMetricCard label="Blocked" value={stats.blockedCount} detail={topHost ? topHost.host : "No host data"} icon={Ban} tone={stats.blockedCount ? "danger" : "neutral"} />
+        <StudioMetricCard label={t("studio.pdfProxy.requests")} value={stats.totalRequests} detail={t("studio.pdfProxy.streamed", { count: stats.successCount })} icon={FileText} tone="accent" />
+        <StudioMetricCard label={t("studio.pdfProxy.errors")} value={stats.errorCount} detail={topError ? `${topError[0]} (${topError[1]})` : t("studio.pdfProxy.noErrors")} icon={AlertTriangle} tone={stats.errorCount ? "warning" : "success"} />
+        <StudioMetricCard label={t("studio.pdfProxy.timeouts")} value={stats.timeoutCount} detail={t("studio.pdfProxy.oversized", { count: stats.oversizedCount })} icon={Clock3} tone={stats.timeoutCount ? "danger" : "neutral"} />
+        <StudioMetricCard label={t("studio.pdfProxy.blocked")} value={stats.blockedCount} detail={topHost ? topHost.host : t("studio.pdfProxy.noHostData")} icon={Ban} tone={stats.blockedCount ? "danger" : "neutral"} />
       </StudioMetricGrid>
 
       <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]">
         <div className="rounded-md border border-border bg-background p-3">
           <div className="mb-2 flex items-center gap-2">
             <Gauge className="size-4 text-accent" />
-            <h3 className="text-sm font-semibold text-foreground">Top hosts</h3>
+            <h3 className="text-sm font-semibold text-foreground">{t("studio.pdfProxy.topHosts")}</h3>
           </div>
           <div className="space-y-2">
             {stats.topHosts.length ? (
@@ -102,40 +106,35 @@ function PdfProxyStatsContent({ stats }: { stats: PaperPdfProxyStats }) {
                 <div key={host.host} className="flex items-center justify-between gap-3 rounded-md bg-secondary/40 px-3 py-2 text-sm">
                   <span className="truncate font-medium text-foreground">{host.host}</span>
                   <span className="shrink-0 text-xs text-muted-foreground">
-                    {host.requestCount} req / {host.errorCount} err
+                    {t("studio.pdfProxy.hostRow", { requests: host.requestCount, errors: host.errorCount })}
                   </span>
                 </div>
               ))
             ) : (
-              <p className="text-sm text-muted-foreground">No host data in this window.</p>
+              <p className="text-sm text-muted-foreground">{t("studio.pdfProxy.noHostWindow")}</p>
             )}
           </div>
         </div>
 
         <div className="rounded-md border border-border bg-background p-3">
-          <h3 className="text-sm font-semibold text-foreground">Recent errors</h3>
+          <h3 className="text-sm font-semibold text-foreground">{t("studio.pdfProxy.recentErrors")}</h3>
           <div className="mt-2 space-y-2">
             {stats.recentErrors.length ? (
               stats.recentErrors.map((item) => (
                 <div key={`${item.timestamp}-${item.code}-${item.path}`} className="rounded-md bg-secondary/40 px-3 py-2 text-xs">
                   <div className="flex items-center justify-between gap-2">
                     <span className="font-semibold text-warning">{item.code}</span>
-                    <span className="text-muted-foreground">{formatDateTime(item.timestamp)}</span>
+                    <span className="text-muted-foreground">{dateTime(item.timestamp)}</span>
                   </div>
                   <p className="mt-1 truncate text-muted-foreground">{[item.host, item.path].filter(Boolean).join("")}</p>
                 </div>
               ))
             ) : (
-              <p className="text-sm text-muted-foreground">No recent proxy errors.</p>
+              <p className="text-sm text-muted-foreground">{t("studio.pdfProxy.noRecentErrors")}</p>
             )}
           </div>
         </div>
       </section>
     </div>
   )
-}
-
-function formatDateTime(value: string): string {
-  const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
 }

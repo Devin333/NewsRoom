@@ -13,20 +13,22 @@ import { BoardOutputPanel } from "@/features/studio/boards/components/board-outp
 import { CrossBoardInsightPanel } from "@/features/studio/boards/components/cross-board-insight-panel"
 import { useBoardList } from "@/features/studio/boards/hooks/use-board-list"
 import { useBoardOutput } from "@/features/studio/boards/hooks/use-board-output"
+import { useI18n } from "@/lib/i18n/use-i18n"
 import type {
   StudioBoardDetailViewModel,
   StudioBoardListViewModel
 } from "@/types/board"
 
 export function BoardCenterPage({ initialData }: { initialData: StudioBoardListViewModel }) {
+  const { locale, t } = useI18n()
   const { data } = useBoardList(initialData)
 
   return (
     <main className="space-y-6">
       <StudioPageHeader
-        eyebrow="Business"
-        title="Board Center"
-        description="Business board objects for AI News, Project Radar, Paper Radar, Community Pulse, and Cross Board."
+        eyebrow={locale === "zh" ? "业务" : "Business"}
+        title={t("studio.module.boardCenter.title")}
+        description={t("studio.module.boardCenter.description")}
       />
       <NoticeList notices={data.notices} />
       <BoardCardGrid summaries={data.summaries} definitions={data.definitions} />
@@ -35,6 +37,7 @@ export function BoardCenterPage({ initialData }: { initialData: StudioBoardListV
 }
 
 export function BoardDetailPage({ detail }: { detail: StudioBoardDetailViewModel }) {
+  const { locale, t } = useI18n()
   const { data: output, isLoading, buildOutput } = useBoardOutput(detail.summary.boardType, detail.output)
   const [itemsJson, setItemsJson] = useState(detail.sampleItemsJson)
   const [topic, setTopic] = useState("Agent Memory")
@@ -61,14 +64,14 @@ export function BoardDetailPage({ detail }: { detail: StudioBoardDetailViewModel
   return (
     <main className="space-y-6">
       <StudioPageHeader
-        eyebrow="Board Center"
+        eyebrow={locale === "zh" ? "业务板中心" : "Board Center"}
         title={detail.summary.title}
         description={detail.definition.description}
         actions={
           <Button asChild variant="outline" size="sm">
             <Link href="/studio/boards">
               <ArrowLeft className="size-4" />
-              Boards
+              {locale === "zh" ? "业务板" : "Boards"}
             </Link>
           </Button>
         }
@@ -78,28 +81,28 @@ export function BoardDetailPage({ detail }: { detail: StudioBoardDetailViewModel
 
       <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_24rem]">
         <StudioPanel
-          title="Board definition"
+          title={t("studio.boards.definition")}
           description={detail.summary.boardType}
           actions={<Badge variant={detail.summary.status === "ready" ? "success" : "warning"}>{detail.summary.status}</Badge>}
         >
           <div className="grid gap-4 text-sm md:grid-cols-2">
-            <DefinitionLine label="Input object" value={detail.definition.inputObject} />
-            <DefinitionLine label="Output object" value={detail.definition.outputObject} />
-            <DefinitionLine label="Signal types" value={detail.definition.signalTypes.join(", ")} />
-            <DefinitionLine label="Visible sections" value={detail.definition.visibleSections.join(", ")} />
+            <DefinitionLine label={t("studio.boards.inputObject")} value={detail.definition.inputObject} />
+            <DefinitionLine label={t("studio.boards.outputObject")} value={detail.definition.outputObject} />
+            <DefinitionLine label={t("studio.boards.signalTypes")} value={detail.definition.signalTypes.join(", ")} />
+            <DefinitionLine label={t("studio.boards.visibleSections")} value={detail.definition.visibleSections.join(", ")} />
           </div>
         </StudioPanel>
 
         <Card>
           <CardHeader className="flex-row items-center gap-3">
             <div>
-              <CardTitle>Build output</CardTitle>
-              <p className="mt-1 text-xs text-muted-foreground">Generate a sample board response</p>
+              <CardTitle>{t("studio.boards.buildOutput")}</CardTitle>
+              <p className="mt-1 text-xs text-muted-foreground">{t("studio.boards.buildDescription")}</p>
             </div>
           </CardHeader>
           <CardContent className="space-y-3">
             <label className="block text-sm font-medium text-foreground" htmlFor="board-topic">
-              Topic
+              {t("studio.boards.topic")}
             </label>
             <input
               id="board-topic"
@@ -108,7 +111,7 @@ export function BoardDetailPage({ detail }: { detail: StudioBoardDetailViewModel
               className="flex h-9 w-full rounded-md border border-input bg-card px-3 py-2 text-sm text-foreground shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
             <label className="block text-sm font-medium text-foreground" htmlFor="board-sample-items">
-              Sample items JSON
+              {t("studio.boards.sampleItemsJson")}
             </label>
             <textarea
               id="board-sample-items"
@@ -123,7 +126,7 @@ export function BoardDetailPage({ detail }: { detail: StudioBoardDetailViewModel
             ) : null}
             <Button onClick={handleBuildOutput} disabled={isLoading}>
               <Play className="size-4" />
-              {isLoading ? "Building" : "Build output"}
+              {isLoading ? t("studio.boards.building") : t("studio.boards.buildOutput")}
             </Button>
           </CardContent>
         </Card>
@@ -136,12 +139,13 @@ export function BoardDetailPage({ detail }: { detail: StudioBoardDetailViewModel
 }
 
 function NoticeList({ notices }: { notices: string[] }) {
+  const { t } = useI18n()
   const unique = [...new Set(notices.filter(Boolean))]
   if (!unique.length) return null
   return (
     <div className="space-y-3">
       {unique.map((notice) => (
-        <StudioFallbackNotice key={notice} title="Board data notice" message={notice} />
+        <StudioFallbackNotice key={notice} title={t("studio.boards.dataNotice")} message={notice} />
       ))}
     </div>
   )

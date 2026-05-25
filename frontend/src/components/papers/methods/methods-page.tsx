@@ -62,14 +62,14 @@ export function MethodsPage({ locale }: { locale: Locale }) {
       />
       {status === "fallback" ? (
         <InlineNotice
-          message={fallbackNoticeVisible ? "Paper method API is unavailable; showing local catalog fallback." : null}
+          message={fallbackNoticeVisible ? t(papersCopy.methodApiFallback, locale) : null}
           locale={locale}
           onDismiss={() => setFallbackNoticeVisible(false)}
         />
       ) : null}
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {status === "loading" ? (
-          <p className="text-sm text-[#334155]/60 dark:text-muted-foreground">Loading paper methods...</p>
+          <p className="text-sm text-[#334155]/60 dark:text-muted-foreground">{t(papersCopy.loadingMethods, locale)}</p>
         ) : null}
         {methodItems.map((method) => (
           <MethodCard key={method.id} method={method} locale={locale} />

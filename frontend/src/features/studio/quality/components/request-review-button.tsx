@@ -12,6 +12,7 @@ import {
   DialogTrigger
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import { useI18n } from "@/lib/i18n/use-i18n"
 import type {
   StudioQualityDataState,
   StudioRequestReviewAction,
@@ -28,6 +29,7 @@ export function RequestReviewButton({
   dataState: StudioQualityDataState
   requestReviewAction: StudioRequestReviewAction
 }) {
+  const { t } = useI18n()
   const [open, setOpen] = useState(false)
   const [reason, setReason] = useState("")
   const [requestedBy, setRequestedBy] = useState("")
@@ -39,7 +41,7 @@ export function RequestReviewButton({
   function submit() {
     const trimmedReason = reason.trim()
     if (!trimmedReason) {
-      setValidation("Reason is required.")
+      setValidation(t("studio.quality.reasonRequired"))
       return
     }
 
@@ -63,34 +65,34 @@ export function RequestReviewButton({
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button disabled={disabled} title={disabled ? "Live API data is required to request review." : undefined}>
+        <Button disabled={disabled} title={disabled ? t("studio.quality.requestReviewDisabledTitle") : undefined}>
           <Send className="size-4" />
-          Request review
+          {t("studio.quality.requestReview")}
         </Button>
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Request human review</DialogTitle>
-          <DialogDescription>Submit a governed review request for this report quality gate.</DialogDescription>
+          <DialogTitle>{t("studio.quality.requestReviewTitle")}</DialogTitle>
+          <DialogDescription>{t("studio.quality.requestReviewDescription")}</DialogDescription>
         </DialogHeader>
         {disabled ? (
           <p className="rounded-md border border-warning/30 bg-warning/10 p-3 text-sm text-warning">
-            Request Review is disabled while this page is using fallback data.
+            {t("studio.quality.requestReviewDisabled")}
           </p>
         ) : null}
         <div className="space-y-4">
           <label className="block space-y-1.5">
-            <span className="text-sm font-medium text-foreground">Reason</span>
+            <span className="text-sm font-medium text-foreground">{t("studio.runs.reason")}</span>
             <textarea
               className="min-h-28 w-full rounded-md border border-input bg-card px-3 py-2 text-sm text-foreground shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
               value={reason}
               onChange={(event) => setReason(event.target.value)}
-              placeholder="Explain why this report needs human review."
+              placeholder={t("studio.quality.reasonPlaceholder")}
               disabled={disabled || isPending}
             />
           </label>
           <label className="block space-y-1.5">
-            <span className="text-sm font-medium text-foreground">Requested by</span>
+            <span className="text-sm font-medium text-foreground">{t("studio.quality.requestedBy")}</span>
             <Input
               value={requestedBy}
               onChange={(event) => setRequestedBy(event.target.value)}
@@ -103,7 +105,7 @@ export function RequestReviewButton({
             result.ok ? (
               <div className="rounded-md border border-success/30 bg-success/10 p-3 text-sm text-success">
                 <p>{result.message}</p>
-                {result.approvalId ? <p className="mt-1 font-mono">Approval: {result.approvalId}</p> : null}
+                {result.approvalId ? <p className="mt-1 font-mono">{t("studio.quality.approval", { approvalId: result.approvalId })}</p> : null}
                 {result.requestId ? <p className="mt-1 font-mono">RequestId: {result.requestId}</p> : null}
               </div>
             ) : (
@@ -115,11 +117,11 @@ export function RequestReviewButton({
           ) : null}
           <div className="flex justify-end gap-2">
             <Button type="button" variant="outline" onClick={() => setOpen(false)} disabled={isPending}>
-              Close
+              {t("common.close")}
             </Button>
             <Button type="button" onClick={submit} disabled={disabled || isPending}>
               <Send className="size-4" />
-              {isPending ? "Submitting" : "Submit"}
+              {isPending ? t("studio.runs.submitting") : t("common.submit")}
             </Button>
           </div>
         </div>

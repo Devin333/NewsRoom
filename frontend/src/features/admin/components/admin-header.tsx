@@ -3,17 +3,16 @@
 import { Filter, Play, Search } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { PreferenceControls } from "@/components/layout/preference-controls"
 import { pageTitleKey, ui } from "@/features/admin/lib/i18n"
 import type { AdminLang, AdminPage } from "@/features/admin/types"
 
 export function AdminHeader({
   activePage,
-  lang,
-  onToggleLang
+  lang
 }: {
   activePage: AdminPage
   lang: AdminLang
-  onToggleLang: () => void
 }) {
   const copy = ui[lang]
   const pageTitle = copy[pageTitleKey[activePage]]
@@ -37,9 +36,7 @@ export function AdminHeader({
             <Filter className="size-4" />
             {copy.filters}
           </Button>
-          <Button type="button" variant="outline" size="sm" aria-label="Toggle language" onClick={onToggleLang}>
-            {copy.languageSwitch}
-          </Button>
+          <PreferenceControls compact />
           <Button type="button" size="sm">
             <Play className="size-4" />
             {copy.runPipeline}

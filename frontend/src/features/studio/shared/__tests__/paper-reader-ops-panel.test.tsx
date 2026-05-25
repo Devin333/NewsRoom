@@ -6,6 +6,7 @@ import {
   fetchPaperReaderOpsStats,
   refreshPaperReaderSummary,
 } from "@/features/studio/shared/api/paper-reader-ops-api"
+import { useUiStore } from "@/stores/ui-store"
 import type { PaperReaderOpsStats } from "@/types/studio"
 
 vi.mock("@/features/studio/shared/api/paper-reader-ops-api", () => ({
@@ -95,6 +96,7 @@ describe("PaperReaderOpsPanel", () => {
   beforeEach(() => {
     vi.mocked(fetchPaperReaderOpsStats).mockReset()
     vi.mocked(refreshPaperReaderSummary).mockReset()
+    useUiStore.setState({ locale: "zh" })
   })
 
   it("renders loading state", () => {
@@ -102,7 +104,7 @@ describe("PaperReaderOpsPanel", () => {
 
     renderPanel()
 
-    expect(screen.getByText("Loading paper cache and summary runtime statistics.")).toBeInTheDocument()
+    expect(screen.getByText("正在加载论文缓存与摘要运行时统计。")).toBeInTheDocument()
   })
 
   it("renders error state", async () => {
@@ -110,7 +112,7 @@ describe("PaperReaderOpsPanel", () => {
 
     renderPanel()
 
-    expect(await screen.findByText("Paper Reader ops unavailable")).toBeInTheDocument()
+    expect(await screen.findByText("Paper Reader 运维不可用")).toBeInTheDocument()
     expect(screen.getByText("ops down")).toBeInTheDocument()
   })
 
@@ -126,7 +128,7 @@ describe("PaperReaderOpsPanel", () => {
 
     renderPanel()
 
-    expect(await screen.findByText("No Paper Reader runtime data")).toBeInTheDocument()
+    expect(await screen.findByText("暂无 Paper Reader 运行数据")).toBeInTheDocument()
   })
 
   it("renders ready stats and recent failures", async () => {
@@ -134,12 +136,12 @@ describe("PaperReaderOpsPanel", () => {
 
     renderPanel()
 
-    expect(await screen.findByText("Summary hit rate")).toBeInTheDocument()
+    expect(await screen.findByText("摘要命中率")).toBeInTheDocument()
     expect(screen.getByText("67%")).toBeInTheDocument()
     expect(screen.getByText("paper_summary_unavailable (1)")).toBeInTheDocument()
     expect(screen.getAllByText("paper_summary_unavailable").length).toBeGreaterThan(0)
     expect(screen.getByText("4")).toBeInTheDocument()
-    expect(screen.getByText("2 text artifacts")).toBeInTheDocument()
+    expect(screen.getByText("2 个文本产物")).toBeInTheDocument()
   })
 
   it("requires a reason before refreshing summary", async () => {
@@ -158,13 +160,13 @@ describe("PaperReaderOpsPanel", () => {
 
     renderPanel()
 
-    const submit = await screen.findByRole("button", { name: /Refresh/ })
+    const submit = await screen.findByRole("button", { name: /刷新/ })
     expect(submit).toBeDisabled()
 
-    fireEvent.change(screen.getByLabelText("Paper id or slug"), { target: { value: "paper-1" } })
+    fireEvent.change(screen.getByLabelText("论文 ID 或 slug"), { target: { value: "paper-1" } })
     expect(submit).toBeDisabled()
 
-    fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "stale summary" } })
+    fireEvent.change(screen.getByLabelText("原因"), { target: { value: "stale summary" } })
     expect(submit).toBeEnabled()
     fireEvent.click(submit)
 

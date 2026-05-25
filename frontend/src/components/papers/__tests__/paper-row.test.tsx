@@ -1,7 +1,8 @@
 import { render, screen } from "@testing-library/react"
-import { describe, expect, it, vi } from "vitest"
+import { beforeEach, describe, expect, it, vi } from "vitest"
 import { PaperRow } from "@/components/papers/paper-row"
 import type { Paper } from "@/lib/papers/types"
+import { useUiStore } from "@/stores/ui-store"
 
 const paper: Paper = {
   id: "paper-swe-agent",
@@ -22,14 +23,18 @@ const paper: Paper = {
 }
 
 describe("PaperRow", () => {
+  beforeEach(() => {
+    useUiStore.setState({ locale: "en" })
+  })
+
   it("links PDF and GitHub actions to real destinations and avoids stars per hour copy", () => {
     render(<PaperRow paper={paper} locale="en" onPreview={vi.fn()} />)
 
     expect(screen.getAllByRole("link", { name: /open paper pdf/i })[0]).toHaveAttribute("href", "https://arxiv.org/pdf/2405.15793.pdf")
     expect(screen.getAllByRole("link", { name: /open github repository/i })[0]).toHaveAttribute("href", "https://github.com/SWE-agent/SWE-agent")
-    expect(screen.getAllByText("24 citations")).toHaveLength(1)
-    expect(screen.getByText("CITATIONS")).toBeInTheDocument()
-    expect(screen.getAllByText("19.3K stars")).toHaveLength(1)
+    expect(screen.getAllByText("24").length).toBeGreaterThan(0)
+    expect(screen.getByText("CITES")).toBeInTheDocument()
+    expect(screen.getAllByText("19.3K").length).toBeGreaterThan(0)
     expect(screen.getByText("STARS")).toBeInTheDocument()
     expect(screen.queryByText(/stars \/ hr/i)).not.toBeInTheDocument()
     expect(screen.queryByText(/github momentum/i)).not.toBeInTheDocument()

@@ -5,6 +5,7 @@ import Link from "next/link"
 import { Bell, BookOpen, Brain, ExternalLink, FileText, Github, Globe2, Heart, Quote, RefreshCw, ThermometerSun, X } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { translate } from "@/lib/i18n"
 import { fetchPaperDetail, requestPaperSummary } from "@/lib/papers/api"
 import { papersCopy, t } from "@/lib/papers/copy"
 import {
@@ -171,7 +172,7 @@ export function PaperDetailDrawer({
       >
         <div className="flex items-center justify-between border-b border-[#d8dfd8] px-7 py-5 dark:border-border">
           <div className="text-xs uppercase tracking-[0.16em] text-[#334155]/55">
-            Trending
+            {translate(locale, "papers.reader.trending")}
             {arxivHref ? <span> / {arxivIdFromUrl(arxivHref)}</span> : null}
           </div>
           <a
@@ -199,7 +200,7 @@ export function PaperDetailDrawer({
               {title}
             </h2>
             <div className="mt-5 flex flex-wrap items-center gap-x-3 gap-y-2 text-sm text-[#334155]/55 dark:text-muted-foreground">
-              <span>{activePaper.venue ?? "Paper"}</span>
+              <span>{activePaper.venue ?? translate(locale, "papers.reader.paper")}</span>
               <span aria-hidden="true">/</span>
               <span>{formatPaperDate(activePaper.publishedAt, locale)}</span>
               {typeof citationCount === "number" ? (
@@ -207,7 +208,7 @@ export function PaperDetailDrawer({
                   <span aria-hidden="true">/</span>
                   <span className="inline-flex items-center gap-1">
                     <Quote className="size-4" />
-                    {formatCompactNumber(citationCount)} OpenAlex citations
+                    {formatCompactNumber(citationCount)} {translate(locale, "papers.reader.openAlexCitations")}
                   </span>
                 </>
               ) : null}
@@ -219,20 +220,20 @@ export function PaperDetailDrawer({
               {activePaper.userState?.favorite ? (
                 <Badge variant="accent" className="rounded-sm">
                   <Heart className="mr-1 size-3 fill-current" />
-                  Favorite
+                  {translate(locale, "papers.reader.favorite")}
                 </Badge>
               ) : null}
               {activePaper.userState?.subscribed ? (
                 <Badge variant="muted" className="rounded-sm">
                   <Bell className="mr-1 size-3" />
-                  Subscribed
+                  {translate(locale, "papers.reader.subscribed")}
                 </Badge>
               ) : null}
               {pdfHref ? (
                 <Button asChild variant="outline" className="rounded-md bg-white dark:bg-card">
                   <a href={pdfHref} target="_blank" rel="noreferrer">
                     <FileText className="size-4" />
-                    View PDF
+                    {translate(locale, "papers.reader.viewPdf")}
                   </a>
                 </Button>
               ) : null}
@@ -240,7 +241,7 @@ export function PaperDetailDrawer({
                 <Button asChild variant="outline" className="rounded-md bg-white dark:bg-card">
                   <a href={arxivHref} target="_blank" rel="noreferrer">
                     <ExternalLink className="size-4" />
-                    arXiv page
+                    {translate(locale, "papers.reader.arxivPage")}
                   </a>
                 </Button>
               ) : null}
@@ -248,9 +249,9 @@ export function PaperDetailDrawer({
                 <Button asChild variant="outline" className="rounded-md bg-white dark:bg-card">
                   <a href={repoHref} target="_blank" rel="noreferrer">
                     <Github className="size-4" />
-                    Code
+                    {translate(locale, "papers.reader.code")}
                     {typeof activePaper.githubStars === "number" ? (
-                      <span className="text-[#334155]/55">/ {formatCompactNumber(activePaper.githubStars)} stars</span>
+                      <span className="text-[#334155]/55">/ {formatCompactNumber(activePaper.githubStars)} {translate(locale, "papers.reader.stars")}</span>
                     ) : null}
                   </a>
                 </Button>
@@ -259,20 +260,20 @@ export function PaperDetailDrawer({
                 <Button asChild variant="outline" className="rounded-md bg-white dark:bg-card">
                   <a href={projectHref} target="_blank" rel="noreferrer">
                     <Globe2 className="size-4" />
-                    Project page
+                    {translate(locale, "papers.reader.projectPage")}
                   </a>
                 </Button>
               ) : null}
               <Button asChild className="rounded-md">
                 <Link href={`/papers/${encodeURIComponent(activePaper.slug || activePaper.id)}`}>
                   <BookOpen className="size-4" />
-                  Open reader
+                  {translate(locale, "papers.reader.openReader")}
                 </Link>
               </Button>
             </div>
           </header>
 
-          <DetailSection title="NewsRoom AI" meta={summary?.cached ? "cached" : "on demand"}>
+          <DetailSection title="NewsRoom AI" meta={summary?.cached ? translate(locale, "papers.reader.cached") : translate(locale, "papers.reader.onDemand")}>
             <AISummaryBlock
               status={summaryStatus}
               summary={summary}
@@ -286,13 +287,13 @@ export function PaperDetailDrawer({
             />
           </DetailSection>
 
-          <DetailSection title="Abstract">
+          <DetailSection title={translate(locale, "papers.reader.abstract")}>
             <p className="max-w-5xl text-base leading-8 text-[#334155]/74 dark:text-muted-foreground">
               {paperSnippet(activePaper, locale)}
             </p>
           </DetailSection>
 
-          <DetailSection title="Implementations" meta={`${implementations.length} repositories`}>
+          <DetailSection title={translate(locale, "papers.reader.implementations")} meta={translate(locale, "papers.reader.repositories", { count: implementations.length })}>
             {implementations.length ? (
               <div className="divide-y divide-[#d8dfd8] rounded-md border border-[#d8dfd8] bg-white dark:divide-border dark:border-border dark:bg-card">
                 {implementations.map((implementation) => (
@@ -308,17 +309,17 @@ export function PaperDetailDrawer({
                       <span className="truncate font-semibold">{implementation.name}</span>
                     </span>
                     {typeof implementation.githubStars === "number" ? (
-                      <span className="shrink-0 text-[#334155]/58">{formatCompactNumber(implementation.githubStars)} stars</span>
+                      <span className="shrink-0 text-[#334155]/58">{formatCompactNumber(implementation.githubStars)} {translate(locale, "papers.reader.stars")}</span>
                     ) : null}
                   </a>
                 ))}
               </div>
             ) : (
-              <EmptyState text={locale === "zh" ? "暂无可验证实现仓库。" : "No verified implementation repository yet."} />
+              <EmptyState text={translate(locale, "papers.reader.noImplementations")} />
             )}
           </DetailSection>
 
-          <DetailSection title="Benchmarks / SOTA" meta={`${benchmarks.length} results`}>
+          <DetailSection title="Benchmarks / SOTA" meta={translate(locale, "papers.reader.results", { count: benchmarks.length })}>
             {benchmarks.length ? (
               <div className="divide-y divide-[#d8dfd8] rounded-md border border-[#d8dfd8] bg-white dark:divide-border dark:border-border dark:bg-card">
                 {benchmarks.map((benchmark) => (
@@ -331,37 +332,37 @@ export function PaperDetailDrawer({
                   >
                     <span className="font-semibold">{benchmark.name}</span>
                     <span className="text-[#334155]/58">
-                      {[benchmark.metric, benchmark.value].filter(Boolean).join(" · ") || "reported"}
+                      {[benchmark.metric, benchmark.value].filter(Boolean).join(" · ") || translate(locale, "papers.reader.reported")}
                     </span>
                   </a>
                 ))}
               </div>
             ) : (
-              <EmptyState text={locale === "zh" ? "暂无真实 Benchmark / SOTA 字段。" : "No real Benchmark / SOTA fields are recorded yet."} />
+              <EmptyState text={translate(locale, "papers.reader.noBenchmarks")} />
             )}
           </DetailSection>
 
-          <DetailSection title="Heat" meta="real signals only">
+          <DetailSection title={translate(locale, "papers.reader.heat")} meta={translate(locale, "papers.reader.realSignalsOnly")}>
             <div className="flex flex-wrap gap-3 text-sm text-[#334155]/72 dark:text-muted-foreground">
               <MetricPill
                 icon={<ThermometerSun className="size-4" />}
-                label="NewsRoom heat"
+                label={translate(locale, "papers.reader.newsroomHeat")}
                 value={typeof activePaper.newsroomHeatScore === "number" ? activePaper.newsroomHeatScore.toFixed(1) : "N/A"}
               />
               <MetricPill
                 icon={<Github className="size-4" />}
-                label="GitHub stars"
+                label={translate(locale, "papers.reader.githubStars")}
                 value={typeof activePaper.githubStars === "number" ? formatCompactNumber(activePaper.githubStars) : "N/A"}
               />
               <MetricPill
                 icon={<Quote className="size-4" />}
-                label="OpenAlex citations"
+                label={translate(locale, "papers.reader.openAlexCitations")}
                 value={typeof citationCount === "number" ? formatCompactNumber(citationCount) : "N/A"}
               />
             </div>
           </DetailSection>
 
-          <DetailSection title="Tasks" meta={`${tasks.length} tagged`}>
+          <DetailSection title={translate(locale, "papers.tasks")} meta={translate(locale, "papers.reader.tagged", { count: tasks.length })}>
             <div className="flex flex-wrap gap-2">
               {tasks.map((task) => (
                 <Badge key={task.id} variant="accent" className="rounded-sm border-emerald-200 bg-emerald-100/80 text-emerald-800">
@@ -371,7 +372,7 @@ export function PaperDetailDrawer({
             </div>
           </DetailSection>
 
-          <DetailSection title="Methods" meta={`${methods.length} used`}>
+          <DetailSection title={translate(locale, "papers.methods")} meta={translate(locale, "papers.reader.used", { count: methods.length })}>
             <div className="flex flex-wrap gap-2">
               {methods.map((method) => (
                 <Badge key={method.id} variant="muted" className="rounded-sm bg-white text-[#334155] dark:bg-card dark:text-foreground">
@@ -412,7 +413,7 @@ function AISummaryBlock({
         ) : null}
         {summary.contributions?.length ? (
           <div>
-            <h4 className="text-xs font-semibold uppercase tracking-[0.16em] text-[#334155]/52">Contributions</h4>
+            <h4 className="text-xs font-semibold uppercase tracking-[0.16em] text-[#334155]/52">{translate(locale, "papers.reader.contributions")}</h4>
             <ul className="mt-2 list-disc space-y-1 pl-5 text-sm leading-6 text-[#334155]/72 dark:text-muted-foreground">
               {summary.contributions.map((contribution) => (
                 <li key={contribution}>{contribution}</li>
@@ -427,13 +428,13 @@ function AISummaryBlock({
     return (
       <div className="flex items-center gap-3 rounded-md border border-[#d8dfd8] bg-white px-4 py-4 text-sm text-[#334155]/68 dark:border-border dark:bg-card dark:text-muted-foreground">
         <Brain className="size-4 animate-pulse" />
-        {locale === "zh" ? "正在生成 NewsRoom AI 解读..." : "Generating NewsRoom AI summary..."}
+        {translate(locale, "papers.reader.generatingSummary")}
       </div>
     )
   }
   return (
     <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-900">
-      <p>{error ?? (locale === "zh" ? "AI 解读暂不可用。" : "AI summary is unavailable.")}</p>
+      <p>{error ?? translate(locale, "papers.reader.summaryUnavailable")}</p>
       <button type="button" className="mt-3 inline-flex items-center gap-2 font-semibold" onClick={onRetry}>
         <RefreshCw className="size-4" />
         {locale === "zh" ? "重试" : "Retry"}

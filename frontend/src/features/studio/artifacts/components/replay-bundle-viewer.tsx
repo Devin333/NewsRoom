@@ -4,34 +4,36 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ArtifactPreview } from "@/features/studio/artifacts/components/artifact-preview"
 import { ReplayReadinessBadge } from "@/features/studio/artifacts/components/artifact-status-badge"
 import { StudioMetricCard, StudioMetricGrid, StudioNotice, StudioPanel } from "@/features/studio/shared/components/studio-dashboard"
+import { useI18n } from "@/lib/i18n/use-i18n"
 import type { StudioReplayBundle } from "@/types/artifact"
 
 export function ReplayBundleViewer({ replay }: { replay: StudioReplayBundle }) {
+  const { t } = useI18n()
   const integrityValid = replay.integrity.valid === true
 
   return (
     <div className="space-y-4">
       <StudioMetricGrid className="xl:grid-cols-5 2xl:grid-cols-5">
-        <StudioMetricCard label="Readiness" value={<ReplayReadinessBadge replay={replay} />} detail={replay.ready ? "Replay ready" : "Review required"} icon={ShieldCheck} tone={replay.ready ? "success" : "warning"} />
-        <StudioMetricCard label="Events" value={String(replay.eventCount)} detail="Replay event records" icon={Workflow} />
-        <StudioMetricCard label="Artifacts" value={String(replay.artifactCount)} detail="Replay artifacts" icon={Archive} />
-        <StudioMetricCard label="Step results" value={String(replay.stepResultCount)} detail="Step result payloads" icon={ListTree} />
-        <StudioMetricCard label="Integrity" value={<Badge variant={integrityValid ? "success" : "warning"}>{integrityValid ? "valid" : "check"}</Badge>} detail="Bundle validation" icon={integrityValid ? CheckCircle2 : AlertTriangle} tone={integrityValid ? "success" : "warning"} />
+        <StudioMetricCard label={t("studio.artifacts.readiness")} value={<ReplayReadinessBadge replay={replay} />} detail={replay.ready ? t("studio.artifacts.replayReady") : t("studio.artifacts.reviewRequired")} icon={ShieldCheck} tone={replay.ready ? "success" : "warning"} />
+        <StudioMetricCard label={t("studio.artifacts.events")} value={String(replay.eventCount)} detail={t("studio.artifacts.replayEvents")} icon={Workflow} />
+        <StudioMetricCard label={t("studio.quality.artifacts")} value={String(replay.artifactCount)} detail={t("studio.artifacts.replayArtifacts")} icon={Archive} />
+        <StudioMetricCard label={t("studio.artifacts.stepResults")} value={String(replay.stepResultCount)} detail={t("studio.artifacts.stepPayloads")} icon={ListTree} />
+        <StudioMetricCard label={t("studio.artifacts.integrity")} value={<Badge variant={integrityValid ? "success" : "warning"}>{integrityValid ? t("studio.artifacts.valid") : t("studio.artifacts.check")}</Badge>} detail={t("studio.artifacts.bundleValidation")} icon={integrityValid ? CheckCircle2 : AlertTriangle} tone={integrityValid ? "success" : "warning"} />
       </StudioMetricGrid>
 
       {replay.eventsError ? (
-        <StudioNotice tone="danger" title="Replay events error">
+        <StudioNotice tone="danger" title={t("studio.artifacts.replayEventsError")}>
           {replay.eventsError}
         </StudioNotice>
       ) : null}
 
       <Tabs defaultValue="manifest">
         <TabsList className="flex h-auto flex-wrap justify-start">
-          <TabsTrigger value="manifest">Manifest</TabsTrigger>
-          <TabsTrigger value="events">Events</TabsTrigger>
-          <TabsTrigger value="artifacts">Artifacts</TabsTrigger>
-          <TabsTrigger value="steps">Step results</TabsTrigger>
-          <TabsTrigger value="integrity">Integrity</TabsTrigger>
+          <TabsTrigger value="manifest">{t("studio.artifacts.manifest")}</TabsTrigger>
+          <TabsTrigger value="events">{t("studio.artifacts.events")}</TabsTrigger>
+          <TabsTrigger value="artifacts">{t("studio.quality.artifacts")}</TabsTrigger>
+          <TabsTrigger value="steps">{t("studio.artifacts.stepResults")}</TabsTrigger>
+          <TabsTrigger value="integrity">{t("studio.artifacts.integrity")}</TabsTrigger>
         </TabsList>
         <TabsContent value="manifest">
           <JsonPanel title="manifest.json" value={replay.manifest} />

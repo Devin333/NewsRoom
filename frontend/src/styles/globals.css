@@ -169,4 +169,31 @@ select {
     scrollbar-color: var(--border) transparent;
     scrollbar-width: thin;
   }
+
+  .paper-pdf-text-layer {
+    user-select: text;
+    transform-origin: 0 0;
+  }
+
+  .paper-pdf-text-layer span,
+  .paper-pdf-text-layer div {
+    color: transparent;
+    cursor: text;
+  }
+
+  .paper-pdf-text-layer ::selection {
+    background: rgba(37, 99, 235, 0.28);
+    color: transparent;
+  }
+
+  .paper-pdf-search-hit {
+    border-radius: 2px;
+    background: rgba(250, 204, 21, 0.3);
+    outline: 1px solid rgba(202, 138, 4, 0.28);
+  }
+
+  .paper-pdf-search-hit-active {
+    background: rgba(56, 189, 248, 0.34);
+    outline: 2px solid rgba(2, 132, 199, 0.58);
+  }
 }

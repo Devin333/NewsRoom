@@ -10,11 +10,13 @@ import { NewsList } from "@/features/news/components/news-list"
 import { NewsToolbar } from "@/features/news/components/news-toolbar"
 import { useNewsList } from "@/features/news/hooks/use-news-list"
 import { filtersFromSearchParams, filtersToSearchParams, updateFilters } from "@/features/news/lib/news-filters"
+import { useI18n } from "@/lib/i18n/use-i18n"
 import type { NewsFilters, NewsViewMode } from "@/types/news"
 
 export function NewsPageClient() {
   const router = useRouter()
   const searchParams = useSearchParams()
+  const { locale, t } = useI18n()
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false)
   const filters = useMemo(() => filtersFromSearchParams(new URLSearchParams(searchParams.toString())), [searchParams])
   const { data, isLoading, isError, error, refetch } = useNewsList(filters)
@@ -30,11 +32,11 @@ export function NewsPageClient() {
   }
 
   if (isError) {
-    return <ErrorState message={error instanceof Error ? error.message : "新闻加载失败。"} onRetry={() => refetch()} />
+    return <ErrorState message={error instanceof Error ? error.message : t("portal.news.loadError")} onRetry={() => refetch()} />
   }
 
   if (!data) {
-    return <EmptyState title="暂无新闻数据" description="mock 新闻数据当前不可用。" />
+    return <EmptyState title={t("portal.news.emptyTitle")} description={t("portal.news.emptyDescription")} />
   }
 
   const page = data.page
@@ -54,26 +56,33 @@ export function NewsPageClient() {
     <main className="space-y-8">
       <header className="pt-2">
         <h1 className="font-serif text-4xl font-semibold tracking-normal text-foreground">
-          Trending <span className="italic text-primary">Intelligence</span>
+          {locale === "zh" ? t("portal.news.title") : (
+            <>
+              Trending <span className="italic text-primary">{t("portal.news.titleAccent")}</span>
+            </>
+          )}
         </h1>
-        <p className="mt-2 font-serif text-sm italic text-muted-foreground">
-          Curated daily from NewsRoom evidence, sources, agents and reports
-        </p>
+        <p className="mt-2 font-serif text-sm italic text-muted-foreground">{t("portal.news.description")}</p>
       </header>
 
       <div className="grid gap-8 xl:grid-cols-[190px_minmax(0,1fr)]">
         <aside className="hidden space-y-8 xl:block">
-          <DomainList title="Top Domains" items={categories} onSelect={(category) => setFilters({ category: [category] })} />
-          <DomainList title="Trending Sources" items={trendingSources} onSelect={(sourceType) => setFilters({ sourceType: [sourceType as NonNullable<NewsFilters["sourceType"]>[number]] })} />
+          <DomainList title={t("portal.news.topDomains")} items={categories} locale={locale} onSelect={(category) => setFilters({ category: [category] })} />
+          <DomainList
+            title={t("portal.news.trendingSources")}
+            items={trendingSources}
+            locale={locale}
+            onSelect={(sourceType) => setFilters({ sourceType: [sourceType as NonNullable<NewsFilters["sourceType"]>[number]] })}
+          />
         </aside>
 
         <section className="min-w-0 space-y-5">
           <div className="flex flex-col gap-4 border-b border-border pb-3 xl:flex-row xl:items-end xl:justify-between">
             <div className="flex flex-wrap items-center gap-3">
               {[
-                ["heatScore", "trending"],
-                ["publishedAt", "newest"],
-                ["qualityScore", "quality"]
+                ["heatScore", t("portal.news.sort.trending")],
+                ["publishedAt", t("portal.news.sort.newest")],
+                ["qualityScore", t("portal.news.sort.quality")]
               ].map(([sort, label]) => (
                 <button
                   key={sort}
@@ -92,10 +101,10 @@ export function NewsPageClient() {
 
             <div className="flex flex-wrap items-center gap-2">
               {[
-                ["", "All Time"],
-                ["today", "Today"],
-                ["week", "This Week"],
-                ["month", "This Month"]
+                ["", t("common.allTime")],
+                ["today", t("common.today")],
+                ["week", t("common.thisWeek")],
+                ["month", t("common.thisMonth")]
               ].map(([dateRange, label]) => (
                 <button
                   key={label}
@@ -120,12 +129,8 @@ export function NewsPageClient() {
           </div>
 
           <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
-            <span>
-              已显示 {page.items.length} / {page.total} 条匹配新闻
-            </span>
-            <span>
-              第 {page.page} / {totalPages} 页
-            </span>
+            <span>{t("portal.news.showing", { shown: page.items.length, total: page.total })}</span>
+            <span>{t("portal.news.page", { page: page.page, totalPages })}</span>
           </div>
 
           <NewsList items={page.items} viewMode={viewMode} />
@@ -137,7 +142,7 @@ export function NewsPageClient() {
               onClick={() => setFilters({ page: page.page - 1 })}
               className="rounded-md border border-border px-3 py-2 text-sm text-foreground hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-45"
             >
-              上一页
+              {t("common.previousPage")}
             </button>
             <button
               type="button"
@@ -145,7 +150,7 @@ export function NewsPageClient() {
               onClick={() => setFilters({ page: page.page + 1 })}
               className="rounded-md border border-border px-3 py-2 text-sm text-foreground hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-45"
             >
-              下一页
+              {t("common.nextPage")}
             </button>
           </div>
         </section>
@@ -157,12 +162,16 @@ export function NewsPageClient() {
 function DomainList({
   title,
   items,
+  locale,
   onSelect
 }: {
   title: string
   items: Array<{ name: string; count: number }>
+  locale: "zh" | "en"
   onSelect: (name: string) => void
 }) {
+  const { t, status } = useI18n()
+
   return (
     <section className="space-y-3">
       <h2 className="font-mono text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{title}</h2>
@@ -174,31 +183,33 @@ function DomainList({
             onClick={() => onSelect(item.name)}
             className="flex w-full items-baseline justify-between gap-3 text-left text-sm text-muted-foreground hover:text-foreground"
           >
-            <span className="truncate">{labelValue(item.name)}</span>
+            <span className="truncate">{labelValue(item.name, locale, status)}</span>
             <span className="font-mono text-[11px]">{item.count}</span>
           </button>
         ))}
       </div>
       <button type="button" className="font-serif text-sm italic text-muted-foreground hover:text-foreground">
-        all domains →
+        {t("portal.news.allDomains")} →
       </button>
     </section>
   )
 }
 
-function labelValue(value: string) {
+function labelValue(value: string, locale: "zh" | "en", status: (value: string | null | undefined) => string) {
   const labels: Record<string, string> = {
-    official_blog: "官方博客",
+    official_blog: locale === "zh" ? "官方博客" : "Official Blog",
     rss: "RSS",
     github: "GitHub",
     hackernews: "Hacker News",
     reddit: "Reddit",
     arxiv: "arXiv",
-    media: "媒体",
-    custom: "自定义",
-    passed: "通过",
-    review: "复核",
-    failed: "失败"
+    media: locale === "zh" ? "媒体" : "Media",
+    custom: locale === "zh" ? "自定义" : "Custom"
   }
+
+  if (value === "passed" || value === "review" || value === "failed") {
+    return status(value)
+  }
+
   return labels[value] ?? value
 }

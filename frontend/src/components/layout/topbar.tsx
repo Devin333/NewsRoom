@@ -6,10 +6,12 @@ import { Bell, Command, Moon, Search, Sun } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { useI18n } from "@/lib/i18n/use-i18n"
 import { cn } from "@/lib/utils"
 import { useUiStore } from "@/stores/ui-store"
 
 export function Topbar() {
+  const { t } = useI18n()
   const pathname = usePathname()
   const setCommandOpen = useUiStore((state) => state.setCommandOpen)
   const theme = useUiStore((state) => state.theme)
@@ -22,7 +24,7 @@ export function Topbar() {
         <Link href="/" className="flex shrink-0 items-center gap-2">
           <span className="flex size-6 items-center justify-center rounded-sm border-2 border-foreground text-xs font-black">N</span>
           <span className="text-base font-semibold tracking-normal">NewsRoom</span>
-          <span className="hidden font-serif text-sm italic text-muted-foreground sm:inline">With Evidence</span>
+          <span className="hidden font-serif text-sm italic text-muted-foreground sm:inline">{t("portal.topbar.withEvidence")}</span>
         </Link>
 
         <nav className="hidden items-center gap-5 text-sm text-muted-foreground lg:flex">
@@ -35,7 +37,7 @@ export function Topbar() {
                 isActive(pathname, item.href) && "border-foreground text-foreground"
               )}
             >
-              {item.label}
+              {t(item.labelKey)}
             </Link>
           ))}
         </nav>
@@ -43,12 +45,12 @@ export function Topbar() {
         <div className="min-w-0 flex-1" />
 
         <Button variant="outline" size="sm" className="hidden md:inline-flex">
-          提交反馈
+          {t("portal.topbar.feedback")}
         </Button>
 
         <div className="relative hidden min-w-0 sm:block sm:w-64 xl:w-80">
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input className="h-9 border-border bg-background pl-9 pr-12" placeholder="搜索新闻、主题、报告" />
+          <Input className="h-9 border-border bg-background pl-9 pr-12" placeholder={t("portal.topbar.searchPlaceholder")} />
           <span className="pointer-events-none absolute right-2 top-1/2 hidden -translate-y-1/2 rounded border border-border bg-card px-1.5 py-0.5 text-[10px] text-muted-foreground xl:inline">
             Ctrl K
           </span>
@@ -56,16 +58,16 @@ export function Topbar() {
 
         <Button variant="outline" size="sm" className="hidden gap-2 md:inline-flex" onClick={() => setCommandOpen(true)}>
           <Command className="size-4" />
-          命令
+          {t("portal.topbar.command")}
         </Button>
 
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button variant="ghost" size="icon" aria-label="通知">
+            <Button variant="ghost" size="icon" aria-label={t("portal.topbar.notifications")}>
               <Bell className="size-4" />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>通知占位</TooltipContent>
+          <TooltipContent>{t("portal.topbar.notificationPlaceholder")}</TooltipContent>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>
@@ -81,12 +83,12 @@ export function Topbar() {
 }
 
 const navItems = [
-  { href: "/", label: "趋势" },
-  { href: "/news", label: "新闻" },
-  { href: "/topics", label: "主题" },
-  { href: "/tech", label: "技术" },
-  { href: "/reports", label: "报告" },
-  { href: "/studio", label: "Studio" }
+  { href: "/", labelKey: "nav.trends" },
+  { href: "/news", labelKey: "nav.today" },
+  { href: "/topics", labelKey: "nav.topics" },
+  { href: "/tech", labelKey: "nav.engineering" },
+  { href: "/reports", labelKey: "nav.reports" },
+  { href: "/studio", labelKey: "nav.studio" }
 ]
 
 function isActive(pathname: string, href: string) {

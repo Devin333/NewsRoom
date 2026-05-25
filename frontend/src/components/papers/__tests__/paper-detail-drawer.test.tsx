@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import { PaperDetailDrawer } from "@/components/papers/shared/paper-detail-drawer"
 import { fetchPaperDetail, requestPaperSummary } from "@/lib/papers/api"
 import type { Paper } from "@/lib/papers/types"
+import { useUiStore } from "@/stores/ui-store"
 
 vi.mock("@/lib/papers/api", () => ({
   fetchPaperDetail: vi.fn(),
@@ -40,6 +41,7 @@ const paper: Paper = {
 
 describe("PaperDetailDrawer", () => {
   beforeEach(() => {
+    useUiStore.setState({ locale: "en" })
     vi.mocked(fetchPaperDetail).mockReset()
     vi.mocked(requestPaperSummary).mockReset()
     vi.mocked(requestPaperSummary).mockResolvedValue({
@@ -65,7 +67,7 @@ describe("PaperDetailDrawer", () => {
     expect(screen.getByText("Tasks")).toBeInTheDocument()
     expect(screen.getByText("Methods")).toBeInTheDocument()
     expect(screen.getByText("Benchmarks / SOTA")).toBeInTheDocument()
-    expect(screen.getByText("No real Benchmark / SOTA fields are recorded yet.")).toBeInTheDocument()
+    expect(screen.getByText("No real benchmark fields are recorded yet.")).toBeInTheDocument()
     expect(screen.getByRole("link", { name: /view pdf/i })).toHaveAttribute("href", "https://arxiv.org/pdf/2304.02643.pdf")
     expect(screen.getByRole("link", { name: /code/i })).toHaveAttribute("href", "https://github.com/facebookresearch/segment-anything")
     expect(screen.getByRole("link", { name: /open reader/i })).toHaveAttribute("href", "/papers/segment-anything")

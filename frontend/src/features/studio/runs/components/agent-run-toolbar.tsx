@@ -2,6 +2,7 @@
 
 import { Search } from "lucide-react"
 import { Input } from "@/components/ui/input"
+import { useI18n } from "@/lib/i18n/use-i18n"
 import type { AgentRun, AgentRunFilters, AgentRunStatus } from "@/types/agent"
 
 const statuses: AgentRunStatus[] = ["running", "success", "failed", "partially_failed", "cancelled"]
@@ -15,6 +16,7 @@ export function AgentRunToolbar({
   filters: AgentRunFilters
   onFiltersChange: (filters: AgentRunFilters) => void
 }) {
+  const { t, status } = useI18n()
   const agents = Array.from(new Set(runs.map((run) => run.agentName))).sort()
   const profiles = Array.from(new Set(runs.map((run) => run.profile))).sort()
 
@@ -25,39 +27,52 @@ export function AgentRunToolbar({
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             className="pl-9"
-            placeholder="搜索运行、智能体、配置"
+            placeholder={t("studio.runs.searchPlaceholder")}
             value={filters.keyword ?? ""}
             onChange={(event) => onFiltersChange({ ...filters, keyword: event.target.value || undefined })}
           />
         </label>
         <Select
-          label="智能体"
+          label={t("studio.runs.agent")}
           value={filters.agentName?.[0] ?? ""}
           options={agents}
+          allLabel={t("studio.runs.all")}
           onChange={(value) => onFiltersChange({ ...filters, agentName: value ? [value] : undefined })}
         />
         <Select
-          label="状态"
+          label={t("common.status")}
           value={filters.status?.[0] ?? ""}
           options={statuses}
+          allLabel={t("studio.runs.all")}
+          optionLabel={(value) => status(value)}
           onChange={(value) => onFiltersChange({ ...filters, status: value ? [value as AgentRunStatus] : undefined })}
         />
         <Select
-          label="配置"
+          label={t("studio.runs.profile")}
           value={filters.profile?.[0] ?? ""}
           options={profiles}
+          allLabel={t("studio.runs.all")}
           onChange={(value) => onFiltersChange({ ...filters, profile: value ? [value] : undefined })}
         />
         <Select
-          label="范围"
+          label={t("studio.runs.range")}
           value={filters.dateRange ?? ""}
           options={["today", "week", "month"]}
+          allLabel={t("studio.runs.all")}
+          optionLabel={(value) => {
+            if (value === "today") return t("common.today")
+            if (value === "week") return t("common.thisWeek")
+            if (value === "month") return t("common.thisMonth")
+            return value
+          }}
           onChange={(value) => onFiltersChange({ ...filters, dateRange: value ? (value as AgentRunFilters["dateRange"]) : undefined })}
         />
         <Select
-          label="排序"
+          label={t("studio.runs.sort")}
           value={filters.sort ?? "startedAt"}
           options={["startedAt", "durationMs", "qualityScore", "errorCount"]}
+          allLabel={t("studio.runs.all")}
+          optionLabel={(value) => t(`studio.runs.sort.${value}`)}
           onChange={(value) => onFiltersChange({ ...filters, sort: value as AgentRunFilters["sort"] })}
         />
       </div>
@@ -68,10 +83,10 @@ export function AgentRunToolbar({
             checked={Boolean(filters.hasError)}
             onChange={(event) => onFiltersChange({ ...filters, hasError: event.target.checked || undefined })}
           />
-          仅错误
+          {t("studio.runs.errorsOnly")}
         </label>
         <label className="inline-flex items-center gap-2 rounded-md border border-border px-3 py-2 text-sm text-muted-foreground">
-          最低质量
+          {t("studio.runs.minimumQuality")}
           <input
             className="h-6 w-16 rounded border border-border bg-background px-2 text-foreground"
             type="number"
@@ -92,11 +107,15 @@ function Select({
   label,
   value,
   options,
+  allLabel,
+  optionLabel,
   onChange
 }: {
   label: string
   value: string
   options: string[]
+  allLabel?: string
+  optionLabel?: (value: string) => string
   onChange: (value: string) => void
 }) {
   return (
@@ -107,31 +126,13 @@ function Select({
         value={value}
         onChange={(event) => onChange(event.target.value)}
       >
-        <option value="">全部</option>
+        <option value="">{allLabel ?? "All"}</option>
         {options.map((option) => (
           <option key={option} value={option}>
-            {labelOption(option)}
+            {optionLabel?.(option) ?? option}
           </option>
         ))}
       </select>
     </label>
   )
-}
-
-function labelOption(option: string) {
-  const labels: Record<string, string> = {
-    today: "今天",
-    week: "本周",
-    month: "本月",
-    startedAt: "开始时间",
-    durationMs: "耗时",
-    qualityScore: "质量分",
-    errorCount: "错误数",
-    running: "运行中",
-    success: "成功",
-    failed: "失败",
-    partially_failed: "部分失败",
-    cancelled: "已取消",
-  }
-  return labels[option] ?? option
 }

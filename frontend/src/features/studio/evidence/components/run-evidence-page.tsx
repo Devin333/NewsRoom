@@ -1,3 +1,5 @@
+"use client"
+
 import Link from "next/link"
 import { ArrowLeft, CheckCircle2, CircleHelp, FileWarning, Gauge, Route, XCircle } from "lucide-react"
 import { Badge } from "@/components/common/badge"
@@ -12,45 +14,47 @@ import {
   StudioMetricGrid,
   StudioPageHeader
 } from "@/features/studio/shared/components/studio-dashboard"
+import { useI18n } from "@/lib/i18n/use-i18n"
 import type { StudioRunEvidenceDetail } from "@/types/evidence"
 
 export function RunEvidencePage({ detail }: { detail: StudioRunEvidenceDetail }) {
+  const { t, dataState, status } = useI18n()
   return (
     <main className="space-y-6">
       <StudioPageHeader
-        eyebrow="Evidence Center"
+        eyebrow={t("studio.module.evidenceCenter.title")}
         title={detail.workflowName ?? detail.runId}
-        description="Source, evidence, claim, report section, and quality decision lineage for this run."
+        description={t("studio.evidence.runDetailDescription")}
         actions={
           <Button asChild variant="outline">
             <Link href="/studio/evidence">
               <ArrowLeft className="size-4" />
-              Evidence
+              {t("studio.evidence.backToEvidence")}
             </Link>
           </Button>
         }
         meta={
           <>
-            <Badge tone={detail.dataState === "ready" ? "success" : detail.dataState === "fallback" ? "info" : "warning"}>{detail.dataState}</Badge>
-            {detail.qualityDecision ? <Badge tone={detail.qualityDecision === "blocked" ? "danger" : "neutral"}>{detail.qualityDecision}</Badge> : null}
+            <Badge tone={detail.dataState === "ready" ? "success" : detail.dataState === "fallback" ? "info" : "warning"}>{dataState(detail.dataState)}</Badge>
+            {detail.qualityDecision ? <Badge tone={detail.qualityDecision === "blocked" ? "danger" : "neutral"}>{status(detail.qualityDecision)}</Badge> : null}
           </>
         }
       />
       <NoticeList notices={detail.notices} tone={detail.dataState === "ready" ? "success" : "warning"} />
 
       <StudioMetricGrid className="xl:grid-cols-5 2xl:grid-cols-5">
-        <StudioMetricCard label="Run" value={<span className="text-sm">{detail.runId}</span>} detail={detail.reportId ? `Report ${detail.reportId}` : "No report linked"} icon={Route} />
-        <StudioMetricCard label="Decision" value={detail.qualityDecision ?? "unknown"} detail={detail.qualityRoute ?? "No quality route"} icon={Gauge} tone={detail.qualityDecision === "blocked" ? "danger" : "accent"} />
-        <StudioMetricCard label="Accepted" value={detail.counts.accepted} detail="Supported" icon={CheckCircle2} tone="success" />
-        <StudioMetricCard label="Rejected" value={detail.counts.rejected} detail="Rejected" icon={XCircle} tone="danger" />
-        <StudioMetricCard label="Unsupported" value={detail.counts.unsupported} detail={`${detail.counts.uncertain} uncertain`} icon={FileWarning} tone={detail.counts.unsupported ? "warning" : "info"} />
+        <StudioMetricCard label={t("studio.runs.runId")} value={<span className="text-sm">{detail.runId}</span>} detail={detail.reportId ? `${t("studio.evidence.report")} ${detail.reportId}` : t("studio.evidence.noReportLinked")} icon={Route} />
+        <StudioMetricCard label={t("studio.evidence.decision")} value={detail.qualityDecision ? status(detail.qualityDecision) : t("common.unknown")} detail={detail.qualityRoute ?? t("studio.evidence.noQualityRoute")} icon={Gauge} tone={detail.qualityDecision === "blocked" ? "danger" : "accent"} />
+        <StudioMetricCard label={t("studio.evidence.accepted")} value={detail.counts.accepted} detail={t("studio.evidence.supported")} icon={CheckCircle2} tone="success" />
+        <StudioMetricCard label={t("studio.evidence.rejected")} value={detail.counts.rejected} detail={t("studio.evidence.rejected")} icon={XCircle} tone="danger" />
+        <StudioMetricCard label={t("studio.evidence.unsupported")} value={detail.counts.unsupported} detail={t("studio.evidence.uncertainCount", { count: detail.counts.uncertain })} icon={FileWarning} tone={detail.counts.unsupported ? "warning" : "info"} />
       </StudioMetricGrid>
 
       <StudioMetricGrid className="xl:grid-cols-4 2xl:grid-cols-4">
-        <StudioMetricCard label="Quality score" value={detail.qualityScore === undefined ? "none" : `${detail.qualityScore}%`} detail="Report quality" icon={Gauge} tone="accent" />
-        <StudioMetricCard label="Uncertain" value={detail.counts.uncertain} detail="Needs review" icon={CircleHelp} tone="warning" />
-        <StudioMetricCard label="Rejected" value={detail.counts.rejected} detail="Not usable" icon={XCircle} tone="danger" />
-        <StudioMetricCard label="Claims" value={detail.claims.length} detail="Rendered in support table" icon={Route} />
+        <StudioMetricCard label={t("studio.evidence.qualityScore")} value={detail.qualityScore === undefined ? t("common.none") : `${detail.qualityScore}%`} detail={t("studio.evidence.reportQuality")} icon={Gauge} tone="accent" />
+        <StudioMetricCard label={t("studio.evidence.uncertain")} value={detail.counts.uncertain} detail={t("studio.evidence.needsReview")} icon={CircleHelp} tone="warning" />
+        <StudioMetricCard label={t("studio.evidence.rejected")} value={detail.counts.rejected} detail={t("studio.evidence.notUsable")} icon={XCircle} tone="danger" />
+        <StudioMetricCard label={t("studio.evidence.claims")} value={detail.claims.length} detail={t("studio.evidence.renderedInSupportTable")} icon={Route} />
       </StudioMetricGrid>
 
       <QualityLineageGraph claims={detail.claims} />

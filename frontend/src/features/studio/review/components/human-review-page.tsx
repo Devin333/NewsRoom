@@ -14,29 +14,31 @@ import {
   StudioPageHeader,
   StudioToolbar
 } from "@/features/studio/shared/components/studio-dashboard"
+import { useI18n } from "@/lib/i18n/use-i18n"
 import type { StudioReviewItem, StudioReviewQueue } from "@/types/review"
 
-const filters: { value: ReviewQueueFilter; label: string }[] = [
-  { value: "pending", label: "Pending" },
-  { value: "high-risk", label: "High risk" },
-  { value: "blocked", label: "Blocked runs" },
-  { value: "history", label: "History" },
-  { value: "all", label: "All" }
+const filters: { value: ReviewQueueFilter; labelKey: string }[] = [
+  { value: "pending", labelKey: "studio.review.pending" },
+  { value: "high-risk", labelKey: "studio.review.highRiskLabel" },
+  { value: "blocked", labelKey: "studio.review.blockedRuns" },
+  { value: "history", labelKey: "studio.review.history" },
+  { value: "all", labelKey: "studio.review.all" }
 ]
 
 export function HumanReviewPage({ queue }: { queue: StudioReviewQueue }) {
+  const { t } = useI18n()
   const { filter, setFilter, query, setQuery, metrics, filteredItems } = useReviewQueue(queue.items)
 
   return (
     <main className="space-y-6">
       <StudioPageHeader
-        eyebrow="Governance"
-        title="Human Review"
-        description="Pending approvals, high-risk operations, blocked runs, and recorded human decisions."
+        eyebrow={t("studio.nav.governance")}
+        title={t("studio.module.humanReview.title")}
+        description={t("studio.module.humanReview.description")}
       />
 
       {queue.notices.length ? (
-        <StudioNotice tone="warning" title="Review data notice">
+        <StudioNotice tone="warning" title={t("studio.review.dataNotice")}>
           {queue.notices.map((notice) => (
             <p key={notice}>{notice}</p>
           ))}
@@ -56,26 +58,26 @@ export function HumanReviewPage({ queue }: { queue: StudioReviewQueue }) {
                 type="button"
                 variant={filter === item.value ? "default" : "outline"}
               >
-                {item.label}
+                {t(item.labelKey)}
               </Button>
             ))}
           </div>
           <label className="relative lg:w-96">
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
-              aria-label="Search review queue"
+              aria-label={t("studio.review.searchLabel")}
               className="pl-9"
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search approval, run, report, action"
+              placeholder={t("studio.review.searchPlaceholder")}
               value={query}
             />
           </label>
         </div>
       </StudioToolbar>
 
-      {queue.items.length ? <ReviewQueueTable items={filteredItems} /> : <EmptyState title="No review queue" description="No approvals or blocked runs were returned." />}
+      {queue.items.length ? <ReviewQueueTable items={filteredItems} /> : <EmptyState title={t("studio.review.noQueue")} description={t("studio.review.noQueueDescription")} />}
 
-      <ReviewHistoryPanel items={queue.items} title="Approval history" />
+      <ReviewHistoryPanel items={queue.items} title={t("studio.review.approvalHistory")} />
     </main>
   )
 }
@@ -93,13 +95,14 @@ function ReviewMetrics({
   blocked: number
   history: number
 }) {
+  const { t } = useI18n()
   const critical = items.filter((item) => item.riskLevel === "critical").length
   return (
     <StudioMetricGrid className="xl:grid-cols-4 2xl:grid-cols-4">
-      <StudioMetricCard icon={ShieldCheck} label="Pending" value={pending} detail="Awaiting decision" tone="info" />
-      <StudioMetricCard icon={AlertTriangle} label="High risk" value={highRisk} detail={`${critical} critical`} tone={highRisk ? "warning" : "neutral"} />
-      <StudioMetricCard icon={AlertTriangle} label="Blocked runs" value={blocked} detail="Workflow recovery" tone={blocked ? "danger" : "success"} />
-      <StudioMetricCard icon={History} label="History" value={history} detail="Completed decisions" />
+      <StudioMetricCard icon={ShieldCheck} label={t("studio.review.pending")} value={pending} detail={t("studio.review.awaitingDecision")} tone="info" />
+      <StudioMetricCard icon={AlertTriangle} label={t("studio.review.highRiskLabel")} value={highRisk} detail={t("studio.review.criticalCount", { count: critical })} tone={highRisk ? "warning" : "neutral"} />
+      <StudioMetricCard icon={AlertTriangle} label={t("studio.review.blockedRuns")} value={blocked} detail={t("studio.review.workflowRecovery")} tone={blocked ? "danger" : "success"} />
+      <StudioMetricCard icon={History} label={t("studio.review.history")} value={history} detail={t("studio.review.completedDecisions")} />
     </StudioMetricGrid>
   )
 }

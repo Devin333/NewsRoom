@@ -1,6 +1,8 @@
 import { BarChart3, FileText, Lightbulb, ListChecks } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { formatDataState } from "@/lib/i18n"
+import { useI18n } from "@/lib/i18n/use-i18n"
 import type { StudioBoardOutputViewModel } from "@/types/board"
 
 const qualityVariant = {
@@ -10,22 +12,23 @@ const qualityVariant = {
 } as const
 
 export function BoardOutputPanel({ output }: { output: StudioBoardOutputViewModel }) {
+  const { locale, t } = useI18n()
   return (
     <section className="space-y-4">
       <div className="grid gap-4 md:grid-cols-4">
-        <MetricTile label="Cards" value={output.stats.cardCount} />
-        <MetricTile label="Insights" value={output.stats.insightCount} />
-        <MetricTile label="Relations" value={output.stats.relationCount} />
-        <MetricTile label="Quality" value={output.quality.score ?? output.quality.status} />
+        <MetricTile label={t("studio.boards.cards")} value={output.stats.cardCount} />
+        <MetricTile label={t("studio.boards.insights")} value={output.stats.insightCount} />
+        <MetricTile label={t("studio.boards.relations")} value={output.stats.relationCount} />
+        <MetricTile label={t("studio.boards.quality")} value={output.quality.score ?? formatDataState(locale, output.quality.status)} />
       </div>
 
       <Card>
         <CardHeader className="flex-row items-center justify-between gap-4">
           <div>
-            <CardTitle>Quality summary</CardTitle>
+            <CardTitle>{t("studio.boards.qualitySummary")}</CardTitle>
             <p className="mt-1 text-sm text-muted-foreground">{output.quality.label}</p>
           </div>
-          <Badge variant={qualityVariant[output.quality.status]}>{output.quality.source}</Badge>
+          <Badge variant={qualityVariant[output.quality.status]}>{formatDataState(locale, output.quality.status)}</Badge>
         </CardHeader>
         <CardContent>
           <div className="flex flex-wrap gap-2">
@@ -42,7 +45,7 @@ export function BoardOutputPanel({ output }: { output: StudioBoardOutputViewMode
         <Card>
           <CardHeader className="flex-row items-center gap-3">
             <ListChecks className="size-5 text-accent" />
-            <CardTitle>Cards</CardTitle>
+            <CardTitle>{t("studio.boards.cards")}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             {output.cards.length ? (
@@ -53,7 +56,7 @@ export function BoardOutputPanel({ output }: { output: StudioBoardOutputViewMode
                       <h3 className="text-sm font-semibold text-foreground">{card.title}</h3>
                       {card.subtitle ? <p className="mt-1 text-xs text-muted-foreground">{card.subtitle}</p> : null}
                     </div>
-                    {card.score !== undefined ? <Badge variant="accent">score {card.score}</Badge> : null}
+                    {card.score !== undefined ? <Badge variant="accent">{t("studio.boards.score", { score: card.score })}</Badge> : null}
                   </div>
                   <p className="mt-3 text-sm leading-6 text-muted-foreground">{card.summary}</p>
                   <div className="mt-3 flex flex-wrap gap-2">
@@ -70,7 +73,7 @@ export function BoardOutputPanel({ output }: { output: StudioBoardOutputViewMode
                 </article>
               ))
             ) : (
-              <p className="text-sm text-muted-foreground">No board cards returned for this output.</p>
+              <p className="text-sm text-muted-foreground">{t("studio.boards.noCards")}</p>
             )}
           </CardContent>
         </Card>
@@ -78,7 +81,7 @@ export function BoardOutputPanel({ output }: { output: StudioBoardOutputViewMode
         <Card>
           <CardHeader className="flex-row items-center gap-3">
             <Lightbulb className="size-5 text-accent" />
-            <CardTitle>Insights</CardTitle>
+            <CardTitle>{t("studio.boards.insights")}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             {output.insights.length ? (
@@ -94,7 +97,7 @@ export function BoardOutputPanel({ output }: { output: StudioBoardOutputViewMode
                 </article>
               ))
             ) : (
-              <p className="text-sm text-muted-foreground">No board insights returned for this output.</p>
+              <p className="text-sm text-muted-foreground">{t("studio.boards.noInsights")}</p>
             )}
           </CardContent>
         </Card>
@@ -104,14 +107,14 @@ export function BoardOutputPanel({ output }: { output: StudioBoardOutputViewMode
         <Card>
           <CardHeader className="flex-row items-center gap-3">
             <FileText className="size-5 text-accent" />
-            <CardTitle>Detail pages</CardTitle>
+            <CardTitle>{t("studio.boards.detailPages")}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             {output.detailPages.map((page) => (
               <div key={page.id} className="rounded-md border border-border p-3">
                 <p className="text-sm font-medium text-foreground">{page.title}</p>
                 <p className="mt-1 text-sm text-muted-foreground">{page.summary}</p>
-                <p className="mt-2 text-xs text-muted-foreground">{page.sectionCount} sections</p>
+                <p className="mt-2 text-xs text-muted-foreground">{t("studio.boards.sectionCount", { count: page.sectionCount })}</p>
               </div>
             ))}
           </CardContent>
@@ -120,7 +123,7 @@ export function BoardOutputPanel({ output }: { output: StudioBoardOutputViewMode
         <Card>
           <CardHeader className="flex-row items-center gap-3">
             <BarChart3 className="size-5 text-accent" />
-            <CardTitle>Sections</CardTitle>
+            <CardTitle>{t("studio.boards.sections")}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             {output.sections.map((section) => (
@@ -128,7 +131,7 @@ export function BoardOutputPanel({ output }: { output: StudioBoardOutputViewMode
                 <p className="text-sm font-medium text-foreground">{section.title}</p>
                 {section.content ? <p className="mt-1 text-sm text-muted-foreground">{section.content}</p> : null}
                 <p className="mt-2 text-xs text-muted-foreground">
-                  {section.cardCount} cards, {section.insightCount} insights, {section.metricCount} metrics
+                  {t("studio.boards.sectionStats", { cards: section.cardCount, insights: section.insightCount, metrics: section.metricCount })}
                 </p>
               </div>
             ))}

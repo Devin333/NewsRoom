@@ -10,10 +10,10 @@ type ReaderApiResponse = {
 export const dynamic = "force-dynamic"
 
 export default async function PaperReaderRoute({ params }: { params: { slug: string } }) {
-  const result = await safeApiGet<ReaderApiResponse>(`/api/v1/papers/${encodeURIComponent(params.slug)}/reader?locale=en`)
+  const result = await safeApiGet<ReaderApiResponse>(`/api/v1/papers/${encodeURIComponent(params.slug)}/reader?locale=zh`)
   if (!result.ok) {
     notFound()
   }
 
-  return <PaperReaderPage reader={result.data.reader} locale="en" />
+  return <PaperReaderPage reader={result.data.reader} locale="zh" />
 }

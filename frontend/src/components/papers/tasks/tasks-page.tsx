@@ -61,14 +61,14 @@ export function TasksPage({ locale }: { locale: Locale }) {
       />
       {status === "fallback" ? (
         <InlineNotice
-          message={fallbackNoticeVisible ? "Paper task API is unavailable; showing local catalog fallback." : null}
+          message={fallbackNoticeVisible ? t(papersCopy.taskApiFallback, locale) : null}
           locale={locale}
           onDismiss={() => setFallbackNoticeVisible(false)}
         />
       ) : null}
       <div className="space-y-6">
         {status === "loading" ? (
-          <p className="text-sm text-[#334155]/60 dark:text-muted-foreground">Loading paper tasks...</p>
+          <p className="text-sm text-[#334155]/60 dark:text-muted-foreground">{t(papersCopy.loadingTasks, locale)}</p>
         ) : null}
         {taskGroups.map((group) => (
           <TaskSection

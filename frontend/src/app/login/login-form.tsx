@@ -6,10 +6,12 @@ import { LockKeyhole } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { bootstrapAccount, fetchAuthSession, login } from "@/lib/auth/api"
+import { useI18n } from "@/lib/i18n/use-i18n"
 
 export function LoginForm() {
   const router = useRouter()
   const searchParams = useSearchParams()
+  const { t } = useI18n()
   const nextPath = safeNextPath(searchParams.get("next"))
   const [initialized, setInitialized] = useState<boolean | null>(null)
   const [username, setUsername] = useState("")
@@ -30,13 +32,13 @@ export function LoginForm() {
       .catch((requestError) => {
         if (!cancelled) {
           setInitialized(true)
-          setError(requestError instanceof Error ? requestError.message : "Session check failed")
+          setError(requestError instanceof Error ? requestError.message : t("auth.sessionCheckFailed"))
         }
       })
     return () => {
       cancelled = true
     }
-  }, [nextPath, router])
+  }, [nextPath, router, t])
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -53,12 +55,12 @@ export function LoginForm() {
       router.refresh()
     } catch (requestError) {
       setStatus("error")
-      setError(requestError instanceof Error ? requestError.message : "Login failed")
+      setError(requestError instanceof Error ? requestError.message : t("auth.loginFailed"))
     }
   }
 
   const isBootstrap = initialized === false
-  const title = isBootstrap ? "Create the first NewsRoom account" : "Sign in to NewsRoom"
+  const title = isBootstrap ? t("auth.bootstrap.title") : t("auth.login.title")
 
   return (
     <main className="flex min-h-[calc(100vh-8rem)] items-center justify-center px-4 py-12">
@@ -70,14 +72,14 @@ export function LoginForm() {
           <div>
             <h1 className="text-xl font-bold tracking-normal">{title}</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              {isBootstrap ? "Bootstrap is available because no account exists yet." : "Use your local account to continue."}
+              {isBootstrap ? t("auth.bootstrap.description") : t("auth.login.description")}
             </p>
           </div>
         </div>
 
         <form className="space-y-4" onSubmit={submit}>
           <label className="block text-sm font-medium">
-            Username
+            {t("auth.username")}
             <Input
               className="mt-2"
               autoComplete="username"
@@ -89,7 +91,7 @@ export function LoginForm() {
             />
           </label>
           <label className="block text-sm font-medium">
-            Password
+            {t("auth.password")}
             <Input
               className="mt-2"
               autoComplete={isBootstrap ? "new-password" : "current-password"}
@@ -102,12 +104,12 @@ export function LoginForm() {
             />
           </label>
           {error ? (
-            <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-900">
+            <div className="rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
               {error}
             </div>
           ) : null}
           <Button type="submit" className="w-full" disabled={status === "loading" || initialized === null}>
-            {status === "loading" ? "Working..." : isBootstrap ? "Create account" : "Sign in"}
+            {status === "loading" ? t("auth.working") : isBootstrap ? t("auth.createAccount") : t("auth.signIn")}
           </Button>
         </form>
       </section>

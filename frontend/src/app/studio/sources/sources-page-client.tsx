@@ -6,8 +6,10 @@ import { SourceMetrics } from "@/features/sources/components/source-metrics"
 import { SourceToolbar } from "@/features/sources/components/source-toolbar"
 import { useSources } from "@/features/sources/hooks/use-sources"
 import { StudioNotice, StudioPageHeader } from "@/features/studio/shared/components/studio-dashboard"
+import { useI18n } from "@/lib/i18n/use-i18n"
 
 export function SourcesPageClient() {
+  const { t } = useI18n()
   const {
     allSources,
     sources,
@@ -24,24 +26,27 @@ export function SourcesPageClient() {
   return (
     <div className="space-y-6">
       <StudioPageHeader
-        eyebrow="System"
-        title="Sources"
-        description="Monitor source registry health, collection freshness, failure signals, and connector coverage."
+        eyebrow={t("studio.nav.system")}
+        title={t("studio.module.sources.title")}
+        description={t("studio.module.sources.description")}
       />
 
       {isLoading ? (
-        <StudioNotice tone="info" title="Loading sources">
-          Reading source registry from the NewsRoom API.
+        <StudioNotice tone="info" title={t("studio.sources.loadingTitle")}>
+          {t("studio.sources.loadingDescription")}
         </StudioNotice>
       ) : null}
       {error ? (
-        <StudioNotice tone="warning" title="Source fallback active">
-          Real API is unavailable. Showing fallback source data: {error instanceof Error ? error.message : "request failed"}.
+        <StudioNotice tone="warning" title={t("studio.sources.fallbackTitle")}>
+          {t("studio.sources.fallbackDescription", {
+            message: error instanceof Error ? error.message : t("studio.sources.requestFailed")
+          })}
         </StudioNotice>
       ) : null}
       {!error && !isUsingMockFallback ? (
-        <StudioNotice tone="success" title="Source registry connected">
-          Loaded {allSources.length} sources from the live registry.{isFetchingPreview ? " Fetching selected source preview." : ""}
+        <StudioNotice tone="success" title={t("studio.sources.connectedTitle")}>
+          {t("studio.sources.connectedDescription", { count: allSources.length })}
+          {isFetchingPreview ? t("studio.sources.fetchingPreview") : ""}
         </StudioNotice>
       ) : null}
 

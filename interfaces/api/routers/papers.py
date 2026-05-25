@@ -5,6 +5,7 @@ from fastapi import APIRouter, Header, Query
 
 from interfaces.api.deps import ApiRouteHelpers, ApiServices
 from interfaces.services.auth_service import AuthSessionInvalidError
+from interfaces.services.paper_reader_notes_service import PaperReaderNoteNotFoundError
 from interfaces.services.paper_service import (
     DEFAULT_LIMIT,
     DEFAULT_OPS_STATS_WINDOW_HOURS,
@@ -31,6 +32,32 @@ class PaperStatePatchRequest(BaseModel):
     readingStatus: str | None = Field(default=None, pattern="^(unread|reading|finished)$")
     currentPage: int | None = Field(default=None, ge=1)
     progressPercent: int | None = Field(default=None, ge=0, le=100)
+
+
+class PaperReaderNoteAnchorRequest(BaseModel):
+    pageNumber: int | None = Field(default=None, ge=1)
+    quote: str | None = Field(default=None, max_length=2000)
+    rects: list[dict[str, float]] | None = None
+    textStart: int | None = Field(default=None, ge=0)
+    textEnd: int | None = Field(default=None, ge=0)
+
+
+class PaperReaderNoteCreateRequest(BaseModel):
+    kind: str = Field(..., pattern="^(bookmark|highlight|note)$")
+    pageNumber: int = Field(..., ge=1)
+    color: str = Field("yellow", pattern="^(yellow|green|blue|pink)$")
+    quote: str | None = Field(default=None, max_length=2000)
+    noteText: str | None = Field(default=None, max_length=4000)
+    label: str | None = Field(default=None, max_length=200)
+    anchor: PaperReaderNoteAnchorRequest | None = None
+
+
+class PaperReaderNotePatchRequest(BaseModel):
+    color: str | None = Field(default=None, pattern="^(yellow|green|blue|pink)$")
+    quote: str | None = Field(default=None, max_length=2000)
+    noteText: str | None = Field(default=None, max_length=4000)
+    label: str | None = Field(default=None, max_length=200)
+    anchor: PaperReaderNoteAnchorRequest | None = None
 
 
 def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
@@ -201,6 +228,95 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
                 user_action_required=True,
             )
         return helpers.success({"state": state.to_dict()})
+
+    @router.get("/api/v1/papers/{paper_id}/notes")
+    def list_paper_notes(paper_id: str, x_newsroom_session: str | None = Header(default=None)):
+        user_id = _session_user_id(services, helpers, x_newsroom_session)
+        if not isinstance(user_id, str):
+            return user_id
+        notes = services.paper_reader_notes_service_factory().list_notes(user_id=user_id, paper_id=paper_id)
+        return helpers.success({"notes": [note.to_dict() for note in notes]})
+
+    @router.post("/api/v1/papers/{paper_id}/notes")
+    def create_paper_note(
+        paper_id: str,
+        request: PaperReaderNoteCreateRequest,
+        x_newsroom_session: str | None = Header(default=None),
+    ):
+        user_id = _session_user_id(services, helpers, x_newsroom_session)
+        if not isinstance(user_id, str):
+            return user_id
+        try:
+            note = services.paper_reader_notes_service_factory().create_note(
+                user_id=user_id,
+                paper_id=paper_id,
+                payload=request.model_dump(exclude_none=True),
+            )
+        except ValueError as exc:
+            return helpers.error(
+                status_code=400,
+                code="paper_reader_note_invalid",
+                message=str(exc),
+                user_action_required=True,
+            )
+        return helpers.success({"note": note.to_dict()})
+
+    @router.patch("/api/v1/papers/{paper_id}/notes/{note_id}")
+    def patch_paper_note(
+        paper_id: str,
+        note_id: str,
+        request: PaperReaderNotePatchRequest,
+        x_newsroom_session: str | None = Header(default=None),
+    ):
+        user_id = _session_user_id(services, helpers, x_newsroom_session)
+        if not isinstance(user_id, str):
+            return user_id
+        try:
+            note = services.paper_reader_notes_service_factory().patch_note(
+                user_id=user_id,
+                paper_id=paper_id,
+                note_id=note_id,
+                patch=request.model_dump(exclude_none=True),
+            )
+        except PaperReaderNoteNotFoundError:
+            return helpers.error(
+                status_code=404,
+                code="paper_reader_note_not_found",
+                message="paper reader note was not found",
+                user_action_required=True,
+            )
+        except ValueError as exc:
+            return helpers.error(
+                status_code=400,
+                code="paper_reader_note_invalid",
+                message=str(exc),
+                user_action_required=True,
+            )
+        return helpers.success({"note": note.to_dict()})
+
+    @router.delete("/api/v1/papers/{paper_id}/notes/{note_id}")
+    def delete_paper_note(
+        paper_id: str,
+        note_id: str,
+        x_newsroom_session: str | None = Header(default=None),
+    ):
+        user_id = _session_user_id(services, helpers, x_newsroom_session)
+        if not isinstance(user_id, str):
+            return user_id
+        try:
+            services.paper_reader_notes_service_factory().delete_note(
+                user_id=user_id,
+                paper_id=paper_id,
+                note_id=note_id,
+            )
+        except PaperReaderNoteNotFoundError:
+            return helpers.error(
+                status_code=404,
+                code="paper_reader_note_not_found",
+                message="paper reader note was not found",
+                user_action_required=True,
+            )
+        return helpers.success({"deleted": True})
 
     @router.post("/api/v1/papers/{paper_id}/summary")
     def summarize_paper(

@@ -8,42 +8,48 @@ import { ReviewDecisionPanel } from "@/features/studio/review/components/review-
 import { ReviewHistoryPanel } from "@/features/studio/review/components/review-history-panel"
 import { ReviewRiskBadge } from "@/features/studio/review/components/review-risk-badge"
 import {
+  formatDateTime as formatLocalizedDateTime,
+  type Translator
+} from "@/lib/i18n"
+import {
   StudioField,
   StudioFieldGrid,
   StudioNotice,
   StudioPageHeader,
   StudioPanel
 } from "@/features/studio/shared/components/studio-dashboard"
+import { useI18n } from "@/lib/i18n/use-i18n"
 import type { StudioReviewDetail, StudioReviewItem } from "@/types/review"
 
 export function HumanReviewDetailPage({ detail }: { detail: StudioReviewDetail }) {
+  const { t, status } = useI18n()
   const { item, notices } = detail
 
   return (
     <main className="space-y-6">
       <StudioPageHeader
-        eyebrow="Human Review"
+        eyebrow={t("studio.module.humanReview.title")}
         title={item.approvalId}
         description={item.requestedAction}
         actions={
           <Button asChild variant="outline">
             <Link href="/studio/review">
               <ArrowLeft className="size-4" />
-              Review
+              {t("studio.review.review")}
             </Link>
           </Button>
         }
         meta={
           <>
             <ReviewRiskBadge riskLevel={item.riskLevel} />
-            <Badge variant="info">{item.status}</Badge>
+            <Badge variant="info">{status(item.status)}</Badge>
             {item.rawStatus && item.rawStatus !== item.status ? <Badge variant="muted">{item.rawStatus}</Badge> : null}
           </>
         }
       />
 
       {notices.length || item.notices.length ? (
-        <StudioNotice tone="warning" title="Review data notice">
+        <StudioNotice tone="warning" title={t("studio.review.dataNotice")}>
           {[...notices, ...item.notices].map((notice) => (
             <p key={notice}>{notice}</p>
           ))}
@@ -63,19 +69,20 @@ export function HumanReviewDetailPage({ detail }: { detail: StudioReviewDetail }
 }
 
 function ReviewDetailSummary({ item }: { item: StudioReviewItem }) {
+  const { locale, t } = useI18n()
   return (
-    <StudioPanel title="Review summary" description={riskExplanation(item)}>
+    <StudioPanel title={t("studio.review.summary")} description={riskExplanation(item, t)}>
       <StudioFieldGrid className="md:grid-cols-2">
-        <StudioField label="Requested action" value={item.requestedAction} />
-        <StudioField label="Requested by" value={item.requestedBy ?? "n/a"} />
-        <StudioField label="Requested at" value={formatDateTime(item.requestedAt)} />
-        <StudioField label="Expires at" value={formatDateTime(item.expiresAt)} />
-        <StudioField label="Run" value={item.runId ? <ResourceLink href={`/studio/runs/${encodeURIComponent(item.runId)}`} label={item.runId} /> : "n/a"} />
-        <StudioField label="Report" value={item.reportId ? <ResourceLink href={`/reports/${encodeURIComponent(item.reportId)}`} label={item.reportId} /> : "n/a"} />
+        <StudioField label={t("studio.review.requestedAction")} value={item.requestedAction} />
+        <StudioField label={t("studio.review.requestedBy")} value={item.requestedBy ?? "n/a"} />
+        <StudioField label={t("studio.review.requestedAt")} value={formatReviewDateTime(locale, item.requestedAt)} />
+        <StudioField label={t("studio.review.expiresAt")} value={formatReviewDateTime(locale, item.expiresAt)} />
+        <StudioField label={t("studio.review.runId")} value={item.runId ? <ResourceLink href={`/studio/runs/${encodeURIComponent(item.runId)}`} label={item.runId} /> : "n/a"} />
+        <StudioField label={t("studio.review.reportId")} value={item.reportId ? <ResourceLink href={`/reports/${encodeURIComponent(item.reportId)}`} label={item.reportId} /> : "n/a"} />
       </StudioFieldGrid>
       {item.reason ? (
         <div className="mt-4 rounded-md border border-border bg-background p-3">
-          <h2 className="text-sm font-semibold text-foreground">Reason</h2>
+          <h2 className="text-sm font-semibold text-foreground">{t("studio.review.reason")}</h2>
           <p className="mt-1 text-sm leading-6 text-muted-foreground">{item.reason}</p>
         </div>
       ) : null}
@@ -84,8 +91,9 @@ function ReviewDetailSummary({ item }: { item: StudioReviewItem }) {
 }
 
 function PayloadPreview({ payload }: { payload?: Record<string, unknown> }) {
+  const { t } = useI18n()
   return (
-    <StudioPanel title="Payload preview">
+    <StudioPanel title={t("studio.review.payloadPreview")}>
       <pre className="max-h-[34rem] overflow-auto rounded-md bg-muted p-4 text-xs leading-5 text-foreground">
         {JSON.stringify(payload ?? {}, null, 2)}
       </pre>
@@ -102,22 +110,14 @@ function ResourceLink({ href, label }: { href: string; label: string }) {
   )
 }
 
-function riskExplanation(item: StudioReviewItem): string {
-  if (item.riskLevel === "critical") return "Critical risk. Review payload, linked run, and report before allowing workflow continuation."
-  if (item.riskLevel === "high") return "High risk. This action can affect publishing, blocked workflow recovery, or external delivery."
-  if (item.riskLevel === "medium") return "Medium risk. Human verification is expected before the workflow proceeds."
-  return "Low risk. Confirm that the requested action matches the payload and linked artifacts."
+function riskExplanation(item: StudioReviewItem, t: Translator): string {
+  if (item.riskLevel === "critical") return t("studio.review.criticalRisk")
+  if (item.riskLevel === "high") return t("studio.review.highRisk")
+  if (item.riskLevel === "medium") return t("studio.review.mediumRisk")
+  return t("studio.review.lowRisk")
 }
 
-function formatDateTime(value: string | undefined): string | undefined {
+function formatReviewDateTime(locale: "zh" | "en", value: string | undefined): string | undefined {
   if (!value) return undefined
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return value
-  return new Intl.DateTimeFormat("en", {
-    month: "short",
-    day: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit"
-  }).format(date)
+  return formatLocalizedDateTime(locale, value)
 }

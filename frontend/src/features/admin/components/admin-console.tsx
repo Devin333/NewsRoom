@@ -23,10 +23,11 @@ import {
 import { pageTitleKey, pick, ui } from "@/features/admin/lib/i18n"
 import type { AdminLang, AdminPage, PipelineNode, ReviewTask, SourceRecord } from "@/features/admin/types"
 import { cn } from "@/lib/utils"
+import { useUiStore } from "@/stores/ui-store"
 
 export function AdminConsole() {
   const [activePage, setActivePage] = useState<AdminPage>("overview")
-  const [lang, setLang] = useState<AdminLang>("zh")
+  const lang = useUiStore((state) => state.locale) as AdminLang
   const [selectedReviewId, setSelectedReviewId] = useState(reviewTasks[0]?.id ?? "")
   const [selectedPipelineId, setSelectedPipelineId] = useState(pipelineNodes[0]?.id ?? "")
   const [selectedSourceId, setSelectedSourceId] = useState(sources[0]?.id ?? "")
@@ -59,10 +60,10 @@ export function AdminConsole() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-950">
+    <div className="min-h-screen bg-background text-foreground">
       <AdminSidebar activePage={activePage} lang={lang} onPageChange={setActivePage} />
       <div className="min-w-0 lg:pl-72">
-        <AdminHeader activePage={activePage} lang={lang} onToggleLang={() => setLang(lang === "zh" ? "en" : "zh")} />
+        <AdminHeader activePage={activePage} lang={lang} />
         <main className="mx-auto max-w-[1500px] space-y-6 px-4 py-5 lg:px-6">
           {activePage === "overview"
             ? renderOverview({ lang, selectedReview, selectedPipeline, onOpenReview: openReview, onSelectPipeline: setSelectedPipelineId })

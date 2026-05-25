@@ -4,6 +4,7 @@ import { EmptyState } from "@/components/common/empty-state"
 import { SourceHealthBadge } from "@/components/common/source-health-badge"
 import { StudioTableFrame } from "@/features/studio/shared/components/studio-dashboard"
 import { formatDateTime, formatDurationMs, formatNumber, titleCase } from "@/lib/format"
+import { useI18n } from "@/lib/i18n/use-i18n"
 import { cn } from "@/lib/utils"
 import type { Source } from "@/types/source"
 
@@ -16,12 +17,13 @@ export function SourceHealthTable({
   selectedSourceId?: string
   onSelectSource: (sourceId: string) => void
 }) {
+  const { t } = useI18n()
   if (!sources.length) {
-    return <EmptyState title="No matching sources" description="Adjust source search, type, health, or enabled filters." />
+    return <EmptyState title={t("studio.sources.noMatching")} description={t("studio.sources.noMatchingDescription")} />
   }
 
   if (sources.every((source) => !source.enabled)) {
-    return <EmptyState title="All sources are disabled" description="Runtime collection will not produce new evidence until sources are enabled." />
+    return <EmptyState title={t("studio.sources.allDisabled")} description={t("studio.sources.allDisabledDescription")} />
   }
 
   return (
@@ -30,16 +32,16 @@ export function SourceHealthTable({
         <table className="w-full min-w-[1120px] border-collapse text-left text-sm">
           <thead className="border-b border-border bg-secondary/80 text-xs uppercase text-muted-foreground">
             <tr>
-              <th className="px-4 py-3 font-medium">Source</th>
-              <th className="px-4 py-3 font-medium">Type</th>
-              <th className="px-4 py-3 font-medium">Enabled</th>
-              <th className="px-4 py-3 font-medium">Health</th>
-              <th className="px-4 py-3 font-medium">Last run</th>
-              <th className="px-4 py-3 font-medium">Last success</th>
-              <th className="px-4 py-3 font-medium">Errors 24h</th>
-              <th className="px-4 py-3 font-medium">Collected 24h</th>
-              <th className="px-4 py-3 font-medium">Avg latency</th>
-              <th className="px-4 py-3 font-medium">Profile</th>
+              <th className="px-4 py-3 font-medium">{t("studio.sources.source")}</th>
+              <th className="px-4 py-3 font-medium">{t("studio.sources.type")}</th>
+              <th className="px-4 py-3 font-medium">{t("studio.sources.enabled")}</th>
+              <th className="px-4 py-3 font-medium">{t("studio.sources.health")}</th>
+              <th className="px-4 py-3 font-medium">{t("studio.sources.lastRun")}</th>
+              <th className="px-4 py-3 font-medium">{t("studio.sources.lastSuccess")}</th>
+              <th className="px-4 py-3 font-medium">{t("studio.sources.errors24h")}</th>
+              <th className="px-4 py-3 font-medium">{t("studio.sources.collected24h")}</th>
+              <th className="px-4 py-3 font-medium">{t("studio.sources.avgLatency")}</th>
+              <th className="px-4 py-3 font-medium">{t("studio.sources.profile")}</th>
             </tr>
           </thead>
           <tbody>
@@ -57,14 +59,14 @@ export function SourceHealthTable({
                   <p className="truncate text-xs text-muted-foreground">{source.id}</p>
                 </td>
                 <td className="px-4 py-3 text-muted-foreground">{titleCase(source.type)}</td>
-                <td className="px-4 py-3 text-muted-foreground">{source.enabled ? "Enabled" : "Disabled"}</td>
+                <td className="px-4 py-3 text-muted-foreground">{source.enabled ? t("studio.sources.enabledValue") : t("studio.sources.disabledValue")}</td>
                 <td className="px-4 py-3"><SourceHealthBadge status={source.healthStatus} /></td>
                 <td className="px-4 py-3 text-muted-foreground">{formatDateTime(source.lastRunAt)}</td>
                 <td className="px-4 py-3 text-muted-foreground">{formatDateTime(source.lastSuccessAt)}</td>
                 <td className={cn("px-4 py-3", source.errorCount24h ? "font-semibold text-warning" : "text-muted-foreground")}>{formatNumber(source.errorCount24h)}</td>
                 <td className="px-4 py-3 text-muted-foreground">{formatNumber(source.collectedCount24h)}</td>
                 <td className="px-4 py-3 text-muted-foreground">{formatDurationMs(source.avgLatencyMs)}</td>
-                <td className="max-w-48 truncate px-4 py-3 text-muted-foreground">{source.configProfile ?? "none"}</td>
+                <td className="max-w-48 truncate px-4 py-3 text-muted-foreground">{source.configProfile ?? t("studio.sources.none")}</td>
               </tr>
             ))}
           </tbody>

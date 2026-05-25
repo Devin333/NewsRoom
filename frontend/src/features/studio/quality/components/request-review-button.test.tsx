@@ -8,10 +8,10 @@ describe("RequestReviewButton", () => {
     const action = vi.fn<StudioRequestReviewAction>()
     render(<RequestReviewButton reportId="report-1" dataState="ready" requestReviewAction={action} />)
 
-    fireEvent.click(screen.getByRole("button", { name: /request review/i }))
-    fireEvent.click(screen.getByRole("button", { name: /submit/i }))
+    fireEvent.click(screen.getByRole("button", { name: /请求人工审核/ }))
+    fireEvent.click(screen.getByRole("button", { name: /提交/ }))
 
-    expect(await screen.findByText("Reason is required.")).toBeInTheDocument()
+    expect(await screen.findByText("必须填写原因。")).toBeInTheDocument()
     expect(action).not.toHaveBeenCalled()
   })
 
@@ -23,14 +23,14 @@ describe("RequestReviewButton", () => {
     })
     render(<RequestReviewButton reportId="report-1" dataState="ready" requestReviewAction={action} />)
 
-    fireEvent.click(screen.getByRole("button", { name: /request review/i }))
-    fireEvent.change(screen.getByPlaceholderText("Explain why this report needs human review."), {
+    fireEvent.click(screen.getByRole("button", { name: /请求人工审核/ }))
+    fireEvent.change(screen.getByPlaceholderText("说明为什么该报告需要人工审核。"), {
       target: { value: "Citation gap needs editor review" }
     })
     fireEvent.change(screen.getByPlaceholderText("operator@example.com"), {
       target: { value: "operator@example.com" }
     })
-    fireEvent.click(screen.getByRole("button", { name: /submit/i }))
+    fireEvent.click(screen.getByRole("button", { name: /提交/ }))
 
     await waitFor(() => expect(action).toHaveBeenCalledTimes(1))
     expect(action).toHaveBeenCalledWith("report-1", {
@@ -49,13 +49,13 @@ describe("RequestReviewButton", () => {
     })
     render(<RequestReviewButton reportId="report-1" dataState="ready" requestReviewAction={action} />)
 
-    fireEvent.click(screen.getByRole("button", { name: /request review/i }))
-    fireEvent.change(screen.getByPlaceholderText("Explain why this report needs human review."), {
+    fireEvent.click(screen.getByRole("button", { name: /请求人工审核/ }))
+    fireEvent.change(screen.getByPlaceholderText("说明为什么该报告需要人工审核。"), {
       target: { value: "Needs review" }
     })
-    fireEvent.click(screen.getByRole("button", { name: /submit/i }))
+    fireEvent.click(screen.getByRole("button", { name: /提交/ }))
 
-    expect(await screen.findByText("Approval: approval-123")).toBeInTheDocument()
+    expect(await screen.findByText("审批：approval-123")).toBeInTheDocument()
     expect(screen.getByText("RequestId: req-1")).toBeInTheDocument()
   })
 
@@ -67,11 +67,11 @@ describe("RequestReviewButton", () => {
     })
     render(<RequestReviewButton reportId="report-1" dataState="ready" requestReviewAction={action} />)
 
-    fireEvent.click(screen.getByRole("button", { name: /request review/i }))
-    fireEvent.change(screen.getByPlaceholderText("Explain why this report needs human review."), {
+    fireEvent.click(screen.getByRole("button", { name: /请求人工审核/ }))
+    fireEvent.change(screen.getByPlaceholderText("说明为什么该报告需要人工审核。"), {
       target: { value: "Needs review" }
     })
-    fireEvent.click(screen.getByRole("button", { name: /submit/i }))
+    fireEvent.click(screen.getByRole("button", { name: /提交/ }))
 
     expect(await screen.findByText("API failed")).toBeInTheDocument()
     expect(screen.getByText("RequestId: req-error")).toBeInTheDocument()
@@ -81,6 +81,6 @@ describe("RequestReviewButton", () => {
     const action = vi.fn<StudioRequestReviewAction>()
     render(<RequestReviewButton reportId="report-1" dataState="fallback" requestReviewAction={action} />)
 
-    expect(screen.getByRole("button", { name: /request review/i })).toBeDisabled()
+    expect(screen.getByRole("button", { name: /请求人工审核/ })).toBeDisabled()
   })
 })

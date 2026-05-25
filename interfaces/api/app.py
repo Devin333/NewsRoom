@@ -46,6 +46,7 @@ from interfaces.services.board_service import BoardApplicationService
 from interfaces.services.memory_service import MemoryApplicationService
 from interfaces.services.mcp_service import MCPApplicationService
 from interfaces.services.paper_service import PapersApplicationService
+from interfaces.services.paper_reader_notes_service import PaperReaderNotesApplicationService
 from interfaces.services.paper_user_state_service import PaperUserStateApplicationService
 from interfaces.services.report_service import ReportApplicationService
 from interfaces.services.run_inspection_service import RunInspectionService
@@ -77,6 +78,7 @@ ApprovalServiceFactory = Callable[[], ApprovalApplicationService]
 BoardServiceFactory = Callable[[], BoardApplicationService]
 PapersServiceFactory = Callable[[], PapersApplicationService]
 AuthServiceFactory = Callable[[], AuthApplicationService]
+PaperReaderNotesServiceFactory = Callable[[], PaperReaderNotesApplicationService]
 PaperUserStateServiceFactory = Callable[[], PaperUserStateApplicationService]
 AuditEmitterFactory = Callable[[], AuditEmitter | None]
 ApiKeyRoles = Mapping[str, str | Sequence[str]]
@@ -102,6 +104,7 @@ def create_app(
     board_service_factory: BoardServiceFactory = BoardApplicationService,
     papers_service_factory: PapersServiceFactory = PapersApplicationService,
     auth_service_factory: AuthServiceFactory = AuthApplicationService,
+    paper_reader_notes_service_factory: PaperReaderNotesServiceFactory = PaperReaderNotesApplicationService,
     paper_user_state_service_factory: PaperUserStateServiceFactory = PaperUserStateApplicationService,
     audit_emitter_factory: AuditEmitterFactory | None = audit_emitter_from_env,
     api_token: str | None = None,
@@ -254,6 +257,7 @@ def create_app(
         board_service_factory=board_service_factory,
         papers_service_factory=papers_service_factory,
         auth_service_factory=auth_service_factory,
+        paper_reader_notes_service_factory=paper_reader_notes_service_factory,
         paper_user_state_service_factory=paper_user_state_service_factory,
     )
     helpers = ApiRouteHelpers(

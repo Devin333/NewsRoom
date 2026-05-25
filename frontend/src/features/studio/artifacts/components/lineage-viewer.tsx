@@ -3,26 +3,28 @@ import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { StudioPanel } from "@/features/studio/shared/components/studio-dashboard"
 import { formatDateTime } from "@/lib/format"
+import { useI18n } from "@/lib/i18n/use-i18n"
 import type { StudioLineageRef } from "@/types/artifact"
 
 export function LineageViewer({ lineage }: { lineage: StudioLineageRef[] }) {
+  const { t } = useI18n()
   return (
-    <StudioPanel title="Lineage" description="Source to evidence to claim to report relationships." contentClassName="p-0">
+    <StudioPanel title={t("studio.artifacts.lineage")} description={t("studio.artifacts.lineageDescription")} contentClassName="p-0">
       {!lineage.length ? (
         <div className="p-4">
-          <EmptyState title="No lineage" description="This run did not return upstream or downstream relationships." />
+          <EmptyState title={t("studio.artifacts.noLineage")} description={t("studio.artifacts.noLineageDescription")} />
         </div>
       ) : (
         <div className="overflow-x-auto">
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Direction</TableHead>
-                <TableHead>Source</TableHead>
-                <TableHead>Target</TableHead>
-                <TableHead>Run</TableHead>
-                <TableHead>Relation</TableHead>
-                <TableHead>Created</TableHead>
+                <TableHead>{t("studio.artifacts.direction")}</TableHead>
+                <TableHead>{t("studio.sources.source")}</TableHead>
+                <TableHead>{t("studio.artifacts.target")}</TableHead>
+                <TableHead>{t("studio.runs.runId")}</TableHead>
+                <TableHead>{t("studio.artifacts.relation")}</TableHead>
+                <TableHead>{t("studio.artifacts.created")}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>

@@ -34,8 +34,8 @@ describe("ReviewDecisionPanel", () => {
     )
 
     fireEvent.change(screen.getByLabelText("decided_by"), { target: { value: "reviewer-1" } })
-    fireEvent.click(screen.getByRole("button", { name: /approve/i }))
-    fireEvent.click(screen.getByRole("button", { name: /confirm approve/i }))
+    fireEvent.click(screen.getByRole("button", { name: "通过" }))
+    fireEvent.click(screen.getByRole("button", { name: /确认通过/ }))
 
     await waitFor(() => expect(submitted).toHaveLength(1))
     expect(submitted[0]).toMatchObject({
@@ -48,9 +48,9 @@ describe("ReviewDecisionPanel", () => {
     const submit = vi.fn()
     render(<ReviewDecisionPanel item={pendingItem} onSubmitAction={submit} />)
 
-    fireEvent.click(screen.getByRole("button", { name: /reject/i }))
+    fireEvent.click(screen.getByRole("button", { name: "驳回" }))
 
-    expect(await screen.findByText("decided_by is required.")).toBeInTheDocument()
+    expect(await screen.findByText("必须填写 decided_by。")).toBeInTheDocument()
     expect(submit).not.toHaveBeenCalled()
   })
 
@@ -60,9 +60,9 @@ describe("ReviewDecisionPanel", () => {
 
     fireEvent.change(screen.getByLabelText("decided_by"), { target: { value: "reviewer-2" } })
     fireEvent.change(screen.getByLabelText("modifications JSON"), { target: { value: "{}" } })
-    fireEvent.click(screen.getByRole("button", { name: /modify/i }))
+    fireEvent.click(screen.getByRole("button", { name: "修改" }))
 
-    expect(await screen.findByText("modifications are required for modify decisions.")).toBeInTheDocument()
+    expect(await screen.findByText("修改决策必须提供 modifications。")).toBeInTheDocument()
     expect(submit).not.toHaveBeenCalled()
   })
 
@@ -79,9 +79,9 @@ describe("ReviewDecisionPanel", () => {
       />
     )
 
-    expect(screen.getByRole("button", { name: /approve/i })).toBeDisabled()
-    expect(screen.getByRole("button", { name: /reject/i })).toBeDisabled()
-    expect(screen.getByRole("button", { name: /modify/i })).toBeDisabled()
+    expect(screen.getByRole("button", { name: "通过" })).toBeDisabled()
+    expect(screen.getByRole("button", { name: "驳回" })).toBeDisabled()
+    expect(screen.getByRole("button", { name: "修改" })).toBeDisabled()
     expect(screen.getByText("Approvals API is unavailable; fallback report items cannot be approved here.")).toBeInTheDocument()
   })
 })

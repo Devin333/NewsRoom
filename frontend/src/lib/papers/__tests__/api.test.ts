@@ -1,11 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { apiGet, apiPatch, apiPost } from "@/lib/api/client"
+import { apiDelete, apiGet, apiPatch, apiPost } from "@/lib/api/client"
 import {
   askPaper,
+  createPaperReaderNote,
+  deletePaperReaderNote,
   fetchPaperDetail,
   fetchPaperGraph,
   fetchPaperMethods,
   fetchPaperReaderPayload,
+  fetchPaperReaderNotes,
   fetchPaperRelated,
   fetchPaperSections,
   fetchPaperUserState,
@@ -13,12 +16,14 @@ import {
   fetchPapers,
   fetchPaperTasks,
   patchPaperUserState,
+  patchPaperReaderNote,
   refreshPaperSummary,
   requestPaperSummary
 } from "@/lib/papers/api"
 
 vi.mock("@/lib/api/client", () => ({
   apiGet: vi.fn(),
+  apiDelete: vi.fn(),
   apiPatch: vi.fn(),
   apiPost: vi.fn()
 }))
@@ -26,6 +31,7 @@ vi.mock("@/lib/api/client", () => ({
 describe("paper browser API client", () => {
   beforeEach(() => {
     vi.mocked(apiGet).mockReset()
+    vi.mocked(apiDelete).mockReset()
     vi.mocked(apiPatch).mockReset()
     vi.mocked(apiPost).mockReset()
   })
@@ -116,6 +122,30 @@ describe("paper browser API client", () => {
     vi.mocked(apiGet).mockResolvedValueOnce({ success: true, data: { states: [] } })
     await fetchPaperUserStates(["paper/1", "paper/2"])
     expect(apiGet).toHaveBeenCalledWith("/api/papers/me/state?paperIds=paper%2F1%2Cpaper%2F2", undefined)
+
+    vi.mocked(apiGet).mockResolvedValueOnce({ success: true, data: { notes: [] } })
+    await fetchPaperReaderNotes("paper/1")
+    expect(apiGet).toHaveBeenCalledWith("/api/papers/paper%2F1/notes", undefined)
+
+    vi.mocked(apiPost).mockResolvedValueOnce({ success: true, data: { note: { noteId: "n1" } } })
+    await createPaperReaderNote("paper/1", { kind: "bookmark", pageNumber: 1 })
+    expect(apiPost).toHaveBeenCalledWith(
+      "/api/papers/paper%2F1/notes",
+      { kind: "bookmark", pageNumber: 1 },
+      undefined
+    )
+
+    vi.mocked(apiPatch).mockResolvedValueOnce({ success: true, data: { note: { noteId: "n1" } } })
+    await patchPaperReaderNote("paper/1", "note/1", { color: "pink" })
+    expect(apiPatch).toHaveBeenCalledWith(
+      "/api/papers/paper%2F1/notes/note%2F1",
+      { color: "pink" },
+      undefined
+    )
+
+    vi.mocked(apiDelete).mockResolvedValueOnce({ success: true, data: { deleted: true } })
+    await deletePaperReaderNote("paper/1", "note/1")
+    expect(apiDelete).toHaveBeenCalledWith("/api/papers/paper%2F1/notes/note%2F1", undefined)
 
     vi.mocked(apiPost).mockResolvedValueOnce({ success: true, data: { answer: { paperId: "p" } } })
     await askPaper("paper/1", "What is new?", "en")

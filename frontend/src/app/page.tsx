@@ -11,8 +11,10 @@ import { TechRadarPreview } from "@/features/dashboard/components/tech-radar-pre
 import { TopStories } from "@/features/dashboard/components/top-stories"
 import { TrendingTopicsPreview } from "@/features/dashboard/components/trending-topics-preview"
 import { useDashboardOverview } from "@/features/dashboard/hooks/use-dashboard-overview"
+import { useI18n } from "@/lib/i18n/use-i18n"
 
 export default function DashboardPage() {
+  const { t } = useI18n()
   const { data, isLoading, isError, error, refetch } = useDashboardOverview()
 
   if (isLoading) {
@@ -20,19 +22,19 @@ export default function DashboardPage() {
   }
 
   if (isError) {
-    return <ErrorState message={error instanceof Error ? error.message : "仪表盘数据加载失败。"} onRetry={() => refetch()} />
+    return <ErrorState message={error instanceof Error ? error.message : t("portal.home.loadError")} onRetry={() => refetch()} />
   }
 
   if (!data) {
-    return <EmptyState title="暂无仪表盘总览" description="mock 仪表盘总览当前不可用。" />
+    return <EmptyState title={t("portal.home.emptyTitle")} description={t("portal.home.emptyDescription")} />
   }
 
   return (
     <main className="space-y-6">
       <PageHeader
-        eyebrow="读者门户"
-        title="情报仪表盘"
-        description="用于跟踪 AI 技术新闻、趋势信号、来源健康和智能体运行质量的日常工作台。"
+        eyebrow={t("portal.home.eyebrow")}
+        title={t("portal.home.title")}
+        description={t("portal.home.description")}
       />
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">

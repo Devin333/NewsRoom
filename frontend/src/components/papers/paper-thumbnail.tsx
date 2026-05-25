@@ -1,5 +1,6 @@
 import { FileSearch } from "lucide-react"
 import { PdfPageThumbnail } from "@/components/papers/pdf-page-thumbnail"
+import { translate } from "@/lib/i18n"
 import { paperPdfUrl } from "@/lib/papers/format"
 import type { Locale, Paper } from "@/lib/papers/types"
 
@@ -38,7 +39,7 @@ export function PaperThumbnail({ paper, locale }: { paper: Paper; locale: Locale
           <span className="block h-1.5 w-16 rounded-full bg-slate-200 dark:bg-slate-700" />
         </div>
         <p className="mt-auto text-[0.62rem] font-semibold uppercase tracking-[0.14em] text-slate-400">
-          No verified PDF
+          {translate(locale, "papers.reader.noVerifiedPdf")}
         </p>
       </div>
     </div>
