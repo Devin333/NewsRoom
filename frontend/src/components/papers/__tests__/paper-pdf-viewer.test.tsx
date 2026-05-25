@@ -12,7 +12,10 @@ const pdfjsMock = vi.hoisted(() => {
   }
   const pdf = {
     numPages: 3,
-    getPage: vi.fn(async () => page),
+    getPage: vi.fn(async (pageNumber: number) => {
+      void pageNumber
+      return page
+    }),
     destroy: vi.fn(async () => undefined)
   }
   const getDocument = vi.fn()
@@ -35,7 +38,11 @@ const pdfjsMock = vi.hoisted(() => {
       renderCancel.mockReset()
       render.mockClear()
       page.getViewport.mockClear()
-      pdf.getPage.mockClear()
+      pdf.getPage.mockReset()
+      pdf.getPage.mockImplementation(async (pageNumber: number) => {
+        void pageNumber
+        return page
+      })
       pdf.destroy.mockClear()
       loadingDestroy.mockReset()
       getDocument.mockReset()
@@ -59,13 +66,14 @@ vi.mock("pdfjs-dist", () => ({
   getDocument: pdfjsMock.getDocument
 }))
 
-function renderViewer() {
+function renderViewer(props: Partial<Parameters<typeof PaperPdfViewer>[0]> = {}) {
   return render(
     <PaperPdfViewer
       pdfUrl="https://arxiv.org/pdf/2605.00001.pdf"
       title="Reader Paper"
       locale="en"
       fallback={<div>Text fallback content</div>}
+      {...props}
     />
   )
 }
@@ -111,6 +119,36 @@ describe("PaperPdfViewer", () => {
     await waitFor(() => expect(pdfjsMock.pdf.getPage).toHaveBeenCalledWith(1))
   })
 
+  it("restores and clamps the initial page", async () => {
+    const onPageChange = vi.fn()
+    const { rerender } = renderViewer({ initialPage: 2, onPageChange })
+
+    await waitFor(() => expect(pdfjsMock.getDocument).toHaveBeenCalled())
+    await act(async () => {
+      pdfjsMock.resolveDocument()
+    })
+
+    expect(await screen.findByText("Page 2 of 3")).toBeInTheDocument()
+    await waitFor(() => expect(onPageChange).toHaveBeenCalledWith(2, 3))
+
+    pdfjsMock.reset()
+    rerender(
+      <PaperPdfViewer
+        pdfUrl="https://arxiv.org/pdf/2605.00001.pdf?reload=1"
+        title="Reader Paper"
+        locale="en"
+        fallback={<div>Text fallback content</div>}
+        initialPage={99}
+      />
+    )
+
+    await waitFor(() => expect(pdfjsMock.getDocument).toHaveBeenCalled())
+    await act(async () => {
+      pdfjsMock.resolveDocument()
+    })
+    expect(await screen.findByText("Page 3 of 3")).toBeInTheDocument()
+  })
+
   it("navigates pages and disables controls at boundaries", async () => {
     renderViewer()
     await waitFor(() => expect(pdfjsMock.getDocument).toHaveBeenCalled())
@@ -127,6 +165,66 @@ describe("PaperPdfViewer", () => {
     fireEvent.click(next)
     expect(await screen.findByText("Page 3 of 3")).toBeInTheDocument()
     expect(next).toBeDisabled()
+  })
+
+  it("renders thumbnails and navigates by selected thumbnail", async () => {
+    renderViewer()
+    await waitFor(() => expect(pdfjsMock.getDocument).toHaveBeenCalled())
+    await act(async () => {
+      pdfjsMock.resolveDocument()
+    })
+
+    const firstPage = await screen.findByRole("button", { name: "Go to page 1" })
+    expect(firstPage).toHaveAttribute("aria-current", "page")
+
+    fireEvent.click(screen.getByRole("button", { name: "Go to page 3" }))
+
+    expect(await screen.findByText("Page 3 of 3")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Go to page 3" })).toHaveAttribute("aria-current", "page")
+    expect(await screen.findByLabelText("Reader Paper PDF thumbnail page 3")).toBeInTheDocument()
+  })
+
+  it("keeps the main viewer usable when a thumbnail render fails", async () => {
+    pdfjsMock.pdf.getPage.mockImplementation(async (pageNumber: number) => {
+      if (pageNumber === 2) {
+        throw new Error("thumbnail failed")
+      }
+      return pdfjsMock.page
+    })
+
+    renderViewer()
+    await waitFor(() => expect(pdfjsMock.getDocument).toHaveBeenCalled())
+    await act(async () => {
+      pdfjsMock.resolveDocument()
+    })
+
+    expect(await screen.findByText("Page 1 of 3")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Go to page 2" })).toHaveTextContent("Page 2")
+  })
+
+  it("supports keyboard page and zoom controls without crossing boundaries", async () => {
+    renderViewer()
+    await waitFor(() => expect(pdfjsMock.getDocument).toHaveBeenCalled())
+    await act(async () => {
+      pdfjsMock.resolveDocument()
+    })
+
+    const viewer = await screen.findByLabelText("Reader Paper PDF viewer")
+    fireEvent.keyDown(viewer, { key: "ArrowRight" })
+    expect(await screen.findByText("Page 2 of 3")).toBeInTheDocument()
+
+    fireEvent.keyDown(viewer, { key: "PageDown" })
+    expect(await screen.findByText("Page 3 of 3")).toBeInTheDocument()
+
+    fireEvent.keyDown(viewer, { key: "ArrowRight" })
+    expect(screen.getByText("Page 3 of 3")).toBeInTheDocument()
+
+    fireEvent.keyDown(viewer, { key: "+" })
+    expect(await screen.findByText("125%")).toBeInTheDocument()
+
+    fireEvent.keyDown(viewer, { key: "-" })
+    fireEvent.keyDown(viewer, { key: "-" })
+    expect(await screen.findByText("75%")).toBeInTheDocument()
   })
 
   it("clamps jump page input", async () => {

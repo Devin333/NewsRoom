@@ -12,15 +12,17 @@ vi.mock("@/lib/papers/api", () => ({
 
 vi.mock("@/components/papers/shared/paper-pdf-viewer", () => ({
   PaperPdfViewer: ({
+    initialPage,
     pdfUrl,
     title,
     onPageChange,
   }: {
+    initialPage?: number
     pdfUrl: string
     title: string
     onPageChange?: (pageNumber: number, numPages: number) => void
   }) => (
-    <div data-testid="paper-pdf-viewer" data-pdf-url={pdfUrl}>
+    <div data-testid="paper-pdf-viewer" data-initial-page={initialPage ?? ""} data-pdf-url={pdfUrl}>
       {title} PDF viewer
       <button type="button" onClick={() => onPageChange?.(2, 4)}>
         mock page 2
@@ -159,6 +161,17 @@ describe("PaperReaderPage", () => {
   })
 
   it("updates favorite, subscription, reading status, and PDF progress state", async () => {
+    vi.mocked(fetchPaperUserState).mockResolvedValueOnce({
+      userId: "user-1",
+      paperId: "reader-paper",
+      favorite: false,
+      subscribed: false,
+      readingStatus: "reading",
+      currentPage: 3,
+      progressPercent: 75,
+      updatedAt: "2026-05-24T00:00:00Z"
+    })
+
     render(
       <PaperReaderPage
         reader={{
@@ -175,6 +188,10 @@ describe("PaperReaderPage", () => {
         locale="en"
       />
     )
+
+    await waitFor(() => {
+      expect(screen.getByTestId("paper-pdf-viewer")).toHaveAttribute("data-initial-page", "3")
+    })
 
     fireEvent.click(await screen.findByRole("button", { name: /favorite/i }))
     await waitFor(() => {

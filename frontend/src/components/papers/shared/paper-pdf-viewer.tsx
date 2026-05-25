@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react"
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react"
 import { ChevronLeft, ChevronRight, FileWarning, Loader2, ZoomIn, ZoomOut } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -11,6 +11,7 @@ type PaperPdfViewerProps = {
   title: string
   locale: Locale
   fallback: ReactNode
+  initialPage?: number
   onPageChange?: (pageNumber: number, numPages: number) => void
 }
 
@@ -43,10 +44,21 @@ type PdfLoadingTask = {
 const MIN_SCALE = 0.75
 const MAX_SCALE = 2
 const SCALE_STEP = 0.25
+const THUMBNAIL_WIDTH = 88
 
-export function PaperPdfViewer({ pdfUrl, title, locale, fallback, onPageChange }: PaperPdfViewerProps) {
+export function PaperPdfViewer({
+  pdfUrl,
+  title,
+  locale,
+  fallback,
+  initialPage,
+  onPageChange,
+}: PaperPdfViewerProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const renderTaskRef = useRef<PdfRenderTask | null>(null)
+  const initialPageRef = useRef(initialPage)
+  const initialPageAppliedRef = useRef(false)
+  const userNavigatedRef = useRef(false)
   const [pdfDocument, setPdfDocument] = useState<PdfDocument | null>(null)
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading")
   const [isRendering, setIsRendering] = useState(false)
@@ -54,6 +66,10 @@ export function PaperPdfViewer({ pdfUrl, title, locale, fallback, onPageChange }
   const [pageInput, setPageInput] = useState("1")
   const [numPages, setNumPages] = useState(0)
   const [scale, setScale] = useState(1)
+
+  useEffect(() => {
+    initialPageRef.current = initialPage
+  }, [initialPage])
 
   useEffect(() => {
     let cancelled = false
@@ -67,6 +83,8 @@ export function PaperPdfViewer({ pdfUrl, title, locale, fallback, onPageChange }
     setPageNumber(1)
     setPageInput("1")
     setScale(1)
+    initialPageAppliedRef.current = false
+    userNavigatedRef.current = false
     renderTaskRef.current?.cancel()
     renderTaskRef.current = null
 
@@ -79,7 +97,7 @@ export function PaperPdfViewer({ pdfUrl, title, locale, fallback, onPageChange }
           disableStream: true,
           rangeChunkSize: 65536,
           url: pdfProxyUrl(pdfUrl),
-          withCredentials: false
+          withCredentials: false,
         }) as unknown as PdfLoadingTask
         const pdf = await loadingTask.promise
         loadedDocument = pdf
@@ -87,8 +105,12 @@ export function PaperPdfViewer({ pdfUrl, title, locale, fallback, onPageChange }
           await pdf.destroy()
           return
         }
+        const firstPage = clampPage(initialPageRef.current ?? 1, pdf.numPages)
         setPdfDocument(pdf)
         setNumPages(pdf.numPages)
+        setPageNumber(firstPage)
+        setPageInput(String(firstPage))
+        initialPageAppliedRef.current = initialPageRef.current !== undefined
         setStatus("ready")
       } catch {
         if (!cancelled) {
@@ -107,6 +129,23 @@ export function PaperPdfViewer({ pdfUrl, title, locale, fallback, onPageChange }
       void loadedDocument?.destroy()
     }
   }, [pdfUrl])
+
+  useEffect(() => {
+    if (
+      initialPage === undefined ||
+      initialPageAppliedRef.current ||
+      userNavigatedRef.current ||
+      status !== "ready" ||
+      !pdfDocument ||
+      numPages <= 0
+    ) {
+      return
+    }
+    const firstPage = clampPage(initialPage, numPages)
+    setPageNumber(firstPage)
+    setPageInput(String(firstPage))
+    initialPageAppliedRef.current = true
+  }, [initialPage, numPages, pdfDocument, status])
 
   useEffect(() => {
     if (!pdfDocument || status !== "ready") {
@@ -171,7 +210,7 @@ export function PaperPdfViewer({ pdfUrl, title, locale, fallback, onPageChange }
         <div className="border-b border-[#d8dfd8] bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-border dark:bg-amber-950/30 dark:text-amber-100">
           <div className="flex items-center gap-2 font-semibold">
             <FileWarning className="size-4" />
-            {locale === "zh" ? "PDF 暂不可渲染，已切换到文本阅读。" : "PDF could not be rendered; showing text fallback."}
+            {locale === "zh" ? "PDF could not be rendered; showing text fallback." : "PDF could not be rendered; showing text fallback."}
           </div>
         </div>
         {fallback}
@@ -184,7 +223,10 @@ export function PaperPdfViewer({ pdfUrl, title, locale, fallback, onPageChange }
   const canZoomOut = status === "ready" && scale > MIN_SCALE
   const canZoomIn = status === "ready" && scale < MAX_SCALE
 
-  function goToPage(nextPage: number) {
+  function goToPage(nextPage: number, options: { userInitiated?: boolean } = {}) {
+    if (options.userInitiated !== false) {
+      userNavigatedRef.current = true
+    }
     const clamped = clampPage(nextPage, numPages)
     setPageNumber(clamped)
     setPageInput(String(clamped))
@@ -196,16 +238,49 @@ export function PaperPdfViewer({ pdfUrl, title, locale, fallback, onPageChange }
   }
 
   function changeScale(nextScale: number) {
+    userNavigatedRef.current = true
     setScale(clampScale(nextScale))
   }
 
+  function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (status !== "ready") {
+      return
+    }
+    const target = event.target
+    if (
+      target instanceof HTMLInputElement ||
+      target instanceof HTMLTextAreaElement ||
+      target instanceof HTMLSelectElement
+    ) {
+      return
+    }
+    if (event.key === "ArrowLeft" || event.key === "PageUp") {
+      event.preventDefault()
+      goToPage(pageNumber - 1)
+    } else if (event.key === "ArrowRight" || event.key === "PageDown") {
+      event.preventDefault()
+      goToPage(pageNumber + 1)
+    } else if (event.key === "+" || event.key === "=") {
+      event.preventDefault()
+      changeScale(scale + SCALE_STEP)
+    } else if (event.key === "-" || event.key === "_") {
+      event.preventDefault()
+      changeScale(scale - SCALE_STEP)
+    }
+  }
+
   return (
-    <div className="flex min-h-[42rem] flex-col bg-[#f8faf9] dark:bg-background">
+    <div
+      aria-label={`${title} PDF viewer`}
+      className="flex min-h-[42rem] flex-col bg-[#f8faf9] outline-none focus-visible:ring-2 focus-visible:ring-[#315d8a]/35 dark:bg-background"
+      tabIndex={0}
+      onKeyDown={handleKeyDown}
+    >
       <div className="flex flex-col gap-3 border-b border-[#d8dfd8] bg-white px-4 py-3 dark:border-border dark:bg-card lg:flex-row lg:items-center lg:justify-between">
         <div className="min-w-0">
           <h2 className="truncate text-sm font-semibold text-[#334155] dark:text-foreground">{title}</h2>
           <p className="mt-1 text-xs text-[#334155]/55 dark:text-muted-foreground">
-            {status === "ready" ? `Page ${pageNumber} of ${numPages}` : locale === "zh" ? "正在加载 PDF" : "Loading PDF"}
+            {status === "ready" ? `Page ${pageNumber} of ${numPages}` : locale === "zh" ? "Loading PDF" : "Loading PDF"}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -269,28 +344,188 @@ export function PaperPdfViewer({ pdfUrl, title, locale, fallback, onPageChange }
         </div>
       </div>
 
-      <div className="relative flex h-[78vh] min-h-[38rem] flex-1 justify-center overflow-auto bg-[#eef4ef] p-4 dark:bg-secondary/30">
-        {status === "loading" ? (
-          <div className="absolute inset-0 flex items-center justify-center bg-white/80 dark:bg-background/80">
-            <div className="inline-flex items-center gap-2 rounded-md border border-[#d8dfd8] bg-white px-4 py-3 text-sm font-semibold text-[#334155]/70 shadow-sm dark:border-border dark:bg-card dark:text-muted-foreground">
-              <Loader2 className="size-4 animate-spin" />
-              {locale === "zh" ? "正在加载 PDF" : "Loading PDF"}
+      <div className="grid min-h-[38rem] flex-1 lg:grid-cols-[7.25rem_minmax(0,1fr)]">
+        <PdfThumbnailRail
+          currentPage={pageNumber}
+          locale={locale}
+          numPages={numPages}
+          onSelectPage={(nextPage) => goToPage(nextPage)}
+          pdfDocument={pdfDocument}
+          status={status}
+          title={title}
+        />
+        <div className="relative flex h-[78vh] min-h-[38rem] flex-1 justify-center overflow-auto bg-[#eef4ef] p-4 dark:bg-secondary/30">
+          {status === "loading" ? (
+            <div className="absolute inset-0 flex items-center justify-center bg-white/80 dark:bg-background/80">
+              <div className="inline-flex items-center gap-2 rounded-md border border-[#d8dfd8] bg-white px-4 py-3 text-sm font-semibold text-[#334155]/70 shadow-sm dark:border-border dark:bg-card dark:text-muted-foreground">
+                <Loader2 className="size-4 animate-spin" />
+                {locale === "zh" ? "Loading PDF" : "Loading PDF"}
+              </div>
             </div>
-          </div>
+          ) : null}
+          {isRendering && status === "ready" ? (
+            <div className="absolute right-4 top-4 inline-flex items-center gap-2 rounded-md bg-white px-3 py-2 text-xs font-semibold text-[#334155]/65 shadow-sm dark:bg-card dark:text-muted-foreground">
+              <Loader2 className="size-3 animate-spin" />
+              {locale === "zh" ? "Rendering" : "Rendering"}
+            </div>
+          ) : null}
+          <canvas
+            ref={canvasRef}
+            aria-label={`${title} PDF page ${pageNumber}`}
+            className="block self-start bg-white shadow-lg"
+          />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function PdfThumbnailRail({
+  currentPage,
+  locale,
+  numPages,
+  onSelectPage,
+  pdfDocument,
+  status,
+  title,
+}: {
+  currentPage: number
+  locale: Locale
+  numPages: number
+  onSelectPage: (pageNumber: number) => void
+  pdfDocument: PdfDocument | null
+  status: "loading" | "ready" | "error"
+  title: string
+}) {
+  if (status !== "ready" || !pdfDocument || numPages <= 0) {
+    return (
+      <aside className="hidden border-r border-[#d8dfd8] bg-white p-3 dark:border-border dark:bg-card lg:block">
+        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#334155]/45 dark:text-muted-foreground">
+          {locale === "zh" ? "Pages" : "Pages"}
+        </p>
+      </aside>
+    )
+  }
+
+  return (
+    <aside className="hidden max-h-[78vh] overflow-y-auto border-r border-[#d8dfd8] bg-white p-3 dark:border-border dark:bg-card lg:block">
+      <p className="mb-3 text-xs font-semibold uppercase tracking-[0.16em] text-[#334155]/45 dark:text-muted-foreground">
+        {locale === "zh" ? "Pages" : "Pages"}
+      </p>
+      <div className="space-y-2">
+        {Array.from({ length: numPages }, (_, index) => {
+          const thumbnailPage = index + 1
+          return (
+            <PdfThumbnailButton
+              key={thumbnailPage}
+              active={thumbnailPage === currentPage}
+              onSelect={() => onSelectPage(thumbnailPage)}
+              pageNumber={thumbnailPage}
+              pdfDocument={pdfDocument}
+              title={title}
+            />
+          )
+        })}
+      </div>
+    </aside>
+  )
+}
+
+function PdfThumbnailButton({
+  active,
+  onSelect,
+  pageNumber,
+  pdfDocument,
+  title,
+}: {
+  active: boolean
+  onSelect: () => void
+  pageNumber: number
+  pdfDocument: PdfDocument
+  title: string
+}) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const renderTaskRef = useRef<PdfRenderTask | null>(null)
+  const [status, setStatus] = useState<"loading" | "ready" | "error">("loading")
+
+  useEffect(() => {
+    let cancelled = false
+    renderTaskRef.current?.cancel()
+    renderTaskRef.current = null
+    setStatus("loading")
+
+    async function renderThumbnail() {
+      try {
+        const page = await pdfDocument.getPage(pageNumber)
+        if (cancelled) {
+          return
+        }
+        const viewport = page.getViewport({ scale: 1 })
+        const thumbnailScale = THUMBNAIL_WIDTH / Math.max(viewport.width, 1)
+        const thumbnailViewport = page.getViewport({ scale: thumbnailScale })
+        const canvas = canvasRef.current
+        const context = canvas?.getContext("2d")
+        if (!canvas || !context) {
+          throw new Error("thumbnail canvas context unavailable")
+        }
+        canvas.width = Math.floor(thumbnailViewport.width)
+        canvas.height = Math.floor(thumbnailViewport.height)
+        canvas.style.width = `${Math.floor(thumbnailViewport.width)}px`
+        canvas.style.height = `${Math.floor(thumbnailViewport.height)}px`
+        const renderTask = page.render({ canvasContext: context, viewport: thumbnailViewport })
+        renderTaskRef.current = renderTask
+        await renderTask.promise
+        if (!cancelled) {
+          setStatus("ready")
+        }
+      } catch {
+        if (!cancelled) {
+          setStatus("error")
+        }
+      }
+    }
+
+    void renderThumbnail()
+
+    return () => {
+      cancelled = true
+      renderTaskRef.current?.cancel()
+      renderTaskRef.current = null
+    }
+  }, [pageNumber, pdfDocument])
+
+  return (
+    <button
+      type="button"
+      aria-current={active ? "page" : undefined}
+      aria-label={`Go to page ${pageNumber}`}
+      className={[
+        "block w-full rounded-md border p-1 text-left text-xs transition",
+        active
+          ? "border-[#315d8a] bg-[#eef4ef] shadow-sm ring-2 ring-[#315d8a]/25 dark:bg-secondary"
+          : "border-[#d8dfd8] bg-white hover:border-[#315d8a]/60 dark:border-border dark:bg-background",
+      ].join(" ")}
+      onClick={onSelect}
+    >
+      <span className="flex min-h-28 items-center justify-center rounded-sm bg-[#eef4ef] dark:bg-secondary/60">
+        {status === "error" ? (
+          <span className="px-2 text-center text-[0.68rem] font-semibold text-[#334155]/55 dark:text-muted-foreground">
+            Page {pageNumber}
+          </span>
         ) : null}
-        {isRendering && status === "ready" ? (
-          <div className="absolute right-4 top-4 inline-flex items-center gap-2 rounded-md bg-white px-3 py-2 text-xs font-semibold text-[#334155]/65 shadow-sm dark:bg-card dark:text-muted-foreground">
-            <Loader2 className="size-3 animate-spin" />
-            {locale === "zh" ? "渲染中" : "Rendering"}
-          </div>
+        {status === "loading" ? (
+          <Loader2 className="size-4 animate-spin text-[#334155]/40" />
         ) : null}
         <canvas
           ref={canvasRef}
-          aria-label={`${title} PDF page ${pageNumber}`}
-          className="block self-start bg-white shadow-lg"
+          aria-label={`${title} PDF thumbnail page ${pageNumber}`}
+          className={status === "ready" ? "block bg-white shadow-sm" : "hidden"}
         />
-      </div>
-    </div>
+      </span>
+      <span className="mt-1 block text-center font-semibold text-[#334155]/65 dark:text-muted-foreground">
+        {pageNumber}
+      </span>
+    </button>
   )
 }
 

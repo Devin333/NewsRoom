@@ -151,6 +151,7 @@ export function PaperReaderPage({ reader, locale }: { reader: PaperReaderPayload
                 title={title}
                 locale={locale}
                 fallback={<ReaderTextFallback reader={reader} paper={paper} locale={locale} />}
+                initialPage={userState?.currentPage}
                 onPageChange={handlePdfPageChange}
               />
             ) : (
