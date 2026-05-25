@@ -1,10 +1,15 @@
 import { Suspense } from "react"
 import { LoginForm } from "@/app/login/login-form"
+import { defaultPostLoginPath } from "@/lib/frontend-surface"
+
+export const dynamic = "force-dynamic"
 
 export default function LoginPage() {
+  const defaultNextPath = defaultPostLoginPath()
+
   return (
     <Suspense fallback={<LoginShell />}>
-      <LoginForm />
+      <LoginForm defaultNextPath={defaultNextPath} />
     </Suspense>
   )
 }

@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import LoginPage from "@/app/login/page"
 import { bootstrapAccount, fetchAuthSession, login } from "@/lib/auth/api"
 
@@ -24,13 +24,24 @@ vi.mock("@/lib/auth/api", () => ({
 }))
 
 describe("LoginPage", () => {
+  const originalSurface = process.env.NEWSROOM_FRONTEND_SURFACE
+
   beforeEach(() => {
+    delete process.env.NEWSROOM_FRONTEND_SURFACE
     navigation.refresh.mockReset()
     navigation.replace.mockReset()
     navigation.searchParams = new URLSearchParams()
     vi.mocked(bootstrapAccount).mockReset()
     vi.mocked(fetchAuthSession).mockReset()
     vi.mocked(login).mockReset()
+  })
+
+  afterEach(() => {
+    if (originalSurface === undefined) {
+      delete process.env.NEWSROOM_FRONTEND_SURFACE
+      return
+    }
+    process.env.NEWSROOM_FRONTEND_SURFACE = originalSurface
   })
 
   it("shows first-admin bootstrap when auth is uninitialized", async () => {
@@ -92,6 +103,24 @@ describe("LoginPage", () => {
 
     await waitFor(() => {
       expect(navigation.replace).toHaveBeenCalledWith("/papers")
+    })
+  })
+
+  it("uses the Admin home as the default login target in Admin surface mode", async () => {
+    process.env.NEWSROOM_FRONTEND_SURFACE = "admin"
+    vi.mocked(fetchAuthSession).mockResolvedValue({
+      initialized: true,
+      session: {
+        user: { userId: "user-1", username: "admin", role: "admin" },
+        sessionId: "sess-1",
+        expiresAt: "2026-06-01T00:00:00Z"
+      }
+    })
+
+    render(<LoginPage />)
+
+    await waitFor(() => {
+      expect(navigation.replace).toHaveBeenCalledWith("/")
     })
   })
 })

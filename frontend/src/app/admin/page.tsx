@@ -1,11 +1,7 @@
-import type { Metadata } from "next"
-import { AdminConsole } from "@/features/admin/components/admin-console"
+import { redirect } from "next/navigation"
 
-export const metadata: Metadata = {
-  title: "NewsRoom 情报控制台",
-  description: "NewsRoom admin intelligence console for ingestion, review, pipeline, agent runtime, quality gates, and publishing control."
-}
+export const dynamic = "force-dynamic"
 
 export default function AdminPage() {
-  return <AdminConsole />
+  redirect("/")
 }

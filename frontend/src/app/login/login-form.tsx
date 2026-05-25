@@ -8,11 +8,11 @@ import { Input } from "@/components/ui/input"
 import { bootstrapAccount, fetchAuthSession, login } from "@/lib/auth/api"
 import { useI18n } from "@/lib/i18n/use-i18n"
 
-export function LoginForm() {
+export function LoginForm({ defaultNextPath = "/papers" }: { defaultNextPath?: string }) {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { t } = useI18n()
-  const nextPath = safeNextPath(searchParams.get("next"))
+  const nextPath = safeNextPath(searchParams.get("next"), defaultNextPath)
   const [initialized, setInitialized] = useState<boolean | null>(null)
   const [username, setUsername] = useState("")
   const [password, setPassword] = useState("")
@@ -117,9 +117,9 @@ export function LoginForm() {
   )
 }
 
-function safeNextPath(value: string | null) {
+function safeNextPath(value: string | null, fallback: string) {
   if (!value || !value.startsWith("/") || value.startsWith("//") || value.startsWith("/login")) {
-    return "/papers"
+    return fallback
   }
   return value
 }

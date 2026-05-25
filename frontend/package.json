@@ -4,6 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:portal": "node scripts/dev-surface.mjs portal",
+    "dev:admin": "node scripts/dev-surface.mjs admin",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",

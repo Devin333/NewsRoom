@@ -4,15 +4,20 @@ import type { ReactNode } from "react"
 import { usePathname } from "next/navigation"
 import { PapersHeader } from "@/components/papers/papers-header"
 import { AppHeader } from "@/components/layout/AppHeader"
+import type { FrontendSurface } from "@/lib/frontend-surface"
 import { useUiStore } from "@/stores/ui-store"
 import { cn } from "@/lib/utils"
 
-export function AppShell({ children }: { children: ReactNode }) {
+export function AppShell({ children, surface = "portal" }: { children: ReactNode; surface?: FrontendSurface }) {
   const pathname = usePathname()
   const theme = useUiStore((state) => state.theme)
   const locale = useUiStore((state) => state.locale)
   const setTheme = useUiStore((state) => state.setTheme)
   const setLocale = useUiStore((state) => state.setLocale)
+
+  if (surface === "admin") {
+    return <div className="min-h-screen bg-background text-foreground">{children}</div>
+  }
 
   if (pathname.startsWith("/admin") || pathname.startsWith("/studio")) {
     return <div className="min-h-screen bg-background text-foreground">{children}</div>

@@ -134,6 +134,7 @@ async function parseJsonResponse<T>(response: Response): Promise<T> {
 function apiUrl(path: string): string {
   if (path.startsWith("http://") || path.startsWith("https://")) return path
   const suffix = path.startsWith("/") ? path : `/${path}`
+  if (suffix.startsWith("/api/")) return suffix
   const baseUrl = process.env.NEXT_PUBLIC_NEWSROOM_API_BASE_URL ?? DEFAULT_API_BASE_URL
   if (!baseUrl) return suffix
   return `${baseUrl.replace(/\/$/, "")}${suffix}`
