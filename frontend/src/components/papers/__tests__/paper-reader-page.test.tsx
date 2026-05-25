@@ -8,6 +8,14 @@ vi.mock("@/lib/papers/api", () => ({
   askPaper: vi.fn()
 }))
 
+vi.mock("@/components/papers/shared/paper-pdf-viewer", () => ({
+  PaperPdfViewer: ({ pdfUrl, title }: { pdfUrl: string; title: string }) => (
+    <div data-testid="paper-pdf-viewer" data-pdf-url={pdfUrl}>
+      {title} PDF viewer
+    </div>
+  )
+}))
+
 const reader: PaperReaderPayload = {
   paper: {
     id: "reader-paper",
@@ -89,6 +97,31 @@ describe("PaperReaderPage", () => {
     expect(screen.getByRole("heading", { name: "Benchmark Results" })).toBeInTheDocument()
     expect(screen.getByText("MMLU / accuracy / 91.2")).toBeInTheDocument()
     expect(screen.getByText("Benchmark")).toBeInTheDocument()
+  })
+
+  it("renders controlled PDF viewer when a PDF URL exists", () => {
+    render(
+      <PaperReaderPage
+        reader={{
+          ...reader,
+          paper: {
+            ...reader.paper,
+            pdfUrl: "https://arxiv.org/pdf/2605.00001.pdf"
+          },
+          quality: {
+            ...reader.quality,
+            pdfAvailable: true
+          }
+        }}
+        locale="en"
+      />
+    )
+
+    expect(screen.getByTestId("paper-pdf-viewer")).toHaveAttribute(
+      "data-pdf-url",
+      "https://arxiv.org/pdf/2605.00001.pdf"
+    )
+    expect(screen.queryByTitle("Reader Paper")).not.toBeInTheDocument()
   })
 
   it("renders text extraction quality state", () => {

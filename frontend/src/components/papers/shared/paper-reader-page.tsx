@@ -5,6 +5,7 @@ import { ArrowLeft, Brain, ExternalLink, FileText, Github, MessageSquare, Quote,
 import Link from "next/link"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { PaperPdfViewer } from "@/components/papers/shared/paper-pdf-viewer"
 import {
   formatCompactNumber,
   formatPaperDate,
@@ -78,26 +79,14 @@ export function PaperReaderPage({ reader, locale }: { reader: PaperReaderPayload
         <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_26rem] 2xl:grid-cols-[minmax(0,1fr)_30rem]">
           <section className="min-h-[42rem] overflow-hidden rounded-md border border-[#d8dfd8] bg-white dark:border-border dark:bg-card">
             {pdfUrl ? (
-              <iframe
+              <PaperPdfViewer
+                pdfUrl={pdfUrl}
                 title={title}
-                src={`/api/papers/pdf?url=${encodeURIComponent(pdfUrl)}`}
-                className="h-[78vh] min-h-[42rem] w-full bg-white"
+                locale={locale}
+                fallback={<ReaderTextFallback reader={reader} paper={paper} locale={locale} />}
               />
             ) : (
-              <div className="p-7">
-                <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-[#334155]/55">Text fallback</h2>
-                <div className="mt-5 space-y-5">
-                  {reader.sections.length ? (
-                    reader.sections.map((section) => (
-                      <ReaderTextSection key={section.id} section={section} />
-                    ))
-                  ) : (
-                    <p className="text-base leading-8 text-[#334155]/72 dark:text-muted-foreground">
-                      {paperSnippet(paper, locale)}
-                    </p>
-                  )}
-                </div>
-              </div>
+              <ReaderTextFallback reader={reader} paper={paper} locale={locale} />
             )}
           </section>
 
@@ -109,6 +98,25 @@ export function PaperReaderPage({ reader, locale }: { reader: PaperReaderPayload
         </div>
       </div>
     </main>
+  )
+}
+
+function ReaderTextFallback({ reader, paper, locale }: { reader: PaperReaderPayload; paper: Paper; locale: Locale }) {
+  return (
+    <div className="p-7">
+      <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-[#334155]/55">Text fallback</h2>
+      <div className="mt-5 space-y-5">
+        {reader.sections.length ? (
+          reader.sections.map((section) => (
+            <ReaderTextSection key={section.id} section={section} />
+          ))
+        ) : (
+          <p className="text-base leading-8 text-[#334155]/72 dark:text-muted-foreground">
+            {paperSnippet(paper, locale)}
+          </p>
+        )}
+      </div>
+    </div>
   )
 }
 
