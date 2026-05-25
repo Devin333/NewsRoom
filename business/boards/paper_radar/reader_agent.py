@@ -12,6 +12,18 @@ from business.boards.paper_radar.public_mapper import sanitize_public_payload
 
 PRIVATE_FIELD_NAMES = {"raw_payload", "raw_content", "raw_html", "full_text", "secret", "api_key", "token", "authorization"}
 
+SECTION_TYPE_KEYWORDS = {
+    "method": {"method", "methods", "architecture", "approach", "model", "algorithm", "task", "tasks"},
+    "experiment": {"experiment", "experiments", "evaluation", "evaluate", "evaluated", "task", "tasks"},
+    "limitation": {"limitation", "limitations", "weakness", "weaknesses", "failure", "caveat", "risk", "risks"},
+    "implementation": {"implementation", "implementations", "code", "repo", "repository", "github", "project"},
+    "benchmark": {"benchmark", "benchmarks", "metric", "score", "result", "results", "performance"},
+    "evidence": {"evidence", "source", "sources", "citation", "citations", "reference", "references"},
+    "contribution": {"contribution", "contributions", "insight", "insights", "novel", "main"},
+    "summary": {"summary", "overview", "tldr", "explain"},
+    "abstract": {"abstract"},
+}
+
 
 @dataclass(frozen=True)
 class PaperReaderQuestion:
@@ -170,8 +182,14 @@ def _rank_sections(sections: Sequence[Any], question: str) -> list[Any]:
     terms = _terms(question)
     scored: list[tuple[float, Any]] = []
     for section in sections:
-        text = f"{getattr(section, 'title', '')} {getattr(section, 'summary', '') or ''} {getattr(section, 'textExcerpt', '')}"
+        section_type = _text(getattr(section, "sectionType", "")).casefold()
+        text = (
+            f"{section_type} {getattr(section, 'title', '')} "
+            f"{getattr(section, 'summary', '') or ''} {getattr(section, 'textExcerpt', '')}"
+        )
         score = sum(1 for term in terms if term in text.casefold())
+        if section_type in SECTION_TYPE_KEYWORDS and terms.intersection(SECTION_TYPE_KEYWORDS[section_type]):
+            score += 3
         if not terms and text.strip():
             score = 1
         if score:

@@ -1,5 +1,6 @@
 import { StudioFallbackNotice } from "@/features/studio/shared/components/studio-fallback-notice"
 import { StudioMetricCard, StudioMetricGrid, StudioPageHeader } from "@/features/studio/shared/components/studio-dashboard"
+import { PaperPdfProxyStatsPanel } from "@/features/studio/shared/components/paper-pdf-proxy-stats-panel"
 import { StudioSectionCard } from "@/features/studio/shared/components/studio-section-card"
 import { studioModuleEntries } from "@/features/studio/shared/lib/studio-navigation"
 
@@ -20,6 +21,8 @@ export default function StudioPage() {
       </StudioMetricGrid>
 
       <StudioFallbackNotice message="Studio modules use live /api/v1 endpoints first. When a module cannot reach the API, it must show a visible fallback notice before using deterministic fallback data." />
+
+      <PaperPdfProxyStatsPanel />
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4" aria-label="Studio module entries">
         {studioModuleEntries.map((entry) => (

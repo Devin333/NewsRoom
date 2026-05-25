@@ -331,7 +331,8 @@ class PapersApplicationService:
         summary = self._cached_summary_for(paper, self._summary_route(), locale=locale)
         if summary is None and paper.aiSummary is not None and paper.aiSummary.locale == locale:
             summary = paper.aiSummary
-        return build_reader_payload(paper, ai_summary=summary)
+        candidates = tuple(self._published_papers(self._load_cache()))
+        return build_reader_payload(paper, ai_summary=summary, related_paper_candidates=candidates)
 
     def ask_paper(self, paper_id: str, *, question: str, locale: PaperLocale) -> PaperReaderAnswer:
         normalized_question = " ".join(question.strip().split())

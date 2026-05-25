@@ -143,12 +143,17 @@ export interface PaperSection {
   summary?: string
   sectionType:
     | "abstract"
+    | "summary"
+    | "contribution"
     | "introduction"
     | "related_work"
     | "method"
     | "experiment"
     | "result"
     | "limitation"
+    | "implementation"
+    | "benchmark"
+    | "evidence"
     | "conclusion"
     | "appendix"
     | "unknown"
@@ -165,14 +170,45 @@ export interface PaperReaderQuality {
   lastUpdatedAt?: string | null
 }
 
+export interface RelatedPaper {
+  id: string
+  title: string
+  slug: string
+  relationReason: string
+  score: number
+  venue?: string
+  publishedAt?: string
+  paperUrl?: string
+}
+
+export interface RelatedProject {
+  id: string
+  name: string
+  url?: string
+  sourceType: "implementation" | "repository" | "project" | string
+  relationReason: string
+  score: number
+  githubStars?: number
+}
+
+export interface RelatedNews {
+  id: string
+  title: string
+  url?: string
+  sourceType: string
+  relationReason: string
+  score: number
+  summary?: string
+}
+
 export interface PaperReaderPayload {
   paper: Paper
   sections: PaperSection[]
   aiSummary: PaperAISummary | null
   readerNotes: unknown[]
-  relatedPapers: unknown[]
-  relatedProjects: unknown[]
-  relatedNews: unknown[]
+  relatedPapers: RelatedPaper[]
+  relatedProjects: RelatedProject[]
+  relatedNews: RelatedNews[]
   quality: PaperReaderQuality
 }
 

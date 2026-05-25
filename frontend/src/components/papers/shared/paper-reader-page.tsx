@@ -15,7 +15,17 @@ import {
   taskName
 } from "@/lib/papers/format"
 import { askPaper } from "@/lib/papers/api"
-import type { Locale, Paper, PaperAISummary, PaperReaderAnswer, PaperReaderPayload } from "@/lib/papers/types"
+import type {
+  Locale,
+  Paper,
+  PaperAISummary,
+  PaperReaderAnswer,
+  PaperReaderPayload,
+  PaperSection,
+  RelatedNews,
+  RelatedPaper,
+  RelatedProject
+} from "@/lib/papers/types"
 
 export function PaperReaderPage({ reader, locale }: { reader: PaperReaderPayload; locale: Locale }) {
   const paper = reader.paper
@@ -79,12 +89,7 @@ export function PaperReaderPage({ reader, locale }: { reader: PaperReaderPayload
                 <div className="mt-5 space-y-5">
                   {reader.sections.length ? (
                     reader.sections.map((section) => (
-                      <article key={section.id} className="rounded-md border border-[#d8dfd8] p-5 dark:border-border">
-                        <h3 className="text-lg font-bold">{section.title}</h3>
-                        <p className="mt-3 text-base leading-8 text-[#334155]/72 dark:text-muted-foreground">
-                          {section.textExcerpt}
-                        </p>
-                      </article>
+                      <ReaderTextSection key={section.id} section={section} />
                     ))
                   ) : (
                     <p className="text-base leading-8 text-[#334155]/72 dark:text-muted-foreground">
@@ -99,12 +104,40 @@ export function PaperReaderPage({ reader, locale }: { reader: PaperReaderPayload
           <aside className="space-y-4">
             <ReaderPanel summary={summary} paper={paper} locale={locale} />
             <SignalPanel paper={paper} reader={reader} />
-            <RelatedPanel />
+            <RelatedPanel reader={reader} />
           </aside>
         </div>
       </div>
     </main>
   )
+}
+
+function ReaderTextSection({ section }: { section: PaperSection }) {
+  return (
+    <article className="rounded-md border border-[#d8dfd8] p-5 dark:border-border">
+      <div className="flex flex-wrap items-center gap-2">
+        <h3 className="text-lg font-bold">{section.title}</h3>
+        <Badge variant="muted" className="rounded-sm">
+          {formatSectionType(section.sectionType)}
+        </Badge>
+      </div>
+      {section.summary ? (
+        <p className="mt-3 text-sm font-medium leading-6 text-[#334155]/75 dark:text-muted-foreground">
+          {section.summary}
+        </p>
+      ) : null}
+      <p className="mt-3 whitespace-pre-line text-base leading-8 text-[#334155]/72 dark:text-muted-foreground">
+        {section.textExcerpt}
+      </p>
+    </article>
+  )
+}
+
+function formatSectionType(value: PaperSection["sectionType"]) {
+  return value
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ")
 }
 
 function ReaderPanel({ summary, paper, locale }: { summary: PaperAISummary | null; paper: Paper; locale: Locale }) {
@@ -267,14 +300,96 @@ function SignalPanel({ paper, reader }: { paper: Paper; reader: PaperReaderPaylo
   )
 }
 
-function RelatedPanel() {
+function RelatedPanel({ reader }: { reader: PaperReaderPayload }) {
+  const hasRelated = reader.relatedPapers.length || reader.relatedProjects.length || reader.relatedNews.length
   return (
     <section className="rounded-md border border-[#d8dfd8] bg-white p-5 dark:border-border dark:bg-card">
       <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-[#334155]/58">Related entities</h2>
-      <p className="mt-3 text-sm leading-6 text-[#334155]/62 dark:text-muted-foreground">
-        Related papers, projects, and news graph links will appear here when Paper Graph is enabled.
-      </p>
+      {hasRelated ? (
+        <div className="mt-4 space-y-4">
+          <MiniList title="Related papers" empty="No related papers yet.">
+            {reader.relatedPapers.map((item) => (
+              <RelatedPaperRow key={item.id} item={item} />
+            ))}
+          </MiniList>
+          <MiniList title="Projects" empty="No related projects yet.">
+            {reader.relatedProjects.map((item) => (
+              <RelatedProjectRow key={item.id} item={item} />
+            ))}
+          </MiniList>
+          <MiniList title="News and sources" empty="No related news sources yet.">
+            {reader.relatedNews.map((item) => (
+              <RelatedNewsRow key={item.id} item={item} />
+            ))}
+          </MiniList>
+        </div>
+      ) : (
+        <p className="mt-3 text-sm leading-6 text-[#334155]/62 dark:text-muted-foreground">
+          No related paper, project, or news signals are available yet.
+        </p>
+      )}
     </section>
+  )
+}
+
+function RelatedPaperRow({ item }: { item: RelatedPaper }) {
+  return (
+    <Link href={`/papers/${item.slug}`} className="block py-2 text-sm">
+      <span className="flex items-center justify-between gap-3">
+        <span className="font-semibold text-[#334155] dark:text-foreground">{item.title}</span>
+        <FileText className="size-4 shrink-0 text-[#334155]/48" />
+      </span>
+      <span className="mt-1 block text-xs leading-5 text-[#334155]/60 dark:text-muted-foreground">
+        {item.relationReason}
+      </span>
+    </Link>
+  )
+}
+
+function RelatedProjectRow({ item }: { item: RelatedProject }) {
+  const content = (
+    <>
+      <span className="flex items-center justify-between gap-3">
+        <span className="font-semibold text-[#334155] dark:text-foreground">{item.name}</span>
+        {item.url ? <Github className="size-4 shrink-0 text-[#334155]/48" /> : null}
+      </span>
+      <span className="mt-1 block text-xs leading-5 text-[#334155]/60 dark:text-muted-foreground">
+        {item.relationReason}
+      </span>
+    </>
+  )
+  return item.url ? (
+    <a href={item.url} target="_blank" rel="noreferrer" className="block py-2 text-sm">
+      {content}
+    </a>
+  ) : (
+    <div className="py-2 text-sm">{content}</div>
+  )
+}
+
+function RelatedNewsRow({ item }: { item: RelatedNews }) {
+  const content = (
+    <>
+      <span className="flex items-center justify-between gap-3">
+        <span className="font-semibold text-[#334155] dark:text-foreground">{item.title}</span>
+        {item.url ? <ExternalLink className="size-4 shrink-0 text-[#334155]/48" /> : null}
+      </span>
+      <span className="mt-1 block text-xs leading-5 text-[#334155]/60 dark:text-muted-foreground">
+        {item.relationReason} / {item.sourceType}
+      </span>
+      {item.summary ? (
+        <span className="mt-1 block text-xs leading-5 text-[#334155]/58 dark:text-muted-foreground">
+          {item.summary}
+        </span>
+      ) : null}
+    </>
+  )
+  return item.url ? (
+    <a href={item.url} target="_blank" rel="noreferrer" className="block py-2 text-sm">
+      {content}
+    </a>
+  ) : (
+    <div className="py-2 text-sm">{content}</div>
   )
 }
 

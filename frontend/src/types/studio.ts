@@ -58,3 +58,41 @@ export type StudioFallbackNotice = {
   error?: StudioApiError
   action?: ReactNode
 }
+
+export type PaperPdfProxyDataState = "ready" | "partial" | "empty" | "fallback"
+
+export type PaperPdfProxyHostStats = {
+  host: string
+  requestCount: number
+  errorCount: number
+  avgDurationMs?: number
+}
+
+export type PaperPdfProxyRecentError = {
+  timestamp: string
+  host?: string
+  path?: string
+  code: string
+  status?: number
+  durationMs?: number
+}
+
+export type PaperPdfProxyStats = {
+  dataState: PaperPdfProxyDataState
+  windowHours: number
+  generatedAt: string
+  windowStartedAt: string
+  windowEndedAt: string
+  totalRequests: number
+  successCount: number
+  errorCount: number
+  timeoutCount: number
+  oversizedCount: number
+  blockedCount: number
+  invalidContentTypeCount: number
+  upstreamFailureCount: number
+  errorsByCode: Record<string, number>
+  topHosts: PaperPdfProxyHostStats[]
+  recentErrors: PaperPdfProxyRecentError[]
+  notices: string[]
+}
