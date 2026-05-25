@@ -18,7 +18,7 @@ import type { Benchmark, BenchmarkRef, Locale, Paper, PaperMethod } from "@/lib/
 export function MethodDetailPage({ method, locale, papers }: { method: PaperMethod; locale: Locale; papers?: Paper[] }) {
   const [notice, setNotice] = useState<string | null>(null)
   const [selectedPaper, setSelectedPaper] = useState<Paper | null>(null)
-  const methodPapers = papers?.filter((paper) => paper.methodRefs.some((methodRef) => methodRef.slug === method.slug)) ?? getPapersForMethod(method.slug)
+  const methodPapers = papers?.filter((paper) => (paper.methodRefs ?? []).some((methodRef) => methodRef.slug === method.slug)) ?? getPapersForMethod(method.slug)
   const methodBenchmarks = getBenchmarksForMethod(method.slug)
   const commonBenchmarks = method.commonBenchmarks?.length ? method.commonBenchmarks : methodBenchmarks
 

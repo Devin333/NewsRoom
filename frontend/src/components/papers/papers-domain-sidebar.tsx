@@ -55,5 +55,5 @@ function DomainPanel({ index, title, domains, papers, locale }: { index: string;
 }
 
 export function countPapersForTask(papers: Paper[], taskSlug: string) {
-  return papers.filter((paper) => paper.isPublished && paper.taskRefs.some((task) => task.slug === taskSlug)).length
+  return papers.filter((paper) => paper.isPublished && (paper.taskRefs ?? []).some((task) => task.slug === taskSlug)).length
 }

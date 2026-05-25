@@ -81,6 +81,18 @@ export function TrendingPapersPage({ locale, papers }: { locale: Locale; papers:
     updateQuery({ period: nextPeriod === "all" ? null : nextPeriod, paper: null })
   }
 
+  function periodHref(nextPeriod: PaperPeriod) {
+    const nextParams = new URLSearchParams(searchParams.toString())
+    nextParams.delete("paper")
+    if (nextPeriod === "all") {
+      nextParams.delete("period")
+    } else {
+      nextParams.set("period", nextPeriod)
+    }
+    const nextQuery = nextParams.toString()
+    return nextQuery ? `${pathname}?${nextQuery}` : pathname
+  }
+
   function updateSort(nextSort: PaperSort) {
     updateQuery({ sort: nextSort === "trending" ? null : nextSort, paper: null })
   }
@@ -102,6 +114,13 @@ export function TrendingPapersPage({ locale, papers }: { locale: Locale; papers:
     updateQuery({ paper: null })
   }
 
+  function closeDrawerHref() {
+    const nextParams = new URLSearchParams(searchParams.toString())
+    nextParams.delete("paper")
+    const nextQuery = nextParams.toString()
+    return nextQuery ? `${pathname}?${nextQuery}` : pathname
+  }
+
   return (
     <div className="space-y-0">
       <PapersMicrobar
@@ -120,11 +139,12 @@ export function TrendingPapersPage({ locale, papers }: { locale: Locale; papers:
         ]}
       />
       <div className="mt-6 flex flex-col gap-4 border-y border-[#d7dfd8] py-4 md:flex-row md:items-center md:justify-between dark:border-border">
-        <PaperPeriodTabs value={period} locale={locale} onChange={updatePeriod} />
+        <PaperPeriodTabs value={period} locale={locale} hrefForPeriod={periodHref} onChange={updatePeriod} />
         <form className="flex w-full gap-2 md:max-w-xl" onSubmit={submitSearch}>
           <div className="relative min-w-0 flex-1">
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[#334155]/45" />
             <Input
+              name="q"
               value={searchText}
               onChange={(event) => setSearchText(event.target.value)}
               placeholder={t(papersCopy.searchPlaceholder, locale)}
@@ -166,6 +186,7 @@ export function TrendingPapersPage({ locale, papers }: { locale: Locale; papers:
         paperId={selectedPaperId}
         locale={locale}
         open={Boolean(selectedPaperId)}
+        closeHref={closeDrawerHref()}
         onOpenChange={(open) => {
           if (!open) {
             closeDrawer()

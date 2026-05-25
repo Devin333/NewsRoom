@@ -17,7 +17,7 @@ import type { Benchmark, Locale, Paper, PaperTask } from "@/lib/papers/types"
 export function TaskDetailPage({ task, locale, papers }: { task: PaperTask; locale: Locale; papers?: Paper[] }) {
   const [notice, setNotice] = useState<string | null>(null)
   const [selectedPaper, setSelectedPaper] = useState<Paper | null>(null)
-  const taskPapers = papers?.filter((paper) => paper.taskRefs.some((taskRef) => taskRef.slug === task.slug)) ?? getPapersForTask(task.slug)
+  const taskPapers = papers?.filter((paper) => (paper.taskRefs ?? []).some((taskRef) => taskRef.slug === task.slug)) ?? getPapersForTask(task.slug)
   const taskBenchmarks = getBenchmarksForTask(task.slug)
 
   function previewPaper(paper: Paper) {
@@ -72,7 +72,7 @@ function TaskDetailHero({
   benchmarks: Benchmark[]
   locale: Locale
 }) {
-  const methodsUsed = new Set(taskPapers.flatMap((paper) => paper.methodRefs.map((method) => method.slug))).size || task.methodCount
+  const methodsUsed = new Set(taskPapers.flatMap((paper) => (paper.methodRefs ?? []).map((method) => method.slug))).size || task.methodCount
   const statItems = [
     { label: t(papersCopy.papers, locale), value: taskPapers.length },
     { label: t(papersCopy.benchmarks, locale), value: benchmarks.length || task.benchmarkCount },

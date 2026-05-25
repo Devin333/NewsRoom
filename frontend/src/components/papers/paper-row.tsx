@@ -20,6 +20,10 @@ export function PaperRow({
 }) {
   const paperHref = paperPdfUrl(paper) ?? paper.paperUrl ?? paper.arxivUrl
   const repoHref = paper.repoUrl?.startsWith("https://github.com/") && paper.repoUrl !== "https://github.com/" ? paper.repoUrl : undefined
+  const authors = paper.authors ?? []
+  const tasks = paper.taskRefs ?? []
+  const methods = paper.methodRefs ?? []
+  const tags = paper.tags ?? []
 
   function handleRowClick(event: MouseEvent<HTMLElement>) {
     const target = event.target
@@ -60,7 +64,7 @@ export function PaperRow({
           </button>
 
           <p className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-[#334155]/55 dark:text-muted-foreground">
-            <span>{paper.authors.slice(0, 3).join(", ")}</span>
+            <span>{authors.slice(0, 3).join(", ")}</span>
             <span aria-hidden="true">·</span>
             <span>{formatPaperDate(paper.publishedAt, locale)}</span>
             {paper.venue ? (
@@ -76,7 +80,7 @@ export function PaperRow({
           </p>
 
           <div className="mt-4">
-            <PaperTags tasks={paper.taskRefs} methods={paper.methodRefs} tags={paper.tags} locale={locale} />
+            <PaperTags tasks={tasks} methods={methods} tags={tags} locale={locale} />
           </div>
 
           <div className="mt-5 flex flex-wrap gap-2 lg:hidden">

@@ -1,7 +1,8 @@
 "use client"
 
 import { useEffect, useState, type ReactNode } from "react"
-import { Brain, ExternalLink, FileText, Github, Globe2, Quote, RefreshCw, ThermometerSun, X } from "lucide-react"
+import Link from "next/link"
+import { BookOpen, Brain, ExternalLink, FileText, Github, Globe2, Quote, RefreshCw, ThermometerSun, X } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { fetchPaperDetail, requestPaperSummary } from "@/lib/papers/api"
@@ -25,12 +26,14 @@ export function PaperDetailDrawer({
   paperId,
   locale,
   open,
+  closeHref,
   onOpenChange
 }: {
   paper: Paper | null
   paperId?: string | null
   locale: Locale
   open: boolean
+  closeHref?: string
   onOpenChange: (open: boolean) => void
 }) {
   const [activePaper, setActivePaper] = useState<Paper | null>(paper)
@@ -141,6 +144,9 @@ export function PaperDetailDrawer({
       ? activePaper.paperUrl
       : undefined)
   const citationCount = activePaper.citationCount
+  const authors = activePaper.authors ?? []
+  const tasks = activePaper.taskRefs ?? []
+  const methods = activePaper.methodRefs ?? []
   const implementations = activePaper.implementations ?? []
   const benchmarks = activePaper.benchmarks ?? []
 
@@ -168,14 +174,18 @@ export function PaperDetailDrawer({
             Trending
             {arxivHref ? <span> / {arxivIdFromUrl(arxivHref)}</span> : null}
           </div>
-          <button
-            type="button"
+          <a
+            href={closeHref ?? "/papers"}
+            role="button"
             className="rounded-full p-2 text-[#334155]/55 transition-colors hover:bg-white hover:text-[#334155] dark:hover:bg-card dark:hover:text-foreground"
             aria-label={t(papersCopy.dismiss, locale)}
-            onClick={() => onOpenChange(false)}
-          >
-            <X className="size-5" />
-          </button>
+              onClick={(event) => {
+                event.preventDefault()
+                onOpenChange(false)
+              }}
+            >
+              <X className="size-5" />
+          </a>
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-7 py-7">
@@ -203,7 +213,7 @@ export function PaperDetailDrawer({
               ) : null}
             </div>
             <p className="mt-5 border-t border-[#d8dfd8] pt-5 text-base leading-7 text-[#334155] dark:border-border dark:text-foreground">
-              {activePaper.authors.join(", ")}
+              {authors.join(", ")}
             </p>
             <div className="mt-4 flex flex-wrap gap-2">
               {pdfHref ? (
@@ -241,6 +251,12 @@ export function PaperDetailDrawer({
                   </a>
                 </Button>
               ) : null}
+              <Button asChild className="rounded-md">
+                <Link href={`/papers/${encodeURIComponent(activePaper.slug || activePaper.id)}`}>
+                  <BookOpen className="size-4" />
+                  Open reader
+                </Link>
+              </Button>
             </div>
           </header>
 
@@ -333,9 +349,9 @@ export function PaperDetailDrawer({
             </div>
           </DetailSection>
 
-          <DetailSection title="Tasks" meta={`${activePaper.taskRefs.length} tagged`}>
+          <DetailSection title="Tasks" meta={`${tasks.length} tagged`}>
             <div className="flex flex-wrap gap-2">
-              {activePaper.taskRefs.map((task) => (
+              {tasks.map((task) => (
                 <Badge key={task.id} variant="accent" className="rounded-sm border-emerald-200 bg-emerald-100/80 text-emerald-800">
                   {taskName(task, locale)}
                 </Badge>
@@ -343,9 +359,9 @@ export function PaperDetailDrawer({
             </div>
           </DetailSection>
 
-          <DetailSection title="Methods" meta={`${activePaper.methodRefs.length} used`}>
+          <DetailSection title="Methods" meta={`${methods.length} used`}>
             <div className="flex flex-wrap gap-2">
-              {activePaper.methodRefs.map((method) => (
+              {methods.map((method) => (
                 <Badge key={method.id} variant="muted" className="rounded-sm bg-white text-[#334155] dark:bg-card dark:text-foreground">
                   {methodName(method, locale)}
                 </Badge>

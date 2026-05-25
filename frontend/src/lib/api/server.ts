@@ -49,6 +49,26 @@ export async function safeApiGet<T>(path: string): Promise<SafeApiResult<T>> {
   }
 }
 
+export async function safeApiPost<T>(path: string, body?: unknown): Promise<SafeApiResult<T>> {
+  try {
+    return { ok: true, data: await apiPost<T>(path, body) }
+  } catch (error) {
+    if (error instanceof NewsRoomApiError) {
+      return {
+        ok: false,
+        errorCode: error.code,
+        errorMessage: error.message,
+        requestId: error.requestId
+      }
+    }
+    return {
+      ok: false,
+      errorCode: "request_failed",
+      errorMessage: error instanceof Error ? error.message : "Request failed"
+    }
+  }
+}
+
 async function apiGet<T>(path: string): Promise<T> {
   const response = await fetch(apiUrl(path), {
     method: "GET",
@@ -58,6 +78,74 @@ async function apiGet<T>(path: string): Promise<T> {
 
   const payload = await parsePayload<T>(response)
   if (!response.ok) {
+    if (isApiEnvelope<T>(payload) && payload.error) {
+      throw new NewsRoomApiError(
+        {
+          code: payload.error.code,
+          message: payload.error.message,
+          detail: "detail" in payload.error ? payload.error.detail : payload.error.details,
+          requestId: payload.error.requestId ?? payload.error.request_id ?? payload.request_id ?? undefined
+        },
+        response.status
+      )
+    }
+    throw new NewsRoomApiError(
+      {
+        code: `http_${response.status}`,
+        message: response.statusText || "API request failed",
+        detail: payload
+      },
+      response.status
+    )
+  }
+
+  if (isApiEnvelope<T>(payload)) {
+    if (payload.success === false) {
+      const error = payload.error ?? {
+        code: "api_error",
+        message: "API request failed",
+        detail: payload
+      }
+      throw new NewsRoomApiError(
+        {
+          code: error.code,
+          message: error.message,
+          detail: "detail" in error ? error.detail : error.details,
+          requestId: error.requestId ?? error.request_id ?? payload.request_id ?? undefined
+        },
+        response.status
+      )
+    }
+    return payload.data as T
+  }
+
+  return payload as T
+}
+
+async function apiPost<T>(path: string, body?: unknown): Promise<T> {
+  const response = await fetch(apiUrl(path), {
+    method: "POST",
+    headers: {
+      ...requestHeaders(),
+      "Content-Type": "application/json",
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+    cache: "no-store"
+  })
+
+  const payload = await parsePayload<T>(response)
+  if (!response.ok) {
+    if (isApiEnvelope<T>(payload) && payload.error) {
+      throw new NewsRoomApiError(
+        {
+          code: payload.error.code,
+          message: payload.error.message,
+          detail: "detail" in payload.error ? payload.error.detail : payload.error.details,
+          requestId: payload.error.requestId ?? payload.error.request_id ?? payload.request_id ?? undefined
+        },
+        response.status
+      )
+    }
     throw new NewsRoomApiError(
       {
         code: `http_${response.status}`,

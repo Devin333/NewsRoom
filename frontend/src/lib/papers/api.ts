@@ -1,5 +1,5 @@
 import { apiGet, apiPost } from "@/lib/api/client"
-import type { Locale, Paper, PaperAISummary, PaperListResult, PaperPeriod, PaperSort } from "@/lib/papers/types"
+import type { Locale, Paper, PaperAISummary, PaperListResult, PaperPeriod, PaperReaderPayload, PaperSort } from "@/lib/papers/types"
 
 type ApiEnvelope<T> = {
   success: boolean
@@ -41,12 +41,12 @@ export class PapersApiError extends Error {
 }
 
 export async function fetchPapers(params: PaperListParams, init?: RequestInit): Promise<PaperListResult> {
-  const envelope = await apiGet<ApiEnvelope<PaperListResult>>(`/api/v1/papers${queryString(params)}`, init)
+  const envelope = await apiGet<ApiEnvelope<PaperListResult>>(`/api/papers${queryString(params)}`, init)
   return unwrapEnvelope(envelope)
 }
 
 export async function fetchPaperDetail(paperId: string, init?: RequestInit): Promise<Paper> {
-  const envelope = await apiGet<ApiEnvelope<{ paper: Paper }>>(`/api/v1/papers/${encodeURIComponent(paperId)}`, init)
+  const envelope = await apiGet<ApiEnvelope<{ paper: Paper }>>(`/api/papers/${encodeURIComponent(paperId)}`, init)
   return unwrapEnvelope(envelope).paper
 }
 
@@ -56,11 +56,23 @@ export async function requestPaperSummary(
   init?: RequestInit
 ): Promise<PaperAISummary> {
   const envelope = await apiPost<ApiEnvelope<{ summary: PaperAISummary }>>(
-    `/api/v1/papers/${encodeURIComponent(paperId)}/summary?locale=${locale}`,
+    `/api/papers/${encodeURIComponent(paperId)}/summary?locale=${locale}`,
     undefined,
     init
   )
   return unwrapEnvelope(envelope).summary
+}
+
+export async function fetchPaperReaderPayload(
+  paperId: string,
+  locale: Locale,
+  init?: RequestInit
+): Promise<PaperReaderPayload> {
+  const envelope = await apiGet<ApiEnvelope<{ reader: PaperReaderPayload }>>(
+    `/api/papers/${encodeURIComponent(paperId)}/reader?locale=${locale}`,
+    init
+  )
+  return unwrapEnvelope(envelope).reader
 }
 
 function unwrapEnvelope<T>(envelope: ApiEnvelope<T>): T {

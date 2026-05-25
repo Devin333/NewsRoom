@@ -1,0 +1,250 @@
+import type { ReactNode } from "react"
+import { ArrowLeft, Brain, ExternalLink, FileText, Github, MessageSquare, Quote, Sparkles, ThermometerSun } from "lucide-react"
+import Link from "next/link"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import {
+  formatCompactNumber,
+  formatPaperDate,
+  methodName,
+  paperPdfUrl,
+  paperSnippet,
+  paperTitle,
+  taskName
+} from "@/lib/papers/format"
+import type { Locale, Paper, PaperAISummary, PaperReaderPayload } from "@/lib/papers/types"
+
+export function PaperReaderPage({ reader, locale }: { reader: PaperReaderPayload; locale: Locale }) {
+  const paper = reader.paper
+  const title = paperTitle(paper, locale)
+  const summary = reader.aiSummary ?? paper.aiSummary ?? null
+  const pdfUrl = paperPdfUrl(paper)
+  const authors = paper.authors ?? []
+  const tasks = paper.taskRefs ?? []
+  const methods = paper.methodRefs ?? []
+
+  return (
+    <main className="min-h-screen bg-[#f7f9f6] text-[#334155] dark:bg-background dark:text-foreground">
+      <div className="mx-auto max-w-[118rem] px-5 py-5 sm:px-8 lg:px-10">
+        <div className="mb-5 flex items-center justify-between gap-4 border-b border-[#d8dfd8] pb-4 dark:border-border">
+          <Button asChild variant="ghost" className="rounded-full">
+            <Link href="/papers">
+              <ArrowLeft className="size-4" />
+              Papers
+            </Link>
+          </Button>
+          <div className="flex flex-wrap justify-end gap-2">
+            <ExternalLinks paper={paper} />
+          </div>
+        </div>
+
+        <header className="pb-6">
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#334155]/55">
+            {paper.venue ?? "Paper"} / {formatPaperDate(paper.publishedAt, locale)}
+          </p>
+          <h1 className="mt-3 max-w-6xl text-4xl font-black leading-tight tracking-normal sm:text-5xl">
+            {title}
+          </h1>
+          <p className="mt-4 max-w-5xl text-base leading-7 text-[#334155]/68 dark:text-muted-foreground">
+            {authors.join(", ")}
+          </p>
+          <div className="mt-5 flex flex-wrap gap-2">
+            {tasks.map((task) => (
+              <Badge key={task.id} variant="accent" className="rounded-sm">
+                {taskName(task, locale)}
+              </Badge>
+            ))}
+            {methods.map((method) => (
+              <Badge key={method.id} variant="muted" className="rounded-sm">
+                {methodName(method, locale)}
+              </Badge>
+            ))}
+          </div>
+        </header>
+
+        <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_26rem] 2xl:grid-cols-[minmax(0,1fr)_30rem]">
+          <section className="min-h-[42rem] overflow-hidden rounded-md border border-[#d8dfd8] bg-white dark:border-border dark:bg-card">
+            {pdfUrl ? (
+              <iframe
+                title={title}
+                src={`/api/papers/pdf?url=${encodeURIComponent(pdfUrl)}`}
+                className="h-[78vh] min-h-[42rem] w-full bg-white"
+              />
+            ) : (
+              <div className="p-7">
+                <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-[#334155]/55">Text fallback</h2>
+                <div className="mt-5 space-y-5">
+                  {reader.sections.length ? (
+                    reader.sections.map((section) => (
+                      <article key={section.id} className="rounded-md border border-[#d8dfd8] p-5 dark:border-border">
+                        <h3 className="text-lg font-bold">{section.title}</h3>
+                        <p className="mt-3 text-base leading-8 text-[#334155]/72 dark:text-muted-foreground">
+                          {section.textExcerpt}
+                        </p>
+                      </article>
+                    ))
+                  ) : (
+                    <p className="text-base leading-8 text-[#334155]/72 dark:text-muted-foreground">
+                      {paperSnippet(paper, locale)}
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+          </section>
+
+          <aside className="space-y-4">
+            <ReaderPanel summary={summary} paper={paper} locale={locale} />
+            <SignalPanel paper={paper} reader={reader} />
+            <RelatedPanel />
+          </aside>
+        </div>
+      </div>
+    </main>
+  )
+}
+
+function ReaderPanel({ summary, paper, locale }: { summary: PaperAISummary | null; paper: Paper; locale: Locale }) {
+  return (
+    <section className="rounded-md border border-[#d8dfd8] bg-white p-5 dark:border-border dark:bg-card">
+      <div className="flex items-center justify-between gap-3 border-b border-[#d8dfd8] pb-3 dark:border-border">
+        <h2 className="inline-flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.18em] text-[#334155]/58">
+          <Brain className="size-4" />
+          AI Reader
+        </h2>
+        <Badge variant="muted" className="rounded-sm">
+          v1
+        </Badge>
+      </div>
+      {summary ? (
+        <div className="mt-4 space-y-4">
+          <p className="text-base leading-7">{summary.summary}</p>
+          {summary.keyInsights.length ? (
+            <Block title="TL;DR" items={summary.keyInsights} />
+          ) : null}
+          {summary.limitations.length ? (
+            <Block title="Limitations" items={summary.limitations} />
+          ) : null}
+        </div>
+      ) : (
+        <p className="mt-4 text-sm leading-6 text-[#334155]/64 dark:text-muted-foreground">
+          AI summary is not cached yet. Open the preview drawer to generate it on demand.
+        </p>
+      )}
+      <div className="mt-5 rounded-md border border-dashed border-[#d8dfd8] p-4 text-sm text-[#334155]/58 dark:border-border dark:text-muted-foreground">
+        <div className="flex items-center gap-2 font-semibold text-[#334155] dark:text-foreground">
+          <MessageSquare className="size-4" />
+          Ask this paper
+        </div>
+        <p className="mt-2">
+          {locale === "zh" ? "Reader Agent Q&A is not enabled in this phase." : "Reader Agent Q&A is not enabled in this phase."}
+        </p>
+      </div>
+      <div className="mt-5 grid grid-cols-3 gap-2 text-sm">
+        <Metric icon={<ThermometerSun className="size-4" />} value={paper.newsroomHeatScore?.toFixed(1) ?? "N/A"} label="Heat" />
+        <Metric icon={<Github className="size-4" />} value={paper.githubStars ? formatCompactNumber(paper.githubStars) : "N/A"} label="Stars" />
+        <Metric icon={<Quote className="size-4" />} value={paper.citationCount ? formatCompactNumber(paper.citationCount) : "N/A"} label="Cites" />
+      </div>
+    </section>
+  )
+}
+
+function SignalPanel({ paper, reader }: { paper: Paper; reader: PaperReaderPayload }) {
+  const implementations = paper.implementations ?? []
+  const benchmarks = paper.benchmarks ?? []
+  return (
+    <section className="rounded-md border border-[#d8dfd8] bg-white p-5 dark:border-border dark:bg-card">
+      <h2 className="inline-flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.18em] text-[#334155]/58">
+        <Sparkles className="size-4" />
+        Research Signals
+      </h2>
+      <div className="mt-4 space-y-4">
+        <MiniList title="Implementations" empty="No verified implementation repository yet.">
+          {implementations.map((item) => (
+            <a key={item.id} href={item.repoUrl} target="_blank" rel="noreferrer" className="flex items-center justify-between gap-3 py-2 text-sm">
+              <span className="truncate font-semibold">{item.name}</span>
+              <Github className="size-4 shrink-0 text-[#334155]/48" />
+            </a>
+          ))}
+        </MiniList>
+        <MiniList title="Benchmarks" empty="No real benchmark fields are recorded yet.">
+          {benchmarks.map((item) => (
+            <div key={item.id} className="flex items-center justify-between gap-3 py-2 text-sm">
+              <span className="font-semibold">{item.name}</span>
+              <span className="text-[#334155]/58">{[item.metric, item.value].filter(Boolean).join(" / ")}</span>
+            </div>
+          ))}
+        </MiniList>
+        <div className="rounded-md bg-[#eef4ef] p-3 text-xs leading-5 text-[#334155]/68 dark:bg-secondary dark:text-muted-foreground">
+          Quality: PDF {reader.quality.pdfAvailable ? "available" : "missing"} / summary{" "}
+          {reader.quality.summaryAvailable ? "available" : "not cached"} / evidence coverage{" "}
+          {Math.round(reader.quality.evidenceCoverage * 100)}%
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function RelatedPanel() {
+  return (
+    <section className="rounded-md border border-[#d8dfd8] bg-white p-5 dark:border-border dark:bg-card">
+      <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-[#334155]/58">Related entities</h2>
+      <p className="mt-3 text-sm leading-6 text-[#334155]/62 dark:text-muted-foreground">
+        Related papers, projects, and news graph links will appear here when Paper Graph is enabled.
+      </p>
+    </section>
+  )
+}
+
+function ExternalLinks({ paper }: { paper: Paper }) {
+  const links = [
+    { href: paperPdfUrl(paper), label: "PDF", icon: <FileText className="size-4" /> },
+    { href: paper.arxivUrl, label: "arXiv", icon: <ExternalLink className="size-4" /> },
+    { href: paper.repoUrl, label: "Code", icon: <Github className="size-4" /> },
+    { href: paper.projectUrl, label: "Project", icon: <ExternalLink className="size-4" /> },
+  ].filter((link) => link.href)
+
+  return links.map((link) => (
+    <Button key={link.label} asChild variant="outline" className="rounded-full bg-white dark:bg-card">
+      <a href={link.href} target="_blank" rel="noreferrer">
+        {link.icon}
+        {link.label}
+      </a>
+    </Button>
+  ))
+}
+
+function Block({ title, items }: { title: string; items: string[] }) {
+  return (
+    <div>
+      <h3 className="text-xs font-semibold uppercase tracking-[0.16em] text-[#334155]/52">{title}</h3>
+      <ul className="mt-2 list-disc space-y-1 pl-5 text-sm leading-6 text-[#334155]/72 dark:text-muted-foreground">
+        {items.map((item) => (
+          <li key={item}>{item}</li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+function Metric({ icon, value, label }: { icon: ReactNode; value: string; label: string }) {
+  return (
+    <div className="rounded-md border border-[#d8dfd8] p-3 dark:border-border">
+      <div className="flex items-center gap-2 text-[#334155]/55">{icon}</div>
+      <div className="mt-2 font-bold">{value}</div>
+      <div className="text-xs text-[#334155]/55">{label}</div>
+    </div>
+  )
+}
+
+function MiniList({ title, empty, children }: { title: string; empty: string; children: ReactNode }) {
+  const items = Array.isArray(children) ? children.filter(Boolean) : children ? [children] : []
+  return (
+    <div>
+      <h3 className="text-xs font-semibold uppercase tracking-[0.16em] text-[#334155]/52">{title}</h3>
+      <div className="mt-2 divide-y divide-[#d8dfd8] dark:divide-border">
+        {items.length ? items : <p className="py-2 text-sm text-[#334155]/58 dark:text-muted-foreground">{empty}</p>}
+      </div>
+    </div>
+  )
+}

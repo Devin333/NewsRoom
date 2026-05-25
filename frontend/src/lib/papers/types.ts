@@ -66,6 +66,21 @@ export interface PaperAISummary {
   cached: boolean
 }
 
+export interface PaperSourceRef {
+  sourceId?: string
+  sourceName?: string
+  sourceType?: string
+  url?: string
+  externalId?: string
+  title?: string
+}
+
+export interface PaperEvidenceRef extends PaperSourceRef {
+  evidenceId?: string
+  summary?: string
+  quote?: string
+}
+
 export interface Paper {
   id: string
   slug: string
@@ -95,6 +110,8 @@ export interface Paper {
   implementations?: PaperImplementation[]
   benchmarks?: PaperBenchmarkResult[]
   aiSummary?: PaperAISummary
+  evidenceRefs?: PaperEvidenceRef[]
+  sourceRefs?: PaperSourceRef[]
   isPublished: boolean
 }
 
@@ -113,6 +130,50 @@ export interface PaperListResult {
   offset: number
   has_next?: boolean
   papers: Paper[]
+}
+
+export interface PaperSection {
+  id: string
+  paperId: string
+  title: string
+  level: number
+  pageStart?: number
+  pageEnd?: number
+  textExcerpt: string
+  summary?: string
+  sectionType:
+    | "abstract"
+    | "introduction"
+    | "related_work"
+    | "method"
+    | "experiment"
+    | "result"
+    | "limitation"
+    | "conclusion"
+    | "appendix"
+    | "unknown"
+}
+
+export interface PaperReaderQuality {
+  paperId: string
+  pdfAvailable: boolean
+  textExtracted: boolean
+  summaryAvailable: boolean
+  implementationVerified: boolean
+  benchmarkVerified: boolean
+  evidenceCoverage: number
+  lastUpdatedAt?: string | null
+}
+
+export interface PaperReaderPayload {
+  paper: Paper
+  sections: PaperSection[]
+  aiSummary: PaperAISummary | null
+  readerNotes: unknown[]
+  relatedPapers: unknown[]
+  relatedProjects: unknown[]
+  relatedNews: unknown[]
+  quality: PaperReaderQuality
 }
 
 export interface PaperTask {

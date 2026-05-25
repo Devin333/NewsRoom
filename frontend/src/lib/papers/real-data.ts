@@ -97,7 +97,22 @@ export async function loadApiPapers(): Promise<Paper[]> {
   }
 
   const rawPapers = Array.isArray(result.data?.papers) ? result.data.papers : []
-  return rawPapers.map(cachedPaperToPaper).filter(isPaper)
+  return rawPapers.filter(isAuthoritativePaper)
+}
+
+function isAuthoritativePaper(value: unknown): value is Paper {
+  if (!isRecord(value)) {
+    return false
+  }
+  return Boolean(
+    text(value.id) &&
+      text(value.slug) &&
+      text(value.title) &&
+      text(value.abstractSnippet) &&
+      Array.isArray(value.authors) &&
+      text(value.publishedAt) &&
+      value.isPublished !== undefined
+  )
 }
 
 export function loadCachedPapers(): Paper[] {

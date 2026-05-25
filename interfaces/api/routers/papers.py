@@ -125,6 +125,37 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
             )
         return helpers.success({"summary": summary.to_dict()})
 
+    @router.get("/api/v1/papers/{paper_id}/reader")
+    def get_reader_payload(paper_id: str, locale: str = Query("en", pattern="^(zh|en)$")):
+        try:
+            reader = services.papers_service_factory().get_reader_payload(
+                paper_id,
+                locale=locale,  # type: ignore[arg-type]
+            )
+        except PaperCacheNotFoundError:
+            return helpers.error(
+                status_code=404,
+                code="papers_cache_not_found",
+                message="papers data cache was not found",
+                user_action_required=True,
+            )
+        except PaperCacheInvalidError as exc:
+            return helpers.error(
+                status_code=500,
+                code="papers_cache_invalid",
+                message="papers data cache could not be read",
+                details={"reason": str(exc)},
+                retryable=True,
+            )
+        except PaperNotFoundError:
+            return helpers.error(
+                status_code=404,
+                code="paper_not_found",
+                message="paper was not found",
+                user_action_required=True,
+            )
+        return helpers.success({"reader": reader.to_dict()})
+
     return router
 
 

@@ -27,6 +27,21 @@ describe("Papers API data loading", () => {
             paperUrl: "https://arxiv.org/abs/2605.00001",
             arxivUrl: "https://arxiv.org/abs/2605.00001",
             pdfUrl: "https://arxiv.org/pdf/2605.00001",
+            projectUrl: "https://example.com/project",
+            newsroomHeatScore: 42,
+            implementations: [{ id: "repo", name: "owner/repo", repoUrl: "https://github.com/owner/repo" }],
+            benchmarks: [{ id: "bench", name: "MMLU", metric: "acc", value: 90 }],
+            aiSummary: {
+              paperId: "arxiv-2605.00001",
+              locale: "en",
+              modelRoute: "writer-primary",
+              abstractHash: "hash",
+              summary: "A summary.",
+              keyInsights: ["A"],
+              limitations: [],
+              generatedAt: "2026-05-24T00:00:00Z",
+              cached: true
+            },
             isPublished: true
           }
         ]
@@ -41,6 +56,11 @@ describe("Papers API data loading", () => {
       id: "arxiv-2605.00001",
       title: "Agent Paper",
       pdfUrl: "https://arxiv.org/pdf/2605.00001",
+      projectUrl: "https://example.com/project",
+      newsroomHeatScore: 42,
+      implementations: [{ id: "repo", name: "owner/repo", repoUrl: "https://github.com/owner/repo" }],
+      benchmarks: [{ id: "bench", name: "MMLU", metric: "acc", value: 90 }],
+      aiSummary: expect.objectContaining({ summary: "A summary." }),
       isPublished: true
     })
     expect(papers[0].githubStars).toBeUndefined()

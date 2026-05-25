@@ -18,6 +18,9 @@ from framework.llm import (
     LLMRequest,
     build_openai_compatible_client_from_config,
 )
+from business.boards.paper_radar.public_mapper import map_paper_radar_artifact_to_public_papers, sanitize_public_payload
+from business.boards.paper_radar.reader_payload_builder import PaperReaderPayload, build_reader_payload
+from interfaces.services.paper_artifact_repository import PaperArtifactRepository
 
 
 PaperPeriod = Literal["daily", "weekly", "monthly", "all"]
@@ -161,6 +164,8 @@ class PublicPaper:
     benchmarks: tuple[PaperBenchmarkResult, ...] = ()
     newsroomHeatScore: float | None = None
     aiSummary: PaperAISummary | None = None
+    evidenceRefs: tuple[Mapping[str, Any], ...] = ()
+    sourceRefs: tuple[Mapping[str, Any], ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -198,6 +203,10 @@ class PublicPaper:
                 payload[key] = value
         if self.aiSummary is not None:
             payload["aiSummary"] = self.aiSummary.to_dict()
+        if self.evidenceRefs:
+            payload["evidenceRefs"] = [sanitize_public_payload(ref) for ref in self.evidenceRefs]
+        if self.sourceRefs:
+            payload["sourceRefs"] = [sanitize_public_payload(ref) for ref in self.sourceRefs]
         return payload
 
 
@@ -252,11 +261,14 @@ class PapersApplicationService:
         *,
         papers_data_path: str | Path | None = None,
         summary_cache_path: str | Path | None = None,
+        artifact_repository: PaperArtifactRepository | None = None,
         llm_client_factory: Callable[[str], Any] | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
+        self._explicit_papers_data_path = papers_data_path is not None or bool(os.environ.get(PAPERS_DATA_PATH_ENV))
         self.papers_data_path = _papers_data_path(papers_data_path)
         self.summary_cache_path = _summary_cache_path(summary_cache_path)
+        self.artifact_repository = artifact_repository or PaperArtifactRepository()
         self.llm_client_factory = llm_client_factory or _default_llm_client_factory
         self.clock = clock or (lambda: datetime.now(timezone.utc))
 
@@ -306,6 +318,13 @@ class PapersApplicationService:
         self._write_summary_cache(cache)
         return summary
 
+    def get_reader_payload(self, paper_id: str, *, locale: PaperLocale) -> PaperReaderPayload:
+        paper = self.get_paper(paper_id)
+        summary = self._cached_summary_for(paper, self._summary_route(), locale=locale)
+        if summary is None and paper.aiSummary is not None and paper.aiSummary.locale == locale:
+            summary = paper.aiSummary
+        return build_reader_payload(paper, ai_summary=summary)
+
     def _published_papers(self, cache: Mapping[str, Any]) -> list[PublicPaper]:
         raw_papers = cache.get("papers")
         papers = [_paper_payload(raw_paper) for raw_paper in _sequence(raw_papers)]
@@ -333,6 +352,12 @@ class PapersApplicationService:
         return filtered
 
     def _load_cache(self) -> Mapping[str, Any]:
+        if not self._explicit_papers_data_path:
+            artifact_payload = self.artifact_repository.latest_paper_radar_payload()
+            if artifact_payload is not None:
+                mapped = map_paper_radar_artifact_to_public_papers(artifact_payload)
+                if mapped.get("papers"):
+                    return mapped
         if not self.papers_data_path.exists():
             raise PaperCacheNotFoundError(str(self.papers_data_path))
         try:
@@ -451,6 +476,8 @@ def _paper_payload(raw_paper: Any) -> PublicPaper | None:
         isPublished=raw_paper.get("isPublished") is not False,
         implementations=implementations,
         benchmarks=tuple(_benchmarks(raw_paper)),
+        evidenceRefs=tuple(_mapping_refs(raw_paper.get("evidenceRefs") or raw_paper.get("evidence_refs"))),
+        sourceRefs=tuple(_mapping_refs(raw_paper.get("sourceRefs") or raw_paper.get("source_refs"))),
     )
     return _with_heat_score(paper)
 
@@ -637,7 +664,7 @@ def _papers_data_path(configured_path: str | Path | None) -> Path:
     env_path = os.environ.get(PAPERS_DATA_PATH_ENV)
     if env_path:
         return Path(env_path).expanduser().resolve()
-    return _project_root() / "frontend" / "data" / "papers" / "arxiv-papers.json"
+    return _project_root() / ".newsroom" / "papers" / "arxiv-papers.json"
 
 
 def _summary_cache_path(configured_path: str | Path | None) -> Path:
@@ -717,6 +744,16 @@ def _refs(value: Any) -> list[PaperRef]:
         name = _text(item.get("name"))
         if ref_id and slug and name:
             refs.append(PaperRef(id=ref_id, slug=slug, name=name, nameZh=_optional_text(item.get("nameZh"))))
+    return refs
+
+
+def _mapping_refs(value: Any) -> list[Mapping[str, Any]]:
+    refs: list[Mapping[str, Any]] = []
+    for item in _sequence(value):
+        if isinstance(item, Mapping):
+            cleaned = sanitize_public_payload(item)
+            if isinstance(cleaned, Mapping):
+                refs.append(cleaned)
     return refs
 
 

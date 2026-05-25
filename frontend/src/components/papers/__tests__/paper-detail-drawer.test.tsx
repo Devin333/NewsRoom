@@ -68,6 +68,7 @@ describe("PaperDetailDrawer", () => {
     expect(screen.getByText("No real Benchmark / SOTA fields are recorded yet.")).toBeInTheDocument()
     expect(screen.getByRole("link", { name: /view pdf/i })).toHaveAttribute("href", "https://arxiv.org/pdf/2304.02643.pdf")
     expect(screen.getByRole("link", { name: /code/i })).toHaveAttribute("href", "https://github.com/facebookresearch/segment-anything")
+    expect(screen.getByRole("link", { name: /open reader/i })).toHaveAttribute("href", "/papers/segment-anything")
   })
 
   it("notifies when dismissed", () => {
