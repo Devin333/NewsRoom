@@ -116,6 +116,31 @@ describe("PaperDetailDrawer", () => {
     expect(screen.getByText("Contributions")).toBeInTheDocument()
   })
 
+  it("shows paper user state badges when present", () => {
+    render(
+      <PaperDetailDrawer
+        paper={{
+          ...paper,
+          userState: {
+            userId: "user-1",
+            paperId: paper.id,
+            favorite: true,
+            subscribed: true,
+            readingStatus: "reading",
+            progressPercent: 20,
+            updatedAt: "2026-05-24T00:00:00Z"
+          }
+        }}
+        locale="en"
+        open
+        onOpenChange={vi.fn()}
+      />
+    )
+
+    expect(screen.getByText("Favorite")).toBeInTheDocument()
+    expect(screen.getByText("Subscribed")).toBeInTheDocument()
+  })
+
   it("renders retryable summary error state", async () => {
     vi.mocked(requestPaperSummary).mockRejectedValue(new Error("provider unavailable"))
     render(<PaperDetailDrawer paper={paper} locale="en" open onOpenChange={vi.fn()} />)

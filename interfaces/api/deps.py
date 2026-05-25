@@ -8,12 +8,14 @@ from fastapi import Request
 from interfaces.models import ActorContext, actor_context_from_headers
 from interfaces.services.approval_service import ApprovalApplicationService
 from interfaces.services.artifact_service import ArtifactInspectionService
+from interfaces.services.auth_service import AuthApplicationService
 from interfaces.services.board_service import BoardApplicationService
 from interfaces.services.diagnose_service import DiagnosticApplicationService
 from interfaces.services.entity_service import EntityTrackingApplicationService
 from interfaces.services.memory_service import MemoryApplicationService
 from interfaces.services.mcp_service import MCPApplicationService
 from interfaces.services.paper_service import PapersApplicationService
+from interfaces.services.paper_user_state_service import PaperUserStateApplicationService
 from interfaces.services.report_service import ReportApplicationService
 from interfaces.services.run_inspection_service import RunInspectionService
 from interfaces.services.run_operation_service import RunOperationApplicationService
@@ -42,6 +44,8 @@ ScheduleServiceFactory = Callable[[], ScheduleApplicationService]
 ApprovalServiceFactory = Callable[[], ApprovalApplicationService]
 BoardServiceFactory = Callable[[], BoardApplicationService]
 PapersServiceFactory = Callable[[], PapersApplicationService]
+AuthServiceFactory = Callable[[], AuthApplicationService]
+PaperUserStateServiceFactory = Callable[[], PaperUserStateApplicationService]
 
 
 @dataclass(frozen=True)
@@ -63,6 +67,8 @@ class ApiServices:
     approval_service_factory: ApprovalServiceFactory
     board_service_factory: BoardServiceFactory
     papers_service_factory: PapersServiceFactory
+    auth_service_factory: AuthServiceFactory
+    paper_user_state_service_factory: PaperUserStateServiceFactory
 
 
 @dataclass(frozen=True)
@@ -97,6 +103,8 @@ def build_api_services(
     approval_service_factory: ApprovalServiceFactory = ApprovalApplicationService,
     board_service_factory: BoardServiceFactory = BoardApplicationService,
     papers_service_factory: PapersServiceFactory = PapersApplicationService,
+    auth_service_factory: AuthServiceFactory = AuthApplicationService,
+    paper_user_state_service_factory: PaperUserStateServiceFactory = PaperUserStateApplicationService,
 ) -> ApiServices:
     return ApiServices(
         worker_service_factory=worker_service_factory,
@@ -116,6 +124,8 @@ def build_api_services(
         approval_service_factory=approval_service_factory,
         board_service_factory=board_service_factory,
         papers_service_factory=papers_service_factory,
+        auth_service_factory=auth_service_factory,
+        paper_user_state_service_factory=paper_user_state_service_factory,
     )
 
 

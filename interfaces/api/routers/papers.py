@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from pydantic import BaseModel, Field
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Header, Query
 
 from interfaces.api.deps import ApiRouteHelpers, ApiServices
+from interfaces.services.auth_service import AuthSessionInvalidError
 from interfaces.services.paper_service import (
     DEFAULT_LIMIT,
     DEFAULT_OPS_STATS_WINDOW_HOURS,
@@ -22,6 +23,14 @@ from interfaces.services.paper_service import (
 class PaperAskRequest(BaseModel):
     question: str = Field(..., min_length=1, max_length=1000)
     locale: str = Field("en", pattern="^(zh|en)$")
+
+
+class PaperStatePatchRequest(BaseModel):
+    favorite: bool | None = None
+    subscribed: bool | None = None
+    readingStatus: str | None = Field(default=None, pattern="^(unread|reading|finished)$")
+    currentPage: int | None = Field(default=None, ge=1)
+    progressPercent: int | None = Field(default=None, ge=0, le=100)
 
 
 def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
@@ -120,6 +129,18 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
         stats = services.papers_service_factory().get_ops_stats(window_hours=window_hours)
         return helpers.success({"stats": stats})
 
+    @router.get("/api/v1/papers/me/state")
+    def list_my_paper_state(
+        paper_ids: str | None = Query(None, alias="paperIds", max_length=2000),
+        x_newsroom_session: str | None = Header(default=None),
+    ):
+        user_id = _session_user_id(services, helpers, x_newsroom_session)
+        if not isinstance(user_id, str):
+            return user_id
+        ids = [item.strip() for item in (paper_ids or "").split(",") if item.strip()] or None
+        states = services.paper_user_state_service_factory().list_states(user_id=user_id, paper_ids=ids)
+        return helpers.success({"states": [state.to_dict() for state in states]})
+
     @router.get("/api/v1/papers/{paper_id}")
     def get_paper(paper_id: str):
         try:
@@ -147,6 +168,39 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
                 user_action_required=True,
             )
         return helpers.success({"paper": paper.to_dict()})
+
+    @router.get("/api/v1/papers/{paper_id}/state")
+    def get_paper_state(paper_id: str, x_newsroom_session: str | None = Header(default=None)):
+        user_id = _session_user_id(services, helpers, x_newsroom_session)
+        if not isinstance(user_id, str):
+            return user_id
+        state = services.paper_user_state_service_factory().get_state(user_id=user_id, paper_id=paper_id)
+        return helpers.success({"state": state.to_dict()})
+
+    @router.patch("/api/v1/papers/{paper_id}/state")
+    def patch_paper_state(
+        paper_id: str,
+        request: PaperStatePatchRequest,
+        x_newsroom_session: str | None = Header(default=None),
+    ):
+        user_id = _session_user_id(services, helpers, x_newsroom_session)
+        if not isinstance(user_id, str):
+            return user_id
+        patch = request.model_dump(exclude_none=True)
+        try:
+            state = services.paper_user_state_service_factory().patch_state(
+                user_id=user_id,
+                paper_id=paper_id,
+                patch=patch,
+            )
+        except ValueError as exc:
+            return helpers.error(
+                status_code=400,
+                code="paper_state_invalid",
+                message=str(exc),
+                user_action_required=True,
+            )
+        return helpers.success({"state": state.to_dict()})
 
     @router.post("/api/v1/papers/{paper_id}/summary")
     def summarize_paper(
@@ -358,3 +412,15 @@ def _optional_text(value: str | None) -> str | None:
         return None
     text = value.strip()
     return text or None
+
+
+def _session_user_id(services: ApiServices, helpers: ApiRouteHelpers, session_token: str | None):
+    try:
+        return services.auth_service_factory().get_session(session_token).user.userId
+    except AuthSessionInvalidError:
+        return helpers.error(
+            status_code=401,
+            code="auth_session_required",
+            message="valid user session required",
+            user_action_required=True,
+        )

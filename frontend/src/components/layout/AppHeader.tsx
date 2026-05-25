@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button"
 import { Sheet, SheetClose, SheetContent, SheetTrigger } from "@/components/ui/sheet"
 import { MegaMenu } from "@/components/layout/MegaMenu"
 import { SearchButton } from "@/components/layout/SearchButton"
+import { AccountMenu } from "@/components/auth/account-menu"
 import { cn } from "@/lib/utils"
 
 export function AppHeader() {
@@ -71,6 +72,7 @@ export function AppHeader() {
         <div className="min-w-0 flex-1 lg:hidden" />
 
         <SearchButton className="ml-auto hidden sm:inline-flex" />
+        <AccountMenu />
 
         <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
           <SheetTrigger asChild>

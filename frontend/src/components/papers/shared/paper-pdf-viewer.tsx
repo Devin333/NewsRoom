@@ -11,6 +11,7 @@ type PaperPdfViewerProps = {
   title: string
   locale: Locale
   fallback: ReactNode
+  onPageChange?: (pageNumber: number, numPages: number) => void
 }
 
 type PdfViewport = {
@@ -43,7 +44,7 @@ const MIN_SCALE = 0.75
 const MAX_SCALE = 2
 const SCALE_STEP = 0.25
 
-export function PaperPdfViewer({ pdfUrl, title, locale, fallback }: PaperPdfViewerProps) {
+export function PaperPdfViewer({ pdfUrl, title, locale, fallback, onPageChange }: PaperPdfViewerProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const renderTaskRef = useRef<PdfRenderTask | null>(null)
   const [pdfDocument, setPdfDocument] = useState<PdfDocument | null>(null)
@@ -157,6 +158,12 @@ export function PaperPdfViewer({ pdfUrl, title, locale, fallback }: PaperPdfView
       renderTaskRef.current = null
     }
   }, [pageNumber, pdfDocument, scale, status])
+
+  useEffect(() => {
+    if (status === "ready" && numPages > 0) {
+      onPageChange?.(pageNumber, numPages)
+    }
+  }, [numPages, onPageChange, pageNumber, status])
 
   if (status === "error") {
     return (

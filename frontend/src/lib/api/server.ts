@@ -29,9 +29,9 @@ export class NewsRoomApiError extends Error {
   }
 }
 
-export async function safeApiGet<T>(path: string): Promise<SafeApiResult<T>> {
+export async function safeApiGet<T>(path: string, init?: RequestInit): Promise<SafeApiResult<T>> {
   try {
-    return { ok: true, data: await apiGet<T>(path) }
+    return { ok: true, data: await apiGet<T>(path, init) }
   } catch (error) {
     if (error instanceof NewsRoomApiError) {
       return {
@@ -49,9 +49,9 @@ export async function safeApiGet<T>(path: string): Promise<SafeApiResult<T>> {
   }
 }
 
-export async function safeApiPost<T>(path: string, body?: unknown): Promise<SafeApiResult<T>> {
+export async function safeApiPost<T>(path: string, body?: unknown, init?: RequestInit): Promise<SafeApiResult<T>> {
   try {
-    return { ok: true, data: await apiPost<T>(path, body) }
+    return { ok: true, data: await apiPost<T>(path, body, init) }
   } catch (error) {
     if (error instanceof NewsRoomApiError) {
       return {
@@ -69,10 +69,31 @@ export async function safeApiPost<T>(path: string, body?: unknown): Promise<Safe
   }
 }
 
-async function apiGet<T>(path: string): Promise<T> {
+export async function safeApiPatch<T>(path: string, body?: unknown, init?: RequestInit): Promise<SafeApiResult<T>> {
+  try {
+    return { ok: true, data: await apiPatch<T>(path, body, init) }
+  } catch (error) {
+    if (error instanceof NewsRoomApiError) {
+      return {
+        ok: false,
+        errorCode: error.code,
+        errorMessage: error.message,
+        requestId: error.requestId
+      }
+    }
+    return {
+      ok: false,
+      errorCode: "request_failed",
+      errorMessage: error instanceof Error ? error.message : "Request failed"
+    }
+  }
+}
+
+async function apiGet<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(apiUrl(path), {
+    ...init,
     method: "GET",
-    headers: requestHeaders(),
+    headers: requestHeaders(init?.headers),
     cache: "no-store"
   })
 
@@ -122,11 +143,70 @@ async function apiGet<T>(path: string): Promise<T> {
   return payload as T
 }
 
-async function apiPost<T>(path: string, body?: unknown): Promise<T> {
+async function apiPost<T>(path: string, body?: unknown, init?: RequestInit): Promise<T> {
   const response = await fetch(apiUrl(path), {
+    ...init,
     method: "POST",
     headers: {
-      ...requestHeaders(),
+      ...requestHeaders(init?.headers),
+      "Content-Type": "application/json",
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+    cache: "no-store"
+  })
+
+  const payload = await parsePayload<T>(response)
+  if (!response.ok) {
+    if (isApiEnvelope<T>(payload) && payload.error) {
+      throw new NewsRoomApiError(
+        {
+          code: payload.error.code,
+          message: payload.error.message,
+          detail: "detail" in payload.error ? payload.error.detail : payload.error.details,
+          requestId: payload.error.requestId ?? payload.error.request_id ?? payload.request_id ?? undefined
+        },
+        response.status
+      )
+    }
+    throw new NewsRoomApiError(
+      {
+        code: `http_${response.status}`,
+        message: response.statusText || "API request failed",
+        detail: payload
+      },
+      response.status
+    )
+  }
+
+  if (isApiEnvelope<T>(payload)) {
+    if (payload.success === false) {
+      const error = payload.error ?? {
+        code: "api_error",
+        message: "API request failed",
+        detail: payload
+      }
+      throw new NewsRoomApiError(
+        {
+          code: error.code,
+          message: error.message,
+          detail: "detail" in error ? error.detail : error.details,
+          requestId: error.requestId ?? error.request_id ?? payload.request_id ?? undefined
+        },
+        response.status
+      )
+    }
+    return payload.data as T
+  }
+
+  return payload as T
+}
+
+async function apiPatch<T>(path: string, body?: unknown, init?: RequestInit): Promise<T> {
+  const response = await fetch(apiUrl(path), {
+    ...init,
+    method: "PATCH",
+    headers: {
+      ...requestHeaders(init?.headers),
       "Content-Type": "application/json",
     },
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -198,9 +278,20 @@ function apiUrl(path: string): string {
   return `${baseUrl.replace(/\/$/, "")}${suffix}`
 }
 
-function requestHeaders(): HeadersInit {
+function requestHeaders(extra?: HeadersInit): HeadersInit {
   const headers: Record<string, string> = {
     Accept: "application/json"
+  }
+  if (extra instanceof Headers) {
+    extra.forEach((value, key) => {
+      headers[key] = value
+    })
+  } else if (Array.isArray(extra)) {
+    for (const [key, value] of extra) {
+      headers[key] = value
+    }
+  } else if (extra) {
+    Object.assign(headers, extra)
   }
   const apiToken = process.env.NEWSROOM_API_TOKEN ?? process.env.NEWS_API_TOKEN
   if (apiToken) {

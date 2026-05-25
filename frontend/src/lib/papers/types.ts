@@ -16,6 +16,34 @@ export type PaperModuleRoute =
 
 export type PaperSort = "trending" | "newest" | "most_cited"
 export type PaperPeriod = "daily" | "weekly" | "monthly" | "all"
+export type ReadingStatus = "unread" | "reading" | "finished"
+
+export interface CurrentUser {
+  userId: string
+  username: string
+  role: string
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface AuthSession {
+  user: CurrentUser
+  sessionId: string
+  expiresAt: string
+  initialized?: boolean
+}
+
+export interface PaperUserState {
+  userId: string
+  paperId: string
+  favorite: boolean
+  subscribed: boolean
+  readingStatus: ReadingStatus
+  currentPage?: number
+  progressPercent: number
+  lastReadAt?: string
+  updatedAt: string
+}
 
 export interface TaskRef {
   id: string
@@ -119,6 +147,7 @@ export interface Paper {
   aiSummary?: PaperAISummary
   evidenceRefs?: PaperEvidenceRef[]
   sourceRefs?: PaperSourceRef[]
+  userState?: PaperUserState
   isPublished: boolean
 }
 

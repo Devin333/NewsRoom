@@ -1,17 +1,30 @@
-import { fireEvent, render, screen } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { PaperReaderPage } from "@/components/papers/shared/paper-reader-page"
-import { askPaper } from "@/lib/papers/api"
+import { askPaper, fetchPaperUserState, patchPaperUserState } from "@/lib/papers/api"
 import type { PaperReaderPayload } from "@/lib/papers/types"
 
 vi.mock("@/lib/papers/api", () => ({
-  askPaper: vi.fn()
+  askPaper: vi.fn(),
+  fetchPaperUserState: vi.fn(),
+  patchPaperUserState: vi.fn()
 }))
 
 vi.mock("@/components/papers/shared/paper-pdf-viewer", () => ({
-  PaperPdfViewer: ({ pdfUrl, title }: { pdfUrl: string; title: string }) => (
+  PaperPdfViewer: ({
+    pdfUrl,
+    title,
+    onPageChange,
+  }: {
+    pdfUrl: string
+    title: string
+    onPageChange?: (pageNumber: number, numPages: number) => void
+  }) => (
     <div data-testid="paper-pdf-viewer" data-pdf-url={pdfUrl}>
       {title} PDF viewer
+      <button type="button" onClick={() => onPageChange?.(2, 4)}>
+        mock page 2
+      </button>
     </div>
   )
 }))
@@ -77,6 +90,27 @@ const reader: PaperReaderPayload = {
 describe("PaperReaderPage", () => {
   beforeEach(() => {
     vi.mocked(askPaper).mockReset()
+    vi.mocked(fetchPaperUserState).mockReset()
+    vi.mocked(patchPaperUserState).mockReset()
+    vi.mocked(fetchPaperUserState).mockResolvedValue({
+      userId: "user-1",
+      paperId: "reader-paper",
+      favorite: false,
+      subscribed: false,
+      readingStatus: "unread",
+      progressPercent: 0,
+      updatedAt: "2026-05-24T00:00:00Z"
+    })
+    vi.mocked(patchPaperUserState).mockImplementation(async (_paperId, patch) => ({
+      userId: "user-1",
+      paperId: "reader-paper",
+      favorite: patch.favorite ?? false,
+      subscribed: patch.subscribed ?? false,
+      readingStatus: patch.readingStatus ?? "unread",
+      currentPage: patch.currentPage ?? undefined,
+      progressPercent: patch.progressPercent ?? 0,
+      updatedAt: "2026-05-24T00:01:00Z"
+    }))
   })
 
   it("renders derived reader sections in the text fallback", () => {
@@ -122,6 +156,69 @@ describe("PaperReaderPage", () => {
       "https://arxiv.org/pdf/2605.00001.pdf"
     )
     expect(screen.queryByTitle("Reader Paper")).not.toBeInTheDocument()
+  })
+
+  it("updates favorite, subscription, reading status, and PDF progress state", async () => {
+    render(
+      <PaperReaderPage
+        reader={{
+          ...reader,
+          paper: {
+            ...reader.paper,
+            pdfUrl: "https://arxiv.org/pdf/2605.00001.pdf"
+          },
+          quality: {
+            ...reader.quality,
+            pdfAvailable: true
+          }
+        }}
+        locale="en"
+      />
+    )
+
+    fireEvent.click(await screen.findByRole("button", { name: /favorite/i }))
+    await waitFor(() => {
+      expect(patchPaperUserState).toHaveBeenNthCalledWith(1, "reader-paper", {
+        favorite: true,
+        subscribed: undefined,
+        readingStatus: undefined,
+        currentPage: undefined,
+        progressPercent: undefined
+      })
+    })
+
+    fireEvent.click(screen.getByRole("button", { name: /subscribe/i }))
+    await waitFor(() => {
+      expect(patchPaperUserState).toHaveBeenNthCalledWith(2, "reader-paper", {
+        favorite: undefined,
+        subscribed: true,
+        readingStatus: undefined,
+        currentPage: undefined,
+        progressPercent: undefined
+      })
+    })
+
+    fireEvent.click(screen.getByRole("button", { name: /unread/i }))
+    await waitFor(() => {
+      expect(patchPaperUserState).toHaveBeenNthCalledWith(3, "reader-paper", {
+        favorite: undefined,
+        subscribed: undefined,
+        readingStatus: "finished",
+        currentPage: undefined,
+        progressPercent: 100
+      })
+    })
+
+    fireEvent.click(screen.getByRole("button", { name: /mock page 2/i }))
+    await waitFor(() => {
+      expect(patchPaperUserState).toHaveBeenNthCalledWith(4, "reader-paper", {
+        favorite: undefined,
+        subscribed: undefined,
+        readingStatus: "reading",
+        currentPage: 2,
+        progressPercent: 50
+      })
+    })
   })
 
   it("renders text extraction quality state", () => {

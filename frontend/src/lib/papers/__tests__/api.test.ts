@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { apiGet, apiPost } from "@/lib/api/client"
+import { apiGet, apiPatch, apiPost } from "@/lib/api/client"
 import {
   askPaper,
   fetchPaperDetail,
@@ -8,24 +8,29 @@ import {
   fetchPaperReaderPayload,
   fetchPaperRelated,
   fetchPaperSections,
+  fetchPaperUserState,
+  fetchPaperUserStates,
   fetchPapers,
   fetchPaperTasks,
+  patchPaperUserState,
   refreshPaperSummary,
   requestPaperSummary
 } from "@/lib/papers/api"
 
 vi.mock("@/lib/api/client", () => ({
   apiGet: vi.fn(),
+  apiPatch: vi.fn(),
   apiPost: vi.fn()
 }))
 
 describe("paper browser API client", () => {
   beforeEach(() => {
     vi.mocked(apiGet).mockReset()
+    vi.mocked(apiPatch).mockReset()
     vi.mocked(apiPost).mockReset()
   })
 
-  it("uses BFF routes for list, detail, summary, reader payload, derived surfaces, and ask", async () => {
+  it("uses BFF routes for list, detail, summary, reader payload, derived surfaces, state, and ask", async () => {
     vi.mocked(apiGet).mockResolvedValueOnce({ success: true, data: { papers: [] } })
     await fetchPapers({ limit: 10, period: "weekly" })
     expect(apiGet).toHaveBeenCalledWith("/api/papers?limit=10&period=weekly", undefined)
@@ -69,6 +74,48 @@ describe("paper browser API client", () => {
     vi.mocked(apiGet).mockResolvedValueOnce({ success: true, data: { methods: [] } })
     await fetchPaperMethods()
     expect(apiGet).toHaveBeenCalledWith("/api/papers/methods", undefined)
+
+    vi.mocked(apiGet).mockResolvedValueOnce({
+      success: true,
+      data: {
+        state: {
+          userId: "user-1",
+          paperId: "paper/1",
+          favorite: false,
+          subscribed: false,
+          readingStatus: "unread",
+          progressPercent: 0,
+          updatedAt: "2026-05-24T00:00:00Z"
+        }
+      }
+    })
+    await fetchPaperUserState("paper/1")
+    expect(apiGet).toHaveBeenCalledWith("/api/papers/paper%2F1/state", undefined)
+
+    vi.mocked(apiPatch).mockResolvedValueOnce({
+      success: true,
+      data: {
+        state: {
+          userId: "user-1",
+          paperId: "paper/1",
+          favorite: true,
+          subscribed: false,
+          readingStatus: "reading",
+          progressPercent: 25,
+          updatedAt: "2026-05-24T00:00:00Z"
+        }
+      }
+    })
+    await patchPaperUserState("paper/1", { favorite: true, readingStatus: "reading", progressPercent: 25 })
+    expect(apiPatch).toHaveBeenCalledWith(
+      "/api/papers/paper%2F1/state",
+      { favorite: true, readingStatus: "reading", progressPercent: 25 },
+      undefined
+    )
+
+    vi.mocked(apiGet).mockResolvedValueOnce({ success: true, data: { states: [] } })
+    await fetchPaperUserStates(["paper/1", "paper/2"])
+    expect(apiGet).toHaveBeenCalledWith("/api/papers/me/state?paperIds=paper%2F1%2Cpaper%2F2", undefined)
 
     vi.mocked(apiPost).mockResolvedValueOnce({ success: true, data: { answer: { paperId: "p" } } })
     await askPaper("paper/1", "What is new?", "en")

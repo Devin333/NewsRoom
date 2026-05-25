@@ -1,7 +1,7 @@
 "use client"
 
-import { FormEvent, useEffect, useState, type ReactNode } from "react"
-import { ArrowLeft, Brain, ExternalLink, FileText, Github, MessageSquare, Quote, Sparkles, ThermometerSun } from "lucide-react"
+import { FormEvent, useCallback, useEffect, useState, type ReactNode } from "react"
+import { ArrowLeft, Bell, Brain, CheckCircle2, ExternalLink, FileText, Github, Heart, MessageSquare, Quote, Sparkles, ThermometerSun } from "lucide-react"
 import Link from "next/link"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -15,7 +15,7 @@ import {
   paperTitle,
   taskName
 } from "@/lib/papers/format"
-import { askPaper } from "@/lib/papers/api"
+import { askPaper, fetchPaperUserState, patchPaperUserState } from "@/lib/papers/api"
 import type {
   Locale,
   Paper,
@@ -23,6 +23,8 @@ import type {
   PaperReaderAnswer,
   PaperReaderPayload,
   PaperSection,
+  PaperUserState,
+  ReadingStatus,
   RelatedNews,
   RelatedPaper,
   RelatedProject
@@ -36,6 +38,59 @@ export function PaperReaderPage({ reader, locale }: { reader: PaperReaderPayload
   const authors = paper.authors ?? []
   const tasks = paper.taskRefs ?? []
   const methods = paper.methodRefs ?? []
+  const [userState, setUserState] = useState<PaperUserState | null>(paper.userState ?? null)
+  const [stateStatus, setStateStatus] = useState<"idle" | "loading" | "saving" | "error">("idle")
+  const [stateError, setStateError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    setStateStatus("loading")
+    setStateError(null)
+    fetchPaperUserState(paper.id)
+      .then((state) => {
+        if (!cancelled) {
+          setUserState(state)
+          setStateStatus("idle")
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setStateStatus("error")
+          setStateError(error instanceof Error ? error.message : "Paper state unavailable")
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [paper.id])
+
+  const updateUserState = useCallback(async (patch: Partial<PaperUserState> & { readingStatus?: ReadingStatus }) => {
+    setStateStatus("saving")
+    setStateError(null)
+    try {
+      const nextState = await patchPaperUserState(paper.id, {
+        favorite: patch.favorite,
+        subscribed: patch.subscribed,
+        readingStatus: patch.readingStatus,
+        currentPage: patch.currentPage,
+        progressPercent: patch.progressPercent,
+      })
+      setUserState(nextState)
+      setStateStatus("idle")
+    } catch (error) {
+      setStateStatus("error")
+      setStateError(error instanceof Error ? error.message : "Paper state could not be saved")
+    }
+  }, [paper.id])
+
+  const handlePdfPageChange = useCallback((pageNumber: number, numPages: number) => {
+    const progressPercent = Math.min(100, Math.max(0, Math.round((pageNumber / Math.max(numPages, 1)) * 100)))
+    void updateUserState({
+      currentPage: pageNumber,
+      progressPercent,
+      readingStatus: progressPercent >= 100 ? "finished" : "reading",
+    })
+  }, [updateUserState])
 
   return (
     <main className="min-h-screen bg-[#f7f9f6] text-[#334155] dark:bg-background dark:text-foreground">
@@ -48,9 +103,21 @@ export function PaperReaderPage({ reader, locale }: { reader: PaperReaderPayload
             </Link>
           </Button>
           <div className="flex flex-wrap justify-end gap-2">
+            <PaperStateControls
+              state={userState}
+              status={stateStatus}
+              onToggleFavorite={() => updateUserState({ favorite: !(userState?.favorite ?? false) })}
+              onToggleSubscribed={() => updateUserState({ subscribed: !(userState?.subscribed ?? false) })}
+              onStatusChange={(readingStatus) => updateUserState({ readingStatus, progressPercent: readingStatus === "finished" ? 100 : userState?.progressPercent ?? 0 })}
+            />
             <ExternalLinks paper={paper} />
           </div>
         </div>
+        {stateError ? (
+          <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            {stateError}
+          </div>
+        ) : null}
 
         <header className="pb-6">
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#334155]/55">
@@ -84,6 +151,7 @@ export function PaperReaderPage({ reader, locale }: { reader: PaperReaderPayload
                 title={title}
                 locale={locale}
                 fallback={<ReaderTextFallback reader={reader} paper={paper} locale={locale} />}
+                onPageChange={handlePdfPageChange}
               />
             ) : (
               <ReaderTextFallback reader={reader} paper={paper} locale={locale} />
@@ -98,6 +166,45 @@ export function PaperReaderPage({ reader, locale }: { reader: PaperReaderPayload
         </div>
       </div>
     </main>
+  )
+}
+
+function PaperStateControls({
+  state,
+  status,
+  onToggleFavorite,
+  onToggleSubscribed,
+  onStatusChange,
+}: {
+  state: PaperUserState | null
+  status: "idle" | "loading" | "saving" | "error"
+  onToggleFavorite: () => void
+  onToggleSubscribed: () => void
+  onStatusChange: (status: ReadingStatus) => void
+}) {
+  const disabled = status === "loading" || status === "saving"
+  const readingStatus = state?.readingStatus ?? "unread"
+  return (
+    <div className="flex flex-wrap gap-2">
+      <Button type="button" variant={state?.favorite ? "default" : "outline"} className="rounded-full bg-white dark:bg-card" disabled={disabled} onClick={onToggleFavorite}>
+        <Heart className={state?.favorite ? "size-4 fill-current" : "size-4"} />
+        Favorite
+      </Button>
+      <Button type="button" variant={state?.subscribed ? "default" : "outline"} className="rounded-full bg-white dark:bg-card" disabled={disabled} onClick={onToggleSubscribed}>
+        <Bell className="size-4" />
+        Subscribe
+      </Button>
+      <Button
+        type="button"
+        variant={readingStatus === "finished" ? "default" : "outline"}
+        className="rounded-full bg-white dark:bg-card"
+        disabled={disabled}
+        onClick={() => onStatusChange(readingStatus === "finished" ? "reading" : "finished")}
+      >
+        <CheckCircle2 className="size-4" />
+        {readingStatus === "finished" ? "Finished" : readingStatus === "reading" ? "Reading" : "Unread"}
+      </Button>
+    </div>
   )
 }
 

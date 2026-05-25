@@ -61,6 +61,25 @@ export async function apiPost<T>(path: string, body?: unknown, init?: RequestIni
   return parseJsonResponse<T>(response)
 }
 
+export async function apiPatch<T>(path: string, body?: unknown, init?: RequestInit): Promise<T> {
+  if (shouldUseMock()) {
+    return resolveMockPath(path) as T
+  }
+
+  const response = await fetch(apiUrl(path), {
+    ...init,
+    method: "PATCH",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      ...init?.headers
+    },
+    body: body === undefined ? undefined : JSON.stringify(body)
+  })
+
+  return parseJsonResponse<T>(response)
+}
+
 async function parseJsonResponse<T>(response: Response): Promise<T> {
   const requestId = response.headers.get("x-request-id") ?? undefined
   const contentType = response.headers.get("content-type") ?? ""

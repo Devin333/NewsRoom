@@ -1,7 +1,7 @@
 "use client"
 
 import type { MouseEvent, ReactNode } from "react"
-import { BookOpen, Github } from "lucide-react"
+import { Bell, BookOpen, Github, Heart } from "lucide-react"
 import { PaperTags } from "@/components/papers/paper-tags"
 import { PaperThumbnail } from "@/components/papers/paper-thumbnail"
 import { Button } from "@/components/ui/button"
@@ -82,6 +82,22 @@ export function PaperRow({
           <div className="mt-4">
             <PaperTags tasks={tasks} methods={methods} tags={tags} locale={locale} />
           </div>
+          {paper.userState?.favorite || paper.userState?.subscribed ? (
+            <div className="mt-3 flex flex-wrap gap-2 text-xs font-semibold text-[#334155]/60 dark:text-muted-foreground">
+              {paper.userState.favorite ? (
+                <span className="inline-flex items-center gap-1 rounded-sm bg-[#eef4ef] px-2 py-1 dark:bg-secondary">
+                  <Heart className="size-3 fill-current" />
+                  Favorite
+                </span>
+              ) : null}
+              {paper.userState.subscribed ? (
+                <span className="inline-flex items-center gap-1 rounded-sm bg-[#eef4ef] px-2 py-1 dark:bg-secondary">
+                  <Bell className="size-3" />
+                  Subscribed
+                </span>
+              ) : null}
+            </div>
+          ) : null}
 
           <div className="mt-5 flex flex-wrap gap-2 lg:hidden">
             {paperHref ? (

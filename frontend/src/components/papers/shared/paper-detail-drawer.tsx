@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from "react"
 import Link from "next/link"
-import { BookOpen, Brain, ExternalLink, FileText, Github, Globe2, Quote, RefreshCw, ThermometerSun, X } from "lucide-react"
+import { Bell, BookOpen, Brain, ExternalLink, FileText, Github, Globe2, Heart, Quote, RefreshCw, ThermometerSun, X } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { fetchPaperDetail, requestPaperSummary } from "@/lib/papers/api"
@@ -216,6 +216,18 @@ export function PaperDetailDrawer({
               {authors.join(", ")}
             </p>
             <div className="mt-4 flex flex-wrap gap-2">
+              {activePaper.userState?.favorite ? (
+                <Badge variant="accent" className="rounded-sm">
+                  <Heart className="mr-1 size-3 fill-current" />
+                  Favorite
+                </Badge>
+              ) : null}
+              {activePaper.userState?.subscribed ? (
+                <Badge variant="muted" className="rounded-sm">
+                  <Bell className="mr-1 size-3" />
+                  Subscribed
+                </Badge>
+              ) : null}
               {pdfHref ? (
                 <Button asChild variant="outline" className="rounded-md bg-white dark:bg-card">
                   <a href={pdfHref} target="_blank" rel="noreferrer">

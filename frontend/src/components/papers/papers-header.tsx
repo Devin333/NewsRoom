@@ -6,6 +6,7 @@ import { ChevronDown, Menu, Search } from "lucide-react"
 import { PapersDropdown } from "@/components/papers/papers-dropdown"
 import { PapersLanguageToggle } from "@/components/papers/shared/language-toggle"
 import { PapersThemeToggle } from "@/components/papers/shared/theme-toggle"
+import { AccountMenu } from "@/components/auth/account-menu"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Sheet, SheetClose, SheetContent, SheetTrigger } from "@/components/ui/sheet"
@@ -82,6 +83,7 @@ export function PapersHeader({
         </div>
         <PapersThemeToggle theme={theme} locale={locale} onThemeChange={onThemeChange} />
         <PapersLanguageToggle locale={locale} onLocaleChange={onLocaleChange} />
+        <AccountMenu />
 
         <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
           <SheetTrigger asChild>

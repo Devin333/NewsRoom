@@ -1,4 +1,4 @@
-import { apiGet, apiPost } from "@/lib/api/client"
+import { apiGet, apiPatch, apiPost } from "@/lib/api/client"
 import type {
   Locale,
   Paper,
@@ -10,8 +10,10 @@ import type {
   PaperReaderPayload,
   PaperRelationGraph,
   PaperSection,
+  PaperUserState,
   PaperTask,
   RelatedPaper,
+  ReadingStatus,
   PaperSort
 } from "@/lib/papers/types"
 
@@ -163,6 +165,48 @@ export async function askPaper(
     init
   )
   return unwrapEnvelope(envelope).answer
+}
+
+export type PaperUserStatePatch = {
+  favorite?: boolean
+  subscribed?: boolean
+  readingStatus?: ReadingStatus
+  currentPage?: number | null
+  progressPercent?: number
+}
+
+export async function fetchPaperUserState(paperId: string, init?: RequestInit): Promise<PaperUserState> {
+  const envelope = await apiGet<ApiEnvelope<{ state: PaperUserState }>>(
+    `/api/papers/${encodeURIComponent(paperId)}/state`,
+    init
+  )
+  return unwrapEnvelope(envelope).state
+}
+
+export async function patchPaperUserState(
+  paperId: string,
+  patch: PaperUserStatePatch,
+  init?: RequestInit
+): Promise<PaperUserState> {
+  const envelope = await apiPatch<ApiEnvelope<{ state: PaperUserState }>>(
+    `/api/papers/${encodeURIComponent(paperId)}/state`,
+    patch,
+    init
+  )
+  return unwrapEnvelope(envelope).state
+}
+
+export async function fetchPaperUserStates(paperIds: string[], init?: RequestInit): Promise<PaperUserState[]> {
+  const params = new URLSearchParams()
+  if (paperIds.length) {
+    params.set("paperIds", paperIds.join(","))
+  }
+  const query = params.toString()
+  const envelope = await apiGet<ApiEnvelope<{ states: PaperUserState[] }>>(
+    `/api/papers/me/state${query ? `?${query}` : ""}`,
+    init
+  )
+  return unwrapEnvelope(envelope).states
 }
 
 function unwrapEnvelope<T>(envelope: ApiEnvelope<T>): T {

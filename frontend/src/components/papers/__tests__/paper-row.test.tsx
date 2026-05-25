@@ -40,4 +40,28 @@ describe("PaperRow", () => {
 
     expect(screen.queryByRole("link", { name: /open github repository/i })).not.toBeInTheDocument()
   })
+
+  it("shows user state badges when available", () => {
+    render(
+      <PaperRow
+        paper={{
+          ...paper,
+          userState: {
+            userId: "user-1",
+            paperId: paper.id,
+            favorite: true,
+            subscribed: true,
+            readingStatus: "reading",
+            progressPercent: 35,
+            updatedAt: "2026-05-24T00:00:00Z"
+          }
+        }}
+        locale="en"
+        onPreview={vi.fn()}
+      />
+    )
+
+    expect(screen.getByText("Favorite")).toBeInTheDocument()
+    expect(screen.getByText("Subscribed")).toBeInTheDocument()
+  })
 })

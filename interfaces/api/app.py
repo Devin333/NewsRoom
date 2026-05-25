@@ -39,12 +39,14 @@ from interfaces.api.errors import http_error_code
 from interfaces.events import AuditEmitter, audit_emitter_from_env
 from interfaces.env import load_root_env
 from interfaces.services.approval_service import ApprovalApplicationService
+from interfaces.services.auth_service import AuthApplicationService
 from interfaces.services.diagnose_service import DiagnosticApplicationService
 from interfaces.services.entity_service import EntityTrackingApplicationService
 from interfaces.services.board_service import BoardApplicationService
 from interfaces.services.memory_service import MemoryApplicationService
 from interfaces.services.mcp_service import MCPApplicationService
 from interfaces.services.paper_service import PapersApplicationService
+from interfaces.services.paper_user_state_service import PaperUserStateApplicationService
 from interfaces.services.report_service import ReportApplicationService
 from interfaces.services.run_inspection_service import RunInspectionService
 from interfaces.services.run_operation_service import RunOperationApplicationService
@@ -74,6 +76,8 @@ ScheduleServiceFactory = Callable[[], ScheduleApplicationService]
 ApprovalServiceFactory = Callable[[], ApprovalApplicationService]
 BoardServiceFactory = Callable[[], BoardApplicationService]
 PapersServiceFactory = Callable[[], PapersApplicationService]
+AuthServiceFactory = Callable[[], AuthApplicationService]
+PaperUserStateServiceFactory = Callable[[], PaperUserStateApplicationService]
 AuditEmitterFactory = Callable[[], AuditEmitter | None]
 ApiKeyRoles = Mapping[str, str | Sequence[str]]
 
@@ -97,6 +101,8 @@ def create_app(
     approval_service_factory: ApprovalServiceFactory = ApprovalApplicationService,
     board_service_factory: BoardServiceFactory = BoardApplicationService,
     papers_service_factory: PapersServiceFactory = PapersApplicationService,
+    auth_service_factory: AuthServiceFactory = AuthApplicationService,
+    paper_user_state_service_factory: PaperUserStateServiceFactory = PaperUserStateApplicationService,
     audit_emitter_factory: AuditEmitterFactory | None = audit_emitter_from_env,
     api_token: str | None = None,
     api_keys: ApiKeyRoles | None = None,
@@ -247,6 +253,8 @@ def create_app(
         approval_service_factory=approval_service_factory,
         board_service_factory=board_service_factory,
         papers_service_factory=papers_service_factory,
+        auth_service_factory=auth_service_factory,
+        paper_user_state_service_factory=paper_user_state_service_factory,
     )
     helpers = ApiRouteHelpers(
         success=_success,
