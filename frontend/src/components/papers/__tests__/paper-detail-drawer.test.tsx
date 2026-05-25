@@ -95,6 +95,27 @@ describe("PaperDetailDrawer", () => {
     expect(await screen.findByText("Segment Anything introduces a promptable segmentation foundation model.")).toBeInTheDocument()
   })
 
+  it("renders compact v2 contributions in the AI summary block", async () => {
+    vi.mocked(requestPaperSummary).mockResolvedValue({
+      paperId: paper.id,
+      locale: "en",
+      modelRoute: "writer-primary",
+      abstractHash: "abc",
+      summary: "Segment Anything introduces promptable segmentation.",
+      keyInsights: ["Promptable segmentation"],
+      limitations: [],
+      contributions: ["Introduces a promptable segmentation task."],
+      generatedAt: "2026-05-24T00:00:00Z",
+      cached: false,
+      summarySchemaVersion: "v2"
+    })
+
+    render(<PaperDetailDrawer paper={paper} locale="en" open onOpenChange={vi.fn()} />)
+
+    expect(await screen.findByText("Introduces a promptable segmentation task.")).toBeInTheDocument()
+    expect(screen.getByText("Contributions")).toBeInTheDocument()
+  })
+
   it("renders retryable summary error state", async () => {
     vi.mocked(requestPaperSummary).mockRejectedValue(new Error("provider unavailable"))
     render(<PaperDetailDrawer paper={paper} locale="en" open onOpenChange={vi.fn()} />)

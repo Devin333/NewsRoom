@@ -1,0 +1,23 @@
+import { NextRequest, NextResponse } from "next/server"
+import { safeApiGet } from "@/lib/api/server"
+
+export const dynamic = "force-dynamic"
+
+export async function GET(request: NextRequest, { params }: { params: { paperId: string } }) {
+  const locale = request.nextUrl.searchParams.get("locale") ?? "en"
+  const result = await safeApiGet(`/api/v1/papers/${encodeURIComponent(params.paperId)}/sections?locale=${locale}`)
+  if (result.ok) {
+    return NextResponse.json({ success: true, data: result.data })
+  }
+  return NextResponse.json(
+    {
+      success: false,
+      error: {
+        code: result.errorCode,
+        message: result.errorMessage,
+        requestId: result.requestId,
+      },
+    },
+    { status: result.errorCode === "paper_not_found" ? 404 : 502 }
+  )
+}

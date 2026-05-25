@@ -4,7 +4,7 @@ import { safeApiGet } from "@/lib/api/server"
 import { normalizePdfUrl, paperPdfUrlFromSource } from "@/lib/papers/format"
 import { papers as catalogPapers, paperMethods, paperTasks } from "@/lib/papers/catalog"
 import { arxivIdFromUrl, enrichPapersForPublicStream, normalizeDoi, normalizeGithubRepoUrl } from "@/lib/papers/enrichment"
-import type { MethodRef, Paper, TaskRef } from "@/lib/papers/types"
+import type { MethodRef, Paper, PaperMethod, PaperTask, TaskRef } from "@/lib/papers/types"
 
 type SourceSignal = {
   authors?: unknown
@@ -62,6 +62,14 @@ type PapersApiResponse = {
   papers?: unknown
 }
 
+type PaperTasksApiResponse = {
+  tasks?: unknown
+}
+
+type PaperMethodsApiResponse = {
+  methods?: unknown
+}
+
 const ARTIFACT_FILE_NAMES = [
   "data_buffer.final.json",
   "output.json",
@@ -100,6 +108,22 @@ export async function loadApiPapers(): Promise<Paper[]> {
   return rawPapers.filter(isAuthoritativePaper)
 }
 
+export async function loadApiPaperTasks(): Promise<PaperTask[]> {
+  const result = await safeApiGet<PaperTasksApiResponse>("/api/v1/papers/tasks")
+  if (!result.ok || !Array.isArray(result.data?.tasks)) {
+    return []
+  }
+  return result.data.tasks.filter(isPaperTask)
+}
+
+export async function loadApiPaperMethods(): Promise<PaperMethod[]> {
+  const result = await safeApiGet<PaperMethodsApiResponse>("/api/v1/papers/methods")
+  if (!result.ok || !Array.isArray(result.data?.methods)) {
+    return []
+  }
+  return result.data.methods.filter(isPaperMethod)
+}
+
 function isAuthoritativePaper(value: unknown): value is Paper {
   if (!isRecord(value)) {
     return false
@@ -112,6 +136,33 @@ function isAuthoritativePaper(value: unknown): value is Paper {
       Array.isArray(value.authors) &&
       text(value.publishedAt) &&
       value.isPublished !== undefined
+  )
+}
+
+function isPaperTask(value: unknown): value is PaperTask {
+  return (
+    isRecord(value) &&
+    text(value.id) !== "" &&
+    text(value.slug) !== "" &&
+    text(value.name) !== "" &&
+    text(value.description) !== "" &&
+    typeof value.paperCount === "number" &&
+    Array.isArray(value.sisterTasks) &&
+    Array.isArray(value.commonMethods)
+  )
+}
+
+function isPaperMethod(value: unknown): value is PaperMethod {
+  return (
+    isRecord(value) &&
+    text(value.id) !== "" &&
+    text(value.slug) !== "" &&
+    text(value.name) !== "" &&
+    text(value.description) !== "" &&
+    typeof value.paperCount === "number" &&
+    typeof value.taskCount === "number" &&
+    Array.isArray(value.relatedTasks) &&
+    Array.isArray(value.relatedMethods)
   )
 }
 

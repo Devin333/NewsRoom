@@ -5,7 +5,14 @@ export const dynamic = "force-dynamic"
 
 export async function POST(request: NextRequest, { params }: { params: { paperId: string } }) {
   const locale = request.nextUrl.searchParams.get("locale") ?? "en"
-  const result = await safeApiPost(`/api/v1/papers/${encodeURIComponent(params.paperId)}/summary?locale=${locale}`)
+  const refresh = request.nextUrl.searchParams.get("refresh") === "true"
+  const searchParams = new URLSearchParams({ locale })
+  if (refresh) {
+    searchParams.set("refresh", "true")
+  }
+  const result = await safeApiPost(
+    `/api/v1/papers/${encodeURIComponent(params.paperId)}/summary?${searchParams.toString()}`
+  )
   if (result.ok) {
     return NextResponse.json({ success: true, data: result.data })
   }

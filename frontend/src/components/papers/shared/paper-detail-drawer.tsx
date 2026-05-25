@@ -398,6 +398,16 @@ function AISummaryBlock({
             ))}
           </ul>
         ) : null}
+        {summary.contributions?.length ? (
+          <div>
+            <h4 className="text-xs font-semibold uppercase tracking-[0.16em] text-[#334155]/52">Contributions</h4>
+            <ul className="mt-2 list-disc space-y-1 pl-5 text-sm leading-6 text-[#334155]/72 dark:text-muted-foreground">
+              {summary.contributions.map((contribution) => (
+                <li key={contribution}>{contribution}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
       </div>
     )
   }

@@ -15,8 +15,18 @@ import { getBenchmarksForMethod, getPapersForMethod } from "@/lib/papers/catalog
 import { papersRoutes } from "@/lib/papers/routes"
 import type { Benchmark, BenchmarkRef, Locale, Paper, PaperMethod } from "@/lib/papers/types"
 
-export function MethodDetailPage({ method, locale, papers }: { method: PaperMethod; locale: Locale; papers?: Paper[] }) {
-  const [notice, setNotice] = useState<string | null>(null)
+export function MethodDetailPage({
+  method,
+  locale,
+  papers,
+  fallbackNotice
+}: {
+  method: PaperMethod
+  locale: Locale
+  papers?: Paper[]
+  fallbackNotice?: string | null
+}) {
+  const [notice, setNotice] = useState<string | null>(fallbackNotice ?? null)
   const [selectedPaper, setSelectedPaper] = useState<Paper | null>(null)
   const methodPapers = papers?.filter((paper) => (paper.methodRefs ?? []).some((methodRef) => methodRef.slug === method.slug)) ?? getPapersForMethod(method.slug)
   const methodBenchmarks = getBenchmarksForMethod(method.slug)

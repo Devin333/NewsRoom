@@ -6,7 +6,9 @@ from fastapi import APIRouter, Query
 from interfaces.api.deps import ApiRouteHelpers, ApiServices
 from interfaces.services.paper_service import (
     DEFAULT_LIMIT,
+    DEFAULT_OPS_STATS_WINDOW_HOURS,
     MAX_LIMIT,
+    MAX_OPS_STATS_WINDOW_HOURS,
     PaperCacheInvalidError,
     PaperCacheNotFoundError,
     PaperListQuery,
@@ -64,6 +66,60 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
             )
         return helpers.success(result.to_dict())
 
+    @router.get("/api/v1/papers/tasks")
+    def list_tasks():
+        try:
+            tasks = services.papers_service_factory().list_tasks()
+        except PaperCacheNotFoundError:
+            return helpers.error(
+                status_code=404,
+                code="papers_cache_not_found",
+                message="papers data cache was not found",
+                user_action_required=True,
+            )
+        except PaperCacheInvalidError as exc:
+            return helpers.error(
+                status_code=500,
+                code="papers_cache_invalid",
+                message="papers data cache could not be read",
+                details={"reason": str(exc)},
+                retryable=True,
+            )
+        return helpers.success({"tasks": list(tasks)})
+
+    @router.get("/api/v1/papers/methods")
+    def list_methods():
+        try:
+            methods = services.papers_service_factory().list_methods()
+        except PaperCacheNotFoundError:
+            return helpers.error(
+                status_code=404,
+                code="papers_cache_not_found",
+                message="papers data cache was not found",
+                user_action_required=True,
+            )
+        except PaperCacheInvalidError as exc:
+            return helpers.error(
+                status_code=500,
+                code="papers_cache_invalid",
+                message="papers data cache could not be read",
+                details={"reason": str(exc)},
+                retryable=True,
+            )
+        return helpers.success({"methods": list(methods)})
+
+    @router.get("/api/v1/papers/ops/stats")
+    def get_paper_reader_ops_stats(
+        window_hours: int = Query(
+            DEFAULT_OPS_STATS_WINDOW_HOURS,
+            alias="windowHours",
+            ge=1,
+            le=MAX_OPS_STATS_WINDOW_HOURS,
+        )
+    ):
+        stats = services.papers_service_factory().get_ops_stats(window_hours=window_hours)
+        return helpers.success({"stats": stats})
+
     @router.get("/api/v1/papers/{paper_id}")
     def get_paper(paper_id: str):
         try:
@@ -93,11 +149,16 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
         return helpers.success({"paper": paper.to_dict()})
 
     @router.post("/api/v1/papers/{paper_id}/summary")
-    def summarize_paper(paper_id: str, locale: str = Query("en", pattern="^(zh|en)$")):
+    def summarize_paper(
+        paper_id: str,
+        locale: str = Query("en", pattern="^(zh|en)$"),
+        refresh: bool = Query(False),
+    ):
         try:
             summary = services.papers_service_factory().get_or_generate_summary(
                 paper_id,
                 locale=locale,  # type: ignore[arg-type]
+                refresh=refresh,
             )
         except PaperNotFoundError:
             return helpers.error(
@@ -161,6 +222,93 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
                 user_action_required=True,
             )
         return helpers.success({"reader": reader.to_dict()})
+
+    @router.get("/api/v1/papers/{paper_id}/sections")
+    def get_paper_sections(paper_id: str, locale: str = Query("en", pattern="^(zh|en)$")):
+        try:
+            sections = services.papers_service_factory().get_paper_sections(
+                paper_id,
+                locale=locale,  # type: ignore[arg-type]
+            )
+        except PaperCacheNotFoundError:
+            return helpers.error(
+                status_code=404,
+                code="papers_cache_not_found",
+                message="papers data cache was not found",
+                user_action_required=True,
+            )
+        except PaperCacheInvalidError as exc:
+            return helpers.error(
+                status_code=500,
+                code="papers_cache_invalid",
+                message="papers data cache could not be read",
+                details={"reason": str(exc)},
+                retryable=True,
+            )
+        except PaperNotFoundError:
+            return helpers.error(
+                status_code=404,
+                code="paper_not_found",
+                message="paper was not found",
+                user_action_required=True,
+            )
+        return helpers.success({"sections": list(sections)})
+
+    @router.get("/api/v1/papers/{paper_id}/related")
+    def get_related_papers(paper_id: str):
+        try:
+            related_papers = services.papers_service_factory().get_related_papers(paper_id)
+        except PaperCacheNotFoundError:
+            return helpers.error(
+                status_code=404,
+                code="papers_cache_not_found",
+                message="papers data cache was not found",
+                user_action_required=True,
+            )
+        except PaperCacheInvalidError as exc:
+            return helpers.error(
+                status_code=500,
+                code="papers_cache_invalid",
+                message="papers data cache could not be read",
+                details={"reason": str(exc)},
+                retryable=True,
+            )
+        except PaperNotFoundError:
+            return helpers.error(
+                status_code=404,
+                code="paper_not_found",
+                message="paper was not found",
+                user_action_required=True,
+            )
+        return helpers.success({"relatedPapers": list(related_papers)})
+
+    @router.get("/api/v1/papers/{paper_id}/graph")
+    def get_paper_graph(paper_id: str):
+        try:
+            graph = services.papers_service_factory().get_paper_graph(paper_id)
+        except PaperCacheNotFoundError:
+            return helpers.error(
+                status_code=404,
+                code="papers_cache_not_found",
+                message="papers data cache was not found",
+                user_action_required=True,
+            )
+        except PaperCacheInvalidError as exc:
+            return helpers.error(
+                status_code=500,
+                code="papers_cache_invalid",
+                message="papers data cache could not be read",
+                details={"reason": str(exc)},
+                retryable=True,
+            )
+        except PaperNotFoundError:
+            return helpers.error(
+                status_code=404,
+                code="paper_not_found",
+                message="paper was not found",
+                user_action_required=True,
+            )
+        return helpers.success({"graph": graph})
 
     @router.post("/api/v1/papers/{paper_id}/ask")
     def ask_paper(paper_id: str, request: PaperAskRequest):

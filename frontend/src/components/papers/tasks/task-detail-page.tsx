@@ -14,8 +14,18 @@ import { getBenchmarksForTask, getPapersForTask } from "@/lib/papers/catalog"
 import { papersRoutes } from "@/lib/papers/routes"
 import type { Benchmark, Locale, Paper, PaperTask } from "@/lib/papers/types"
 
-export function TaskDetailPage({ task, locale, papers }: { task: PaperTask; locale: Locale; papers?: Paper[] }) {
-  const [notice, setNotice] = useState<string | null>(null)
+export function TaskDetailPage({
+  task,
+  locale,
+  papers,
+  fallbackNotice
+}: {
+  task: PaperTask
+  locale: Locale
+  papers?: Paper[]
+  fallbackNotice?: string | null
+}) {
+  const [notice, setNotice] = useState<string | null>(fallbackNotice ?? null)
   const [selectedPaper, setSelectedPaper] = useState<Paper | null>(null)
   const taskPapers = papers?.filter((paper) => (paper.taskRefs ?? []).some((taskRef) => taskRef.slug === task.slug)) ?? getPapersForTask(task.slug)
   const taskBenchmarks = getBenchmarksForTask(task.slug)

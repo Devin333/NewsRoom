@@ -91,6 +91,77 @@ describe("PaperReaderPage", () => {
     expect(screen.getByText("Benchmark")).toBeInTheDocument()
   })
 
+  it("renders text extraction quality state", () => {
+    const { rerender } = render(<PaperReaderPage reader={reader} locale="en" />)
+
+    expect(screen.getByText(/text missing/i)).toBeInTheDocument()
+
+    rerender(
+      <PaperReaderPage
+        reader={{
+          ...reader,
+          quality: {
+            ...reader.quality,
+            textExtracted: true
+          }
+        }}
+        locale="en"
+      />
+    )
+
+    expect(screen.getByText(/text extracted/i)).toBeInTheDocument()
+  })
+
+  it("renders structured AI summary v2 fields and preserves legacy fallback", () => {
+    const legacyReader: PaperReaderPayload = {
+      ...reader,
+      aiSummary: {
+        paperId: "reader-paper",
+        locale: "en",
+        modelRoute: "writer-primary",
+        abstractHash: "abc",
+        summary: "Legacy summary still renders.",
+        keyInsights: ["Legacy insight"],
+        limitations: ["Legacy limitation"],
+        generatedAt: "2026-05-24T00:00:00Z",
+        cached: true
+      }
+    }
+    const { rerender } = render(<PaperReaderPage reader={legacyReader} locale="en" />)
+
+    expect(screen.getByText("Legacy summary still renders.")).toBeInTheDocument()
+    expect(screen.getByText("Legacy insight")).toBeInTheDocument()
+    expect(screen.queryByText("Engineering Relevance")).not.toBeInTheDocument()
+
+    rerender(
+      <PaperReaderPage
+        reader={{
+          ...legacyReader,
+          aiSummary: {
+            ...legacyReader.aiSummary!,
+            summary: "Structured summary renders richer reader context.",
+            contributions: ["Adds structured reader summaries."],
+            methodSummary: "Uses retrieval over public paper sections.",
+            experimentSummary: "Reports benchmark signals when available.",
+            engineeringRelevance: "Useful for teams comparing implementations.",
+            readingDifficulty: "medium",
+            recommendedAudience: ["engineer", "researcher"],
+            summarySchemaVersion: "v2"
+          }
+        }}
+        locale="en"
+      />
+    )
+
+    expect(screen.getByText("Adds structured reader summaries.")).toBeInTheDocument()
+    expect(screen.getByText("Uses retrieval over public paper sections.")).toBeInTheDocument()
+    expect(screen.getByText("Reports benchmark signals when available.")).toBeInTheDocument()
+    expect(screen.getByText("Useful for teams comparing implementations.")).toBeInTheDocument()
+    expect(screen.getByText("Difficulty: Medium")).toBeInTheDocument()
+    expect(screen.getByText("Engineer")).toBeInTheDocument()
+    expect(screen.getByText("Researcher")).toBeInTheDocument()
+  })
+
   it("renders related entity empty and ready states", () => {
     const { rerender } = render(<PaperReaderPage reader={reader} locale="en" />)
 

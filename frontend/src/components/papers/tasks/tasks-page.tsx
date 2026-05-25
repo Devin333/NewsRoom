@@ -1,13 +1,51 @@
+"use client"
+
+import { useEffect, useState } from "react"
 import { PapersHero } from "@/components/papers/papers-hero"
 import { PapersMicrobar } from "@/components/papers/papers-microbar"
 import { TaskSection } from "@/components/papers/tasks/task-section"
+import { InlineNotice } from "@/components/papers/shared/inline-notice"
 import { papersCopy, taskGroupLabels, t } from "@/lib/papers/copy"
 import { benchmarks, papers, paperTasks } from "@/lib/papers/catalog"
-import type { Locale } from "@/lib/papers/types"
+import { fetchPaperTasks, fetchPapers } from "@/lib/papers/api"
+import type { Locale, Paper, PaperTask } from "@/lib/papers/types"
 
 const taskGroups = ["general", "vision", "video", "language", "audio", "robotics", "infra"]
 
 export function TasksPage({ locale }: { locale: Locale }) {
+  const [tasks, setTasks] = useState<PaperTask[]>([])
+  const [paperItems, setPaperItems] = useState<Paper[]>([])
+  const [status, setStatus] = useState<"loading" | "ready" | "fallback">("loading")
+  const [fallbackNoticeVisible, setFallbackNoticeVisible] = useState(true)
+
+  useEffect(() => {
+    let active = true
+    Promise.all([fetchPaperTasks(), fetchPapers({ limit: 1000, period: "all" })])
+      .then(([apiTasks, apiPapers]) => {
+        if (!active) {
+          return
+        }
+        setTasks(apiTasks)
+        setPaperItems(apiPapers.papers)
+        setStatus("ready")
+      })
+      .catch(() => {
+        if (!active) {
+          return
+        }
+        setTasks(paperTasks)
+        setPaperItems(papers)
+        setStatus("fallback")
+      })
+    return () => {
+      active = false
+    }
+  }, [])
+
+  const taskItems = status === "loading" ? [] : tasks
+  const taskPaperItems = status === "loading" ? [] : paperItems
+  const benchmarkCount = status === "fallback" ? benchmarks.length : taskItems.reduce((total, task) => total + task.benchmarkCount, 0)
+
   return (
     <div className="space-y-6">
       <PapersMicrobar items={[{ label: "Tasks" }]} meta={t(papersCopy.taskBranch, locale)} locale={locale} />
@@ -16,17 +54,27 @@ export function TasksPage({ locale }: { locale: Locale }) {
         title={t(papersCopy.tasks, locale)}
         subtitle={t(papersCopy.tasksSubtitle, locale)}
         stats={[
-          { label: t(papersCopy.tasks, locale), value: paperTasks.length },
-          { label: t(papersCopy.papers, locale), value: papers.length },
-          { label: t(papersCopy.benchmarks, locale), value: benchmarks.length }
+          { label: t(papersCopy.tasks, locale), value: taskItems.length },
+          { label: t(papersCopy.papers, locale), value: taskPaperItems.length },
+          { label: t(papersCopy.benchmarks, locale), value: benchmarkCount }
         ]}
       />
+      {status === "fallback" ? (
+        <InlineNotice
+          message={fallbackNoticeVisible ? "Paper task API is unavailable; showing local catalog fallback." : null}
+          locale={locale}
+          onDismiss={() => setFallbackNoticeVisible(false)}
+        />
+      ) : null}
       <div className="space-y-6">
+        {status === "loading" ? (
+          <p className="text-sm text-[#334155]/60 dark:text-muted-foreground">Loading paper tasks...</p>
+        ) : null}
         {taskGroups.map((group) => (
           <TaskSection
             key={group}
             title={t(taskGroupLabels[group], locale, group)}
-            tasks={paperTasks.filter((task) => task.group === group)}
+            tasks={taskItems.filter((task) => task.group === group)}
             locale={locale}
           />
         ))}

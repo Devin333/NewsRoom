@@ -17,6 +17,7 @@ export const queryKeys = {
     runs: ["studio", "runs"] as const,
     runDetail: (id: string) => ["studio", "runs", id] as const,
     pdfProxyStats: (windowHours: number) => ["studio", "paper-reader", "pdf-proxy", "stats", windowHours] as const,
+    paperReaderOpsStats: (windowHours: number) => ["studio", "paper-reader", "ops", "stats", windowHours] as const,
     sources: ["studio", "sources"] as const,
     sourcePreview: (id: string) => ["studio", "sources", id, "preview"] as const
   }

@@ -158,6 +158,32 @@ function ReaderPanel({ summary, paper, locale }: { summary: PaperAISummary | nul
           {summary.keyInsights.length ? (
             <Block title="TL;DR" items={summary.keyInsights} />
           ) : null}
+          {summary.contributions?.length ? (
+            <Block title="Contributions" items={summary.contributions} />
+          ) : null}
+          {summary.methodSummary ? (
+            <SummaryField title="Method" value={summary.methodSummary} />
+          ) : null}
+          {summary.experimentSummary ? (
+            <SummaryField title="Experiments" value={summary.experimentSummary} />
+          ) : null}
+          {summary.engineeringRelevance ? (
+            <SummaryField title="Engineering Relevance" value={summary.engineeringRelevance} />
+          ) : null}
+          {summary.readingDifficulty || summary.recommendedAudience?.length ? (
+            <div className="flex flex-wrap gap-2">
+              {summary.readingDifficulty ? (
+                <Badge variant="muted" className="rounded-sm">
+                  Difficulty: {formatSummaryToken(summary.readingDifficulty)}
+                </Badge>
+              ) : null}
+              {summary.recommendedAudience?.map((audience) => (
+                <Badge key={audience} variant="accent" className="rounded-sm">
+                  {formatSummaryToken(audience)}
+                </Badge>
+              ))}
+            </div>
+          ) : null}
           {summary.limitations.length ? (
             <Block title="Limitations" items={summary.limitations} />
           ) : null}
@@ -292,7 +318,8 @@ function SignalPanel({ paper, reader }: { paper: Paper; reader: PaperReaderPaylo
         </MiniList>
         <div className="rounded-md bg-[#eef4ef] p-3 text-xs leading-5 text-[#334155]/68 dark:bg-secondary dark:text-muted-foreground">
           Quality: PDF {reader.quality.pdfAvailable ? "available" : "missing"} / summary{" "}
-          {reader.quality.summaryAvailable ? "available" : "not cached"} / evidence coverage{" "}
+          {reader.quality.summaryAvailable ? "available" : "not cached"} / text{" "}
+          {reader.quality.textExtracted ? "extracted" : "missing"} / evidence coverage{" "}
           {Math.round(reader.quality.evidenceCoverage * 100)}%
         </div>
       </div>
@@ -422,6 +449,22 @@ function Block({ title, items }: { title: string; items: string[] }) {
       </ul>
     </div>
   )
+}
+
+function SummaryField({ title, value }: { title: string; value: string }) {
+  return (
+    <div>
+      <h3 className="text-xs font-semibold uppercase tracking-[0.16em] text-[#334155]/52">{title}</h3>
+      <p className="mt-2 text-sm leading-6 text-[#334155]/72 dark:text-muted-foreground">{value}</p>
+    </div>
+  )
+}
+
+function formatSummaryToken(value: string) {
+  return value
+    .split(/[_-]+/)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ")
 }
 
 function Metric({ icon, value, label }: { icon: ReactNode; value: string; label: string }) {

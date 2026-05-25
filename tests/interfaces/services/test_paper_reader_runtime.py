@@ -118,6 +118,204 @@ def test_reader_payload_returns_sections_and_quality(tmp_path) -> None:
     assert reader["quality"]["pdfAvailable"] is True
 
 
+def test_reader_cache_miss_writes_public_cache(tmp_path) -> None:
+    cache_path = tmp_path / "papers.json"
+    reader_cache_dir = tmp_path / "reader-cache"
+    cache_path.write_text(
+        json.dumps(
+            {
+                "papers": [
+                    {
+                        "id": "cache-paper",
+                        "slug": "cache-paper",
+                        "title": "Cache Paper",
+                        "abstractSnippet": "Cache abstract.",
+                        "authors": ["A"],
+                        "publishedAt": "2026-05-24T00:00:00Z",
+                        "paperUrl": "https://arxiv.org/abs/2605.10001",
+                        "evidenceRefs": [{"sourceId": "arxiv", "raw_payload": {"token": "secret"}}],
+                        "isPublished": True,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    service = PapersApplicationService(papers_data_path=cache_path, reader_cache_dir=reader_cache_dir)
+
+    reader = service.get_reader_payload("cache-paper", locale="en").to_dict()
+
+    cache_file = reader_cache_dir / "cache-paper.json"
+    assert cache_file.exists()
+    assert reader["sections"][0]["sectionType"] == "abstract"
+    cache_record = json.loads(cache_file.read_text(encoding="utf-8"))
+    assert cache_record["paperId"] == "cache-paper"
+    assert cache_record["sourceHash"]
+    assert cache_record["payload"]["paper"]["id"] == "cache-paper"
+    serialized = json.dumps(cache_record)
+    assert "raw_payload" not in serialized
+    assert "token" not in serialized
+    assert "secret" not in serialized
+
+
+def test_reader_cache_reuses_valid_cache_and_rebuilds_stale_cache(tmp_path) -> None:
+    cache_path = tmp_path / "papers.json"
+    reader_cache_dir = tmp_path / "reader-cache"
+    cache_path.write_text(
+        json.dumps(
+            {
+                "papers": [
+                    {
+                        "id": "reuse-paper",
+                        "slug": "reuse-paper",
+                        "title": "Reuse Paper",
+                        "abstractSnippet": "Original cacheable abstract.",
+                        "authors": ["A"],
+                        "publishedAt": "2026-05-24T00:00:00Z",
+                        "paperUrl": "https://arxiv.org/abs/2605.10002",
+                        "isPublished": True,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    service = PapersApplicationService(papers_data_path=cache_path, reader_cache_dir=reader_cache_dir)
+    service.get_reader_payload("reuse-paper", locale="en")
+    cache_file = reader_cache_dir / "reuse-paper.json"
+    cache_record = json.loads(cache_file.read_text(encoding="utf-8"))
+    cache_record["payload"]["sections"][0]["textExcerpt"] = "Cached public section."
+    cache_record["payload"]["raw_payload"] = {"token": "secret"}
+    cache_record["payload"]["sections"][0]["authorization"] = "Bearer secret"
+    cache_file.write_text(json.dumps(cache_record), encoding="utf-8")
+
+    cached_reader = service.get_reader_payload("reuse-paper", locale="en").to_dict()
+
+    assert cached_reader["sections"][0]["textExcerpt"] == "Cached public section."
+    serialized = json.dumps(cached_reader)
+    assert "raw_payload" not in serialized
+    assert "authorization" not in serialized
+    assert "token" not in serialized
+
+    stale_record = json.loads(cache_file.read_text(encoding="utf-8"))
+    stale_record["sourceHash"] = "stale"
+    stale_record["payload"]["sections"][0]["textExcerpt"] = "Stale cache should not leak."
+    cache_file.write_text(json.dumps(stale_record), encoding="utf-8")
+
+    rebuilt_reader = service.get_reader_payload("reuse-paper", locale="en").to_dict()
+
+    assert rebuilt_reader["sections"][0]["textExcerpt"] == "Original cacheable abstract."
+    assert json.loads(cache_file.read_text(encoding="utf-8"))["sourceHash"] != "stale"
+
+
+def test_text_extraction_artifact_adds_sections_and_text_extracted_quality(tmp_path) -> None:
+    cache_path = tmp_path / "papers.json"
+    reader_cache_dir = tmp_path / "reader-cache"
+    text_extraction_dir = tmp_path / "text-extractions"
+    cache_path.write_text(
+        json.dumps(
+            {
+                "papers": [
+                    {
+                        "id": "extract-paper",
+                        "slug": "extract-paper",
+                        "title": "Extract Paper",
+                        "abstractSnippet": "Metadata abstract.",
+                        "authors": ["A"],
+                        "publishedAt": "2026-05-24T00:00:00Z",
+                        "paperUrl": "https://arxiv.org/abs/2605.10003",
+                        "isPublished": True,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    service = PapersApplicationService(
+        papers_data_path=cache_path,
+        reader_cache_dir=reader_cache_dir,
+        text_extraction_dir=text_extraction_dir,
+    )
+    service.get_reader_payload("extract-paper", locale="en")
+    base_source_hash = json.loads((reader_cache_dir / "extract-paper.json").read_text(encoding="utf-8"))["baseSourceHash"]
+    text_extraction_dir.mkdir()
+    (text_extraction_dir / "extract-paper.json").write_text(
+        json.dumps(
+            {
+                "paperId": "extract-paper",
+                "sourceHash": base_source_hash,
+                "extractedAt": "2026-05-25T00:00:00Z",
+                "sections": [
+                    {
+                        "title": "Method",
+                        "level": 2,
+                        "pageStart": 3,
+                        "pageEnd": 4,
+                        "textExcerpt": "Extracted method details from a safe artifact.",
+                        "summary": "Extracted method summary.",
+                        "sectionType": "method",
+                        "raw_payload": {"token": "secret"},
+                        "full_text": "private full text",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    reader = service.get_reader_payload("extract-paper", locale="en").to_dict()
+
+    assert reader["quality"]["textExtracted"] is True
+    assert reader["sections"][0]["id"].startswith("extract-paper:extracted:method:")
+    assert reader["sections"][0]["pageStart"] == 3
+    assert reader["sections"][0]["summary"] == "Extracted method summary."
+    assert any(section["sectionType"] == "abstract" for section in reader["sections"])
+    serialized = json.dumps(reader)
+    assert "raw_payload" not in serialized
+    assert "full_text" not in serialized
+    assert "token" not in serialized
+    assert "secret" not in serialized
+
+
+def test_corrupt_reader_cache_or_extraction_artifact_does_not_break_payload(tmp_path) -> None:
+    cache_path = tmp_path / "papers.json"
+    reader_cache_dir = tmp_path / "reader-cache"
+    text_extraction_dir = tmp_path / "text-extractions"
+    cache_path.write_text(
+        json.dumps(
+            {
+                "papers": [
+                    {
+                        "id": "corrupt-paper",
+                        "slug": "corrupt-paper",
+                        "title": "Corrupt Paper",
+                        "abstractSnippet": "Corrupt fallback abstract.",
+                        "authors": ["A"],
+                        "publishedAt": "2026-05-24T00:00:00Z",
+                        "paperUrl": "https://arxiv.org/abs/2605.10004",
+                        "isPublished": True,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    reader_cache_dir.mkdir()
+    text_extraction_dir.mkdir()
+    (reader_cache_dir / "corrupt-paper.json").write_text("{not-json", encoding="utf-8")
+    (text_extraction_dir / "corrupt-paper.json").write_text("{not-json", encoding="utf-8")
+    service = PapersApplicationService(
+        papers_data_path=cache_path,
+        reader_cache_dir=reader_cache_dir,
+        text_extraction_dir=text_extraction_dir,
+    )
+
+    reader = service.get_reader_payload("corrupt-paper", locale="en").to_dict()
+
+    assert reader["sections"][0]["textExcerpt"] == "Corrupt fallback abstract."
+    assert reader["quality"]["textExtracted"] is False
+
+
 def test_reader_payload_builds_public_derived_sections_and_ranks_answers(tmp_path) -> None:
     cache_path = tmp_path / "papers.json"
     summary_path = tmp_path / "summaries.json"
@@ -260,6 +458,23 @@ def test_reader_payload_builds_public_derived_sections_and_ranks_answers(tmp_pat
 
     assert answer["citations"][0]["sectionId"] == "section-paper:benchmark"
     assert "MMLU" in answer["answer"]
+
+    sections = service.get_paper_sections("section-paper", locale="en")
+    related_papers = service.get_related_papers("section-paper")
+    graph = service.get_paper_graph("section-paper")
+    tasks = service.list_tasks()
+    methods = service.list_methods()
+
+    assert sections[0]["id"] == "section-paper:abstract"
+    assert related_papers[0]["id"] == "related-paper"
+    assert any(node["type"] == "project" for node in graph["nodes"])
+    assert any(edge["target"].startswith("news:") for edge in graph["edges"])
+    assert tasks[0]["slug"] == "qa"
+    assert tasks[0]["paperCount"] == 2
+    assert tasks[0]["methodCount"] == 1
+    assert methods[0]["slug"] == "rag"
+    assert methods[0]["paperCount"] == 2
+    assert methods[0]["taskCount"] == 1
 
 
 def test_reader_agent_answers_with_citations_cache_and_redaction(tmp_path) -> None:

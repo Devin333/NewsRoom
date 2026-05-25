@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
+import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -26,8 +28,18 @@ from business.boards.paper_radar.reader_agent import (
     answer_reader_question,
     copy_answer,
 )
-from business.boards.paper_radar.reader_payload_builder import PaperReaderPayload, build_reader_payload
+from business.boards.paper_radar.reader_payload_builder import (
+    PaperReaderPayload,
+    PaperReaderQuality,
+    PaperSection,
+    build_reader_payload,
+)
 from interfaces.services.paper_artifact_repository import PaperArtifactRepository
+from interfaces.services.paper_reader_cache_repository import (
+    PaperReaderCacheRepository,
+    TextExtractionRepository,
+    reader_cache_source_hash,
+)
 
 
 PaperPeriod = Literal["daily", "weekly", "monthly", "all"]
@@ -36,9 +48,15 @@ PaperLocale = Literal["zh", "en"]
 
 PAPERS_DATA_PATH_ENV = "NEWSROOM_PAPERS_DATA_PATH"
 PAPERS_SUMMARY_CACHE_PATH_ENV = "NEWSROOM_PAPERS_AI_SUMMARY_CACHE_PATH"
+PAPERS_SUMMARY_EVENTS_PATH_ENV = "NEWSROOM_PAPERS_SUMMARY_EVENTS_PATH"
 PAPERS_SUMMARY_MODEL_ROUTE_ENV = "NEWS_PAPERS_SUMMARY_MODEL_ROUTE"
+PAPER_SUMMARY_SCHEMA_VERSION = "v2"
 DEFAULT_LIMIT = 1000
 MAX_LIMIT = 5000
+DEFAULT_OPS_STATS_WINDOW_HOURS = 24
+MAX_OPS_STATS_WINDOW_HOURS = 24 * 30
+
+logger = logging.getLogger(__name__)
 
 _GITHUB_REPO_PATTERN = re.compile(r"https?://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 
@@ -124,11 +142,18 @@ class PaperAISummary:
     summary: str
     keyInsights: tuple[str, ...] = ()
     limitations: tuple[str, ...] = ()
+    contributions: tuple[str, ...] = ()
+    methodSummary: str | None = None
+    experimentSummary: str | None = None
+    engineeringRelevance: str | None = None
+    readingDifficulty: Literal["low", "medium", "high"] | None = None
+    recommendedAudience: tuple[str, ...] = ()
+    summarySchemaVersion: str | None = None
     generatedAt: str = ""
     cached: bool = False
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "paperId": self.paperId,
             "locale": self.locale,
             "modelRoute": self.modelRoute,
@@ -139,6 +164,20 @@ class PaperAISummary:
             "generatedAt": self.generatedAt,
             "cached": self.cached,
         }
+        if self.contributions:
+            payload["contributions"] = list(self.contributions)
+        for key, value in (
+            ("methodSummary", self.methodSummary),
+            ("experimentSummary", self.experimentSummary),
+            ("engineeringRelevance", self.engineeringRelevance),
+            ("readingDifficulty", self.readingDifficulty),
+            ("summarySchemaVersion", self.summarySchemaVersion),
+        ):
+            if value:
+                payload[key] = value
+        if self.recommendedAudience:
+            payload["recommendedAudience"] = list(self.recommendedAudience)
+        return sanitize_public_payload(payload)
 
 
 @dataclass(frozen=True)
@@ -268,6 +307,11 @@ class PapersApplicationService:
         *,
         papers_data_path: str | Path | None = None,
         summary_cache_path: str | Path | None = None,
+        summary_events_path: str | Path | None = None,
+        reader_cache_dir: str | Path | None = None,
+        text_extraction_dir: str | Path | None = None,
+        reader_cache_repository: PaperReaderCacheRepository | None = None,
+        text_extraction_repository: TextExtractionRepository | None = None,
         artifact_repository: PaperArtifactRepository | None = None,
         llm_client_factory: Callable[[str], Any] | None = None,
         clock: Callable[[], datetime] | None = None,
@@ -275,6 +319,9 @@ class PapersApplicationService:
         self._explicit_papers_data_path = papers_data_path is not None or bool(os.environ.get(PAPERS_DATA_PATH_ENV))
         self.papers_data_path = _papers_data_path(papers_data_path)
         self.summary_cache_path = _summary_cache_path(summary_cache_path)
+        self.summary_events_path = _summary_events_path(summary_events_path)
+        self.reader_cache_repository = reader_cache_repository or PaperReaderCacheRepository(reader_cache_dir)
+        self.text_extraction_repository = text_extraction_repository or TextExtractionRepository(text_extraction_dir)
         self.artifact_repository = artifact_repository or PaperArtifactRepository()
         self.llm_client_factory = llm_client_factory or _default_llm_client_factory
         self.clock = clock or (lambda: datetime.now(timezone.utc))
@@ -313,18 +360,48 @@ class PapersApplicationService:
                 return _with_summary(paper, cached_summary)
         raise PaperNotFoundError(f"paper not found: {paper_id}")
 
-    def get_or_generate_summary(self, paper_id: str, *, locale: PaperLocale) -> PaperAISummary:
+    def get_or_generate_summary(self, paper_id: str, *, locale: PaperLocale, refresh: bool = False) -> PaperAISummary:
         paper = self.get_paper(paper_id)
         route = self._summary_route()
-        cached = self._cached_summary_for(paper, route, locale=locale)
-        if cached is not None:
-            return _copy_summary(cached, cached=True)
+        started = time.perf_counter()
+        try:
+            if not refresh:
+                cached = self._cached_summary_for(paper, route, locale=locale)
+                if cached is not None:
+                    self._record_summary_event(
+                        paper_id=paper.id,
+                        locale=locale,
+                        model_route=route,
+                        outcome="cache_hit",
+                        duration_ms=_duration_ms(started),
+                        cache_hit=True,
+                    )
+                    return _copy_summary(cached, cached=True)
 
-        summary = self._generate_summary(paper, locale=locale, route=route)
-        cache = self._read_summary_cache()
-        cache[summary_cache_key(paper, locale=locale, route=route)] = summary.to_dict() | {"cached": False}
-        self._write_summary_cache(cache)
-        return summary
+            summary = self._generate_summary(paper, locale=locale, route=route)
+            cache = self._read_summary_cache()
+            cache[summary_cache_key(paper, locale=locale, route=route)] = summary.to_dict() | {"cached": False}
+            self._write_summary_cache(cache)
+            self._record_summary_event(
+                paper_id=paper.id,
+                locale=locale,
+                model_route=route,
+                outcome="generated",
+                duration_ms=_duration_ms(started),
+                cache_hit=False,
+            )
+            return summary
+        except PaperSummaryUnavailableError:
+            self._record_summary_event(
+                paper_id=paper.id,
+                locale=locale,
+                model_route=route,
+                outcome="failed",
+                duration_ms=_duration_ms(started),
+                cache_hit=False,
+                error_code="paper_summary_unavailable",
+            )
+            raise
 
     def get_reader_payload(self, paper_id: str, *, locale: PaperLocale) -> PaperReaderPayload:
         paper = self.get_paper(paper_id)
@@ -332,7 +409,46 @@ class PapersApplicationService:
         if summary is None and paper.aiSummary is not None and paper.aiSummary.locale == locale:
             summary = paper.aiSummary
         candidates = tuple(self._published_papers(self._load_cache()))
-        return build_reader_payload(paper, ai_summary=summary, related_paper_candidates=candidates)
+        base_source_hash = reader_source_hash(paper, ai_summary=summary, related_paper_candidates=candidates)
+        extracted_sections = self.text_extraction_repository.read_sections(paper.id, base_source_hash)
+        source_hash = reader_cache_source_hash(base_source_hash, extracted_sections)
+        cached_reader = _reader_payload_from_cache(self.reader_cache_repository.read(paper.id, source_hash))
+        if cached_reader is not None:
+            return cached_reader
+        reader = build_reader_payload(
+            paper,
+            ai_summary=summary,
+            related_paper_candidates=candidates,
+            extracted_section_payloads=extracted_sections,
+        )
+        cached_at = self.clock().isoformat().replace("+00:00", "Z")
+        if not self.reader_cache_repository.write(
+            paper.id,
+            source_hash,
+            reader.to_dict(),
+            cached_at=cached_at,
+            base_source_hash=base_source_hash,
+        ):
+            logger.warning("paper reader cache write failed", extra={"paper_id": paper.id})
+        return reader
+
+    def get_paper_sections(self, paper_id: str, *, locale: PaperLocale) -> tuple[Mapping[str, Any], ...]:
+        reader = self.get_reader_payload(paper_id, locale=locale)
+        return tuple(section.to_dict() for section in reader.sections)
+
+    def get_related_papers(self, paper_id: str) -> tuple[Mapping[str, Any], ...]:
+        reader = self.get_reader_payload(paper_id, locale="en")
+        return tuple(reader.relatedPapers)
+
+    def get_paper_graph(self, paper_id: str) -> Mapping[str, Any]:
+        reader = self.get_reader_payload(paper_id, locale="en")
+        return _paper_graph_payload(reader)
+
+    def list_tasks(self) -> tuple[Mapping[str, Any], ...]:
+        return tuple(_task_index(self._published_papers(self._load_cache())))
+
+    def list_methods(self) -> tuple[Mapping[str, Any], ...]:
+        return tuple(_method_index(self._published_papers(self._load_cache())))
 
     def ask_paper(self, paper_id: str, *, question: str, locale: PaperLocale) -> PaperReaderAnswer:
         normalized_question = " ".join(question.strip().split())
@@ -351,6 +467,76 @@ class PapersApplicationService:
         )
         self._reader_answer_cache[cache_key] = answer.to_dict() | {"cached": False}
         return answer
+
+    def get_ops_stats(self, *, window_hours: int = DEFAULT_OPS_STATS_WINDOW_HOURS) -> Mapping[str, Any]:
+        normalized_window_hours = _normalized_window_hours(window_hours)
+        now = self.clock()
+        window_start = now - timedelta(hours=normalized_window_hours)
+        paper_cache = _paper_cache_stats(self)
+        summary_cache = _summary_cache_stats(self.summary_cache_path)
+        summary_events = _summary_event_stats(self.summary_events_path, window_start=window_start, window_end=now)
+        reader_cache = _directory_artifact_stats(self.reader_cache_repository.cache_dir)
+        text_extraction = _directory_artifact_stats(self.text_extraction_repository.extraction_dir)
+        state_inputs = (
+            paper_cache,
+            summary_cache,
+            summary_events,
+            reader_cache,
+            text_extraction,
+        )
+        data_state = _ops_data_state(state_inputs)
+        payload = {
+            "dataState": data_state,
+            "windowHours": normalized_window_hours,
+            "windowStart": now_to_iso(window_start),
+            "windowEnd": now_to_iso(now),
+            "paperCache": paper_cache,
+            "summaryCache": summary_cache,
+            "summaryEvents": summary_events,
+            "readerCache": reader_cache,
+            "textExtraction": text_extraction,
+            "lastUpdatedAt": _latest_timestamp(
+                [
+                    paper_cache.get("lastUpdatedAt"),
+                    summary_cache.get("lastUpdatedAt"),
+                    summary_events.get("lastUpdatedAt"),
+                    reader_cache.get("lastUpdatedAt"),
+                    text_extraction.get("lastUpdatedAt"),
+                ]
+            ),
+        }
+        return sanitize_public_payload(payload)
+
+    def _record_summary_event(
+        self,
+        *,
+        paper_id: str,
+        locale: PaperLocale,
+        model_route: str,
+        outcome: Literal["cache_hit", "generated", "failed"],
+        duration_ms: int,
+        cache_hit: bool,
+        error_code: str | None = None,
+    ) -> None:
+        payload = {
+            "timestamp": self.clock().isoformat().replace("+00:00", "Z"),
+            "paperId": paper_id,
+            "locale": locale,
+            "modelRoute": model_route,
+            "outcome": outcome,
+            "durationMs": max(0, duration_ms),
+            "cacheHit": bool(cache_hit),
+            "schemaVersion": PAPER_SUMMARY_SCHEMA_VERSION,
+        }
+        if error_code:
+            payload["errorCode"] = error_code
+        try:
+            self.summary_events_path.parent.mkdir(parents=True, exist_ok=True)
+            with self.summary_events_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(sanitize_public_payload(payload), ensure_ascii=False, sort_keys=True))
+                handle.write("\n")
+        except (OSError, TypeError, ValueError) as exc:
+            logger.warning("paper summary event write failed", extra={"paper_id": paper_id, "reason": str(exc)})
 
     def _published_papers(self, cache: Mapping[str, Any]) -> list[PublicPaper]:
         raw_papers = cache.get("papers")
@@ -430,6 +616,13 @@ class PapersApplicationService:
             summary=summary,
             keyInsights=tuple(_string_list(payload.get("keyInsights") or payload.get("key_insights"))),
             limitations=tuple(_string_list(payload.get("limitations"))),
+            contributions=tuple(_string_list(payload.get("contributions"))),
+            methodSummary=_optional_text(payload.get("methodSummary") or payload.get("method_summary")),
+            experimentSummary=_optional_text(payload.get("experimentSummary") or payload.get("experiment_summary")),
+            engineeringRelevance=_optional_text(payload.get("engineeringRelevance") or payload.get("engineering_relevance")),
+            readingDifficulty=_reading_difficulty(payload.get("readingDifficulty") or payload.get("reading_difficulty")),
+            recommendedAudience=tuple(_string_list(payload.get("recommendedAudience") or payload.get("recommended_audience"))),
+            summarySchemaVersion=PAPER_SUMMARY_SCHEMA_VERSION,
             generatedAt=self.clock().isoformat().replace("+00:00", "Z"),
             cached=False,
         )
@@ -450,16 +643,430 @@ class PapersApplicationService:
         temp_path.replace(self.summary_cache_path)
 
 
+def _duration_ms(started: float) -> int:
+    return max(0, int((time.perf_counter() - started) * 1000))
+
+
+def _normalized_window_hours(value: int) -> int:
+    if not isinstance(value, int) or value < 1:
+        return DEFAULT_OPS_STATS_WINDOW_HOURS
+    return min(value, MAX_OPS_STATS_WINDOW_HOURS)
+
+
+def now_to_iso(value: datetime) -> str:
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _paper_cache_stats(service: PapersApplicationService) -> Mapping[str, Any]:
+    file_exists = service.papers_data_path.exists()
+    try:
+        cache = service._load_cache()
+    except PaperCacheNotFoundError:
+        return {
+            "status": "missing",
+            "exists": False,
+            "paperCount": 0,
+            "collectedAt": None,
+            "source": None,
+            "lastUpdatedAt": None,
+        }
+    except PaperCacheInvalidError:
+        return {
+            "status": "invalid",
+            "exists": file_exists,
+            "paperCount": 0,
+            "collectedAt": None,
+            "source": None,
+            "lastUpdatedAt": _path_mtime_iso(service.papers_data_path),
+        }
+    papers = service._published_papers(cache)
+    return {
+        "status": "ready",
+        "exists": file_exists,
+        "paperCount": len(papers),
+        "collectedAt": _optional_text(cache.get("collectedAt")),
+        "source": _optional_text(cache.get("source")) or "papers-cache",
+        "lastUpdatedAt": _path_mtime_iso(service.papers_data_path) or _optional_text(cache.get("collectedAt")),
+    }
+
+
+def _summary_cache_stats(path: Path) -> Mapping[str, Any]:
+    if not path.exists():
+        return {
+            "status": "missing",
+            "exists": False,
+            "entryCount": 0,
+            "v2EntryCount": 0,
+            "localeCounts": {},
+            "modelRouteCounts": {},
+            "lastGeneratedAt": None,
+            "lastUpdatedAt": None,
+        }
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {
+            "status": "invalid",
+            "exists": True,
+            "entryCount": 0,
+            "v2EntryCount": 0,
+            "localeCounts": {},
+            "modelRouteCounts": {},
+            "lastGeneratedAt": None,
+            "lastUpdatedAt": _path_mtime_iso(path),
+        }
+    if not isinstance(payload, Mapping):
+        return {
+            "status": "invalid",
+            "exists": True,
+            "entryCount": 0,
+            "v2EntryCount": 0,
+            "localeCounts": {},
+            "modelRouteCounts": {},
+            "lastGeneratedAt": None,
+            "lastUpdatedAt": _path_mtime_iso(path),
+        }
+
+    locale_counts: dict[str, int] = {}
+    model_route_counts: dict[str, int] = {}
+    last_generated_at: str | None = None
+    v2_count = 0
+    for key, value in payload.items():
+        if not isinstance(value, Mapping):
+            continue
+        sanitized = sanitize_public_payload(value)
+        if not isinstance(sanitized, Mapping):
+            continue
+        schema_version = _optional_text(
+            sanitized.get("summarySchemaVersion") or sanitized.get("summary_schema_version")
+        )
+        if schema_version == PAPER_SUMMARY_SCHEMA_VERSION or str(key).endswith(f":{PAPER_SUMMARY_SCHEMA_VERSION}"):
+            v2_count += 1
+        locale = _optional_text(sanitized.get("locale"))
+        if locale:
+            _increment_count(locale_counts, locale)
+        route = _optional_text(sanitized.get("modelRoute") or sanitized.get("model_route"))
+        if route:
+            _increment_count(model_route_counts, route)
+        generated_at = _optional_text(sanitized.get("generatedAt") or sanitized.get("generated_at"))
+        last_generated_at = _latest_timestamp([last_generated_at, generated_at])
+
+    return {
+        "status": "ready",
+        "exists": True,
+        "entryCount": len(payload),
+        "v2EntryCount": v2_count,
+        "localeCounts": locale_counts,
+        "modelRouteCounts": model_route_counts,
+        "lastGeneratedAt": last_generated_at,
+        "lastUpdatedAt": _path_mtime_iso(path) or last_generated_at,
+    }
+
+
+def _summary_event_stats(path: Path, *, window_start: datetime, window_end: datetime) -> Mapping[str, Any]:
+    if not path.exists():
+        return _empty_summary_event_stats(status="missing", exists=False)
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return _empty_summary_event_stats(status="invalid", exists=True, last_updated_at=_path_mtime_iso(path))
+
+    partial = False
+    events: list[Mapping[str, Any]] = []
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            raw = json.loads(line)
+        except json.JSONDecodeError:
+            partial = True
+            continue
+        event = _safe_summary_event(raw)
+        event_time = _datetime(_text(event.get("timestamp")))
+        if event_time is None:
+            partial = True
+            continue
+        if window_start <= event_time <= window_end:
+            events.append(event)
+
+    outcome_counts: dict[str, int] = {}
+    error_code_counts: dict[str, int] = {}
+    locale_counts: dict[str, int] = {}
+    model_route_counts: dict[str, int] = {}
+    recent_failures: list[Mapping[str, Any]] = []
+    cache_hit_count = 0
+    generated_count = 0
+    failure_count = 0
+    durations: list[int] = []
+    for event in events:
+        outcome = _text(event.get("outcome")) or "unknown"
+        _increment_count(outcome_counts, outcome)
+        if outcome == "cache_hit":
+            cache_hit_count += 1
+        elif outcome == "generated":
+            generated_count += 1
+        elif outcome == "failed":
+            failure_count += 1
+            recent_failures.append(
+                {
+                    "timestamp": event.get("timestamp"),
+                    "paperId": event.get("paperId"),
+                    "locale": event.get("locale"),
+                    "modelRoute": event.get("modelRoute"),
+                    "errorCode": event.get("errorCode") or "paper_summary_unavailable",
+                    "durationMs": event.get("durationMs"),
+                    "schemaVersion": event.get("schemaVersion"),
+                }
+            )
+        error_code = _optional_text(event.get("errorCode"))
+        if error_code:
+            _increment_count(error_code_counts, error_code)
+        locale = _optional_text(event.get("locale"))
+        if locale:
+            _increment_count(locale_counts, locale)
+        route = _optional_text(event.get("modelRoute"))
+        if route:
+            _increment_count(model_route_counts, route)
+        duration = _int_number(event.get("durationMs"))
+        if duration is not None and duration >= 0:
+            durations.append(duration)
+
+    recent_failures = sorted(
+        recent_failures,
+        key=lambda event: _timestamp(_text(event.get("timestamp"))),
+        reverse=True,
+    )[:5]
+    summary_requests = cache_hit_count + generated_count
+    hit_rate = round(cache_hit_count / summary_requests, 4) if summary_requests else 0.0
+    return {
+        "status": "partial" if partial else "ready",
+        "exists": True,
+        "eventCount": len(events),
+        "cacheHitCount": cache_hit_count,
+        "generatedCount": generated_count,
+        "failureCount": failure_count,
+        "hitRate": hit_rate,
+        "outcomeCounts": outcome_counts,
+        "errorCodeCounts": error_code_counts,
+        "localeCounts": locale_counts,
+        "modelRouteCounts": model_route_counts,
+        "recentFailures": recent_failures,
+        "averageDurationMs": round(sum(durations) / len(durations)) if durations else 0,
+        "lastUpdatedAt": _latest_timestamp([event.get("timestamp") for event in events]) or _path_mtime_iso(path),
+    }
+
+
+def _empty_summary_event_stats(
+    *,
+    status: str,
+    exists: bool,
+    last_updated_at: str | None = None,
+) -> Mapping[str, Any]:
+    return {
+        "status": status,
+        "exists": exists,
+        "eventCount": 0,
+        "cacheHitCount": 0,
+        "generatedCount": 0,
+        "failureCount": 0,
+        "hitRate": 0.0,
+        "outcomeCounts": {},
+        "errorCodeCounts": {},
+        "localeCounts": {},
+        "modelRouteCounts": {},
+        "recentFailures": [],
+        "averageDurationMs": 0,
+        "lastUpdatedAt": last_updated_at,
+    }
+
+
+def _safe_summary_event(value: Any) -> Mapping[str, Any]:
+    sanitized = sanitize_public_payload(value)
+    if not isinstance(sanitized, Mapping):
+        return {}
+    payload: dict[str, Any] = {}
+    for key in (
+        "timestamp",
+        "paperId",
+        "locale",
+        "modelRoute",
+        "outcome",
+        "durationMs",
+        "errorCode",
+        "cacheHit",
+        "schemaVersion",
+    ):
+        if key in sanitized and sanitized[key] not in (None, "", [], {}):
+            payload[key] = sanitized[key]
+    return payload
+
+
+def _directory_artifact_stats(path: Path) -> Mapping[str, Any]:
+    if not path.exists():
+        return {"status": "missing", "exists": False, "fileCount": 0, "lastUpdatedAt": None}
+    if not path.is_dir():
+        return {"status": "invalid", "exists": True, "fileCount": 0, "lastUpdatedAt": _path_mtime_iso(path)}
+    try:
+        files = [file for file in path.glob("*.json") if file.is_file()]
+    except OSError:
+        return {"status": "invalid", "exists": True, "fileCount": 0, "lastUpdatedAt": _path_mtime_iso(path)}
+    return {
+        "status": "ready",
+        "exists": True,
+        "fileCount": len(files),
+        "lastUpdatedAt": _latest_timestamp([_path_mtime_iso(file) for file in files]) or _path_mtime_iso(path),
+    }
+
+
+def _ops_data_state(items: Sequence[Mapping[str, Any]]) -> Literal["empty", "partial", "ready"]:
+    statuses = {_text(item.get("status")) for item in items}
+    if "invalid" in statuses or "partial" in statuses:
+        return "partial"
+    has_data = any(
+        bool(
+            _int_number(item.get("paperCount"))
+            or _int_number(item.get("entryCount"))
+            or _int_number(item.get("eventCount"))
+            or _int_number(item.get("fileCount"))
+        )
+        for item in items
+    )
+    return "ready" if has_data else "empty"
+
+
+def _increment_count(counts: dict[str, int], key: str) -> None:
+    counts[key] = counts.get(key, 0) + 1
+
+
+def _path_mtime_iso(path: Path) -> str | None:
+    try:
+        return datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+    except OSError:
+        return None
+
+
+def _latest_timestamp(values: Sequence[Any]) -> str | None:
+    latest: datetime | None = None
+    for value in values:
+        parsed = _datetime(_text(value))
+        if parsed is not None and (latest is None or parsed > latest):
+            latest = parsed
+    return latest.isoformat().replace("+00:00", "Z") if latest is not None else None
+
+
 def _default_llm_client_factory(route: str) -> Any:
     return build_openai_compatible_client_from_config(route_id=route)
 
 
 def summary_cache_key(paper: PublicPaper, *, locale: PaperLocale, route: str) -> str:
+    return ":".join((paper.id, paper_abstract_hash(paper), locale, route, PAPER_SUMMARY_SCHEMA_VERSION))
+
+
+def legacy_summary_cache_key(paper: PublicPaper, *, locale: PaperLocale, route: str) -> str:
     return ":".join((paper.id, paper_abstract_hash(paper), locale, route))
 
 
 def paper_abstract_hash(paper: PublicPaper) -> str:
     return hashlib.sha256(paper.abstractSnippet.encode("utf-8")).hexdigest()[:16]
+
+
+def reader_source_hash(
+    paper: PublicPaper,
+    *,
+    ai_summary: PaperAISummary | None,
+    related_paper_candidates: Sequence[PublicPaper],
+) -> str:
+    paper_payload = paper.to_dict()
+    paper_payload.pop("aiSummary", None)
+    payload = {
+        "paper": paper_payload,
+        "aiSummary": ai_summary.to_dict() if ai_summary is not None else None,
+        "relatedCandidateIds": [candidate.id for candidate in related_paper_candidates if candidate.isPublished],
+    }
+    encoded = json.dumps(
+        sanitize_public_payload(payload),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()[:16]
+
+
+def _reader_payload_from_cache(payload: Mapping[str, Any] | None) -> PaperReaderPayload | None:
+    if not isinstance(payload, Mapping):
+        return None
+    sanitized = sanitize_public_payload(payload)
+    if not isinstance(sanitized, Mapping):
+        return None
+    paper = _paper_payload(sanitized.get("paper"))
+    if paper is None:
+        return None
+    ai_summary = _summary_from_payload(sanitized.get("aiSummary")) if isinstance(sanitized.get("aiSummary"), Mapping) else None
+    sections = tuple(
+        section
+        for section in (_section_from_payload(item) for item in _sequence(sanitized.get("sections")))
+        if section is not None and section.paperId == paper.id
+    )
+    quality = _quality_from_payload(sanitized.get("quality"), paper_id=paper.id)
+    if not sections or quality is None:
+        return None
+    return PaperReaderPayload(
+        paper=paper,
+        sections=sections,
+        aiSummary=ai_summary,
+        readerNotes=tuple(_mapping_list(sanitized.get("readerNotes"))),
+        relatedPapers=tuple(_mapping_list(sanitized.get("relatedPapers"))),
+        relatedProjects=tuple(_mapping_list(sanitized.get("relatedProjects"))),
+        relatedNews=tuple(_mapping_list(sanitized.get("relatedNews"))),
+        quality=quality,
+    )
+
+
+def _section_from_payload(payload: Any) -> PaperSection | None:
+    if not isinstance(payload, Mapping):
+        return None
+    section_id = _text(payload.get("id"))
+    paper_id = _text(payload.get("paperId"))
+    title = _text(payload.get("title"))
+    text_excerpt = _text(payload.get("textExcerpt"))
+    section_type = _text(payload.get("sectionType")) or "unknown"
+    if not section_id or not paper_id or not title or not text_excerpt:
+        return None
+    return PaperSection(
+        id=section_id,
+        paperId=paper_id,
+        title=title,
+        level=_positive_int(payload.get("level")) or 1,
+        pageStart=_positive_int(payload.get("pageStart")),
+        pageEnd=_positive_int(payload.get("pageEnd")),
+        textExcerpt=text_excerpt,
+        summary=_optional_text(payload.get("summary")),
+        sectionType=section_type,
+    )
+
+
+def _quality_from_payload(payload: Any, *, paper_id: str) -> PaperReaderQuality | None:
+    if not isinstance(payload, Mapping) or _text(payload.get("paperId")) != paper_id:
+        return None
+    return PaperReaderQuality(
+        paperId=paper_id,
+        pdfAvailable=bool(payload.get("pdfAvailable")),
+        textExtracted=bool(payload.get("textExtracted")),
+        summaryAvailable=bool(payload.get("summaryAvailable")),
+        implementationVerified=bool(payload.get("implementationVerified")),
+        benchmarkVerified=bool(payload.get("benchmarkVerified")),
+        evidenceCoverage=max(0.0, min(_float_number(payload.get("evidenceCoverage")) or 0.0, 1.0)),
+        lastUpdatedAt=_optional_text(payload.get("lastUpdatedAt")),
+    )
+
+
+def _mapping_list(value: Any) -> list[Mapping[str, Any]]:
+    items: list[Mapping[str, Any]] = []
+    for item in _sequence(value):
+        sanitized = sanitize_public_payload(item)
+        if isinstance(sanitized, Mapping):
+            items.append(sanitized)
+    return items
 
 
 def _paper_payload(raw_paper: Any) -> PublicPaper | None:
@@ -519,6 +1126,217 @@ def _with_heat_score(paper: PublicPaper) -> PublicPaper:
 
 def _with_summary(paper: PublicPaper, summary: PaperAISummary | None) -> PublicPaper:
     return PublicPaper(**(paper.__dict__ | {"aiSummary": summary}))
+
+
+def _paper_graph_payload(reader: PaperReaderPayload) -> Mapping[str, Any]:
+    paper = reader.paper
+    nodes: list[dict[str, Any]] = [
+        {
+            "id": f"paper:{paper.id}",
+            "type": "paper",
+            "label": paper.title,
+            "paperId": paper.id,
+            "slug": paper.slug,
+            "url": paper.paperUrl,
+        }
+    ]
+    edges: list[dict[str, Any]] = []
+
+    def add_node_edge(kind: str, item: Mapping[str, Any], label_key: str = "title") -> None:
+        item_id = _text(item.get("id"))
+        label = _text(item.get(label_key)) or _text(item.get("name"))
+        if not item_id or not label:
+            return
+        node_id = f"{kind}:{item_id}"
+        node: dict[str, Any] = {
+            "id": node_id,
+            "type": kind,
+            "label": label,
+        }
+        for key in ("slug", "url", "sourceType", "score"):
+            value = item.get(key)
+            if value not in (None, "", []):
+                node[key] = value
+        nodes.append(node)
+        edges.append(
+            {
+                "id": f"paper:{paper.id}->{node_id}",
+                "source": f"paper:{paper.id}",
+                "target": node_id,
+                "type": "related",
+                "relationReason": _text(item.get("relationReason")) or "Related signal",
+                "score": _float_number(item.get("score")) or 0,
+            }
+        )
+
+    for item in reader.relatedPapers:
+        add_node_edge("paper", item)
+    for item in reader.relatedProjects:
+        add_node_edge("project", item, label_key="name")
+    for item in reader.relatedNews:
+        add_node_edge("news", item)
+
+    return sanitize_public_payload({"paperId": paper.id, "nodes": nodes, "edges": edges})
+
+
+def _task_index(papers: Sequence[PublicPaper]) -> list[Mapping[str, Any]]:
+    records: dict[str, dict[str, Any]] = {}
+    for paper in papers:
+        for task in paper.taskRefs:
+            record = records.setdefault(
+                task.slug,
+                {
+                    "id": task.id,
+                    "slug": task.slug,
+                    "name": task.name,
+                    "nameZh": task.nameZh,
+                    "group": _task_group(task),
+                    "paperIds": set(),
+                    "methodRefs": {},
+                    "sisterTasks": {},
+                    "benchmarkIds": set(),
+                },
+            )
+            record["paperIds"].add(paper.id)
+            for method in paper.methodRefs:
+                record["methodRefs"][method.slug] = method
+            for sibling in paper.taskRefs:
+                if sibling.slug != task.slug:
+                    record["sisterTasks"][sibling.slug] = sibling
+            for benchmark in paper.benchmarks:
+                if not benchmark.taskSlug or benchmark.taskSlug == task.slug:
+                    record["benchmarkIds"].add(benchmark.id)
+
+    results: list[Mapping[str, Any]] = []
+    for record in records.values():
+        paper_count = len(record["paperIds"])
+        methods = _top_refs(record["methodRefs"].values())
+        siblings = _top_refs(record["sisterTasks"].values())
+        payload = {
+            "id": record["id"],
+            "slug": record["slug"],
+            "name": record["name"],
+            "group": record["group"],
+            "description": f"Derived from {paper_count} public papers tagged with {record['name']}.",
+            "paperCount": paper_count,
+            "benchmarkCount": len(record["benchmarkIds"]),
+            "methodCount": len(record["methodRefs"]),
+            "sisterTasks": [ref.to_dict() for ref in siblings],
+            "commonMethods": [ref.to_dict() for ref in methods],
+        }
+        if record.get("nameZh"):
+            payload["nameZh"] = record["nameZh"]
+        results.append(payload)
+    return sorted(results, key=lambda item: (-int(item["paperCount"]), str(item["name"]).casefold()))
+
+
+def _method_index(papers: Sequence[PublicPaper]) -> list[Mapping[str, Any]]:
+    records: dict[str, dict[str, Any]] = {}
+    for paper in papers:
+        for method in paper.methodRefs:
+            record = records.setdefault(
+                method.slug,
+                {
+                    "id": method.id,
+                    "slug": method.slug,
+                    "name": method.name,
+                    "nameZh": method.nameZh,
+                    "paperIds": set(),
+                    "taskRefs": {},
+                    "relatedMethods": {},
+                    "benchmarkRefs": {},
+                    "implementationIds": set(),
+                },
+            )
+            record["paperIds"].add(paper.id)
+            for task in paper.taskRefs:
+                record["taskRefs"][task.slug] = task
+            for sibling in paper.methodRefs:
+                if sibling.slug != method.slug:
+                    record["relatedMethods"][sibling.slug] = sibling
+            for benchmark in paper.benchmarks:
+                record["benchmarkRefs"][benchmark.id] = benchmark
+            for implementation in paper.implementations:
+                record["implementationIds"].add(implementation.id)
+
+    results: list[Mapping[str, Any]] = []
+    for record in records.values():
+        paper_count = len(record["paperIds"])
+        tasks = _top_refs(record["taskRefs"].values())
+        related_methods = _top_refs(record["relatedMethods"].values())
+        payload = {
+            "id": record["id"],
+            "slug": record["slug"],
+            "name": record["name"],
+            "description": f"Derived from {paper_count} public papers using {record['name']}.",
+            "paperCount": paper_count,
+            "taskCount": len(record["taskRefs"]),
+            "implementationCount": len(record["implementationIds"]),
+            "area": _method_area(record["name"]),
+            "relatedTasks": [ref.to_dict() for ref in tasks],
+            "relatedMethods": [ref.to_dict() for ref in related_methods],
+            "commonBenchmarks": [_benchmark_ref(benchmark) for benchmark in list(record["benchmarkRefs"].values())[:8]],
+        }
+        if record.get("nameZh"):
+            payload["nameZh"] = record["nameZh"]
+        results.append(payload)
+    return sorted(results, key=lambda item: (-int(item["paperCount"]), str(item["name"]).casefold()))
+
+
+def _top_refs(refs: Sequence[PaperRef]) -> list[PaperRef]:
+    return sorted(refs, key=lambda ref: ref.name.casefold())[:8]
+
+
+def _benchmark_ref(benchmark: PaperBenchmarkResult) -> Mapping[str, Any]:
+    slug = _slugify(benchmark.name) or benchmark.id
+    return {"id": benchmark.id, "slug": slug, "name": benchmark.name}
+
+
+def _labelled_values(label: str, values: Sequence[str]) -> str:
+    cleaned = [value for value in (_text(item) for item in values) if value]
+    return f"{label}: {', '.join(cleaned)}." if cleaned else ""
+
+
+def _join_sentences(values: Sequence[str]) -> str:
+    return " ".join(value for value in (_text(item) for item in values) if value)
+
+
+def _drop_empty(payload: Mapping[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in payload.items() if value not in (None, "", [], {})}
+
+
+def _slugify(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", value.casefold()).strip("-")
+
+
+def _task_group(task: PaperRef) -> str:
+    text = f"{task.slug} {task.name}".casefold()
+    if any(term in text for term in ("vision", "visual", "image", "document")):
+        return "vision"
+    if any(term in text for term in ("language", "llm", "reasoning", "qa")):
+        return "language"
+    if any(term in text for term in ("serving", "inference", "kernel", "infra")):
+        return "infra"
+    if any(term in text for term in ("audio", "speech")):
+        return "audio"
+    if any(term in text for term in ("robot", "robotics")):
+        return "robotics"
+    if "video" in text:
+        return "video"
+    return "general"
+
+
+def _method_area(name: str) -> str:
+    text = name.casefold()
+    if any(term in text for term in ("vision", "visual", "image", "multimodal")):
+        return "Multimodal"
+    if any(term in text for term in ("serving", "kernel", "inference")):
+        return "Infrastructure"
+    if any(term in text for term in ("agent", "tool", "planning", "react")):
+        return "Agents"
+    if any(term in text for term in ("language", "llm", "reasoning", "thought")):
+        return "Language Models"
+    return "Research Methods"
 
 
 def _copy_summary(summary: PaperAISummary, *, cached: bool) -> PaperAISummary:
@@ -629,27 +1447,27 @@ def _paper_search_text(paper: PublicPaper) -> str:
 
 def _summary_request(paper: PublicPaper, *, locale: PaperLocale) -> LLMRequest:
     language = "Chinese" if locale == "zh" else "English"
+    public_context = _summary_public_context(paper)
     return LLMRequest(
         messages=[
             LLMMessage.system(
                 "You write concise, evidence-oriented research summaries for NewsRoom. "
-                "Use only the provided paper metadata. Return strict JSON with keys: "
-                "summary, keyInsights, limitations."
+                "Use only the provided public paper signals. Return strict JSON with keys: "
+                "summary, keyInsights, limitations, contributions, methodSummary, "
+                "experimentSummary, engineeringRelevance, readingDifficulty, recommendedAudience. "
+                "readingDifficulty must be one of low, medium, high. Omit fields when evidence is missing."
             ),
             LLMMessage.user(
                 f"Language: {language}\n"
-                f"Title: {paper.title}\n"
-                f"Authors: {', '.join(paper.authors)}\n"
-                f"Venue: {paper.venue or 'Paper'}\n"
-                f"Published: {paper.publishedAt}\n"
-                f"Abstract: {paper.abstractSnippet}\n"
-                "Write one paragraph summary, 3 keyInsights, and 1-2 limitations."
+                f"Public paper context JSON:\n{json.dumps(public_context, ensure_ascii=False, sort_keys=True)}\n"
+                "Write one paragraph summary, up to 3 keyInsights, up to 3 contributions, "
+                "1-2 limitations, and concise method/experiment/engineering relevance fields when supported."
             ),
         ],
         temperature=0.2,
-        max_tokens=700,
+        max_tokens=1000,
         response_format={"type": "json_object"},
-        metadata={"paper_id": paper.id, "locale": locale},
+        metadata={"paper_id": paper.id, "locale": locale, "summary_schema_version": PAPER_SUMMARY_SCHEMA_VERSION},
     )
 
 
@@ -664,12 +1482,76 @@ def _parse_summary_response(content: str) -> Mapping[str, Any]:
     return payload if isinstance(payload, Mapping) else {"summary": stripped}
 
 
+def _summary_public_context(paper: PublicPaper) -> Mapping[str, Any]:
+    context = {
+        "title": paper.title,
+        "authors": list(paper.authors),
+        "venue": paper.venue,
+        "publishedAt": paper.publishedAt,
+        "abstract": paper.abstractSnippet,
+        "tasks": [ref.to_dict() for ref in paper.taskRefs],
+        "methods": [ref.to_dict() for ref in paper.methodRefs],
+        "implementations": [implementation.to_dict() for implementation in paper.implementations],
+        "benchmarks": [benchmark.to_dict() for benchmark in paper.benchmarks],
+        "sections": [
+            {"title": "Abstract", "sectionType": "abstract", "textExcerpt": paper.abstractSnippet},
+            _summary_signal_section("Method signals", "method", _summary_method_signal_text(paper)),
+            _summary_signal_section("Experiment signals", "experiment", _summary_experiment_signal_text(paper)),
+            _summary_signal_section("Implementation signals", "implementation", _summary_implementation_signal_text(paper)),
+        ],
+        "evidenceRefs": [sanitize_public_payload(ref) for ref in paper.evidenceRefs],
+        "sourceRefs": [sanitize_public_payload(ref) for ref in paper.sourceRefs],
+    }
+    return sanitize_public_payload(_drop_empty(context))
+
+
+def _summary_signal_section(title: str, section_type: str, text: str) -> Mapping[str, Any]:
+    return _drop_empty({"title": title, "sectionType": section_type, "textExcerpt": text})
+
+
+def _summary_method_signal_text(paper: PublicPaper) -> str:
+    return _join_sentences(
+        [
+            _labelled_values("Tasks", [ref.name for ref in paper.taskRefs]),
+            _labelled_values("Methods", [ref.name for ref in paper.methodRefs]),
+        ]
+    )
+
+
+def _summary_experiment_signal_text(paper: PublicPaper) -> str:
+    lines = []
+    for benchmark in paper.benchmarks:
+        parts = [
+            benchmark.name,
+            benchmark.metric or "",
+            str(benchmark.value) if benchmark.value is not None else "",
+            benchmark.taskSlug or "",
+        ]
+        line = " / ".join(part for part in parts if part)
+        if line:
+            lines.append(line)
+    return "\n".join(lines)
+
+
+def _summary_implementation_signal_text(paper: PublicPaper) -> str:
+    lines = []
+    for implementation in paper.implementations:
+        parts = [implementation.name, implementation.repoUrl]
+        if implementation.githubStars is not None:
+            parts.append(f"{implementation.githubStars} GitHub stars")
+        lines.append(" / ".join(part for part in parts if part))
+    return "\n".join(lines)
+
+
 def _summary_from_payload(payload: Mapping[str, Any]) -> PaperAISummary | None:
-    paper_id = _text(payload.get("paperId"))
-    locale = _text(payload.get("locale"))
-    route = _text(payload.get("modelRoute"))
-    abstract_hash = _text(payload.get("abstractHash"))
-    summary = _text(payload.get("summary"))
+    sanitized = sanitize_public_payload(payload)
+    if not isinstance(sanitized, Mapping):
+        return None
+    paper_id = _text(sanitized.get("paperId"))
+    locale = _text(sanitized.get("locale"))
+    route = _text(sanitized.get("modelRoute"))
+    abstract_hash = _text(sanitized.get("abstractHash"))
+    summary = _text(sanitized.get("summary"))
     if not paper_id or locale not in {"zh", "en"} or not route or not abstract_hash or not summary:
         return None
     return PaperAISummary(
@@ -678,9 +1560,18 @@ def _summary_from_payload(payload: Mapping[str, Any]) -> PaperAISummary | None:
         modelRoute=route,
         abstractHash=abstract_hash,
         summary=summary,
-        keyInsights=tuple(_string_list(payload.get("keyInsights"))),
-        limitations=tuple(_string_list(payload.get("limitations"))),
-        generatedAt=_text(payload.get("generatedAt")),
+        keyInsights=tuple(_string_list(sanitized.get("keyInsights") or sanitized.get("key_insights"))),
+        limitations=tuple(_string_list(sanitized.get("limitations"))),
+        contributions=tuple(_string_list(sanitized.get("contributions"))),
+        methodSummary=_optional_text(sanitized.get("methodSummary") or sanitized.get("method_summary")),
+        experimentSummary=_optional_text(sanitized.get("experimentSummary") or sanitized.get("experiment_summary")),
+        engineeringRelevance=_optional_text(sanitized.get("engineeringRelevance") or sanitized.get("engineering_relevance")),
+        readingDifficulty=_reading_difficulty(
+            sanitized.get("readingDifficulty") or sanitized.get("reading_difficulty")
+        ),
+        recommendedAudience=tuple(_string_list(sanitized.get("recommendedAudience") or sanitized.get("recommended_audience"))),
+        summarySchemaVersion=_optional_text(sanitized.get("summarySchemaVersion") or sanitized.get("summary_schema_version")),
+        generatedAt=_text(sanitized.get("generatedAt")),
         cached=True,
     )
 
@@ -701,6 +1592,15 @@ def _summary_cache_path(configured_path: str | Path | None) -> Path:
     if env_path:
         return Path(env_path).expanduser().resolve()
     return _project_root() / ".newsroom" / "papers" / "ai-summaries.json"
+
+
+def _summary_events_path(configured_path: str | Path | None) -> Path:
+    if configured_path is not None:
+        return Path(configured_path).expanduser().resolve()
+    env_path = os.environ.get(PAPERS_SUMMARY_EVENTS_PATH_ENV)
+    if env_path:
+        return Path(env_path).expanduser().resolve()
+    return _project_root() / ".newsroom" / "papers" / "summary-events.jsonl"
 
 
 def _project_root() -> Path:
@@ -799,6 +1699,13 @@ def _optional_text(value: Any) -> str | None:
     return text or None
 
 
+def _reading_difficulty(value: Any) -> Literal["low", "medium", "high"] | None:
+    text = _text(value).casefold()
+    if text in {"low", "medium", "high"}:
+        return text  # type: ignore[return-value]
+    return None
+
+
 def _text(value: Any) -> str:
     return value.strip() if isinstance(value, str) else ""
 
@@ -811,6 +1718,11 @@ def _int_number(value: Any) -> int | None:
     if isinstance(value, float) and value.is_integer():
         return int(value)
     return None
+
+
+def _positive_int(value: Any) -> int | None:
+    number = _int_number(value)
+    return number if number is not None and number >= 0 else None
 
 
 def _float_number(value: Any) -> float | None:

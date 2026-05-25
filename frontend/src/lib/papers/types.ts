@@ -62,6 +62,13 @@ export interface PaperAISummary {
   summary: string
   keyInsights: string[]
   limitations: string[]
+  contributions?: string[]
+  methodSummary?: string
+  experimentSummary?: string
+  engineeringRelevance?: string
+  readingDifficulty?: "low" | "medium" | "high"
+  recommendedAudience?: string[]
+  summarySchemaVersion?: string
   generatedAt: string
   cached: boolean
 }
@@ -199,6 +206,39 @@ export interface RelatedNews {
   relationReason: string
   score: number
   summary?: string
+}
+
+export interface PaperSectionList {
+  sections: PaperSection[]
+}
+
+export interface RelatedPaperList {
+  relatedPapers: RelatedPaper[]
+}
+
+export interface PaperGraphNode {
+  id: string
+  type: "paper" | "project" | "news" | string
+  label: string
+  slug?: string
+  url?: string
+  sourceType?: string
+  score?: number
+}
+
+export interface PaperGraphEdge {
+  id: string
+  source: string
+  target: string
+  type: "related" | string
+  relationReason: string
+  score: number
+}
+
+export interface PaperRelationGraph {
+  paperId: string
+  nodes: PaperGraphNode[]
+  edges: PaperGraphEdge[]
 }
 
 export interface PaperReaderPayload {

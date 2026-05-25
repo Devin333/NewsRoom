@@ -4,9 +4,14 @@ import type {
   Paper,
   PaperAISummary,
   PaperListResult,
+  PaperMethod,
   PaperPeriod,
   PaperReaderAnswer,
   PaperReaderPayload,
+  PaperRelationGraph,
+  PaperSection,
+  PaperTask,
+  RelatedPaper,
   PaperSort
 } from "@/lib/papers/types"
 
@@ -33,6 +38,12 @@ export type PaperListParams = {
   offset?: number
   task?: string
   method?: string
+}
+
+export type PaperSummaryRequestOptions = {
+  refresh?: boolean
+  reason?: string
+  init?: RequestInit
 }
 
 export class PapersApiError extends Error {
@@ -62,14 +73,32 @@ export async function fetchPaperDetail(paperId: string, init?: RequestInit): Pro
 export async function requestPaperSummary(
   paperId: string,
   locale: Locale,
-  init?: RequestInit
+  options?: RequestInit | PaperSummaryRequestOptions
 ): Promise<PaperAISummary> {
+  const requestOptions = normalizeSummaryRequestOptions(options)
+  const searchParams = new URLSearchParams({ locale })
+  if (requestOptions.refresh) {
+    searchParams.set("refresh", "true")
+  }
   const envelope = await apiPost<ApiEnvelope<{ summary: PaperAISummary }>>(
-    `/api/papers/${encodeURIComponent(paperId)}/summary?locale=${locale}`,
-    undefined,
-    init
+    `/api/papers/${encodeURIComponent(paperId)}/summary?${searchParams.toString()}`,
+    requestOptions.refresh ? { reason: requestOptions.reason } : undefined,
+    requestOptions.init
   )
   return unwrapEnvelope(envelope).summary
+}
+
+export async function refreshPaperSummary(
+  paperId: string,
+  locale: Locale,
+  reason: string,
+  init?: RequestInit
+): Promise<PaperAISummary> {
+  return requestPaperSummary(paperId, locale, {
+    refresh: true,
+    reason,
+    init,
+  })
 }
 
 export async function fetchPaperReaderPayload(
@@ -82,6 +111,44 @@ export async function fetchPaperReaderPayload(
     init
   )
   return unwrapEnvelope(envelope).reader
+}
+
+export async function fetchPaperSections(
+  paperId: string,
+  locale: Locale,
+  init?: RequestInit
+): Promise<PaperSection[]> {
+  const envelope = await apiGet<ApiEnvelope<{ sections: PaperSection[] }>>(
+    `/api/papers/${encodeURIComponent(paperId)}/sections?locale=${locale}`,
+    init
+  )
+  return unwrapEnvelope(envelope).sections
+}
+
+export async function fetchPaperRelated(paperId: string, init?: RequestInit): Promise<RelatedPaper[]> {
+  const envelope = await apiGet<ApiEnvelope<{ relatedPapers: RelatedPaper[] }>>(
+    `/api/papers/${encodeURIComponent(paperId)}/related`,
+    init
+  )
+  return unwrapEnvelope(envelope).relatedPapers
+}
+
+export async function fetchPaperGraph(paperId: string, init?: RequestInit): Promise<PaperRelationGraph> {
+  const envelope = await apiGet<ApiEnvelope<{ graph: PaperRelationGraph }>>(
+    `/api/papers/${encodeURIComponent(paperId)}/graph`,
+    init
+  )
+  return unwrapEnvelope(envelope).graph
+}
+
+export async function fetchPaperTasks(init?: RequestInit): Promise<PaperTask[]> {
+  const envelope = await apiGet<ApiEnvelope<{ tasks: PaperTask[] }>>("/api/papers/tasks", init)
+  return unwrapEnvelope(envelope).tasks
+}
+
+export async function fetchPaperMethods(init?: RequestInit): Promise<PaperMethod[]> {
+  const envelope = await apiGet<ApiEnvelope<{ methods: PaperMethod[] }>>("/api/papers/methods", init)
+  return unwrapEnvelope(envelope).methods
 }
 
 export async function askPaper(
@@ -121,4 +188,14 @@ function queryString(params: PaperListParams) {
   }
   const text = searchParams.toString()
   return text ? `?${text}` : ""
+}
+
+function normalizeSummaryRequestOptions(options?: RequestInit | PaperSummaryRequestOptions): PaperSummaryRequestOptions {
+  if (!options) {
+    return {}
+  }
+  if ("refresh" in options || "reason" in options || "init" in options) {
+    return options as PaperSummaryRequestOptions
+  }
+  return { init: options as RequestInit }
 }

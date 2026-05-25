@@ -96,3 +96,74 @@ export type PaperPdfProxyStats = {
   recentErrors: PaperPdfProxyRecentError[]
   notices: string[]
 }
+
+export type PaperReaderOpsDataState = "ready" | "partial" | "empty" | "fallback"
+
+export type PaperReaderRuntimeFileStatus = "ready" | "partial" | "empty" | "missing" | "invalid"
+
+export type PaperReaderCacheStats = {
+  status: PaperReaderRuntimeFileStatus
+  exists: boolean
+  paperCount: number
+  collectedAt?: string | null
+  source?: string | null
+  lastUpdatedAt?: string | null
+}
+
+export type PaperSummaryCacheStats = {
+  status: PaperReaderRuntimeFileStatus
+  exists: boolean
+  entryCount: number
+  v2EntryCount: number
+  localeCounts: Record<string, number>
+  modelRouteCounts: Record<string, number>
+  lastGeneratedAt?: string | null
+  lastUpdatedAt?: string | null
+}
+
+export type PaperSummaryRecentFailure = {
+  timestamp: string
+  paperId?: string
+  locale?: string
+  modelRoute?: string
+  errorCode?: string
+  durationMs?: number
+  schemaVersion?: string
+}
+
+export type PaperSummaryEventStats = {
+  status: PaperReaderRuntimeFileStatus
+  exists: boolean
+  eventCount: number
+  cacheHitCount: number
+  generatedCount: number
+  failureCount: number
+  hitRate: number
+  outcomeCounts: Record<string, number>
+  errorCodeCounts: Record<string, number>
+  localeCounts: Record<string, number>
+  modelRouteCounts: Record<string, number>
+  recentFailures: PaperSummaryRecentFailure[]
+  averageDurationMs: number
+  lastUpdatedAt?: string | null
+}
+
+export type PaperReaderArtifactStats = {
+  status: PaperReaderRuntimeFileStatus
+  exists: boolean
+  fileCount: number
+  lastUpdatedAt?: string | null
+}
+
+export type PaperReaderOpsStats = {
+  dataState: PaperReaderOpsDataState
+  windowHours: number
+  windowStart: string
+  windowEnd: string
+  paperCache: PaperReaderCacheStats
+  summaryCache: PaperSummaryCacheStats
+  summaryEvents: PaperSummaryEventStats
+  readerCache: PaperReaderArtifactStats
+  textExtraction: PaperReaderArtifactStats
+  lastUpdatedAt?: string | null
+}

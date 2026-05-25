@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timezone
 
 from fastapi.testclient import TestClient
 
@@ -317,13 +318,16 @@ def test_papers_summary_api_generates_and_caches(monkeypatch, tmp_path) -> None:
     client = TestClient(create_app(papers_service_factory=factory, audit_emitter_factory=None))
     first = client.post("/api/v1/papers/paper-summary/summary?locale=en")
     second = client.post("/api/v1/papers/paper-summary/summary?locale=en")
+    refreshed = client.post("/api/v1/papers/paper-summary/summary?locale=en&refresh=true")
 
     assert first.status_code == 200
     assert first.json()["data"]["summary"]["summary"] == "A concise real LLM summary."
     assert first.json()["data"]["summary"]["cached"] is False
     assert second.status_code == 200
     assert second.json()["data"]["summary"]["cached"] is True
-    assert FakeClient.calls == 1
+    assert refreshed.status_code == 200
+    assert refreshed.json()["data"]["summary"]["cached"] is False
+    assert FakeClient.calls == 2
 
 
 def test_papers_summary_api_returns_non_blocking_error(monkeypatch, tmp_path) -> None:
@@ -363,6 +367,95 @@ def test_papers_summary_api_returns_non_blocking_error(monkeypatch, tmp_path) ->
     assert response.json()["error"]["retryable"] is True
 
 
+def test_papers_ops_stats_api_returns_safe_reader_runtime_stats(monkeypatch, tmp_path) -> None:
+    cache_path = tmp_path / "papers.json"
+    summary_path = tmp_path / "ai-summaries.json"
+    events_path = tmp_path / "summary-events.jsonl"
+    reader_cache_dir = tmp_path / "reader-cache"
+    text_extraction_dir = tmp_path / "text-extractions"
+    cache_path.write_text(
+        json.dumps(
+            {
+                "source": "api-cache",
+                "collectedAt": "2026-05-24T13:41:06Z",
+                "papers": [
+                    {
+                        "id": "ops-api-paper",
+                        "title": "Ops API Paper",
+                        "abstractSnippet": "A paper for ops API stats.",
+                        "authors": ["Alice Example"],
+                        "publishedAt": "2026-05-24T00:00:00Z",
+                        "paperUrl": "https://arxiv.org/abs/2605.00020",
+                        "isPublished": True,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    summary_path.write_text(
+        json.dumps(
+            {
+                "ops-api-paper:hash:en:writer-primary:v2": {
+                    "paperId": "ops-api-paper",
+                    "locale": "en",
+                    "modelRoute": "writer-primary",
+                    "abstractHash": "hash",
+                    "summary": "Cached summary.",
+                    "keyInsights": [],
+                    "limitations": [],
+                    "summarySchemaVersion": "v2",
+                    "generatedAt": "2026-05-25T00:00:00Z",
+                    "raw_payload": {"token": "secret"},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    events_path.write_text(
+        json.dumps(
+            {
+                "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                "paperId": "ops-api-paper",
+                "locale": "en",
+                "modelRoute": "writer-primary",
+                "outcome": "generated",
+                "durationMs": 42,
+                "cacheHit": False,
+                "schemaVersion": "v2",
+                "secret": "should not leak",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    reader_cache_dir.mkdir()
+    text_extraction_dir.mkdir()
+    (reader_cache_dir / "ops-api-paper.json").write_text("{}", encoding="utf-8")
+    (text_extraction_dir / "ops-api-paper.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("NEWSROOM_PAPERS_DATA_PATH", str(cache_path))
+    monkeypatch.setenv("NEWSROOM_PAPERS_AI_SUMMARY_CACHE_PATH", str(summary_path))
+    monkeypatch.setenv("NEWSROOM_PAPERS_SUMMARY_EVENTS_PATH", str(events_path))
+    monkeypatch.setenv("NEWSROOM_PAPERS_READER_CACHE_DIR", str(reader_cache_dir))
+    monkeypatch.setenv("NEWSROOM_PAPERS_TEXT_EXTRACTION_DIR", str(text_extraction_dir))
+
+    client = TestClient(create_app(audit_emitter_factory=None))
+    response = client.get("/api/v1/papers/ops/stats?windowHours=24")
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["success"] is True
+    stats = payload["data"]["stats"]
+    assert stats["paperCache"]["paperCount"] == 1
+    assert stats["summaryCache"]["v2EntryCount"] == 1
+    assert stats["summaryEvents"]["generatedCount"] == 1
+    assert stats["readerCache"]["fileCount"] == 1
+    assert stats["textExtraction"]["fileCount"] == 1
+    serialized = json.dumps(stats)
+    assert "secret" not in serialized
+    assert str(tmp_path) not in serialized
+
+
 def test_papers_ask_api_returns_grounded_answer_and_not_found(monkeypatch, tmp_path) -> None:
     cache_path = tmp_path / "papers.json"
     cache_path.write_text(
@@ -395,5 +488,79 @@ def test_papers_ask_api_returns_grounded_answer_and_not_found(monkeypatch, tmp_p
     assert "agent memory" in answer["answer"]
     assert answer["citations"][0]["sectionId"] == "paper-ask:abstract"
     assert answer["confidence"] > 0
+    assert missing.status_code == 404
+    assert missing.json()["error"]["code"] == "paper_not_found"
+
+
+def test_papers_reader_api_surfaces_sections_related_graph_tasks_and_methods(monkeypatch, tmp_path) -> None:
+    cache_path = tmp_path / "papers.json"
+    cache_path.write_text(
+        json.dumps(
+            {
+                "papers": [
+                    {
+                        "id": "surface-paper",
+                        "slug": "surface-paper",
+                        "title": "Surface Paper",
+                        "abstractSnippet": "Paper about API surfaces for reader agents.",
+                        "authors": ["A"],
+                        "publishedAt": "2026-05-24T00:00:00Z",
+                        "paperUrl": "https://arxiv.org/abs/2605.00009",
+                        "repoUrl": "https://github.com/owner/surface-paper",
+                        "taskRefs": [{"id": "task-api", "slug": "api", "name": "API"}],
+                        "methodRefs": [{"id": "method-reader", "slug": "reader-agent", "name": "Reader Agent"}],
+                        "evidenceRefs": [
+                            {
+                                "evidenceId": "ev-blog",
+                                "title": "Release note",
+                                "sourceType": "official_blog",
+                                "url": "https://example.com/release",
+                                "raw_payload": {"token": "secret"},
+                            }
+                        ],
+                        "isPublished": True,
+                    },
+                    {
+                        "id": "surface-related",
+                        "slug": "surface-related",
+                        "title": "Related Surface Paper",
+                        "abstractSnippet": "Another reader agent API paper.",
+                        "authors": ["B"],
+                        "publishedAt": "2026-05-23T00:00:00Z",
+                        "paperUrl": "https://arxiv.org/abs/2605.00010",
+                        "taskRefs": [{"id": "task-api", "slug": "api", "name": "API"}],
+                        "methodRefs": [{"id": "method-reader", "slug": "reader-agent", "name": "Reader Agent"}],
+                        "isPublished": True,
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("NEWSROOM_PAPERS_DATA_PATH", str(cache_path))
+
+    client = TestClient(create_app(audit_emitter_factory=None))
+
+    sections = client.get("/api/v1/papers/surface-paper/sections")
+    related = client.get("/api/v1/papers/surface-paper/related")
+    graph = client.get("/api/v1/papers/surface-paper/graph")
+    tasks = client.get("/api/v1/papers/tasks")
+    methods = client.get("/api/v1/papers/methods")
+    missing = client.get("/api/v1/papers/missing/sections")
+
+    assert sections.status_code == 200
+    assert sections.json()["data"]["sections"][0]["sectionType"] == "abstract"
+    assert related.status_code == 200
+    assert related.json()["data"]["relatedPapers"][0]["id"] == "surface-related"
+    assert graph.status_code == 200
+    serialized_graph = json.dumps(graph.json())
+    assert "secret" not in serialized_graph
+    assert any(node["type"] == "news" for node in graph.json()["data"]["graph"]["nodes"])
+    assert tasks.status_code == 200
+    assert tasks.json()["data"]["tasks"][0]["slug"] == "api"
+    assert tasks.json()["data"]["tasks"][0]["paperCount"] == 2
+    assert methods.status_code == 200
+    assert methods.json()["data"]["methods"][0]["slug"] == "reader-agent"
+    assert methods.json()["data"]["methods"][0]["paperCount"] == 2
     assert missing.status_code == 404
     assert missing.json()["error"]["code"] == "paper_not_found"

@@ -120,12 +120,14 @@ def build_reader_payload(
     *,
     ai_summary: Any | None,
     related_paper_candidates: Sequence[Any] = (),
+    extracted_section_payloads: Sequence[Mapping[str, Any]] = (),
 ) -> PaperReaderPayload:
-    sections = tuple(_build_sections(paper, ai_summary=ai_summary))
+    extracted_sections = tuple(_extracted_sections(paper.id, extracted_section_payloads))
+    sections = tuple(_merge_sections([*extracted_sections, *_build_sections(paper, ai_summary=ai_summary)]))
     quality = PaperReaderQuality(
         paperId=paper.id,
         pdfAvailable=bool(paper.pdfUrl),
-        textExtracted=False,
+        textExtracted=bool(extracted_sections),
         summaryAvailable=ai_summary is not None,
         implementationVerified=bool(paper.implementations),
         benchmarkVerified=bool(paper.benchmarks),
@@ -218,6 +220,48 @@ def _build_sections(paper: Any, *, ai_summary: Any | None) -> list[PaperSection]
     append("evidence", "Evidence and Sources", _refs_text(evidence_refs, source_refs), "evidence")
 
     return sections
+
+
+def _extracted_sections(paper_id: str, payloads: Sequence[Mapping[str, Any]]) -> list[PaperSection]:
+    sections: list[PaperSection] = []
+    for index, payload in enumerate(payloads, start=1):
+        sanitized = sanitize_public_payload(payload)
+        if not isinstance(sanitized, Mapping):
+            continue
+        text_excerpt = _clean_text(sanitized.get("textExcerpt")) or _clean_text(sanitized.get("summary"))
+        if not text_excerpt:
+            continue
+        title = _clean_text(sanitized.get("title")) or "Extracted Section"
+        section_type = _section_type(_clean_text(sanitized.get("sectionType")))
+        sections.append(
+            PaperSection(
+                id=_extracted_section_id(paper_id, section_type, title, text_excerpt, index),
+                paperId=paper_id,
+                title=title,
+                level=_positive_int(sanitized.get("level")) or 1,
+                pageStart=_positive_int(sanitized.get("pageStart")),
+                pageEnd=_positive_int(sanitized.get("pageEnd")),
+                textExcerpt=text_excerpt,
+                summary=_clean_text(sanitized.get("summary")) or None,
+                sectionType=section_type,
+            )
+        )
+    return sections
+
+
+def _merge_sections(sections: Sequence[PaperSection]) -> list[PaperSection]:
+    merged: list[PaperSection] = []
+    seen_text: set[str] = set()
+    seen_ids: set[str] = set()
+    for section in sections:
+        text_key = section.textExcerpt.casefold()
+        section_id = section.id
+        if not text_key or text_key in seen_text or section_id in seen_ids:
+            continue
+        seen_text.add(text_key)
+        seen_ids.add(section_id)
+        merged.append(section)
+    return merged
 
 
 def _ref_names(refs: Sequence[Any]) -> list[str]:
@@ -497,6 +541,42 @@ def _project_name(url: str) -> str:
 
 def _stable_id(prefix: str, value: str) -> str:
     return f"{prefix}-{hashlib.sha1(value.encode('utf-8')).hexdigest()[:12]}"
+
+
+def _extracted_section_id(paper_id: str, section_type: str, title: str, text_excerpt: str, index: int) -> str:
+    value = f"{paper_id}:{section_type}:{title}:{text_excerpt}:{index}"
+    return f"{paper_id}:extracted:{section_type}:{hashlib.sha1(value.encode('utf-8')).hexdigest()[:10]}"
+
+
+def _section_type(value: str) -> str:
+    allowed = {
+        "abstract",
+        "summary",
+        "contribution",
+        "introduction",
+        "related_work",
+        "method",
+        "experiment",
+        "result",
+        "limitation",
+        "implementation",
+        "benchmark",
+        "evidence",
+        "conclusion",
+        "appendix",
+        "unknown",
+    }
+    return value if value in allowed else "unknown"
+
+
+def _positive_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int) and value >= 0:
+        return value
+    if isinstance(value, float) and value.is_integer() and value >= 0:
+        return int(value)
+    return None
 
 
 def _bullet_text(values: Sequence[Any]) -> str:
