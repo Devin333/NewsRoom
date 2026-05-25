@@ -1,7 +1,7 @@
 "use client"
 
-import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react"
-import { ChevronLeft, ChevronRight, FileWarning, Loader2, ZoomIn, ZoomOut } from "lucide-react"
+import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react"
+import { ChevronLeft, ChevronRight, FileWarning, Loader2, Search, ZoomIn, ZoomOut } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import type { Locale } from "@/lib/papers/types"
@@ -26,6 +26,7 @@ type PdfRenderTask = {
 }
 
 type PdfPage = {
+  getTextContent?: () => Promise<PdfTextContent>
   getViewport: (options: { scale: number }) => PdfViewport
   render: (params: { canvasContext: CanvasRenderingContext2D; viewport: PdfViewport }) => PdfRenderTask
 }
@@ -41,10 +42,27 @@ type PdfLoadingTask = {
   destroy: () => Promise<void> | void
 }
 
+type PdfTextContent = {
+  items: Array<{ str?: string }>
+}
+
+type PdfPageText = {
+  pageNumber: number
+  text: string
+}
+
+type PdfSearchResult = {
+  id: string
+  pageNumber: number
+  snippet: string
+  matchIndex: number
+}
+
 const MIN_SCALE = 0.75
 const MAX_SCALE = 2
 const SCALE_STEP = 0.25
 const THUMBNAIL_WIDTH = 88
+const MIN_SEARCH_LENGTH = 2
 
 export function PaperPdfViewer({
   pdfUrl,
@@ -66,6 +84,11 @@ export function PaperPdfViewer({
   const [pageInput, setPageInput] = useState("1")
   const [numPages, setNumPages] = useState(0)
   const [scale, setScale] = useState(1)
+  const [pageTexts, setPageTexts] = useState<PdfPageText[]>([])
+  const [searchQuery, setSearchQuery] = useState("")
+  const [searchStatus, setSearchStatus] = useState<"idle" | "indexing" | "ready" | "error">("idle")
+  const [activeSearchIndex, setActiveSearchIndex] = useState(0)
+  const searchResults = useMemo(() => buildSearchResults(pageTexts, searchQuery), [pageTexts, searchQuery])
 
   useEffect(() => {
     initialPageRef.current = initialPage
@@ -83,6 +106,10 @@ export function PaperPdfViewer({
     setPageNumber(1)
     setPageInput("1")
     setScale(1)
+    setPageTexts([])
+    setSearchQuery("")
+    setSearchStatus("idle")
+    setActiveSearchIndex(0)
     initialPageAppliedRef.current = false
     userNavigatedRef.current = false
     renderTaskRef.current?.cancel()
@@ -129,6 +156,51 @@ export function PaperPdfViewer({
       void loadedDocument?.destroy()
     }
   }, [pdfUrl])
+
+  useEffect(() => {
+    if (!pdfDocument || status !== "ready" || numPages <= 0) {
+      return
+    }
+
+    let cancelled = false
+    setSearchStatus("indexing")
+    setPageTexts([])
+
+    async function indexPdfText() {
+      try {
+        const indexedPages: PdfPageText[] = []
+        for (let index = 1; index <= numPages; index += 1) {
+          const page = await pdfDocument!.getPage(index)
+          if (!page.getTextContent) {
+            throw new Error("PDF text content unavailable")
+          }
+          const content = await page.getTextContent()
+          if (cancelled) {
+            return
+          }
+          indexedPages.push({
+            pageNumber: index,
+            text: content.items.map((item) => item.str ?? "").filter(Boolean).join(" "),
+          })
+        }
+        if (!cancelled) {
+          setPageTexts(indexedPages)
+          setSearchStatus("ready")
+        }
+      } catch {
+        if (!cancelled) {
+          setPageTexts([])
+          setSearchStatus("error")
+        }
+      }
+    }
+
+    void indexPdfText()
+
+    return () => {
+      cancelled = true
+    }
+  }, [numPages, pdfDocument, status])
 
   useEffect(() => {
     if (
@@ -204,6 +276,10 @@ export function PaperPdfViewer({
     }
   }, [numPages, onPageChange, pageNumber, status])
 
+  useEffect(() => {
+    setActiveSearchIndex((current) => clampSearchIndex(current, searchResults.length))
+  }, [searchResults.length])
+
   if (status === "error") {
     return (
       <div className="min-h-[42rem]">
@@ -240,6 +316,15 @@ export function PaperPdfViewer({
   function changeScale(nextScale: number) {
     userNavigatedRef.current = true
     setScale(clampScale(nextScale))
+  }
+
+  function goToSearchResult(nextIndex: number) {
+    if (!searchResults.length) {
+      return
+    }
+    const clamped = clampSearchIndex(nextIndex, searchResults.length)
+    setActiveSearchIndex(clamped)
+    goToPage(searchResults[clamped].pageNumber)
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
@@ -343,6 +428,18 @@ export function PaperPdfViewer({
           </Button>
         </div>
       </div>
+      <PdfSearchPanel
+        activeIndex={activeSearchIndex}
+        locale={locale}
+        onQueryChange={(nextQuery) => {
+          setSearchQuery(nextQuery)
+          setActiveSearchIndex(0)
+        }}
+        onSelectResult={goToSearchResult}
+        query={searchQuery}
+        results={searchResults}
+        searchStatus={searchStatus}
+      />
 
       <div className="grid min-h-[38rem] flex-1 lg:grid-cols-[7.25rem_minmax(0,1fr)]">
         <PdfThumbnailRail
@@ -377,6 +474,105 @@ export function PaperPdfViewer({
         </div>
       </div>
     </div>
+  )
+}
+
+function PdfSearchPanel({
+  activeIndex,
+  locale,
+  onQueryChange,
+  onSelectResult,
+  query,
+  results,
+  searchStatus,
+}: {
+  activeIndex: number
+  locale: Locale
+  onQueryChange: (query: string) => void
+  onSelectResult: (index: number) => void
+  query: string
+  results: PdfSearchResult[]
+  searchStatus: "idle" | "indexing" | "ready" | "error"
+}) {
+  const trimmedQuery = query.trim()
+  const queryTooShort = trimmedQuery.length > 0 && trimmedQuery.length < MIN_SEARCH_LENGTH
+  const canUseResults = results.length > 0
+  const statusText =
+    searchStatus === "indexing"
+      ? "Indexing PDF text"
+      : searchStatus === "error"
+        ? "PDF search text is unavailable."
+        : queryTooShort
+          ? "Enter at least 2 characters."
+          : trimmedQuery.length >= MIN_SEARCH_LENGTH
+            ? `${results.length} result${results.length === 1 ? "" : "s"}`
+            : "Search this PDF"
+
+  return (
+    <section className="border-b border-[#d8dfd8] bg-white px-4 py-3 dark:border-border dark:bg-card">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+        <label className="relative min-w-0 flex-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[#334155]/45" />
+          <Input
+            aria-label="Search PDF text"
+            className="h-9 bg-white pl-9 dark:bg-background"
+            disabled={searchStatus === "indexing"}
+            placeholder={locale === "zh" ? "Search PDF" : "Search PDF"}
+            type="search"
+            value={query}
+            onChange={(event) => onQueryChange(event.target.value)}
+          />
+        </label>
+        <div className="flex items-center gap-2">
+          <span className="min-w-36 text-xs font-semibold text-[#334155]/58 dark:text-muted-foreground">
+            {statusText}
+          </span>
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            aria-label="Previous search result"
+            disabled={!canUseResults || activeIndex <= 0}
+            onClick={() => onSelectResult(activeIndex - 1)}
+          >
+            <ChevronLeft className="size-4" />
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            aria-label="Next search result"
+            disabled={!canUseResults || activeIndex >= results.length - 1}
+            onClick={() => onSelectResult(activeIndex + 1)}
+          >
+            <ChevronRight className="size-4" />
+          </Button>
+        </div>
+      </div>
+      {canUseResults ? (
+        <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
+          {results.map((result, index) => (
+            <button
+              key={result.id}
+              type="button"
+              aria-current={index === activeIndex ? "true" : undefined}
+              className={[
+                "min-w-56 max-w-72 rounded-md border px-3 py-2 text-left text-xs leading-5 transition",
+                index === activeIndex
+                  ? "border-[#315d8a] bg-[#eef4ef] text-[#334155] ring-2 ring-[#315d8a]/20 dark:bg-secondary dark:text-foreground"
+                  : "border-[#d8dfd8] bg-white text-[#334155]/68 hover:border-[#315d8a]/60 dark:border-border dark:bg-background dark:text-muted-foreground",
+              ].join(" ")}
+              onClick={() => onSelectResult(index)}
+            >
+              <span className="block font-semibold text-[#334155] dark:text-foreground">
+                Page {result.pageNumber}
+              </span>
+              <span className="line-clamp-2">{result.snippet}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </section>
   )
 }
 
@@ -531,6 +727,43 @@ function PdfThumbnailButton({
 
 function pdfProxyUrl(pdfUrl: string) {
   return `/api/papers/pdf?url=${encodeURIComponent(pdfUrl)}`
+}
+
+function buildSearchResults(pageTexts: PdfPageText[], query: string): PdfSearchResult[] {
+  const normalizedQuery = query.trim().toLowerCase()
+  if (normalizedQuery.length < MIN_SEARCH_LENGTH) {
+    return []
+  }
+  const results: PdfSearchResult[] = []
+  for (const page of pageTexts) {
+    const normalizedText = page.text.toLowerCase()
+    const matchIndex = normalizedText.indexOf(normalizedQuery)
+    if (matchIndex < 0) {
+      continue
+    }
+    results.push({
+      id: `${page.pageNumber}:${matchIndex}`,
+      pageNumber: page.pageNumber,
+      matchIndex,
+      snippet: buildSnippet(page.text, matchIndex, query.trim().length),
+    })
+  }
+  return results
+}
+
+function buildSnippet(text: string, matchIndex: number, queryLength: number) {
+  const start = Math.max(0, matchIndex - 42)
+  const end = Math.min(text.length, matchIndex + queryLength + 58)
+  const prefix = start > 0 ? "... " : ""
+  const suffix = end < text.length ? " ..." : ""
+  return `${prefix}${text.slice(start, end).replace(/\s+/g, " ").trim()}${suffix}`
+}
+
+function clampSearchIndex(value: number, resultCount: number) {
+  if (!Number.isFinite(value) || resultCount <= 0) {
+    return 0
+  }
+  return Math.min(Math.max(value, 0), resultCount - 1)
 }
 
 function clampPage(value: number, numPages: number) {
