@@ -16,6 +16,7 @@ export type PaperModuleRoute =
 
 export type PaperSort = "trending" | "newest" | "most_cited"
 export type PaperPeriod = "daily" | "weekly" | "monthly" | "all"
+export type PaperDataState = "ready" | "degraded" | "empty"
 export type ReadingStatus = "unread" | "reading" | "finished"
 
 export interface CurrentUser {
@@ -216,6 +217,8 @@ export interface PaperListResult {
   limit: number
   offset: number
   has_next?: boolean
+  dataState?: PaperDataState
+  notices?: string[]
   papers: Paper[]
 }
 
@@ -286,6 +289,16 @@ export interface RelatedNews {
   relationReason: string
   score: number
   summary?: string
+}
+
+export interface RelatedCommunitySignal {
+  id: string
+  title: string
+  url?: string
+  sourceType: string
+  relationReason: string
+  score: number
+  comments?: number
 }
 
 export interface PaperSectionList {
@@ -376,6 +389,8 @@ export interface PaperTask {
   trendSignal?: string
   sisterTasks: TaskRef[]
   commonMethods: MethodRef[]
+  latestPaperIds?: string[]
+  implementationCount?: number
 }
 
 export interface PaperMethod {
@@ -392,6 +407,8 @@ export interface PaperMethod {
   relatedTasks: TaskRef[]
   relatedMethods: MethodRef[]
   commonBenchmarks?: BenchmarkRef[]
+  representativePaperIds?: string[]
+  relatedProjectIds?: string[]
 }
 
 export interface Benchmark {

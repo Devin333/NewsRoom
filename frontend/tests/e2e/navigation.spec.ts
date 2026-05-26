@@ -46,6 +46,7 @@ for (const route of routes) {
 }
 
 test("/ renders the Portal homepage modules", async ({ page }) => {
+  await useEnglishLocale(page)
   await page.goto("/")
 
   await expect(page.getByRole("heading", { name: /AI intelligence front page/i })).toBeVisible()
@@ -56,6 +57,10 @@ test("/ renders the Portal homepage modules", async ({ page }) => {
   await expect(modules.getByRole("link", { name: /View Community Pulse/i })).toBeVisible()
   await expect(modules.getByRole("link", { name: /View Cross-board Evidence Graph/i })).toBeVisible()
   await expect(modules.getByRole("link", { name: /View Reports \/ Briefings/i })).toBeVisible()
+  const researchEntries = page.getByRole("region", { name: "Paper Radar research entries" })
+  await expect(researchEntries.getByRole("link", { name: /Trending Papers/i })).toHaveAttribute("href", "/papers")
+  await expect(researchEntries.getByRole("link", { name: /Tasks/i })).toHaveAttribute("href", "/papers/tasks")
+  await expect(researchEntries.getByRole("link", { name: /Methods/i })).toHaveAttribute("href", "/papers/methods")
   await expect(page.locator("body")).not.toContainText("Quality Gate")
 })
 
@@ -92,6 +97,9 @@ test("/papers search, period tabs, and drawer deep-link work", async ({ page, ba
   await page.goto("/papers?paper=arxiv-2605.22823")
   await expect(page.getByRole("dialog", { name: /paper detail/i })).toBeVisible()
   await expect(page.getByRole("heading", { name: "NewsRoom AI" })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "News and sources" })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "Community signals" })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "Evidence references" })).toBeVisible()
   await page.getByRole("button", { name: /dismiss|关闭/i }).click()
   await expect(page).toHaveURL(/\/papers$/)
 })
@@ -140,6 +148,7 @@ test("/topics evidence graph renders the structured PRD-07 surface", async ({ pa
 })
 
 async function authenticate(page: Page, baseURL: string | undefined) {
+  await useEnglishLocale(page)
   await page.route("**/api/auth/session", async (route) => {
     await route.fulfill({
       status: 200,
@@ -163,6 +172,23 @@ async function authenticate(page: Page, baseURL: string | undefined) {
       url: baseURL ?? "http://127.0.0.1:3000"
     }
   ])
+}
+
+async function useEnglishLocale(page: Page) {
+  await page.addInitScript(() => {
+    window.localStorage.setItem(
+      "newsroom-ui",
+      JSON.stringify({
+        state: {
+          sidebarCollapsed: false,
+          rightPanelOpen: true,
+          theme: "light",
+          locale: "en"
+        },
+        version: 0
+      })
+    )
+  })
 }
 
 async function mockProjectRadar(page: Page) {

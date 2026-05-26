@@ -1,22 +1,17 @@
 import { NextResponse } from "next/server"
-import { safeApiGet } from "@/lib/api/server"
+import { getPaperMethodsResult } from "@/lib/papers/real-data"
 
 export const dynamic = "force-dynamic"
 
 export async function GET() {
-  const result = await safeApiGet("/api/v1/papers/methods")
-  if (result.ok) {
-    return NextResponse.json({ success: true, data: result.data })
-  }
-  return NextResponse.json(
-    {
-      success: false,
-      error: {
-        code: result.errorCode,
-        message: result.errorMessage,
-        requestId: result.requestId,
-      },
-    },
-    { status: result.errorCode === "papers_cache_not_found" ? 404 : 502 }
-  )
+  const result = await getPaperMethodsResult()
+  return NextResponse.json({
+    success: true,
+    data: {
+      methods: result.items,
+      source: result.source,
+      dataState: result.dataState,
+      notices: result.notices
+    }
+  })
 }

@@ -17,7 +17,7 @@ import {
   paperTitle,
   taskName
 } from "@/lib/papers/format"
-import type { Locale, Paper, PaperAISummary } from "@/lib/papers/types"
+import type { Locale, Paper, PaperAISummary, PaperSourceRef } from "@/lib/papers/types"
 import { cn } from "@/lib/utils"
 
 const CLOSE_ANIMATION_MS = 420
@@ -150,6 +150,9 @@ export function PaperDetailDrawer({
   const methods = activePaper.methodRefs ?? []
   const implementations = activePaper.implementations ?? []
   const benchmarks = activePaper.benchmarks ?? []
+  const newsSources = (activePaper.sourceRefs ?? []).filter(isNewsSourceRef)
+  const communitySignals = (activePaper.sourceRefs ?? []).filter(isCommunitySourceRef)
+  const evidenceRefs = activePaper.evidenceRefs ?? []
 
   return (
     <>
@@ -342,6 +345,42 @@ export function PaperDetailDrawer({
             )}
           </DetailSection>
 
+          <DetailSection title={translate(locale, "papers.reader.newsSources")} meta={translate(locale, "papers.reader.results", { count: newsSources.length })}>
+            <RelatedSourceList
+              items={newsSources.map((source, index) => ({
+                id: source.sourceId ?? source.externalId ?? `news-${index}`,
+                title: source.title ?? source.sourceName ?? source.sourceType ?? translate(locale, "papers.reader.newsSources"),
+                meta: source.sourceName ?? source.sourceType ?? translate(locale, "papers.reader.newsSources"),
+                url: source.url
+              }))}
+              empty={translate(locale, "papers.reader.noNewsSources")}
+            />
+          </DetailSection>
+
+          <DetailSection title={translate(locale, "papers.reader.communitySignals")} meta={translate(locale, "papers.reader.results", { count: communitySignals.length })}>
+            <RelatedSourceList
+              items={communitySignals.map((source, index) => ({
+                id: source.sourceId ?? source.externalId ?? `community-${index}`,
+                title: source.title ?? source.sourceName ?? source.sourceType ?? translate(locale, "papers.reader.communitySignals"),
+                meta: source.sourceName ?? source.sourceType ?? translate(locale, "papers.reader.communitySignals"),
+                url: source.url
+              }))}
+              empty={translate(locale, "papers.reader.noCommunitySignals")}
+            />
+          </DetailSection>
+
+          <DetailSection title={translate(locale, "papers.reader.evidenceRefs")} meta={translate(locale, "papers.reader.results", { count: evidenceRefs.length })}>
+            <RelatedSourceList
+              items={evidenceRefs.map((evidence, index) => ({
+                id: evidence.evidenceId ?? evidence.sourceId ?? `evidence-${index}`,
+                title: evidence.summary ?? evidence.quote ?? evidence.title ?? translate(locale, "papers.reader.evidenceRefs"),
+                meta: evidence.sourceName ?? evidence.sourceType ?? translate(locale, "papers.reader.evidenceRefs"),
+                url: evidence.url
+              }))}
+              empty={translate(locale, "papers.reader.noEvidenceRefs")}
+            />
+          </DetailSection>
+
           <DetailSection title={translate(locale, "papers.reader.heat")} meta={translate(locale, "papers.reader.realSignalsOnly")}>
             <div className="flex flex-wrap gap-3 text-sm text-[#334155]/72 dark:text-muted-foreground">
               <MetricPill
@@ -437,10 +476,64 @@ function AISummaryBlock({
       <p>{error ?? translate(locale, "papers.reader.summaryUnavailable")}</p>
       <button type="button" className="mt-3 inline-flex items-center gap-2 font-semibold" onClick={onRetry}>
         <RefreshCw className="size-4" />
-        {locale === "zh" ? "重试" : "Retry"}
+        {translate(locale, "common.retry")}
       </button>
     </div>
   )
+}
+
+function RelatedSourceList({
+  items,
+  empty
+}: {
+  items: Array<{ id: string; title: string; meta: string; url?: string }>
+  empty: string
+}) {
+  if (!items.length) {
+    return <EmptyState text={empty} />
+  }
+
+  return (
+    <div className="divide-y divide-[#d8dfd8] rounded-md border border-[#d8dfd8] bg-white dark:divide-border dark:border-border dark:bg-card">
+      {items.map((item) => {
+        const content = (
+          <>
+            <span className="min-w-0">
+              <span className="block line-clamp-2 font-semibold">{item.title}</span>
+              <span className="mt-1 block truncate text-xs text-[#334155]/58 dark:text-muted-foreground">{item.meta}</span>
+            </span>
+            <ExternalLink className="size-4 shrink-0 text-[#334155]/45 dark:text-muted-foreground" />
+          </>
+        )
+
+        return item.url ? (
+          <a
+            key={item.id}
+            href={item.url}
+            target="_blank"
+            rel="noreferrer"
+            className="flex items-center justify-between gap-4 px-4 py-3 text-sm text-[#334155] transition-colors hover:bg-[#eef4ef] dark:text-foreground dark:hover:bg-secondary"
+          >
+            {content}
+          </a>
+        ) : (
+          <div key={item.id} className="flex items-center justify-between gap-4 px-4 py-3 text-sm text-[#334155] dark:text-foreground">
+            {content}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function isNewsSourceRef(source: PaperSourceRef) {
+  const value = `${source.sourceType ?? ""} ${source.sourceName ?? ""}`.toLowerCase()
+  return ["news", "blog", "rss", "official", "media", "press"].some((token) => value.includes(token))
+}
+
+function isCommunitySourceRef(source: PaperSourceRef) {
+  const value = `${source.sourceType ?? ""} ${source.sourceName ?? ""}`.toLowerCase()
+  return ["hackernews", "reddit", "github", "community", "discussion", "hn"].some((token) => value.includes(token))
 }
 
 function EmptyState({ text }: { text: string }) {

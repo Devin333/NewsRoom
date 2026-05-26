@@ -6,8 +6,8 @@ import { PapersHero } from "@/components/papers/papers-hero"
 import { PapersMicrobar } from "@/components/papers/papers-microbar"
 import { InlineNotice } from "@/components/papers/shared/inline-notice"
 import { papersCopy, t } from "@/lib/papers/copy"
-import { papers, paperMethods, paperTasks } from "@/lib/papers/catalog"
-import { fetchPaperMethods, fetchPaperTasks, fetchPapers } from "@/lib/papers/api"
+import { paperMethods, paperTasks } from "@/lib/papers/catalog"
+import { fetchPaperMethodsResult, fetchPaperTasksResult, fetchPapers } from "@/lib/papers/api"
 import type { Locale, Paper, PaperMethod, PaperTask } from "@/lib/papers/types"
 
 export function MethodsPage({ locale }: { locale: Locale }) {
@@ -15,33 +15,36 @@ export function MethodsPage({ locale }: { locale: Locale }) {
   const [tasks, setTasks] = useState<PaperTask[]>([])
   const [paperItems, setPaperItems] = useState<Paper[]>([])
   const [status, setStatus] = useState<"loading" | "ready" | "fallback">("loading")
+  const [notice, setNotice] = useState<string | null>(null)
   const [fallbackNoticeVisible, setFallbackNoticeVisible] = useState(true)
 
   useEffect(() => {
     let active = true
-    Promise.all([fetchPaperMethods(), fetchPaperTasks(), fetchPapers({ limit: 1000, period: "all" })])
+    Promise.all([fetchPaperMethodsResult(), fetchPaperTasksResult(), fetchPapers({ limit: 1000, period: "all" })])
       .then(([apiMethods, apiTasks, apiPapers]) => {
         if (!active) {
           return
         }
-        setMethods(apiMethods)
-        setTasks(apiTasks)
+        setMethods(apiMethods.methods)
+        setTasks(apiTasks.tasks)
         setPaperItems(apiPapers.papers)
-        setStatus("ready")
+        setNotice(apiMethods.notices?.[0] ?? apiTasks.notices?.[0] ?? null)
+        setStatus(apiMethods.dataState === "ready" || !apiMethods.dataState ? "ready" : "fallback")
       })
       .catch(() => {
         if (!active) {
           return
         }
-        setMethods(paperMethods)
-        setTasks(paperTasks)
-        setPaperItems(papers)
+        setMethods(emptyMethodCounts(paperMethods))
+        setTasks(emptyTaskCounts(paperTasks))
+        setPaperItems([])
+        setNotice(t(papersCopy.methodApiFallback, locale))
         setStatus("fallback")
       })
     return () => {
       active = false
     }
-  }, [])
+  }, [locale])
 
   const methodItems = status === "loading" ? [] : methods
   const taskItems = status === "loading" ? [] : tasks
@@ -62,7 +65,7 @@ export function MethodsPage({ locale }: { locale: Locale }) {
       />
       {status === "fallback" ? (
         <InlineNotice
-          message={fallbackNoticeVisible ? t(papersCopy.methodApiFallback, locale) : null}
+          message={fallbackNoticeVisible ? notice ?? t(papersCopy.methodApiFallback, locale) : null}
           locale={locale}
           onDismiss={() => setFallbackNoticeVisible(false)}
         />
@@ -71,10 +74,37 @@ export function MethodsPage({ locale }: { locale: Locale }) {
         {status === "loading" ? (
           <p className="text-sm text-[#334155]/60 dark:text-muted-foreground">{t(papersCopy.loadingMethods, locale)}</p>
         ) : null}
+        {status !== "loading" && methodItems.length === 0 ? (
+          <p className="rounded-md border border-dashed border-border p-6 text-sm text-muted-foreground">
+            {t(papersCopy.noPapers, locale)}
+          </p>
+        ) : null}
         {methodItems.map((method) => (
           <MethodCard key={method.id} method={method} locale={locale} />
         ))}
       </section>
     </div>
   )
+}
+
+function emptyTaskCounts(tasks: PaperTask[]): PaperTask[] {
+  return tasks.map((task) => ({
+    ...task,
+    paperCount: 0,
+    benchmarkCount: 0,
+    methodCount: 0,
+    latestPaperIds: [],
+    implementationCount: 0
+  }))
+}
+
+function emptyMethodCounts(methods: PaperMethod[]): PaperMethod[] {
+  return methods.map((method) => ({
+    ...method,
+    paperCount: 0,
+    taskCount: 0,
+    implementationCount: 0,
+    representativePaperIds: [],
+    relatedProjectIds: []
+  }))
 }

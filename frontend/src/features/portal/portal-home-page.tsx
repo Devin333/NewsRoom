@@ -1,7 +1,7 @@
 import Link from "next/link"
 import { ArrowRight, CircleCheck, CircleDashed, CircleAlert, Network, Newspaper, Radio, FileText, GitBranch, BookOpen } from "lucide-react"
 import { cn } from "@/lib/utils"
-import type { PortalHomeData, PortalModuleStatus, PortalModuleSummary } from "@/features/portal/portal-home-data"
+import type { PortalHomeData, PortalModuleStatus, PortalModuleSummary, PortalResearchEntry } from "@/features/portal/portal-home-data"
 
 const moduleIcons: Record<PortalModuleSummary["id"], typeof Newspaper> = {
   news: Newspaper,
@@ -49,6 +49,24 @@ export function PortalHomePage({ data }: { data: PortalHomeData }) {
         {data.modules.map((module) => (
           <PortalModuleCard key={module.id} module={module} />
         ))}
+      </section>
+
+      <section aria-label="Paper Radar research entries" className="border-t border-[#d7dfd8] pt-8 dark:border-border">
+        <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#334155]/55 dark:text-muted-foreground">Research Module</p>
+            <h2 className="mt-2 text-2xl font-black text-[#334155] dark:text-foreground">Paper Radar</h2>
+          </div>
+          <Link href="/papers" className="inline-flex items-center gap-2 text-sm font-semibold text-emerald-700 hover:text-emerald-800">
+            Open research board
+            <ArrowRight className="size-4" />
+          </Link>
+        </div>
+        <div className="grid gap-3 md:grid-cols-3">
+          {data.researchEntries.map((entry) => (
+            <ResearchEntryCard key={entry.href} entry={entry} />
+          ))}
+        </div>
       </section>
 
       <section className="grid gap-8 border-t border-[#d7dfd8] pt-8 xl:grid-cols-[16rem_minmax(0,1fr)] dark:border-border">
@@ -101,6 +119,36 @@ export function PortalHomePage({ data }: { data: PortalHomeData }) {
         </div>
       </section>
     </div>
+  )
+}
+
+function ResearchEntryCard({ entry }: { entry: PortalResearchEntry }) {
+  const idBase = `research-entry-${entry.href.replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-|-$/g, "") || "root"}`
+  const titleId = `${idBase}-title`
+  const descriptionId = `${idBase}-description`
+
+  return (
+    <Link
+      href={entry.href}
+      aria-labelledby={titleId}
+      aria-describedby={descriptionId}
+      className="group rounded-md border border-[#dbe3dc] bg-white/80 p-4 transition-colors hover:bg-white dark:border-border dark:bg-card"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h3 id={titleId} className="text-base font-semibold text-[#334155] dark:text-foreground">{entry.title}</h3>
+          <p id={descriptionId} className="mt-2 line-clamp-3 text-sm leading-6 text-[#334155]/65 dark:text-muted-foreground">{entry.description}</p>
+        </div>
+        <ArrowRight className="size-4 shrink-0 text-[#334155]/45 transition-transform group-hover:translate-x-0.5 dark:text-muted-foreground" />
+      </div>
+      <div className="mt-4 rounded-md border border-[#edf1ed] bg-[#f7f9f6] px-3 py-2 dark:border-border dark:bg-background">
+        <p className="text-[11px] uppercase tracking-normal text-[#334155]/55 dark:text-muted-foreground">{entry.metricLabel}</p>
+        <p className="mt-1 text-sm font-semibold text-[#334155] dark:text-foreground">{entry.metricValue}</p>
+      </div>
+      {entry.highlights.length ? (
+        <p className="mt-3 line-clamp-1 text-xs text-[#334155]/55 dark:text-muted-foreground">{entry.highlights[0].title}</p>
+      ) : null}
+    </Link>
   )
 }
 

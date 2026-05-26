@@ -153,13 +153,13 @@ export function TrendingPapersPage({ locale, papers }: { locale: Locale; papers:
             />
           </div>
           <Button type="submit" variant="outline" className="h-10 rounded-full bg-white dark:bg-card">
-            {locale === "zh" ? "搜索" : "Search"}
+            {t(papersCopy.searchAction, locale)}
           </Button>
         </form>
       </div>
       {error ? (
         <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-          {locale === "zh" ? "API 暂不可用，已显示本地缓存：" : "API unavailable; showing local cache: "}
+          {t(papersCopy.apiUnavailableCache, locale)}
           {error}
         </div>
       ) : null}
@@ -168,7 +168,7 @@ export function TrendingPapersPage({ locale, papers }: { locale: Locale; papers:
         <div className="space-y-3">
           {isLoading ? (
             <p className="text-sm text-[#334155]/55 dark:text-muted-foreground">
-              {locale === "zh" ? "正在更新论文列表..." : "Updating papers..."}
+              {t(papersCopy.updatingPapers, locale)}
             </p>
           ) : null}
           <PaperStream

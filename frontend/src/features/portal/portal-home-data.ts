@@ -34,8 +34,18 @@ export type PortalModuleSummary = {
 export type PortalHomeData = {
   generatedAt: string
   modules: PortalModuleSummary[]
+  researchEntries: PortalResearchEntry[]
   totalSignals: number
   readyModules: number
+}
+
+export type PortalResearchEntry = {
+  title: string
+  href: string
+  description: string
+  metricLabel: string
+  metricValue: string | number
+  highlights: PortalHighlight[]
 }
 
 export type EvidenceGraphSection = {
@@ -83,6 +93,7 @@ export async function getPortalHomeData(): Promise<PortalHomeData> {
   return {
     generatedAt: new Date().toISOString(),
     modules,
+    researchEntries: researchEntriesFrom(papers),
     totalSignals: modules.reduce((total, module) => total + primaryCount(module), 0),
     readyModules: modules.filter((module) => module.status === "ready").length
   }
@@ -282,6 +293,39 @@ function evidenceModule(modules: PortalModuleSummary[]): PortalModuleSummary {
       })),
     notices: degraded ? ["One or more evidence sources are degraded."] : []
   }
+}
+
+function researchEntriesFrom(papers: PortalModuleSummary): PortalResearchEntry[] {
+  const paperCount = papers.metrics.find((metric) => metric.label === "Papers")?.value ?? 0
+  const taskCount = papers.metrics.find((metric) => metric.label === "Tasks")?.value ?? paperTasks.length
+  const methodCount = papers.metrics.find((metric) => metric.label === "Methods")?.value ?? paperMethods.length
+
+  return [
+    {
+      title: "Trending Papers",
+      href: "/papers",
+      description: "Track current research papers with PDFs, repositories, tasks, methods, and citation signals.",
+      metricLabel: "Papers",
+      metricValue: paperCount,
+      highlights: papers.highlights.slice(0, 2)
+    },
+    {
+      title: "Tasks",
+      href: "/papers/tasks",
+      description: "Browse research tasks such as agents, coding, multimodal reasoning, long context, and evaluation.",
+      metricLabel: "Tasks",
+      metricValue: taskCount,
+      highlights: papers.highlights.slice(0, 1)
+    },
+    {
+      title: "Methods",
+      href: "/papers/methods",
+      description: "Explore methods, model structures, reasoning patterns, and implementation evidence from papers.",
+      metricLabel: "Methods",
+      metricValue: methodCount,
+      highlights: papers.highlights.slice(0, 1)
+    }
+  ]
 }
 
 function unavailableModule(

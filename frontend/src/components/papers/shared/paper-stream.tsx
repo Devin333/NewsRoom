@@ -62,7 +62,7 @@ export function PaperStream({
                 className="rounded-full bg-white px-6 dark:bg-card"
                 onClick={() => setVisibleCount((count) => Math.min(count + PAGE_SIZE, sortedPapers.length))}
               >
-                Load more papers
+                {t(papersCopy.loadMorePapers, locale)}
                 <span className="text-[#334155]/55">
                   {visiblePapers.length}/{sortedPapers.length}
                 </span>

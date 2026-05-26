@@ -2,13 +2,13 @@ import { render, screen } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { MethodsPage } from "@/components/papers/methods/methods-page"
 import { TasksPage } from "@/components/papers/tasks/tasks-page"
-import { fetchPaperMethods, fetchPapers, fetchPaperTasks } from "@/lib/papers/api"
+import { fetchPaperMethodsResult, fetchPapers, fetchPaperTasksResult } from "@/lib/papers/api"
 import type { PaperListResult } from "@/lib/papers/types"
 
 vi.mock("@/lib/papers/api", () => ({
-  fetchPaperMethods: vi.fn(),
+  fetchPaperMethodsResult: vi.fn(),
   fetchPapers: vi.fn(),
-  fetchPaperTasks: vi.fn()
+  fetchPaperTasksResult: vi.fn()
 }))
 
 const paperResult: PaperListResult = {
@@ -70,13 +70,13 @@ const apiMethods = [
 
 describe("paper task and method pages", () => {
   beforeEach(() => {
-    vi.mocked(fetchPaperMethods).mockReset()
+    vi.mocked(fetchPaperMethodsResult).mockReset()
     vi.mocked(fetchPapers).mockReset()
-    vi.mocked(fetchPaperTasks).mockReset()
+    vi.mocked(fetchPaperTasksResult).mockReset()
   })
 
   it("renders API-backed tasks and visible task fallback", async () => {
-    vi.mocked(fetchPaperTasks).mockResolvedValueOnce(apiTasks)
+    vi.mocked(fetchPaperTasksResult).mockResolvedValueOnce({ tasks: apiTasks, dataState: "ready", source: "backend", notices: [] })
     vi.mocked(fetchPapers).mockResolvedValueOnce(paperResult)
 
     const { unmount } = render(<TasksPage locale="en" />)
@@ -85,17 +85,17 @@ describe("paper task and method pages", () => {
     expect(screen.queryByText(/catalog fallback/i)).not.toBeInTheDocument()
     unmount()
 
-    vi.mocked(fetchPaperTasks).mockRejectedValueOnce(new Error("offline"))
+    vi.mocked(fetchPaperTasksResult).mockRejectedValueOnce(new Error("offline"))
     vi.mocked(fetchPapers).mockRejectedValueOnce(new Error("offline"))
 
     render(<TasksPage locale="en" />)
 
-    expect(await screen.findByText("Paper task API is unavailable; showing local catalog fallback.")).toBeInTheDocument()
+    expect(await screen.findByText("Paper task API is unavailable; showing taxonomy with real paper-derived counts.")).toBeInTheDocument()
   })
 
   it("renders API-backed methods and visible method fallback", async () => {
-    vi.mocked(fetchPaperMethods).mockResolvedValueOnce(apiMethods)
-    vi.mocked(fetchPaperTasks).mockResolvedValueOnce(apiTasks)
+    vi.mocked(fetchPaperMethodsResult).mockResolvedValueOnce({ methods: apiMethods, dataState: "ready", source: "backend", notices: [] })
+    vi.mocked(fetchPaperTasksResult).mockResolvedValueOnce({ tasks: apiTasks, dataState: "ready", source: "backend", notices: [] })
     vi.mocked(fetchPapers).mockResolvedValueOnce(paperResult)
 
     const { unmount } = render(<MethodsPage locale="en" />)
@@ -104,12 +104,12 @@ describe("paper task and method pages", () => {
     expect(screen.queryByText(/catalog fallback/i)).not.toBeInTheDocument()
     unmount()
 
-    vi.mocked(fetchPaperMethods).mockRejectedValueOnce(new Error("offline"))
-    vi.mocked(fetchPaperTasks).mockRejectedValueOnce(new Error("offline"))
+    vi.mocked(fetchPaperMethodsResult).mockRejectedValueOnce(new Error("offline"))
+    vi.mocked(fetchPaperTasksResult).mockRejectedValueOnce(new Error("offline"))
     vi.mocked(fetchPapers).mockRejectedValueOnce(new Error("offline"))
 
     render(<MethodsPage locale="en" />)
 
-    expect(await screen.findByText("Paper method API is unavailable; showing local catalog fallback.")).toBeInTheDocument()
+    expect(await screen.findByText("Paper method API is unavailable; showing taxonomy with real paper-derived counts.")).toBeInTheDocument()
   })
 })

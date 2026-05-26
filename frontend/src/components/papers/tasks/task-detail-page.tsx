@@ -6,8 +6,10 @@ import { CommonMethodsPanel } from "@/components/papers/tasks/common-methods-pan
 import { SisterTasksPanel } from "@/components/papers/tasks/sister-tasks-panel"
 import { PapersMicrobar } from "@/components/papers/papers-microbar"
 import { InlineNotice } from "@/components/papers/shared/inline-notice"
+import { ImplementationList } from "@/components/papers/shared/implementation-list"
 import { PaperDetailDrawer } from "@/components/papers/shared/paper-detail-drawer"
 import { PaperStream } from "@/components/papers/shared/paper-stream"
+import { translate } from "@/lib/i18n"
 import { papersCopy, t } from "@/lib/papers/copy"
 import { formatWholeNumber, taskDescription, taskName } from "@/lib/papers/format"
 import { getBenchmarksForTask, getPapersForTask } from "@/lib/papers/catalog"
@@ -50,6 +52,7 @@ export function TaskDetailPage({
       <div className="grid gap-10 xl:grid-cols-[minmax(0,1fr)_18rem] 2xl:grid-cols-[minmax(0,1fr)_19rem]">
         <main className="space-y-6">
           <BenchmarkList benchmarks={taskBenchmarks} task={task} locale={locale} onSelect={previewBenchmark} />
+          <ImplementationList papers={taskPapers} locale={locale} title={translate(locale, "papers.reader.projects")} />
           <PaperStream papers={taskPapers} locale={locale} title={t(papersCopy.papersUnderTask, locale)} onPreview={previewPaper} />
         </main>
         <aside className="space-y-8 border-t border-[#d7dfd8] pt-6 xl:sticky xl:top-24 xl:self-start xl:border-t-0 xl:pt-0 dark:border-border">

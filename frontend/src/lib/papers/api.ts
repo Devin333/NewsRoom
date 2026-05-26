@@ -3,6 +3,7 @@ import type {
   Locale,
   Paper,
   PaperAISummary,
+  PaperDataState,
   PaperListResult,
   PaperMethod,
   PaperPeriod,
@@ -49,6 +50,20 @@ export type PaperSummaryRequestOptions = {
   refresh?: boolean
   reason?: string
   init?: RequestInit
+}
+
+export type PaperTasksResult = {
+  tasks: PaperTask[]
+  source?: string
+  dataState?: PaperDataState
+  notices?: string[]
+}
+
+export type PaperMethodsResult = {
+  methods: PaperMethod[]
+  source?: string
+  dataState?: PaperDataState
+  notices?: string[]
 }
 
 export class PapersApiError extends Error {
@@ -147,13 +162,21 @@ export async function fetchPaperGraph(paperId: string, init?: RequestInit): Prom
 }
 
 export async function fetchPaperTasks(init?: RequestInit): Promise<PaperTask[]> {
-  const envelope = await apiGet<ApiEnvelope<{ tasks: PaperTask[] }>>("/api/papers/tasks", init)
-  return unwrapEnvelope(envelope).tasks
+  return (await fetchPaperTasksResult(init)).tasks
 }
 
 export async function fetchPaperMethods(init?: RequestInit): Promise<PaperMethod[]> {
-  const envelope = await apiGet<ApiEnvelope<{ methods: PaperMethod[] }>>("/api/papers/methods", init)
-  return unwrapEnvelope(envelope).methods
+  return (await fetchPaperMethodsResult(init)).methods
+}
+
+export async function fetchPaperTasksResult(init?: RequestInit): Promise<PaperTasksResult> {
+  const envelope = await apiGet<ApiEnvelope<PaperTasksResult>>("/api/papers/tasks", init)
+  return unwrapEnvelope(envelope)
+}
+
+export async function fetchPaperMethodsResult(init?: RequestInit): Promise<PaperMethodsResult> {
+  const envelope = await apiGet<ApiEnvelope<PaperMethodsResult>>("/api/papers/methods", init)
+  return unwrapEnvelope(envelope)
 }
 
 export async function askPaper(

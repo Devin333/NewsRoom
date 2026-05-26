@@ -7,8 +7,10 @@ import { RelatedTasksPanel } from "@/components/papers/methods/related-tasks-pan
 import { PapersHero } from "@/components/papers/papers-hero"
 import { PapersMicrobar } from "@/components/papers/papers-microbar"
 import { InlineNotice } from "@/components/papers/shared/inline-notice"
+import { ImplementationList } from "@/components/papers/shared/implementation-list"
 import { PaperDetailDrawer } from "@/components/papers/shared/paper-detail-drawer"
 import { PaperStream } from "@/components/papers/shared/paper-stream"
+import { translate } from "@/lib/i18n"
 import { papersCopy, t } from "@/lib/papers/copy"
 import { methodDescription, methodName } from "@/lib/papers/format"
 import { getBenchmarksForMethod, getPapersForMethod } from "@/lib/papers/catalog"
@@ -61,6 +63,7 @@ export function MethodDetailPage({
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_20rem]">
         <main className="space-y-6">
           <RelatedTasksPanel tasks={method.relatedTasks} locale={locale} />
+          <ImplementationList papers={methodPapers} locale={locale} title={translate(locale, "papers.reader.projects")} />
           <PaperStream papers={methodPapers} locale={locale} title={t(papersCopy.papersUsingMethod, locale)} onPreview={previewPaper} />
         </main>
         <aside className="space-y-6 xl:sticky xl:top-24 xl:self-start">

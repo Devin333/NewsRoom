@@ -1,22 +1,21 @@
 import { NextRequest, NextResponse } from "next/server"
-import { safeApiGet } from "@/lib/api/server"
+import { getPaperById } from "@/lib/papers/real-data"
 
 export const dynamic = "force-dynamic"
 
 export async function GET(_request: NextRequest, { params }: { params: { paperId: string } }) {
-  const result = await safeApiGet(`/api/v1/papers/${encodeURIComponent(params.paperId)}`)
-  if (result.ok) {
-    return NextResponse.json({ success: true, data: result.data })
+  const paper = await getPaperById(params.paperId)
+  if (paper) {
+    return NextResponse.json({ success: true, data: { paper } })
   }
   return NextResponse.json(
     {
       success: false,
       error: {
-        code: result.errorCode,
-        message: result.errorMessage,
-        requestId: result.requestId,
+        code: "paper_not_found",
+        message: "Paper not found",
       },
     },
-    { status: result.errorCode === "paper_not_found" ? 404 : 502 }
+    { status: 404 }
   )
 }

@@ -1,10 +1,10 @@
 import fs from "node:fs"
 import path from "node:path"
 import { safeApiGet } from "@/lib/api/server"
-import { normalizePdfUrl, paperPdfUrlFromSource } from "@/lib/papers/format"
-import { papers as catalogPapers, paperMethods, paperTasks } from "@/lib/papers/catalog"
-import { arxivIdFromUrl, enrichPapersForPublicStream, normalizeDoi, normalizeGithubRepoUrl } from "@/lib/papers/enrichment"
-import type { MethodRef, Paper, PaperMethod, PaperTask, TaskRef } from "@/lib/papers/types"
+import { normalizePdfUrl, paperPdfUrlFromSource, sortPapers } from "@/lib/papers/format"
+import { getBenchmarksForMethod, getBenchmarksForTask, paperMethods, paperTasks } from "@/lib/papers/catalog"
+import { arxivIdFromUrl, enrichPapersForPublicStream, githubRepoSlug, normalizeDoi, normalizeGithubRepoUrl } from "@/lib/papers/enrichment"
+import type { MethodRef, Paper, PaperDataState, PaperListResult, PaperMethod, PaperPeriod, PaperSort, PaperTask, TaskRef } from "@/lib/papers/types"
 
 type SourceSignal = {
   authors?: unknown
@@ -82,20 +82,149 @@ const PAPER_SOURCE_TYPES = new Set(["arxiv", "paper_index"])
 const BLOCKED_SOURCE_TYPES = new Set(["official_blog", "ai_news", "rss", "blog", "press_release"])
 const LOCAL_PAPER_CACHE_PATH = path.resolve(process.cwd(), "data", "papers", "arxiv-papers.json")
 
+export type PaperRuntimeData = {
+  papers: Paper[]
+  source: "backend" | "cache" | "artifact" | "empty"
+  dataState: PaperDataState
+  notices: string[]
+  collectedAt?: string
+}
+
+export type PaperListQuery = {
+  q?: string
+  period?: PaperPeriod
+  sort?: PaperSort
+  task?: string
+  method?: string
+  limit?: number
+  offset?: number
+}
+
+export type PaperTaxonomyResult<T> = {
+  items: T[]
+  source: "backend" | "taxonomy"
+  dataState: PaperDataState
+  notices: string[]
+}
+
 export async function getPublishedPapers() {
+  return (await getPublishedPaperData()).papers
+}
+
+export async function getPublishedPaperData(): Promise<PaperRuntimeData> {
   const apiPapers = await loadApiPapers()
   if (apiPapers.length) {
-    return apiPapers
+    return {
+      papers: normalizeRuntimePapers(apiPapers),
+      source: "backend",
+      dataState: "ready",
+      notices: []
+    }
   }
 
   const cachedPapers = loadCachedPapers()
   if (cachedPapers.length) {
-    return cachedPapers
+    return {
+      papers: normalizeRuntimePapers(cachedPapers),
+      source: "cache",
+      dataState: "degraded",
+      notices: ["Backend paper API is unavailable; showing tracked paper cache."]
+    }
   }
 
   const extractedPapers = loadLatestExtractedPapers()
-  const candidates = extractedPapers.length ? extractedPapers : catalogPapers
-  return enrichPapersForPublicStream(candidates)
+  if (extractedPapers.length) {
+    return {
+      papers: normalizeRuntimePapers(await enrichPapersForPublicStream(extractedPapers)),
+      source: "artifact",
+      dataState: "degraded",
+      notices: ["Backend paper API and tracked cache are unavailable; showing latest Paper Radar artifacts."]
+    }
+  }
+
+  return {
+    papers: [],
+    source: "empty",
+    dataState: "empty",
+    notices: ["No backend, tracked cache, or artifact papers are available."]
+  }
+}
+
+export async function getPaperListResult(query: PaperListQuery = {}): Promise<PaperListResult> {
+  const data = await getPublishedPaperData()
+  const period = parsePaperPeriod(query.period)
+  const sort = parsePaperSort(query.sort)
+  const limit = positiveInteger(query.limit, 1000)
+  const offset = Math.max(0, positiveInteger(query.offset, 0))
+  const filtered = filterPapers(data.papers, {
+    q: query.q,
+    period,
+    task: query.task,
+    method: query.method
+  })
+  const sorted = sortPapers(filtered, sort)
+  const papers = sorted.slice(offset, offset + limit)
+
+  return {
+    source: data.source,
+    query: query.q ?? "",
+    period,
+    sort,
+    task: query.task,
+    method: query.method,
+    collectedAt: data.collectedAt ?? new Date().toISOString(),
+    paper_count: papers.length,
+    total_count: sorted.length,
+    source_count: uniqueStrings(data.papers.map((paper) => paper.venue ?? paper.sourceRefs?.[0]?.sourceName ?? "papers")).length,
+    limit,
+    offset,
+    has_next: offset + papers.length < sorted.length,
+    dataState: data.dataState,
+    notices: data.notices,
+    papers
+  }
+}
+
+export async function getPaperById(paperId: string): Promise<Paper | null> {
+  const result = await safeApiGet<{ paper?: unknown }>(`/api/v1/papers/${encodeURIComponent(paperId)}`)
+  if (result.ok && isPaper(result.data?.paper)) {
+    return normalizeRuntimePaper(result.data.paper)
+  }
+  if (result.ok && isPaper(result.data)) {
+    return normalizeRuntimePaper(result.data)
+  }
+
+  const data = await getPublishedPaperData()
+  return data.papers.find((paper) => paper.id === paperId || paper.slug === paperId) ?? null
+}
+
+export async function getPaperTasksResult(): Promise<PaperTaxonomyResult<PaperTask>> {
+  const [apiTasks, paperData] = await Promise.all([loadApiPaperTasks(), getPublishedPaperData()])
+  const source = apiTasks.length ? "backend" : "taxonomy"
+  const tasks = deriveTasks(apiTasks.length ? apiTasks : paperTasks, paperData.papers)
+  return {
+    items: tasks,
+    source,
+    dataState: apiTasks.length ? "ready" : paperData.dataState === "empty" ? "empty" : "degraded",
+    notices: apiTasks.length
+      ? paperData.notices
+      : ["Paper task API is unavailable; showing taxonomy with real paper-derived counts.", ...paperData.notices]
+  }
+}
+
+export async function getPaperMethodsResult(): Promise<PaperTaxonomyResult<PaperMethod>> {
+  const [apiMethods, apiTasks, paperData] = await Promise.all([loadApiPaperMethods(), loadApiPaperTasks(), getPublishedPaperData()])
+  const source = apiMethods.length ? "backend" : "taxonomy"
+  const tasks = deriveTasks(apiTasks.length ? apiTasks : paperTasks, paperData.papers)
+  const methods = deriveMethods(apiMethods.length ? apiMethods : paperMethods, tasks, paperData.papers)
+  return {
+    items: methods,
+    source,
+    dataState: apiMethods.length ? "ready" : paperData.dataState === "empty" ? "empty" : "degraded",
+    notices: apiMethods.length
+      ? paperData.notices
+      : ["Paper method API is unavailable; showing taxonomy with real paper-derived counts.", ...paperData.notices]
+  }
 }
 
 export async function loadApiPapers(): Promise<Paper[]> {
@@ -122,6 +251,145 @@ export async function loadApiPaperMethods(): Promise<PaperMethod[]> {
     return []
   }
   return result.data.methods.filter(isPaperMethod)
+}
+
+function normalizeRuntimePapers(papers: Paper[]) {
+  return papers.filter((paper) => paper.isPublished !== false).map(normalizeRuntimePaper)
+}
+
+function normalizeRuntimePaper(paper: Paper): Paper {
+  const repoUrl = normalizeGithubRepoUrl(paper.repoUrl)
+  const implementations = paper.implementations?.length
+    ? paper.implementations
+    : repoUrl
+      ? [
+          {
+            id: `${paper.id}-repo`,
+            name: githubRepoSlug(repoUrl) ?? "GitHub repository",
+            repoUrl,
+            provider: "GitHub",
+            githubStars: paper.githubStars
+          }
+        ]
+      : []
+
+  return {
+    ...paper,
+    repoUrl,
+    implementations
+  }
+}
+
+function filterPapers(
+  papers: Paper[],
+  query: { q?: string; period: PaperPeriod; task?: string; method?: string }
+) {
+  const search = lower(query.q ?? "")
+  const periodStart = periodStartDate(query.period)
+
+  return papers.filter((paper) => {
+    if (periodStart && new Date(paper.publishedAt).getTime() < periodStart.getTime()) {
+      return false
+    }
+    if (query.task && !matchesRef(query.task, paper.taskRefs)) {
+      return false
+    }
+    if (query.method && !matchesRef(query.method, paper.methodRefs)) {
+      return false
+    }
+    if (!search) {
+      return true
+    }
+
+    const haystack = [
+      paper.title,
+      paper.titleZh,
+      paper.abstractSnippet,
+      paper.abstractSnippetZh,
+      paper.authors.join(" "),
+      paper.tags.join(" "),
+      paper.taskRefs.map((task) => `${task.slug} ${task.name} ${task.nameZh ?? ""}`).join(" "),
+      paper.methodRefs.map((method) => `${method.slug} ${method.name} ${method.nameZh ?? ""}`).join(" ")
+    ].join(" ")
+
+    return lower(haystack).includes(search)
+  })
+}
+
+function deriveTasks(tasks: PaperTask[], papers: Paper[]): PaperTask[] {
+  return tasks.map((task) => {
+    const relatedPapers = papersForTask(papers, task.slug)
+    const methodCount = uniqueStrings(relatedPapers.flatMap((paper) => paper.methodRefs.map((method) => method.slug))).length
+    const implementationCount = relatedPapers.filter(hasImplementationSignal).length
+    return {
+      ...task,
+      paperCount: relatedPapers.length,
+      methodCount: methodCount || task.methodCount,
+      benchmarkCount: getBenchmarksForTask(task.slug).length || task.benchmarkCount,
+      latestPaperIds: sortPapers(relatedPapers, "newest").slice(0, 5).map((paper) => paper.id),
+      implementationCount
+    }
+  })
+}
+
+function deriveMethods(methods: PaperMethod[], tasks: PaperTask[], papers: Paper[]): PaperMethod[] {
+  const taskBySlug = new Map(tasks.map((task) => [task.slug, task]))
+
+  return methods.map((method) => {
+    const relatedPapers = papersForMethod(papers, method.slug)
+    const relatedTaskSlugs = uniqueStrings(relatedPapers.flatMap((paper) => paper.taskRefs.map((task) => task.slug)))
+    const relatedTasks = relatedTaskSlugs.map((slug) => taskBySlug.get(slug)).filter(isPaperTask)
+    const implementationCount = relatedPapers.filter(hasImplementationSignal).length
+    return {
+      ...method,
+      paperCount: relatedPapers.length,
+      taskCount: relatedTasks.length || method.taskCount,
+      implementationCount,
+      relatedTasks: relatedTasks.length ? relatedTasks : method.relatedTasks,
+      commonBenchmarks: method.commonBenchmarks?.length ? method.commonBenchmarks : getBenchmarksForMethod(method.slug),
+      representativePaperIds: sortPapers(relatedPapers, "trending").slice(0, 5).map((paper) => paper.id),
+      relatedProjectIds: relatedPapers.flatMap((paper) => paper.implementations?.map((item) => item.id) ?? [])
+    }
+  })
+}
+
+function papersForTask(papers: Paper[], slug: string) {
+  return papers.filter((paper) => paper.taskRefs.some((task) => task.slug === slug))
+}
+
+function papersForMethod(papers: Paper[], slug: string) {
+  return papers.filter((paper) => paper.methodRefs.some((method) => method.slug === slug))
+}
+
+function hasImplementationSignal(paper: Paper) {
+  return Boolean(normalizeGithubRepoUrl(paper.repoUrl) || paper.implementations?.length)
+}
+
+function matchesRef(value: string, refs: Array<TaskRef | MethodRef>) {
+  const normalized = lower(value)
+  return refs.some((ref) => lower(ref.slug) === normalized || lower(ref.name) === normalized || lower(ref.nameZh ?? "") === normalized)
+}
+
+function periodStartDate(period: PaperPeriod) {
+  const days = period === "daily" ? 1 : period === "weekly" ? 7 : period === "monthly" ? 30 : 0
+  if (!days) {
+    return null
+  }
+  const start = new Date()
+  start.setDate(start.getDate() - days)
+  return start
+}
+
+function parsePaperPeriod(value: PaperPeriod | undefined): PaperPeriod {
+  return value === "daily" || value === "weekly" || value === "monthly" || value === "all" ? value : "all"
+}
+
+function parsePaperSort(value: PaperSort | undefined): PaperSort {
+  return value === "newest" || value === "most_cited" || value === "trending" ? value : "trending"
+}
+
+function positiveInteger(value: number | undefined, fallback: number) {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.floor(value) : fallback
 }
 
 function isAuthoritativePaper(value: unknown): value is Paper {
@@ -221,6 +489,15 @@ function cachedPaperToPaper(value: unknown): Paper | null {
     arxivUrl,
     pdfUrl,
     repoUrl,
+    sourceRefs: [
+      {
+        sourceId: text(value.sourceId) || id,
+        sourceName: text(value.sourceName) || text(value.venue) || "arXiv",
+        sourceType: text(value.sourceType) || "arxiv",
+        url: paperUrl,
+        title
+      }
+    ],
     githubStars: numberValue(value.githubStars),
     citationCount: numberValue(value.citationCount),
     isPublished: value.isPublished !== false
@@ -375,6 +652,25 @@ function signalToPaper(signal: SourceSignal, index: number): Paper | null {
     arxivUrl: sourceType === "arxiv" || url.includes("arxiv.org") ? url : undefined,
     pdfUrl,
     repoUrl,
+    sourceRefs: [
+      {
+        sourceId: text(signal.source_id) || text(raw.source_id),
+        sourceName,
+        sourceType,
+        url,
+        title
+      }
+    ],
+    evidenceRefs: [
+      {
+        evidenceId: text(signal.signal_id) || text(raw.signal_id),
+        sourceName,
+        sourceType,
+        url,
+        title,
+        summary
+      }
+    ],
     isPublished: true
   }
 }
@@ -651,6 +947,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object")
 }
 
-function isPaper(value: Paper | null): value is Paper {
-  return value !== null
+function isPaper(value: unknown): value is Paper {
+  return isRecord(value) && Boolean(text(value.id) && text(value.slug) && text(value.title) && text(value.abstractSnippet))
 }

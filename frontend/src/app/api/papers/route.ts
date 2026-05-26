@@ -1,27 +1,35 @@
 import { NextRequest, NextResponse } from "next/server"
-import { safeApiGet } from "@/lib/api/server"
+import { getPaperListResult } from "@/lib/papers/real-data"
+import type { PaperPeriod, PaperSort } from "@/lib/papers/types"
 
 export const dynamic = "force-dynamic"
 
 export async function GET(request: NextRequest) {
-  const query = request.nextUrl.searchParams.toString()
-  const result = await safeApiGet(`/api/v1/papers${query ? `?${query}` : ""}`)
-  return paperResponse(result)
+  const params = request.nextUrl.searchParams
+  const result = await getPaperListResult({
+    q: params.get("q") ?? undefined,
+    period: parsePeriod(params.get("period")),
+    sort: parseSort(params.get("sort")),
+    task: params.get("task") ?? undefined,
+    method: params.get("method") ?? undefined,
+    limit: numberParam(params.get("limit")) ?? numberParam(params.get("pageSize")),
+    offset: numberParam(params.get("offset"))
+  })
+  return NextResponse.json({ success: true, data: result })
 }
 
-function paperResponse(result: Awaited<ReturnType<typeof safeApiGet>>) {
-  if (result.ok) {
-    return NextResponse.json({ success: true, data: result.data })
+function parsePeriod(value: string | null): PaperPeriod | undefined {
+  return value === "daily" || value === "weekly" || value === "monthly" || value === "all" ? value : undefined
+}
+
+function parseSort(value: string | null): PaperSort | undefined {
+  return value === "trending" || value === "newest" || value === "most_cited" ? value : undefined
+}
+
+function numberParam(value: string | null) {
+  if (!value) {
+    return undefined
   }
-  return NextResponse.json(
-    {
-      success: false,
-      error: {
-        code: result.errorCode,
-        message: result.errorMessage,
-        requestId: result.requestId,
-      },
-    },
-    { status: result.errorCode === "papers_cache_not_found" ? 404 : 502 }
-  )
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined
 }

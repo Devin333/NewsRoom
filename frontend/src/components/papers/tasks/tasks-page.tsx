@@ -6,8 +6,8 @@ import { PapersMicrobar } from "@/components/papers/papers-microbar"
 import { TaskSection } from "@/components/papers/tasks/task-section"
 import { InlineNotice } from "@/components/papers/shared/inline-notice"
 import { papersCopy, taskGroupLabels, t } from "@/lib/papers/copy"
-import { benchmarks, papers, paperTasks } from "@/lib/papers/catalog"
-import { fetchPaperTasks, fetchPapers } from "@/lib/papers/api"
+import { benchmarks, paperTasks } from "@/lib/papers/catalog"
+import { fetchPaperTasksResult, fetchPapers } from "@/lib/papers/api"
 import type { Locale, Paper, PaperTask } from "@/lib/papers/types"
 
 const taskGroups = ["general", "vision", "video", "language", "audio", "robotics", "infra"]
@@ -16,31 +16,34 @@ export function TasksPage({ locale }: { locale: Locale }) {
   const [tasks, setTasks] = useState<PaperTask[]>([])
   const [paperItems, setPaperItems] = useState<Paper[]>([])
   const [status, setStatus] = useState<"loading" | "ready" | "fallback">("loading")
+  const [notice, setNotice] = useState<string | null>(null)
   const [fallbackNoticeVisible, setFallbackNoticeVisible] = useState(true)
 
   useEffect(() => {
     let active = true
-    Promise.all([fetchPaperTasks(), fetchPapers({ limit: 1000, period: "all" })])
+    Promise.all([fetchPaperTasksResult(), fetchPapers({ limit: 1000, period: "all" })])
       .then(([apiTasks, apiPapers]) => {
         if (!active) {
           return
         }
-        setTasks(apiTasks)
+        setTasks(apiTasks.tasks)
         setPaperItems(apiPapers.papers)
-        setStatus("ready")
+        setNotice(apiTasks.notices?.[0] ?? null)
+        setStatus(apiTasks.dataState === "ready" || !apiTasks.dataState ? "ready" : "fallback")
       })
       .catch(() => {
         if (!active) {
           return
         }
-        setTasks(paperTasks)
-        setPaperItems(papers)
+        setTasks(emptyTaskCounts(paperTasks))
+        setPaperItems([])
+        setNotice(t(papersCopy.taskApiFallback, locale))
         setStatus("fallback")
       })
     return () => {
       active = false
     }
-  }, [])
+  }, [locale])
 
   const taskItems = status === "loading" ? [] : tasks
   const taskPaperItems = status === "loading" ? [] : paperItems
@@ -61,7 +64,7 @@ export function TasksPage({ locale }: { locale: Locale }) {
       />
       {status === "fallback" ? (
         <InlineNotice
-          message={fallbackNoticeVisible ? t(papersCopy.taskApiFallback, locale) : null}
+          message={fallbackNoticeVisible ? notice ?? t(papersCopy.taskApiFallback, locale) : null}
           locale={locale}
           onDismiss={() => setFallbackNoticeVisible(false)}
         />
@@ -69,6 +72,11 @@ export function TasksPage({ locale }: { locale: Locale }) {
       <div className="space-y-6">
         {status === "loading" ? (
           <p className="text-sm text-[#334155]/60 dark:text-muted-foreground">{t(papersCopy.loadingTasks, locale)}</p>
+        ) : null}
+        {status !== "loading" && taskItems.length === 0 ? (
+          <p className="rounded-md border border-dashed border-border p-6 text-sm text-muted-foreground">
+            {t(papersCopy.noPapers, locale)}
+          </p>
         ) : null}
         {taskGroups.map((group) => (
           <TaskSection
@@ -81,4 +89,15 @@ export function TasksPage({ locale }: { locale: Locale }) {
       </div>
     </div>
   )
+}
+
+function emptyTaskCounts(tasks: PaperTask[]): PaperTask[] {
+  return tasks.map((task) => ({
+    ...task,
+    paperCount: 0,
+    benchmarkCount: 0,
+    methodCount: 0,
+    latestPaperIds: [],
+    implementationCount: 0
+  }))
 }

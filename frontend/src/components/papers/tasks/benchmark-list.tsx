@@ -26,13 +26,13 @@ export function BenchmarkList({
             01/
           </p>
           <h2 className="mt-2 text-xl font-black text-[#334155] dark:text-foreground">
-            {benchmarks.length ? t(papersCopy.benchmarksTitle, locale) : "Task branches"}
+            {benchmarks.length ? t(papersCopy.benchmarksTitle, locale) : t(papersCopy.taskBranches, locale)}
           </h2>
         </div>
         <p className="hidden max-w-sm text-right text-xs leading-5 text-[#334155]/55 sm:block dark:text-muted-foreground">
           {benchmarks.length
-            ? "Public benchmark entry points for this task. Details are staged for a future route."
-            : "Related task and method entry points inferred from the current public paper set."}
+            ? t(papersCopy.benchmarkEntryHelp, locale)
+            : t(papersCopy.taskBranchHelp, locale)}
         </p>
       </div>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
