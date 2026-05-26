@@ -564,3 +564,137 @@ def test_papers_reader_api_surfaces_sections_related_graph_tasks_and_methods(mon
     assert methods.json()["data"]["methods"][0]["paperCount"] == 2
     assert missing.status_code == 404
     assert missing.json()["error"]["code"] == "paper_not_found"
+
+
+def test_papers_ops_ingest_api_returns_runs_repair_blocked_and_taxonomy() -> None:
+    client = TestClient(
+        create_app(
+            paper_ingest_service_factory=lambda: _FakePaperIngestService(),
+            audit_emitter_factory=None,
+        )
+    )
+
+    response = client.get("/api/v1/papers/ops/ingest")
+    runs = client.get("/api/v1/papers/ops/ingest-runs")
+    repair = client.get("/api/v1/papers/ops/repair")
+    blocked = client.get("/api/v1/papers/ops/blocked")
+    taxonomy = client.get("/api/v1/papers/ops/taxonomy-events")
+
+    assert response.status_code == 200
+    assert response.json()["data"]["ingest"]["runs"][0]["runId"] == "paper-run-1"
+    assert runs.json()["data"]["runs"][0]["publishedCount"] == 1
+    assert repair.json()["data"]["items"][0]["queue"] == "agent_repair"
+    assert blocked.json()["data"]["items"][0]["queue"] == "manual_blocked"
+    assert taxonomy.json()["data"]["events"][0]["slug"] == "agent-planning"
+
+
+def test_papers_ops_ingest_trigger_enqueues_worker_task() -> None:
+    worker = _FakePaperWorkerService()
+    client = TestClient(
+        create_app(
+            worker_service_factory=lambda: worker,
+            paper_ingest_service_factory=lambda: _FakePaperIngestService(),
+            audit_emitter_factory=None,
+        )
+    )
+
+    response = client.post(
+        "/api/v1/papers/ops/ingest/trigger",
+        json={"candidateLimit": 100, "minGithubStars": 50, "runId": "paper-run-2"},
+    )
+
+    assert response.status_code == 200
+    assert worker.calls == [(100, 50, "paper-run-2")]
+    assert response.json()["data"]["enqueued"]["task_type"] == "papers.ingest_github_arxiv_daily"
+
+
+class _FakePaperIngestService:
+    def get_ops_state(self, *, limit: int = 20):
+        return {
+            "runs": [
+                {
+                    "runId": "paper-run-1",
+                    "status": "partial",
+                    "startedAt": "2026-05-27T00:00:00Z",
+                    "finishedAt": "2026-05-27T00:01:00Z",
+                    "candidateLimit": 100,
+                    "minGithubStars": 50,
+                    "candidateCount": 2,
+                    "processedCount": 2,
+                    "publishedCount": 1,
+                    "skippedNoGithubCount": 0,
+                    "skippedLowStarsCount": 0,
+                    "repairQueuedCount": 1,
+                    "blockedCount": 1,
+                    "failureCount": 1,
+                    "publishedPaperIds": ["paper-1"],
+                }
+            ],
+            "repairQueue": [
+                {
+                    "itemId": "repair-1",
+                    "runId": "paper-run-1",
+                    "paperId": "paper-2",
+                    "step": "classify",
+                    "errorCode": "classifier_json_invalid",
+                    "errorMessage": "bad json",
+                    "status": "queued",
+                    "queue": "agent_repair",
+                    "createdAt": "2026-05-27T00:00:00Z",
+                }
+            ],
+            "blockedItems": [
+                {
+                    "itemId": "blocked-1",
+                    "runId": "paper-run-1",
+                    "paperId": "paper-3",
+                    "step": "classify",
+                    "errorCode": "classifier_unavailable",
+                    "errorMessage": "missing API key",
+                    "status": "blocked",
+                    "queue": "manual_blocked",
+                    "createdAt": "2026-05-27T00:00:00Z",
+                }
+            ],
+            "taxonomyEvents": [
+                {
+                    "eventId": "tax-1",
+                    "runId": "paper-run-1",
+                    "paperId": "paper-1",
+                    "kind": "task",
+                    "slug": "agent-planning",
+                    "name": "Agent Planning",
+                    "confidence": 0.9,
+                    "action": "auto_published",
+                    "createdAt": "2026-05-27T00:00:00Z",
+                }
+            ],
+            "promptMemory": [],
+            "config": {
+                "candidateLimit": 100,
+                "minGithubStars": 50,
+                "autoTaxonomyConfidence": 0.85,
+                "arxivQuery": "cat:cs.AI",
+                "classifierModelRoute": "writer-primary",
+            },
+        }
+
+
+class _FakePaperWorkerService:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def enqueue_paper_ingest(self, *, candidate_limit=None, min_github_stars=None, run_id=None):
+        self.calls.append((candidate_limit, min_github_stars, run_id))
+
+        class Result:
+            def to_dict(self):
+                return {
+                    "message_id": "1-0",
+                    "task_id": "task-1",
+                    "task_type": "papers.ingest_github_arxiv_daily",
+                    "queue_name": "news:queue:papers",
+                    "status": "queued",
+                }
+
+        return Result()

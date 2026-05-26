@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 from fastapi import APIRouter, Header, Query
+from fastapi.responses import FileResponse
 
 from interfaces.api.deps import ApiRouteHelpers, ApiServices
 from interfaces.services.auth_service import AuthSessionInvalidError
@@ -32,6 +33,12 @@ class PaperStatePatchRequest(BaseModel):
     readingStatus: str | None = Field(default=None, pattern="^(unread|reading|finished)$")
     currentPage: int | None = Field(default=None, ge=1)
     progressPercent: int | None = Field(default=None, ge=0, le=100)
+
+
+class PaperIngestTriggerRequest(BaseModel):
+    candidateLimit: int | None = Field(default=None, ge=1, le=500)
+    minGithubStars: int | None = Field(default=None, ge=0, le=1_000_000)
+    runId: str | None = Field(default=None, min_length=1, max_length=120)
 
 
 class PaperReaderNoteAnchorRequest(BaseModel):
@@ -155,6 +162,67 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
     ):
         stats = services.papers_service_factory().get_ops_stats(window_hours=window_hours)
         return helpers.success({"stats": stats})
+
+    @router.get("/api/v1/papers/ops/ingest")
+    def get_paper_ingest_ops(limit: int = Query(20, ge=1, le=100)):
+        ops = services.paper_ingest_service_factory().get_ops_state(limit=limit)
+        return helpers.success({"ingest": ops})
+
+    @router.get("/api/v1/papers/ops/ingest-runs")
+    def get_paper_ingest_runs(limit: int = Query(20, ge=1, le=100)):
+        ops = services.paper_ingest_service_factory().get_ops_state(limit=limit)
+        return helpers.success({"runs": ops.get("runs", [])})
+
+    @router.get("/api/v1/papers/ops/repair")
+    def get_paper_ingest_repair_queue(limit: int = Query(20, ge=1, le=100)):
+        ops = services.paper_ingest_service_factory().get_ops_state(limit=limit)
+        return helpers.success({"items": ops.get("repairQueue", [])})
+
+    @router.get("/api/v1/papers/ops/blocked")
+    def get_paper_ingest_blocked_items(limit: int = Query(20, ge=1, le=100)):
+        ops = services.paper_ingest_service_factory().get_ops_state(limit=limit)
+        return helpers.success({"items": ops.get("blockedItems", [])})
+
+    @router.get("/api/v1/papers/ops/taxonomy-events")
+    def get_paper_ingest_taxonomy_events(limit: int = Query(20, ge=1, le=100)):
+        ops = services.paper_ingest_service_factory().get_ops_state(limit=limit)
+        return helpers.success({"events": ops.get("taxonomyEvents", [])})
+
+    @router.post("/api/v1/papers/ops/ingest/trigger")
+    def trigger_paper_ingest(request: PaperIngestTriggerRequest):
+        try:
+            result = services.worker_service_factory().enqueue_paper_ingest(
+                candidate_limit=request.candidateLimit,
+                min_github_stars=request.minGithubStars,
+                run_id=request.runId,
+            )
+        except ValueError as exc:
+            return helpers.error(
+                status_code=400,
+                code="paper_ingest_trigger_invalid",
+                message=str(exc),
+                user_action_required=True,
+            )
+        except RuntimeError as exc:
+            return helpers.error(
+                status_code=503,
+                code="paper_ingest_trigger_unavailable",
+                message=str(exc),
+                retryable=True,
+            )
+        return helpers.success({"enqueued": result.to_dict()})
+
+    @router.get("/api/v1/papers/assets/thumbnails/{file_name}")
+    def get_paper_thumbnail(file_name: str):
+        path = services.paper_ingest_service_factory().get_thumbnail_path(file_name)
+        if path is None:
+            return helpers.error(
+                status_code=404,
+                code="paper_thumbnail_not_found",
+                message="paper thumbnail was not found",
+                user_action_required=True,
+            )
+        return FileResponse(path, media_type="image/png")
 
     @router.get("/api/v1/papers/me/state")
     def list_my_paper_state(

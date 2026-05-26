@@ -2,7 +2,7 @@
 
 import { FormEvent, useMemo, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { AlertTriangle, BarChart3, Database, FileSearch, RefreshCw, Sparkles } from "lucide-react"
+import { AlertTriangle, BarChart3, Database, FileSearch, GitBranch, Play, RefreshCw, ShieldAlert, Sparkles, Tags, Wrench } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -11,8 +11,10 @@ import { formatDataState, formatStatus } from "@/lib/i18n"
 import { useI18n } from "@/lib/i18n/use-i18n"
 import { queryKeys } from "@/lib/query/query-keys"
 import {
+  fetchPaperIngestOpsState,
   fetchPaperReaderOpsStats,
   refreshPaperReaderSummary,
+  triggerPaperIngest,
 } from "@/features/studio/shared/api/paper-reader-ops-api"
 import {
   StudioEmptyBlock,
@@ -22,7 +24,7 @@ import {
   StudioPanel,
 } from "@/features/studio/shared/components/studio-dashboard"
 import type { Locale } from "@/lib/papers/types"
-import type { PaperReaderOpsStats } from "@/types/studio"
+import type { PaperIngestOpsState, PaperReaderOpsStats } from "@/types/studio"
 
 export function PaperReaderOpsPanel({ windowHours = 24 }: { windowHours?: number }) {
   const { locale: uiLocale, t, dateTime } = useI18n()
@@ -30,10 +32,18 @@ export function PaperReaderOpsPanel({ windowHours = 24 }: { windowHours?: number
   const [paperId, setPaperId] = useState("")
   const [summaryLocale, setSummaryLocale] = useState<Locale>("en")
   const [reason, setReason] = useState("")
+  const ingestLimit = 20
 
   const { data, error, isError, isLoading } = useQuery({
     queryKey: queryKeys.studio.paperReaderOpsStats(windowHours),
     queryFn: () => fetchPaperReaderOpsStats(windowHours),
+    retry: false,
+    staleTime: 30_000
+  })
+
+  const ingestQuery = useQuery({
+    queryKey: queryKeys.studio.paperIngestOps(ingestLimit),
+    queryFn: () => fetchPaperIngestOpsState(ingestLimit),
     retry: false,
     staleTime: 30_000
   })
@@ -48,6 +58,13 @@ export function PaperReaderOpsPanel({ windowHours = 24 }: { windowHours?: number
     onSuccess: () => {
       setReason("")
       void queryClient.invalidateQueries({ queryKey: queryKeys.studio.paperReaderOpsStats(windowHours) })
+    }
+  })
+
+  const triggerIngestMutation = useMutation({
+    mutationFn: () => triggerPaperIngest({}),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.studio.paperIngestOps(ingestLimit) })
     }
   })
 
@@ -109,6 +126,15 @@ export function PaperReaderOpsPanel({ windowHours = 24 }: { windowHours?: number
             onReasonChange={setReason}
             onSubmit={handleSubmit}
           />
+          <PaperIngestOpsContent
+            state={ingestQuery.data}
+            loading={ingestQuery.isLoading}
+            error={ingestQuery.error}
+            triggering={triggerIngestMutation.isPending}
+            triggerError={triggerIngestMutation.error}
+            triggerSuccess={triggerIngestMutation.isSuccess}
+            onTrigger={() => triggerIngestMutation.mutate()}
+          />
         </div>
       </StudioPanel>
     )
@@ -122,6 +148,15 @@ export function PaperReaderOpsPanel({ windowHours = 24 }: { windowHours?: number
     >
       <div className="space-y-4">
         <PaperReaderOpsContent stats={data} />
+        <PaperIngestOpsContent
+          state={ingestQuery.data}
+          loading={ingestQuery.isLoading}
+          error={ingestQuery.error}
+          triggering={triggerIngestMutation.isPending}
+          triggerError={triggerIngestMutation.error}
+          triggerSuccess={triggerIngestMutation.isSuccess}
+          onTrigger={() => triggerIngestMutation.mutate()}
+        />
         <SummaryRefreshForm
           paperId={paperId}
           locale={summaryLocale}
@@ -196,6 +231,160 @@ function PaperReaderOpsContent({ stats }: { stats: PaperReaderOpsStats }) {
           </div>
         </div>
       </section>
+    </div>
+  )
+}
+
+function PaperIngestOpsContent({
+  state,
+  loading,
+  error,
+  triggering,
+  triggerError,
+  triggerSuccess,
+  onTrigger,
+}: {
+  state?: PaperIngestOpsState
+  loading: boolean
+  error: Error | null
+  triggering: boolean
+  triggerError: Error | null
+  triggerSuccess: boolean
+  onTrigger: () => void
+}) {
+  const { t, dateTime } = useI18n()
+  const latestRun = state?.runs[0]
+  const repairCount = state?.repairQueue.length ?? 0
+  const blockedCount = state?.blockedItems.length ?? 0
+  const taxonomyCount = state?.taxonomyEvents.length ?? 0
+
+  if (loading) {
+    return (
+      <div className="rounded-md border border-border bg-background p-3">
+        <div className="h-24 animate-pulse rounded-md bg-secondary/50" />
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <StudioNotice tone="warning" title={t("studio.ops.ingestUnavailable")}>
+        <p>{error.message}</p>
+      </StudioNotice>
+    )
+  }
+
+  return (
+    <section className="rounded-md border border-border bg-background p-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold text-foreground">{t("studio.ops.ingestTitle")}</h3>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {state
+              ? t("studio.ops.ingestConfig", {
+                  candidates: state.config.candidateLimit,
+                  stars: state.config.minGithubStars,
+                  confidence: Math.round(state.config.autoTaxonomyConfidence * 100),
+                })
+              : t("studio.ops.ingestNoState")}
+          </p>
+        </div>
+        <Button type="button" onClick={onTrigger} disabled={triggering}>
+          <Play className="size-4" />
+          {triggering ? t("studio.ops.ingestTriggering") : t("studio.ops.ingestTrigger")}
+        </Button>
+      </div>
+      {triggerError ? <p className="mt-2 text-xs text-danger">{triggerError.message}</p> : null}
+      {triggerSuccess && !triggerError ? <p className="mt-2 text-xs text-success">{t("studio.ops.ingestTriggered")}</p> : null}
+
+      <StudioMetricGrid className="mt-4 xl:grid-cols-4 2xl:grid-cols-4">
+        <StudioMetricCard
+          label={t("studio.ops.ingestPublished")}
+          value={latestRun?.publishedCount ?? 0}
+          detail={latestRun ? `${latestRun.status} / ${dateTime(latestRun.startedAt)}` : t("studio.ops.noRuns")}
+          icon={GitBranch}
+          tone={(latestRun?.publishedCount ?? 0) > 0 ? "success" : "neutral"}
+        />
+        <StudioMetricCard
+          label={t("studio.ops.ingestRepair")}
+          value={repairCount}
+          detail={latestRun ? t("studio.ops.ingestRepairLatest", { count: latestRun.repairQueuedCount }) : t("studio.ops.noRuns")}
+          icon={Wrench}
+          tone={repairCount ? "warning" : "success"}
+        />
+        <StudioMetricCard
+          label={t("studio.ops.ingestBlocked")}
+          value={blockedCount}
+          detail={blockedCount ? t("studio.ops.ingestNeedsHuman") : t("studio.ops.ingestNoBlocked")}
+          icon={ShieldAlert}
+          tone={blockedCount ? "danger" : "success"}
+        />
+        <StudioMetricCard
+          label={t("studio.ops.ingestTaxonomy")}
+          value={taxonomyCount}
+          detail={t("studio.ops.ingestAutoPublished")}
+          icon={Tags}
+          tone={taxonomyCount ? "info" : "neutral"}
+        />
+      </StudioMetricGrid>
+
+      <div className="mt-4 grid gap-4 lg:grid-cols-3">
+        <IngestList
+          title={t("studio.ops.ingestRecentRuns")}
+          empty={t("studio.ops.noRuns")}
+          items={(state?.runs ?? []).slice(0, 4).map((run) => ({
+            id: run.runId,
+            headline: `${run.status} / ${run.publishedCount} ${t("studio.ops.ingestPublishedShort")}`,
+            meta: `${dateTime(run.startedAt)} / ${run.processedCount}/${run.candidateCount}`,
+          }))}
+        />
+        <IngestList
+          title={t("studio.ops.ingestRepairQueue")}
+          empty={t("studio.ops.ingestNoRepair")}
+          items={(state?.repairQueue ?? []).slice(0, 4).map((item) => ({
+            id: item.itemId,
+            headline: `${item.step}: ${item.errorCode}`,
+            meta: item.retryAt ? `${item.paperId ?? item.title ?? ""} / ${dateTime(item.retryAt)}` : item.errorMessage,
+          }))}
+        />
+        <IngestList
+          title={t("studio.ops.ingestBlockedItems")}
+          empty={t("studio.ops.ingestNoBlocked")}
+          items={(state?.blockedItems ?? []).slice(0, 4).map((item) => ({
+            id: item.itemId,
+            headline: `${item.step}: ${item.errorCode}`,
+            meta: item.paperId ?? item.title ?? item.errorMessage,
+          }))}
+        />
+      </div>
+    </section>
+  )
+}
+
+function IngestList({
+  title,
+  empty,
+  items,
+}: {
+  title: string
+  empty: string
+  items: Array<{ id: string; headline: string; meta: string }>
+}) {
+  return (
+    <div className="rounded-md border border-border bg-card p-3">
+      <h4 className="text-sm font-semibold text-foreground">{title}</h4>
+      <div className="mt-2 space-y-2">
+        {items.length ? (
+          items.map((item) => (
+            <div key={item.id} className="rounded-md bg-secondary/40 px-3 py-2 text-xs">
+              <p className="truncate font-semibold text-foreground">{item.headline}</p>
+              <p className="mt-1 truncate text-muted-foreground">{item.meta}</p>
+            </div>
+          ))
+        ) : (
+          <p className="text-sm text-muted-foreground">{empty}</p>
+        )}
+      </div>
     </div>
   )
 }

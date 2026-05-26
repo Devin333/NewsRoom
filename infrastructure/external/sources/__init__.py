@@ -34,6 +34,7 @@ from infrastructure.external.sources.github import (
     GITHUB_API_URL,
     GithubConnector,
     GithubRepository,
+    GithubRepositoryMetadata,
     GithubRepositorySearchResult,
     build_github_graphql_url,
 )
@@ -68,6 +69,7 @@ __all__ = [
     "GITHUB_API_URL",
     "GithubConnector",
     "GithubRepository",
+    "GithubRepositoryMetadata",
     "GithubRepositorySearchResult",
     "build_github_graphql_url",
     "HACKERNEWS_API_URL",

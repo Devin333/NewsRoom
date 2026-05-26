@@ -1,6 +1,6 @@
 import { apiGet, apiPost } from "@/lib/api/client"
 import type { Locale, PaperAISummary } from "@/lib/papers/types"
-import type { PaperReaderOpsStats } from "@/types/studio"
+import type { PaperIngestOpsState, PaperIngestTriggerResult, PaperReaderOpsStats } from "@/types/studio"
 
 type ApiEnvelope<T> = {
   success: boolean
@@ -22,6 +22,36 @@ export async function fetchPaperReaderOpsStats(windowHours = 24): Promise<PaperR
     return envelope.data.stats
   }
   throw new Error(envelope.error?.message ?? "Paper Reader ops stats unavailable")
+}
+
+export async function fetchPaperIngestOpsState(limit = 20): Promise<PaperIngestOpsState> {
+  const envelope = await apiGet<ApiEnvelope<{ ingest: PaperIngestOpsState }>>(
+    `/api/papers/ops/ingest?limit=${encodeURIComponent(String(limit))}`
+  )
+  if (envelope.success && envelope.data?.ingest) {
+    return envelope.data.ingest
+  }
+  throw new Error(envelope.error?.message ?? "Paper ingest ops unavailable")
+}
+
+export async function triggerPaperIngest({
+  candidateLimit,
+  minGithubStars,
+}: {
+  candidateLimit?: number
+  minGithubStars?: number
+}): Promise<PaperIngestTriggerResult> {
+  const envelope = await apiPost<ApiEnvelope<{ enqueued: PaperIngestTriggerResult }>>(
+    "/api/papers/ops/ingest",
+    {
+      candidateLimit,
+      minGithubStars,
+    }
+  )
+  if (envelope.success && envelope.data?.enqueued) {
+    return envelope.data.enqueued
+  }
+  throw new Error(envelope.error?.message ?? "Paper ingest trigger failed")
 }
 
 export async function refreshPaperReaderSummary({

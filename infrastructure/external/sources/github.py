@@ -128,6 +128,42 @@ class GithubRepositorySearchResult:
         }
 
 
+@dataclass(frozen=True)
+class GithubRepositoryMetadata:
+    repository_id: int | None
+    full_name: str
+    html_url: str
+    description: str | None
+    language: str | None
+    stargazers_count: int
+    forks_count: int
+    open_issues_count: int
+    archived: bool
+    disabled: bool
+    visibility: str | None
+    topics: list[str]
+    pushed_at: datetime | None
+    updated_at: datetime | None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "repository_id": self.repository_id,
+            "full_name": self.full_name,
+            "html_url": self.html_url,
+            "description": self.description,
+            "language": self.language,
+            "stargazers_count": self.stargazers_count,
+            "forks_count": self.forks_count,
+            "open_issues_count": self.open_issues_count,
+            "archived": self.archived,
+            "disabled": self.disabled,
+            "visibility": self.visibility,
+            "topics": list(self.topics),
+            "pushed_at": _dt(self.pushed_at),
+            "updated_at": _dt(self.updated_at),
+        }
+
+
 class GithubConnector:
     def __init__(
         self,
@@ -353,6 +389,45 @@ class GithubConnector:
             for repository in repositories
         ]
         return items, []
+
+    def fetch_repository_metadata(
+        self,
+        source: SourceDefinition,
+        *,
+        repository: str | GithubRepository,
+    ) -> tuple[GithubRepositoryMetadata | None, list[SourceError]]:
+        policy = effective_fetch_policy(self.fetch_policy, source)
+        self._last_response_metadata = None
+        try:
+            repo = _repository_from_source(source, repository=repository)
+            api_url = build_github_repository_metadata_url(source.url or GITHUB_API_URL, repo)
+            rate_limit = self._rate_limiter.reserve(
+                api_url,
+                limit_per_minute=self.fetch_policy.rate_limit_per_domain_per_minute,
+            )
+            if not rate_limit.allowed:
+                return None, [rate_limited_source_error(source, rate_limit, url=api_url)]
+            payload = run_with_fetch_retries(
+                lambda: self._fetch_source_text(api_url, policy),
+                policy,
+            )
+        except Exception as exc:
+            error = _exception_source_error(source, exc, phase="fetch")
+            return None, [attach_response_metadata_to_error(error, self._last_response_metadata)]
+
+        if not payload.strip():
+            return None, [
+                _source_error(
+                    source,
+                    "empty_source_response",
+                    "GitHub API returned an empty repository response",
+                    metadata={"phase": "fetch", "retryable": True, "source_health_affecting": True},
+                )
+            ]
+        try:
+            return self.parse_repository_metadata(payload), []
+        except Exception as exc:
+            return None, [_exception_source_error(source, exc, phase="parse")]
 
     def fetch_discussions(
         self,
@@ -627,6 +702,15 @@ class GithubConnector:
         repositories = [repository for repository in repositories if repository is not None]
         return repositories[:limit] if limit else repositories
 
+    def parse_repository_metadata(self, content: str) -> GithubRepositoryMetadata:
+        payload = json.loads(content)
+        if not isinstance(payload, dict):
+            raise ValueError("GitHub repository response must be a JSON object")
+        metadata = _repository_metadata(payload)
+        if metadata is None:
+            raise ValueError("GitHub repository response did not include repository identity")
+        return metadata
+
     def parse_discussions(
         self,
         source: SourceDefinition,
@@ -663,13 +747,17 @@ class GithubConnector:
 
     def _default_fetch_text(self, url: str, policy: SourceFetchPolicy | None = None) -> str:
         policy = policy or self.fetch_policy
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "User-Agent": policy.user_agent,
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+        token = os.getenv("GITHUB_TOKEN")
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
         request = Request(
             url,
-            headers={
-                "Accept": "application/vnd.github+json",
-                "User-Agent": policy.user_agent,
-                "X-GitHub-Api-Version": "2022-11-28",
-            },
+            headers=headers,
         )
         with open_request_with_fetch_policy(request, policy) as response:
             self._last_response_metadata = response_metadata_from_http_response(response, url=url)
@@ -848,6 +936,11 @@ def build_github_repository_search_url(
     return f"{base}/search/repositories?{urlencode(params)}"
 
 
+def build_github_repository_metadata_url(base_url: str, repository: GithubRepository) -> str:
+    base = base_url.rstrip("/")
+    return f"{base}/repos/{repository.owner}/{repository.name}"
+
+
 def build_github_graphql_url(base_url: str) -> str:
     base = base_url.rstrip("/")
     if base.endswith("/graphql"):
@@ -877,6 +970,29 @@ def _repository_search_result(item: dict[str, Any]) -> GithubRepositorySearchRes
         topics=[str(topic) for topic in item.get("topics") or []],
         updated_at=_parse_datetime(item.get("updated_at")),
         score=_optional_float(item.get("score")),
+    )
+
+
+def _repository_metadata(item: dict[str, Any]) -> GithubRepositoryMetadata | None:
+    full_name = item.get("full_name")
+    html_url = item.get("html_url")
+    if not full_name or not html_url:
+        return None
+    return GithubRepositoryMetadata(
+        repository_id=_optional_int(item.get("id")),
+        full_name=str(full_name),
+        html_url=str(html_url),
+        description=_optional_text(item.get("description")),
+        language=_optional_text(item.get("language")),
+        stargazers_count=_int_or_zero(item.get("stargazers_count")),
+        forks_count=_int_or_zero(item.get("forks_count")),
+        open_issues_count=_int_or_zero(item.get("open_issues_count")),
+        archived=bool(item.get("archived", False)),
+        disabled=bool(item.get("disabled", False)),
+        visibility=_optional_text(item.get("visibility")),
+        topics=[str(topic) for topic in item.get("topics") or []],
+        pushed_at=_parse_datetime(item.get("pushed_at")),
+        updated_at=_parse_datetime(item.get("updated_at")),
     )
 
 

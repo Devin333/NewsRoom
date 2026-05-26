@@ -60,6 +60,29 @@ def test_schedule_service_upserts_daily_schedule_from_application_args() -> None
     }
 
 
+def test_schedule_service_upserts_paper_ingest_schedule_from_application_args() -> None:
+    store = InMemoryScheduleStore()
+    service = ScheduleApplicationService(store=store, queue=_FakeQueue())
+
+    result = service.upsert_paper_ingest_schedule(
+        schedule_id="papers",
+        trigger_type="interval",
+        interval_seconds=86400,
+        candidate_limit=100,
+        min_github_stars=50,
+        queue_name="news:queue:papers",
+    )
+
+    record = store.get_schedule("papers")
+    assert result.to_dict()["schedule_id"] == "papers"
+    assert record.spec.task_type == "papers.ingest_github_arxiv_daily"
+    assert record.spec.queue_name == "news:queue:papers"
+    assert record.spec.payload_template == {
+        "candidate_limit": 100,
+        "min_github_stars": 50,
+    }
+
+
 def test_schedule_service_tick_enqueues_due_schedule_and_updates_state() -> None:
     store = InMemoryScheduleStore(
         [

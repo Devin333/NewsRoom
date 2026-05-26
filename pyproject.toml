@@ -12,6 +12,7 @@ license = { text = "Apache-2.0" }
 authors = [{ name = "NewsRoom" }]
 dependencies = [
   "jsonschema>=4.0",
+  "PyMuPDF>=1.24",
   "PyYAML>=6.0.1",
   "pydantic>=2.6",
 ]

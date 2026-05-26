@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from framework.workers.models import Task
+from interfaces.services.paper_ingest_service import PAPER_INGEST_TASK_TYPE
 from framework.workers.scheduler import (
     EnqueuedScheduleTask,
     ScheduleEvaluation,
@@ -23,6 +24,7 @@ from infrastructure.storage.local_json import LocalJsonScheduleStore
 
 DEFAULT_REDIS_URL = "redis://127.0.0.1:6379/0"
 DEFAULT_DAILY_QUEUE = "news:queue:daily"
+DEFAULT_PAPER_QUEUE = "news:queue:papers"
 DEFAULT_SCHEDULE_STORE_PATH = ".newsroom/schedules/schedules.json"
 
 
@@ -143,6 +145,40 @@ class ScheduleApplicationService:
                 "profile": profile,
                 "topic": topic,
                 "source_limit": source_limit,
+            },
+            queue_name=queue_name,
+            interval_seconds=effective_interval_seconds if trigger_type == "interval" else None,
+            run_at=run_at if trigger_type == "interval" else None,
+        )
+        return self.upsert_schedule(ScheduleRecord(spec=spec, next_run_at=spec.run_at))
+
+    def upsert_paper_ingest_schedule(
+        self,
+        *,
+        schedule_id: str = "papers-ingest-github-arxiv-daily",
+        name: str = "Daily GitHub arXiv paper ingest",
+        trigger_type: str = "interval",
+        interval_seconds: int | None = 86400,
+        run_at: datetime | None = None,
+        candidate_limit: int = 100,
+        min_github_stars: int = 50,
+        queue_name: str = DEFAULT_PAPER_QUEUE,
+    ) -> ScheduleUpsertResult:
+        effective_interval_seconds = interval_seconds if interval_seconds is not None else 86400
+        if trigger_type == "interval" and effective_interval_seconds <= 0:
+            raise ValueError("interval_seconds must be greater than zero")
+        if candidate_limit <= 0:
+            raise ValueError("candidate_limit must be greater than zero")
+        if min_github_stars < 0:
+            raise ValueError("min_github_stars must be non-negative")
+        spec = ScheduleSpec(
+            schedule_id=schedule_id,
+            name=name,
+            trigger_type=trigger_type,
+            task_type=PAPER_INGEST_TASK_TYPE,
+            payload_template={
+                "candidate_limit": candidate_limit,
+                "min_github_stars": min_github_stars,
             },
             queue_name=queue_name,
             interval_seconds=effective_interval_seconds if trigger_type == "interval" else None,

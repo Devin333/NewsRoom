@@ -1,4 +1,5 @@
 from business.layers.signal.worker_handlers import SourceHealthCheckTaskHandler
+from business.boards.paper_radar.worker_handlers import PaperIngestTaskHandler
 from framework.workers import (
     LeasedTask,
     Task,
@@ -14,6 +15,7 @@ from interfaces.services.worker_service import (
     DEFAULT_DAILY_QUEUE,
     DEFAULT_DEAD_LETTER_QUEUE,
     DEFAULT_MEMORY_QUEUE,
+    DEFAULT_PAPER_QUEUE,
     DEFAULT_SOURCE_QUEUE,
     WorkerApplicationService,
 )
@@ -86,6 +88,20 @@ def test_worker_service_enqueue_source_health_uses_source_queue() -> None:
         "source_id": "source-1",
         "limit": 1,
     }
+    assert result.message_id == "1-0"
+    assert queue.enqueued[0] is result.task
+
+
+def test_worker_service_enqueue_paper_ingest_uses_paper_queue() -> None:
+    queue = _FakeQueue()
+    service = WorkerApplicationService(queue=queue, handlers={})
+
+    result = service.enqueue_paper_ingest(candidate_limit=100, min_github_stars=50)
+
+    assert result.task.task_type == "papers.ingest_github_arxiv_daily"
+    assert result.task.queue_name == DEFAULT_PAPER_QUEUE
+    assert result.task.payload == {"candidate_limit": 100, "min_github_stars": 50}
+    assert result.task.dedup_key == "news:queue:papers:daily:github-arxiv"
     assert result.message_id == "1-0"
     assert queue.enqueued[0] is result.task
 
@@ -257,9 +273,9 @@ def test_worker_service_queue_status_uses_default_queues() -> None:
 
     payload = result.to_dict()
     assert queue.status_calls == [
-        [DEFAULT_DAILY_QUEUE, DEFAULT_MEMORY_QUEUE, DEFAULT_SOURCE_QUEUE, DEFAULT_DEAD_LETTER_QUEUE]
+        [DEFAULT_DAILY_QUEUE, DEFAULT_MEMORY_QUEUE, DEFAULT_PAPER_QUEUE, DEFAULT_SOURCE_QUEUE, DEFAULT_DEAD_LETTER_QUEUE]
     ]
-    assert payload["queue_count"] == 4
+    assert payload["queue_count"] == 5
     assert payload["total_stream_length"] == 0
 
 
@@ -277,6 +293,22 @@ def test_source_health_check_task_handler_calls_source_service() -> None:
     assert result.status == TaskStatus.SUCCEEDED
     assert result.output["checked_count"] == 1
     assert result.output["entries"][0]["source_id"] == "source-1"
+
+
+def test_paper_ingest_task_handler_calls_ingest_service() -> None:
+    handler = PaperIngestTaskHandler(_FakePaperIngestService())
+    task = Task(
+        task_type="papers.ingest_github_arxiv_daily",
+        payload={"candidate_limit": 100, "min_github_stars": 50, "run_id": "paper-run-1"},
+        task_id="task-paper",
+    )
+
+    result = handler.handle(task)
+
+    assert result.success is True
+    assert result.status == TaskStatus.SUCCEEDED
+    assert result.workflow_run_id == "paper-run-1"
+    assert result.output["publishedCount"] == 1
 
 
 def test_worker_service_run_loop_stops_after_max_tasks() -> None:
@@ -474,6 +506,23 @@ class _FakeSourceHealthResult:
             "entries": [{"source_id": "source-1", "ok": True, "status": "healthy"}],
             "events": [],
         }
+
+
+class _FakePaperIngestService:
+    def run_daily_ingest(self, *, candidate_limit=None, min_github_stars=None, run_id=None):
+        assert candidate_limit == 100
+        assert min_github_stars == 50
+        assert run_id == "paper-run-1"
+
+        class Result:
+            def to_dict(self):
+                return {
+                    "runId": "paper-run-1",
+                    "status": "succeeded",
+                    "publishedCount": 1,
+                }
+
+        return Result()
 
 
 def _dt(value: str):

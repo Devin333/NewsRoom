@@ -3,15 +3,19 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { PaperReaderOpsPanel } from "@/features/studio/shared/components/paper-reader-ops-panel"
 import {
+  fetchPaperIngestOpsState,
   fetchPaperReaderOpsStats,
   refreshPaperReaderSummary,
+  triggerPaperIngest,
 } from "@/features/studio/shared/api/paper-reader-ops-api"
 import { useUiStore } from "@/stores/ui-store"
-import type { PaperReaderOpsStats } from "@/types/studio"
+import type { PaperIngestOpsState, PaperReaderOpsStats } from "@/types/studio"
 
 vi.mock("@/features/studio/shared/api/paper-reader-ops-api", () => ({
+  fetchPaperIngestOpsState: vi.fn(),
   fetchPaperReaderOpsStats: vi.fn(),
-  refreshPaperReaderSummary: vi.fn()
+  refreshPaperReaderSummary: vi.fn(),
+  triggerPaperIngest: vi.fn()
 }))
 
 const readyStats: PaperReaderOpsStats = {
@@ -77,6 +81,67 @@ const readyStats: PaperReaderOpsStats = {
   lastUpdatedAt: "2026-05-25T00:58:00.000Z"
 }
 
+const readyIngest: PaperIngestOpsState = {
+  runs: [
+    {
+      runId: "paper-run-1",
+      status: "partial",
+      startedAt: "2026-05-25T00:55:00.000Z",
+      finishedAt: "2026-05-25T01:00:00.000Z",
+      candidateLimit: 100,
+      minGithubStars: 50,
+      autoTaxonomyConfidence: 0.85,
+      candidateCount: 2,
+      processedCount: 2,
+      publishedCount: 1,
+      skippedNoGithubCount: 0,
+      skippedLowStarsCount: 0,
+      repairQueuedCount: 1,
+      blockedCount: 0,
+      failureCount: 1,
+      publishedPaperIds: ["paper-1"]
+    }
+  ],
+  repairQueue: [
+    {
+      itemId: "repair-1",
+      runId: "paper-run-1",
+      paperId: "paper-2",
+      step: "classify",
+      errorCode: "classifier_json_invalid",
+      errorMessage: "bad json",
+      status: "queued",
+      queue: "agent_repair",
+      repairAction: "inject_prompt_memory_and_reclassify",
+      retryAt: "2026-05-25T01:30:00.000Z",
+      createdAt: "2026-05-25T01:00:00.000Z",
+      userActionRequired: false
+    }
+  ],
+  blockedItems: [],
+  taxonomyEvents: [
+    {
+      eventId: "tax-1",
+      runId: "paper-run-1",
+      paperId: "paper-1",
+      kind: "task",
+      slug: "agent-planning",
+      name: "Agent Planning",
+      confidence: 0.9,
+      action: "auto_published",
+      createdAt: "2026-05-25T01:00:00.000Z"
+    }
+  ],
+  promptMemory: [],
+  config: {
+    candidateLimit: 100,
+    minGithubStars: 50,
+    autoTaxonomyConfidence: 0.85,
+    arxivQuery: "cat:cs.AI",
+    classifierModelRoute: "writer-primary"
+  }
+}
+
 function renderPanel() {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -95,7 +160,10 @@ function renderPanel() {
 describe("PaperReaderOpsPanel", () => {
   beforeEach(() => {
     vi.mocked(fetchPaperReaderOpsStats).mockReset()
+    vi.mocked(fetchPaperIngestOpsState).mockReset()
     vi.mocked(refreshPaperReaderSummary).mockReset()
+    vi.mocked(triggerPaperIngest).mockReset()
+    vi.mocked(fetchPaperIngestOpsState).mockResolvedValue(readyIngest)
     useUiStore.setState({ locale: "zh" })
   })
 
@@ -142,6 +210,36 @@ describe("PaperReaderOpsPanel", () => {
     expect(screen.getAllByText("paper_summary_unavailable").length).toBeGreaterThan(0)
     expect(screen.getByText("4")).toBeInTheDocument()
     expect(screen.getByText("2 个文本产物")).toBeInTheDocument()
+  })
+
+  it("renders paper ingest ops state", async () => {
+    vi.mocked(fetchPaperReaderOpsStats).mockResolvedValue(readyStats)
+
+    renderPanel()
+
+    expect(await screen.findByText("论文入库自治")).toBeInTheDocument()
+    expect(screen.getByText(/classifier_json_invalid/)).toBeInTheDocument()
+    expect(screen.getByText("Agent 修复")).toBeInTheDocument()
+  })
+
+  it("triggers paper ingest from the ops panel", async () => {
+    vi.mocked(fetchPaperReaderOpsStats).mockResolvedValue(readyStats)
+    vi.mocked(triggerPaperIngest).mockResolvedValue({
+      message_id: "1-0",
+      task_id: "task-1",
+      task_type: "papers.ingest_github_arxiv_daily",
+      queue_name: "news:queue:papers",
+      status: "queued"
+    })
+
+    renderPanel()
+
+    const trigger = await screen.findByRole("button", { name: /触发入库/ })
+    fireEvent.click(trigger)
+
+    await waitFor(() => {
+      expect(triggerPaperIngest).toHaveBeenCalledWith({})
+    })
   })
 
   it("requires a reason before refreshing summary", async () => {

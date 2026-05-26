@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from business.boards.cross_board.worker_handlers import DailyIntelligenceTaskHandler
+from business.boards.paper_radar.worker_handlers import PaperIngestTaskHandler
 from business.layers.output.worker_handlers import MemoryReindexTaskHandler
 from business.layers.signal.worker_handlers import SourceHealthCheckTaskHandler
 from framework.workers import (
@@ -26,6 +27,7 @@ from infrastructure.storage.workers import (
     RedisWorkerRegistry,
 )
 from interfaces.services.memory_service import MemoryApplicationService
+from interfaces.services.paper_ingest_service import PAPER_INGEST_TASK_TYPE, PaperIngestApplicationService
 from interfaces.services.run_service import RunApplicationService
 from interfaces.services.source_service import SourceApplicationService
 
@@ -33,6 +35,7 @@ from interfaces.services.source_service import SourceApplicationService
 DEFAULT_REDIS_URL = "redis://127.0.0.1:6379/0"
 DEFAULT_DAILY_QUEUE = "news:queue:daily"
 DEFAULT_MEMORY_QUEUE = "news:queue:memory"
+DEFAULT_PAPER_QUEUE = "news:queue:papers"
 DEFAULT_SOURCE_QUEUE = "news:queue:sources"
 DEFAULT_DEAD_LETTER_QUEUE = "news:queue:dead-letter"
 WORKER_STATUS_CHOICES = tuple(status.value for status in WorkerStatus)
@@ -182,6 +185,9 @@ class WorkerApplicationService:
                 SourceHealthCheckTaskHandler.task_type: SourceHealthCheckTaskHandler(
                     source_service=SourceApplicationService()
                 ),
+                PaperIngestTaskHandler.task_type: PaperIngestTaskHandler(
+                    paper_ingest_service=PaperIngestApplicationService()
+                ),
             }
         self.handlers = handlers
 
@@ -259,6 +265,35 @@ class WorkerApplicationService:
             task_type=SourceHealthCheckTaskHandler.task_type,
             queue_name=queue_name,
             payload=payload,
+        )
+        message_id = self.queue.enqueue(task)
+        return EnqueuedTaskResult(task=task, message_id=str(message_id))
+
+    def enqueue_paper_ingest(
+        self,
+        *,
+        candidate_limit: int | None = None,
+        min_github_stars: int | None = None,
+        run_id: str | None = None,
+        queue_name: str = DEFAULT_PAPER_QUEUE,
+    ) -> EnqueuedTaskResult:
+        payload: dict[str, Any] = {}
+        if candidate_limit is not None:
+            if candidate_limit <= 0:
+                raise ValueError("candidate_limit must be greater than zero")
+            payload["candidate_limit"] = candidate_limit
+        if min_github_stars is not None:
+            if min_github_stars < 0:
+                raise ValueError("min_github_stars must be non-negative")
+            payload["min_github_stars"] = min_github_stars
+        if run_id:
+            payload["run_id"] = run_id
+        _reject_secret_payload_keys(payload)
+        task = Task(
+            task_type=PAPER_INGEST_TASK_TYPE,
+            queue_name=queue_name,
+            payload=payload,
+            dedup_key=None if run_id else f"{queue_name}:daily:github-arxiv",
         )
         message_id = self.queue.enqueue(task)
         return EnqueuedTaskResult(task=task, message_id=str(message_id))
@@ -386,7 +421,7 @@ class WorkerApplicationService:
     def queue_status(self, *, queue_names: list[str] | None = None) -> WorkerQueueStatusResult:
         queues = _unique_queue_names(
             queue_names
-            or [DEFAULT_DAILY_QUEUE, DEFAULT_MEMORY_QUEUE, DEFAULT_SOURCE_QUEUE, DEFAULT_DEAD_LETTER_QUEUE]
+            or [DEFAULT_DAILY_QUEUE, DEFAULT_MEMORY_QUEUE, DEFAULT_PAPER_QUEUE, DEFAULT_SOURCE_QUEUE, DEFAULT_DEAD_LETTER_QUEUE]
         )
         return WorkerQueueStatusResult(queues=self.queue.status(queues))
 

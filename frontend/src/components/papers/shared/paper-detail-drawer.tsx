@@ -322,6 +322,30 @@ export function PaperDetailDrawer({
             )}
           </DetailSection>
 
+          <DetailSection title={translate(locale, "papers.tasks")} meta={translate(locale, "papers.reader.tagged", { count: tasks.length })}>
+            <TaxonomyLinks
+              items={tasks.map((task) => ({
+                id: task.id,
+                href: `/papers/tasks/${encodeURIComponent(task.slug)}`,
+                label: taskName(task, locale),
+                variant: "task" as const,
+              }))}
+              empty={translate(locale, "papers.reader.noTasks")}
+            />
+          </DetailSection>
+
+          <DetailSection title={translate(locale, "papers.methods")} meta={translate(locale, "papers.reader.used", { count: methods.length })}>
+            <TaxonomyLinks
+              items={methods.map((method) => ({
+                id: method.id,
+                href: `/papers/methods/${encodeURIComponent(method.slug)}`,
+                label: methodName(method, locale),
+                variant: "method" as const,
+              }))}
+              empty={translate(locale, "papers.reader.noMethods")}
+            />
+          </DetailSection>
+
           <DetailSection title="Benchmarks / SOTA" meta={translate(locale, "papers.reader.results", { count: benchmarks.length })}>
             {benchmarks.length ? (
               <div className="divide-y divide-[#d8dfd8] rounded-md border border-[#d8dfd8] bg-white dark:divide-border dark:border-border dark:bg-card">
@@ -400,26 +424,6 @@ export function PaperDetailDrawer({
               />
             </div>
           </DetailSection>
-
-          <DetailSection title={translate(locale, "papers.tasks")} meta={translate(locale, "papers.reader.tagged", { count: tasks.length })}>
-            <div className="flex flex-wrap gap-2">
-              {tasks.map((task) => (
-                <Badge key={task.id} variant="accent" className="rounded-sm border-emerald-200 bg-emerald-100/80 text-emerald-800">
-                  {taskName(task, locale)}
-                </Badge>
-              ))}
-            </div>
-          </DetailSection>
-
-          <DetailSection title={translate(locale, "papers.methods")} meta={translate(locale, "papers.reader.used", { count: methods.length })}>
-            <div className="flex flex-wrap gap-2">
-              {methods.map((method) => (
-                <Badge key={method.id} variant="muted" className="rounded-sm bg-white text-[#334155] dark:bg-card dark:text-foreground">
-                  {methodName(method, locale)}
-                </Badge>
-              ))}
-            </div>
-          </DetailSection>
         </div>
       </aside>
     </>
@@ -478,6 +482,36 @@ function AISummaryBlock({
         <RefreshCw className="size-4" />
         {translate(locale, "common.retry")}
       </button>
+    </div>
+  )
+}
+
+function TaxonomyLinks({
+  items,
+  empty,
+}: {
+  items: Array<{ id: string; href: string; label: string; variant: "task" | "method" }>
+  empty: string
+}) {
+  if (!items.length) {
+    return <EmptyState text={empty} />
+  }
+  return (
+    <div className="flex flex-wrap gap-2">
+      {items.map((item) => (
+        <Link
+          key={item.id}
+          href={item.href}
+          className={cn(
+            "inline-flex items-center rounded-sm border px-2.5 py-1 text-xs font-semibold transition-colors",
+            item.variant === "task"
+              ? "border-emerald-200 bg-emerald-100/80 text-emerald-800 hover:bg-emerald-100"
+              : "border-[#d8dfd8] bg-white text-[#334155] hover:bg-[#eef4ef] dark:border-border dark:bg-card dark:text-foreground dark:hover:bg-secondary"
+          )}
+        >
+          {item.label}
+        </Link>
+      ))}
     </div>
   )
 }

@@ -167,3 +167,74 @@ export type PaperReaderOpsStats = {
   textExtraction: PaperReaderArtifactStats
   lastUpdatedAt?: string | null
 }
+
+export type PaperIngestRun = {
+  runId: string
+  status: string
+  startedAt: string
+  finishedAt?: string | null
+  candidateLimit: number
+  minGithubStars: number
+  autoTaxonomyConfidence?: number
+  candidateCount: number
+  processedCount: number
+  publishedCount: number
+  skippedNoGithubCount: number
+  skippedLowStarsCount: number
+  repairQueuedCount: number
+  blockedCount: number
+  failureCount: number
+  publishedPaperIds: string[]
+  errors?: Array<Record<string, unknown>>
+}
+
+export type PaperIngestRepairItem = {
+  itemId: string
+  runId: string
+  paperId?: string
+  title?: string
+  step: string
+  errorCode: string
+  errorMessage: string
+  status: string
+  queue: "agent_repair" | "manual_blocked" | string
+  repairAction?: string
+  retryAt?: string
+  createdAt: string
+  userActionRequired?: boolean
+}
+
+export type PaperIngestTaxonomyEvent = {
+  eventId: string
+  runId: string
+  paperId: string
+  kind: "task" | "method" | "benchmark" | string
+  slug: string
+  name: string
+  confidence?: number
+  action: string
+  createdAt: string
+}
+
+export type PaperIngestOpsState = {
+  runs: PaperIngestRun[]
+  repairQueue: PaperIngestRepairItem[]
+  blockedItems: PaperIngestRepairItem[]
+  taxonomyEvents: PaperIngestTaxonomyEvent[]
+  promptMemory: Array<Record<string, unknown>>
+  config: {
+    candidateLimit: number
+    minGithubStars: number
+    autoTaxonomyConfidence: number
+    arxivQuery: string
+    classifierModelRoute: string
+  }
+}
+
+export type PaperIngestTriggerResult = {
+  message_id: string
+  task_id: string
+  task_type: string
+  queue_name: string
+  status: string
+}

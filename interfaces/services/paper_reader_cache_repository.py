@@ -84,24 +84,61 @@ class TextExtractionRepository:
             return ()
         if _text(payload.get("paperId")) != paper_id or _text(payload.get("sourceHash")) != source_hash:
             return ()
-        sections: list[Mapping[str, Any]] = []
-        for item in _sequence(payload.get("sections")):
-            if not isinstance(item, Mapping):
-                continue
+        return _public_sections_from_payload(payload)
+
+    def read_latest_sections(self, paper_id: str) -> tuple[Mapping[str, Any], ...]:
+        payload = _read_json_object(self.path_for(paper_id))
+        if payload is None or _text(payload.get("paperId")) != paper_id:
+            return ()
+        return _public_sections_from_payload(payload)
+
+    def write_sections(
+        self,
+        paper_id: str,
+        source_hash: str,
+        sections: Sequence[Mapping[str, Any]],
+        *,
+        cached_at: str,
+        pdf_url: str | None = None,
+        full_text_hash: str | None = None,
+    ) -> bool:
+        sanitized_sections = []
+        for item in sections:
             sanitized = sanitize_public_payload(item)
-            if not isinstance(sanitized, Mapping):
-                continue
-            public_section = {
-                key: sanitized[key]
-                for key in PUBLIC_EXTRACTION_SECTION_FIELDS
-                if key in sanitized and sanitized[key] not in (None, "", [], {})
-            }
-            if _text(public_section.get("textExcerpt")) or _text(public_section.get("summary")):
-                sections.append(public_section)
-        return tuple(sections)
+            if isinstance(sanitized, Mapping):
+                sanitized_sections.append(dict(sanitized))
+        record: dict[str, Any] = {
+            "paperId": paper_id,
+            "sourceHash": source_hash,
+            "cachedAt": cached_at,
+            "sections": sanitized_sections,
+        }
+        if pdf_url:
+            record["pdfUrl"] = pdf_url
+        if full_text_hash:
+            record["fullTextHash"] = full_text_hash
+        return _write_json_object(self.path_for(paper_id), record)
 
     def path_for(self, paper_id: str) -> Path:
         return self.extraction_dir / f"{_safe_file_key(paper_id)}.json"
+
+
+def _public_sections_from_payload(payload: Mapping[str, Any]) -> tuple[Mapping[str, Any], ...]:
+    sections: list[Mapping[str, Any]] = []
+    for item in _sequence(payload.get("sections")):
+        if not isinstance(item, Mapping):
+            continue
+        sanitized = sanitize_public_payload(item)
+        if not isinstance(sanitized, Mapping):
+            continue
+        public_section = {
+            key: sanitized[key]
+            for key in PUBLIC_EXTRACTION_SECTION_FIELDS
+            if key in sanitized and sanitized[key] not in (None, "", [], {})
+        }
+        if _text(public_section.get("textExcerpt")) or _text(public_section.get("summary")):
+            sections.append(public_section)
+    return tuple(sections)
 
 
 def reader_cache_source_hash(base_source_hash: str, extraction_sections: Sequence[Mapping[str, Any]]) -> str:

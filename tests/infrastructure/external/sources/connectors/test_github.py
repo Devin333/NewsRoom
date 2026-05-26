@@ -114,6 +114,25 @@ GITHUB_SEARCH = json.dumps(
     }
 )
 
+GITHUB_REPOSITORY_METADATA = json.dumps(
+    {
+        "id": 1,
+        "full_name": "owner/repo",
+        "html_url": "https://github.com/owner/repo",
+        "description": "Repository description",
+        "language": "Python",
+        "stargazers_count": 123,
+        "forks_count": 4,
+        "open_issues_count": 5,
+        "archived": False,
+        "disabled": False,
+        "visibility": "public",
+        "topics": ["ai", "news"],
+        "pushed_at": "2026-05-11T09:00:00Z",
+        "updated_at": "2026-05-11T10:00:00Z",
+    }
+)
+
 GITHUB_DISCUSSIONS = json.dumps(
     {
         "data": {
@@ -275,6 +294,26 @@ def test_github_connector_fetches_repository_search_items_for_trending_mode() ->
     assert items[0].title == "owner/repo"
     assert items[0].metadata["github_surface"] == "repository_search"
     assert items[0].metadata["stargazers_count"] == 123
+
+
+def test_github_connector_fetches_repository_metadata_without_search() -> None:
+    captured = {}
+
+    def fetch_text(url: str) -> str:
+        captured["url"] = url
+        return GITHUB_REPOSITORY_METADATA
+
+    metadata, errors = GithubConnector(fetch_text=fetch_text).fetch_repository_metadata(
+        _source(),
+        repository="owner/repo",
+    )
+
+    assert errors == []
+    assert captured["url"] == f"{GITHUB_API_URL}/repos/owner/repo"
+    assert metadata is not None
+    assert metadata.full_name == "owner/repo"
+    assert metadata.stargazers_count == 123
+    assert metadata.pushed_at == datetime(2026, 5, 11, 9, 0, tzinfo=UTC)
 
 
 def test_github_connector_fetches_discussions_with_graphql_fetcher() -> None:

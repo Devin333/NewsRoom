@@ -68,6 +68,12 @@ describe("PaperDetailDrawer", () => {
     expect(screen.getByText("Methods")).toBeInTheDocument()
     expect(screen.getByText("Benchmarks / SOTA")).toBeInTheDocument()
     expect(screen.getByText("No real benchmark fields are recorded yet.")).toBeInTheDocument()
+    expect(screen.getByRole("link", { name: "Visual QA" })).toHaveAttribute("href", "/papers/tasks/visual-question-answering")
+    expect(screen.getByRole("link", { name: "Tool Use" })).toHaveAttribute("href", "/papers/methods/tool-use")
+    expect(
+      screen.getByText("Tasks").compareDocumentPosition(screen.getByText("Benchmarks / SOTA")) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
     expect(screen.getByRole("link", { name: /view pdf/i })).toHaveAttribute("href", "https://arxiv.org/pdf/2304.02643.pdf")
     expect(screen.getByRole("link", { name: /code/i })).toHaveAttribute("href", "https://github.com/facebookresearch/segment-anything")
     expect(screen.getByRole("link", { name: /open reader/i })).toHaveAttribute("href", "/papers/segment-anything")

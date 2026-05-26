@@ -411,6 +411,8 @@ class PapersApplicationService:
         candidates = tuple(self._published_papers(self._load_cache()))
         base_source_hash = reader_source_hash(paper, ai_summary=summary, related_paper_candidates=candidates)
         extracted_sections = self.text_extraction_repository.read_sections(paper.id, base_source_hash)
+        if not extracted_sections:
+            extracted_sections = self.text_extraction_repository.read_latest_sections(paper.id)
         source_hash = reader_cache_source_hash(base_source_hash, extracted_sections)
         cached_reader = _reader_payload_from_cache(self.reader_cache_repository.read(paper.id, source_hash))
         if cached_reader is not None:
