@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { TrendingPapersPage } from "@/components/papers/trending-papers-page"
+import { comicSansFontFamily } from "@/lib/fonts"
 import { fetchPapers, requestPaperSummary } from "@/lib/papers/api"
 import type { Paper } from "@/lib/papers/types"
 
@@ -64,6 +65,10 @@ describe("TrendingPapersPage", () => {
     await waitFor(() => expect(fetchPapers).toHaveBeenCalledWith({ q: "", period: "all", sort: "trending", limit: 1000 }))
     expect(screen.getByRole("navigation", { name: /research breadcrumb/i })).toBeInTheDocument()
     expect(screen.getByRole("link", { name: "Research" })).toHaveAttribute("href", "/papers")
+    expect(screen.getByText(/frontend user view/i).closest("span")).toHaveStyle({ fontFamily: comicSansFontFamily })
+    expect(screen.getByLabelText("Paper period")).toHaveStyle({ fontFamily: comicSansFontFamily })
+    expect(screen.getByLabelText("Paper sort")).toHaveStyle({ fontFamily: comicSansFontFamily })
+    expect(screen.getAllByRole("link", { name: /Agents/i })[0]).toHaveStyle({ fontFamily: comicSansFontFamily })
     expect(screen.queryByRole("textbox", { name: /search papers/i })).not.toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "Search" })).not.toBeInTheDocument()
 

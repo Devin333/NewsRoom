@@ -1,6 +1,7 @@
 "use client"
 
 import { sortLabels, t } from "@/lib/papers/copy"
+import { comicSansFont } from "@/lib/fonts"
 import type { Locale, PaperSort } from "@/lib/papers/types"
 import { cn } from "@/lib/utils"
 
@@ -16,7 +17,7 @@ export function PaperSortTabs({
   onChange: (sort: PaperSort) => void
 }) {
   return (
-    <div className="inline-flex gap-5">
+    <div className="inline-flex gap-5" aria-label="Paper sort" style={comicSansFont}>
       {sorts.map((sort) => (
         <button
           key={sort}

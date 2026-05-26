@@ -9,6 +9,7 @@ import { PapersThemeToggle } from "@/components/papers/shared/theme-toggle"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Sheet, SheetClose, SheetContent, SheetDescription, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
+import { comicSansFont } from "@/lib/fonts"
 import { papersCopy, t } from "@/lib/papers/copy"
 import type { Locale } from "@/lib/papers/types"
 import { cn } from "@/lib/utils"
@@ -59,7 +60,7 @@ export function ResearchHeader({
             }
           }}
         >
-          <nav className="flex items-center gap-2" aria-label="Portal modules">
+          <nav className="flex items-center gap-2" aria-label="Portal modules" style={comicSansFont}>
             {researchHeaderGroups.map((group) => {
               const active = activeGroupId === group.id
               const dropdownId = `research-header-${group.id}-menu`
@@ -95,7 +96,11 @@ export function ResearchHeader({
 
         <div className="relative ml-auto hidden w-[min(26rem,32vw)] md:block">
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input className="h-10 rounded-full border-[#d7dfd8] bg-white pl-9 shadow-sm dark:border-border dark:bg-card" placeholder={t(papersCopy.searchPlaceholder, locale)} />
+          <Input
+            className="h-10 rounded-full border-[#d7dfd8] bg-white pl-9 shadow-sm dark:border-border dark:bg-card"
+            placeholder={t(papersCopy.searchPlaceholder, locale)}
+            style={comicSansFont}
+          />
         </div>
         <div className="hidden items-center gap-2 sm:flex">
           <PapersThemeToggle theme={theme} locale={locale} onThemeChange={onThemeChange} />
@@ -118,13 +123,13 @@ export function ResearchHeader({
             </div>
             <div className="relative mb-4">
               <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-              <Input className="h-9 pl-9" placeholder={t(papersCopy.searchPlaceholder, locale)} />
+              <Input className="h-9 pl-9" placeholder={t(papersCopy.searchPlaceholder, locale)} style={comicSansFont} />
             </div>
             <div className="mb-4 flex flex-wrap items-center gap-2 sm:hidden">
               <PapersThemeToggle theme={theme} locale={locale} onThemeChange={onThemeChange} />
               <PapersLanguageToggle locale={locale} onLocaleChange={onLocaleChange} />
             </div>
-            <nav className="space-y-4" aria-label="Research mobile navigation">
+            <nav className="space-y-4" aria-label="Research mobile navigation" style={comicSansFont}>
               {researchHeaderGroups.map((group) => (
                 <div key={group.id}>
                   <p className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">

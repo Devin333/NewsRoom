@@ -1,4 +1,5 @@
 import Link from "next/link"
+import { comicSansFont } from "@/lib/fonts"
 import { papersCopy, t } from "@/lib/papers/copy"
 import { formatWholeNumber, taskName } from "@/lib/papers/format"
 import { papersRoutes } from "@/lib/papers/routes"
@@ -38,6 +39,7 @@ function DomainPanel({ index, title, domains, papers, locale }: { index: string;
               key={domain.id}
               href={papersRoutes.taskDetail(domain.slug)}
               className="group flex items-baseline justify-between gap-3 text-base font-semibold text-[#334155]/80 transition-colors hover:text-emerald-700 dark:text-muted-foreground dark:hover:text-foreground"
+              style={comicSansFont}
             >
               <span className="leading-5">{name}</span>
               <span

@@ -1,6 +1,7 @@
 "use client"
 
 import { periodLabels, t } from "@/lib/papers/copy"
+import { comicSansFont } from "@/lib/fonts"
 import type { Locale, PaperPeriod } from "@/lib/papers/types"
 import { cn } from "@/lib/utils"
 
@@ -27,6 +28,7 @@ export function PaperPeriodTabs({
           : "inline-flex flex-wrap gap-2"
       )}
       aria-label="Paper period"
+      style={comicSansFont}
     >
       {periods.map((period) => {
         const href = hrefForPeriod?.(period) ?? "#"

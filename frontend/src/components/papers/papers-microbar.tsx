@@ -1,5 +1,6 @@
 import Link from "next/link"
 import { ChevronRight } from "lucide-react"
+import { comicSansFont } from "@/lib/fonts"
 import { papersCopy, t } from "@/lib/papers/copy"
 import type { Locale } from "@/lib/papers/types"
 
@@ -31,7 +32,10 @@ export function PapersMicrobar({
           </span>
         ))}
       </nav>
-      <span className="inline-flex w-fit items-center gap-2 rounded-full border border-[#dbe5dd] bg-white/90 px-3 py-1 text-xs text-[#334155]/70 shadow-sm dark:border-border dark:bg-card dark:text-muted-foreground">
+      <span
+        className="inline-flex w-fit items-center gap-2 rounded-full border border-[#dbe5dd] bg-white/90 px-3 py-1 text-xs text-[#334155]/70 shadow-sm dark:border-border dark:bg-card dark:text-muted-foreground"
+        style={comicSansFont}
+      >
         <span className="size-2 rounded-full bg-emerald-500" />
         {meta || t(papersCopy.frontendView, locale)}
       </span>
