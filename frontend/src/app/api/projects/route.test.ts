@@ -1,0 +1,30 @@
+import { describe, expect, it, vi } from "vitest"
+import { NextRequest } from "next/server"
+import { GET } from "@/app/api/projects/route"
+import { getProjectList } from "@/lib/projects/data-source"
+
+vi.mock("@/lib/projects/data-source", () => ({
+  getProjectList: vi.fn(),
+}))
+
+describe("projects API route", () => {
+  it("returns project list data from the project data source", async () => {
+    vi.mocked(getProjectList).mockResolvedValueOnce({
+      items: [],
+      allItems: [],
+      metrics: [],
+      options: { categories: [], sources: [], languages: [] },
+      page: { page: 1, pageSize: 24, total: 0, hasNext: false },
+      dataState: "empty",
+      source: "none",
+      notices: [],
+    })
+
+    const response = await GET(new NextRequest("http://localhost/api/projects?q=agent&sort=growth"))
+    const payload = await response.json()
+
+    expect(response.status).toBe(200)
+    expect(payload).toMatchObject({ success: true, data: { dataState: "empty" } })
+    expect(getProjectList).toHaveBeenCalledWith(expect.objectContaining({ q: "agent", sort: "growth" }))
+  })
+})
