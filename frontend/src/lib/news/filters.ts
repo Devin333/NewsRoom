@@ -43,17 +43,19 @@ export function qualityStatusFromScore(score?: number): QualityStatus | undefine
 export function filtersFromSearchParams(params: URLSearchParams): NewsFilters {
   const topicParam = params.get("topic")
   const topicStatus = readEnum(params.get("topicStatus"), topicStatusValues) ?? readEnum(topicParam, topicStatusValues)
+  const periodRange = dateRangeFromPeriod(params.get("period"))
+  const sourceTypeParam = params.get("sourceType") ?? params.get("source")
   const filters: NewsFilters = {
     keyword: params.get("q") ?? undefined,
-    dateRange: readEnum(params.get("dateRange") ?? params.get("date"), ["today", "week", "month", "custom"]),
+    dateRange: readEnum(params.get("dateRange") ?? params.get("date"), ["today", "week", "month", "custom"]) ?? periodRange,
     category: readCsv(params.get("category")),
-    sourceType: readEnumList(params.get("sourceType"), sourceTypes),
+    sourceType: readEnumList(sourceTypeParam, sourceTypes),
     topic: topicParam && !readEnum(topicParam, topicStatusValues) ? topicParam : undefined,
     credibility: readEnumList(params.get("credibility"), credibilityLevels),
     qualityStatus: readEnumList(params.get("quality"), qualityStatuses),
     topicStatus: topicStatus ?? "all",
     reportStatus: readEnum(params.get("report"), ["all", "included", "not_included"]) ?? "all",
-    sort: readEnum(params.get("sort"), sortFields) ?? "publishedAt",
+    sort: sortFromAlias(params.get("sort")) ?? "publishedAt",
     viewMode: readEnum(params.get("view"), viewModes) ?? "card",
     page: Math.max(1, Number(params.get("page") ?? "1") || 1),
     pageSize: positiveNumber(params.get("pageSize")),
@@ -224,6 +226,19 @@ function readEnum<T extends string>(value: string | null, allowed: readonly T[])
 function readEnumList<T extends string>(value: string | null, allowed: readonly T[]) {
   const items = readCsv(value)?.filter((item): item is T => allowed.includes(item as T))
   return items?.length ? items : undefined
+}
+
+function dateRangeFromPeriod(value: string | null): NewsFilters["dateRange"] | undefined {
+  if (value === "daily" || value === "today") return "today"
+  if (value === "weekly" || value === "week") return "week"
+  if (value === "monthly" || value === "month") return "month"
+  return undefined
+}
+
+function sortFromAlias(value: string | null): NewsFilters["sort"] | undefined {
+  if (value === "top" || value === "trending") return "heatScore"
+  if (value === "newest") return "publishedAt"
+  return readEnum(value, sortFields)
 }
 
 function setIf(params: URLSearchParams, key: string, value?: string) {

@@ -9,32 +9,32 @@ import type { NewsItem } from "@/types/news"
 
 export function NewsTable({ items }: { items: NewsItem[] }) {
   return (
-    <div className="overflow-x-auto rounded-lg border border-border bg-card">
+    <div className="overflow-x-auto rounded-md border border-[#dbe3dc] bg-white dark:border-border dark:bg-card">
       <table className="w-full min-w-[980px] table-fixed text-left text-sm">
-        <thead className="border-b border-border text-xs uppercase text-muted-foreground">
+        <thead className="border-b border-[#d7dfd8] text-xs uppercase text-[#334155]/55 dark:border-border dark:text-muted-foreground">
           <tr>
-            <th className="w-[34%] px-4 py-3 font-medium">标题</th>
-            <th className="w-[15%] px-4 py-3 font-medium">来源</th>
-            <th className="w-[12%] px-4 py-3 font-medium">分类</th>
-            <th className="w-[10%] px-4 py-3 font-medium">热度</th>
-            <th className="w-[11%] px-4 py-3 font-medium">质量</th>
-            <th className="w-[12%] px-4 py-3 font-medium">可信度</th>
-            <th className="w-[14%] px-4 py-3 font-medium">发布时间</th>
-            <th className="w-[16%] px-4 py-3 font-medium">主题</th>
+            <th className="w-[34%] px-4 py-3 font-medium">Title</th>
+            <th className="w-[15%] px-4 py-3 font-medium">Source</th>
+            <th className="w-[12%] px-4 py-3 font-medium">Category</th>
+            <th className="w-[10%] px-4 py-3 font-medium">Heat</th>
+            <th className="w-[11%] px-4 py-3 font-medium">Quality</th>
+            <th className="w-[12%] px-4 py-3 font-medium">Trust</th>
+            <th className="w-[14%] px-4 py-3 font-medium">Published</th>
+            <th className="w-[16%] px-4 py-3 font-medium">Topic</th>
           </tr>
         </thead>
         <tbody>
           {items.map((item) => (
-            <tr key={item.id} className="border-b border-border last:border-0">
+            <tr key={item.id} className="border-b border-[#d7dfd8] last:border-0 dark:border-border">
               <td className="px-4 py-3">
-                <Link href={`/news/${item.id}`} className="line-clamp-2 font-medium text-foreground hover:text-accent">
+                <Link href={`/news/${item.id}`} className="line-clamp-2 font-medium text-[#334155] hover:text-emerald-700 dark:text-foreground">
                   {item.title}
                 </Link>
               </td>
               <td className="px-4 py-3">
-                <SourceBadge type={item.sourceType} />
+                <SourceBadge name={item.sourceName} type={item.sourceType} />
               </td>
-              <td className="px-4 py-3 text-muted-foreground">{item.category}</td>
+              <td className="px-4 py-3 text-[#334155]/65 dark:text-muted-foreground">{item.category}</td>
               <td className="px-4 py-3">
                 {typeof item.heatScore === "number" ? <HeatScoreBadge value={item.heatScore} /> : <Badge tone="neutral">N/A</Badge>}
               </td>
@@ -44,14 +44,14 @@ export function NewsTable({ items }: { items: NewsItem[] }) {
               <td className="px-4 py-3">
                 <CredibilityBadge value={item.credibility} />
               </td>
-              <td className="px-4 py-3 text-muted-foreground">{formatDateTime(item.publishedAt)}</td>
+              <td className="px-4 py-3 text-[#334155]/65 dark:text-muted-foreground">{formatDateTime(item.publishedAt)}</td>
               <td className="px-4 py-3">
                 {item.topicId && item.topicName ? (
-                  <Link href={`/topics/${item.topicId}`} className="text-accent hover:text-foreground">
+                  <Link href={`/topics/${item.topicId}`} className="text-emerald-700 hover:text-[#334155] dark:text-accent dark:hover:text-foreground">
                     {item.topicName}
                   </Link>
                 ) : (
-                  <span className="text-muted-foreground">未聚类</span>
+                  <span className="text-[#334155]/50 dark:text-muted-foreground">Unclustered</span>
                 )}
               </td>
             </tr>

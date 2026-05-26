@@ -7,8 +7,8 @@ export function NewsList({ items, viewMode }: { items: NewsItem[]; viewMode: New
   if (!items.length) {
     return (
       <EmptyState
-        title="没有匹配的新闻"
-        description="可以移除一个或多个筛选条件，或切回最新发布排序。"
+        title="No matching news"
+        description="Remove one or more filters, broaden the time range, or switch back to newest items."
       />
     )
   }
@@ -18,7 +18,7 @@ export function NewsList({ items, viewMode }: { items: NewsItem[]; viewMode: New
   }
 
   return (
-    <div className="border-t border-border">
+    <div className="border-t border-[#d7dfd8] dark:border-border">
       {items.map((item) => (
         <NewsCard key={item.id} news={item} compact={viewMode === "dense"} />
       ))}

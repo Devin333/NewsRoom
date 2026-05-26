@@ -1,7 +1,6 @@
 import fs from "node:fs"
 import path from "node:path"
 import { safeApiGet } from "@/lib/api/server"
-import { newsItems as mockNews } from "@/lib/mock-data"
 import { applyNewsFilters, getFilterOptions, paginateNews } from "@/lib/news/filters"
 import type { CredibilityLevel, SourceType } from "@/types/common"
 import type { EvidenceRef, NewsEntity, NewsFilters, NewsItem, NewsListResult, RelatedRef } from "@/types/news"
@@ -82,10 +81,10 @@ export async function loadNewsData(): Promise<NewsDataLoad> {
   }
 
   return {
-    items: fallbackNewsItems(),
+    items: [],
     source: "fallback",
     generatedAt: new Date().toISOString(),
-    notices: [...notices, "Using bundled fallback news because no ai_news backend output or local artifact is available."],
+    notices: [...notices, "No real ai_news backend output or local artifact is available; showing an empty AI News Board."],
   }
 }
 
@@ -402,28 +401,6 @@ function sourceRefsFromCard(card: JsonRecord, signal?: JsonRecord): EvidenceRef[
     deduped.set(item.url ?? item.id, item)
   }
   return [...deduped.values()]
-}
-
-function fallbackNewsItems(): NewsItem[] {
-  const items: NewsItem[] = []
-  for (const item of mockNews) {
-    const sourceUrl = cleanHttpsUrl(item.sourceUrl)
-    if (!sourceUrl) {
-      continue
-    }
-    items.push({
-      ...item,
-      url: sourceUrl,
-      sourceUrl,
-      heatScore: item.heatScore,
-      qualityScore: item.qualityScore,
-      evidenceRefs: item.evidenceRefs ?? [],
-      relatedPapers: item.relatedPapers ?? [],
-      relatedProjects: item.relatedProjects ?? [],
-      relatedCommunityTopics: item.relatedCommunityTopics ?? [],
-    })
-  }
-  return items
 }
 
 function isAiNewsRun(run: JsonRecord) {

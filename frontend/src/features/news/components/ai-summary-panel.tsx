@@ -6,12 +6,14 @@ export function AISummaryPanel({
   whyItMatters?: string
 }) {
   return (
-    <section className="rounded-lg border border-border bg-card p-5">
-      <h2 className="text-lg font-semibold text-foreground">AI 摘要</h2>
-      <p className="mt-3 text-sm leading-6 text-muted-foreground">{summary ?? "这条新闻暂无详细 AI 摘要。"}</p>
-      <div className="mt-5 rounded-md border border-border bg-secondary/50 p-4">
-        <p className="text-xs font-medium uppercase text-accent">为什么重要</p>
-        <p className="mt-2 text-sm leading-6 text-foreground">{whyItMatters ?? "暂无重要性分析。"}</p>
+    <section className="rounded-md border border-[#dbe3dc] bg-white/85 p-5 dark:border-border dark:bg-card">
+      <h2 className="text-lg font-semibold text-[#334155] dark:text-foreground">AI summary</h2>
+      <p className="mt-3 text-sm leading-6 text-[#334155]/68 dark:text-muted-foreground">
+        {summary ?? "This news item does not have a detailed AI summary yet."}
+      </p>
+      <div className="mt-5 rounded-md border border-[#edf1ed] bg-[#f7f9f6] p-4 dark:border-border dark:bg-background">
+        <p className="text-xs font-medium uppercase text-emerald-700 dark:text-accent">Why it matters</p>
+        <p className="mt-2 text-sm leading-6 text-[#334155] dark:text-foreground">{whyItMatters ?? "No importance analysis is available yet."}</p>
       </div>
     </section>
   )

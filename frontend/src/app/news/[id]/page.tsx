@@ -11,6 +11,7 @@ import { KeyFactsList } from "@/features/news/components/key-facts-list"
 import { NewsDetailHeader } from "@/features/news/components/news-detail-header"
 import { NewsEvidenceList } from "@/features/news/components/news-evidence-list"
 import { NewsInsightPanel } from "@/features/news/components/news-insight-panel"
+import { NewsRelationsPanel } from "@/features/news/components/news-relations-panel"
 import { useNewsDetail } from "@/features/news/hooks/use-news-detail"
 
 export default function NewsDetailPage({ params }: { params: { id: string } }) {
@@ -21,17 +22,17 @@ export default function NewsDetailPage({ params }: { params: { id: string } }) {
   }
 
   if (isError) {
-    return <ErrorState message={error instanceof Error ? error.message : "新闻详情加载失败。"} onRetry={() => refetch()} />
+    return <ErrorState message={error instanceof Error ? error.message : "News detail failed to load."} onRetry={() => refetch()} />
   }
 
   if (!data?.news) {
     return (
       <EmptyState
-        title="未找到新闻"
-        description="这个新闻 ID 不在当前 AI News 数据集中。"
+        title="News item not found"
+        description="This news id is not present in the current AI News data set."
         action={
           <Link href="/news" className="rounded-md border border-border px-3 py-2 text-sm text-foreground hover:bg-secondary">
-            返回新闻
+            Back to news
           </Link>
         }
       />
@@ -39,11 +40,11 @@ export default function NewsDetailPage({ params }: { params: { id: string } }) {
   }
 
   return (
-    <main className="space-y-6">
+    <main className="space-y-6 font-papers-research">
       {data.dataState === "fallback" ? (
-        <div className="rounded-md border border-warning/30 bg-warning/10 p-3 text-sm text-muted-foreground">
-          <Badge tone="warning">Fallback</Badge>
-          <span className="ml-2">当前详情来自显式备用数据。</span>
+        <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+          <Badge tone="warning">Degraded</Badge>
+          <span className="ml-2">This detail view is using the current degraded AI News data state.</span>
         </div>
       ) : null}
 
@@ -54,10 +55,11 @@ export default function NewsDetailPage({ params }: { params: { id: string } }) {
           <AISummaryPanel summary={data.news.detailedSummary} whyItMatters={data.news.whyItMatters} />
           <KeyFactsList facts={data.news.keyFacts} />
           <NewsEvidenceList evidence={data.evidence} />
-          <section className="rounded-lg border border-border bg-card p-5">
-            <h2 className="text-lg font-semibold text-foreground">相关时间线预览</h2>
-            <p className="mt-3 text-sm leading-6 text-muted-foreground">
-              完整时间线会在主题和 Studio 工作区中展开，这里保留当前新闻与证据、后续事件的连接入口。
+          <NewsRelationsPanel news={data.news} />
+          <section className="rounded-md border border-[#dbe3dc] bg-white/85 p-5 dark:border-border dark:bg-card">
+            <h2 className="text-lg font-semibold text-[#334155] dark:text-foreground">Timeline preview</h2>
+            <p className="mt-3 text-sm leading-6 text-[#334155]/68 dark:text-muted-foreground">
+              A full event timeline belongs in the topic and evidence graph surfaces. This detail page keeps the source, evidence, and related object entry points close to the news item.
             </p>
           </section>
           <AgentExplanationCard items={data.news.agentExplanation} />

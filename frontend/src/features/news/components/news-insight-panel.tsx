@@ -26,72 +26,72 @@ export function NewsInsightPanel({
 }) {
   return (
     <aside className="space-y-4">
-      <PanelCard title="评分">
+      <PanelCard title="Scores">
         <div className="space-y-4">
-          <OptionalScoreMeter label="热度" value={news.heatScore} />
-          <OptionalScoreMeter label="质量" value={news.qualityScore} />
+          <OptionalScoreMeter label="Heat" value={news.heatScore} />
+          <OptionalScoreMeter label="Quality" value={news.qualityScore} />
           <div className="flex flex-wrap gap-2">
-            {typeof news.heatScore === "number" ? <HeatScoreBadge value={news.heatScore} /> : <Badge tone="neutral">热度 N/A</Badge>}
-            {typeof news.qualityScore === "number" ? <QualityBadge value={news.qualityScore} /> : <Badge tone="neutral">质量 N/A</Badge>}
+            {typeof news.heatScore === "number" ? <HeatScoreBadge value={news.heatScore} /> : <Badge tone="neutral">Heat N/A</Badge>}
+            {typeof news.qualityScore === "number" ? <QualityBadge value={news.qualityScore} /> : <Badge tone="neutral">Quality N/A</Badge>}
             <CredibilityBadge value={news.credibility} />
           </div>
         </div>
       </PanelCard>
 
-      <PanelCard title="来源信息">
+      <PanelCard title="Source">
         <div className="space-y-3">
           <SourceBadge name={news.sourceName} type={news.sourceType} />
-          <p className="text-sm text-muted-foreground">发布于 {formatDateTime(news.publishedAt)}</p>
-          <p className="text-sm text-muted-foreground">采集于 {formatDateTime(news.collectedAt)}</p>
+          <p className="text-sm text-[#334155]/68 dark:text-muted-foreground">Published {formatDateTime(news.publishedAt)}</p>
+          <p className="text-sm text-[#334155]/68 dark:text-muted-foreground">Collected {formatDateTime(news.collectedAt)}</p>
         </div>
       </PanelCard>
 
-      <PanelCard title="相关主题">
+      <PanelCard title="Topic">
         {topic ? (
-          <Link href={`/topics/${topic.id}`} className="block rounded-md border border-border p-3 hover:bg-secondary">
-            <p className="text-sm font-medium text-foreground">{topic.name}</p>
-            <p className="mt-2 line-clamp-3 text-sm text-muted-foreground">{topic.summary}</p>
+          <Link href={`/topics/${topic.id}`} className="block rounded-md border border-[#dbe3dc] p-3 hover:bg-[#f7f9f6] dark:border-border dark:hover:bg-secondary">
+            <p className="text-sm font-medium text-[#334155] dark:text-foreground">{topic.name}</p>
+            <p className="mt-2 line-clamp-3 text-sm text-[#334155]/68 dark:text-muted-foreground">{topic.summary}</p>
           </Link>
         ) : news.topicId && news.topicName ? (
-          <div className="rounded-md border border-border p-3">
-            <p className="text-sm font-medium text-foreground">{news.topicName}</p>
-            <p className="mt-2 text-sm text-muted-foreground">来自 AI News board 的主题关联。</p>
+          <div className="rounded-md border border-[#dbe3dc] p-3 dark:border-border">
+            <p className="text-sm font-medium text-[#334155] dark:text-foreground">{news.topicName}</p>
+            <p className="mt-2 text-sm text-[#334155]/68 dark:text-muted-foreground">Topic relation from the AI News board output.</p>
           </div>
         ) : (
-          <p className="text-sm text-muted-foreground">这条新闻暂未聚类到主题。</p>
+          <p className="text-sm text-[#334155]/60 dark:text-muted-foreground">This news item is not clustered to a topic yet.</p>
         )}
       </PanelCard>
 
-      <PanelCard title="报告链接">
+      <PanelCard title="Reports">
         {reports.length ? (
           <div className="space-y-2">
             {reports.map((report) => (
-              <Link key={report.id} href={`/reports/${report.id}`} className="flex gap-2 rounded-md border border-border p-3 hover:bg-secondary">
-                <FileText className="mt-0.5 h-4 w-4 shrink-0 text-accent" />
-                <span className="text-sm text-foreground">{report.title}</span>
+              <Link key={report.id} href={`/reports/${report.id}`} className="flex gap-2 rounded-md border border-[#dbe3dc] p-3 hover:bg-[#f7f9f6] dark:border-border dark:hover:bg-secondary">
+                <FileText className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700 dark:text-accent" />
+                <span className="text-sm text-[#334155] dark:text-foreground">{report.title}</span>
               </Link>
             ))}
           </div>
         ) : (
-          <p className="text-sm text-muted-foreground">暂无报告纳入这条新闻。</p>
+          <p className="text-sm text-[#334155]/60 dark:text-muted-foreground">No reports include this news item yet.</p>
         )}
       </PanelCard>
 
-      <PanelCard title="验证状态">
+      <PanelCard title="Verification">
         <div className="space-y-3">
           <div className="flex items-center gap-2">
             <ShieldCheck className="h-4 w-4 text-success" />
             <StatusBadge status={evidence.length ? "passed" : "review"} />
           </div>
-          <p className="text-sm text-muted-foreground">
-            {evidence.length ? `已关联 ${evidence.length} 条证据。` : "暂无证据关联，这条新闻应保持复核状态。"}
+          <p className="text-sm text-[#334155]/68 dark:text-muted-foreground">
+            {evidence.length ? `${evidence.length} evidence item(s) are linked.` : "No evidence is linked yet; keep this item in review."}
           </p>
         </div>
       </PanelCard>
 
-      <PanelCard title="原始来源">
-        <a href={news.sourceUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 text-sm text-accent hover:text-foreground">
-          打开原文
+      <PanelCard title="Original source">
+        <a href={news.sourceUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 text-sm text-emerald-700 hover:text-[#334155] dark:text-accent dark:hover:text-foreground">
+          Open source
           <LinkIcon className="h-4 w-4" />
         </a>
       </PanelCard>
@@ -101,8 +101,8 @@ export function NewsInsightPanel({
 
 function PanelCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className="rounded-lg border border-border bg-card p-4">
-      <h2 className="mb-4 text-sm font-semibold text-foreground">{title}</h2>
+    <section className="rounded-md border border-[#dbe3dc] bg-white/85 p-4 dark:border-border dark:bg-card">
+      <h2 className="mb-4 text-sm font-semibold text-[#334155] dark:text-foreground">{title}</h2>
       {children}
     </section>
   )
@@ -112,11 +112,11 @@ function OptionalScoreMeter({ label, value }: { label: string; value?: number })
   if (typeof value !== "number") {
     return (
       <div className="space-y-1.5">
-        <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+        <div className="flex items-center justify-between gap-3 text-xs text-[#334155]/60 dark:text-muted-foreground">
           <span>{label}</span>
-          <span className="font-medium text-foreground">N/A</span>
+          <span className="font-medium text-[#334155] dark:text-foreground">N/A</span>
         </div>
-        <div className="h-2 overflow-hidden rounded-full bg-secondary" />
+        <div className="h-2 overflow-hidden rounded-full bg-[#eef3ef] dark:bg-secondary" />
       </div>
     )
   }

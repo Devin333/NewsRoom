@@ -10,9 +10,9 @@ export function NewsFilterPanel({
   onChange: (patch: Partial<NewsFilters>) => void
 }) {
   return (
-    <aside className="rounded-lg border border-border bg-card p-4">
+    <aside className="rounded-md border border-[#dbe3dc] bg-white/85 p-4 dark:border-border dark:bg-card">
       <div className="flex items-center justify-between gap-3">
-        <h2 className="text-sm font-semibold text-foreground">筛选</h2>
+        <h2 className="text-sm font-semibold text-[#334155] dark:text-foreground">Filters</h2>
         <button
           type="button"
           onClick={() =>
@@ -27,41 +27,41 @@ export function NewsFilterPanel({
               reportStatus: "all",
             })
           }
-          className="text-xs text-accent hover:text-foreground"
+          className="text-xs font-medium text-emerald-700 hover:text-[#334155] dark:text-accent dark:hover:text-foreground"
         >
-          重置
+          Reset
         </button>
       </div>
 
       <div className="mt-4 space-y-5">
         <SelectBlock
-          label="日期"
+          label="Period"
           value={filters.dateRange ?? ""}
           onChange={(value) => onChange({ dateRange: value ? (value as NewsFilters["dateRange"]) : undefined })}
           options={[
-            ["", "任意时间"],
-            ["today", "今天"],
-            ["week", "本周"],
-            ["month", "本月"],
+            ["", "All time"],
+            ["today", "Today"],
+            ["week", "This week"],
+            ["month", "This month"],
           ]}
         />
 
         <TextBlock
-          label="主题"
+          label="Topic"
           value={filters.topic ?? ""}
-          placeholder="agents、models、safety..."
+          placeholder="agents, models, safety..."
           onChange={(topic) => onChange({ topic: topic || undefined })}
         />
 
         <CheckboxBlock
-          label="分类"
+          label="Category"
           values={options.categories}
           selected={filters.category ?? []}
           onToggle={(category) => onChange({ category: toggle(filters.category, category) })}
         />
 
         <CheckboxBlock
-          label="来源"
+          label="Source"
           values={options.sourceTypes}
           selected={filters.sourceType ?? []}
           onToggle={(sourceType) => onChange({ sourceType: toggle(filters.sourceType, sourceType) })}
@@ -69,41 +69,19 @@ export function NewsFilterPanel({
         />
 
         <CheckboxBlock
-          label="可信度"
+          label="Credibility"
           values={options.credibility}
           selected={filters.credibility ?? []}
           onToggle={(credibility) => onChange({ credibility: toggle(filters.credibility, credibility) })}
-          formatValue={credibilityLabelValue}
+          formatValue={titleCase}
         />
 
         <CheckboxBlock
-          label="质量"
+          label="Quality"
           values={options.qualityStatuses}
           selected={filters.qualityStatus ?? []}
           onToggle={(qualityStatus) => onChange({ qualityStatus: toggle(filters.qualityStatus, qualityStatus) })}
-          formatValue={qualityLabelValue}
-        />
-
-        <SelectBlock
-          label="主题状态"
-          value={filters.topicStatus ?? "all"}
-          onChange={(value) => onChange({ topicStatus: value as NewsFilters["topicStatus"] })}
-          options={[
-            ["all", "全部"],
-            ["clustered", "已聚类"],
-            ["unclustered", "未聚类"],
-          ]}
-        />
-
-        <SelectBlock
-          label="报告状态"
-          value={filters.reportStatus ?? "all"}
-          onChange={(value) => onChange({ reportStatus: value as NewsFilters["reportStatus"] })}
-          options={[
-            ["all", "全部"],
-            ["included", "已纳入"],
-            ["not_included", "未纳入"],
-          ]}
+          formatValue={titleCase}
         />
       </div>
     </aside>
@@ -115,7 +93,7 @@ function CheckboxBlock<T extends string>({
   values,
   selected,
   onToggle,
-  formatValue = labelValue,
+  formatValue = titleCase,
 }: {
   label: string
   values: T[]
@@ -125,15 +103,15 @@ function CheckboxBlock<T extends string>({
 }) {
   return (
     <div>
-      <p className="mb-2 text-xs font-medium uppercase text-muted-foreground">{label}</p>
+      <p className="mb-2 text-xs font-medium uppercase text-[#334155]/55 dark:text-muted-foreground">{label}</p>
       <div className="space-y-2">
         {values.map((value) => (
-          <label key={value} className="flex items-center gap-2 text-sm text-muted-foreground">
+          <label key={value} className="flex items-center gap-2 text-sm text-[#334155]/68 dark:text-muted-foreground">
             <input
               type="checkbox"
               checked={selected.includes(value)}
               onChange={() => onToggle(value)}
-              className="h-4 w-4 rounded border-border bg-background accent-[hsl(var(--accent))]"
+              className="h-4 w-4 rounded border-[#dbe3dc] bg-white accent-emerald-700 dark:border-border dark:bg-background"
             />
             <span>{formatValue(value)}</span>
           </label>
@@ -156,11 +134,11 @@ function SelectBlock({
 }) {
   return (
     <label className="block">
-      <span className="mb-2 block text-xs font-medium uppercase text-muted-foreground">{label}</span>
+      <span className="mb-2 block text-xs font-medium uppercase text-[#334155]/55 dark:text-muted-foreground">{label}</span>
       <select
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="h-10 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none"
+        className="h-10 w-full rounded-md border border-[#dbe3dc] bg-white px-3 text-sm text-[#334155] outline-none dark:border-border dark:bg-background dark:text-foreground"
       >
         {options.map(([optionValue, labelText]) => (
           <option key={optionValue} value={optionValue}>
@@ -185,12 +163,12 @@ function TextBlock({
 }) {
   return (
     <label className="block">
-      <span className="mb-2 block text-xs font-medium uppercase text-muted-foreground">{label}</span>
+      <span className="mb-2 block text-xs font-medium uppercase text-[#334155]/55 dark:text-muted-foreground">{label}</span>
       <input
         value={value}
         placeholder={placeholder}
         onChange={(event) => onChange(event.target.value)}
-        className="h-10 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none placeholder:text-muted-foreground"
+        className="h-10 w-full rounded-md border border-[#dbe3dc] bg-white px-3 text-sm text-[#334155] outline-none placeholder:text-[#334155]/40 dark:border-border dark:bg-background dark:text-foreground"
       />
     </label>
   )
@@ -206,50 +184,21 @@ function toggle<T extends string>(values: T[] | undefined, value: T) {
   return [...set]
 }
 
-function labelValue(value: string) {
-  return categoryLabelValue(value)
-}
-
-function credibilityLabelValue(value: string) {
-  const labels: Record<string, string> = {
-    high: "高",
-    medium: "中",
-    low: "低",
-  }
-  return labels[value] ?? value
-}
-
-function qualityLabelValue(value: string) {
-  const labels: Record<string, string> = {
-    passed: "通过",
-    review: "复核",
-    failed: "失败",
-  }
-  return labels[value] ?? value
-}
-
 function sourceTypeLabelValue(value: string) {
   const labels: Record<string, string> = {
-    official_blog: "官方博客",
+    official_blog: "Official blog",
     rss: "RSS",
     atom: "Atom",
     github: "GitHub",
     hackernews: "Hacker News",
     reddit: "Reddit",
     arxiv: "arXiv",
-    lobsters: "Lobsters",
-    stackoverflow: "Stack Overflow",
-    devto: "dev.to",
-    medium: "Medium",
-    html: "HTML",
-    web_page: "网页",
-    media: "媒体",
-    manual: "手动",
-    custom: "自定义",
+    media: "Media",
+    custom: "Custom",
   }
-  return labels[value] ?? value
+  return labels[value] ?? titleCase(value)
 }
 
-function categoryLabelValue(value: string) {
-  return value
+function titleCase(value: string) {
+  return value.replace(/[_-]/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase())
 }

@@ -111,14 +111,15 @@ describe("news server data loader", () => {
     expect(data.items[0]).toMatchObject({ title: "Local artifact news", sourceUrl: "https://example.com/local-news" })
   })
 
-  it("marks bundled mock data as explicit fallback", async () => {
+  it("returns an explicit empty degraded state when real news output is unavailable", async () => {
     mockedSafeApiGet.mockResolvedValueOnce({ ok: false, errorCode: "request_failed", errorMessage: "offline" })
 
     const result = await getNewsListResult({ pageSize: 2 })
 
     expect(result.dataState).toBe("fallback")
     expect(result.source).toBe("fallback")
-    expect(result.page.items).toHaveLength(2)
-    expect(result.notices.join(" ")).toContain("fallback")
+    expect(result.page.items).toHaveLength(0)
+    expect(result.allItems).toHaveLength(0)
+    expect(result.notices.join(" ")).toContain("No real ai_news")
   })
 })

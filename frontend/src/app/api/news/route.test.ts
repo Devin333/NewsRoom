@@ -30,4 +30,25 @@ describe("/api/news route", () => {
     expect(payload.success).toBe(true)
     expect(getNewsListResult).toHaveBeenCalledWith(expect.objectContaining({ dateRange: "today", sort: "heatScore" }))
   })
+
+  it("accepts PRD query aliases for period, source, and sort", async () => {
+    vi.mocked(getNewsListResult).mockResolvedValueOnce({
+      page: { items: [], total: 0, page: 1, pageSize: 8, hasNext: false },
+      allItems: [],
+      allFiltered: [],
+      options: { categories: [], sourceTypes: [], credibility: ["high", "medium", "low"], qualityStatuses: ["passed", "review", "failed"] },
+      dataState: "ready",
+      source: "backend",
+      notices: [],
+    })
+
+    const response = await GET(new NextRequest("http://localhost/api/news?period=weekly&source=github&sort=trending"))
+    const payload = await response.json()
+
+    expect(response.status).toBe(200)
+    expect(payload.success).toBe(true)
+    expect(getNewsListResult).toHaveBeenCalledWith(
+      expect.objectContaining({ dateRange: "week", sourceType: ["github"], sort: "heatScore" })
+    )
+  })
 })
