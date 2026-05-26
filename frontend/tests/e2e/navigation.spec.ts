@@ -109,6 +109,22 @@ test("/papers domain links open task detail view", async ({ page, baseURL }) => 
   await expect(page.locator("aside a[href^='/papers/methods/']").first()).toBeVisible()
 })
 
+test("/tech/repos opens a Project Radar detail drawer from URL", async ({ page, baseURL }) => {
+  await authenticate(page, baseURL)
+  await mockProjectRadar(page)
+
+  await page.goto("/tech/repos?project=openai-codex")
+
+  await expect(page.getByRole("heading", { name: /Project Radar Board/i })).toBeVisible()
+  const drawer = page.getByRole("dialog", { name: /project detail/i })
+  await expect(drawer).toBeVisible()
+  await expect(drawer.getByRole("heading", { name: "codex" })).toBeVisible()
+  await expect(drawer.getByRole("link", { name: /open repo/i })).toHaveAttribute("href", "https://github.com/openai/codex")
+
+  await page.getByRole("button", { name: /close project detail/i }).click()
+  await expect(page).toHaveURL(/\/tech\/repos$/)
+})
+
 async function authenticate(page: Page, baseURL: string | undefined) {
   await page.route("**/api/auth/session", async (route) => {
     await route.fulfill({
@@ -133,4 +149,75 @@ async function authenticate(page: Page, baseURL: string | undefined) {
       url: baseURL ?? "http://127.0.0.1:3000"
     }
   ])
+}
+
+async function mockProjectRadar(page: Page) {
+  const project = {
+    id: "codex",
+    slug: "openai-codex",
+    name: "codex",
+    fullName: "openai/codex",
+    description: "A coding agent that runs in your terminal.",
+    repoUrl: "https://github.com/openai/codex",
+    owner: "openai",
+    language: "TypeScript",
+    stars: 12000,
+    forks: 500,
+    openIssues: 42,
+    starGrowth7d: 320,
+    scores: { trendScore: 88, activityScore: 60, evidenceScore: 2 },
+    categoryRefs: [{ category: "agent_framework", label: "Agent Framework" }],
+    categories: ["agent_framework"],
+    tags: ["devtool"],
+    topics: ["Agent Framework", "devtool"],
+    maturity: "rising",
+    relationCounts: { papers: 0, news: 1, community: 1 },
+    relatedNews: [{ title: "Codex launch", url: "https://example.com/news", sourceName: "Example" }],
+    relatedCommunityTopics: [{ title: "HN discussion", url: "https://news.ycombinator.com/item?id=1", sourceName: "Hacker News" }]
+  }
+
+  await page.route("**/api/projects/openai-codex", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        success: true,
+        data: { project, dataState: "ready", source: "artifact", notices: [] },
+        error: null
+      })
+    })
+  })
+
+  await page.route(/\/api\/projects(?:\?.*)?$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        success: true,
+        data: {
+          items: [project],
+          allItems: [project],
+          allFiltered: [project],
+          metrics: [
+            { label: "Projects", value: 1 },
+            { label: "With stars", value: 1 },
+            { label: "Star delta", value: 320 },
+            { label: "Active signals", value: 1, hint: "2 related references" }
+          ],
+          options: {
+            categories: [{ value: "agent_framework", label: "Agent Framework", count: 1 }],
+            sources: [{ value: "github", label: "GitHub", count: 1 }],
+            languages: [{ value: "typescript", label: "TypeScript", count: 1 }],
+            topics: [{ value: "Agent Framework", label: "Agent Framework", count: 1 }],
+            maturity: [{ value: "rising", label: "Rising", count: 1 }]
+          },
+          page: { page: 1, pageSize: 24, total: 1, hasNext: false, nextCursor: null },
+          dataState: "ready",
+          source: "artifact",
+          notices: []
+        },
+        error: null
+      })
+    })
+  })
 }

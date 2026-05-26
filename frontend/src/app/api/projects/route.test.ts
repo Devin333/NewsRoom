@@ -12,19 +12,30 @@ describe("projects API route", () => {
     vi.mocked(getProjectList).mockResolvedValueOnce({
       items: [],
       allItems: [],
+      allFiltered: [],
       metrics: [],
-      options: { categories: [], sources: [], languages: [] },
+        options: { categories: [], sources: [], languages: [], topics: [], maturity: [] },
       page: { page: 1, pageSize: 24, total: 0, hasNext: false },
       dataState: "empty",
       source: "none",
       notices: [],
     })
 
-    const response = await GET(new NextRequest("http://localhost/api/projects?q=agent&sort=growth"))
+    const response = await GET(new NextRequest("http://localhost/api/projects?q=agent&period=weekly&topic=rag&maturity=rising&sort=activity&limit=12&cursor=2"))
     const payload = await response.json()
 
     expect(response.status).toBe(200)
     expect(payload).toMatchObject({ success: true, data: { dataState: "empty" } })
-    expect(getProjectList).toHaveBeenCalledWith(expect.objectContaining({ q: "agent", sort: "growth" }))
+    expect(getProjectList).toHaveBeenCalledWith(
+      expect.objectContaining({
+        q: "agent",
+        period: "weekly",
+        topic: "rag",
+        maturity: "rising",
+        sort: "activity",
+        limit: 12,
+        cursor: "2",
+      })
+    )
   })
 })

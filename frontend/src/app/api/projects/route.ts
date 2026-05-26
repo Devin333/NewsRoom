@@ -27,11 +27,16 @@ function projectParams(searchParams: URLSearchParams): ProjectListParams {
   return {
     q: searchParams.get("q") ?? undefined,
     category: searchParams.get("category") as ProjectListParams["category"],
+    topic: searchParams.get("topic") ?? undefined,
     sort: searchParams.get("sort") as ProjectListParams["sort"],
     source: searchParams.get("source") as ProjectListParams["source"],
     language: searchParams.get("language") as ProjectListParams["language"],
+    maturity: searchParams.get("maturity") as ProjectListParams["maturity"],
+    period: searchParams.get("period") as ProjectListParams["period"],
     page: numberParam(searchParams.get("page")),
     pageSize: numberParam(searchParams.get("pageSize")),
+    limit: numberParam(searchParams.get("limit")),
+    cursor: searchParams.get("cursor") ?? undefined,
   }
 }
 

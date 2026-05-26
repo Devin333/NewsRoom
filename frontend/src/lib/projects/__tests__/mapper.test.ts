@@ -33,11 +33,14 @@ describe("project radar mapper", () => {
     expect(result.items[0]).toMatchObject({
       id: "card-codex",
       slug: "openai-codex",
+      fullName: "openai/codex",
       repoUrl: "https://github.com/openai/codex",
       owner: "openai",
       language: "TypeScript",
       starGrowth7d: 120,
       qualityScore: 0.92,
+      categories: ["agent_framework", "coding"],
+      relationCounts: { papers: 0, news: 1, community: 0 },
     })
     expect(result.items[0].stars).toBeUndefined()
     expect(JSON.stringify(result.items[0])).not.toMatch(/raw_payload|raw_html|token|secret/i)
@@ -90,7 +93,48 @@ describe("project radar mapper", () => {
     expect(result.items).toHaveLength(1)
     expect(result.items[0].name).toBe("AgentKit")
     expect(result.page).toMatchObject({ page: 1, pageSize: 1, total: 1, hasNext: false })
-    expect(result.options.categories.map((option) => option.value)).toEqual(["agent", "rag"])
+    expect(result.options.categories.map((option) => option.value)).toEqual(["agent_framework", "rag"])
+  })
+
+  it("supports PRD aliases for topic, period, maturity, activity sort, and limit", () => {
+    const now = new Date().toISOString()
+    const payload = {
+      cards: [
+        {
+          card_id: "active-agent",
+          name: "ActiveAgent",
+          repo_url: "https://github.com/acme/active-agent",
+          description: "Agent workflow toolkit",
+          language: "Python",
+          stars: 100,
+          star_growth_7d: 20,
+          pushed_at: now,
+          tags: ["agent"],
+        },
+        {
+          card_id: "old-rag",
+          name: "OldRag",
+          repo_url: "https://github.com/acme/old-rag",
+          description: "RAG data layer",
+          language: "Rust",
+          stars: 300,
+          pushed_at: "2020-01-01T00:00:00Z",
+          tags: ["rag"],
+        },
+      ],
+    }
+
+    const result = buildProjectListResult(
+      payload,
+      { topic: "agent", period: "weekly", maturity: "rising", sort: "activity", limit: 1 },
+      { source: "artifact" }
+    )
+
+    expect(result.items).toHaveLength(1)
+    expect(result.items[0].name).toBe("ActiveAgent")
+    expect(result.items[0].maturity).toBe("rising")
+    expect(result.page.pageSize).toBe(1)
+    expect(result.options.maturity.map((option) => option.value)).toContain("rising")
   })
 
   it("normalizes only full HTTPS GitHub repository URLs", () => {

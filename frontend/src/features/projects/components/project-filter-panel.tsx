@@ -12,27 +12,41 @@ export function ProjectFilterPanel({
   onChange: (patch: Partial<ProjectListParams>) => void
 }) {
   return (
-    <aside className="space-y-6">
+    <aside className="space-y-7">
       <FilterGroup
-        title="分类"
+        title="Topics"
+        activeValue={filters.topic}
+        options={options.topics}
+        onSelect={(topic) => onChange({ topic, page: 1, cursor: undefined })}
+        onClear={() => onChange({ topic: undefined, page: 1, cursor: undefined })}
+      />
+      <FilterGroup
+        title="Categories"
         activeValue={filters.category}
         options={options.categories}
-        onSelect={(category) => onChange({ category: category as ProjectListParams["category"], page: 1 })}
-        onClear={() => onChange({ category: undefined, page: 1 })}
+        onSelect={(category) => onChange({ category: category as ProjectListParams["category"], page: 1, cursor: undefined })}
+        onClear={() => onChange({ category: undefined, page: 1, cursor: undefined })}
       />
       <FilterGroup
-        title="来源"
-        activeValue={filters.source}
-        options={options.sources}
-        onSelect={(source) => onChange({ source: source as ProjectListParams["source"], page: 1 })}
-        onClear={() => onChange({ source: undefined, page: 1 })}
-      />
-      <FilterGroup
-        title="语言"
+        title="Languages"
         activeValue={filters.language}
         options={options.languages}
-        onSelect={(language) => onChange({ language: language as ProjectListParams["language"], page: 1 })}
-        onClear={() => onChange({ language: undefined, page: 1 })}
+        onSelect={(language) => onChange({ language: language as ProjectListParams["language"], page: 1, cursor: undefined })}
+        onClear={() => onChange({ language: undefined, page: 1, cursor: undefined })}
+      />
+      <FilterGroup
+        title="Maturity"
+        activeValue={filters.maturity}
+        options={options.maturity}
+        onSelect={(maturity) => onChange({ maturity: maturity as ProjectListParams["maturity"], page: 1, cursor: undefined })}
+        onClear={() => onChange({ maturity: undefined, page: 1, cursor: undefined })}
+      />
+      <FilterGroup
+        title="Sources"
+        activeValue={filters.source}
+        options={options.sources}
+        onSelect={(source) => onChange({ source: source as ProjectListParams["source"], page: 1, cursor: undefined })}
+        onClear={() => onChange({ source: undefined, page: 1, cursor: undefined })}
       />
     </aside>
   )
@@ -54,24 +68,24 @@ function FilterGroup({
   return (
     <section className="space-y-3">
       <div className="flex items-center justify-between gap-2">
-        <h2 className="font-mono text-[11px] font-semibold uppercase tracking-normal text-muted-foreground">{title}</h2>
+        <h2 className="font-mono text-[11px] font-semibold uppercase tracking-normal text-[#334155]/55 dark:text-muted-foreground">{title}</h2>
         {activeValue ? (
           <Button type="button" variant="ghost" size="sm" className="h-7 px-2" onClick={onClear}>
-            清除
+            Clear
           </Button>
         ) : null}
       </div>
       {options.length ? (
         <div className="space-y-2">
-          {options.map((option) => (
+          {options.slice(0, 10).map((option) => (
             <button
               key={option.value}
               type="button"
               onClick={() => onSelect(option.value)}
               className={
                 activeValue === option.value
-                  ? "flex w-full items-center justify-between gap-2 rounded-md bg-foreground px-3 py-2 text-left text-sm text-background"
-                  : "flex w-full items-center justify-between gap-2 rounded-md px-3 py-2 text-left text-sm text-muted-foreground hover:bg-secondary hover:text-foreground"
+                  ? "flex w-full items-center justify-between gap-2 rounded-md bg-[#334155] px-3 py-2 text-left text-sm text-white"
+                  : "flex w-full items-center justify-between gap-2 rounded-md px-3 py-2 text-left text-sm text-[#334155]/68 hover:bg-white hover:text-[#334155] dark:text-muted-foreground dark:hover:bg-card dark:hover:text-foreground"
               }
             >
               <span className="truncate">{option.label}</span>
@@ -80,7 +94,9 @@ function FilterGroup({
           ))}
         </div>
       ) : (
-        <p className="rounded-md border border-dashed border-border px-3 py-4 text-xs leading-5 text-muted-foreground">暂无可用选项</p>
+        <p className="rounded-md border border-dashed border-[#dbe3dc] px-3 py-4 text-xs leading-5 text-[#334155]/55 dark:border-border dark:text-muted-foreground">
+          No available options from current project data.
+        </p>
       )}
     </section>
   )

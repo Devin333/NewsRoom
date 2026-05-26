@@ -18,7 +18,8 @@ describe("projects API client", () => {
         items: [],
         allItems: [],
         metrics: [],
-        options: { categories: [], sources: [], languages: [] },
+        options: { categories: [], sources: [], languages: [], topics: [], maturity: [] },
+        allFiltered: [],
         page: { page: 1, pageSize: 24, total: 0, hasNext: false },
         dataState: "empty",
         source: "none",
@@ -26,9 +27,19 @@ describe("projects API client", () => {
       },
     })
 
-    await fetchProjects({ q: "agent", category: "agent", sort: "growth", source: "github", language: "python" })
+    await fetchProjects({
+      q: "agent",
+      category: "agent",
+      topic: "workflow",
+      sort: "activity",
+      source: "github",
+      language: "python",
+      maturity: "rising",
+      period: "weekly",
+      limit: 12,
+    })
     expect(apiGet).toHaveBeenCalledWith(
-      "/api/projects?q=agent&category=agent&sort=growth&source=github&language=python",
+      "/api/projects?q=agent&category=agent&topic=workflow&sort=activity&source=github&language=python&maturity=rising&period=weekly&limit=12",
       undefined
     )
 
@@ -39,10 +50,15 @@ describe("projects API client", () => {
           id: "p1",
           slug: "openai-codex",
           name: "codex",
+          fullName: "openai/codex",
           description: "Terminal coding agent",
           repoUrl: "https://github.com/openai/codex",
+          scores: {},
           categoryRefs: [],
+          categories: [],
           tags: [],
+          topics: [],
+          relationCounts: { papers: 0, news: 0, community: 0 },
         },
         dataState: "ready",
         source: "artifact",
