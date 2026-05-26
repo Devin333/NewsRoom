@@ -75,7 +75,7 @@ describe("dashboard overview source", () => {
 
     expect(result.available).toBe(true)
     expect(result.overview).toBeNull()
-    expect(result.notices.join(" ")).toContain("No local cross_board artifact")
+    expect(result.notices.join(" ")).toContain("没有找到可展示的本地 cross_board 产物")
   })
 
   it("returns explicit fallback when backend and local artifacts are unavailable", async () => {

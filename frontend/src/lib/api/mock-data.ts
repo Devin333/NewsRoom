@@ -28,10 +28,10 @@ export const mockAgentRuns: AgentRun[] = [
     qualityScore: 91,
     errorCount: 0,
     steps: [
-      { id: "collect", label: "Collect sources", status: "success" },
-      { id: "cluster", label: "Cluster topics", status: "success" },
-      { id: "score", label: "Score quality", status: "success" },
-      { id: "report", label: "Generate brief", status: "success" }
+      { id: "collect", label: "采集来源", status: "success" },
+      { id: "cluster", label: "聚类主题", status: "success" },
+      { id: "score", label: "质量评分", status: "success" },
+      { id: "report", label: "生成简报", status: "success" }
     ]
   }
 ]
@@ -39,7 +39,7 @@ export const mockAgentRuns: AgentRun[] = [
 export const mockSources: SourceHealth[] = [
   {
     id: "source-official-ai",
-    name: "Official AI blogs",
+    name: "官方 AI 博客",
     type: "official_blog",
     status: "healthy",
     successRate: 99,
@@ -67,7 +67,7 @@ export const mockQualityResult: QualityGateSummary = {
   status: "passed",
   passedChecks: 11,
   totalChecks: 12,
-  summary: "Citation coverage and source freshness passed. One community source is marked for review."
+  summary: "引用覆盖和来源新鲜度已通过，一个社区来源被标记为待复核。"
 }
 
 const fallbackStories: TopStory[] = [...newsItems]
@@ -102,25 +102,25 @@ export const mockDashboardOverview: DashboardOverview = {
   generatedAt: "2026-05-23T08:42:00+08:00",
   dataState: "fallback",
   metrics: [
-    { id: "signals", label: "Today signals", value: 146, description: "Collected AI signals", delta: "+18%" },
-    { id: "news", label: "Important news", value: 58, description: "Ranked and deduplicated stories", delta: "-7 duplicates" },
-    { id: "projects", label: "Hot projects", value: 12, description: "Project radar items", delta: "+4" },
-    { id: "papers", label: "Hot papers", value: 9, description: "Paper radar items" },
-    { id: "community", label: "Community discussions", value: 21, description: "Community pulse topics" },
-    { id: "high_confidence", label: "High-confidence insights", value: 82, description: "Average quality score", delta: "+5" }
+    { id: "signals", label: "今日信号", value: 146, description: "已采集 AI 信号", delta: "+18%" },
+    { id: "news", label: "重要新闻", value: 58, description: "已排序去重新闻", delta: "-7 重复" },
+    { id: "projects", label: "热门项目", value: 12, description: "项目雷达条目", delta: "+4" },
+    { id: "papers", label: "热门论文", value: 9, description: "论文雷达条目" },
+    { id: "community", label: "社区讨论", value: 21, description: "社区脉搏话题" },
+    { id: "high_confidence", label: "高置信洞察", value: 82, description: "平均质量评分", delta: "+5" }
   ],
   brief: {
-    title: "Runtime evidence is becoming the new agent platform interface",
+    title: "运行时证据正在成为新的 Agent 平台界面",
     summary:
-      "The strongest fallback signal is that agent frameworks are turning traces, policy, and quality evidence into native runtime objects.",
+      "当前 fallback 信号显示，Agent 框架正在把 trace、策略和质量证据变成原生运行时对象。",
     keyFindings: [
-      "Agent runtime launches are making strategy decisions and step outcomes inspectable.",
-      "Coding agent benchmarks increasingly emphasize repository-level repair and verification.",
-      "Open model releases are competing on tool-use consistency, not only raw benchmark score."
+      "Agent 运行时发布正在让策略决策和步骤结果可检查。",
+      "编码 Agent 基准越来越强调仓库级修复和验证。",
+      "开放模型发布正在竞争工具使用一致性，而不只是原始基准分数。"
     ],
     coreJudgments: [
-      "Control and observability are moving from application glue into framework runtime contracts.",
-      "Teams should prioritize systems that expose evidence, review gates, and repeatable reading paths."
+      "控制与可观测性正在从应用胶水层进入框架运行时契约。",
+      "团队应优先关注能暴露证据、复核门控和可重复阅读路径的系统。"
     ],
     readingPath: fallbackStories.slice(0, 4).map((story) => ({
       id: story.id,
@@ -130,8 +130,8 @@ export const mockDashboardOverview: DashboardOverview = {
       board: story.board
     })),
     agentNotes: ["Showing local fallback"],
-    mainTrend: "Agent runtime control and observability",
-    riskNote: "Community governance signals still need review before being treated as high confidence.",
+    mainTrend: "Agent 运行时控制与可观测性",
+    riskNote: "社区治理信号仍需复核，暂不应直接视为高置信判断。",
     updatedAt: "2026-05-23T08:42:00+08:00",
     reportId: reports[0]?.id
   },
@@ -140,35 +140,35 @@ export const mockDashboardOverview: DashboardOverview = {
   techRadar: [
     {
       id: "fallback-paper",
-      name: techItems.find((item) => item.type === "paper")?.name ?? "Production RAG memory lifecycle evaluation",
-      summary: "Fallback paper radar item.",
+      name: techItems.find((item) => item.type === "paper")?.name ?? "生产 RAG 记忆生命周期评估",
+      summary: "Fallback 论文雷达条目。",
       category: "paper",
       href: "/papers"
     },
     {
       id: "fallback-project",
-      name: techItems.find((item) => item.type === "repo")?.name ?? "Auditable browser automation for agents",
-      summary: "Fallback project radar item.",
+      name: techItems.find((item) => item.type === "repo")?.name ?? "面向 Agent 的可审计浏览器自动化",
+      summary: "Fallback 项目雷达条目。",
       category: "project",
       href: "/projects"
     },
     {
       id: "fallback-framework",
-      name: techItems.find((item) => item.type === "framework")?.name ?? "Policy-aware workflow checkpoints",
-      summary: "Fallback framework radar item.",
+      name: techItems.find((item) => item.type === "framework")?.name ?? "策略感知工作流检查点",
+      summary: "Fallback 框架雷达条目。",
       category: "framework"
     }
   ],
   rightInsights: [
     {
       id: "fallback-mode",
-      title: "Fallback mode",
+      title: "Fallback 状态",
       summary: "Showing local fallback",
       tone: "warning"
     },
     {
       id: "quality",
-      title: "Quality gate",
+      title: "质量门控",
       summary: mockQualityResult.summary,
       tone: "success",
       value: `${mockQualityResult.passedChecks}/${mockQualityResult.totalChecks}`

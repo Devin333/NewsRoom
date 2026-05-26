@@ -82,7 +82,7 @@ export function adaptBoardGroupToOverview(sources: BoardOutputSource[], context:
   const missingBoards = REQUIRED_BOARDS.filter((board) => !presentBoards.has(board))
   const notices = [...(context.notices ?? [])]
   if (missingBoards.length) {
-    notices.push(`Partial cross-board overview: missing ${missingBoards.join(", ")} output.`)
+    notices.push(`部分板块产物缺失：${missingBoards.join(", ")}。`)
   }
 
   return buildOverviewFromRecords(records, {
@@ -106,8 +106,8 @@ export function adaptMockDashboardOverview(value: unknown): DashboardOverview {
   const generatedAt = legacy.brief?.updatedAt ?? new Date().toISOString()
   const topStories: TopStory[] = (legacy.topStories ?? []).slice(0, 6).map((story, index) => ({
     id: story.id || `fallback-story-${index + 1}`,
-    title: story.title || "Fallback story",
-    summary: story.summary || "Bundled fallback dashboard story.",
+    title: story.title || "Fallback 线索",
+    summary: story.summary || "本地 fallback 首页线索。",
     board: "news",
     objectId: story.id,
     href: `/news/${encodeURIComponent(story.id || `fallback-story-${index + 1}`)}`,
@@ -119,8 +119,8 @@ export function adaptMockDashboardOverview(value: unknown): DashboardOverview {
   }))
   const trendingTopics: TrendingTopic[] = (legacy.trendingTopics ?? []).slice(0, 6).map((topic, index) => ({
     id: topic.id || `fallback-topic-${index + 1}`,
-    name: topic.name || "Fallback topic",
-    summary: topic.summary || "Bundled fallback topic.",
+    name: topic.name || "Fallback 主题",
+    summary: topic.summary || "本地 fallback 主题。",
     trend: topic.trend ?? "stable",
     heatScore: topic.heatScore,
     signalCount: topic.itemCount,
@@ -131,16 +131,16 @@ export function adaptMockDashboardOverview(value: unknown): DashboardOverview {
     generatedAt,
     dataState: "fallback",
     metrics: [
-      metric("signals", "Today signals", legacy.metrics?.newsCollectedToday ?? 0, "Collected AI signals", legacy.metricDeltas?.newsCollectedToday),
-      metric("news", "Important news", legacy.metrics?.deduplicatedItems ?? topStories.length, "Ranked news stories", legacy.metricDeltas?.deduplicatedItems),
-      metric("projects", "Hot projects", 0, "Project radar items"),
-      metric("papers", "Hot papers", 0, "Paper radar items"),
-      metric("community", "Community discussions", 0, "Community pulse topics"),
-      metric("high_confidence", "High-confidence insights", legacy.metrics?.avgQualityScore ?? 0, "Quality score", legacy.metricDeltas?.avgQualityScore)
+      metric("signals", "今日信号", legacy.metrics?.newsCollectedToday ?? 0, "已采集 AI 信号", legacy.metricDeltas?.newsCollectedToday),
+      metric("news", "重要新闻", legacy.metrics?.deduplicatedItems ?? topStories.length, "已排序新闻", legacy.metricDeltas?.deduplicatedItems),
+      metric("projects", "热门项目", 0, "项目雷达条目"),
+      metric("papers", "热门论文", 0, "论文雷达条目"),
+      metric("community", "社区讨论", 0, "社区脉搏话题"),
+      metric("high_confidence", "高置信洞察", legacy.metrics?.avgQualityScore ?? 0, "质量评分", legacy.metricDeltas?.avgQualityScore)
     ],
     brief: {
-      title: legacy.brief?.title ?? "Local fallback dashboard",
-      summary: legacy.brief?.summary ?? "Showing bundled fallback data because no live cross-board output is available.",
+      title: legacy.brief?.title ?? "本地 fallback 首页",
+      summary: legacy.brief?.summary ?? "由于没有可用的实时 cross-board 产物，当前展示本地 fallback 数据。",
       keyFindings: legacy.brief?.keyFindings ?? [],
       coreJudgments: [legacy.brief?.mainTrend].filter(isNonEmptyString),
       readingPath: topStories.slice(0, 4).map((story) => ({
@@ -166,7 +166,7 @@ export function adaptMockDashboardOverview(value: unknown): DashboardOverview {
     rightInsights: [
       {
         id: "fallback",
-        title: "Fallback mode",
+        title: "Fallback 状态",
         summary: "Showing local fallback",
         tone: "warning"
       }
@@ -174,7 +174,7 @@ export function adaptMockDashboardOverview(value: unknown): DashboardOverview {
     quality: {
       status: legacy.qualityGate?.status ?? "unknown",
       score: legacy.metrics?.avgQualityScore,
-      summary: legacy.qualityGate?.summary ?? "Fallback quality status.",
+      summary: legacy.qualityGate?.summary ?? "Fallback 质量状态。",
       generatedAt
     },
     notices: ["Showing local fallback"]
@@ -186,16 +186,16 @@ export function emptyDashboardOverview(notices: string[] = []): DashboardOvervie
     generatedAt: null,
     dataState: "empty",
     metrics: [
-      metric("signals", "Today signals", 0, "Collected AI signals"),
-      metric("news", "Important news", 0, "Ranked news stories"),
-      metric("projects", "Hot projects", 0, "Project radar items"),
-      metric("papers", "Hot papers", 0, "Paper radar items"),
-      metric("community", "Community discussions", 0, "Community pulse topics"),
-      metric("high_confidence", "High-confidence insights", 0, "Cross-board insights")
+      metric("signals", "今日信号", 0, "已采集 AI 信号"),
+      metric("news", "重要新闻", 0, "已排序新闻"),
+      metric("projects", "热门项目", 0, "项目雷达条目"),
+      metric("papers", "热门论文", 0, "论文雷达条目"),
+      metric("community", "社区讨论", 0, "社区脉搏话题"),
+      metric("high_confidence", "高置信洞察", 0, "跨板块洞察")
     ],
     brief: {
-      title: "No cross-board intelligence yet",
-      summary: "No backend or local cross-board output currently has displayable content.",
+      title: "暂无 cross-board 情报",
+      summary: "后端和本地产物中还没有可展示的首页情报内容。",
       keyFindings: [],
       coreJudgments: [],
       readingPath: [],
@@ -208,7 +208,7 @@ export function emptyDashboardOverview(notices: string[] = []): DashboardOvervie
     rightInsights: [],
     quality: {
       status: "unknown",
-      summary: "No quality signal is available yet.",
+      summary: "暂无质量信号。",
       generatedAt: null
     },
     notices
@@ -508,12 +508,12 @@ function buildMetrics(records: JsonRecord[], cards: JsonRecord[], insights: Json
   const insightCount = sum(stats.map((item) => numberValue(item.insight_count ?? item.insightCount))) || insights.length
 
   return [
-    metric("signals", "Today signals", signalCount, "Collected across boards"),
-    metric("news", "Important news", cardsByBoard.news, "AI news stories"),
-    metric("projects", "Hot projects", cardsByBoard.project, "Project radar items"),
-    metric("papers", "Hot papers", cardsByBoard.paper, "Paper radar items"),
-    metric("community", "Community discussions", cardsByBoard.community, "Community pulse topics"),
-    metric("high_confidence", "High-confidence insights", highConfidence || insightCount, "Reliable cross-board findings")
+    metric("signals", "今日信号", signalCount, "跨板块采集"),
+    metric("news", "重要新闻", cardsByBoard.news, "AI 新闻条目"),
+    metric("projects", "热门项目", cardsByBoard.project, "项目雷达条目"),
+    metric("papers", "热门论文", cardsByBoard.paper, "论文雷达条目"),
+    metric("community", "社区讨论", cardsByBoard.community, "社区脉搏话题"),
+    metric("high_confidence", "高置信洞察", highConfidence || insightCount, "可靠跨板块判断")
   ]
 }
 
@@ -531,18 +531,18 @@ function buildBrief(input: {
   const title = firstText([
     report?.title,
     ...input.records.map((record) => record.title),
-    input.dataState === "partial" ? "Cross-board intelligence snapshot" : "Cross-board intelligence"
-  ]) ?? "Cross-board intelligence"
+    input.dataState === "partial" ? "跨板块情报快照" : "跨板块情报"
+  ]) ?? "跨板块情报"
   const summary =
     firstText([report?.summary, ...input.records.map((record) => record.summary)]) ??
-    `Synthesized ${input.topStories.length} story(s) and ${input.trendingTopics.length} topic(s) across boards.`
+    `已跨板块汇总 ${input.topStories.length} 条重点线索和 ${input.trendingTopics.length} 个趋势主题。`
   const findings = uniqueStrings([
     ...input.insights.flatMap((insight) => [text(insight.title), text(insight.summary)]),
     ...input.topStories.slice(0, 3).map((story) => story.reason || story.summary)
   ]).slice(0, 5)
   const coreJudgments = uniqueStrings([
-    input.trendingTopics[0] ? `${input.trendingTopics[0].name} is the strongest current cross-board topic.` : undefined,
-    ...input.topStories.slice(0, 2).map((story) => `${story.title} is worth following from ${story.board}.`)
+    input.trendingTopics[0] ? `${input.trendingTopics[0].name} 是当前最强的跨板块主题。` : undefined,
+    ...input.topStories.slice(0, 2).map((story) => `${story.title} 值得从 ${story.board} 板块继续阅读。`)
   ]).slice(0, 4)
   const readingPath = input.topStories.slice(0, 4).map((story) => ({
     id: story.id,
@@ -553,7 +553,7 @@ function buildBrief(input: {
   }))
   const agentNotes = uniqueStrings([
     ...input.notices,
-    input.dataState === "partial" ? "Partial cross-board overview generated from available board outputs." : undefined
+    input.dataState === "partial" ? "已基于可用板块产物生成部分 cross-board 首页。" : undefined
   ]).slice(0, 5)
 
   return {
@@ -564,7 +564,7 @@ function buildBrief(input: {
     readingPath,
     agentNotes,
     mainTrend: input.trendingTopics[0]?.name,
-    riskNote: input.dataState === "partial" ? "Some board outputs were unavailable, so trend attribution is partial." : undefined,
+    riskNote: input.dataState === "partial" ? "部分板块产物不可用，趋势归因可能不完整。" : undefined,
     updatedAt: input.generatedAt
   }
 }
@@ -580,27 +580,27 @@ function buildRightInsights(input: {
   return [
     {
       id: "freshness",
-      title: "Data freshness",
-      summary: input.generatedAt ? `Generated at ${input.generatedAt}` : "No generated timestamp is available.",
+      title: "数据新鲜度",
+      summary: input.generatedAt ? `生成于 ${input.generatedAt}` : "暂无生成时间。",
       tone: input.generatedAt ? "info" : "warning"
     },
     {
       id: "quality",
-      title: "Quality status",
+      title: "质量状态",
       summary: input.quality.summary,
       value: input.quality.score,
       tone: qualityTone(input.quality.status)
     },
     {
       id: "source",
-      title: "Source",
-      summary: input.sourceLabel ?? "Cross-board intelligence output",
+      title: "数据来源",
+      summary: input.sourceLabel ?? "Cross-board intelligence 产物",
       tone: input.dataState === "partial" ? "warning" : "accent"
     },
     {
       id: "agent-notes",
       title: "Agent notes",
-      summary: input.notices[0] ?? "No notable source warnings.",
+      summary: input.notices[0] ?? "暂无额外来源提醒。",
       items: input.notices.slice(0, 4),
       tone: input.notices.length ? "warning" : "success"
     }
@@ -622,7 +622,7 @@ function buildQuality(records: JsonRecord[], generatedAt: string | null): Dashbo
   return {
     status,
     score: scorePercent(qualityRecord?.score ?? qualityRecord?.quality_score ?? qualityRecord?.confidence),
-    summary: firstText([qualityRecord?.summary, qualityRecord?.reason]) || (status === "passed" ? "Quality checks passed." : "Quality status requires review."),
+    summary: firstText([qualityRecord?.summary, qualityRecord?.reason]) || (status === "passed" ? "质量检查已通过。" : "质量状态需要复核。"),
     generatedAt,
     checks
   }

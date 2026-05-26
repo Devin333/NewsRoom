@@ -11,6 +11,8 @@ describe("TopStories", () => {
     expect(screen.getByRole("link", { name: /Paper story/ })).toHaveAttribute("href", "/papers/paper-1")
     expect(screen.getByRole("link", { name: /Project story/ })).toHaveAttribute("href", "/projects/project-1")
     expect(screen.getByRole("link", { name: /Community story/ })).toHaveAttribute("href", "/community/community-1")
+    expect(screen.getByText("AI 新闻")).toBeInTheDocument()
+    expect(screen.getAllByText("继续阅读")).toHaveLength(4)
   })
 })
 

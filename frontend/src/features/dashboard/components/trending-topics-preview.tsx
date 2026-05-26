@@ -16,13 +16,27 @@ const trendVariant = {
   falling: "warning"
 } as const
 
+const trendLabels: Record<TrendingTopic["trend"], string> = {
+  rising: "升温",
+  stable: "稳定",
+  falling: "回落"
+}
+
+const boardLabels: Record<TrendingTopic["boards"][number], string> = {
+  cross_board: "跨板块",
+  news: "AI 新闻",
+  paper: "论文",
+  project: "项目",
+  community: "社区"
+}
+
 export function TrendingTopicsPreview({ topics }: { topics: TrendingTopic[] }) {
   return (
     <section className="space-y-4">
       <div className="flex items-center justify-between gap-3">
-        <h2 className="text-lg font-semibold text-foreground">Trending topics</h2>
+        <h2 className="text-lg font-semibold text-foreground">趋势主题</h2>
         <Link href="/topics" className="text-sm text-accent hover:text-foreground">
-          Browse topics
+          浏览主题
         </Link>
       </div>
       <div className="grid gap-3 md:grid-cols-2">
@@ -40,13 +54,13 @@ export function TrendingTopicsPreview({ topics }: { topics: TrendingTopic[] }) {
               <div className="mt-4 flex flex-wrap items-center gap-2">
                 <Badge variant={trendVariant[topic.trend]} className="gap-1">
                   <TrendIcon className="h-3 w-3" />
-                  {topic.trend}
+                  {trendLabels[topic.trend]}
                 </Badge>
-                {topic.heatScore !== undefined ? <Badge variant="accent">Heat {topic.heatScore}</Badge> : null}
-                {topic.signalCount !== undefined ? <Badge variant="default">{topic.signalCount} signals</Badge> : null}
+                {topic.heatScore !== undefined ? <Badge variant="accent">热度 {topic.heatScore}</Badge> : null}
+                {topic.signalCount !== undefined ? <Badge variant="default">{topic.signalCount} 个信号</Badge> : null}
                 {topic.boards.slice(0, 3).map((board) => (
                   <Badge key={board} variant="muted">
-                    {board}
+                    {boardLabels[board] ?? board}
                   </Badge>
                 ))}
               </div>

@@ -3,11 +3,11 @@
 import { RefreshCcw } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card } from "@/components/ui/card"
 import { EmptyState } from "@/components/common/empty-state"
 import { ErrorState } from "@/components/common/error-state"
 import { PageSkeleton } from "@/components/common/loading-skeleton"
 import { PageHeader } from "@/components/layout/page-header"
+import { DashboardFreshnessBar, DashboardStateNotice } from "@/features/dashboard/components/dashboard-state-panels"
 import { IntelligenceBrief } from "@/features/dashboard/components/intelligence-brief"
 import { MetricsStrip } from "@/features/dashboard/components/metrics-strip"
 import { RightInsightPanel } from "@/features/dashboard/components/right-insight-panel"
@@ -34,8 +34,8 @@ export function DashboardHomePage() {
       <div className="space-y-6">
         <DashboardHeader />
         <ErrorState
-          title="Dashboard overview failed"
-          message={error instanceof Error ? error.message : "Unable to load dashboard overview."}
+          title="首页情报加载失败"
+          message={error instanceof Error ? error.message : "暂时无法加载首页情报。"}
           onRetry={() => void refetch()}
         />
       </div>
@@ -47,12 +47,12 @@ export function DashboardHomePage() {
       <div className="space-y-6">
         <DashboardHeader overview={data} />
         <EmptyState
-          title="No cross-board intelligence yet"
-          description="No backend or local cross-board output currently has displayable content."
+          title="暂无 cross-board 情报"
+          description="后端和本地产物中还没有可展示的首页情报内容。"
           action={
             <Button variant="outline" size="sm" onClick={() => void refetch()}>
               <RefreshCcw className="h-4 w-4" />
-              Refresh
+              刷新
             </Button>
           }
         />
@@ -63,7 +63,8 @@ export function DashboardHomePage() {
   return (
     <div className="space-y-6">
       <DashboardHeader overview={data} />
-      <DashboardNotices overview={data} />
+      <DashboardStateNotice overview={data} />
+      <DashboardFreshnessBar overview={data} />
       <MetricsStrip overview={data} />
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
         <div className="min-w-0 space-y-6">
@@ -81,43 +82,20 @@ export function DashboardHomePage() {
 function DashboardHeader({ overview }: { overview?: DashboardOverview | null }) {
   return (
     <PageHeader
-      eyebrow="Home / Intelligence Brief"
-      title="Cross-board Intelligence"
-      description="Daily synthesis across AI news, project radar, paper radar, and community pulse."
+      eyebrow="首页 / Cross-board Intelligence"
+      title="今日情报"
+      description="汇总 AI 新闻、项目雷达、论文雷达与社区脉搏，给出跨板块摘要、趋势归因和推荐阅读路径。"
       actions={
         overview ? (
           <>
             <Badge variant={overview.dataState === "fallback" ? "warning" : overview.dataState === "partial" ? "accent" : "success"}>
-              {overview.dataState}
+              {stateLabel(overview.dataState)}
             </Badge>
-            <Badge variant="muted">{overview.generatedAt ? `Fresh ${formatDate(overview.generatedAt)}` : "No timestamp"}</Badge>
+            <Badge variant="muted">{overview.generatedAt ? `更新 ${formatDate(overview.generatedAt)}` : "暂无时间戳"}</Badge>
           </>
         ) : null
       }
     />
-  )
-}
-
-function DashboardNotices({ overview }: { overview: DashboardOverview }) {
-  const notices = overview.dataState === "fallback" && !overview.notices?.includes("Showing local fallback")
-    ? ["Showing local fallback", ...(overview.notices ?? [])]
-    : overview.notices ?? []
-
-  if (!notices.length && overview.dataState !== "partial") {
-    return null
-  }
-
-  return (
-    <Card className="flex flex-col gap-3 p-4 text-sm text-muted-foreground md:flex-row md:items-center md:justify-between">
-      <div className="flex flex-wrap items-center gap-2">
-        <Badge variant={overview.dataState === "fallback" ? "warning" : "accent"}>
-          {overview.dataState === "fallback" ? "Showing local fallback" : "Partial data"}
-        </Badge>
-        {notices.slice(0, 3).map((notice) => (
-          <span key={notice}>{notice}</span>
-        ))}
-      </div>
-    </Card>
   )
 }
 
@@ -126,10 +104,17 @@ function formatDate(value: string) {
   if (Number.isNaN(date.getTime())) {
     return value
   }
-  return new Intl.DateTimeFormat("en-US", {
+  return new Intl.DateTimeFormat("zh-CN", {
     month: "short",
     day: "numeric",
     hour: "2-digit",
     minute: "2-digit"
   }).format(date)
+}
+
+function stateLabel(state: DashboardOverview["dataState"]) {
+  if (state === "fallback") return "本地 fallback"
+  if (state === "partial") return "部分数据"
+  if (state === "empty") return "暂无数据"
+  return "已就绪"
 }

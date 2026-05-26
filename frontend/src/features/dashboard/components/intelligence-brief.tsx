@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowRight, CheckCircle2, Route } from "lucide-react"
+import { AlertTriangle, ArrowRight, Bot, CheckCircle2, Route } from "lucide-react"
 import Link from "next/link"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -11,17 +11,18 @@ export function IntelligenceBrief({ brief }: { brief: DashboardOverview["brief"]
       <CardContent className="p-5">
         <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
           <div className="min-w-0">
-            <Badge variant="accent">Today intelligence brief</Badge>
+            <Badge variant="accent">今日情报简报</Badge>
             <h2 className="mt-3 text-xl font-semibold text-foreground">{brief.title}</h2>
           </div>
-          <p className="text-xs text-muted-foreground">{brief.updatedAt ? `Updated ${formatDateTime(brief.updatedAt)}` : "No timestamp"}</p>
+          <p className="text-xs text-muted-foreground">{brief.updatedAt ? `更新于 ${formatDateTime(brief.updatedAt)}` : "暂无时间戳"}</p>
         </div>
 
-        <p className="mt-4 line-clamp-5 text-sm leading-6 text-muted-foreground">{brief.summary}</p>
+        <p className="mt-4 text-xs font-semibold uppercase text-muted-foreground">今日摘要</p>
+        <p className="mt-2 line-clamp-5 text-sm leading-6 text-muted-foreground">{brief.summary}</p>
 
         <div className="mt-5 grid gap-4 lg:grid-cols-[1fr_0.9fr]">
           <div>
-            <h3 className="text-sm font-semibold text-foreground">Key findings</h3>
+            <h3 className="text-sm font-semibold text-foreground">关键发现</h3>
             <ul className="mt-3 space-y-2">
               {brief.keyFindings.length ? (
                 brief.keyFindings.map((finding) => (
@@ -31,17 +32,21 @@ export function IntelligenceBrief({ brief }: { brief: DashboardOverview["brief"]
                   </li>
                 ))
               ) : (
-                <li className="text-sm text-muted-foreground">No key findings have been published yet.</li>
+                <li className="text-sm text-muted-foreground">暂无关键发现。</li>
               )}
             </ul>
           </div>
 
           <div className="space-y-3">
             <div className="rounded-md border border-border bg-secondary/50 p-3">
-              <p className="text-xs uppercase text-muted-foreground">Core judgment</p>
-              <p className="mt-1 text-sm text-foreground">
-                {brief.coreJudgments[0] ?? brief.mainTrend ?? "Waiting for cross-board judgment."}
-              </p>
+              <p className="text-xs uppercase text-muted-foreground">核心判断</p>
+              <div className="mt-2 space-y-2">
+                {(brief.coreJudgments.length ? brief.coreJudgments : [brief.mainTrend ?? "等待跨板块判断。"]).map((judgment) => (
+                  <p key={judgment} className="text-sm leading-5 text-foreground">
+                    {judgment}
+                  </p>
+                ))}
+              </div>
             </div>
             {brief.riskNote ? (
               <div className="rounded-md border border-warning/30 bg-warning/10 p-3">
@@ -57,7 +62,7 @@ export function IntelligenceBrief({ brief }: { brief: DashboardOverview["brief"]
         <div className="mt-5">
           <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
             <Route className="h-4 w-4 text-accent" />
-            Recommended reading path
+            推荐阅读路径
           </h3>
           <div className="mt-3 flex flex-wrap gap-2">
             {brief.readingPath.length ? (
@@ -70,7 +75,21 @@ export function IntelligenceBrief({ brief }: { brief: DashboardOverview["brief"]
                 </Button>
               ))
             ) : (
-              <span className="text-sm text-muted-foreground">No reading path is available yet.</span>
+              <span className="text-sm text-muted-foreground">暂无推荐阅读路径。</span>
+            )}
+          </div>
+        </div>
+
+        <div className="mt-5 rounded-md border border-border bg-secondary/30 p-3">
+          <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
+            <Bot className="h-4 w-4 text-accent" />
+            Agent notes
+          </h3>
+          <div className="mt-2 space-y-1 text-sm leading-6 text-muted-foreground">
+            {brief.agentNotes.length ? (
+              brief.agentNotes.slice(0, 4).map((note) => <p key={note}>{note}</p>)
+            ) : (
+              <p>暂无 Agent 备注。</p>
             )}
           </div>
         </div>
@@ -84,7 +103,7 @@ function formatDateTime(value: string) {
   if (Number.isNaN(date.getTime())) {
     return value
   }
-  return new Intl.DateTimeFormat("en-US", {
+  return new Intl.DateTimeFormat("zh-CN", {
     month: "short",
     day: "numeric",
     hour: "2-digit",

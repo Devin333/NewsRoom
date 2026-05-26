@@ -13,13 +13,22 @@ const categoryIcon = {
   community: Sparkles
 }
 
+const categoryLabels: Record<TechRadarItem["category"], string> = {
+  paper: "论文",
+  project: "项目",
+  framework: "框架",
+  model: "模型",
+  tool: "工具",
+  community: "社区"
+}
+
 export function TechRadarPreview({ radar }: { radar: TechRadarItem[] }) {
   return (
     <section className="space-y-4">
       <div className="flex items-center justify-between gap-3">
-        <h2 className="text-lg font-semibold text-foreground">Tech radar preview</h2>
+        <h2 className="text-lg font-semibold text-foreground">技术雷达预览</h2>
         <Link href="/projects" className="text-sm text-accent hover:text-foreground">
-          Open radar
+          打开雷达
         </Link>
       </div>
       <div className="grid gap-3 md:grid-cols-3">
@@ -31,8 +40,8 @@ export function TechRadarPreview({ radar }: { radar: TechRadarItem[] }) {
                 <Icon className="h-4 w-4" />
               </span>
               <div className="mt-4 flex flex-wrap gap-2">
-                <Badge variant="accent">{item.category}</Badge>
-                {item.score !== undefined ? <Badge variant="muted">Score {item.score}</Badge> : null}
+                <Badge variant="accent">{categoryLabels[item.category]}</Badge>
+                {item.score !== undefined ? <Badge variant="muted">评分 {item.score}</Badge> : null}
               </div>
               <h3 className="mt-3 text-sm font-semibold leading-5 text-foreground">{item.name}</h3>
               <p className="mt-2 line-clamp-3 text-sm leading-5 text-muted-foreground">{item.summary}</p>

@@ -56,7 +56,7 @@ export async function getDashboardOverview(): Promise<DashboardOverview> {
     return withNotices(adaptMockDashboardOverview(mockDashboardOverview), [...notices, "Showing local fallback"])
   }
 
-  return emptyDashboardOverview(notices.length ? notices : ["No displayable cross-board content was found."])
+  return emptyDashboardOverview(notices.length ? notices : ["没有找到可展示的 cross-board 内容。"])
 }
 
 export async function loadBackendDashboardOverview(): Promise<SourceResult> {
@@ -66,7 +66,7 @@ export async function loadBackendDashboardOverview(): Promise<SourceResult> {
     return {
       available: false,
       overview: null,
-      notices: [`Backend run lookup failed: ${runsResult.errorMessage}`]
+      notices: [`后端运行列表读取失败：${runsResult.errorMessage}`]
     }
   }
 
@@ -105,7 +105,7 @@ export async function loadBackendDashboardOverview(): Promise<SourceResult> {
       return { available: true, overview, notices }
     }
   } else {
-    notices.push(`Backend latest report lookup failed: ${latestReport.errorMessage}`)
+    notices.push(`后端最新报告读取失败：${latestReport.errorMessage}`)
   }
 
   const reportList = await safeApiGet<{ reports?: unknown; items?: unknown }>("/api/v1/reports?limit=10")
@@ -125,7 +125,7 @@ export async function loadBackendDashboardOverview(): Promise<SourceResult> {
   return {
     available: true,
     overview: null,
-    notices: [...notices, "Backend did not expose a populated cross_board output."]
+    notices: [...notices, "后端没有返回可展示的 cross_board 产物。"]
   }
 }
 
@@ -136,7 +136,7 @@ export function loadLocalDashboardOverview(): SourceResult {
     return {
       available: false,
       overview: null,
-      notices: [`No local runs root found at ${roots.join(", ")}.`]
+      notices: [`没有找到本地 runs 目录：${roots.join(", ")}。`]
     }
   }
 
@@ -148,7 +148,7 @@ export function loadLocalDashboardOverview(): SourceResult {
         dataState: "ready",
         generatedAt: generatedAtFromPayload(payload) ?? candidate.modifiedAt,
         sourceLabel: `Local ${candidate.name}/${fileName}`,
-        notices: [`Loaded local cross-board artifact from ${candidate.name}.`]
+        notices: [`已从本地产物 ${candidate.name} 读取 cross-board 情报。`]
       })
       if (overview && hasDashboardContent(overview)) {
         return { available: true, overview, notices: [] }
@@ -160,7 +160,7 @@ export function loadLocalDashboardOverview(): SourceResult {
   if (grouped.length) {
     const overview = adaptBoardGroupToOverview(grouped, {
       sourceLabel: "Local productized board outputs",
-      notices: ["Built partial cross-board overview from local productized board outputs."]
+      notices: ["已从本地 productized board 产物生成部分 cross-board 首页。"]
     })
     if (overview && hasDashboardContent(overview)) {
       return { available: true, overview, notices: [] }
@@ -170,7 +170,7 @@ export function loadLocalDashboardOverview(): SourceResult {
   return {
     available: true,
     overview: null,
-    notices: ["No local cross_board artifact or productized board output with displayable content was found."]
+    notices: ["没有找到可展示的本地 cross_board 产物或 productized board 产物。"]
   }
 }
 
