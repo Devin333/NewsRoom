@@ -1,5 +1,13 @@
-import { TechPageClient } from "@/app/tech/tech-page-client";
+import { Suspense } from "react"
+import { PageSkeleton } from "@/components/common/loading-skeleton"
+import { ProjectRadarPage } from "@/features/projects/components/project-radar-page"
+
+export const dynamic = "force-dynamic"
 
 export default function TechReposPage() {
-  return <TechPageClient fixedType="repo" />;
+  return (
+    <Suspense fallback={<PageSkeleton />}>
+      <ProjectRadarPage />
+    </Suspense>
+  )
 }

@@ -23,6 +23,6 @@ describe("frontend surface helpers", () => {
 
     expect(getFrontendSurface()).toBe("admin")
     expect(defaultPostLoginPath()).toBe("/")
-    expect(defaultPostLoginPath("portal")).toBe("/papers")
+    expect(defaultPostLoginPath("portal")).toBe("/")
   })
 })

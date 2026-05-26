@@ -11,5 +11,5 @@ export function getFrontendSurface(): FrontendSurface {
 }
 
 export function defaultPostLoginPath(surface: FrontendSurface = getFrontendSurface()) {
-  return surface === "admin" ? "/" : "/papers"
+  return surface === "admin" ? "/" : "/"
 }

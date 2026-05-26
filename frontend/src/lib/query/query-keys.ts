@@ -1,5 +1,4 @@
 export const queryKeys = {
-  dashboard: ["dashboard"] as const,
   news: {
     all: ["news"] as const,
     list: (filters: unknown) => ["news", "list", filters] as const,

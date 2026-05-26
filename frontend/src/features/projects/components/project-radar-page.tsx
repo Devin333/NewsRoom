@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { useRouter, useSearchParams } from "next/navigation"
+import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { EmptyState } from "@/components/common/empty-state"
 import { ErrorState } from "@/components/common/error-state"
 import { PageSkeleton } from "@/components/common/loading-skeleton"
@@ -25,6 +25,7 @@ const SORT_TABS: Array<{ value: ProjectSort; label: string }> = [
 
 export function ProjectRadarPage() {
   const router = useRouter()
+  const pathname = usePathname()
   const searchParams = useSearchParams()
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false)
   const [data, setData] = useState<ProjectListResult | null>(null)
@@ -54,7 +55,7 @@ export function ProjectRadarPage() {
   function setFilters(patch: Partial<ProjectListParams>) {
     const next = { ...filters, ...patch }
     const query = filtersToSearchParams(next).toString()
-    router.replace(query ? `/projects?${query}` : "/projects", { scroll: false })
+    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false })
   }
 
   if (isLoading && !data) {

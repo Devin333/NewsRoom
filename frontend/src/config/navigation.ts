@@ -15,11 +15,9 @@ export const PORTAL_NAVIGATION: NavigationItem[] = [
     label: "Papers",
     href: "/papers",
     children: [
-      { label: "Papers", href: "/papers" },
-      { label: "Benchmarks", href: "/papers?sort=most_cited" },
-      { label: "Papers with Code", href: "/papers?method=implementation" },
-      { label: "Reading List", href: "/search?type=reading-list" },
-      { label: "Paper Digests", href: "/reports?type=paper-digests" }
+      { label: "Trending Papers", href: "/papers" },
+      { label: "Tasks", href: "/papers/tasks" },
+      { label: "Methods", href: "/papers/methods" }
     ]
   },
   {
@@ -30,7 +28,7 @@ export const PORTAL_NAVIGATION: NavigationItem[] = [
       { label: "Official Updates", href: "/news?source=official" },
       { label: "Product Updates", href: "/news?topic=product-updates" },
       { label: "Open Source", href: "/tech/repos" },
-      { label: "Community Buzz", href: "/news?source=community" }
+      { label: "Community Buzz", href: "/community" }
     ]
   },
   {

@@ -24,16 +24,18 @@ export function AppShell({ children, surface = "portal" }: { children: ReactNode
   }
 
   const isPapersRoute = pathname.startsWith("/papers")
+  const isPortalHomeRoute = pathname === "/"
+  const usesResearchFrame = isPapersRoute || isPortalHomeRoute
 
   return (
-    <div className={cn("min-h-screen text-foreground", isPapersRoute ? "font-papers-research bg-[#f7f9f6] dark:bg-background" : "bg-background")}>
+    <div className={cn("min-h-screen text-foreground", usesResearchFrame ? "font-papers-research bg-[#f7f9f6] dark:bg-background" : "bg-background")}>
       {isPapersRoute ? (
         <PapersHeader locale={locale} theme={theme} onLocaleChange={setLocale} onThemeChange={setTheme} />
       ) : (
         <AppHeader />
       )}
-      <main className={cn("min-w-0", isPapersRoute ? "px-5 pb-16 pt-0 sm:px-8 2xl:px-12" : "px-4 py-6 sm:px-6")}>
-        <div className={cn("mx-auto w-full", isPapersRoute ? "max-w-[1920px]" : "max-w-[1480px]")}>{children}</div>
+      <main className={cn("min-w-0", usesResearchFrame ? "px-5 pb-16 pt-0 sm:px-8 2xl:px-12" : "px-4 py-6 sm:px-6")}>
+        <div className={cn("mx-auto w-full", usesResearchFrame ? "max-w-[1920px]" : "max-w-[1480px]")}>{children}</div>
       </main>
     </div>
   )

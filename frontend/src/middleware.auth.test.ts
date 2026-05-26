@@ -36,6 +36,14 @@ describe("auth middleware", () => {
     expect(response.headers.get("location")).toBeNull()
   })
 
+  it("keeps the Portal root public", () => {
+    process.env.NEWSROOM_FRONTEND_SURFACE = "portal"
+
+    const response = middleware(request("/"))
+
+    expect(response.headers.get("location")).toBeNull()
+  })
+
   it("keeps login and auth APIs public", () => {
     expect(middleware(request("/login")).headers.get("location")).toBeNull()
     expect(middleware(request("/api/auth/session")).headers.get("location")).toBeNull()
@@ -47,7 +55,7 @@ describe("auth middleware", () => {
     const response = middleware(request("/studio/runs"))
 
     expect(response.status).toBe(307)
-    expect(response.headers.get("location")).toBe("http://localhost/papers")
+    expect(response.headers.get("location")).toBe("http://localhost/")
   })
 
   it("redirects Portal routes away from the Admin surface when an origin is configured", () => {
@@ -67,6 +75,14 @@ describe("auth middleware", () => {
     expect(middleware(request("/studio/runs")).headers.get("location")).toBe(
       "http://localhost/login?next=%2Fstudio%2Fruns"
     )
+  })
+
+  it("redirects authenticated Admin root to Studio", () => {
+    process.env.NEWSROOM_FRONTEND_SURFACE = "admin"
+
+    const response = middleware(request("/", "newsroom_session=session-token"))
+
+    expect(response.headers.get("location")).toBe("http://localhost/studio")
   })
 })
 

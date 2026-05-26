@@ -1,17 +1,9 @@
-import { DashboardHomePage } from "@/features/dashboard/components/dashboard-home-page"
-import { StudioShell } from "@/features/studio/shared/components/studio-shell"
-import { getFrontendSurface } from "@/lib/frontend-surface"
+import { PortalHomePage } from "@/features/portal/portal-home-page"
+import { getPortalHomeData } from "@/features/portal/portal-home-data"
 
 export const dynamic = "force-dynamic"
 
-export default function HomePage() {
-  if (getFrontendSurface() === "admin") {
-    return (
-      <StudioShell>
-        <DashboardHomePage />
-      </StudioShell>
-    )
-  }
-
-  return <DashboardHomePage />
+export default async function HomePage() {
+  const data = await getPortalHomeData()
+  return <PortalHomePage data={data} />
 }

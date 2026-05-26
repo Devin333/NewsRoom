@@ -62,7 +62,7 @@ describe("LoginPage", () => {
     await waitFor(() => {
       expect(bootstrapAccount).toHaveBeenCalledWith("admin", "correct horse")
     })
-    expect(navigation.replace).toHaveBeenCalledWith("/papers")
+    expect(navigation.replace).toHaveBeenCalledWith("/")
     expect(navigation.refresh).toHaveBeenCalled()
   })
 
@@ -102,7 +102,7 @@ describe("LoginPage", () => {
     render(<LoginPage />)
 
     await waitFor(() => {
-      expect(navigation.replace).toHaveBeenCalledWith("/papers")
+      expect(navigation.replace).toHaveBeenCalledWith("/")
     })
   })
 

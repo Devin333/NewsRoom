@@ -2,16 +2,17 @@ import { NextRequest, NextResponse } from "next/server"
 import { NEWSROOM_SESSION_COOKIE } from "@/lib/auth/session"
 import { getFrontendSurface, type FrontendSurface } from "@/lib/frontend-surface"
 
-const PORTAL_PREFIXES = ["/news", "/topics", "/tech", "/reports", "/search", "/papers"]
+const PORTAL_PREFIXES = ["/news", "/topics", "/tech", "/reports", "/search", "/papers", "/community"]
 const ADMIN_PREFIXES = ["/studio", "/admin"]
 
 export function middleware(request: NextRequest) {
   const { pathname, search } = request.nextUrl
-  if (isPublicPath(pathname)) {
+  const surface = getFrontendSurface()
+
+  if (isPublicPath(pathname, surface)) {
     return NextResponse.next()
   }
 
-  const surface = getFrontendSurface()
   const surfaceRedirect = getCrossSurfaceRedirect(request, surface)
   if (surfaceRedirect) {
     return surfaceRedirect
@@ -23,6 +24,12 @@ export function middleware(request: NextRequest) {
 
   const sessionCookie = request.cookies.get(NEWSROOM_SESSION_COOKIE)?.value
   if (sessionCookie) {
+    if (surface === "admin" && pathname === "/") {
+      const studioUrl = request.nextUrl.clone()
+      studioUrl.pathname = "/studio"
+      studioUrl.search = ""
+      return NextResponse.redirect(studioUrl)
+    }
     return NextResponse.next()
   }
 
@@ -33,8 +40,9 @@ export function middleware(request: NextRequest) {
   return NextResponse.redirect(loginUrl)
 }
 
-function isPublicPath(pathname: string) {
+function isPublicPath(pathname: string, surface: FrontendSurface) {
   return (
+    (surface === "portal" && pathname === "/") ||
     pathname.startsWith("/login") ||
     pathname.startsWith("/api/") ||
     pathname.startsWith("/_next/") ||
@@ -61,7 +69,7 @@ function getCrossSurfaceRedirect(request: NextRequest, surface: FrontendSurface)
   const { pathname, search } = request.nextUrl
 
   if (surface === "portal" && isAdminPath(pathname)) {
-    return redirectToSurface(request, process.env.NEWSROOM_ADMIN_ORIGIN, `${pathname}${search}`, "/papers")
+    return redirectToSurface(request, process.env.NEWSROOM_ADMIN_ORIGIN, `${pathname}${search}`, "/")
   }
 
   if (surface === "admin" && isPortalPath(pathname)) {

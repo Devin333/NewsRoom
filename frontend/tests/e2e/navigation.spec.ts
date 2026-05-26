@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test"
+import { expect, test, type Page } from "@playwright/test"
 
 const routes = [
   "/",
@@ -15,6 +15,8 @@ const routes = [
   "/tech/papers",
   "/tech/repos",
   "/tech/frameworks",
+  "/community",
+  "/topics?view=evidence-graph",
   "/reports",
   "/reports/report-daily-ai-runtime",
   "/search?q=agent&type=topic",
@@ -32,14 +34,33 @@ const routes = [
 ]
 
 for (const route of routes) {
-  test(`${route} is reachable`, async ({ page }) => {
+  test(`${route} is reachable`, async ({ page, baseURL }) => {
+    if (route !== "/") {
+      await authenticate(page, baseURL)
+    }
+
     const response = await page.goto(route)
     expect(response?.ok()).toBeTruthy()
     await expect(page.locator("body")).toBeVisible()
   })
 }
 
-test("/papers uses one breadcrumb and real paper actions", async ({ page }) => {
+test("/ renders the Portal homepage modules", async ({ page }) => {
+  await page.goto("/")
+
+  await expect(page.getByRole("heading", { name: /AI intelligence front page/i })).toBeVisible()
+  const modules = page.getByRole("region", { name: "Portal modules" })
+  await expect(modules.getByRole("link", { name: /View AI News/i })).toBeVisible()
+  await expect(modules.getByRole("link", { name: /View Project Radar/i })).toBeVisible()
+  await expect(modules.getByRole("link", { name: /View Paper Radar/i })).toBeVisible()
+  await expect(modules.getByRole("link", { name: /View Community Pulse/i })).toBeVisible()
+  await expect(modules.getByRole("link", { name: /View Cross-board Evidence Graph/i })).toBeVisible()
+  await expect(modules.getByRole("link", { name: /View Reports \/ Briefings/i })).toBeVisible()
+  await expect(page.locator("body")).not.toContainText("Quality Gate")
+})
+
+test("/papers uses one breadcrumb and real paper actions", async ({ page, baseURL }) => {
+  await authenticate(page, baseURL)
   await page.goto("/papers")
 
   await expect(page.locator("nav[aria-label='Papers breadcrumb']")).toHaveCount(1)
@@ -56,7 +77,8 @@ test("/papers uses one breadcrumb and real paper actions", async ({ page }) => {
   expect(pdfHref).toMatch(/\/pdf\/|\.pdf($|\?)/)
 })
 
-test("/papers search, period tabs, and drawer deep-link work", async ({ page }) => {
+test("/papers search, period tabs, and drawer deep-link work", async ({ page, baseURL }) => {
+  await authenticate(page, baseURL)
   await page.goto("/papers")
 
   const main = page.locator("main")
@@ -74,7 +96,8 @@ test("/papers search, period tabs, and drawer deep-link work", async ({ page }) 
   await expect(page).toHaveURL(/\/papers$/)
 })
 
-test("/papers domain links open task detail view", async ({ page }) => {
+test("/papers domain links open task detail view", async ({ page, baseURL }) => {
+  await authenticate(page, baseURL)
   await page.goto("/papers")
 
   await page.locator("a[href='/papers/tasks/agents']").first().click()
@@ -85,3 +108,29 @@ test("/papers domain links open task detail view", async ({ page }) => {
   await expect(page.locator("aside a[href^='/papers/tasks/']").first()).toBeVisible()
   await expect(page.locator("aside a[href^='/papers/methods/']").first()).toBeVisible()
 })
+
+async function authenticate(page: Page, baseURL: string | undefined) {
+  await page.route("**/api/auth/session", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        success: true,
+        data: {
+          session: {
+            userId: "e2e-user",
+            username: "e2e",
+            role: "admin"
+          }
+        }
+      })
+    })
+  })
+  await page.context().addCookies([
+    {
+      name: "newsroom_session",
+      value: "session-token",
+      url: baseURL ?? "http://127.0.0.1:3000"
+    }
+  ])
+}
