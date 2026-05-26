@@ -11,6 +11,7 @@ type LoadedCommunityData = {
   payload?: unknown
   source: CommunityListResult["source"]
   notice?: string
+  generatedAt?: string
 }
 
 type RunListResponse = {
@@ -34,6 +35,7 @@ const COMMUNITY_WORKFLOW_ID = "community_pulse-productized-board"
 const MAX_ARTIFACT_BYTES = 8_000_000
 const BACKEND_ARTIFACT_KEYS = ["board_output", "output"] as const
 const LOCAL_ARTIFACT_FILES = ["board_output.json", "output.json"] as const
+const LOCAL_SPLIT_FILES = ["cards.json", "detail_pages.json"] as const
 
 export async function getCommunityList(params: CommunityListParams): Promise<CommunityListResult> {
   const loaded = await loadCommunityData()
@@ -42,7 +44,7 @@ export async function getCommunityList(params: CommunityListParams): Promise<Com
   return buildCommunityListResult(adapted.topics, params, {
     source: adapted.topics.length ? loaded.source : "empty",
     dataState: adapted.dataState,
-    generatedAt: adapted.generatedAt,
+    generatedAt: adapted.generatedAt ?? loaded.generatedAt,
     notices: adapted.notices
   })
 }
@@ -62,18 +64,18 @@ async function loadCommunityData(): Promise<LoadedCommunityData> {
 
   return {
     source: "empty",
-    notice: "No backend output or local community_pulse artifact was found."
+    notice: "未找到后端输出或本地 community_pulse artifact。"
   }
 }
 
 async function loadBackendBoardOutput(): Promise<LoadedCommunityData> {
   const runsResult = await safeApiGet<RunListResponse>(
-    `/api/v1/runs?limit=50&workflow_id=${encodeURIComponent(COMMUNITY_WORKFLOW_ID)}`
+    `/api/v1/runs?limit=80&workflow_id=${encodeURIComponent(COMMUNITY_WORKFLOW_ID)}`
   )
   if (!runsResult.ok) {
     return {
       source: "empty",
-      notice: `Backend community run lookup failed: ${runsResult.errorMessage}`
+      notice: `后端社区脉搏运行查询失败：${runsResult.errorMessage}`
     }
   }
 
@@ -92,7 +94,8 @@ async function loadBackendBoardOutput(): Promise<LoadedCommunityData> {
         return {
           payload,
           source: "backend",
-          notice: `Loaded from backend community_pulse ${artifactKey} artifact.`
+          notice: `已加载后端 community_pulse ${artifactKey} artifact。`,
+          generatedAt: adapted.generatedAt ?? runTimestamp(run)
         }
       }
     }
@@ -100,7 +103,7 @@ async function loadBackendBoardOutput(): Promise<LoadedCommunityData> {
 
   return {
     source: "empty",
-    notice: "Backend did not expose a populated community_pulse board artifact."
+    notice: "后端没有提供包含可展示话题的 community_pulse board artifact。"
   }
 }
 
@@ -114,19 +117,23 @@ async function loadBackendArtifact(runId: string, artifactKey: (typeof BACKEND_A
 async function loadLatestArtifactBoardOutput(): Promise<LoadedCommunityData> {
   const runDirs = await communityRunDirs()
   for (const candidate of runDirs) {
-    const payload = await readFirstJson(candidate.runDir, LOCAL_ARTIFACT_FILES)
+    const payload = await readLocalPayload(candidate)
     if (payload !== undefined) {
+      const adapted = adaptCommunityBoardPayload(payload)
+      if (!adapted.topics.length) continue
+
       return {
         payload,
         source: "artifact",
-        notice: `Loaded from local community_pulse artifact: ${candidate.name}.`
+        notice: `已加载本地 community_pulse artifact：${candidate.name}。`,
+        generatedAt: adapted.generatedAt ?? candidate.modifiedAt
       }
     }
   }
 
   return {
     source: "empty",
-    notice: "No local community_pulse artifact could be read."
+    notice: "没有可读取的本地 community_pulse artifact。"
   }
 }
 
@@ -154,9 +161,9 @@ async function communityRunDirs() {
 }
 
 function runsRoots() {
-  if (process.env.NEWSROOM_RUNS_ROOT) {
-    return [process.env.NEWSROOM_RUNS_ROOT]
-  }
+  const configuredRoots = [process.env.NEWSROOM_RUNS_DIR, process.env.NEWSROOM_RUNS_ROOT].filter(Boolean) as string[]
+  if (configuredRoots.length) return uniquePaths(configuredRoots)
+
   return uniquePaths([
     path.resolve(process.cwd(), ".newsroom", "runs"),
     path.resolve(process.cwd(), "..", ".newsroom", "runs")
@@ -170,6 +177,25 @@ async function readFirstJson(runDir: string, filenames: readonly string[]) {
     if (payload !== undefined) return payload
   }
   return undefined
+}
+
+async function readLocalPayload(candidate: LocalCommunityCandidate) {
+  const directPayload = await readFirstJson(candidate.runDir, LOCAL_ARTIFACT_FILES)
+  if (directPayload !== undefined && adaptCommunityBoardPayload(directPayload).topics.length) {
+    return directPayload
+  }
+
+  const cardsPayload = await readJson(path.join(candidate.runDir, LOCAL_SPLIT_FILES[0]))
+  const cards = jsonArray(cardsPayload, "cards")
+  if (!cards.length) return undefined
+
+  const detailPagesPayload = await readJson(path.join(candidate.runDir, LOCAL_SPLIT_FILES[1]))
+  return {
+    board_type: "community_pulse",
+    cards,
+    detail_pages: jsonArray(detailPagesPayload, "detail_pages"),
+    generated_at: manifestTimestamp(candidate.manifest) ?? candidate.modifiedAt
+  }
 }
 
 async function readJson(filePath: string) {
@@ -243,13 +269,28 @@ function compareRunTime(left: JsonRecord, right: JsonRecord) {
 }
 
 function runTime(run: JsonRecord) {
-  const value = text(run.finished_at) || text(run.finishedAt) || text(run.started_at) || text(run.startedAt)
+  const value = runTimestamp(run)
   const time = Date.parse(value)
   return Number.isFinite(time) ? time : 0
 }
 
+function runTimestamp(run: JsonRecord) {
+  return text(run.finished_at) || text(run.finishedAt) || text(run.completed_at) || text(run.started_at) || text(run.startedAt)
+}
+
+function manifestTimestamp(manifest?: JsonRecord) {
+  return manifest ? runTimestamp(manifest) : ""
+}
+
 function arrayRecords(value: unknown): JsonRecord[] {
   return Array.isArray(value) ? value.map(asRecord).filter((item): item is JsonRecord => item !== undefined) : []
+}
+
+function jsonArray(value: unknown, key: string): unknown[] {
+  if (Array.isArray(value)) return value
+  const record = asRecord(value)
+  const nested = record?.[key]
+  return Array.isArray(nested) ? nested : []
 }
 
 function asRecord(value: unknown): JsonRecord | undefined {

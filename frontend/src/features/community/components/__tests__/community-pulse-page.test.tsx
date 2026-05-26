@@ -11,7 +11,7 @@ describe("Community Pulse UI", () => {
 
     render(<CommunityPulsePage result={result} filters={{}} onChange={vi.fn()} />)
 
-    expect(screen.getByText("No community topics")).toBeInTheDocument()
+    expect(screen.getByText("暂无社区话题")).toBeInTheDocument()
   })
 
   it("renders community topic cards and forwards filter interactions", () => {
@@ -23,23 +23,23 @@ describe("Community Pulse UI", () => {
     expect(screen.getByText("Agent memory debate")).toBeInTheDocument()
     expect(screen.getByText("Memory paper")).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole("button", { name: "Positive" }))
+    fireEvent.click(screen.getByRole("button", { name: "正面" }))
     expect(onChange).toHaveBeenCalledWith({ sentiment: "positive" })
 
-    fireEvent.change(screen.getByRole("textbox", { name: "Search community topics" }), {
+    fireEvent.change(screen.getByRole("textbox", { name: "搜索社区话题" }), {
       target: { value: "latency" }
     })
-    fireEvent.click(screen.getByRole("button", { name: "Search" }))
+    fireEvent.click(screen.getByRole("button", { name: "搜索" }))
     expect(onChange).toHaveBeenLastCalledWith({ q: "latency" })
   })
 
   it("renders Community Pulse detail sections from public data", () => {
     render(<CommunityTopicDetail topic={sampleDetail()} />)
 
-    expect(screen.getByText("Top discussions")).toBeInTheDocument()
-    expect(screen.getByText("Representative comments")).toBeInTheDocument()
+    expect(screen.getByText("高热讨论")).toBeInTheDocument()
+    expect(screen.getByText("代表性评论")).toBeInTheDocument()
     expect(screen.getByText("Memory paper")).toBeInTheDocument()
-    expect(screen.getByText("Open discussion")).toBeInTheDocument()
+    expect(screen.getByText("打开讨论")).toBeInTheDocument()
   })
 })
 
@@ -99,7 +99,7 @@ function sampleDetail(): CommunityTopicDetailType {
     timeline: [
       {
         id: "timeline-1",
-        label: "Published",
+        label: "发布",
         timestamp: "2026-05-24T00:00:00Z"
       }
     ],

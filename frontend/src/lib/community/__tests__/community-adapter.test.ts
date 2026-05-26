@@ -62,6 +62,57 @@ describe("community board adapter", () => {
     expect(JSON.stringify(result)).not.toContain("secret")
   })
 
+  it("reads nested backend artifacts, provenance refs, and board-specific score fields", () => {
+    const result = adaptCommunityBoardPayload({
+      content: {
+        board_output: {
+          board_type: "community_pulse",
+          generated_at: "2026-05-26T00:00:00Z",
+          cards: [
+            {
+              card_id: "card-backend",
+              title: "Backend community topic",
+              summary: "Public backend summary.",
+              published_at: "2026-05-25T00:00:00Z",
+              ranking_features: {
+                board_specific_features: {
+                  sentiment_divergence: "0.22",
+                  adoption_score: 0.33
+                }
+              },
+              score: {
+                factors: [{ name: "discussion_heat", value: "0.91" }]
+              },
+              provenance: {
+                source_refs: [
+                  {
+                    external_id: "reddit-1",
+                    source_name: "Reddit",
+                    source_type: "reddit",
+                    source_url: "https://reddit.com/r/LocalLLaMA/comments/1",
+                    content_excerpt: "Public provenance excerpt."
+                  }
+                ]
+              }
+            }
+          ],
+          detail_pages: [{ title: "Backend community topic", summary: "Backend detail summary." }]
+        }
+      }
+    })
+
+    expect(result.topics[0]).toMatchObject({
+      sourceType: "reddit",
+      sourceUrl: "https://reddit.com/r/LocalLLaMA/comments/1",
+      heatScore: 91,
+      controversyScore: 22,
+      adoptionScore: 33,
+      sentiment: "unknown",
+      commentCount: undefined
+    })
+    expect(result.details[0]?.summary).toBe("Backend detail summary.")
+  })
+
   it("filters and sorts topics by query, source, sentiment, topic, and score", () => {
     const topics: CommunityTopic[] = [
       topic({ id: "1", title: "Agent memory", sourceType: "hackernews", sentiment: "mixed", heatScore: 60, tags: ["agents"] }),

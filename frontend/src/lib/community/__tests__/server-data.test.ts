@@ -53,7 +53,7 @@ describe("community server data", () => {
 
     expect(mockedSafeApiGet).toHaveBeenNthCalledWith(
       1,
-      "/api/v1/runs?limit=50&workflow_id=community_pulse-productized-board"
+      "/api/v1/runs?limit=80&workflow_id=community_pulse-productized-board"
     )
     expect(mockedSafeApiGet).toHaveBeenNthCalledWith(2, "/api/v1/runs/run-community/artifacts/board_output")
     expect(result.source).toBe("backend")
@@ -90,7 +90,40 @@ describe("community server data", () => {
     expect(result.source).toBe("empty")
     expect(result.dataState).toBe("empty")
     expect(result.topics).toEqual([])
-    expect(result.notices.join(" ")).toContain("local community_pulse artifact")
+    expect(result.notices.join(" ")).toContain("本地 community_pulse artifact")
+  })
+
+  it("loads split local cards and detail_pages artifacts when board output files are absent", async () => {
+    vi.stubEnv("NEWSROOM_RUNS_ROOT", "")
+    vi.stubEnv("NEWSROOM_RUNS_DIR", tempDir)
+    mockedSafeApiGet.mockResolvedValueOnce({ ok: false, errorCode: "request_failed", errorMessage: "offline" })
+    const runDir = path.join(tempDir, "split-community_pulse")
+    await mkdir(runDir, { recursive: true })
+    await writeFile(
+      path.join(runDir, "manifest.json"),
+      JSON.stringify({
+        workflow_id: "community_pulse-productized-board",
+        run_id: "split-community_pulse",
+        finished_at: "2026-05-26T00:00:00Z"
+      }),
+      "utf8"
+    )
+    await writeFile(
+      path.join(runDir, "cards.json"),
+      JSON.stringify(boardPayload({ title: "Split community topic" }).cards),
+      "utf8"
+    )
+    await writeFile(
+      path.join(runDir, "detail_pages.json"),
+      JSON.stringify([{ title: "Split community topic", summary: "Split detail summary." }]),
+      "utf8"
+    )
+
+    const result = await getCommunityList({})
+
+    expect(result.source).toBe("artifact")
+    expect(result.topics[0]?.title).toBe("Split community topic")
+    expect(result.generatedAt).toBe("2026-05-26T00:00:00Z")
   })
 
   it("builds topic detail from the same artifact source", async () => {

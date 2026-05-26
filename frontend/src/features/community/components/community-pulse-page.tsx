@@ -44,21 +44,21 @@ export function CommunityPulsePage({
   return (
     <main className="space-y-8">
       <PageHeader
-        eyebrow="Community Pulse"
-        title="Developer community signals"
-        description="Track public developer discussions, sentiment, controversy, adoption signals, and their links to papers, projects, and news."
+        eyebrow="社区脉搏"
+        title="开发者社区信号"
+        description="追踪公开开发者讨论、情绪分歧、采用信号，以及它们和论文、项目、新闻之间的关系。"
         actions={
           <Badge tone={result.dataState === "empty" ? "warning" : "accent"}>
-            {result.source === "artifact" ? "Local artifact" : result.source === "backend" ? "Backend output" : "Empty"}
+            {result.source === "artifact" ? "本地 artifact" : result.source === "backend" ? "后端输出" : "暂无数据"}
           </Badge>
         }
       />
 
       <section className="grid gap-3 md:grid-cols-4">
-        <MetricCard label="Topics" value={result.metrics.totalTopics} />
-        <MetricCard label="Sources" value={result.metrics.activeSources} />
-        <MetricCard label="Avg heat" value={result.metrics.averageHeatScore ?? "n/a"} />
-        <MetricCard label="Mixed signals" value={result.metrics.mixedCount} />
+        <MetricCard label="话题" value={result.metrics.totalTopics} />
+        <MetricCard label="来源" value={result.metrics.activeSources} />
+        <MetricCard label="平均热度" value={result.metrics.averageHeatScore ?? "暂无"} />
+        <MetricCard label="分歧信号" value={result.metrics.mixedCount} />
       </section>
 
       <div className="grid gap-8 xl:grid-cols-[190px_minmax(0,1fr)]">
@@ -67,7 +67,7 @@ export function CommunityPulsePage({
         <section className="min-w-0 space-y-5">
           <div className="flex flex-wrap items-center gap-2 border-b border-border pb-3">
             <SegmentButton active={!filters.sentiment} onClick={() => onChange({ sentiment: undefined })}>
-              All sentiment
+              全部情绪
             </SegmentButton>
             {COMMUNITY_SENTIMENTS.map((sentiment) => (
               <SegmentButton
@@ -82,7 +82,7 @@ export function CommunityPulsePage({
 
           <div className="flex flex-wrap items-center gap-2">
             <SegmentButton active={!filters.source} onClick={() => onChange({ source: undefined })}>
-              All sources
+              全部来源
             </SegmentButton>
             {result.options.sources.map((source) => (
               <SegmentButton
@@ -101,28 +101,28 @@ export function CommunityPulsePage({
               <input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search discussions, entities, tags"
+                placeholder="搜索讨论、实体、标签"
                 className="h-10 w-full rounded-md border border-border bg-background pl-9 pr-3 text-sm text-foreground outline-none focus:border-primary"
-                aria-label="Search community topics"
+                aria-label="搜索社区话题"
               />
             </label>
             <select
               value={filters.sort ?? "trending"}
               onChange={(event) => onChange({ sort: event.target.value as CommunityListParams["sort"] })}
               className="h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none"
-              aria-label="Sort community topics"
+              aria-label="社区话题排序"
             >
-              <option value="trending">Trending</option>
-              <option value="newest">Newest</option>
-              <option value="controversial">Controversial</option>
-              <option value="adoption">Adoption</option>
+              <option value="trending">趋势优先</option>
+              <option value="newest">最新优先</option>
+              <option value="controversial">争议优先</option>
+              <option value="adoption">采用优先</option>
             </select>
             <Button type="submit" size="sm">
-              Search
+              搜索
             </Button>
             <Button type="button" variant="outline" size="sm" className="xl:hidden" onClick={() => setMobileFiltersOpen((value) => !value)}>
               <SlidersHorizontal className="size-4" />
-              Filters
+              筛选
             </Button>
           </form>
 
@@ -132,10 +132,10 @@ export function CommunityPulsePage({
 
           <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
             <span>
-              Showing {page.items.length} of {page.total}
+              显示 {page.items.length} / {page.total}
             </span>
             <span>
-              Page {page.page} of {totalPages}
+              第 {page.page} / {totalPages} 页
             </span>
           </div>
 
@@ -146,7 +146,7 @@ export function CommunityPulsePage({
               ))}
             </div>
           ) : (
-            <EmptyState title="No community topics" description="No public Community Pulse topics matched the current filters." />
+            <EmptyState title="暂无社区话题" description="当前筛选条件下没有匹配的公开社区脉搏话题。" />
           )}
 
           {result.notices.length ? (
@@ -159,10 +159,10 @@ export function CommunityPulsePage({
 
           <div className="flex items-center justify-between gap-3">
             <Button variant="outline" disabled={page.page <= 1} onClick={() => onChange({ page: page.page - 1 })}>
-              Previous
+              上一页
             </Button>
             <Button variant="outline" disabled={!page.hasNext} onClick={() => onChange({ page: page.page + 1 })}>
-              Next
+              下一页
             </Button>
           </div>
         </section>

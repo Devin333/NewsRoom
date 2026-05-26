@@ -12,7 +12,7 @@ export async function GET(_request: NextRequest, { params }: { params: { slug: s
           success: false,
           error: {
             code: "community_topic_not_found",
-            message: "Community topic was not found."
+            message: "未找到社区话题。"
           }
         },
         { status: 404 }
@@ -26,7 +26,7 @@ export async function GET(_request: NextRequest, { params }: { params: { slug: s
         success: false,
         error: {
           code: "community_topic_request_failed",
-          message: error instanceof Error ? error.message : "Community topic request failed"
+          message: error instanceof Error ? error.message : "社区话题请求失败"
         }
       },
       { status: 500 }

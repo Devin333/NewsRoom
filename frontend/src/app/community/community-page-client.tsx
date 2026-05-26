@@ -36,11 +36,11 @@ export function CommunityPageClient() {
   if (isLoading) return <PageSkeleton />
 
   if (isError) {
-    return <ErrorState message={error instanceof Error ? error.message : "Community Pulse failed to load."} onRetry={() => refetch()} />
+    return <ErrorState message={error instanceof Error ? error.message : "社区脉搏加载失败。"} onRetry={() => refetch()} />
   }
 
   if (!data) {
-    return <EmptyState title="No community data" description="Community Pulse data is currently unavailable." />
+    return <EmptyState title="暂无社区数据" description="当前没有可展示的社区脉搏数据。" />
   }
 
   return <CommunityPulsePage result={data} filters={filters} onChange={setFilters} />

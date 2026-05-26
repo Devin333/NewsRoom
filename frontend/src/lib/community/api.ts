@@ -49,7 +49,7 @@ function unwrapEnvelope<T>(envelope: ApiEnvelope<T>): T {
   }
   const error = envelope.error
   throw new CommunityApiError(
-    error?.message ?? "Community API request failed",
+    error?.message ?? "社区 API 请求失败",
     error?.code,
     error?.detail ?? error?.details,
     error?.retryable

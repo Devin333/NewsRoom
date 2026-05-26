@@ -19,11 +19,11 @@ export default function CommunityTopicPage({ params }: { params: { slug: string 
   if (isError && typeof error === "object" && error !== null && "code" in error && error.code === "community_topic_not_found") {
     return (
       <EmptyState
-        title="Topic not found"
-        description="This Community Pulse topic is not available in the current public artifact."
+        title="未找到话题"
+        description="当前公开 artifact 中没有这个社区脉搏话题。"
         action={
           <Link href="/community" className="rounded-md border border-border px-3 py-2 text-sm text-foreground hover:bg-secondary">
-            Back to Community Pulse
+            返回社区脉搏
           </Link>
         }
       />
@@ -33,7 +33,7 @@ export default function CommunityTopicPage({ params }: { params: { slug: string 
   if (isError) {
     return (
       <ErrorState
-        message={error instanceof Error ? error.message : "Community topic failed to load."}
+        message={error instanceof Error ? error.message : "社区话题加载失败。"}
         onRetry={() => refetch()}
       />
     )
@@ -42,11 +42,11 @@ export default function CommunityTopicPage({ params }: { params: { slug: string 
   if (!data) {
     return (
       <EmptyState
-        title="Topic not found"
-        description="This Community Pulse topic is not available in the current public artifact."
+        title="未找到话题"
+        description="当前公开 artifact 中没有这个社区脉搏话题。"
         action={
           <Link href="/community" className="rounded-md border border-border px-3 py-2 text-sm text-foreground hover:bg-secondary">
-            Back to Community Pulse
+            返回社区脉搏
           </Link>
         }
       />

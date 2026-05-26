@@ -19,7 +19,7 @@ export function CommunityFilterPanel({
   return (
     <aside className="rounded-md border border-border bg-card p-4">
       <div className="flex items-center justify-between gap-3">
-        <h2 className="text-sm font-semibold text-foreground">Filters</h2>
+        <h2 className="text-sm font-semibold text-foreground">筛选</h2>
         <button
           type="button"
           onClick={() =>
@@ -32,34 +32,34 @@ export function CommunityFilterPanel({
           }
           className="text-xs text-accent hover:text-foreground"
         >
-          Reset
+          重置
         </button>
       </div>
 
       <div className="mt-4 space-y-5">
         <SelectBlock
-          label="Source"
+          label="来源"
           value={filters.source ?? ""}
-          options={[["", "All sources"], ...COMMUNITY_SOURCE_TYPES.map((source) => [source, communitySourceLabel(source)] as const)]}
+          options={[["", "全部来源"], ...COMMUNITY_SOURCE_TYPES.map((source) => [source, communitySourceLabel(source)] as const)]}
           onChange={(value) => onChange({ source: value ? (value as CommunitySourceType) : undefined })}
         />
 
         <SelectBlock
-          label="Sentiment"
+          label="情绪"
           value={filters.sentiment ?? ""}
-          options={[["", "All sentiment"], ...COMMUNITY_SENTIMENTS.map((sentiment) => [sentiment, communitySentimentLabel(sentiment)] as const)]}
+          options={[["", "全部情绪"], ...COMMUNITY_SENTIMENTS.map((sentiment) => [sentiment, communitySentimentLabel(sentiment)] as const)]}
           onChange={(value) => onChange({ sentiment: value ? (value as CommunitySentiment) : undefined })}
         />
 
         <SelectBlock
-          label="Topic"
+          label="话题"
           value={filters.topic ?? ""}
-          options={[["", "All topics"], ...COMMUNITY_TOPIC_KEYS.map((topic) => [topic, communityTopicLabel(topic)] as const)]}
+          options={[["", "全部话题"], ...COMMUNITY_TOPIC_KEYS.map((topic) => [topic, communityTopicLabel(topic)] as const)]}
           onChange={(value) => onChange({ topic: value ? (value as CommunityTopicKey) : undefined })}
         />
 
         <SelectBlock
-          label="Sort"
+          label="排序"
           value={filters.sort ?? "trending"}
           options={COMMUNITY_SORTS.map((sort) => [sort, sortLabel(sort)] as const)}
           onChange={(value) => onChange({ sort: value as CommunitySort })}
@@ -100,10 +100,10 @@ function SelectBlock({
 
 function sortLabel(sort: CommunitySort) {
   const labels: Record<CommunitySort, string> = {
-    trending: "Trending",
-    newest: "Newest",
-    controversial: "Controversial",
-    adoption: "Adoption"
+    trending: "趋势优先",
+    newest: "最新优先",
+    controversial: "争议优先",
+    adoption: "采用优先"
   }
   return labels[sort]
 }

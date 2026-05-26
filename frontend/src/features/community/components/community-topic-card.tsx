@@ -51,13 +51,13 @@ export function CommunityTopicCard({ topic }: { topic: CommunityTopic }) {
 
             <div className="mt-5 flex flex-wrap items-center gap-2">
               <Button asChild variant="outline" size="sm">
-                <Link href={`/community/topics/${topic.slug}`}>View topic</Link>
+                <Link href={`/community/topics/${topic.slug}`}>查看话题</Link>
               </Button>
               {topic.sourceUrl ? (
                 <Button asChild variant="ghost" size="sm">
                   <a href={topic.sourceUrl} target="_blank" rel="noreferrer">
                     <ExternalLink className="size-4" />
-                    Open source
+                    打开来源
                   </a>
                 </Button>
               ) : null}
@@ -65,11 +65,11 @@ export function CommunityTopicCard({ topic }: { topic: CommunityTopic }) {
           </div>
 
           <aside className="grid grid-cols-2 gap-3 border-t border-border pt-4 md:block md:space-y-4 md:border-l md:border-t-0 md:pl-5 md:pt-0">
-            <Metric icon={<Flame className="size-4" />} label="Heat" value={topic.heatScore} />
-            <Metric icon={<GitBranch className="size-4" />} label="Controversy" value={topic.controversyScore} />
-            <Metric icon={<RadioTower className="size-4" />} label="Adoption" value={topic.adoptionScore} />
+            <Metric icon={<Flame className="size-4" />} label="热度" value={topic.heatScore} />
+            <Metric icon={<GitBranch className="size-4" />} label="争议" value={topic.controversyScore} />
+            <Metric icon={<RadioTower className="size-4" />} label="采用" value={topic.adoptionScore} />
             {topic.commentCount !== undefined ? (
-              <Metric icon={<MessageSquare className="size-4" />} label="Comments" value={topic.commentCount} />
+              <Metric icon={<MessageSquare className="size-4" />} label="评论" value={topic.commentCount} />
             ) : null}
           </aside>
         </article>
@@ -83,7 +83,7 @@ function Metric({ icon, label, value }: { icon: ReactNode; label: string; value?
     <div className="min-w-0">
       <div className="flex items-center justify-center gap-2 text-foreground md:justify-start">
         <span className="text-muted-foreground">{icon}</span>
-        <span className="font-mono text-lg font-semibold">{value === undefined ? "n/a" : Math.round(value)}</span>
+        <span className="font-mono text-lg font-semibold">{value === undefined ? "暂无" : Math.round(value)}</span>
       </div>
       <p className="mt-1 text-center font-mono text-[10px] uppercase tracking-normal text-muted-foreground md:text-left">{label}</p>
     </div>

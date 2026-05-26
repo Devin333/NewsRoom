@@ -42,7 +42,7 @@ export function adaptCommunityBoardPayload(
       topics: [],
       details: [],
       dataState: "empty",
-      notices: [options.notice, "Community board output was not available."].filter(Boolean) as string[]
+      notices: [options.notice, "未找到可用的社区脉搏 board output。"].filter(Boolean) as string[]
     }
   }
 
@@ -83,11 +83,23 @@ function adaptCommunityTopic(
   index: number,
   context: { id: string; slug: string; title: string; generatedAt?: string }
 ): CommunityTopic {
-  const evidenceRefs = adaptEvidenceRefs(readArray(card.evidence_refs), card.summary)
+  const provenance = readObject(card.provenance)
+  const evidenceRefs = uniqueEvidenceRefs(
+    adaptEvidenceRefs(
+      [
+        ...readArray(card.evidence_refs),
+        ...readArray(provenance?.evidence_refs),
+        ...readArray(provenance?.source_refs)
+      ],
+      card.summary
+    )
+  )
   const firstEvidence = evidenceRefs[0]
-  const metrics = metricMap(card.metrics)
+  const metrics = mergeMetricMaps(metricMap(card.metrics), scoreFactorMap(card.score))
   const ranking = readObject(card.ranking_features)
   const metadata = readObject(card.metadata)
+  const boardSpecificFeatures =
+    readObject(ranking?.board_specific_features) ?? readObject(metadata?.board_specific_features)
   const sourceType = normalizeSourceType(firstEvidence?.sourceType)
   const sourceName = firstEvidence?.sourceName ?? sourceNameFromSubtitle(readString(card.subtitle))
   const sourceUrl = safeHttpsUrl(firstEvidence?.url)
@@ -101,7 +113,7 @@ function adaptCommunityTopic(
     id: context.id,
     slug: context.slug,
     title: context.title,
-    summary: publicExcerpt(card.summary, 420) ?? "No public summary is available.",
+    summary: publicExcerpt(card.summary, 420) ?? "暂无公开摘要。",
     sourceType,
     sourceName,
     sourceUrl,
@@ -113,9 +125,27 @@ function adaptCommunityTopic(
       context.generatedAt ??
       publishedAt,
     sentiment: readSentiment(card, metadata, ranking),
-    controversyScore: readScore(metrics, ranking, ["Controversy", "Sentiment Divergence"], ["controversy_score", "sentiment_divergence"]),
-    adoptionScore: readScore(metrics, ranking, ["Adoption", "Adoption Score"], ["adoption_score", "adoption"]),
-    heatScore: readScore(metrics, ranking, ["Heat", "Discussion Heat"], ["discussion_heat", "heat_score", "heat"]),
+    controversyScore: readScore(
+      metrics,
+      ranking,
+      [boardSpecificFeatures],
+      ["Controversy", "Sentiment Divergence"],
+      ["controversy_score", "sentiment_divergence"]
+    ),
+    adoptionScore: readScore(
+      metrics,
+      ranking,
+      [boardSpecificFeatures],
+      ["Adoption", "Adoption Score"],
+      ["adoption_score", "adoption"]
+    ),
+    heatScore: readScore(
+      metrics,
+      ranking,
+      [boardSpecificFeatures],
+      ["Heat", "Discussion Heat"],
+      ["discussion_heat", "heat_score", "heat"]
+    ),
     commentCount: readCount(card, metadata, ["comment_count", "commentCount", "comments"]),
     upvoteCount: readCount(card, metadata, ["upvote_count", "upvoteCount", "score", "points"]),
     tags,
@@ -140,7 +170,7 @@ function buildCommunityTopicDetail(
   const timeline = buildTimeline(topic, generatedAt)
   const notices = representativeComments.length
     ? []
-    : ["Representative comments were not present in the public artifact; only public summaries are shown."]
+    : ["公开 artifact 未包含代表性评论摘录，当前仅展示公开摘要。"]
 
   return {
     ...topic,
@@ -157,11 +187,22 @@ function buildCommunityTopicDetail(
 function communityBoardOutput(payload: unknown): Record<string, unknown> | undefined {
   const root = readObject(payload)
   if (!root) return undefined
+  const contentOutput = communityBoardOutput(root.content)
+  if (contentOutput) return contentOutput
   const nestedOutput = readObject(root.board_output)
   if (nestedOutput) return nestedOutput
+  const nestedCamelOutput = readObject(root.boardOutput)
+  if (nestedCamelOutput) return nestedCamelOutput
   const nestedDataOutput = readObject(readObject(root.data)?.board_output)
   if (nestedDataOutput) return nestedDataOutput
-  if (Array.isArray(root.cards) || Array.isArray(root.detail_pages)) return root
+  const nestedCamelDataOutput = readObject(readObject(root.data)?.boardOutput)
+  if (nestedCamelDataOutput) return nestedCamelDataOutput
+  if (Array.isArray(root.cards) || Array.isArray(root.detail_pages) || Array.isArray(root.detailPages)) {
+    return {
+      ...root,
+      detail_pages: readArray(root.detail_pages).length ? root.detail_pages : root.detailPages
+    }
+  }
   return undefined
 }
 
@@ -186,6 +227,16 @@ function adaptEvidenceRefs(values: unknown[], fallbackSummary: unknown): Evidenc
       publishedAt: readString(ref.published_at),
       reliability: readString(ref.reliability)
     }
+  })
+}
+
+function uniqueEvidenceRefs(values: EvidenceRef[]) {
+  const seen = new Set<string>()
+  return values.filter((value) => {
+    const key = value.id || value.url || `${value.sourceName}:${value.excerpt}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
   })
 }
 
@@ -293,7 +344,7 @@ function buildTimeline(topic: CommunityTopic, generatedAt?: string): CommunityTi
   if (topic.publishedAt) {
     items.push({
       id: `${topic.id}-published`,
-      label: "Published",
+      label: "发布",
       timestamp: topic.publishedAt,
       description: topic.sourceName,
       sourceName: topic.sourceName
@@ -302,7 +353,7 @@ function buildTimeline(topic: CommunityTopic, generatedAt?: string): CommunityTi
   if (topic.lastActivityAt && topic.lastActivityAt !== topic.publishedAt) {
     items.push({
       id: `${topic.id}-activity`,
-      label: "Last activity",
+      label: "最近活跃",
       timestamp: topic.lastActivityAt,
       description: topic.summary,
       sourceName: topic.sourceName
@@ -311,9 +362,9 @@ function buildTimeline(topic: CommunityTopic, generatedAt?: string): CommunityTi
   if (generatedAt) {
     items.push({
       id: `${topic.id}-generated`,
-      label: "Analyzed",
+      label: "完成分析",
       timestamp: generatedAt,
-      description: "Community Pulse board output generated."
+      description: "社区脉搏 board output 已生成。"
     })
   }
   return items
@@ -393,6 +444,7 @@ function normalizeEntityType(value: string): CommunityEntity["type"] | undefined
 function readScore(
   metrics: Map<string, number>,
   ranking: Record<string, unknown> | undefined,
+  featureRecords: Array<Record<string, unknown> | undefined>,
   metricNames: string[],
   rankingNames: string[]
 ) {
@@ -403,6 +455,12 @@ function readScore(
   for (const name of rankingNames) {
     const value = readNumber(ranking?.[name])
     if (value !== undefined) return scoreToDisplayNumber(value)
+  }
+  for (const record of featureRecords) {
+    for (const name of rankingNames) {
+      const value = readNumber(record?.[name])
+      if (value !== undefined) return scoreToDisplayNumber(value)
+    }
   }
   return undefined
 }
@@ -432,12 +490,36 @@ function metricMap(value: unknown) {
   return map
 }
 
+function scoreFactorMap(value: unknown) {
+  const score = readObject(value)
+  const map = new Map<string, number>()
+  for (const item of readArray(score?.factors)) {
+    const factor = readObject(item)
+    const name = readString(factor?.name)
+    const number = readNumber(factor?.value)
+    if (name && number !== undefined) {
+      map.set(normalizeMetricName(name), number)
+    }
+  }
+  return map
+}
+
+function mergeMetricMaps(...maps: Array<Map<string, number>>) {
+  const merged = new Map<string, number>()
+  for (const map of maps) {
+    for (const [key, value] of map) {
+      merged.set(key, value)
+    }
+  }
+  return merged
+}
+
 function topicTags(card: Record<string, unknown>, relatedRefs: Array<NonNullable<ReturnType<typeof adaptObjectRef>>>) {
   const explicitTags = readArray(card.tags).map((tag) => readString(tag)).filter(isString)
   const badgeTags = readArray(card.badges)
     .map((badge) => readString(readObject(badge)?.label))
     .filter(isString)
-    .filter((label) => !["community_pulse"].includes(label))
+    .filter((label) => !["community_pulse", "community_discussion_pulse"].includes(label))
   const relatedTags = relatedRefs
     .filter((ref) => ref.objectType === "topic")
     .map((ref) => ref.label ?? ref.objectId)
@@ -516,7 +598,7 @@ function slugify(value: string) {
 }
 
 function readObject(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : undefined
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined
 }
 
 function readArray(value: unknown): unknown[] {
@@ -528,7 +610,12 @@ function readString(value: unknown): string | undefined {
 }
 
 function readNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined
+  if (typeof value === "number" && Number.isFinite(value)) return value
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? parsed : undefined
+  }
+  return undefined
 }
 
 function isString(value: string | undefined): value is string {

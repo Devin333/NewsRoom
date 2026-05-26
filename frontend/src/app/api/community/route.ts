@@ -15,7 +15,7 @@ export async function GET(request: NextRequest) {
         success: false,
         error: {
           code: "community_request_failed",
-          message: error instanceof Error ? error.message : "Community Pulse request failed"
+          message: error instanceof Error ? error.message : "社区脉搏请求失败"
         }
       },
       { status: 500 }

@@ -151,32 +151,32 @@ export function communitySourceLabel(sourceType: CommunitySourceType): string {
   const labels: Record<CommunitySourceType, string> = {
     hackernews: "Hacker News",
     reddit: "Reddit",
-    github_discussion: "GitHub Discussions",
+    github_discussion: "GitHub 讨论",
     stackoverflow: "Stack Overflow",
     lobsters: "Lobsters",
-    other: "Other"
+    other: "其他来源"
   }
   return labels[sourceType]
 }
 
 export function communitySentimentLabel(sentiment: CommunitySentiment): string {
   const labels: Record<CommunitySentiment, string> = {
-    positive: "Positive",
-    negative: "Negative",
-    mixed: "Mixed",
-    neutral: "Neutral",
-    unknown: "Unknown"
+    positive: "正面",
+    negative: "负面",
+    mixed: "分歧",
+    neutral: "中性",
+    unknown: "未知"
   }
   return labels[sentiment]
 }
 
 export function communityTopicLabel(topic: CommunityTopicKey): string {
   const labels: Record<CommunityTopicKey, string> = {
-    agents: "Agents",
+    agents: "智能体",
     rag: "RAG",
-    inference: "Inference",
-    evaluation: "Evaluation",
-    coding: "Coding"
+    inference: "推理服务",
+    evaluation: "评测",
+    coding: "编程助手"
   }
   return labels[topic]
 }
