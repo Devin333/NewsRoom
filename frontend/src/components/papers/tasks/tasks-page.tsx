@@ -53,7 +53,7 @@ export function TasksPage({ locale }: { locale: Locale }) {
     <div className="space-y-6">
       <PapersMicrobar items={[{ label: "Tasks" }]} meta={t(papersCopy.taskBranch, locale)} locale={locale} />
       <PapersHero
-        eyebrow="Papers / Tasks"
+        eyebrow=""
         title={t(papersCopy.tasks, locale)}
         subtitle={t(papersCopy.tasksSubtitle, locale)}
         stats={[

@@ -51,11 +51,11 @@ describe("PaperRow", () => {
     })
   })
 
-  it("uses Consolas for the paper title", () => {
+  it("uses Comic Sans MS for the paper title", () => {
     render(<PaperRow paper={paper} locale="en" onPreview={vi.fn()} />)
 
     expect(screen.getByRole("heading", { name: paper.title })).toHaveStyle({
-      fontFamily: "Consolas, \"Courier New\", monospace"
+      fontFamily: "Comic Sans MS, \"Courier New\", monospace"
     })
   })
 

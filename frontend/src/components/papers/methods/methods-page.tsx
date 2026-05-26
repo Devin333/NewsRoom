@@ -54,7 +54,7 @@ export function MethodsPage({ locale }: { locale: Locale }) {
     <div className="space-y-6">
       <PapersMicrobar items={[{ label: "Methods" }]} meta={t(papersCopy.methodBranch, locale)} locale={locale} />
       <PapersHero
-        eyebrow="Papers / Methods"
+        eyebrow=""
         title={t(papersCopy.methods, locale)}
         subtitle={t(papersCopy.methodsSubtitle, locale)}
         stats={[

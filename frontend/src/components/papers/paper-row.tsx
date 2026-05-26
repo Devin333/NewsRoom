@@ -15,7 +15,7 @@ const PAPER_ROW_BODY_FONT: CSSProperties = {
 }
 
 const PAPER_ROW_TITLE_FONT: CSSProperties = {
-  fontFamily: "Consolas, \"Courier New\", monospace"
+  fontFamily: "Comic Sans MS, \"Courier New\", monospace"
 }
 
 export function PaperRow({
