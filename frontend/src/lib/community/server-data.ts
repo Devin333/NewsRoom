@@ -1,15 +1,39 @@
 import { readdir, readFile, stat } from "node:fs/promises"
 import path from "node:path"
-import { safeApiPost } from "@/lib/api/server"
+import { safeApiGet } from "@/lib/api/server"
 import { adaptCommunityBoardPayload } from "@/lib/community/community-adapter"
 import { buildCommunityListResult } from "@/lib/community/community-filters"
 import type { CommunityListParams, CommunityListResult, CommunityTopicDetail } from "@/types/community"
+
+type JsonRecord = Record<string, unknown>
 
 type LoadedCommunityData = {
   payload?: unknown
   source: CommunityListResult["source"]
   notice?: string
 }
+
+type RunListResponse = {
+  runs?: unknown
+  items?: unknown
+}
+
+type ArtifactResponse = {
+  content?: unknown
+  data?: unknown
+}
+
+type LocalCommunityCandidate = {
+  runDir: string
+  name: string
+  manifest?: JsonRecord
+  modifiedAt: string
+}
+
+const COMMUNITY_WORKFLOW_ID = "community_pulse-productized-board"
+const MAX_ARTIFACT_BYTES = 8_000_000
+const BACKEND_ARTIFACT_KEYS = ["board_output", "output"] as const
+const LOCAL_ARTIFACT_FILES = ["board_output.json", "output.json"] as const
 
 export async function getCommunityList(params: CommunityListParams): Promise<CommunityListResult> {
   const loaded = await loadCommunityData()
@@ -43,38 +67,59 @@ async function loadCommunityData(): Promise<LoadedCommunityData> {
 }
 
 async function loadBackendBoardOutput(): Promise<LoadedCommunityData> {
-  const response = await safeApiPost<unknown>("/api/v1/boards/community_pulse/output", { items: [] })
-  if (!response.ok) {
+  const runsResult = await safeApiGet<RunListResponse>(
+    `/api/v1/runs?limit=50&workflow_id=${encodeURIComponent(COMMUNITY_WORKFLOW_ID)}`
+  )
+  if (!runsResult.ok) {
     return {
       source: "empty",
-      notice: `Backend community board output unavailable: ${response.errorMessage}`
+      notice: `Backend community run lookup failed: ${runsResult.errorMessage}`
     }
   }
 
-  const adapted = adaptCommunityBoardPayload(response.data)
-  if (!adapted.topics.length) {
-    return {
-      source: "empty",
-      notice: "Backend community board output returned no displayable topics; local artifacts were checked."
+  const runs = arrayRecords(runsResult.data.runs ?? runsResult.data.items).filter(isCommunityPulseRun).sort(compareRunTime)
+  for (const run of runs) {
+    const runId = text(run.run_id) || text(run.id)
+    if (!runId) continue
+
+    for (const artifactKey of BACKEND_ARTIFACT_KEYS) {
+      const artifact = await loadBackendArtifact(runId, artifactKey)
+      const payload = unwrapArtifactPayload(artifact)
+      if (!payload) continue
+
+      const adapted = adaptCommunityBoardPayload(payload)
+      if (adapted.topics.length) {
+        return {
+          payload,
+          source: "backend",
+          notice: `Loaded from backend community_pulse ${artifactKey} artifact.`
+        }
+      }
     }
   }
 
   return {
-    payload: response.data,
-    source: "backend",
-    notice: "Loaded from backend community_pulse board output."
+    source: "empty",
+    notice: "Backend did not expose a populated community_pulse board artifact."
   }
+}
+
+async function loadBackendArtifact(runId: string, artifactKey: (typeof BACKEND_ARTIFACT_KEYS)[number]): Promise<ArtifactResponse> {
+  const response = await safeApiGet<ArtifactResponse>(
+    `/api/v1/runs/${encodeURIComponent(runId)}/artifacts/${encodeURIComponent(artifactKey)}`
+  )
+  return response.ok ? response.data : {}
 }
 
 async function loadLatestArtifactBoardOutput(): Promise<LoadedCommunityData> {
   const runDirs = await communityRunDirs()
-  for (const runDir of runDirs) {
-    const payload = await readFirstJson(runDir, ["board_output.json", "output.json"])
+  for (const candidate of runDirs) {
+    const payload = await readFirstJson(candidate.runDir, LOCAL_ARTIFACT_FILES)
     if (payload !== undefined) {
       return {
         payload,
         source: "artifact",
-        notice: `Loaded from local community_pulse artifact: ${path.basename(runDir)}.`
+        notice: `Loaded from local community_pulse artifact: ${candidate.name}.`
       }
     }
   }
@@ -86,26 +131,39 @@ async function loadLatestArtifactBoardOutput(): Promise<LoadedCommunityData> {
 }
 
 async function communityRunDirs() {
-  const roots = uniquePaths([
-    path.resolve(process.cwd(), ".newsroom", "runs"),
-    path.resolve(process.cwd(), "..", ".newsroom", "runs")
-  ])
-  const dirs: Array<{ path: string; mtimeMs: number }> = []
+  const dirs: LocalCommunityCandidate[] = []
 
-  for (const root of roots) {
+  for (const root of runsRoots()) {
     const entries = await safeReadDir(root)
     for (const entry of entries) {
-      if (!entry.isDirectory() || !entry.name.includes("community_pulse")) continue
+      if (!entry.isDirectory() || entry.name === "_records") continue
       const fullPath = path.join(root, entry.name)
-      const info = await safeStat(fullPath)
-      if (info) dirs.push({ path: fullPath, mtimeMs: info.mtimeMs })
+      const manifest = asRecord(await readJson(path.join(fullPath, "manifest.json")))
+      if (!isCommunityPulseCandidate(entry.name, manifest)) continue
+
+      const modifiedAt = await latestModifiedAt([
+        path.join(fullPath, "board_output.json"),
+        path.join(fullPath, "output.json"),
+        path.join(fullPath, "manifest.json")
+      ])
+      dirs.push({ runDir: fullPath, name: entry.name, manifest, modifiedAt })
     }
   }
 
-  return dirs.sort((left, right) => right.mtimeMs - left.mtimeMs).map((entry) => entry.path)
+  return dirs.sort((left, right) => Date.parse(right.modifiedAt) - Date.parse(left.modifiedAt))
 }
 
-async function readFirstJson(runDir: string, filenames: string[]) {
+function runsRoots() {
+  if (process.env.NEWSROOM_RUNS_ROOT) {
+    return [process.env.NEWSROOM_RUNS_ROOT]
+  }
+  return uniquePaths([
+    path.resolve(process.cwd(), ".newsroom", "runs"),
+    path.resolve(process.cwd(), "..", ".newsroom", "runs")
+  ])
+}
+
+async function readFirstJson(runDir: string, filenames: readonly string[]) {
   for (const filename of filenames) {
     const filePath = path.join(runDir, filename)
     const payload = await readJson(filePath)
@@ -116,6 +174,8 @@ async function readFirstJson(runDir: string, filenames: string[]) {
 
 async function readJson(filePath: string) {
   try {
+    const info = await stat(filePath)
+    if (!info.isFile() || info.size <= 2 || info.size > MAX_ARTIFACT_BYTES) return undefined
     return JSON.parse(await readFile(filePath, "utf-8")) as unknown
   } catch {
     return undefined
@@ -136,6 +196,68 @@ async function safeStat(filePath: string) {
   } catch {
     return undefined
   }
+}
+
+async function latestModifiedAt(filePaths: string[]) {
+  const times: number[] = []
+  for (const filePath of filePaths) {
+    const info = await safeStat(filePath)
+    if (info?.isFile()) times.push(info.mtimeMs)
+  }
+  return new Date(Math.max(0, ...times)).toISOString()
+}
+
+function unwrapArtifactPayload(value: unknown): unknown {
+  const record = asRecord(value)
+  if (!record) return value
+  return record.content ?? record.data ?? value
+}
+
+function isCommunityPulseRun(run: JsonRecord) {
+  const values = [run.workflow_id, run.workflowId, run.profile, run.run_id, run.id, run.board_type, run.boardType]
+    .map(text)
+    .join(" ")
+    .toLowerCase()
+  return values.includes(COMMUNITY_WORKFLOW_ID) || values.includes("community_pulse")
+}
+
+function isCommunityPulseCandidate(name: string, manifest?: JsonRecord) {
+  const productization = asRecord(manifest?.business_productization)
+  const values = [
+    name,
+    manifest?.workflow_id,
+    manifest?.workflowId,
+    manifest?.run_id,
+    manifest?.id,
+    productization?.board_type,
+    productization?.boardType
+  ]
+    .map(text)
+    .join(" ")
+    .toLowerCase()
+  return values.includes(COMMUNITY_WORKFLOW_ID) || values.includes("community_pulse")
+}
+
+function compareRunTime(left: JsonRecord, right: JsonRecord) {
+  return runTime(right) - runTime(left)
+}
+
+function runTime(run: JsonRecord) {
+  const value = text(run.finished_at) || text(run.finishedAt) || text(run.started_at) || text(run.startedAt)
+  const time = Date.parse(value)
+  return Number.isFinite(time) ? time : 0
+}
+
+function arrayRecords(value: unknown): JsonRecord[] {
+  return Array.isArray(value) ? value.map(asRecord).filter((item): item is JsonRecord => item !== undefined) : []
+}
+
+function asRecord(value: unknown): JsonRecord | undefined {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : undefined
+}
+
+function text(value: unknown) {
+  return typeof value === "string" || typeof value === "number" ? String(value).trim() : ""
 }
 
 function uniquePaths(values: string[]) {

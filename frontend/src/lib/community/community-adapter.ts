@@ -467,7 +467,13 @@ function safeHttpsUrl(value?: string) {
   if (!value) return undefined
   try {
     const url = new URL(value)
-    return url.protocol === "https:" ? url.toString() : undefined
+    if (url.protocol !== "https:") return undefined
+    for (const key of [...url.searchParams.keys()]) {
+      if (/token|secret|key|password|auth/i.test(key)) {
+        url.searchParams.delete(key)
+      }
+    }
+    return url.toString()
   } catch {
     return undefined
   }

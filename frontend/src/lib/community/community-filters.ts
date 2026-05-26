@@ -35,7 +35,8 @@ export function communityFiltersFromSearchParams(params: URLSearchParams): Commu
     sentiment: readEnum(params.get("sentiment"), COMMUNITY_SENTIMENTS),
     sort: readEnum(params.get("sort"), COMMUNITY_SORTS) ?? "trending",
     topic: readEnum(params.get("topic"), COMMUNITY_TOPIC_KEYS),
-    page: Math.max(1, Number(params.get("page") ?? "1") || 1)
+    page: Math.max(1, Number(params.get("page") ?? "1") || 1),
+    pageSize: positiveNumber(params.get("pageSize"))
   })
 }
 
@@ -47,6 +48,7 @@ export function communityFiltersToSearchParams(filters: CommunityListParams): UR
   setIf(params, "sort", filters.sort && filters.sort !== "trending" ? filters.sort : undefined)
   setIf(params, "topic", filters.topic)
   setIf(params, "page", filters.page && filters.page > 1 ? String(filters.page) : undefined)
+  setIf(params, "pageSize", filters.pageSize && filters.pageSize !== COMMUNITY_PAGE_SIZE ? String(filters.pageSize) : undefined)
   return params
 }
 
@@ -235,6 +237,11 @@ function average(values: number[]) {
 
 function readEnum<T extends string>(value: string | null, allowed: readonly T[]) {
   return value && allowed.includes(value as T) ? (value as T) : undefined
+}
+
+function positiveNumber(value: string | null) {
+  const number = Number(value)
+  return Number.isFinite(number) && number > 0 ? Math.floor(number) : undefined
 }
 
 function setIf(params: URLSearchParams, key: string, value?: string) {
