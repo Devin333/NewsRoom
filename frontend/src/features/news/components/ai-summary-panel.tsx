@@ -1,6 +1,6 @@
 export function AISummaryPanel({
   summary,
-  whyItMatters
+  whyItMatters,
 }: {
   summary?: string
   whyItMatters?: string

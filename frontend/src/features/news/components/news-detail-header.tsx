@@ -34,8 +34,8 @@ export function NewsDetailHeader({ news }: { news: NewsItem }) {
       </div>
 
       <div className="mt-5 flex flex-wrap items-center gap-2">
-        <HeatScoreBadge value={news.heatScore} />
-        <QualityBadge value={news.qualityScore} />
+        {typeof news.heatScore === "number" ? <HeatScoreBadge value={news.heatScore} /> : <Badge tone="neutral">热度 N/A</Badge>}
+        {typeof news.qualityScore === "number" ? <QualityBadge value={news.qualityScore} /> : <Badge tone="neutral">质量 N/A</Badge>}
         <CredibilityBadge value={news.credibility} />
         <span className="text-xs text-muted-foreground">发布于 {formatDateTime(news.publishedAt)}</span>
         <span className="text-xs text-muted-foreground">采集于 {formatDateTime(news.collectedAt)}</span>

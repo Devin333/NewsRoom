@@ -1,6 +1,7 @@
 "use client"
 
 import { Filter, Search } from "lucide-react"
+import { Button } from "@/components/ui/button"
 import { NewsViewModeToggle } from "@/features/news/components/news-view-mode-toggle"
 import { useI18n } from "@/lib/i18n/use-i18n"
 import type { NewsFilters, NewsViewMode } from "@/types/news"
@@ -8,7 +9,7 @@ import type { NewsFilters, NewsViewMode } from "@/types/news"
 export function NewsToolbar({
   filters,
   onChange,
-  onToggleFilters
+  onToggleFilters,
 }: {
   filters: NewsFilters
   onChange: (patch: Partial<NewsFilters>) => void
@@ -42,14 +43,10 @@ export function NewsToolbar({
 
         <NewsViewModeToggle value={(filters.viewMode ?? "card") as NewsViewMode} onChange={(viewMode) => onChange({ viewMode })} />
 
-        <button
-          type="button"
-          onClick={onToggleFilters}
-          className="inline-flex h-10 items-center gap-2 rounded-md border border-border px-3 text-sm text-foreground hover:bg-secondary lg:hidden"
-        >
+        <Button type="button" variant="outline" onClick={onToggleFilters} className="lg:hidden">
           <Filter className="h-4 w-4" />
           {t("common.filters")}
-        </button>
+        </Button>
       </div>
     </div>
   )

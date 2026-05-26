@@ -5,12 +5,12 @@ import type { NewsViewMode } from "@/types/news"
 const modes: Array<{ value: NewsViewMode; label: string; icon: React.ComponentType<{ className?: string }> }> = [
   { value: "card", label: "卡片", icon: LayoutList },
   { value: "dense", label: "紧凑", icon: Columns3 },
-  { value: "table", label: "表格", icon: Table2 }
+  { value: "table", label: "表格", icon: Table2 },
 ]
 
 export function NewsViewModeToggle({
   value,
-  onChange
+  onChange,
 }: {
   value: NewsViewMode
   onChange: (value: NewsViewMode) => void

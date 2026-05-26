@@ -1,5 +1,6 @@
 import { FileText, LinkIcon, ShieldCheck } from "lucide-react"
 import Link from "next/link"
+import { Badge } from "@/components/common/badge"
 import { CredibilityBadge } from "@/components/common/credibility-badge"
 import { HeatScoreBadge } from "@/components/common/heat-score-badge"
 import { QualityBadge } from "@/components/common/quality-badge"
@@ -16,7 +17,7 @@ export function NewsInsightPanel({
   news,
   evidence,
   topic,
-  reports
+  reports,
 }: {
   news: NewsItem
   evidence: EvidenceItem[]
@@ -27,11 +28,11 @@ export function NewsInsightPanel({
     <aside className="space-y-4">
       <PanelCard title="评分">
         <div className="space-y-4">
-          <ScoreMeter label="热度" value={news.heatScore} />
-          <ScoreMeter label="质量分" value={news.qualityScore} />
+          <OptionalScoreMeter label="热度" value={news.heatScore} />
+          <OptionalScoreMeter label="质量" value={news.qualityScore} />
           <div className="flex flex-wrap gap-2">
-            <HeatScoreBadge value={news.heatScore} />
-            <QualityBadge value={news.qualityScore} />
+            {typeof news.heatScore === "number" ? <HeatScoreBadge value={news.heatScore} /> : <Badge tone="neutral">热度 N/A</Badge>}
+            {typeof news.qualityScore === "number" ? <QualityBadge value={news.qualityScore} /> : <Badge tone="neutral">质量 N/A</Badge>}
             <CredibilityBadge value={news.credibility} />
           </div>
         </div>
@@ -51,6 +52,11 @@ export function NewsInsightPanel({
             <p className="text-sm font-medium text-foreground">{topic.name}</p>
             <p className="mt-2 line-clamp-3 text-sm text-muted-foreground">{topic.summary}</p>
           </Link>
+        ) : news.topicId && news.topicName ? (
+          <div className="rounded-md border border-border p-3">
+            <p className="text-sm font-medium text-foreground">{news.topicName}</p>
+            <p className="mt-2 text-sm text-muted-foreground">来自 AI News board 的主题关联。</p>
+          </div>
         ) : (
           <p className="text-sm text-muted-foreground">这条新闻暂未聚类到主题。</p>
         )}
@@ -78,7 +84,7 @@ export function NewsInsightPanel({
             <StatusBadge status={evidence.length ? "passed" : "review"} />
           </div>
           <p className="text-sm text-muted-foreground">
-            {evidence.length ? `已关联 ${evidence.length} 条证据。` : "暂无证据关联；这条新闻应保持复核状态。"}
+            {evidence.length ? `已关联 ${evidence.length} 条证据。` : "暂无证据关联，这条新闻应保持复核状态。"}
           </p>
         </div>
       </PanelCard>
@@ -100,4 +106,19 @@ function PanelCard({ title, children }: { title: string; children: React.ReactNo
       {children}
     </section>
   )
+}
+
+function OptionalScoreMeter({ label, value }: { label: string; value?: number }) {
+  if (typeof value !== "number") {
+    return (
+      <div className="space-y-1.5">
+        <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+          <span>{label}</span>
+          <span className="font-medium text-foreground">N/A</span>
+        </div>
+        <div className="h-2 overflow-hidden rounded-full bg-secondary" />
+      </div>
+    )
+  }
+  return <ScoreMeter label={label} value={value} />
 }

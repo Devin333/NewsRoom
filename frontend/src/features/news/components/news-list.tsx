@@ -8,7 +8,7 @@ export function NewsList({ items, viewMode }: { items: NewsItem[]; viewMode: New
     return (
       <EmptyState
         title="没有匹配的新闻"
-        description="可以移除一两个筛选条件，或切回最新发布排序。"
+        description="可以移除一个或多个筛选条件，或切回最新发布排序。"
       />
     )
   }

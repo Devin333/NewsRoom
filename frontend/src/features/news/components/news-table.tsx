@@ -1,4 +1,5 @@
 import Link from "next/link"
+import { Badge } from "@/components/common/badge"
 import { CredibilityBadge } from "@/components/common/credibility-badge"
 import { HeatScoreBadge } from "@/components/common/heat-score-badge"
 import { QualityBadge } from "@/components/common/quality-badge"
@@ -35,10 +36,10 @@ export function NewsTable({ items }: { items: NewsItem[] }) {
               </td>
               <td className="px-4 py-3 text-muted-foreground">{item.category}</td>
               <td className="px-4 py-3">
-                <HeatScoreBadge value={item.heatScore} />
+                {typeof item.heatScore === "number" ? <HeatScoreBadge value={item.heatScore} /> : <Badge tone="neutral">N/A</Badge>}
               </td>
               <td className="px-4 py-3">
-                <QualityBadge value={item.qualityScore} />
+                {typeof item.qualityScore === "number" ? <QualityBadge value={item.qualityScore} /> : <Badge tone="neutral">N/A</Badge>}
               </td>
               <td className="px-4 py-3">
                 <CredibilityBadge value={item.credibility} />

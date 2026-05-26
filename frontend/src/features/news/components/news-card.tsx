@@ -61,18 +61,18 @@ export function NewsCard({ news, compact = false }: { news: NewsItem; compact?: 
         <div className="space-y-5 pt-2 text-center">
           <Metric value={news.heatScore} label="热度" />
           <Metric value={news.qualityScore} label="质量" />
-          <HeatScoreBadge value={news.heatScore} />
-          <QualityBadge value={news.qualityScore} />
+          {typeof news.heatScore === "number" ? <HeatScoreBadge value={news.heatScore} /> : <Badge tone="neutral">热度 N/A</Badge>}
+          {typeof news.qualityScore === "number" ? <QualityBadge value={news.qualityScore} /> : <Badge tone="neutral">质量 N/A</Badge>}
         </div>
       </aside>
     </article>
   )
 }
 
-function Metric({ value, label }: { value: number; label: string }) {
+function Metric({ value, label }: { value?: number; label: string }) {
   return (
     <div>
-      <p className="font-mono text-lg font-semibold text-foreground">{value}</p>
+      <p className="font-mono text-lg font-semibold text-foreground">{typeof value === "number" ? value : "N/A"}</p>
       <p className="mt-1 font-mono text-[10px] uppercase tracking-normal text-muted-foreground">{label}</p>
     </div>
   )

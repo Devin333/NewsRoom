@@ -14,7 +14,7 @@ export function AgentExplanationCard({ items }: { items?: string[] }) {
           ))}
         </ul>
       ) : (
-        <p className="mt-3 text-sm text-muted-foreground">暂无公开智能体解释</p>
+        <p className="mt-3 text-sm text-muted-foreground">暂无公开智能体解释。</p>
       )}
     </section>
   )

@@ -5,6 +5,9 @@ import { useRouter, useSearchParams } from "next/navigation"
 import { EmptyState } from "@/components/common/empty-state"
 import { ErrorState } from "@/components/common/error-state"
 import { PageSkeleton } from "@/components/common/loading-skeleton"
+import { Badge } from "@/components/common/badge"
+import { Button } from "@/components/ui/button"
+import { Card } from "@/components/ui/card"
 import { NewsFilterPanel } from "@/features/news/components/news-filter-panel"
 import { NewsList } from "@/features/news/components/news-list"
 import { NewsToolbar } from "@/features/news/components/news-toolbar"
@@ -124,6 +127,8 @@ export function NewsPageClient() {
 
           <NewsToolbar filters={filters} onChange={setFilters} onToggleFilters={() => setMobileFiltersOpen((value) => !value)} />
 
+          {data.dataState === "fallback" ? <FallbackBanner notices={data.notices} /> : null}
+
           <div className={mobileFiltersOpen ? "block xl:hidden" : "hidden"}>
             <NewsFilterPanel filters={filters} options={data.options} onChange={setFilters} />
           </div>
@@ -136,26 +141,43 @@ export function NewsPageClient() {
           <NewsList items={page.items} viewMode={viewMode} />
 
           <div className="flex items-center justify-between gap-3">
-            <button
+            <Button
               type="button"
+              variant="outline"
               disabled={page.page <= 1}
               onClick={() => setFilters({ page: page.page - 1 })}
-              className="rounded-md border border-border px-3 py-2 text-sm text-foreground hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-45"
             >
               {t("common.previousPage")}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="outline"
               disabled={!page.hasNext}
               onClick={() => setFilters({ page: page.page + 1 })}
-              className="rounded-md border border-border px-3 py-2 text-sm text-foreground hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-45"
             >
               {t("common.nextPage")}
-            </button>
+            </Button>
           </div>
         </section>
       </div>
     </main>
+  )
+}
+
+function FallbackBanner({ notices }: { notices: string[] }) {
+  return (
+    <Card className="flex flex-col gap-2 border-warning/30 bg-warning/10 p-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="min-w-0">
+        <div className="flex items-center gap-2">
+          <Badge tone="warning">Fallback</Badge>
+          <p className="text-sm font-medium text-foreground">正在显示备用新闻数据</p>
+        </div>
+        <p className="mt-2 text-sm leading-6 text-muted-foreground">
+          后端 ai_news 输出和本地最新产物暂不可用，当前列表来自显式 fallback 数据。
+        </p>
+      </div>
+      {notices.length ? <p className="text-xs text-muted-foreground sm:max-w-sm">{notices[notices.length - 1]}</p> : null}
+    </Card>
   )
 }
 
