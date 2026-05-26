@@ -20,7 +20,7 @@ export function PapersHero({
   if (variant === "editorial") {
     const [firstWord, ...rest] = title.split(" ")
     return (
-      <section className="grid gap-8 py-12 lg:grid-cols-[minmax(0,1fr)_18rem] lg:items-end">
+      <section className="grid gap-8 py-12 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-end">
         <div>
           {eyebrow ? (
             <p className="mb-5 text-xs font-medium uppercase tracking-[0.18em] text-[#334155]/55">
@@ -35,7 +35,7 @@ export function PapersHero({
           </h1>
           <p className="mt-6 max-w-3xl text-base leading-7 text-[#334155]/70 dark:text-muted-foreground">{subtitle}</p>
         </div>
-        <div className="w-full max-w-[18rem] space-y-3 justify-self-start sm:justify-self-end">
+        <div className="w-full max-w-[22rem] space-y-3 justify-self-start sm:justify-self-end">
           <div className="rounded-3xl border border-[#dbe3dc] bg-white/85 p-4 shadow-[0_24px_60px_rgba(15,23,42,0.10)] dark:border-border dark:bg-card">
             <div className="grid grid-cols-3 gap-2">
               {stats.map((stat) => (
