@@ -125,6 +125,20 @@ test("/tech/repos opens a Project Radar detail drawer from URL", async ({ page, 
   await expect(page).toHaveURL(/\/tech\/repos$/)
 })
 
+test("/topics evidence graph renders the structured PRD-07 surface", async ({ page, baseURL }) => {
+  await authenticate(page, baseURL)
+  await page.goto("/topics?view=evidence-graph&topic=Agent")
+
+  await expect(page.getByRole("heading", { name: "Cross-board Evidence Graph" })).toBeVisible()
+  await expect(page.getByLabel("搜索主题")).toBeVisible()
+  await expect(page.getByText("Graph Summary")).toBeVisible()
+  await expect(page.getByText("Signal Mix")).toBeVisible()
+  await expect(page.getByText("Evidence Chain")).toBeVisible()
+  await expect(page.getByText("Timeline")).toBeVisible()
+  await expect(page.getByText("Evidence Inspector")).toBeVisible()
+  await expect(page.getByText("Related Reports")).toBeVisible()
+})
+
 async function authenticate(page: Page, baseURL: string | undefined) {
   await page.route("**/api/auth/session", async (route) => {
     await route.fulfill({

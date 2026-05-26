@@ -264,7 +264,7 @@ function evidenceModule(modules: PortalModuleSummary[]): PortalModuleSummary {
     title: "Cross-board Evidence Graph",
     href: "/topics?view=evidence-graph",
     eyebrow: "Evidence",
-    description: "Connect papers, projects, news, community signals, and reports into explainable evidence chains.",
+    description: "把 Paper、Project、Community、AI News 串成证据链和技术演进链。",
     status: empty ? "empty" : degraded ? "degraded" : "ready",
     sourceLabel: "derived",
     metrics: [
