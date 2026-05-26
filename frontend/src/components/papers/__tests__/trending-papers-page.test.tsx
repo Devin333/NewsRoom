@@ -62,6 +62,8 @@ describe("TrendingPapersPage", () => {
     render(<TrendingPapersPage locale="en" papers={papers} />)
 
     await waitFor(() => expect(fetchPapers).toHaveBeenCalledWith({ q: "", period: "all", sort: "trending", limit: 1000 }))
+    expect(screen.getByRole("navigation", { name: /research breadcrumb/i })).toBeInTheDocument()
+    expect(screen.getByRole("link", { name: "Research" })).toHaveAttribute("href", "/papers")
     expect(screen.queryByRole("textbox", { name: /search papers/i })).not.toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "Search" })).not.toBeInTheDocument()
 

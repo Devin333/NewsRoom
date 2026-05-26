@@ -13,10 +13,10 @@ export function PapersMicrobar({
   locale: Locale
 }) {
   return (
-    <div className="flex flex-col gap-2 py-6 text-sm sm:flex-row sm:items-center sm:justify-between">
-      <nav className="flex flex-wrap items-center gap-2 text-xs uppercase tracking-[0.16em] text-[#334155]/55" aria-label="Papers breadcrumb">
+    <div className="flex flex-col gap-2 pt-5 pb-2 text-sm sm:flex-row sm:items-center sm:justify-between">
+      <nav className="flex flex-wrap items-center gap-2 text-xs uppercase tracking-[0.16em] text-[#334155]/55" aria-label="Research breadcrumb">
         <Link href="/papers" className="font-medium hover:text-primary">
-          Papers
+          Research
         </Link>
         {items.map((item) => (
           <span key={`${item.label}-${item.href ?? "current"}`} className="inline-flex items-center gap-1">

@@ -20,7 +20,7 @@ export function PapersHero({
   if (variant === "editorial") {
     const [firstWord, ...rest] = title.split(" ")
     return (
-      <section className="grid gap-8 py-12 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-end">
+      <section className="grid gap-8 pt-8 pb-10 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-end">
         <div>
           {eyebrow ? (
             <p className="mb-5 text-xs font-medium uppercase tracking-[0.18em] text-[#334155]/55">
