@@ -14,19 +14,19 @@ export function CommunityTopicDetail({ topic }: { topic: CommunityTopicDetailTyp
   return (
     <main className="space-y-6">
       <PageHeader
-        eyebrow="社区脉搏"
+        eyebrow="Community Pulse"
         title={topic.title}
         description={topic.summary}
         actions={
           <>
             <Button asChild variant="outline" size="sm">
-              <Link href="/community">返回</Link>
+              <Link href="/community">Back</Link>
             </Button>
             {topic.sourceUrl ? (
               <Button asChild size="sm">
                 <a href={topic.sourceUrl} target="_blank" rel="noreferrer">
                   <ExternalLink className="size-4" />
-                  打开来源
+                  Open source
                 </a>
               </Button>
             ) : null}
@@ -35,15 +35,15 @@ export function CommunityTopicDetail({ topic }: { topic: CommunityTopicDetailTyp
       />
 
       <section className="grid gap-3 md:grid-cols-4">
-        <MetricCard label="情绪" value={<CommunitySentimentBadge sentiment={topic.sentiment} />} />
-        <MetricCard label="热度" value={scoreText(topic.heatScore)} />
-        <MetricCard label="争议" value={scoreText(topic.controversyScore)} />
-        <MetricCard label="采用" value={scoreText(topic.adoptionScore)} />
+        <MetricCard label="Sentiment" value={<CommunitySentimentBadge sentiment={topic.sentiment} />} />
+        <MetricCard label="Heat" value={scoreText(topic.heatScore)} />
+        <MetricCard label="Controversy" value={scoreText(topic.controversyScore)} />
+        <MetricCard label="Adoption" value={scoreText(topic.adoptionScore)} />
       </section>
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
         <div className="space-y-6">
-          <DetailPanel title="高热讨论">
+          <DetailPanel title="Top discussions">
             <div className="space-y-4">
               {topic.topDiscussions.map((discussion) => (
                 <DiscussionItem key={discussion.id} discussion={discussion} />
@@ -51,14 +51,14 @@ export function CommunityTopicDetail({ topic }: { topic: CommunityTopicDetailTyp
             </div>
           </DetailPanel>
 
-          <DetailPanel title="代表性评论">
+          <DetailPanel title="Representative comments">
             {topic.representativeComments.length ? (
               <div className="space-y-3">
                 {topic.representativeComments.map((comment) => (
                   <blockquote key={comment.id} className="border-l-2 border-border pl-4 text-sm leading-6 text-muted-foreground">
                     <p>{comment.excerpt}</p>
                     <footer className="mt-2 text-xs text-muted-foreground">
-                      {comment.authorName ?? comment.sourceName ?? "公开摘录"}
+                      {comment.authorName ?? comment.sourceName ?? "Public excerpt"}
                       {comment.publishedAt ? ` | ${formatDateTime(comment.publishedAt)}` : null}
                     </footer>
                   </blockquote>
@@ -66,37 +66,37 @@ export function CommunityTopicDetail({ topic }: { topic: CommunityTopicDetailTyp
               </div>
             ) : (
               <p className="text-sm leading-6 text-muted-foreground">
-                这个 artifact 没有包含公开的代表性评论摘录。
+                This artifact does not include public representative comment excerpts.
               </p>
             )}
           </DetailPanel>
 
-          <DetailPanel title="证据引用">
+          <DetailPanel title="Evidence references">
             {topic.evidenceRefs?.length ? (
               <div className="space-y-3">
                 {topic.evidenceRefs.map((evidence) => (
                   <div key={evidence.id} className="rounded-md border border-border p-3">
                     <div className="flex flex-wrap items-center gap-2">
-                      <Badge tone="accent">{evidence.sourceName ?? evidence.sourceId ?? "证据"}</Badge>
+                      <Badge tone="accent">{evidence.sourceName ?? evidence.sourceId ?? "Evidence"}</Badge>
                       {evidence.reliability ? <Badge tone="neutral">{evidence.reliability}</Badge> : null}
                     </div>
                     {evidence.excerpt ? <p className="mt-2 text-sm leading-6 text-muted-foreground">{evidence.excerpt}</p> : null}
                     {evidence.url ? (
                       <a className="mt-2 inline-flex text-xs text-accent hover:text-foreground" href={evidence.url} target="_blank" rel="noreferrer">
-                        打开证据
+                        Open evidence
                       </a>
                     ) : null}
                   </div>
                 ))}
               </div>
             ) : (
-              <p className="text-sm text-muted-foreground">暂无公开证据引用。</p>
+              <p className="text-sm text-muted-foreground">No public evidence references are available.</p>
             )}
           </DetailPanel>
         </div>
 
         <aside className="space-y-6">
-          <DetailPanel title="来源分布">
+          <DetailPanel title="Source distribution">
             <div className="space-y-3">
               {topic.sourceDistribution.map((item) => (
                 <div key={item.sourceType} className="flex items-center justify-between gap-3 text-sm">
@@ -107,13 +107,13 @@ export function CommunityTopicDetail({ topic }: { topic: CommunityTopicDetailTyp
             </div>
           </DetailPanel>
 
-          <DetailPanel title="关联对象">
-            <RelationList title="论文" items={topic.relatedPapers?.map((paper) => ({ id: paper.id, label: paper.title, url: paper.url })) ?? []} />
-            <RelationList title="项目" items={topic.relatedProjects?.map((project) => ({ id: project.id, label: project.name, url: project.url })) ?? []} />
-            <RelationList title="新闻" items={topic.relatedNews?.map((news) => ({ id: news.id, label: news.title, url: news.url })) ?? []} />
+          <DetailPanel title="Related objects">
+            <RelationList title="Papers" items={topic.relatedPapers?.map((paper) => ({ id: paper.id, label: paper.title, url: paper.url })) ?? []} />
+            <RelationList title="Projects" items={topic.relatedProjects?.map((project) => ({ id: project.id, label: project.name, url: project.url })) ?? []} />
+            <RelationList title="News" items={topic.relatedNews?.map((news) => ({ id: news.id, label: news.title, url: news.url })) ?? []} />
           </DetailPanel>
 
-          <DetailPanel title="时间线">
+          <DetailPanel title="Timeline">
             <div className="space-y-4">
               {topic.timeline.map((item) => (
                 <div key={item.id} className="border-l-2 border-border pl-3">
@@ -163,11 +163,11 @@ function DiscussionItem({ discussion }: { discussion: CommunityDiscussion }) {
       <p className="mt-2 text-sm leading-6 text-muted-foreground">{discussion.excerpt}</p>
       <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
         {discussion.publishedAt ? <span>{formatDateTime(discussion.publishedAt)}</span> : null}
-        {discussion.commentCount !== undefined ? <span>{discussion.commentCount} 条评论</span> : null}
-        {discussion.upvoteCount !== undefined ? <span>{discussion.upvoteCount} 票</span> : null}
+        {discussion.commentCount !== undefined ? <span>{discussion.commentCount} comments</span> : null}
+        {discussion.upvoteCount !== undefined ? <span>{discussion.upvoteCount} score</span> : null}
         {discussion.url ? (
           <a className="text-accent hover:text-foreground" href={discussion.url} target="_blank" rel="noreferrer">
-            打开讨论
+            Open discussion
           </a>
         ) : null}
       </div>
@@ -194,12 +194,12 @@ function RelationList({ title, items }: { title: string; items: Array<{ id: stri
           )}
         </div>
       ) : (
-        <p className="text-sm text-muted-foreground">暂无公开链接。</p>
+        <p className="text-sm text-muted-foreground">No public links are available.</p>
       )}
     </div>
   )
 }
 
 function scoreText(value?: number) {
-  return value === undefined ? "暂无" : Math.round(value)
+  return value === undefined ? "n/a" : Math.round(value)
 }

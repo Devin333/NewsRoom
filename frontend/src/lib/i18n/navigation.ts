@@ -8,7 +8,7 @@ const navigationKeyByLabel: Record<string, TranslationKey> = {
   "Official Updates": "nav.officialUpdates",
   "Product Updates": "nav.productUpdates",
   "Open Source": "nav.openSource",
-  "Community Buzz": "nav.communityBuzz",
+  "Community Pulse": "nav.communityBuzz",
   Saved: "nav.saved",
   Trends: "nav.trends",
   Hot: "nav.hot",

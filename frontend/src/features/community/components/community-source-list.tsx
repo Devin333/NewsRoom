@@ -13,14 +13,14 @@ export function CommunitySourceList({
   return (
     <aside className="hidden space-y-8 xl:block">
       <SourceBlock
-        title="来源"
+        title="Sources"
         items={options.sources}
         active={filters.source}
         label={(value) => communitySourceLabel(value)}
         onSelect={(source) => onChange({ source: filters.source === source ? undefined : source })}
       />
       <SourceBlock
-        title="话题"
+        title="Topics"
         items={options.topics}
         active={filters.topic}
         label={(value) => communityTopicLabel(value)}

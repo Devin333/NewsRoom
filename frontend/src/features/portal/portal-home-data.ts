@@ -1,4 +1,4 @@
-import { getCommunityList } from "@/lib/community/server-data"
+import { getCommunitySignals } from "@/lib/community/server-data"
 import { getNewsListResult } from "@/lib/news/server-data"
 import { getPublishedPapers } from "@/lib/papers/real-data"
 import { paperMethods, paperTasks } from "@/lib/papers/catalog"
@@ -210,25 +210,25 @@ async function papersModule(): Promise<PortalModuleSummary> {
 
 async function communityModule(): Promise<PortalModuleSummary> {
   try {
-    const result = await getCommunityList({ sort: "trending", pageSize: 6 })
-    const topics = result.allTopics
+    const result = await getCommunitySignals({ sort: "hot", limit: 6 })
+    const signals = result.allItems
     return {
       id: "community",
       title: "Community Pulse",
       href: "/community",
       eyebrow: "Community",
-      description: "Developer discussion, sentiment, controversy, propagation paths, and adoption feedback.",
-      status: topics.length ? stateFrom(result.dataState === "ready") : "empty",
+      description: "Observe community discussions, developer feedback, controversy, propagation paths, and real adoption signals.",
+      status: signals.length ? stateFrom(result.dataState === "ready") : "empty",
       sourceLabel: result.source,
       metrics: [
-        { label: "Topics", value: topics.length },
+        { label: "Signals", value: signals.length },
         { label: "Sources", value: result.metrics.activeSources },
-        { label: "Mixed", value: result.metrics.mixedCount }
+        { label: "Debates", value: result.metrics.controversialSignals }
       ],
-      highlights: topics.slice(0, 3).map((topic) => ({
-        title: topic.title,
-        href: `/community/topics/${topic.slug}`,
-        meta: topic.sourceName ?? topic.sourceType
+      highlights: signals.slice(0, 3).map((signal) => ({
+        title: signal.title,
+        href: `/community?signal=${encodeURIComponent(signal.id)}`,
+        meta: signal.sourceName ?? signal.source
       })),
       notices: result.notices
     }

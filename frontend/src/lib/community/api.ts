@@ -1,5 +1,15 @@
 import { apiGet } from "@/lib/api/client"
-import type { CommunityListParams, CommunityListResult, CommunityTopicDetail } from "@/types/community"
+import {
+  communitySignalFiltersToSearchParams
+} from "@/lib/community/community-signals"
+import type {
+  CommunityListParams,
+  CommunityListResult,
+  CommunitySignalDetailResult,
+  CommunitySignalListParams,
+  CommunitySignalListResult,
+  CommunityTopicDetail
+} from "@/types/community"
 
 type ApiEnvelope<T> = {
   success: boolean
@@ -43,13 +53,33 @@ export async function fetchCommunityTopic(slug: string, init?: RequestInit): Pro
   return unwrapEnvelope(envelope).topic
 }
 
+export async function fetchCommunitySignals(
+  params: CommunitySignalListParams = {},
+  init?: RequestInit
+): Promise<CommunitySignalListResult> {
+  const query = communitySignalFiltersToSearchParams(params)
+  const envelope = await apiGet<ApiEnvelope<CommunitySignalListResult>>(
+    `/api/community/signals${query.size ? `?${query.toString()}` : ""}`,
+    init
+  )
+  return unwrapEnvelope(envelope)
+}
+
+export async function fetchCommunitySignal(signalId: string, init?: RequestInit): Promise<CommunitySignalDetailResult> {
+  const envelope = await apiGet<ApiEnvelope<CommunitySignalDetailResult>>(
+    `/api/community/signals/${encodeURIComponent(signalId)}`,
+    init
+  )
+  return unwrapEnvelope(envelope)
+}
+
 function unwrapEnvelope<T>(envelope: ApiEnvelope<T>): T {
   if (envelope.success && envelope.data !== undefined && envelope.data !== null) {
     return envelope.data
   }
   const error = envelope.error
   throw new CommunityApiError(
-    error?.message ?? "社区 API 请求失败",
+    error?.message ?? "Community API request failed",
     error?.code,
     error?.detail ?? error?.details,
     error?.retryable

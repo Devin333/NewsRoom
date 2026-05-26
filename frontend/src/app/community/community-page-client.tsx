@@ -7,41 +7,68 @@ import { EmptyState } from "@/components/common/empty-state"
 import { ErrorState } from "@/components/common/error-state"
 import { PageSkeleton } from "@/components/common/loading-skeleton"
 import { CommunityPulsePage } from "@/features/community/components/community-pulse-page"
-import { fetchCommunityTopics } from "@/lib/community/api"
+import { fetchCommunitySignal, fetchCommunitySignals } from "@/lib/community/api"
 import {
-  communityFiltersFromSearchParams,
-  communityFiltersToSearchParams,
-  updateCommunityFilters
-} from "@/lib/community/community-filters"
-import type { CommunityListParams } from "@/types/community"
+  communitySignalFiltersFromSearchParams,
+  communitySignalFiltersToSearchParams,
+  updateCommunitySignalFilters
+} from "@/lib/community/community-signals"
+import type { CommunitySignalListParams } from "@/types/community"
 
 export function CommunityPageClient() {
   const router = useRouter()
   const searchParams = useSearchParams()
+  const selectedSignalId = searchParams.get("signal") ?? undefined
   const filters = useMemo(
-    () => communityFiltersFromSearchParams(new URLSearchParams(searchParams.toString())),
+    () => communitySignalFiltersFromSearchParams(new URLSearchParams(searchParams.toString())),
     [searchParams]
   )
   const { data, isLoading, isError, error, refetch } = useQuery({
-    queryKey: ["community", "topics", filters],
-    queryFn: () => fetchCommunityTopics(filters)
+    queryKey: ["community", "signals", filters],
+    queryFn: () => fetchCommunitySignals(filters)
+  })
+  const { data: selectedSignal } = useQuery({
+    queryKey: ["community", "signal", selectedSignalId],
+    queryFn: () => fetchCommunitySignal(selectedSignalId ?? ""),
+    enabled: Boolean(selectedSignalId)
   })
 
-  const setFilters = (patch: Partial<CommunityListParams>) => {
-    const next = updateCommunityFilters(filters, patch)
-    const params = communityFiltersToSearchParams(next)
+  const setFilters = (patch: Partial<CommunitySignalListParams>) => {
+    const next = updateCommunitySignalFilters(filters, patch)
+    const params = communitySignalFiltersToSearchParams(next)
+    if (selectedSignalId) params.set("signal", selectedSignalId)
+    router.replace(params.size ? `/community?${params.toString()}` : "/community", { scroll: false })
+  }
+
+  const openSignal = (signalId: string) => {
+    const params = communitySignalFiltersToSearchParams(filters)
+    params.set("signal", signalId)
+    router.replace(`/community?${params.toString()}`, { scroll: false })
+  }
+
+  const closeSignal = () => {
+    const params = communitySignalFiltersToSearchParams(filters)
     router.replace(params.size ? `/community?${params.toString()}` : "/community", { scroll: false })
   }
 
   if (isLoading) return <PageSkeleton />
 
   if (isError) {
-    return <ErrorState message={error instanceof Error ? error.message : "社区脉搏加载失败。"} onRetry={() => refetch()} />
+    return <ErrorState message={error instanceof Error ? error.message : "Community Pulse failed to load."} onRetry={() => refetch()} />
   }
 
   if (!data) {
-    return <EmptyState title="暂无社区数据" description="当前没有可展示的社区脉搏数据。" />
+    return <EmptyState title="No community data" description="Community Pulse data is currently unavailable." />
   }
 
-  return <CommunityPulsePage result={data} filters={filters} onChange={setFilters} />
+  return (
+    <CommunityPulsePage
+      result={data}
+      filters={filters}
+      selectedSignal={selectedSignal}
+      onChange={setFilters}
+      onOpenSignal={openSignal}
+      onCloseSignal={closeSignal}
+    />
+  )
 }

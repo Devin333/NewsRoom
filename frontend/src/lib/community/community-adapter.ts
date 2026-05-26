@@ -3,12 +3,12 @@ import type {
   CommunityDataState,
   CommunityDiscussion,
   CommunityEntity,
-  CommunitySentiment,
   CommunitySourceDistribution,
   CommunitySourceType,
   CommunityTimelineItem,
   CommunityTopic,
   CommunityTopicDetail,
+  CommunityTopicSentiment,
   EvidenceRef,
   RelatedNewsRef,
   RelatedPaperRef,
@@ -26,9 +26,15 @@ type CommunityBoardDataSet = {
 const COMMUNITY_SOURCE_TYPES = new Set<CommunitySourceType>([
   "hackernews",
   "reddit",
+  "github",
+  "github_trending",
   "github_discussion",
   "stackoverflow",
   "lobsters",
+  "devto",
+  "medium",
+  "x",
+  "blog",
   "other"
 ])
 
@@ -42,7 +48,7 @@ export function adaptCommunityBoardPayload(
       topics: [],
       details: [],
       dataState: "empty",
-      notices: [options.notice, "未找到可用的社区脉搏 board output。"].filter(Boolean) as string[]
+      notices: [options.notice, "Community board output was not available."].filter(Boolean) as string[]
     }
   }
 
@@ -58,7 +64,7 @@ export function adaptCommunityBoardPayload(
     const id = uniqueValue(baseId, idCounts)
     const title = readString(raw.title) ?? readString(readObject(raw.primary_object_ref)?.label) ?? `Community topic ${index + 1}`
     const slug = uniqueValue(slugify(`${title}-${readString(raw.published_at) ?? index + 1}`), slugCounts)
-    return adaptCommunityTopic(raw, index, { id, slug, title, generatedAt })
+    return adaptCommunityTopic(raw, { id, slug, title, generatedAt })
   })
 
   const details = topics.map((topic, index) =>
@@ -80,7 +86,6 @@ export function findCommunityTopicDetail(payload: unknown, slug: string): Commun
 
 function adaptCommunityTopic(
   card: Record<string, unknown>,
-  index: number,
   context: { id: string; slug: string; title: string; generatedAt?: string }
 ): CommunityTopic {
   const provenance = readObject(card.provenance)
@@ -99,9 +104,9 @@ function adaptCommunityTopic(
   const ranking = readObject(card.ranking_features)
   const metadata = readObject(card.metadata)
   const boardSpecificFeatures =
-    readObject(ranking?.board_specific_features) ?? readObject(metadata?.board_specific_features)
-  const sourceType = normalizeSourceType(firstEvidence?.sourceType)
+    readObject(metadata?.board_specific_features) ?? readObject(ranking?.board_specific_features)
   const sourceName = firstEvidence?.sourceName ?? sourceNameFromSubtitle(readString(card.subtitle))
+  const sourceType = normalizeSourceType(firstEvidence?.sourceType, sourceName, firstEvidence?.url)
   const sourceUrl = safeHttpsUrl(firstEvidence?.url)
   const relatedRefs = readArray(card.related_refs).map(adaptObjectRef).filter(isPresent)
   const primaryRef = adaptObjectRef(card.primary_object_ref)
@@ -113,7 +118,7 @@ function adaptCommunityTopic(
     id: context.id,
     slug: context.slug,
     title: context.title,
-    summary: publicExcerpt(card.summary, 420) ?? "暂无公开摘要。",
+    summary: publicExcerpt(card.summary, 420) ?? "No public summary is available.",
     sourceType,
     sourceName,
     sourceUrl,
@@ -170,7 +175,7 @@ function buildCommunityTopicDetail(
   const timeline = buildTimeline(topic, generatedAt)
   const notices = representativeComments.length
     ? []
-    : ["公开 artifact 未包含代表性评论摘录，当前仅展示公开摘要。"]
+    : ["Representative comments were not present in the public artifact; only public summaries are shown."]
 
   return {
     ...topic,
@@ -257,7 +262,6 @@ function adaptObjectRef(value: unknown) {
 function entityFromObjectRef(ref: ReturnType<typeof adaptObjectRef>): CommunityEntity | undefined {
   if (!ref) return undefined
   const type = normalizeEntityType(ref.objectType)
-  if (type === undefined) return undefined
   return {
     id: ref.objectId,
     name: ref.label ?? ref.objectId,
@@ -316,7 +320,7 @@ function buildTopDiscussions(topic: CommunityTopic): CommunityDiscussion[] {
       id: evidence.id,
       title: evidence.title ?? topic.title,
       sourceName: evidence.sourceName ?? topic.sourceName,
-      sourceType: normalizeSourceType(evidence.sourceType),
+      sourceType: normalizeSourceType(evidence.sourceType, evidence.sourceName, evidence.url),
       url: evidence.url,
       excerpt: evidence.excerpt ?? topic.summary,
       publishedAt: evidence.publishedAt ?? topic.publishedAt,
@@ -344,7 +348,7 @@ function buildTimeline(topic: CommunityTopic, generatedAt?: string): CommunityTi
   if (topic.publishedAt) {
     items.push({
       id: `${topic.id}-published`,
-      label: "发布",
+      label: "Published",
       timestamp: topic.publishedAt,
       description: topic.sourceName,
       sourceName: topic.sourceName
@@ -353,7 +357,7 @@ function buildTimeline(topic: CommunityTopic, generatedAt?: string): CommunityTi
   if (topic.lastActivityAt && topic.lastActivityAt !== topic.publishedAt) {
     items.push({
       id: `${topic.id}-activity`,
-      label: "最近活跃",
+      label: "Last activity",
       timestamp: topic.lastActivityAt,
       description: topic.summary,
       sourceName: topic.sourceName
@@ -362,9 +366,9 @@ function buildTimeline(topic: CommunityTopic, generatedAt?: string): CommunityTi
   if (generatedAt) {
     items.push({
       id: `${topic.id}-generated`,
-      label: "完成分析",
+      label: "Analyzed",
       timestamp: generatedAt,
-      description: "社区脉搏 board output 已生成。"
+      description: "Community Pulse board output generated."
     })
   }
   return items
@@ -374,7 +378,7 @@ function buildSourceDistribution(topic: CommunityTopic): CommunitySourceDistribu
   const counts = new Map<CommunitySourceType, number>()
   const refs = topic.evidenceRefs?.length ? topic.evidenceRefs : [{ sourceType: topic.sourceType }]
   for (const ref of refs) {
-    const sourceType = normalizeSourceType(ref.sourceType)
+    const sourceType = normalizeSourceType(ref.sourceType, undefined, "url" in ref ? ref.url : undefined)
     counts.set(sourceType, (counts.get(sourceType) ?? 0) + 1)
   }
   return [...counts.entries()].map(([sourceType, count]) => ({ sourceType, count }))
@@ -398,7 +402,7 @@ function readSentiment(
   card: Record<string, unknown>,
   metadata: Record<string, unknown> | undefined,
   ranking: Record<string, unknown> | undefined
-): CommunitySentiment {
+): CommunityTopicSentiment {
   return (
     normalizeSentiment(readString(card.sentiment)) ??
     normalizeSentiment(readString(metadata?.sentiment)) ??
@@ -408,28 +412,36 @@ function readSentiment(
   )
 }
 
-function normalizeSentiment(value?: string): CommunitySentiment | undefined {
+function normalizeSentiment(value?: string): CommunityTopicSentiment | undefined {
   const normalized = value?.trim().toLowerCase()
   if (!normalized) return undefined
-  if (["positive", "negative", "mixed", "neutral", "unknown"].includes(normalized)) {
-    return normalized as CommunitySentiment
+  if (["positive", "negative", "mixed", "neutral", "controversial", "unknown"].includes(normalized)) {
+    return normalized as CommunityTopicSentiment
   }
   return undefined
 }
 
-function normalizeSourceType(value?: string): CommunitySourceType {
+function normalizeSourceType(value?: string, sourceName?: string, url?: string): CommunitySourceType {
   const normalized = value?.trim().toLowerCase().replaceAll("-", "_")
-  if (normalized === "github" || normalized === "github_discussions" || normalized === "github_discussion") {
-    return "github_discussion"
-  }
+  const normalizedName = sourceName?.trim().toLowerCase() ?? ""
+  const normalizedUrl = url?.trim().toLowerCase() ?? ""
+
+  if (normalized === "github_trending" || normalizedName.includes("github trending")) return "github_trending"
+  if (normalized === "github" || normalized === "github_discussions" || normalized === "github_discussion") return "github_discussion"
   if (normalized === "hn" || normalized === "hacker_news") return "hackernews"
   if (normalized === "stack_overflow") return "stackoverflow"
+  if (normalized === "twitter" || normalized === "x_twitter") return "x"
+  if (normalized === "official_blog" || normalized === "blog" || normalizedName.includes("blog")) return "blog"
+  if (normalizedUrl.includes("news.ycombinator.com")) return "hackernews"
+  if (normalizedUrl.includes("reddit.com")) return "reddit"
+  if (normalizedUrl.includes("github.com/trending")) return "github_trending"
+  if (normalizedUrl.includes("github.com")) return "github_discussion"
   return normalized && COMMUNITY_SOURCE_TYPES.has(normalized as CommunitySourceType)
     ? (normalized as CommunitySourceType)
     : "other"
 }
 
-function normalizeEntityType(value: string): CommunityEntity["type"] | undefined {
+function normalizeEntityType(value: string): CommunityEntity["type"] {
   const normalized = value.trim().toLowerCase()
   if (["entity", "company", "organization"].includes(normalized)) return "company"
   if (["project", "repo", "repository", "github_project"].includes(normalized)) return "project"

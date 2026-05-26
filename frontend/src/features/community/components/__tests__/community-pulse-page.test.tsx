@@ -2,44 +2,93 @@ import { fireEvent, render, screen } from "@testing-library/react"
 import { describe, expect, it, vi } from "vitest"
 import { CommunityPulsePage } from "@/features/community/components/community-pulse-page"
 import { CommunityTopicDetail } from "@/features/community/components/community-topic-detail"
-import { buildCommunityListResult } from "@/lib/community/community-filters"
+import {
+  buildCommunitySignalDetailResult,
+  buildCommunitySignalListResult
+} from "@/lib/community/community-signals"
 import type { CommunityTopic, CommunityTopicDetail as CommunityTopicDetailType } from "@/types/community"
 
 describe("Community Pulse UI", () => {
-  it("renders an empty state when no community topics are available", () => {
-    const result = buildCommunityListResult([], {}, { source: "empty" })
+  it("renders an empty state when no community signals are available", () => {
+    const result = buildCommunitySignalListResult([], [], {}, { source: "empty" })
 
-    render(<CommunityPulsePage result={result} filters={{}} onChange={vi.fn()} />)
+    render(
+      <CommunityPulsePage
+        result={result}
+        filters={{}}
+        onChange={vi.fn()}
+        onOpenSignal={vi.fn()}
+        onCloseSignal={vi.fn()}
+      />
+    )
 
-    expect(screen.getByText("暂无社区话题")).toBeInTheDocument()
+    expect(screen.getByText("No community signals")).toBeInTheDocument()
   })
 
-  it("renders community topic cards and forwards filter interactions", () => {
+  it("renders signal stream and forwards filter interactions", () => {
     const onChange = vi.fn()
-    const result = buildCommunityListResult([sampleTopic()], {}, { source: "artifact" })
+    const onOpenSignal = vi.fn()
+    const result = buildCommunitySignalListResult([sampleTopic()], [sampleDetail()], {}, { source: "artifact" })
 
-    render(<CommunityPulsePage result={result} filters={{}} onChange={onChange} />)
+    render(
+      <CommunityPulsePage
+        result={result}
+        filters={{}}
+        onChange={onChange}
+        onOpenSignal={onOpenSignal}
+        onCloseSignal={vi.fn()}
+      />
+    )
 
-    expect(screen.getByText("Agent memory debate")).toBeInTheDocument()
-    expect(screen.getByText("Memory paper")).toBeInTheDocument()
+    expect(screen.getAllByText("Agent memory debate").length).toBeGreaterThan(0)
+    expect(screen.getByText("Hot Discussion")).toBeInTheDocument()
+    expect(screen.getByText("Debate Cluster")).toBeInTheDocument()
+    expect(screen.getAllByText("1 papers").length).toBeGreaterThan(0)
 
-    fireEvent.click(screen.getByRole("button", { name: "正面" }))
-    expect(onChange).toHaveBeenCalledWith({ sentiment: "positive" })
+    fireEvent.click(screen.getByRole("button", { name: "Positive" }))
+    expect(onChange).toHaveBeenCalledWith({ sentiment: "positive", cursor: undefined })
 
-    fireEvent.change(screen.getByRole("textbox", { name: "搜索社区话题" }), {
+    fireEvent.change(screen.getByRole("textbox", { name: "Search community signals" }), {
       target: { value: "latency" }
     })
-    fireEvent.click(screen.getByRole("button", { name: "搜索" }))
-    expect(onChange).toHaveBeenLastCalledWith({ q: "latency" })
+    fireEvent.click(screen.getByRole("button", { name: "Search" }))
+    expect(onChange).toHaveBeenLastCalledWith({ q: "latency", cursor: undefined })
+
+    fireEvent.click(screen.getByRole("button", { name: "Inspect signal" }))
+    expect(onOpenSignal).toHaveBeenCalledWith("topic-1")
   })
 
-  it("renders Community Pulse detail sections from public data", () => {
+  it("renders the signal detail drawer from public data", () => {
+    const detail = buildCommunitySignalDetailResult([sampleTopic()], [sampleDetail()], "topic-1")
+    expect(detail).toBeDefined()
+    const onClose = vi.fn()
+    const result = buildCommunitySignalListResult([sampleTopic()], [sampleDetail()], {}, { source: "artifact" })
+
+    render(
+      <CommunityPulsePage
+        result={result}
+        filters={{}}
+        selectedSignal={detail}
+        onChange={vi.fn()}
+        onOpenSignal={vi.fn()}
+        onCloseSignal={onClose}
+      />
+    )
+
+    expect(screen.getByRole("dialog", { name: "Community signal detail" })).toBeInTheDocument()
+    expect(screen.getByText("Evidence links")).toBeInTheDocument()
+    expect(screen.getByText("Memory repo")).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "Close signal detail" }))
+    expect(onClose).toHaveBeenCalled()
+  })
+
+  it("renders Community Pulse topic detail sections from public data", () => {
     render(<CommunityTopicDetail topic={sampleDetail()} />)
 
-    expect(screen.getByText("高热讨论")).toBeInTheDocument()
-    expect(screen.getByText("代表性评论")).toBeInTheDocument()
+    expect(screen.getByText("Top discussions")).toBeInTheDocument()
+    expect(screen.getByText("Representative comments")).toBeInTheDocument()
     expect(screen.getByText("Memory paper")).toBeInTheDocument()
-    expect(screen.getByText("打开讨论")).toBeInTheDocument()
+    expect(screen.getByText("Open discussion")).toBeInTheDocument()
   })
 })
 
@@ -57,6 +106,9 @@ function sampleTopic(): CommunityTopic {
     sentiment: "mixed",
     heatScore: 88,
     controversyScore: 42,
+    adoptionScore: 35,
+    commentCount: 18,
+    upvoteCount: 75,
     tags: ["agents"],
     relatedPapers: [{ id: "paper-1", title: "Memory paper" }],
     relatedProjects: [{ id: "project-1", name: "Memory repo" }],
@@ -99,7 +151,7 @@ function sampleDetail(): CommunityTopicDetailType {
     timeline: [
       {
         id: "timeline-1",
-        label: "发布",
+        label: "Published",
         timestamp: "2026-05-24T00:00:00Z"
       }
     ],

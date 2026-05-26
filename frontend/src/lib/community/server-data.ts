@@ -3,7 +3,18 @@ import path from "node:path"
 import { safeApiGet } from "@/lib/api/server"
 import { adaptCommunityBoardPayload } from "@/lib/community/community-adapter"
 import { buildCommunityListResult } from "@/lib/community/community-filters"
-import type { CommunityListParams, CommunityListResult, CommunityTopicDetail } from "@/types/community"
+import {
+  buildCommunitySignalDetailResult,
+  buildCommunitySignalListResult
+} from "@/lib/community/community-signals"
+import type {
+  CommunityListParams,
+  CommunityListResult,
+  CommunitySignalDetailResult,
+  CommunitySignalListParams,
+  CommunitySignalListResult,
+  CommunityTopicDetail
+} from "@/types/community"
 
 type JsonRecord = Record<string, unknown>
 
@@ -55,6 +66,27 @@ export async function getCommunityTopic(slug: string): Promise<CommunityTopicDet
   return adapted.details.find((detail) => detail.slug === slug)
 }
 
+export async function getCommunitySignals(params: CommunitySignalListParams): Promise<CommunitySignalListResult> {
+  const loaded = await loadCommunityData()
+  const adapted = adaptCommunityBoardPayload(loaded.payload, { notice: loaded.notice })
+
+  return buildCommunitySignalListResult(adapted.topics, adapted.details, params, {
+    source: adapted.topics.length ? loaded.source : "empty",
+    dataState: adapted.dataState,
+    generatedAt: adapted.generatedAt ?? loaded.generatedAt,
+    notices: adapted.notices
+  })
+}
+
+export async function getCommunitySignal(signalId: string): Promise<CommunitySignalDetailResult | undefined> {
+  const loaded = await loadCommunityData()
+  const adapted = adaptCommunityBoardPayload(loaded.payload, { notice: loaded.notice })
+  return buildCommunitySignalDetailResult(adapted.topics, adapted.details, signalId, {
+    generatedAt: adapted.generatedAt ?? loaded.generatedAt,
+    notices: adapted.notices
+  })
+}
+
 async function loadCommunityData(): Promise<LoadedCommunityData> {
   const backend = await loadBackendBoardOutput()
   if (backend.payload) return backend
@@ -64,7 +96,7 @@ async function loadCommunityData(): Promise<LoadedCommunityData> {
 
   return {
     source: "empty",
-    notice: "未找到后端输出或本地 community_pulse artifact。"
+    notice: "No backend output or local community_pulse artifact was found."
   }
 }
 
@@ -75,7 +107,7 @@ async function loadBackendBoardOutput(): Promise<LoadedCommunityData> {
   if (!runsResult.ok) {
     return {
       source: "empty",
-      notice: `后端社区脉搏运行查询失败：${runsResult.errorMessage}`
+      notice: `Backend community run lookup failed: ${runsResult.errorMessage}`
     }
   }
 
@@ -94,7 +126,7 @@ async function loadBackendBoardOutput(): Promise<LoadedCommunityData> {
         return {
           payload,
           source: "backend",
-          notice: `已加载后端 community_pulse ${artifactKey} artifact。`,
+          notice: `Loaded from backend community_pulse ${artifactKey} artifact.`,
           generatedAt: adapted.generatedAt ?? runTimestamp(run)
         }
       }
@@ -103,7 +135,7 @@ async function loadBackendBoardOutput(): Promise<LoadedCommunityData> {
 
   return {
     source: "empty",
-    notice: "后端没有提供包含可展示话题的 community_pulse board artifact。"
+    notice: "Backend did not expose a populated community_pulse board artifact."
   }
 }
 
@@ -118,22 +150,22 @@ async function loadLatestArtifactBoardOutput(): Promise<LoadedCommunityData> {
   const runDirs = await communityRunDirs()
   for (const candidate of runDirs) {
     const payload = await readLocalPayload(candidate)
-    if (payload !== undefined) {
-      const adapted = adaptCommunityBoardPayload(payload)
-      if (!adapted.topics.length) continue
+    if (payload === undefined) continue
 
-      return {
-        payload,
-        source: "artifact",
-        notice: `已加载本地 community_pulse artifact：${candidate.name}。`,
-        generatedAt: adapted.generatedAt ?? candidate.modifiedAt
-      }
+    const adapted = adaptCommunityBoardPayload(payload)
+    if (!adapted.topics.length) continue
+
+    return {
+      payload,
+      source: "artifact",
+      notice: `Loaded from local community_pulse artifact: ${candidate.name}.`,
+      generatedAt: adapted.generatedAt ?? candidate.modifiedAt
     }
   }
 
   return {
     source: "empty",
-    notice: "没有可读取的本地 community_pulse artifact。"
+    notice: "No local community_pulse artifact could be read."
   }
 }
 
@@ -151,6 +183,8 @@ async function communityRunDirs() {
       const modifiedAt = await latestModifiedAt([
         path.join(fullPath, "board_output.json"),
         path.join(fullPath, "output.json"),
+        path.join(fullPath, "cards.json"),
+        path.join(fullPath, "detail_pages.json"),
         path.join(fullPath, "manifest.json")
       ])
       dirs.push({ runDir: fullPath, name: entry.name, manifest, modifiedAt })
@@ -170,15 +204,6 @@ function runsRoots() {
   ])
 }
 
-async function readFirstJson(runDir: string, filenames: readonly string[]) {
-  for (const filename of filenames) {
-    const filePath = path.join(runDir, filename)
-    const payload = await readJson(filePath)
-    if (payload !== undefined) return payload
-  }
-  return undefined
-}
-
 async function readLocalPayload(candidate: LocalCommunityCandidate) {
   const directPayload = await readFirstJson(candidate.runDir, LOCAL_ARTIFACT_FILES)
   if (directPayload !== undefined && adaptCommunityBoardPayload(directPayload).topics.length) {
@@ -196,6 +221,15 @@ async function readLocalPayload(candidate: LocalCommunityCandidate) {
     detail_pages: jsonArray(detailPagesPayload, "detail_pages"),
     generated_at: manifestTimestamp(candidate.manifest) ?? candidate.modifiedAt
   }
+}
+
+async function readFirstJson(runDir: string, filenames: readonly string[]) {
+  for (const filename of filenames) {
+    const filePath = path.join(runDir, filename)
+    const payload = await readJson(filePath)
+    if (payload !== undefined) return payload
+  }
+  return undefined
 }
 
 async function readJson(filePath: string) {
@@ -235,8 +269,19 @@ async function latestModifiedAt(filePaths: string[]) {
 
 function unwrapArtifactPayload(value: unknown): unknown {
   const record = asRecord(value)
-  if (!record) return value
-  return record.content ?? record.data ?? value
+  if (!record) return parseJsonString(value) ?? value
+  const content = parseJsonString(record.content) ?? record.content
+  const data = parseJsonString(record.data) ?? record.data
+  return content ?? data ?? value
+}
+
+function parseJsonString(value: unknown) {
+  if (typeof value !== "string") return undefined
+  try {
+    return JSON.parse(value) as unknown
+  } catch {
+    return undefined
+  }
 }
 
 function isCommunityPulseRun(run: JsonRecord) {

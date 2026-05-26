@@ -1,16 +1,31 @@
 import type { PageResponse } from "@/types/common"
 
-export type CommunitySourceType =
+export type CommunitySource =
   | "hackernews"
   | "reddit"
+  | "github"
+  | "github_trending"
+  | "x"
+  | "blog"
+  | "other"
+
+export type CommunitySourceType =
+  | CommunitySource
   | "github_discussion"
   | "stackoverflow"
   | "lobsters"
-  | "other"
+  | "devto"
+  | "medium"
 
-export type CommunitySentiment = "positive" | "negative" | "mixed" | "neutral" | "unknown"
+export type CommunitySentiment = "positive" | "neutral" | "negative" | "mixed" | "controversial"
 
-export type CommunitySort = "trending" | "newest" | "controversial" | "adoption"
+export type CommunityTopicSentiment = CommunitySentiment | "unknown"
+
+export type CommunitySort = "trending" | "hot" | "newest" | "controversial" | "adoption"
+
+export type CommunitySignalSort = "hot" | "newest" | "controversial" | "adoption"
+
+export type CommunitySignalPeriod = "daily" | "weekly" | "monthly" | "all"
 
 export type CommunityTopicKey = "agents" | "rag" | "inference" | "evaluation" | "coding"
 
@@ -57,6 +72,102 @@ export type RelatedNewsRef = {
   publishedAt?: string
 }
 
+export type CommunitySignal = {
+  id: string
+  slug: string
+  source: CommunitySource
+  sourceName?: string
+  title: string
+  url: string
+  author?: string
+  summary: string
+  postedAt: string
+  collectedAt: string
+  score?: number
+  comments?: number
+  sentiment: CommunitySentiment
+  topics: string[]
+  entities: CommunityEntity[]
+  heatScore: number
+  controversyScore: number
+  adoptionScore: number
+  relatedPaperIds: string[]
+  relatedProjectIds: string[]
+  relatedNewsIds: string[]
+  relatedPapers?: RelatedPaperRef[]
+  relatedProjects?: RelatedProjectRef[]
+  relatedNews?: RelatedNewsRef[]
+  evidenceLinks?: EvidenceRef[]
+}
+
+export type DebateCluster = {
+  id: string
+  title: string
+  summary: string
+  signalIds: string[]
+  topicIds: string[]
+  positiveArguments: string[]
+  negativeArguments: string[]
+  neutralFacts: string[]
+  controversyScore: number
+  lastUpdatedAt: string
+}
+
+export type CommunitySignalFacets = {
+  sources: Array<{ source: CommunitySource; label: string; count: number }>
+  topics: Array<{ topic: string; label: string; count: number }>
+  sentiments: Array<{ sentiment: CommunitySentiment; label: string; count: number }>
+}
+
+export type CommunitySignalMetrics = {
+  totalSignals: number
+  periodSignals: number
+  activeSources: number
+  hotSignals: number
+  controversialSignals: number
+  averageHeatScore?: number
+  averageControversyScore?: number
+  heatSummary: string
+}
+
+export type CommunitySignalListParams = {
+  q?: string
+  source?: CommunitySource
+  sentiment?: CommunitySentiment
+  topic?: string
+  period?: CommunitySignalPeriod
+  sort?: CommunitySignalSort | "trending"
+  limit?: number
+  cursor?: string
+  page?: number
+  pageSize?: number
+}
+
+export type CommunitySignalListResult = {
+  items: CommunitySignal[]
+  allItems: CommunitySignal[]
+  allFiltered: CommunitySignal[]
+  clusters: DebateCluster[]
+  facets: CommunitySignalFacets
+  nextCursor: string | null
+  page: PageResponse<CommunitySignal> & { nextCursor: string | null }
+  metrics: CommunitySignalMetrics
+  dataState: CommunityDataState
+  source: "backend" | "artifact" | "empty"
+  generatedAt?: string
+  notices: string[]
+}
+
+export type CommunitySignalDetailResult = {
+  signal: CommunitySignal
+  relatedPapers: RelatedPaperRef[]
+  relatedProjects: RelatedProjectRef[]
+  relatedNews: RelatedNewsRef[]
+  evidenceLinks: EvidenceRef[]
+  clusters: DebateCluster[]
+  notices: string[]
+}
+
 export type CommunityTopic = {
   id: string
   slug: string
@@ -67,7 +178,7 @@ export type CommunityTopic = {
   sourceUrl?: string
   publishedAt?: string
   lastActivityAt?: string
-  sentiment: CommunitySentiment
+  sentiment: CommunityTopicSentiment
   controversyScore?: number
   adoptionScore?: number
   heatScore?: number
@@ -103,7 +214,7 @@ export type CommunityCommentExcerpt = {
   authorName?: string
   sourceName?: string
   excerpt: string
-  sentiment: CommunitySentiment
+  sentiment: CommunityTopicSentiment
   publishedAt?: string
 }
 
@@ -127,7 +238,7 @@ export type CommunityTopicDetail = CommunityTopic & {
 export type CommunityListParams = {
   q?: string
   source?: CommunitySourceType
-  sentiment?: Exclude<CommunitySentiment, "unknown"> | "unknown"
+  sentiment?: CommunityTopicSentiment
   sort?: CommunitySort
   topic?: CommunityTopicKey
   page?: number
@@ -136,7 +247,7 @@ export type CommunityListParams = {
 
 export type CommunityFilterOptions = {
   sources: Array<{ sourceType: CommunitySourceType; label: string; count: number }>
-  sentiments: Array<{ sentiment: CommunitySentiment; count: number }>
+  sentiments: Array<{ sentiment: CommunityTopicSentiment; count: number }>
   topics: Array<{ topic: CommunityTopicKey; label: string; count: number }>
   tags: string[]
 }

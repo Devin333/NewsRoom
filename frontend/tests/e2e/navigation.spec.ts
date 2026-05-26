@@ -54,7 +54,7 @@ test("/ renders the Portal homepage modules", async ({ page }) => {
   await expect(modules.getByRole("link", { name: /View AI News/i })).toBeVisible()
   await expect(modules.getByRole("link", { name: /View Project Radar/i })).toBeVisible()
   await expect(modules.getByRole("link", { name: /View Paper Radar/i })).toBeVisible()
-  await expect(modules.getByRole("link", { name: /View Community Pulse/i })).toBeVisible()
+  await expect(modules.getByRole("link", { name: /View Community Pulse/i })).toHaveAttribute("href", "/community")
   await expect(modules.getByRole("link", { name: /View Cross-board Evidence Graph/i })).toBeVisible()
   await expect(modules.getByRole("link", { name: /View Reports \/ Briefings/i })).toBeVisible()
   const researchEntries = page.getByRole("region", { name: "Paper Radar research entries" })
@@ -62,6 +62,35 @@ test("/ renders the Portal homepage modules", async ({ page }) => {
   await expect(researchEntries.getByRole("link", { name: /Tasks/i })).toHaveAttribute("href", "/papers/tasks")
   await expect(researchEntries.getByRole("link", { name: /Methods/i })).toHaveAttribute("href", "/papers/methods")
   await expect(page.locator("body")).not.toContainText("Quality Gate")
+})
+
+test("/community renders the Community Pulse board", async ({ page, baseURL }) => {
+  await authenticate(page, baseURL)
+  await mockCommunityPulse(page)
+
+  await page.goto("/community")
+
+  await expect(page.getByRole("heading", { name: /Community Pulse Board/i })).toBeVisible()
+  await expect(page.getByText("Hot Discussion")).toBeVisible()
+  await expect(page.getByText("Agent memory debate").first()).toBeVisible()
+})
+
+test("/ home Community Pulse card opens /community", async ({ page, baseURL }) => {
+  await authenticate(page, baseURL)
+  await mockCommunityPulse(page)
+  await page.goto("/")
+
+  await page.getByRole("region", { name: "Portal modules" }).getByRole("link", { name: /View Community Pulse/i }).click()
+
+  await expect(page).toHaveURL(/\/community$/)
+  await expect(page.getByRole("heading", { name: /Community Pulse Board/i })).toBeVisible()
+})
+
+test("/news?source=community redirects to /community with mapped filters", async ({ page, baseURL }) => {
+  await authenticate(page, baseURL)
+  await page.goto("/news?source=community&q=agent&topic=agents&sentiment=mixed&period=weekly&sort=controversial&limit=12")
+
+  await expect(page).toHaveURL(/\/community\?q=agent&topic=agents&sentiment=mixed&period=weekly&sort=controversial&limit=12$/)
 })
 
 test("/papers uses one breadcrumb and real paper actions", async ({ page, baseURL }) => {
@@ -254,6 +283,113 @@ async function mockProjectRadar(page: Page) {
           page: { page: 1, pageSize: 24, total: 1, hasNext: false, nextCursor: null },
           dataState: "ready",
           source: "artifact",
+          notices: []
+        },
+        error: null
+      })
+    })
+  })
+}
+
+async function mockCommunityPulse(page: Page) {
+  const signal = {
+    id: "signal-1",
+    slug: "agent-memory-debate",
+    source: "hackernews",
+    sourceName: "Hacker News",
+    title: "Agent memory debate",
+    url: "https://news.ycombinator.com/item?id=1",
+    summary: "Developers discuss memory latency and reliability.",
+    postedAt: "2026-05-25T00:00:00Z",
+    collectedAt: "2026-05-25T00:00:00Z",
+    score: 75,
+    comments: 18,
+    sentiment: "mixed",
+    topics: ["agents"],
+    entities: [],
+    heatScore: 88,
+    controversyScore: 42,
+    adoptionScore: 35,
+    relatedPaperIds: ["paper-1"],
+    relatedProjectIds: ["project-1"],
+    relatedNewsIds: ["news-1"],
+    relatedPapers: [{ id: "paper-1", title: "Memory paper" }],
+    relatedProjects: [{ id: "project-1", name: "Memory repo" }],
+    relatedNews: [{ id: "news-1", title: "Memory launch" }],
+    evidenceLinks: [
+      {
+        id: "evidence-1",
+        sourceName: "Hacker News",
+        sourceType: "hackernews",
+        url: "https://news.ycombinator.com/item?id=1",
+        excerpt: "Public excerpt only."
+      }
+    ]
+  }
+  const cluster = {
+    id: "cluster-signal-1",
+    title: "Agent memory debate",
+    summary: "Developers discuss memory latency and reliability.",
+    signalIds: ["signal-1"],
+    topicIds: ["agents"],
+    positiveArguments: [],
+    negativeArguments: [],
+    neutralFacts: ["Latency is the main blocker.", "Public excerpt only."],
+    controversyScore: 42,
+    lastUpdatedAt: "2026-05-25T00:00:00Z"
+  }
+
+  await page.route(/\/api\/community\/signals(?:\?.*)?$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        success: true,
+        data: {
+          items: [signal],
+          allItems: [signal],
+          allFiltered: [signal],
+          clusters: [cluster],
+          facets: {
+            sources: [{ source: "hackernews", label: "Hacker News", count: 1 }],
+            topics: [{ topic: "agents", label: "agents", count: 1 }],
+            sentiments: [{ sentiment: "mixed", label: "Mixed", count: 1 }]
+          },
+          nextCursor: null,
+          page: { items: [signal], total: 1, page: 1, pageSize: 10, hasNext: false, nextCursor: null },
+          metrics: {
+            totalSignals: 1,
+            periodSignals: 1,
+            activeSources: 1,
+            hotSignals: 1,
+            controversialSignals: 0,
+            averageHeatScore: 88,
+            averageControversyScore: 42,
+            heatSummary: "Current lead: Agent memory debate"
+          },
+          dataState: "ready",
+          source: "artifact",
+          generatedAt: "2026-05-26T00:00:00Z",
+          notices: []
+        },
+        error: null
+      })
+    })
+  })
+
+  await page.route("**/api/community/signals/signal-1", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        success: true,
+        data: {
+          signal,
+          relatedPapers: signal.relatedPapers,
+          relatedProjects: signal.relatedProjects,
+          relatedNews: signal.relatedNews,
+          evidenceLinks: signal.evidenceLinks,
+          clusters: [cluster],
           notices: []
         },
         error: null

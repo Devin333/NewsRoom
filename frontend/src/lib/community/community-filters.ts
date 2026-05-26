@@ -4,11 +4,11 @@ import type {
   CommunityListParams,
   CommunityListResult,
   CommunityMetrics,
-  CommunitySentiment,
   CommunitySort,
   CommunitySourceType,
   CommunityTopic,
-  CommunityTopicKey
+  CommunityTopicKey,
+  CommunityTopicSentiment
 } from "@/types/community"
 
 export const COMMUNITY_PAGE_SIZE = 8
@@ -22,9 +22,16 @@ export const COMMUNITY_SOURCE_TYPES: CommunitySourceType[] = [
   "other"
 ]
 
-export const COMMUNITY_SENTIMENTS: CommunitySentiment[] = ["positive", "negative", "mixed", "neutral", "unknown"]
+export const COMMUNITY_SENTIMENTS: CommunityTopicSentiment[] = [
+  "positive",
+  "negative",
+  "mixed",
+  "neutral",
+  "controversial",
+  "unknown"
+]
 
-export const COMMUNITY_SORTS: CommunitySort[] = ["trending", "newest", "controversial", "adoption"]
+export const COMMUNITY_SORTS: CommunitySort[] = ["trending", "hot", "newest", "controversial", "adoption"]
 
 export const COMMUNITY_TOPIC_KEYS: CommunityTopicKey[] = ["agents", "rag", "inference", "evaluation", "coding"]
 
@@ -33,10 +40,10 @@ export function communityFiltersFromSearchParams(params: URLSearchParams): Commu
     q: params.get("q") ?? undefined,
     source: readEnum(params.get("source"), COMMUNITY_SOURCE_TYPES),
     sentiment: readEnum(params.get("sentiment"), COMMUNITY_SENTIMENTS),
-    sort: readEnum(params.get("sort"), COMMUNITY_SORTS) ?? "trending",
+    sort: readSort(params.get("sort")),
     topic: readEnum(params.get("topic"), COMMUNITY_TOPIC_KEYS),
     page: Math.max(1, Number(params.get("page") ?? "1") || 1),
-    pageSize: positiveNumber(params.get("pageSize"))
+    pageSize: positiveNumber(params.get("pageSize") ?? params.get("limit"))
   })
 }
 
@@ -151,32 +158,39 @@ export function communitySourceLabel(sourceType: CommunitySourceType): string {
   const labels: Record<CommunitySourceType, string> = {
     hackernews: "Hacker News",
     reddit: "Reddit",
-    github_discussion: "GitHub 讨论",
+    github: "GitHub",
+    github_trending: "GitHub Trending",
+    github_discussion: "GitHub Discussions",
     stackoverflow: "Stack Overflow",
     lobsters: "Lobsters",
-    other: "其他来源"
+    devto: "dev.to",
+    medium: "Medium",
+    x: "X / Twitter",
+    blog: "Blogs",
+    other: "Other"
   }
   return labels[sourceType]
 }
 
-export function communitySentimentLabel(sentiment: CommunitySentiment): string {
-  const labels: Record<CommunitySentiment, string> = {
-    positive: "正面",
-    negative: "负面",
-    mixed: "分歧",
-    neutral: "中性",
-    unknown: "未知"
+export function communitySentimentLabel(sentiment: CommunityTopicSentiment): string {
+  const labels: Record<CommunityTopicSentiment, string> = {
+    positive: "Positive",
+    negative: "Negative",
+    mixed: "Mixed",
+    neutral: "Neutral",
+    controversial: "Controversial",
+    unknown: "Unknown"
   }
   return labels[sentiment]
 }
 
 export function communityTopicLabel(topic: CommunityTopicKey): string {
   const labels: Record<CommunityTopicKey, string> = {
-    agents: "智能体",
+    agents: "Agents",
     rag: "RAG",
-    inference: "推理服务",
-    evaluation: "评测",
-    coding: "编程助手"
+    inference: "Inference",
+    evaluation: "Evaluation",
+    coding: "Coding"
   }
   return labels[topic]
 }
@@ -212,11 +226,11 @@ function topicSearchText(topic: CommunityTopic) {
 function matchesTopicKey(item: CommunityTopic, topic: CommunityTopicKey) {
   const haystack = topicSearchText(item)
   const aliases: Record<CommunityTopicKey, string[]> = {
-    agents: ["agent", "agents", "agentic"],
+    agents: ["agent", "agents", "agentic", "ai agent"],
     rag: ["rag", "retrieval"],
     inference: ["inference", "serving", "latency"],
     evaluation: ["evaluation", "eval", "benchmark"],
-    coding: ["coding", "code", "developer"]
+    coding: ["coding", "code", "developer", "programming"]
   }
   return aliases[topic].some((alias) => haystack.includes(alias))
 }
@@ -233,6 +247,12 @@ function numberValue(value: number | undefined) {
 function average(values: number[]) {
   if (!values.length) return undefined
   return Math.round(values.reduce((total, value) => total + value, 0) / values.length)
+}
+
+function readSort(value: string | null): CommunitySort {
+  if (value === "hot") return "hot"
+  if (value === "trending") return "trending"
+  return readEnum(value, COMMUNITY_SORTS) ?? "trending"
 }
 
 function readEnum<T extends string>(value: string | null, allowed: readonly T[]) {

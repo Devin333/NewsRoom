@@ -7,7 +7,13 @@ import {
   communitySourceLabel,
   communityTopicLabel
 } from "@/lib/community/community-filters"
-import type { CommunityListParams, CommunitySentiment, CommunitySort, CommunitySourceType, CommunityTopicKey } from "@/types/community"
+import type {
+  CommunityListParams,
+  CommunitySort,
+  CommunitySourceType,
+  CommunityTopicKey,
+  CommunityTopicSentiment
+} from "@/types/community"
 
 export function CommunityFilterPanel({
   filters,
@@ -19,7 +25,7 @@ export function CommunityFilterPanel({
   return (
     <aside className="rounded-md border border-border bg-card p-4">
       <div className="flex items-center justify-between gap-3">
-        <h2 className="text-sm font-semibold text-foreground">筛选</h2>
+        <h2 className="text-sm font-semibold text-foreground">Filters</h2>
         <button
           type="button"
           onClick={() =>
@@ -32,34 +38,34 @@ export function CommunityFilterPanel({
           }
           className="text-xs text-accent hover:text-foreground"
         >
-          重置
+          Reset
         </button>
       </div>
 
       <div className="mt-4 space-y-5">
         <SelectBlock
-          label="来源"
+          label="Source"
           value={filters.source ?? ""}
-          options={[["", "全部来源"], ...COMMUNITY_SOURCE_TYPES.map((source) => [source, communitySourceLabel(source)] as const)]}
+          options={[["", "All sources"], ...COMMUNITY_SOURCE_TYPES.map((source) => [source, communitySourceLabel(source)] as const)]}
           onChange={(value) => onChange({ source: value ? (value as CommunitySourceType) : undefined })}
         />
 
         <SelectBlock
-          label="情绪"
+          label="Sentiment"
           value={filters.sentiment ?? ""}
-          options={[["", "全部情绪"], ...COMMUNITY_SENTIMENTS.map((sentiment) => [sentiment, communitySentimentLabel(sentiment)] as const)]}
-          onChange={(value) => onChange({ sentiment: value ? (value as CommunitySentiment) : undefined })}
+          options={[["", "All sentiment"], ...COMMUNITY_SENTIMENTS.map((sentiment) => [sentiment, communitySentimentLabel(sentiment)] as const)]}
+          onChange={(value) => onChange({ sentiment: value ? (value as CommunityTopicSentiment) : undefined })}
         />
 
         <SelectBlock
-          label="话题"
+          label="Topic"
           value={filters.topic ?? ""}
-          options={[["", "全部话题"], ...COMMUNITY_TOPIC_KEYS.map((topic) => [topic, communityTopicLabel(topic)] as const)]}
+          options={[["", "All topics"], ...COMMUNITY_TOPIC_KEYS.map((topic) => [topic, communityTopicLabel(topic)] as const)]}
           onChange={(value) => onChange({ topic: value ? (value as CommunityTopicKey) : undefined })}
         />
 
         <SelectBlock
-          label="排序"
+          label="Sort"
           value={filters.sort ?? "trending"}
           options={COMMUNITY_SORTS.map((sort) => [sort, sortLabel(sort)] as const)}
           onChange={(value) => onChange({ sort: value as CommunitySort })}
@@ -100,10 +106,11 @@ function SelectBlock({
 
 function sortLabel(sort: CommunitySort) {
   const labels: Record<CommunitySort, string> = {
-    trending: "趋势优先",
-    newest: "最新优先",
-    controversial: "争议优先",
-    adoption: "采用优先"
+    trending: "Trending",
+    hot: "Hot",
+    newest: "Newest",
+    controversial: "Controversial",
+    adoption: "Adoption"
   }
   return labels[sort]
 }

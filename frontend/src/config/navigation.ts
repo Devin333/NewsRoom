@@ -28,7 +28,7 @@ export const PORTAL_NAVIGATION: NavigationItem[] = [
       { label: "Official Updates", href: "/news?source=official" },
       { label: "Product Updates", href: "/news?topic=product-updates" },
       { label: "Open Source", href: "/tech/repos" },
-      { label: "Community Buzz", href: "/community" }
+      { label: "Community Pulse", href: "/community" }
     ]
   },
   {

@@ -12,7 +12,7 @@ export async function GET(_request: NextRequest, { params }: { params: { slug: s
           success: false,
           error: {
             code: "community_topic_not_found",
-            message: "未找到社区话题。"
+            message: "Community Pulse topic was not found."
           }
         },
         { status: 404 }
@@ -26,7 +26,7 @@ export async function GET(_request: NextRequest, { params }: { params: { slug: s
         success: false,
         error: {
           code: "community_topic_request_failed",
-          message: error instanceof Error ? error.message : "社区话题请求失败"
+          message: error instanceof Error ? error.message : "Community Pulse topic request failed"
         }
       },
       { status: 500 }

@@ -3,7 +3,7 @@ import path from "node:path"
 import { tmpdir } from "node:os"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { safeApiGet } from "@/lib/api/server"
-import { getCommunityList, getCommunityTopic } from "@/lib/community/server-data"
+import { getCommunityList, getCommunitySignal, getCommunitySignals, getCommunityTopic } from "@/lib/community/server-data"
 
 vi.mock("@/lib/api/server", () => ({
   safeApiGet: vi.fn()
@@ -82,6 +82,26 @@ describe("community server data", () => {
     expect(result.topics[0]?.title).toBe("Latest community topic")
   })
 
+  it("builds signal list and detail results from the same real artifact path", async () => {
+    mockedSafeApiGet.mockResolvedValue({ ok: false, errorCode: "request_failed", errorMessage: "offline" })
+    await writeRunArtifact("signals-community", "Agent memory signal", "2026-05-25T00:00:00Z")
+
+    const list = await getCommunitySignals({ source: "hackernews", sort: "hot", limit: 1 })
+    const detail = await getCommunitySignal("card-agent-memory-signal")
+
+    expect(list.source).toBe("artifact")
+    expect(list.items[0]).toMatchObject({
+      id: "card-agent-memory-signal",
+      title: "Agent memory signal",
+      source: "hackernews",
+      sentiment: "mixed",
+      heatScore: 84
+    })
+    expect(list.nextCursor).toBeNull()
+    expect(detail?.signal.title).toBe("Agent memory signal")
+    expect(detail?.evidenceLinks[0]?.url).toBe("https://news.ycombinator.com/item?id=1")
+  })
+
   it("returns explicit empty state when backend and local artifacts are unavailable", async () => {
     mockedSafeApiGet.mockResolvedValueOnce({ ok: false, errorCode: "request_failed", errorMessage: "offline" })
 
@@ -90,7 +110,7 @@ describe("community server data", () => {
     expect(result.source).toBe("empty")
     expect(result.dataState).toBe("empty")
     expect(result.topics).toEqual([])
-    expect(result.notices.join(" ")).toContain("本地 community_pulse artifact")
+    expect(result.notices.join(" ")).toContain("local community_pulse artifact")
   })
 
   it("loads split local cards and detail_pages artifacts when board output files are absent", async () => {
