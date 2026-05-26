@@ -1,80 +1,42 @@
-import { Activity, Bot, Database, FileText, Gauge } from "lucide-react"
-import Link from "next/link"
-import { ScoreMeter } from "@/components/common/score-meter"
-import { SourceBadge } from "@/components/common/source-badge"
-import { StatusBadge } from "@/components/common/status-badge"
-import { formatDateTime } from "@/lib/format"
-import type { DashboardOverview } from "@/types/dashboard"
+import { Bot, Database, Gauge, NotebookText } from "lucide-react"
+import type { ComponentType, ReactNode } from "react"
+import { Badge } from "@/components/ui/badge"
+import { Card } from "@/components/ui/card"
+import type { DashboardOverview, RightInsight } from "@/types/dashboard"
+
+const insightIcons = [Database, Gauge, Bot, NotebookText]
 
 export function RightInsightPanel({ overview }: { overview: DashboardOverview }) {
-  const latestRun = overview.latestRun
-  const latestReport = overview.latestReport
-
   return (
     <aside className="space-y-4">
-      <PanelCard title="智能体状态" icon={Bot}>
-        {latestRun ? (
-          <div className="space-y-3">
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-sm text-muted-foreground">{latestRun.workflowName}</span>
-              <StatusBadge status={latestRun.status} />
-            </div>
-            <p className="text-xs text-muted-foreground">完成于 {formatDateTime(latestRun.finishedAt)}</p>
-          </div>
-        ) : (
-          <p className="text-sm text-muted-foreground">暂无智能体运行。</p>
-        )}
+      <PanelCard
+        title="Quality status"
+        icon={Gauge}
+        badge={<Badge variant={qualityVariant(overview.quality.status)}>{overview.quality.status}</Badge>}
+      >
+        <p className="text-sm leading-5 text-muted-foreground">{overview.quality.summary}</p>
+        {overview.quality.score !== undefined ? (
+          <p className="mt-3 text-sm font-medium text-foreground">Score {overview.quality.score}</p>
+        ) : null}
       </PanelCard>
 
-      <PanelCard title="数据源健康" icon={Database}>
-        <div className="space-y-3">
-          {overview.sourceHealth.map((source) => (
-            <div key={source.id} className="flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <p className="truncate text-sm text-foreground">{source.name}</p>
-                <p className="text-xs text-muted-foreground">{source.successRate}% 成功率</p>
-              </div>
-              <SourceBadge type={source.type} />
-            </div>
-          ))}
-        </div>
-      </PanelCard>
-
-      <PanelCard title="质量门控" icon={Gauge}>
-        <div className="space-y-3">
-          <div className="flex items-center justify-between gap-3">
-            <StatusBadge status={overview.qualityGate.status} />
-            <span className="text-sm text-muted-foreground">
-              {overview.qualityGate.passedChecks}/{overview.qualityGate.totalChecks}
-            </span>
-          </div>
-          <p className="text-sm leading-5 text-muted-foreground">{overview.qualityGate.summary}</p>
-        </div>
-      </PanelCard>
-
-      <PanelCard title="最近运行" icon={Activity}>
-        {latestRun ? (
-          <Link href={`/studio/runs/${latestRun.id}`} className="block rounded-md border border-border p-3 hover:bg-secondary">
-            <p className="text-sm font-medium text-foreground">{latestRun.id}</p>
-            <p className="mt-1 text-xs text-muted-foreground">{Math.round((latestRun.durationSeconds ?? 0) / 60)} 分钟运行时长</p>
-          </Link>
-        ) : (
-          <p className="text-sm text-muted-foreground">暂无运行。</p>
-        )}
-      </PanelCard>
-
-      <PanelCard title="最新报告" icon={FileText}>
-        {latestReport ? (
-          <Link href={`/reports/${latestReport.id}`} className="block rounded-md border border-border p-3 hover:bg-secondary">
-            <p className="text-sm font-medium text-foreground">{latestReport.title}</p>
-            <div className="mt-3">
-              <ScoreMeter label="质量" value={latestReport.qualityScore ?? 0} />
-            </div>
-          </Link>
-        ) : (
-          <p className="text-sm text-muted-foreground">暂无报告。</p>
-        )}
-      </PanelCard>
+      {overview.rightInsights.map((insight, index) => {
+        const Icon = insightIcons[index % insightIcons.length]
+        return (
+          <PanelCard key={insight.id} title={insight.title} icon={Icon} badge={<Badge variant={toneVariant(insight)}>{insight.value ?? insight.tone ?? "info"}</Badge>}>
+            <p className="text-sm leading-5 text-muted-foreground">{insight.summary}</p>
+            {insight.items?.length ? (
+              <ul className="mt-3 space-y-2">
+                {insight.items.map((item) => (
+                  <li key={item} className="text-xs leading-5 text-muted-foreground">
+                    {item}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </PanelCard>
+        )
+      })}
     </aside>
   )
 }
@@ -82,19 +44,40 @@ export function RightInsightPanel({ overview }: { overview: DashboardOverview })
 function PanelCard({
   title,
   icon: Icon,
+  badge,
   children
 }: {
   title: string
-  icon: React.ComponentType<{ className?: string }>
-  children: React.ReactNode
+  icon: ComponentType<{ className?: string }>
+  badge?: ReactNode
+  children: ReactNode
 }) {
   return (
-    <section className="rounded-lg border border-border bg-card p-4">
-      <div className="mb-4 flex items-center gap-2">
-        <Icon className="h-4 w-4 text-accent" />
-        <h2 className="text-sm font-semibold text-foreground">{title}</h2>
+    <Card className="p-4">
+      <div className="mb-4 flex items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <Icon className="h-4 w-4 shrink-0 text-accent" />
+          <h2 className="truncate text-sm font-semibold text-foreground">{title}</h2>
+        </div>
+        {badge}
       </div>
       {children}
-    </section>
+    </Card>
   )
+}
+
+function qualityVariant(status: DashboardOverview["quality"]["status"]) {
+  if (status === "passed") return "success"
+  if (status === "failed") return "danger"
+  if (status === "review") return "warning"
+  return "muted"
+}
+
+function toneVariant(insight: RightInsight) {
+  if (insight.tone === "success") return "success"
+  if (insight.tone === "warning") return "warning"
+  if (insight.tone === "danger") return "danger"
+  if (insight.tone === "accent") return "accent"
+  if (insight.tone === "info") return "info"
+  return "muted"
 }

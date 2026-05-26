@@ -1,9 +1,9 @@
 import type { AgentRun } from "@/types/agent"
-import type { DashboardOverview } from "@/types/dashboard"
+import type { DashboardOverview, TopStory, TrendingTopic } from "@/types/dashboard"
+import type { NewsItem } from "@/types/news"
 import type { QualityGateSummary } from "@/types/quality"
 import type { SourceHealth } from "@/types/source"
 import { evidences, newsItems, reports, techItems, topics } from "@/lib/mock-data"
-import type { NewsItem } from "@/types/news"
 
 export const mockNewsItems = newsItems
 export const mockNews = newsItems
@@ -28,10 +28,10 @@ export const mockAgentRuns: AgentRun[] = [
     qualityScore: 91,
     errorCount: 0,
     steps: [
-      { id: "collect", label: "采集来源", status: "success" },
-      { id: "cluster", label: "聚类主题", status: "success" },
-      { id: "score", label: "质量评分", status: "success" },
-      { id: "report", label: "生成简报", status: "success" }
+      { id: "collect", label: "Collect sources", status: "success" },
+      { id: "cluster", label: "Cluster topics", status: "success" },
+      { id: "score", label: "Score quality", status: "success" },
+      { id: "report", label: "Generate brief", status: "success" }
     ]
   }
 ]
@@ -39,7 +39,7 @@ export const mockAgentRuns: AgentRun[] = [
 export const mockSources: SourceHealth[] = [
   {
     id: "source-official-ai",
-    name: "官方 AI 博客",
+    name: "Official AI blogs",
     type: "official_blog",
     status: "healthy",
     successRate: 99,
@@ -67,51 +67,120 @@ export const mockQualityResult: QualityGateSummary = {
   status: "passed",
   passedChecks: 11,
   totalChecks: 12,
-  summary: "引用覆盖和来源新鲜度已通过。一个社区来源条目标记为待复核。"
+  summary: "Citation coverage and source freshness passed. One community source is marked for review."
 }
 
+const fallbackStories: TopStory[] = [...newsItems]
+  .sort((left, right) => (right.heatScore ?? 0) - (left.heatScore ?? 0))
+  .slice(0, 5)
+  .map((item) => ({
+    id: item.id,
+    title: item.title,
+    summary: item.summary,
+    board: "news",
+    objectId: item.id,
+    href: `/news/${encodeURIComponent(item.id)}`,
+    score: item.heatScore,
+    confidence: item.qualityScore,
+    publishedAt: item.publishedAt,
+    sourceName: item.sourceName,
+    tags: item.tags
+  }))
+
+const fallbackTopics: TrendingTopic[] = topics.slice(0, 5).map((topic) => ({
+  id: topic.id,
+  name: topic.name,
+  summary: topic.summary,
+  trend: topic.trend,
+  heatScore: topic.heatScore,
+  signalCount: topic.itemCount,
+  boards: ["cross_board"],
+  href: `/topics/${encodeURIComponent(topic.id)}`
+}))
+
 export const mockDashboardOverview: DashboardOverview = {
-  metrics: {
-    newsCollectedToday: 146,
-    deduplicatedItems: 58,
-    topicsUpdatedToday: 12,
-    reportsGeneratedToday: 3,
-    sourceSuccessRate: 94,
-    avgQualityScore: 82
-  },
-  metricDeltas: {
-    newsCollectedToday: "+18%",
-    deduplicatedItems: "-7 个重复簇",
-    topicsUpdatedToday: "+4",
-    reportsGeneratedToday: "+1",
-    sourceSuccessRate: "+2%",
-    avgQualityScore: "+5"
-  },
+  generatedAt: "2026-05-23T08:42:00+08:00",
+  dataState: "fallback",
+  metrics: [
+    { id: "signals", label: "Today signals", value: 146, description: "Collected AI signals", delta: "+18%" },
+    { id: "news", label: "Important news", value: 58, description: "Ranked and deduplicated stories", delta: "-7 duplicates" },
+    { id: "projects", label: "Hot projects", value: 12, description: "Project radar items", delta: "+4" },
+    { id: "papers", label: "Hot papers", value: 9, description: "Paper radar items" },
+    { id: "community", label: "Community discussions", value: 21, description: "Community pulse topics" },
+    { id: "high_confidence", label: "High-confidence insights", value: 82, description: "Average quality score", delta: "+5" }
+  ],
   brief: {
-    title: "运行时证据正在成为新的 Agent 平台界面",
+    title: "Runtime evidence is becoming the new agent platform interface",
     summary:
-      "今天最强的信号是：Agent 框架正在把 trace、策略和质量证据变成原生运行时对象。编码 Agent 基准和开放权重工具使用发布也强化了同一方向：团队需要可以检查、门控和改进的系统。",
+      "The strongest fallback signal is that agent frameworks are turning traces, policy, and quality evidence into native runtime objects.",
     keyFindings: [
-      "Agent 运行时发布正在让策略决策和步骤结果持久化。",
-      "编码 Agent 基准现在强调仓库级修复和验证。",
-      "开放模型发布正在竞争工具使用一致性，而不只是原始基准分数。"
+      "Agent runtime launches are making strategy decisions and step outcomes inspectable.",
+      "Coding agent benchmarks increasingly emphasize repository-level repair and verification.",
+      "Open model releases are competing on tool-use consistency, not only raw benchmark score."
     ],
-    mainTrend: "控制与可观测性正在从应用胶水层进入框架运行时契约。",
-    riskNote: "社区对治理逻辑应该位于何处仍有噪声，因此低可信来源需要复核。",
+    coreJudgments: [
+      "Control and observability are moving from application glue into framework runtime contracts.",
+      "Teams should prioritize systems that expose evidence, review gates, and repeatable reading paths."
+    ],
+    readingPath: fallbackStories.slice(0, 4).map((story) => ({
+      id: story.id,
+      label: story.title,
+      href: story.href,
+      description: story.summary,
+      board: story.board
+    })),
+    agentNotes: ["Showing local fallback"],
+    mainTrend: "Agent runtime control and observability",
+    riskNote: "Community governance signals still need review before being treated as high confidence.",
     updatedAt: "2026-05-23T08:42:00+08:00",
     reportId: reports[0]?.id
   },
-  topStories: [...newsItems].sort((a, b) => b.heatScore - a.heatScore).slice(0, 5),
-  trendingTopics: topics.slice(0, 5),
-  latestRun: mockAgentRuns[0],
-  latestReport: reports[0],
-  sourceHealth: mockSources,
-  qualityGate: mockQualityResult,
-  techRadar: {
-    paper: techItems.find((item) => item.type === "paper")?.name ?? "生产 RAG 系统的记忆生命周期评估",
-    repo: techItems.find((item) => item.type === "repo")?.name ?? "面向 Agent 的可审计浏览器自动化工具",
-    framework: techItems.find((item) => item.type === "framework")?.name ?? "策略感知工作流检查点"
-  }
+  topStories: fallbackStories,
+  trendingTopics: fallbackTopics,
+  techRadar: [
+    {
+      id: "fallback-paper",
+      name: techItems.find((item) => item.type === "paper")?.name ?? "Production RAG memory lifecycle evaluation",
+      summary: "Fallback paper radar item.",
+      category: "paper",
+      href: "/papers"
+    },
+    {
+      id: "fallback-project",
+      name: techItems.find((item) => item.type === "repo")?.name ?? "Auditable browser automation for agents",
+      summary: "Fallback project radar item.",
+      category: "project",
+      href: "/projects"
+    },
+    {
+      id: "fallback-framework",
+      name: techItems.find((item) => item.type === "framework")?.name ?? "Policy-aware workflow checkpoints",
+      summary: "Fallback framework radar item.",
+      category: "framework"
+    }
+  ],
+  rightInsights: [
+    {
+      id: "fallback-mode",
+      title: "Fallback mode",
+      summary: "Showing local fallback",
+      tone: "warning"
+    },
+    {
+      id: "quality",
+      title: "Quality gate",
+      summary: mockQualityResult.summary,
+      tone: "success",
+      value: `${mockQualityResult.passedChecks}/${mockQualityResult.totalChecks}`
+    }
+  ],
+  quality: {
+    status: "passed",
+    score: 82,
+    summary: mockQualityResult.summary,
+    generatedAt: "2026-05-23T08:42:00+08:00"
+  },
+  notices: ["Showing local fallback"]
 }
 
 export const mockDashboard = mockDashboardOverview
