@@ -10,20 +10,22 @@ export function PaperPeriodTabs({
   value,
   locale,
   hrefForPeriod,
-  onChange
+  onChange,
+  fullWidth = false
 }: {
   value: PaperPeriod
   locale: Locale
   hrefForPeriod?: (period: PaperPeriod) => string
   onChange: (period: PaperPeriod) => void
+  fullWidth?: boolean
 }) {
   return (
-    <div className="inline-flex flex-wrap gap-2" aria-label="Paper period">
+    <div className={cn(fullWidth ? "grid w-full grid-cols-4 gap-2" : "inline-flex flex-wrap gap-2")} aria-label="Paper period">
       {periods.map((period) => {
         const href = hrefForPeriod?.(period) ?? "#"
         const formId = `paper-period-${period}`
         return (
-          <span key={period} className="inline-flex">
+          <span key={period} className={cn("inline-flex", fullWidth && "min-w-0")}>
             <form id={formId} action={actionPath(href)} method="get" className="hidden" aria-hidden="true">
               {hiddenFields(href).map(([name, hiddenValue]) => (
                 <input key={name} type="hidden" name={name} value={hiddenValue} />
@@ -34,6 +36,7 @@ export function PaperPeriodTabs({
               form={formId}
               className={cn(
                 "h-8 rounded-full border px-3 text-sm font-semibold transition-colors",
+                fullWidth && "w-full px-2",
                 value === period
                   ? "border-[#315d8a] bg-[#315d8a] text-white"
                   : "border-[#d7dfd8] bg-white text-[#334155]/65 hover:border-[#315d8a]/40 hover:text-[#334155] dark:border-border dark:bg-card dark:text-muted-foreground"

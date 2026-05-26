@@ -58,17 +58,23 @@ describe("TrendingPapersPage", () => {
     vi.mocked(requestPaperSummary).mockRejectedValue(new Error("summary unavailable"))
   })
 
-  it("syncs search and period interactions to the URL", async () => {
+  it("syncs period interactions to the URL without rendering page search", async () => {
     render(<TrendingPapersPage locale="en" papers={papers} />)
 
     await waitFor(() => expect(fetchPapers).toHaveBeenCalledWith({ q: "", period: "all", sort: "trending", limit: 1000 }))
+    expect(screen.queryByRole("textbox", { name: /search papers/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Search" })).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole("button", { name: "Weekly" }))
     expect(replace).toHaveBeenCalledWith("/papers?period=weekly", { scroll: false })
+  })
 
-    fireEvent.change(screen.getByRole("textbox", { name: /search papers/i }), { target: { value: "agent" } })
-    fireEvent.click(screen.getByRole("button", { name: "Search" }))
-    expect(replace).toHaveBeenLastCalledWith("/papers?q=agent", { scroll: false })
+  it("keeps URL query filtering after hiding page search", async () => {
+    query = "q=agent"
+    render(<TrendingPapersPage locale="en" papers={papers} />)
+
+    await waitFor(() => expect(fetchPapers).toHaveBeenCalledWith({ q: "agent", period: "all", sort: "trending", limit: 1000 }))
+    expect(screen.queryByRole("textbox", { name: /search papers/i })).not.toBeInTheDocument()
   })
 
   it("opens paper drawer via deep-link query", async () => {

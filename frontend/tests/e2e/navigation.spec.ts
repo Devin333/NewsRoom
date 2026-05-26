@@ -111,17 +111,16 @@ test("/papers uses one breadcrumb and real paper actions", async ({ page, baseUR
   expect(pdfHref).toMatch(/\/pdf\/|\.pdf($|\?)/)
 })
 
-test("/papers search, period tabs, and drawer deep-link work", async ({ page, baseURL }) => {
+test("/papers period tabs and drawer deep-link work", async ({ page, baseURL }) => {
   await authenticate(page, baseURL)
+  const papersLoaded = page.waitForResponse((response) => response.url().includes("/api/papers?") && response.request().method() === "GET")
   await page.goto("/papers")
+  await papersLoaded
 
   const main = page.locator("main")
+  await expect(main.getByRole("textbox", { name: /search papers|搜索论文/i })).toHaveCount(0)
   await main.locator("[aria-label='Paper period'] button").nth(1).click()
   await expect(page).toHaveURL(/period=weekly/)
-
-  await main.getByRole("textbox").last().fill("agent")
-  await main.locator("form button[type='submit']").click()
-  await expect(page).toHaveURL(/q=agent/)
 
   await page.goto("/papers?paper=arxiv-2605.22823")
   await expect(page.getByRole("dialog", { name: /paper detail/i })).toBeVisible()
@@ -135,9 +134,13 @@ test("/papers search, period tabs, and drawer deep-link work", async ({ page, ba
 
 test("/papers domain links open task detail view", async ({ page, baseURL }) => {
   await authenticate(page, baseURL)
+  const papersLoaded = page.waitForResponse((response) => response.url().includes("/api/papers?") && response.request().method() === "GET")
   await page.goto("/papers")
+  await papersLoaded
 
-  await page.locator("a[href='/papers/tasks/agents']").first().click()
+  const agentsLink = page.locator("aside a[href='/papers/tasks/agents']").first()
+  await expect(agentsLink).toBeVisible()
+  await agentsLink.click()
 
   await expect(page).toHaveURL(/\/papers\/tasks\/agents$/)
   await expect(page.locator("nav[aria-label='Papers breadcrumb']")).toContainText("Tasks")

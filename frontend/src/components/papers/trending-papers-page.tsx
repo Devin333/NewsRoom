@@ -1,7 +1,6 @@
 "use client"
 
-import { FormEvent, useEffect, useMemo, useState } from "react"
-import { Search } from "lucide-react"
+import { useEffect, useMemo, useState } from "react"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { PapersDomainSidebar } from "@/components/papers/papers-domain-sidebar"
 import { PapersHero } from "@/components/papers/papers-hero"
@@ -9,8 +8,6 @@ import { PapersMicrobar } from "@/components/papers/papers-microbar"
 import { PaperDetailDrawer } from "@/components/papers/shared/paper-detail-drawer"
 import { PaperPeriodTabs } from "@/components/papers/shared/paper-period-tabs"
 import { PaperStream } from "@/components/papers/shared/paper-stream"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { fetchPapers } from "@/lib/papers/api"
 import { papersCopy, t } from "@/lib/papers/copy"
 import { paperTasks, topDomains, trendingDomains } from "@/lib/papers/catalog"
@@ -24,7 +21,6 @@ export function TrendingPapersPage({ locale, papers }: { locale: Locale; papers:
   const sort = parseSort(searchParams.get("sort"))
   const query = searchParams.get("q") ?? ""
   const deepLinkedPaperId = searchParams.get("paper")
-  const [searchText, setSearchText] = useState(query)
   const [visiblePapers, setVisiblePapers] = useState(papers)
   const [selectedPaperId, setSelectedPaperId] = useState<string | null>(deepLinkedPaperId)
   const [isLoading, setIsLoading] = useState(false)
@@ -33,10 +29,6 @@ export function TrendingPapersPage({ locale, papers }: { locale: Locale; papers:
     () => visiblePapers.find((paper) => paper.id === selectedPaperId || paper.slug === selectedPaperId) ?? null,
     [selectedPaperId, visiblePapers]
   )
-
-  useEffect(() => {
-    setSearchText(query)
-  }, [query])
 
   useEffect(() => {
     setSelectedPaperId(deepLinkedPaperId)
@@ -70,11 +62,6 @@ export function TrendingPapersPage({ locale, papers }: { locale: Locale; papers:
 
   function previewPaper(paper: Paper) {
     updateQuery({ paper: paper.id })
-  }
-
-  function submitSearch(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    updateQuery({ q: searchText.trim(), paper: null })
   }
 
   function updatePeriod(nextPeriod: PaperPeriod) {
@@ -137,26 +124,9 @@ export function TrendingPapersPage({ locale, papers }: { locale: Locale; papers:
           { label: t(papersCopy.tasks, locale), value: paperTasks.length },
           { label: t(papersCopy.repositories, locale), value: papers.filter((paper) => paper.repoUrl).length }
         ]}
+        aside={<PaperPeriodTabs value={period} locale={locale} hrefForPeriod={periodHref} onChange={updatePeriod} fullWidth />}
       />
-      <div className="mt-6 flex flex-col gap-4 border-y border-[#d7dfd8] py-4 md:flex-row md:items-center md:justify-between dark:border-border">
-        <PaperPeriodTabs value={period} locale={locale} hrefForPeriod={periodHref} onChange={updatePeriod} />
-        <form className="flex w-full gap-2 md:max-w-xl" onSubmit={submitSearch}>
-          <div className="relative min-w-0 flex-1">
-            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[#334155]/45" />
-            <Input
-              name="q"
-              value={searchText}
-              onChange={(event) => setSearchText(event.target.value)}
-              placeholder={t(papersCopy.searchPlaceholder, locale)}
-              className="h-10 rounded-full border-[#d7dfd8] bg-white pl-9 text-[#334155] dark:bg-card"
-              aria-label={t(papersCopy.searchPlaceholder, locale)}
-            />
-          </div>
-          <Button type="submit" variant="outline" className="h-10 rounded-full bg-white dark:bg-card">
-            {t(papersCopy.searchAction, locale)}
-          </Button>
-        </form>
-      </div>
+      <div className="mt-6 border-t border-[#d7dfd8] dark:border-border" />
       {error ? (
         <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
           {t(papersCopy.apiUnavailableCache, locale)}
