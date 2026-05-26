@@ -7,6 +7,8 @@ import { cn } from "@/lib/utils"
 export const Sheet = DialogPrimitive.Root
 export const SheetTrigger = DialogPrimitive.Trigger
 export const SheetClose = DialogPrimitive.Close
+export const SheetTitle = DialogPrimitive.Title
+export const SheetDescription = DialogPrimitive.Description
 
 export function SheetContent({ className, children, ...props }: React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>) {
   return (

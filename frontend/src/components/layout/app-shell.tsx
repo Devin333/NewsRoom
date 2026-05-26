@@ -2,8 +2,7 @@
 
 import type { ReactNode } from "react"
 import { usePathname } from "next/navigation"
-import { PapersHeader } from "@/components/papers/papers-header"
-import { AppHeader } from "@/components/layout/AppHeader"
+import { ResearchHeader } from "@/components/layout/research-header"
 import type { FrontendSurface } from "@/lib/frontend-surface"
 import { useUiStore } from "@/stores/ui-store"
 import { cn } from "@/lib/utils"
@@ -23,17 +22,12 @@ export function AppShell({ children, surface = "portal" }: { children: ReactNode
     return <div className="min-h-screen bg-background text-foreground">{children}</div>
   }
 
-  const isPapersRoute = pathname.startsWith("/papers")
   const isPortalHomeRoute = pathname === "/"
-  const usesResearchFrame = isPapersRoute || isPortalHomeRoute
+  const usesResearchFrame = pathname.startsWith("/papers") || isPortalHomeRoute
 
   return (
     <div className={cn("min-h-screen text-foreground", usesResearchFrame ? "font-papers-research bg-[#f7f9f6] dark:bg-background" : "bg-background")}>
-      {isPapersRoute ? (
-        <PapersHeader locale={locale} theme={theme} onLocaleChange={setLocale} onThemeChange={setTheme} />
-      ) : (
-        <AppHeader />
-      )}
+      <ResearchHeader locale={locale} theme={theme} onLocaleChange={setLocale} onThemeChange={setTheme} />
       <main className={cn("min-w-0", usesResearchFrame ? "px-5 pb-16 pt-0 sm:px-8 2xl:px-12" : "px-4 py-6 sm:px-6")}>
         <div className={cn("mx-auto w-full", usesResearchFrame ? "max-w-[1920px]" : "max-w-[1480px]")}>{children}</div>
       </main>
