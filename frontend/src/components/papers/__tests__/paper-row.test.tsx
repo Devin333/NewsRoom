@@ -40,6 +40,25 @@ describe("PaperRow", () => {
     expect(screen.queryByText(/github momentum/i)).not.toBeInTheDocument()
   })
 
+  it("uses Comic Sans MS for paper metadata and abstract copy", () => {
+    render(<PaperRow paper={paper} locale="en" onPreview={vi.fn()} />)
+
+    expect(screen.getByText(/John Yang/).closest("p")).toHaveStyle({
+      fontFamily: "\"Comic Sans MS\", \"Comic Sans\", cursive"
+    })
+    expect(screen.getByText(paper.abstractSnippet).closest("p")).toHaveStyle({
+      fontFamily: "\"Comic Sans MS\", \"Comic Sans\", cursive"
+    })
+  })
+
+  it("uses Consolas for the paper title", () => {
+    render(<PaperRow paper={paper} locale="en" onPreview={vi.fn()} />)
+
+    expect(screen.getByRole("heading", { name: paper.title })).toHaveStyle({
+      fontFamily: "Consolas, \"Courier New\", monospace"
+    })
+  })
+
   it("does not render a GitHub root link", () => {
     render(<PaperRow paper={{ ...paper, repoUrl: "https://github.com/" }} locale="en" onPreview={vi.fn()} />)
 

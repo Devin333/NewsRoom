@@ -1,6 +1,6 @@
 "use client"
 
-import type { MouseEvent, ReactNode } from "react"
+import type { CSSProperties, MouseEvent, ReactNode } from "react"
 import { Bell, BookOpen, Github, Heart } from "lucide-react"
 import { PaperTags } from "@/components/papers/paper-tags"
 import { PaperThumbnail } from "@/components/papers/paper-thumbnail"
@@ -9,6 +9,14 @@ import { translate } from "@/lib/i18n"
 import { papersCopy, t } from "@/lib/papers/copy"
 import { formatCompactNumber, formatPaperDate, paperPdfUrl, paperSnippet, paperTitle } from "@/lib/papers/format"
 import type { Locale, Paper } from "@/lib/papers/types"
+
+const PAPER_ROW_BODY_FONT: CSSProperties = {
+  fontFamily: "\"Comic Sans MS\", \"Comic Sans\", cursive"
+}
+
+const PAPER_ROW_TITLE_FONT: CSSProperties = {
+  fontFamily: "Consolas, \"Courier New\", monospace"
+}
 
 export function PaperRow({
   paper,
@@ -59,12 +67,18 @@ export function PaperRow({
 
         <div className="min-w-0">
           <button type="button" className="block text-left" onClick={() => onPreview(paper)}>
-            <h2 className="text-balance text-xl font-black leading-7 text-[#334155] sm:text-2xl dark:text-foreground">
+            <h2
+              className="text-balance text-xl font-black leading-7 text-[#334155] sm:text-2xl dark:text-foreground"
+              style={PAPER_ROW_TITLE_FONT}
+            >
               {paperTitle(paper, locale)}
             </h2>
           </button>
 
-          <p className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-[#334155]/55 dark:text-muted-foreground">
+          <p
+            className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-[#334155]/55 dark:text-muted-foreground"
+            style={PAPER_ROW_BODY_FONT}
+          >
             <span>{authors.slice(0, 3).join(", ")}</span>
             <span aria-hidden="true">·</span>
             <span>{formatPaperDate(paper.publishedAt, locale)}</span>
@@ -76,7 +90,10 @@ export function PaperRow({
             ) : null}
           </p>
 
-          <p className="mt-3 line-clamp-4 max-w-[90rem] text-base leading-7 text-[#334155]/70 dark:text-muted-foreground">
+          <p
+            className="mt-3 line-clamp-4 max-w-[90rem] text-base leading-7 text-[#334155]/70 dark:text-muted-foreground"
+            style={PAPER_ROW_BODY_FONT}
+          >
             {paperSnippet(paper, locale)}
           </p>
 
