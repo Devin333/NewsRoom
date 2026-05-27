@@ -66,7 +66,6 @@ DEFAULT_ARXIV_USER_AGENT = "NewsRoom/0.1 paper-ingest contact: local-dev"
 DEFAULT_CLASSIFIER_MAX_CHARS = 120_000
 DEFAULT_PDF_MAX_BYTES = 40_000_000
 DEFAULT_REPAIR_DELAY_MINUTES = 30
-DEFAULT_LIMIT_FOR_BACKFILL = 500
 
 _GITHUB_REPO_PATTERN = re.compile(r"https?://(?:www\.)?github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 _ARXIV_ID_PATTERN = re.compile(r"arxiv\.org/(?:abs|pdf)/([^/?#]+)", flags=re.IGNORECASE)
@@ -202,6 +201,7 @@ class PaperClassificationBackfillResult:
     run_id: str
     started_at: str
     finished_at: str
+    batch_size: int
     scanned_count: int
     updated_count: int
     skipped_count: int
@@ -215,6 +215,7 @@ class PaperClassificationBackfillResult:
             "runId": self.run_id,
             "startedAt": self.started_at,
             "finishedAt": self.finished_at,
+            "batchSize": self.batch_size,
             "scannedCount": self.scanned_count,
             "updatedCount": self.updated_count,
             "skippedCount": self.skipped_count,
@@ -492,16 +493,18 @@ class PaperIngestApplicationService:
         self,
         *,
         limit: int | None = None,
+        batch_size: int = 25,
         run_id: str | None = None,
         config: PaperIngestConfig | None = None,
     ) -> PaperClassificationBackfillResult:
         resolved_config = config or self.config
         started = self.clock()
         normalized_run_id = run_id or f"paper-classification-backfill-{started.strftime('%Y%m%d%H%M%S')}"
-        max_items = _positive_int(limit) or DEFAULT_LIMIT_FOR_BACKFILL
+        max_items = _positive_int(limit)
+        flush_batch_size = _positive_int(batch_size) or 25
         cache = self._read_paper_cache()
         papers = [dict(item) for item in _sequence(cache.get("papers")) if isinstance(item, Mapping)]
-        next_papers: list[Mapping[str, Any]] = []
+        next_papers: list[Mapping[str, Any]] = [dict(item) for item in papers]
         scanned_count = 0
         updated_count = 0
         skipped_count = 0
@@ -510,27 +513,75 @@ class PaperIngestApplicationService:
         updated_ids: list[str] = []
         errors: list[Mapping[str, Any]] = []
 
-        for paper in papers:
+        def flush_cache() -> None:
+            cache.update(
+                {
+                    "source": _optional_text(cache.get("source")) or "papers_ingest_github_arxiv_daily",
+                    "collectedAt": _iso(self.clock()),
+                    "papers": next_papers,
+                }
+            )
+            self._write_paper_cache(cache)
+
+        dirty_since_flush = 0
+        for index, paper in enumerate(next_papers):
             if paper.get("isPublished") is False or not _paper_needs_taxonomy_backfill(paper):
                 skipped_count += 1
-                next_papers.append(paper)
                 continue
-            if scanned_count >= max_items:
-                next_papers.append(paper)
+            if max_items is not None and scanned_count >= max_items:
                 continue
 
             scanned_count += 1
             candidate = _candidate_from_cached_paper(paper, fetched_at=self.clock())
             if candidate is None:
                 skipped_count += 1
-                next_papers.append(paper)
                 continue
             paper_id = _candidate_paper_id(candidate)
-            full_text = _cached_paper_full_text(paper, self.text_extraction_repository)
             repo_url = _optional_text(paper.get("repoUrl")) or _optional_text(candidate.metadata.get("repo_url")) or ""
             github_stars = _positive_int(paper.get("githubStars") or candidate.metadata.get("github_stars")) or 0
+            cached_sections = _cached_paper_sections(paper, paper_id, self.text_extraction_repository)
+            full_text = _join_paper_text(paper, cached_sections)
+            backfill_text_source = "text_extraction" if cached_sections else "summary"
 
             try:
+                if backfill_text_source == "summary":
+                    try:
+                        pdf_url = _candidate_pdf_url(candidate) or ""
+                        extraction = self._extract_pdf(
+                            candidate,
+                            paper_id=paper_id,
+                            pdf_url=pdf_url,
+                            config=resolved_config,
+                        )
+                        source_hash = _source_hash(candidate, pdf_url=pdf_url, repo_url=repo_url)
+                        full_text_hash = hashlib.sha256(extraction.full_text.encode("utf-8")).hexdigest()[:16]
+                        cached_at = _iso(self.clock())
+                        self.text_extraction_repository.write_sections(
+                            paper_id,
+                            source_hash,
+                            extraction.sections,
+                            cached_at=cached_at,
+                            pdf_url=pdf_url,
+                            full_text_hash=full_text_hash,
+                        )
+                        full_text = _join_paper_text(paper, extraction.sections, fallback_text=extraction.full_text)
+                        backfill_text_source = "pdf_extract"
+                    except PaperIngestError as exc:
+                        repair_queued_count += 1
+                        errors.append(
+                            self._handle_failure(
+                                run_id=normalized_run_id,
+                                candidate=candidate,
+                                step=exc.step,
+                                error_code=exc.code,
+                                error_message=str(exc),
+                                hard_block=False,
+                                context={"mode": "classification_backfill", "fallback": "summary"},
+                            )
+                        )
+                        if dirty_since_flush:
+                            flush_cache()
+                            dirty_since_flush = 0
                 classification = self._classify_paper(
                     candidate,
                     full_text=full_text,
@@ -558,6 +609,9 @@ class PaperIngestApplicationService:
                             context={"lowConfidenceItems": low_confidence_items, "mode": "classification_backfill"},
                         )
                     )
+                    if dirty_since_flush:
+                        flush_cache()
+                        dirty_since_flush = 0
                 if not taxonomy.get("taskRefs") or not taxonomy.get("methodRefs"):
                     raise PaperIngestError(
                         "classification backfill did not produce publishable tasks and methods",
@@ -577,7 +631,9 @@ class PaperIngestApplicationService:
                         context={"mode": "classification_backfill"},
                     )
                 )
-                next_papers.append(paper)
+                if dirty_since_flush:
+                    flush_cache()
+                    dirty_since_flush = 0
                 continue
             except PaperIngestError as exc:
                 repair_queued_count += 1
@@ -592,7 +648,28 @@ class PaperIngestApplicationService:
                         context={"mode": "classification_backfill"},
                     )
                 )
-                next_papers.append(paper)
+                if dirty_since_flush:
+                    flush_cache()
+                    dirty_since_flush = 0
+                continue
+            except Exception as exc:
+                queued = self._handle_failure(
+                    run_id=normalized_run_id,
+                    candidate=candidate,
+                    step="unknown",
+                    error_code=type(exc).__name__,
+                    error_message=str(exc),
+                    hard_block=_is_hard_block_error(type(exc).__name__, str(exc)),
+                    context={"mode": "classification_backfill"},
+                )
+                if queued.get("queue") == "manual_blocked":
+                    blocked_count += 1
+                else:
+                    repair_queued_count += 1
+                errors.append(queued)
+                if dirty_since_flush:
+                    flush_cache()
+                    dirty_since_flush = 0
                 continue
 
             updated = _deep_merge(
@@ -601,26 +678,29 @@ class PaperIngestApplicationService:
                     "taskRefs": taxonomy.get("taskRefs") or [],
                     "methodRefs": taxonomy.get("methodRefs") or [],
                     "benchmarks": taxonomy.get("benchmarks") or [],
-                    "classification": _classification_record(taxonomy=taxonomy, classification=classification),
+                    "classification": dict(_classification_record(taxonomy=taxonomy, classification=classification))
+                    | {
+                        "backfillTextSource": backfill_text_source,
+                        "fullTextAvailable": backfill_text_source in {"text_extraction", "pdf_extract"},
+                    },
                 },
             )
-            next_papers.append(updated)
+            next_papers[index] = updated
             updated_count += 1
             updated_ids.append(_optional_text(updated.get("id")) or paper_id)
+            dirty_since_flush += 1
+            if dirty_since_flush >= flush_batch_size:
+                flush_cache()
+                dirty_since_flush = 0
 
-        cache.update(
-            {
-                "source": _optional_text(cache.get("source")) or "papers_ingest_github_arxiv_daily",
-                "collectedAt": _iso(self.clock()),
-                "papers": next_papers,
-            }
-        )
-        self._write_paper_cache(cache)
+        if dirty_since_flush:
+            flush_cache()
         finished = self.clock()
         return PaperClassificationBackfillResult(
             run_id=normalized_run_id,
             started_at=_iso(started),
             finished_at=_iso(finished),
+            batch_size=flush_batch_size,
             scanned_count=scanned_count,
             updated_count=updated_count,
             skipped_count=skipped_count,
@@ -1846,23 +1926,41 @@ def _paper_needs_taxonomy_backfill(record: Mapping[str, Any]) -> bool:
     return False
 
 
-def _cached_paper_full_text(record: Mapping[str, Any], repository: TextExtractionRepository) -> str:
-    paper_id = _optional_text(record.get("id"))
-    sections = repository.read_latest_sections(paper_id) if paper_id else ()
-    section_text = "\n\n".join(
+def _cached_paper_sections(
+    record: Mapping[str, Any],
+    paper_id: str,
+    repository: TextExtractionRepository,
+) -> tuple[Mapping[str, Any], ...]:
+    candidate_ids = []
+    for value in (paper_id, _optional_text(record.get("id"))):
+        if value and value not in candidate_ids:
+            candidate_ids.append(value)
+    for candidate_id in candidate_ids:
+        sections = repository.read_latest_sections(candidate_id)
+        if sections:
+            return sections
+    return ()
+
+
+def _join_paper_text(
+    record: Mapping[str, Any],
+    sections: Sequence[Mapping[str, Any]],
+    *,
+    fallback_text: str | None = None,
+) -> str:
+    parts = [
+        _optional_text(record.get("title")),
+        _optional_text(record.get("abstractSnippet") or record.get("summary")),
+    ]
+    section_texts = [
         _optional_text(item.get("textExcerpt") or item.get("summary"))
         for item in sections
         if isinstance(item, Mapping)
-    )
-    return "\n\n".join(
-        part
-        for part in (
-            _optional_text(record.get("title")),
-            _optional_text(record.get("abstractSnippet") or record.get("summary")),
-            section_text,
-        )
-        if part
-    )
+    ]
+    parts.extend(section_texts)
+    if not any(section_texts) and fallback_text:
+        parts.append(_optional_text(fallback_text))
+    return "\n\n".join(part for part in parts if part)
 
 
 def _cached_arxiv_id(record: Mapping[str, Any]) -> str | None:

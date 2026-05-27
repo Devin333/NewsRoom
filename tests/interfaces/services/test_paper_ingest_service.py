@@ -168,11 +168,254 @@ def test_paper_classification_backfill_updates_existing_published_papers(tmp_pat
     result = service.backfill_published_classification(run_id="backfill-test")
 
     assert result.updated_count == 1
+    assert result.batch_size == 25
     paper = json.loads(cache_path.read_text(encoding="utf-8"))["papers"][0]
     assert paper["taskRefs"][0]["group"] == "agents"
     assert paper["methodRefs"][0]["area"] == "Prompt Engineering"
     assert paper["benchmarks"][0]["category"] == "language-understanding"
     assert paper["classification"]["schemaVersion"] == "paper_ingest_classification_v2"
+    assert paper["classification"]["backfillTextSource"] == "text_extraction"
+    assert paper["classification"]["fullTextAvailable"] is True
+
+
+def test_paper_classification_backfill_extracts_pdf_when_text_cache_is_missing(tmp_path) -> None:
+    cache_path = tmp_path / "papers.json"
+    cache_path.write_text(
+        json.dumps(
+            {
+                "source": "test-cache",
+                "papers": [
+                    {
+                        "id": "arxiv-2605.00011",
+                        "title": "PDF Only Agent Paper",
+                        "abstractSnippet": "An agent paper with cached metadata only.",
+                        "authors": ["A"],
+                        "publishedAt": "2026-05-20T00:00:00Z",
+                        "paperUrl": "https://arxiv.org/abs/2605.00011",
+                        "pdfUrl": "https://arxiv.org/pdf/2605.00011",
+                        "repoUrl": "https://github.com/example/pdf-agent",
+                        "githubStars": 120,
+                        "taskRefs": [{"slug": "legacy-task", "name": "Legacy Task"}],
+                        "methodRefs": [{"slug": "legacy-method", "name": "Legacy Method"}],
+                        "isPublished": True,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    text_repo = TextExtractionRepository(tmp_path / "text")
+    service = PaperIngestApplicationService(
+        source_service=_FakeSourceService([]),
+        github_connector=_FakeGithubConnector(stars=120),
+        papers_data_path=cache_path,
+        state_dir=tmp_path / "state",
+        text_extraction_repository=text_repo,
+        pdf_fetcher=lambda url, max_bytes: b"%PDF fake",
+        pdf_processor=_FakePdfProcessor("The full paper studies agent task completion and tool use."),
+        llm_client_factory=lambda route: _FakeLLMClient(
+            {
+                "primaryTaskGroup": "agents",
+                "taskRefs": [{"slug": "agent-task-completion", "name": "Agent Task Completion", "group": "agents", "confidence": 0.91}],
+                "methodRefs": [{"slug": "tool-use", "name": "Tool Use", "area": "Prompt Engineering", "confidence": 0.9}],
+                "confidence": 0.9,
+            }
+        ),
+        config=PaperIngestConfig(candidate_limit=100, min_github_stars=50, auto_taxonomy_confidence=0.85),
+        clock=_fixed_clock,
+    )
+
+    result = service.backfill_published_classification(run_id="backfill-pdf", batch_size=1)
+
+    assert result.updated_count == 1
+    assert text_repo.read_latest_sections("arxiv-2605.00011")
+    paper = json.loads(cache_path.read_text(encoding="utf-8"))["papers"][0]
+    assert paper["classification"]["backfillTextSource"] == "pdf_extract"
+    assert paper["classification"]["fullTextAvailable"] is True
+    assert paper["taskRefs"][0]["group"] == "agents"
+    assert paper["methodRefs"][0]["area"] == "Prompt Engineering"
+
+
+def test_paper_classification_backfill_falls_back_to_summary_and_queues_repair_when_pdf_fails(tmp_path) -> None:
+    cache_path = tmp_path / "papers.json"
+    cache_path.write_text(
+        json.dumps(
+            {
+                "source": "test-cache",
+                "papers": [
+                    {
+                        "id": "arxiv-2605.00012",
+                        "title": "Summary Fallback Paper",
+                        "abstractSnippet": "An agent paper with enough summary evidence.",
+                        "authors": ["A"],
+                        "publishedAt": "2026-05-20T00:00:00Z",
+                        "paperUrl": "https://arxiv.org/abs/2605.00012",
+                        "pdfUrl": "https://arxiv.org/pdf/2605.00012",
+                        "repoUrl": "https://github.com/example/summary-agent",
+                        "githubStars": 120,
+                        "taskRefs": [{"slug": "legacy-task", "name": "Legacy Task"}],
+                        "methodRefs": [{"slug": "legacy-method", "name": "Legacy Method"}],
+                        "isPublished": True,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    service = PaperIngestApplicationService(
+        source_service=_FakeSourceService([]),
+        github_connector=_FakeGithubConnector(stars=120),
+        papers_data_path=cache_path,
+        state_dir=tmp_path / "state",
+        text_extraction_repository=TextExtractionRepository(tmp_path / "text"),
+        pdf_fetcher=lambda url, max_bytes: b"%PDF fake",
+        pdf_processor=_FailingPdfProcessor(ValueError("broken pdf")),
+        llm_client_factory=lambda route: _FakeLLMClient(
+            {
+                "primaryTaskGroup": "agents",
+                "taskRefs": [{"slug": "agent-task-completion", "name": "Agent Task Completion", "group": "agents", "confidence": 0.91}],
+                "methodRefs": [{"slug": "prompting", "name": "Prompting", "area": "Prompt Engineering", "confidence": 0.9}],
+                "confidence": 0.9,
+            }
+        ),
+        config=PaperIngestConfig(candidate_limit=100, min_github_stars=50, auto_taxonomy_confidence=0.85),
+        clock=_fixed_clock,
+    )
+
+    result = service.backfill_published_classification(run_id="backfill-pdf-fallback", batch_size=1)
+
+    assert result.updated_count == 1
+    assert result.repair_queued_count == 1
+    repair = service.get_ops_state()["repairQueue"][0]
+    assert repair["errorCode"] == "pdf_fetch_failed"
+    assert repair["context"]["fallback"] == "summary"
+    paper = json.loads(cache_path.read_text(encoding="utf-8"))["papers"][0]
+    assert paper["classification"]["backfillTextSource"] == "summary"
+    assert paper["classification"]["fullTextAvailable"] is False
+    assert paper["classification"]["schemaVersion"] == "paper_ingest_classification_v2"
+
+
+def test_paper_classification_backfill_flushes_completed_papers_before_later_failures(tmp_path) -> None:
+    cache_path = tmp_path / "papers.json"
+    cache_path.write_text(
+        json.dumps(
+            {
+                "source": "test-cache",
+                "papers": [
+                    {
+                        "id": "paper-ok",
+                        "title": "First Paper",
+                        "abstractSnippet": "First paper.",
+                        "paperUrl": "https://arxiv.org/abs/2605.00013",
+                        "repoUrl": "https://github.com/example/first",
+                        "githubStars": 120,
+                        "taskRefs": [{"slug": "legacy-task", "name": "Legacy Task"}],
+                        "methodRefs": [{"slug": "legacy-method", "name": "Legacy Method"}],
+                        "isPublished": True,
+                    },
+                    {
+                        "id": "paper-fail",
+                        "title": "Second Paper",
+                        "abstractSnippet": "Second paper.",
+                        "paperUrl": "https://arxiv.org/abs/2605.00014",
+                        "repoUrl": "https://github.com/example/second",
+                        "githubStars": 120,
+                        "taskRefs": [{"slug": "legacy-task", "name": "Legacy Task"}],
+                        "methodRefs": [{"slug": "legacy-method", "name": "Legacy Method"}],
+                        "isPublished": True,
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    text_repo = TextExtractionRepository(tmp_path / "text")
+    for paper_id in ("paper-ok", "paper-fail"):
+        text_repo.write_sections(
+            paper_id,
+            "source-hash",
+            [{"title": "Body", "textExcerpt": "Agent paper evidence.", "sectionType": "body"}],
+            cached_at="2026-05-27T08:00:00Z",
+        )
+    llm_client = _SequencedLLMClient(
+        [
+            {
+                "primaryTaskGroup": "agents",
+                "taskRefs": [{"slug": "agents", "name": "Agents", "group": "agents", "confidence": 0.91}],
+                "methodRefs": [{"slug": "prompting", "name": "Prompting", "area": "Prompt Engineering", "confidence": 0.9}],
+                "confidence": 0.9,
+            },
+            RuntimeError("temporary classifier failure"),
+        ]
+    )
+    service = PaperIngestApplicationService(
+        source_service=_FakeSourceService([]),
+        github_connector=_FakeGithubConnector(stars=120),
+        papers_data_path=cache_path,
+        state_dir=tmp_path / "state",
+        text_extraction_repository=text_repo,
+        llm_client_factory=lambda route: llm_client,
+        config=PaperIngestConfig(candidate_limit=100, min_github_stars=50, auto_taxonomy_confidence=0.85),
+        clock=_fixed_clock,
+    )
+
+    result = service.backfill_published_classification(run_id="backfill-partial", batch_size=25)
+
+    assert result.updated_count == 1
+    assert result.repair_queued_count == 1
+    papers = json.loads(cache_path.read_text(encoding="utf-8"))["papers"]
+    assert papers[0]["classification"]["schemaVersion"] == "paper_ingest_classification_v2"
+    assert "classification" not in papers[1]
+
+
+def test_paper_classification_backfill_blocks_classifier_credentials(tmp_path) -> None:
+    cache_path = tmp_path / "papers.json"
+    cache_path.write_text(
+        json.dumps(
+            {
+                "source": "test-cache",
+                "papers": [
+                    {
+                        "id": "paper-blocked",
+                        "title": "Blocked Paper",
+                        "abstractSnippet": "Agent paper.",
+                        "paperUrl": "https://arxiv.org/abs/2605.00015",
+                        "repoUrl": "https://github.com/example/blocked",
+                        "githubStars": 120,
+                        "taskRefs": [{"slug": "legacy-task", "name": "Legacy Task"}],
+                        "methodRefs": [{"slug": "legacy-method", "name": "Legacy Method"}],
+                        "isPublished": True,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    text_repo = TextExtractionRepository(tmp_path / "text")
+    text_repo.write_sections(
+        "paper-blocked",
+        "source-hash",
+        [{"title": "Body", "textExcerpt": "Agent paper evidence.", "sectionType": "body"}],
+        cached_at="2026-05-27T08:00:00Z",
+    )
+    service = PaperIngestApplicationService(
+        source_service=_FakeSourceService([]),
+        github_connector=_FakeGithubConnector(stars=120),
+        papers_data_path=cache_path,
+        state_dir=tmp_path / "state",
+        text_extraction_repository=text_repo,
+        llm_client_factory=lambda route: _FailingLLMClient(LLMConfigurationError("missing API key")),
+        config=PaperIngestConfig(candidate_limit=100, min_github_stars=50, auto_taxonomy_confidence=0.85),
+        clock=_fixed_clock,
+    )
+
+    result = service.backfill_published_classification(run_id="backfill-blocked")
+
+    assert result.blocked_count == 1
+    assert result.repair_queued_count == 0
+    blocked = service.get_ops_state()["blockedItems"][0]
+    assert blocked["queue"] == "manual_blocked"
+    assert blocked["userActionRequired"] is True
 
 
 def test_paper_ingest_skips_repositories_below_star_threshold(tmp_path) -> None:
@@ -620,6 +863,14 @@ class _FakePdfProcessor:
         )
 
 
+class _FailingPdfProcessor:
+    def __init__(self, exc: Exception) -> None:
+        self.exc = exc
+
+    def extract(self, pdf_bytes: bytes, *, paper_id: str, pdf_url: str, thumbnail_path: Path) -> PaperPdfExtraction:
+        raise self.exc
+
+
 class _FakeLLMClient:
     def __init__(self, payload: Mapping[str, Any]) -> None:
         self.payload = payload
@@ -630,6 +881,25 @@ class _FakeLLMClient:
 
         response = Response()
         response.content = json.dumps(self.payload)
+        return response
+
+
+class _SequencedLLMClient:
+    def __init__(self, outcomes: list[Mapping[str, Any] | Exception]) -> None:
+        self.outcomes = outcomes
+        self.index = 0
+
+    def complete(self, request):
+        outcome = self.outcomes[min(self.index, len(self.outcomes) - 1)]
+        self.index += 1
+        if isinstance(outcome, Exception):
+            raise outcome
+
+        class Response:
+            content = ""
+
+        response = Response()
+        response.content = json.dumps(outcome)
         return response
 
 

@@ -45,6 +45,12 @@ class PaperIngestTriggerRequest(BaseModel):
     runId: str | None = Field(default=None, min_length=1, max_length=120)
 
 
+class PaperClassificationBackfillTriggerRequest(BaseModel):
+    limit: int | None = Field(default=None, ge=1, le=100_000)
+    batchSize: int = Field(default=25, ge=1, le=500)
+    runId: str | None = Field(default=None, min_length=1, max_length=120)
+
+
 class PaperReaderNoteAnchorRequest(BaseModel):
     pageNumber: int | None = Field(default=None, ge=1)
     quote: str | None = Field(default=None, max_length=2000)
@@ -238,6 +244,35 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
                 }
             )
         return helpers.success({"enqueued": result.to_dict()})
+
+    @router.post("/api/v1/papers/ops/classification-backfill/trigger")
+    def trigger_paper_classification_backfill(request: PaperClassificationBackfillTriggerRequest):
+        run_id = request.runId or f"paper-classification-backfill-local-{uuid4().hex[:12]}"
+        paper_ingest_service = services.paper_ingest_service_factory()
+        _start_paper_classification_backfill_background(
+            paper_ingest_service,
+            limit=request.limit,
+            batch_size=request.batchSize,
+            run_id=run_id,
+        )
+        return helpers.success(
+            {
+                "backfill": {
+                    "runId": run_id,
+                    "status": "queued",
+                    "mode": "local_background",
+                    "limit": request.limit,
+                    "batchSize": request.batchSize,
+                    "scannedCount": 0,
+                    "updatedCount": 0,
+                    "skippedCount": 0,
+                    "repairQueuedCount": 0,
+                    "blockedCount": 0,
+                    "updatedPaperIds": [],
+                    "errors": [],
+                }
+            }
+        )
 
     @router.get("/api/v1/papers/assets/thumbnails/{file_name}")
     def get_paper_thumbnail(file_name: str):
@@ -670,6 +705,42 @@ def _run_paper_ingest_background(
         paper_ingest_service.run_daily_ingest(
             candidate_limit=candidate_limit,
             min_github_stars=min_github_stars,
+            run_id=run_id,
+        )
+    except Exception:
+        return
+
+
+def _start_paper_classification_backfill_background(
+    paper_ingest_service,
+    *,
+    limit: int | None,
+    batch_size: int,
+    run_id: str,
+) -> None:
+    Thread(
+        target=_run_paper_classification_backfill_background,
+        kwargs={
+            "paper_ingest_service": paper_ingest_service,
+            "limit": limit,
+            "batch_size": batch_size,
+            "run_id": run_id,
+        },
+        daemon=True,
+    ).start()
+
+
+def _run_paper_classification_backfill_background(
+    paper_ingest_service,
+    *,
+    limit: int | None,
+    batch_size: int,
+    run_id: str,
+) -> None:
+    try:
+        paper_ingest_service.backfill_published_classification(
+            limit=limit,
+            batch_size=batch_size,
             run_id=run_id,
         )
     except Exception:
