@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from threading import Thread
+from typing import Any
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
@@ -10,6 +11,7 @@ from fastapi.responses import FileResponse
 from interfaces.api.deps import ApiRouteHelpers, ApiServices
 from interfaces.services.auth_service import AuthSessionInvalidError
 from interfaces.services.paper_ingest_service import PAPER_INGEST_TASK_TYPE
+from interfaces.services.paper_reader_interaction_service import ReaderSelectionNotFoundError
 from interfaces.services.paper_reader_notes_service import PaperReaderNoteNotFoundError
 from interfaces.services.paper_service import (
     DEFAULT_LIMIT,
@@ -81,6 +83,58 @@ class PaperReaderNotePatchRequest(BaseModel):
     noteText: str | None = Field(default=None, max_length=4000)
     label: str | None = Field(default=None, max_length=200)
     anchor: PaperReaderNoteAnchorRequest | None = None
+
+
+class PaperReaderBlockTargetRequest(BaseModel):
+    targetType: str = Field(..., pattern="^(text_selection|paragraph|figure|table|equation)$")
+    blockId: str | None = Field(default=None, max_length=200)
+    sectionId: str | None = Field(default=None, max_length=200)
+    paragraphId: str | None = Field(default=None, max_length=200)
+    pageNumber: int | None = Field(default=None, ge=1)
+    sourceBox: dict[str, float] | None = None
+    metadata: dict[str, Any] | None = None
+
+
+class PaperReaderEventRequest(BaseModel):
+    type: str = Field(
+        ...,
+        pattern=(
+            "^(selection_created|selection_discarded|selection_updated|note_updated|"
+            "explanation_generated|example_generated|confusion_marked|confusion_unmarked|"
+            "reader_settings_changed|drawer_resized|toc_navigated|reader_progress_sampled|"
+            "figure_explanation_requested|figure_explanation_generated|"
+            "table_explanation_requested|table_explanation_generated)$"
+        ),
+    )
+    selectionId: str | None = Field(default=None, max_length=200)
+    target: PaperReaderBlockTargetRequest | None = None
+    sectionId: str | None = Field(default=None, max_length=200)
+    paragraphId: str | None = Field(default=None, max_length=200)
+    selectedText: str | None = Field(default=None, max_length=8000)
+    surroundingText: str | None = Field(default=None, max_length=16000)
+    payload: dict[str, Any] | None = None
+
+
+class PaperReaderSelectionCreateRequest(BaseModel):
+    selectionId: str | None = Field(default=None, max_length=200)
+    target: PaperReaderBlockTargetRequest | None = None
+    sectionId: str | None = Field(default=None, max_length=200)
+    paragraphId: str | None = Field(default=None, max_length=200)
+    selectedText: str | None = Field(default=None, max_length=8000)
+    surroundingText: str | None = Field(default=None, max_length=16000)
+    payload: dict[str, Any] | None = None
+
+
+class PaperReaderSelectionPatchRequest(BaseModel):
+    noteText: str | None = Field(default=None, max_length=12000)
+    explained: bool | None = None
+    exampled: bool | None = None
+    confused: bool | None = None
+    explainQuestion: str | None = Field(default=None, max_length=2000)
+    exampleQuestion: str | None = Field(default=None, max_length=2000)
+    question: str | None = Field(default=None, max_length=2000)
+    answer: str | None = Field(default=None, max_length=20000)
+    example: str | None = Field(default=None, max_length=20000)
 
 
 def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
@@ -483,6 +537,121 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
             )
         return helpers.success({"deleted": True})
 
+    @router.post("/api/v1/papers/{paper_id}/reader/events")
+    def record_paper_reader_event(
+        paper_id: str,
+        request: PaperReaderEventRequest,
+        x_newsroom_session: str | None = Header(default=None),
+    ):
+        user_id = _session_user_id(services, helpers, x_newsroom_session)
+        if not isinstance(user_id, str):
+            return user_id
+        try:
+            result = services.paper_reader_interaction_service_factory().record_event(
+                user_id=user_id,
+                paper_id=paper_id,
+                payload=request.model_dump(exclude_none=True),
+            )
+        except ValueError as exc:
+            return helpers.error(
+                status_code=400,
+                code="paper_reader_event_invalid",
+                message=str(exc),
+                user_action_required=True,
+            )
+        payload = result.to_dict()
+        payload["feedbackIngest"] = _enqueue_reader_feedback_best_effort(services, paper_id=paper_id, user_id=user_id)
+        return helpers.success(payload)
+
+    @router.post("/api/v1/papers/{paper_id}/reader/selections")
+    def create_paper_reader_selection(
+        paper_id: str,
+        request: PaperReaderSelectionCreateRequest,
+        x_newsroom_session: str | None = Header(default=None),
+    ):
+        user_id = _session_user_id(services, helpers, x_newsroom_session)
+        if not isinstance(user_id, str):
+            return user_id
+        try:
+            result = services.paper_reader_interaction_service_factory().create_selection(
+                user_id=user_id,
+                paper_id=paper_id,
+                payload=request.model_dump(exclude_none=True),
+            )
+        except ValueError as exc:
+            return helpers.error(
+                status_code=400,
+                code="paper_reader_selection_invalid",
+                message=str(exc),
+                user_action_required=True,
+            )
+        payload = result.to_dict()
+        payload["feedbackIngest"] = _enqueue_reader_feedback_best_effort(services, paper_id=paper_id, user_id=user_id)
+        return helpers.success(payload)
+
+    @router.patch("/api/v1/papers/{paper_id}/reader/selections/{selection_id}")
+    def patch_paper_reader_selection(
+        paper_id: str,
+        selection_id: str,
+        request: PaperReaderSelectionPatchRequest,
+        x_newsroom_session: str | None = Header(default=None),
+    ):
+        user_id = _session_user_id(services, helpers, x_newsroom_session)
+        if not isinstance(user_id, str):
+            return user_id
+        try:
+            result = services.paper_reader_interaction_service_factory().patch_selection(
+                user_id=user_id,
+                paper_id=paper_id,
+                selection_id=selection_id,
+                patch=request.model_dump(exclude_none=True),
+            )
+        except ReaderSelectionNotFoundError:
+            return helpers.error(
+                status_code=404,
+                code="paper_reader_selection_not_found",
+                message="paper reader selection was not found",
+                user_action_required=True,
+            )
+        except ValueError as exc:
+            return helpers.error(
+                status_code=400,
+                code="paper_reader_selection_invalid",
+                message=str(exc),
+                user_action_required=True,
+            )
+        payload = result.to_dict()
+        payload["feedbackIngest"] = _enqueue_reader_feedback_best_effort(services, paper_id=paper_id, user_id=user_id)
+        return helpers.success(payload)
+
+    @router.get("/api/v1/papers/{paper_id}/reader/materials")
+    def get_paper_reader_materials(
+        paper_id: str,
+        x_newsroom_session: str | None = Header(default=None),
+    ):
+        user_id = _session_user_id(services, helpers, x_newsroom_session)
+        if not isinstance(user_id, str):
+            return user_id
+        summary = services.paper_reader_interaction_service_factory().material_summary(
+            user_id=user_id,
+            paper_id=paper_id,
+        )
+        return helpers.success({"materials": summary.to_dict()})
+
+    @router.delete("/api/v1/papers/{paper_id}/reader/materials")
+    def delete_paper_reader_materials(
+        paper_id: str,
+        x_newsroom_session: str | None = Header(default=None),
+    ):
+        user_id = _session_user_id(services, helpers, x_newsroom_session)
+        if not isinstance(user_id, str):
+            return user_id
+        deleted = services.paper_reader_interaction_service_factory().delete_user_paper_materials(
+            user_id=user_id,
+            paper_id=paper_id,
+        )
+        return helpers.success({"deleted": deleted})
+
     @router.post("/api/v1/papers/{paper_id}/summary")
     def summarize_paper(
         paper_id: str,
@@ -816,6 +985,20 @@ def _run_paper_citation_backfill_background(
         )
     except Exception:
         return
+
+
+def _enqueue_reader_feedback_best_effort(services: ApiServices, *, paper_id: str, user_id: str) -> dict[str, Any]:
+    try:
+        result = services.worker_service_factory().enqueue_paper_reader_feedback(
+            paper_id=paper_id,
+            user_id=user_id,
+        )
+    except Exception as exc:
+        return {
+            "queued": False,
+            "reason": "worker_queue_unavailable" if _is_worker_queue_unavailable(exc) else type(exc).__name__,
+        }
+    return {"queued": True, "enqueued": result.to_dict()}
 
 
 def _session_user_id(services: ApiServices, helpers: ApiRouteHelpers, session_token: str | None):

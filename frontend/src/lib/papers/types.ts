@@ -97,6 +97,142 @@ export interface PaperReaderNotePatch {
   anchor?: PaperReaderNoteAnchor
 }
 
+export type ReaderTargetType = "text_selection" | "paragraph" | "figure" | "table" | "equation"
+
+export type ReaderEventType =
+  | "selection_created"
+  | "selection_discarded"
+  | "selection_updated"
+  | "note_updated"
+  | "explanation_generated"
+  | "example_generated"
+  | "confusion_marked"
+  | "confusion_unmarked"
+  | "reader_settings_changed"
+  | "drawer_resized"
+  | "toc_navigated"
+  | "reader_progress_sampled"
+  | "figure_explanation_requested"
+  | "figure_explanation_generated"
+  | "table_explanation_requested"
+  | "table_explanation_generated"
+
+export interface ReaderBlockTarget {
+  targetType: ReaderTargetType
+  blockId?: string
+  sectionId?: string
+  paragraphId?: string
+  pageNumber?: number
+  sourceBox?: Record<string, number>
+  metadata?: Record<string, unknown>
+}
+
+export interface ReaderEvent {
+  eventId: string
+  type: ReaderEventType
+  eventType: ReaderEventType
+  userId: string
+  paperId: string
+  selectionId?: string
+  target?: ReaderBlockTarget
+  sectionId?: string
+  paragraphId?: string
+  selectedText?: string
+  surroundingText?: string
+  payload?: Record<string, unknown>
+  createdAt: string
+}
+
+export type ReaderSelectionStatus = "temp" | "has_note" | "explained" | "exampled" | "confused"
+
+export interface ReaderSelection {
+  selectionId: string
+  id: string
+  userId: string
+  paperId: string
+  target: ReaderBlockTarget
+  sectionId?: string
+  sectionTitle?: string
+  paragraphId?: string
+  selectedText: string
+  surroundingText: string
+  noteText?: string
+  explainQuestion?: string
+  exampleQuestion?: string
+  explained: boolean
+  exampled: boolean
+  confused: boolean
+  status: ReaderSelectionStatus
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ReaderMaterialSummary {
+  paperId: string
+  userId: string
+  selections: ReaderSelection[]
+  events: ReaderEvent[]
+  stats: {
+    noteCount: number
+    explainedCount: number
+    exampledCount: number
+    confusedCount: number
+    materialCount: number
+  }
+}
+
+export interface ReaderFeedbackIngestStatus {
+  queued: boolean
+  enqueued?: {
+    message_id: string
+    task_id: string
+    task_type: string
+    queue_name: string
+    status: string
+  }
+  reason?: string
+}
+
+export interface ReaderEventRecordResult {
+  event: ReaderEvent
+  selection: ReaderSelection | null
+  materials: ReaderMaterialSummary
+  feedbackIngest?: ReaderFeedbackIngestStatus
+}
+
+export interface ReaderEventCreate {
+  type: ReaderEventType
+  selectionId?: string
+  target?: ReaderBlockTarget
+  sectionId?: string
+  paragraphId?: string
+  selectedText?: string
+  surroundingText?: string
+  payload?: Record<string, unknown>
+}
+
+export interface ReaderSelectionCreate {
+  selectionId?: string
+  target?: ReaderBlockTarget
+  sectionId?: string
+  paragraphId?: string
+  selectedText?: string
+  surroundingText?: string
+  payload?: Record<string, unknown>
+}
+
+export interface ReaderSelectionPatch {
+  noteText?: string | null
+  explained?: boolean
+  exampled?: boolean
+  confused?: boolean
+  explainQuestion?: string
+  exampleQuestion?: string
+  question?: string
+  answer?: string
+  example?: string
+}
+
 export interface TaskRef {
   id: string
   slug: string

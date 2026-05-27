@@ -1,0 +1,40 @@
+import { cookies } from "next/headers"
+import { NextResponse } from "next/server"
+import { safeApiDelete, safeApiGet } from "@/lib/api/server"
+import { NEWSROOM_SESSION_COOKIE } from "@/lib/auth/session"
+
+export const dynamic = "force-dynamic"
+
+export async function GET(_request: Request, { params }: { params: { paperId: string } }) {
+  const token = cookies().get(NEWSROOM_SESSION_COOKIE)?.value
+  const result = await safeApiGet(`/api/v1/papers/${encodeURIComponent(params.paperId)}/reader/materials`, {
+    headers: token ? { "x-newsroom-session": token } : undefined,
+  })
+  return readerMaterialsResponse(result)
+}
+
+export async function DELETE(_request: Request, { params }: { params: { paperId: string } }) {
+  const token = cookies().get(NEWSROOM_SESSION_COOKIE)?.value
+  const result = await safeApiDelete(`/api/v1/papers/${encodeURIComponent(params.paperId)}/reader/materials`, {
+    headers: token ? { "x-newsroom-session": token } : undefined,
+  })
+  return readerMaterialsResponse(result)
+}
+
+function readerMaterialsResponse(result: Awaited<ReturnType<typeof safeApiGet>>) {
+  if (result.ok) {
+    return NextResponse.json({ success: true, data: result.data })
+  }
+  const status = result.errorCode === "auth_session_required" ? 401 : 502
+  return NextResponse.json(
+    {
+      success: false,
+      error: {
+        code: result.errorCode,
+        message: result.errorMessage,
+        requestId: result.requestId,
+      },
+    },
+    { status }
+  )
+}

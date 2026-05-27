@@ -8,7 +8,12 @@ from pathlib import Path
 from typing import Any, Callable
 
 from business.boards.cross_board.worker_handlers import DailyIntelligenceTaskHandler
-from business.boards.paper_radar.worker_handlers import PaperIngestTaskHandler
+from business.boards.paper_radar.reader_feedback import PaperReaderFeedbackService
+from business.boards.paper_radar.worker_handlers import (
+    PAPER_READER_FEEDBACK_TASK_TYPE,
+    PaperIngestTaskHandler,
+    PaperReaderFeedbackTaskHandler,
+)
 from business.layers.output.worker_handlers import MemoryReindexTaskHandler
 from business.layers.signal.worker_handlers import SourceHealthCheckTaskHandler
 from framework.workers import (
@@ -28,6 +33,7 @@ from infrastructure.storage.workers import (
 )
 from interfaces.services.memory_service import MemoryApplicationService
 from interfaces.services.paper_ingest_service import PAPER_INGEST_TASK_TYPE, PaperIngestApplicationService
+from interfaces.services.paper_reader_interaction_service import LocalJsonPaperReaderInteractionRepository
 from interfaces.services.run_service import RunApplicationService
 from interfaces.services.source_service import SourceApplicationService
 
@@ -188,6 +194,10 @@ class WorkerApplicationService:
                 PaperIngestTaskHandler.task_type: PaperIngestTaskHandler(
                     paper_ingest_service=PaperIngestApplicationService()
                 ),
+                PaperReaderFeedbackTaskHandler.task_type: PaperReaderFeedbackTaskHandler(
+                    event_repository=LocalJsonPaperReaderInteractionRepository(),
+                    feedback_service=_paper_reader_feedback_service_from_env(),
+                ),
             }
         self.handlers = handlers
 
@@ -294,6 +304,40 @@ class WorkerApplicationService:
             queue_name=queue_name,
             payload=payload,
             dedup_key=None if run_id else f"{queue_name}:daily:github-arxiv",
+        )
+        message_id = self.queue.enqueue(task)
+        return EnqueuedTaskResult(task=task, message_id=str(message_id))
+
+    def enqueue_paper_reader_feedback(
+        self,
+        *,
+        paper_id: str,
+        user_id: str | None = None,
+        limit: int = 100,
+        queue_name: str = DEFAULT_MEMORY_QUEUE,
+    ) -> EnqueuedTaskResult:
+        resolved_paper_id = str(paper_id).strip()
+        if not resolved_paper_id:
+            raise ValueError("paper_id is required")
+        resolved_user_id = str(user_id).strip() if user_id is not None else None
+        if limit <= 0:
+            raise ValueError("limit must be greater than zero")
+        payload: dict[str, Any] = {
+            "paper_id": resolved_paper_id,
+            "limit": int(limit),
+        }
+        if resolved_user_id:
+            payload["user_id"] = resolved_user_id
+        _reject_secret_payload_keys(payload)
+        task = Task(
+            task_type=PAPER_READER_FEEDBACK_TASK_TYPE,
+            queue_name=queue_name,
+            payload=payload,
+            dedup_key=_paper_reader_feedback_dedup_key(
+                queue_name=queue_name,
+                paper_id=resolved_paper_id,
+                user_id=resolved_user_id,
+            ),
         )
         message_id = self.queue.enqueue(task)
         return EnqueuedTaskResult(task=task, message_id=str(message_id))
@@ -614,3 +658,32 @@ def _daily_task_dedup_key(
     if run_id:
         return None
     return f"{queue_name}:daily:{profile}:{topic.strip().casefold()}"
+
+
+def _paper_reader_feedback_dedup_key(
+    *,
+    queue_name: str,
+    paper_id: str,
+    user_id: str | None,
+) -> str:
+    now = datetime.now(UTC)
+    window_start_minute = now.minute - (now.minute % 5)
+    window = now.replace(minute=window_start_minute, second=0, microsecond=0)
+    user_part = user_id or "*"
+    return f"{queue_name}:paper-reader-feedback:{paper_id}:{user_part}:{window.isoformat()}"
+
+
+def _paper_reader_feedback_service_from_env() -> PaperReaderFeedbackService:
+    return PaperReaderFeedbackService(repository=_paper_reader_memory_repository_from_env())
+
+
+def _paper_reader_memory_repository_from_env():
+    if os.environ.get("NEWS_MEMORY_POSTGRES_ENABLED", "").lower() not in {"1", "true", "yes", "on"}:
+        return None
+    dsn = os.environ.get("NEWS_DATABASE_DSN")
+    if not dsn:
+        return None
+    from infrastructure.storage.postgres.memory_repository import PostgresIntelligenceMemoryRepository
+    from infrastructure.storage.postgres.repository import PostgresRepository
+
+    return PostgresIntelligenceMemoryRepository(PostgresRepository(dsn))

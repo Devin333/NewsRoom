@@ -16,6 +16,7 @@ from interfaces.services.memory_service import MemoryApplicationService
 from interfaces.services.mcp_service import MCPApplicationService
 from interfaces.services.paper_service import PapersApplicationService
 from interfaces.services.paper_ingest_service import PaperIngestApplicationService
+from interfaces.services.paper_reader_interaction_service import PaperReaderInteractionApplicationService
 from interfaces.services.paper_reader_notes_service import PaperReaderNotesApplicationService
 from interfaces.services.paper_user_state_service import PaperUserStateApplicationService
 from interfaces.services.report_service import ReportApplicationService
@@ -48,6 +49,7 @@ BoardServiceFactory = Callable[[], BoardApplicationService]
 PapersServiceFactory = Callable[[], PapersApplicationService]
 PaperIngestServiceFactory = Callable[[], PaperIngestApplicationService]
 AuthServiceFactory = Callable[[], AuthApplicationService]
+PaperReaderInteractionServiceFactory = Callable[[], PaperReaderInteractionApplicationService]
 PaperReaderNotesServiceFactory = Callable[[], PaperReaderNotesApplicationService]
 PaperUserStateServiceFactory = Callable[[], PaperUserStateApplicationService]
 
@@ -73,6 +75,7 @@ class ApiServices:
     papers_service_factory: PapersServiceFactory
     paper_ingest_service_factory: PaperIngestServiceFactory
     auth_service_factory: AuthServiceFactory
+    paper_reader_interaction_service_factory: PaperReaderInteractionServiceFactory
     paper_reader_notes_service_factory: PaperReaderNotesServiceFactory
     paper_user_state_service_factory: PaperUserStateServiceFactory
 
@@ -111,6 +114,7 @@ def build_api_services(
     papers_service_factory: PapersServiceFactory = PapersApplicationService,
     paper_ingest_service_factory: PaperIngestServiceFactory = PaperIngestApplicationService,
     auth_service_factory: AuthServiceFactory = AuthApplicationService,
+    paper_reader_interaction_service_factory: PaperReaderInteractionServiceFactory = PaperReaderInteractionApplicationService,
     paper_reader_notes_service_factory: PaperReaderNotesServiceFactory = PaperReaderNotesApplicationService,
     paper_user_state_service_factory: PaperUserStateServiceFactory = PaperUserStateApplicationService,
 ) -> ApiServices:
@@ -134,6 +138,7 @@ def build_api_services(
         papers_service_factory=papers_service_factory,
         paper_ingest_service_factory=paper_ingest_service_factory,
         auth_service_factory=auth_service_factory,
+        paper_reader_interaction_service_factory=paper_reader_interaction_service_factory,
         paper_reader_notes_service_factory=paper_reader_notes_service_factory,
         paper_user_state_service_factory=paper_user_state_service_factory,
     )

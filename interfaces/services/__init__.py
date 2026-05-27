@@ -13,6 +13,7 @@ from interfaces.services.entity_service import EntityTrackingApplicationService
 from interfaces.services.memory_service import MemoryApplicationService
 from interfaces.services.mcp_service import MCPApplicationService
 from interfaces.services.paper_service import PapersApplicationService
+from interfaces.services.paper_reader_interaction_service import PaperReaderInteractionApplicationService
 from interfaces.services.paper_reader_notes_service import PaperReaderNotesApplicationService
 from interfaces.services.paper_user_state_service import PaperUserStateApplicationService
 from interfaces.services.report_service import ReportApplicationService
@@ -35,6 +36,7 @@ __all__ = [
     "MemoryApplicationService",
     "MCPApplicationService",
     "PapersApplicationService",
+    "PaperReaderInteractionApplicationService",
     "PaperReaderNotesApplicationService",
     "PaperUserStateApplicationService",
     "ReportApplicationService",

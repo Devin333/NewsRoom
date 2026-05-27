@@ -15,6 +15,11 @@ import type {
   PaperRelationGraph,
   PaperSection,
   PaperUserState,
+  ReaderEventCreate,
+  ReaderEventRecordResult,
+  ReaderMaterialSummary,
+  ReaderSelectionCreate,
+  ReaderSelectionPatch,
   PaperTask,
   RelatedPaper,
   ReadingStatus,
@@ -243,6 +248,65 @@ export async function deletePaperReaderNote(
 ): Promise<boolean> {
   const envelope = await apiDelete<ApiEnvelope<{ deleted: boolean }>>(
     `/api/papers/${encodeURIComponent(paperId)}/notes/${encodeURIComponent(noteId)}`,
+    init
+  )
+  return unwrapEnvelope(envelope).deleted
+}
+
+export async function recordReaderEvent(
+  paperId: string,
+  event: ReaderEventCreate,
+  init?: RequestInit
+): Promise<ReaderEventRecordResult> {
+  const envelope = await apiPost<ApiEnvelope<ReaderEventRecordResult>>(
+    `/api/papers/${encodeURIComponent(paperId)}/reader/events`,
+    event,
+    init
+  )
+  return unwrapEnvelope(envelope)
+}
+
+export async function createReaderSelection(
+  paperId: string,
+  selection: ReaderSelectionCreate,
+  init?: RequestInit
+): Promise<ReaderEventRecordResult> {
+  const envelope = await apiPost<ApiEnvelope<ReaderEventRecordResult>>(
+    `/api/papers/${encodeURIComponent(paperId)}/reader/selections`,
+    selection,
+    init
+  )
+  return unwrapEnvelope(envelope)
+}
+
+export async function patchReaderSelection(
+  paperId: string,
+  selectionId: string,
+  patch: ReaderSelectionPatch,
+  init?: RequestInit
+): Promise<ReaderEventRecordResult> {
+  const envelope = await apiPatch<ApiEnvelope<ReaderEventRecordResult>>(
+    `/api/papers/${encodeURIComponent(paperId)}/reader/selections/${encodeURIComponent(selectionId)}`,
+    patch,
+    init
+  )
+  return unwrapEnvelope(envelope)
+}
+
+export async function fetchReaderMaterials(paperId: string, init?: RequestInit): Promise<ReaderMaterialSummary> {
+  const envelope = await apiGet<ApiEnvelope<{ materials: ReaderMaterialSummary }>>(
+    `/api/papers/${encodeURIComponent(paperId)}/reader/materials`,
+    init
+  )
+  return unwrapEnvelope(envelope).materials
+}
+
+export async function deleteReaderMaterials(
+  paperId: string,
+  init?: RequestInit
+): Promise<{ eventsDeleted: number; selectionsDeleted: number }> {
+  const envelope = await apiDelete<ApiEnvelope<{ deleted: { eventsDeleted: number; selectionsDeleted: number } }>>(
+    `/api/papers/${encodeURIComponent(paperId)}/reader/materials`,
     init
   )
   return unwrapEnvelope(envelope).deleted

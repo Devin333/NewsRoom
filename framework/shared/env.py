@@ -32,7 +32,7 @@ def env_values_from_root(*, override: bool = False) -> dict[str, str]:
 
 
 def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[1]
+    return Path(__file__).resolve().parents[2]
 
 
 def _read_env_file(env_path: Path) -> dict[str, str]:
