@@ -23,12 +23,17 @@ from framework.llm import (
     LLMRequest,
     build_openai_compatible_client_from_config,
 )
-from infrastructure.external.sources import GITHUB_API_URL, SourceFetchPolicy, default_github_connector
+from infrastructure.external.sources import (
+    ARXIV_API_URL,
+    GITHUB_API_URL,
+    SourceFetchPolicy,
+    default_arxiv_connector,
+    default_github_connector,
+)
 from infrastructure.external.sources.github import GithubRepository, GithubRepositoryMetadata
 from infrastructure.external.sources.models import RawSourceItem, SourceDefinition
 from interfaces.services.paper_reader_cache_repository import TextExtractionRepository
 from interfaces.services.paper_service import PAPERS_DATA_PATH_ENV
-from interfaces.services.source_service import SourceApplicationService
 
 
 PAPER_INGEST_TASK_TYPE = "papers.ingest_github_arxiv_daily"
@@ -37,6 +42,7 @@ PAPERS_INGEST_CANDIDATE_LIMIT_ENV = "NEWSROOM_PAPERS_INGEST_CANDIDATE_LIMIT"
 PAPERS_INGEST_MIN_GITHUB_STARS_ENV = "NEWSROOM_PAPERS_INGEST_MIN_GITHUB_STARS"
 PAPERS_INGEST_AUTO_TAXONOMY_CONFIDENCE_ENV = "NEWSROOM_PAPERS_INGEST_AUTO_TAXONOMY_CONFIDENCE"
 PAPERS_INGEST_ARXIV_QUERY_ENV = "NEWSROOM_PAPERS_INGEST_ARXIV_QUERY"
+PAPERS_INGEST_ARXIV_USER_AGENT_ENV = "NEWSROOM_PAPERS_INGEST_ARXIV_USER_AGENT"
 PAPERS_CLASSIFIER_MODEL_ROUTE_ENV = "NEWSROOM_PAPERS_CLASSIFIER_MODEL_ROUTE"
 PAPERS_CLASSIFIER_MAX_CHARS_ENV = "NEWSROOM_PAPERS_CLASSIFIER_MAX_CHARS"
 PAPERS_PDF_MAX_BYTES_ENV = "NEWSROOM_PAPERS_PDF_MAX_BYTES"
@@ -45,6 +51,7 @@ DEFAULT_CANDIDATE_LIMIT = 100
 DEFAULT_MIN_GITHUB_STARS = 50
 DEFAULT_AUTO_TAXONOMY_CONFIDENCE = 0.85
 DEFAULT_ARXIV_QUERY = "cat:cs.AI OR cat:cs.LG OR cat:cs.CL"
+DEFAULT_ARXIV_USER_AGENT = "NewsRoom/0.1 paper-ingest contact: local-dev"
 DEFAULT_CLASSIFIER_MAX_CHARS = 120_000
 DEFAULT_PDF_MAX_BYTES = 40_000_000
 DEFAULT_REPAIR_DELAY_MINUTES = 30
@@ -86,6 +93,7 @@ class PaperIngestConfig:
     min_github_stars: int = DEFAULT_MIN_GITHUB_STARS
     auto_taxonomy_confidence: float = DEFAULT_AUTO_TAXONOMY_CONFIDENCE
     arxiv_query: str = DEFAULT_ARXIV_QUERY
+    arxiv_user_agent: str = DEFAULT_ARXIV_USER_AGENT
     classifier_model_route: str = DEFAULT_MODEL_ROUTE_ID
     classifier_max_chars: int = DEFAULT_CLASSIFIER_MAX_CHARS
     pdf_max_bytes: int = DEFAULT_PDF_MAX_BYTES
@@ -101,6 +109,8 @@ class PaperIngestConfig:
             ),
             arxiv_query=os.environ.get(PAPERS_INGEST_ARXIV_QUERY_ENV, DEFAULT_ARXIV_QUERY).strip()
             or DEFAULT_ARXIV_QUERY,
+            arxiv_user_agent=os.environ.get(PAPERS_INGEST_ARXIV_USER_AGENT_ENV, DEFAULT_ARXIV_USER_AGENT).strip()
+            or DEFAULT_ARXIV_USER_AGENT,
             classifier_model_route=os.environ.get(PAPERS_CLASSIFIER_MODEL_ROUTE_ENV, DEFAULT_MODEL_ROUTE_ID).strip()
             or DEFAULT_MODEL_ROUTE_ID,
             classifier_max_chars=_positive_int_env(PAPERS_CLASSIFIER_MAX_CHARS_ENV, DEFAULT_CLASSIFIER_MAX_CHARS),
@@ -118,6 +128,7 @@ class PaperIngestConfig:
             min_github_stars=_positive_int(min_github_stars) or self.min_github_stars,
             auto_taxonomy_confidence=self.auto_taxonomy_confidence,
             arxiv_query=self.arxiv_query,
+            arxiv_user_agent=self.arxiv_user_agent,
             classifier_model_route=self.classifier_model_route,
             classifier_max_chars=self.classifier_max_chars,
             pdf_max_bytes=self.pdf_max_bytes,
@@ -240,6 +251,7 @@ class PaperIngestApplicationService:
         self,
         *,
         source_service: Any | None = None,
+        arxiv_connector: Any | None = None,
         github_connector: Any | None = None,
         papers_data_path: str | Path | None = None,
         state_dir: str | Path | None = None,
@@ -251,7 +263,15 @@ class PaperIngestApplicationService:
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self.config = config or PaperIngestConfig.from_env()
-        self.source_service = source_service or SourceApplicationService()
+        self.source_service = source_service
+        self.arxiv_connector = arxiv_connector or default_arxiv_connector(
+            fetch_policy=SourceFetchPolicy(
+                max_bytes=5_000_000,
+                timeout_seconds=60.0,
+                respect_robots=False,
+                user_agent=self.config.arxiv_user_agent,
+            )
+        )
         self.github_connector = github_connector or default_github_connector(fetch_policy=SourceFetchPolicy(max_bytes=5_000_000))
         self.papers_data_path = _papers_data_path(papers_data_path)
         self.state = PaperIngestStateRepository(state_dir)
@@ -275,10 +295,88 @@ class PaperIngestApplicationService:
         started = self.clock()
         normalized_run_id = run_id or f"paper-ingest-{started.strftime('%Y%m%d%H%M%S')}"
         run_state = _new_run_state(normalized_run_id, started=started, config=config)
-        candidates = self._fetch_candidates(config)
+        errors: list[Mapping[str, Any]] = []
+        try:
+            candidates = self._fetch_candidates(config)
+        except PaperIngestHardBlock as exc:
+            run_state["blockedCount"] += 1
+            errors.append(
+                self._handle_run_failure(
+                    run_id=normalized_run_id,
+                    step=exc.step,
+                    error_code=exc.code,
+                    error_message=str(exc),
+                    hard_block=True,
+                )
+            )
+            return self._finalize_run(run_state, published_ids=[], errors=errors)
+        except PaperIngestError as exc:
+            candidates = self._cached_arxiv_candidates(config)
+            if not candidates:
+                run_state["failureCount"] += 1
+                run_state["repairQueuedCount"] += 1
+                errors.append(
+                    self._handle_run_failure(
+                        run_id=normalized_run_id,
+                        step=exc.step,
+                        error_code=exc.code,
+                        error_message=str(exc),
+                        hard_block=False,
+                    )
+                )
+                return self._finalize_run(run_state, published_ids=[], errors=errors)
+            run_state["failureCount"] += 1
+            run_state["repairQueuedCount"] += 1
+            errors.append(
+                self._handle_run_failure(
+                    run_id=normalized_run_id,
+                    step=exc.step,
+                    error_code=exc.code,
+                    error_message=str(exc),
+                    hard_block=False,
+                    context={
+                        "fallback": "papers_cache",
+                        "fallbackCandidateCount": len(candidates),
+                    },
+                )
+            )
+        except Exception as exc:
+            hard_block = _is_hard_block_error(type(exc).__name__, str(exc))
+            candidates = [] if hard_block else self._cached_arxiv_candidates(config)
+            if candidates:
+                run_state["failureCount"] += 1
+                run_state["repairQueuedCount"] += 1
+                errors.append(
+                    self._handle_run_failure(
+                        run_id=normalized_run_id,
+                        step="arxiv_fetch",
+                        error_code=type(exc).__name__,
+                        error_message=str(exc),
+                        hard_block=False,
+                        context={
+                            "fallback": "papers_cache",
+                            "fallbackCandidateCount": len(candidates),
+                        },
+                    )
+                )
+            else:
+                if hard_block:
+                    run_state["blockedCount"] += 1
+                else:
+                    run_state["failureCount"] += 1
+                    run_state["repairQueuedCount"] += 1
+                errors.append(
+                    self._handle_run_failure(
+                        run_id=normalized_run_id,
+                        step="arxiv_fetch",
+                        error_code=type(exc).__name__,
+                        error_message=str(exc),
+                        hard_block=hard_block,
+                    )
+                )
+                return self._finalize_run(run_state, published_ids=[], errors=errors)
         run_state["candidateCount"] = len(candidates)
         published_ids: list[str] = []
-        errors: list[Mapping[str, Any]] = []
 
         for candidate in candidates[: config.candidate_limit]:
             run_state["processedCount"] += 1
@@ -336,24 +434,10 @@ class PaperIngestApplicationService:
             elif outcome["status"] == "repair_queued":
                 run_state["repairQueuedCount"] += 1
 
-        finished = self.clock()
-        status = "succeeded"
-        if run_state["blockedCount"]:
-            status = "blocked"
-        elif run_state["failureCount"] or run_state["repairQueuedCount"]:
-            status = "partial"
-        run_state.update(
-            {
-                "status": status,
-                "finishedAt": _iso(finished),
-                "publishedPaperIds": published_ids,
-                "errors": list(errors),
-            }
-        )
-        self.state.record_run(run_state)
-        return _run_result_from_state(run_state)
+        return self._finalize_run(run_state, published_ids=published_ids, errors=errors)
 
     def get_ops_state(self, *, limit: int = 20) -> Mapping[str, Any]:
+        self.state.reclassify_soft_blocked_items(now=self.clock)
         return sanitize_public_payload(
             {
                 "runs": self.state.list_runs(limit=limit),
@@ -379,8 +463,28 @@ class PaperIngestApplicationService:
         return path if path.exists() and path.is_file() else None
 
     def _fetch_candidates(self, config: PaperIngestConfig) -> list[RawSourceItem]:
-        result = self.source_service.fetch_arxiv(query=config.arxiv_query, limit=config.candidate_limit)
-        errors = getattr(result, "errors", None) or []
+        if self.source_service is not None:
+            result = self.source_service.fetch_arxiv(query=config.arxiv_query, limit=config.candidate_limit)
+            items = list(getattr(result, "items", []) or [])
+            errors = getattr(result, "errors", None) or []
+        else:
+            source = SourceDefinition(
+                source_id="arxiv",
+                name="arXiv",
+                source_type="arxiv",
+                url=ARXIV_API_URL,
+                reliability="high",
+                authority_score=0.95,
+                topics=["papers", "research"],
+                language="en",
+                metadata={"query": config.arxiv_query},
+                respect_robots=False,
+            )
+            items, errors = self.arxiv_connector.fetch(
+                source,
+                query=config.arxiv_query,
+                limit=config.candidate_limit,
+            )
         if errors:
             first_error = errors[0]
             error_payload = first_error.to_dict() if hasattr(first_error, "to_dict") else {}
@@ -389,7 +493,24 @@ class PaperIngestApplicationService:
             if _is_hard_block_error(code, message):
                 raise PaperIngestHardBlock(message, code=code, step="arxiv_fetch", retryable=False)
             raise PaperIngestError(message, code=code, step="arxiv_fetch")
-        return _dedupe_candidates(list(getattr(result, "items", []) or []))
+        return _dedupe_candidates(items)
+
+    def _cached_arxiv_candidates(self, config: PaperIngestConfig) -> list[RawSourceItem]:
+        try:
+            payload = json.loads(self.papers_data_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return []
+        papers = payload.get("papers") if isinstance(payload, Mapping) else None
+        if not isinstance(papers, Sequence):
+            return []
+        candidates = [
+            candidate
+            for paper in papers
+            if isinstance(paper, Mapping)
+            for candidate in [_candidate_from_cached_paper(paper, fetched_at=self.clock())]
+            if candidate is not None
+        ]
+        return _dedupe_candidates(candidates)[: config.candidate_limit]
 
     def _process_candidate(
         self,
@@ -567,7 +688,9 @@ class PaperIngestApplicationService:
             client = self.llm_client_factory(config.classifier_model_route)
             response = client.complete(request)
         except (LLMConfigurationError, LLMProviderError) as exc:
-            raise PaperIngestHardBlock(str(exc), code="classifier_unavailable", step="classify", retryable=False) from exc
+            if _is_hard_block_error(type(exc).__name__, str(exc)):
+                raise PaperIngestHardBlock(str(exc), code="classifier_unavailable", step="classify", retryable=False) from exc
+            raise PaperIngestError(str(exc), code="classifier_unavailable", step="classify") from exc
         except (RuntimeError, OSError, ValueError) as exc:
             if _is_hard_block_error(type(exc).__name__, str(exc)):
                 raise PaperIngestHardBlock(str(exc), code="classifier_hard_blocked", step="classify", retryable=False) from exc
@@ -882,6 +1005,84 @@ class PaperIngestApplicationService:
         )
         return repair
 
+    def _handle_run_failure(
+        self,
+        *,
+        run_id: str,
+        step: str,
+        error_code: str,
+        error_message: str,
+        hard_block: bool,
+        context: Mapping[str, Any] | None = None,
+    ) -> Mapping[str, Any]:
+        base = {
+            "itemId": _stable_id("paper-ingest-run-failure", run_id, step, error_code),
+            "runId": run_id,
+            "paperId": None,
+            "title": "Daily arXiv candidate fetch",
+            "step": step,
+            "errorCode": error_code,
+            "errorMessage": error_message,
+            "createdAt": _iso(self.clock()),
+            "context": sanitize_public_payload(context or {}),
+        }
+        if hard_block or _is_hard_block_error(error_code, error_message):
+            blocked = dict(base) | {
+                "queue": "manual_blocked",
+                "status": "blocked",
+                "reason": "credential_permission_or_account_block",
+                "userActionRequired": True,
+            }
+            self.state.record_blocked_item(blocked)
+            return blocked
+
+        retry_at = self.clock() + timedelta(minutes=DEFAULT_REPAIR_DELAY_MINUTES)
+        repair = dict(base) | {
+            "queue": "agent_repair",
+            "status": "queued",
+            "retryAt": _iso(retry_at),
+            "attemptCount": 0,
+            "repairAction": _repair_action_for(error_code, step),
+            "userActionRequired": False,
+        }
+        self.state.record_repair_item(repair)
+        self.state.record_prompt_memory(
+            {
+                "memoryId": _stable_id("prompt-memory", run_id, step, error_code),
+                "createdAt": _iso(self.clock()),
+                "failureType": error_code,
+                "inputFeature": step,
+                "rootCause": error_message,
+                "repairAction": repair["repairAction"],
+                "result": "queued",
+            }
+        )
+        return repair
+
+    def _finalize_run(
+        self,
+        run_state: dict[str, Any],
+        *,
+        published_ids: Sequence[str],
+        errors: Sequence[Mapping[str, Any]],
+    ) -> PaperIngestRunResult:
+        finished = self.clock()
+        status = "succeeded"
+        if run_state["blockedCount"]:
+            status = "blocked"
+        elif run_state["failureCount"] or run_state["repairQueuedCount"]:
+            status = "partial"
+        run_state.update(
+            {
+                "status": status,
+                "finishedAt": _iso(finished),
+                "publishedPaperIds": list(published_ids),
+                "errors": [dict(item) for item in errors],
+            }
+        )
+        self.state.record_run(run_state)
+        return _run_result_from_state(run_state)
+
 
 class PaperIngestStateRepository:
     def __init__(self, state_dir: str | Path | None = None) -> None:
@@ -917,6 +1118,66 @@ class PaperIngestStateRepository:
     def list_blocked_items(self, *, limit: int = 20) -> list[Mapping[str, Any]]:
         payload = _read_json(self.blocked_path, default={"items": []})
         return [dict(item) for item in _sequence(payload.get("items")) if isinstance(item, Mapping)][:limit]
+
+    def reclassify_soft_blocked_items(self, *, now: Callable[[], datetime]) -> int:
+        blocked_payload = dict(_read_json(self.blocked_path, default={"items": []}))
+        blocked_items = [dict(item) for item in _sequence(blocked_payload.get("items")) if isinstance(item, Mapping)]
+        if not blocked_items:
+            return 0
+
+        remaining_blocked: list[Mapping[str, Any]] = []
+        reclassified: list[Mapping[str, Any]] = []
+        for item in blocked_items:
+            error_code = str(item.get("errorCode") or "")
+            error_message = str(item.get("errorMessage") or "")
+            if _is_hard_block_error(error_code, error_message):
+                remaining_blocked.append(item)
+                continue
+            retry_at = now() + timedelta(minutes=DEFAULT_REPAIR_DELAY_MINUTES)
+            repair = dict(item)
+            repair.pop("reason", None)
+            repair.update(
+                {
+                    "queue": "agent_repair",
+                    "status": "queued",
+                    "retryAt": _iso(retry_at),
+                    "attemptCount": int(repair.get("attemptCount") or 0),
+                    "repairAction": _repair_action_for(error_code, str(item.get("step") or "")),
+                    "userActionRequired": False,
+                    "reclassifiedFrom": "manual_blocked",
+                    "reclassifiedAt": _iso(now()),
+                }
+            )
+            reclassified.append(repair)
+
+        if not reclassified:
+            return 0
+        _write_json(self.blocked_path, {"items": remaining_blocked})
+        for item in reclassified:
+            self.record_repair_item(item)
+            self.record_prompt_memory(
+                {
+                    "memoryId": _stable_id(
+                        "prompt-memory",
+                        str(item.get("runId") or ""),
+                        str(item.get("paperId") or ""),
+                        str(item.get("step") or ""),
+                        str(item.get("errorCode") or ""),
+                    ),
+                    "createdAt": _iso(now()),
+                    "failureType": str(item.get("errorCode") or ""),
+                    "inputFeature": " ".join(
+                        [
+                            str(item.get("title") or ""),
+                            str(item.get("step") or ""),
+                        ]
+                    )[:500],
+                    "rootCause": str(item.get("errorMessage") or ""),
+                    "repairAction": str(item.get("repairAction") or ""),
+                    "result": "reclassified_from_manual_blocked",
+                }
+            )
+        return len(reclassified)
 
     def record_prompt_memory(self, item: Mapping[str, Any]) -> None:
         self._upsert_list_item(self.prompt_memory_path, root_key="memories", item=item, id_key="memoryId", max_items=200)
@@ -1008,7 +1269,6 @@ def _classification_request(
         ],
         temperature=0.1,
         max_tokens=1800,
-        response_format={"type": "json_object"},
         metadata={"paper_id": _candidate_paper_id(candidate), "schema": "paper_ingest_classification_v1"},
     )
 
@@ -1190,6 +1450,58 @@ def _dedupe_candidates(candidates: Sequence[RawSourceItem]) -> list[RawSourceIte
         seen.add(key)
         result.append(candidate)
     return result
+
+
+def _candidate_from_cached_paper(record: Mapping[str, Any], *, fetched_at: datetime) -> RawSourceItem | None:
+    title = _optional_text(record.get("title"))
+    url = (
+        _optional_text(record.get("paperUrl"))
+        or _optional_text(record.get("arxivUrl"))
+        or _optional_text(record.get("url"))
+    )
+    if not title or not url:
+        return None
+    paper_id = _optional_text(record.get("id")) or hashlib.sha256(url.encode("utf-8")).hexdigest()[:16]
+    metadata = {
+        "arxiv_id": _cached_arxiv_id(record),
+        "pdf_url": _optional_text(record.get("pdfUrl")),
+        "repo_url": _optional_text(record.get("repoUrl")),
+        "github_stars": record.get("githubStars"),
+        "cache_source": "papers_cache",
+    }
+    return RawSourceItem(
+        source_item_id=f"cached-{paper_id}",
+        source_id="arxiv",
+        source_name="arXiv",
+        source_type="arxiv",
+        title=title,
+        url=url,
+        fetched_at=fetched_at,
+        published_at=_parse_datetime_optional(record.get("publishedAt")),
+        summary=_optional_text(record.get("abstractSnippet") or record.get("summary")),
+        raw_content=json.dumps(sanitize_public_payload(dict(record)), ensure_ascii=False, sort_keys=True),
+        authors=[str(item) for item in _sequence(record.get("authors")) if str(item).strip()],
+        tags=[str(item) for item in _sequence(record.get("tags")) if str(item).strip()],
+        language=_optional_text(record.get("language")) or "en",
+        metadata={key: value for key, value in metadata.items() if value not in (None, "", [])},
+    )
+
+
+def _cached_arxiv_id(record: Mapping[str, Any]) -> str | None:
+    explicit = _optional_text(record.get("arxivId"))
+    if explicit:
+        return explicit.removeprefix("arxiv-")
+    paper_id = _optional_text(record.get("id"))
+    if paper_id and paper_id.startswith("arxiv-"):
+        return paper_id.removeprefix("arxiv-")
+    for key in ("paperUrl", "arxivUrl", "pdfUrl"):
+        value = _optional_text(record.get(key))
+        if not value:
+            continue
+        match = _ARXIV_ID_PATTERN.search(value)
+        if match:
+            return match.group(1).removesuffix(".pdf")
+    return None
 
 
 def _candidate_paper_id(candidate: RawSourceItem) -> str:
@@ -1443,6 +1755,19 @@ def _dt(value: datetime | None) -> str | None:
 
 def _iso(value: datetime) -> str:
     return _dt(value) or datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _parse_datetime_optional(value: Any) -> datetime | None:
+    text = _optional_text(value)
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def _optional_text(value: Any) -> str | None:

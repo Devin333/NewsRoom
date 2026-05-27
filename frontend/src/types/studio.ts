@@ -237,4 +237,7 @@ export type PaperIngestTriggerResult = {
   task_type: string
   queue_name: string
   status: string
+  run_id?: string
+  mode?: "worker_queue" | "local_background" | string
+  fallback_reason?: string
 }

@@ -1,4 +1,5 @@
 import json
+import time
 from datetime import datetime, timezone
 
 from fastapi.testclient import TestClient
@@ -608,6 +609,33 @@ def test_papers_ops_ingest_trigger_enqueues_worker_task() -> None:
     assert response.json()["data"]["enqueued"]["task_type"] == "papers.ingest_github_arxiv_daily"
 
 
+def test_papers_ops_ingest_trigger_falls_back_to_local_background_when_worker_queue_is_down() -> None:
+    worker = _UnavailablePaperWorkerService()
+    ingest = _RecordingPaperIngestService()
+    client = TestClient(
+        create_app(
+            worker_service_factory=lambda: worker,
+            paper_ingest_service_factory=lambda: ingest,
+            audit_emitter_factory=None,
+        )
+    )
+
+    response = client.post(
+        "/api/v1/papers/ops/ingest/trigger",
+        json={"candidateLimit": 100, "minGithubStars": 50, "runId": "paper-local-run"},
+    )
+
+    payload = response.json()["data"]["enqueued"]
+    assert response.status_code == 200
+    assert payload["queue_name"] == "local:background"
+    assert payload["mode"] == "local_background"
+    for _ in range(100):
+        if ingest.calls:
+            break
+        time.sleep(0.01)
+    assert ingest.calls == [(100, 50, "paper-local-run")]
+
+
 class _FakePaperIngestService:
     def get_ops_state(self, *, limit: int = 20):
         return {
@@ -696,5 +724,24 @@ class _FakePaperWorkerService:
                     "queue_name": "news:queue:papers",
                     "status": "queued",
                 }
+
+        return Result()
+
+
+class _UnavailablePaperWorkerService:
+    def enqueue_paper_ingest(self, *, candidate_limit=None, min_github_stars=None, run_id=None):
+        raise ConnectionError("Redis connection refused on 127.0.0.1:6379")
+
+
+class _RecordingPaperIngestService(_FakePaperIngestService):
+    def __init__(self) -> None:
+        self.calls = []
+
+    def run_daily_ingest(self, *, candidate_limit=None, min_github_stars=None, run_id=None):
+        self.calls.append((candidate_limit, min_github_stars, run_id))
+
+        class Result:
+            def to_dict(self):
+                return {"runId": run_id, "status": "succeeded"}
 
         return Result()

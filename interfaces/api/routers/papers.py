@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+from threading import Thread
+from uuid import uuid4
+
 from pydantic import BaseModel, Field
 from fastapi import APIRouter, Header, Query
 from fastapi.responses import FileResponse
 
 from interfaces.api.deps import ApiRouteHelpers, ApiServices
 from interfaces.services.auth_service import AuthSessionInvalidError
+from interfaces.services.paper_ingest_service import PAPER_INGEST_TASK_TYPE
 from interfaces.services.paper_reader_notes_service import PaperReaderNoteNotFoundError
 from interfaces.services.paper_service import (
     DEFAULT_LIMIT,
@@ -203,12 +207,35 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
                 message=str(exc),
                 user_action_required=True,
             )
-        except RuntimeError as exc:
-            return helpers.error(
-                status_code=503,
-                code="paper_ingest_trigger_unavailable",
-                message=str(exc),
-                retryable=True,
+        except Exception as exc:
+            if not _is_worker_queue_unavailable(exc):
+                return helpers.error(
+                    status_code=503,
+                    code="paper_ingest_trigger_unavailable",
+                    message=str(exc),
+                    retryable=True,
+            )
+            run_id = request.runId or f"paper-ingest-local-{uuid4().hex[:12]}"
+            paper_ingest_service = services.paper_ingest_service_factory()
+            _start_paper_ingest_background(
+                paper_ingest_service,
+                candidate_limit=request.candidateLimit,
+                min_github_stars=request.minGithubStars,
+                run_id=run_id,
+            )
+            return helpers.success(
+                {
+                    "enqueued": {
+                        "message_id": "local-background",
+                        "task_id": f"{run_id}:local-background",
+                        "task_type": PAPER_INGEST_TASK_TYPE,
+                        "queue_name": "local:background",
+                        "status": "queued",
+                        "run_id": run_id,
+                        "mode": "local_background",
+                        "fallback_reason": "worker_queue_unavailable",
+                    }
+                }
             )
         return helpers.success({"enqueued": result.to_dict()})
 
@@ -596,6 +623,57 @@ def _optional_text(value: str | None) -> str | None:
         return None
     text = value.strip()
     return text or None
+
+
+def _is_worker_queue_unavailable(exc: Exception) -> bool:
+    text = f"{type(exc).__name__}: {exc}".casefold()
+    return any(
+        hint in text
+        for hint in (
+            "redis",
+            "connection refused",
+            "connectionerror",
+            "error 10061",
+            "no connection could be made",
+            "max number of clients reached",
+        )
+    )
+
+
+def _start_paper_ingest_background(
+    paper_ingest_service,
+    *,
+    candidate_limit: int | None,
+    min_github_stars: int | None,
+    run_id: str,
+) -> None:
+    Thread(
+        target=_run_paper_ingest_background,
+        kwargs={
+            "paper_ingest_service": paper_ingest_service,
+            "candidate_limit": candidate_limit,
+            "min_github_stars": min_github_stars,
+            "run_id": run_id,
+        },
+        daemon=True,
+    ).start()
+
+
+def _run_paper_ingest_background(
+    paper_ingest_service,
+    *,
+    candidate_limit: int | None,
+    min_github_stars: int | None,
+    run_id: str,
+) -> None:
+    try:
+        paper_ingest_service.run_daily_ingest(
+            candidate_limit=candidate_limit,
+            min_github_stars=min_github_stars,
+            run_id=run_id,
+        )
+    except Exception:
+        return
 
 
 def _session_user_id(services: ApiServices, helpers: ApiRouteHelpers, session_token: str | None):
