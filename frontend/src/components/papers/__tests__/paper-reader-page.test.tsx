@@ -170,6 +170,39 @@ describe("PaperReaderPage Open Reader", () => {
     })
   })
 
+  it("loads existing v2 reading settings without overwriting them on mount", async () => {
+    window.localStorage.setItem("newsroom:open-reader:reader-paper:settings", JSON.stringify({
+      fontSize: 24,
+      contentWidth: 960,
+      theme: "light",
+      drawerWidth: 520,
+      layoutVersion: 2,
+    }))
+
+    render(<PaperReaderPage reader={reader} locale="en" />)
+
+    await waitFor(() => {
+      const stored = JSON.parse(window.localStorage.getItem("newsroom:open-reader:reader-paper:settings") ?? "{}")
+      expect(stored).toMatchObject({ fontSize: 24, contentWidth: 960, theme: "light", drawerWidth: 520, layoutVersion: 2 })
+    })
+  })
+
+  it("upgrades old narrow reader settings to the wider layout while preserving theme", async () => {
+    window.localStorage.setItem("newsroom:open-reader:reader-paper:settings", JSON.stringify({
+      fontSize: 21,
+      contentWidth: 960,
+      theme: "light",
+      drawerWidth: 470,
+    }))
+
+    render(<PaperReaderPage reader={reader} locale="en" />)
+
+    await waitFor(() => {
+      const stored = JSON.parse(window.localStorage.getItem("newsroom:open-reader:reader-paper:settings") ?? "{}")
+      expect(stored).toMatchObject({ contentWidth: 1180, theme: "light", layoutVersion: 2 })
+    })
+  })
+
   it("persists the floating TOC drag position to localStorage", async () => {
     render(<PaperReaderPage reader={reader} locale="en" />)
 

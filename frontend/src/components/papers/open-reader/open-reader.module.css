@@ -12,7 +12,7 @@
   --reader-green: #1d6d55;
   --reader-shadow: 0 18px 48px rgba(54, 39, 18, 0.14);
   --reader-font-size: 21px;
-  --reader-content-width: 820px;
+  --reader-content-width: 1180px;
   --open-reader-progress: 14%;
   min-height: 100vh;
   background: var(--reader-bg);
@@ -58,34 +58,48 @@
   position: sticky;
   top: 0;
   z-index: 30;
-  height: 52px;
+  height: 46px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 24px;
-  background: color-mix(in srgb, var(--reader-bg) 88%, transparent);
-  border-bottom: 1px solid color-mix(in srgb, var(--reader-line) 74%, transparent);
-  backdrop-filter: blur(18px);
+  gap: 24px;
+  padding: 0 28px;
+  background: color-mix(in srgb, var(--reader-bg) 82%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--reader-line) 48%, transparent);
+  backdrop-filter: blur(14px);
 }
 
 .topBarLeft {
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
+  max-width: min(720px, 58vw);
+  margin-left: max(72px, calc((100vw - var(--reader-content-width)) / 2 - 6px));
+  padding: 4px;
+  border: 1px solid color-mix(in srgb, var(--reader-line) 34%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--reader-paper) 42%, transparent);
 }
 
 .backLink {
-  color: var(--reader-muted);
-  font-size: 14px;
+  flex: 0 0 auto;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--reader-paper) 70%, transparent);
+  color: color-mix(in srgb, var(--reader-ink) 62%, var(--reader-muted));
+  font-size: 13px;
+  line-height: 1.2;
   text-decoration: none;
 }
 
 .topTitle {
-  max-width: 60vw;
+  min-width: 0;
   overflow: hidden;
-  color: var(--reader-muted);
-  font-size: 14px;
+  padding: 0 10px 0 2px;
+  color: color-mix(in srgb, var(--reader-muted) 88%, var(--reader-ink));
+  font-size: 13px;
+  line-height: 1.2;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -107,7 +121,7 @@
 }
 
 .readerLayout {
-  width: min(var(--reader-content-width), calc(100vw - 56px));
+  width: min(var(--reader-content-width), calc(100vw - 160px));
   margin: 0 auto;
   padding: 34px 0 104px;
 }
@@ -128,7 +142,7 @@
 }
 
 .titleBlock h1 {
-  max-width: 920px;
+  max-width: min(980px, 100%);
   margin: 0;
   font-family: Georgia, "Times New Roman", "Noto Serif SC", serif;
   font-size: clamp(28px, 3vw, 40px);
@@ -147,7 +161,7 @@
   background: color-mix(in srgb, var(--reader-paper) 72%, transparent);
   border: 1px solid color-mix(in srgb, var(--reader-line) 72%, transparent);
   border-radius: 8px;
-  padding: clamp(30px, 4vw, 48px);
+  padding: clamp(34px, 4vw, 56px);
   box-shadow: 0 8px 28px rgba(24, 30, 40, 0.04);
 }
 

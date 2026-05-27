@@ -255,7 +255,7 @@ function ReaderSettingsDock({ settings, onChange }: { settings: ReaderSettings; 
       <div className={styles.settingsPanel}>
         <div className={styles.settingsTitle}>阅读设置</div>
         <div className={styles.settingRow}><label>字体大小</label><input type="range" min={12} max={38} value={settings.fontSize} onChange={(event) => onChange({ fontSize: Number(event.target.value) })} /></div>
-        <div className={styles.settingRow}><label>文本宽度</label><input type="range" min={420} max={1320} value={settings.contentWidth} onChange={(event) => onChange({ contentWidth: Number(event.target.value) })} /></div>
+        <div className={styles.settingRow}><label>文本宽度</label><input type="range" min={520} max={1520} value={settings.contentWidth} onChange={(event) => onChange({ contentWidth: Number(event.target.value) })} /></div>
         <div className={styles.themeRow}>{(["light", "warm", "dark"] as const).map((theme) => <button key={theme} type="button" className={`${styles.themeButton} ${settings.theme === theme ? styles.activeTheme : ""}`} onClick={() => onChange({ theme })}>{theme === "light" ? "浅色" : theme === "warm" ? "暖色" : "深色"}</button>)}</div>
       </div>
     </aside>

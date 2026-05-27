@@ -15,6 +15,7 @@ export interface ReaderSettings {
   contentWidth: number
   theme: ReaderTheme
   drawerWidth: number
+  layoutVersion: number
 }
 
 export interface ReaderParagraph {

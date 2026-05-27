@@ -1,8 +1,8 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useReducer } from "react"
+import { useCallback, useEffect, useMemo, useReducer, useState } from "react"
 import type { ReaderEvent, ReaderSelection, ReaderSettings, ReaderTheme, ReaderParagraph } from "./open-reader-types"
-import { clamp, createId, createReaderEvent, DEFAULT_READER_SETTINGS, getSurroundingText, nowIso, safeJsonParse, shouldKeepSelection, storageKey } from "./open-reader-utils"
+import { clamp, createId, createReaderEvent, DEFAULT_READER_SETTINGS, getSurroundingText, nowIso, READER_SETTINGS_LAYOUT_VERSION, safeJsonParse, shouldKeepSelection, storageKey } from "./open-reader-utils"
 
 interface SelectionState {
   selections: ReaderSelection[]
@@ -23,10 +23,11 @@ const EMPTY_STATE: SelectionState = { selections: [], events: [] }
 
 export function useOpenReaderSettings(paperId: string) {
   const key = useMemo(() => storageKey(paperId, "settings"), [paperId])
+  const [settingsLoaded, setSettingsLoaded] = useState(false)
   const [settings, setSettings] = useReducer((current: ReaderSettings, patch: Partial<ReaderSettings>) => {
-    const next: ReaderSettings = { ...current, ...patch }
+    const next: ReaderSettings = { ...current, ...patch, layoutVersion: READER_SETTINGS_LAYOUT_VERSION }
     next.fontSize = clamp(next.fontSize, 12, 38)
-    next.contentWidth = clamp(next.contentWidth, 420, 1320)
+    next.contentWidth = clamp(next.contentWidth, 520, 1520)
     next.drawerWidth = clamp(next.drawerWidth, 360, 920)
     next.theme = normalizeTheme(next.theme)
     return next
@@ -34,15 +35,29 @@ export function useOpenReaderSettings(paperId: string) {
 
   useEffect(() => {
     if (typeof window === "undefined") return
-    setSettings(safeJsonParse<ReaderSettings>(window.localStorage.getItem(key), DEFAULT_READER_SETTINGS))
+    setSettings(normalizeStoredSettings(safeJsonParse<Partial<ReaderSettings>>(window.localStorage.getItem(key), {})))
+    setSettingsLoaded(true)
   }, [key])
 
   useEffect(() => {
-    if (typeof window === "undefined") return
+    if (typeof window === "undefined" || !settingsLoaded) return
     window.localStorage.setItem(key, JSON.stringify(settings))
-  }, [key, settings])
+  }, [key, settings, settingsLoaded])
 
   return { settings, patchSettings: setSettings }
+}
+
+function normalizeStoredSettings(stored: Partial<ReaderSettings>): ReaderSettings {
+  const shouldUpgradeWidth =
+    stored.layoutVersion !== READER_SETTINGS_LAYOUT_VERSION &&
+    (stored.contentWidth ?? DEFAULT_READER_SETTINGS.contentWidth) < DEFAULT_READER_SETTINGS.contentWidth
+
+  return {
+    ...DEFAULT_READER_SETTINGS,
+    ...stored,
+    contentWidth: shouldUpgradeWidth ? DEFAULT_READER_SETTINGS.contentWidth : stored.contentWidth ?? DEFAULT_READER_SETTINGS.contentWidth,
+    layoutVersion: READER_SETTINGS_LAYOUT_VERSION,
+  }
 }
 
 function normalizeTheme(value: string): ReaderTheme {

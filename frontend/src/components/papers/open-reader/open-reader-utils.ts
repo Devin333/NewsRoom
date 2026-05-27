@@ -10,11 +10,14 @@ import type {
   ReaderTocItem,
 } from "./open-reader-types"
 
+export const READER_SETTINGS_LAYOUT_VERSION = 2
+
 export const DEFAULT_READER_SETTINGS: ReaderSettings = {
   fontSize: 21,
-  contentWidth: 820,
+  contentWidth: 1180,
   theme: "warm",
   drawerWidth: 470,
+  layoutVersion: READER_SETTINGS_LAYOUT_VERSION,
 }
 
 export function createId(prefix: string) {
