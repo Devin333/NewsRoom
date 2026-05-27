@@ -20,7 +20,7 @@ export function TasksPage({ locale }: { locale: Locale }) {
 
   useEffect(() => {
     let active = true
-    Promise.all([fetchPaperTasksResult(), fetchPapers({ limit: 1000, period: "all" })])
+    Promise.all([fetchPaperTasksResult(), fetchPapers({ limit: 5000, period: "all" })])
       .then(([apiTasks, apiPapers]) => {
         if (!active) {
           return

@@ -78,6 +78,7 @@ const ARTIFACT_FILE_NAMES = [
   "ranked_items.json"
 ]
 const MAX_ARTIFACT_BYTES = 8_000_000
+const API_PAPER_LOAD_LIMIT = 5000
 const PAPER_SOURCE_TYPES = new Set(["arxiv", "paper_index"])
 const BLOCKED_SOURCE_TYPES = new Set(["official_blog", "ai_news", "rss", "blog", "press_release"])
 const LOCAL_PAPER_CACHE_PATH = path.resolve(process.cwd(), "data", "papers", "arxiv-papers.json")
@@ -228,7 +229,7 @@ export async function getPaperMethodsResult(): Promise<PaperTaxonomyResult<Paper
 }
 
 export async function loadApiPapers(): Promise<Paper[]> {
-  const result = await safeApiGet<PapersApiResponse>("/api/v1/papers?limit=1000")
+  const result = await safeApiGet<PapersApiResponse>(`/api/v1/papers?limit=${API_PAPER_LOAD_LIMIT}`)
   if (!result.ok) {
     return []
   }

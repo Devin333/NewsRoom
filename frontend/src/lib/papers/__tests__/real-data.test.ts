@@ -55,7 +55,7 @@ describe("Papers API data loading", () => {
 
     const papers = await loadApiPapers()
 
-    expect(mockedSafeApiGet).toHaveBeenCalledWith("/api/v1/papers?limit=1000")
+    expect(mockedSafeApiGet).toHaveBeenCalledWith("/api/v1/papers?limit=5000")
     expect(papers).toHaveLength(1)
     expect(papers[0]).toMatchObject({
       id: "arxiv-2605.00001",
