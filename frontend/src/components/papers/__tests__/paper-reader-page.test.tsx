@@ -200,7 +200,7 @@ describe("PaperReaderPage Open Reader", () => {
 
     await waitFor(() => {
       const stored = JSON.parse(window.localStorage.getItem("newsroom:open-reader:reader-paper:settings") ?? "{}")
-      expect(stored).toMatchObject({ contentWidth: 1250, theme: "light", layoutVersion: 2 })
+      expect(stored).toMatchObject({ contentWidth: 1180, theme: "light", layoutVersion: 2 })
     })
   })
 

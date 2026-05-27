@@ -8,13 +8,15 @@ from framework.workers.models import Task, TaskResult, TaskStatus
 
 
 PAPER_READER_FEEDBACK_TASK_TYPE = "paper_reader.feedback_ingest"
+PAPER_VISUAL_COMPILE_TASK_TYPE = "papers.visual_compile"
 
 
 class PaperIngestTaskHandler:
     task_type = "papers.ingest_github_arxiv_daily"
 
-    def __init__(self, paper_ingest_service: Any) -> None:
+    def __init__(self, paper_ingest_service: Any, visual_compile_enqueue: Any | None = None) -> None:
         self.paper_ingest_service = paper_ingest_service
+        self.visual_compile_enqueue = visual_compile_enqueue
 
     def handle(self, task: Task) -> TaskResult:
         result = self.paper_ingest_service.run_daily_ingest(
@@ -23,6 +25,7 @@ class PaperIngestTaskHandler:
             run_id=task.payload.get("run_id"),
         )
         payload = result.to_dict()
+        payload["visualCompileEnqueued"] = self._enqueue_visual_compile(payload)
         blocked = payload.get("status") == "blocked"
         failed = payload.get("status") == "failed"
         return TaskResult(
@@ -36,6 +39,66 @@ class PaperIngestTaskHandler:
             error_message="paper ingest has credential, permission, or account blockers" if blocked else None,
         )
 
+    def _enqueue_visual_compile(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
+        if self.visual_compile_enqueue is None:
+            return []
+        enqueued: list[dict[str, Any]] = []
+        for paper_id in payload.get("publishedPaperIds") or []:
+            if not isinstance(paper_id, str) or not paper_id.strip():
+                continue
+            try:
+                result = self.visual_compile_enqueue(paper_id=paper_id)
+            except Exception as exc:
+                enqueued.append(
+                    {
+                        "paperId": paper_id,
+                        "queued": False,
+                        "reason": type(exc).__name__,
+                        "message": str(exc),
+                    }
+                )
+                continue
+            to_dict = getattr(result, "to_dict", None)
+            enqueued.append(
+                {
+                    "paperId": paper_id,
+                    "queued": True,
+                    "enqueued": to_dict() if callable(to_dict) else result,
+                }
+            )
+        return enqueued
+
+
+class PaperVisualCompileTaskHandler:
+    task_type = PAPER_VISUAL_COMPILE_TASK_TYPE
+
+    def __init__(self, paper_visual_compiler_service: Any) -> None:
+        self.paper_visual_compiler_service = paper_visual_compiler_service
+
+    def handle(self, task: Task) -> TaskResult:
+        paper_id = _optional_text(task.payload.get("paper_id") or task.payload.get("paperId"))
+        if not paper_id:
+            raise ValueError("paper_id is required")
+        force = _truthy(task.payload.get("force"))
+        result = self.paper_visual_compiler_service.compile_paper(
+            paper_id,
+            force=force,
+            run_id=_optional_text(task.payload.get("run_id") or task.payload.get("runId")),
+        )
+        payload = result.to_dict()
+        failed = payload.get("status") in {"compile_failed", "review_failed"}
+        needs_review = payload.get("status") == "needs_review"
+        return TaskResult(
+            task_id=task.task_id,
+            success=not failed,
+            status=TaskStatus.WAITING_FOR_APPROVAL if needs_review else TaskStatus.FAILED if failed else TaskStatus.SUCCEEDED,
+            workflow_run_id=f"paper-visual-compile:{paper_id}",
+            run_status=str(payload.get("status") or "compiled"),
+            output=handler_output(payload, run_id=f"paper-visual-compile:{paper_id}"),
+            error_type=str(payload.get("status")) if failed or needs_review else None,
+            error_message=_first_diagnostic_message(payload.get("diagnostics")) if failed or needs_review else None,
+        )
+
 
 def _optional_int(value: Any) -> int | None:
     if isinstance(value, bool) or value is None:
@@ -47,6 +110,22 @@ def _optional_int(value: Any) -> int | None:
             return int(value)
         except ValueError:
             return None
+    return None
+
+
+def _truthy(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().casefold() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
+def _first_diagnostic_message(value: Any) -> str | None:
+    if isinstance(value, list):
+        for item in value:
+            if isinstance(item, dict) and isinstance(item.get("message"), str):
+                return item["message"]
     return None
 
 

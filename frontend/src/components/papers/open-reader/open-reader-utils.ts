@@ -14,7 +14,7 @@ export const READER_SETTINGS_LAYOUT_VERSION = 2
 
 export const DEFAULT_READER_SETTINGS: ReaderSettings = {
   fontSize: 21,
-  contentWidth: 1250,
+  contentWidth: 1180,
   theme: "warm",
   drawerWidth: 470,
   layoutVersion: READER_SETTINGS_LAYOUT_VERSION,

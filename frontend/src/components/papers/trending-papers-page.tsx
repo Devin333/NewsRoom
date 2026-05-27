@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { ChevronLeft, ChevronRight } from "lucide-react"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { PapersDomainSidebar } from "@/components/papers/papers-domain-sidebar"
@@ -21,8 +21,10 @@ const PAPER_PAGE_SIZE = 15
 
 export function TrendingPapersPage({ locale, papers }: { locale: Locale; papers: Paper[] }) {
   const router = useRouter()
+  const routerReplace = router.replace
   const pathname = usePathname()
   const searchParams = useSearchParams()
+  const searchText = searchParams.toString()
   const period = parsePeriod(searchParams.get("period"))
   const sort = parseSort(searchParams.get("sort"))
   const page = parsePage(searchParams.get("page"))
@@ -48,6 +50,21 @@ export function TrendingPapersPage({ locale, papers }: { locale: Locale; papers:
       null,
     [dashboardPapers, selectedPaperId, visiblePapers]
   )
+  const updateQuery = useCallback((updates: Record<string, string | null>) => {
+    const nextParams = new URLSearchParams(searchText)
+    for (const [key, value] of Object.entries(updates)) {
+      if (value === null || value === "") {
+        nextParams.delete(key)
+      } else {
+        nextParams.set(key, value)
+      }
+    }
+    const nextQuery = nextParams.toString()
+    routerReplace(nextQuery ? `${pathname}?${nextQuery}` : pathname, { scroll: false })
+  }, [pathname, routerReplace, searchText])
+  const updatePage = useCallback((nextPage: number) => {
+    updateQuery({ page: nextPage <= 1 ? null : String(nextPage), paper: null })
+  }, [updateQuery])
 
   useEffect(() => {
     setSelectedPaperId(deepLinkedPaperId)
@@ -88,7 +105,7 @@ export function TrendingPapersPage({ locale, papers }: { locale: Locale; papers:
     return () => {
       cancelled = true
     }
-  }, [page, pageOffset, papers, period, query, sort])
+  }, [page, pageOffset, papers, period, query, sort, updatePage])
 
   function previewPaper(paper: Paper) {
     updateQuery({ paper: paper.id })
@@ -99,7 +116,7 @@ export function TrendingPapersPage({ locale, papers }: { locale: Locale; papers:
   }
 
   function periodHref(nextPeriod: PaperPeriod) {
-    const nextParams = new URLSearchParams(searchParams.toString())
+    const nextParams = new URLSearchParams(searchText)
     nextParams.delete("paper")
     nextParams.delete("page")
     if (nextPeriod === "all") {
@@ -115,29 +132,12 @@ export function TrendingPapersPage({ locale, papers }: { locale: Locale; papers:
     updateQuery({ sort: nextSort === "trending" ? null : nextSort, page: null, paper: null })
   }
 
-  function updatePage(nextPage: number) {
-    updateQuery({ page: nextPage <= 1 ? null : String(nextPage), paper: null })
-  }
-
-  function updateQuery(updates: Record<string, string | null>) {
-    const nextParams = new URLSearchParams(searchParams.toString())
-    for (const [key, value] of Object.entries(updates)) {
-      if (value === null || value === "") {
-        nextParams.delete(key)
-      } else {
-        nextParams.set(key, value)
-      }
-    }
-    const nextQuery = nextParams.toString()
-    router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname, { scroll: false })
-  }
-
   function closeDrawer() {
     updateQuery({ paper: null })
   }
 
   function closeDrawerHref() {
-    const nextParams = new URLSearchParams(searchParams.toString())
+    const nextParams = new URLSearchParams(searchText)
     nextParams.delete("paper")
     const nextQuery = nextParams.toString()
     return nextQuery ? `${pathname}?${nextQuery}` : pathname

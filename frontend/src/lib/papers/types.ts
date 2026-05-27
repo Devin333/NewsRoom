@@ -120,6 +120,7 @@ export type ReaderEventType =
 export interface ReaderBlockTarget {
   targetType: ReaderTargetType
   blockId?: string
+  assetId?: string
   sectionId?: string
   paragraphId?: string
   pageNumber?: number

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from threading import Thread
 from typing import Any
 from uuid import uuid4
@@ -11,6 +12,7 @@ from fastapi.responses import FileResponse
 from interfaces.api.deps import ApiRouteHelpers, ApiServices
 from interfaces.services.auth_service import AuthSessionInvalidError
 from interfaces.services.paper_ingest_service import PAPER_INGEST_TASK_TYPE
+from interfaces.services.paper_visual_compiler_service import PAPER_VISUAL_COMPILE_TASK_TYPE
 from interfaces.services.paper_reader_interaction_service import ReaderSelectionNotFoundError
 from interfaces.services.paper_reader_notes_service import PaperReaderNoteNotFoundError
 from interfaces.services.paper_service import (
@@ -44,6 +46,11 @@ class PaperStatePatchRequest(BaseModel):
 class PaperIngestTriggerRequest(BaseModel):
     candidateLimit: int | None = Field(default=None, ge=1, le=500)
     minGithubStars: int | None = Field(default=None, ge=0, le=1_000_000)
+    runId: str | None = Field(default=None, min_length=1, max_length=120)
+
+
+class PaperVisualCompileRequest(BaseModel):
+    force: bool = False
     runId: str | None = Field(default=None, min_length=1, max_length=120)
 
 
@@ -88,6 +95,7 @@ class PaperReaderNotePatchRequest(BaseModel):
 class PaperReaderBlockTargetRequest(BaseModel):
     targetType: str = Field(..., pattern="^(text_selection|paragraph|figure|table|equation)$")
     blockId: str | None = Field(default=None, max_length=200)
+    assetId: str | None = Field(default=None, max_length=200)
     sectionId: str | None = Field(default=None, max_length=200)
     paragraphId: str | None = Field(default=None, max_length=200)
     pageNumber: int | None = Field(default=None, ge=1)
@@ -371,6 +379,197 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
                 status_code=404,
                 code="paper_thumbnail_not_found",
                 message="paper thumbnail was not found",
+                user_action_required=True,
+            )
+        return FileResponse(path, media_type="image/png")
+
+    @router.get("/api/v1/papers/{paper_id}/document")
+    def get_paper_document(paper_id: str):
+        try:
+            payload = services.paper_visual_compiler_service_factory().get_document_payload(paper_id)
+        except PaperCacheNotFoundError:
+            return helpers.error(
+                status_code=404,
+                code="papers_cache_not_found",
+                message="papers data cache was not found",
+                user_action_required=True,
+            )
+        except PaperCacheInvalidError as exc:
+            return helpers.error(
+                status_code=500,
+                code="papers_cache_invalid",
+                message="papers data cache could not be read",
+                details={"reason": str(exc)},
+                retryable=True,
+            )
+        except PaperNotFoundError:
+            return helpers.error(
+                status_code=404,
+                code="paper_not_found",
+                message="paper was not found",
+                user_action_required=True,
+            )
+        return helpers.success(dict(payload))
+
+    @router.get("/api/v1/papers/{paper_id}/compile-status")
+    def get_paper_compile_status(paper_id: str):
+        try:
+            status = services.paper_visual_compiler_service_factory().get_compile_status(paper_id)
+        except PaperCacheNotFoundError:
+            return helpers.error(
+                status_code=404,
+                code="papers_cache_not_found",
+                message="papers data cache was not found",
+                user_action_required=True,
+            )
+        except PaperCacheInvalidError as exc:
+            return helpers.error(
+                status_code=500,
+                code="papers_cache_invalid",
+                message="papers data cache could not be read",
+                details={"reason": str(exc)},
+                retryable=True,
+            )
+        except PaperNotFoundError:
+            return helpers.error(
+                status_code=404,
+                code="paper_not_found",
+                message="paper was not found",
+                user_action_required=True,
+            )
+        return helpers.success({"status": status.to_dict()})
+
+    @router.post("/api/v1/papers/{paper_id}/compile")
+    def trigger_paper_visual_compile(paper_id: str, request: PaperVisualCompileRequest):
+        try:
+            paper = services.papers_service_factory().get_paper(paper_id)
+        except PaperCacheNotFoundError:
+            return helpers.error(
+                status_code=404,
+                code="papers_cache_not_found",
+                message="papers data cache was not found",
+                user_action_required=True,
+            )
+        except PaperCacheInvalidError as exc:
+            return helpers.error(
+                status_code=500,
+                code="papers_cache_invalid",
+                message="papers data cache could not be read",
+                details={"reason": str(exc)},
+                retryable=True,
+            )
+        except PaperNotFoundError:
+            return helpers.error(
+                status_code=404,
+                code="paper_not_found",
+                message="paper was not found",
+                user_action_required=True,
+            )
+        try:
+            result = services.worker_service_factory().enqueue_paper_visual_compile(
+                paper_id=paper.id,
+                force=request.force,
+                run_id=request.runId,
+            )
+        except ValueError as exc:
+            return helpers.error(
+                status_code=400,
+                code="paper_visual_compile_invalid",
+                message=str(exc),
+                user_action_required=True,
+            )
+        except Exception as exc:
+            if not _is_worker_queue_unavailable(exc):
+                return helpers.error(
+                    status_code=503,
+                    code="paper_visual_compile_trigger_unavailable",
+                    message=str(exc),
+                    retryable=True,
+                )
+            run_id = request.runId or f"paper-visual-compile-local-{uuid4().hex[:12]}"
+            _start_paper_visual_compile_background(
+                services.paper_visual_compiler_service_factory(),
+                paper_id=paper.id,
+                force=request.force,
+                run_id=run_id,
+            )
+            return helpers.success(
+                {
+                    "enqueued": {
+                        "message_id": "local-background",
+                        "task_id": f"{run_id}:local-background",
+                        "task_type": PAPER_VISUAL_COMPILE_TASK_TYPE,
+                        "queue_name": "local:background",
+                        "status": "queued",
+                        "paper_id": paper.id,
+                        "run_id": run_id,
+                        "mode": "local_background",
+                        "fallback_reason": "worker_queue_unavailable",
+                    }
+                }
+            )
+        return helpers.success({"enqueued": result.to_dict()})
+
+    @router.get("/api/v1/papers/{paper_id}/assets/{asset_id}")
+    def get_paper_visual_asset(paper_id: str, asset_id: str):
+        try:
+            resolved = services.paper_visual_compiler_service_factory().resolve_asset(paper_id, asset_id)
+        except PaperNotFoundError:
+            return helpers.error(
+                status_code=404,
+                code="paper_not_found",
+                message="paper was not found",
+                user_action_required=True,
+            )
+        if resolved is None:
+            return helpers.error(
+                status_code=404,
+                code="paper_asset_not_found",
+                message="paper visual asset was not found",
+                user_action_required=True,
+            )
+        path, media_type = resolved
+        return FileResponse(path, media_type=media_type)
+
+    @router.get("/api/v1/papers/{paper_id}/source-preview")
+    def get_paper_source_preview(
+        paper_id: str,
+        page: int = Query(..., ge=1),
+        bbox: str = Query(..., min_length=1, max_length=200),
+    ):
+        parsed_bbox = _parse_bbox_query(bbox)
+        if parsed_bbox is None:
+            return helpers.error(
+                status_code=400,
+                code="paper_source_preview_bbox_invalid",
+                message="bbox must be x0,y0,x1,y1 or a JSON object with x0/y0/x1/y1",
+                user_action_required=True,
+            )
+        try:
+            path = services.paper_visual_compiler_service_factory().source_preview(
+                paper_id,
+                page_number=page,
+                bbox=parsed_bbox,
+            )
+        except PaperNotFoundError:
+            return helpers.error(
+                status_code=404,
+                code="paper_not_found",
+                message="paper was not found",
+                user_action_required=True,
+            )
+        except Exception as exc:
+            return helpers.error(
+                status_code=400,
+                code="paper_source_preview_failed",
+                message=str(exc),
+                user_action_required=True,
+            )
+        if path is None:
+            return helpers.error(
+                status_code=404,
+                code="paper_source_preview_not_found",
+                message="paper source preview was not found",
                 user_action_required=True,
             )
         return FileResponse(path, media_type="image/png")
@@ -987,6 +1186,38 @@ def _run_paper_citation_backfill_background(
         return
 
 
+def _start_paper_visual_compile_background(
+    paper_visual_compiler_service,
+    *,
+    paper_id: str,
+    force: bool,
+    run_id: str,
+) -> None:
+    Thread(
+        target=_run_paper_visual_compile_background,
+        kwargs={
+            "paper_visual_compiler_service": paper_visual_compiler_service,
+            "paper_id": paper_id,
+            "force": force,
+            "run_id": run_id,
+        },
+        daemon=True,
+    ).start()
+
+
+def _run_paper_visual_compile_background(
+    paper_visual_compiler_service,
+    *,
+    paper_id: str,
+    force: bool,
+    run_id: str,
+) -> None:
+    try:
+        paper_visual_compiler_service.compile_paper(paper_id, force=force, run_id=run_id)
+    except Exception:
+        return
+
+
 def _enqueue_reader_feedback_best_effort(services: ApiServices, *, paper_id: str, user_id: str) -> dict[str, Any]:
     try:
         result = services.worker_service_factory().enqueue_paper_reader_feedback(
@@ -999,6 +1230,41 @@ def _enqueue_reader_feedback_best_effort(services: ApiServices, *, paper_id: str
             "reason": "worker_queue_unavailable" if _is_worker_queue_unavailable(exc) else type(exc).__name__,
         }
     return {"queued": True, "enqueued": result.to_dict()}
+
+
+def _parse_bbox_query(value: str) -> tuple[float, float, float, float] | None:
+    text = value.strip()
+    if not text:
+        return None
+    if text.startswith("{"):
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(payload, dict):
+            return None
+        coords = [_float(payload.get(key)) for key in ("x0", "y0", "x1", "y1")]
+    else:
+        coords = [_float(part) for part in text.split(",")]
+    if len(coords) != 4 or any(item is None for item in coords):
+        return None
+    x0, y0, x1, y1 = coords
+    if x1 <= x0 or y1 <= y0:
+        return None
+    return (x0, y0, x1, y1)  # type: ignore[return-value]
+
+
+def _float(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value.strip())
+        except ValueError:
+            return None
+    return None
 
 
 def _session_user_id(services: ApiServices, helpers: ApiRouteHelpers, session_token: str | None):

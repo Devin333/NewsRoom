@@ -11,8 +11,10 @@ from business.boards.cross_board.worker_handlers import DailyIntelligenceTaskHan
 from business.boards.paper_radar.reader_feedback import PaperReaderFeedbackService
 from business.boards.paper_radar.worker_handlers import (
     PAPER_READER_FEEDBACK_TASK_TYPE,
+    PAPER_VISUAL_COMPILE_TASK_TYPE,
     PaperIngestTaskHandler,
     PaperReaderFeedbackTaskHandler,
+    PaperVisualCompileTaskHandler,
 )
 from business.layers.output.worker_handlers import MemoryReindexTaskHandler
 from business.layers.signal.worker_handlers import SourceHealthCheckTaskHandler
@@ -34,6 +36,7 @@ from infrastructure.storage.workers import (
 from interfaces.services.memory_service import MemoryApplicationService
 from interfaces.services.paper_ingest_service import PAPER_INGEST_TASK_TYPE, PaperIngestApplicationService
 from interfaces.services.paper_reader_interaction_service import LocalJsonPaperReaderInteractionRepository
+from interfaces.services.paper_visual_compiler_service import PaperVisualCompilerApplicationService
 from interfaces.services.run_service import RunApplicationService
 from interfaces.services.source_service import SourceApplicationService
 
@@ -64,6 +67,8 @@ class EnqueuedTaskResult:
             "topic": self.task.payload.get("topic"),
             "source_limit": self.task.payload.get("source_limit"),
             "run_id": self.task.payload.get("run_id"),
+            "paper_id": self.task.payload.get("paper_id"),
+            "force": self.task.payload.get("force"),
         }
 
 
@@ -192,7 +197,11 @@ class WorkerApplicationService:
                     source_service=SourceApplicationService()
                 ),
                 PaperIngestTaskHandler.task_type: PaperIngestTaskHandler(
-                    paper_ingest_service=PaperIngestApplicationService()
+                    paper_ingest_service=PaperIngestApplicationService(),
+                    visual_compile_enqueue=lambda *, paper_id: self.enqueue_paper_visual_compile(paper_id=paper_id),
+                ),
+                PaperVisualCompileTaskHandler.task_type: PaperVisualCompileTaskHandler(
+                    paper_visual_compiler_service=PaperVisualCompilerApplicationService()
                 ),
                 PaperReaderFeedbackTaskHandler.task_type: PaperReaderFeedbackTaskHandler(
                     event_repository=LocalJsonPaperReaderInteractionRepository(),
@@ -338,6 +347,33 @@ class WorkerApplicationService:
                 paper_id=resolved_paper_id,
                 user_id=resolved_user_id,
             ),
+        )
+        message_id = self.queue.enqueue(task)
+        return EnqueuedTaskResult(task=task, message_id=str(message_id))
+
+    def enqueue_paper_visual_compile(
+        self,
+        *,
+        paper_id: str,
+        force: bool = False,
+        run_id: str | None = None,
+        queue_name: str = DEFAULT_PAPER_QUEUE,
+    ) -> EnqueuedTaskResult:
+        resolved_paper_id = str(paper_id).strip()
+        if not resolved_paper_id:
+            raise ValueError("paper_id is required")
+        payload: dict[str, Any] = {
+            "paper_id": resolved_paper_id,
+            "force": bool(force),
+        }
+        if run_id:
+            payload["run_id"] = run_id
+        _reject_secret_payload_keys(payload)
+        task = Task(
+            task_type=PAPER_VISUAL_COMPILE_TASK_TYPE,
+            queue_name=queue_name,
+            payload=payload,
+            dedup_key=None if force or run_id else f"{queue_name}:paper-visual-compile:{resolved_paper_id}",
         )
         message_id = self.queue.enqueue(task)
         return EnqueuedTaskResult(task=task, message_id=str(message_id))
