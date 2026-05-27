@@ -34,7 +34,7 @@ const benchmarkRefs = {
 export const paperTasks: PaperTask[] = [
   {
     ...taskRefs.agents,
-    group: "general",
+    group: "agents",
     description: "Agent systems that reason, call tools, use memory, and complete multi-step tasks.",
     descriptionZh: "能够推理、调用工具、使用记忆并完成多步任务的智能体系统。",
     paperCount: 4,
@@ -46,7 +46,7 @@ export const paperTasks: PaperTask[] = [
   },
   {
     ...taskRefs.codingAgents,
-    group: "general",
+    group: "code-ai",
     description: "Agents that plan, edit, and test changes inside software repositories.",
     descriptionZh: "能够在代码仓库中规划、编辑和测试变更的智能体。",
     paperCount: 1,
@@ -58,7 +58,7 @@ export const paperTasks: PaperTask[] = [
   },
   {
     ...taskRefs.reasoning,
-    group: "general",
+    group: "reasoning",
     description: "Reasoning tasks for multi-step inference, search, planning, and self-correction.",
     descriptionZh: "面向多步推理、搜索、规划和自我修正的研究任务。",
     paperCount: 3,
@@ -70,7 +70,7 @@ export const paperTasks: PaperTask[] = [
   },
   {
     ...taskRefs.visualQuestionAnswering,
-    group: "vision",
+    group: "multimodal",
     description: "Answering and grounding questions in images, diagrams, documents, and visual scenes.",
     descriptionZh: "围绕图像、图表、文档和视觉场景进行问答与定位。",
     paperCount: 2,
@@ -82,7 +82,7 @@ export const paperTasks: PaperTask[] = [
   },
   {
     ...taskRefs.documentUnderstanding,
-    group: "vision",
+    group: "multimodal",
     description: "Understanding layouts, masks, visual regions, and long visual text.",
     descriptionZh: "理解版式、掩码、视觉区域和长视觉文本。",
     paperCount: 2,
@@ -94,7 +94,7 @@ export const paperTasks: PaperTask[] = [
   },
   {
     ...taskRefs.languageModeling,
-    group: "language",
+    group: "language-models",
     description: "Modeling language distributions, instruction following, and generation behavior.",
     descriptionZh: "建模语言分布、指令跟随和生成行为。",
     paperCount: 4,
@@ -106,7 +106,7 @@ export const paperTasks: PaperTask[] = [
   },
   {
     ...taskRefs.inferenceServing,
-    group: "infra",
+    group: "systems-infra",
     description: "Serving systems, kernels, routing, and optimization for deployed AI workloads.",
     descriptionZh: "面向已部署 AI 工作负载的服务系统、内核、路由与优化。",
     paperCount: 1,
@@ -118,7 +118,7 @@ export const paperTasks: PaperTask[] = [
   },
   {
     ...taskRefs.computerUseAgents,
-    group: "general",
+    group: "agents",
     description: "Agents that operate browsers, desktops, terminals, and software interfaces.",
     descriptionZh: "能够操作浏览器、桌面、终端和软件界面的智能体。",
     paperCount: 1,
@@ -138,7 +138,7 @@ export const paperMethods: PaperMethod[] = [
     paperCount: 1,
     taskCount: 3,
     implementationCount: 1,
-    area: "Agents",
+    area: "Prompt Engineering",
     relatedTasks: [taskRefs.agents, taskRefs.codingAgents, taskRefs.computerUseAgents, taskRefs.reasoning, taskRefs.languageModeling],
     relatedMethods: [methodRefs.toolUse, methodRefs.chainOfThought, methodRefs.planning, methodRefs.agentMemory, methodRefs.agent],
     commonBenchmarks: [benchmarkRefs.hotpotQa, benchmarkRefs.gameOf24, benchmarkRefs.sweBench]
@@ -150,7 +150,7 @@ export const paperMethods: PaperMethod[] = [
     paperCount: 3,
     taskCount: 5,
     implementationCount: 3,
-    area: "Agents",
+    area: "Prompt Engineering",
     relatedTasks: [taskRefs.agents, taskRefs.codingAgents, taskRefs.visualQuestionAnswering],
     relatedMethods: [methodRefs.react, methodRefs.planning, methodRefs.agentMemory, methodRefs.llm],
     commonBenchmarks: [benchmarkRefs.sweBench, benchmarkRefs.hotpotQa]
@@ -162,7 +162,7 @@ export const paperMethods: PaperMethod[] = [
     paperCount: 1,
     taskCount: 3,
     implementationCount: 1,
-    area: "Reasoning",
+    area: "Prompt Engineering",
     relatedTasks: [taskRefs.reasoning, taskRefs.languageModeling, taskRefs.agents],
     relatedMethods: [methodRefs.planning, methodRefs.react, methodRefs.llm],
     commonBenchmarks: [benchmarkRefs.gameOf24, benchmarkRefs.hotpotQa]
@@ -174,7 +174,7 @@ export const paperMethods: PaperMethod[] = [
     paperCount: 3,
     taskCount: 4,
     implementationCount: 3,
-    area: "Agents",
+    area: "Prompt Engineering",
     relatedTasks: [taskRefs.agents, taskRefs.codingAgents, taskRefs.reasoning],
     relatedMethods: [methodRefs.react, methodRefs.toolUse, methodRefs.chainOfThought, methodRefs.agentMemory],
     commonBenchmarks: [benchmarkRefs.gameOf24, benchmarkRefs.sweBench]
@@ -186,7 +186,7 @@ export const paperMethods: PaperMethod[] = [
     paperCount: 1,
     taskCount: 2,
     implementationCount: 1,
-    area: "Agents",
+    area: "Prompt Engineering",
     relatedTasks: [taskRefs.agents, taskRefs.reasoning],
     relatedMethods: [methodRefs.react, methodRefs.planning, methodRefs.toolUse],
     commonBenchmarks: [benchmarkRefs.hotpotQa]
@@ -198,7 +198,7 @@ export const paperMethods: PaperMethod[] = [
     paperCount: 1,
     taskCount: 3,
     implementationCount: 1,
-    area: "Multimodal",
+    area: "Language Models",
     relatedTasks: [taskRefs.visualQuestionAnswering, taskRefs.languageModeling, taskRefs.documentUnderstanding],
     relatedMethods: [methodRefs.llm, methodRefs.toolUse],
     commonBenchmarks: [benchmarkRefs.llavaBench]
@@ -218,12 +218,12 @@ export const paperMethods: PaperMethod[] = [
 ]
 
 export const benchmarks: Benchmark[] = [
-  { ...benchmarkRefs.sweBench, taskSlug: "coding-agents", methodSlug: "tool-use", entryCount: 417, metric: "resolved", bestValue: "verified" },
-  { ...benchmarkRefs.hotpotQa, taskSlug: "agents", methodSlug: "react", entryCount: 84, metric: "EM/F1", bestValue: "reported" },
-  { ...benchmarkRefs.gameOf24, taskSlug: "reasoning", methodSlug: "chain-of-thought", entryCount: 32, metric: "success", bestValue: "reported" },
-  { ...benchmarkRefs.sam1b, taskSlug: "document-understanding", methodSlug: "tool-use", entryCount: 12, metric: "mIoU", bestValue: "reported" },
-  { ...benchmarkRefs.llavaBench, taskSlug: "visual-question-answering", methodSlug: "post-training", entryCount: 28, metric: "score", bestValue: "reported" },
-  { ...benchmarkRefs.longContext, taskSlug: "inference-serving", methodSlug: "large-language-model", entryCount: 16, metric: "throughput", bestValue: "reported" }
+  { ...benchmarkRefs.sweBench, category: "software-engineering", taskSlug: "coding-agents", methodSlug: "tool-use", entryCount: 417, metric: "resolved", bestValue: "verified" },
+  { ...benchmarkRefs.hotpotQa, category: "question-answering", taskSlug: "agents", methodSlug: "react", entryCount: 84, metric: "EM/F1", bestValue: "reported" },
+  { ...benchmarkRefs.gameOf24, category: "reasoning-logic", taskSlug: "reasoning", methodSlug: "chain-of-thought", entryCount: 32, metric: "success", bestValue: "reported" },
+  { ...benchmarkRefs.sam1b, category: "segmentation", taskSlug: "document-understanding", methodSlug: "tool-use", entryCount: 12, metric: "mIoU", bestValue: "reported" },
+  { ...benchmarkRefs.llavaBench, category: "visual-question-answering", taskSlug: "visual-question-answering", methodSlug: "post-training", entryCount: 28, metric: "score", bestValue: "reported" },
+  { ...benchmarkRefs.longContext, category: "long-context", taskSlug: "inference-serving", methodSlug: "large-language-model", entryCount: 16, metric: "throughput", bestValue: "reported" }
 ]
 
 export const papers: Paper[] = [

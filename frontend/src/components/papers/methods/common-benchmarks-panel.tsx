@@ -1,6 +1,7 @@
 "use client"
 
 import { ArrowRight } from "lucide-react"
+import { benchmarkCategoryLabel } from "@/lib/papers/categories"
 import { papersCopy, t } from "@/lib/papers/copy"
 import type { Benchmark, BenchmarkRef, Locale } from "@/lib/papers/types"
 
@@ -24,7 +25,14 @@ export function CommonBenchmarksPanel({
             className="flex items-center justify-between gap-3 rounded-md border border-border bg-background/60 px-3 py-2 text-left text-sm hover:bg-secondary"
             onClick={() => onSelect(benchmark)}
           >
-            {benchmark.name}
+            <span className="min-w-0">
+              <span className="block truncate font-semibold">{benchmark.name}</span>
+              {benchmark.category ? (
+                <span className="mt-1 block text-xs text-muted-foreground">
+                  {benchmarkCategoryLabel(benchmark.category, locale) ?? benchmark.category}
+                </span>
+              ) : null}
+            </span>
             <ArrowRight className="size-4 text-muted-foreground" />
           </button>
         ))}

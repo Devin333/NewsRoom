@@ -26,6 +26,7 @@ import {
 } from "@/lib/papers/api"
 import { translate } from "@/lib/i18n"
 import { useI18n } from "@/lib/i18n/use-i18n"
+import { benchmarkCategoryLabel } from "@/lib/papers/categories"
 import type {
   Locale,
   Paper,
@@ -564,7 +565,14 @@ function SignalPanel({ paper, reader, locale }: { paper: Paper; reader: PaperRea
         <MiniList title={translate(locale, "papers.reader.benchmarks")} empty={translate(locale, "papers.reader.noBenchmarks")}>
           {benchmarks.map((item) => (
             <div key={item.id} className="flex items-center justify-between gap-3 py-2 text-sm">
-              <span className="font-semibold">{item.name}</span>
+              <span className="min-w-0">
+                <span className="block truncate font-semibold">{item.name}</span>
+                {item.category ? (
+                  <span className="mt-0.5 block text-xs text-[#334155]/52 dark:text-muted-foreground">
+                    {benchmarkCategoryLabel(item.category, locale) ?? item.category}
+                  </span>
+                ) : null}
+              </span>
               <span className="text-[#334155]/58">{[item.metric, item.value].filter(Boolean).join(" / ")}</span>
             </div>
           ))}

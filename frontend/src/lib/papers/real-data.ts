@@ -308,8 +308,8 @@ function filterPapers(
       paper.abstractSnippetZh,
       paper.authors.join(" "),
       paper.tags.join(" "),
-      paper.taskRefs.map((task) => `${task.slug} ${task.name} ${task.nameZh ?? ""}`).join(" "),
-      paper.methodRefs.map((method) => `${method.slug} ${method.name} ${method.nameZh ?? ""}`).join(" ")
+      paper.taskRefs.map((task) => `${task.slug} ${task.name} ${task.nameZh ?? ""} ${task.group ?? ""}`).join(" "),
+      paper.methodRefs.map((method) => `${method.slug} ${method.name} ${method.nameZh ?? ""} ${method.area ?? ""}`).join(" ")
     ].join(" ")
 
     return lower(haystack).includes(search)

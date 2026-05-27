@@ -122,11 +122,11 @@ def test_paper_service_summary_v2_uses_public_context_and_separate_cache(tmp_pat
         "authors": ["A"],
         "publishedAt": "2026-05-24T00:00:00Z",
         "paperUrl": "https://arxiv.org/abs/2605.20001",
-        "taskRefs": [{"id": "task-agents", "slug": "agents", "name": "Agents"}],
-        "methodRefs": [{"id": "method-rag", "slug": "rag", "name": "Retrieval Augmented Generation"}],
+        "taskRefs": [{"id": "task-agents", "slug": "agents", "name": "Agents", "group": "agents"}],
+        "methodRefs": [{"id": "method-rag", "slug": "rag", "name": "Retrieval Augmented Generation", "area": "Language Models"}],
         "repoUrl": "https://github.com/owner/summary-v2",
         "githubStars": 128,
-        "benchmarks": [{"id": "bench-mmlu", "name": "MMLU", "metric": "accuracy", "value": "91.2"}],
+        "benchmarks": [{"id": "bench-mmlu", "name": "MMLU", "category": "language-understanding", "metric": "accuracy", "value": "91.2"}],
         "evidenceRefs": [
             {
                 "evidenceId": "ev-1",
@@ -207,7 +207,9 @@ def test_paper_service_summary_v2_uses_public_context_and_separate_cache(tmp_pat
 
     prompt = FakeClient.prompts[0]
     assert "Retrieval Augmented Generation" in prompt
+    assert "Language Models" in prompt
     assert "MMLU" in prompt
+    assert "language-understanding" in prompt
     assert "github.com/owner/summary-v2" in prompt
     assert "Public evidence summary" in prompt
     assert "raw_payload" not in prompt

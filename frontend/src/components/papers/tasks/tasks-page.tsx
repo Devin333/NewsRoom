@@ -5,12 +5,11 @@ import { PapersHero } from "@/components/papers/papers-hero"
 import { PapersMicrobar } from "@/components/papers/papers-microbar"
 import { TaskSection } from "@/components/papers/tasks/task-section"
 import { InlineNotice } from "@/components/papers/shared/inline-notice"
-import { papersCopy, taskGroupLabels, t } from "@/lib/papers/copy"
+import { orderedTaskGroups, taskGroupLabel } from "@/lib/papers/categories"
+import { papersCopy, t } from "@/lib/papers/copy"
 import { benchmarks, paperTasks } from "@/lib/papers/catalog"
 import { fetchPaperTasksResult, fetchPapers } from "@/lib/papers/api"
 import type { Locale, Paper, PaperTask } from "@/lib/papers/types"
-
-const taskGroups = ["general", "vision", "video", "language", "audio", "robotics", "infra"]
 
 export function TasksPage({ locale }: { locale: Locale }) {
   const [tasks, setTasks] = useState<PaperTask[]>([])
@@ -48,6 +47,7 @@ export function TasksPage({ locale }: { locale: Locale }) {
   const taskItems = status === "loading" ? [] : tasks
   const taskPaperItems = status === "loading" ? [] : paperItems
   const benchmarkCount = status === "fallback" ? benchmarks.length : taskItems.reduce((total, task) => total + task.benchmarkCount, 0)
+  const visibleTaskGroups = orderedTaskGroups(taskItems)
 
   return (
     <div className="space-y-6">
@@ -78,10 +78,10 @@ export function TasksPage({ locale }: { locale: Locale }) {
             {t(papersCopy.noPapers, locale)}
           </p>
         ) : null}
-        {taskGroups.map((group) => (
+        {visibleTaskGroups.map((group) => (
           <TaskSection
             key={group}
-            title={t(taskGroupLabels[group], locale, group)}
+            title={taskGroupLabel(group, locale)}
             tasks={taskItems.filter((task) => task.group === group)}
             locale={locale}
           />

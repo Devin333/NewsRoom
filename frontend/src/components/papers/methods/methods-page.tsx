@@ -49,6 +49,7 @@ export function MethodsPage({ locale }: { locale: Locale }) {
   const methodItems = status === "loading" ? [] : methods
   const taskItems = status === "loading" ? [] : tasks
   const paperItemsForStats = status === "loading" ? [] : paperItems
+  const methodGroups = groupMethodsByArea(methodItems)
 
   return (
     <div className="space-y-6">
@@ -70,7 +71,7 @@ export function MethodsPage({ locale }: { locale: Locale }) {
           onDismiss={() => setFallbackNoticeVisible(false)}
         />
       ) : null}
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+      <section className="space-y-6">
         {status === "loading" ? (
           <p className="text-sm text-[#334155]/60 dark:text-muted-foreground">{t(papersCopy.loadingMethods, locale)}</p>
         ) : null}
@@ -79,8 +80,18 @@ export function MethodsPage({ locale }: { locale: Locale }) {
             {t(papersCopy.noPapers, locale)}
           </p>
         ) : null}
-        {methodItems.map((method) => (
-          <MethodCard key={method.id} method={method} locale={locale} />
+        {methodGroups.map((group) => (
+          <div key={group.area} className="space-y-3">
+            <div className="flex items-center justify-between gap-3 border-b border-border pb-2">
+              <h2 className="text-base font-semibold text-[#334155] dark:text-foreground">{group.area}</h2>
+              <span className="text-xs text-muted-foreground">{group.methods.length} {t(papersCopy.methods, locale)}</span>
+            </div>
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {group.methods.map((method) => (
+                <MethodCard key={method.id} method={method} locale={locale} />
+              ))}
+            </div>
+          </div>
         ))}
       </section>
     </div>
@@ -107,4 +118,23 @@ function emptyMethodCounts(methods: PaperMethod[]): PaperMethod[] {
     representativePaperIds: [],
     relatedProjectIds: []
   }))
+}
+
+function groupMethodsByArea(methods: PaperMethod[]) {
+  const records = new Map<string, PaperMethod[]>()
+  methods.forEach((method) => {
+    const area = method.area || "Unclassified"
+    records.set(area, [...(records.get(area) ?? []), method])
+  })
+  return Array.from(records.entries())
+    .map(([area, items]) => ({
+      area,
+      methods: items.sort((left, right) => right.paperCount - left.paperCount || left.name.localeCompare(right.name))
+    }))
+    .sort((left, right) => {
+      const paperDelta =
+        right.methods.reduce((total, method) => total + method.paperCount, 0) -
+        left.methods.reduce((total, method) => total + method.paperCount, 0)
+      return paperDelta || left.area.localeCompare(right.area)
+    })
 }

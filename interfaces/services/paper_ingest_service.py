@@ -34,6 +34,17 @@ from infrastructure.external.sources.github import GithubRepository, GithubRepos
 from infrastructure.external.sources.models import RawSourceItem, SourceDefinition
 from interfaces.services.paper_reader_cache_repository import TextExtractionRepository
 from interfaces.services.paper_service import PAPERS_DATA_PATH_ENV
+from interfaces.services.paper_taxonomy_categories import (
+    AI_TASK_GROUPS,
+    BENCHMARK_CATEGORIES,
+    benchmark_category_options,
+    load_pwc_method_collections,
+    method_collection_options,
+    normalize_ai_task_group,
+    normalize_benchmark_category,
+    normalize_method_collection,
+    task_group_options,
+)
 
 
 PAPER_INGEST_TASK_TYPE = "papers.ingest_github_arxiv_daily"
@@ -55,6 +66,7 @@ DEFAULT_ARXIV_USER_AGENT = "NewsRoom/0.1 paper-ingest contact: local-dev"
 DEFAULT_CLASSIFIER_MAX_CHARS = 120_000
 DEFAULT_PDF_MAX_BYTES = 40_000_000
 DEFAULT_REPAIR_DELAY_MINUTES = 30
+DEFAULT_LIMIT_FOR_BACKFILL = 500
 
 _GITHUB_REPO_PATTERN = re.compile(r"https?://(?:www\.)?github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 _ARXIV_ID_PATTERN = re.compile(r"arxiv\.org/(?:abs|pdf)/([^/?#]+)", flags=re.IGNORECASE)
@@ -181,6 +193,34 @@ class PaperIngestRunResult:
             "blockedCount": self.blocked_count,
             "failureCount": self.failure_count,
             "publishedPaperIds": list(self.published_paper_ids),
+            "errors": [dict(item) for item in self.errors],
+        }
+
+
+@dataclass(frozen=True)
+class PaperClassificationBackfillResult:
+    run_id: str
+    started_at: str
+    finished_at: str
+    scanned_count: int
+    updated_count: int
+    skipped_count: int
+    repair_queued_count: int
+    blocked_count: int
+    updated_paper_ids: tuple[str, ...]
+    errors: tuple[Mapping[str, Any], ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "runId": self.run_id,
+            "startedAt": self.started_at,
+            "finishedAt": self.finished_at,
+            "scannedCount": self.scanned_count,
+            "updatedCount": self.updated_count,
+            "skippedCount": self.skipped_count,
+            "repairQueuedCount": self.repair_queued_count,
+            "blockedCount": self.blocked_count,
+            "updatedPaperIds": list(self.updated_paper_ids),
             "errors": [dict(item) for item in self.errors],
         }
 
@@ -448,6 +488,148 @@ class PaperIngestApplicationService:
 
         return self._finalize_run(run_state, published_ids=published_ids, errors=errors)
 
+    def backfill_published_classification(
+        self,
+        *,
+        limit: int | None = None,
+        run_id: str | None = None,
+        config: PaperIngestConfig | None = None,
+    ) -> PaperClassificationBackfillResult:
+        resolved_config = config or self.config
+        started = self.clock()
+        normalized_run_id = run_id or f"paper-classification-backfill-{started.strftime('%Y%m%d%H%M%S')}"
+        max_items = _positive_int(limit) or DEFAULT_LIMIT_FOR_BACKFILL
+        cache = self._read_paper_cache()
+        papers = [dict(item) for item in _sequence(cache.get("papers")) if isinstance(item, Mapping)]
+        next_papers: list[Mapping[str, Any]] = []
+        scanned_count = 0
+        updated_count = 0
+        skipped_count = 0
+        repair_queued_count = 0
+        blocked_count = 0
+        updated_ids: list[str] = []
+        errors: list[Mapping[str, Any]] = []
+
+        for paper in papers:
+            if paper.get("isPublished") is False or not _paper_needs_taxonomy_backfill(paper):
+                skipped_count += 1
+                next_papers.append(paper)
+                continue
+            if scanned_count >= max_items:
+                next_papers.append(paper)
+                continue
+
+            scanned_count += 1
+            candidate = _candidate_from_cached_paper(paper, fetched_at=self.clock())
+            if candidate is None:
+                skipped_count += 1
+                next_papers.append(paper)
+                continue
+            paper_id = _candidate_paper_id(candidate)
+            full_text = _cached_paper_full_text(paper, self.text_extraction_repository)
+            repo_url = _optional_text(paper.get("repoUrl")) or _optional_text(candidate.metadata.get("repo_url")) or ""
+            github_stars = _positive_int(paper.get("githubStars") or candidate.metadata.get("github_stars")) or 0
+
+            try:
+                classification = self._classify_paper(
+                    candidate,
+                    full_text=full_text,
+                    repo_url=repo_url,
+                    github_stars=github_stars,
+                    config=resolved_config,
+                )
+                taxonomy = self._normalize_classification(
+                    classification,
+                    config=resolved_config,
+                    run_id=normalized_run_id,
+                    paper_id=paper_id,
+                )
+                low_confidence_items = taxonomy.get("lowConfidenceItems") or []
+                if low_confidence_items:
+                    repair_queued_count += 1
+                    errors.append(
+                        self._handle_failure(
+                            run_id=normalized_run_id,
+                            candidate=candidate,
+                            step="classify",
+                            error_code="classification_low_confidence",
+                            error_message="classification included low confidence taxonomy entries during backfill",
+                            hard_block=False,
+                            context={"lowConfidenceItems": low_confidence_items, "mode": "classification_backfill"},
+                        )
+                    )
+                if not taxonomy.get("taskRefs") or not taxonomy.get("methodRefs"):
+                    raise PaperIngestError(
+                        "classification backfill did not produce publishable tasks and methods",
+                        code="classification_empty",
+                        step="classify",
+                    )
+            except PaperIngestHardBlock as exc:
+                blocked_count += 1
+                errors.append(
+                    self._handle_failure(
+                        run_id=normalized_run_id,
+                        candidate=candidate,
+                        step=exc.step,
+                        error_code=exc.code,
+                        error_message=str(exc),
+                        hard_block=True,
+                        context={"mode": "classification_backfill"},
+                    )
+                )
+                next_papers.append(paper)
+                continue
+            except PaperIngestError as exc:
+                repair_queued_count += 1
+                errors.append(
+                    self._handle_failure(
+                        run_id=normalized_run_id,
+                        candidate=candidate,
+                        step=exc.step,
+                        error_code=exc.code,
+                        error_message=str(exc),
+                        hard_block=False,
+                        context={"mode": "classification_backfill"},
+                    )
+                )
+                next_papers.append(paper)
+                continue
+
+            updated = _deep_merge(
+                paper,
+                {
+                    "taskRefs": taxonomy.get("taskRefs") or [],
+                    "methodRefs": taxonomy.get("methodRefs") or [],
+                    "benchmarks": taxonomy.get("benchmarks") or [],
+                    "classification": _classification_record(taxonomy=taxonomy, classification=classification),
+                },
+            )
+            next_papers.append(updated)
+            updated_count += 1
+            updated_ids.append(_optional_text(updated.get("id")) or paper_id)
+
+        cache.update(
+            {
+                "source": _optional_text(cache.get("source")) or "papers_ingest_github_arxiv_daily",
+                "collectedAt": _iso(self.clock()),
+                "papers": next_papers,
+            }
+        )
+        self._write_paper_cache(cache)
+        finished = self.clock()
+        return PaperClassificationBackfillResult(
+            run_id=normalized_run_id,
+            started_at=_iso(started),
+            finished_at=_iso(finished),
+            scanned_count=scanned_count,
+            updated_count=updated_count,
+            skipped_count=skipped_count,
+            repair_queued_count=repair_queued_count,
+            blocked_count=blocked_count,
+            updated_paper_ids=tuple(updated_ids),
+            errors=tuple(errors),
+        )
+
     def get_ops_state(self, *, limit: int = 20) -> Mapping[str, Any]:
         self.state.reclassify_soft_blocked_items(now=self.clock)
         return sanitize_public_payload(
@@ -584,9 +766,9 @@ class PaperIngestApplicationService:
 
         task_refs = taxonomy.get("taskRefs") if isinstance(taxonomy.get("taskRefs"), list) else []
         method_refs = taxonomy.get("methodRefs") if isinstance(taxonomy.get("methodRefs"), list) else []
-        if not task_refs and not method_refs:
+        if not task_refs or not method_refs:
             raise PaperIngestError(
-                "classification did not produce publishable tasks or methods",
+                "classification did not produce publishable tasks and methods",
                 code="classification_empty",
                 step="classify",
             )
@@ -737,23 +919,66 @@ class PaperIngestApplicationService:
     ) -> Mapping[str, Any]:
         taxonomy = self._taxonomy_context()
         low_confidence: list[Mapping[str, Any]] = []
+        task_value = payload.get("taskRefs") or payload.get("tasks")
+        method_value = payload.get("methodRefs") or payload.get("methods")
+        method_collections = taxonomy.get("methodCollections")
+        method_collection_names = (
+            tuple(str(item) for item in method_collections)
+            if isinstance(method_collections, Sequence) and not isinstance(method_collections, (str, bytes))
+            else load_pwc_method_collections()
+        )
+        primary_task_group = normalize_ai_task_group(
+            payload.get("primaryTaskGroup") or payload.get("primary_task_group")
+        ) or _first_valid_task_group(task_value)
+        if primary_task_group is None:
+            low_confidence.append(
+                {
+                    "kind": "task",
+                    "slug": None,
+                    "name": "Primary task group",
+                    "confidence": _float(payload.get("confidence"), default=0.0),
+                    "evidence": _optional_text(payload.get("evidenceSummary") or payload.get("evidence_summary")),
+                    "reason": "missing_or_invalid_primary_task_group",
+                    "allowedValues": list(AI_TASK_GROUPS),
+                    "action": "agent_repair_retry",
+                }
+            )
+        secondary_task_groups, invalid_secondary_groups = _normalize_secondary_task_groups(
+            payload.get("secondaryTaskGroups") or payload.get("secondary_task_groups")
+        )
+        for invalid_group in invalid_secondary_groups:
+            low_confidence.append(
+                {
+                    "kind": "task",
+                    "slug": _slugify(invalid_group),
+                    "name": invalid_group,
+                    "confidence": _float(payload.get("confidence"), default=0.0),
+                    "reason": "invalid_secondary_task_group",
+                    "allowedValues": list(AI_TASK_GROUPS),
+                    "action": "agent_repair_retry",
+                }
+            )
         task_refs = self._normalize_refs(
-            payload.get("taskRefs") or payload.get("tasks"),
+            task_value,
             kind="task",
             existing=taxonomy["tasksBySlug"],
             confidence_threshold=config.auto_taxonomy_confidence,
             run_id=run_id,
             paper_id=paper_id,
             low_confidence=low_confidence,
+            default_task_group=primary_task_group,
+            method_collections=method_collection_names,
         )
         method_refs = self._normalize_refs(
-            payload.get("methodRefs") or payload.get("methods"),
+            method_value,
             kind="method",
             existing=taxonomy["methodsBySlug"],
             confidence_threshold=config.auto_taxonomy_confidence,
             run_id=run_id,
             paper_id=paper_id,
             low_confidence=low_confidence,
+            default_task_group=primary_task_group,
+            method_collections=method_collection_names,
         )
         benchmarks = self._normalize_benchmarks(
             payload.get("benchmarks"),
@@ -764,6 +989,8 @@ class PaperIngestApplicationService:
         )
         return sanitize_public_payload(
             {
+                "primaryTaskGroup": primary_task_group,
+                "secondaryTaskGroups": secondary_task_groups,
                 "taskRefs": task_refs,
                 "methodRefs": method_refs,
                 "benchmarks": benchmarks,
@@ -783,6 +1010,8 @@ class PaperIngestApplicationService:
         run_id: str,
         paper_id: str,
         low_confidence: list[Mapping[str, Any]],
+        default_task_group: str | None,
+        method_collections: Sequence[str],
     ) -> list[Mapping[str, Any]]:
         refs: list[Mapping[str, Any]] = []
         for item in _sequence(value):
@@ -796,8 +1025,46 @@ class PaperIngestApplicationService:
                 continue
             confidence = _float(item.get("confidence"), default=1.0 if slug in existing else 0.0)
             evidence = _optional_text(item.get("evidence") or item.get("evidenceSummary"))
+            ref_extra: dict[str, Any] = {}
+            if kind == "task":
+                group = normalize_ai_task_group(item.get("group") or item.get("taskGroup") or default_task_group)
+                if group is None:
+                    low_confidence.append(
+                        {
+                            "kind": kind,
+                            "slug": slug,
+                            "name": name,
+                            "confidence": confidence,
+                            "evidence": evidence,
+                            "reason": "missing_or_invalid_task_group",
+                            "allowedValues": list(AI_TASK_GROUPS),
+                            "action": "agent_repair_retry",
+                        }
+                    )
+                    continue
+                ref_extra["group"] = group
+            if kind == "method":
+                area = normalize_method_collection(
+                    item.get("area") or item.get("collection") or item.get("methodCollection"),
+                    collections=method_collections,
+                )
+                if area is None:
+                    low_confidence.append(
+                        {
+                            "kind": kind,
+                            "slug": slug,
+                            "name": name,
+                            "confidence": confidence,
+                            "evidence": evidence,
+                            "reason": "missing_or_invalid_method_collection",
+                            "allowedValues": list(method_collections),
+                            "action": "agent_repair_retry",
+                        }
+                    )
+                    continue
+                ref_extra["area"] = area
             if slug in existing:
-                existing_ref = dict(existing[slug])
+                existing_ref = dict(existing[slug]) | ref_extra
                 refs.append(_public_ref(existing_ref, confidence=confidence, evidence=evidence))
                 continue
             if confidence >= confidence_threshold:
@@ -805,7 +1072,7 @@ class PaperIngestApplicationService:
                     "id": _optional_text(item.get("id")) or f"{kind}-{slug}",
                     "slug": slug,
                     "name": name,
-                }
+                } | ref_extra
                 self.state.upsert_taxonomy_ref(kind, ref)
                 self.state.record_taxonomy_event(
                     {
@@ -815,6 +1082,7 @@ class PaperIngestApplicationService:
                         "kind": kind,
                         "slug": slug,
                         "name": name,
+                        **ref_extra,
                         "confidence": confidence,
                         "evidence": evidence,
                         "action": "auto_published",
@@ -856,6 +1124,24 @@ class PaperIngestApplicationService:
             slug = _slugify(_optional_text(item.get("slug")) or name)
             confidence = _float(item.get("confidence"), default=0.0)
             evidence = _optional_text(item.get("evidence") or item.get("evidenceSummary"))
+            category = normalize_benchmark_category(
+                item.get("category") or item.get("benchmarkCategory") or item.get("benchmark_category")
+            )
+            metric = _optional_text(item.get("metric"))
+            if category is None or not metric:
+                low_confidence.append(
+                    {
+                        "kind": "benchmark",
+                        "slug": slug,
+                        "name": name,
+                        "confidence": confidence,
+                        "evidence": evidence,
+                        "reason": "missing_or_invalid_benchmark_category_or_metric",
+                        "allowedValues": list(BENCHMARK_CATEGORIES),
+                        "action": "agent_repair_retry",
+                    }
+                )
+                continue
             if confidence < confidence_threshold:
                 low_confidence.append(
                     {
@@ -871,7 +1157,8 @@ class PaperIngestApplicationService:
             benchmark = {
                 "id": _optional_text(item.get("id")) or f"bench-{slug}",
                 "name": name,
-                "metric": _optional_text(item.get("metric")),
+                "category": category,
+                "metric": metric,
                 "value": item.get("value") if item.get("value") not in (None, "", [], {}) else None,
                 "taskSlug": _optional_text(item.get("taskSlug") or item.get("task_slug")),
                 "url": _normalized_https_url(item.get("url")),
@@ -887,6 +1174,7 @@ class PaperIngestApplicationService:
                     "kind": "benchmark",
                     "slug": slug,
                     "name": name,
+                    "category": category,
                     "confidence": confidence,
                     "evidence": evidence,
                     "action": "auto_published",
@@ -911,11 +1199,15 @@ class PaperIngestApplicationService:
             _add_ref_to_index(tasks, ref)
         for ref in _sequence(stored.get("methods")):
             _add_ref_to_index(methods, ref)
+        method_collections = load_pwc_method_collections()
         return {
             "tasks": list(tasks.values()),
             "methods": list(methods.values()),
             "tasksBySlug": tasks,
             "methodsBySlug": methods,
+            "taskGroups": list(AI_TASK_GROUPS),
+            "methodCollections": list(method_collections),
+            "benchmarkCategories": list(BENCHMARK_CATEGORIES),
         }
 
     def _publish_paper(self, paper_payload: Mapping[str, Any], *, collected_at: str) -> None:
@@ -1265,6 +1557,9 @@ def _classification_request(
         "githubStars": github_stars,
         "knownTasks": taxonomy.get("tasks", []),
         "knownMethods": taxonomy.get("methods", []),
+        "allowedTaskGroups": task_group_options(),
+        "allowedMethodAreas": method_collection_options(taxonomy.get("methodCollections")),
+        "allowedBenchmarkCategories": benchmark_category_options(),
         "promptMemory": list(prompt_memory),
         "fullText": _truncate_middle(full_text, max_chars),
     }
@@ -1272,16 +1567,21 @@ def _classification_request(
         messages=[
             LLMMessage.system(
                 "You classify AI research papers for NewsRoom. Read the full paper text and return strict JSON. "
-                "Prefer existing knownTasks and knownMethods by slug when they fit. Create new tasks/methods only "
-                "when the evidence is explicit and confidence is high. Extract benchmark results only when reported. "
-                "Return keys: taskRefs, methodRefs, benchmarks, confidence, evidenceSummary. Each task/method item "
-                "must include slug, name, confidence, and evidence. Each benchmark item must include name, metric, "
-                "value when present, taskSlug when known, confidence, and evidence."
+                "Use only the allowedTaskGroups slugs for task grouping, allowedMethodAreas names for methodRef.area, "
+                "and allowedBenchmarkCategories slugs for benchmark.category. Every paper must have exactly one "
+                "primaryTaskGroup and at most two secondaryTaskGroups. Prefer existing knownTasks and knownMethods by "
+                "slug when they fit; create new task/method refs only when evidence is explicit and confidence is high. "
+                "Return keys: primaryTaskGroup, secondaryTaskGroups, taskRefs, methodRefs, benchmarks, confidence, "
+                "evidenceSummary. Each taskRef must include slug, name, group, confidence, and evidence. Each methodRef "
+                "must include slug, name, area, confidence, and evidence. Extract benchmark entries only when the paper "
+                "explicitly reports a dataset/benchmark and metric; do not invent missing benchmarks. Each benchmark "
+                "must include category, name, metric, value when present, taskSlug when known, confidence, and evidence."
             ),
             LLMMessage.user(json.dumps(context, ensure_ascii=False, sort_keys=True)),
         ],
         temperature=0.1,
-        max_tokens=1800,
+        max_tokens=2400,
+        response_format={"type": "json_object"},
         metadata={"paper_id": _candidate_paper_id(candidate), "schema": "paper_ingest_classification_v1"},
     )
 
@@ -1330,15 +1630,7 @@ def _paper_payload_from_ingest(
                 "githubStars": github.stargazers_count,
             }
         ],
-        "classification": {
-            "schemaVersion": "paper_ingest_classification_v1",
-            "confidence": taxonomy.get("confidence") or _float(classification.get("confidence")),
-            "evidenceSummary": taxonomy.get("evidenceSummary")
-            or _optional_text(classification.get("evidenceSummary") or classification.get("evidence_summary")),
-            "modelTaskRefs": classification.get("taskRefs") or classification.get("tasks") or [],
-            "modelMethodRefs": classification.get("methodRefs") or classification.get("methods") or [],
-            "lowConfidenceItems": taxonomy.get("lowConfidenceItems") or [],
-        },
+        "classification": _classification_record(taxonomy=taxonomy, classification=classification),
         "ingest": {
             "runId": run_id,
             "source": "papers.ingest_github_arxiv_daily",
@@ -1347,6 +1639,23 @@ def _paper_payload_from_ingest(
         },
     }
     return {key: value for key, value in payload.items() if value not in (None, "", [], {})}
+
+
+def _classification_record(*, taxonomy: Mapping[str, Any], classification: Mapping[str, Any]) -> Mapping[str, Any]:
+    return sanitize_public_payload(
+        {
+            "schemaVersion": "paper_ingest_classification_v2",
+            "primaryTaskGroup": taxonomy.get("primaryTaskGroup"),
+            "secondaryTaskGroups": taxonomy.get("secondaryTaskGroups") or [],
+            "confidence": taxonomy.get("confidence") or _float(classification.get("confidence")),
+            "evidenceSummary": taxonomy.get("evidenceSummary")
+            or _optional_text(classification.get("evidenceSummary") or classification.get("evidence_summary")),
+            "modelTaskRefs": classification.get("taskRefs") or classification.get("tasks") or [],
+            "modelMethodRefs": classification.get("methodRefs") or classification.get("methods") or [],
+            "modelBenchmarks": classification.get("benchmarks") or [],
+            "lowConfidenceItems": taxonomy.get("lowConfidenceItems") or [],
+        }
+    )
 
 
 def _new_run_state(run_id: str, *, started: datetime, config: PaperIngestConfig) -> dict[str, Any]:
@@ -1514,6 +1823,48 @@ def _candidate_from_cached_paper(record: Mapping[str, Any], *, fetched_at: datet
     )
 
 
+def _paper_needs_taxonomy_backfill(record: Mapping[str, Any]) -> bool:
+    classification = record.get("classification")
+    if not isinstance(classification, Mapping) or classification.get("schemaVersion") != "paper_ingest_classification_v2":
+        return True
+    task_refs = _sequence(record.get("taskRefs"))
+    method_refs = _sequence(record.get("methodRefs"))
+    if not task_refs or not method_refs:
+        return True
+    for ref in task_refs:
+        if not isinstance(ref, Mapping) or normalize_ai_task_group(ref.get("group")) is None:
+            return True
+    for ref in method_refs:
+        if not isinstance(ref, Mapping) or normalize_method_collection(ref.get("area")) is None:
+            return True
+    for benchmark in _sequence(record.get("benchmarks")) or _sequence(record.get("benchmarkResults")):
+        if isinstance(benchmark, Mapping) and _optional_text(benchmark.get("metric")):
+            if normalize_benchmark_category(
+                benchmark.get("category") or benchmark.get("benchmarkCategory") or benchmark.get("benchmark_category")
+            ) is None:
+                return True
+    return False
+
+
+def _cached_paper_full_text(record: Mapping[str, Any], repository: TextExtractionRepository) -> str:
+    paper_id = _optional_text(record.get("id"))
+    sections = repository.read_latest_sections(paper_id) if paper_id else ()
+    section_text = "\n\n".join(
+        _optional_text(item.get("textExcerpt") or item.get("summary"))
+        for item in sections
+        if isinstance(item, Mapping)
+    )
+    return "\n\n".join(
+        part
+        for part in (
+            _optional_text(record.get("title")),
+            _optional_text(record.get("abstractSnippet") or record.get("summary")),
+            section_text,
+        )
+        if part
+    )
+
+
 def _cached_arxiv_id(record: Mapping[str, Any]) -> str | None:
     explicit = _optional_text(record.get("arxivId"))
     if explicit:
@@ -1675,6 +2026,8 @@ def _public_ref(ref: Mapping[str, Any], *, confidence: float, evidence: str | No
         "slug": _optional_text(ref.get("slug")),
         "name": _optional_text(ref.get("name")),
         "nameZh": _optional_text(ref.get("nameZh")),
+        "group": _optional_text(ref.get("group")),
+        "area": _optional_text(ref.get("area")),
         "confidence": confidence,
         "evidence": evidence,
     }
@@ -1693,6 +2046,34 @@ def _dedupe_refs(refs: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
     return result
 
 
+def _first_valid_task_group(value: Any) -> str | None:
+    for item in _sequence(value):
+        if not isinstance(item, Mapping):
+            continue
+        group = normalize_ai_task_group(item.get("group") or item.get("taskGroup"))
+        if group:
+            return group
+    return None
+
+
+def _normalize_secondary_task_groups(value: Any) -> tuple[list[str], list[str]]:
+    groups: list[str] = []
+    invalid: list[str] = []
+    for item in _sequence(value):
+        normalized = normalize_ai_task_group(item)
+        if normalized:
+            if normalized not in groups:
+                groups.append(normalized)
+            continue
+        text = _optional_text(item)
+        if text:
+            invalid.append(text)
+    if len(groups) > 2:
+        invalid.extend(groups[2:])
+        groups = groups[:2]
+    return groups, invalid
+
+
 def _add_ref_to_index(index: dict[str, Mapping[str, Any]], value: Any) -> None:
     if not isinstance(value, Mapping):
         return
@@ -1701,7 +2082,12 @@ def _add_ref_to_index(index: dict[str, Mapping[str, Any]], value: Any) -> None:
     ref_id = _optional_text(value.get("id"))
     if not slug or not name:
         return
-    index.setdefault(slug, {"id": ref_id or f"ref-{slug}", "slug": slug, "name": name})
+    ref = {"id": ref_id or f"ref-{slug}", "slug": slug, "name": name}
+    for key in ("nameZh", "group", "area"):
+        text = _optional_text(value.get(key))
+        if text:
+            ref[key] = text
+    index.setdefault(slug, ref)
 
 
 def _deep_merge(existing: Mapping[str, Any], incoming: Mapping[str, Any]) -> Mapping[str, Any]:

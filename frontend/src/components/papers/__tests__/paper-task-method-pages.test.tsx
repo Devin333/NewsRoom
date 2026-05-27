@@ -43,7 +43,7 @@ const apiTasks = [
     id: "task-backend",
     slug: "backend-task",
     name: "Backend Task",
-    group: "general",
+    group: "language-models",
     description: "Derived backend task.",
     paperCount: 1,
     benchmarkCount: 0,
@@ -62,7 +62,7 @@ const apiMethods = [
     paperCount: 1,
     taskCount: 1,
     implementationCount: 0,
-    area: "Agents",
+    area: "Transformers",
     relatedTasks: [],
     relatedMethods: []
   }
@@ -82,6 +82,7 @@ describe("paper task and method pages", () => {
     const { unmount } = render(<TasksPage locale="en" />)
 
     expect(await screen.findByText("Backend Task")).toBeInTheDocument()
+    expect(screen.getByText("Language Models")).toBeInTheDocument()
     expect(screen.queryByText(/catalog fallback/i)).not.toBeInTheDocument()
     unmount()
 
@@ -101,6 +102,7 @@ describe("paper task and method pages", () => {
     const { unmount } = render(<MethodsPage locale="en" />)
 
     expect(await screen.findByText("Backend Method")).toBeInTheDocument()
+    expect(screen.getAllByText("Transformers").length).toBeGreaterThan(0)
     expect(screen.queryByText(/catalog fallback/i)).not.toBeInTheDocument()
     unmount()
 

@@ -102,6 +102,9 @@ export interface TaskRef {
   slug: string
   name: string
   nameZh?: string
+  group?: string
+  confidence?: number
+  evidence?: string
 }
 
 export interface MethodRef {
@@ -109,12 +112,16 @@ export interface MethodRef {
   slug: string
   name: string
   nameZh?: string
+  area?: string
+  confidence?: number
+  evidence?: string
 }
 
 export interface BenchmarkRef {
   id: string
   slug: string
   name: string
+  category?: string
 }
 
 export interface PaperImplementation {
@@ -128,10 +135,13 @@ export interface PaperImplementation {
 export interface PaperBenchmarkResult {
   id: string
   name: string
+  category?: string
   metric?: string
   value?: string | number
   taskSlug?: string
   url?: string
+  confidence?: number
+  evidence?: string
 }
 
 export interface PaperAISummary {
@@ -373,13 +383,20 @@ export interface PaperTask {
   name: string
   nameZh?: string
   group:
-    | "general"
-    | "vision"
-    | "video"
-    | "language"
-    | "audio"
-    | "robotics"
-    | "infra"
+    | "agents"
+    | "language-models"
+    | "reasoning"
+    | "multimodal"
+    | "computer-vision"
+    | "speech-audio"
+    | "code-ai"
+    | "robotics-embodied"
+    | "retrieval-knowledge"
+    | "data-evaluation"
+    | "systems-infra"
+    | "security-safety"
+    | "ai-for-science"
+    | "human-ai-interaction"
     | string
   description: string
   descriptionZh?: string
@@ -415,6 +432,7 @@ export interface Benchmark {
   id: string
   slug: string
   name: string
+  category?: string
   taskSlug?: string
   methodSlug?: string
   entryCount: number

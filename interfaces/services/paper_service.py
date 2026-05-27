@@ -40,6 +40,11 @@ from interfaces.services.paper_reader_cache_repository import (
     TextExtractionRepository,
     reader_cache_source_hash,
 )
+from interfaces.services.paper_taxonomy_categories import (
+    normalize_ai_task_group,
+    normalize_benchmark_category,
+    normalize_method_collection,
+)
 
 
 PaperPeriod = Literal["daily", "weekly", "monthly", "all"]
@@ -83,11 +88,23 @@ class PaperRef:
     slug: str
     name: str
     nameZh: str | None = None
+    group: str | None = None
+    area: str | None = None
+    confidence: float | None = None
+    evidence: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload = {"id": self.id, "slug": self.slug, "name": self.name}
         if self.nameZh:
             payload["nameZh"] = self.nameZh
+        if self.group:
+            payload["group"] = self.group
+        if self.area:
+            payload["area"] = self.area
+        if self.confidence is not None:
+            payload["confidence"] = self.confidence
+        if self.evidence:
+            payload["evidence"] = self.evidence
         return payload
 
 
@@ -115,13 +132,18 @@ class PaperImplementation:
 class PaperBenchmarkResult:
     id: str
     name: str
+    category: str | None = None
     metric: str | None = None
     value: str | int | float | None = None
     taskSlug: str | None = None
     url: str | None = None
+    confidence: float | None = None
+    evidence: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {"id": self.id, "name": self.name}
+        if self.category is not None:
+            payload["category"] = self.category
         if self.metric is not None:
             payload["metric"] = self.metric
         if self.value is not None:
@@ -130,6 +152,10 @@ class PaperBenchmarkResult:
             payload["taskSlug"] = self.taskSlug
         if self.url is not None:
             payload["url"] = self.url
+        if self.confidence is not None:
+            payload["confidence"] = self.confidence
+        if self.evidence is not None:
+            payload["evidence"] = self.evidence
         return payload
 
 
@@ -1243,6 +1269,7 @@ def _method_index(papers: Sequence[PublicPaper]) -> list[Mapping[str, Any]]:
                     "slug": method.slug,
                     "name": method.name,
                     "nameZh": method.nameZh,
+                    "area": method.area,
                     "paperIds": set(),
                     "taskRefs": {},
                     "relatedMethods": {},
@@ -1250,6 +1277,8 @@ def _method_index(papers: Sequence[PublicPaper]) -> list[Mapping[str, Any]]:
                     "implementationIds": set(),
                 },
             )
+            if method.area and not record.get("area"):
+                record["area"] = method.area
             record["paperIds"].add(paper.id)
             for task in paper.taskRefs:
                 record["taskRefs"][task.slug] = task
@@ -1274,7 +1303,7 @@ def _method_index(papers: Sequence[PublicPaper]) -> list[Mapping[str, Any]]:
             "paperCount": paper_count,
             "taskCount": len(record["taskRefs"]),
             "implementationCount": len(record["implementationIds"]),
-            "area": _method_area(record["name"]),
+            "area": record.get("area") or _method_area(record["name"]),
             "relatedTasks": [ref.to_dict() for ref in tasks],
             "relatedMethods": [ref.to_dict() for ref in related_methods],
             "commonBenchmarks": [_benchmark_ref(benchmark) for benchmark in list(record["benchmarkRefs"].values())[:8]],
@@ -1291,7 +1320,10 @@ def _top_refs(refs: Sequence[PaperRef]) -> list[PaperRef]:
 
 def _benchmark_ref(benchmark: PaperBenchmarkResult) -> Mapping[str, Any]:
     slug = _slugify(benchmark.name) or benchmark.id
-    return {"id": benchmark.id, "slug": slug, "name": benchmark.name}
+    payload = {"id": benchmark.id, "slug": slug, "name": benchmark.name}
+    if benchmark.category:
+        payload["category"] = benchmark.category
+    return payload
 
 
 def _labelled_values(label: str, values: Sequence[str]) -> str:
@@ -1312,33 +1344,105 @@ def _slugify(value: str) -> str:
 
 
 def _task_group(task: PaperRef) -> str:
+    normalized = normalize_ai_task_group(task.group)
+    if normalized:
+        return normalized
     text = f"{task.slug} {task.name}".casefold()
-    if any(term in text for term in ("vision", "visual", "image", "document")):
-        return "vision"
-    if any(term in text for term in ("language", "llm", "reasoning", "qa")):
-        return "language"
-    if any(term in text for term in ("serving", "inference", "kernel", "infra")):
-        return "infra"
+    if any(term in text for term in ("agent", "tool", "computer use", "browser")):
+        return "agents"
+    if any(term in text for term in ("language", "llm", "modeling", "instruction")):
+        return "language-models"
+    if any(term in text for term in ("reasoning", "math", "logic", "qa", "question answering")):
+        return "reasoning"
+    if any(term in text for term in ("multimodal", "vision-language", "vqa", "document")):
+        return "multimodal"
+    if any(term in text for term in ("vision", "visual", "image", "segmentation", "detection")):
+        return "computer-vision"
+    if any(term in text for term in ("serving", "inference", "kernel", "infra", "systems")):
+        return "systems-infra"
     if any(term in text for term in ("audio", "speech")):
-        return "audio"
+        return "speech-audio"
     if any(term in text for term in ("robot", "robotics")):
-        return "robotics"
-    if "video" in text:
-        return "video"
-    return "general"
+        return "robotics-embodied"
+    if any(term in text for term in ("code", "software", "program")):
+        return "code-ai"
+    if any(term in text for term in ("retrieval", "rag", "knowledge")):
+        return "retrieval-knowledge"
+    if any(term in text for term in ("evaluation", "benchmark", "data")):
+        return "data-evaluation"
+    if any(term in text for term in ("safety", "security", "privacy", "alignment")):
+        return "security-safety"
+    if any(term in text for term in ("science", "medical", "bio", "chem")):
+        return "ai-for-science"
+    if any(term in text for term in ("human", "interaction", "interface")):
+        return "human-ai-interaction"
+    return "agents"
 
 
 def _method_area(name: str) -> str:
+    normalized = normalize_method_collection(name)
+    if normalized:
+        return normalized
     text = name.casefold()
     if any(term in text for term in ("vision", "visual", "image", "multimodal")):
-        return "Multimodal"
+        return normalize_method_collection("Vision Transformers") or "Transformers"
     if any(term in text for term in ("serving", "kernel", "inference")):
-        return "Infrastructure"
+        return normalize_method_collection("Optimization") or "Language Models"
     if any(term in text for term in ("agent", "tool", "planning", "react")):
-        return "Agents"
+        return normalize_method_collection("Prompt Engineering") or "Language Models"
     if any(term in text for term in ("language", "llm", "reasoning", "thought")):
-        return "Language Models"
-    return "Research Methods"
+        return normalize_method_collection("Language Models") or "Transformers"
+    return normalize_method_collection("Transformers") or "Language Models"
+
+
+def _benchmark_category(value: Any, *, name: str, task_slug: str | None) -> str | None:
+    normalized = normalize_benchmark_category(value)
+    if normalized:
+        return normalized
+    text = f"{name} {task_slug or ''}".casefold()
+    if any(term in text for term in ("swe", "human_eval", "humaneval", "code", "software")):
+        return "software-engineering" if "swe" in text or "software" in text else "code-generation"
+    if any(term in text for term in ("mmlu", "glue", "superglue", "understanding")):
+        return "language-understanding"
+    if any(term in text for term in ("qa", "question", "hotpot", "squad", "natural questions")):
+        return "question-answering"
+    if any(term in text for term in ("math", "gsm", "mmlu-pro")):
+        return "reasoning-math"
+    if any(term in text for term in ("logic", "proof", "game of 24")):
+        return "reasoning-logic"
+    if any(term in text for term in ("long", "context", "needle")):
+        return "long-context"
+    if any(term in text for term in ("agent", "webarena", "task completion")):
+        return "agent-task-completion"
+    if any(term in text for term in ("tool", "api")):
+        return "tool-use"
+    if any(term in text for term in ("retrieval", "search", "rag")):
+        return "retrieval-search"
+    if any(term in text for term in ("vqa", "visual question")):
+        return "visual-question-answering"
+    if any(term in text for term in ("image", "imagenet", "classification")):
+        return "image-classification"
+    if any(term in text for term in ("detection", "coco")):
+        return "object-detection"
+    if any(term in text for term in ("segment", "mask", "sam")):
+        return "segmentation"
+    if any(term in text for term in ("video", "activity")):
+        return "video-understanding"
+    if any(term in text for term in ("speech", "asr", "whisper")):
+        return "speech-recognition"
+    if any(term in text for term in ("audio", "music")):
+        return "audio-understanding"
+    if any(term in text for term in ("robot", "manipulation")):
+        return "robotics-manipulation"
+    if any(term in text for term in ("medical", "med", "biomedical")):
+        return "medical-imaging"
+    if any(term in text for term in ("safety", "robust", "adversarial")):
+        return "safety-robustness"
+    if any(term in text for term in ("privacy", "security")):
+        return "privacy-security"
+    if any(term in text for term in ("efficiency", "latency", "throughput")):
+        return "efficiency-systems"
+    return None
 
 
 def _copy_summary(summary: PaperAISummary, *, cached: bool) -> PaperAISummary:
@@ -1395,10 +1499,17 @@ def _benchmarks(raw_paper: Mapping[str, Any]) -> list[PaperBenchmarkResult]:
             PaperBenchmarkResult(
                 id=_text(value.get("id")) or _text(value.get("slug")) or f"benchmark-{index + 1}",
                 name=name,
+                category=_benchmark_category(
+                    value.get("category") or value.get("benchmarkCategory") or value.get("benchmark_category"),
+                    name=name,
+                    task_slug=_optional_text(value.get("taskSlug") or value.get("task_slug")),
+                ),
                 metric=_optional_text(value.get("metric")),
                 value=value.get("value") if isinstance(value.get("value"), (str, int, float)) else value.get("bestValue"),
-                taskSlug=_optional_text(value.get("taskSlug")),
+                taskSlug=_optional_text(value.get("taskSlug") or value.get("task_slug")),
                 url=_normalized_https_url(value.get("url")),
+                confidence=_float_number(value.get("confidence")),
+                evidence=_optional_text(value.get("evidence") or value.get("evidenceSummary")),
             )
         )
     return results
@@ -1441,8 +1552,10 @@ def _paper_search_text(paper: PublicPaper) -> str:
         " ".join(paper.tags),
         " ".join(ref.name for ref in paper.taskRefs),
         " ".join(ref.slug for ref in paper.taskRefs),
+        " ".join(ref.group or "" for ref in paper.taskRefs),
         " ".join(ref.name for ref in paper.methodRefs),
         " ".join(ref.slug for ref in paper.methodRefs),
+        " ".join(ref.area or "" for ref in paper.methodRefs),
     ]
     return " ".join(parts).casefold()
 
@@ -1528,6 +1641,7 @@ def _summary_experiment_signal_text(paper: PublicPaper) -> str:
             benchmark.metric or "",
             str(benchmark.value) if benchmark.value is not None else "",
             benchmark.taskSlug or "",
+            benchmark.category or "",
         ]
         line = " / ".join(part for part in parts if part)
         if line:
@@ -1672,7 +1786,18 @@ def _refs(value: Any) -> list[PaperRef]:
         slug = _text(item.get("slug"))
         name = _text(item.get("name"))
         if ref_id and slug and name:
-            refs.append(PaperRef(id=ref_id, slug=slug, name=name, nameZh=_optional_text(item.get("nameZh"))))
+            refs.append(
+                PaperRef(
+                    id=ref_id,
+                    slug=slug,
+                    name=name,
+                    nameZh=_optional_text(item.get("nameZh")),
+                    group=normalize_ai_task_group(item.get("group")),
+                    area=normalize_method_collection(item.get("area")),
+                    confidence=_float_number(item.get("confidence")),
+                    evidence=_optional_text(item.get("evidence") or item.get("evidenceSummary")),
+                )
+            )
     return refs
 
 

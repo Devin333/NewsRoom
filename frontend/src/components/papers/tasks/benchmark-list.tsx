@@ -1,6 +1,7 @@
 "use client"
 
 import { ArrowRight, Layers3 } from "lucide-react"
+import { benchmarkCategoryLabel } from "@/lib/papers/categories"
 import { papersCopy, t } from "@/lib/papers/copy"
 import { taskName } from "@/lib/papers/format"
 import type { Benchmark, Locale, MethodRef, PaperTask, TaskRef } from "@/lib/papers/types"
@@ -54,6 +55,11 @@ export function BenchmarkList({
             <span className="mt-5 block text-base font-black leading-5 text-[#334155] dark:text-foreground">
               {item.name}
             </span>
+            {item.benchmark.category ? (
+              <span className="mt-2 inline-flex rounded-sm border border-[#d7dfd8] px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-[#334155]/60 dark:border-border dark:text-muted-foreground">
+                {benchmarkCategoryLabel(item.benchmark.category, locale) ?? item.benchmark.category}
+              </span>
+            ) : null}
             <span className="mt-3 flex items-center justify-between gap-3 text-xs font-semibold uppercase tracking-[0.12em] text-[#334155]/55 dark:text-muted-foreground">
               <span>{item.meta}</span>
               <ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5" />

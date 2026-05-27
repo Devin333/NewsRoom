@@ -12,6 +12,21 @@ from interfaces.services.paper_ingest_service import (
     PaperPdfExtraction,
 )
 from interfaces.services.paper_reader_cache_repository import TextExtractionRepository
+from interfaces.services.paper_taxonomy_categories import (
+    BENCHMARK_CATEGORIES,
+    load_pwc_method_collections,
+    normalize_benchmark_category,
+    normalize_method_collection,
+)
+
+
+def test_paper_taxonomy_loads_pwc_method_collections_and_benchmark_categories() -> None:
+    collections = load_pwc_method_collections()
+
+    assert "Transformers" in collections
+    assert normalize_method_collection("transformers") == "Transformers"
+    assert len(BENCHMARK_CATEGORIES) == 40
+    assert normalize_benchmark_category("question answering") == "question-answering"
 
 
 def test_paper_ingest_publishes_github_arxiv_paper_with_thumbnail_and_taxonomy(tmp_path) -> None:
@@ -38,9 +53,11 @@ def test_paper_ingest_publishes_github_arxiv_paper_with_thumbnail_and_taxonomy(t
         pdf_processor=_FakePdfProcessor("The paper studies agent planning and reports MMLU 88."),
         llm_client_factory=lambda route: _FakeLLMClient(
             {
-                "taskRefs": [{"slug": "agent-planning", "name": "Agent Planning", "confidence": 0.93, "evidence": "planning task"}],
-                "methodRefs": [{"slug": "tree-search", "name": "Tree Search", "confidence": 0.9, "evidence": "method section"}],
-                "benchmarks": [{"name": "MMLU", "metric": "accuracy", "value": "88", "taskSlug": "agent-planning", "confidence": 0.91}],
+                "primaryTaskGroup": "agents",
+                "secondaryTaskGroups": ["reasoning"],
+                "taskRefs": [{"slug": "agent-planning", "name": "Agent Planning", "group": "agents", "confidence": 0.93, "evidence": "planning task"}],
+                "methodRefs": [{"slug": "tree-search", "name": "Tree Search", "area": "Prompt Engineering", "confidence": 0.9, "evidence": "method section"}],
+                "benchmarks": [{"name": "MMLU", "category": "question-answering", "metric": "accuracy", "value": "88", "taskSlug": "agent-planning", "confidence": 0.91}],
                 "confidence": 0.92,
                 "evidenceSummary": "The paper reports code, task, method, and benchmark evidence.",
             }
@@ -61,8 +78,12 @@ def test_paper_ingest_publishes_github_arxiv_paper_with_thumbnail_and_taxonomy(t
     assert paper["githubStars"] == 88
     assert paper["thumbnailUrl"].startswith("/api/papers/assets/thumbnails/")
     assert paper["taskRefs"][0]["slug"] == "agent-planning"
+    assert paper["taskRefs"][0]["group"] == "agents"
     assert paper["methodRefs"][0]["slug"] == "tree-search"
+    assert paper["methodRefs"][0]["area"] == "Prompt Engineering"
     assert paper["benchmarks"][0]["name"] == "MMLU"
+    assert paper["benchmarks"][0]["category"] == "question-answering"
+    assert paper["classification"]["primaryTaskGroup"] == "agents"
     assert paper["classification"]["confidence"] == 0.92
     assert (state_dir / "taxonomy-events.json").exists()
     assert text_repo.read_latest_sections("arxiv-2605.00001")
@@ -77,8 +98,9 @@ def test_paper_ingest_extracts_explicit_github_from_pdf_text(tmp_path) -> None:
         pdf_text="Implementation: https://github.com/example/pdf-code.",
         stars=64,
         llm_payload={
-            "taskRefs": [{"slug": "code-generation", "name": "Code Generation", "confidence": 0.9}],
-            "methodRefs": [{"slug": "self-repair", "name": "Self Repair", "confidence": 0.9}],
+            "primaryTaskGroup": "code-ai",
+            "taskRefs": [{"slug": "code-generation", "name": "Code Generation", "group": "code-ai", "confidence": 0.9}],
+            "methodRefs": [{"slug": "self-repair", "name": "Self Repair", "area": "Prompt Engineering", "confidence": 0.9}],
             "confidence": 0.9,
         },
     )
@@ -88,6 +110,69 @@ def test_paper_ingest_extracts_explicit_github_from_pdf_text(tmp_path) -> None:
     assert result.published_count == 1
     paper = json.loads(cache_path.read_text(encoding="utf-8"))["papers"][0]
     assert paper["repoUrl"] == "https://github.com/example/pdf-code"
+    assert paper["taskRefs"][0]["group"] == "code-ai"
+
+
+def test_paper_classification_backfill_updates_existing_published_papers(tmp_path) -> None:
+    cache_path = tmp_path / "papers.json"
+    cache_path.write_text(
+        json.dumps(
+            {
+                "source": "test-cache",
+                "papers": [
+                    {
+                        "id": "legacy-paper",
+                        "title": "Legacy Agent Paper",
+                        "abstractSnippet": "An agent paper with MMLU results.",
+                        "authors": ["A"],
+                        "publishedAt": "2026-05-20T00:00:00Z",
+                        "paperUrl": "https://arxiv.org/abs/2605.00010",
+                        "repoUrl": "https://github.com/example/legacy-agent",
+                        "githubStars": 120,
+                        "taskRefs": [{"id": "task-old", "slug": "old-agent", "name": "Old Agent"}],
+                        "methodRefs": [{"id": "method-old", "slug": "old-method", "name": "Old Method"}],
+                        "benchmarks": [{"id": "bench-mmlu", "name": "MMLU", "metric": "accuracy", "value": "88"}],
+                        "isPublished": True,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    text_repo = TextExtractionRepository(tmp_path / "text")
+    text_repo.write_sections(
+        "legacy-paper",
+        "source-hash",
+        [{"title": "Experiments", "textExcerpt": "The agent system reports MMLU accuracy 88.", "sectionType": "experiment"}],
+        cached_at="2026-05-27T08:00:00Z",
+    )
+    service = PaperIngestApplicationService(
+        source_service=_FakeSourceService([]),
+        github_connector=_FakeGithubConnector(stars=120),
+        papers_data_path=cache_path,
+        state_dir=tmp_path / "state",
+        text_extraction_repository=text_repo,
+        llm_client_factory=lambda route: _FakeLLMClient(
+            {
+                "primaryTaskGroup": "agents",
+                "taskRefs": [{"slug": "agent-task-completion", "name": "Agent Task Completion", "group": "agents", "confidence": 0.91}],
+                "methodRefs": [{"slug": "react", "name": "ReAct", "area": "Prompt Engineering", "confidence": 0.9}],
+                "benchmarks": [{"name": "MMLU", "category": "language-understanding", "metric": "accuracy", "value": "88", "confidence": 0.9}],
+                "confidence": 0.9,
+            }
+        ),
+        config=PaperIngestConfig(candidate_limit=100, min_github_stars=50, auto_taxonomy_confidence=0.85),
+        clock=_fixed_clock,
+    )
+
+    result = service.backfill_published_classification(run_id="backfill-test")
+
+    assert result.updated_count == 1
+    paper = json.loads(cache_path.read_text(encoding="utf-8"))["papers"][0]
+    assert paper["taskRefs"][0]["group"] == "agents"
+    assert paper["methodRefs"][0]["area"] == "Prompt Engineering"
+    assert paper["benchmarks"][0]["category"] == "language-understanding"
+    assert paper["classification"]["schemaVersion"] == "paper_ingest_classification_v2"
 
 
 def test_paper_ingest_skips_repositories_below_star_threshold(tmp_path) -> None:
@@ -122,6 +207,34 @@ def test_paper_ingest_queues_repair_for_invalid_classifier_json(tmp_path) -> Non
     assert repair_items[0]["queue"] == "agent_repair"
     assert repair_items[0]["errorCode"] == "classifier_json_invalid"
     assert repair_items[0]["userActionRequired"] is False
+
+
+def test_paper_ingest_queues_repair_for_invalid_controlled_taxonomy(tmp_path) -> None:
+    service = _service(
+        tmp_path,
+        source_items=[_candidate("2605.00009", summary="Code: https://github.com/example/invalid-taxonomy.")],
+        stars=80,
+        llm_payload={
+            "primaryTaskGroup": "generic-ai",
+            "taskRefs": [{"slug": "generic", "name": "Generic AI", "group": "generic-ai", "confidence": 0.94}],
+            "methodRefs": [{"slug": "invented", "name": "Invented Method", "area": "Invented Area", "confidence": 0.94}],
+            "benchmarks": [{"name": "MMLU", "category": "made-up-benchmark", "metric": "accuracy", "value": "88", "confidence": 0.94}],
+            "confidence": 0.94,
+        },
+    )
+
+    result = service.run_daily_ingest()
+    repair_items = service.get_ops_state()["repairQueue"]
+
+    assert result.published_count == 0
+    assert result.repair_queued_count == 1
+    assert repair_items[0]["errorCode"] == "classification_empty"
+    low_confidence_item = next(item for item in repair_items if item["errorCode"] == "classification_low_confidence")
+    reasons = {
+        item["reason"]
+        for item in low_confidence_item.get("context", {}).get("lowConfidenceItems", [])
+    }
+    assert "missing_or_invalid_task_group" in reasons or "missing_or_invalid_method_collection" in reasons
 
 
 def test_paper_ingest_blocks_only_credential_permission_or_account_failures(tmp_path) -> None:
@@ -348,8 +461,9 @@ def _service(
         or _FakeLLMClient(
             llm_payload
             or {
-                "taskRefs": [{"slug": "agents", "name": "Agents", "confidence": 0.9}],
-                "methodRefs": [{"slug": "rag", "name": "Retrieval Augmented Generation", "confidence": 0.9}],
+                "primaryTaskGroup": "agents",
+                "taskRefs": [{"slug": "agents", "name": "Agents", "group": "agents", "confidence": 0.9}],
+                "methodRefs": [{"slug": "rag", "name": "Retrieval Augmented Generation", "area": "Language Models", "confidence": 0.9}],
                 "confidence": 0.9,
             }
         ),

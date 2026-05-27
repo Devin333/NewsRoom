@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { translate } from "@/lib/i18n"
 import { fetchPaperDetail, requestPaperSummary } from "@/lib/papers/api"
+import { benchmarkCategoryLabel } from "@/lib/papers/categories"
 import { papersCopy, t } from "@/lib/papers/copy"
 import {
   formatCompactNumber,
@@ -357,8 +358,15 @@ export function PaperDetailDrawer({
                     rel={benchmark.url ? "noreferrer" : undefined}
                     className="flex items-center justify-between gap-4 px-4 py-3 text-sm text-[#334155] dark:text-foreground"
                   >
-                    <span className="font-semibold">{benchmark.name}</span>
-                    <span className="text-[#334155]/58">
+                    <span className="min-w-0">
+                      <span className="block truncate font-semibold">{benchmark.name}</span>
+                      {benchmark.category ? (
+                        <span className="mt-1 inline-flex rounded-sm border border-[#d8dfd8] bg-[#eef4ef] px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-[#334155]/64 dark:border-border dark:bg-secondary dark:text-muted-foreground">
+                          {benchmarkCategoryLabel(benchmark.category, locale) ?? benchmark.category}
+                        </span>
+                      ) : null}
+                    </span>
+                    <span className="shrink-0 text-[#334155]/58">
                       {[benchmark.metric, benchmark.value].filter(Boolean).join(" · ") || translate(locale, "papers.reader.reported")}
                     </span>
                   </a>

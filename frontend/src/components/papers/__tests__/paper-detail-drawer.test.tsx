@@ -20,8 +20,8 @@ const paper: Paper = {
   venue: "ICCV",
   citationCount: 8800,
   tags: ["segmentation"],
-  taskRefs: [{ id: "task-vqa", slug: "visual-question-answering", name: "Visual QA" }],
-  methodRefs: [{ id: "method-tool-use", slug: "tool-use", name: "Tool Use" }],
+  taskRefs: [{ id: "task-vqa", slug: "visual-question-answering", name: "Visual QA", group: "multimodal" }],
+  methodRefs: [{ id: "method-tool-use", slug: "tool-use", name: "Tool Use", area: "Prompt Engineering" }],
   githubStars: 54200,
   arxivUrl: "https://arxiv.org/abs/2304.02643",
   pdfUrl: "https://arxiv.org/pdf/2304.02643.pdf",
@@ -147,6 +147,31 @@ describe("PaperDetailDrawer", () => {
 
     expect(screen.getByText("Favorite")).toBeInTheDocument()
     expect(screen.getByText("Subscribed")).toBeInTheDocument()
+  })
+
+  it("shows benchmark category badges when benchmark results are available", () => {
+    render(
+      <PaperDetailDrawer
+        paper={{
+          ...paper,
+          benchmarks: [
+            {
+              id: "bench-vqa",
+              name: "VQA v2",
+              category: "visual-question-answering",
+              metric: "accuracy",
+              value: "86.4"
+            }
+          ]
+        }}
+        locale="en"
+        open
+        onOpenChange={vi.fn()}
+      />
+    )
+
+    expect(screen.getByText("VQA v2")).toBeInTheDocument()
+    expect(screen.getAllByText("Visual QA").length).toBeGreaterThan(0)
   })
 
   it("renders retryable summary error state", async () => {

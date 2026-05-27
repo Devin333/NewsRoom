@@ -1,0 +1,833 @@
+{
+  "collections": [
+    {
+      "count": 4687,
+      "name": "2D Parallel Distributed Methods",
+      "slug": "2d-parallel-distributed-methods"
+    },
+    {
+      "count": 1079,
+      "name": "3D Face Mesh Models",
+      "slug": "3d-face-mesh-models"
+    },
+    {
+      "count": 731,
+      "name": "3D Object Detection Models",
+      "slug": "3d-object-detection-models"
+    },
+    {
+      "count": 160,
+      "name": "3D Reconstruction",
+      "slug": "3d-reconstruction"
+    },
+    {
+      "count": 103,
+      "name": "3D Representations",
+      "slug": "3d-representations"
+    },
+    {
+      "count": 91,
+      "name": "Convolutional Neural Networks",
+      "slug": "convolutional-neural-networks"
+    },
+    {
+      "count": 78,
+      "name": "Activation Functions",
+      "slug": "activation-functions"
+    },
+    {
+      "count": 71,
+      "name": "Image Model Blocks",
+      "slug": "image-model-blocks"
+    },
+    {
+      "count": 66,
+      "name": "Transformers",
+      "slug": "transformers"
+    },
+    {
+      "count": 64,
+      "name": "Attention Mechanisms",
+      "slug": "attention-mechanisms"
+    },
+    {
+      "count": 58,
+      "name": "Object Detection Models",
+      "slug": "object-detection-models"
+    },
+    {
+      "count": 54,
+      "name": "Stochastic Optimization",
+      "slug": "stochastic-optimization"
+    },
+    {
+      "count": 52,
+      "name": "Graph Models",
+      "slug": "graph-models"
+    },
+    {
+      "count": 49,
+      "name": "Regularization",
+      "slug": "regularization"
+    },
+    {
+      "count": 47,
+      "name": "Generative Models",
+      "slug": "generative-models"
+    },
+    {
+      "count": 42,
+      "name": "Graph Embeddings",
+      "slug": "graph-embeddings"
+    },
+    {
+      "count": 40,
+      "name": "Language Models",
+      "slug": "language-models"
+    },
+    {
+      "count": 38,
+      "name": "Self-Supervised Learning",
+      "slug": "self-supervised-learning"
+    },
+    {
+      "count": 35,
+      "name": "Loss Functions",
+      "slug": "loss-functions"
+    },
+    {
+      "count": 35,
+      "name": "Skip Connection Blocks",
+      "slug": "skip-connection-blocks"
+    },
+    {
+      "count": 34,
+      "name": "Convolutions",
+      "slug": "convolutions"
+    },
+    {
+      "count": 33,
+      "name": "6D Pose Estimation Models",
+      "slug": "6d-pose-estimation-models"
+    },
+    {
+      "count": 33,
+      "name": "Generative Adversarial Networks",
+      "slug": "generative-adversarial-networks"
+    },
+    {
+      "count": 33,
+      "name": "Image Data Augmentation",
+      "slug": "image-data-augmentation"
+    },
+    {
+      "count": 32,
+      "name": "Vision Transformers",
+      "slug": "vision-transformers"
+    },
+    {
+      "count": 31,
+      "name": "Attention Modules",
+      "slug": "attention-modules"
+    },
+    {
+      "count": 31,
+      "name": "Distributed Methods",
+      "slug": "distributed-methods"
+    },
+    {
+      "count": 31,
+      "name": "Optimization",
+      "slug": "optimization"
+    },
+    {
+      "count": 29,
+      "name": "Recurrent Neural Networks",
+      "slug": "recurrent-neural-networks"
+    },
+    {
+      "count": 28,
+      "name": "Vision and Language Pre-Trained Models",
+      "slug": "vision-and-language-pre-trained-models"
+    },
+    {
+      "count": 26,
+      "name": "Normalization",
+      "slug": "normalization"
+    },
+    {
+      "count": 25,
+      "name": "Semantic Segmentation Models",
+      "slug": "semantic-segmentation-models"
+    },
+    {
+      "count": 22,
+      "name": "Semi-Supervised Learning Methods",
+      "slug": "semi-supervised-learning-methods"
+    },
+    {
+      "count": 21,
+      "name": "Image Models",
+      "slug": "image-models"
+    },
+    {
+      "count": 21,
+      "name": "Policy Gradient Methods",
+      "slug": "policy-gradient-methods"
+    },
+    {
+      "count": 19,
+      "name": "Autoencoding Transformers",
+      "slug": "autoencoding-transformers"
+    },
+    {
+      "count": 19,
+      "name": "Clustering",
+      "slug": "clustering"
+    },
+    {
+      "count": 19,
+      "name": "Deep Tabular Learning",
+      "slug": "deep-tabular-learning"
+    },
+    {
+      "count": 19,
+      "name": "One-Stage Object Detection Models",
+      "slug": "one-stage-object-detection-models"
+    },
+    {
+      "count": 18,
+      "name": "Domain Adaptation",
+      "slug": "domain-adaptation"
+    },
+    {
+      "count": 18,
+      "name": "Feature Extractors",
+      "slug": "feature-extractors"
+    },
+    {
+      "count": 17,
+      "name": "Adaptive Activation Functions",
+      "slug": "adaptive-activation-functions"
+    },
+    {
+      "count": 16,
+      "name": "Active Learning",
+      "slug": "active-learning"
+    },
+    {
+      "count": 16,
+      "name": "Graph Representation Learning",
+      "slug": "graph-representation-learning"
+    },
+    {
+      "count": 16,
+      "name": "Light-weight neural networks",
+      "slug": "light-weight-neural-networks"
+    },
+    {
+      "count": 16,
+      "name": "Neural Architecture Search",
+      "slug": "neural-architecture-search"
+    },
+    {
+      "count": 15,
+      "name": "Data Parallel Methods",
+      "slug": "data-parallel-methods"
+    },
+    {
+      "count": 15,
+      "name": "Interpretability",
+      "slug": "interpretability"
+    },
+    {
+      "count": 15,
+      "name": "Sequence To Sequence Models",
+      "slug": "sequence-to-sequence-models"
+    },
+    {
+      "count": 14,
+      "name": "Pooling Operations",
+      "slug": "pooling-operations"
+    },
+    {
+      "count": 13,
+      "name": "Autoregressive Transformers",
+      "slug": "autoregressive-transformers"
+    },
+    {
+      "count": 13,
+      "name": "Generative Audio Models",
+      "slug": "generative-audio-models"
+    },
+    {
+      "count": 13,
+      "name": "Word Embeddings",
+      "slug": "word-embeddings"
+    },
+    {
+      "count": 12,
+      "name": "Action Recognition Models",
+      "slug": "action-recognition-models"
+    },
+    {
+      "count": 12,
+      "name": "Adversarial Training",
+      "slug": "adversarial-training"
+    },
+    {
+      "count": 12,
+      "name": "Feedforward Networks",
+      "slug": "feedforward-networks"
+    },
+    {
+      "count": 12,
+      "name": "Image Generation Models",
+      "slug": "image-generation-models"
+    },
+    {
+      "count": 11,
+      "name": "Learning Rate Schedules",
+      "slug": "learning-rate-schedules"
+    },
+    {
+      "count": 11,
+      "name": "Multi-Modal Methods",
+      "slug": "multi-modal-methods"
+    },
+    {
+      "count": 11,
+      "name": "Time Series Analysis",
+      "slug": "time-series-analysis"
+    },
+    {
+      "count": 10,
+      "name": "Attention",
+      "slug": "attention"
+    },
+    {
+      "count": 10,
+      "name": "Backbone Architectures",
+      "slug": "backbone-architectures"
+    },
+    {
+      "count": 10,
+      "name": "Image Representations",
+      "slug": "image-representations"
+    },
+    {
+      "count": 10,
+      "name": "Instance Segmentation Models",
+      "slug": "instance-segmentation-models"
+    },
+    {
+      "count": 10,
+      "name": "Multi-Object Tracking Models",
+      "slug": "multi-object-tracking-models"
+    },
+    {
+      "count": 10,
+      "name": "Reinforcement Learning Frameworks",
+      "slug": "reinforcement-learning-frameworks"
+    },
+    {
+      "count": 9,
+      "name": "AutoML",
+      "slug": "automl"
+    },
+    {
+      "count": 9,
+      "name": "Fine-Tuning",
+      "slug": "fine-tuning"
+    },
+    {
+      "count": 9,
+      "name": "Heuristic Search Algorithms",
+      "slug": "heuristic-search-algorithms"
+    },
+    {
+      "count": 9,
+      "name": "Image Segmentation Models",
+      "slug": "image-segmentation-models"
+    },
+    {
+      "count": 9,
+      "name": "Knowledge Distillation",
+      "slug": "knowledge-distillation"
+    },
+    {
+      "count": 9,
+      "name": "Non-Parametric Regression",
+      "slug": "non-parametric-regression"
+    },
+    {
+      "count": 9,
+      "name": "RoI Feature Extractors",
+      "slug": "roi-feature-extractors"
+    },
+    {
+      "count": 9,
+      "name": "Semantic Segmentation Modules",
+      "slug": "semantic-segmentation-modules"
+    },
+    {
+      "count": 9,
+      "name": "Text-to-Speech Models",
+      "slug": "text-to-speech-models"
+    },
+    {
+      "count": 8,
+      "name": "Degridding",
+      "slug": "degridding"
+    },
+    {
+      "count": 8,
+      "name": "Dimensionality Reduction",
+      "slug": "dimensionality-reduction"
+    },
+    {
+      "count": 8,
+      "name": "Hybrid Parallel Methods",
+      "slug": "hybrid-parallel-methods"
+    },
+    {
+      "count": 8,
+      "name": "Large Batch Optimization",
+      "slug": "large-batch-optimization"
+    },
+    {
+      "count": 8,
+      "name": "Q-Learning Networks",
+      "slug": "q-learning-networks"
+    },
+    {
+      "count": 7,
+      "name": "Action Recognition Blocks",
+      "slug": "action-recognition-blocks"
+    },
+    {
+      "count": 7,
+      "name": "Attention Patterns",
+      "slug": "attention-patterns"
+    },
+    {
+      "count": 7,
+      "name": "Audio Model Blocks",
+      "slug": "audio-model-blocks"
+    },
+    {
+      "count": 7,
+      "name": "Feature Pyramid Blocks",
+      "slug": "feature-pyramid-blocks"
+    },
+    {
+      "count": 7,
+      "name": "Likelihood-Based Generative Models",
+      "slug": "likelihood-based-generative-models"
+    },
+    {
+      "count": 7,
+      "name": "Miscellaneous Components",
+      "slug": "miscellaneous-components"
+    },
+    {
+      "count": 7,
+      "name": "Model Parallel Methods",
+      "slug": "model-parallel-methods"
+    },
+    {
+      "count": 7,
+      "name": "Output Functions",
+      "slug": "output-functions"
+    },
+    {
+      "count": 7,
+      "name": "Pose Estimation Models",
+      "slug": "pose-estimation-models"
+    },
+    {
+      "count": 7,
+      "name": "Proposal Filtering",
+      "slug": "proposal-filtering"
+    },
+    {
+      "count": 7,
+      "name": "Sentence Embeddings",
+      "slug": "sentence-embeddings"
+    },
+    {
+      "count": 7,
+      "name": "Static Word Embeddings",
+      "slug": "static-word-embeddings"
+    },
+    {
+      "count": 6,
+      "name": "Distributed Reinforcement Learning",
+      "slug": "distributed-reinforcement-learning"
+    },
+    {
+      "count": 6,
+      "name": "Non-Parametric Classification",
+      "slug": "non-parametric-classification"
+    },
+    {
+      "count": 6,
+      "name": "Position Embeddings",
+      "slug": "position-embeddings"
+    },
+    {
+      "count": 6,
+      "name": "Value Function Estimation",
+      "slug": "value-function-estimation"
+    },
+    {
+      "count": 6,
+      "name": "Video Model Blocks",
+      "slug": "video-model-blocks"
+    },
+    {
+      "count": 5,
+      "name": "Adversarial Attacks",
+      "slug": "adversarial-attacks"
+    },
+    {
+      "count": 5,
+      "name": "Contextualized Word Embeddings",
+      "slug": "contextualized-word-embeddings"
+    },
+    {
+      "count": 5,
+      "name": "Face Recognition Models",
+      "slug": "face-recognition-models"
+    },
+    {
+      "count": 5,
+      "name": "Generative Video Models",
+      "slug": "generative-video-models"
+    },
+    {
+      "count": 5,
+      "name": "Image Denoising Models",
+      "slug": "image-denoising-models"
+    },
+    {
+      "count": 5,
+      "name": "Imitation Learning Methods",
+      "slug": "imitation-learning-methods"
+    },
+    {
+      "count": 5,
+      "name": "Initialization",
+      "slug": "initialization"
+    },
+    {
+      "count": 5,
+      "name": "Model Compression",
+      "slug": "model-compression"
+    },
+    {
+      "count": 5,
+      "name": "Offline Reinforcement Learning Methods",
+      "slug": "offline-reinforcement-learning-methods"
+    },
+    {
+      "count": 5,
+      "name": "On-Policy TD Control",
+      "slug": "on-policy-td-control"
+    },
+    {
+      "count": 5,
+      "name": "Point Cloud Models",
+      "slug": "point-cloud-models"
+    },
+    {
+      "count": 5,
+      "name": "Pruning",
+      "slug": "pruning"
+    },
+    {
+      "count": 5,
+      "name": "Recommendation Systems",
+      "slug": "recommendation-systems"
+    },
+    {
+      "count": 5,
+      "name": "Region Proposal",
+      "slug": "region-proposal"
+    },
+    {
+      "count": 5,
+      "name": "Representation Learning",
+      "slug": "representation-learning"
+    },
+    {
+      "count": 5,
+      "name": "Temporal Convolutions",
+      "slug": "temporal-convolutions"
+    },
+    {
+      "count": 4,
+      "name": "Adversarial Image Data Augmentation",
+      "slug": "adversarial-image-data-augmentation"
+    },
+    {
+      "count": 4,
+      "name": "Bidirectional Recurrent Neural Networks",
+      "slug": "bidirectional-recurrent-neural-networks"
+    },
+    {
+      "count": 4,
+      "name": "Face Restoration Models",
+      "slug": "face-restoration-models"
+    },
+    {
+      "count": 4,
+      "name": "Fourier-related Transforms",
+      "slug": "fourier-related-transforms"
+    },
+    {
+      "count": 4,
+      "name": "Generative Training",
+      "slug": "generative-training"
+    },
+    {
+      "count": 4,
+      "name": "Language Model Pre-Training",
+      "slug": "language-model-pre-training"
+    },
+    {
+      "count": 4,
+      "name": "Meta-Learning Algorithms",
+      "slug": "meta-learning-algorithms"
+    },
+    {
+      "count": 4,
+      "name": "Multi-scale analysis",
+      "slug": "multi-scale-analysis"
+    },
+    {
+      "count": 4,
+      "name": "Off-Policy TD Control",
+      "slug": "off-policy-td-control"
+    },
+    {
+      "count": 4,
+      "name": "Replicated Data Parallel",
+      "slug": "replicated-data-parallel"
+    },
+    {
+      "count": 4,
+      "name": "Robust Training",
+      "slug": "robust-training"
+    },
+    {
+      "count": 4,
+      "name": "Robustness Methods",
+      "slug": "robustness-methods"
+    },
+    {
+      "count": 4,
+      "name": "Speech Separation Models",
+      "slug": "speech-separation-models"
+    },
+    {
+      "count": 4,
+      "name": "Text Classification Models",
+      "slug": "text-classification-models"
+    },
+    {
+      "count": 4,
+      "name": "Video-Text Retrieval Models",
+      "slug": "video-text-retrieval-models"
+    },
+    {
+      "count": 4,
+      "name": "Working Memory Models",
+      "slug": "working-memory-models"
+    },
+    {
+      "count": 3,
+      "name": "Actor-Critic Algorithms",
+      "slug": "actor-critic-algorithms"
+    },
+    {
+      "count": 3,
+      "name": "Affinity Functions",
+      "slug": "affinity-functions"
+    },
+    {
+      "count": 3,
+      "name": "Asynchronous Pipeline Parallel",
+      "slug": "asynchronous-pipeline-parallel"
+    },
+    {
+      "count": 3,
+      "name": "Auto Parallel Methods",
+      "slug": "auto-parallel-methods"
+    },
+    {
+      "count": 3,
+      "name": "Board Game Models",
+      "slug": "board-game-models"
+    },
+    {
+      "count": 3,
+      "name": "Code Generation Transformers",
+      "slug": "code-generation-transformers"
+    },
+    {
+      "count": 3,
+      "name": "Diffusion Models",
+      "slug": "diffusion-models"
+    },
+    {
+      "count": 3,
+      "name": "Discriminators",
+      "slug": "discriminators"
+    },
+    {
+      "count": 3,
+      "name": "Eligibility Traces",
+      "slug": "eligibility-traces"
+    },
+    {
+      "count": 3,
+      "name": "Ensembling",
+      "slug": "ensembling"
+    },
+    {
+      "count": 3,
+      "name": "Feature Matching",
+      "slug": "feature-matching"
+    },
+    {
+      "count": 3,
+      "name": "Gated Linear Networks",
+      "slug": "gated-linear-networks"
+    },
+    {
+      "count": 3,
+      "name": "Generalized Linear Models",
+      "slug": "generalized-linear-models"
+    },
+    {
+      "count": 3,
+      "name": "Hybrid Optimization",
+      "slug": "hybrid-optimization"
+    },
+    {
+      "count": 3,
+      "name": "Hyperparameter Search",
+      "slug": "hyperparameter-search"
+    },
+    {
+      "count": 3,
+      "name": "Image Restoration Models",
+      "slug": "image-restoration-models"
+    },
+    {
+      "count": 3,
+      "name": "Image Retrieval Models",
+      "slug": "image-retrieval-models"
+    },
+    {
+      "count": 3,
+      "name": "Information Retrieval Methods",
+      "slug": "information-retrieval-methods"
+    },
+    {
+      "count": 3,
+      "name": "Instance Segmentation Modules",
+      "slug": "instance-segmentation-modules"
+    },
+    {
+      "count": 3,
+      "name": "Latent Variable Sampling",
+      "slug": "latent-variable-sampling"
+    },
+    {
+      "count": 3,
+      "name": "Markov Chain Monte Carlo",
+      "slug": "markov-chain-monte-carlo"
+    },
+    {
+      "count": 3,
+      "name": "Medical Image Models",
+      "slug": "medical-image-models"
+    },
+    {
+      "count": 3,
+      "name": "Prompt Engineering",
+      "slug": "prompt-engineering"
+    },
+    {
+      "count": 3,
+      "name": "Quantum Methods",
+      "slug": "quantum-methods"
+    },
+    {
+      "count": 3,
+      "name": "RL Transformers",
+      "slug": "rl-transformers"
+    },
+    {
+      "count": 3,
+      "name": "Rule-based systems",
+      "slug": "rule-based-systems"
+    },
+    {
+      "count": 3,
+      "name": "Sharded Data Parallel Methods",
+      "slug": "sharded-data-parallel-methods"
+    },
+    {
+      "count": 3,
+      "name": "Stereo Depth Estimation Models",
+      "slug": "stereo-depth-estimation-models"
+    },
+    {
+      "count": 3,
+      "name": "Structured Prediction",
+      "slug": "structured-prediction"
+    },
+    {
+      "count": 3,
+      "name": "Subword Segmentation",
+      "slug": "subword-segmentation"
+    },
+    {
+      "count": 3,
+      "name": "Tabular Data Generation",
+      "slug": "tabular-data-generation"
+    },
+    {
+      "count": 3,
+      "name": "Time Series Modules",
+      "slug": "time-series-modules"
+    },
+    {
+      "count": 3,
+      "name": "Unpaired Image-to-Image Translation",
+      "slug": "unpaired-image-to-image-translation"
+    },
+    {
+      "count": 3,
+      "name": "Variational Optimization",
+      "slug": "variational-optimization"
+    },
+    {
+      "count": 3,
+      "name": "Video Object Segmentation Models",
+      "slug": "video-object-segmentation-models"
+    },
+    {
+      "count": 3,
+      "name": "Video Recognition Models",
+      "slug": "video-recognition-models"
+    }
+  ],
+  "generatedAt": "2026-05-27T00:00:00Z",
+  "minMethodCount": 3,
+  "schemaVersion": "pwc_method_collections_v1",
+  "source": "https://huggingface.co/datasets/pwc-archive/methods"
+}
