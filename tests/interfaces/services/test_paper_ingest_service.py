@@ -211,6 +211,28 @@ def test_paper_ingest_uses_candidate_limit_100(tmp_path) -> None:
     assert result.skipped_no_github_count == 100
 
 
+def test_paper_ingest_persists_running_state_before_fetching_candidates(tmp_path) -> None:
+    state_dir = tmp_path / "state"
+    source = _InspectingSourceService(state_dir)
+    service = PaperIngestApplicationService(
+        source_service=source,
+        github_connector=_FakeGithubConnector(stars=80),
+        papers_data_path=tmp_path / "papers.json",
+        state_dir=state_dir,
+        pdf_fetcher=lambda url, max_bytes: b"%PDF fake",
+        pdf_processor=_FakePdfProcessor("No repository."),
+        llm_client_factory=lambda route: _FakeLLMClient({}),
+        config=PaperIngestConfig(candidate_limit=100),
+        clock=_fixed_clock,
+    )
+
+    result = service.run_daily_ingest(run_id="visible-running-run")
+
+    assert source.saw_running_state is True
+    assert result.status == "succeeded"
+    assert service.get_ops_state()["runs"][0]["status"] == "succeeded"
+
+
 def test_paper_ingest_default_uses_dedicated_arxiv_api_connector(tmp_path) -> None:
     arxiv_connector = _FakeArxivConnector(
         [_candidate("2605.00006", summary="No explicit repository.")]
@@ -371,6 +393,23 @@ class _FakeSourceService:
     def fetch_arxiv(self, *, query: str, limit: int) -> _FakeSourceResult:
         self.calls.append((query, limit))
         return _FakeSourceResult(self.items[:limit])
+
+
+class _InspectingSourceService:
+    def __init__(self, state_dir: Path) -> None:
+        self.state_dir = state_dir
+        self.saw_running_state = False
+
+    def fetch_arxiv(self, *, query: str, limit: int) -> _FakeSourceResult:
+        payload = json.loads((self.state_dir / "ingest-runs.json").read_text(encoding="utf-8"))
+        run = payload["runs"][0]
+        self.saw_running_state = (
+            run["runId"] == "visible-running-run"
+            and run["status"] == "running"
+            and run["candidateCount"] == 0
+            and run["processedCount"] == 0
+        )
+        return _FakeSourceResult([])
 
 
 class _FakeArxivConnector:

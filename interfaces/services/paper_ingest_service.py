@@ -295,6 +295,7 @@ class PaperIngestApplicationService:
         started = self.clock()
         normalized_run_id = run_id or f"paper-ingest-{started.strftime('%Y%m%d%H%M%S')}"
         run_state = _new_run_state(normalized_run_id, started=started, config=config)
+        self.state.record_run(run_state)
         errors: list[Mapping[str, Any]] = []
         try:
             candidates = self._fetch_candidates(config)
@@ -377,6 +378,7 @@ class PaperIngestApplicationService:
                 return self._finalize_run(run_state, published_ids=[], errors=errors)
         run_state["candidateCount"] = len(candidates)
         published_ids: list[str] = []
+        self.state.record_run(_progress_run_state(run_state, published_ids=published_ids, errors=errors))
 
         for candidate in candidates[: config.candidate_limit]:
             run_state["processedCount"] += 1
@@ -393,6 +395,7 @@ class PaperIngestApplicationService:
                     hard_block=True,
                 )
                 errors.append(blocked)
+                self.state.record_run(_progress_run_state(run_state, published_ids=published_ids, errors=errors))
                 continue
             except PaperIngestError as exc:
                 run_state["failureCount"] += 1
@@ -406,6 +409,7 @@ class PaperIngestApplicationService:
                 )
                 run_state["repairQueuedCount"] += 1
                 errors.append(queued)
+                self.state.record_run(_progress_run_state(run_state, published_ids=published_ids, errors=errors))
                 continue
             except Exception as exc:
                 run_state["failureCount"] += 1
@@ -422,6 +426,7 @@ class PaperIngestApplicationService:
                 else:
                     run_state["repairQueuedCount"] += 1
                 errors.append(queued)
+                self.state.record_run(_progress_run_state(run_state, published_ids=published_ids, errors=errors))
                 continue
 
             if outcome["status"] == "published":
@@ -433,6 +438,7 @@ class PaperIngestApplicationService:
                 run_state["skippedLowStarsCount"] += 1
             elif outcome["status"] == "repair_queued":
                 run_state["repairQueuedCount"] += 1
+            self.state.record_run(_progress_run_state(run_state, published_ids=published_ids, errors=errors))
 
         return self._finalize_run(run_state, published_ids=published_ids, errors=errors)
 
@@ -1356,6 +1362,20 @@ def _new_run_state(run_id: str, *, started: datetime, config: PaperIngestConfig)
         "publishedPaperIds": [],
         "errors": [],
     }
+
+
+def _progress_run_state(
+    state: Mapping[str, Any],
+    *,
+    published_ids: Sequence[str],
+    errors: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    progress = dict(state)
+    progress["status"] = "running"
+    progress["finishedAt"] = None
+    progress["publishedPaperIds"] = list(published_ids)
+    progress["errors"] = list(errors)
+    return progress
 
 
 def _run_result_from_state(state: Mapping[str, Any]) -> PaperIngestRunResult:
