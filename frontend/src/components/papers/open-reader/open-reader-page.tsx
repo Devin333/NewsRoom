@@ -1,6 +1,7 @@
 "use client"
 
 import Link from "next/link"
+import { GitFork } from "lucide-react"
 import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react"
 import { formatPaperDate, paperTitle } from "@/lib/papers/format"
 import type { Locale } from "@/lib/papers/types"
@@ -136,7 +137,9 @@ export function OpenReaderPage({ reader, locale, backHref = "/papers" }: OpenRea
     >
       <header className={styles.topBar}>
         <div className={styles.topBarLeft}>
-          <Link className={styles.backLink} href={backHref}>← Papers</Link>
+          <Link className={styles.readerMarkLink} href={backHref} aria-label="返回论文列表">
+            <GitFork aria-hidden="true" className={styles.readerMarkIcon} />
+          </Link>
           <span className={styles.topTitle}>{title}</span>
         </div>
         <div className={styles.progressTrack}><span /></div>
@@ -255,7 +258,7 @@ function ReaderSettingsDock({ settings, onChange }: { settings: ReaderSettings; 
       <div className={styles.settingsPanel}>
         <div className={styles.settingsTitle}>阅读设置</div>
         <div className={styles.settingRow}><label>字体大小</label><input type="range" min={12} max={38} value={settings.fontSize} onChange={(event) => onChange({ fontSize: Number(event.target.value) })} /></div>
-        <div className={styles.settingRow}><label>文本宽度</label><input type="range" min={520} max={1520} value={settings.contentWidth} onChange={(event) => onChange({ contentWidth: Number(event.target.value) })} /></div>
+        <div className={styles.settingRow}><label>文本宽度</label><input type="range" min={520} max={2000} value={settings.contentWidth} onChange={(event) => onChange({ contentWidth: Number(event.target.value) })} /></div>
         <div className={styles.themeRow}>{(["light", "warm", "dark"] as const).map((theme) => <button key={theme} type="button" className={`${styles.themeButton} ${settings.theme === theme ? styles.activeTheme : ""}`} onClick={() => onChange({ theme })}>{theme === "light" ? "浅色" : theme === "warm" ? "暖色" : "深色"}</button>)}</div>
       </div>
     </aside>

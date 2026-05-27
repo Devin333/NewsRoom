@@ -27,7 +27,7 @@ export function useOpenReaderSettings(paperId: string) {
   const [settings, setSettings] = useReducer((current: ReaderSettings, patch: Partial<ReaderSettings>) => {
     const next: ReaderSettings = { ...current, ...patch, layoutVersion: READER_SETTINGS_LAYOUT_VERSION }
     next.fontSize = clamp(next.fontSize, 12, 38)
-    next.contentWidth = clamp(next.contentWidth, 520, 1520)
+    next.contentWidth = clamp(next.contentWidth, 520, 2000)
     next.drawerWidth = clamp(next.drawerWidth, 360, 920)
     next.theme = normalizeTheme(next.theme)
     return next

@@ -129,6 +129,7 @@ describe("PaperReaderPage Open Reader", () => {
 
     expect(screen.getByRole("heading", { name: "Reader Paper" })).toBeInTheDocument()
     expect(screen.getByText("Open Reader")).toBeInTheDocument()
+    expect(screen.getByRole("link", { name: "返回论文列表" })).toHaveAttribute("href", "/papers")
     expect(screen.getByRole("button", { name: "阅读设置" })).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "目" })).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "Ask" })).not.toBeInTheDocument()
@@ -199,7 +200,7 @@ describe("PaperReaderPage Open Reader", () => {
 
     await waitFor(() => {
       const stored = JSON.parse(window.localStorage.getItem("newsroom:open-reader:reader-paper:settings") ?? "{}")
-      expect(stored).toMatchObject({ contentWidth: 1180, theme: "light", layoutVersion: 2 })
+      expect(stored).toMatchObject({ contentWidth: 1250, theme: "light", layoutVersion: 2 })
     })
   })
 
