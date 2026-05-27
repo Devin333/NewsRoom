@@ -23,7 +23,12 @@ export function AppShell({ children, surface = "portal" }: { children: ReactNode
   }
 
   const isPortalHomeRoute = pathname === "/"
+  const isReaderRoute = isPaperReaderRoute(pathname)
   const usesResearchFrame = pathname.startsWith("/papers") || isPortalHomeRoute
+
+  if (isReaderRoute) {
+    return <div className="min-h-screen bg-background text-foreground">{children}</div>
+  }
 
   return (
     <div className={cn("min-h-screen text-foreground", usesResearchFrame ? "font-papers-research bg-[#f7f9f6] dark:bg-background" : "bg-background")}>
@@ -33,4 +38,9 @@ export function AppShell({ children, surface = "portal" }: { children: ReactNode
       </main>
     </div>
   )
+}
+
+function isPaperReaderRoute(pathname: string) {
+  const parts = pathname.split("/").filter(Boolean)
+  return parts.length === 2 && parts[0] === "papers"
 }

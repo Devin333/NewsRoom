@@ -5,7 +5,7 @@ import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react"
 import { formatPaperDate, paperTitle } from "@/lib/papers/format"
 import type { Locale } from "@/lib/papers/types"
 import type { DrawerState, NotePopoverState, OpenReaderPageProps, ReaderParagraph, ReaderSelection, ReaderSettings, SelectionMenuState } from "./open-reader-types"
-import { buildReaderParagraphs, buildReaderToc, clamp, getSelectionOffsetsWithinElement, getSelectionStatus, makeMaterialSummary, mockExample, mockExplain } from "./open-reader-utils"
+import { buildReaderParagraphs, buildReaderToc, clamp, getSelectionOffsetsWithinElement, getSelectionStatus, makeMaterialSummary, mockExample, mockExplain, safeJsonParse, storageKey } from "./open-reader-utils"
 import { useOpenReaderSelections, useOpenReaderSettings } from "./open-reader-state"
 import styles from "./open-reader.module.css"
 
@@ -173,7 +173,7 @@ export function OpenReaderPage({ reader, locale, backHref = "/papers" }: OpenRea
         </section>
       </article>
 
-      <FloatingToc items={toc} activeSectionId={activeSectionId} materialCount={materials.selections.length} onNavigate={(id) => sectionRefs.current.get(id)?.scrollIntoView({ behavior: "smooth", block: "start" })} onOpenMaterials={openMaterials} />
+      <FloatingToc paperId={paper.id} items={toc} activeSectionId={activeSectionId} materialCount={materials.selections.length} onNavigate={(id) => sectionRefs.current.get(id)?.scrollIntoView({ behavior: "smooth", block: "start" })} onOpenMaterials={openMaterials} />
 
       {menu && menuSelection ? (
         <SelectionActionMenu
@@ -262,30 +262,51 @@ function ReaderSettingsDock({ settings, onChange }: { settings: ReaderSettings; 
   )
 }
 
-function FloatingToc({ items, activeSectionId, materialCount, onNavigate, onOpenMaterials }: { items: { id: string; title: string; paragraphCount: number }[]; activeSectionId: string | null; materialCount: number; onNavigate: (id: string) => void; onOpenMaterials: () => void }) {
+function FloatingToc({ paperId, items, activeSectionId, materialCount, onNavigate, onOpenMaterials }: { paperId: string; items: { id: string; title: string; paragraphCount: number }[]; activeSectionId: string | null; materialCount: number; onNavigate: (id: string) => void; onOpenMaterials: () => void }) {
   const rootRef = useRef<HTMLDivElement | null>(null)
   const [side, setSide] = useState<"left" | "right">("left")
   const [dragging, setDragging] = useState(false)
+  const [position, setPosition] = useState<{ x: number; y: number } | null>(null)
   const offsetRef = useRef({ x: 0, y: 0 })
+  const positionRef = useRef<{ x: number; y: number } | null>(null)
+  const positionKey = useMemo(() => storageKey(paperId, "toc-position"), [paperId])
+
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    const saved = safeJsonParse<{ x: number; y: number } | null>(window.localStorage.getItem(positionKey), null)
+    if (!saved || !Number.isFinite(saved.x) || !Number.isFinite(saved.y)) return
+    const next = {
+      x: clamp(saved.x, 8, window.innerWidth - 62),
+      y: clamp(saved.y, 58, window.innerHeight - 66),
+    }
+    positionRef.current = next
+    setPosition(next)
+    setSide(next.x + 31 > window.innerWidth / 2 ? "right" : "left")
+  }, [positionKey])
 
   useEffect(() => {
     function onMove(event: MouseEvent) {
-      if (!dragging || !rootRef.current) return
+      if (!dragging) return
       const x = Math.max(8, Math.min(window.innerWidth - 62, event.clientX - offsetRef.current.x))
       const y = Math.max(58, Math.min(window.innerHeight - 66, event.clientY - offsetRef.current.y))
-      rootRef.current.style.left = `${x}px`
-      rootRef.current.style.top = `${y}px`
-      rootRef.current.style.bottom = "auto"
+      const next = { x, y }
+      positionRef.current = next
+      setPosition(next)
       setSide(x + 31 > window.innerWidth / 2 ? "right" : "left")
     }
-    function onUp() { setDragging(false) }
+    function onUp() {
+      setDragging(false)
+      if (positionRef.current) {
+        window.localStorage.setItem(positionKey, JSON.stringify(positionRef.current))
+      }
+    }
     window.addEventListener("mousemove", onMove)
     window.addEventListener("mouseup", onUp)
     return () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp) }
-  }, [dragging])
+  }, [dragging, positionKey])
 
   return (
-    <div ref={rootRef} className={`${styles.floatingToc} ${side === "right" ? styles.sideRight : styles.sideLeft}`} data-open-reader-keep-open>
+    <div ref={rootRef} className={`${styles.floatingToc} ${side === "right" ? styles.sideRight : styles.sideLeft}`} style={position ? { left: position.x, top: position.y, bottom: "auto" } : undefined} data-open-reader-keep-open>
       <button type="button" className={styles.tocOrb} onMouseDown={(event) => { const rect = rootRef.current?.getBoundingClientRect(); if (rect) { offsetRef.current = { x: event.clientX - rect.left, y: event.clientY - rect.top }; setDragging(true); event.preventDefault() } }}>目</button>
       <nav className={styles.tocPanel}>
         <div className={styles.tocPanelTitle}>悬浮目录 · 可拖动</div>

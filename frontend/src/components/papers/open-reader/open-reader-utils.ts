@@ -1,4 +1,4 @@
-import type { Locale, PaperReaderPayload } from "@/lib/papers/types"
+import type { Locale, PaperReaderPayload, PaperSection } from "@/lib/papers/types"
 import type {
   ReaderEvent,
   ReaderEventType,
@@ -70,15 +70,19 @@ export function createReaderEvent(
 
 export function buildReaderParagraphs(reader: PaperReaderPayload, locale: Locale): ReaderParagraph[] {
   const paragraphs: ReaderParagraph[] = []
-  for (const section of reader.sections ?? []) {
+  const sourceSections = selectReaderSections(reader.sections ?? [])
+
+  for (const section of sourceSections) {
     const parts = splitText(section.textExcerpt)
     for (let index = 0; index < parts.length; index += 1) {
+      const fallbackSectionId = `${reader.paper.id}:pdf-text`
+      const usesPdfFallback = isPageDumpSection(section)
       paragraphs.push({
         id: `${section.id}:p${index + 1}`,
         paperId: section.paperId,
-        sectionId: section.id,
-        sectionTitle: section.title || sectionTypeLabel(section.sectionType, locale),
-        sectionType: section.sectionType,
+        sectionId: usesPdfFallback ? fallbackSectionId : section.id,
+        sectionTitle: usesPdfFallback ? pdfTextLabel(locale) : section.title || sectionTypeLabel(section.sectionType, locale),
+        sectionType: usesPdfFallback ? "unknown" : section.sectionType,
         index,
         text: parts[index],
         summary: section.summary,
@@ -100,6 +104,19 @@ export function buildReaderParagraphs(reader: PaperReaderPayload, locale: Locale
     })
   }
   return paragraphs
+}
+
+function selectReaderSections(sections: PaperSection[]) {
+  const semanticSections = sections.filter((section) => !isPageDumpSection(section))
+  return semanticSections.length ? semanticSections : sections
+}
+
+function isPageDumpSection(section: PaperSection) {
+  return /^page\s+\d+$/i.test(section.title.trim())
+}
+
+function pdfTextLabel(locale: Locale) {
+  return locale === "zh" ? "PDF 文本" : "PDF Text"
 }
 
 function splitText(value: string) {

@@ -22,7 +22,7 @@ describe("AppShell", () => {
     useUiStore.setState({ locale: "en", theme: "light" })
   })
 
-  it.each(["/", "/news", "/community", "/reports", "/search"])("renders the Research header on portal route %s", (pathname) => {
+  it.each(["/", "/news", "/community", "/reports", "/search", "/papers", "/papers/tasks/agents", "/papers/methods/tool-use"])("renders the Research header on portal route %s", (pathname) => {
     navigationState.pathname = pathname
 
     render(
@@ -53,6 +53,20 @@ describe("AppShell", () => {
 
     expect(screen.getByText("Management content")).toBeInTheDocument()
     expect(screen.queryByRole("link", { name: "NewsRoom Research" })).not.toBeInTheDocument()
+  })
+
+  it("keeps paper reader routes outside the portal Research header and frame", () => {
+    navigationState.pathname = "/papers/reader-paper"
+
+    const { container } = render(
+      <AppShell>
+        <div>Open Reader content</div>
+      </AppShell>
+    )
+
+    expect(screen.getByText("Open Reader content")).toBeInTheDocument()
+    expect(screen.queryByRole("link", { name: "NewsRoom Research" })).not.toBeInTheDocument()
+    expect(container.querySelector("main")).toBeNull()
   })
 
   it("keeps the admin surface outside the portal Research header", () => {

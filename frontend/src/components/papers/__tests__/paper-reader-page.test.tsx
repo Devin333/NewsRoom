@@ -57,6 +57,66 @@ const reader: PaperReaderPayload = {
   },
 }
 
+const pageDumpReader: PaperReaderPayload = {
+  ...reader,
+  sections: [
+    {
+      id: "reader-paper:page-1",
+      paperId: "reader-paper",
+      title: "Page 1",
+      level: 1,
+      textExcerpt: "Raw PDF page header, authors, and unrelated page text.",
+      sectionType: "abstract",
+    },
+    {
+      id: "reader-paper:page-2",
+      paperId: "reader-paper",
+      title: "Page 2",
+      level: 1,
+      textExcerpt: "Second raw PDF page dump with figure OCR text.",
+      sectionType: "unknown",
+    },
+    {
+      id: "reader-paper:semantic-abstract",
+      paperId: "reader-paper",
+      title: "Abstract",
+      level: 1,
+      textExcerpt: "Clean abstract text should be the first visible reader paragraph.",
+      sectionType: "abstract",
+    },
+    {
+      id: "reader-paper:semantic-method",
+      paperId: "reader-paper",
+      title: "Method",
+      level: 1,
+      textExcerpt: "Clean method text should remain in the table of contents.",
+      sectionType: "method",
+    },
+  ],
+}
+
+const onlyPageDumpReader: PaperReaderPayload = {
+  ...reader,
+  sections: [
+    {
+      id: "reader-paper:page-1",
+      paperId: "reader-paper",
+      title: "Page 1",
+      level: 1,
+      textExcerpt: "Raw page one text remains readable in fallback mode.",
+      sectionType: "unknown",
+    },
+    {
+      id: "reader-paper:page-2",
+      paperId: "reader-paper",
+      title: "Page 2",
+      level: 1,
+      textExcerpt: "Raw page two text remains readable in fallback mode.",
+      sectionType: "unknown",
+    },
+  ],
+}
+
 describe("PaperReaderPage Open Reader", () => {
   beforeEach(() => {
     window.localStorage.clear()
@@ -75,6 +135,27 @@ describe("PaperReaderPage Open Reader", () => {
     expect(screen.queryByText(/PDF viewer/i)).not.toBeInTheDocument()
   })
 
+  it("renders clean semantic sections before PDF page dumps", () => {
+    render(<PaperReaderPage reader={pageDumpReader} locale="en" />)
+
+    expect(screen.getByText("Clean abstract text should be the first visible reader paragraph.")).toBeInTheDocument()
+    expect(screen.getByText("Clean method text should remain in the table of contents.")).toBeInTheDocument()
+    expect(screen.queryByText("Raw PDF page header, authors, and unrelated page text.")).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /Page 1/ })).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /Abstract/ })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /Method/ })).toBeInTheDocument()
+  })
+
+  it("collapses pure PDF page dumps into a single fallback TOC section", () => {
+    render(<PaperReaderPage reader={onlyPageDumpReader} locale="en" />)
+
+    expect(screen.getByText("Raw page one text remains readable in fallback mode.")).toBeInTheDocument()
+    expect(screen.getByText("Raw page two text remains readable in fallback mode.")).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /Page 1/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /Page 2/ })).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /PDF Text/ })).toBeInTheDocument()
+  })
+
   it("persists reading settings to localStorage", async () => {
     const { container } = render(<PaperReaderPage reader={reader} locale="en" />)
 
@@ -86,6 +167,19 @@ describe("PaperReaderPage Open Reader", () => {
     await waitFor(() => {
       const stored = JSON.parse(window.localStorage.getItem("newsroom:open-reader:reader-paper:settings") ?? "{}")
       expect(stored).toMatchObject({ fontSize: 28, contentWidth: 960, theme: "dark" })
+    })
+  })
+
+  it("persists the floating TOC drag position to localStorage", async () => {
+    render(<PaperReaderPage reader={reader} locale="en" />)
+
+    fireEvent.mouseDown(screen.getByRole("button", { name: "目" }), { clientX: 28, clientY: 800 })
+    fireEvent.mouseMove(window, { clientX: 180, clientY: 860 })
+    fireEvent.mouseUp(window)
+
+    await waitFor(() => {
+      const stored = JSON.parse(window.localStorage.getItem("newsroom:open-reader:reader-paper:toc-position") ?? "{}")
+      expect(stored).toMatchObject({ x: 152, y: 60 })
     })
   })
 
@@ -272,8 +366,16 @@ describe("PaperReaderPage Open Reader", () => {
     const css = readFileSync(join(process.cwd(), "src/components/papers/open-reader/open-reader.module.css"), "utf-8")
 
     expect(css).toContain(".selectionMark")
-    expect(css).toContain("color:var(--reader-ink)")
-    expect(css).toContain("-webkit-text-fill-color:var(--reader-ink)")
+    expect(css).toMatch(/color:\s*var\(--reader-ink\)/)
+    expect(css).toMatch(/-webkit-text-fill-color:\s*var\(--reader-ink\)/)
+  })
+
+  it("keeps the floating TOC bounded and scrollable", () => {
+    const css = readFileSync(join(process.cwd(), "src/components/papers/open-reader/open-reader.module.css"), "utf-8")
+
+    expect(css).toContain(".tocPanel")
+    expect(css).toContain("max-height: min(520px, calc(100vh - 116px))")
+    expect(css).toContain("overflow-y: auto")
   })
 })
 
