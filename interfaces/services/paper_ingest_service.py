@@ -272,7 +272,13 @@ class PaperIngestApplicationService:
                 user_agent=self.config.arxiv_user_agent,
             )
         )
-        self.github_connector = github_connector or default_github_connector(fetch_policy=SourceFetchPolicy(max_bytes=5_000_000))
+        self.github_connector = github_connector or default_github_connector(
+            fetch_policy=SourceFetchPolicy(
+                max_bytes=5_000_000,
+                timeout_seconds=60.0,
+                respect_robots=False,
+            )
+        )
         self.papers_data_path = _papers_data_path(papers_data_path)
         self.state = PaperIngestStateRepository(state_dir)
         self.text_extraction_repository = text_extraction_repository or TextExtractionRepository()
@@ -648,6 +654,7 @@ class PaperIngestApplicationService:
             authority_score=0.9,
             topics=["github", "repository"],
             metadata={"repository": repository},
+            respect_robots=False,
         )
         metadata, errors = self.github_connector.fetch_repository_metadata(source, repository=repository)
         if errors:

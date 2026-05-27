@@ -18,6 +18,7 @@ def test_paper_ingest_publishes_github_arxiv_paper_with_thumbnail_and_taxonomy(t
     cache_path = tmp_path / "papers.json"
     state_dir = tmp_path / "state"
     text_repo = TextExtractionRepository(tmp_path / "text")
+    github = _FakeGithubConnector(stars=88)
     source = _FakeSourceService(
         [
             _candidate(
@@ -29,7 +30,7 @@ def test_paper_ingest_publishes_github_arxiv_paper_with_thumbnail_and_taxonomy(t
 
     service = PaperIngestApplicationService(
         source_service=source,
-        github_connector=_FakeGithubConnector(stars=88),
+        github_connector=github,
         papers_data_path=cache_path,
         state_dir=state_dir,
         text_extraction_repository=text_repo,
@@ -51,6 +52,7 @@ def test_paper_ingest_publishes_github_arxiv_paper_with_thumbnail_and_taxonomy(t
     result = service.run_daily_ingest()
 
     assert source.calls == [("cat:cs.AI OR cat:cs.LG OR cat:cs.CL", 100)]
+    assert github.calls[0]["respect_robots"] is False
     assert result.published_count == 1
     payload = json.loads(cache_path.read_text(encoding="utf-8"))
     paper = payload["papers"][0]
@@ -450,8 +452,15 @@ class _FailingArxivConnector:
 class _FakeGithubConnector:
     def __init__(self, *, stars: int) -> None:
         self.stars = stars
+        self.calls: list[dict[str, Any]] = []
 
     def fetch_repository_metadata(self, source, *, repository: str):
+        self.calls.append(
+            {
+                "repository": repository,
+                "respect_robots": source.respect_robots,
+            }
+        )
         return (
             GithubRepositoryMetadata(
                 repository_id=1,
