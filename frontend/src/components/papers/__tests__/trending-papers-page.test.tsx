@@ -84,7 +84,8 @@ describe("TrendingPapersPage", () => {
   it("syncs period interactions to the URL without rendering page search", async () => {
     render(<TrendingPapersPage locale="en" papers={papers} />)
 
-    await waitFor(() => expect(fetchPapers).toHaveBeenCalledWith({ q: "", period: "all", sort: "trending", limit: 5000 }))
+    await waitFor(() => expect(fetchPapers).toHaveBeenCalledWith({ q: "", period: "all", sort: "trending", limit: 50, offset: 0 }))
+    expect(fetchPapers).toHaveBeenCalledWith({ q: "", period: "all", sort: "trending", limit: 5000 })
     expect(screen.getByRole("navigation", { name: /research breadcrumb/i })).toBeInTheDocument()
     expect(screen.getByRole("link", { name: "Research" })).toHaveAttribute("href", "/papers")
     expect(screen.getByLabelText(/papers: 2/i)).toBeInTheDocument()
@@ -105,8 +106,96 @@ describe("TrendingPapersPage", () => {
     query = "q=agent"
     render(<TrendingPapersPage locale="en" papers={papers} />)
 
-    await waitFor(() => expect(fetchPapers).toHaveBeenCalledWith({ q: "agent", period: "all", sort: "trending", limit: 5000 }))
+    await waitFor(() => expect(fetchPapers).toHaveBeenCalledWith({ q: "agent", period: "all", sort: "trending", limit: 50, offset: 0 }))
+    expect(fetchPapers).toHaveBeenCalledWith({ q: "agent", period: "all", sort: "trending", limit: 5000 })
     expect(screen.queryByRole("textbox", { name: /search papers/i })).not.toBeInTheDocument()
+  })
+
+  it("loads paginated paper pages from the URL", async () => {
+    query = "page=2"
+    const pagedPapers = Array.from({ length: 60 }, (_, index): Paper => {
+      const number = index + 1
+      return {
+        id: `paper-${number}`,
+        slug: `paper-${number}`,
+        title: `Paged Paper ${number}`,
+        abstractSnippet: `Paper ${number}.`,
+        authors: ["A"],
+        publishedAt: "2026-05-24T00:00:00Z",
+        tags: ["agents"],
+        taskRefs: [{ id: "task-agents", slug: "agents", name: "Agents" }],
+        methodRefs: [],
+        pdfUrl: `https://arxiv.org/pdf/2605.${String(number).padStart(5, "0")}.pdf`,
+        repoUrl: "https://github.com/owner/paged-paper",
+        isPublished: true
+      }
+    })
+    vi.mocked(fetchPapers).mockImplementation(async (params) => {
+      const limit = params.limit ?? 50
+      const offset = params.offset ?? 0
+      const resultPapers = limit === 5000 ? pagedPapers : pagedPapers.slice(offset, offset + limit)
+      return {
+        source: "test",
+        query: params.q ?? "",
+        period: params.period ?? "all",
+        sort: params.sort ?? "trending",
+        paper_count: resultPapers.length,
+        total_count: pagedPapers.length,
+        source_count: 1,
+        limit,
+        offset,
+        papers: resultPapers
+      }
+    })
+
+    render(<TrendingPapersPage locale="en" papers={pagedPapers} />)
+
+    expect(await screen.findByText("Paged Paper 51")).toBeInTheDocument()
+    expect(fetchPapers).toHaveBeenCalledWith({ q: "", period: "all", sort: "trending", limit: 50, offset: 50 })
+    expect(screen.getByText("51-60 of 60 papers")).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole("button", { name: "Previous page" }))
+    expect(replace).toHaveBeenCalledWith("/papers", { scroll: false })
+  })
+
+  it("writes the next page to the URL", async () => {
+    const pagedPapers = Array.from({ length: 60 }, (_, index): Paper => ({
+      id: `paper-${index + 1}`,
+      slug: `paper-${index + 1}`,
+      title: `Paged Paper ${index + 1}`,
+      abstractSnippet: `Paper ${index + 1}.`,
+      authors: ["A"],
+      publishedAt: "2026-05-24T00:00:00Z",
+      tags: ["agents"],
+      taskRefs: [{ id: "task-agents", slug: "agents", name: "Agents" }],
+      methodRefs: [],
+      pdfUrl: `https://arxiv.org/pdf/2605.${String(index + 1).padStart(5, "0")}.pdf`,
+      repoUrl: "https://github.com/owner/paged-paper",
+      isPublished: true
+    }))
+    vi.mocked(fetchPapers).mockImplementation(async (params) => {
+      const limit = params.limit ?? 50
+      const offset = params.offset ?? 0
+      const resultPapers = limit === 5000 ? pagedPapers : pagedPapers.slice(offset, offset + limit)
+      return {
+        source: "test",
+        query: params.q ?? "",
+        period: params.period ?? "all",
+        sort: params.sort ?? "trending",
+        paper_count: resultPapers.length,
+        total_count: pagedPapers.length,
+        source_count: 1,
+        limit,
+        offset,
+        papers: resultPapers
+      }
+    })
+
+    render(<TrendingPapersPage locale="en" papers={pagedPapers} />)
+
+    expect(await screen.findByText("1-50 of 60 papers")).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }))
+    expect(replace).toHaveBeenCalledWith("/papers?page=2", { scroll: false })
   })
 
   it("opens paper drawer via deep-link query", async () => {
