@@ -71,11 +71,11 @@
 
 .topBarLeft {
   display: flex;
+  flex: 0 0 auto;
   min-width: 0;
   align-items: center;
-  gap: 11px;
-  width: min(760px, 58vw);
-  margin-left: max(0px, calc((100vw - var(--reader-content-width)) / 2 - 102px));
+  width: auto;
+  margin-left: 0;
 }
 
 .readerMarkLink {
@@ -84,35 +84,25 @@
   width: 34px;
   height: 34px;
   place-items: center;
-  border: 3px solid color-mix(in srgb, var(--reader-ink) 72%, var(--reader-muted));
+  border: 0;
   border-radius: 50%;
-  background: color-mix(in srgb, var(--reader-paper) 34%, transparent);
-  color: color-mix(in srgb, var(--reader-ink) 72%, var(--reader-muted));
-  box-shadow: 0 1px 0 color-mix(in srgb, var(--reader-paper) 55%, transparent);
+  background: #111827;
+  color: #fff;
+  box-shadow: 0 8px 20px rgba(17, 24, 39, 0.18);
   text-decoration: none;
+  transition: background 140ms ease, transform 140ms ease, box-shadow 140ms ease;
 }
 
 .readerMarkLink:hover {
-  border-color: var(--reader-accent);
-  color: var(--reader-accent);
+  background: #000;
+  box-shadow: 0 10px 24px rgba(17, 24, 39, 0.24);
+  transform: translateX(-1px);
 }
 
 .readerMarkIcon {
-  width: 22px;
-  height: 22px;
-  stroke-width: 3;
-  transform: rotate(90deg);
-}
-
-.topTitle {
-  min-width: 0;
-  overflow: hidden;
-  padding: 0;
-  color: color-mix(in srgb, var(--reader-muted) 88%, var(--reader-ink));
-  font-size: 13px;
-  line-height: 1.2;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  width: 18px;
+  height: 18px;
+  stroke-width: 2.6;
 }
 
 .progressTrack {
@@ -671,10 +661,6 @@
 @media (max-width: 780px) {
   .progressTrack {
     width: 82px;
-  }
-
-  .topTitle {
-    max-width: 45vw;
   }
 
   .readerLayout {

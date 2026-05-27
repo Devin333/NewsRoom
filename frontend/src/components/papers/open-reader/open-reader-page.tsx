@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { GitFork } from "lucide-react"
+import { ArrowLeft } from "lucide-react"
 import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react"
 import { formatPaperDate, paperTitle } from "@/lib/papers/format"
 import type { Locale } from "@/lib/papers/types"
@@ -138,9 +138,8 @@ export function OpenReaderPage({ reader, locale, backHref = "/papers" }: OpenRea
       <header className={styles.topBar}>
         <div className={styles.topBarLeft}>
           <Link className={styles.readerMarkLink} href={backHref} aria-label="返回论文列表">
-            <GitFork aria-hidden="true" className={styles.readerMarkIcon} />
+            <ArrowLeft aria-hidden="true" className={styles.readerMarkIcon} />
           </Link>
-          <span className={styles.topTitle}>{title}</span>
         </div>
         <div className={styles.progressTrack}><span /></div>
       </header>
