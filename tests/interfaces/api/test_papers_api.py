@@ -664,6 +664,34 @@ def test_papers_ops_classification_backfill_trigger_runs_local_background() -> N
     assert ingest.backfill_calls == [(10, 5, "classification-backfill-test")]
 
 
+def test_papers_ops_citation_backfill_trigger_runs_local_background() -> None:
+    ingest = _RecordingPaperIngestService()
+    client = TestClient(
+        create_app(
+            paper_ingest_service_factory=lambda: ingest,
+            audit_emitter_factory=None,
+        )
+    )
+
+    response = client.post(
+        "/api/v1/papers/ops/citation-backfill/trigger",
+        json={"limit": 10, "batchSize": 5, "runId": "citation-backfill-test"},
+    )
+
+    payload = response.json()["data"]["backfill"]
+    assert response.status_code == 200
+    assert payload["runId"] == "citation-backfill-test"
+    assert payload["status"] == "queued"
+    assert payload["mode"] == "local_background"
+    assert payload["limit"] == 10
+    assert payload["batchSize"] == 5
+    for _ in range(100):
+        if ingest.citation_backfill_calls:
+            break
+        time.sleep(0.01)
+    assert ingest.citation_backfill_calls == [(10, 5, "citation-backfill-test")]
+
+
 class _FakePaperIngestService:
     def get_ops_state(self, *, limit: int = 20):
         return {
@@ -752,6 +780,23 @@ class _FakePaperIngestService:
 
         return Result()
 
+    def backfill_published_citations(self, *, limit=None, batch_size=50, run_id=None):
+        class Result:
+            def to_dict(self):
+                return {
+                    "runId": run_id,
+                    "batchSize": batch_size,
+                    "scannedCount": 0,
+                    "updatedCount": 0,
+                    "skippedCount": 0,
+                    "repairQueuedCount": 0,
+                    "blockedCount": 0,
+                    "updatedPaperIds": [],
+                    "errors": [],
+                }
+
+        return Result()
+
 
 class _FakePaperWorkerService:
     def __init__(self) -> None:
@@ -782,6 +827,7 @@ class _RecordingPaperIngestService(_FakePaperIngestService):
     def __init__(self) -> None:
         self.calls = []
         self.backfill_calls = []
+        self.citation_backfill_calls = []
 
     def run_daily_ingest(self, *, candidate_limit=None, min_github_stars=None, run_id=None):
         self.calls.append((candidate_limit, min_github_stars, run_id))
@@ -794,6 +840,25 @@ class _RecordingPaperIngestService(_FakePaperIngestService):
 
     def backfill_published_classification(self, *, limit=None, batch_size=25, run_id=None):
         self.backfill_calls.append((limit, batch_size, run_id))
+
+        class Result:
+            def to_dict(self):
+                return {
+                    "runId": run_id,
+                    "batchSize": batch_size,
+                    "scannedCount": 0,
+                    "updatedCount": 0,
+                    "skippedCount": 0,
+                    "repairQueuedCount": 0,
+                    "blockedCount": 0,
+                    "updatedPaperIds": [],
+                    "errors": [],
+                }
+
+        return Result()
+
+    def backfill_published_citations(self, *, limit=None, batch_size=50, run_id=None):
+        self.citation_backfill_calls.append((limit, batch_size, run_id))
 
         class Result:
             def to_dict(self):

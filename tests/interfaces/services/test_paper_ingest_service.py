@@ -7,6 +7,7 @@ from framework.llm import LLMConfigurationError
 from infrastructure.external.sources.github import GithubRepositoryMetadata
 from infrastructure.external.sources.models import RawSourceItem, SourceError
 from interfaces.services.paper_ingest_service import (
+    PaperCitationMetadata,
     PaperIngestApplicationService,
     PaperIngestConfig,
     PaperPdfExtraction,
@@ -34,6 +35,16 @@ def test_paper_ingest_publishes_github_arxiv_paper_with_thumbnail_and_taxonomy(t
     state_dir = tmp_path / "state"
     text_repo = TextExtractionRepository(tmp_path / "text")
     github = _FakeGithubConnector(stars=88)
+    citation_client = _FakeCitationClient(
+        {
+            "10.48550/arxiv.2605.00001": PaperCitationMetadata(
+                doi="10.48550/arxiv.2605.00001",
+                citation_count=7,
+                openalex_id="https://openalex.org/W260500001",
+                display_name="Paper 2605.00001",
+            )
+        }
+    )
     source = _FakeSourceService(
         [
             _candidate(
@@ -51,6 +62,7 @@ def test_paper_ingest_publishes_github_arxiv_paper_with_thumbnail_and_taxonomy(t
         text_extraction_repository=text_repo,
         pdf_fetcher=lambda url, max_bytes: b"%PDF fake",
         pdf_processor=_FakePdfProcessor("The paper studies agent planning and reports MMLU 88."),
+        citation_client=citation_client,
         llm_client_factory=lambda route: _FakeLLMClient(
             {
                 "primaryTaskGroup": "agents",
@@ -76,6 +88,10 @@ def test_paper_ingest_publishes_github_arxiv_paper_with_thumbnail_and_taxonomy(t
     assert paper["isPublished"] is True
     assert paper["repoUrl"] == "https://github.com/example/agent-paper"
     assert paper["githubStars"] == 88
+    assert paper["citationDoi"] == "10.48550/arxiv.2605.00001"
+    assert paper["citationCount"] == 7
+    assert paper["openAlexId"] == "https://openalex.org/W260500001"
+    assert citation_client.calls == [["10.48550/arxiv.2605.00001"]]
     assert paper["thumbnailUrl"].startswith("/api/papers/assets/thumbnails/")
     assert paper["taskRefs"][0]["slug"] == "agent-planning"
     assert paper["taskRefs"][0]["group"] == "agents"
@@ -111,6 +127,189 @@ def test_paper_ingest_extracts_explicit_github_from_pdf_text(tmp_path) -> None:
     paper = json.loads(cache_path.read_text(encoding="utf-8"))["papers"][0]
     assert paper["repoUrl"] == "https://github.com/example/pdf-code"
     assert paper["taskRefs"][0]["group"] == "code-ai"
+
+
+def test_paper_ingest_publishes_when_openalex_citation_is_temporarily_missing(tmp_path) -> None:
+    service = _service(
+        tmp_path,
+        source_items=[_candidate("2605.00020", summary="Code: https://github.com/example/citation-soft-fail.")],
+        stars=80,
+        citation_client=_FakeCitationClient({}),
+    )
+
+    result = service.run_daily_ingest(run_id="citation-soft-fail")
+
+    assert result.published_count == 1
+    assert result.repair_queued_count == 1
+    paper = json.loads((tmp_path / "papers.json").read_text(encoding="utf-8"))["papers"][0]
+    assert paper["citationDoi"] == "10.48550/arxiv.2605.00020"
+    assert paper["citationCount"] == 0
+    repair = service.get_ops_state()["repairQueue"][0]
+    assert repair["step"] == "citation_fetch"
+    assert repair["errorCode"] == "openalex_citation_not_found"
+    assert repair["context"]["nonBlocking"] is True
+
+
+def test_paper_citation_backfill_updates_existing_published_papers(tmp_path) -> None:
+    cache_path = tmp_path / "papers.json"
+    cache_path.write_text(
+        json.dumps(
+            {
+                "source": "test-cache",
+                "papers": [
+                    {
+                        "id": "arxiv-2605.00021",
+                        "title": "Citation Ready Paper",
+                        "abstractSnippet": "A paper that needs OpenAlex citation enrichment.",
+                        "paperUrl": "https://arxiv.org/abs/2605.00021",
+                        "citationDoi": "10.48550/arxiv.2605.00021",
+                        "citationCount": 0,
+                        "isPublished": True,
+                    },
+                    {
+                        "id": "already-synced",
+                        "title": "Already Synced",
+                        "abstractSnippet": "Skip me.",
+                        "paperUrl": "https://arxiv.org/abs/2605.00022",
+                        "citationDoi": "10.48550/arxiv.2605.00022",
+                        "citationCount": 2,
+                        "openAlexId": "https://openalex.org/W260500022",
+                        "isPublished": True,
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    citation_client = _FakeCitationClient(
+        {
+            "10.48550/arxiv.2605.00021": PaperCitationMetadata(
+                doi="10.48550/arxiv.2605.00021",
+                citation_count=12,
+                openalex_id="https://openalex.org/W260500021",
+                display_name="Citation Ready Paper",
+            )
+        }
+    )
+    service = PaperIngestApplicationService(
+        source_service=_FakeSourceService([]),
+        github_connector=_FakeGithubConnector(stars=120),
+        papers_data_path=cache_path,
+        state_dir=tmp_path / "state",
+        citation_client=citation_client,
+        config=PaperIngestConfig(candidate_limit=100),
+        clock=_fixed_clock,
+    )
+
+    result = service.backfill_published_citations(run_id="citation-backfill-test", batch_size=1)
+
+    assert result.scanned_count == 1
+    assert result.updated_count == 1
+    assert result.skipped_count == 1
+    papers = json.loads(cache_path.read_text(encoding="utf-8"))["papers"]
+    assert papers[0]["citationCount"] == 12
+    assert papers[0]["openAlexId"] == "https://openalex.org/W260500021"
+    assert papers[0]["citation"]["provider"] == "openalex"
+    assert citation_client.calls == [["10.48550/arxiv.2605.00021"]]
+
+
+def test_paper_citation_backfill_accepts_openalex_html_entities_in_title(tmp_path) -> None:
+    cache_path = tmp_path / "papers.json"
+    cache_path.write_text(
+        json.dumps(
+            {
+                "source": "test-cache",
+                "papers": [
+                    {
+                        "id": "arxiv-2605.00024",
+                        "title": "Adaptive Attacks & Efficient Defenses",
+                        "abstractSnippet": "A paper.",
+                        "paperUrl": "https://arxiv.org/abs/2605.00024",
+                        "citationDoi": "10.48550/arxiv.2605.00024",
+                        "citationCount": 0,
+                        "isPublished": True,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    service = PaperIngestApplicationService(
+        source_service=_FakeSourceService([]),
+        github_connector=_FakeGithubConnector(stars=120),
+        papers_data_path=cache_path,
+        state_dir=tmp_path / "state",
+        citation_client=_FakeCitationClient(
+            {
+                "10.48550/arxiv.2605.00024": PaperCitationMetadata(
+                    doi="10.48550/arxiv.2605.00024",
+                    citation_count=3,
+                    openalex_id="https://openalex.org/W260500024",
+                    display_name="Adaptive Attacks &amp; Efficient Defenses",
+                )
+            }
+        ),
+        config=PaperIngestConfig(candidate_limit=100),
+        clock=_fixed_clock,
+    )
+
+    result = service.backfill_published_citations(run_id="citation-html-title", batch_size=1)
+
+    assert result.updated_count == 1
+    assert result.repair_queued_count == 0
+    paper = json.loads(cache_path.read_text(encoding="utf-8"))["papers"][0]
+    assert paper["openAlexId"] == "https://openalex.org/W260500024"
+
+
+def test_paper_citation_backfill_queues_repair_for_openalex_title_mismatch(tmp_path) -> None:
+    cache_path = tmp_path / "papers.json"
+    cache_path.write_text(
+        json.dumps(
+            {
+                "source": "test-cache",
+                "papers": [
+                    {
+                        "id": "arxiv-2605.00023",
+                        "title": "Expected Paper Title",
+                        "abstractSnippet": "A paper.",
+                        "paperUrl": "https://arxiv.org/abs/2605.00023",
+                        "citationDoi": "10.48550/arxiv.2605.00023",
+                        "citationCount": 0,
+                        "isPublished": True,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    service = PaperIngestApplicationService(
+        source_service=_FakeSourceService([]),
+        github_connector=_FakeGithubConnector(stars=120),
+        papers_data_path=cache_path,
+        state_dir=tmp_path / "state",
+        citation_client=_FakeCitationClient(
+            {
+                "10.48550/arxiv.2605.00023": PaperCitationMetadata(
+                    doi="10.48550/arxiv.2605.00023",
+                    citation_count=5,
+                    openalex_id="https://openalex.org/W260500023",
+                    display_name="Different Work",
+                )
+            }
+        ),
+        config=PaperIngestConfig(candidate_limit=100),
+        clock=_fixed_clock,
+    )
+
+    result = service.backfill_published_citations(run_id="citation-title-mismatch", batch_size=1)
+
+    assert result.updated_count == 0
+    assert result.repair_queued_count == 1
+    paper = json.loads(cache_path.read_text(encoding="utf-8"))["papers"][0]
+    assert "openAlexId" not in paper
+    repair = service.get_ops_state()["repairQueue"][0]
+    assert repair["errorCode"] == "openalex_title_mismatch"
+    assert repair["repairAction"] == "normalize_doi_refetch_openalex_and_verify_title"
 
 
 def test_paper_classification_backfill_updates_existing_published_papers(tmp_path) -> None:
@@ -752,6 +951,7 @@ def _service(
     stars: int = 80,
     llm_payload: dict[str, Any] | None = None,
     llm_client: Any | None = None,
+    citation_client: Any | None = None,
 ) -> PaperIngestApplicationService:
     return PaperIngestApplicationService(
         source_service=_FakeSourceService(source_items),
@@ -761,6 +961,7 @@ def _service(
         text_extraction_repository=TextExtractionRepository(tmp_path / "text"),
         pdf_fetcher=lambda url, max_bytes: b"%PDF fake",
         pdf_processor=_FakePdfProcessor(pdf_text),
+        citation_client=citation_client or _FakeCitationClient({}),
         llm_client_factory=lambda route: llm_client
         or _FakeLLMClient(
             llm_payload
@@ -898,6 +1099,25 @@ class _FakeGithubConnector:
             ),
             [],
         )
+
+
+class _FakeCitationClient:
+    def __init__(
+        self,
+        citations: Mapping[str, PaperCitationMetadata],
+        *,
+        error: Exception | None = None,
+    ) -> None:
+        self.citations = dict(citations)
+        self.error = error
+        self.calls: list[list[str]] = []
+
+    def fetch_by_dois(self, dois):
+        normalized = [str(doi).strip().lower() for doi in dois]
+        self.calls.append(normalized)
+        if self.error is not None:
+            raise self.error
+        return {doi: self.citations[doi] for doi in normalized if doi in self.citations}
 
 
 class _FakePdfProcessor:

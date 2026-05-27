@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import json
 import os
 import re
@@ -11,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 
 from business.boards.paper_radar.public_mapper import sanitize_public_payload
@@ -57,6 +58,9 @@ PAPERS_INGEST_ARXIV_USER_AGENT_ENV = "NEWSROOM_PAPERS_INGEST_ARXIV_USER_AGENT"
 PAPERS_CLASSIFIER_MODEL_ROUTE_ENV = "NEWSROOM_PAPERS_CLASSIFIER_MODEL_ROUTE"
 PAPERS_CLASSIFIER_MAX_CHARS_ENV = "NEWSROOM_PAPERS_CLASSIFIER_MAX_CHARS"
 PAPERS_PDF_MAX_BYTES_ENV = "NEWSROOM_PAPERS_PDF_MAX_BYTES"
+PAPERS_OPENALEX_API_KEY_ENV = "OPENALEX_API_KEY"
+PAPERS_OPENALEX_API_KEY_FALLBACK_ENV = "NEWSROOM_OPENALEX_API_KEY"
+PAPERS_OPENALEX_MAILTO_ENV = "NEWSROOM_OPENALEX_MAILTO"
 
 DEFAULT_CANDIDATE_LIMIT = 100
 DEFAULT_MIN_GITHUB_STARS = 50
@@ -66,6 +70,8 @@ DEFAULT_ARXIV_USER_AGENT = "NewsRoom/0.1 paper-ingest contact: local-dev"
 DEFAULT_CLASSIFIER_MAX_CHARS = 120_000
 DEFAULT_PDF_MAX_BYTES = 40_000_000
 DEFAULT_REPAIR_DELAY_MINUTES = 30
+DEFAULT_OPENALEX_BATCH_SIZE = 50
+OPENALEX_WORKS_API = "https://api.openalex.org/works"
 
 _GITHUB_REPO_PATTERN = re.compile(r"https?://(?:www\.)?github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 _ARXIV_ID_PATTERN = re.compile(r"arxiv\.org/(?:abs|pdf)/([^/?#]+)", flags=re.IGNORECASE)
@@ -226,6 +232,133 @@ class PaperClassificationBackfillResult:
         }
 
 
+@dataclass(frozen=True)
+class PaperCitationMetadata:
+    doi: str
+    citation_count: int
+    openalex_id: str
+    display_name: str | None = None
+
+    def to_cache_payload(self, *, fetched_at: str) -> Mapping[str, Any]:
+        return sanitize_public_payload(
+            {
+                "citationCount": self.citation_count,
+                "citationDoi": self.doi,
+                "openAlexId": self.openalex_id,
+                "citationFetchedAt": fetched_at,
+                "citationSource": "openalex",
+                "citation": {
+                    "provider": "openalex",
+                    "openAlexId": self.openalex_id,
+                    "doi": self.doi,
+                    "count": self.citation_count,
+                    "displayName": self.display_name,
+                    "fetchedAt": fetched_at,
+                },
+            }
+        )
+
+
+@dataclass(frozen=True)
+class PaperCitationBackfillResult:
+    run_id: str
+    started_at: str
+    finished_at: str
+    batch_size: int
+    scanned_count: int
+    updated_count: int
+    skipped_count: int
+    repair_queued_count: int
+    blocked_count: int
+    updated_paper_ids: tuple[str, ...]
+    errors: tuple[Mapping[str, Any], ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "runId": self.run_id,
+            "startedAt": self.started_at,
+            "finishedAt": self.finished_at,
+            "batchSize": self.batch_size,
+            "scannedCount": self.scanned_count,
+            "updatedCount": self.updated_count,
+            "skippedCount": self.skipped_count,
+            "repairQueuedCount": self.repair_queued_count,
+            "blockedCount": self.blocked_count,
+            "updatedPaperIds": list(self.updated_paper_ids),
+            "errors": [dict(item) for item in self.errors],
+        }
+
+
+class PaperOpenAlexCitationClient:
+    def __init__(
+        self,
+        *,
+        api_key: str | None = None,
+        mailto: str | None = None,
+        opener: Callable[[Request, int], Mapping[str, Any]] | None = None,
+    ) -> None:
+        self.api_key = (
+            api_key
+            if api_key is not None
+            else os.environ.get(PAPERS_OPENALEX_API_KEY_ENV) or os.environ.get(PAPERS_OPENALEX_API_KEY_FALLBACK_ENV)
+        )
+        self.mailto = mailto if mailto is not None else os.environ.get(PAPERS_OPENALEX_MAILTO_ENV)
+        self.opener = opener or _openalex_fetch_json
+
+    def fetch_by_dois(self, dois: Sequence[str]) -> Mapping[str, PaperCitationMetadata]:
+        normalized_dois = _dedupe_strings([_normalize_doi(doi) for doi in dois])
+        if not normalized_dois:
+            return {}
+
+        params: dict[str, str] = {
+            "filter": f"doi:{'|'.join(normalized_dois)}",
+            "per-page": str(min(len(normalized_dois), 200)),
+            "select": "id,doi,display_name,cited_by_count",
+        }
+        if self.api_key:
+            params["api_key"] = self.api_key
+        if self.mailto:
+            params["mailto"] = self.mailto
+        url = f"{OPENALEX_WORKS_API}?{urlencode(params)}"
+        request = Request(
+            url,
+            headers={
+                "Accept": "application/json",
+                "User-Agent": "NewsRoomResearch/0.1 paper-citations",
+            },
+        )
+        try:
+            payload = self.opener(request, 45)
+        except PaperIngestError:
+            raise
+        except HTTPError as exc:
+            message = _http_error_message(exc)
+            if _is_hard_block_error(str(exc.code), message):
+                raise PaperIngestHardBlock(message, code="openalex_hard_blocked", step="citation_fetch", retryable=False) from exc
+            raise PaperIngestError(message, code="openalex_fetch_failed", step="citation_fetch") from exc
+        except (URLError, OSError, ValueError, TimeoutError) as exc:
+            raise PaperIngestError(str(exc), code="openalex_fetch_failed", step="citation_fetch") from exc
+
+        results: dict[str, PaperCitationMetadata] = {}
+        for item in _sequence(payload.get("results")):
+            if not isinstance(item, Mapping):
+                continue
+            doi = _normalize_doi(item.get("doi"))
+            if not doi:
+                continue
+            citation_count = _int(item.get("cited_by_count"))
+            openalex_id = _optional_text(item.get("id"))
+            if citation_count is None or citation_count < 0 or not openalex_id:
+                continue
+            results[doi] = PaperCitationMetadata(
+                doi=doi,
+                citation_count=citation_count,
+                openalex_id=openalex_id,
+                display_name=_optional_text(item.get("display_name")),
+            )
+        return results
+
+
 class PaperPdfProcessor:
     def extract(
         self,
@@ -299,6 +432,7 @@ class PaperIngestApplicationService:
         text_extraction_repository: TextExtractionRepository | None = None,
         pdf_processor: PaperPdfProcessor | None = None,
         pdf_fetcher: Callable[[str, int], bytes] | None = None,
+        citation_client: PaperOpenAlexCitationClient | None = None,
         llm_client_factory: Callable[[str], Any] | None = None,
         config: PaperIngestConfig | None = None,
         clock: Callable[[], datetime] | None = None,
@@ -325,6 +459,7 @@ class PaperIngestApplicationService:
         self.text_extraction_repository = text_extraction_repository or TextExtractionRepository()
         self.pdf_processor = pdf_processor or PaperPdfProcessor()
         self.pdf_fetcher = pdf_fetcher or _fetch_pdf_bytes
+        self.citation_client = citation_client or PaperOpenAlexCitationClient()
         self.llm_client_factory = llm_client_factory or _default_llm_client_factory
         self.clock = clock or (lambda: datetime.now(UTC))
 
@@ -479,6 +614,10 @@ class PaperIngestApplicationService:
             if outcome["status"] == "published":
                 run_state["publishedCount"] += 1
                 published_ids.append(str(outcome["paperId"]))
+                if outcome.get("citationFailureQueue") == "manual_blocked":
+                    run_state["blockedCount"] += 1
+                elif outcome.get("citationFailureQueue") == "agent_repair":
+                    run_state["repairQueuedCount"] += 1
             elif outcome["status"] == "skipped_no_github":
                 run_state["skippedNoGithubCount"] += 1
             elif outcome["status"] == "skipped_low_stars":
@@ -710,6 +849,166 @@ class PaperIngestApplicationService:
             errors=tuple(errors),
         )
 
+    def backfill_published_citations(
+        self,
+        *,
+        limit: int | None = None,
+        batch_size: int = DEFAULT_OPENALEX_BATCH_SIZE,
+        run_id: str | None = None,
+    ) -> PaperCitationBackfillResult:
+        started = self.clock()
+        normalized_run_id = run_id or f"paper-citation-backfill-{started.strftime('%Y%m%d%H%M%S')}"
+        max_items = _positive_int(limit)
+        flush_batch_size = min(_positive_int(batch_size) or DEFAULT_OPENALEX_BATCH_SIZE, 200)
+        cache = self._read_paper_cache()
+        papers = [dict(item) for item in _sequence(cache.get("papers")) if isinstance(item, Mapping)]
+        next_papers: list[Mapping[str, Any]] = [dict(item) for item in papers]
+        scanned_count = 0
+        updated_count = 0
+        skipped_count = 0
+        repair_queued_count = 0
+        blocked_count = 0
+        updated_ids: list[str] = []
+        errors: list[Mapping[str, Any]] = []
+        dirty_since_flush = 0
+
+        def flush_cache() -> None:
+            cache.update(
+                {
+                    "source": _optional_text(cache.get("source")) or "papers_ingest_github_arxiv_daily",
+                    "collectedAt": _iso(self.clock()),
+                    "papers": next_papers,
+                }
+            )
+            self._write_paper_cache(cache)
+
+        def process_batch(batch: Sequence[tuple[int, Mapping[str, Any], str, RawSourceItem]]) -> bool:
+            nonlocal updated_count, repair_queued_count, blocked_count, dirty_since_flush
+            if not batch:
+                return True
+            try:
+                citation_by_doi = self.citation_client.fetch_by_dois([doi for _, _, doi, _ in batch])
+            except PaperIngestHardBlock as exc:
+                blocked_count += 1
+                errors.append(
+                    self._handle_run_failure(
+                        run_id=normalized_run_id,
+                        step=exc.step,
+                        error_code=exc.code,
+                        error_message=str(exc),
+                        hard_block=True,
+                        context={"mode": "citation_backfill", "doiCount": len(batch)},
+                    )
+                )
+                if dirty_since_flush:
+                    flush_cache()
+                    dirty_since_flush = 0
+                return False
+            except PaperIngestError as exc:
+                repair_queued_count += 1
+                errors.append(
+                    self._handle_run_failure(
+                        run_id=normalized_run_id,
+                        step=exc.step,
+                        error_code=exc.code,
+                        error_message=str(exc),
+                        hard_block=False,
+                        context={"mode": "citation_backfill", "doiCount": len(batch)},
+                    )
+                )
+                if dirty_since_flush:
+                    flush_cache()
+                    dirty_since_flush = 0
+                return False
+
+            fetched_at = _iso(self.clock())
+            for index, paper, doi, candidate in batch:
+                citation = citation_by_doi.get(doi)
+                if citation is None:
+                    repair_queued_count += 1
+                    errors.append(
+                        self._handle_failure(
+                            run_id=normalized_run_id,
+                            candidate=candidate,
+                            step="citation_fetch",
+                            error_code="openalex_citation_not_found",
+                            error_message=f"OpenAlex did not return a work for DOI {doi}",
+                            hard_block=False,
+                            context={"mode": "citation_backfill", "doi": doi},
+                        )
+                    )
+                    continue
+                if not _openalex_title_matches_paper(paper, citation):
+                    repair_queued_count += 1
+                    errors.append(
+                        self._handle_failure(
+                            run_id=normalized_run_id,
+                            candidate=candidate,
+                            step="citation_fetch",
+                            error_code="openalex_title_mismatch",
+                            error_message="OpenAlex DOI result title did not match the cached paper title",
+                            hard_block=False,
+                            context={
+                                "mode": "citation_backfill",
+                                "doi": doi,
+                                "openAlexId": citation.openalex_id,
+                                "openAlexTitle": citation.display_name,
+                            },
+                        )
+                    )
+                    continue
+                updated = _deep_merge(paper, citation.to_cache_payload(fetched_at=fetched_at))
+                next_papers[index] = updated
+                updated_count += 1
+                updated_ids.append(_optional_text(updated.get("id")) or _candidate_paper_id(candidate))
+                dirty_since_flush += 1
+                if dirty_since_flush >= flush_batch_size:
+                    flush_cache()
+                    dirty_since_flush = 0
+            return True
+
+        batch: list[tuple[int, Mapping[str, Any], str, RawSourceItem]] = []
+        for index, paper in enumerate(next_papers):
+            if paper.get("isPublished") is False or not _paper_needs_citation_backfill(paper):
+                skipped_count += 1
+                continue
+            if max_items is not None and scanned_count >= max_items:
+                continue
+            doi = _citation_doi_for_record(paper)
+            if not doi:
+                skipped_count += 1
+                continue
+            candidate = _candidate_from_cached_paper(paper, fetched_at=self.clock())
+            if candidate is None:
+                skipped_count += 1
+                continue
+            scanned_count += 1
+            batch.append((index, paper, doi, candidate))
+            if len(batch) >= flush_batch_size:
+                if not process_batch(batch):
+                    batch = []
+                    break
+                batch = []
+
+        if batch:
+            process_batch(batch)
+        if dirty_since_flush:
+            flush_cache()
+        finished = self.clock()
+        return PaperCitationBackfillResult(
+            run_id=normalized_run_id,
+            started_at=_iso(started),
+            finished_at=_iso(finished),
+            batch_size=flush_batch_size,
+            scanned_count=scanned_count,
+            updated_count=updated_count,
+            skipped_count=skipped_count,
+            repair_queued_count=repair_queued_count,
+            blocked_count=blocked_count,
+            updated_paper_ids=tuple(updated_ids),
+            errors=tuple(errors),
+        )
+
     def get_ops_state(self, *, limit: int = 20) -> Mapping[str, Any]:
         self.state.reclassify_soft_blocked_items(now=self.clock)
         return sanitize_public_payload(
@@ -865,6 +1164,31 @@ class PaperIngestApplicationService:
             full_text_hash=full_text_hash,
         )
 
+        citation: PaperCitationMetadata | None = None
+        citation_failure: Mapping[str, Any] | None = None
+        try:
+            citation = self._fetch_citation_metadata(candidate)
+        except PaperIngestHardBlock as exc:
+            citation_failure = self._handle_failure(
+                run_id=run_id,
+                candidate=candidate,
+                step=exc.step,
+                error_code=exc.code,
+                error_message=str(exc),
+                hard_block=True,
+                context={"mode": "ingest", "nonBlocking": True},
+            )
+        except PaperIngestError as exc:
+            citation_failure = self._handle_failure(
+                run_id=run_id,
+                candidate=candidate,
+                step=exc.step,
+                error_code=exc.code,
+                error_message=str(exc),
+                hard_block=False,
+                context={"mode": "ingest", "nonBlocking": True},
+            )
+
         thumbnail_url = _thumbnail_url(extraction.thumbnail_path)
         paper_payload = _paper_payload_from_ingest(
             candidate,
@@ -873,13 +1197,18 @@ class PaperIngestApplicationService:
             repo_url=repo_url,
             github=metadata,
             thumbnail_url=thumbnail_url,
+            citation=citation,
             taxonomy=taxonomy,
             classification=classification,
             run_id=run_id,
             collected_at=cached_at,
         )
         self._publish_paper(paper_payload, collected_at=cached_at)
-        return {"status": "published", "paperId": paper_id}
+        return {
+            "status": "published",
+            "paperId": paper_id,
+            "citationFailureQueue": citation_failure.get("queue") if citation_failure else None,
+        }
 
     def _extract_pdf(
         self,
@@ -932,6 +1261,26 @@ class PaperIngestApplicationService:
         if metadata.archived or metadata.disabled:
             raise PaperIngestError("GitHub repository is archived or disabled", code="github_repo_inactive", step="github_verify")
         return metadata
+
+    def _fetch_citation_metadata(self, candidate: RawSourceItem) -> PaperCitationMetadata | None:
+        doi = _citation_doi_for_candidate(candidate)
+        if not doi:
+            return None
+        citation_by_doi = self.citation_client.fetch_by_dois([doi])
+        citation = citation_by_doi.get(doi)
+        if citation is None:
+            raise PaperIngestError(
+                f"OpenAlex did not return a work for DOI {doi}",
+                code="openalex_citation_not_found",
+                step="citation_fetch",
+            )
+        if not _openalex_title_matches_candidate(candidate, citation):
+            raise PaperIngestError(
+                "OpenAlex DOI result title did not match the candidate paper title",
+                code="openalex_title_mismatch",
+                step="citation_fetch",
+            )
+        return citation
 
     def _classify_paper(
         self,
@@ -1680,12 +2029,14 @@ def _paper_payload_from_ingest(
     repo_url: str,
     github: GithubRepositoryMetadata,
     thumbnail_url: str | None,
+    citation: PaperCitationMetadata | None,
     taxonomy: Mapping[str, Any],
     classification: Mapping[str, Any],
     run_id: str,
     collected_at: str,
 ) -> Mapping[str, Any]:
     arxiv_id = _candidate_arxiv_id(candidate)
+    citation_doi = citation.doi if citation else _citation_doi_for_candidate(candidate)
     published_at = _dt(candidate.published_at) or collected_at
     payload = {
         "id": paper_id,
@@ -1695,6 +2046,11 @@ def _paper_payload_from_ingest(
         "authors": list(candidate.authors),
         "publishedAt": published_at,
         "venue": "arXiv",
+        "citationCount": citation.citation_count if citation else 0,
+        "citationDoi": citation_doi,
+        "openAlexId": citation.openalex_id if citation else None,
+        "citationFetchedAt": collected_at if citation else None,
+        "citationSource": "openalex" if citation else None,
         "tags": list(candidate.tags),
         "taskRefs": taxonomy.get("taskRefs") or [],
         "methodRefs": taxonomy.get("methodRefs") or [],
@@ -1717,6 +2073,7 @@ def _paper_payload_from_ingest(
             }
         ],
         "classification": _classification_record(taxonomy=taxonomy, classification=classification),
+        "citation": citation.to_cache_payload(fetched_at=collected_at).get("citation") if citation else None,
         "ingest": {
             "runId": run_id,
             "source": "papers.ingest_github_arxiv_daily",
@@ -1862,6 +2219,34 @@ def _write_json(path: Path, payload: Mapping[str, Any]) -> None:
     temp_path.replace(path)
 
 
+def _openalex_fetch_json(request: Request, timeout_seconds: int) -> Mapping[str, Any]:
+    with urlopen(request, timeout=timeout_seconds) as response:  # nosec B310 - fixed OpenAlex API URL.
+        payload = json.loads(response.read().decode("utf-8"))
+    if not isinstance(payload, Mapping):
+        raise ValueError("OpenAlex response root must be an object")
+    return payload
+
+
+def _http_error_message(exc: HTTPError) -> str:
+    try:
+        body = exc.read().decode("utf-8", errors="replace")
+    except Exception:
+        body = ""
+    return f"HTTP {exc.code}: {body or exc.reason}"
+
+
+def _dedupe_strings(values: Sequence[str | None]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        text = _optional_text(value)
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        result.append(text)
+    return result
+
+
 def _dedupe_candidates(candidates: Sequence[RawSourceItem]) -> list[RawSourceItem]:
     seen: set[str] = set()
     result: list[RawSourceItem] = []
@@ -1930,6 +2315,74 @@ def _paper_needs_taxonomy_backfill(record: Mapping[str, Any]) -> bool:
             ) is None:
                 return True
     return False
+
+
+def _paper_needs_citation_backfill(record: Mapping[str, Any]) -> bool:
+    if not _citation_doi_for_record(record):
+        return False
+    if _optional_text(record.get("openAlexId")):
+        return False
+    citation = record.get("citation")
+    if isinstance(citation, Mapping) and _optional_text(citation.get("openAlexId")):
+        return False
+    return True
+
+
+def _citation_doi_for_record(record: Mapping[str, Any]) -> str | None:
+    doi = _normalize_doi(record.get("citationDoi") or record.get("doi"))
+    if doi:
+        return doi
+    arxiv_id = _cached_arxiv_id(record)
+    return _arxiv_doi(arxiv_id)
+
+
+def _citation_doi_for_candidate(candidate: RawSourceItem) -> str | None:
+    doi = _normalize_doi(candidate.metadata.get("citationDoi") or candidate.metadata.get("citation_doi") or candidate.metadata.get("doi"))
+    if doi:
+        return doi
+    return _arxiv_doi(_candidate_arxiv_id(candidate))
+
+
+def _arxiv_doi(arxiv_id: str | None) -> str | None:
+    if not arxiv_id:
+        return None
+    clean_id = arxiv_id.removeprefix("arxiv-").removesuffix(".pdf")
+    clean_id = re.sub(r"v\d+$", "", clean_id, flags=re.IGNORECASE)
+    return _normalize_doi(f"10.48550/arxiv.{clean_id}")
+
+
+def _normalize_doi(value: Any) -> str | None:
+    text = _optional_text(value)
+    if not text:
+        return None
+    normalized = text.casefold()
+    normalized = re.sub(r"^https?://(?:dx\.)?doi\.org/", "", normalized).strip()
+    normalized = normalized.rstrip(".,;:)]}>'\"")
+    return normalized or None
+
+
+def _openalex_title_matches_candidate(candidate: RawSourceItem, citation: PaperCitationMetadata) -> bool:
+    return _titles_match(candidate.title, citation.display_name)
+
+
+def _openalex_title_matches_paper(record: Mapping[str, Any], citation: PaperCitationMetadata) -> bool:
+    return _titles_match(_optional_text(record.get("title")) or "", citation.display_name)
+
+
+def _titles_match(left: str, right: str | None) -> bool:
+    normalized_left = _normalize_title(left)
+    normalized_right = _normalize_title(right or "")
+    if not normalized_left or not normalized_right:
+        return True
+    return (
+        normalized_left == normalized_right
+        or normalized_left in normalized_right
+        or normalized_right in normalized_left
+    )
+
+
+def _normalize_title(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", html.unescape(value).casefold()).strip()
 
 
 def _cached_paper_sections(
@@ -2208,6 +2661,8 @@ def _repair_action_for(error_code: str, step: str) -> str:
         return "normalize_github_url_and_retry_metadata_fetch"
     if "pdf" in normalized:
         return "normalize_pdf_url_refetch_and_extract"
+    if "citation" in normalized or "openalex" in normalized:
+        return "normalize_doi_refetch_openalex_and_verify_title"
     if "json" in normalized or "classif" in normalized:
         return "inject_prompt_memory_and_reclassify"
     return "retry_with_backoff_and_prompt_memory"
@@ -2309,6 +2764,21 @@ def _float(value: Any, default: float = 0.0) -> float:
         except ValueError:
             return default
     return default
+
+
+def _int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value.strip())
+        except ValueError:
+            return None
+    return None
 
 
 def _positive_int(value: Any) -> int | None:
