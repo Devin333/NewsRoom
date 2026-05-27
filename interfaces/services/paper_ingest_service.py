@@ -1026,13 +1026,14 @@ class PaperIngestApplicationService:
         secondary_task_groups, invalid_secondary_groups = _normalize_secondary_task_groups(
             payload.get("secondaryTaskGroups") or payload.get("secondary_task_groups")
         )
+        classification_confidence = _float(payload.get("confidence"), default=0.0)
         for invalid_group in invalid_secondary_groups:
             low_confidence.append(
                 {
                     "kind": "task",
                     "slug": _slugify(invalid_group),
                     "name": invalid_group,
-                    "confidence": _float(payload.get("confidence"), default=0.0),
+                    "confidence": classification_confidence,
                     "reason": "invalid_secondary_task_group",
                     "allowedValues": list(AI_TASK_GROUPS),
                     "action": "agent_repair_retry",
@@ -1048,6 +1049,7 @@ class PaperIngestApplicationService:
             low_confidence=low_confidence,
             default_task_group=primary_task_group,
             method_collections=method_collection_names,
+            default_confidence=classification_confidence,
         )
         method_refs = self._normalize_refs(
             method_value,
@@ -1059,6 +1061,7 @@ class PaperIngestApplicationService:
             low_confidence=low_confidence,
             default_task_group=primary_task_group,
             method_collections=method_collection_names,
+            default_confidence=classification_confidence,
         )
         benchmarks = self._normalize_benchmarks(
             payload.get("benchmarks"),
@@ -1066,6 +1069,7 @@ class PaperIngestApplicationService:
             run_id=run_id,
             paper_id=paper_id,
             low_confidence=low_confidence,
+            default_confidence=classification_confidence,
         )
         return sanitize_public_payload(
             {
@@ -1083,15 +1087,16 @@ class PaperIngestApplicationService:
     def _normalize_refs(
         self,
         value: Any,
-        *,
-        kind: str,
-        existing: Mapping[str, Mapping[str, Any]],
-        confidence_threshold: float,
-        run_id: str,
-        paper_id: str,
-        low_confidence: list[Mapping[str, Any]],
-        default_task_group: str | None,
-        method_collections: Sequence[str],
+            *,
+            kind: str,
+            existing: Mapping[str, Mapping[str, Any]],
+            confidence_threshold: float,
+            run_id: str,
+            paper_id: str,
+            low_confidence: list[Mapping[str, Any]],
+            default_task_group: str | None,
+            method_collections: Sequence[str],
+            default_confidence: float,
     ) -> list[Mapping[str, Any]]:
         refs: list[Mapping[str, Any]] = []
         for item in _sequence(value):
@@ -1103,7 +1108,7 @@ class PaperIngestApplicationService:
             slug = _slugify(_optional_text(item.get("slug")) or name)
             if not name or not slug:
                 continue
-            confidence = _float(item.get("confidence"), default=1.0 if slug in existing else 0.0)
+            confidence = _float(item.get("confidence"), default=1.0 if slug in existing else default_confidence)
             evidence = _optional_text(item.get("evidence") or item.get("evidenceSummary"))
             ref_extra: dict[str, Any] = {}
             if kind == "task":
@@ -1125,7 +1130,7 @@ class PaperIngestApplicationService:
                 ref_extra["group"] = group
             if kind == "method":
                 area = normalize_method_collection(
-                    item.get("area") or item.get("collection") or item.get("methodCollection"),
+                    item.get("area") or item.get("collection") or item.get("methodCollection") or name,
                     collections=method_collections,
                 )
                 if area is None:
@@ -1187,10 +1192,11 @@ class PaperIngestApplicationService:
         self,
         value: Any,
         *,
-        confidence_threshold: float,
-        run_id: str,
-        paper_id: str,
-        low_confidence: list[Mapping[str, Any]],
+            confidence_threshold: float,
+            run_id: str,
+            paper_id: str,
+            low_confidence: list[Mapping[str, Any]],
+            default_confidence: float,
     ) -> list[Mapping[str, Any]]:
         benchmarks: list[Mapping[str, Any]] = []
         for item in _sequence(value):
@@ -1202,7 +1208,7 @@ class PaperIngestApplicationService:
             if not name:
                 continue
             slug = _slugify(_optional_text(item.get("slug")) or name)
-            confidence = _float(item.get("confidence"), default=0.0)
+            confidence = _float(item.get("confidence"), default=default_confidence)
             evidence = _optional_text(item.get("evidence") or item.get("evidenceSummary"))
             category = normalize_benchmark_category(
                 item.get("category") or item.get("benchmarkCategory") or item.get("benchmark_category")

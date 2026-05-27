@@ -236,6 +236,67 @@ def test_paper_classification_backfill_extracts_pdf_when_text_cache_is_missing(t
     assert paper["methodRefs"][0]["area"] == "Prompt Engineering"
 
 
+def test_paper_classification_backfill_uses_global_confidence_for_refs_without_item_confidence(tmp_path) -> None:
+    cache_path = tmp_path / "papers.json"
+    cache_path.write_text(
+        json.dumps(
+            {
+                "source": "test-cache",
+                "papers": [
+                    {
+                        "id": "paper-global-confidence",
+                        "title": "Global Confidence Paper",
+                        "abstractSnippet": "A paper with classifier-level confidence.",
+                        "paperUrl": "https://arxiv.org/abs/2605.00016",
+                        "repoUrl": "https://github.com/example/global-confidence",
+                        "githubStars": 120,
+                        "taskRefs": [{"slug": "legacy-task", "name": "Legacy Task"}],
+                        "methodRefs": [{"slug": "legacy-method", "name": "Legacy Method"}],
+                        "benchmarks": [{"name": "MMLU", "metric": "accuracy", "value": "88"}],
+                        "isPublished": True,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    text_repo = TextExtractionRepository(tmp_path / "text")
+    text_repo.write_sections(
+        "paper-global-confidence",
+        "source-hash",
+        [{"title": "Body", "textExcerpt": "The paper reports MMLU accuracy.", "sectionType": "body"}],
+        cached_at="2026-05-27T08:00:00Z",
+    )
+    service = PaperIngestApplicationService(
+        source_service=_FakeSourceService([]),
+        github_connector=_FakeGithubConnector(stars=120),
+        papers_data_path=cache_path,
+        state_dir=tmp_path / "state",
+        text_extraction_repository=text_repo,
+        llm_client_factory=lambda route: _FakeLLMClient(
+            {
+                "primaryTaskGroup": "language-models",
+                "taskRefs": [{"slug": "language-understanding", "name": "Language Understanding", "group": "language-models"}],
+                "methodRefs": [{"slug": "fine-tuning", "name": "Fine-Tuning"}],
+                "benchmarks": [{"name": "MMLU", "category": "language-understanding", "metric": "accuracy", "value": "88"}],
+                "confidence": 0.9,
+            }
+        ),
+        config=PaperIngestConfig(candidate_limit=100, min_github_stars=50, auto_taxonomy_confidence=0.85),
+        clock=_fixed_clock,
+    )
+
+    result = service.backfill_published_classification(run_id="backfill-global-confidence")
+
+    assert result.updated_count == 1
+    assert result.repair_queued_count == 0
+    paper = json.loads(cache_path.read_text(encoding="utf-8"))["papers"][0]
+    assert paper["taskRefs"][0]["confidence"] == 0.9
+    assert paper["methodRefs"][0]["area"] == "Fine-Tuning"
+    assert paper["methodRefs"][0]["confidence"] == 0.9
+    assert paper["benchmarks"][0]["confidence"] == 0.9
+
+
 def test_paper_classification_backfill_falls_back_to_summary_and_queues_repair_when_pdf_fails(tmp_path) -> None:
     cache_path = tmp_path / "papers.json"
     cache_path.write_text(
