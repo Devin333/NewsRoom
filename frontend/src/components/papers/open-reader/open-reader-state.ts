@@ -1,0 +1,239 @@
+"use client"
+
+import { useCallback, useEffect, useMemo, useReducer } from "react"
+import type { ReaderEvent, ReaderSelection, ReaderSettings, ReaderTheme, ReaderParagraph } from "./open-reader-types"
+import { clamp, createId, createReaderEvent, DEFAULT_READER_SETTINGS, getSurroundingText, nowIso, safeJsonParse, shouldKeepSelection, storageKey } from "./open-reader-utils"
+
+interface SelectionState {
+  selections: ReaderSelection[]
+  events: ReaderEvent[]
+}
+
+type SelectionAction =
+  | { type: "load"; state: SelectionState }
+  | { type: "create_temp"; selection: ReaderSelection }
+  | { type: "discard"; selectionId: string }
+  | { type: "discard_all_temp" }
+  | { type: "update_note"; selectionId: string; noteText: string }
+  | { type: "confirm_explain"; selectionId: string; question: string }
+  | { type: "confirm_example"; selectionId: string; question: string }
+  | { type: "toggle_confused"; selectionId: string }
+
+const EMPTY_STATE: SelectionState = { selections: [], events: [] }
+
+export function useOpenReaderSettings(paperId: string) {
+  const key = useMemo(() => storageKey(paperId, "settings"), [paperId])
+  const [settings, setSettings] = useReducer((current: ReaderSettings, patch: Partial<ReaderSettings>) => {
+    const next: ReaderSettings = { ...current, ...patch }
+    next.fontSize = clamp(next.fontSize, 12, 38)
+    next.contentWidth = clamp(next.contentWidth, 420, 1320)
+    next.drawerWidth = clamp(next.drawerWidth, 360, 920)
+    next.theme = normalizeTheme(next.theme)
+    return next
+  }, DEFAULT_READER_SETTINGS)
+
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    setSettings(safeJsonParse<ReaderSettings>(window.localStorage.getItem(key), DEFAULT_READER_SETTINGS))
+  }, [key])
+
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    window.localStorage.setItem(key, JSON.stringify(settings))
+  }, [key, settings])
+
+  return { settings, patchSettings: setSettings }
+}
+
+function normalizeTheme(value: string): ReaderTheme {
+  if (value === "light" || value === "warm" || value === "dark") return value
+  return "warm"
+}
+
+export function useOpenReaderSelections(paperId: string) {
+  const selectionsKey = useMemo(() => storageKey(paperId, "selections"), [paperId])
+  const eventsKey = useMemo(() => storageKey(paperId, "events"), [paperId])
+  const [state, dispatch] = useReducer(selectionReducer, EMPTY_STATE)
+
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    dispatch({
+      type: "load",
+      state: {
+        selections: safeJsonParse<ReaderSelection[]>(window.localStorage.getItem(selectionsKey), []),
+        events: safeJsonParse<ReaderEvent[]>(window.localStorage.getItem(eventsKey), []),
+      },
+    })
+  }, [eventsKey, selectionsKey])
+
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    window.localStorage.setItem(selectionsKey, JSON.stringify(state.selections))
+    window.localStorage.setItem(eventsKey, JSON.stringify(state.events))
+  }, [eventsKey, selectionsKey, state])
+
+  const createTempSelection = useCallback((input: {
+    paragraph: ReaderParagraph
+    selectedText: string
+    startOffset: number
+    endOffset: number
+  }) => {
+    const now = nowIso()
+    const selection: ReaderSelection = {
+      id: createId("selection"),
+      paperId,
+      sectionId: input.paragraph.sectionId,
+      sectionTitle: input.paragraph.sectionTitle,
+      paragraphId: input.paragraph.id,
+      selectedText: input.selectedText,
+      surroundingText: getSurroundingText(input.paragraph.text, input.startOffset, input.endOffset),
+      startOffset: input.startOffset,
+      endOffset: input.endOffset,
+      noteText: "",
+      explainQuestion: "",
+      exampleQuestion: "",
+      explained: false,
+      exampled: false,
+      confused: false,
+      createdAt: now,
+      updatedAt: now,
+    }
+    dispatch({ type: "create_temp", selection })
+    return selection.id
+  }, [paperId])
+
+  const discardSelection = useCallback((selectionId: string) => dispatch({ type: "discard", selectionId }), [])
+  const discardAllTemp = useCallback(() => dispatch({ type: "discard_all_temp" }), [])
+  const updateNote = useCallback((selectionId: string, noteText: string) => dispatch({ type: "update_note", selectionId, noteText }), [])
+  const confirmExplain = useCallback((selectionId: string, question: string) => dispatch({ type: "confirm_explain", selectionId, question }), [])
+  const confirmExample = useCallback((selectionId: string, question: string) => dispatch({ type: "confirm_example", selectionId, question }), [])
+  const toggleConfused = useCallback((selectionId: string) => dispatch({ type: "toggle_confused", selectionId }), [])
+
+  return {
+    selections: state.selections,
+    events: state.events,
+    createTempSelection,
+    discardSelection,
+    discardAllTemp,
+    updateNote,
+    confirmExplain,
+    confirmExample,
+    toggleConfused,
+  }
+}
+
+function selectionReducer(state: SelectionState, action: SelectionAction): SelectionState {
+  switch (action.type) {
+    case "load":
+      return action.state
+
+    case "create_temp":
+      return {
+        selections: [...state.selections.filter(shouldKeepSelection), action.selection],
+        events: [...state.events, createReaderEvent("selection_created", action.selection.paperId, {
+          selectionId: action.selection.id,
+          paragraphId: action.selection.paragraphId,
+          sectionId: action.selection.sectionId,
+          selectedText: action.selection.selectedText,
+          surroundingText: action.selection.surroundingText,
+        })],
+      }
+
+    case "discard": {
+      const target = state.selections.find((item) => item.id === action.selectionId)
+      return {
+        selections: state.selections.filter((item) => item.id !== action.selectionId),
+        events: target ? [...state.events, createReaderEvent("selection_discarded", target.paperId, {
+          selectionId: target.id,
+          paragraphId: target.paragraphId,
+          sectionId: target.sectionId,
+          selectedText: target.selectedText,
+        })] : state.events,
+      }
+    }
+
+    case "discard_all_temp": {
+      const removed = state.selections.filter((item) => !shouldKeepSelection(item))
+      return {
+        selections: state.selections.filter(shouldKeepSelection),
+        events: [...state.events, ...removed.map((item) => createReaderEvent("selection_discarded", item.paperId, {
+          selectionId: item.id,
+          paragraphId: item.paragraphId,
+          sectionId: item.sectionId,
+          selectedText: item.selectedText,
+        }))],
+      }
+    }
+
+    case "update_note": {
+      const target = state.selections.find((item) => item.id === action.selectionId)
+      if (!target || target.noteText === action.noteText) return state
+      const updated = { ...target, noteText: action.noteText, updatedAt: nowIso() }
+      const nextSelections = shouldKeepSelection(updated)
+        ? state.selections.map((item) => item.id === updated.id ? updated : item)
+        : state.selections.filter((item) => item.id !== updated.id)
+      return {
+        selections: nextSelections,
+        events: [...state.events, createReaderEvent("note_updated", updated.paperId, {
+          selectionId: updated.id,
+          paragraphId: updated.paragraphId,
+          sectionId: updated.sectionId,
+          selectedText: updated.selectedText,
+          surroundingText: updated.surroundingText,
+          payload: { noteText: action.noteText },
+        })],
+      }
+    }
+
+    case "confirm_explain":
+      return updateSelection(state, action.selectionId, (selection) => ({ ...selection, explained: true, explainQuestion: action.question, updatedAt: nowIso() }), "explanation_generated", { question: action.question })
+
+    case "confirm_example":
+      return updateSelection(state, action.selectionId, (selection) => ({ ...selection, exampled: true, exampleQuestion: action.question, updatedAt: nowIso() }), "example_generated", { question: action.question })
+
+    case "toggle_confused": {
+      const target = state.selections.find((item) => item.id === action.selectionId)
+      if (!target) return state
+      const updated = { ...target, confused: !target.confused, updatedAt: nowIso() }
+      const nextSelections = updated.confused || shouldKeepSelection(updated)
+        ? state.selections.map((item) => item.id === updated.id ? updated : item)
+        : state.selections.filter((item) => item.id !== updated.id)
+      return {
+        selections: nextSelections,
+        events: [...state.events, createReaderEvent(updated.confused ? "confusion_marked" : "confusion_unmarked", updated.paperId, {
+          selectionId: updated.id,
+          paragraphId: updated.paragraphId,
+          sectionId: updated.sectionId,
+          selectedText: updated.selectedText,
+          surroundingText: updated.surroundingText,
+        })],
+      }
+    }
+
+    default:
+      return state
+  }
+}
+
+function updateSelection(
+  state: SelectionState,
+  selectionId: string,
+  update: (selection: ReaderSelection) => ReaderSelection,
+  eventType: "note_updated" | "explanation_generated" | "example_generated",
+  payload: Record<string, unknown>,
+): SelectionState {
+  const target = state.selections.find((item) => item.id === selectionId)
+  if (!target) return state
+  const updated = update(target)
+  return {
+    selections: state.selections.map((item) => item.id === selectionId ? updated : item),
+    events: [...state.events, createReaderEvent(eventType, updated.paperId, {
+      selectionId: updated.id,
+      paragraphId: updated.paragraphId,
+      sectionId: updated.sectionId,
+      selectedText: updated.selectedText,
+      surroundingText: updated.surroundingText,
+      payload,
+    })],
+  }
+}

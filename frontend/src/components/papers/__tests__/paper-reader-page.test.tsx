@@ -1,70 +1,9 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
+import { beforeEach, describe, expect, it } from "vitest"
 import { PaperReaderPage } from "@/components/papers/shared/paper-reader-page"
-import {
-  askPaper,
-  createPaperReaderNote,
-  deletePaperReaderNote,
-  fetchPaperReaderNotes,
-  fetchPaperUserState,
-  patchPaperReaderNote,
-  patchPaperUserState
-} from "@/lib/papers/api"
-import type { PaperReaderNote, PaperReaderNoteCreate, PaperReaderPayload } from "@/lib/papers/types"
-import { useUiStore } from "@/stores/ui-store"
-
-vi.mock("@/lib/papers/api", () => ({
-  askPaper: vi.fn(),
-  createPaperReaderNote: vi.fn(),
-  deletePaperReaderNote: vi.fn(),
-  fetchPaperReaderNotes: vi.fn(),
-  fetchPaperUserState: vi.fn(),
-  patchPaperReaderNote: vi.fn(),
-  patchPaperUserState: vi.fn()
-}))
-
-vi.mock("@/components/papers/shared/paper-pdf-viewer", () => ({
-  PaperPdfViewer: ({
-    initialPage,
-    notes,
-    onCreateReaderNote,
-    pdfUrl,
-    title,
-    onPageChange,
-  }: {
-    initialPage?: number
-    notes?: PaperReaderNote[]
-    onCreateReaderNote?: (note: PaperReaderNoteCreate) => void
-    pdfUrl: string
-    title: string
-    onPageChange?: (pageNumber: number, numPages: number) => void
-  }) => (
-    <div data-testid="paper-pdf-viewer" data-initial-page={initialPage ?? ""} data-note-count={notes?.length ?? 0} data-pdf-url={pdfUrl}>
-      {title} PDF viewer
-      <button type="button" onClick={() => onPageChange?.(2, 4)}>
-        mock page 2
-      </button>
-      <button
-        type="button"
-        onClick={() =>
-          onCreateReaderNote?.({
-            kind: "highlight",
-            pageNumber: 2,
-            color: "yellow",
-            quote: "Selected text",
-            anchor: {
-              pageNumber: 2,
-              quote: "Selected text",
-              rects: [{ left: 10, top: 12, width: 24, height: 3 }]
-            }
-          })
-        }
-      >
-        mock highlight
-      </button>
-    </div>
-  )
-}))
+import type { PaperReaderPayload } from "@/lib/papers/types"
 
 const reader: PaperReaderPayload = {
   paper: {
@@ -72,14 +11,14 @@ const reader: PaperReaderPayload = {
     slug: "reader-paper",
     title: "Reader Paper",
     abstractSnippet: "The paper introduces grounded reader agents.",
-    authors: ["A"],
+    authors: ["A. Chen", "M. Torres"],
     publishedAt: "2026-05-24T00:00:00Z",
     venue: "arXiv",
     tags: [],
     taskRefs: [],
     methodRefs: [],
     paperUrl: "https://arxiv.org/abs/2605.00001",
-    isPublished: true
+    isPublished: true,
   },
   sections: [
     {
@@ -87,25 +26,19 @@ const reader: PaperReaderPayload = {
       paperId: "reader-paper",
       title: "Abstract",
       level: 1,
-      textExcerpt: "The paper introduces grounded reader agents.",
-      sectionType: "abstract"
+      textExcerpt:
+        "The paper introduces grounded reader agents that inspect claims before answering. The verifier checks claims against evidence.",
+      sectionType: "abstract",
     },
     {
       id: "reader-paper:method",
       paperId: "reader-paper",
-      title: "Method and Task Signals",
+      title: "Method",
       level: 1,
-      textExcerpt: "Methods: Retrieval Augmented Generation.",
-      sectionType: "method"
+      textExcerpt:
+        "The method decomposes long-horizon reading into planning, retrieval, verification, and reader-card generation.",
+      sectionType: "method",
     },
-    {
-      id: "reader-paper:benchmark",
-      paperId: "reader-paper",
-      title: "Benchmark Results",
-      level: 1,
-      textExcerpt: "MMLU / accuracy / 91.2",
-      sectionType: "benchmark"
-    }
   ],
   aiSummary: null,
   readerNotes: [],
@@ -115,453 +48,268 @@ const reader: PaperReaderPayload = {
   quality: {
     paperId: "reader-paper",
     pdfAvailable: false,
-    textExtracted: false,
+    textExtracted: true,
     summaryAvailable: false,
     implementationVerified: false,
     benchmarkVerified: false,
     evidenceCoverage: 0,
-    lastUpdatedAt: "2026-05-24T00:00:00Z"
-  }
+    lastUpdatedAt: "2026-05-24T00:00:00Z",
+  },
 }
 
-describe("PaperReaderPage", () => {
+describe("PaperReaderPage Open Reader", () => {
   beforeEach(() => {
-    useUiStore.setState({ locale: "en" })
-    vi.mocked(askPaper).mockReset()
-    vi.mocked(createPaperReaderNote).mockReset()
-    vi.mocked(deletePaperReaderNote).mockReset()
-    vi.mocked(fetchPaperReaderNotes).mockReset()
-    vi.mocked(fetchPaperUserState).mockReset()
-    vi.mocked(patchPaperReaderNote).mockReset()
-    vi.mocked(patchPaperUserState).mockReset()
-    vi.mocked(fetchPaperReaderNotes).mockResolvedValue([])
-    vi.mocked(createPaperReaderNote).mockImplementation(async (_paperId, note) => ({
-      noteId: `created-${note.kind}`,
-      userId: "user-1",
-      paperId: "reader-paper",
-      kind: note.kind,
-      pageNumber: note.pageNumber,
-      color: note.color ?? "yellow",
-      quote: note.quote,
-      noteText: note.noteText,
-      label: note.label,
-      anchor: note.anchor,
-      createdAt: "2026-05-24T00:02:00Z",
-      updatedAt: "2026-05-24T00:02:00Z"
-    }))
-    vi.mocked(patchPaperReaderNote).mockImplementation(async (_paperId, noteId, patch) => ({
-      noteId,
-      userId: "user-1",
-      paperId: "reader-paper",
-      kind: "note",
-      pageNumber: 2,
-      color: patch.color ?? "blue",
-      quote: "Selected text",
-      noteText: patch.noteText ?? "Updated note",
-      createdAt: "2026-05-24T00:00:00Z",
-      updatedAt: "2026-05-24T00:03:00Z"
-    }))
-    vi.mocked(deletePaperReaderNote).mockResolvedValue(true)
-    vi.mocked(fetchPaperUserState).mockResolvedValue({
-      userId: "user-1",
-      paperId: "reader-paper",
-      favorite: false,
-      subscribed: false,
-      readingStatus: "unread",
-      progressPercent: 0,
-      updatedAt: "2026-05-24T00:00:00Z"
-    })
-    vi.mocked(patchPaperUserState).mockImplementation(async (_paperId, patch) => ({
-      userId: "user-1",
-      paperId: "reader-paper",
-      favorite: patch.favorite ?? false,
-      subscribed: patch.subscribed ?? false,
-      readingStatus: patch.readingStatus ?? "unread",
-      currentPage: patch.currentPage ?? undefined,
-      progressPercent: patch.progressPercent ?? 0,
-      updatedAt: "2026-05-24T00:01:00Z"
-    }))
+    window.localStorage.clear()
+    document.documentElement.style.removeProperty("--open-reader-progress")
+    Element.prototype.scrollIntoView = function scrollIntoView() {}
   })
 
-  it("renders derived reader sections in the text fallback", () => {
-    const noPdfReader: PaperReaderPayload = {
-      ...reader,
-      paper: {
-        ...reader.paper,
-        paperUrl: undefined,
-        arxivUrl: undefined,
-        pdfUrl: undefined
-      }
-    }
-
-    render(<PaperReaderPage reader={noPdfReader} locale="en" />)
-
-    expect(screen.getByRole("heading", { name: "Method and Task Signals" })).toBeInTheDocument()
-    expect(screen.getByText("Methods: Retrieval Augmented Generation.")).toBeInTheDocument()
-    expect(screen.getByRole("heading", { name: "Benchmark Results" })).toBeInTheDocument()
-    expect(screen.getByText("MMLU / accuracy / 91.2")).toBeInTheDocument()
-    expect(screen.getByText("Benchmark")).toBeInTheDocument()
-  })
-
-  it("renders controlled PDF viewer when a PDF URL exists", () => {
-    render(
-      <PaperReaderPage
-        reader={{
-          ...reader,
-          paper: {
-            ...reader.paper,
-            pdfUrl: "https://arxiv.org/pdf/2605.00001.pdf"
-          },
-          quality: {
-            ...reader.quality,
-            pdfAvailable: true
-          }
-        }}
-        locale="en"
-      />
-    )
-
-    expect(screen.getByTestId("paper-pdf-viewer")).toHaveAttribute(
-      "data-pdf-url",
-      "https://arxiv.org/pdf/2605.00001.pdf"
-    )
-    expect(screen.queryByTitle("Reader Paper")).not.toBeInTheDocument()
-  })
-
-  it("updates favorite, subscription, reading status, and PDF progress state", async () => {
-    vi.mocked(fetchPaperUserState).mockResolvedValueOnce({
-      userId: "user-1",
-      paperId: "reader-paper",
-      favorite: false,
-      subscribed: false,
-      readingStatus: "reading",
-      currentPage: 3,
-      progressPercent: 75,
-      updatedAt: "2026-05-24T00:00:00Z"
-    })
-
-    render(
-      <PaperReaderPage
-        reader={{
-          ...reader,
-          paper: {
-            ...reader.paper,
-            pdfUrl: "https://arxiv.org/pdf/2605.00001.pdf"
-          },
-          quality: {
-            ...reader.quality,
-            pdfAvailable: true
-          }
-        }}
-        locale="en"
-      />
-    )
-
-    await waitFor(() => {
-      expect(screen.getByTestId("paper-pdf-viewer")).toHaveAttribute("data-initial-page", "3")
-    })
-
-    fireEvent.click(await screen.findByRole("button", { name: /favorite/i }))
-    await waitFor(() => {
-      expect(patchPaperUserState).toHaveBeenNthCalledWith(1, "reader-paper", {
-        favorite: true,
-        subscribed: undefined,
-        readingStatus: undefined,
-        currentPage: undefined,
-        progressPercent: undefined
-      })
-    })
-
-    fireEvent.click(screen.getByRole("button", { name: /subscribe/i }))
-    await waitFor(() => {
-      expect(patchPaperUserState).toHaveBeenNthCalledWith(2, "reader-paper", {
-        favorite: undefined,
-        subscribed: true,
-        readingStatus: undefined,
-        currentPage: undefined,
-        progressPercent: undefined
-      })
-    })
-
-    fireEvent.click(screen.getByRole("button", { name: /unread/i }))
-    await waitFor(() => {
-      expect(patchPaperUserState).toHaveBeenNthCalledWith(3, "reader-paper", {
-        favorite: undefined,
-        subscribed: undefined,
-        readingStatus: "finished",
-        currentPage: undefined,
-        progressPercent: 100
-      })
-    })
-
-    fireEvent.click(screen.getByRole("button", { name: /mock page 2/i }))
-    await waitFor(() => {
-      expect(patchPaperUserState).toHaveBeenNthCalledWith(4, "reader-paper", {
-        favorite: undefined,
-        subscribed: undefined,
-        readingStatus: "reading",
-        currentPage: 2,
-        progressPercent: 50
-      })
-    })
-  })
-
-  it("loads notes, creates bookmarks and highlights, and edits/deletes notes", async () => {
-    vi.mocked(fetchPaperUserState).mockResolvedValueOnce({
-      userId: "user-1",
-      paperId: "reader-paper",
-      favorite: false,
-      subscribed: false,
-      readingStatus: "reading",
-      currentPage: 2,
-      progressPercent: 50,
-      updatedAt: "2026-05-24T00:00:00Z"
-    })
-    vi.mocked(fetchPaperReaderNotes).mockResolvedValueOnce([
-      {
-        noteId: "note-1",
-        userId: "user-1",
-        paperId: "reader-paper",
-        kind: "note",
-        pageNumber: 2,
-        color: "blue",
-        quote: "Selected text",
-        noteText: "Initial note",
-        createdAt: "2026-05-24T00:00:00Z",
-        updatedAt: "2026-05-24T00:00:00Z"
-      }
-    ])
-
-    render(
-      <PaperReaderPage
-        reader={{
-          ...reader,
-          paper: {
-            ...reader.paper,
-            pdfUrl: "https://arxiv.org/pdf/2605.00001.pdf"
-          },
-          quality: {
-            ...reader.quality,
-            pdfAvailable: true
-          }
-        }}
-        locale="en"
-      />
-    )
-
-    expect(await screen.findByText("Initial note")).toBeInTheDocument()
-    await waitFor(() => {
-      expect(screen.getByTestId("paper-pdf-viewer")).toHaveAttribute("data-note-count", "1")
-    })
-
-    fireEvent.click(screen.getByRole("button", { name: "Bookmark" }))
-    await waitFor(() => {
-      expect(createPaperReaderNote).toHaveBeenCalledWith("reader-paper", {
-        kind: "bookmark",
-        pageNumber: 2,
-        color: "yellow",
-        label: "Page 2"
-      })
-    })
-
-    fireEvent.click(screen.getByRole("button", { name: /mock highlight/i }))
-    await waitFor(() => {
-      expect(createPaperReaderNote).toHaveBeenCalledWith(
-        "reader-paper",
-        expect.objectContaining({
-          kind: "highlight",
-          pageNumber: 2,
-          quote: "Selected text"
-        })
-      )
-    })
-
-    fireEvent.change(screen.getByLabelText("Edit note on page 2"), { target: { value: "Updated note" } })
-    fireEvent.click(screen.getByRole("button", { name: "Save note" }))
-    await waitFor(() => {
-      expect(patchPaperReaderNote).toHaveBeenCalledWith("reader-paper", "note-1", { noteText: "Updated note" })
-    })
-
-    fireEvent.click(screen.getByRole("button", { name: /Delete Note/i }))
-    await waitFor(() => {
-      expect(deletePaperReaderNote).toHaveBeenCalledWith("reader-paper", "note-1")
-    })
-  })
-
-  it("keeps reader visible when notes API fails", async () => {
-    vi.mocked(fetchPaperReaderNotes).mockRejectedValueOnce(new Error("notes unavailable"))
-
+  it("renders the quiet Open Reader instead of the old PDF and assistant panels", () => {
     render(<PaperReaderPage reader={reader} locale="en" />)
 
-    expect(await screen.findByText("notes unavailable")).toBeInTheDocument()
     expect(screen.getByRole("heading", { name: "Reader Paper" })).toBeInTheDocument()
-    expect(screen.getByText("No bookmarks or notes yet.")).toBeInTheDocument()
+    expect(screen.getByText("Open Reader")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "阅读设置" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "目" })).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Ask" })).not.toBeInTheDocument()
+    expect(screen.queryByText(/PDF viewer/i)).not.toBeInTheDocument()
   })
 
-  it("renders text extraction quality state", () => {
-    const { rerender } = render(<PaperReaderPage reader={reader} locale="en" />)
+  it("persists reading settings to localStorage", async () => {
+    const { container } = render(<PaperReaderPage reader={reader} locale="en" />)
 
-    expect(screen.getByText(/text missing/i)).toBeInTheDocument()
+    const sliders = Array.from(container.querySelectorAll<HTMLInputElement>('input[type="range"]'))
+    fireEvent.change(sliders[0], { target: { value: "28" } })
+    fireEvent.change(sliders[1], { target: { value: "960" } })
+    fireEvent.click(screen.getByRole("button", { name: "深色" }))
 
-    rerender(
-      <PaperReaderPage
-        reader={{
-          ...reader,
-          quality: {
-            ...reader.quality,
-            textExtracted: true
-          }
-        }}
-        locale="en"
-      />
-    )
-
-    expect(screen.getByText(/text extracted/i)).toBeInTheDocument()
+    await waitFor(() => {
+      const stored = JSON.parse(window.localStorage.getItem("newsroom:open-reader:reader-paper:settings") ?? "{}")
+      expect(stored).toMatchObject({ fontSize: 28, contentWidth: 960, theme: "dark" })
+    })
   })
 
-  it("renders structured AI summary v2 fields and preserves legacy fallback", () => {
-    const legacyReader: PaperReaderPayload = {
-      ...reader,
-      aiSummary: {
-        paperId: "reader-paper",
-        locale: "en",
-        modelRoute: "writer-primary",
-        abstractHash: "abc",
-        summary: "Legacy summary still renders.",
-        keyInsights: ["Legacy insight"],
-        limitations: ["Legacy limitation"],
-        generatedAt: "2026-05-24T00:00:00Z",
-        cached: true
-      }
-    }
-    const { rerender } = render(<PaperReaderPage reader={legacyReader} locale="en" />)
+  it("shows only the action menu after selecting text", async () => {
+    const { container } = render(<PaperReaderPage reader={reader} locale="en" />)
 
-    expect(screen.getByText("Legacy summary still renders.")).toBeInTheDocument()
-    expect(screen.getByText("Legacy insight")).toBeInTheDocument()
-    expect(screen.queryByText("Engineering Relevance")).not.toBeInTheDocument()
+    selectParagraphText(container, "grounded reader agents")
+    fireEvent.mouseUp(container.querySelector("[data-paragraph-id]")!)
 
-    rerender(
-      <PaperReaderPage
-        reader={{
-          ...legacyReader,
-          aiSummary: {
-            ...legacyReader.aiSummary!,
-            summary: "Structured summary renders richer reader context.",
-            contributions: ["Adds structured reader summaries."],
-            methodSummary: "Uses retrieval over public paper sections.",
-            experimentSummary: "Reports benchmark signals when available.",
-            engineeringRelevance: "Useful for teams comparing implementations.",
-            readingDifficulty: "medium",
-            recommendedAudience: ["engineer", "researcher"],
-            summarySchemaVersion: "v2"
-          }
-        }}
-        locale="en"
-      />
-    )
-
-    expect(screen.getByText("Adds structured reader summaries.")).toBeInTheDocument()
-    expect(screen.getByText("Uses retrieval over public paper sections.")).toBeInTheDocument()
-    expect(screen.getByText("Reports benchmark signals when available.")).toBeInTheDocument()
-    expect(screen.getByText("Useful for teams comparing implementations.")).toBeInTheDocument()
-    expect(screen.getByText("Difficulty: Medium")).toBeInTheDocument()
-    expect(screen.getByText("Engineer")).toBeInTheDocument()
-    expect(screen.getByText("Researcher")).toBeInTheDocument()
+    expect(await screen.findByRole("button", { name: "笔记" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "解释选中内容" })).toBeInTheDocument()
+    expect(screen.queryByPlaceholderText(/写下你的理解/)).not.toBeInTheDocument()
+    expect(screen.queryByText("解释选中内容", { selector: "strong" })).not.toBeInTheDocument()
   })
 
-  it("renders related entity empty and ready states", () => {
-    const { rerender } = render(<PaperReaderPage reader={reader} locale="en" />)
+  it("keeps note highlights only after note text is entered", async () => {
+    const { container } = render(<PaperReaderPage reader={reader} locale="en" />)
 
-    expect(screen.getByText("No related paper, project, or news signals are available yet.")).toBeInTheDocument()
+    selectParagraphText(container, "grounded reader agents")
+    fireEvent.mouseUp(container.querySelector("[data-paragraph-id]")!)
+    fireEvent.click(await screen.findByRole("button", { name: "笔记" }))
+    fireEvent.change(await screen.findByPlaceholderText(/写下你的理解/), { target: { value: "Important reader-agent claim." } })
 
-    const relatedReader: PaperReaderPayload = {
-      ...reader,
-      relatedPapers: [
-        {
-          id: "related-paper",
-          title: "Related Reader Paper",
-          slug: "related-reader-paper",
-          relationReason: "Shared methods: Retrieval Augmented Generation",
-          score: 8
-        }
-      ],
-      relatedProjects: [
-        {
-          id: "project-repo",
-          name: "owner/repo",
-          url: "https://github.com/owner/repo",
-          sourceType: "implementation",
-          relationReason: "Verified implementation repository",
-          score: 90
-        },
-        {
-          id: "project-note",
-          name: "Offline project note",
-          sourceType: "project",
-          relationReason: "Project page linked by the paper",
-          score: 30
-        }
-      ],
-      relatedNews: [
-        {
-          id: "news-source",
-          title: "Release note",
-          url: "https://example.com/news/release",
-          sourceType: "official_blog",
-          relationReason: "Evidence source",
-          score: 70,
-          summary: "Public source context."
-        }
-      ]
-    }
-
-    rerender(<PaperReaderPage reader={relatedReader} locale="en" />)
-
-    expect(screen.getByRole("link", { name: /Related Reader Paper/ })).toHaveAttribute("href", "/papers/related-reader-paper")
-    expect(screen.getByRole("link", { name: /owner\/repo/ })).toHaveAttribute("href", "https://github.com/owner/repo")
-    expect(screen.getByText("Offline project note").closest("a")).toBeNull()
-    expect(screen.getByRole("link", { name: /Release note/ })).toHaveAttribute("href", "https://example.com/news/release")
-    expect(screen.getByText("Public source context.")).toBeInTheDocument()
-  })
-
-  it("asks the paper and renders answer citations", async () => {
-    vi.mocked(askPaper).mockResolvedValue({
-      paperId: "reader-paper",
-      locale: "en",
-      question: "What does it introduce?",
-      answer: "It introduces grounded reader agents.",
-      citations: [
-        {
-          id: "section-1",
-          label: "Abstract",
-          sourceType: "section",
-          sectionId: "reader-paper:abstract",
-          textExcerpt: "The paper introduces grounded reader agents."
-        }
-      ],
-      confidence: 0.82,
-      generatedAt: "2026-05-24T00:00:00Z",
-      cached: true
+    await waitFor(() => {
+      const selections = JSON.parse(window.localStorage.getItem("newsroom:open-reader:reader-paper:selections") ?? "[]")
+      expect(selections[0]).toMatchObject({
+        noteText: "Important reader-agent claim.",
+        selectedText: "grounded reader agents",
+      })
     })
 
-    render(<PaperReaderPage reader={reader} locale="en" />)
-    fireEvent.change(screen.getByPlaceholderText(/ask a question/i), { target: { value: "What does it introduce?" } })
-    fireEvent.click(screen.getByRole("button", { name: "Ask" }))
-
-    expect(await screen.findByText("It introduces grounded reader agents.")).toBeInTheDocument()
-    expect(screen.getByText("Abstract / section")).toBeInTheDocument()
-    expect(screen.getByText("cached")).toBeInTheDocument()
-    expect(askPaper).toHaveBeenCalledWith("reader-paper", "What does it introduce?", "en")
+    fireEvent.click(document.body)
+    await waitFor(() => {
+      expect(container.querySelector("[data-selection-id]")).not.toBeNull()
+      expect(screen.queryByPlaceholderText(/写下你的理解/)).not.toBeInTheDocument()
+    })
   })
 
-  it("keeps reader visible when ask fails", async () => {
-    vi.mocked(askPaper).mockRejectedValue(new Error("agent unavailable"))
+  it("removes empty note selections and removes cleared notes without other material", async () => {
+    const { container } = render(<PaperReaderPage reader={reader} locale="en" />)
 
-    render(<PaperReaderPage reader={reader} locale="en" />)
-    fireEvent.change(screen.getByPlaceholderText(/ask a question/i), { target: { value: "Why?" } })
-    fireEvent.click(screen.getByRole("button", { name: "Ask" }))
+    selectParagraphText(container, "grounded reader agents")
+    fireEvent.mouseUp(container.querySelector("[data-paragraph-id]")!)
+    fireEvent.click(await screen.findByRole("button", { name: "笔记" }))
+    fireEvent.click(document.body)
 
-    expect(await screen.findByText("agent unavailable")).toBeInTheDocument()
-    expect(screen.getByRole("heading", { name: "Reader Paper" })).toBeInTheDocument()
+    await waitFor(() => {
+      expect(container.querySelector("[data-selection-id]")).toBeNull()
+      expect(JSON.parse(window.localStorage.getItem("newsroom:open-reader:reader-paper:selections") ?? "[]")).toEqual([])
+    })
+
+    selectParagraphText(container, "verifier checks claims")
+    fireEvent.mouseUp(container.querySelector("[data-paragraph-id]")!)
+    fireEvent.click(await screen.findByRole("button", { name: "笔记" }))
+    fireEvent.change(await screen.findByPlaceholderText(/写下你的理解/), { target: { value: "Check the evidence path." } })
+    await waitFor(() => {
+      expect(container.querySelector("[data-selection-id]")).not.toBeNull()
+      const selections = JSON.parse(window.localStorage.getItem("newsroom:open-reader:reader-paper:selections") ?? "[]")
+      expect(selections[0]).toMatchObject({ noteText: "Check the evidence path." })
+    })
+
+    const mark = container.querySelector<HTMLElement>("[data-selection-id]")!
+    fireEvent.click(mark)
+    fireEvent.click(await screen.findByRole("button", { name: "笔记" }))
+    fireEvent.change(await screen.findByPlaceholderText(/写下你的理解/), { target: { value: "" } })
+
+    await waitFor(() => {
+      expect(container.querySelector("[data-selection-id]")).toBeNull()
+      expect(JSON.parse(window.localStorage.getItem("newsroom:open-reader:reader-paper:selections") ?? "[]")).toEqual([])
+    })
+  })
+
+  it("does not keep a highlight when an explain drawer is closed before generation", async () => {
+    const { container } = render(<PaperReaderPage reader={reader} locale="en" />)
+
+    selectParagraphText(container, "grounded reader agents")
+    fireEvent.mouseUp(container.querySelector("[data-paragraph-id]")!)
+    fireEvent.click(await screen.findByRole("button", { name: "解释选中内容" }))
+    expect(await screen.findByText("等待生成")).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "关闭" }))
+
+    await waitFor(() => {
+      expect(container.querySelector("[data-selection-id]")).toBeNull()
+    })
+  })
+
+  it("closes an unconfirmed drawer on outside click and clears its temporary highlight", async () => {
+    const { container } = render(<PaperReaderPage reader={reader} locale="en" />)
+
+    selectParagraphText(container, "grounded reader agents")
+    fireEvent.mouseUp(container.querySelector("[data-paragraph-id]")!)
+    fireEvent.click(await screen.findByRole("button", { name: "解释选中内容" }))
+    expect(await screen.findByText("等待生成")).toBeInTheDocument()
+
+    fireEvent.click(document.body)
+
+    await waitFor(() => {
+      expect(screen.queryByText("等待生成")).not.toBeInTheDocument()
+      expect(container.querySelector("[data-selection-id]")).toBeNull()
+    })
+  })
+
+  it("keeps a highlight and records material only after explanation is generated", async () => {
+    const { container } = render(<PaperReaderPage reader={reader} locale="en" />)
+
+    selectParagraphText(container, "verifier checks claims")
+    fireEvent.mouseUp(container.querySelector("[data-paragraph-id]")!)
+    fireEvent.click(await screen.findByRole("button", { name: "解释选中内容" }))
+    fireEvent.click(await screen.findByRole("button", { name: "使用默认" }))
+
+    await waitFor(() => {
+      expect(container.querySelector("[data-selection-id]")).not.toBeNull()
+      const selections = JSON.parse(window.localStorage.getItem("newsroom:open-reader:reader-paper:selections") ?? "[]")
+      expect(selections[0]).toMatchObject({ explained: true, selectedText: "verifier checks claims" })
+    })
+  })
+
+  it("keeps a highlight and records material only after an example is generated", async () => {
+    const { container } = render(<PaperReaderPage reader={reader} locale="en" />)
+
+    selectParagraphText(container, "long-horizon reading")
+    fireEvent.mouseUp(container.querySelectorAll("[data-paragraph-id]")[1])
+    fireEvent.click(await screen.findByRole("button", { name: "举例说明" }))
+    fireEvent.change(await screen.findByPlaceholderText(/用工程实现举例/), { target: { value: "Use an engineering example." } })
+    fireEvent.click(await screen.findByRole("button", { name: "生成例子" }))
+
+    await waitFor(() => {
+      expect(container.querySelector("[data-selection-id]")).not.toBeNull()
+      const selections = JSON.parse(window.localStorage.getItem("newsroom:open-reader:reader-paper:selections") ?? "[]")
+      expect(selections[0]).toMatchObject({
+        exampled: true,
+        exampleQuestion: "Use an engineering example.",
+        selectedText: "long-horizon reading",
+      })
+    })
+  })
+
+  it("toggles confusion marks and removes the highlight when no other material remains", async () => {
+    const { container } = render(<PaperReaderPage reader={reader} locale="en" />)
+
+    selectParagraphText(container, "planning, retrieval")
+    fireEvent.mouseUp(container.querySelectorAll("[data-paragraph-id]")[1])
+    fireEvent.click(await screen.findByRole("button", { name: "标记为不懂" }))
+
+    const mark = await waitFor(() => {
+      const current = container.querySelector<HTMLElement>("[data-selection-id]")
+      expect(current).not.toBeNull()
+      return current!
+    })
+    fireEvent.click(mark)
+    fireEvent.click(await screen.findByRole("button", { name: "取消标记为不懂" }))
+
+    await waitFor(() => {
+      expect(container.querySelector("[data-selection-id]")).toBeNull()
+      const selections = JSON.parse(window.localStorage.getItem("newsroom:open-reader:reader-paper:selections") ?? "[]")
+      expect(selections).toEqual([])
+    })
+  })
+
+  it("cleans temporary UI with outside click and Escape", async () => {
+    const { container } = render(<PaperReaderPage reader={reader} locale="en" />)
+
+    selectParagraphText(container, "grounded reader agents")
+    fireEvent.mouseUp(container.querySelector("[data-paragraph-id]")!)
+    expect(await screen.findByRole("button", { name: "笔记" })).toBeInTheDocument()
+
+    fireEvent.click(document.body)
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: "笔记" })).not.toBeInTheDocument()
+      expect(container.querySelector("[data-selection-id]")).toBeNull()
+    })
+
+    selectParagraphText(container, "verifier checks claims")
+    fireEvent.mouseUp(container.querySelector("[data-paragraph-id]")!)
+    expect(await screen.findByRole("button", { name: "笔记" })).toBeInTheDocument()
+    fireEvent.keyDown(document, { key: "Escape" })
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: "笔记" })).not.toBeInTheDocument()
+      expect(container.querySelector("[data-selection-id]")).toBeNull()
+    })
+  })
+
+  it("keeps dark theme highlight text tied to the reader ink token", () => {
+    const css = readFileSync(join(process.cwd(), "src/components/papers/open-reader/open-reader.module.css"), "utf-8")
+
+    expect(css).toContain(".selectionMark")
+    expect(css).toContain("color:var(--reader-ink)")
+    expect(css).toContain("-webkit-text-fill-color:var(--reader-ink)")
   })
 })
+
+function selectParagraphText(container: HTMLElement, text: string) {
+  const textNode = findTextNode(container, text)
+  if (!textNode) {
+    throw new Error(`Could not find text node containing: ${text}`)
+  }
+  const fullText = textNode.textContent ?? ""
+  const start = fullText.indexOf(text)
+  const range = document.createRange()
+  range.setStart(textNode, start)
+  range.setEnd(textNode, start + text.length)
+  range.getBoundingClientRect = () => ({
+    x: 12,
+    y: 24,
+    width: 120,
+    height: 22,
+    top: 24,
+    right: 132,
+    bottom: 46,
+    left: 12,
+    toJSON: () => ({}),
+  })
+  const selection = window.getSelection()
+  selection?.removeAllRanges()
+  selection?.addRange(range)
+}
+
+function findTextNode(root: Node, text: string): Text | null {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+  while (walker.nextNode()) {
+    const node = walker.currentNode
+    if (node.textContent?.includes(text)) {
+      return node as Text
+    }
+  }
+  return null
+}
