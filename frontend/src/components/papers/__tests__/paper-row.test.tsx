@@ -49,6 +49,7 @@ describe("PaperRow", () => {
     expect(screen.getByText(paper.abstractSnippet).closest("p")).toHaveStyle({
       fontFamily: "\"Comic Sans MS\", \"Comic Sans\", cursive"
     })
+    expect(screen.getByText(paper.abstractSnippet).closest("p")).toHaveClass("line-clamp-3")
   })
 
   it("uses Comic Sans MS for the paper title", () => {

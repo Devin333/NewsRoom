@@ -91,7 +91,7 @@ export function PaperRow({
           </p>
 
           <p
-            className="mt-3 line-clamp-4 max-w-[90rem] text-base leading-7 text-[#334155]/70 dark:text-muted-foreground"
+            className="mt-3 line-clamp-3 max-w-[90rem] text-base leading-7 text-[#334155]/70 dark:text-muted-foreground"
             style={PAPER_ROW_BODY_FONT}
           >
             {paperSnippet(paper, locale)}
