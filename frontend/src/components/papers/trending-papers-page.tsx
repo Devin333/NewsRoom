@@ -17,7 +17,7 @@ import { buildPaperPortalMetrics, deriveTopPaperDomains, deriveTrendingPaperDoma
 import type { Locale, Paper, PaperPeriod, PaperSort } from "@/lib/papers/types"
 
 const PAPER_DASHBOARD_LIMIT = 5000
-const PAPER_PAGE_SIZE = 50
+const PAPER_PAGE_SIZE = 15
 
 export function TrendingPapersPage({ locale, papers }: { locale: Locale; papers: Paper[] }) {
   const router = useRouter()

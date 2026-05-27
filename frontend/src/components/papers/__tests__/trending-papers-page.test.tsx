@@ -84,7 +84,7 @@ describe("TrendingPapersPage", () => {
   it("syncs period interactions to the URL without rendering page search", async () => {
     render(<TrendingPapersPage locale="en" papers={papers} />)
 
-    await waitFor(() => expect(fetchPapers).toHaveBeenCalledWith({ q: "", period: "all", sort: "trending", limit: 50, offset: 0 }))
+    await waitFor(() => expect(fetchPapers).toHaveBeenCalledWith({ q: "", period: "all", sort: "trending", limit: 15, offset: 0 }))
     expect(fetchPapers).toHaveBeenCalledWith({ q: "", period: "all", sort: "trending", limit: 5000 })
     expect(screen.getByRole("navigation", { name: /research breadcrumb/i })).toBeInTheDocument()
     expect(screen.getByRole("link", { name: "Research" })).toHaveAttribute("href", "/papers")
@@ -106,7 +106,7 @@ describe("TrendingPapersPage", () => {
     query = "q=agent"
     render(<TrendingPapersPage locale="en" papers={papers} />)
 
-    await waitFor(() => expect(fetchPapers).toHaveBeenCalledWith({ q: "agent", period: "all", sort: "trending", limit: 50, offset: 0 }))
+    await waitFor(() => expect(fetchPapers).toHaveBeenCalledWith({ q: "agent", period: "all", sort: "trending", limit: 15, offset: 0 }))
     expect(fetchPapers).toHaveBeenCalledWith({ q: "agent", period: "all", sort: "trending", limit: 5000 })
     expect(screen.queryByRole("textbox", { name: /search papers/i })).not.toBeInTheDocument()
   })
@@ -131,7 +131,7 @@ describe("TrendingPapersPage", () => {
       }
     })
     vi.mocked(fetchPapers).mockImplementation(async (params) => {
-      const limit = params.limit ?? 50
+      const limit = params.limit ?? 15
       const offset = params.offset ?? 0
       const resultPapers = limit === 5000 ? pagedPapers : pagedPapers.slice(offset, offset + limit)
       return {
@@ -150,9 +150,9 @@ describe("TrendingPapersPage", () => {
 
     render(<TrendingPapersPage locale="en" papers={pagedPapers} />)
 
-    expect(await screen.findByText("Paged Paper 51")).toBeInTheDocument()
-    expect(fetchPapers).toHaveBeenCalledWith({ q: "", period: "all", sort: "trending", limit: 50, offset: 50 })
-    expect(screen.getByText("51-60 of 60 papers")).toBeInTheDocument()
+    expect(await screen.findByText("Paged Paper 16")).toBeInTheDocument()
+    expect(fetchPapers).toHaveBeenCalledWith({ q: "", period: "all", sort: "trending", limit: 15, offset: 15 })
+    expect(screen.getByText("16-30 of 60 papers")).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole("button", { name: "Previous page" }))
     expect(replace).toHaveBeenCalledWith("/papers", { scroll: false })
@@ -174,7 +174,7 @@ describe("TrendingPapersPage", () => {
       isPublished: true
     }))
     vi.mocked(fetchPapers).mockImplementation(async (params) => {
-      const limit = params.limit ?? 50
+      const limit = params.limit ?? 15
       const offset = params.offset ?? 0
       const resultPapers = limit === 5000 ? pagedPapers : pagedPapers.slice(offset, offset + limit)
       return {
@@ -193,7 +193,7 @@ describe("TrendingPapersPage", () => {
 
     render(<TrendingPapersPage locale="en" papers={pagedPapers} />)
 
-    expect(await screen.findByText("1-50 of 60 papers")).toBeInTheDocument()
+    expect(await screen.findByText("1-15 of 60 papers")).toBeInTheDocument()
     fireEvent.click(screen.getByRole("button", { name: "Next page" }))
     expect(replace).toHaveBeenCalledWith("/papers?page=2", { scroll: false })
   })
