@@ -10,8 +10,10 @@ import { PaperPeriodTabs } from "@/components/papers/shared/paper-period-tabs"
 import { PaperStream } from "@/components/papers/shared/paper-stream"
 import { fetchPapers } from "@/lib/papers/api"
 import { papersCopy, t } from "@/lib/papers/copy"
-import { paperTasks, topDomains, trendingDomains } from "@/lib/papers/catalog"
+import { buildPaperPortalMetrics, deriveTopPaperDomains, deriveTrendingPaperDomains } from "@/lib/papers/metrics"
 import type { Locale, Paper, PaperPeriod, PaperSort } from "@/lib/papers/types"
+
+const PAPER_DASHBOARD_LIMIT = 5000
 
 export function TrendingPapersPage({ locale, papers }: { locale: Locale; papers: Paper[] }) {
   const router = useRouter()
@@ -22,9 +24,16 @@ export function TrendingPapersPage({ locale, papers }: { locale: Locale; papers:
   const query = searchParams.get("q") ?? ""
   const deepLinkedPaperId = searchParams.get("paper")
   const [visiblePapers, setVisiblePapers] = useState(papers)
+  const [paperTotalCount, setPaperTotalCount] = useState(papers.filter((paper) => paper.isPublished !== false).length)
   const [selectedPaperId, setSelectedPaperId] = useState<string | null>(deepLinkedPaperId)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const portalMetrics = useMemo(
+    () => buildPaperPortalMetrics(visiblePapers, paperTotalCount),
+    [paperTotalCount, visiblePapers]
+  )
+  const topDomains = useMemo(() => deriveTopPaperDomains(visiblePapers), [visiblePapers])
+  const trendingDomains = useMemo(() => deriveTrendingPaperDomains(visiblePapers), [visiblePapers])
   const selectedPaper = useMemo(
     () => visiblePapers.find((paper) => paper.id === selectedPaperId || paper.slug === selectedPaperId) ?? null,
     [selectedPaperId, visiblePapers]
@@ -38,15 +47,17 @@ export function TrendingPapersPage({ locale, papers }: { locale: Locale; papers:
     let cancelled = false
     setIsLoading(true)
     setError(null)
-    fetchPapers({ q: query, period, sort, limit: 1000 })
+    fetchPapers({ q: query, period, sort, limit: PAPER_DASHBOARD_LIMIT })
       .then((result) => {
         if (!cancelled) {
           setVisiblePapers(result.papers)
+          setPaperTotalCount(result.total_count)
         }
       })
       .catch((requestError) => {
         if (!cancelled) {
           setVisiblePapers(papers)
+          setPaperTotalCount(papers.filter((paper) => paper.isPublished !== false).length)
           setError(requestError instanceof Error ? requestError.message : "Papers request failed")
         }
       })
@@ -120,9 +131,9 @@ export function TrendingPapersPage({ locale, papers }: { locale: Locale; papers:
         subtitle={t(papersCopy.researchSubtitle, locale)}
         variant="editorial"
         stats={[
-          { label: t(papersCopy.papers, locale), value: papers.length },
-          { label: t(papersCopy.tasks, locale), value: paperTasks.length },
-          { label: t(papersCopy.repositories, locale), value: papers.filter((paper) => paper.repoUrl).length }
+          { label: t(papersCopy.papers, locale), value: portalMetrics.paperCount },
+          { label: t(papersCopy.tasks, locale), value: portalMetrics.taskCount },
+          { label: t(papersCopy.repositories, locale), value: portalMetrics.repositoryCount }
         ]}
         aside={<PaperPeriodTabs value={period} locale={locale} hrefForPeriod={periodHref} onChange={updatePeriod} fullWidth />}
       />

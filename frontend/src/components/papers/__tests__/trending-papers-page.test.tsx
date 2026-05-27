@@ -35,6 +35,28 @@ const papers: Paper[] = [
     pdfUrl: "https://arxiv.org/pdf/2605.00001.pdf",
     repoUrl: "https://github.com/owner/agent-paper",
     isPublished: true
+  },
+  {
+    id: "paper-reasoning",
+    slug: "paper-reasoning",
+    title: "Reasoning Paper",
+    abstractSnippet: "A paper about reasoning.",
+    authors: ["B"],
+    publishedAt: "2026-05-25T00:00:00Z",
+    citationCount: 11,
+    tags: ["reasoning"],
+    taskRefs: [{ id: "task-reasoning", slug: "reasoning", name: "Reasoning" }],
+    methodRefs: [],
+    pdfUrl: "https://arxiv.org/pdf/2605.00002.pdf",
+    implementations: [
+      {
+        id: "impl-reasoning",
+        name: "owner/reasoning-paper",
+        repoUrl: "https://github.com/owner/reasoning-paper",
+        provider: "github"
+      }
+    ],
+    isPublished: true
   }
 ]
 
@@ -49,10 +71,10 @@ describe("TrendingPapersPage", () => {
       query: "",
       period: "all",
       sort: "trending",
-      paper_count: 1,
-      total_count: 1,
+      paper_count: 2,
+      total_count: 2,
       source_count: 1,
-      limit: 1000,
+      limit: 5000,
       offset: 0,
       papers
     })
@@ -62,9 +84,12 @@ describe("TrendingPapersPage", () => {
   it("syncs period interactions to the URL without rendering page search", async () => {
     render(<TrendingPapersPage locale="en" papers={papers} />)
 
-    await waitFor(() => expect(fetchPapers).toHaveBeenCalledWith({ q: "", period: "all", sort: "trending", limit: 1000 }))
+    await waitFor(() => expect(fetchPapers).toHaveBeenCalledWith({ q: "", period: "all", sort: "trending", limit: 5000 }))
     expect(screen.getByRole("navigation", { name: /research breadcrumb/i })).toBeInTheDocument()
     expect(screen.getByRole("link", { name: "Research" })).toHaveAttribute("href", "/papers")
+    expect(screen.getByLabelText(/papers: 2/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/tasks: 2/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/repos(?:itories)?: 2/i)).toBeInTheDocument()
     expect(screen.getByText(/frontend user view/i).closest("span")).toHaveStyle({ fontFamily: comicSansFontFamily })
     expect(screen.getByLabelText("Paper period")).toHaveStyle({ fontFamily: comicSansFontFamily })
     expect(screen.getByLabelText("Paper sort")).toHaveStyle({ fontFamily: comicSansFontFamily })
@@ -80,7 +105,7 @@ describe("TrendingPapersPage", () => {
     query = "q=agent"
     render(<TrendingPapersPage locale="en" papers={papers} />)
 
-    await waitFor(() => expect(fetchPapers).toHaveBeenCalledWith({ q: "agent", period: "all", sort: "trending", limit: 1000 }))
+    await waitFor(() => expect(fetchPapers).toHaveBeenCalledWith({ q: "agent", period: "all", sort: "trending", limit: 5000 }))
     expect(screen.queryByRole("textbox", { name: /search papers/i })).not.toBeInTheDocument()
   })
 

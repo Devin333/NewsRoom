@@ -138,12 +138,17 @@ test("/papers domain links open task detail view", async ({ page, baseURL }) => 
   await page.goto("/papers")
   await papersLoaded
 
-  const agentsLink = page.locator("aside a[href='/papers/tasks/agents']").first()
-  await expect(agentsLink).toBeVisible()
-  await agentsLink.click()
+  const taskLink = page.locator("aside a[href^='/papers/tasks/']").first()
+  await expect(taskLink).toBeVisible()
+  const taskHref = await taskLink.getAttribute("href")
+  if (!taskHref) {
+    throw new Error("Expected a task href in the papers domain sidebar")
+  }
+  expect(taskHref).toMatch(/^\/papers\/tasks\/[^/]+$/)
+  await taskLink.click()
 
-  await expect(page).toHaveURL(/\/papers\/tasks\/agents$/)
-  await expect(page.locator("nav[aria-label='Papers breadcrumb']")).toContainText("Tasks")
+  await expect(page).toHaveURL(new RegExp(`${taskHref.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`))
+  await expect(page.locator("nav[aria-label='Research breadcrumb']")).toContainText("Tasks")
   await expect(page.locator("h1")).toBeVisible()
   await expect(page.locator("aside a[href^='/papers/tasks/']").first()).toBeVisible()
   await expect(page.locator("aside a[href^='/papers/methods/']").first()).toBeVisible()
