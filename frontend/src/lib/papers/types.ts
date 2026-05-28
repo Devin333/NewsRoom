@@ -378,6 +378,7 @@ export interface PaperSection {
   pageEnd?: number
   textExcerpt: string
   summary?: string
+  metadata?: Record<string, unknown>
   sectionType:
     | "abstract"
     | "summary"

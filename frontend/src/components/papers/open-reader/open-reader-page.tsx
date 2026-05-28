@@ -1,20 +1,26 @@
 "use client"
 
 import Link from "next/link"
-import { ArrowLeft } from "lucide-react"
+import Image from "next/image"
+import { ArrowLeft, Eye, ImageIcon, Sigma, Table2, X } from "lucide-react"
 import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react"
 import { formatPaperDate, paperTitle } from "@/lib/papers/format"
+import { recordReaderEvent } from "@/lib/papers/api"
 import type { Locale } from "@/lib/papers/types"
-import type { DrawerState, NotePopoverState, OpenReaderPageProps, ReaderParagraph, ReaderSelection, ReaderSettings, SelectionMenuState } from "./open-reader-types"
+import { paperAssetUrl, paperSourcePreviewUrl } from "@/lib/paper-reader/api"
+import { targetForPaperBlock } from "@/lib/paper-reader/interactions"
+import type { PaperSourceRegion } from "@/lib/paper-reader/types"
+import type { DrawerState, NotePopoverState, OpenReaderPageProps, OpenReaderVisualBlock, ReaderParagraph, ReaderSelection, ReaderSettings, ReaderTocItem, SelectionMenuState } from "./open-reader-types"
 import { buildReaderParagraphs, buildReaderToc, clamp, getSelectionOffsetsWithinElement, getSelectionStatus, makeMaterialSummary, mockExample, mockExplain, safeJsonParse, storageKey } from "./open-reader-utils"
 import { useOpenReaderSelections, useOpenReaderSettings } from "./open-reader-state"
 import styles from "./open-reader.module.css"
 
-export function OpenReaderPage({ reader, locale, backHref = "/papers" }: OpenReaderPageProps) {
+export function OpenReaderPage({ reader, locale, backHref = "/papers", visualLayer }: OpenReaderPageProps) {
   const paper = reader.paper
   const title = paperTitle(paper, locale)
   const paragraphs = useMemo(() => buildReaderParagraphs(reader, locale), [reader, locale])
-  const toc = useMemo(() => buildReaderToc(paragraphs), [paragraphs])
+  const toc = useMemo(() => mergeVisualToc(buildReaderToc(paragraphs), visualLayer?.blocks ?? []), [paragraphs, visualLayer])
+  const visualsBySection = useMemo(() => groupVisualsBySection(visualLayer?.blocks ?? []), [visualLayer])
   const { settings, patchSettings } = useOpenReaderSettings(paper.id)
   const { selections, events, createTempSelection, discardAllTemp, updateNote, confirmExplain, confirmExample, toggleConfused } = useOpenReaderSelections(paper.id)
   const materials = useMemo(() => makeMaterialSummary(paper.id, selections, events), [paper.id, selections, events])
@@ -27,6 +33,7 @@ export function OpenReaderPage({ reader, locale, backHref = "/papers" }: OpenRea
   const [menu, setMenu] = useState<SelectionMenuState | null>(null)
   const [note, setNote] = useState<NotePopoverState | null>(null)
   const [drawer, setDrawer] = useState<DrawerState | null>(null)
+  const [preview, setPreview] = useState<{ title: string; source: PaperSourceRegion } | null>(null)
 
   const menuSelection = menu ? selections.find((item) => item.id === menu.selectionId) : undefined
   const noteSelection = note ? selections.find((item) => item.id === note.selectionId) : undefined
@@ -128,6 +135,23 @@ export function OpenReaderPage({ reader, locale, backHref = "/papers" }: OpenRea
     setDrawer({ mode: "materials" })
   }
 
+  function openSourcePreview(visual: OpenReaderVisualBlock) {
+    if (!visual.source) return
+    setPreview({
+      title: visual.block.label || visual.block.caption || visual.asset?.caption || `Page ${visual.source.pageNumber}`,
+      source: visual.source,
+    })
+    void recordReaderEvent(paper.id, {
+      type: visual.block.type === "table"
+        ? "table_explanation_requested"
+        : visual.block.type === "figure"
+          ? "figure_explanation_requested"
+          : "reader_progress_sampled",
+      target: targetForPaperBlock(visual.block),
+      payload: { action: "source_preview_opened" },
+    }).catch(() => undefined)
+  }
+
   const themeClass = settings.theme === "dark" ? styles.darkTheme : settings.theme === "light" ? styles.lightTheme : styles.warmTheme
 
   return (
@@ -153,22 +177,31 @@ export function OpenReaderPage({ reader, locale, backHref = "/papers" }: OpenRea
           <p>{paper.authors?.join(", ")} · {paper.venue ?? "Paper"} · {formatPaperDate(paper.publishedAt, locale)}</p>
         </section>
 
-        <section ref={contentRef} className={styles.paperCard} onMouseUp={handleMouseUp}>
+        <section ref={contentRef} className={styles.paperCard} aria-label="Open reader paper body" data-open-reader-body onMouseUp={handleMouseUp}>
           {toc.map((section) => {
             const sectionParagraphs = paragraphs.filter((paragraph) => paragraph.sectionId === section.id)
+            const sectionVisuals = visualsBySection.get(section.id) ?? []
+            const sectionItems = buildSectionItems(sectionParagraphs, sectionVisuals)
             return (
               <section key={section.id} ref={bindSection(section.id)} className={styles.readerSection}>
                 <div className={styles.sectionLabel}>{section.sectionType}</div>
                 <h2>{section.title}</h2>
-                {sectionParagraphs.map((paragraph) => (
-                  <ReaderParagraphView
-                    key={paragraph.id}
-                    paragraph={paragraph}
-                    paragraphRef={bindParagraph(paragraph.id)}
-                    selections={selections.filter((item) => item.paragraphId === paragraph.id)}
-                    onOpenSelectionMenu={openSelectionMenu}
-                  />
-                ))}
+                {sectionItems.map((item) => item.type === "paragraph" ? (
+                    <ReaderParagraphView
+                      key={item.paragraph.id}
+                      paragraph={item.paragraph}
+                      paragraphRef={bindParagraph(item.paragraph.id)}
+                      selections={selections.filter((selection) => selection.paragraphId === item.paragraph.id)}
+                      onOpenSelectionMenu={openSelectionMenu}
+                    />
+                  ) : (
+                    <OpenReaderVisualBlockView
+                      key={item.visual.id}
+                      visual={item.visual}
+                      paperId={paper.id}
+                      onPreview={openSourcePreview}
+                    />
+                  ))}
               </section>
             )
           })}
@@ -206,8 +239,60 @@ export function OpenReaderPage({ reader, locale, backHref = "/papers" }: OpenRea
           onConfirmExample={(selectionId, question) => confirmExample(selectionId, question)}
         />
       ) : null}
+
+      {preview ? (
+        <SourcePreviewModal paperId={paper.id} title={preview.title} source={preview.source} onClose={() => setPreview(null)} />
+      ) : null}
     </main>
   )
+}
+
+type SectionContentItem =
+  | { type: "paragraph"; order: number; paragraph: ReaderParagraph }
+  | { type: "visual"; order: number; visual: OpenReaderVisualBlock }
+
+function mergeVisualToc(toc: ReaderTocItem[], visualBlocks: OpenReaderVisualBlock[]) {
+  const next = [...toc]
+  const seen = new Set(next.map((item) => item.id))
+  for (const visual of visualBlocks) {
+    if (seen.has(visual.sectionId)) continue
+    seen.add(visual.sectionId)
+    next.push({
+      id: visual.sectionId,
+      title: visual.sectionTitle,
+      sectionType: visual.sectionType,
+      paragraphCount: 0,
+    })
+  }
+  return next
+}
+
+function groupVisualsBySection(visuals: OpenReaderVisualBlock[]) {
+  const grouped = new Map<string, OpenReaderVisualBlock[]>()
+  for (const visual of visuals) {
+    const sectionVisuals = grouped.get(visual.sectionId) ?? []
+    sectionVisuals.push(visual)
+    grouped.set(visual.sectionId, sectionVisuals)
+  }
+  for (const sectionVisuals of grouped.values()) {
+    sectionVisuals.sort((left, right) => left.order - right.order)
+  }
+  return grouped
+}
+
+function buildSectionItems(paragraphs: ReaderParagraph[], visuals: OpenReaderVisualBlock[]): SectionContentItem[] {
+  return [
+    ...paragraphs.map((paragraph) => ({
+      type: "paragraph" as const,
+      order: paragraph.sourceOrder ?? paragraph.index * 1000,
+      paragraph,
+    })),
+    ...visuals.map((visual) => ({
+      type: "visual" as const,
+      order: visual.order,
+      visual,
+    })),
+  ].sort((left, right) => left.order - right.order)
 }
 
 function ReaderParagraphView({ paragraph, selections, paragraphRef, onOpenSelectionMenu }: {
@@ -231,6 +316,81 @@ function ReaderParagraphView({ paragraph, selections, paragraphRef, onOpenSelect
         </mark>
       ) : <span key={index}>{segment.text}</span>)}
     </p>
+  )
+}
+
+function OpenReaderVisualBlockView({
+  visual,
+  paperId,
+  onPreview,
+}: {
+  visual: OpenReaderVisualBlock
+  paperId: string
+  onPreview: (visual: OpenReaderVisualBlock) => void
+}) {
+  const block = visual.block
+  const asset = visual.asset
+  const Icon = block.type === "table" ? Table2 : block.type === "equation" ? Sigma : ImageIcon
+  const label = block.label || asset?.label || block.type
+  const caption = block.caption || asset?.caption || block.text
+
+  return (
+    <figure id={block.id} className={styles.visualBlock} data-block-id={block.id} data-asset-id={asset?.assetId}>
+      <div className={styles.visualToolbar}>
+        <span><Icon size={17} aria-hidden="true" />{label}</span>
+        {visual.source ? (
+          <button type="button" className={styles.iconButton} title="Open source preview" onClick={() => onPreview(visual)}>
+            <Eye size={16} aria-hidden="true" />
+          </button>
+        ) : null}
+      </div>
+      {asset ? (
+        <Image
+          src={paperAssetUrl(paperId, asset.assetId)}
+          alt={caption || label}
+          className={styles.visualImage}
+          loading="lazy"
+          width={asset.width}
+          height={asset.height}
+          unoptimized
+        />
+      ) : (
+        <div className={styles.assetMissing}>Asset unavailable</div>
+      )}
+      {caption ? <figcaption>{caption}</figcaption> : null}
+    </figure>
+  )
+}
+
+function SourcePreviewModal({
+  paperId,
+  title,
+  source,
+  onClose,
+}: {
+  paperId: string
+  title: string
+  source: PaperSourceRegion
+  onClose: () => void
+}) {
+  return (
+    <div className={styles.previewBackdrop} role="dialog" aria-modal="true" aria-label="Source preview" data-open-reader-keep-open>
+      <div className={styles.previewDialog}>
+        <div className={styles.previewHeader}>
+          <strong>{title}</strong>
+          <button type="button" className={styles.iconButton} title="Close" onClick={onClose}>
+            <X size={17} aria-hidden="true" />
+          </button>
+        </div>
+        <Image
+          src={paperSourcePreviewUrl(paperId, source)}
+          alt={title}
+          width={Math.max(1, Math.round((source.bbox.x1 - source.bbox.x0) * 4))}
+          height={Math.max(1, Math.round((source.bbox.y1 - source.bbox.y0) * 4))}
+          unoptimized
+        />
+      </div>
+    </div>
   )
 }
 

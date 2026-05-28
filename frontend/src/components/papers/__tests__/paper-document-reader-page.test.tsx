@@ -9,14 +9,14 @@ vi.mock("@/lib/papers/api", () => ({
 }))
 
 describe("PaperDocumentReaderPage", () => {
-  it("renders compiled PaperDocument blocks and keeps AI summary out of the article body", () => {
+  it("renders compiled PaperDocument blocks through the Open Reader and keeps AI summary out of the body", () => {
     render(<PaperDocumentReaderPage payload={compiledPayload} locale="en" />)
 
-    const article = screen.getByLabelText("Compiled paper body")
+    expect(screen.getByText("Open Reader")).toBeInTheDocument()
+    const article = screen.getByLabelText("Open reader paper body")
     expect(within(article).getByText("This is real PDF paragraph text.")).toBeInTheDocument()
     expect(within(article).getByText("Figure 1: Real figure from the PDF.")).toBeInTheDocument()
     expect(within(article).queryByText("AI generated summary must stay in the panel.")).not.toBeInTheDocument()
-    expect(screen.getByText("AI generated summary must stay in the panel.")).toBeInTheDocument()
     expect(screen.getByRole("img", { name: "Figure 1: Real figure from the PDF." })).toHaveAttribute(
       "src",
       "/api/papers/visual-paper/assets/asset-figure-1",
@@ -28,7 +28,7 @@ describe("PaperDocumentReaderPage", () => {
 
     expect(screen.getByText("Compiled document is not published")).toBeInTheDocument()
     expect(screen.getByText("visual asset is missing")).toBeInTheDocument()
-    expect(screen.queryByLabelText("Compiled paper body")).not.toBeInTheDocument()
+    expect(screen.queryByLabelText("Open reader paper body")).not.toBeInTheDocument()
     expect(screen.queryByText("This legacy section must never become body text.")).not.toBeInTheDocument()
   })
 

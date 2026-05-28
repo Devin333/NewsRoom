@@ -77,11 +77,15 @@ export function buildReaderParagraphs(reader: PaperReaderPayload, locale: Locale
 
   for (const section of sourceSections) {
     const parts = splitText(section.textExcerpt)
+    const metadata = sectionMetadata(section)
+    const blockIds = stringArray(metadata?.blockIds)
+    const sourceOrders = numberArray(metadata?.sourceOrders)
     for (let index = 0; index < parts.length; index += 1) {
       const fallbackSectionId = `${reader.paper.id}:pdf-text`
       const usesPdfFallback = isPageDumpSection(section)
+      const blockId = blockIds[index]
       paragraphs.push({
-        id: `${section.id}:p${index + 1}`,
+        id: blockId || `${section.id}:p${index + 1}`,
         paperId: section.paperId,
         sectionId: usesPdfFallback ? fallbackSectionId : section.id,
         sectionTitle: usesPdfFallback ? pdfTextLabel(locale) : section.title || sectionTypeLabel(section.sectionType, locale),
@@ -91,6 +95,8 @@ export function buildReaderParagraphs(reader: PaperReaderPayload, locale: Locale
         summary: section.summary,
         pageStart: section.pageStart,
         pageEnd: section.pageEnd,
+        blockId,
+        sourceOrder: sourceOrders[index],
       })
     }
   }
@@ -107,6 +113,19 @@ export function buildReaderParagraphs(reader: PaperReaderPayload, locale: Locale
     })
   }
   return paragraphs
+}
+
+function sectionMetadata(section: PaperSection) {
+  const metadata = section.metadata
+  return metadata && typeof metadata === "object" ? metadata : null
+}
+
+function stringArray(value: unknown) {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.length > 0) : []
+}
+
+function numberArray(value: unknown) {
+  return Array.isArray(value) ? value.filter((item): item is number => typeof item === "number" && Number.isFinite(item)) : []
 }
 
 function selectReaderSections(sections: PaperSection[]) {

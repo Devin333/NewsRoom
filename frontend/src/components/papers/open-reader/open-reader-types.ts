@@ -1,4 +1,5 @@
 import type { Locale, PaperReaderPayload, PaperSection } from "@/lib/papers/types"
+import type { PaperBlock, PaperSourceRegion, PaperVisualAsset } from "@/lib/paper-reader/types"
 
 export type ReaderTheme = "light" | "warm" | "dark"
 export type ReaderAssistMode = "explain" | "example" | "materials"
@@ -29,6 +30,8 @@ export interface ReaderParagraph {
   summary?: string
   pageStart?: number
   pageEnd?: number
+  blockId?: string
+  sourceOrder?: number
 }
 
 export interface ReaderTocItem {
@@ -36,6 +39,22 @@ export interface ReaderTocItem {
   title: string
   sectionType: PaperSection["sectionType"]
   paragraphCount: number
+}
+
+export interface OpenReaderVisualBlock {
+  id: string
+  paperId: string
+  sectionId: string
+  sectionTitle: string
+  sectionType: PaperSection["sectionType"]
+  order: number
+  block: PaperBlock
+  asset?: PaperVisualAsset
+  source?: PaperSourceRegion
+}
+
+export interface OpenReaderVisualLayer {
+  blocks: OpenReaderVisualBlock[]
 }
 
 export interface ReaderSelection {
@@ -99,6 +118,7 @@ export interface OpenReaderPageProps {
   reader: PaperReaderPayload
   locale: Locale
   backHref?: string
+  visualLayer?: OpenReaderVisualLayer
 }
 
 export interface SelectionMenuState {
