@@ -243,6 +243,17 @@
   scroll-margin-top: 76px;
 }
 
+.visual_figure,
+.visual_equation {
+  width: min(100%, 920px);
+  margin-right: auto;
+  margin-left: auto;
+}
+
+.visual_table {
+  width: 100%;
+}
+
 .visualToolbar {
   display: flex;
   align-items: center;
@@ -282,10 +293,17 @@
 
 .visualImage {
   display: block;
-  width: 100%;
-  max-height: 720px;
+  width: auto;
+  max-width: 100%;
+  max-height: min(620px, 78vh);
+  margin: 0 auto;
   object-fit: contain;
   background: #fff;
+}
+
+.visual_table .visualImage {
+  width: 100%;
+  max-height: none;
 }
 
 .equationMath,

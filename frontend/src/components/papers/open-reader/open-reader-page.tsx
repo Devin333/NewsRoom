@@ -333,7 +333,7 @@ function OpenReaderVisualBlockView({
   const isEquation = block.type === "equation"
 
   return (
-    <figure id={block.id} className={styles.visualBlock} data-block-id={block.id} data-asset-id={asset?.assetId}>
+    <figure id={block.id} className={`${styles.visualBlock} ${styles[`visual_${block.type}`]}`} data-block-id={block.id} data-asset-id={asset?.assetId}>
       <div className={styles.visualToolbar}>
         <span><Icon size={17} aria-hidden="true" />{label}</span>
         {visual.source ? (

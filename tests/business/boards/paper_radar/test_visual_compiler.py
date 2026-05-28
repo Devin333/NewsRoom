@@ -14,6 +14,13 @@ from business.boards.paper_radar.visual_compiler.model_layout_provider import (
     OpenAICompatiblePaperLayoutProvider,
     build_model_layout_provider_from_env,
 )
+from business.boards.paper_radar.visual_compiler.models import (
+    PaperAssetManifest,
+    PaperBlock,
+    PaperDocument,
+    PaperSourceRegion,
+    PaperVisualAsset,
+)
 from business.boards.paper_radar.visual_compiler.reviewer import HeuristicPaperDocumentReviewer
 from business.boards.paper_radar.worker_handlers import PaperVisualCompileTaskHandler
 from framework.workers import Task
@@ -121,6 +128,30 @@ def test_visual_compiler_uses_model_layout_provider_for_table_and_figure_crops(t
     assert "AI summary must remain outside the body." not in "\n".join(block.text for block in draft.document.blocks)
 
 
+def test_visual_compiler_prefers_model_equation_text_over_overlapping_pdf_prose(tmp_path) -> None:
+    output_dir = tmp_path / "model-equation-text"
+    compiler = PyMuPDFPaperCompiler(dpi=96, layout_provider=_ModelEquationTextLayoutProvider(), max_visual_assets_per_page=8)
+
+    draft = compiler.compile(
+        pdf_bytes=_model_equation_text_pdf_bytes(),
+        paper={
+            "id": "model-equation-paper",
+            "title": "Model Equation Paper",
+            "abstractSnippet": "AI summary must remain outside the body.",
+        },
+        output_dir=output_dir,
+        source_pdf_url="https://arxiv.org/pdf/2605.00005.pdf",
+        started_at=datetime(2026, 5, 28, tzinfo=timezone.utc),
+        finished_at=datetime(2026, 5, 28, tzinfo=timezone.utc),
+    )
+
+    equation_blocks = [block for block in draft.document.blocks if block.type == "equation"]
+    assert len(equation_blocks) == 1
+    assert equation_blocks[0].text == r"q(x_t \mid x_0)=\mathcal{N}(x_t;\sqrt{\alpha_t}x_0,(1-\alpha_t)I)"
+    assert equation_blocks[0].metadata.get("modelGeneratedEquationText") is True
+    assert "Given a data sample" not in equation_blocks[0].text
+
+
 def test_visual_compiler_keeps_visual_ocr_and_hyphenation_noise_out_of_body(tmp_path) -> None:
     output_dir = tmp_path / "clean-body"
     compiler = PyMuPDFPaperCompiler(dpi=96, layout_provider=_CleanBodyLayoutProvider(), max_visual_assets_per_page=8)
@@ -151,6 +182,128 @@ def test_visual_compiler_keeps_visual_ocr_and_hyphenation_noise_out_of_body(tmp_
     assert len(figure_blocks) == 1
     assert figure_blocks[0].caption == "Figure 1: A real multi-line figure caption from the paper."
     assert any(item["code"] == "visual_text_blocks_skipped" for item in draft.compile_info.diagnostics)
+
+
+def test_visual_compiler_merges_multiple_image_blocks_for_one_caption(tmp_path) -> None:
+    output_dir = tmp_path / "multi-image-figure"
+
+    draft = PyMuPDFPaperCompiler(dpi=96).compile(
+        pdf_bytes=_multi_image_figure_pdf_bytes(),
+        paper={
+            "id": "multi-image-paper",
+            "title": "Multi Image Figure Paper",
+            "abstractSnippet": "AI summary must remain outside the body.",
+        },
+        output_dir=output_dir,
+        source_pdf_url="https://arxiv.org/pdf/2605.00004.pdf",
+        started_at=datetime(2026, 5, 28, tzinfo=timezone.utc),
+        finished_at=datetime(2026, 5, 28, tzinfo=timezone.utc),
+    )
+
+    figure_blocks = [block for block in draft.document.blocks if block.type == "figure"]
+    figure_assets = [asset for asset in draft.manifest.assets if asset.kind == "figure"]
+
+    assert len(figure_blocks) == 1
+    assert len(figure_assets) == 1
+    assert figure_blocks[0].label == "Figure 1"
+    assert int(figure_assets[0].metadata.get("imageBlockCount") or 0) >= 2
+
+
+def test_visual_compiler_keeps_two_column_prose_out_of_image_figure_crop(tmp_path) -> None:
+    output_dir = tmp_path / "two-column-figure"
+
+    draft = PyMuPDFPaperCompiler(dpi=96).compile(
+        pdf_bytes=_two_column_image_figure_pdf_bytes(),
+        paper={
+            "id": "two-column-figure-paper",
+            "title": "Two Column Figure Paper",
+            "abstractSnippet": "AI summary must remain outside the body.",
+        },
+        output_dir=output_dir,
+        source_pdf_url="https://arxiv.org/pdf/2605.00005.pdf",
+        started_at=datetime(2026, 5, 28, tzinfo=timezone.utc),
+        finished_at=datetime(2026, 5, 28, tzinfo=timezone.utc),
+    )
+
+    figure_asset = next(asset for asset in draft.manifest.assets if asset.kind == "figure")
+    body_text = "\n".join(block.text for block in draft.document.blocks if block.type == "paragraph")
+
+    assert figure_asset.source is not None
+    assert figure_asset.source.bbox[0] >= 300
+    assert figure_asset.source.bbox[1] >= 190
+    assert figure_asset.source.bbox[2] <= 520
+    assert figure_asset.source.bbox[3] <= 410
+    assert "Left column prose must stay readable" in body_text
+    assert "Panel prompt" not in body_text
+    assert "Reference Image" not in body_text
+
+
+def test_asset_gate_blocks_oversegmented_visual_labels(tmp_path) -> None:
+    paper_dir = tmp_path / "oversegmented"
+    assets_dir = paper_dir / "assets"
+    assets_dir.mkdir(parents=True)
+
+    blocks: list[PaperBlock] = []
+    assets: list[PaperVisualAsset] = []
+    for index in range(4):
+        file_path = assets_dir / f"figure-{index}.png"
+        file_path.write_bytes(_sample_png_bytes())
+        source = PaperSourceRegion(pageNumber=1, bbox=(72.0 + index * 20, 120.0, 112.0 + index * 20, 160.0))
+        asset_id = f"asset-{index}"
+        assets.append(
+            PaperVisualAsset(
+                assetId=asset_id,
+                paperId="oversegmented-paper",
+                kind="figure",
+                fileName=f"assets/figure-{index}.png",
+                mimeType="image/png",
+                width=40,
+                height=40,
+                checksum=_sha256(file_path.read_bytes()),
+                pageNumber=1,
+                label="Figure 1",
+                caption="Figure 1: One figure should not be split into many cards.",
+                source=source,
+                blankRatio=0.0,
+            )
+        )
+        blocks.append(
+            PaperBlock(
+                id=f"block-{index}",
+                paperId="oversegmented-paper",
+                type="figure",
+                text="Figure 1: One figure should not be split into many cards.",
+                pageNumber=1,
+                assetId=asset_id,
+                label="Figure 1",
+                caption="Figure 1: One figure should not be split into many cards.",
+                source=source,
+            )
+        )
+
+    document = PaperDocument(
+        paperId="oversegmented-paper",
+        schemaVersion="paper_document_v1",
+        status="needs_review",
+        title="Oversegmented Paper",
+        compiledAt="2026-05-28T00:00:00Z",
+        sourceHash="hash",
+        paper={},
+        outline=(),
+        blocks=tuple(blocks),
+    )
+    manifest = PaperAssetManifest(
+        paperId="oversegmented-paper",
+        schemaVersion="paper_document_v1",
+        createdAt="2026-05-28T00:00:00Z",
+        sourceHash="hash",
+        assets=tuple(assets),
+    )
+
+    gate_report = PaperAssetGate().validate(document=document, manifest=manifest, paper_dir=paper_dir)
+
+    assert gate_report["passed"] is False
+    assert any(error["code"] == "visual_block_label_repeated" for error in gate_report["errors"])
 
 
 def test_model_layout_provider_env_factory_requires_explicit_enablement() -> None:
@@ -341,6 +494,27 @@ def _layout_provider_pdf_bytes() -> bytes:
     return payload
 
 
+def _model_equation_text_pdf_bytes() -> bytes:
+    import fitz
+
+    document = fitz.open()
+    page = document.new_page(width=612, height=792)
+    page.insert_text((72, 72), "Model Equation Paper", fontsize=20)
+    page.insert_textbox(
+        fitz.Rect(72, 118, 540, 160),
+        "This paragraph is real paper text from the PDF before the equation.",
+        fontsize=11,
+    )
+    page.insert_textbox(
+        fitz.Rect(72, 180, 540, 222),
+        "Given a data sample x0, the forward process gradually perturbs it with Gaussian noise under a variance schedule alpha_t:",
+        fontsize=11,
+    )
+    payload = document.tobytes()
+    document.close()
+    return payload
+
+
 def _noisy_visual_pdf_bytes() -> bytes:
     import fitz
 
@@ -367,12 +541,80 @@ def _noisy_visual_pdf_bytes() -> bytes:
     return payload
 
 
+def _multi_image_figure_pdf_bytes() -> bytes:
+    import fitz
+
+    document = fitz.open()
+    page = document.new_page(width=612, height=792)
+    page.insert_text((72, 72), "Multi Image Figure Paper", fontsize=20)
+    page.insert_textbox(
+        fitz.Rect(72, 112, 540, 170),
+        "This paragraph is real paper text. The figure below is composed of several embedded image blocks.",
+        fontsize=11,
+    )
+    image = _sample_png_bytes()
+    for index, rect in enumerate(
+        (
+            fitz.Rect(96, 220, 196, 320),
+            fitz.Rect(216, 220, 316, 320),
+            fitz.Rect(96, 340, 196, 440),
+            fitz.Rect(216, 340, 316, 440),
+        )
+    ):
+        page.insert_image(rect, stream=image)
+        page.insert_text((rect.x0, rect.y1 + 12), f"Panel {index + 1}", fontsize=8)
+    page.insert_text((96, 480), "Figure 1: One multi-panel figure with a single caption.", fontsize=10)
+    payload = document.tobytes()
+    document.close()
+    return payload
+
+
+def _two_column_image_figure_pdf_bytes() -> bytes:
+    import fitz
+
+    document = fitz.open()
+    page = document.new_page(width=612, height=792)
+    page.insert_text((72, 72), "Two Column Figure Paper", fontsize=20)
+    page.insert_text((72, 112), "1 Introduction", fontsize=16)
+    page.insert_textbox(
+        fitz.Rect(72, 150, 285, 430),
+        "Left column prose must stay readable in the article body. "
+        "The compiler should not crop this paragraph into the visual asset. "
+        "This sentence continues the real paper discussion.",
+        fontsize=10,
+    )
+    image = _sample_png_bytes()
+    for rect in (
+        fitz.Rect(326, 230, 386, 290),
+        fitz.Rect(408, 230, 468, 290),
+        fitz.Rect(326, 318, 386, 378),
+        fitz.Rect(408, 318, 468, 378),
+    ):
+        page.insert_image(rect, stream=image)
+    page.insert_text((326, 214), "Panel prompt", fontsize=7)
+    page.insert_text((326, 392), "Reference Image", fontsize=7)
+    page.insert_text(
+        (306, 424),
+        "Figure 1: A multi-panel figure that lives in the right column.",
+        fontsize=10,
+    )
+    payload = document.tobytes()
+    document.close()
+    return payload
+
+
 def _sample_png_bytes() -> bytes:
     import fitz
 
     pixmap = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 40, 40), False)
     pixmap.clear_with(0x336699)
     return pixmap.tobytes("png")
+
+
+def _sha256(payload: bytes) -> str:
+    import hashlib
+
+    return hashlib.sha256(payload).hexdigest()
 
 
 class _FakeWorkerService:
@@ -436,6 +678,26 @@ class _CleanBodyLayoutProvider:
                     caption="Figure 1: A real multi-line figure caption from the paper.",
                     bbox=(96, 276, 516, 476),
                     confidence=0.99,
+                ),
+            )
+        )
+
+
+class _ModelEquationTextLayoutProvider:
+    provider_name = "model-equation-text-layout-v1"
+
+    def detect_regions(self, **_kwargs):
+        return PaperLayoutDetection(
+            regions=(
+                PaperLayoutRegion(
+                    kind="equation",
+                    label="Equation 1",
+                    caption=None,
+                    bbox=(72, 180, 540, 222),
+                    confidence=0.99,
+                    metadata={
+                        "equationText": r"q(x_t \mid x_0)=\mathcal{N}(x_t;\sqrt{\alpha_t}x_0,(1-\alpha_t)I)",
+                    },
                 ),
             )
         )

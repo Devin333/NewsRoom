@@ -304,7 +304,7 @@ class PyMuPDFPaperCompiler:
                     if region.kind == "equation":
                         if len(equation_items) >= _MAX_EQUATIONS_PER_PAGE:
                             continue
-                        equation = _equation_for_model_region(region, text_blocks) or _equation_from_model_region(region)
+                        equation = _equation_from_model_region(region) or _equation_for_model_region(region, text_blocks)
                         if equation is None:
                             continue
                         if _covered_by_visual_asset(equation["bbox"], visual_assets):
@@ -353,22 +353,26 @@ class PyMuPDFPaperCompiler:
                 }
             )
 
-        for block in _page_image_blocks(page):
+        visual_text_blocks: list[dict[str, Any]] = []
+        image_blocks = _page_image_blocks(page)
+        image_groups = _group_image_blocks_by_caption(
+            image_blocks,
+            captions,
+            visual_assets,
+            page_height=page_height,
+        )
+        for group in image_groups:
             if len(visual_assets) >= self.max_visual_assets_per_page:
                 break
-            if _covered_by_visual_asset(block["bbox"], visual_assets):
+            caption = group["caption"]
+            if _visual_asset_with_label_exists(caption["label"], visual_assets):
                 continue
-            caption = _nearest_caption(block["bbox"], captions, page_height=page_height)
-            if caption is None:
-                diagnostics.append(
-                    {
-                        "severity": "warning",
-                        "code": "uncaptioned_image_skipped",
-                        "message": "image block was skipped because no nearby Figure/Table caption was detected",
-                        "pageNumber": page_number,
-                    }
-                )
-                continue
+            crop_bbox = _visual_bbox_for_caption_group(
+                group,
+                text_blocks=text_blocks,
+                page_width=page_width,
+                page_height=page_height,
+            )
             asset = self._crop_visual_asset(
                 page=page,
                 matrix=matrix,
@@ -377,15 +381,29 @@ class PyMuPDFPaperCompiler:
                 kind=caption["kind"],
                 label=caption["label"],
                 caption=caption["text"],
-                bbox=block["bbox"],
+                bbox=crop_bbox,
                 page_width=page_width,
                 page_height=page_height,
                 assets_dir=assets_dir,
+                metadata={"imageBlockCount": len(group["bboxes"])},
             )
             if asset is None or asset.assetId in visual_keys:
                 continue
             visual_keys.add(asset.assetId)
-            visual_assets.append((asset, asset.source.bbox[1] if asset.source else block["bbox"][1], block["bbox"][0]))
+            visual_assets.append((asset, asset.source.bbox[1] if asset.source else crop_bbox[1], crop_bbox[0]))
+            visual_text_blocks.extend(_visual_text_blocks_for_crop(crop_bbox, text_blocks, page_width=page_width, page_height=page_height))
+
+        skipped_uncaptioned_images = sum(1 for block in image_blocks if not _image_block_has_caption(block["bbox"], captions, page_height=page_height))
+        if skipped_uncaptioned_images:
+            diagnostics.append(
+                {
+                    "severity": "warning",
+                    "code": "uncaptioned_image_skipped",
+                    "message": "image blocks were skipped because no nearby Figure/Table caption was detected",
+                    "pageNumber": page_number,
+                    "count": skipped_uncaptioned_images,
+                }
+            )
 
         for caption in captions:
             if len(visual_assets) >= self.max_visual_assets_per_page:
@@ -423,6 +441,7 @@ class PyMuPDFPaperCompiler:
                 continue
             visual_keys.add(asset.assetId)
             visual_assets.append((asset, asset.source.bbox[1] if asset.source else crop_bbox[1], crop_bbox[0]))
+            visual_text_blocks.extend(_visual_text_blocks_for_crop(crop_bbox, text_blocks, page_width=page_width, page_height=page_height))
 
         equation_count = len(equation_items)
         for block in text_blocks:
@@ -448,6 +467,7 @@ class PyMuPDFPaperCompiler:
         page_assets.extend(asset for asset, _, _ in visual_assets)
         content_items: list[tuple[float, float, PaperBlock]] = []
         current_section_id = f"{paper_id}:page-{page_number}"
+        section_ranges: list[tuple[float, str]] = [(0.0, current_section_id)]
         skipped_visual_text_blocks = 0
         skipped_noise_text_blocks = 0
         for index, block in enumerate(text_blocks, start=1):
@@ -465,6 +485,8 @@ class PyMuPDFPaperCompiler:
                 page_width=page_width,
                 page_height=page_height,
             )
+            if skip_reason is None and _text_block_matches_any(block, visual_text_blocks):
+                skip_reason = "visual_annotation"
             if skip_reason == "visual_annotation":
                 skipped_visual_text_blocks += 1
                 continue
@@ -474,6 +496,7 @@ class PyMuPDFPaperCompiler:
             block_type, level = _text_block_type(block, page_width=page_width)
             if block_type == "heading":
                 current_section_id = _stable_id(paper_id, "section", str(page_number), text)[:40]
+                section_ranges.append((block["bbox"][1], current_section_id))
             content_items.append(
                 (
                     block["bbox"][1],
@@ -528,7 +551,7 @@ class PyMuPDFPaperCompiler:
                         type=asset.kind,  # type: ignore[arg-type]
                         text=asset.caption or asset.label or "",
                         pageNumber=page_number,
-                        sectionId=current_section_id,
+                        sectionId=_section_id_for_y(y, section_ranges),
                         assetId=asset.assetId,
                         label=asset.label,
                         caption=asset.caption,
@@ -549,7 +572,7 @@ class PyMuPDFPaperCompiler:
                         type="equation",
                         text=equation["text"],
                         pageNumber=page_number,
-                        sectionId=current_section_id,
+                        sectionId=_section_id_for_y(y, section_ranges),
                         label=equation["label"],
                         caption=equation["text"],
                         source=PaperSourceRegion(
@@ -779,6 +802,40 @@ def _page_image_blocks(page: Any) -> list[dict[str, Any]]:
     return blocks
 
 
+def _group_image_blocks_by_caption(
+    image_blocks: Sequence[Mapping[str, Any]],
+    captions: Sequence[Mapping[str, Any]],
+    visual_assets: Sequence[tuple[PaperVisualAsset, float, float]],
+    *,
+    page_height: float,
+) -> list[dict[str, Any]]:
+    grouped: dict[str, dict[str, Any]] = {}
+    for block in image_blocks:
+        bbox = block.get("bbox")
+        if not isinstance(bbox, tuple):
+            continue
+        if _covered_by_visual_asset(bbox, visual_assets):
+            continue
+        caption = _nearest_caption(bbox, captions, page_height=page_height)
+        if caption is None:
+            continue
+        key = _normalize_label(caption.get("label")) or _bbox_key(caption["bbox"])
+        existing = grouped.setdefault(key, {"caption": caption, "bboxes": []})
+        existing["bboxes"].append(bbox)
+    groups = [item for item in grouped.values() if item["bboxes"]]
+    groups.sort(key=lambda item: (_merged_bbox(item["bboxes"])[1], _merged_bbox(item["bboxes"])[0]))
+    return groups
+
+
+def _image_block_has_caption(
+    bbox: tuple[float, float, float, float],
+    captions: Sequence[Mapping[str, Any]],
+    *,
+    page_height: float,
+) -> bool:
+    return _nearest_caption(bbox, captions, page_height=page_height) is not None
+
+
 def _caption_info(block: Mapping[str, Any]) -> dict[str, Any] | None:
     text = _normalize_space(str(block.get("text") or ""))
     match = _CAPTION_PATTERN.match(text)
@@ -807,6 +864,8 @@ def _equation_info(block: Mapping[str, Any]) -> dict[str, Any] | None:
         return None
     if not _MATH_PATTERN.search(text):
         return None
+    if not _looks_like_standalone_equation_text(text):
+        return None
     label_match = _EQUATION_LABEL_PATTERN.search(text)
     label = f"Equation {label_match.group('label')}" if label_match else "Equation"
     if width < 80 and label == "Equation":
@@ -828,8 +887,14 @@ def _text_block_skip_reason(
         return "empty"
     if _PRIVATE_USE_PATTERN.fullmatch(text):
         return "private_use_glyphs"
+    if _looks_like_pdf_mojibake(text):
+        return "pdf_encoding_noise"
     if _is_page_number_text(text, bbox, page_number=page_number, page_width=page_width, page_height=page_height):
         return "page_number"
+    if _is_arxiv_sidebar_text(text, bbox, page_width=page_width, page_height=page_height):
+        return "arxiv_sidebar"
+    if _looks_like_front_matter_noise(text, bbox, page_number=page_number, page_width=page_width, page_height=page_height):
+        return "front_matter_noise"
     if _text_block_overlaps_visual_asset(bbox, visual_assets):
         return "visual_annotation"
     if _looks_like_table_row(text) and _text_block_near_visual_asset(
@@ -845,6 +910,7 @@ def _text_block_skip_reason(
         visual_assets,
         page_width=page_width,
         page_height=page_height,
+        margin_scale=0.045,
     ):
         return "visual_annotation"
     return None
@@ -866,13 +932,86 @@ def _is_page_number_text(
     return width <= page_width * 0.22 and (bbox[1] <= page_height * 0.16 or bbox[3] >= page_height * 0.78)
 
 
+def _is_arxiv_sidebar_text(
+    text: str,
+    bbox: tuple[float, float, float, float],
+    *,
+    page_width: float,
+    page_height: float,
+) -> bool:
+    if "arXiv:" not in text:
+        return False
+    width = bbox[2] - bbox[0]
+    height = bbox[3] - bbox[1]
+    return bbox[0] <= page_width * 0.12 and height > page_height * 0.18 and width < page_width * 0.16
+
+
+def _looks_like_front_matter_noise(
+    text: str,
+    bbox: tuple[float, float, float, float],
+    *,
+    page_number: int,
+    page_width: float,
+    page_height: float,
+) -> bool:
+    if page_number != 1:
+        return False
+    compact = _normalize_space(text)
+    if not compact:
+        return True
+    if compact in {"Preprint."}:
+        return True
+    if compact.startswith(("†", "*", "‡")) or "Work done" in compact or "Joint Advising" in compact:
+        return True
+    if bbox[3] > page_height * 0.86 and len(compact) <= 80:
+        return True
+    if bbox[1] < page_height * 0.31:
+        if re.search(r"\b(University|Institute|Adobe|Google|Department|Laboratory)\b", compact):
+            return True
+        if re.search(r"\d", compact) and len(_WORD_PATTERN.findall(compact)) <= 14:
+            return True
+        if bbox[0] > page_width * 0.18 and bbox[2] < page_width * 0.82 and len(compact) <= 160:
+            return True
+    return False
+
+
+def _looks_like_pdf_mojibake(text: str) -> bool:
+    if any(marker in text for marker in ("鈥", "鈭", "檚", "燡", "椻", "€")):
+        return True
+    if "\ufffd" in text:
+        return True
+    non_ascii = sum(1 for char in text if ord(char) > 127)
+    if non_ascii >= 3 and non_ascii / max(1, len(text)) > 0.18 and not re.search(r"[\u4e00-\u9fff]", text):
+        return True
+    return False
+
+
+def _looks_like_standalone_equation_text(text: str) -> bool:
+    compact = _normalize_space(text)
+    if not compact or _looks_like_pdf_mojibake(compact):
+        return False
+    if _EQUATION_LABEL_PATTERN.search(compact):
+        return True
+    if "\\" in compact:
+        return True
+    if re.search(r"[=≤≥∑∫√^_]", compact) is None:
+        return False
+    words = _WORD_PATTERN.findall(compact)
+    math_symbols = re.findall(r"[=+\-*/^_(){}\[\]|,.;:≤≥∑∫√]", compact)
+    if len(words) > 18 and len(math_symbols) < max(5, len(words) // 2):
+        return False
+    if len(compact) > 180 and len(math_symbols) < 10:
+        return False
+    return True
+
+
 def _looks_like_short_visual_annotation(text: str) -> bool:
-    if len(text) > 64:
+    if len(text) > 96:
         return False
     words = _WORD_PATTERN.findall(text)
     if not words:
         return True
-    if len(words) <= 6:
+    if len(words) <= 10:
         return True
     return False
 
@@ -1014,6 +1153,8 @@ def _equation_from_model_region(region: Any) -> Mapping[str, Any] | None:
     )
     if not text:
         return None
+    if not _looks_like_standalone_equation_text(text):
+        return None
     if len(text) > 500:
         text = text[:500].rstrip()
     label_match = _EQUATION_LABEL_PATTERN.search(text)
@@ -1111,6 +1252,149 @@ def _caption_visual_bbox(
         top = max(24.0, y0 - 8)
         bottom = min(page_height - 24.0, y1 + min(260.0, page_height * 0.34))
     return (left, top, right, bottom)
+
+
+def _merged_visual_bbox(
+    bboxes: Sequence[tuple[float, float, float, float]],
+    *,
+    text_blocks: Sequence[Mapping[str, Any]] = (),
+    page_width: float,
+    page_height: float,
+) -> tuple[float, float, float, float]:
+    merged = _merged_bbox(bboxes)
+    visual_text_bboxes = [
+        bbox
+        for block in text_blocks
+        if (bbox := block.get("bbox")) is not None
+        and isinstance(bbox, tuple)
+        and _is_text_inside_or_near_image_group(block, merged, page_width=page_width, page_height=page_height)
+    ]
+    if visual_text_bboxes:
+        merged = _merged_bbox([merged, *visual_text_bboxes])
+    return _expand_bbox(_clamp_visual_bbox(merged, page_width=page_width, page_height=page_height), page_width=page_width, page_height=page_height, margin=8)
+
+
+def _visual_bbox_for_caption_group(
+    group: Mapping[str, Any],
+    *,
+    text_blocks: Sequence[Mapping[str, Any]] = (),
+    page_width: float,
+    page_height: float,
+) -> tuple[float, float, float, float]:
+    bboxes = group.get("bboxes")
+    caption = group.get("caption")
+    if not isinstance(bboxes, Sequence) or not bboxes:
+        if isinstance(caption, Mapping):
+            return _caption_visual_bbox(caption, page_width=page_width, page_height=page_height)
+        return (24.0, 24.0, page_width - 24.0, page_height - 24.0)
+    return _merged_visual_bbox(bboxes, text_blocks=text_blocks, page_width=page_width, page_height=page_height)
+
+
+def _visual_text_blocks_for_crop(
+    crop_bbox: tuple[float, float, float, float],
+    text_blocks: Sequence[Mapping[str, Any]],
+    *,
+    page_width: float,
+    page_height: float,
+) -> list[dict[str, Any]]:
+    return [
+        dict(block)
+        for block in text_blocks
+        if _is_text_inside_or_near_image_group(block, crop_bbox, page_width=page_width, page_height=page_height)
+    ]
+
+
+def _is_text_inside_or_near_image_group(
+    block: Mapping[str, Any],
+    image_bbox: tuple[float, float, float, float],
+    *,
+    page_width: float,
+    page_height: float,
+) -> bool:
+    text = _normalize_space(str(block.get("text") or ""))
+    bbox = block.get("bbox")
+    if not text or not isinstance(bbox, tuple):
+        return False
+    if _caption_info(block) is not None:
+        return False
+    if _SECTION_PATTERN.match(text) or _NUMBERED_HEADING_PATTERN.match(text):
+        return False
+    guard = _expand_bbox_xy(
+        image_bbox,
+        page_width=page_width,
+        page_height=page_height,
+        margin_x=max(10.0, page_width * 0.025),
+        margin_y=max(12.0, page_height * 0.035),
+    )
+    if not _rect_center_inside(bbox, guard):
+        return False
+    if _intersection_over_min_area(bbox, image_bbox) >= 0.08:
+        return True
+    if _looks_like_short_visual_annotation(text):
+        return True
+    return _looks_like_table_row(text)
+
+
+def _text_block_matches_any(block: Mapping[str, Any], others: Sequence[Mapping[str, Any]]) -> bool:
+    text = _normalize_space(str(block.get("text") or ""))
+    bbox = block.get("bbox")
+    if not text or not isinstance(bbox, tuple):
+        return False
+    for other in others:
+        other_bbox = other.get("bbox")
+        if not isinstance(other_bbox, tuple):
+            continue
+        if text == _normalize_space(str(other.get("text") or "")) and _intersection_over_min_area(bbox, other_bbox) >= 0.8:
+            return True
+    return False
+
+
+def _section_id_for_y(y: float, section_ranges: Sequence[tuple[float, str]]) -> str:
+    current = section_ranges[0][1] if section_ranges else ""
+    for section_y, section_id in sorted(section_ranges, key=lambda item: item[0]):
+        if section_y <= y + 0.1:
+            current = section_id
+            continue
+        break
+    return current
+
+
+def _clamp_visual_bbox(
+    bbox: tuple[float, float, float, float],
+    *,
+    page_width: float,
+    page_height: float,
+) -> tuple[float, float, float, float]:
+    return (
+        max(20.0, min(page_width - 20.0, bbox[0])),
+        max(20.0, min(page_height - 20.0, bbox[1])),
+        max(20.0, min(page_width - 20.0, bbox[2])),
+        max(20.0, min(page_height - 20.0, bbox[3])),
+    )
+
+
+def _merged_bbox(bboxes: Sequence[tuple[float, float, float, float]]) -> tuple[float, float, float, float]:
+    return (
+        min(bbox[0] for bbox in bboxes),
+        min(bbox[1] for bbox in bboxes),
+        max(bbox[2] for bbox in bboxes),
+        max(bbox[3] for bbox in bboxes),
+    )
+
+
+def _union_bbox(
+    left: tuple[float, float, float, float],
+    right: tuple[float, float, float, float],
+    *,
+    page_width: float,
+    page_height: float,
+) -> tuple[float, float, float, float]:
+    return (
+        max(0.0, min(left[0], right[0])),
+        max(0.0, min(left[1], right[1])),
+        min(page_width, max(left[2], right[2])),
+        min(page_height, max(left[3], right[3])),
+    )
 
 
 def _text_block_type(block: Mapping[str, Any], *, page_width: float) -> tuple[str, int | None]:

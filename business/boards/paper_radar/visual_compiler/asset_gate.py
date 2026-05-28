@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import struct
 from collections.abc import Mapping
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -141,6 +142,30 @@ class PaperAssetGate:
         asset_backed_blocks = [block for block in document.blocks if block.type in ASSET_BACKED_BLOCK_TYPES]
         if visual_assets and not asset_backed_blocks:
             errors.append(_issue("visual_assets_unbound", "manifest has visual assets but document has no visual blocks"))
+        label_counts = Counter(
+            block.label
+            for block in asset_backed_blocks
+            if block.label
+        )
+        repeated_labels = {label: count for label, count in label_counts.items() if count > 3}
+        if repeated_labels:
+            errors.append(
+                _issue(
+                    "visual_block_label_repeated",
+                    "too many visual blocks share the same label; likely over-segmented PDF image crops",
+                    labels=repeated_labels,
+                )
+            )
+        unique_asset_labels = {asset.label for asset in visual_assets if asset.label}
+        if len(visual_assets) > 24 and unique_asset_labels and len(visual_assets) > len(unique_asset_labels) * 3:
+            errors.append(
+                _issue(
+                    "visual_assets_oversegmented",
+                    "visual assets appear over-segmented relative to figure/table labels",
+                    visualAssetCount=len(visual_assets),
+                    uniqueLabelCount=len(unique_asset_labels),
+                )
+            )
 
         return {
             "passed": not errors,
