@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 from fastapi.testclient import TestClient
 
-from business.boards.paper_radar.visual_compiler import PaperAssetGate, PaperVisualCompilerRepository
+from business.boards.paper_radar.visual_compiler import PaperAssetGate, PaperVisualCompilerRepository, PyMuPDFPaperCompiler
 from business.boards.paper_radar.visual_compiler.reviewer import HeuristicPaperDocumentReviewer
 from business.boards.paper_radar.worker_handlers import PaperVisualCompileTaskHandler
 from framework.workers import Task
@@ -45,6 +45,33 @@ def test_asset_gate_blocks_missing_visual_asset_file(tmp_path) -> None:
 
     assert gate_report["passed"] is False
     assert any(error["code"] == "asset_file_missing" for error in gate_report["errors"])
+
+
+def test_visual_compiler_skips_uncaptioned_image_blocks_before_asset_gate(tmp_path) -> None:
+    output_dir = tmp_path / "uncaptioned"
+    draft = PyMuPDFPaperCompiler(dpi=96).compile(
+        pdf_bytes=_uncaptioned_image_pdf_bytes(),
+        paper={
+            "id": "uncaptioned-paper",
+            "title": "Uncaptioned Image Paper",
+            "abstractSnippet": "This paper contains an image without a figure caption.",
+        },
+        output_dir=output_dir,
+        source_pdf_url="https://arxiv.org/pdf/2605.00001.pdf",
+        started_at=datetime(2026, 5, 28, tzinfo=timezone.utc),
+        finished_at=datetime(2026, 5, 28, tzinfo=timezone.utc),
+    )
+
+    gate_report = PaperAssetGate().validate(
+        document=draft.document,
+        manifest=draft.manifest,
+        paper_dir=output_dir,
+    )
+
+    visual_assets = [asset for asset in draft.manifest.assets if asset.kind in {"figure", "table", "equation"}]
+    assert gate_report["passed"] is True
+    assert visual_assets == []
+    assert any(item["code"] == "uncaptioned_image_skipped" for item in draft.compile_info.diagnostics)
 
 
 def test_visual_compiler_review_failure_blocks_document_payload(tmp_path) -> None:
@@ -166,6 +193,34 @@ def _sample_pdf_bytes() -> bytes:
     payload = document.tobytes()
     document.close()
     return payload
+
+
+def _uncaptioned_image_pdf_bytes() -> bytes:
+    import fitz
+
+    document = fitz.open()
+    page = document.new_page(width=612, height=792)
+    page.insert_text((72, 72), "Uncaptioned Image Paper", fontsize=20)
+    page.insert_textbox(
+        fitz.Rect(72, 112, 540, 180),
+        "This paragraph is real PDF body text. The image below is decorative and has no Figure caption.",
+        fontsize=11,
+    )
+    page.insert_image(
+        fitz.Rect(72, 220, 220, 340),
+        stream=_sample_png_bytes(),
+    )
+    payload = document.tobytes()
+    document.close()
+    return payload
+
+
+def _sample_png_bytes() -> bytes:
+    import fitz
+
+    pixmap = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 40, 40), False)
+    pixmap.clear_with(0x336699)
+    return pixmap.tobytes("png")
 
 
 class _FakeWorkerService:

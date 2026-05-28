@@ -241,14 +241,24 @@ class PyMuPDFPaperCompiler:
             if len(visual_assets) >= self.max_visual_assets_per_page:
                 break
             caption = _nearest_caption(block["bbox"], captions, page_height=page_height)
+            if caption is None:
+                diagnostics.append(
+                    {
+                        "severity": "warning",
+                        "code": "uncaptioned_image_skipped",
+                        "message": "image block was skipped because no nearby Figure/Table caption was detected",
+                        "pageNumber": page_number,
+                    }
+                )
+                continue
             asset = self._crop_visual_asset(
                 page=page,
                 matrix=matrix,
                 paper_id=paper_id,
                 page_number=page_number,
-                kind=caption["kind"] if caption else "figure",
-                label=caption["label"] if caption else f"Figure p{page_number}",
-                caption=caption["text"] if caption else None,
+                kind=caption["kind"],
+                label=caption["label"],
+                caption=caption["text"],
                 bbox=block["bbox"],
                 page_width=page_width,
                 page_height=page_height,
