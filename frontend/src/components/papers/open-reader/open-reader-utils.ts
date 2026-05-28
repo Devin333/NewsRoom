@@ -1,5 +1,6 @@
 import type { Locale, PaperReaderPayload, PaperSection } from "@/lib/papers/types"
 import type {
+  PaperInlineSpan,
   PaperSourceRegion,
 } from "@/lib/paper-reader/types"
 import type {
@@ -84,6 +85,7 @@ export function buildReaderParagraphs(reader: PaperReaderPayload, locale: Locale
     const blockIds = stringArray(metadata?.blockIds)
     const blockSources = sourceArray(metadata?.blockSources)
     const sourceOrders = numberArray(metadata?.sourceOrders)
+    const blockInlineSpans = inlineSpanArrayArray(metadata?.blockInlineSpans)
     for (let index = 0; index < parts.length; index += 1) {
       const fallbackSectionId = `${reader.paper.id}:pdf-text`
       const usesPdfFallback = isPageDumpSection(section)
@@ -102,6 +104,7 @@ export function buildReaderParagraphs(reader: PaperReaderPayload, locale: Locale
         blockId,
         source: blockSources[index],
         sourceOrder: sourceOrders[index],
+        inlineSpans: blockInlineSpans[index],
       })
     }
   }
@@ -140,6 +143,24 @@ function sourceArray(value: unknown): Array<PaperSourceRegion | undefined> {
     const source = item as Partial<PaperSourceRegion>
     return typeof source.pageNumber === "number" && source.bbox ? source as PaperSourceRegion : undefined
   })
+}
+
+function inlineSpanArrayArray(value: unknown): Array<PaperInlineSpan[] | undefined> {
+  if (!Array.isArray(value)) return []
+  return value.map((item) => {
+    if (!Array.isArray(item)) return undefined
+    const spans = item.filter(isInlineSpan)
+    return spans.length ? spans : undefined
+  })
+}
+
+function isInlineSpan(value: unknown): value is PaperInlineSpan {
+  if (!value || typeof value !== "object") return false
+  const span = value as Partial<PaperInlineSpan>
+  return typeof span.type === "string"
+    && typeof span.text === "string"
+    && typeof span.start === "number"
+    && typeof span.end === "number"
 }
 
 function selectReaderSections(sections: PaperSection[]) {

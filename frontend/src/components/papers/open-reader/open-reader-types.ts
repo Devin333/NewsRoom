@@ -1,5 +1,5 @@
 import type { Locale, PaperReaderPayload, PaperSection } from "@/lib/papers/types"
-import type { PaperBlock, PaperSourceRegion, PaperVisualAsset } from "@/lib/paper-reader/types"
+import type { PaperBlock, PaperInlineSpan, PaperReference, PaperSourceRegion, PaperVisualAsset } from "@/lib/paper-reader/types"
 
 export type ReaderTheme = "light" | "warm" | "dark"
 export type ReaderAssistMode = "explain" | "example" | "materials"
@@ -33,6 +33,7 @@ export interface ReaderParagraph {
   blockId?: string
   source?: PaperSourceRegion
   sourceOrder?: number
+  inlineSpans?: PaperInlineSpan[]
 }
 
 export interface ReaderTocItem {
@@ -56,6 +57,7 @@ export interface OpenReaderVisualBlock {
 
 export interface OpenReaderVisualLayer {
   blocks: OpenReaderVisualBlock[]
+  references?: PaperReference[]
 }
 
 export interface ReaderSelection {

@@ -14,7 +14,18 @@ describe("PaperDocumentReaderPage", () => {
 
     expect(screen.getByText("Open Reader")).toBeInTheDocument()
     const article = screen.getByLabelText("Open reader paper body")
-    expect(within(article).getByText("This is real PDF paragraph text.")).toBeInTheDocument()
+    expect(within(article).getByText(/This is real PDF paragraph text/)).toBeInTheDocument()
+    expect(within(article).getByText("Figure 1")).toBeInTheDocument()
+    expect(within(article).getByText("[")).toBeInTheDocument()
+    expect(within(article).getByRole("button", { name: "Reference [1]" })).toBeInTheDocument()
+    expect(within(article).getByRole("button", { name: "Reference [2]" })).toBeInTheDocument()
+    expect(within(article).getByText("[?]")).toBeInTheDocument()
+    expect(within(article).getByText("References")).toBeInTheDocument()
+    expect(within(article).getByText(/Less is More/)).toBeInTheDocument()
+    expect(article.querySelector(".katex")).not.toBeNull()
+    expect(within(article).queryByText("Figuremodel")).not.toBeInTheDocument()
+    expect(within(article).queryByText("Anything[")).not.toBeInTheDocument()
+    expect(within(article).queryByText("R^Bx")).not.toBeInTheDocument()
     expect(within(article).getByText("Real figure from the PDF.")).toBeInTheDocument()
     expect(within(article).getByLabelText("y = Wx + b (1)")).toBeInTheDocument()
     expect(within(article).getByRole("table", { name: "Table 1" })).toBeInTheDocument()
@@ -50,6 +61,18 @@ describe("PaperDocumentReaderPage", () => {
       "src",
       expect.stringContaining("/api/papers/visual-paper/source-preview?page=1&bbox="),
     )
+  })
+
+  it("jumps from inline references and citations to their compiled targets", () => {
+    const scrollIntoView = vi.fn()
+    Element.prototype.scrollIntoView = scrollIntoView
+    render(<PaperDocumentReaderPage payload={compiledPayload} locale="en" />)
+
+    fireEvent.click(screen.getByText("Figure 1"))
+    expect(scrollIntoView).toHaveBeenCalledTimes(1)
+
+    fireEvent.click(screen.getByRole("button", { name: "Reference [1]" }))
+    expect(scrollIntoView).toHaveBeenCalledTimes(2)
   })
 
   it("uses the asset itself for source-first visual previews when PDF page crops are unavailable", () => {
@@ -130,7 +153,33 @@ const compiledPayload: PaperDocumentResponse = {
     sourceHash: "hash",
     paper: { id: "visual-paper", title: "Visual Paper" },
     outline: [{ id: "block-heading-1", blockId: "block-heading-1", title: "Introduction", level: 1, pageNumber: 1 }],
-    auxiliary: { aiSummary: "AI generated summary must stay in the panel." },
+    auxiliary: {
+      aiSummary: "AI generated summary must stay in the panel.",
+      references: [
+        {
+          id: "ref-wu2025less",
+          key: "wu2025less",
+          number: 1,
+          label: "[1]",
+          title: "Less is More for Subject-Driven Generation",
+          authors: ["Wu, Ada", "Li, Ben"],
+          year: "2025",
+          venue: "arXiv",
+          text: "Wu, Ada and Li, Ben. Less is More for Subject-Driven Generation. arXiv. 2025.",
+        },
+        {
+          id: "ref-mou2025dreamo",
+          key: "mou2025dreamo",
+          number: 2,
+          label: "[2]",
+          title: "DreamO",
+          authors: ["Mou, Chen"],
+          year: "2025",
+          venue: "CVPR",
+          text: "Mou, Chen. DreamO. CVPR. 2025.",
+        },
+      ],
+    },
     blocks: [
       {
         id: "block-heading-1",
@@ -145,10 +194,48 @@ const compiledPayload: PaperDocumentResponse = {
         id: "block-paragraph-1",
         paperId: "visual-paper",
         type: "paragraph",
-        text: "This is real PDF paragraph text.",
+        text: String.raw`This is real PDF paragraph text. See Figure 1 and Orient Anything [?] plus UNO [1, 2]. The feature tensor is \mathcal{F} = \{F_i\}_{i=0}^{M} and F_i \in \mathbb{R}^{B \times L \times C}.`,
         pageNumber: 1,
         sectionId: "block-heading-1",
         source: { pageNumber: 1, bbox: { x0: 72, y0: 142, x1: 540, y1: 200 } },
+        metadata: {
+          inlineSpans: [
+            { type: "text", text: "This is real PDF paragraph text. See", start: 0, end: 36 },
+            { type: "ref", text: "Figure 1", label: "fig:source", refKind: "figure", targetBlockId: "block-figure-1", sectionId: "block-heading-1", display: "Figure 1", start: 37, end: 45 },
+            { type: "text", text: "and Orient Anything", start: 46, end: 65 },
+            { type: "citation", text: "[?]", citations: [{ key: "missing2025orient", number: null, referenceId: null, missing: true }], start: 66, end: 69 },
+            { type: "text", text: "plus UNO", start: 70, end: 78 },
+            {
+              type: "citation",
+              text: "[1, 2]",
+              citations: [
+                { key: "wu2025less", number: 1, referenceId: "ref-wu2025less" },
+                { key: "mou2025dreamo", number: 2, referenceId: "ref-mou2025dreamo" },
+              ],
+              start: 79,
+              end: 85,
+            },
+            { type: "text", text: ". The feature tensor is", start: 85, end: 108 },
+            {
+              type: "math",
+              text: String.raw`\mathcal{F} = \{F_i\}_{i=0}^{M}`,
+              latex: String.raw`\mathcal{F} = \{F_i\}_{i=0}^{M}`,
+              displayMode: false,
+              start: 109,
+              end: 140,
+            },
+            { type: "text", text: "and", start: 141, end: 144 },
+            {
+              type: "math",
+              text: String.raw`F_i \in \mathbb{R}^{B \times L \times C}`,
+              latex: String.raw`F_i \in \mathbb{R}^{B \times L \times C}`,
+              displayMode: false,
+              start: 145,
+              end: 185,
+            },
+            { type: "text", text: ".", start: 185, end: 186 },
+          ],
+        },
       },
       {
         id: "block-figure-1",

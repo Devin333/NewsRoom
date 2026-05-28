@@ -23,6 +23,60 @@ export interface PaperSourceRegion {
   pageHeight?: number
 }
 
+export type PaperInlineSpan =
+  | {
+      type: "text"
+      text: string
+      start: number
+      end: number
+    }
+  | {
+      type: "math"
+      text: string
+      latex: string
+      displayMode?: boolean
+      start: number
+      end: number
+    }
+  | {
+      type: "ref"
+      text: string
+      label?: string
+      refKind?: "figure" | "table" | "section" | "equation" | "reference" | string
+      targetBlockId?: string | null
+      sectionId?: string | null
+      display?: string
+      start: number
+      end: number
+    }
+  | {
+      type: "citation"
+      text: string
+      citations: Array<{
+        key: string
+        number: number | null
+        referenceId: string | null
+        missing?: boolean
+      }>
+      start: number
+      end: number
+    }
+
+export interface PaperReference {
+  id: string
+  key: string
+  number: number
+  label: string
+  title?: string
+  authors?: string[]
+  year?: string
+  venue?: string
+  doi?: string
+  url?: string
+  text: string
+  missing?: boolean
+}
+
 export interface PaperBlock {
   id: string
   paperId: string

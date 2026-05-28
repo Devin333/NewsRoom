@@ -233,6 +233,43 @@
   box-shadow: 0 0 0 8px color-mix(in srgb, var(--reader-accent-soft) 38%, transparent);
 }
 
+.inlineMath,
+.inlineMathPlain {
+  display: inline;
+  margin: 0 0.08em;
+  color: var(--reader-ink);
+  -webkit-text-fill-color: var(--reader-ink);
+}
+
+.inlineMathPlain {
+  font-family: "Times New Roman", Georgia, serif;
+  font-style: italic;
+}
+
+.inlineRefLink,
+.inlineCitationLink {
+  display: inline;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--reader-accent);
+  cursor: pointer;
+  font: inherit;
+  text-decoration: none;
+  text-underline-offset: 0.18em;
+}
+
+.inlineRefLink:hover,
+.inlineCitationLink:hover {
+  text-decoration: underline;
+}
+
+.inlineCitationGroup {
+  display: inline-flex;
+  gap: 0.18em;
+  vertical-align: baseline;
+}
+
 .visualBlock {
   position: relative;
   margin: 30px 0 34px;
@@ -455,6 +492,33 @@
   color: #9b3b31;
   background: color-mix(in srgb, var(--reader-confused) 36%, transparent);
   font-weight: 800;
+}
+
+.referencesSection {
+  margin-top: 54px;
+}
+
+.referenceList {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-family: Georgia, "Times New Roman", "Noto Serif SC", serif;
+  font-size: calc(var(--reader-font-size) * 0.78);
+  line-height: 1.65;
+}
+
+.referenceItem {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: 10px;
+  scroll-margin-top: 80px;
+}
+
+.referenceLabel {
+  color: var(--reader-accent);
+  font-variant-numeric: tabular-nums;
 }
 
 .previewBackdrop {

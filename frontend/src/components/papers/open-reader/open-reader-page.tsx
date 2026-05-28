@@ -9,11 +9,11 @@ import { recordReaderEvent } from "@/lib/papers/api"
 import type { Locale } from "@/lib/papers/types"
 import { paperAssetUrl, paperSourcePreviewUrl } from "@/lib/paper-reader/api"
 import { targetForPaperBlock } from "@/lib/paper-reader/interactions"
-import type { PaperBlock, PaperSourceRegion } from "@/lib/paper-reader/types"
+import type { PaperInlineSpan, PaperReference, PaperSourceRegion } from "@/lib/paper-reader/types"
 import type { DrawerState, NotePopoverState, OpenReaderPageProps, OpenReaderVisualBlock, ReaderParagraph, ReaderSelection, ReaderSettings, ReaderTocItem, SelectionMenuState } from "./open-reader-types"
 import { buildReaderParagraphs, buildReaderToc, clamp, getSelectionOffsetsWithinElement, getSelectionStatus, makeMaterialSummary, mockExample, mockExplain, safeJsonParse, storageKey } from "./open-reader-utils"
 import { useOpenReaderSelections, useOpenReaderSettings } from "./open-reader-state"
-import { EquationRenderer } from "./equation-renderer"
+import { EquationRenderer, InlineMathRenderer } from "./equation-renderer"
 import styles from "./open-reader.module.css"
 
 export function OpenReaderPage({ reader, locale, backHref = "/papers", visualLayer }: OpenReaderPageProps) {
@@ -22,6 +22,7 @@ export function OpenReaderPage({ reader, locale, backHref = "/papers", visualLay
   const paragraphs = useMemo(() => buildReaderParagraphs(reader, locale), [reader, locale])
   const toc = useMemo(() => mergeVisualToc(buildReaderToc(paragraphs), visualLayer?.blocks ?? []), [paragraphs, visualLayer])
   const visualsBySection = useMemo(() => groupVisualsBySection(visualLayer?.blocks ?? []), [visualLayer])
+  const references = visualLayer?.references ?? []
   const { settings, patchSettings } = useOpenReaderSettings(paper.id)
   const { selections, events, createTempSelection, discardAllTemp, updateNote, confirmExplain, confirmExample, toggleConfused } = useOpenReaderSelections(paper.id)
   const materials = useMemo(() => makeMaterialSummary(paper.id, selections, events), [paper.id, selections, events])
@@ -212,6 +213,7 @@ export function OpenReaderPage({ reader, locale, backHref = "/papers", visualLay
               </section>
             )
           })}
+          <ReferencesSection references={references} />
         </section>
       </article>
 
@@ -317,7 +319,7 @@ function ReaderParagraphView({ paragraph, selections, paragraphRef, onOpenSelect
   paragraphRef: (node: HTMLParagraphElement | null) => void
   onOpenSelectionMenu: (selection: ReaderSelection, rect: DOMRect) => void
 }) {
-  const segments = buildSegments(paragraph.text, selections)
+  const segments = buildParagraphSegments(paragraph, selections)
   return (
     <p ref={paragraphRef} className={styles.paragraph} data-paragraph-id={paragraph.id}>
       {segments.map((segment, index) => segment.selection ? (
@@ -328,9 +330,9 @@ function ReaderParagraphView({ paragraph, selections, paragraphRef, onOpenSelect
           onClick={(event) => { event.stopPropagation(); onOpenSelectionMenu(segment.selection!, event.currentTarget.getBoundingClientRect()) }}
           onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); onOpenSelectionMenu(segment.selection!, event.currentTarget.getBoundingClientRect()) }}
         >
-          {segment.text}
+          {renderParagraphSegment(segment, index)}
         </mark>
-      ) : <span key={index}>{segment.text}</span>)}
+      ) : <span key={index}>{renderParagraphSegment(segment, index)}</span>)}
     </p>
   )
 }
@@ -499,6 +501,23 @@ function PaperTable({ model, label }: { model: PaperTableModel; label: string })
   )
 }
 
+function ReferencesSection({ references }: { references: PaperReference[] }) {
+  if (!references.length) return null
+  return (
+    <section id="references" className={`${styles.readerSection} ${styles.referencesSection}`}>
+      <h2>References</h2>
+      <ol className={styles.referenceList}>
+        {references.map((reference) => (
+          <li key={reference.id} id={reference.id} className={styles.referenceItem}>
+            <span className={styles.referenceLabel}>{reference.label}</span>
+            <span>{reference.text}</span>
+          </li>
+        ))}
+      </ol>
+    </section>
+  )
+}
+
 function tableClass(value?: string | null) {
   if (!value) return ""
   const map: Record<string, string> = {
@@ -536,20 +555,131 @@ function escapeHtml(value: string) {
     .replace(/'/g, "&#39;")
 }
 
-function buildSegments(text: string, selections: ReaderSelection[]) {
+type ParagraphSegment = {
+  text: string
+  inlineSpan?: PaperInlineSpan
+  selection?: ReaderSelection
+}
+
+function buildParagraphSegments(paragraph: ReaderParagraph, selections: ReaderSelection[]): ParagraphSegment[] {
+  const spans = normalizeParagraphInlineSpans(paragraph)
+  if (!spans.length) return applySelectionSegments([{ text: paragraph.text }], selections)
+  const segments: ParagraphSegment[] = []
+  let cursor = 0
+  for (const span of spans) {
+    if (span.start > cursor) {
+      segments.push({ text: paragraph.text.slice(cursor, span.start) })
+    }
+    segments.push({ text: paragraph.text.slice(span.start, span.end) || span.text, inlineSpan: span })
+    cursor = Math.max(cursor, span.end)
+  }
+  if (cursor < paragraph.text.length) {
+    segments.push({ text: paragraph.text.slice(cursor) })
+  }
+  return applySelectionSegments(segments, selections)
+}
+
+function normalizeParagraphInlineSpans(paragraph: ReaderParagraph) {
+  const spans = paragraph.inlineSpans ?? []
+  return spans
+    .filter((span) => span.start >= 0 && span.end <= paragraph.text.length && span.start < span.end)
+    .sort((left, right) => left.start - right.start)
+}
+
+function applySelectionSegments(baseSegments: ParagraphSegment[], selections: ReaderSelection[]) {
+  const text = baseSegments.map((segment) => segment.text).join("")
   const sorted = selections
     .filter((selection) => selection.startOffset >= 0 && selection.endOffset <= text.length && selection.startOffset < selection.endOffset)
     .sort((a, b) => a.startOffset - b.startOffset)
-  const segments: { text: string; selection?: ReaderSelection }[] = []
+  const segments: ParagraphSegment[] = []
   let cursor = 0
   for (const selection of sorted) {
     if (selection.startOffset < cursor) continue
-    if (selection.startOffset > cursor) segments.push({ text: text.slice(cursor, selection.startOffset) })
-    segments.push({ text: text.slice(selection.startOffset, selection.endOffset), selection })
+    if (selection.startOffset > cursor) segments.push(...sliceParagraphSegments(baseSegments, cursor, selection.startOffset))
+    segments.push(...sliceParagraphSegments(baseSegments, selection.startOffset, selection.endOffset).map((segment) => ({ ...segment, selection })))
     cursor = selection.endOffset
   }
-  if (cursor < text.length) segments.push({ text: text.slice(cursor) })
+  if (cursor < text.length) segments.push(...sliceParagraphSegments(baseSegments, cursor, text.length))
   return segments.length ? segments : [{ text }]
+}
+
+function sliceParagraphSegments(segments: ParagraphSegment[], start: number, end: number) {
+  const sliced: ParagraphSegment[] = []
+  let cursor = 0
+  for (const segment of segments) {
+    const segmentStart = cursor
+    const segmentEnd = cursor + segment.text.length
+    cursor = segmentEnd
+    if (segmentEnd <= start || segmentStart >= end) continue
+    const localStart = Math.max(0, start - segmentStart)
+    const localEnd = Math.min(segment.text.length, end - segmentStart)
+    sliced.push({ ...segment, text: segment.text.slice(localStart, localEnd) })
+  }
+  return sliced
+}
+
+function renderParagraphSegment(segment: ParagraphSegment, index: number) {
+  const span = segment.inlineSpan
+  if (!span) return segment.text
+  if (span.type === "math") {
+    return <InlineMathRenderer key={index} value={span.latex} fallback={segment.text || span.text} />
+  }
+  if (span.type === "ref") {
+    return (
+      <button
+        key={index}
+        type="button"
+        className={styles.inlineRefLink}
+        onClick={(event) => {
+          event.stopPropagation()
+          const targetId = span.targetBlockId || span.sectionId
+          if (targetId) scrollToReaderTarget(targetId)
+        }}
+      >
+        {segment.text || span.text}
+      </button>
+    )
+  }
+  if (span.type === "citation") {
+    return (
+      <span key={index} className={styles.inlineCitationGroup}>
+        {renderCitationLinks(span, segment.text || span.text)}
+      </span>
+    )
+  }
+  return segment.text
+}
+
+function renderCitationLinks(span: Extract<PaperInlineSpan, { type: "citation" }>, fallback: string) {
+  const citations = span.citations ?? []
+  const validCitations = citations.filter((citation) => citation.referenceId && citation.number)
+  if (!validCitations.length) return fallback || "[?]"
+  const citationByNumber = new Map(validCitations.map((citation) => [citation.number, citation]))
+  const display = fallback || span.text
+  return display.split(/(\d+)/).map((token, index) => {
+    const number = Number(token)
+    const citation = Number.isFinite(number) ? citationByNumber.get(number) : undefined
+    if (!citation) return <span key={`${token}-${index}`}>{token}</span>
+    return (
+      <button
+        key={`${citation.referenceId}-${index}`}
+        type="button"
+        className={styles.inlineCitationLink}
+        aria-label={`Reference [${citation.number}]`}
+        onClick={(event) => {
+          event.stopPropagation()
+          if (citation.referenceId) scrollToReaderTarget(citation.referenceId)
+        }}
+      >
+        {token}
+      </button>
+    )
+  })
+}
+
+function scrollToReaderTarget(id: string) {
+  if (typeof document === "undefined") return
+  document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" })
 }
 
 function ReaderSettingsDock({ settings, onChange }: { settings: ReaderSettings; onChange: (patch: Partial<ReaderSettings>) => void }) {

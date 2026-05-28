@@ -1,12 +1,13 @@
 import type { OpenReaderVisualLayer } from "@/components/papers/open-reader/open-reader-types"
 import type { PaperReaderPayload, PaperSection } from "@/lib/papers/types"
-import type { PaperBlock, PaperDocumentResponse } from "@/lib/paper-reader/types"
+import type { PaperBlock, PaperDocumentResponse, PaperInlineSpan, PaperReference } from "@/lib/paper-reader/types"
 
 type MutableSection = PaperSection & {
   textParts: string[]
   blockIds: string[]
   blockSources: unknown[]
   sourceOrders: number[]
+  blockInlineSpans: unknown[]
 }
 
 export function paperDocumentToOpenReader(payload: PaperDocumentResponse): {
@@ -18,7 +19,7 @@ export function paperDocumentToOpenReader(payload: PaperDocumentResponse): {
   if (!document || !manifest || payload.status.status !== "compiled") {
     return {
       reader: emptyReaderPayload(payload),
-      visualLayer: { blocks: [] },
+      visualLayer: { blocks: [], references: [] },
     }
   }
 
@@ -54,6 +55,7 @@ export function paperDocumentToOpenReader(payload: PaperDocumentResponse): {
         section.blockIds.push(block.id)
         section.blockSources.push(block.source ?? null)
         section.sourceOrders.push(order)
+        section.blockInlineSpans.push(readInlineSpans(block))
         section.pageStart = minNumber(section.pageStart, block.pageNumber)
         section.pageEnd = maxNumber(section.pageEnd, block.pageNumber)
       }
@@ -110,7 +112,7 @@ export function paperDocumentToOpenReader(payload: PaperDocumentResponse): {
         lastUpdatedAt: payload.status.updatedAt,
       },
     },
-    visualLayer: { blocks: visualBlocks },
+    visualLayer: { blocks: visualBlocks, references: readReferences(document.auxiliary) },
   }
 }
 
@@ -162,6 +164,7 @@ function ensureSection(
     blockIds: [],
     blockSources: [],
     sourceOrders: [],
+    blockInlineSpans: [],
   }
   sections.set(id, section)
   return section
@@ -181,6 +184,7 @@ function finalizeSection(section: MutableSection): PaperSection {
       blockIds: section.blockIds,
       blockSources: section.blockSources,
       sourceOrders: section.sourceOrders,
+      blockInlineSpans: section.blockInlineSpans,
     },
   }
 }
@@ -213,4 +217,35 @@ function maxNumber(left: number | undefined, right: number | undefined) {
   if (right === undefined) return left
   if (left === undefined) return right
   return Math.max(left, right)
+}
+
+function readInlineSpans(block: PaperBlock): PaperInlineSpan[] {
+  const spans = block.metadata?.inlineSpans
+  if (!Array.isArray(spans)) return []
+  return spans.filter(isInlineSpan)
+}
+
+function isInlineSpan(value: unknown): value is PaperInlineSpan {
+  if (!value || typeof value !== "object") return false
+  const span = value as Partial<PaperInlineSpan>
+  return typeof span.type === "string"
+    && typeof span.text === "string"
+    && typeof span.start === "number"
+    && typeof span.end === "number"
+}
+
+function readReferences(auxiliary: Record<string, unknown> | undefined): PaperReference[] {
+  const references = auxiliary?.references
+  if (!Array.isArray(references)) return []
+  return references.filter(isPaperReference)
+}
+
+function isPaperReference(value: unknown): value is PaperReference {
+  if (!value || typeof value !== "object") return false
+  const reference = value as Partial<PaperReference>
+  return typeof reference.id === "string"
+    && typeof reference.key === "string"
+    && typeof reference.number === "number"
+    && typeof reference.label === "string"
+    && typeof reference.text === "string"
 }

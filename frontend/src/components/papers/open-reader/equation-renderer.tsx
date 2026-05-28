@@ -34,6 +34,35 @@ export function EquationRenderer({ value }: { value: string }) {
   )
 }
 
+export function InlineMathRenderer({ value, fallback }: { value: string; fallback?: string }) {
+  const normalized = normalizeEquation(value)
+  const rendered = useMemo(() => {
+    if (!normalized) return null
+    try {
+      return katex.renderToString(stripEquationDelimiters(normalized), {
+        displayMode: false,
+        throwOnError: false,
+        strict: "ignore",
+        trust: false,
+      })
+    } catch {
+      return null
+    }
+  }, [normalized])
+
+  if (!rendered) {
+    return <span className={styles.inlineMathPlain}>{fallback || normalized || value}</span>
+  }
+
+  return (
+    <span
+      className={styles.inlineMath}
+      aria-label={fallback || normalized}
+      dangerouslySetInnerHTML={{ __html: rendered }}
+    />
+  )
+}
+
 function normalizeEquation(value: string) {
   return value.replace(/\s+/g, " ").trim()
 }

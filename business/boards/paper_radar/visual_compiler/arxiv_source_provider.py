@@ -47,6 +47,7 @@ _SECTION_COMMANDS = {
     "paragraph": 4,
 }
 _SECTION_PATTERN = re.compile(r"\\(?P<command>part|chapter|section|subsection|subsubsection|paragraph)\*?\s*(?:\[[^\]]*\])?\s*\{(?P<title>.*?)\}", re.DOTALL)
+_FOLLOWING_LABEL_PATTERN = re.compile(r"(?:\s*\\label\s*\{[^}]+\})+")
 _ENV_START_PATTERN = re.compile(r"\\begin\s*\{(?P<name>[A-Za-z*]+)\}")
 _ENV_END_TEMPLATE = r"\\end\s*\{{{name}\}}"
 _CAPTION_PATTERN = re.compile(r"\\(?:caption|captionof)\s*(?:\{(?P<captionof>figure|table)\})?\s*(?:\[[^\]]*\])?\s*\{(?P<body>.*?)\}", re.DOTALL)
@@ -85,6 +86,14 @@ _TABULAR_ENV_PATTERN = re.compile(
     re.DOTALL,
 )
 _ROWCOLORS_PATTERN = re.compile(r"\\rowcolors\s*\{(?P<start>\d+)\}\s*\{(?P<odd>[^{}]*)\}\s*\{(?P<even>[^{}]*)\}")
+_BIBLIOGRAPHY_PATTERN = re.compile(r"\\bibliography\s*\{(?P<body>[^{}]+)\}")
+_BIB_ENTRY_PATTERN = re.compile(r"@(?P<kind>[A-Za-z]+)\s*\{\s*(?P<key>[^,\s]+)\s*,(?P<body>.*?)(?=\n\s*@|\Z)", re.DOTALL)
+_BIB_FIELD_PATTERN = re.compile(r"(?P<name>[A-Za-z][A-Za-z0-9_-]*)\s*=\s*(?P<value>\{(?:[^{}]|\{[^{}]*\})*\}|\"(?:[^\"\\]|\\.)*\"|[^,\n]+)\s*,?", re.DOTALL)
+_INLINE_TOKEN_PATTERN = re.compile(
+    r"(?P<math>\$(?:\\.|[^$]){1,240}?\$)"
+    r"|(?P<cite>~?\\(?:cite|citep|citet|citealp|citeauthor)\*?(?:\[[^\]]*\]){0,2}\{[^{}]*\})"
+    r"|(?P<ref>~?\\(?:ref|autoref|eqref)\*?(?:\[[^\]]*\]){0,2}\{[^{}]*\})"
+)
 _TABLE_ASSET_CSS = """
 html {
   background: #fff;
@@ -342,6 +351,7 @@ class ArxivSourcePaperCompiler:
                 **_auxiliary_metadata(paper),
                 "sourceCompiler": self.provider_name,
                 "sourceMapping": "synthetic",
+                "references": parser.references(),
                 "arxivSource": {
                     "arxivId": arxiv_id,
                     "packageChecksum": source_hash,
@@ -470,6 +480,30 @@ class _RenderedTable:
     asset: PaperVisualAsset
 
 
+@dataclass
+class _LabelTarget:
+    label: str
+    kind: str
+    display: str
+    block_id: str
+    section_id: str | None = None
+
+
+@dataclass
+class _PendingInlineBlock:
+    block_index: int
+    latex: str
+    kind: str
+
+
+@dataclass
+class _InlineChunk:
+    kind: str
+    text: str
+    span: dict[str, Any] | None = None
+    raw: str = ""
+
+
 class _TexDocumentParser:
     def __init__(
         self,
@@ -497,6 +531,11 @@ class _TexDocumentParser:
         self.table_counter = 0
         self.equation_counter = 0
         self.synthetic_page = 1
+        self.section_counters: list[int] = []
+        self.labels: dict[str, _LabelTarget] = {}
+        self.pending_inline_blocks: list[_PendingInlineBlock] = []
+        self.bib_entries: dict[str, Mapping[str, Any]] = {}
+        self.reference_numbers: dict[str, int] = {}
 
     def render_pdf_pages(self, *, pdf_bytes: bytes) -> None:
         try:
@@ -541,8 +580,10 @@ class _TexDocumentParser:
 
     def parse(self, tex: str) -> _ParseResult:
         cleaned = _strip_comments(tex)
+        self.bib_entries = _parse_bibliography_entries(cleaned, self.root_dir)
         cleaned = _remove_preamble_noise(cleaned)
         self._parse_segment(cleaned)
+        self._resolve_inline_blocks()
         return _ParseResult(blocks=tuple(self.blocks), assets=tuple(self.assets), diagnostics=tuple(self.diagnostics))
 
     def _parse_segment(self, tex: str) -> None:
@@ -580,7 +621,11 @@ class _TexDocumentParser:
         candidates: list[tuple[int, int, str, Any]] = []
         section = _SECTION_PATTERN.search(tex, position)
         if section:
-            candidates.append((section.start(), section.end(), "section", (section.group("command"), section.group("title"), section.group(0))))
+            raw_end = section.end()
+            following_label = _FOLLOWING_LABEL_PATTERN.match(tex, raw_end)
+            if following_label:
+                raw_end = following_label.end()
+            candidates.append((section.start(), raw_end, "section", (section.group("command"), section.group("title"), tex[section.start() : raw_end])))
         abstract = _BEGIN_ABSTRACT_PATTERN.search(tex, position)
         if abstract:
             end_match = _END_ABSTRACT_PATTERN.search(tex, abstract.end())
@@ -612,8 +657,18 @@ class _TexDocumentParser:
         if not title:
             return
         level = _SECTION_COMMANDS.get(command, 1)
+        section_number = self._next_section_number(level) if title.casefold() != "abstract" else ""
         block_id = _stable_id(self.paper_id, "heading", str(len(self.blocks)), title)
         self.section_id = block_id
+        label_key = _label_from_tex(raw)
+        if label_key:
+            self.labels[label_key] = _LabelTarget(
+                label=label_key,
+                kind="section",
+                display=f"Section {section_number}" if section_number else title,
+                block_id=block_id,
+                section_id=block_id,
+            )
         self.blocks.append(
             PaperBlock(
                 id=block_id,
@@ -629,6 +684,8 @@ class _TexDocumentParser:
                     "sourceKind": "tex-source",
                     "sourceMapping": "synthetic",
                     "latexCommand": command,
+                    "latexLabel": label_key,
+                    "sectionNumber": section_number,
                     "latex": raw[:800],
                 },
             )
@@ -636,10 +693,11 @@ class _TexDocumentParser:
 
     def _emit_text(self, tex: str) -> None:
         for paragraph_tex in _paragraph_chunks(tex):
-            paragraph = _clean_text(paragraph_tex)
+            paragraph = _clean_text_preserving_inline(paragraph_tex)
             if not paragraph or _is_structural_noise(paragraph):
                 continue
             block_id = _stable_id(self.paper_id, "paragraph", str(len(self.blocks)), paragraph[:120])
+            block_index = len(self.blocks)
             self.blocks.append(
                 PaperBlock(
                     id=block_id,
@@ -658,6 +716,7 @@ class _TexDocumentParser:
                     },
                 )
             )
+            self.pending_inline_blocks.append(_PendingInlineBlock(block_index=block_index, latex=paragraph_tex, kind="paragraph"))
 
     def _emit_equation(self, body_tex: str) -> None:
         equation = _clean_equation_text(body_tex)
@@ -665,6 +724,15 @@ class _TexDocumentParser:
             return
         self.equation_counter += 1
         block_id = _stable_id(self.paper_id, "equation", str(self.equation_counter), equation)
+        label_key = _label_from_tex(body_tex)
+        if label_key:
+            self.labels[label_key] = _LabelTarget(
+                label=label_key,
+                kind="equation",
+                display=f"Equation {self.equation_counter}",
+                block_id=block_id,
+                section_id=self.section_id,
+            )
         self.blocks.append(
             PaperBlock(
                 id=block_id,
@@ -680,6 +748,7 @@ class _TexDocumentParser:
                     "sourceKind": "tex-source",
                     "sourceMapping": "synthetic",
                     "texKind": "equation",
+                    "latexLabel": label_key,
                     "latex": equation,
                 },
             )
@@ -728,6 +797,14 @@ class _TexDocumentParser:
         if asset is None:
             return
         block_id = _stable_id(self.paper_id, "figure-block", display_label, asset.assetId)
+        if label_key:
+            self.labels[label_key] = _LabelTarget(
+                label=label_key,
+                kind="figure",
+                display=display_label,
+                block_id=block_id,
+                section_id=self.section_id,
+            )
         self.blocks.append(
             PaperBlock(
                 id=block_id,
@@ -769,6 +846,14 @@ class _TexDocumentParser:
             return
         asset = rendered.asset
         block_id = _stable_id(self.paper_id, "table-block", display_label, asset.assetId)
+        if label_key:
+            self.labels[label_key] = _LabelTarget(
+                label=label_key,
+                kind="table",
+                display=display_label,
+                block_id=block_id,
+                section_id=self.section_id,
+            )
         self.blocks.append(
             PaperBlock(
                 id=block_id,
@@ -794,6 +879,158 @@ class _TexDocumentParser:
                 },
             )
         )
+
+    def _next_section_number(self, level: int) -> str:
+        normalized_level = max(1, min(int(level), 6))
+        while len(self.section_counters) < normalized_level:
+            self.section_counters.append(0)
+        self.section_counters = self.section_counters[:normalized_level]
+        self.section_counters[normalized_level - 1] += 1
+        return ".".join(str(item) for item in self.section_counters if item > 0)
+
+    def _resolve_inline_blocks(self) -> None:
+        next_blocks = list(self.blocks)
+        for pending in self.pending_inline_blocks:
+            if pending.block_index >= len(next_blocks):
+                continue
+            block = next_blocks[pending.block_index]
+            parsed = self._inline_model_from_tex(pending.latex)
+            if not parsed["text"].strip():
+                continue
+            metadata = dict(block.metadata)
+            metadata["inlineSpans"] = parsed["spans"]
+            metadata["inlineText"] = parsed["text"]
+            next_blocks[pending.block_index] = PaperBlock(
+                id=block.id,
+                paperId=block.paperId,
+                type=block.type,
+                text=parsed["text"],
+                level=block.level,
+                pageNumber=block.pageNumber,
+                sectionId=block.sectionId,
+                assetId=block.assetId,
+                label=block.label,
+                caption=block.caption,
+                source=block.source,
+                metadata=metadata,
+            )
+        self.blocks = next_blocks
+
+    def _inline_model_from_tex(self, tex: str) -> Mapping[str, Any]:
+        chunks: list[_InlineChunk] = []
+
+        def append_text(raw: str) -> None:
+            cleaned = _clean_text_preserving_inline(raw, strip_inline_tokens=False)
+            if cleaned:
+                chunks.append(_InlineChunk(kind="text", text=cleaned, raw=raw))
+
+        position = 0
+        for match in _INLINE_TOKEN_PATTERN.finditer(tex):
+            append_text(tex[position:match.start()])
+            token_text = ""
+            token_span: dict[str, Any] | None = None
+            if match.group("math"):
+                raw = match.group("math")
+                latex = raw[1:-1].strip()
+                token_text = _inline_math_fallback_text(latex)
+                token_span = {
+                    "type": "math",
+                    "text": token_text,
+                    "latex": latex,
+                    "displayMode": False,
+                }
+            elif match.group("ref"):
+                raw = match.group("ref")
+                key = _command_body(raw)
+                command = _latex_command_name(raw)
+                target = self.labels.get(key)
+                suffix_start = match.end()
+                suffix = ""
+                if suffix_start < len(tex) and tex[suffix_start] == "(":
+                    suffix_match = re.match(r"\([A-Za-z0-9]+\)", tex[suffix_start:])
+                    if suffix_match:
+                        suffix = suffix_match.group(0)
+                token_text = _reference_display_text(command, key, target) + suffix
+                if target is None:
+                    self.diagnostics.append(
+                        {
+                            "severity": "warning",
+                            "code": "tex_reference_missing",
+                            "message": "TeX reference target was not found",
+                            "label": key,
+                        }
+                    )
+                token_span = {
+                    "type": "ref",
+                    "text": token_text,
+                    "label": key,
+                    "refKind": target.kind if target else _reference_kind_from_key(command, key),
+                    "targetBlockId": target.block_id if target else None,
+                    "sectionId": target.section_id if target else None,
+                    "display": token_text,
+                }
+            elif match.group("cite"):
+                raw = match.group("cite")
+                keys = [item.strip() for item in _command_body(raw).split(",") if item.strip()]
+                citations: list[dict[str, Any]] = []
+                for key in keys:
+                    entry = self.bib_entries.get(key)
+                    if entry is None:
+                        self.diagnostics.append(
+                            {
+                                "severity": "warning",
+                                "code": "tex_citation_missing",
+                                "message": "BibTeX citation entry was not found",
+                                "citationKey": key,
+                            }
+                        )
+                        citations.append(
+                            {
+                                "key": key,
+                                "number": None,
+                                "referenceId": None,
+                                "missing": True,
+                            }
+                        )
+                        continue
+                    number = self._reference_number_for_key(key)
+                    citations.append(
+                        {
+                            "key": key,
+                            "number": number,
+                            "referenceId": _reference_id(key),
+                        }
+                    )
+                token_text = _citation_display(citations)
+                token_span = {
+                    "type": "citation",
+                    "text": token_text,
+                    "citations": citations,
+                }
+            if token_span is not None:
+                chunks.append(_InlineChunk(kind=str(token_span["type"]), text=token_text, span=token_span, raw=match.group(0)))
+            position = match.end()
+            if match.group("ref") and position < len(tex) and tex[position] == "(":
+                suffix_match = re.match(r"\([A-Za-z0-9]+\)", tex[position:])
+                if suffix_match:
+                    position += len(suffix_match.group(0))
+        append_text(tex[position:])
+        chunks = _dedupe_reference_context(chunks)
+        text, spans = _materialize_inline_chunks(chunks)
+        return {"text": text, "spans": spans}
+
+    def _reference_number_for_key(self, key: str) -> int:
+        if key not in self.reference_numbers:
+            self.reference_numbers[key] = len(self.reference_numbers) + 1
+        return self.reference_numbers[key]
+
+    def references(self) -> tuple[Mapping[str, Any], ...]:
+        ordered = sorted(self.reference_numbers.items(), key=lambda item: item[1])
+        references: list[Mapping[str, Any]] = []
+        for key, number in ordered:
+            entry = self.bib_entries.get(key, {})
+            references.append(_reference_payload(key, number, entry))
+        return tuple(references)
 
     def _resolve_graphic_path(self, value: str) -> Path | None:
         normalized = value.strip().strip("{}")
@@ -1191,6 +1428,264 @@ def _clean_text(tex: str | None) -> str:
     text = re.sub(r"\s*\n\s*", " ", text)
     text = _PUNCT_SPACE_PATTERN.sub(r"\1", text)
     return text.strip()
+
+
+def _clean_text_preserving_inline(tex: str | None, *, strip_inline_tokens: bool = True) -> str:
+    if not tex:
+        return ""
+    text = _strip_comments(tex)
+    text = _CAPTION_PATTERN.sub(lambda match: _clean_text_preserving_inline(match.group("body"), strip_inline_tokens=strip_inline_tokens), text)
+    text = _LABEL_PATTERN.sub("", text)
+    text = _INCLUDE_GRAPHICS_PATTERN.sub("", text)
+    text = re.sub(r"\\(?:begin|end)\s*\{[^}]+\}", "\n", text)
+    if strip_inline_tokens:
+        text = _INLINE_TOKEN_PATTERN.sub(lambda match: _inline_token_fallback_text(match.group(0)), text)
+    text = _replace_text_commands(text)
+    text = _latex_text_replacements(text)
+    text = _LATEX_COMMAND_PATTERN.sub("", text)
+    text = re.sub(r"[{}]", "", text)
+    text = text.replace("\u00a0", " ")
+    text = re.sub(r"~+", " ", text)
+    text = _WHITESPACE_PATTERN.sub(" ", text)
+    text = re.sub(r"\s*\n\s*", " ", text)
+    text = _PUNCT_SPACE_PATTERN.sub(r"\1", text)
+    return text.strip()
+
+
+def _inline_token_fallback_text(raw: str) -> str:
+    if raw.startswith("$") and raw.endswith("$"):
+        return _inline_math_fallback_text(raw[1:-1])
+    command = _latex_command_name(raw)
+    body = _command_body(raw)
+    if command in {"cite", "citep", "citet", "citealp", "citeauthor"}:
+        keys = [key.strip() for key in body.split(",") if key.strip()]
+        return _citation_display([{"number": index + 1} for index, _key in enumerate(keys)]) if keys else ""
+    if command in {"ref", "autoref", "eqref"}:
+        return _reference_display_text(command, body, None)
+    return body
+
+
+def _replace_text_commands(value: str) -> str:
+    text = value
+    previous = None
+    while previous != text:
+        previous = text
+        text = _COMMAND_WITH_TEXT_ARG.sub(lambda match: match.group("body"), text)
+        text = re.sub(
+            r"\\(?:textcolor|color)\s*\{[^{}]*\}\s*\{(?P<body>[^{}]*(?:\{[^{}]*\}[^{}]*)*)\}",
+            lambda match: match.group("body"),
+            text,
+            flags=re.DOTALL,
+        )
+    return text
+
+
+def _latex_text_replacements(value: str) -> str:
+    text = value
+    text = text.replace("``", '"').replace("''", '"')
+    text = text.replace("---", "-").replace("--", "-")
+    text = text.replace("\\%", "%").replace("\\&", "&").replace("\\_", "_").replace("\\#", "#")
+    text = text.replace("\\$", "$").replace("\\{", "{").replace("\\}", "}")
+    replacements = {
+        r"\textasciitilde": "~",
+        r"\times": "x",
+        r"\pm": "+/-",
+        r"\leq": "<=",
+        r"\geq": ">=",
+        r"\rightarrow": "->",
+        r"\leftarrow": "<-",
+        r"\uparrow": "up",
+        r"\downarrow": "down",
+        r"\dag": "dagger",
+        r"\dagger": "dagger",
+        r"\etal": "et al.",
+        r"\eg": "e.g.",
+        r"\ie": "i.e.",
+        r"\etc": "etc.",
+        r"\methodname": "GoToHunt",
+    }
+    for key, value in sorted(replacements.items(), key=lambda item: len(item[0]), reverse=True):
+        text = text.replace(key, value)
+    return text
+
+
+def _needs_join_space(left: str, right: str) -> bool:
+    left_tail = left[-1:] if left else ""
+    right_head = right[:1] if right else ""
+    if not left_tail or not right_head:
+        return False
+    if left_tail.isspace() or right_head.isspace():
+        return False
+    if right_head in ",.;:!?)]}":
+        return False
+    if left_tail in "([{":
+        return False
+    return True
+
+
+def _inline_math_fallback_text(latex: str) -> str:
+    normalized = _clean_equation_text(latex)
+    return normalized or latex.strip()
+
+
+def _command_body(raw: str) -> str:
+    match = re.search(r"\{(?P<body>[^{}]*)\}\s*$", raw)
+    return match.group("body").strip() if match else ""
+
+
+def _latex_command_name(raw: str) -> str:
+    match = re.search(r"\\(?P<name>[A-Za-z]+)\*?", raw)
+    return match.group("name") if match else ""
+
+
+def _reference_display_text(command: str, key: str, target: _LabelTarget | None) -> str:
+    if target is not None:
+        if command == "eqref" and not target.display.startswith("("):
+            return f"({target.display})" if target.kind == "equation" else target.display
+        return target.display
+    kind = _reference_kind_from_key(command, key)
+    tail = _REF_PREFIX_PATTERN.sub("", key).replace("_", " ").replace("-", " ").strip()
+    if command == "eqref":
+        return f"({tail or key})"
+    if kind == "figure":
+        return f"Figure {tail}" if tail else key
+    if kind == "table":
+        return f"Table {tail}" if tail else key
+    if kind == "section":
+        return f"Section {tail}" if tail else key
+    if kind == "equation":
+        return f"Equation {tail}" if tail else key
+    return tail or key
+
+
+def _reference_kind_from_key(command: str, key: str) -> str:
+    if command == "eqref":
+        return "equation"
+    normalized = key.casefold()
+    if normalized.startswith(("fig:", "figure:", "fig_", "figure_")):
+        return "figure"
+    if normalized.startswith(("tab:", "table:", "tab_", "table_")):
+        return "table"
+    if normalized.startswith(("sec:", "section:", "sec_", "section_")):
+        return "section"
+    if normalized.startswith(("eq:", "equation:", "eq_", "equation_")):
+        return "equation"
+    return "reference"
+
+
+def _citation_display(citations: Sequence[Mapping[str, Any]]) -> str:
+    if any(item.get("missing") for item in citations):
+        return "[?]"
+    numbers = sorted({int(item["number"]) for item in citations if isinstance(item.get("number"), int) or str(item.get("number") or "").isdigit()})
+    if not numbers:
+        return "[?]"
+    ranges: list[str] = []
+    index = 0
+    while index < len(numbers):
+        start = numbers[index]
+        end = start
+        while index + 1 < len(numbers) and numbers[index + 1] == end + 1:
+            index += 1
+            end = numbers[index]
+        if end - start >= 2:
+            ranges.append(f"{start}-{end}")
+        elif end > start:
+            ranges.extend(str(number) for number in range(start, end + 1))
+        else:
+            ranges.append(str(start))
+        index += 1
+    return "[" + ", ".join(ranges) + "]"
+
+
+def _dedupe_reference_context(chunks: Sequence[_InlineChunk]) -> list[_InlineChunk]:
+    next_chunks = [
+        _InlineChunk(kind=chunk.kind, text=chunk.text, span=dict(chunk.span) if chunk.span else None, raw=chunk.raw)
+        for chunk in chunks
+        if chunk.text
+    ]
+    for index, chunk in enumerate(next_chunks):
+        if chunk.kind != "ref" or not chunk.span:
+            continue
+        ref_kind = str(chunk.span.get("refKind") or "")
+        display = str(chunk.span.get("display") or chunk.text)
+        if ref_kind not in {"figure", "table", "section", "equation"}:
+            continue
+        previous = _previous_text_chunk(next_chunks, index)
+        if previous is None:
+            continue
+        prefix = {
+            "figure": "Figure",
+            "table": "Table",
+            "section": "Section",
+            "equation": "Equation",
+        }[ref_kind]
+        plural = f"{prefix}s"
+        pattern = re.compile(rf"(?P<head>(?:^|[\s(\[])(?:{re.escape(prefix)}|{re.escape(plural)}))\s*$", re.IGNORECASE)
+        if pattern.search(previous.text) and display.casefold().startswith(prefix.casefold()):
+            previous.text = pattern.sub(
+                lambda match: match.group("head")[:-len(prefix)] if match.group("head").casefold().endswith(prefix.casefold()) else match.group("head")[:-len(plural)],
+                previous.text,
+            ).rstrip()
+            previous.text = re.sub(r"\s+$", "", previous.text)
+    return [chunk for chunk in next_chunks if chunk.text]
+
+
+def _previous_text_chunk(chunks: Sequence[_InlineChunk], index: int) -> _InlineChunk | None:
+    for previous_index in range(index - 1, -1, -1):
+        if chunks[previous_index].kind == "text":
+            return chunks[previous_index]
+        if chunks[previous_index].text.strip():
+            return None
+    return None
+
+
+def _materialize_inline_chunks(chunks: Sequence[_InlineChunk]) -> tuple[str, list[dict[str, Any]]]:
+    spans: list[dict[str, Any]] = []
+    output: list[str] = []
+    for chunk in chunks:
+        text = _normalize_inline_text(chunk.text)
+        if not text:
+            continue
+        if output and _needs_join_space(output[-1], text):
+            output.append(" ")
+        start = len("".join(output))
+        output.append(text)
+        span = dict(chunk.span) if chunk.span else {"type": "text"}
+        span["text"] = text
+        span["start"] = start
+        span["end"] = start + len(text)
+        spans.append(span)
+    text = _normalize_inline_text("".join(output))
+    return text, _normalize_inline_spans(spans, text)
+
+
+def _normalize_inline_text(value: str) -> str:
+    text = value.replace("\u00a0", " ")
+    text = _WHITESPACE_PATTERN.sub(" ", text)
+    text = re.sub(r"\s+([,.;:!?])", r"\1", text)
+    text = re.sub(r"\(\s+", "(", text)
+    text = re.sub(r"\s+\)", ")", text)
+    return text.strip()
+
+
+def _normalize_inline_spans(spans: Sequence[Mapping[str, Any]], text: str) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    cursor = 0
+    for span in spans:
+        span_text = str(span.get("text") or "")
+        if not span_text:
+            continue
+        start = text.find(span_text, cursor)
+        if start < 0:
+            start = cursor
+        end = min(len(text), start + len(span_text))
+        cursor = end
+        payload = dict(span)
+        payload["start"] = start
+        payload["end"] = end
+        payload["text"] = text[start:end] or span_text
+        normalized.append(payload)
+    return normalized
 
 
 def _citation_replacement(raw: str, body: str) -> str:
@@ -1650,6 +2145,111 @@ def _is_structural_noise(value: str) -> bool:
     if normalized.startswith("Squeezing Capacity") and "Technical Appendices" in normalized:
         return True
     return False
+
+
+def _parse_bibliography_entries(tex: str, root_dir: Path) -> dict[str, Mapping[str, Any]]:
+    entries: dict[str, Mapping[str, Any]] = {}
+    bibliography_paths: list[str] = []
+    for match in _BIBLIOGRAPHY_PATTERN.finditer(tex):
+        bibliography_paths.extend(item.strip() for item in match.group("body").split(",") if item.strip())
+    for raw_path in bibliography_paths:
+        candidates = [raw_path] if raw_path.endswith(".bib") else [f"{raw_path}.bib", raw_path]
+        bib_path = next((path for candidate in candidates for path in [_safe_join(root_dir, candidate)] if path is not None and path.exists()), None)
+        if bib_path is None:
+            continue
+        try:
+            content = bib_path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            content = bib_path.read_text(encoding="latin-1")
+        except OSError:
+            continue
+        entries.update(_parse_bib_file(content))
+    return entries
+
+
+def _parse_bib_file(content: str) -> dict[str, Mapping[str, Any]]:
+    entries: dict[str, Mapping[str, Any]] = {}
+    normalized = _strip_comments(content)
+    for match in _BIB_ENTRY_PATTERN.finditer(normalized):
+        key = match.group("key").strip()
+        body = match.group("body")
+        fields: dict[str, str] = {}
+        for field in _BIB_FIELD_PATTERN.finditer(body):
+            name = field.group("name").strip().casefold()
+            value = _bib_field_text(field.group("value"))
+            if value:
+                fields[name] = value
+        if key:
+            entries[key] = {
+                "key": key,
+                "kind": match.group("kind").strip().casefold(),
+                "fields": fields,
+            }
+    return entries
+
+
+def _bib_field_text(value: str) -> str:
+    text = value.strip().rstrip(",").strip()
+    if (text.startswith("{") and text.endswith("}")) or (text.startswith('"') and text.endswith('"')):
+        text = text[1:-1]
+    text = text.replace("\n", " ")
+    return _latex_to_reference_text(text)
+
+
+def _latex_to_reference_text(value: str) -> str:
+    text = _clean_text_preserving_inline(value)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
+def _reference_id(key: str) -> str:
+    return f"ref-{_safe_name(key).lower()}"
+
+
+def _reference_payload(key: str, number: int, entry: Mapping[str, Any]) -> Mapping[str, Any]:
+    fields = entry.get("fields") if isinstance(entry.get("fields"), Mapping) else {}
+    title = str(fields.get("title") or "").strip()
+    authors = str(fields.get("author") or "").strip()
+    year = str(fields.get("year") or "").strip()
+    venue = str(fields.get("journal") or fields.get("booktitle") or fields.get("publisher") or fields.get("archiveprefix") or "").strip()
+    doi = str(fields.get("doi") or "").strip()
+    url = str(fields.get("url") or "").strip()
+    parts = []
+    if authors:
+        parts.append(authors)
+    if title:
+        parts.append(title)
+    if venue:
+        parts.append(venue)
+    if year:
+        parts.append(year)
+    if doi:
+        parts.append(f"doi:{doi}")
+    if url:
+        parts.append(url)
+    text = ". ".join(part.strip(" .") for part in parts if part.strip(" ."))
+    if text and not text.endswith("."):
+        text = f"{text}."
+    return {
+        "id": _reference_id(key),
+        "key": key,
+        "number": number,
+        "label": f"[{number}]",
+        "title": title,
+        "authors": _split_bib_authors(authors),
+        "year": year,
+        "venue": venue,
+        "doi": doi,
+        "url": url,
+        "text": text or key,
+        "missing": not bool(entry),
+    }
+
+
+def _split_bib_authors(value: str) -> list[str]:
+    if not value:
+        return []
+    return [author.strip() for author in re.split(r"\s+and\s+", value) if author.strip()]
 
 
 def _render_source_image_to_png(*, source_path: Path, output_path: Path, dpi: int) -> tuple[Path, Any]:

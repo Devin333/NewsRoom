@@ -357,12 +357,55 @@ def test_arxiv_source_compiler_uses_tex_body_equations_and_source_assets(tmp_pat
     equation_blocks = [block for block in draft.document.blocks if block.type == "equation"]
     figure_blocks = [block for block in draft.document.blocks if block.type == "figure"]
     table_blocks = [block for block in draft.document.blocks if block.type == "table"]
+    paragraph_blocks = [block for block in draft.document.blocks if block.type == "paragraph"]
+    references = draft.document.auxiliary.get("references")
 
     assert gate_report["passed"] is True
     assert draft.compile_info.provider == "arxiv-source-tex-v1"
     assert draft.document.title == "Source First Paper"
     assert "Introduction from TeX source" in body_text
     assert "Generated AI summary should stay outside body." not in body_text
+    assert "Figuremodel" not in body_text
+    assert "Tablecopy" not in body_text
+    assert "Anything[" not in body_text
+    assert r"k^\5" not in body_text
+    assert "R^Bx" not in body_text
+    assert "Figure 1(b)" in body_text
+    assert "Table 1" in body_text
+    assert "Section 1.1" in body_text
+    assert "Orient Anything [?]" in body_text
+    assert "[1, 2]" in body_text
+    assert r"\mathcal{F} = \{F_i\}_{i=0}^{M}" in body_text
+    assert r"F_i \in \mathbb{R}^{B \times L \times C}" in body_text
+    assert r"k^\circ \in \{5^\circ,10^\circ,15^\circ,20^\circ\}" in body_text
+    assert any(block.metadata.get("inlineSpans") for block in paragraph_blocks)
+    math_spans = [
+        span
+        for block in paragraph_blocks
+        for span in block.metadata.get("inlineSpans", [])
+        if span.get("type") == "math"
+    ]
+    ref_spans = [
+        span
+        for block in paragraph_blocks
+        for span in block.metadata.get("inlineSpans", [])
+        if span.get("type") == "ref"
+    ]
+    citation_spans = [
+        span
+        for block in paragraph_blocks
+        for span in block.metadata.get("inlineSpans", [])
+        if span.get("type") == "citation"
+    ]
+    assert any(span.get("latex") == r"\mathcal{F} = \{F_i\}_{i=0}^{M}" for span in math_spans)
+    assert any(span.get("text") == "Figure 1(b)" and span.get("targetBlockId") == figure_blocks[0].id for span in ref_spans)
+    assert any(span.get("text") == "Table 1" and span.get("targetBlockId") == table_blocks[0].id for span in ref_spans)
+    assert any(span.get("text") == "Section 1.1" and span.get("sectionId") for span in ref_spans)
+    assert any(span.get("text") == "[1, 2]" for span in citation_spans)
+    assert any(span.get("text") == "[?]" for span in citation_spans)
+    assert isinstance(references, tuple)
+    assert [item["key"] for item in references] == ["wu2025less", "mou2025dreamo"]
+    assert references[0]["label"] == "[1]"
     assert len(equation_blocks) == 1
     assert equation_blocks[0].assetId is None
     assert r"q(\mathbf{x}_t\mid\mathbf{x}_0)" in equation_blocks[0].text
@@ -755,6 +798,7 @@ def _sample_arxiv_source_tarball() -> bytes:
 \begin{document}
 \maketitle
 \input{sections/body}
+\bibliography{bib/references}
 \end{document}
 """,
         "sections/body.tex": r"""
@@ -763,7 +807,8 @@ This abstract is from the TeX source package.
 \end{abstract}
 
 \section{Introduction from TeX source}
-This paragraph is the real paper body from TeX source. It references Figure~\ref{fig:source} and Table~\ref{tab:source}.
+This paragraph is the real paper body from TeX source. It references Figure~\ref{fig:source}(b), Table~\ref{tab:source}, and Section~\ref{sec:formula}.
+Orient Anything~\cite{missing2025orient} should become a missing citation marker, while UNO and DreamO~\cite{wu2025less,mou2025dreamo} should become numeric citations.
 
 \begin{figure}[t]
   \centering
@@ -773,7 +818,9 @@ This paragraph is the real paper body from TeX source. It references Figure~\ref
 \end{figure}
 
 \subsection{Formula}
+\label{sec:formula}
 The next display equation should be emitted as LaTeX text, not as a screenshot.
+Inline formulas should keep TeX spans: $\mathcal{F} = \{F_i\}_{i=0}^{M}$, $F_i \in \mathbb{R}^{B \times L \times C}$, and $k^\circ \in \{5^\circ,10^\circ,15^\circ,20^\circ\}$.
 \begin{equation}
 q(\mathbf{x}_t\mid\mathbf{x}_0) = \mathcal{N}(\mathbf{x}_t; \sqrt{\alpha_t}\mathbf{x}_0, (1-\alpha_t)\mathbf{I})
 \end{equation}
@@ -791,6 +838,21 @@ q(\mathbf{x}_t\mid\mathbf{x}_0) = \mathcal{N}(\mathbf{x}_t; \sqrt{\alpha_t}\math
 \bottomrule
 \end{tabular}
 \end{table}
+""",
+        "bib/references.bib": r"""
+@article{wu2025less,
+  title={Less is More for Subject-Driven Generation},
+  author={Wu, Ada and Li, Ben},
+  journal={arXiv preprint arXiv:2501.00001},
+  year={2025}
+}
+
+@inproceedings{mou2025dreamo,
+  title={DreamO: Unified Subject and Style Customization},
+  author={Mou, Chen and Zhao, Di},
+  booktitle={Conference on Computer Vision},
+  year={2025}
+}
 """,
         "img/figure.pdf": _sample_figure_pdf_bytes(),
     }
