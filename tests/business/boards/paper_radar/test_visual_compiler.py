@@ -107,11 +107,45 @@ def test_visual_compiler_uses_model_layout_provider_for_table_and_figure_crops(t
     )
 
     visual_blocks = [block for block in draft.document.blocks if block.type in {"figure", "table"}]
+    equation_blocks = [block for block in draft.document.blocks if block.type == "equation"]
     assert gate_report["passed"] is True
     assert {block.type for block in visual_blocks} == {"figure", "table"}
     assert any(asset.kind == "table" and asset.metadata.get("layoutProvider") == "fake-model-layout-v1" for asset in draft.manifest.assets)
     assert any(asset.kind == "figure" and asset.metadata.get("layoutProvider") == "fake-model-layout-v1" for asset in draft.manifest.assets)
+    assert all("Figure 1" not in block.text for block in equation_blocks)
     assert "AI summary must remain outside the body." not in "\n".join(block.text for block in draft.document.blocks)
+
+
+def test_visual_compiler_keeps_visual_ocr_and_hyphenation_noise_out_of_body(tmp_path) -> None:
+    output_dir = tmp_path / "clean-body"
+    compiler = PyMuPDFPaperCompiler(dpi=96, layout_provider=_CleanBodyLayoutProvider(), max_visual_assets_per_page=8)
+
+    draft = compiler.compile(
+        pdf_bytes=_noisy_visual_pdf_bytes(),
+        paper={
+            "id": "clean-body-paper",
+            "title": "Clean Body Paper",
+            "abstractSnippet": "AI summary must remain outside the body.",
+        },
+        output_dir=output_dir,
+        source_pdf_url="https://arxiv.org/pdf/2605.00003.pdf",
+        started_at=datetime(2026, 5, 28, tzinfo=timezone.utc),
+        finished_at=datetime(2026, 5, 28, tzinfo=timezone.utc),
+    )
+
+    body_text = "\n".join(block.text for block in draft.document.blocks if block.type == "paragraph")
+    figure_blocks = [block for block in draft.document.blocks if block.type == "figure"]
+
+    assert "approaches often encode text and reference images separately" in body_text
+    assert "ap- proaches" not in body_text
+    assert "Approaches" not in body_text
+    assert "CLIP-T" not in body_text
+    assert "Reference Image" not in body_text
+    assert "Method [1] 22.6 7.0 0.486 DreamO [2] 22.1 9.6 0.372" not in body_text
+    assert "1" not in {block.text for block in draft.document.blocks if block.type == "paragraph"}
+    assert len(figure_blocks) == 1
+    assert figure_blocks[0].caption == "Figure 1: A real multi-line figure caption from the paper."
+    assert any(item["code"] == "visual_text_blocks_skipped" for item in draft.compile_info.diagnostics)
 
 
 def test_model_layout_provider_env_factory_requires_explicit_enablement() -> None:
@@ -296,6 +330,33 @@ def _layout_provider_pdf_bytes() -> bytes:
     page.insert_text((395, 235), "Score", fontsize=9)
     page.insert_text((462, 235), "Delta", fontsize=9)
     page.insert_text((320, 386), "Table 1: Table located by the model layout provider.", fontsize=10)
+    page.insert_text((150, 446), "y = Wx + b (1)", fontsize=13)
+    payload = document.tobytes()
+    document.close()
+    return payload
+
+
+def _noisy_visual_pdf_bytes() -> bytes:
+    import fitz
+
+    document = fitz.open()
+    page = document.new_page(width=612, height=792)
+    page.insert_text((72, 72), "Clean Body Paper", fontsize=20)
+    page.insert_text((72, 112), "Abstract", fontsize=16)
+    page.insert_textbox(
+        fitz.Rect(72, 142, 540, 225),
+        "Existing ap-\nproaches often encode text and reference images separately. This sentence should be readable.",
+        fontsize=11,
+    )
+    figure_rect = fitz.Rect(96, 276, 516, 476)
+    page.draw_rect(figure_rect, color=(0.1, 0.35, 0.55), fill=(0.78, 0.9, 0.86), width=2)
+    page.insert_text((126, 330), "CLIP-T", fontsize=11)
+    page.insert_text((126, 370), "Reference Image", fontsize=11)
+    page.insert_text((360, 350), "Approaches", fontsize=11)
+    page.insert_text((126, 488), "Method [1] 22.6 7.0 0.486 DreamO [2] 22.1 9.6 0.372", fontsize=9)
+    page.insert_text((112, 512), "Figure 1:", fontsize=10)
+    page.insert_text((112, 528), "A real multi-line figure caption from the paper.", fontsize=10)
+    page.insert_text((306, 740), "1", fontsize=10)
     payload = document.tobytes()
     document.close()
     return payload
@@ -346,6 +407,30 @@ class _FakeLayoutProvider:
                     caption="Table 1: Table located by the model layout provider.",
                     bbox=(320, 210, 520, 370),
                     confidence=0.97,
+                ),
+                PaperLayoutRegion(
+                    kind="equation",
+                    label=None,
+                    caption=None,
+                    bbox=(150, 430, 390, 460),
+                    confidence=0.96,
+                ),
+            )
+        )
+
+
+class _CleanBodyLayoutProvider:
+    provider_name = "clean-body-model-layout-v1"
+
+    def detect_regions(self, **_kwargs):
+        return PaperLayoutDetection(
+            regions=(
+                PaperLayoutRegion(
+                    kind="figure",
+                    label="Figure 1",
+                    caption="Figure 1: A real multi-line figure caption from the paper.",
+                    bbox=(96, 276, 516, 476),
+                    confidence=0.99,
                 ),
             )
         )

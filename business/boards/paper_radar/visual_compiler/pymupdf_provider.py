@@ -25,7 +25,7 @@ from business.boards.paper_radar.visual_compiler.model_layout_provider import (
 
 
 _CAPTION_PATTERN = re.compile(
-    r"^\s*(?P<kind>fig(?:ure)?|table)\s*\.?\s*(?P<label>[0-9IVXLC]+[A-Za-z]?)\s*[:.\-]?\s*(?P<caption>.*)$",
+    r"^\s*(?P<kind>fig(?:ure)?|table)\s*\.?\s*(?P<label>[0-9]+[A-Za-z]?|[A-Za-z][0-9]*|[IVXLC]+)\s*[:.\-]?\s*(?P<caption>.*)$",
     re.IGNORECASE,
 )
 _SECTION_PATTERN = re.compile(
@@ -35,6 +35,29 @@ _SECTION_PATTERN = re.compile(
 _NUMBERED_HEADING_PATTERN = re.compile(r"^\s*(\d+|[IVXLC]+)(?:\.\d+)*\.?\s+[A-Z][^\n]{2,90}$")
 _EQUATION_LABEL_PATTERN = re.compile(r"\(\s*(?P<label>\d{1,3})\s*\)\s*$")
 _MATH_PATTERN = re.compile(r"(?:=|≤|≥|∑|∫|√|\\sum|\\frac|\\mathbb|\\theta|\\lambda|\\argmax|\\min|\\max)")
+_PRIVATE_USE_PATTERN = re.compile(r"^[\ue000-\uf8ff\s]+$")
+_PAGE_NUMBER_PATTERN = re.compile(r"^\d{1,3}$")
+_WORD_PATTERN = re.compile(r"[A-Za-z][A-Za-z-]*|\d+(?:\.\d+)?")
+_HYPHENATED_LINE_END_PATTERN = re.compile(r"(?P<prefix>[A-Za-z][A-Za-z]+)[\-\u2010-\u2015]\s*$")
+_COMPOUND_LINEBREAK_PREFIXES = {
+    "cross",
+    "fine",
+    "identity",
+    "image",
+    "layer",
+    "model",
+    "modality",
+    "multi",
+    "one",
+    "single",
+    "stage",
+    "state",
+    "subject",
+    "task",
+    "text",
+    "two",
+    "zero",
+}
 
 
 @dataclass(frozen=True)
@@ -277,9 +300,10 @@ class PyMuPDFPaperCompiler:
                 for region in detection.regions:
                     if len(visual_assets) >= self.max_visual_assets_per_page:
                         break
-                    caption = _caption_for_model_region(region, captions, page_height=page_height)
-                    label = region.label or _caption_label(caption) or _default_visual_label(region.kind)
-                    caption_text = region.caption or _caption_text(caption) or label
+                    caption = _caption_for_model_region(region, captions, page_height=page_height) if region.kind in {"figure", "table"} else None
+                    equation = _equation_for_model_region(region, text_blocks) if region.kind == "equation" else None
+                    label = region.label or _caption_label(caption) or _equation_label(equation) or _default_visual_label(region.kind)
+                    caption_text = region.caption or _caption_text(caption) or _equation_text(equation) or label
                     asset = self._crop_visual_asset(
                         page=page,
                         matrix=matrix,
@@ -350,6 +374,8 @@ class PyMuPDFPaperCompiler:
         for caption in captions:
             if len(visual_assets) >= self.max_visual_assets_per_page:
                 break
+            if _visual_asset_with_label_exists(caption["label"], visual_assets):
+                continue
             if _covered_by_visual_asset(caption["bbox"], visual_assets):
                 continue
             if any(_rects_close(caption["bbox"], asset.source.bbox if asset.source else None) for asset, _, _ in visual_assets):
@@ -413,6 +439,8 @@ class PyMuPDFPaperCompiler:
         page_assets.extend(asset for asset, _, _ in visual_assets)
         content_items: list[tuple[float, float, PaperBlock]] = []
         current_section_id = f"{paper_id}:page-{page_number}"
+        skipped_visual_text_blocks = 0
+        skipped_noise_text_blocks = 0
         for index, block in enumerate(text_blocks, start=1):
             text = block["text"]
             if _caption_info(block) is not None:
@@ -420,6 +448,19 @@ class PyMuPDFPaperCompiler:
             if _equation_info(block) is not None:
                 continue
             if not text:
+                continue
+            skip_reason = _text_block_skip_reason(
+                block,
+                visual_assets,
+                page_number=page_number,
+                page_width=page_width,
+                page_height=page_height,
+            )
+            if skip_reason == "visual_annotation":
+                skipped_visual_text_blocks += 1
+                continue
+            if skip_reason is not None:
+                skipped_noise_text_blocks += 1
                 continue
             block_type, level = _text_block_type(block, page_width=page_width)
             if block_type == "heading":
@@ -445,6 +486,26 @@ class PyMuPDFPaperCompiler:
                         metadata={"fontSize": block.get("fontSize")},
                     ),
                 )
+            )
+        if skipped_visual_text_blocks:
+            diagnostics.append(
+                {
+                    "severity": "info",
+                    "code": "visual_text_blocks_skipped",
+                    "message": "text blocks inside or next to visual assets were excluded from the article body",
+                    "pageNumber": page_number,
+                    "count": skipped_visual_text_blocks,
+                }
+            )
+        if skipped_noise_text_blocks:
+            diagnostics.append(
+                {
+                    "severity": "info",
+                    "code": "pdf_noise_text_blocks_skipped",
+                    "message": "page-number or non-text glyph blocks were excluded from the article body",
+                    "pageNumber": page_number,
+                    "count": skipped_noise_text_blocks,
+                }
             )
 
         for visual_index, (asset, y, x) in enumerate(visual_assets, start=1):
@@ -581,7 +642,7 @@ def _page_text_blocks(page: Any) -> list[dict[str, Any]]:
                 size = span.get("size")
                 if isinstance(size, (int, float)) and math.isfinite(size):
                     font_sizes.append(float(size))
-        text = _normalize_space("\n".join(line_texts))
+        text = _normalize_pdf_text_lines(line_texts)
         bbox = _bbox_tuple(raw_block.get("bbox"))
         if not text or bbox is None:
             continue
@@ -594,7 +655,70 @@ def _page_text_blocks(page: Any) -> list[dict[str, Any]]:
             }
         )
     blocks.sort(key=lambda item: (item["bbox"][1], item["bbox"][0]))
-    return blocks
+    return _merge_caption_continuations(blocks)
+
+
+def _merge_caption_continuations(blocks: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    index = 0
+    while index < len(blocks):
+        current = dict(blocks[index])
+        caption = _caption_info(current)
+        while caption is not None and _caption_needs_continuation(caption["text"]) and index + 1 < len(blocks):
+            candidate = blocks[index + 1]
+            if not _is_caption_continuation(current, candidate):
+                break
+            current = _merge_text_blocks(current, candidate)
+            index += 1
+            caption = _caption_info(current)
+        merged.append(current)
+        index += 1
+    return merged
+
+
+def _caption_needs_continuation(text: str) -> bool:
+    if not text:
+        return False
+    if text.endswith((".", "。", "!", "?")):
+        return False
+    match = _CAPTION_PATTERN.match(text)
+    return bool(match and not _normalize_space(match.group("caption")))
+
+
+def _is_caption_continuation(current: Mapping[str, Any], candidate: Mapping[str, Any]) -> bool:
+    current_bbox = current.get("bbox")
+    candidate_bbox = candidate.get("bbox")
+    if not isinstance(current_bbox, tuple) or not isinstance(candidate_bbox, tuple):
+        return False
+    if _caption_info(candidate) is not None or _equation_info(candidate) is not None:
+        return False
+    candidate_text = _normalize_space(str(candidate.get("text") or ""))
+    if not candidate_text or _SECTION_PATTERN.match(candidate_text) or _NUMBERED_HEADING_PATTERN.match(candidate_text):
+        return False
+    vertical_gap = candidate_bbox[1] - current_bbox[3]
+    if vertical_gap < -2 or vertical_gap > 24:
+        return False
+    return _horizontal_overlap_ratio(current_bbox, candidate_bbox) > 0.18 or abs(candidate_bbox[0] - current_bbox[0]) < 48
+
+
+def _merge_text_blocks(left: Mapping[str, Any], right: Mapping[str, Any]) -> dict[str, Any]:
+    left_bbox = left["bbox"]
+    right_bbox = right["bbox"]
+    return {
+        "text": _normalize_space(f"{left.get('text') or ''} {right.get('text') or ''}"),
+        "bbox": (
+            min(left_bbox[0], right_bbox[0]),
+            min(left_bbox[1], right_bbox[1]),
+            max(left_bbox[2], right_bbox[2]),
+            max(left_bbox[3], right_bbox[3]),
+        ),
+        "fontSize": max(
+            value
+            for value in (left.get("fontSize"), right.get("fontSize"))
+            if isinstance(value, (int, float))
+        ) if any(isinstance(value, (int, float)) for value in (left.get("fontSize"), right.get("fontSize"))) else None,
+        "lineCount": int(left.get("lineCount") or 1) + int(right.get("lineCount") or 1),
+    }
 
 
 def _render_layout_image(page: Any, *, dpi: int) -> Mapping[str, Any]:
@@ -656,6 +780,119 @@ def _equation_info(block: Mapping[str, Any]) -> dict[str, Any] | None:
     return {"label": label, "text": text, "bbox": bbox}
 
 
+def _text_block_skip_reason(
+    block: Mapping[str, Any],
+    visual_assets: Sequence[tuple[PaperVisualAsset, float, float]],
+    *,
+    page_number: int,
+    page_width: float,
+    page_height: float,
+) -> str | None:
+    text = _normalize_space(str(block.get("text") or ""))
+    bbox = block.get("bbox")
+    if not text or not isinstance(bbox, tuple):
+        return "empty"
+    if _PRIVATE_USE_PATTERN.fullmatch(text):
+        return "private_use_glyphs"
+    if _is_page_number_text(text, bbox, page_number=page_number, page_width=page_width, page_height=page_height):
+        return "page_number"
+    if _text_block_overlaps_visual_asset(bbox, visual_assets):
+        return "visual_annotation"
+    if _looks_like_table_row(text) and _text_block_near_visual_asset(
+        bbox,
+        visual_assets,
+        page_width=page_width,
+        page_height=page_height,
+        margin_scale=0.07,
+    ):
+        return "visual_annotation"
+    if _looks_like_short_visual_annotation(text) and _text_block_near_visual_asset(
+        bbox,
+        visual_assets,
+        page_width=page_width,
+        page_height=page_height,
+    ):
+        return "visual_annotation"
+    return None
+
+
+def _is_page_number_text(
+    text: str,
+    bbox: tuple[float, float, float, float],
+    *,
+    page_number: int,
+    page_width: float,
+    page_height: float,
+) -> bool:
+    if not _PAGE_NUMBER_PATTERN.fullmatch(text):
+        return False
+    if text != str(page_number):
+        return False
+    width = bbox[2] - bbox[0]
+    return width <= page_width * 0.22 and (bbox[1] <= page_height * 0.16 or bbox[3] >= page_height * 0.78)
+
+
+def _looks_like_short_visual_annotation(text: str) -> bool:
+    if len(text) > 64:
+        return False
+    words = _WORD_PATTERN.findall(text)
+    if not words:
+        return True
+    if len(words) <= 6:
+        return True
+    return False
+
+
+def _looks_like_table_row(text: str) -> bool:
+    compact = _normalize_space(text)
+    if len(compact) < 12:
+        return False
+    numbers = re.findall(r"(?:\d+(?:\.\d+)?|\([+-]?\d+(?:\.\d+)?\)|[+-]\d+(?:\.\d+)?)", compact)
+    if len(numbers) < 4:
+        return False
+    tokens = _WORD_PATTERN.findall(compact)
+    if not tokens:
+        return False
+    numeric_ratio = len(numbers) / max(1, len(tokens))
+    citation_count = len(re.findall(r"\[[0-9, ]+\]", compact))
+    return numeric_ratio >= 0.28 or citation_count >= 2
+
+
+def _text_block_overlaps_visual_asset(
+    bbox: tuple[float, float, float, float],
+    visual_assets: Sequence[tuple[PaperVisualAsset, float, float]],
+) -> bool:
+    for asset, _, _ in visual_assets:
+        if asset.source is None:
+            continue
+        if _intersection_over_min_area(bbox, asset.source.bbox) >= 0.55:
+            return True
+        if _rect_center_inside(bbox, asset.source.bbox):
+            return True
+    return False
+
+
+def _text_block_near_visual_asset(
+    bbox: tuple[float, float, float, float],
+    visual_assets: Sequence[tuple[PaperVisualAsset, float, float]],
+    *,
+    page_width: float,
+    page_height: float,
+    kind: str | None = None,
+    margin_scale: float = 0.025,
+) -> bool:
+    margin_x = max(14.0, page_width * margin_scale)
+    margin_y = max(14.0, page_height * margin_scale)
+    for asset, _, _ in visual_assets:
+        if asset.source is None:
+            continue
+        if kind is not None and asset.kind != kind:
+            continue
+        if _rect_center_inside(bbox, _expand_bbox_xy(asset.source.bbox, page_width=page_width, page_height=page_height, margin_x=margin_x, margin_y=margin_y)):
+            return True
+    return False
+
+
 def _nearest_caption(
     bbox: tuple[float, float, float, float],
     captions: Sequence[Mapping[str, Any]],
@@ -710,6 +947,44 @@ def _caption_text(caption: Mapping[str, Any] | None) -> str | None:
     if caption is None:
         return None
     return _text(caption.get("text")) or None
+
+
+def _equation_for_model_region(region: Any, text_blocks: Sequence[Mapping[str, Any]]) -> Mapping[str, Any] | None:
+    candidates: list[tuple[float, Mapping[str, Any]]] = []
+    for block in text_blocks:
+        equation = _equation_info(block)
+        if equation is None:
+            continue
+        bbox = equation.get("bbox")
+        if not isinstance(bbox, tuple):
+            continue
+        overlap = _intersection_over_min_area(region.bbox, bbox)
+        if overlap <= 0 and not _rect_center_inside(bbox, region.bbox):
+            continue
+        candidates.append((1 - overlap, equation))
+    if not candidates:
+        return None
+    return sorted(candidates, key=lambda item: item[0])[0][1]
+
+
+def _equation_label(equation: Mapping[str, Any] | None) -> str | None:
+    if equation is None:
+        return None
+    return _text(equation.get("label")) or None
+
+
+def _equation_text(equation: Mapping[str, Any] | None) -> str | None:
+    if equation is None:
+        return None
+    return _text(equation.get("text")) or None
+
+
+def _visual_asset_with_label_exists(
+    label: str | None,
+    visual_assets: Sequence[tuple[PaperVisualAsset, float, float]],
+) -> bool:
+    normalized = _normalize_label(label)
+    return bool(normalized) and any(_normalize_label(asset.label) == normalized for asset, _, _ in visual_assets)
 
 
 def _default_visual_label(kind: str) -> str:
@@ -874,6 +1149,22 @@ def _expand_bbox(
     )
 
 
+def _expand_bbox_xy(
+    bbox: tuple[float, float, float, float],
+    *,
+    page_width: float,
+    page_height: float,
+    margin_x: float,
+    margin_y: float,
+) -> tuple[float, float, float, float]:
+    return (
+        max(0.0, bbox[0] - margin_x),
+        max(0.0, bbox[1] - margin_y),
+        min(page_width, bbox[2] + margin_x),
+        min(page_height, bbox[3] + margin_y),
+    )
+
+
 def _bbox_tuple(value: Any) -> tuple[float, float, float, float] | None:
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes)) and len(value) == 4:
         coords: list[float] = []
@@ -899,6 +1190,15 @@ def _horizontal_overlap_ratio(left: tuple[float, float, float, float], right: tu
     return overlap / width
 
 
+def _rect_center_inside(
+    inner: tuple[float, float, float, float],
+    outer: tuple[float, float, float, float],
+) -> bool:
+    center_x = (inner[0] + inner[2]) / 2
+    center_y = (inner[1] + inner[3]) / 2
+    return outer[0] <= center_x <= outer[2] and outer[1] <= center_y <= outer[3]
+
+
 def _pixmap_blank_ratio(pixmap: Any) -> float:
     samples = bytes(pixmap.samples)
     channels = max(1, int(getattr(pixmap, "n", 3) or 3))
@@ -921,6 +1221,22 @@ def _pixmap_blank_ratio(pixmap: Any) -> float:
 
 def _normalize_space(value: str) -> str:
     return re.sub(r"[ \t\r\f\v]+", " ", value.replace("\u00a0", " ")).strip()
+
+
+def _normalize_pdf_text_lines(lines: Sequence[str]) -> str:
+    normalized_lines = [_normalize_space(line) for line in lines if _normalize_space(line)]
+    if not normalized_lines:
+        return ""
+    text = normalized_lines[0]
+    for line in normalized_lines[1:]:
+        match = _HYPHENATED_LINE_END_PATTERN.search(text)
+        if match and line[:1].islower():
+            prefix = match.group("prefix")
+            separator = "-" if prefix.casefold() in _COMPOUND_LINEBREAK_PREFIXES else ""
+            text = f"{text[:match.start()]}{prefix}{separator}{line}"
+            continue
+        text = f"{text} {line}"
+    return _normalize_space(text)
 
 
 def _stable_id(*parts: str) -> str:
