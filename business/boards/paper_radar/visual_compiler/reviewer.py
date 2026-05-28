@@ -85,10 +85,12 @@ class HeuristicPaperDocumentReviewer(PaperDocumentReviewer):
         self.clock = clock or (lambda: datetime.now(UTC))
 
     def review(self, *, document: PaperDocument, manifest: PaperAssetManifest, gate_report: Mapping[str, Any]) -> PaperReviewReport:
-        visual_blocks = [block for block in document.blocks if block.type in {"figure", "table", "equation"}]
+        asset_blocks = [block for block in document.blocks if block.type in {"figure", "table"}]
+        equation_blocks = [block for block in document.blocks if block.type == "equation"]
         findings = [
             f"{len(document.blocks)} body blocks compiled.",
-            f"{len(visual_blocks)} visual blocks bound to {len(manifest.assets)} manifest assets.",
+            f"{len(asset_blocks)} figure/table blocks bound to manifest assets.",
+            f"{len(equation_blocks)} equation blocks generated as structured text.",
         ]
         risks: list[str] = []
         if not document.outline:
@@ -148,6 +150,7 @@ def _review_request(*, document: PaperDocument, manifest: PaperAssetManifest, ga
                 "Return strict JSON with keys: verdict, summary, findings, risks, suggestions. "
                 "verdict must be pass or fail. Fail if the article structure is unreadable, visuals are mismatched, "
                 "paper-body text appears to be AI summary, or serious source/asset risks remain."
+                " Equation blocks should be readable generated text with source coordinates, not image assets."
             ),
             LLMMessage.user(
                 "Review this PaperDocument artifact for publication readiness:\n"

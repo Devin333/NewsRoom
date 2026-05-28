@@ -202,7 +202,8 @@ class OpenAICompatiblePaperLayoutProvider(PaperVisualLayoutProvider):
                     {
                         "kind": "figure | table | equation",
                         "label": "Figure 1 / Table 1 / Equation 1",
-                        "caption": "caption text from the paper, not a summary",
+                        "caption": "figure or table caption text from the paper, not a summary",
+                        "equationText": "standalone equation text or LaTeX when kind is equation",
                         "bbox": {"x0": 0, "y0": 0, "x1": page_width, "y1": page_height},
                         "confidence": 0.0,
                     }
@@ -220,6 +221,7 @@ class OpenAICompatiblePaperLayoutProvider(PaperVisualLayoutProvider):
                         "Return strict JSON only. Do not summarize, translate, or rewrite the paper. "
                         "Detect real figures, tables, and standalone equations. "
                         "Use the paper caption text if it is visible or provided. "
+                        "For equations, return equationText as readable LaTeX or plain math text; equations are not image assets. "
                         "Bounding boxes must be in PDF page points with top-left origin. "
                         "Prefer one complete region for a multi-panel figure instead of many tiny sub-images. "
                         "Exclude surrounding prose; exclude the caption from the crop when the visual body is clear."
@@ -315,6 +317,7 @@ def _layout_detection_from_payload(
                 metadata={
                     "provider": OpenAICompatiblePaperLayoutProvider.provider_name,
                     "rawIndex": index,
+                    "equationText": _optional_text(item.get("equationText") or item.get("latex") or item.get("formula")),
                 },
             )
         )

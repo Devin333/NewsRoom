@@ -5,7 +5,7 @@ The frontend SHALL render the formal `/papers/[slug]/read` article body only fro
 
 #### Scenario: Compiled paper body renders
 - **WHEN** the reader receives a `compiled` document with paragraph, heading, figure, table, and equation blocks
-- **THEN** it renders the article body from those blocks and uses manifest assets for visual cards.
+- **THEN** it renders the article body from those blocks, uses manifest assets for figure/table cards, and renders equation blocks as generated formula text.
 
 #### Scenario: Non-compiled paper blocks body rendering
 - **WHEN** the reader receives `queued`, `compiling`, `needs_review`, `compile_failed`, `review_failed`, or missing document status

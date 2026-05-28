@@ -12,7 +12,7 @@ import type { PaperDiagnostic, PaperDocumentResponse } from "@/lib/paper-reader/
 import styles from "./paper-document-reader.module.css"
 
 export function PaperDocumentReaderPage({ payload, locale }: { payload: PaperDocumentResponse; locale: Locale }) {
-  const { paper, document, manifest, status } = payload
+  const { document, manifest, status } = payload
   const compiled = status.status === "compiled" && document && manifest
   const adapted = useMemo(() => (compiled ? paperDocumentToOpenReader(payload) : null), [compiled, payload])
 

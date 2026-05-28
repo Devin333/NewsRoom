@@ -1,5 +1,6 @@
 import type { Metadata } from "next"
 import "@/app/globals.css"
+import "katex/dist/katex.min.css"
 import "reactflow/dist/style.css"
 import { AppShell } from "@/components/layout/app-shell"
 import { Providers } from "@/components/providers"

@@ -16,6 +16,8 @@ describe("PaperDocumentReaderPage", () => {
     const article = screen.getByLabelText("Open reader paper body")
     expect(within(article).getByText("This is real PDF paragraph text.")).toBeInTheDocument()
     expect(within(article).getByText("Figure 1: Real figure from the PDF.")).toBeInTheDocument()
+    expect(within(article).getByLabelText("y = Wx + b (1)")).toBeInTheDocument()
+    expect(within(article).queryByText("Asset unavailable")).not.toBeInTheDocument()
     expect(within(article).queryByText("AI generated summary must stay in the panel.")).not.toBeInTheDocument()
     expect(screen.getByRole("img", { name: "Figure 1: Real figure from the PDF." })).toHaveAttribute(
       "src",
@@ -35,7 +37,7 @@ describe("PaperDocumentReaderPage", () => {
   it("opens source preview from visual blocks with source coordinates", () => {
     render(<PaperDocumentReaderPage payload={compiledPayload} locale="en" />)
 
-    fireEvent.click(screen.getAllByTitle("Open source preview").at(-1)!)
+    fireEvent.click(screen.getAllByTitle("Open source preview")[0])
 
     const preview = screen.getByRole("dialog", { name: "Source preview" })
     const image = within(preview).getByRole("img", { name: "Figure 1" })
@@ -54,6 +56,18 @@ describe("PaperDocumentReaderPage", () => {
       assetId: "asset-figure-1",
       pageNumber: 1,
       sourceBox: { x0: 100, y0: 230, x1: 500, y1: 460 },
+    })
+  })
+
+  it("builds reader interaction targets for generated equation blocks", () => {
+    const target = targetForPaperBlock(compiledPayload.document!.blocks[3])
+
+    expect(target).toMatchObject({
+      targetType: "equation",
+      blockId: "block-equation-1",
+      assetId: undefined,
+      pageNumber: 1,
+      sourceBox: { x0: 150, y0: 500, x1: 320, y1: 526 },
     })
   })
 })
@@ -130,6 +144,17 @@ const compiledPayload: PaperDocumentResponse = {
         label: "Figure 1",
         caption: "Figure 1: Real figure from the PDF.",
         source: { pageNumber: 1, bbox: { x0: 100, y0: 230, x1: 500, y1: 460 } },
+      },
+      {
+        id: "block-equation-1",
+        paperId: "visual-paper",
+        type: "equation",
+        text: "y = Wx + b (1)",
+        pageNumber: 1,
+        sectionId: "block-heading-1",
+        label: "Equation 1",
+        caption: "y = Wx + b (1)",
+        source: { pageNumber: 1, bbox: { x0: 150, y0: 500, x1: 320, y1: 526 } },
       },
     ],
   },

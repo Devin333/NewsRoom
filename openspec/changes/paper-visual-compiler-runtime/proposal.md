@@ -4,8 +4,8 @@ Open Reader currently can mix extracted paper text with AI summaries and derived
 
 ## What Changes
 
-- Add a Paper Visual Compiler runtime that turns source PDFs into structured `PaperDocument` blocks and real page/figure/table/equation image assets stored under `.newsroom/papers/visual-compiler/{paper_id}/`.
-- Add deterministic Asset Gate validation for referenced assets, image dimensions, checksums, blankness, captions/labels, source bboxes, and block-to-asset bindings.
+- Add a Paper Visual Compiler runtime that turns source PDFs into structured `PaperDocument` blocks, real page/figure/table image assets, and generated equation text blocks stored under `.newsroom/papers/visual-compiler/{paper_id}/`.
+- Add deterministic Asset Gate validation for referenced figure/table assets, image dimensions, checksums, blankness, captions/labels, source bboxes, block-to-asset bindings, and equation text/source coordinates.
 - Add an AI review stage after deterministic Gate success; documents are not published when review is unavailable or rejects the compiled result.
 - Add background and manual compile surfaces through worker task `papers.visual_compile`; document reads never trigger compilation.
 - Add Paper Document APIs for published documents, compile status, manual compile enqueue, visual assets, and source previews.

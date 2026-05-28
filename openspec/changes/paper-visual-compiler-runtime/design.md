@@ -8,7 +8,7 @@ The new runtime introduces a precompiled `PaperDocument` artifact. It is produce
 
 **Goals:**
 
-- Compile source PDFs into structured blocks, visual assets, manifests, compile info, gate results, and review reports.
+- Compile source PDFs into structured blocks, figure/table visual assets, generated equation text blocks, manifests, compile info, gate results, and review reports.
 - Store compiled artifacts in local runtime storage first, without requiring a database migration.
 - Block publication when deterministic Gate fails or AI review is unavailable/rejected.
 - Expose status, document, asset, source-preview, and manual compile APIs.
@@ -47,7 +47,7 @@ The new runtime introduces a precompiled `PaperDocument` artifact. It is produce
 
 ## Risks / Trade-offs
 
-- PyMuPDF heuristics can miss some figure/table/equation boundaries. Mitigation: preserve full page images, record warnings, expose source-preview bboxes, and keep the provider swappable.
+- PyMuPDF heuristics can miss some figure/table/equation boundaries. Mitigation: preserve full page images, generate equation text blocks with source bboxes, record warnings, expose source-preview bboxes, and keep the provider swappable.
 - AI review availability can delay publication. Mitigation: status APIs expose the exact blocking reason and manual recompile uses the same queue path.
 - Local file storage can grow with rendered page images. Mitigation: manifests make retention and cleanup discoverable; storage remains scoped per paper.
 - Frontend and legacy reader paths may diverge. Mitigation: shared paper-reader types and tests assert the formal article body only consumes `PaperDocument.blocks`.

@@ -78,7 +78,7 @@ def test_visual_compiler_skips_uncaptioned_image_blocks_before_asset_gate(tmp_pa
         paper_dir=output_dir,
     )
 
-    visual_assets = [asset for asset in draft.manifest.assets if asset.kind in {"figure", "table", "equation"}]
+    visual_assets = [asset for asset in draft.manifest.assets if asset.kind in {"figure", "table"}]
     assert gate_report["passed"] is True
     assert visual_assets == []
     assert any(item["code"] == "uncaptioned_image_skipped" for item in draft.compile_info.diagnostics)
@@ -112,6 +112,11 @@ def test_visual_compiler_uses_model_layout_provider_for_table_and_figure_crops(t
     assert {block.type for block in visual_blocks} == {"figure", "table"}
     assert any(asset.kind == "table" and asset.metadata.get("layoutProvider") == "fake-model-layout-v1" for asset in draft.manifest.assets)
     assert any(asset.kind == "figure" and asset.metadata.get("layoutProvider") == "fake-model-layout-v1" for asset in draft.manifest.assets)
+    assert not any(asset.kind == "equation" for asset in draft.manifest.assets)
+    assert equation_blocks
+    assert all(block.assetId is None for block in equation_blocks)
+    assert all(block.source is not None for block in equation_blocks)
+    assert any("y = Wx + b" in block.text for block in equation_blocks)
     assert all("Figure 1" not in block.text for block in equation_blocks)
     assert "AI summary must remain outside the body." not in "\n".join(block.text for block in draft.document.blocks)
 

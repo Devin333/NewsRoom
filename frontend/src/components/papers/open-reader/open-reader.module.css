@@ -288,6 +288,27 @@
   background: #fff;
 }
 
+.equationMath,
+.equationPlain {
+  display: block;
+  margin: 0;
+  overflow-x: auto;
+  padding: 24px 28px;
+  background: #fff;
+  color: var(--reader-ink);
+}
+
+.equationMath {
+  font-size: clamp(18px, 1.6rem, 26px);
+}
+
+.equationPlain {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 18px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+
 .visualBlock figcaption {
   margin: 0;
   padding: 12px 14px;

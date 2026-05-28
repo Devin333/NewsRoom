@@ -13,6 +13,7 @@ import type { PaperSourceRegion } from "@/lib/paper-reader/types"
 import type { DrawerState, NotePopoverState, OpenReaderPageProps, OpenReaderVisualBlock, ReaderParagraph, ReaderSelection, ReaderSettings, ReaderTocItem, SelectionMenuState } from "./open-reader-types"
 import { buildReaderParagraphs, buildReaderToc, clamp, getSelectionOffsetsWithinElement, getSelectionStatus, makeMaterialSummary, mockExample, mockExplain, safeJsonParse, storageKey } from "./open-reader-utils"
 import { useOpenReaderSelections, useOpenReaderSettings } from "./open-reader-state"
+import { EquationRenderer } from "./equation-renderer"
 import styles from "./open-reader.module.css"
 
 export function OpenReaderPage({ reader, locale, backHref = "/papers", visualLayer }: OpenReaderPageProps) {
@@ -328,6 +329,8 @@ function OpenReaderVisualBlockView({
   const Icon = block.type === "table" ? Table2 : block.type === "equation" ? Sigma : ImageIcon
   const label = block.label || asset?.label || block.type
   const caption = block.caption || asset?.caption || block.text
+  const equationText = block.text || block.caption || label
+  const isEquation = block.type === "equation"
 
   return (
     <figure id={block.id} className={styles.visualBlock} data-block-id={block.id} data-asset-id={asset?.assetId}>
@@ -339,7 +342,9 @@ function OpenReaderVisualBlockView({
           </button>
         ) : null}
       </div>
-      {asset ? (
+      {isEquation ? (
+        <EquationRenderer value={equationText} />
+      ) : asset ? (
         <Image
           src={paperAssetUrl(paperId, asset.assetId)}
           alt={caption || label}
@@ -352,7 +357,7 @@ function OpenReaderVisualBlockView({
       ) : (
         <div className={styles.assetMissing}>Asset unavailable</div>
       )}
-      {caption ? <figcaption>{caption}</figcaption> : null}
+      {caption && (!isEquation || caption !== equationText) ? <figcaption>{caption}</figcaption> : null}
     </figure>
   )
 }

@@ -58,6 +58,7 @@ _COMPOUND_LINEBREAK_PREFIXES = {
     "two",
     "zero",
 }
+_MAX_EQUATIONS_PER_PAGE = 12
 
 
 @dataclass(frozen=True)
@@ -273,6 +274,8 @@ class PyMuPDFPaperCompiler:
 
         visual_assets: list[tuple[PaperVisualAsset, float, float]] = []
         visual_keys: set[str] = set()
+        equation_items: list[tuple[Mapping[str, Any], float, float]] = []
+        equation_keys: set[str] = set()
 
         if self.layout_provider is not None:
             try:
@@ -298,12 +301,25 @@ class PyMuPDFPaperCompiler:
             else:
                 diagnostics.extend(detection.diagnostics)
                 for region in detection.regions:
+                    if region.kind == "equation":
+                        if len(equation_items) >= _MAX_EQUATIONS_PER_PAGE:
+                            continue
+                        equation = _equation_for_model_region(region, text_blocks) or _equation_from_model_region(region)
+                        if equation is None:
+                            continue
+                        if _covered_by_visual_asset(equation["bbox"], visual_assets):
+                            continue
+                        equation_key = _stable_id(paper_id, "equation", str(page_number), equation["text"], _bbox_key(equation["bbox"]))
+                        if equation_key in equation_keys:
+                            continue
+                        equation_keys.add(equation_key)
+                        equation_items.append((equation, equation["bbox"][1], equation["bbox"][0]))
+                        continue
                     if len(visual_assets) >= self.max_visual_assets_per_page:
-                        break
+                        continue
                     caption = _caption_for_model_region(region, captions, page_height=page_height) if region.kind in {"figure", "table"} else None
-                    equation = _equation_for_model_region(region, text_blocks) if region.kind == "equation" else None
-                    label = region.label or _caption_label(caption) or _equation_label(equation) or _default_visual_label(region.kind)
-                    caption_text = region.caption or _caption_text(caption) or _equation_text(equation) or label
+                    label = region.label or _caption_label(caption) or _default_visual_label(region.kind)
+                    caption_text = region.caption or _caption_text(caption) or label
                     asset = self._crop_visual_asset(
                         page=page,
                         matrix=matrix,
@@ -408,34 +424,27 @@ class PyMuPDFPaperCompiler:
             visual_keys.add(asset.assetId)
             visual_assets.append((asset, asset.source.bbox[1] if asset.source else crop_bbox[1], crop_bbox[0]))
 
-        equation_count = 0
+        equation_count = len(equation_items)
         for block in text_blocks:
-            if len(visual_assets) >= self.max_visual_assets_per_page or equation_count >= 8:
+            if equation_count >= _MAX_EQUATIONS_PER_PAGE:
                 break
             equation = _equation_info(block)
             if equation is None:
                 continue
             if _covered_by_visual_asset(equation["bbox"], visual_assets):
                 continue
-            asset = self._crop_visual_asset(
-                page=page,
-                matrix=matrix,
-                paper_id=paper_id,
-                page_number=page_number,
-                kind="equation",
-                label=equation["label"],
-                caption=equation["text"],
-                bbox=_expand_bbox(equation["bbox"], page_width=page_width, page_height=page_height, margin=8),
-                page_width=page_width,
-                page_height=page_height,
-                assets_dir=assets_dir,
-            )
-            if asset is None or asset.assetId in visual_keys:
+            equation_key = _stable_id(paper_id, "equation", str(page_number), equation["text"], _bbox_key(equation["bbox"]))
+            if equation_key in equation_keys:
                 continue
             equation_count += 1
-            visual_keys.add(asset.assetId)
-            visual_assets.append((asset, asset.source.bbox[1] if asset.source else equation["bbox"][1], equation["bbox"][0]))
+            equation_keys.add(equation_key)
+            equation_items.append((equation, equation["bbox"][1], equation["bbox"][0]))
 
+        equation_items = [
+            (equation, y, x)
+            for equation, y, x in equation_items
+            if not _covered_by_visual_asset(equation["bbox"], visual_assets)
+        ]
         page_assets.extend(asset for asset, _, _ in visual_assets)
         content_items: list[tuple[float, float, PaperBlock]] = []
         current_section_id = f"{paper_id}:page-{page_number}"
@@ -525,6 +534,31 @@ class PyMuPDFPaperCompiler:
                         caption=asset.caption,
                         source=asset.source,
                         metadata={"visualIndex": visual_index},
+                    ),
+                )
+            )
+        for equation_index, (equation, y, x) in enumerate(equation_items, start=1):
+            equation_bbox = equation["bbox"]
+            content_items.append(
+                (
+                    y,
+                    x,
+                    PaperBlock(
+                        id=_stable_id(paper_id, "equation-block", str(page_number), equation["text"], _bbox_key(equation_bbox)),
+                        paperId=paper_id,
+                        type="equation",
+                        text=equation["text"],
+                        pageNumber=page_number,
+                        sectionId=current_section_id,
+                        label=equation["label"],
+                        caption=equation["text"],
+                        source=PaperSourceRegion(
+                            pageNumber=page_number,
+                            bbox=equation_bbox,
+                            pageWidth=page_width,
+                            pageHeight=page_height,
+                        ),
+                        metadata={"equationIndex": equation_index, **dict(equation.get("metadata") or {})},
                     ),
                 )
             )
@@ -967,6 +1001,39 @@ def _equation_for_model_region(region: Any, text_blocks: Sequence[Mapping[str, A
     return sorted(candidates, key=lambda item: item[0])[0][1]
 
 
+def _equation_from_model_region(region: Any) -> Mapping[str, Any] | None:
+    region_metadata = dict(getattr(region, "metadata", {}) or {})
+    text = _normalize_space(
+        str(
+            region_metadata.get("equationText")
+            or region_metadata.get("latex")
+            or region_metadata.get("formula")
+            or getattr(region, "caption", None)
+            or ""
+        )
+    )
+    if not text:
+        return None
+    if len(text) > 500:
+        text = text[:500].rstrip()
+    label_match = _EQUATION_LABEL_PATTERN.search(text)
+    label = _normalize_space(str(getattr(region, "label", None) or ""))
+    if not label:
+        label = f"Equation {label_match.group('label')}" if label_match else "Equation"
+    metadata = {
+        "layoutProvider": "model",
+        "layoutConfidence": getattr(region, "confidence", None),
+        "modelGeneratedEquationText": True,
+        **region_metadata,
+    }
+    return {
+        "label": label,
+        "text": text,
+        "bbox": region.bbox,
+        "metadata": metadata,
+    }
+
+
 def _equation_label(equation: Mapping[str, Any] | None) -> str | None:
     if equation is None:
         return None
@@ -1241,6 +1308,10 @@ def _normalize_pdf_text_lines(lines: Sequence[str]) -> str:
 
 def _stable_id(*parts: str) -> str:
     return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()[:32]
+
+
+def _bbox_key(bbox: tuple[float, float, float, float]) -> str:
+    return ",".join(str(round(value, 2)) for value in bbox)
 
 
 def _text(value: Any) -> str:

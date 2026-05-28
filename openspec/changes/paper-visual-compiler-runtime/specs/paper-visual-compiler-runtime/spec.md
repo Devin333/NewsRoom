@@ -5,7 +5,7 @@ The system SHALL compile a paper source PDF into a versioned `PaperDocument`, `P
 
 #### Scenario: Successful PDF compile creates document blocks and assets
 - **WHEN** a paper with an available source PDF is compiled
-- **THEN** the compiler stores page images, structured paragraph/heading/figure/table/equation blocks, visual assets with source bboxes, a manifest, compile info, and review metadata for that paper.
+- **THEN** the compiler stores page images, structured paragraph/heading/figure/table/equation blocks, figure/table visual assets with source bboxes, generated equation text/source bboxes, a manifest, compile info, and review metadata for that paper.
 
 #### Scenario: Missing source PDF fails compile without publishing
 - **WHEN** a paper compile is requested but no source PDF can be resolved
@@ -19,7 +19,7 @@ The system SHALL run a deterministic Asset Gate before publication and SHALL blo
 - **THEN** the Gate records hard errors and the paper status becomes `needs_review` or `compile_failed` instead of `compiled`.
 
 #### Scenario: Gate accepts valid block asset bindings
-- **WHEN** every visual block references an existing manifest asset with valid metadata and matching source information
+- **WHEN** every figure/table block references an existing manifest asset with valid metadata and matching source information, and every equation block has generated text plus source coordinates
 - **THEN** the Gate allows the AI review stage to run.
 
 ### Requirement: AI review is required after Gate success

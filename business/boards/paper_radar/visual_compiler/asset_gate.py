@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from business.boards.paper_radar.visual_compiler.models import (
+    ASSET_BACKED_BLOCK_TYPES,
     VISUAL_ASSET_TYPES,
     VISUAL_BLOCK_TYPES,
     PaperAssetManifest,
@@ -97,7 +98,7 @@ class PaperAssetGate:
         for block in document.blocks:
             if block.source is None:
                 warnings.append(_issue("block_source_missing", "block source bbox is missing", blockId=block.id))
-            if block.type in VISUAL_BLOCK_TYPES:
+            if block.type in ASSET_BACKED_BLOCK_TYPES:
                 if not block.assetId:
                     errors.append(_issue("visual_block_asset_missing", "visual block does not reference an asset", blockId=block.id))
                     continue
@@ -127,10 +128,18 @@ class PaperAssetGate:
                     errors.append(_issue("visual_block_label_missing", "visual block label is missing", blockId=block.id))
                 if not block.caption:
                     errors.append(_issue("visual_block_caption_missing", "visual block caption is missing", blockId=block.id))
+            elif block.type == "equation":
+                if block.assetId:
+                    errors.append(_issue("equation_block_asset_unexpected", "equation block must be generated as text, not an image asset", blockId=block.id, assetId=block.assetId))
+                if not block.text and not block.caption:
+                    errors.append(_issue("equation_text_missing", "equation block text is missing", blockId=block.id))
+                if block.source is None:
+                    errors.append(_issue("equation_source_missing", "equation block source bbox is missing", blockId=block.id))
 
         visual_assets = [asset for asset in manifest.assets if asset.kind in VISUAL_ASSET_TYPES]
         visual_blocks = [block for block in document.blocks if block.type in VISUAL_BLOCK_TYPES]
-        if visual_assets and not visual_blocks:
+        asset_backed_blocks = [block for block in document.blocks if block.type in ASSET_BACKED_BLOCK_TYPES]
+        if visual_assets and not asset_backed_blocks:
             errors.append(_issue("visual_assets_unbound", "manifest has visual assets but document has no visual blocks"))
 
         return {
@@ -141,6 +150,7 @@ class PaperAssetGate:
             "visualAssetCount": len(visual_assets),
             "blockCount": len(document.blocks),
             "visualBlockCount": len(visual_blocks),
+            "assetBackedBlockCount": len(asset_backed_blocks),
         }
 
 

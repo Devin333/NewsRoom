@@ -19,7 +19,8 @@ PaperCompileStatus = Literal[
 ]
 
 VISUAL_BLOCK_TYPES = {"figure", "table", "equation"}
-VISUAL_ASSET_TYPES = {"figure", "table", "equation"}
+ASSET_BACKED_BLOCK_TYPES = {"figure", "table"}
+VISUAL_ASSET_TYPES = {"figure", "table"}
 
 
 @dataclass(frozen=True)
