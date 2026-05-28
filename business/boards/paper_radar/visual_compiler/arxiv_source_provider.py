@@ -68,8 +68,27 @@ _BLOCK_MATH_ENVS = {
 _FIGURE_ENVS = {"figure", "figure*", "wrapfigure"}
 _TABLE_ENVS = {"table", "table*", "wraptable"}
 _SKIP_ENVS = {"algorithm", "algorithmic"}
+_TEXT_COMMAND_NAMES = {
+    "textbf",
+    "textit",
+    "emph",
+    "mathbf",
+    "mathrm",
+    "mathcal",
+    "mathbb",
+    "textrm",
+    "text",
+    "underline",
+    "sout",
+    "small",
+    "large",
+    "Large",
+    "LARGE",
+    "footnotesize",
+    "scriptsize",
+}
 _COMMAND_WITH_TEXT_ARG = re.compile(
-    r"\\(?:textbf|textit|emph|mathbf|mathrm|mathcal|mathbb|textrm|text|underline|sout|small|large|Large|LARGE|footnotesize|scriptsize)\s*\{(?P<body>.*?)\}",
+    r"\\(?:textbf|textit|emph|mathbf|mathrm|mathcal|mathbb|textrm|text|underline|sout|small|large|Large|LARGE|footnotesize|scriptsize)(?![A-Za-z])\s*\{(?P<body>.*?)\}",
     re.DOTALL,
 )
 _CITE_COMMAND_PATTERN = re.compile(r"~?\\(?:cite|citep|citet|citealp|citeauthor|ref|autoref|eqref|url)\*?(?:\[[^\]]*\]){0,2}\{(?P<body>[^}]*)\}")
@@ -497,11 +516,44 @@ class _PendingInlineBlock:
 
 
 @dataclass
+class _PendingCaptionBlock:
+    block_index: int
+    latex: str
+
+
+@dataclass
 class _InlineChunk:
     kind: str
     text: str
     span: dict[str, Any] | None = None
     raw: str = ""
+
+
+@dataclass(frozen=True)
+class _CaptionCommand:
+    start: int
+    end: int
+    body: str
+    kind: str | None = None
+
+
+@dataclass(frozen=True)
+class _EnvironmentSpan:
+    name: str
+    start: int
+    body_start: int
+    body_end: int
+    end: int
+
+
+@dataclass(frozen=True)
+class _VisualTexObject:
+    kind: str
+    body_tex: str
+    caption_tex: str | None
+    label: str | None
+    start: int
+    end: int
 
 
 class _TexDocumentParser:
@@ -534,6 +586,7 @@ class _TexDocumentParser:
         self.section_counters: list[int] = []
         self.labels: dict[str, _LabelTarget] = {}
         self.pending_inline_blocks: list[_PendingInlineBlock] = []
+        self.pending_caption_blocks: list[_PendingCaptionBlock] = []
         self.bib_entries: dict[str, Mapping[str, Any]] = {}
         self.reference_numbers: dict[str, int] = {}
 
@@ -584,6 +637,7 @@ class _TexDocumentParser:
         cleaned = _remove_preamble_noise(cleaned)
         self._parse_segment(cleaned)
         self._resolve_inline_blocks()
+        self._resolve_caption_blocks()
         return _ParseResult(blocks=tuple(self.blocks), assets=tuple(self.assets), diagnostics=tuple(self.diagnostics))
 
     def _parse_segment(self, tex: str) -> None:
@@ -755,8 +809,22 @@ class _TexDocumentParser:
         )
 
     def _emit_figure(self, body_tex: str) -> None:
-        caption = _caption_from_tex(body_tex)
-        label_key = _label_from_tex(body_tex)
+        objects = _visual_objects_from_figure_env(body_tex)
+        if len(objects) > 1:
+            self._emit_visual_objects(objects)
+            return
+        if len(objects) == 1:
+            obj = objects[0]
+            if obj.kind == "table":
+                self._emit_table(obj.body_tex, caption_tex=obj.caption_tex, label_key=obj.label)
+                return
+            body_tex = obj.body_tex
+            caption_tex = obj.caption_tex
+            label_key = obj.label
+        else:
+            caption_tex = _caption_body_from_tex(body_tex)
+            label_key = _label_from_tex(body_tex)
+        caption = _clean_caption_tex(caption_tex)
         include_paths = _includegraphics_paths(body_tex)
         if not include_paths:
             self.diagnostics.append(
@@ -805,6 +873,7 @@ class _TexDocumentParser:
                 block_id=block_id,
                 section_id=self.section_id,
             )
+        block_index = len(self.blocks)
         self.blocks.append(
             PaperBlock(
                 id=block_id,
@@ -825,13 +894,24 @@ class _TexDocumentParser:
                     "latexLabel": label_key,
                     "latex": body_tex.strip()[:1600],
                     "includegraphics": include_paths,
+                    "captionLatex": (caption_tex or "").strip()[:1200],
                 },
             )
         )
+        if caption_tex:
+            self.pending_caption_blocks.append(_PendingCaptionBlock(block_index=block_index, latex=caption_tex))
 
-    def _emit_table(self, body_tex: str) -> None:
-        caption = _caption_from_tex(body_tex)
-        label_key = _label_from_tex(body_tex)
+    def _emit_visual_objects(self, objects: Sequence[_VisualTexObject]) -> None:
+        for obj in objects:
+            if obj.kind == "figure":
+                self._emit_figure(obj.body_tex)
+            elif obj.kind == "table":
+                self._emit_table(obj.body_tex, caption_tex=obj.caption_tex, label_key=obj.label)
+
+    def _emit_table(self, body_tex: str, *, caption_tex: str | None = None, label_key: str | None = None) -> None:
+        effective_caption_tex = caption_tex if caption_tex is not None else _caption_body_from_tex(body_tex)
+        caption = _clean_caption_tex(effective_caption_tex)
+        label_key = label_key or _label_from_tex(body_tex)
         self.table_counter += 1
         display_label = _numbered_label("Table", self.table_counter)
         if not caption:
@@ -854,6 +934,7 @@ class _TexDocumentParser:
                 block_id=block_id,
                 section_id=self.section_id,
             )
+        block_index = len(self.blocks)
         self.blocks.append(
             PaperBlock(
                 id=block_id,
@@ -876,9 +957,12 @@ class _TexDocumentParser:
                     "tableText": rendered.text[:2400],
                     "tableHtml": rendered.html,
                     "tableModel": rendered.model,
+                    "captionLatex": (effective_caption_tex or "").strip()[:1200],
                 },
             )
         )
+        if effective_caption_tex:
+            self.pending_caption_blocks.append(_PendingCaptionBlock(block_index=block_index, latex=effective_caption_tex))
 
     def _next_section_number(self, level: int) -> str:
         normalized_level = max(1, min(int(level), 6))
@@ -916,7 +1000,36 @@ class _TexDocumentParser:
             )
         self.blocks = next_blocks
 
-    def _inline_model_from_tex(self, tex: str) -> Mapping[str, Any]:
+    def _resolve_caption_blocks(self) -> None:
+        next_blocks = list(self.blocks)
+        for pending in self.pending_caption_blocks:
+            if pending.block_index >= len(next_blocks):
+                continue
+            block = next_blocks[pending.block_index]
+            parsed = self._inline_model_from_tex(pending.latex, plain_math_text=True)
+            parsed_text = str(parsed.get("text") or "").strip()
+            if not parsed_text:
+                continue
+            metadata = dict(block.metadata)
+            spans = parsed.get("spans")
+            metadata["captionInlineSpans"] = spans if isinstance(spans, list) else []
+            next_blocks[pending.block_index] = PaperBlock(
+                id=block.id,
+                paperId=block.paperId,
+                type=block.type,
+                text=parsed_text,
+                level=block.level,
+                pageNumber=block.pageNumber,
+                sectionId=block.sectionId,
+                assetId=block.assetId,
+                label=block.label,
+                caption=parsed_text,
+                source=block.source,
+                metadata=metadata,
+            )
+        self.blocks = next_blocks
+
+    def _inline_model_from_tex(self, tex: str, *, plain_math_text: bool = False) -> Mapping[str, Any]:
         chunks: list[_InlineChunk] = []
 
         def append_text(raw: str) -> None:
@@ -932,7 +1045,7 @@ class _TexDocumentParser:
             if match.group("math"):
                 raw = match.group("math")
                 latex = raw[1:-1].strip()
-                token_text = _inline_math_fallback_text(latex)
+                token_text = _inline_math_text(latex) if plain_math_text else _inline_math_fallback_text(latex)
                 token_span = {
                     "type": "math",
                     "text": token_text,
@@ -1341,10 +1454,17 @@ def _paragraph_chunks(tex: str) -> list[str]:
 
 
 def _caption_from_tex(tex: str) -> str | None:
-    match = _CAPTION_PATTERN.search(tex)
-    if not match:
-        return None
-    return _clean_text(match.group("body")) or None
+    return _clean_caption_tex(_caption_body_from_tex(tex))
+
+
+def _caption_body_from_tex(tex: str) -> str | None:
+    caption = _first_caption_command(tex)
+    return caption.body if caption else None
+
+
+def _clean_caption_tex(caption_tex: str | None) -> str | None:
+    cleaned = _clean_text(caption_tex)
+    return cleaned or None
 
 
 def _label_from_tex(tex: str) -> str | None:
@@ -1354,6 +1474,193 @@ def _label_from_tex(tex: str) -> str | None:
 
 def _includegraphics_paths(tex: str) -> list[str]:
     return [match.group("path").strip() for match in _INCLUDE_GRAPHICS_PATTERN.finditer(tex) if match.group("path").strip()]
+
+
+def _visual_objects_from_figure_env(body_tex: str) -> list[_VisualTexObject]:
+    spans = _top_level_environment_spans(body_tex, {"minipage"})
+    if not spans:
+        return _visual_objects_from_tex(body_tex, default_kind="figure", offset=0)
+    objects: list[_VisualTexObject] = []
+    for span in spans:
+        child_body = body_tex[span.body_start : span.body_end]
+        objects.extend(_visual_objects_from_tex(child_body, default_kind="figure", offset=span.start))
+    if objects:
+        return objects
+    return _visual_objects_from_tex(body_tex, default_kind="figure", offset=0)
+
+
+def _visual_objects_from_tex(tex: str, *, default_kind: str, offset: int) -> list[_VisualTexObject]:
+    captions = _caption_commands_from_tex(tex)
+    if not captions:
+        obj = _visual_object_from_tex(tex, default_kind=default_kind, start=offset, end=offset + len(tex))
+        return [obj] if obj is not None else []
+    objects: list[_VisualTexObject] = []
+    for index, caption in enumerate(captions):
+        segment_start = 0 if index == 0 else caption.start
+        segment_end = captions[index + 1].start if index + 1 < len(captions) else len(tex)
+        segment = tex[segment_start:segment_end]
+        obj = _visual_object_from_tex(segment, default_kind=default_kind, start=offset + segment_start, end=offset + segment_end)
+        if obj is not None:
+            objects.append(obj)
+    return objects
+
+
+def _visual_object_from_tex(tex: str, *, default_kind: str, start: int, end: int) -> _VisualTexObject | None:
+    caption = _first_caption_command(tex)
+    kind = caption.kind if caption and caption.kind else default_kind
+    if kind not in {"figure", "table"}:
+        kind = default_kind
+    has_graphics = bool(_includegraphics_paths(tex))
+    has_tabular = _TABULAR_ENV_PATTERN.search(tex) is not None
+    if kind == "figure" and not has_graphics and has_tabular:
+        kind = "table"
+    if kind == "table" and not has_tabular and has_graphics:
+        kind = "figure"
+    if kind == "figure" and not has_graphics:
+        return None
+    if kind == "table" and not has_tabular:
+        return None
+    return _VisualTexObject(
+        kind=kind,
+        body_tex=tex,
+        caption_tex=caption.body if caption else None,
+        label=_label_from_tex(tex),
+        start=start,
+        end=end,
+    )
+
+
+def _top_level_environment_spans(tex: str, names: set[str]) -> list[_EnvironmentSpan]:
+    spans: list[_EnvironmentSpan] = []
+    position = 0
+    while position < len(tex):
+        match = _ENV_START_PATTERN.search(tex, position)
+        if not match:
+            break
+        name = match.group("name")
+        span = _environment_span_at(tex, match.start(), name)
+        if span is None:
+            position = match.end()
+            continue
+        if name in names:
+            spans.append(span)
+        position = span.end
+    return spans
+
+
+def _environment_span_at(tex: str, start: int, name: str) -> _EnvironmentSpan | None:
+    begin_match = re.match(rf"\\begin\s*\{{{re.escape(name)}\}}", tex[start:])
+    if not begin_match:
+        return None
+    body_start = start + begin_match.end()
+    token_pattern = re.compile(rf"\\(?P<kind>begin|end)\s*\{{{re.escape(name)}\}}")
+    depth = 1
+    for match in token_pattern.finditer(tex, body_start):
+        if match.group("kind") == "begin":
+            depth += 1
+        else:
+            depth -= 1
+            if depth == 0:
+                return _EnvironmentSpan(
+                    name=name,
+                    start=start,
+                    body_start=body_start,
+                    body_end=match.start(),
+                    end=match.end(),
+                )
+    return None
+
+
+def _first_caption_command(tex: str) -> _CaptionCommand | None:
+    captions = _caption_commands_from_tex(tex, limit=1)
+    return captions[0] if captions else None
+
+
+def _caption_commands_from_tex(tex: str, *, limit: int | None = None) -> list[_CaptionCommand]:
+    captions: list[_CaptionCommand] = []
+    position = 0
+    while True:
+        match = re.search(r"\\(?P<command>captionof|caption)\b", tex[position:])
+        if not match:
+            return captions
+        command_start = position + match.start()
+        cursor = position + match.end()
+        caption_kind: str | None = None
+        if match.group("command") == "captionof":
+            cursor = _skip_tex_space(tex, cursor)
+            if cursor >= len(tex) or tex[cursor] != "{":
+                position = cursor
+                continue
+            parsed_kind = _balanced_group(tex, cursor)
+            if parsed_kind is None:
+                position = cursor + 1
+                continue
+            caption_kind = parsed_kind[0].strip().casefold()
+            cursor = parsed_kind[1]
+        cursor = _skip_tex_space(tex, cursor)
+        if cursor < len(tex) and tex[cursor] == "[":
+            optional_end = _balanced_optional_group(tex, cursor)
+            if optional_end is not None:
+                cursor = _skip_tex_space(tex, optional_end)
+        if cursor >= len(tex) or tex[cursor] != "{":
+            position = cursor
+            continue
+        parsed_body = _balanced_group(tex, cursor)
+        if parsed_body is None:
+            position = cursor + 1
+            continue
+        body, end = parsed_body
+        captions.append(_CaptionCommand(start=command_start, end=end, body=body, kind=caption_kind))
+        if limit is not None and len(captions) >= limit:
+            return captions
+        position = end
+
+
+def _balanced_group(tex: str, start: int) -> tuple[str, int] | None:
+    if start >= len(tex) or tex[start] != "{":
+        return None
+    depth = 0
+    body_start = start + 1
+    index = start
+    while index < len(tex):
+        char = tex[index]
+        if char == "\\":
+            index += 2
+            continue
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return tex[body_start:index], index + 1
+        index += 1
+    return None
+
+
+def _balanced_optional_group(tex: str, start: int) -> int | None:
+    if start >= len(tex) or tex[start] != "[":
+        return None
+    depth = 0
+    index = start
+    while index < len(tex):
+        char = tex[index]
+        if char == "\\":
+            index += 2
+            continue
+        if char == "[":
+            depth += 1
+        elif char == "]":
+            depth -= 1
+            if depth == 0:
+                return index + 1
+        index += 1
+    return None
+
+
+def _skip_tex_space(tex: str, position: int) -> int:
+    while position < len(tex) and tex[position].isspace():
+        position += 1
+    return position
 
 
 def _display_label(label: str | None, *, kind: str, fallback_index: int) -> str:
@@ -1385,7 +1692,7 @@ def _clean_text(tex: str | None) -> str:
     if not tex:
         return ""
     text = _strip_comments(tex)
-    text = _CAPTION_PATTERN.sub(lambda match: _clean_text(match.group("body")), text)
+    text = _replace_caption_commands(text, lambda body: _clean_text(body))
     text = _LABEL_PATTERN.sub("", text)
     text = _INCLUDE_GRAPHICS_PATTERN.sub("", text)
     text = re.sub(r"\\(?:begin|end)\s*\{[^}]+\}", "\n", text)
@@ -1393,14 +1700,11 @@ def _clean_text(tex: str | None) -> str:
     previous = None
     while previous != text:
         previous = text
-        text = _COMMAND_WITH_TEXT_ARG.sub(lambda match: match.group("body"), text)
+        text = _replace_text_commands(text)
     text = _INLINE_MATH_PATTERN.sub(lambda match: f" {_inline_math_text(match.group('body'))} ", text)
     text = _DOLLAR_BLOCK_MATH_PATTERN.sub(" ", text)
     text = _DISPLAY_MATH_PATTERN.sub(" ", text)
-    text = text.replace("``", '"').replace("''", '"')
-    text = text.replace("---", "-").replace("--", "-")
-    text = text.replace("\\%", "%").replace("\\&", "&").replace("\\_", "_").replace("\\#", "#")
-    text = text.replace("\\$", "$").replace("\\{", "{").replace("\\}", "}")
+    text = _latex_text_replacements(text)
     replacements = {
         r"\textasciitilde": "~",
         r"\times": "x",
@@ -1434,7 +1738,7 @@ def _clean_text_preserving_inline(tex: str | None, *, strip_inline_tokens: bool 
     if not tex:
         return ""
     text = _strip_comments(tex)
-    text = _CAPTION_PATTERN.sub(lambda match: _clean_text_preserving_inline(match.group("body"), strip_inline_tokens=strip_inline_tokens), text)
+    text = _replace_caption_commands(text, lambda body: _clean_text_preserving_inline(body, strip_inline_tokens=strip_inline_tokens))
     text = _LABEL_PATTERN.sub("", text)
     text = _INCLUDE_GRAPHICS_PATTERN.sub("", text)
     text = re.sub(r"\\(?:begin|end)\s*\{[^}]+\}", "\n", text)
@@ -1470,22 +1774,18 @@ def _replace_text_commands(value: str) -> str:
     previous = None
     while previous != text:
         previous = text
-        text = _COMMAND_WITH_TEXT_ARG.sub(lambda match: match.group("body"), text)
-        text = re.sub(
-            r"\\(?:textcolor|color)\s*\{[^{}]*\}\s*\{(?P<body>[^{}]*(?:\{[^{}]*\}[^{}]*)*)\}",
-            lambda match: match.group("body"),
-            text,
-            flags=re.DOTALL,
-        )
+        text = _strip_text_wrapping_commands_once(text)
     return text
 
 
 def _latex_text_replacements(value: str) -> str:
     text = value
     text = text.replace("``", '"').replace("''", '"')
-    text = text.replace("---", "-").replace("--", "-")
+    text = text.replace("---", "-").replace("--", "-").replace("\u2014", "-").replace("\u2013", "-").replace("\u2212", "-")
+    text = text.replace("\u2018", "'").replace("\u2019", "'").replace("\u201c", '"').replace("\u201d", '"')
     text = text.replace("\\%", "%").replace("\\&", "&").replace("\\_", "_").replace("\\#", "#")
     text = text.replace("\\$", "$").replace("\\{", "{").replace("\\}", "}")
+    text = _replace_latex_spacing_commands(text)
     replacements = {
         r"\textasciitilde": "~",
         r"\times": "x",
@@ -1507,6 +1807,75 @@ def _latex_text_replacements(value: str) -> str:
     for key, value in sorted(replacements.items(), key=lambda item: len(item[0]), reverse=True):
         text = text.replace(key, value)
     return text
+
+
+def _strip_text_wrapping_commands_once(value: str) -> str:
+    output: list[str] = []
+    position = 0
+    while position < len(value):
+        match = re.search(r"\\(?P<name>[A-Za-z]+)\*?", value[position:])
+        if not match:
+            output.append(value[position:])
+            break
+        command_start = position + match.start()
+        command_end = position + match.end()
+        name = match.group("name")
+        output.append(value[position:command_start])
+        if name in {"textcolor", "color"}:
+            cursor = _skip_tex_space(value, command_end)
+            color_group = _balanced_group(value, cursor) if cursor < len(value) and value[cursor] == "{" else None
+            if color_group is None:
+                output.append(value[command_start:command_end])
+                position = command_end
+                continue
+            cursor = _skip_tex_space(value, color_group[1])
+            body_group = _balanced_group(value, cursor) if cursor < len(value) and value[cursor] == "{" else None
+            if body_group is None:
+                output.append(value[command_start:command_end])
+                position = command_end
+                continue
+            output.append(body_group[0])
+            position = body_group[1]
+            continue
+        if name in _TEXT_COMMAND_NAMES:
+            cursor = _skip_tex_space(value, command_end)
+            body_group = _balanced_group(value, cursor) if cursor < len(value) and value[cursor] == "{" else None
+            if body_group is None:
+                output.append(value[command_start:command_end])
+                position = command_end
+                continue
+            output.append(body_group[0])
+            position = body_group[1]
+            continue
+        output.append(value[command_start:command_end])
+        position = command_end
+    return "".join(output)
+
+
+def _replace_latex_spacing_commands(value: str) -> str:
+    text = value
+    text = re.sub(r"\\[,;:!]", " ", text)
+    text = text.replace(r"\ ", " ")
+    text = text.replace(r"~", " ")
+    text = re.sub(r"\\(?:quad|qquad|enspace|thinspace|medspace|thickspace|hspace|vspace)\*?(?:\s*\{[^{}]*\})?", " ", text)
+    return text
+
+
+def _replace_caption_commands(value: str, replacement: Callable[[str], str]) -> str:
+    text = value
+    output: list[str] = []
+    position = 0
+    while position < len(text):
+        caption = _first_caption_command(text[position:])
+        if caption is None:
+            output.append(text[position:])
+            break
+        start = position + caption.start
+        end = position + caption.end
+        output.append(text[position:start])
+        output.append(replacement(caption.body))
+        position = end
+    return "".join(output)
 
 
 def _needs_join_space(left: str, right: str) -> bool:

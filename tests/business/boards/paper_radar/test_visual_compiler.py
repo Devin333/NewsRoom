@@ -370,6 +370,7 @@ def test_arxiv_source_compiler_uses_tex_body_equations_and_source_assets(tmp_pat
     assert "Anything[" not in body_text
     assert r"k^\5" not in body_text
     assert "R^Bx" not in body_text
+    assert r"@\, k" not in body_text
     assert "Figure 1(b)" in body_text
     assert "Table 1" in body_text
     assert "Section 1.1" in body_text
@@ -378,6 +379,7 @@ def test_arxiv_source_compiler_uses_tex_body_equations_and_source_assets(tmp_pat
     assert r"\mathcal{F} = \{F_i\}_{i=0}^{M}" in body_text
     assert r"F_i \in \mathbb{R}^{B \times L \times C}" in body_text
     assert r"k^\circ \in \{5^\circ,10^\circ,15^\circ,20^\circ\}" in body_text
+    assert '"Recall"@ k^\\circ' in body_text
     assert any(block.metadata.get("inlineSpans") for block in paragraph_blocks)
     math_spans = [
         span
@@ -443,6 +445,61 @@ def test_arxiv_source_compiler_cleans_old_visual_assets(tmp_path) -> None:
 
     assert attempt.draft is not None
     assert not old_asset.exists()
+
+
+def test_arxiv_source_compiler_emits_captionof_children_and_clean_captions(tmp_path) -> None:
+    compiler = ArxivSourcePaperCompiler(source_fetcher=lambda _arxiv_id, _max_bytes: _captionof_arxiv_source_tarball())
+
+    attempt = compiler.try_compile(
+        paper={"id": "captionof-paper", "title": "Fallback Title", "arxivId": "2605.77777v1"},
+        output_dir=tmp_path / "captionof-source",
+        source_pdf_url="https://arxiv.org/pdf/2605.77777v1.pdf",
+        pdf_bytes=_sample_pdf_bytes(),
+        started_at=datetime(2026, 5, 28, tzinfo=timezone.utc),
+        finished_at=datetime(2026, 5, 28, tzinfo=timezone.utc),
+    )
+
+    assert attempt.draft is not None
+    draft = attempt.draft
+    gate_report = PaperAssetGate().validate(
+        document=draft.document,
+        manifest=draft.manifest,
+        paper_dir=tmp_path / "captionof-source",
+    )
+    assert gate_report["passed"] is True
+
+    body_text = "\n".join(block.text for block in draft.document.blocks)
+    figure_blocks = [block for block in draft.document.blocks if block.type == "figure"]
+    table_blocks = [block for block in draft.document.blocks if block.type == "table"]
+    paragraph_blocks = [block for block in draft.document.blocks if block.type == "paragraph"]
+    ref_spans = [
+        span
+        for block in paragraph_blocks
+        for span in block.metadata.get("inlineSpans", [])
+        if span.get("type") == "ref"
+    ]
+
+    assert [block.label for block in figure_blocks] == ["Figure 1", "Figure 2", "Figure 3"]
+    assert [block.label for block in table_blocks] == ["Table 1", "Table 2", "Table 3"]
+    assert "Figure backbone comparison" not in body_text
+    assert "Figure 2" in body_text
+    assert "Figure 3" in body_text
+    assert "Table 1" in body_text
+    assert "Table 2" in body_text
+    assert "Table 3" in body_text
+    assert "Table copy paste issue" not in body_text
+    assert all(span.get("targetBlockId") for span in ref_spans if span.get("label") in {
+        "fig:backbone",
+        "fig:stress",
+        "tab:mm_reasoning_subject_driven",
+        "tab:vlm_based_comparison",
+        "tab:user_study",
+    })
+    assert "Red dashed lines indicate failures." in figure_blocks[0].caption
+    assert "XVerseBench [1] and LAMICBench [2]" in table_blocks[0].caption
+    assert "~chen2025xverse" not in "\n".join(block.caption or "" for block in (*figure_blocks, *table_blocks))
+    assert not any(item["code"] == "tex_reference_missing" for item in draft.compile_info.diagnostics)
+    assert [item["key"] for item in draft.document.auxiliary["references"]] == ["chen2025xverse", "chen2025lamic"]
 
 
 def test_source_first_compiler_falls_back_to_pdf_when_arxiv_source_unavailable(tmp_path) -> None:
@@ -821,6 +878,7 @@ Orient Anything~\cite{missing2025orient} should become a missing citation marker
 \label{sec:formula}
 The next display equation should be emitted as LaTeX text, not as a screenshot.
 Inline formulas should keep TeX spans: $\mathcal{F} = \{F_i\}_{i=0}^{M}$, $F_i \in \mathbb{R}^{B \times L \times C}$, and $k^\circ \in \{5^\circ,10^\circ,15^\circ,20^\circ\}$.
+Spacing commands should not leak: \textit{``Recall''@\,$k^\circ$}.
 \begin{equation}
 q(\mathbf{x}_t\mid\mathbf{x}_0) = \mathcal{N}(\mathbf{x}_t; \sqrt{\alpha_t}\mathbf{x}_0, (1-\alpha_t)\mathbf{I})
 \end{equation}
@@ -851,6 +909,114 @@ q(\mathbf{x}_t\mid\mathbf{x}_0) = \mathcal{N}(\mathbf{x}_t; \sqrt{\alpha_t}\math
   title={DreamO: Unified Subject and Style Customization},
   author={Mou, Chen and Zhao, Di},
   booktitle={Conference on Computer Vision},
+  year={2025}
+}
+""",
+        "img/figure.pdf": _sample_figure_pdf_bytes(),
+    }
+    stream = BytesIO()
+    with tarfile.open(fileobj=stream, mode="w:gz") as archive:
+        for name, content in files.items():
+            data = content.encode("utf-8") if isinstance(content, str) else content
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            archive.addfile(info, BytesIO(data))
+    return stream.getvalue()
+
+
+def _captionof_arxiv_source_tarball() -> bytes:
+    files = {
+        "00README.json": json.dumps(
+            {
+                "sources": [
+                    {
+                        "usage": "toplevel",
+                        "filename": "main.tex",
+                    }
+                ],
+                "spec_version": 1,
+            }
+        ),
+        "main.tex": r"""
+\documentclass{article}
+\usepackage{graphicx}
+\title{Captionof Source Paper}
+\begin{document}
+\maketitle
+We refer to Table~\ref{tab:mm_reasoning_subject_driven}, Table~\ref{tab:vlm_based_comparison}, Table~\ref{tab:user_study}, Figure~\ref{fig:backbone}, and Figure~\ref{fig:stress}.
+
+\begin{figure}[t]
+\begin{minipage}[t]{0.48\textwidth}
+  \centering
+  \includegraphics[width=\linewidth]{img/figure.pdf}
+  \caption{Main qualitative result. \textbf{\textit{\textcolor{red}{Red dashed lines}}} indicate failures.}
+  \label{fig:main}
+\end{minipage}
+\hfill
+\begin{minipage}[t]{0.48\textwidth}
+  \captionof{table}{Quantitative results on XVerseBench~\cite{chen2025xverse} and LAMICBench~\cite{chen2025lamic}.}
+  \begin{tabular}{lc}
+  \toprule
+  Metric & Ours \\
+  \midrule
+  CLIP-T ($\uparrow$) & \textbf{0.3208} \\
+  \bottomrule
+  \end{tabular}
+  \label{tab:mm_reasoning_subject_driven}
+
+  \captionof{table}{Human aligned comparison.}
+  \begin{tabular}{lc}
+  \toprule
+  Method & Score \\
+  \midrule
+  DreamO & 2.838 \\
+  Ours & \textbf{3.010} \\
+  \bottomrule
+  \end{tabular}
+  \label{tab:vlm_based_comparison}
+
+  \captionof{table}{User study from participants.}
+  \begin{tabular}{lc}
+  \toprule
+  Method & Score \\
+  \midrule
+  Ours & \textbf{7.26} \\
+  \bottomrule
+  \end{tabular}
+  \label{tab:user_study}
+\end{minipage}
+\end{figure}
+
+\begin{figure*}[p]
+\begin{minipage}{\linewidth}
+  \centering
+  \includegraphics[width=0.8\linewidth]{img/figure.pdf}
+  \captionof{figure}{Qualitative comparison of different MLLM backbones.}
+  \label{fig:backbone}
+\end{minipage}
+\begin{minipage}{\linewidth}
+  \centering
+  \includegraphics[width=0.8\linewidth]{img/figure.pdf}
+  \captionof{figure}{Stress testing performance with layer groups {0–9}, {10–19}, and all layers (0–28).}
+  \label{fig:stress}
+\end{minipage}
+\end{figure*}
+
+\bibliography{bib/references}
+\end{document}
+""",
+        "bib/references.bib": r"""
+@article{chen2025xverse,
+  title={XVerseBench},
+  author={Chen, Alex},
+  journal={arXiv preprint},
+  year={2025}
+}
+
+@article{chen2025lamic,
+  title={LAMICBench},
+  author={Chen, Blake},
+  journal={arXiv preprint},
   year={2025}
 }
 """,
