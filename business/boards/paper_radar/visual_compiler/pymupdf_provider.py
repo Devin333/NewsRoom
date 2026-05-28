@@ -4,7 +4,6 @@ import hashlib
 import math
 import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -22,6 +21,7 @@ from business.boards.paper_radar.visual_compiler.model_layout_provider import (
     PaperLayoutProviderError,
     PaperVisualLayoutProvider,
 )
+from business.boards.paper_radar.visual_compiler.base import PaperCompileDraft, PaperCompilerError
 
 
 _CAPTION_PATTERN = re.compile(
@@ -59,20 +59,6 @@ _COMPOUND_LINEBREAK_PREFIXES = {
     "zero",
 }
 _MAX_EQUATIONS_PER_PAGE = 12
-
-
-@dataclass(frozen=True)
-class PaperCompileDraft:
-    document: PaperDocument
-    manifest: PaperAssetManifest
-    compile_info: PaperCompileInfo
-
-
-class PaperCompilerError(RuntimeError):
-    def __init__(self, message: str, *, code: str, diagnostics: Sequence[Mapping[str, Any]] = ()) -> None:
-        super().__init__(message)
-        self.code = code
-        self.diagnostics = tuple(dict(item) for item in diagnostics)
 
 
 class PyMuPDFPaperCompiler:

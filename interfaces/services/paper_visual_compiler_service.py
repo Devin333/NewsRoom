@@ -12,19 +12,22 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from business.boards.paper_radar.visual_compiler import (
+    ArxivSourcePaperCompiler,
     PaperAssetGate,
     PaperAssetManifest,
     PaperCompileInfo,
     PaperCompileStatusRecord,
+    PaperCompiler,
     PaperDocument,
     PaperLayoutProviderConfigurationError,
     PaperReviewReport,
     PaperVisualCompilerRepository,
     PyMuPDFPaperCompiler,
+    SourceFirstPaperCompiler,
     build_model_layout_provider_from_env,
 )
 from business.boards.paper_radar.visual_compiler.models import PAPER_DOCUMENT_SCHEMA_VERSION
-from business.boards.paper_radar.visual_compiler.pymupdf_provider import PaperCompilerError
+from business.boards.paper_radar.visual_compiler.base import PaperCompilerError
 from business.boards.paper_radar.visual_compiler.reviewer import LLMPaperDocumentReviewer, PaperDocumentReviewer
 from interfaces.services.paper_ingest_service import DEFAULT_PDF_MAX_BYTES, PAPERS_PDF_MAX_BYTES_ENV
 from interfaces.services.paper_service import PaperNotFoundError, PapersApplicationService
@@ -78,7 +81,7 @@ class PaperVisualCompilerApplicationService:
         *,
         papers_service: PapersApplicationService | None = None,
         repository: PaperVisualCompilerRepository | None = None,
-        compiler: PyMuPDFPaperCompiler | None = None,
+        compiler: PaperCompiler | None = None,
         asset_gate: PaperAssetGate | None = None,
         reviewer: PaperDocumentReviewer | None = None,
         pdf_fetcher: Callable[[str, int], bytes] | None = None,
@@ -426,12 +429,15 @@ def _source_pdf_url(paper: Mapping[str, Any]) -> str | None:
     return None
 
 
-def _default_paper_compiler() -> PyMuPDFPaperCompiler:
+def _default_paper_compiler() -> SourceFirstPaperCompiler:
     try:
         layout_provider = build_model_layout_provider_from_env()
     except PaperLayoutProviderConfigurationError:
         raise
-    return PyMuPDFPaperCompiler(layout_provider=layout_provider)
+    return SourceFirstPaperCompiler(
+        source_compiler=ArxivSourcePaperCompiler(),
+        fallback_compiler=PyMuPDFPaperCompiler(layout_provider=layout_provider),
+    )
 
 
 def _normalized_pdf_url(value: Any) -> str | None:

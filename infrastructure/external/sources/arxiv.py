@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
 from typing import Callable
+from urllib.parse import quote
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request
@@ -42,6 +44,15 @@ ARXIV_CONTENT_TYPES = (
     "application/xml",
     "text/xml",
 )
+ARXIV_SOURCE_CONTENT_TYPES = (
+    "application/gzip",
+    "application/x-gzip",
+    "application/octet-stream",
+    "application/x-tar",
+    "application/x-eprint-tar",
+    "application/pdf",
+)
+DEFAULT_ARXIV_SOURCE_MAX_BYTES = 120_000_000
 
 
 @dataclass(frozen=True)
@@ -59,6 +70,21 @@ class ArxivQuery:
             raise ValueError("start must be non-negative")
         if self.max_results <= 0:
             raise ValueError("max_results must be greater than zero")
+
+
+@dataclass(frozen=True)
+class ArxivSourcePackage:
+    arxiv_id: str
+    url: str
+    content: bytes
+    content_type: str | None = None
+    file_name: str | None = None
+    fetched_at: datetime | None = None
+    response_metadata: SourceFetchResponseMetadata | None = None
+
+    @property
+    def checksum(self) -> str:
+        return sha256(self.content).hexdigest()
 
 
 class ArxivConnector:
@@ -170,6 +196,79 @@ class ArxivConnector:
         return self._fetch_text(url)
 
 
+class ArxivSourceConnector:
+    """Fetch arXiv TeX source packages from the official e-print endpoint."""
+
+    def __init__(
+        self,
+        *,
+        fetch_policy: SourceFetchPolicy | None = None,
+        rate_limiter: DomainRateLimiter | None = None,
+    ) -> None:
+        self.fetch_policy = fetch_policy or SourceFetchPolicy(
+            timeout_seconds=90,
+            max_bytes=DEFAULT_ARXIV_SOURCE_MAX_BYTES,
+            user_agent="NewsRoom/0.1 arxiv-source-fetch contact: local-dev",
+            respect_robots=False,
+            retry_times=1,
+        )
+        self._rate_limiter = rate_limiter or DomainRateLimiter()
+
+    def fetch_source_package(
+        self,
+        arxiv_id: str,
+        *,
+        max_bytes: int | None = None,
+    ) -> ArxivSourcePackage:
+        normalized_id = normalize_arxiv_id(arxiv_id)
+        if not normalized_id:
+            raise ValueError("arxiv id is required")
+        url = build_arxiv_source_url(normalized_id)
+        policy = self.fetch_policy
+        if max_bytes is not None and max_bytes > 0 and max_bytes != policy.max_bytes:
+            from dataclasses import replace
+
+            policy = replace(policy, max_bytes=max_bytes)
+        rate_limit = self._rate_limiter.reserve(
+            url,
+            limit_per_minute=policy.rate_limit_per_domain_per_minute,
+        )
+        if not rate_limit.allowed:
+            raise ValueError(f"arXiv source fetch rate limit reached for domain: {rate_limit.domain}")
+        ensure_robots_allowed(url, policy)
+
+        def operation() -> ArxivSourcePackage:
+            request = Request(
+                url,
+                headers={
+                    "Accept": "application/gzip,application/x-gzip,application/octet-stream,*/*",
+                    "User-Agent": policy.user_agent,
+                },
+            )
+            with open_request_with_fetch_policy(request, policy) as response:
+                response_metadata = response_metadata_from_http_response(response, url=url)
+                ensure_supported_content_type(response_metadata.content_type, ARXIV_SOURCE_CONTENT_TYPES)
+                content_length = response.headers.get("Content-Length") if response.headers is not None else None
+                if content_length and int(content_length) > policy.max_bytes:
+                    raise ValueError("arXiv source package exceeds configured maximum size")
+                body = response.read(policy.max_bytes + 1)
+            if len(body) > policy.max_bytes:
+                raise ValueError("arXiv source package exceeds configured maximum size")
+            if not body:
+                raise ValueError("arXiv source package is empty")
+            return ArxivSourcePackage(
+                arxiv_id=normalized_id,
+                url=response_metadata.url or url,
+                content=body,
+                content_type=response_metadata.content_type,
+                file_name=_content_disposition_file_name((response_metadata.headers or {}).get("Content-Disposition")),
+                fetched_at=datetime.now(UTC),
+                response_metadata=response_metadata,
+            )
+
+        return run_with_fetch_retries(operation, policy)
+
+
 def build_arxiv_query_url(base_url: str, query: ArxivQuery) -> str:
     params = {
         "search_query": query.query,
@@ -180,6 +279,29 @@ def build_arxiv_query_url(base_url: str, query: ArxivQuery) -> str:
     }
     separator = "&" if "?" in base_url else "?"
     return f"{base_url}{separator}{urlencode(params)}"
+
+
+def build_arxiv_source_url(arxiv_id: str) -> str:
+    return f"https://arxiv.org/e-print/{quote(normalize_arxiv_id(arxiv_id), safe='.')}"
+
+
+def build_arxiv_src_url(arxiv_id: str) -> str:
+    return f"https://arxiv.org/src/{quote(normalize_arxiv_id(arxiv_id), safe='.')}"
+
+
+def normalize_arxiv_id(value: str) -> str:
+    text = value.strip().rstrip(".,;:)]}>'\"")
+    marker_found = False
+    for marker in ("arxiv.org/abs/", "arxiv.org/pdf/", "arxiv.org/e-print/", "arxiv.org/src/"):
+        if marker in text:
+            text = text.rsplit(marker, 1)[-1]
+            marker_found = True
+            break
+    if "://" in text and not marker_found:
+        return ""
+    if text.endswith(".pdf"):
+        text = text[:-4]
+    return text.split("?", 1)[0].split("#", 1)[0].strip("/")
 
 
 def _raw_item_from_entry(
@@ -381,3 +503,12 @@ def _parse_datetime(value: str | None) -> datetime | None:
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=UTC)
     return parsed.astimezone(UTC)
+
+
+def _content_disposition_file_name(value: str | None) -> str | None:
+    if not value:
+        return None
+    match = re.search(r'filename\*?=(?:UTF-8\'\')?"?([^";]+)"?', value, flags=re.IGNORECASE)
+    if not match:
+        return None
+    return match.group(1).strip()

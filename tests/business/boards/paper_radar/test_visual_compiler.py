@@ -1,15 +1,20 @@
 import json
 from datetime import datetime, timezone
+from io import BytesIO
+import tarfile
 
 from fastapi.testclient import TestClient
 
 from business.boards.paper_radar.visual_compiler import (
+    ArxivSourcePaperCompiler,
     PaperAssetGate,
     PaperLayoutDetection,
     PaperLayoutRegion,
     PaperVisualCompilerRepository,
     PyMuPDFPaperCompiler,
+    SourceFirstPaperCompiler,
 )
+from infrastructure.external.sources.arxiv import ArxivSourceConnector, build_arxiv_source_url, normalize_arxiv_id
 from business.boards.paper_radar.visual_compiler.model_layout_provider import (
     OpenAICompatiblePaperLayoutProvider,
     build_model_layout_provider_from_env,
@@ -321,6 +326,82 @@ def test_model_layout_provider_env_factory_requires_explicit_enablement() -> Non
     assert isinstance(provider, OpenAICompatiblePaperLayoutProvider)
 
 
+def test_arxiv_source_compiler_uses_tex_body_equations_and_source_assets(tmp_path) -> None:
+    compiler = ArxivSourcePaperCompiler(source_fetcher=lambda _arxiv_id, _max_bytes: _sample_arxiv_source_tarball())
+
+    attempt = compiler.try_compile(
+        paper={
+            "id": "arxiv-source-paper",
+            "slug": "arxiv-source-paper",
+            "title": "Fallback Title",
+            "abstractSnippet": "Generated AI summary should stay outside body.",
+            "arxivId": "2605.12345v1",
+            "pdfUrl": "https://arxiv.org/pdf/2605.12345v1.pdf",
+        },
+        output_dir=tmp_path / "arxiv-source",
+        source_pdf_url="https://arxiv.org/pdf/2605.12345v1.pdf",
+        pdf_bytes=_sample_pdf_bytes(),
+        started_at=datetime(2026, 5, 28, tzinfo=timezone.utc),
+        finished_at=datetime(2026, 5, 28, tzinfo=timezone.utc),
+    )
+
+    assert attempt.available is True
+    assert attempt.draft is not None
+    draft = attempt.draft
+    gate_report = PaperAssetGate().validate(
+        document=draft.document,
+        manifest=draft.manifest,
+        paper_dir=tmp_path / "arxiv-source",
+    )
+    body_text = "\n".join(block.text for block in draft.document.blocks)
+    equation_blocks = [block for block in draft.document.blocks if block.type == "equation"]
+    figure_blocks = [block for block in draft.document.blocks if block.type == "figure"]
+    table_blocks = [block for block in draft.document.blocks if block.type == "table"]
+
+    assert gate_report["passed"] is True
+    assert draft.compile_info.provider == "arxiv-source-tex-v1"
+    assert draft.document.title == "Source First Paper"
+    assert "Introduction from TeX source" in body_text
+    assert "Generated AI summary should stay outside body." not in body_text
+    assert len(equation_blocks) == 1
+    assert equation_blocks[0].assetId is None
+    assert r"q(\mathbf{x}_t\mid\mathbf{x}_0)" in equation_blocks[0].text
+    assert figure_blocks and figure_blocks[0].assetId
+    assert table_blocks and table_blocks[0].assetId
+    assert any(asset.kind == "figure" and asset.metadata.get("sourceFile") == "img/figure.pdf" for asset in draft.manifest.assets)
+    assert any(asset.kind == "table" and asset.metadata.get("sourceKind") == "tex-table-rendered-text" for asset in draft.manifest.assets)
+
+
+def test_source_first_compiler_falls_back_to_pdf_when_arxiv_source_unavailable(tmp_path) -> None:
+    source_compiler = ArxivSourcePaperCompiler(source_fetcher=lambda _arxiv_id, _max_bytes: None)
+    fallback_compiler = PyMuPDFPaperCompiler(dpi=96)
+    compiler = SourceFirstPaperCompiler(source_compiler=source_compiler, fallback_compiler=fallback_compiler)
+
+    draft = compiler.compile(
+        pdf_bytes=_sample_pdf_bytes(),
+        paper={
+            "id": "source-fallback-paper",
+            "title": "Source Fallback Paper",
+            "abstractSnippet": "AI summary must remain outside the body.",
+            "arxivId": "2605.54321v1",
+        },
+        output_dir=tmp_path / "source-fallback",
+        source_pdf_url="https://arxiv.org/pdf/2605.54321v1.pdf",
+        started_at=datetime(2026, 5, 28, tzinfo=timezone.utc),
+        finished_at=datetime(2026, 5, 28, tzinfo=timezone.utc),
+    )
+
+    assert draft.compile_info.provider.startswith("arxiv-source-tex-v1+fallback:")
+    assert any(item["code"] == "source_first_fallback_used" for item in draft.compile_info.diagnostics)
+    assert any(block.type == "figure" for block in draft.document.blocks)
+
+
+def test_arxiv_source_connector_builds_official_source_url_and_normalizes_ids() -> None:
+    assert normalize_arxiv_id("https://arxiv.org/pdf/2605.26111v1.pdf") == "2605.26111v1"
+    assert build_arxiv_source_url("2605.26111v1") == "https://arxiv.org/e-print/2605.26111v1"
+    assert isinstance(ArxivSourceConnector(), ArxivSourceConnector)
+
+
 def test_visual_compiler_review_failure_blocks_document_payload(tmp_path) -> None:
     service = _visual_service(tmp_path, reviewer=HeuristicPaperDocumentReviewer(verdict="fail"))
 
@@ -609,6 +690,86 @@ def _sample_png_bytes() -> bytes:
     pixmap = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 40, 40), False)
     pixmap.clear_with(0x336699)
     return pixmap.tobytes("png")
+
+
+def _sample_figure_pdf_bytes() -> bytes:
+    import fitz
+
+    document = fitz.open()
+    page = document.new_page(width=240, height=140)
+    page.draw_rect(fitz.Rect(16, 16, 224, 124), color=(0.1, 0.2, 0.5), fill=(0.82, 0.92, 0.86), width=2)
+    page.draw_line((28, 112), (212, 34), color=(0.8, 0.1, 0.1), width=3)
+    page.insert_text((28, 72), "Source asset", fontsize=14)
+    payload = document.tobytes()
+    document.close()
+    return payload
+
+
+def _sample_arxiv_source_tarball() -> bytes:
+    files = {
+        "00README.json": json.dumps(
+            {
+                "sources": [
+                    {
+                        "usage": "toplevel",
+                        "filename": "main.tex",
+                    }
+                ],
+                "spec_version": 1,
+            }
+        ),
+        "main.tex": r"""
+\documentclass{article}
+\usepackage{graphicx}
+\title{Source First Paper}
+\begin{document}
+\maketitle
+\input{sections/body}
+\end{document}
+""",
+        "sections/body.tex": r"""
+\begin{abstract}
+This abstract is from the TeX source package.
+\end{abstract}
+
+\section{Introduction from TeX source}
+This paragraph is the real paper body from TeX source. It references Figure~\ref{fig:source} and Table~\ref{tab:source}.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{img/figure.pdf}
+  \caption{A figure restored from the arXiv source asset.}
+  \label{fig:source}
+\end{figure}
+
+\subsection{Formula}
+The next display equation should be emitted as LaTeX text, not as a screenshot.
+\begin{equation}
+q(\mathbf{x}_t\mid\mathbf{x}_0) = \mathcal{N}(\mathbf{x}_t; \sqrt{\alpha_t}\mathbf{x}_0, (1-\alpha_t)\mathbf{I})
+\end{equation}
+
+\begin{table}[t]
+\caption{A table restored from TeX source.}
+\label{tab:source}
+\begin{tabular}{lc}
+\toprule
+Method & Score \\
+\midrule
+Ours & 0.99 \\
+\bottomrule
+\end{tabular}
+\end{table}
+""",
+        "img/figure.pdf": _sample_figure_pdf_bytes(),
+    }
+    stream = BytesIO()
+    with tarfile.open(fileobj=stream, mode="w:gz") as archive:
+        for name, content in files.items():
+            data = content.encode("utf-8") if isinstance(content, str) else content
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            archive.addfile(info, BytesIO(data))
+    return stream.getvalue()
 
 
 def _sha256(payload: bytes) -> str:

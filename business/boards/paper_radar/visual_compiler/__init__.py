@@ -1,4 +1,6 @@
 from business.boards.paper_radar.visual_compiler.asset_gate import PaperAssetGate
+from business.boards.paper_radar.visual_compiler.arxiv_source_provider import ArxivSourcePaperCompiler, SourceFirstPaperCompiler
+from business.boards.paper_radar.visual_compiler.base import PaperCompileDraft, PaperCompiler, PaperCompilerError
 from business.boards.paper_radar.visual_compiler.models import (
     PAPER_DOCUMENT_SCHEMA_VERSION,
     PaperAssetManifest,
@@ -25,12 +27,16 @@ from business.boards.paper_radar.visual_compiler.reviewer import PaperDocumentRe
 
 __all__ = [
     "PAPER_DOCUMENT_SCHEMA_VERSION",
+    "ArxivSourcePaperCompiler",
     "PaperAssetGate",
     "PaperAssetManifest",
     "PaperBlock",
     "PaperCompileInfo",
     "PaperCompileStatus",
     "PaperCompileStatusRecord",
+    "PaperCompileDraft",
+    "PaperCompiler",
+    "PaperCompilerError",
     "PaperDocument",
     "PaperDocumentReviewer",
     "PaperLayoutDetection",
@@ -42,6 +48,7 @@ __all__ = [
     "PaperVisualCompilerRepository",
     "PaperVisualLayoutProvider",
     "PyMuPDFPaperCompiler",
+    "SourceFirstPaperCompiler",
     "OpenAICompatiblePaperLayoutProvider",
     "build_model_layout_provider_from_env",
 ]

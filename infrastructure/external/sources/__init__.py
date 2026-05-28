@@ -2,7 +2,16 @@
 
 from typing import Any
 
-from infrastructure.external.sources.arxiv import ARXIV_API_URL, ArxivConnector, ArxivQuery
+from infrastructure.external.sources.arxiv import (
+    ARXIV_API_URL,
+    ArxivConnector,
+    ArxivQuery,
+    ArxivSourceConnector,
+    ArxivSourcePackage,
+    build_arxiv_source_url,
+    build_arxiv_src_url,
+    normalize_arxiv_id,
+)
 from infrastructure.external.sources.community import (
     DEVTO_API_URL,
     LOBSTERS_BASE_URL,
@@ -55,6 +64,10 @@ def default_arxiv_connector(**kwargs: Any) -> ArxivConnector:
     return ArxivConnector(**kwargs)
 
 
+def default_arxiv_source_connector(**kwargs: Any) -> ArxivSourceConnector:
+    return ArxivSourceConnector(**kwargs)
+
+
 def default_github_connector(**kwargs: Any) -> GithubConnector:
     return GithubConnector(**kwargs)
 
@@ -62,6 +75,8 @@ __all__ = [
     "ARXIV_API_URL",
     "ArxivConnector",
     "ArxivQuery",
+    "ArxivSourceConnector",
+    "ArxivSourcePackage",
     "DEVTO_API_URL",
     "DevToConnector",
     "DomainRateLimiter",
@@ -72,6 +87,8 @@ __all__ = [
     "GithubRepositoryMetadata",
     "GithubRepositorySearchResult",
     "build_github_graphql_url",
+    "build_arxiv_source_url",
+    "build_arxiv_src_url",
     "HACKERNEWS_API_URL",
     "HackerNewsConnector",
     "HtmlConnector",
@@ -105,6 +122,7 @@ __all__ = [
     "build_reddit_listing_url",
     "build_stackoverflow_questions_url",
     "default_arxiv_connector",
+    "default_arxiv_source_connector",
     "default_github_connector",
     "effective_fetch_policy",
     "ensure_robots_allowed",
@@ -113,4 +131,5 @@ __all__ = [
     "open_request_with_fetch_policy",
     "rate_limited_source_error",
     "run_with_fetch_retries",
+    "normalize_arxiv_id",
 ]
