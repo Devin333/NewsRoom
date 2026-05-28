@@ -18,6 +18,10 @@ from business.boards.paper_radar.visual_compiler.models import (
     PaperSourceRegion,
     PaperVisualAsset,
 )
+from business.boards.paper_radar.visual_compiler.model_layout_provider import (
+    PaperLayoutProviderError,
+    PaperVisualLayoutProvider,
+)
 
 
 _CAPTION_PATTERN = re.compile(
@@ -50,9 +54,18 @@ class PaperCompilerError(RuntimeError):
 class PyMuPDFPaperCompiler:
     provider_name = "pymupdf-heuristic-v1"
 
-    def __init__(self, *, dpi: int = 300, max_visual_assets_per_page: int = 24) -> None:
+    def __init__(
+        self,
+        *,
+        dpi: int = 300,
+        layout_dpi: int = 120,
+        max_visual_assets_per_page: int = 24,
+        layout_provider: PaperVisualLayoutProvider | None = None,
+    ) -> None:
         self.dpi = max(72, int(dpi))
+        self.layout_dpi = max(72, min(int(layout_dpi), self.dpi))
         self.max_visual_assets_per_page = max(1, int(max_visual_assets_per_page))
+        self.layout_provider = layout_provider
 
     def compile(
         self,
@@ -136,12 +149,12 @@ class PyMuPDFPaperCompiler:
             sourceHash=source_hash,
             assets=tuple(assets),
             sourcePdfFileName=source_pdf_path.name,
-            provider=self.provider_name,
+            provider=self._provider_name(),
         )
         compile_info = PaperCompileInfo(
             paperId=paper_id,
             status="needs_review",
-            provider=self.provider_name,
+            provider=self._provider_name(),
             sourceHash=source_hash,
             startedAt=_iso(started),
             finishedAt=_iso(finished),
@@ -237,9 +250,74 @@ class PyMuPDFPaperCompiler:
 
         visual_assets: list[tuple[PaperVisualAsset, float, float]] = []
         visual_keys: set[str] = set()
+
+        if self.layout_provider is not None:
+            try:
+                layout_image = _render_layout_image(page, dpi=self.layout_dpi)
+                detection = self.layout_provider.detect_regions(
+                    page_image_bytes=layout_image["bytes"],
+                    page_number=page_number,
+                    page_width=page_width,
+                    page_height=page_height,
+                    rendered_width=layout_image["width"],
+                    rendered_height=layout_image["height"],
+                    captions=captions,
+                )
+            except PaperLayoutProviderError as exc:
+                diagnostics.append(
+                    {
+                        "severity": "warning" if exc.retryable else "error",
+                        "code": exc.code,
+                        "message": str(exc),
+                        "pageNumber": page_number,
+                    }
+                )
+            else:
+                diagnostics.extend(detection.diagnostics)
+                for region in detection.regions:
+                    if len(visual_assets) >= self.max_visual_assets_per_page:
+                        break
+                    caption = _caption_for_model_region(region, captions, page_height=page_height)
+                    label = region.label or _caption_label(caption) or _default_visual_label(region.kind)
+                    caption_text = region.caption or _caption_text(caption) or label
+                    asset = self._crop_visual_asset(
+                        page=page,
+                        matrix=matrix,
+                        paper_id=paper_id,
+                        page_number=page_number,
+                        kind=region.kind,
+                        label=label,
+                        caption=caption_text,
+                        bbox=region.bbox,
+                        page_width=page_width,
+                        page_height=page_height,
+                        assets_dir=assets_dir,
+                        metadata={
+                            "layoutProvider": self.layout_provider.provider_name,
+                            "layoutConfidence": region.confidence,
+                            **dict(region.metadata),
+                        },
+                    )
+                    if asset is None or asset.assetId in visual_keys:
+                        continue
+                    visual_keys.add(asset.assetId)
+                    visual_assets.append((asset, asset.source.bbox[1] if asset.source else region.bbox[1], region.bbox[0]))
+
+        if not visual_assets:
+            diagnostics.append(
+                {
+                    "severity": "info",
+                    "code": "heuristic_visual_layout_used",
+                    "message": "heuristic visual layout extraction was used for this page",
+                    "pageNumber": page_number,
+                }
+            )
+
         for block in _page_image_blocks(page):
             if len(visual_assets) >= self.max_visual_assets_per_page:
                 break
+            if _covered_by_visual_asset(block["bbox"], visual_assets):
+                continue
             caption = _nearest_caption(block["bbox"], captions, page_height=page_height)
             if caption is None:
                 diagnostics.append(
@@ -272,6 +350,8 @@ class PyMuPDFPaperCompiler:
         for caption in captions:
             if len(visual_assets) >= self.max_visual_assets_per_page:
                 break
+            if _covered_by_visual_asset(caption["bbox"], visual_assets):
+                continue
             if any(_rects_close(caption["bbox"], asset.source.bbox if asset.source else None) for asset, _, _ in visual_assets):
                 continue
             crop_bbox = _caption_visual_bbox(caption, page_width=page_width, page_height=page_height)
@@ -308,6 +388,8 @@ class PyMuPDFPaperCompiler:
                 break
             equation = _equation_info(block)
             if equation is None:
+                continue
+            if _covered_by_visual_asset(equation["bbox"], visual_assets):
                 continue
             asset = self._crop_visual_asset(
                 page=page,
@@ -402,6 +484,7 @@ class PyMuPDFPaperCompiler:
         page_width: float,
         page_height: float,
         assets_dir: Path,
+        metadata: Mapping[str, Any] | None = None,
     ) -> PaperVisualAsset | None:
         rect = _rect_from_bbox(page, bbox, margin=4)
         if rect is None or rect.width < 12 or rect.height < 12:
@@ -435,6 +518,7 @@ class PyMuPDFPaperCompiler:
             ),
             pixmap=pixmap,
             asset_id=asset_id,
+            metadata=metadata,
         )
 
     def _asset_from_file(
@@ -450,6 +534,7 @@ class PyMuPDFPaperCompiler:
         source: PaperSourceRegion,
         pixmap: Any,
         asset_id: str | None = None,
+        metadata: Mapping[str, Any] | None = None,
     ) -> PaperVisualAsset:
         data = file_path.read_bytes()
         checksum = hashlib.sha256(data).hexdigest()
@@ -468,8 +553,13 @@ class PyMuPDFPaperCompiler:
             source=source,
             blankRatio=_pixmap_blank_ratio(pixmap),
             fileSize=len(data),
-            metadata={"dpi": self.dpi},
+            metadata={key: value for key, value in {"dpi": self.dpi, **dict(metadata or {})}.items() if value is not None},
         )
+
+    def _provider_name(self) -> str:
+        if self.layout_provider is None:
+            return self.provider_name
+        return f"{self.provider_name}+{self.layout_provider.provider_name}"
 
 
 def _page_text_blocks(page: Any) -> list[dict[str, Any]]:
@@ -505,6 +595,18 @@ def _page_text_blocks(page: Any) -> list[dict[str, Any]]:
         )
     blocks.sort(key=lambda item: (item["bbox"][1], item["bbox"][0]))
     return blocks
+
+
+def _render_layout_image(page: Any, *, dpi: int) -> Mapping[str, Any]:
+    import fitz  # type: ignore[import-not-found]
+
+    scale = dpi / 72
+    pixmap = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)
+    return {
+        "bytes": pixmap.tobytes("png"),
+        "width": int(pixmap.width),
+        "height": int(pixmap.height),
+    }
 
 
 def _page_image_blocks(page: Any) -> list[dict[str, Any]]:
@@ -575,6 +677,77 @@ def _nearest_caption(
     if not candidates:
         return None
     return sorted(candidates, key=lambda item: item[0])[0][1]
+
+
+def _caption_for_model_region(
+    region: Any,
+    captions: Sequence[Mapping[str, Any]],
+    *,
+    page_height: float,
+) -> Mapping[str, Any] | None:
+    label = _normalize_label(getattr(region, "label", None))
+    if label:
+        for caption in captions:
+            if _normalize_label(caption.get("label")) == label:
+                return caption
+    nearest = _nearest_caption(region.bbox, captions, page_height=page_height)
+    if nearest is not None:
+        return nearest
+    for caption in captions:
+        caption_bbox = caption.get("bbox")
+        if isinstance(caption_bbox, tuple) and _horizontal_overlap_ratio(region.bbox, caption_bbox) > 0.1:
+            return caption
+    return None
+
+
+def _caption_label(caption: Mapping[str, Any] | None) -> str | None:
+    if caption is None:
+        return None
+    return _text(caption.get("label")) or None
+
+
+def _caption_text(caption: Mapping[str, Any] | None) -> str | None:
+    if caption is None:
+        return None
+    return _text(caption.get("text")) or None
+
+
+def _default_visual_label(kind: str) -> str:
+    if kind == "table":
+        return "Table"
+    if kind == "equation":
+        return "Equation"
+    return "Figure"
+
+
+def _normalize_label(value: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", "", _text(value).casefold())
+
+
+def _covered_by_visual_asset(
+    bbox: tuple[float, float, float, float],
+    visual_assets: Sequence[tuple[PaperVisualAsset, float, float]],
+) -> bool:
+    for asset, _, _ in visual_assets:
+        if asset.source is None:
+            continue
+        if _intersection_over_min_area(bbox, asset.source.bbox) >= 0.72:
+            return True
+    return False
+
+
+def _intersection_over_min_area(
+    left: tuple[float, float, float, float],
+    right: tuple[float, float, float, float],
+) -> float:
+    overlap_width = max(0.0, min(left[2], right[2]) - max(left[0], right[0]))
+    overlap_height = max(0.0, min(left[3], right[3]) - max(left[1], right[1]))
+    intersection = overlap_width * overlap_height
+    if intersection <= 0:
+        return 0.0
+    left_area = max(1.0, (left[2] - left[0]) * (left[3] - left[1]))
+    right_area = max(1.0, (right[2] - right[0]) * (right[3] - right[1]))
+    return intersection / min(left_area, right_area)
 
 
 def _caption_visual_bbox(

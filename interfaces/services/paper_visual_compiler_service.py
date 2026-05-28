@@ -17,9 +17,11 @@ from business.boards.paper_radar.visual_compiler import (
     PaperCompileInfo,
     PaperCompileStatusRecord,
     PaperDocument,
+    PaperLayoutProviderConfigurationError,
     PaperReviewReport,
     PaperVisualCompilerRepository,
     PyMuPDFPaperCompiler,
+    build_model_layout_provider_from_env,
 )
 from business.boards.paper_radar.visual_compiler.models import PAPER_DOCUMENT_SCHEMA_VERSION
 from business.boards.paper_radar.visual_compiler.pymupdf_provider import PaperCompilerError
@@ -84,7 +86,7 @@ class PaperVisualCompilerApplicationService:
     ) -> None:
         self.papers_service = papers_service or PapersApplicationService()
         self.repository = repository or PaperVisualCompilerRepository()
-        self.compiler = compiler or PyMuPDFPaperCompiler()
+        self.compiler = compiler or _default_paper_compiler()
         self.asset_gate = asset_gate or PaperAssetGate()
         self.reviewer = reviewer or LLMPaperDocumentReviewer(clock=clock)
         self.pdf_fetcher = pdf_fetcher or _fetch_pdf_bytes
@@ -422,6 +424,14 @@ def _source_pdf_url(paper: Mapping[str, Any]) -> str | None:
     if arxiv_id:
         return f"https://arxiv.org/pdf/{arxiv_id}.pdf"
     return None
+
+
+def _default_paper_compiler() -> PyMuPDFPaperCompiler:
+    try:
+        layout_provider = build_model_layout_provider_from_env()
+    except PaperLayoutProviderConfigurationError:
+        raise
+    return PyMuPDFPaperCompiler(layout_provider=layout_provider)
 
 
 def _normalized_pdf_url(value: Any) -> str | None:

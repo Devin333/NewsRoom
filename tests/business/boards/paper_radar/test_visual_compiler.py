@@ -3,7 +3,17 @@ from datetime import datetime, timezone
 
 from fastapi.testclient import TestClient
 
-from business.boards.paper_radar.visual_compiler import PaperAssetGate, PaperVisualCompilerRepository, PyMuPDFPaperCompiler
+from business.boards.paper_radar.visual_compiler import (
+    PaperAssetGate,
+    PaperLayoutDetection,
+    PaperLayoutRegion,
+    PaperVisualCompilerRepository,
+    PyMuPDFPaperCompiler,
+)
+from business.boards.paper_radar.visual_compiler.model_layout_provider import (
+    OpenAICompatiblePaperLayoutProvider,
+    build_model_layout_provider_from_env,
+)
 from business.boards.paper_radar.visual_compiler.reviewer import HeuristicPaperDocumentReviewer
 from business.boards.paper_radar.worker_handlers import PaperVisualCompileTaskHandler
 from framework.workers import Task
@@ -72,6 +82,51 @@ def test_visual_compiler_skips_uncaptioned_image_blocks_before_asset_gate(tmp_pa
     assert gate_report["passed"] is True
     assert visual_assets == []
     assert any(item["code"] == "uncaptioned_image_skipped" for item in draft.compile_info.diagnostics)
+
+
+def test_visual_compiler_uses_model_layout_provider_for_table_and_figure_crops(tmp_path) -> None:
+    output_dir = tmp_path / "model-layout"
+    compiler = PyMuPDFPaperCompiler(dpi=96, layout_provider=_FakeLayoutProvider(), max_visual_assets_per_page=8)
+
+    draft = compiler.compile(
+        pdf_bytes=_layout_provider_pdf_bytes(),
+        paper={
+            "id": "model-layout-paper",
+            "title": "Model Layout Paper",
+            "abstractSnippet": "AI summary must remain outside the body.",
+        },
+        output_dir=output_dir,
+        source_pdf_url="https://arxiv.org/pdf/2605.00002.pdf",
+        started_at=datetime(2026, 5, 28, tzinfo=timezone.utc),
+        finished_at=datetime(2026, 5, 28, tzinfo=timezone.utc),
+    )
+    gate_report = PaperAssetGate().validate(
+        document=draft.document,
+        manifest=draft.manifest,
+        paper_dir=output_dir,
+    )
+
+    visual_blocks = [block for block in draft.document.blocks if block.type in {"figure", "table"}]
+    assert gate_report["passed"] is True
+    assert {block.type for block in visual_blocks} == {"figure", "table"}
+    assert any(asset.kind == "table" and asset.metadata.get("layoutProvider") == "fake-model-layout-v1" for asset in draft.manifest.assets)
+    assert any(asset.kind == "figure" and asset.metadata.get("layoutProvider") == "fake-model-layout-v1" for asset in draft.manifest.assets)
+    assert "AI summary must remain outside the body." not in "\n".join(block.text for block in draft.document.blocks)
+
+
+def test_model_layout_provider_env_factory_requires_explicit_enablement() -> None:
+    assert build_model_layout_provider_from_env({}) is None
+
+    provider = build_model_layout_provider_from_env(
+        {
+            "NEWSROOM_PAPER_PDF_PARSE_MODEL_ENABLED": "true",
+            "NEWSROOM_PAPER_PDF_PARSE_MODEL_BASE_URL": "https://model.example/v1",
+            "NEWSROOM_PAPER_PDF_PARSE_MODEL_API_KEY": "test-key",
+            "NEWSROOM_PAPER_PDF_PARSE_MODEL": "vision-layout-model",
+        }
+    )
+
+    assert isinstance(provider, OpenAICompatiblePaperLayoutProvider)
 
 
 def test_visual_compiler_review_failure_blocks_document_payload(tmp_path) -> None:
@@ -167,6 +222,7 @@ def _visual_service(tmp_path, *, reviewer) -> PaperVisualCompilerApplicationServ
     return PaperVisualCompilerApplicationService(
         papers_service=papers_service,
         repository=PaperVisualCompilerRepository(tmp_path / "visual-compiler"),
+        compiler=PyMuPDFPaperCompiler(),
         reviewer=reviewer,
         pdf_fetcher=lambda _url, _max_bytes: _sample_pdf_bytes(),
         clock=lambda: datetime(2026, 5, 28, tzinfo=timezone.utc),
@@ -215,6 +271,36 @@ def _uncaptioned_image_pdf_bytes() -> bytes:
     return payload
 
 
+def _layout_provider_pdf_bytes() -> bytes:
+    import fitz
+
+    document = fitz.open()
+    page = document.new_page(width=612, height=792)
+    page.insert_text((72, 72), "Model Layout Paper", fontsize=20)
+    page.insert_textbox(
+        fitz.Rect(72, 112, 540, 170),
+        "This paragraph is real paper text from the PDF. The model layout provider should only locate assets.",
+        fontsize=11,
+    )
+    figure_rect = fitz.Rect(90, 210, 290, 370)
+    page.draw_rect(figure_rect, color=(0.1, 0.35, 0.55), fill=(0.78, 0.9, 0.86), width=2)
+    page.draw_line((105, 350), (275, 230), color=(0.85, 0.2, 0.18), width=3)
+    page.insert_text((90, 386), "Figure 1: Figure located by the model layout provider.", fontsize=10)
+    table_rect = fitz.Rect(320, 210, 520, 370)
+    page.draw_rect(table_rect, color=(0.15, 0.15, 0.15), fill=(0.96, 0.96, 0.9), width=1)
+    for x in (386, 452):
+        page.draw_line((x, 210), (x, 370), color=(0.15, 0.15, 0.15), width=1)
+    for y in (250, 290, 330):
+        page.draw_line((320, y), (520, y), color=(0.15, 0.15, 0.15), width=1)
+    page.insert_text((330, 235), "Method", fontsize=9)
+    page.insert_text((395, 235), "Score", fontsize=9)
+    page.insert_text((462, 235), "Delta", fontsize=9)
+    page.insert_text((320, 386), "Table 1: Table located by the model layout provider.", fontsize=10)
+    payload = document.tobytes()
+    document.close()
+    return payload
+
+
 def _sample_png_bytes() -> bytes:
     import fitz
 
@@ -239,3 +325,27 @@ class _FakeWorkerService:
                 }
 
         return Result()
+
+
+class _FakeLayoutProvider:
+    provider_name = "fake-model-layout-v1"
+
+    def detect_regions(self, **_kwargs):
+        return PaperLayoutDetection(
+            regions=(
+                PaperLayoutRegion(
+                    kind="figure",
+                    label="Figure 1",
+                    caption="Figure 1: Figure located by the model layout provider.",
+                    bbox=(90, 210, 290, 370),
+                    confidence=0.98,
+                ),
+                PaperLayoutRegion(
+                    kind="table",
+                    label="Table 1",
+                    caption="Table 1: Table located by the model layout provider.",
+                    bbox=(320, 210, 520, 370),
+                    confidence=0.97,
+                ),
+            )
+        )
