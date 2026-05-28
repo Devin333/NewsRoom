@@ -1,0 +1,4 @@
+interface:
+  display_name: "Paper Visual Compiler Guardrails"
+  short_description: "PDF reader artifact guardrails"
+  default_prompt: "Use $paper-visual-compiler-guardrails to review or modify NewsRoom paper PDF parsing, visual compilation, and Open Reader rendering."
