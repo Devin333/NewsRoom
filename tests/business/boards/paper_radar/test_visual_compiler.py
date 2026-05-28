@@ -363,6 +363,11 @@ def test_arxiv_source_compiler_uses_tex_body_equations_and_source_assets(tmp_pat
     assert gate_report["passed"] is True
     assert draft.compile_info.provider == "arxiv-source-tex-v1"
     assert draft.document.title == "Source First Paper"
+    assert [
+        (item["sectionNumber"], item["title"], item["level"])
+        for item in draft.document.outline
+        if item.get("sectionNumber")
+    ] == [("1", "Introduction from TeX source", 1), ("1.1", "Formula", 2)]
     assert "Introduction from TeX source" in body_text
     assert "Generated AI summary should stay outside body." not in body_text
     assert "Figuremodel" not in body_text

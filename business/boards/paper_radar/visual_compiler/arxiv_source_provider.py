@@ -2791,6 +2791,7 @@ def _outline_from_blocks(blocks: Sequence[PaperBlock]) -> list[Mapping[str, Any]
             "level": block.level or 1,
             "pageNumber": block.pageNumber,
             "blockId": block.id,
+            **({"sectionNumber": str(block.metadata.get("sectionNumber"))} if block.metadata.get("sectionNumber") else {}),
         }
         for block in blocks
         if block.type == "heading" and block.text.strip()

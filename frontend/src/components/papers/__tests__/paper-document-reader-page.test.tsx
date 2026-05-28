@@ -41,6 +41,22 @@ describe("PaperDocumentReaderPage", () => {
     )
   })
 
+  it("renders the compiled outline as a numbered hierarchy", () => {
+    render(<PaperDocumentReaderPage payload={compiledPayload} locale="en" />)
+
+    const article = screen.getByLabelText("Open reader paper body")
+    expect(article.querySelector("h2")?.textContent).toBe("1 Introduction")
+    expect(article.querySelector("h3")?.textContent).toBe("1.1 Evaluation Details")
+
+    const tocButtons = Array.from(document.querySelectorAll<HTMLButtonElement>("[data-level]"))
+    const introductionLink = tocButtons.find((button) => button.textContent?.includes("1 Introduction"))
+    const detailsLink = tocButtons.find((button) => button.textContent?.includes("1.1 Evaluation Details"))
+    expect(introductionLink).toBeDefined()
+    expect(detailsLink).toBeDefined()
+    expect(introductionLink).toHaveAttribute("data-level", "1")
+    expect(detailsLink).toHaveAttribute("data-level", "2")
+  })
+
   it("blocks article rendering for non-compiled documents", () => {
     render(<PaperDocumentReaderPage payload={needsReviewPayload} locale="en" />)
 
@@ -152,7 +168,10 @@ const compiledPayload: PaperDocumentResponse = {
     compiledAt: "2026-05-28T00:00:00Z",
     sourceHash: "hash",
     paper: { id: "visual-paper", title: "Visual Paper" },
-    outline: [{ id: "block-heading-1", blockId: "block-heading-1", title: "Introduction", level: 1, pageNumber: 1 }],
+    outline: [
+      { id: "block-heading-1", blockId: "block-heading-1", title: "Introduction", level: 1, pageNumber: 1, sectionNumber: "1" },
+      { id: "block-heading-2", blockId: "block-heading-2", title: "Evaluation Details", level: 2, pageNumber: 1, sectionNumber: "1.1" },
+    ],
     auxiliary: {
       aiSummary: "AI generated summary must stay in the panel.",
       references: [
@@ -189,6 +208,7 @@ const compiledPayload: PaperDocumentResponse = {
         level: 1,
         pageNumber: 1,
         source: { pageNumber: 1, bbox: { x0: 72, y0: 110, x1: 240, y1: 132 } },
+        metadata: { sectionNumber: "1" },
       },
       {
         id: "block-paragraph-1",
@@ -294,6 +314,25 @@ const compiledPayload: PaperDocumentResponse = {
             ],
           },
         },
+      },
+      {
+        id: "block-heading-2",
+        paperId: "visual-paper",
+        type: "heading",
+        text: "Evaluation Details",
+        level: 2,
+        pageNumber: 1,
+        source: { pageNumber: 1, bbox: { x0: 72, y0: 620, x1: 280, y1: 642 } },
+        metadata: { sectionNumber: "1.1" },
+      },
+      {
+        id: "block-paragraph-2",
+        paperId: "visual-paper",
+        type: "paragraph",
+        text: "This subsection keeps the real compiled outline hierarchy.",
+        pageNumber: 1,
+        sectionId: "block-heading-2",
+        source: { pageNumber: 1, bbox: { x0: 72, y0: 650, x1: 540, y1: 690 } },
       },
     ],
   },

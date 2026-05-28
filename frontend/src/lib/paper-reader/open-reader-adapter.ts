@@ -1,6 +1,6 @@
 import type { OpenReaderVisualLayer } from "@/components/papers/open-reader/open-reader-types"
 import type { PaperReaderPayload, PaperSection } from "@/lib/papers/types"
-import type { PaperBlock, PaperDocumentResponse, PaperInlineSpan, PaperReference } from "@/lib/paper-reader/types"
+import type { PaperBlock, PaperDocument, PaperDocumentResponse, PaperInlineSpan, PaperReference } from "@/lib/paper-reader/types"
 
 type MutableSection = PaperSection & {
   textParts: string[]
@@ -8,6 +8,8 @@ type MutableSection = PaperSection & {
   blockSources: unknown[]
   sourceOrders: number[]
   blockInlineSpans: unknown[]
+  sectionNumber?: string
+  sourceOrder?: number
 }
 
 export function paperDocumentToOpenReader(payload: PaperDocumentResponse): {
@@ -19,7 +21,7 @@ export function paperDocumentToOpenReader(payload: PaperDocumentResponse): {
   if (!document || !manifest || payload.status.status !== "compiled") {
     return {
       reader: emptyReaderPayload(payload),
-      visualLayer: { blocks: [], references: [] },
+      visualLayer: { blocks: [], outline: [], references: [] },
     }
   }
 
@@ -28,15 +30,32 @@ export function paperDocumentToOpenReader(payload: PaperDocumentResponse): {
   let currentSectionId = `${payload.paper.id}:compiled-body`
   let currentSectionTitle = document.title || payload.paper.title
   let currentSectionType: PaperSection["sectionType"] = "unknown"
+  let currentSectionLevel = 1
+  let currentSectionNumber: string | undefined
+  let currentSectionSourceOrder = 0
   const visualBlocks: OpenReaderVisualLayer["blocks"] = []
 
   for (let order = 0; order < document.blocks.length; order += 1) {
     const block = document.blocks[order]
     if (block.type === "heading") {
+      const heading = normalizeHeading(block)
       currentSectionId = block.sectionId || block.id
-      currentSectionTitle = block.text || document.title || payload.paper.title
+      currentSectionTitle = heading.title || document.title || payload.paper.title
       currentSectionType = sectionTypeFromTitle(currentSectionTitle)
-      ensureSection(sections, payload.paper.id, currentSectionId, currentSectionTitle, block.level ?? 1, currentSectionType, block.pageNumber)
+      currentSectionLevel = normalizeLevel(block.level)
+      currentSectionNumber = heading.sectionNumber
+      currentSectionSourceOrder = order
+      ensureSection(
+        sections,
+        payload.paper.id,
+        currentSectionId,
+        currentSectionTitle,
+        currentSectionLevel,
+        currentSectionType,
+        block.pageNumber,
+        currentSectionNumber,
+        currentSectionSourceOrder,
+      )
       continue
     }
 
@@ -46,9 +65,11 @@ export function paperDocumentToOpenReader(payload: PaperDocumentResponse): {
         payload.paper.id,
         block.sectionId || currentSectionId,
         currentSectionTitle,
-        1,
+        currentSectionLevel,
         currentSectionType,
         block.pageNumber,
+        currentSectionNumber,
+        currentSectionSourceOrder,
       )
       if (block.text?.trim()) {
         section.textParts.push(block.text.trim())
@@ -68,9 +89,11 @@ export function paperDocumentToOpenReader(payload: PaperDocumentResponse): {
         payload.paper.id,
         block.sectionId || currentSectionId,
         currentSectionTitle,
-        1,
+        currentSectionLevel,
         currentSectionType,
         block.pageNumber,
+        currentSectionNumber,
+        currentSectionSourceOrder,
       )
       section.pageStart = minNumber(section.pageStart, block.pageNumber)
       section.pageEnd = maxNumber(section.pageEnd, block.pageNumber)
@@ -80,6 +103,8 @@ export function paperDocumentToOpenReader(payload: PaperDocumentResponse): {
         sectionId: section.id,
         sectionTitle: section.title,
         sectionType: section.sectionType,
+        sectionLevel: section.level,
+        sectionNumber: section.sectionNumber,
         order,
         block,
         asset: block.assetId ? assetsById.get(block.assetId) : undefined,
@@ -112,7 +137,11 @@ export function paperDocumentToOpenReader(payload: PaperDocumentResponse): {
         lastUpdatedAt: payload.status.updatedAt,
       },
     },
-    visualLayer: { blocks: visualBlocks, references: readReferences(document.auxiliary) },
+    visualLayer: {
+      blocks: visualBlocks,
+      outline: readOutline(document, sections),
+      references: readReferences(document.auxiliary),
+    },
   }
 }
 
@@ -146,20 +175,29 @@ function ensureSection(
   level: number,
   sectionType: PaperSection["sectionType"],
   pageNumber?: number,
+  sectionNumber?: string,
+  sourceOrder?: number,
 ) {
   const existing = sections.get(id)
   if (existing) {
+    existing.level = normalizeLevel(existing.level || level)
+    if (sectionNumber && !existing.sectionNumber) existing.sectionNumber = sectionNumber
+    if (sourceOrder !== undefined) existing.sourceOrder = minNumber(existing.sourceOrder, sourceOrder)
+    existing.pageStart = minNumber(existing.pageStart, pageNumber)
+    existing.pageEnd = maxNumber(existing.pageEnd, pageNumber)
     return existing
   }
   const section: MutableSection = {
     id,
     paperId,
     title: title || "Paper Body",
-    level,
+    level: normalizeLevel(level),
     pageStart: pageNumber,
     pageEnd: pageNumber,
     textExcerpt: "",
     sectionType,
+    sectionNumber,
+    sourceOrder,
     textParts: [],
     blockIds: [],
     blockSources: [],
@@ -171,6 +209,14 @@ function ensureSection(
 }
 
 function finalizeSection(section: MutableSection): PaperSection {
+  const metadata: Record<string, unknown> = {
+    blockIds: section.blockIds,
+    blockSources: section.blockSources,
+    sourceOrders: section.sourceOrders,
+    blockInlineSpans: section.blockInlineSpans,
+  }
+  if (section.sectionNumber) metadata.sectionNumber = section.sectionNumber
+  if (section.sourceOrder !== undefined) metadata.sectionSourceOrder = section.sourceOrder
   return {
     id: section.id,
     paperId: section.paperId,
@@ -180,12 +226,7 @@ function finalizeSection(section: MutableSection): PaperSection {
     pageEnd: section.pageEnd,
     textExcerpt: section.textParts.join("\n\n"),
     sectionType: section.sectionType,
-    metadata: {
-      blockIds: section.blockIds,
-      blockSources: section.blockSources,
-      sourceOrders: section.sourceOrders,
-      blockInlineSpans: section.blockInlineSpans,
-    },
+    metadata,
   }
 }
 
@@ -205,6 +246,91 @@ function sectionTypeFromTitle(title: string): PaperSection["sectionType"] {
   if (normalized.includes("conclusion")) return "conclusion"
   if (normalized.includes("appendix")) return "appendix"
   return "unknown"
+}
+
+function normalizeHeading(block: PaperBlock) {
+  const rawTitle = block.text?.trim() || "Paper Body"
+  const metadataNumber = optionalText(block.metadata?.sectionNumber)
+  const parsed = splitLeadingSectionNumber(rawTitle)
+  return {
+    title: parsed && (!metadataNumber || parsed.sectionNumber === metadataNumber) ? parsed.title : rawTitle,
+    sectionNumber: metadataNumber ?? parsed?.sectionNumber,
+  }
+}
+
+function splitLeadingSectionNumber(value: string) {
+  const match = /^(\d+(?:\.\d+)*)(?:[.)])?\s+(.+)$/.exec(value.trim())
+  if (!match) return null
+  return {
+    sectionNumber: match[1],
+    title: match[2].trim(),
+  }
+}
+
+function normalizeLevel(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.min(6, Math.max(1, Math.round(value))) : 1
+}
+
+function optionalText(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined
+}
+
+function readOutline(document: PaperDocument, sections: Map<string, MutableSection>): OpenReaderVisualLayer["outline"] {
+  const sectionById = new Map(sections)
+  const headingSectionIdByBlockId = new Map(
+    document.blocks
+      .filter((block) => block.type === "heading")
+      .map((block) => [block.id, block.sectionId || block.id]),
+  )
+  const fromDocument = document.outline
+    .map((item, index) => outlineItemFromDocument(item, index, sectionById, headingSectionIdByBlockId))
+    .filter((item): item is NonNullable<typeof item> => Boolean(item))
+  if (fromDocument.length) return fromDocument
+  return Array.from(sections.values())
+    .sort((left, right) => (left.sourceOrder ?? Number.MAX_SAFE_INTEGER) - (right.sourceOrder ?? Number.MAX_SAFE_INTEGER))
+    .map((section, index) => ({
+      id: section.id,
+      title: section.title,
+      sectionType: section.sectionType,
+      level: normalizeLevel(section.level),
+      sectionNumber: section.sectionNumber,
+      sourceOrder: section.sourceOrder ?? index,
+      paragraphCount: 0,
+    }))
+}
+
+function outlineItemFromDocument(
+  item: PaperDocument["outline"][number],
+  index: number,
+  sections: Map<string, MutableSection>,
+  headingSectionIdByBlockId: Map<string, string>,
+) {
+  const blockId = optionalText(item.blockId)
+  const itemId = optionalText(item.id)
+  const sectionId = (blockId ? headingSectionIdByBlockId.get(blockId) : undefined) ?? itemId
+  if (!sectionId) return null
+  const section = sections.get(sectionId)
+  if (!section && !blockId) return null
+  const normalized = normalizeOutlineTitle(item.title, item.sectionNumber)
+  const title = section?.title || normalized.title
+  return {
+    id: section?.id ?? sectionId,
+    title,
+    sectionType: section?.sectionType ?? sectionTypeFromTitle(title),
+    level: normalizeLevel(section?.level ?? item.level),
+    sectionNumber: section?.sectionNumber ?? normalized.sectionNumber,
+    sourceOrder: section?.sourceOrder ?? index,
+    paragraphCount: 0,
+  }
+}
+
+function normalizeOutlineTitle(title: string, sectionNumber?: unknown) {
+  const metadataNumber = optionalText(sectionNumber)
+  const parsed = splitLeadingSectionNumber(title)
+  return {
+    title: parsed && (!metadataNumber || parsed.sectionNumber === metadataNumber) ? parsed.title : title,
+    sectionNumber: metadataNumber ?? parsed?.sectionNumber,
+  }
 }
 
 function minNumber(left: number | undefined, right: number | undefined) {

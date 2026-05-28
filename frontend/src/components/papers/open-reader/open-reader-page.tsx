@@ -20,7 +20,10 @@ export function OpenReaderPage({ reader, locale, backHref = "/papers", visualLay
   const paper = reader.paper
   const title = paperTitle(paper, locale)
   const paragraphs = useMemo(() => buildReaderParagraphs(reader, locale), [reader, locale])
-  const toc = useMemo(() => mergeVisualToc(buildReaderToc(paragraphs), visualLayer?.blocks ?? []), [paragraphs, visualLayer])
+  const toc = useMemo(
+    () => mergeReaderToc(buildReaderToc(paragraphs), visualLayer?.outline ?? [], visualLayer?.blocks ?? []),
+    [paragraphs, visualLayer],
+  )
   const visualsBySection = useMemo(() => groupVisualsBySection(visualLayer?.blocks ?? []), [visualLayer])
   const references = visualLayer?.references ?? []
   const { settings, patchSettings } = useOpenReaderSettings(paper.id)
@@ -193,7 +196,7 @@ export function OpenReaderPage({ reader, locale, backHref = "/papers", visualLay
             const sectionItems = buildSectionItems(sectionParagraphs, sectionVisuals)
             return (
               <section key={section.id} ref={bindSection(section.id)} className={styles.readerSection}>
-                <h2>{section.title}</h2>
+                <SectionHeading section={section} />
                 {sectionItems.map((item) => item.type === "paragraph" ? (
                     <ReaderParagraphView
                       key={item.paragraph.id}
@@ -269,9 +272,26 @@ type SectionContentItem =
   | { type: "paragraph"; order: number; paragraph: ReaderParagraph }
   | { type: "visual"; order: number; visual: OpenReaderVisualBlock }
 
-function mergeVisualToc(toc: ReaderTocItem[], visualBlocks: OpenReaderVisualBlock[]) {
-  const next = [...toc]
+function mergeReaderToc(paragraphToc: ReaderTocItem[], outline: ReaderTocItem[], visualBlocks: OpenReaderVisualBlock[]) {
+  const paragraphCounts = new Map(paragraphToc.map((item) => [item.id, item.paragraphCount]))
+  const next = (outline.length ? outline : paragraphToc).map((item, index) => ({
+    ...item,
+    level: normalizeTocLevel(item.level),
+    sourceOrder: item.sourceOrder ?? index,
+    paragraphCount: paragraphCounts.get(item.id) ?? item.paragraphCount,
+  }))
   const seen = new Set(next.map((item) => item.id))
+
+  for (const item of paragraphToc) {
+    if (seen.has(item.id)) continue
+    seen.add(item.id)
+    next.push({
+      ...item,
+      level: normalizeTocLevel(item.level),
+      sourceOrder: item.sourceOrder ?? next.length,
+    })
+  }
+
   for (const visual of visualBlocks) {
     if (seen.has(visual.sectionId)) continue
     seen.add(visual.sectionId)
@@ -279,10 +299,21 @@ function mergeVisualToc(toc: ReaderTocItem[], visualBlocks: OpenReaderVisualBloc
       id: visual.sectionId,
       title: visual.sectionTitle,
       sectionType: visual.sectionType,
+      level: normalizeTocLevel(visual.sectionLevel),
+      sectionNumber: visual.sectionNumber,
+      sourceOrder: visual.order,
       paragraphCount: 0,
     })
   }
-  return next
+  return next.sort((left, right) => {
+    const leftOrder = left.sourceOrder ?? Number.MAX_SAFE_INTEGER
+    const rightOrder = right.sourceOrder ?? Number.MAX_SAFE_INTEGER
+    return leftOrder === rightOrder ? left.id.localeCompare(right.id) : leftOrder - rightOrder
+  })
+}
+
+function normalizeTocLevel(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.min(6, Math.max(1, Math.round(value))) : 1
 }
 
 function groupVisualsBySection(visuals: OpenReaderVisualBlock[]) {
@@ -311,6 +342,18 @@ function buildSectionItems(paragraphs: ReaderParagraph[], visuals: OpenReaderVis
       visual,
     })),
   ].sort((left, right) => left.order - right.order)
+}
+
+function SectionHeading({ section }: { section: ReaderTocItem }) {
+  const level = normalizeTocLevel(section.level)
+  const HeadingTag = (`h${Math.min(6, Math.max(2, level + 1))}` as keyof JSX.IntrinsicElements)
+  return (
+    <HeadingTag className={styles.sectionHeading}>
+      {section.sectionNumber ? <span className={styles.sectionNumber}>{section.sectionNumber}</span> : null}
+      {section.sectionNumber ? " " : null}
+      {section.title}
+    </HeadingTag>
+  )
 }
 
 function ReaderParagraphView({ paragraph, selections, paragraphRef, onOpenSelectionMenu }: {
@@ -696,7 +739,7 @@ function ReaderSettingsDock({ settings, onChange }: { settings: ReaderSettings; 
   )
 }
 
-function FloatingToc({ paperId, items, activeSectionId, materialCount, onNavigate, onOpenMaterials }: { paperId: string; items: { id: string; title: string; paragraphCount: number }[]; activeSectionId: string | null; materialCount: number; onNavigate: (id: string) => void; onOpenMaterials: () => void }) {
+function FloatingToc({ paperId, items, activeSectionId, materialCount, onNavigate, onOpenMaterials }: { paperId: string; items: ReaderTocItem[]; activeSectionId: string | null; materialCount: number; onNavigate: (id: string) => void; onOpenMaterials: () => void }) {
   const rootRef = useRef<HTMLDivElement | null>(null)
   const [side, setSide] = useState<"left" | "right">("left")
   const [dragging, setDragging] = useState(false)
@@ -744,7 +787,27 @@ function FloatingToc({ paperId, items, activeSectionId, materialCount, onNavigat
       <button type="button" className={styles.tocOrb} onMouseDown={(event) => { const rect = rootRef.current?.getBoundingClientRect(); if (rect) { offsetRef.current = { x: event.clientX - rect.left, y: event.clientY - rect.top }; setDragging(true); event.preventDefault() } }}>目</button>
       <nav className={styles.tocPanel}>
         <div className={styles.tocPanelTitle}>悬浮目录 · 可拖动</div>
-        {items.map((item) => <button key={item.id} type="button" className={`${styles.tocLink} ${activeSectionId === item.id ? styles.activeTocLink : ""}`} onClick={() => onNavigate(item.id)}><span>{item.title}</span><small>{item.paragraphCount} 段</small></button>)}
+        {items.map((item) => {
+          const level = normalizeTocLevel(item.level)
+          const depth = Math.max(0, level - 1)
+          return (
+            <button
+              key={item.id}
+              type="button"
+              className={`${styles.tocLink} ${activeSectionId === item.id ? styles.activeTocLink : ""}`}
+              data-level={level}
+              style={{ ["--toc-indent" as string]: `${depth * 14}px` }}
+              onClick={() => onNavigate(item.id)}
+            >
+              <span className={styles.tocLinkText}>
+                {item.sectionNumber ? <span className={styles.tocNumber}>{item.sectionNumber}</span> : null}
+                {item.sectionNumber ? " " : null}
+                <span className={styles.tocTitle}>{item.title}</span>
+              </span>
+              <small>{item.paragraphCount} 段</small>
+            </button>
+          )
+        })}
         <button type="button" className={styles.tocLink} onClick={onOpenMaterials}><span>阅读素材</span><small>{materialCount}</small></button>
       </nav>
     </div>

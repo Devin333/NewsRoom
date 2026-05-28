@@ -86,6 +86,8 @@ export function buildReaderParagraphs(reader: PaperReaderPayload, locale: Locale
     const blockSources = sourceArray(metadata?.blockSources)
     const sourceOrders = numberArray(metadata?.sourceOrders)
     const blockInlineSpans = inlineSpanArrayArray(metadata?.blockInlineSpans)
+    const sectionNumber = optionalString(metadata?.sectionNumber)
+    const sectionLevel = usesFiniteLevel(section.level) ? section.level : 1
     for (let index = 0; index < parts.length; index += 1) {
       const fallbackSectionId = `${reader.paper.id}:pdf-text`
       const usesPdfFallback = isPageDumpSection(section)
@@ -96,6 +98,8 @@ export function buildReaderParagraphs(reader: PaperReaderPayload, locale: Locale
         sectionId: usesPdfFallback ? fallbackSectionId : section.id,
         sectionTitle: usesPdfFallback ? pdfTextLabel(locale) : section.title || sectionTypeLabel(section.sectionType, locale),
         sectionType: usesPdfFallback ? "unknown" : section.sectionType,
+        sectionLevel: usesPdfFallback ? 1 : sectionLevel,
+        sectionNumber: usesPdfFallback ? undefined : sectionNumber,
         index,
         text: parts[index],
         summary: section.summary,
@@ -116,6 +120,7 @@ export function buildReaderParagraphs(reader: PaperReaderPayload, locale: Locale
       sectionId: `${reader.paper.id}:abstract`,
       sectionTitle: locale === "zh" ? "摘要" : "Abstract",
       sectionType: "abstract",
+      sectionLevel: 1,
       index: 0,
       text: reader.paper.abstractSnippet,
     })
@@ -134,6 +139,14 @@ function stringArray(value: unknown) {
 
 function numberArray(value: unknown) {
   return Array.isArray(value) ? value.filter((item): item is number => typeof item === "number" && Number.isFinite(item)) : []
+}
+
+function optionalString(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined
+}
+
+function usesFiniteLevel(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
 }
 
 function sourceArray(value: unknown): Array<PaperSourceRegion | undefined> {
@@ -212,6 +225,9 @@ export function buildReaderToc(paragraphs: ReaderParagraph[]): ReaderTocItem[] {
         id: paragraph.sectionId,
         title: paragraph.sectionTitle,
         sectionType: paragraph.sectionType,
+        level: paragraph.sectionLevel,
+        sectionNumber: paragraph.sectionNumber,
+        sourceOrder: paragraph.sourceOrder,
         paragraphCount: 1,
       })
     }

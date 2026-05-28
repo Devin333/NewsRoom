@@ -25,6 +25,8 @@ export interface ReaderParagraph {
   sectionId: string
   sectionTitle: string
   sectionType: PaperSection["sectionType"]
+  sectionLevel: number
+  sectionNumber?: string
   index: number
   text: string
   summary?: string
@@ -40,6 +42,9 @@ export interface ReaderTocItem {
   id: string
   title: string
   sectionType: PaperSection["sectionType"]
+  level: number
+  sectionNumber?: string
+  sourceOrder?: number
   paragraphCount: number
 }
 
@@ -49,6 +54,8 @@ export interface OpenReaderVisualBlock {
   sectionId: string
   sectionTitle: string
   sectionType: PaperSection["sectionType"]
+  sectionLevel: number
+  sectionNumber?: string
   order: number
   block: PaperBlock
   asset?: PaperVisualAsset
@@ -57,6 +64,7 @@ export interface OpenReaderVisualBlock {
 
 export interface OpenReaderVisualLayer {
   blocks: OpenReaderVisualBlock[]
+  outline?: ReaderTocItem[]
   references?: PaperReference[]
 }
 

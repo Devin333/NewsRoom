@@ -183,6 +183,7 @@ export interface PaperDocument {
     level: number
     pageNumber?: number
     blockId?: string
+    sectionNumber?: string
   }>
   blocks: PaperBlock[]
   auxiliary?: Record<string, unknown>
