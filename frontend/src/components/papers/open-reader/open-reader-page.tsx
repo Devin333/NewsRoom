@@ -159,14 +159,9 @@ export function OpenReaderPage({ reader, locale, backHref = "/papers", visualLay
       className={`${styles.openReader} ${themeClass}`}
       style={{ ["--reader-font-size" as string]: `${settings.fontSize}px`, ["--reader-content-width" as string]: `${settings.contentWidth}px` }}
     >
-      <header className={styles.topBar}>
-        <div className={styles.topBarLeft}>
-          <Link className={styles.readerMarkLink} href={backHref} aria-label="返回论文列表">
-            <ArrowLeft aria-hidden="true" className={styles.readerMarkIcon} />
-          </Link>
-        </div>
-        <div className={styles.progressTrack}><span /></div>
-      </header>
+      <Link className={styles.readerBackButton} href={backHref} aria-label="返回论文列表">
+        <ArrowLeft aria-hidden="true" className={styles.readerMarkIcon} />
+      </Link>
 
       <ReaderSettingsDock settings={settings} onChange={patchSettings} />
 

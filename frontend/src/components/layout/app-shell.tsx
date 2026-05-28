@@ -42,5 +42,8 @@ export function AppShell({ children, surface = "portal" }: { children: ReactNode
 
 function isPaperReaderRoute(pathname: string) {
   const parts = pathname.split("/").filter(Boolean)
-  return parts.length === 2 && parts[0] === "papers"
+  return parts[0] === "papers" && (
+    parts.length === 2 ||
+    (parts.length === 3 && parts[2] === "read")
+  )
 }

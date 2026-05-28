@@ -55,8 +55,8 @@ describe("AppShell", () => {
     expect(screen.queryByRole("link", { name: "NewsRoom Research" })).not.toBeInTheDocument()
   })
 
-  it("keeps paper reader routes outside the portal Research header and frame", () => {
-    navigationState.pathname = "/papers/reader-paper"
+  it.each(["/papers/reader-paper", "/papers/reader-paper/read"])("keeps paper reader route %s outside the portal Research header and frame", (pathname) => {
+    navigationState.pathname = pathname
 
     const { container } = render(
       <AppShell>
