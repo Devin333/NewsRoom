@@ -2,14 +2,14 @@
 
 import Link from "next/link"
 import Image from "next/image"
-import { ArrowLeft, Eye, ImageIcon, Sigma, Table2, X } from "lucide-react"
+import { ArrowLeft, Eye, X } from "lucide-react"
 import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react"
 import { formatPaperDate, paperTitle } from "@/lib/papers/format"
 import { recordReaderEvent } from "@/lib/papers/api"
 import type { Locale } from "@/lib/papers/types"
 import { paperAssetUrl, paperSourcePreviewUrl } from "@/lib/paper-reader/api"
 import { targetForPaperBlock } from "@/lib/paper-reader/interactions"
-import type { PaperSourceRegion } from "@/lib/paper-reader/types"
+import type { PaperBlock, PaperSourceRegion } from "@/lib/paper-reader/types"
 import type { DrawerState, NotePopoverState, OpenReaderPageProps, OpenReaderVisualBlock, ReaderParagraph, ReaderSelection, ReaderSettings, ReaderTocItem, SelectionMenuState } from "./open-reader-types"
 import { buildReaderParagraphs, buildReaderToc, clamp, getSelectionOffsetsWithinElement, getSelectionStatus, makeMaterialSummary, mockExample, mockExplain, safeJsonParse, storageKey } from "./open-reader-utils"
 import { useOpenReaderSelections, useOpenReaderSettings } from "./open-reader-state"
@@ -34,7 +34,14 @@ export function OpenReaderPage({ reader, locale, backHref = "/papers", visualLay
   const [menu, setMenu] = useState<SelectionMenuState | null>(null)
   const [note, setNote] = useState<NotePopoverState | null>(null)
   const [drawer, setDrawer] = useState<DrawerState | null>(null)
-  const [preview, setPreview] = useState<{ title: string; source: PaperSourceRegion } | null>(null)
+  const [preview, setPreview] = useState<{
+    title: string
+    source?: PaperSourceRegion
+    assetUrl?: string
+    assetMimeType?: string
+    width?: number
+    height?: number
+  } | null>(null)
 
   const menuSelection = menu ? selections.find((item) => item.id === menu.selectionId) : undefined
   const noteSelection = note ? selections.find((item) => item.id === note.selectionId) : undefined
@@ -137,10 +144,15 @@ export function OpenReaderPage({ reader, locale, backHref = "/papers", visualLay
   }
 
   function openSourcePreview(visual: OpenReaderVisualBlock) {
-    if (!visual.source) return
+    if (!visual.source && !visual.asset) return
+    const useAssetPreview = visual.asset?.metadata?.sourceProvider === "arxiv-source" && visual.asset.kind !== "page"
     setPreview({
-      title: visual.block.label || visual.block.caption || visual.asset?.caption || `Page ${visual.source.pageNumber}`,
-      source: visual.source,
+      title: visual.block.label || visual.block.caption || visual.asset?.caption || `Page ${visual.source?.pageNumber ?? visual.asset?.pageNumber ?? 1}`,
+      source: useAssetPreview ? undefined : visual.source,
+      assetUrl: useAssetPreview && visual.asset ? paperAssetUrl(paper.id, visual.asset.assetId) : undefined,
+      assetMimeType: useAssetPreview ? visual.asset?.mimeType : undefined,
+      width: visual.asset?.width,
+      height: visual.asset?.height,
     })
     void recordReaderEvent(paper.id, {
       type: visual.block.type === "table"
@@ -170,7 +182,7 @@ export function OpenReaderPage({ reader, locale, backHref = "/papers", visualLay
         <section className={styles.titleBlock}>
           <div className={styles.kicker}>Open Reader</div>
           <h1>{title}</h1>
-          <p>{paper.authors?.join(", ")} · {paper.venue ?? "Paper"} · {formatPaperDate(paper.publishedAt, locale)}</p>
+          <p>{paper.authors?.join(", ")} / {paper.venue ?? "Paper"} / {formatPaperDate(paper.publishedAt, locale)}</p>
         </section>
 
         <section ref={contentRef} className={styles.paperCard} aria-label="Open reader paper body" data-open-reader-body onMouseUp={handleMouseUp}>
@@ -180,7 +192,6 @@ export function OpenReaderPage({ reader, locale, backHref = "/papers", visualLay
             const sectionItems = buildSectionItems(sectionParagraphs, sectionVisuals)
             return (
               <section key={section.id} ref={bindSection(section.id)} className={styles.readerSection}>
-                <div className={styles.sectionLabel}>{section.sectionType}</div>
                 <h2>{section.title}</h2>
                 {sectionItems.map((item) => item.type === "paragraph" ? (
                     <ReaderParagraphView
@@ -237,7 +248,16 @@ export function OpenReaderPage({ reader, locale, backHref = "/papers", visualLay
       ) : null}
 
       {preview ? (
-        <SourcePreviewModal paperId={paper.id} title={preview.title} source={preview.source} onClose={() => setPreview(null)} />
+        <SourcePreviewModal
+          paperId={paper.id}
+          title={preview.title}
+          source={preview.source}
+          assetUrl={preview.assetUrl}
+          assetMimeType={preview.assetMimeType}
+          width={preview.width}
+          height={preview.height}
+          onClose={() => setPreview(null)}
+        />
       ) : null}
     </main>
   )
@@ -326,24 +346,27 @@ function OpenReaderVisualBlockView({
 }) {
   const block = visual.block
   const asset = visual.asset
-  const Icon = block.type === "table" ? Table2 : block.type === "equation" ? Sigma : ImageIcon
   const label = block.label || asset?.label || block.type
   const caption = block.caption || asset?.caption || block.text
   const equationText = block.text || block.caption || label
   const isEquation = block.type === "equation"
+  const tableModel = isPaperTableModel(block.metadata?.tableModel) ? block.metadata?.tableModel : undefined
+  const tableHtml = typeof block.metadata?.tableHtml === "string" ? block.metadata.tableHtml : undefined
+  const canPreview = Boolean(visual.source || asset)
 
   return (
     <figure id={block.id} className={`${styles.visualBlock} ${styles[`visual_${block.type}`]}`} data-block-id={block.id} data-asset-id={asset?.assetId}>
-      <div className={styles.visualToolbar}>
-        <span><Icon size={17} aria-hidden="true" />{label}</span>
-        {visual.source ? (
-          <button type="button" className={styles.iconButton} title="Open source preview" onClick={() => onPreview(visual)}>
-            <Eye size={16} aria-hidden="true" />
-          </button>
-        ) : null}
-      </div>
+      {canPreview ? (
+        <button type="button" className={styles.visualPreviewButton} title="Open source preview" onClick={() => onPreview(visual)}>
+          <Eye size={16} aria-hidden="true" />
+        </button>
+      ) : null}
       {isEquation ? (
         <EquationRenderer value={equationText} />
+      ) : tableModel ? (
+        <PaperTable model={tableModel} label={label} />
+      ) : tableHtml ? (
+        <div className={styles.paperTableScroll} dangerouslySetInnerHTML={{ __html: tableHtml }} />
       ) : asset ? (
         <Image
           src={paperAssetUrl(paperId, asset.assetId)}
@@ -357,7 +380,7 @@ function OpenReaderVisualBlockView({
       ) : (
         <div className={styles.assetMissing}>Asset unavailable</div>
       )}
-      {caption && (!isEquation || caption !== equationText) ? <figcaption>{caption}</figcaption> : null}
+      {caption && (!isEquation || caption !== equationText) ? <figcaption><strong>{label}.</strong> {stripLeadingLabel(caption, label)}</figcaption> : null}
     </figure>
   )
 }
@@ -366,13 +389,22 @@ function SourcePreviewModal({
   paperId,
   title,
   source,
+  assetUrl,
+  assetMimeType,
+  width,
+  height,
   onClose,
 }: {
   paperId: string
   title: string
-  source: PaperSourceRegion
+  source?: PaperSourceRegion
+  assetUrl?: string
+  assetMimeType?: string
+  width?: number
+  height?: number
   onClose: () => void
 }) {
+  const isHtmlAsset = assetMimeType?.toLowerCase().includes("html")
   return (
     <div className={styles.previewBackdrop} role="dialog" aria-modal="true" aria-label="Source preview" data-open-reader-keep-open>
       <div className={styles.previewDialog}>
@@ -382,16 +414,126 @@ function SourcePreviewModal({
             <X size={17} aria-hidden="true" />
           </button>
         </div>
-        <Image
-          src={paperSourcePreviewUrl(paperId, source)}
-          alt={title}
-          width={Math.max(1, Math.round((source.bbox.x1 - source.bbox.x0) * 4))}
-          height={Math.max(1, Math.round((source.bbox.y1 - source.bbox.y0) * 4))}
-          unoptimized
-        />
+        {assetUrl && isHtmlAsset ? (
+          <iframe
+            className={styles.previewFrame}
+            src={assetUrl}
+            title={title}
+            width={width ?? 900}
+            height={height ?? 640}
+          />
+        ) : assetUrl ? (
+          <Image src={assetUrl} alt={title} width={width ?? 900} height={height ?? 640} unoptimized />
+        ) : source ? (
+          <Image
+            src={paperSourcePreviewUrl(paperId, source)}
+            alt={title}
+            width={Math.max(1, Math.round((source.bbox.x1 - source.bbox.x0) * 4))}
+            height={Math.max(1, Math.round((source.bbox.y1 - source.bbox.y0) * 4))}
+            unoptimized
+          />
+        ) : null}
       </div>
     </div>
   )
+}
+
+type PaperTableModel = {
+  alignments?: string[]
+  rows: Array<{
+    cells: Array<{
+      text?: string
+      html?: string
+      colspan?: number
+      rowspan?: number
+      align?: string
+      classes?: string[]
+    }>
+    rulesBefore?: string[]
+    rowColor?: string | null
+    zebra?: string | null
+  }>
+}
+
+function isPaperTableModel(value: unknown): value is PaperTableModel {
+  return Boolean(value && typeof value === "object" && Array.isArray((value as PaperTableModel).rows))
+}
+
+function PaperTable({ model, label }: { model: PaperTableModel; label: string }) {
+  return (
+    <div className={styles.paperTableScroll}>
+      <table className={styles.paperCompiledTable} aria-label={label}>
+        <tbody>
+          {model.rows.map((row, rowIndex) => {
+            const rowClasses = [
+              styles.paperTableRow,
+              ...(row.rulesBefore ?? []).map(tableRuleClass).filter(Boolean),
+              tableClass(row.rowColor ?? row.zebra),
+            ].filter(Boolean).join(" ")
+            return (
+              <tr key={rowIndex} className={rowClasses}>
+                {row.cells.map((cell, cellIndex) => {
+                  const Tag = rowIndex === 0 ? "th" : "td"
+                  const align = cell.align || model.alignments?.[cellIndex]
+                  const className = [
+                    styles.paperTableCell,
+                    align === "left" ? styles.alignLeft : align === "right" ? styles.alignRight : styles.alignCenter,
+                    ...(cell.classes ?? []).map(tableClass).filter(Boolean),
+                  ].join(" ")
+                  return (
+                    <Tag
+                      key={cellIndex}
+                      className={className}
+                      colSpan={Math.max(1, cell.colspan ?? 1)}
+                      rowSpan={Math.max(1, cell.rowspan ?? 1)}
+                      dangerouslySetInnerHTML={{ __html: cell.html || escapeHtml(cell.text || "") }}
+                    />
+                  )
+                })}
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function tableClass(value?: string | null) {
+  if (!value) return ""
+  const map: Record<string, string> = {
+    paperTableColorRed: styles.paperTableColorRed,
+    paperTableColorBlue: styles.paperTableColorBlue,
+    paperTableColorGray: styles.paperTableColorGray,
+    paperTableColorNeutral: styles.paperTableColorNeutral,
+  }
+  return map[value] ?? ""
+}
+
+function tableRuleClass(value?: string | null) {
+  if (!value) return ""
+  const map: Record<string, string> = {
+    toprule: styles.rule_toprule,
+    midrule: styles.rule_midrule,
+    bottomrule: styles.rule_bottomrule,
+    cmidrule: styles.rule_cmidrule,
+    hline: styles.rule_midrule,
+  }
+  return map[value] ?? ""
+}
+
+function stripLeadingLabel(caption: string, label: string) {
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  return caption.replace(new RegExp(`^${escaped}\\s*[:.]?\\s*`, "i"), "").trim()
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;")
 }
 
 function buildSegments(text: string, selections: ReaderSelection[]) {

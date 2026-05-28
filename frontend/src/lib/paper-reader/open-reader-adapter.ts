@@ -5,6 +5,7 @@ import type { PaperBlock, PaperDocumentResponse } from "@/lib/paper-reader/types
 type MutableSection = PaperSection & {
   textParts: string[]
   blockIds: string[]
+  blockSources: unknown[]
   sourceOrders: number[]
 }
 
@@ -51,6 +52,7 @@ export function paperDocumentToOpenReader(payload: PaperDocumentResponse): {
       if (block.text?.trim()) {
         section.textParts.push(block.text.trim())
         section.blockIds.push(block.id)
+        section.blockSources.push(block.source ?? null)
         section.sourceOrders.push(order)
         section.pageStart = minNumber(section.pageStart, block.pageNumber)
         section.pageEnd = maxNumber(section.pageEnd, block.pageNumber)
@@ -158,6 +160,7 @@ function ensureSection(
     sectionType,
     textParts: [],
     blockIds: [],
+    blockSources: [],
     sourceOrders: [],
   }
   sections.set(id, section)
@@ -176,6 +179,7 @@ function finalizeSection(section: MutableSection): PaperSection {
     sectionType: section.sectionType,
     metadata: {
       blockIds: section.blockIds,
+      blockSources: section.blockSources,
       sourceOrders: section.sourceOrders,
     },
   }

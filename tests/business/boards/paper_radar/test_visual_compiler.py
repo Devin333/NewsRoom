@@ -367,9 +367,39 @@ def test_arxiv_source_compiler_uses_tex_body_equations_and_source_assets(tmp_pat
     assert equation_blocks[0].assetId is None
     assert r"q(\mathbf{x}_t\mid\mathbf{x}_0)" in equation_blocks[0].text
     assert figure_blocks and figure_blocks[0].assetId
+    assert figure_blocks[0].label == "Figure 1"
+    assert "tau_1" in figure_blocks[0].caption
+    assert "tau_1 and dagger markers" in figure_blocks[0].caption
+    assert "$" not in figure_blocks[0].caption
+    assert "\\dag" not in figure_blocks[0].caption
     assert table_blocks and table_blocks[0].assetId
+    assert table_blocks[0].label == "Table 1"
+    assert table_blocks[0].metadata["tableModel"]["rows"]
+    assert "paperTableColorRed" in table_blocks[0].metadata["tableHtml"]
     assert any(asset.kind == "figure" and asset.metadata.get("sourceFile") == "img/figure.pdf" for asset in draft.manifest.assets)
-    assert any(asset.kind == "table" and asset.metadata.get("sourceKind") == "tex-table-rendered-text" for asset in draft.manifest.assets)
+    table_assets = [asset for asset in draft.manifest.assets if asset.kind == "table"]
+    assert table_assets and table_assets[0].mimeType.startswith("text/html")
+    assert table_assets[0].metadata.get("sourceKind") == "tex-table-html"
+
+
+def test_arxiv_source_compiler_cleans_old_visual_assets(tmp_path) -> None:
+    output_dir = tmp_path / "arxiv-source-clean"
+    old_asset = output_dir / "assets" / "old-pymupdf.png"
+    old_asset.parent.mkdir(parents=True)
+    old_asset.write_bytes(b"old")
+    compiler = ArxivSourcePaperCompiler(source_fetcher=lambda _arxiv_id, _max_bytes: _sample_arxiv_source_tarball())
+
+    attempt = compiler.try_compile(
+        paper={"id": "arxiv-source-paper", "title": "Fallback Title", "arxivId": "2605.12345v1"},
+        output_dir=output_dir,
+        source_pdf_url="https://arxiv.org/pdf/2605.12345v1.pdf",
+        pdf_bytes=_sample_pdf_bytes(),
+        started_at=datetime(2026, 5, 28, tzinfo=timezone.utc),
+        finished_at=datetime(2026, 5, 28, tzinfo=timezone.utc),
+    )
+
+    assert attempt.draft is not None
+    assert not old_asset.exists()
 
 
 def test_source_first_compiler_falls_back_to_pdf_when_arxiv_source_unavailable(tmp_path) -> None:
@@ -738,7 +768,7 @@ This paragraph is the real paper body from TeX source. It references Figure~\ref
 \begin{figure}[t]
   \centering
   \includegraphics[width=\linewidth]{img/figure.pdf}
-  \caption{A figure restored from the arXiv source asset.}
+  \caption{A figure restored from the arXiv source asset with $\tau_1$ and $^\dagger$ markers.}
   \label{fig:source}
 \end{figure}
 
@@ -749,13 +779,15 @@ q(\mathbf{x}_t\mid\mathbf{x}_0) = \mathcal{N}(\mathbf{x}_t; \sqrt{\alpha_t}\math
 \end{equation}
 
 \begin{table}[t]
+\rowcolors{2}{white}{gray!25}
 \caption{A table restored from TeX source.}
 \label{tab:source}
 \begin{tabular}{lc}
 \toprule
-Method & Score \\
+\textbf{Method} & \textbf{Score ($\uparrow$)} \\
 \midrule
-Ours & 0.99 \\
+\textcolor{gray}{\sout{Baseline}} & {\color{red} (-0.10)} \\
+\cellcolor{gray!50}Ours & \cellcolor{gray!50}\textbf{0.99} \\
 \bottomrule
 \end{tabular}
 \end{table}

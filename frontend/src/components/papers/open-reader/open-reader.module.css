@@ -234,12 +234,9 @@
 }
 
 .visualBlock {
+  position: relative;
   margin: 30px 0 34px;
-  overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--reader-line) 82%, transparent);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--reader-paper) 88%, white 12%);
-  box-shadow: 0 10px 26px rgba(24, 30, 40, 0.05);
+  overflow: visible;
   scroll-margin-top: 76px;
 }
 
@@ -252,26 +249,6 @@
 
 .visual_table {
   width: 100%;
-}
-
-.visualToolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 12px;
-  border-bottom: 1px solid color-mix(in srgb, var(--reader-line) 74%, transparent);
-  background: color-mix(in srgb, var(--reader-soft) 54%, transparent);
-}
-
-.visualToolbar span {
-  display: inline-flex;
-  min-width: 0;
-  align-items: center;
-  gap: 8px;
-  color: var(--reader-ink);
-  font-size: 14px;
-  font-weight: 800;
 }
 
 .iconButton {
@@ -291,6 +268,35 @@
   background: var(--reader-accent-soft);
 }
 
+.visualPreviewButton {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, var(--reader-ink) 14%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--reader-paper) 86%, transparent);
+  color: var(--reader-ink);
+  cursor: pointer;
+  opacity: 0;
+  box-shadow: 0 8px 22px rgba(24, 30, 40, 0.12);
+  transition: opacity 0.16s ease, background 0.16s ease;
+}
+
+.visualBlock:hover .visualPreviewButton,
+.visualPreviewButton:focus-visible {
+  opacity: 1;
+}
+
+.visualPreviewButton:hover {
+  background: var(--reader-accent-soft);
+}
+
 .visualImage {
   display: block;
   width: auto;
@@ -306,13 +312,110 @@
   max-height: none;
 }
 
+.paperTableScroll {
+  max-width: 100%;
+  overflow-x: auto;
+  padding: 4px 0 6px;
+}
+
+.paperCompiledTable {
+  width: max-content;
+  min-width: min(100%, 620px);
+  margin: 0 auto;
+  border-collapse: collapse;
+  color: var(--reader-ink);
+  font-family: Georgia, "Times New Roman", "Noto Serif SC", serif;
+  font-size: clamp(13px, calc(var(--reader-font-size) * 0.72), 17px);
+  line-height: 1.38;
+  background: #fff;
+}
+
+.paperTableCell {
+  padding: 6px 12px;
+  border: 0;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.paperCompiledTable th {
+  font-weight: 700;
+}
+
+.rule_toprule > .paperTableCell {
+  border-top: 2px solid #101826;
+}
+
+.rule_midrule > .paperTableCell,
+.rule_cmidrule > .paperTableCell {
+  border-top: 1.4px solid #313b4d;
+}
+
+.rule_bottomrule > .paperTableCell {
+  border-top: 1.8px solid #101826;
+}
+
+.alignLeft {
+  text-align: left;
+}
+
+.alignCenter {
+  text-align: center;
+}
+
+.alignRight {
+  text-align: right;
+}
+
+.paperTableColorGray > .paperTableCell,
+.paperTableCell.paperTableColorGray {
+  background: #d8dce2;
+}
+
+.paperTableColorRed {
+  color: #b42318;
+}
+
+.paperTableColorBlue {
+  color: #1457b8;
+}
+
+.paperTableColorNeutral {
+  color: #475467;
+}
+
+.paperTableMath {
+  font-family: "Times New Roman", Georgia, serif;
+  font-style: italic;
+}
+
+.paperCompiledTable :global(.paperTableColorRed) {
+  color: #b42318;
+}
+
+.paperCompiledTable :global(.paperTableColorBlue) {
+  color: #1457b8;
+}
+
+.paperCompiledTable :global(.paperTableColorGray) {
+  color: #475467;
+}
+
+.paperCompiledTable :global(.paperTableColorNeutral) {
+  color: #475467;
+}
+
+.paperCompiledTable :global(.paperTableMath) {
+  font-family: "Times New Roman", Georgia, serif;
+  font-style: italic;
+}
+
 .equationMath,
 .equationPlain {
   display: block;
   margin: 0;
   overflow-x: auto;
   padding: 24px 28px;
-  background: #fff;
+  background: transparent;
   color: var(--reader-ink);
 }
 
@@ -328,12 +431,21 @@
 }
 
 .visualBlock figcaption {
-  margin: 0;
-  padding: 12px 14px;
-  border-top: 1px solid color-mix(in srgb, var(--reader-line) 62%, transparent);
+  margin: 10px auto 0;
+  padding: 0;
   color: var(--reader-muted);
   font-size: 14px;
   line-height: 1.65;
+}
+
+.visual_figure figcaption,
+.visual_equation figcaption {
+  max-width: 920px;
+}
+
+.visualBlock figcaption strong {
+  color: var(--reader-ink);
+  font-weight: 700;
 }
 
 .assetMissing {
@@ -390,6 +502,16 @@
   max-width: 100%;
   max-height: calc(100vh - 116px);
   object-fit: contain;
+  background: #fff;
+}
+
+.previewFrame {
+  display: block;
+  width: min(92vw, 1120px);
+  min-width: min(92vw, 560px);
+  max-width: 100%;
+  height: min(72vh, 720px);
+  border: 0;
   background: #fff;
 }
 

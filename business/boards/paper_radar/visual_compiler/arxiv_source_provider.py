@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import gzip
 import hashlib
+import html
 import io
 import json
 import os
@@ -79,6 +80,89 @@ _WHITESPACE_PATTERN = re.compile(r"[ \t\r\f\v]+")
 _MULTI_NEWLINE_PATTERN = re.compile(r"\n{3,}")
 _PUNCT_SPACE_PATTERN = re.compile(r"\s+([,.;:!?])")
 _REF_PREFIX_PATTERN = re.compile(r"^(?P<kind>fig|figure|tab|table|eq|equation|sec|section|app|appendix)[:._-]?", re.IGNORECASE)
+_TABULAR_ENV_PATTERN = re.compile(
+    r"\\begin\s*\{(?P<env>tabularx|tabular|array)\}\s*(?:\{[^{}]*\})?\s*\{(?P<cols>[^{}]*)\}(?P<body>.*?)\\end\s*\{(?P=env)\}",
+    re.DOTALL,
+)
+_ROWCOLORS_PATTERN = re.compile(r"\\rowcolors\s*\{(?P<start>\d+)\}\s*\{(?P<odd>[^{}]*)\}\s*\{(?P<even>[^{}]*)\}")
+_TABLE_ASSET_CSS = """
+html {
+  background: #fff;
+  color: #111827;
+}
+
+body {
+  margin: 18px;
+  font-family: Georgia, "Times New Roman", serif;
+}
+
+.paperCompiledTable {
+  width: max-content;
+  min-width: min(100%, 620px);
+  margin: 0 auto;
+  border-collapse: collapse;
+  font-size: 14px;
+  line-height: 1.38;
+}
+
+.paperTableCell {
+  padding: 6px 12px;
+  border: 0;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+th.paperTableCell {
+  font-weight: 700;
+}
+
+.rule-toprule > .paperTableCell {
+  border-top: 2px solid #101826;
+}
+
+.rule-midrule > .paperTableCell,
+.rule-cmidrule > .paperTableCell {
+  border-top: 1.4px solid #313b4d;
+}
+
+.rule-bottomrule > .paperTableCell {
+  border-top: 1.8px solid #101826;
+}
+
+.align-left {
+  text-align: left;
+}
+
+.align-center {
+  text-align: center;
+}
+
+.align-right {
+  text-align: right;
+}
+
+.paperTableColorGray > .paperTableCell,
+.paperTableCell.paperTableColorGray {
+  background: #d8dce2;
+}
+
+.paperTableColorRed {
+  color: #b42318;
+}
+
+.paperTableColorBlue {
+  color: #1457b8;
+}
+
+.paperTableColorNeutral {
+  color: #475467;
+}
+
+.paperTableMath {
+  font-family: "Times New Roman", Georgia, serif;
+  font-style: italic;
+}
+""".strip()
 
 
 @dataclass(frozen=True)
@@ -193,8 +277,8 @@ class ArxivSourcePaperCompiler:
         assets_dir = output_dir / "assets"
         pages_dir = output_dir / "pages"
         _replace_dir(source_dir)
-        assets_dir.mkdir(parents=True, exist_ok=True)
-        pages_dir.mkdir(parents=True, exist_ok=True)
+        _replace_dir(assets_dir)
+        _replace_dir(pages_dir)
         (source_dir / "source-package.bin").write_bytes(payload)
         source_pdf_file_name = None
         if pdf_bytes:
@@ -257,6 +341,7 @@ class ArxivSourcePaperCompiler:
             auxiliary={
                 **_auxiliary_metadata(paper),
                 "sourceCompiler": self.provider_name,
+                "sourceMapping": "synthetic",
                 "arxivSource": {
                     "arxivId": arxiv_id,
                     "packageChecksum": source_hash,
@@ -374,6 +459,15 @@ class _ParseResult:
     blocks: tuple[PaperBlock, ...]
     assets: tuple[PaperVisualAsset, ...]
     diagnostics: tuple[Mapping[str, Any], ...]
+
+
+@dataclass(frozen=True)
+class _RenderedTable:
+    model: Mapping[str, Any]
+    html: str
+    asset_html: str
+    text: str
+    asset: PaperVisualAsset
 
 
 class _TexDocumentParser:
@@ -532,6 +626,8 @@ class _TexDocumentParser:
                 source=_synthetic_source(self.synthetic_page, len(self.blocks)),
                 metadata={
                     "sourceProvider": "arxiv-source",
+                    "sourceKind": "tex-source",
+                    "sourceMapping": "synthetic",
                     "latexCommand": command,
                     "latex": raw[:800],
                 },
@@ -555,7 +651,9 @@ class _TexDocumentParser:
                     source=_synthetic_source(self.synthetic_page, len(self.blocks)),
                     metadata={
                         "sourceProvider": "arxiv-source",
-                        "sourceKind": "tex-paragraph",
+                        "sourceKind": "tex-source",
+                        "sourceMapping": "synthetic",
+                        "texKind": "paragraph",
                         "latex": paragraph_tex.strip()[:1200],
                     },
                 )
@@ -579,7 +677,9 @@ class _TexDocumentParser:
                 source=_synthetic_source(self.synthetic_page, len(self.blocks)),
                 metadata={
                     "sourceProvider": "arxiv-source",
-                    "sourceKind": "tex-equation",
+                    "sourceKind": "tex-source",
+                    "sourceMapping": "synthetic",
+                    "texKind": "equation",
                     "latex": equation,
                 },
             )
@@ -601,7 +701,7 @@ class _TexDocumentParser:
             )
             return
         self.figure_counter += 1
-        display_label = _display_label(label_key, kind="Figure", fallback_index=self.figure_counter)
+        display_label = _numbered_label("Figure", self.figure_counter)
         if not caption:
             caption = display_label
         primary_path = self._resolve_graphic_path(include_paths[0])
@@ -642,7 +742,10 @@ class _TexDocumentParser:
                 source=asset.source,
                 metadata={
                     "sourceProvider": "arxiv-source",
-                    "sourceKind": "tex-figure",
+                    "sourceKind": "tex-source",
+                    "sourceMapping": "asset",
+                    "texKind": "figure",
+                    "latexLabel": label_key,
                     "latex": body_tex.strip()[:1600],
                     "includegraphics": include_paths,
                 },
@@ -653,17 +756,18 @@ class _TexDocumentParser:
         caption = _caption_from_tex(body_tex)
         label_key = _label_from_tex(body_tex)
         self.table_counter += 1
-        display_label = _display_label(label_key, kind="Table", fallback_index=self.table_counter)
+        display_label = _numbered_label("Table", self.table_counter)
         if not caption:
             caption = display_label
-        asset = self._render_table_asset(
+        rendered = self._render_table_asset(
             body_tex=body_tex,
             label=display_label,
             caption=caption,
             counter=self.table_counter,
         )
-        if asset is None:
+        if rendered is None:
             return
+        asset = rendered.asset
         block_id = _stable_id(self.paper_id, "table-block", display_label, asset.assetId)
         self.blocks.append(
             PaperBlock(
@@ -679,9 +783,14 @@ class _TexDocumentParser:
                 source=asset.source,
                 metadata={
                     "sourceProvider": "arxiv-source",
-                    "sourceKind": "tex-table",
+                    "sourceKind": "tex-source",
+                    "sourceMapping": "synthetic",
+                    "texKind": "table",
+                    "latexLabel": label_key,
                     "latex": body_tex.strip()[:2400],
-                    "tableText": _table_plain_text(body_tex)[:2400],
+                    "tableText": rendered.text[:2400],
+                    "tableHtml": rendered.html,
+                    "tableModel": rendered.model,
                 },
             )
         )
@@ -770,15 +879,49 @@ class _TexDocumentParser:
         label: str,
         caption: str,
         counter: int,
-    ) -> PaperVisualAsset | None:
-        table_text = _table_plain_text(body_tex)
-        if not table_text:
-            table_text = _clean_text(body_tex)
+    ) -> _RenderedTable | None:
+        table_model = _table_model_from_tex(body_tex)
+        if table_model is None:
+            self.diagnostics.append(
+                {
+                    "severity": "error",
+                    "code": "tex_table_parse_failed",
+                    "message": "table environment did not contain a parseable tabular body",
+                    "label": label,
+                }
+            )
+            return None
+        table_text = _table_model_text(table_model)
+        table_html = _table_model_html(table_model, label=label)
+        table_asset_html = _table_asset_html(table_html)
         try:
-            png_path, pixmap = _render_text_asset_to_png(
-                text=table_text or caption,
-                output_path=self.assets_dir / f"table-{counter:04d}-{_stable_id(label, caption)[:10]}.png",
-                title=label,
+            asset = _asset_from_text_file(
+                paper_id=self.paper_id,
+                kind="table",
+                file_path=self.assets_dir / f"table-{counter:04d}-{_stable_id(label, caption)[:10]}.html",
+                content=table_asset_html,
+                mime_type="text/html; charset=utf-8",
+                width=_table_model_width(table_model),
+                height=_table_model_height(table_model),
+                page_number=self.synthetic_page,
+                label=label,
+                caption=caption,
+                source=PaperSourceRegion(
+                    pageNumber=self.synthetic_page,
+                    bbox=(0.0, 0.0, float(_table_model_width(table_model)), float(_table_model_height(table_model))),
+                    pageWidth=float(_table_model_width(table_model)),
+                    pageHeight=float(_table_model_height(table_model)),
+                ),
+                output_dir=self.output_dir,
+                metadata={
+                    "sourceProvider": "arxiv-source",
+                    "sourceKind": "tex-table-html",
+                    "sourceMapping": "synthetic",
+                    "latex": body_tex.strip()[:2400],
+                    "tableText": table_text[:2400],
+                    "tableModel": table_model,
+                    "tableHtml": table_html,
+                },
             )
         except Exception as exc:
             self.diagnostics.append(
@@ -790,31 +933,8 @@ class _TexDocumentParser:
                 }
             )
             return None
-        source = PaperSourceRegion(
-            pageNumber=self.synthetic_page,
-            bbox=(0.0, 0.0, float(pixmap.width), float(pixmap.height)),
-            pageWidth=float(pixmap.width),
-            pageHeight=float(pixmap.height),
-        )
-        asset = _asset_from_png(
-            paper_id=self.paper_id,
-            kind="table",
-            file_path=png_path,
-            file_name=png_path.relative_to(self.output_dir).as_posix(),
-            page_number=self.synthetic_page,
-            label=label,
-            caption=caption,
-            source=source,
-            pixmap=pixmap,
-            metadata={
-                "sourceProvider": "arxiv-source",
-                "sourceKind": "tex-table-rendered-text",
-                "latex": body_tex.strip()[:2400],
-                "tableText": table_text[:2400],
-            },
-        )
         self.assets.append(asset)
-        return asset
+        return _RenderedTable(model=table_model, html=table_html, asset_html=table_asset_html, text=table_text, asset=asset)
 
 
 class _TexExpander:
@@ -1010,6 +1130,10 @@ def _display_label(label: str | None, *, kind: str, fallback_index: int) -> str:
     return f"{kind} {fallback_index}"
 
 
+def _numbered_label(kind: str, index: int) -> str:
+    return f"{kind} {index}"
+
+
 def _clean_equation_text(tex: str) -> str:
     text = tex.strip()
     text = re.sub(r"\\label\s*\{[^}]*\}", "", text)
@@ -1033,7 +1157,7 @@ def _clean_text(tex: str | None) -> str:
     while previous != text:
         previous = text
         text = _COMMAND_WITH_TEXT_ARG.sub(lambda match: match.group("body"), text)
-    text = _INLINE_MATH_PATTERN.sub(lambda match: _inline_math_text(match.group("body")), text)
+    text = _INLINE_MATH_PATTERN.sub(lambda match: f" {_inline_math_text(match.group('body'))} ", text)
     text = _DOLLAR_BLOCK_MATH_PATTERN.sub(" ", text)
     text = _DISPLAY_MATH_PATTERN.sub(" ", text)
     text = text.replace("``", '"').replace("''", '"')
@@ -1058,7 +1182,7 @@ def _clean_text(tex: str | None) -> str:
         r"\etc": "etc.",
         r"\methodname": "GoToHunt",
     }
-    for key, value in replacements.items():
+    for key, value in sorted(replacements.items(), key=lambda item: len(item[0]), reverse=True):
         text = text.replace(key, value)
     text = _LATEX_COMMAND_PATTERN.sub("", text)
     text = re.sub(r"[{}]", "", text)
@@ -1084,7 +1208,46 @@ def _citation_replacement(raw: str, body: str) -> str:
 
 
 def _inline_math_text(body: str) -> str:
-    return f"${_clean_equation_text(body)}$"
+    text = _clean_equation_text(body)
+    replacements = {
+        r"\alpha": "alpha",
+        r"\beta": "beta",
+        r"\gamma": "gamma",
+        r"\delta": "delta",
+        r"\epsilon": "epsilon",
+        r"\varepsilon": "epsilon",
+        r"\lambda": "lambda",
+        r"\mu": "mu",
+        r"\sigma": "sigma",
+        r"\tau": "tau",
+        r"\theta": "theta",
+        r"\phi": "phi",
+        r"\psi": "psi",
+        r"\omega": "omega",
+        r"\Delta": "Delta",
+        r"\Sigma": "Sigma",
+        r"\mathcal": "",
+        r"\mathbf": "",
+        r"\mathrm": "",
+        r"\text": "",
+        r"\dag": "dagger",
+        r"\dagger": "dagger",
+        r"\uparrow": "up",
+        r"\downarrow": "down",
+        r"\pm": "+/-",
+        r"\times": "x",
+        r"\leq": "<=",
+        r"\geq": ">=",
+    }
+    for key, value in sorted(replacements.items(), key=lambda item: len(item[0]), reverse=True):
+        text = text.replace(key, value)
+    text = re.sub(r"\^\s*\{?\s*dagger\s*\}?", "dagger", text)
+    text = re.sub(r"\^\s*\{?\s*([A-Za-z0-9+\-/]+)\s*\}?", r"^\1", text)
+    text = re.sub(r"_\s*\{?\s*([A-Za-z0-9+\-/]+)\s*\}?", r"_\1", text)
+    text = _LATEX_COMMAND_PATTERN.sub("", text)
+    text = re.sub(r"[{}]", "", text)
+    text = _WHITESPACE_PATTERN.sub(" ", text).strip(" ,.;")
+    return text
 
 
 def _table_plain_text(tex: str) -> str:
@@ -1103,6 +1266,377 @@ def _table_plain_text(tex: str) -> str:
         if cleaned:
             lines.append(cleaned)
     return "\n".join(lines)
+
+
+def _table_model_from_tex(tex: str) -> Mapping[str, Any] | None:
+    tabular = _TABULAR_ENV_PATTERN.search(tex)
+    if not tabular:
+        return None
+    column_spec = tabular.group("cols").strip()
+    body = tabular.group("body")
+    rowcolors = _rowcolors_from_tex(tex)
+    rows: list[dict[str, Any]] = []
+    pending_rules: list[str] = []
+    for raw_row in _split_table_rows(body):
+        row_tex = raw_row.strip()
+        if not row_tex:
+            continue
+        leading = True
+        while leading:
+            leading = False
+            for command, style in (("\\toprule", "toprule"), ("\\midrule", "midrule"), ("\\bottomrule", "bottomrule"), ("\\hline", "hline")):
+                if row_tex.startswith(command):
+                    pending_rules.append(style)
+                    row_tex = row_tex[len(command):].strip()
+                    leading = True
+            cmidrule_match = re.match(r"\\cmidrule(?:\([^)]*\))?\{[^{}]*\}", row_tex)
+            if cmidrule_match:
+                pending_rules.append("cmidrule")
+                row_tex = row_tex[cmidrule_match.end():].strip()
+                leading = True
+        row_color = None
+        rowcolor_match = re.match(r"\\rowcolor\s*\{(?P<color>[^{}]*)\}", row_tex)
+        if rowcolor_match:
+            row_color = _latex_color_class(rowcolor_match.group("color"))
+            row_tex = row_tex[rowcolor_match.end():].strip()
+        if not row_tex:
+            continue
+        cells = [_cell_model_from_tex(cell) for cell in _split_table_cells(row_tex)]
+        if not any(cell["text"] or cell["html"] for cell in cells):
+            continue
+        rows.append(
+            {
+                "cells": cells,
+                "rulesBefore": pending_rules,
+                "rowColor": row_color,
+                "zebra": _zebra_row_class(len(rows), rowcolors),
+            }
+        )
+        pending_rules = []
+    if pending_rules and rows:
+        rows[-1]["rulesAfter"] = pending_rules
+    if not rows:
+        return None
+    return {
+        "version": 1,
+        "columnSpec": column_spec,
+        "alignments": _column_alignments(column_spec),
+        "rowcolors": rowcolors,
+        "rows": rows,
+    }
+
+
+def _split_table_rows(body: str) -> list[str]:
+    rows: list[str] = []
+    current: list[str] = []
+    depth = 0
+    index = 0
+    while index < len(body):
+        char = body[index]
+        if char == "\\" and index + 1 < len(body) and body[index + 1] == "\\" and depth == 0:
+            rows.append("".join(current))
+            current = []
+            index += 2
+            continue
+        if char == "{":
+            depth += 1
+        elif char == "}" and depth > 0:
+            depth -= 1
+        current.append(char)
+        index += 1
+    if current:
+        rows.append("".join(current))
+    return rows
+
+
+def _split_table_cells(row: str) -> list[str]:
+    cells: list[str] = []
+    current: list[str] = []
+    depth = 0
+    for char in row:
+        if char == "&" and depth == 0:
+            cells.append("".join(current).strip())
+            current = []
+            continue
+        if char == "{":
+            depth += 1
+        elif char == "}" and depth > 0:
+            depth -= 1
+        current.append(char)
+    cells.append("".join(current).strip())
+    return cells
+
+
+def _cell_model_from_tex(cell_tex: str) -> dict[str, Any]:
+    cell = cell_tex.strip()
+    colspan = 1
+    rowspan = 1
+    align = None
+    classes: list[str] = []
+    multicolumn = re.fullmatch(r"\\multicolumn\s*\{(?P<span>\d+)\}\s*\{(?P<align>[^{}]*)\}\s*\{(?P<body>.*)\}", cell, re.DOTALL)
+    if multicolumn:
+        colspan = max(1, int(multicolumn.group("span")))
+        align = _alignment_from_spec(multicolumn.group("align"))
+        cell = multicolumn.group("body").strip()
+    multirow = re.fullmatch(r"\\multirow\s*\{(?P<span>-?\d+)\}\s*\{[^{}]*\}\s*\{(?P<body>.*)\}", cell, re.DOTALL)
+    if multirow:
+        rowspan = max(1, abs(int(multirow.group("span"))))
+        cell = multirow.group("body").strip()
+    cellcolor = re.match(r"\\cellcolor\s*\{(?P<color>[^{}]*)\}(?P<body>.*)", cell, re.DOTALL)
+    if cellcolor:
+        color_class = _latex_color_class(cellcolor.group("color"))
+        if color_class:
+            classes.append(color_class)
+        cell = cellcolor.group("body").strip()
+    html_value = _latex_inline_html(cell)
+    text_value = _clean_text(cell)
+    return {
+        "text": text_value,
+        "html": html_value,
+        "colspan": colspan,
+        "rowspan": rowspan,
+        "align": align,
+        "classes": classes,
+    }
+
+
+def _latex_inline_html(tex: str) -> str:
+    text = tex.strip()
+    text = _CITE_COMMAND_PATTERN.sub(lambda match: html.escape(_citation_replacement(match.group(0), match.group("body"))), text)
+    text = _replace_inline_command(text, "textbf", "strong")
+    text = _replace_inline_command(text, "bf", "strong")
+    text = _replace_inline_command(text, "textit", "em")
+    text = _replace_inline_command(text, "it", "em")
+    text = _replace_inline_command(text, "underline", "u")
+    text = _replace_inline_command(text, "sout", "s")
+    text = _replace_color_commands(text)
+    text = _replace_scoped_color_declarations(text)
+    text = _replace_makecell(text)
+    text = _INLINE_MATH_PATTERN.sub(lambda match: f"<span class=\"paperTableMath\">{html.escape(_clean_equation_text(match.group('body')))}</span>", text)
+    text = text.replace("\\\\", "<br />")
+    replacements = {
+        r"\uparrow": "&uarr;",
+        r"\downarrow": "&darr;",
+        r"\dag": "&dagger;",
+        r"\dagger": "&dagger;",
+        r"\%": "%",
+        r"\&": "&",
+        r"\_": "_",
+        r"\#": "#",
+    }
+    for key, value in sorted(replacements.items(), key=lambda item: len(item[0]), reverse=True):
+        text = text.replace(key, value if value.startswith("&") else html.escape(value))
+    text = _LATEX_COMMAND_PATTERN.sub("", text)
+    text = text.replace("{", "").replace("}", "")
+    return _sanitize_table_inline_html(text).strip()
+
+
+def _replace_inline_command(value: str, command: str, tag: str) -> str:
+    pattern = re.compile(rf"\\{command}\s*\{{(?P<body>[^{{}}]*(?:\{{[^{{}}]*\}}[^{{}}]*)*)\}}", re.DOTALL)
+    previous = None
+    text = value
+    while previous != text:
+        previous = text
+        text = pattern.sub(lambda match: f"<{tag}>{_latex_inline_html(match.group('body'))}</{tag}>", text)
+    return text
+
+
+def _replace_color_commands(value: str) -> str:
+    text = value
+    pattern = re.compile(r"\\(?:textcolor|color)\s*\{(?P<color>[^{}]*)\}\s*\{(?P<body>[^{}]*(?:\{[^{}]*\}[^{}]*)*)\}", re.DOTALL)
+    previous = None
+    while previous != text:
+        previous = text
+        text = pattern.sub(
+            lambda match: f"<span class=\"{html.escape(_latex_color_class(match.group('color')) or 'paperTableColorNeutral')}\">{_latex_inline_html(match.group('body'))}</span>",
+            text,
+        )
+    return text
+
+
+def _replace_scoped_color_declarations(value: str) -> str:
+    text = value
+    scoped_pattern = re.compile(
+        r"\{\s*\\color\s*\{(?P<color>[^{}]*)\}\s*(?P<body>[^{}]*(?:\{[^{}]*\}[^{}]*)*)\}",
+        re.DOTALL,
+    )
+    declaration_pattern = re.compile(r"^\\color\s*\{(?P<color>[^{}]*)\}\s*(?P<body>.+)$", re.DOTALL)
+
+    def render(color: str, body: str) -> str:
+        css_class = html.escape(_latex_color_class(color) or "paperTableColorNeutral")
+        return f"<span class=\"{css_class}\">{_latex_inline_html(body)}</span>"
+
+    previous = None
+    while previous != text:
+        previous = text
+        text = scoped_pattern.sub(lambda match: render(match.group("color"), match.group("body")), text)
+
+    declaration = declaration_pattern.match(text.strip())
+    if declaration:
+        return render(declaration.group("color"), declaration.group("body"))
+    return text
+
+
+def _replace_makecell(value: str) -> str:
+    pattern = re.compile(r"\\makecell(?:\[[^\]]*\])?\s*\{(?P<body>[^{}]*(?:\{[^{}]*\}[^{}]*)*)\}", re.DOTALL)
+    return pattern.sub(lambda match: _latex_inline_html(match.group("body")).replace("\\\\", "<br />"), value)
+
+
+def _sanitize_table_inline_html(value: str) -> str:
+    allowed_patterns = (
+        re.compile(r"</?(?:strong|em|u|s)>", re.IGNORECASE),
+        re.compile(r"<br\s*/?>", re.IGNORECASE),
+        re.compile(r"<span class=\"paperTable(?:Math|ColorRed|ColorBlue|ColorGray|ColorNeutral)\">", re.IGNORECASE),
+        re.compile(r"</span>", re.IGNORECASE),
+    )
+    entity_pattern = re.compile(r"&(?:uarr|darr|dagger|amp|lt|gt|quot|#39);")
+    tokens: dict[str, str] = {}
+
+    def protect(pattern: re.Pattern[str], text: str) -> str:
+        def replace(match: re.Match[str]) -> str:
+            token = f"@@PVC_HTML_{len(tokens)}@@"
+            tokens[token] = match.group(0)
+            return token
+
+        return pattern.sub(replace, text)
+
+    text = value
+    for pattern in allowed_patterns:
+        text = protect(pattern, text)
+    text = protect(entity_pattern, text)
+    text = html.escape(text)
+    for token, original in tokens.items():
+        text = text.replace(token, original)
+    return text
+
+
+def _rowcolors_from_tex(tex: str) -> Mapping[str, Any] | None:
+    match = _ROWCOLORS_PATTERN.search(tex)
+    if not match:
+        return None
+    return {
+        "start": int(match.group("start")),
+        "odd": _latex_color_class(match.group("odd")),
+        "even": _latex_color_class(match.group("even")),
+    }
+
+
+def _zebra_row_class(index: int, rowcolors: Mapping[str, Any] | None) -> str | None:
+    if not rowcolors:
+        return None
+    start = int(rowcolors.get("start") or 0)
+    if start <= 0 or index + 1 < start:
+        return None
+    key = "odd" if (index + 1 - start) % 2 == 0 else "even"
+    value = rowcolors.get(key)
+    return str(value) if value else None
+
+
+def _latex_color_class(value: str | None) -> str | None:
+    normalized = (value or "").strip().casefold()
+    if not normalized or normalized in {"white", "none"}:
+        return None
+    if "red" in normalized:
+        return "paperTableColorRed"
+    if "blue" in normalized:
+        return "paperTableColorBlue"
+    if "gray" in normalized or "grey" in normalized or "uoftcoolgray" in normalized:
+        return "paperTableColorGray"
+    return "paperTableColorNeutral"
+
+
+def _column_alignments(spec: str) -> list[str]:
+    alignments: list[str] = []
+    for char in spec:
+        if char in {"l", "c", "r"}:
+            alignments.append({"l": "left", "c": "center", "r": "right"}[char])
+    return alignments
+
+
+def _alignment_from_spec(spec: str) -> str | None:
+    alignments = _column_alignments(spec)
+    return alignments[0] if alignments else None
+
+
+def _table_model_text(model: Mapping[str, Any]) -> str:
+    lines: list[str] = []
+    for row in model.get("rows", []):
+        if not isinstance(row, Mapping):
+            continue
+        cells = [
+            str(cell.get("text") or "").strip()
+            for cell in row.get("cells", [])
+            if isinstance(cell, Mapping) and str(cell.get("text") or "").strip()
+        ]
+        if cells:
+            lines.append(" | ".join(cells))
+    return "\n".join(lines)
+
+
+def _table_model_html(model: Mapping[str, Any], *, label: str) -> str:
+    alignments = [str(item) for item in model.get("alignments", [])]
+    rows_html: list[str] = []
+    for row in model.get("rows", []):
+        if not isinstance(row, Mapping):
+            continue
+        row_classes = ["paperTableRow"]
+        row_classes.extend(f"rule-{rule}" for rule in row.get("rulesBefore", []) if isinstance(rule, str))
+        row_color = row.get("rowColor") or row.get("zebra")
+        if isinstance(row_color, str) and row_color:
+            row_classes.append(row_color)
+        cells_html: list[str] = []
+        for cell_index, cell in enumerate(row.get("cells", [])):
+            if not isinstance(cell, Mapping):
+                continue
+            tag = "th" if not rows_html else "td"
+            align = cell.get("align") or (alignments[cell_index] if cell_index < len(alignments) else None)
+            classes = ["paperTableCell"]
+            if align in {"left", "center", "right"}:
+                classes.append(f"align-{align}")
+            classes.extend(str(item) for item in cell.get("classes", []) if isinstance(item, str) and item)
+            attrs = [f'class="{" ".join(html.escape(item) for item in classes)}"']
+            colspan = int(cell.get("colspan") or 1)
+            rowspan = int(cell.get("rowspan") or 1)
+            if colspan > 1:
+                attrs.append(f'colspan="{colspan}"')
+            if rowspan > 1:
+                attrs.append(f'rowspan="{rowspan}"')
+            value = str(cell.get("html") or html.escape(str(cell.get("text") or "")))
+            cells_html.append(f"<{tag} {' '.join(attrs)}>{value}</{tag}>")
+        rows_html.append(f"<tr class=\"{' '.join(html.escape(item) for item in row_classes)}\">{''.join(cells_html)}</tr>")
+    return f"<table class=\"paperCompiledTable\" aria-label=\"{html.escape(label)}\"><tbody>{''.join(rows_html)}</tbody></table>"
+
+
+def _table_asset_html(table_html: str) -> str:
+    return "\n".join(
+        (
+            "<!doctype html>",
+            "<html>",
+            "<head>",
+            "<meta charset=\"utf-8\" />",
+            "<style>",
+            _TABLE_ASSET_CSS,
+            "</style>",
+            "</head>",
+            "<body>",
+            table_html,
+            "</body>",
+            "</html>",
+        )
+    )
+
+
+def _table_model_width(model: Mapping[str, Any]) -> int:
+    column_count = max(
+        len(model.get("alignments", []) or []),
+        max((len(row.get("cells", []) or []) for row in model.get("rows", []) if isinstance(row, Mapping)), default=1),
+    )
+    return max(420, min(1800, column_count * 190))
+
+
+def _table_model_height(model: Mapping[str, Any]) -> int:
+    row_count = len([row for row in model.get("rows", []) if isinstance(row, Mapping)])
+    return max(120, min(2200, row_count * 34 + 42))
 
 
 def _is_structural_noise(value: str) -> bool:
@@ -1209,6 +1743,45 @@ def _asset_from_png(
     )
 
 
+def _asset_from_text_file(
+    *,
+    paper_id: str,
+    kind: str,
+    file_path: Path,
+    content: str,
+    mime_type: str,
+    width: int,
+    height: int,
+    page_number: int,
+    label: str,
+    caption: str,
+    source: PaperSourceRegion,
+    output_dir: Path,
+    metadata: Mapping[str, Any],
+) -> PaperVisualAsset:
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    file_path.write_text(content, encoding="utf-8")
+    data = file_path.read_bytes()
+    file_name = file_path.relative_to(output_dir).as_posix()
+    return PaperVisualAsset(
+        assetId=_stable_id(paper_id, "asset", kind, label, file_name),
+        paperId=paper_id,
+        kind=kind,  # type: ignore[arg-type]
+        fileName=file_name,
+        mimeType=mime_type,
+        width=max(1, int(width)),
+        height=max(1, int(height)),
+        checksum=hashlib.sha256(data).hexdigest(),
+        pageNumber=page_number,
+        label=label,
+        caption=caption,
+        source=source,
+        blankRatio=0.0,
+        fileSize=len(data),
+        metadata=dict(metadata),
+    )
+
+
 def _strip_comments(value: str) -> str:
     return "\n".join(_COMMENT_PATTERN.sub("", line) for line in value.splitlines())
 
@@ -1230,7 +1803,7 @@ def _safe_join(root: Path, relative: str) -> Path | None:
 
 
 def _replace_dir(path: Path) -> None:
-    if path.name != "source":
+    if path.name not in {"source", "assets", "pages"}:
         raise PaperCompilerError("refusing to replace unexpected artifact directory", code="artifact_path_unexpected")
     if path.exists():
         shutil.rmtree(path)

@@ -15,8 +15,13 @@ describe("PaperDocumentReaderPage", () => {
     expect(screen.getByText("Open Reader")).toBeInTheDocument()
     const article = screen.getByLabelText("Open reader paper body")
     expect(within(article).getByText("This is real PDF paragraph text.")).toBeInTheDocument()
-    expect(within(article).getByText("Figure 1: Real figure from the PDF.")).toBeInTheDocument()
+    expect(within(article).getByText("Real figure from the PDF.")).toBeInTheDocument()
     expect(within(article).getByLabelText("y = Wx + b (1)")).toBeInTheDocument()
+    expect(within(article).getByRole("table", { name: "Table 1" })).toBeInTheDocument()
+    expect(within(article).getByText("0.99")).toBeInTheDocument()
+    expect(within(article).queryByText("UNKNOWN")).not.toBeInTheDocument()
+    expect(within(article).queryByText("unknown")).not.toBeInTheDocument()
+    expect(screen.queryByText("Figure 1", { selector: "span" })).not.toBeInTheDocument()
     expect(within(article).queryByText("Asset unavailable")).not.toBeInTheDocument()
     expect(within(article).queryByText("AI generated summary must stay in the panel.")).not.toBeInTheDocument()
     expect(screen.getByRole("img", { name: "Figure 1: Real figure from the PDF." })).toHaveAttribute(
@@ -45,6 +50,18 @@ describe("PaperDocumentReaderPage", () => {
       "src",
       expect.stringContaining("/api/papers/visual-paper/source-preview?page=1&bbox="),
     )
+  })
+
+  it("uses the asset itself for source-first visual previews when PDF page crops are unavailable", () => {
+    render(<PaperDocumentReaderPage payload={compiledPayload} locale="en" />)
+
+    const tableBlock = document.querySelector<HTMLElement>('[data-block-id="block-table-1"]')
+    if (!tableBlock) throw new Error("Expected table block to be rendered")
+    fireEvent.click(within(tableBlock).getByTitle("Open source preview"))
+
+    const preview = screen.getByRole("dialog", { name: "Source preview" })
+    const frame = within(preview).getByTitle("Table 1")
+    expect(frame).toHaveAttribute("src", "/api/papers/visual-paper/assets/asset-table-1")
   })
 
   it("builds reader interaction targets for visual assets", () => {
@@ -156,6 +173,41 @@ const compiledPayload: PaperDocumentResponse = {
         caption: "y = Wx + b (1)",
         source: { pageNumber: 1, bbox: { x0: 150, y0: 500, x1: 320, y1: 526 } },
       },
+      {
+        id: "block-table-1",
+        paperId: "visual-paper",
+        type: "table",
+        text: "Table 1: Real table from the TeX source.",
+        pageNumber: 1,
+        sectionId: "block-heading-1",
+        assetId: "asset-table-1",
+        label: "Table 1",
+        caption: "Table 1: Real table from the TeX source.",
+        source: { pageNumber: 1, bbox: { x0: 0, y0: 0, x1: 420, y1: 150 } },
+        metadata: {
+          sourceProvider: "arxiv-source",
+          tableModel: {
+            version: 1,
+            alignments: ["left", "center"],
+            rows: [
+              {
+                rulesBefore: ["toprule"],
+                cells: [
+                  { text: "Method", html: "<strong>Method</strong>" },
+                  { text: "Score", html: "<strong>Score</strong>" },
+                ],
+              },
+              {
+                rulesBefore: ["midrule"],
+                cells: [
+                  { text: "Ours", html: "Ours", classes: ["paperTableColorGray"] },
+                  { text: "0.99", html: "<strong>0.99</strong>", classes: ["paperTableColorBlue"] },
+                ],
+              },
+            ],
+          },
+        },
+      },
     ],
   },
   manifest: {
@@ -177,6 +229,21 @@ const compiledPayload: PaperDocumentResponse = {
         label: "Figure 1",
         caption: "Figure 1: Real figure from the PDF.",
         source: { pageNumber: 1, bbox: { x0: 100, y0: 230, x1: 500, y1: 460 } },
+      },
+      {
+        assetId: "asset-table-1",
+        paperId: "visual-paper",
+        kind: "table",
+        fileName: "assets/asset-table-1.html",
+        mimeType: "text/html; charset=utf-8",
+        width: 420,
+        height: 150,
+        checksum: "checksum-table",
+        pageNumber: 1,
+        label: "Table 1",
+        caption: "Table 1: Real table from the TeX source.",
+        source: { pageNumber: 1, bbox: { x0: 0, y0: 0, x1: 420, y1: 150 } },
+        metadata: { sourceProvider: "arxiv-source", sourceKind: "tex-table-html" },
       },
     ],
   },

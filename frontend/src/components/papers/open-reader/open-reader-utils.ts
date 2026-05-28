@@ -1,5 +1,8 @@
 import type { Locale, PaperReaderPayload, PaperSection } from "@/lib/papers/types"
 import type {
+  PaperSourceRegion,
+} from "@/lib/paper-reader/types"
+import type {
   ReaderEvent,
   ReaderEventType,
   ReaderMaterialSummary,
@@ -79,6 +82,7 @@ export function buildReaderParagraphs(reader: PaperReaderPayload, locale: Locale
     const parts = splitText(section.textExcerpt)
     const metadata = sectionMetadata(section)
     const blockIds = stringArray(metadata?.blockIds)
+    const blockSources = sourceArray(metadata?.blockSources)
     const sourceOrders = numberArray(metadata?.sourceOrders)
     for (let index = 0; index < parts.length; index += 1) {
       const fallbackSectionId = `${reader.paper.id}:pdf-text`
@@ -96,6 +100,7 @@ export function buildReaderParagraphs(reader: PaperReaderPayload, locale: Locale
         pageStart: section.pageStart,
         pageEnd: section.pageEnd,
         blockId,
+        source: blockSources[index],
         sourceOrder: sourceOrders[index],
       })
     }
@@ -126,6 +131,15 @@ function stringArray(value: unknown) {
 
 function numberArray(value: unknown) {
   return Array.isArray(value) ? value.filter((item): item is number => typeof item === "number" && Number.isFinite(item)) : []
+}
+
+function sourceArray(value: unknown): Array<PaperSourceRegion | undefined> {
+  if (!Array.isArray(value)) return []
+  return value.map((item) => {
+    if (!item || typeof item !== "object") return undefined
+    const source = item as Partial<PaperSourceRegion>
+    return typeof source.pageNumber === "number" && source.bbox ? source as PaperSourceRegion : undefined
+  })
 }
 
 function selectReaderSections(sections: PaperSection[]) {

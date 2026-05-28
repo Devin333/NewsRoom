@@ -59,9 +59,9 @@ class PaperAssetGate:
             actual_checksum = hashlib.sha256(file_path.read_bytes()).hexdigest()
             if actual_checksum != asset.checksum:
                 errors.append(_issue("asset_checksum_mismatch", "asset checksum does not match file bytes", assetId=asset.assetId))
-            actual_size = _png_size(file_path)
+            actual_size = _asset_size(file_path, asset.mimeType, asset.width, asset.height)
             if actual_size is None:
-                errors.append(_issue("asset_image_invalid", "asset is not a readable PNG image", assetId=asset.assetId))
+                errors.append(_issue("asset_file_invalid", "asset is not a readable image or structured table file", assetId=asset.assetId))
                 continue
             width, height = actual_size
             if width != asset.width or height != asset.height:
@@ -83,16 +83,20 @@ class PaperAssetGate:
                     errors.append(_issue("asset_caption_missing", "visual asset caption is missing", assetId=asset.assetId))
                 if asset.source is None:
                     errors.append(_issue("asset_source_missing", "visual asset source bbox is missing", assetId=asset.assetId))
-                blank_ratio = asset.blankRatio if asset.blankRatio is not None else _blank_ratio(file_path)
-                if blank_ratio >= self.max_blank_ratio:
-                    errors.append(
-                        _issue(
-                            "asset_blank",
-                            "visual asset is effectively blank",
-                            assetId=asset.assetId,
-                            blankRatio=round(blank_ratio, 6),
+                if asset.kind == "table" and asset.mimeType.startswith("text/html"):
+                    if not isinstance(asset.metadata.get("tableModel"), Mapping) or not asset.metadata.get("tableHtml"):
+                        errors.append(_issue("table_asset_model_missing", "structured table asset is missing table model/html metadata", assetId=asset.assetId))
+                else:
+                    blank_ratio = asset.blankRatio if asset.blankRatio is not None else _blank_ratio(file_path)
+                    if blank_ratio >= self.max_blank_ratio:
+                        errors.append(
+                            _issue(
+                                "asset_blank",
+                                "visual asset is effectively blank",
+                                assetId=asset.assetId,
+                                blankRatio=round(blank_ratio, 6),
+                            )
                         )
-                    )
             elif asset.kind == "page" and asset.source is None:
                 warnings.append(_issue("page_source_missing", "page asset source bbox is missing", assetId=asset.assetId))
 
@@ -194,6 +198,12 @@ def _png_size(path: Path) -> tuple[int, int] | None:
     if len(header) < 24 or header[:8] != b"\x89PNG\r\n\x1a\n" or header[12:16] != b"IHDR":
         return None
     return struct.unpack(">II", header[16:24])
+
+
+def _asset_size(path: Path, mime_type: str, width: int, height: int) -> tuple[int, int] | None:
+    if mime_type.startswith("text/html"):
+        return (width, height) if width > 0 and height > 0 and path.read_text(encoding="utf-8", errors="ignore").strip() else None
+    return _png_size(path)
 
 
 def _blank_ratio(path: Path) -> float:

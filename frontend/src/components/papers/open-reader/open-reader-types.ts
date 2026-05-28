@@ -31,6 +31,7 @@ export interface ReaderParagraph {
   pageStart?: number
   pageEnd?: number
   blockId?: string
+  source?: PaperSourceRegion
   sourceOrder?: number
 }
 
@@ -63,6 +64,9 @@ export interface ReaderSelection {
   sectionId: string
   sectionTitle: string
   paragraphId: string
+  blockId?: string
+  source?: PaperSourceRegion
+  pageNumber?: number
   selectedText: string
   surroundingText: string
   startOffset: number
@@ -95,7 +99,10 @@ export interface ReaderEvent {
   paperId: string
   selectionId?: string
   paragraphId?: string
+  blockId?: string
   sectionId?: string
+  pageNumber?: number
+  source?: PaperSourceRegion
   selectedText?: string
   surroundingText?: string
   payload?: Record<string, unknown>

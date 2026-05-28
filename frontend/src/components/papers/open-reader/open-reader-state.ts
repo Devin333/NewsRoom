@@ -100,6 +100,9 @@ export function useOpenReaderSelections(paperId: string) {
       sectionId: input.paragraph.sectionId,
       sectionTitle: input.paragraph.sectionTitle,
       paragraphId: input.paragraph.id,
+      blockId: input.paragraph.blockId,
+      source: input.paragraph.source,
+      pageNumber: input.paragraph.pageStart ?? input.paragraph.source?.pageNumber,
       selectedText: input.selectedText,
       surroundingText: getSurroundingText(input.paragraph.text, input.startOffset, input.endOffset),
       startOffset: input.startOffset,
@@ -148,7 +151,10 @@ function selectionReducer(state: SelectionState, action: SelectionAction): Selec
         events: [...state.events, createReaderEvent("selection_created", action.selection.paperId, {
           selectionId: action.selection.id,
           paragraphId: action.selection.paragraphId,
+          blockId: action.selection.blockId,
           sectionId: action.selection.sectionId,
+          pageNumber: action.selection.pageNumber,
+          source: action.selection.source,
           selectedText: action.selection.selectedText,
           surroundingText: action.selection.surroundingText,
         })],
@@ -161,7 +167,10 @@ function selectionReducer(state: SelectionState, action: SelectionAction): Selec
         events: target ? [...state.events, createReaderEvent("selection_discarded", target.paperId, {
           selectionId: target.id,
           paragraphId: target.paragraphId,
+          blockId: target.blockId,
           sectionId: target.sectionId,
+          pageNumber: target.pageNumber,
+          source: target.source,
           selectedText: target.selectedText,
         })] : state.events,
       }
@@ -174,7 +183,10 @@ function selectionReducer(state: SelectionState, action: SelectionAction): Selec
         events: [...state.events, ...removed.map((item) => createReaderEvent("selection_discarded", item.paperId, {
           selectionId: item.id,
           paragraphId: item.paragraphId,
+          blockId: item.blockId,
           sectionId: item.sectionId,
+          pageNumber: item.pageNumber,
+          source: item.source,
           selectedText: item.selectedText,
         }))],
       }
@@ -192,7 +204,10 @@ function selectionReducer(state: SelectionState, action: SelectionAction): Selec
         events: [...state.events, createReaderEvent("note_updated", updated.paperId, {
           selectionId: updated.id,
           paragraphId: updated.paragraphId,
+          blockId: updated.blockId,
           sectionId: updated.sectionId,
+          pageNumber: updated.pageNumber,
+          source: updated.source,
           selectedText: updated.selectedText,
           surroundingText: updated.surroundingText,
           payload: { noteText: action.noteText },
@@ -218,7 +233,10 @@ function selectionReducer(state: SelectionState, action: SelectionAction): Selec
         events: [...state.events, createReaderEvent(updated.confused ? "confusion_marked" : "confusion_unmarked", updated.paperId, {
           selectionId: updated.id,
           paragraphId: updated.paragraphId,
+          blockId: updated.blockId,
           sectionId: updated.sectionId,
+          pageNumber: updated.pageNumber,
+          source: updated.source,
           selectedText: updated.selectedText,
           surroundingText: updated.surroundingText,
         })],
@@ -245,7 +263,10 @@ function updateSelection(
     events: [...state.events, createReaderEvent(eventType, updated.paperId, {
       selectionId: updated.id,
       paragraphId: updated.paragraphId,
+      blockId: updated.blockId,
       sectionId: updated.sectionId,
+      pageNumber: updated.pageNumber,
+      source: updated.source,
       selectedText: updated.selectedText,
       surroundingText: updated.surroundingText,
       payload,
