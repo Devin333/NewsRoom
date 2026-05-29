@@ -9,6 +9,14 @@ const routes = [
   "/papers/tasks/agents",
   "/papers/methods",
   "/papers/methods/react",
+  "/projects",
+  "/projects/hot",
+  "/projects/rising",
+  "/projects/tools",
+  "/projects/cases",
+  "/projects/lab",
+  "/projects/collections",
+  "/projects/watchlist",
   "/topics",
   "/topics/agent-runtime-observability",
   "/tech",
@@ -52,7 +60,7 @@ test("/ renders the Portal homepage modules", async ({ page }) => {
   await expect(page.getByRole("heading", { name: /AI intelligence front page/i })).toBeVisible()
   const modules = page.getByRole("region", { name: "Portal modules" })
   await expect(modules.getByRole("link", { name: /View AI News/i })).toBeVisible()
-  await expect(modules.getByRole("link", { name: /View Project Radar/i })).toBeVisible()
+  await expect(modules.getByRole("link", { name: /View Project Radar/i })).toHaveAttribute("href", "/projects")
   await expect(modules.getByRole("link", { name: /View Paper Radar/i })).toBeVisible()
   await expect(modules.getByRole("link", { name: /View Community Pulse/i })).toHaveAttribute("href", "/community")
   await expect(modules.getByRole("link", { name: /View Cross-board Evidence Graph/i })).toBeVisible()
@@ -62,6 +70,22 @@ test("/ renders the Portal homepage modules", async ({ page }) => {
   await expect(researchEntries.getByRole("link", { name: /Tasks/i })).toHaveAttribute("href", "/papers/tasks")
   await expect(researchEntries.getByRole("link", { name: /Methods/i })).toHaveAttribute("href", "/papers/methods")
   await expect(page.locator("body")).not.toContainText("Quality Gate")
+})
+
+test("Research header opens the Projects product navigation", async ({ page, baseURL }) => {
+  await authenticate(page, baseURL)
+  await page.goto("/papers")
+
+  const modules = page.getByRole("navigation", { name: "Portal modules" })
+  await modules.getByRole("button", { name: "Projects" }).hover()
+
+  await expect(modules.getByRole("link", { name: /^Projects\b/i })).toHaveAttribute("href", "/projects")
+  await expect(modules.getByRole("link", { name: /^Hot Projects\b/i })).toHaveAttribute("href", "/projects/hot")
+  await expect(modules.getByRole("link", { name: /^Rising Projects\b/i })).toHaveAttribute("href", "/projects/rising")
+  await expect(modules.getByRole("link", { name: /^Tools\b/i })).toHaveAttribute("href", "/projects/tools")
+  await modules.getByRole("link", { name: /^Projects\b/i }).click()
+
+  await expect(page).toHaveURL(/\/projects$/)
 })
 
 test("/community renders the Community Pulse board", async ({ page, baseURL }) => {
@@ -97,7 +121,7 @@ test("/papers uses one breadcrumb and real paper actions", async ({ page, baseUR
   await authenticate(page, baseURL)
   await page.goto("/papers")
 
-  await expect(page.locator("nav[aria-label='Papers breadcrumb']")).toHaveCount(1)
+  await expect(page.getByRole("navigation", { name: "Research breadcrumb" })).toHaveCount(1)
   await expect(page.getByText("stars / hr")).toHaveCount(0)
   await expect(page.getByRole("button", { name: /^upvote$/i })).toHaveCount(0)
   await expect(page.getByRole("button", { name: /^collection$/i })).toHaveCount(0)

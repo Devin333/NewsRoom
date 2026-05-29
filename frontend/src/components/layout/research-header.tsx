@@ -17,11 +17,13 @@ import type { ThemeMode } from "@/stores/ui-store"
 
 export function ResearchHeader({
   locale,
+  pathname = "/",
   theme,
   onLocaleChange,
   onThemeChange
 }: {
   locale: Locale
+  pathname?: string
   theme: ThemeMode
   onLocaleChange: (locale: Locale) => void
   onThemeChange: (theme: ThemeMode) => void
@@ -63,6 +65,7 @@ export function ResearchHeader({
           <nav className="flex items-center gap-2" aria-label="Portal modules" style={comicSansFont}>
             {researchHeaderGroups.map((group) => {
               const active = activeGroupId === group.id
+              const current = isNavGroupCurrent(pathname, group)
               const dropdownId = `research-header-${group.id}-menu`
 
               return (
@@ -77,17 +80,18 @@ export function ResearchHeader({
                     type="button"
                     className={cn(
                       "inline-flex h-9 items-center gap-1 rounded-full px-4 text-sm font-medium text-[#334155] transition-colors hover:bg-[#eef3ef] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:text-foreground dark:hover:bg-secondary",
-                      active && "bg-[#eef3ef] dark:bg-secondary"
+                      (active || current) && "bg-[#eef3ef] text-[#0f172a] dark:bg-secondary dark:text-foreground"
                     )}
                     aria-expanded={active}
                     aria-controls={dropdownId}
+                    data-current={current ? "true" : undefined}
                     onClick={() => setActiveGroupId(active ? null : group.id)}
                     onFocus={() => setActiveGroupId(group.id)}
                   >
                     {t(group.label, locale)}
                     <ChevronDown className={cn("size-4 transition-transform", active && "rotate-180")} />
                   </button>
-                  {active ? <ResearchHeaderDropdown id={dropdownId} group={group} locale={locale} /> : null}
+                  {active ? <ResearchHeaderDropdown id={dropdownId} group={group} locale={locale} pathname={pathname} /> : null}
                 </div>
               )
             })}
@@ -136,19 +140,32 @@ export function ResearchHeader({
                     {t(group.label, locale)}
                   </p>
                   <div className="space-y-2">
-                    {group.items.map((item) => (
-                      <SheetClose asChild key={item.href}>
-                        <Link
-                          href={item.href}
-                          className="block rounded-md border border-border bg-background/60 px-3 py-2 text-sm transition-colors hover:bg-secondary"
-                        >
-                          <span className="font-medium">{t(item.label, locale)}</span>
-                          <span className="mt-1 block text-xs leading-5 text-muted-foreground">
-                            {t(item.description, locale)}
-                          </span>
-                        </Link>
-                      </SheetClose>
-                    ))}
+                    {group.items.map((item) => {
+                      const current = isNavItemCurrent(pathname, item)
+                      const itemId = navItemDomId("mobile", group.id, item)
+                      const labelId = `${itemId}-label`
+                      const descriptionId = `${itemId}-description`
+
+                      return (
+                        <SheetClose asChild key={item.href}>
+                          <Link
+                            href={item.href}
+                            className={cn(
+                              "block rounded-md border border-border bg-background/60 px-3 py-2 text-sm transition-colors hover:bg-secondary",
+                              current && "border-emerald-300 bg-emerald-50 text-emerald-950 dark:border-emerald-500/40 dark:bg-emerald-950/20"
+                            )}
+                            aria-current={current ? "page" : undefined}
+                            aria-labelledby={labelId}
+                            aria-describedby={descriptionId}
+                          >
+                            <span id={labelId} className="font-medium">{t(item.label, locale)}</span>
+                            <span id={descriptionId} className="mt-1 block text-xs leading-5 text-muted-foreground">
+                              {t(item.description, locale)}
+                            </span>
+                          </Link>
+                        </SheetClose>
+                      )
+                    })}
                   </div>
                 </div>
               ))}
@@ -174,29 +191,101 @@ type HeaderNavGroup = {
   items: HeaderNavItem[]
 }
 
-function ResearchHeaderDropdown({ id, group, locale }: { id: string; group: HeaderNavGroup; locale: Locale }) {
+function ResearchHeaderDropdown({
+  id,
+  group,
+  locale,
+  pathname
+}: {
+  id: string
+  group: HeaderNavGroup
+  locale: Locale
+  pathname: string
+}) {
   return (
     <div id={id} className="absolute left-0 top-full z-50 w-[min(30rem,calc(100vw-2rem))] pt-2">
       <div className="rounded-md border border-border bg-popover p-3 text-popover-foreground shadow-soft">
         <div className="grid gap-1">
-          {group.items.map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              className="group rounded-md px-3 py-2 transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              <span className="flex items-center justify-between gap-3 text-sm font-semibold text-foreground">
-                {t(item.label, locale)}
-              </span>
-              <span className="mt-1 block text-xs leading-5 text-muted-foreground">
-                {t(item.description, locale)}
-              </span>
-            </Link>
-          ))}
+          {group.items.map((item) => {
+            const current = isNavItemCurrent(pathname, item)
+            const itemId = navItemDomId("desktop", group.id, item)
+            const labelId = `${itemId}-label`
+            const descriptionId = `${itemId}-description`
+
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={cn(
+                  "group rounded-md px-3 py-2 transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  current && "bg-emerald-50 text-emerald-950 dark:bg-emerald-950/20"
+                )}
+                aria-current={current ? "page" : undefined}
+                aria-labelledby={labelId}
+                aria-describedby={descriptionId}
+              >
+                <span id={labelId} className="flex items-center justify-between gap-3 text-sm font-semibold text-foreground">
+                  {t(item.label, locale)}
+                </span>
+                <span id={descriptionId} className="mt-1 block text-xs leading-5 text-muted-foreground">
+                  {t(item.description, locale)}
+                </span>
+              </Link>
+            )
+          })}
         </div>
       </div>
     </div>
   )
+}
+
+function isNavGroupCurrent(pathname: string, group: HeaderNavGroup) {
+  const prefixes = navGroupCurrentPrefixes[group.id]
+  if (prefixes) {
+    return prefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`))
+  }
+
+  return group.items.some((item) => {
+    if (item.href.includes("?")) {
+      return false
+    }
+    const path = navItemPath(item)
+    return pathname === path || (path !== "/" && pathname.startsWith(`${path}/`))
+  })
+}
+
+function isNavItemCurrent(pathname: string, item: HeaderNavItem) {
+  if (item.href.includes("?")) {
+    return false
+  }
+
+  const path = navItemPath(item)
+  if (pathname === path) {
+    return true
+  }
+
+  if (path === "/" || path === "/projects" || path === "/papers") {
+    return false
+  }
+
+  return pathname.startsWith(`${path}/`)
+}
+
+function navItemPath(item: HeaderNavItem) {
+  return item.href.split("?")[0] || "/"
+}
+
+function navItemDomId(scope: string, groupId: string, item: HeaderNavItem) {
+  const itemKey = item.href.replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-|-$/g, "") || "root"
+  return `research-header-${scope}-${groupId}-${itemKey}`
+}
+
+const navGroupCurrentPrefixes: Record<string, string[]> = {
+  research: ["/papers"],
+  projects: ["/projects"],
+  today: ["/news", "/community"],
+  trends: ["/topics"],
+  reports: ["/reports"]
 }
 
 const researchHeaderGroups: HeaderNavGroup[] = [
@@ -222,6 +311,52 @@ const researchHeaderGroups: HeaderNavGroup[] = [
     ]
   },
   {
+    id: "projects",
+    label: { zh: "项目", en: "Projects" },
+    items: [
+      {
+        href: "/projects",
+        label: { zh: "项目总览", en: "Projects" },
+        description: { zh: "热门、新星、工具、案例、实验室和关注列表的统一入口。", en: "Unified entry for hot, rising, tools, cases, Lab, collections, and watchlist." }
+      },
+      {
+        href: "/projects/hot",
+        label: { zh: "热门项目", en: "Hot Projects" },
+        description: { zh: "按外部热度、行为信号、技术相关性和来源可信度排序。", en: "Ranked by external heat, behavior signals, technical relevance, and source trust." }
+      },
+      {
+        href: "/projects/rising",
+        label: { zh: "新星项目", en: "Rising Projects" },
+        description: { zh: "正在加速增长、更新活跃或质量上升的项目。", en: "Projects with accelerating growth, active updates, or rising quality." }
+      },
+      {
+        href: "/projects/tools",
+        label: { zh: "工具", en: "Tools" },
+        description: { zh: "按能力、集成方式和部署适配度组织真实项目工具。", en: "Real project tools grouped by capability, integration surface, and deployment fit." }
+      },
+      {
+        href: "/projects/cases",
+        label: { zh: "案例", en: "Cases" },
+        description: { zh: "由真实项目、能力和公开来源引用沉淀出的模块案例。", en: "Cases derived from real projects, capabilities, and public source references." }
+      },
+      {
+        href: "/projects/lab",
+        label: { zh: "实验室", en: "Lab" },
+        description: { zh: "从需求画像出发，结合真实项目案例生成方案。", en: "Start from a requirement profile and derive solutions from real project cases." }
+      },
+      {
+        href: "/projects/collections",
+        label: { zh: "合集", en: "Collections" },
+        description: { zh: "围绕主题生成的真实项目集合，不填充模拟数据。", en: "Topic collections generated from real projects without synthetic filler." }
+      },
+      {
+        href: "/projects/watchlist",
+        label: { zh: "关注列表", en: "Watchlist" },
+        description: { zh: "持续跟踪你关注的真实项目和状态变化。", en: "Track real projects you care about and their state changes." }
+      }
+    ]
+  },
+  {
     id: "today",
     label: { zh: "今日", en: "Today" },
     items: [
@@ -239,11 +374,6 @@ const researchHeaderGroups: HeaderNavGroup[] = [
         href: "/news?topic=product-updates",
         label: { zh: "产品更新", en: "Product Updates" },
         description: { zh: "产品发布、能力变化和采用信号。", en: "Product launches, capability changes, and adoption signals." }
-      },
-      {
-        href: "/tech/repos",
-        label: { zh: "开源", en: "Open Source" },
-        description: { zh: "GitHub 仓库、项目动量和工程落地线索。", en: "GitHub repositories, project momentum, and engineering adoption clues." }
       },
       {
         href: "/community",

@@ -104,7 +104,7 @@ export async function getEvidenceGraphData(): Promise<EvidenceGraphData> {
   const byId = new Map(data.modules.map((module) => [module.id, module]))
   const sections: EvidenceGraphSection[] = [
     graphSection("Papers", "/papers", byId.get("papers")),
-    graphSection("Projects", "/tech/repos", byId.get("projects")),
+    graphSection("Projects", "/projects", byId.get("projects")),
     graphSection("News", "/news", byId.get("news")),
     graphSection("Community", "/community", byId.get("community"))
   ]
@@ -158,7 +158,7 @@ async function projectsModule(): Promise<PortalModuleSummary> {
     return {
       id: "projects",
       title: "Project Radar",
-      href: "/tech/repos",
+      href: "/projects",
       eyebrow: "Open Source",
       description: "GitHub projects, engineering practice, repository momentum, and adoption signals.",
       status: items.length ? stateFrom(result.dataState === "ready") : "empty",
@@ -176,7 +176,7 @@ async function projectsModule(): Promise<PortalModuleSummary> {
       notices: result.notices
     }
   } catch (error) {
-    return unavailableModule("projects", "Project Radar", "/tech/repos", "Open Source", "Project data is currently unavailable.", error)
+    return unavailableModule("projects", "Project Radar", "/projects", "Open Source", "Project data is currently unavailable.", error)
   }
 }
 

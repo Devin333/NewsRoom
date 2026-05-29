@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react"
+import { fireEvent, render, screen, within } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { AppShell } from "@/components/layout/app-shell"
 import { comicSansFontFamily } from "@/lib/fonts"
@@ -22,7 +22,7 @@ describe("AppShell", () => {
     useUiStore.setState({ locale: "en", theme: "light" })
   })
 
-  it.each(["/", "/news", "/community", "/reports", "/search", "/papers", "/papers/tasks/agents", "/papers/methods/tool-use"])("renders the Research header on portal route %s", (pathname) => {
+  it.each(["/", "/news", "/community", "/reports", "/search", "/papers", "/papers/tasks/agents", "/papers/methods/tool-use", "/projects", "/projects/hot", "/projects/tools/openai-codex"])("renders the Research header on portal route %s", (pathname) => {
     navigationState.pathname = pathname
 
     render(
@@ -33,6 +33,7 @@ describe("AppShell", () => {
 
     expect(screen.getByRole("link", { name: "NewsRoom Research" })).toHaveAttribute("href", "/papers")
     expect(screen.getByRole("button", { name: "Research" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Projects" })).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Today" })).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Trends" })).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Reports" })).toBeInTheDocument()
@@ -40,6 +41,62 @@ describe("AppShell", () => {
     expect(screen.getByPlaceholderText(/search papers/i)).toHaveStyle({ fontFamily: comicSansFontFamily })
     expect(screen.getByPlaceholderText(/search papers/i)).toBeInTheDocument()
     expect(screen.queryByRole("link", { name: "Today" })).not.toBeInTheDocument()
+  })
+
+  it("exposes Projects product routes from the desktop Research header", () => {
+    navigationState.pathname = "/projects"
+
+    render(
+      <AppShell>
+        <div>Projects content</div>
+      </AppShell>
+    )
+
+    fireEvent.click(screen.getByRole("button", { name: "Projects" }))
+
+    expect(screen.getByRole("button", { name: "Projects" })).toHaveAttribute("data-current", "true")
+    expect(screen.getByRole("link", { name: /^Projects\b/, current: "page" })).toHaveAttribute("href", "/projects")
+    expect(screen.getByRole("link", { name: /^Hot Projects\b/ })).toHaveAttribute("href", "/projects/hot")
+    expect(screen.getByRole("link", { name: /^Rising Projects\b/ })).toHaveAttribute("href", "/projects/rising")
+    expect(screen.getByRole("link", { name: /^Tools\b/ })).toHaveAttribute("href", "/projects/tools")
+    expect(screen.getByRole("link", { name: /^Cases\b/ })).toHaveAttribute("href", "/projects/cases")
+    expect(screen.getByRole("link", { name: /^Lab\b/ })).toHaveAttribute("href", "/projects/lab")
+    expect(screen.getByRole("link", { name: /^Collections\b/ })).toHaveAttribute("href", "/projects/collections")
+    expect(screen.getByRole("link", { name: /^Watchlist\b/ })).toHaveAttribute("href", "/projects/watchlist")
+  })
+
+  it("marks the closest Projects section as current on nested project routes", () => {
+    navigationState.pathname = "/projects/tools/openai-codex"
+
+    render(
+      <AppShell>
+        <div>Project tool content</div>
+      </AppShell>
+    )
+
+    fireEvent.click(screen.getByRole("button", { name: "Projects" }))
+
+    expect(screen.getByRole("button", { name: "Projects" })).toHaveAttribute("data-current", "true")
+    expect(screen.getByRole("link", { name: /^Tools\b/, current: "page" })).toHaveAttribute("href", "/projects/tools")
+    expect(screen.getByRole("link", { name: /^Projects\b/ })).not.toHaveAttribute("aria-current")
+  })
+
+  it("exposes Projects product routes from the mobile Research navigation", () => {
+    navigationState.pathname = "/projects/hot"
+
+    render(
+      <AppShell>
+        <div>Projects content</div>
+      </AppShell>
+    )
+
+    fireEvent.click(screen.getByRole("button", { name: "Open Research navigation" }))
+
+    const mobileNavigation = within(screen.getByRole("navigation", { name: "Research mobile navigation" }))
+    expect(mobileNavigation.getByRole("link", { name: "Projects" })).toHaveAttribute("href", "/projects")
+    expect(mobileNavigation.getByRole("link", { name: "Hot Projects", current: "page" })).toHaveAttribute("href", "/projects/hot")
+    expect(mobileNavigation.getByRole("link", { name: "Tools" })).toHaveAttribute("href", "/projects/tools")
+    expect(mobileNavigation.queryByRole("link", { name: "Open Source" })).not.toBeInTheDocument()
   })
 
   it.each(["/admin", "/studio", "/studio/runs"])("keeps management route %s outside the portal Research header", (pathname) => {
