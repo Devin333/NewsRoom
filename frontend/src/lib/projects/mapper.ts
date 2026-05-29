@@ -175,11 +175,12 @@ export function mapProjectPayload(payload: unknown): ProjectMappingResult {
   for (const candidate of candidates) {
     const item = mapProjectCandidate(candidate, detailPages)
     if (!item) {
-      notices.push("Skipped a project_radar record without a valid public GitHub repository URL.")
+      notices.push("Skipped a project_radar record without a valid public project or source URL.")
       continue
     }
-    const existing = seen.get(item.repoUrl)
-    seen.set(item.repoUrl, existing ? mergeProjects(existing, item) : item)
+    const key = (item.fullName || item.name || item.repoUrl).toLowerCase()
+    const existing = seen.get(key)
+    seen.set(key, existing ? mergeProjects(existing, item) : item)
   }
 
   for (const item of seen.values()) {
@@ -535,7 +536,7 @@ function findRepo(raw: Record<string, unknown>): GitHubRepo | null {
   if (owner && repoName) {
     return repoFromFullName(`${owner}/${repoName}`)
   }
-  return null
+  return projectRefFromPublicSource(raw)
 }
 
 function repoUrlCandidates(value: unknown, depth = 0): unknown[] {
@@ -581,6 +582,43 @@ function repoFromFullName(value: unknown): GitHubRepo | null {
   return normalizeGitHubRepoUrl(`https://github.com/${owner}/${repo.replace(/\.git$/i, "")}`)
 }
 
+function projectRefFromPublicSource(raw: Record<string, unknown>): GitHubRepo | null {
+  const url = firstPublicSourceUrl(raw)
+  const name = firstStringFrom(raw, ["name", "project_name", "projectName", "title"])
+  if (!url || !name) return null
+
+  try {
+    const hostname = new URL(url).hostname.replace(/^www\./i, "")
+    const projectName = slugify(name) || hostname
+    return {
+      owner: hostname,
+      repo: projectName,
+      fullName: name,
+      url,
+    }
+  } catch {
+    return null
+  }
+}
+
+function firstPublicSourceUrl(raw: Record<string, unknown>): string | undefined {
+  for (const value of [
+    ...repoUrlCandidates(raw),
+    ...arrayValue(raw.evidence_refs).flatMap((ref) => {
+      const record = recordValue(ref)
+      return record ? [record.url, record.source_url, record.sourceUrl] : []
+    }),
+    ...arrayValue(raw.sourceRefs).flatMap((ref) => {
+      const record = recordValue(ref)
+      return record ? [record.url, record.source_url, record.sourceUrl] : []
+    }),
+  ]) {
+    const url = normalizeHttpsUrl(value)
+    if (url) return url
+  }
+  return undefined
+}
+
 function findDetailPage(raw: Record<string, unknown>, pages: Array<Record<string, unknown>>): Record<string, unknown> | undefined {
   const objectRef = recordValue(raw.primary_object_ref) ?? recordValue(raw.primaryObjectRef)
   const objectId = stringValue(objectRef?.object_id) ?? stringValue(objectRef?.objectId)
@@ -599,7 +637,10 @@ function findDetailPage(raw: Record<string, unknown>, pages: Array<Record<string
 
 function projectName(raw: Record<string, unknown>, repo: GitHubRepo): string {
   const value = firstStringFrom(raw, ["name", "project_name", "projectName", "title"])
-  if (!value || value.toLowerCase() === repo.owner.toLowerCase() || value.toLowerCase() === repo.fullName.toLowerCase()) {
+  if (!value) {
+    return repo.repo
+  }
+  if (repo.url.includes("github.com") && (value.toLowerCase() === repo.owner.toLowerCase() || value.toLowerCase() === repo.fullName.toLowerCase())) {
     return repo.repo
   }
   return value
@@ -747,7 +788,7 @@ function objectRefsByType(value: unknown, type: string): unknown[] {
 }
 
 function projectSourcesFromRefs(repo: GitHubRepo, raw: Record<string, unknown>, refs: EvidenceRef[]): ProjectSource[] {
-  const sources = new Set<ProjectSource>(["github"])
+  const sources = new Set<ProjectSource>(repo.url.includes("github.com") ? ["github"] : ["manual"])
   const text = [
     repo.url,
     firstStringFrom(raw, ["source", "source_type", "sourceType"]),

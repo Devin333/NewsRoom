@@ -313,7 +313,7 @@ export const PROJECT_PRODUCT_SECTIONS: ProjectProductSection[] = [
     title: "Tools",
     description: "Real Project Radar tools grouped by capability, integration surface, and deployment fit.",
     href: "/projects/tools",
-    params: { sort: "activity", source: "github", limit: 18 },
+    params: { sort: "activity", limit: 18 },
   },
   {
     id: "cases",

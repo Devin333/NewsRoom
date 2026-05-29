@@ -88,6 +88,16 @@ test("Research header opens the Projects product navigation", async ({ page, bas
   await expect(page).toHaveURL(/\/projects$/)
 })
 
+test("/projects renders the Projects product home without API failure state", async ({ page, baseURL }) => {
+  await authenticate(page, baseURL)
+  await page.goto("/projects")
+
+  await expect(page.getByRole("heading", { name: "Projects" })).toBeVisible()
+  await expect(page.getByText("Projects API v1")).toBeVisible()
+  await expect(page.locator("body")).not.toContainText("Projects failed to load")
+  await expect(page.locator("body")).not.toContainText("Internal Server Error")
+})
+
 test("/community renders the Community Pulse board", async ({ page, baseURL }) => {
   await authenticate(page, baseURL)
   await mockCommunityPulse(page)

@@ -46,20 +46,36 @@ describe("project radar mapper", () => {
     expect(JSON.stringify(result.items[0])).not.toMatch(/raw_payload|raw_html|token|secret/i)
   })
 
-  it("skips records that do not have a legal GitHub repo URL", () => {
+  it("maps non-GitHub Project Radar records from public source evidence", () => {
     const result = mapProjectPayload({
       cards: [
         {
-          card_id: "bad",
-          title: "not a repo",
-          source_url: "https://openai.com/index/example",
+          card_id: "openai-codex-signal",
+          title: "OpenAI Codex",
+          summary: "OpenAI Codex is recognized in an enterprise AI coding agent signal.",
+          evidence_refs: [
+            {
+              external_id: "ev-openai",
+              source_name: "OpenAI News",
+              source_type: "official_blog",
+              source_url: "https://openai.com/index/gartner-2026-agentic-coding-leader",
+            },
+          ],
           raw_payload: { token: "do-not-leak" },
         },
       ],
     })
 
-    expect(result.items).toHaveLength(0)
-    expect(result.notices.join(" ")).toContain("GitHub")
+    expect(result.items).toHaveLength(1)
+    expect(result.items[0]).toMatchObject({
+      id: "openai-codex-signal",
+      name: "OpenAI Codex",
+      slug: "openai-codex",
+      repoUrl: "https://openai.com/index/gartner-2026-agentic-coding-leader",
+      sources: ["manual"],
+      relationCounts: { papers: 0, news: 1, community: 0 },
+    })
+    expect(JSON.stringify(result.items[0])).not.toMatch(/raw_payload|token|secret/i)
   })
 
   it("filters, sorts, and paginates mapped projects", () => {
