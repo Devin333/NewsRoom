@@ -8,14 +8,27 @@ import type {
   ProjectProductRoute,
   ProjectProductSection,
   ProjectsApiCaseResult,
+  ProjectsApiCollection,
   ProjectsApiCollectionResult,
   ProjectsApiHomeResult,
   ProjectsApiListResult,
+  ProjectsApiProjectDetail,
   ProjectsApiToolResult,
   ProjectsApiWatchlistResult,
+  ProjectsCaseExplainRequest,
+  ProjectsCaseExplainResult,
+  ProjectsCaseMapRequest,
+  ProjectsCaseMapResult,
+  ProjectsCollectionCreateRequest,
+  ProjectsCollectionGenerateRequest,
+  ProjectsCollectionItemCreateRequest,
+  ProjectsCollectionMutationResult,
   ProjectsInteractionRequest,
   ProjectsInteractionResponse,
   ProjectsLabAnswerRequest,
+  ProjectsLabNodeExplainRequest,
+  ProjectsLabNodeExplainResult,
+  ProjectsLabSaveRequest,
   ProjectsLabSessionRequest,
   ProjectsLabSessionResponse,
   ProjectsLabSolutionResult,
@@ -25,12 +38,14 @@ import type {
   ProjectsToolRecommendResult,
   ProjectsWatchlistCreateRequest,
   ProjectsWatchlistDeleteResult,
+  ProjectsWatchlistRefreshResult,
   ProjectsWatchlistItemResponse,
   ProjectsWatchlistPatchRequest,
 } from "@/types/projects"
 
 type ApiEnvelope<T> = {
-  success: boolean
+  ok?: boolean
+  success?: boolean
   data?: T | null
   error?: {
     code: string
@@ -105,6 +120,36 @@ export async function fetchProjectsWatchlist(params: { user_id?: string } = {}, 
   return unwrapEnvelope(envelope)
 }
 
+export async function fetchProjectV1Detail(projectId: string, init?: RequestInit): Promise<ProjectsApiProjectDetail> {
+  const envelope = await apiGet<ApiEnvelope<ProjectsApiProjectDetail>>(`/api/v1/projects/${encodeURIComponent(projectId)}`, init)
+  return unwrapEnvelope(envelope)
+}
+
+export async function fetchProjectToolDetail(projectId: string, init?: RequestInit): Promise<ProjectsApiToolResult["tools"][number]> {
+  const envelope = await apiGet<ApiEnvelope<ProjectsApiToolResult["tools"][number]>>(`/api/v1/projects/tools/${encodeURIComponent(projectId)}`, init)
+  return unwrapEnvelope(envelope)
+}
+
+export async function fetchProjectCaseDetail(caseId: string, init?: RequestInit): Promise<ProjectsApiCaseResult["cases"][number]> {
+  const envelope = await apiGet<ApiEnvelope<ProjectsApiCaseResult["cases"][number]>>(`/api/v1/projects/cases/${encodeURIComponent(caseId)}`, init)
+  return unwrapEnvelope(envelope)
+}
+
+export async function explainProjectCase(caseId: string, request: ProjectsCaseExplainRequest, init?: RequestInit): Promise<ProjectsCaseExplainResult> {
+  const envelope = await apiPost<ApiEnvelope<ProjectsCaseExplainResult>>(`/api/v1/projects/cases/${encodeURIComponent(caseId)}/explain`, request, init)
+  return unwrapEnvelope(envelope)
+}
+
+export async function mapProjectCaseToContext(caseId: string, request: ProjectsCaseMapRequest, init?: RequestInit): Promise<ProjectsCaseMapResult> {
+  const envelope = await apiPost<ApiEnvelope<ProjectsCaseMapResult>>(`/api/v1/projects/cases/${encodeURIComponent(caseId)}/map-to-context`, request, init)
+  return unwrapEnvelope(envelope)
+}
+
+export async function fetchProjectCollectionDetail(slug: string, init?: RequestInit): Promise<ProjectsApiCollection> {
+  const envelope = await apiGet<ApiEnvelope<ProjectsApiCollection>>(`/api/v1/projects/collections/${encodeURIComponent(slug)}`, init)
+  return unwrapEnvelope(envelope)
+}
+
 export async function compareProjectTools(request: ProjectsToolCompareRequest, init?: RequestInit): Promise<ProjectsToolCompareResult> {
   const envelope = await apiPost<ApiEnvelope<ProjectsToolCompareResult>>("/api/v1/projects/tools/compare", request, init)
   return unwrapEnvelope(envelope)
@@ -142,6 +187,66 @@ export async function generateProjectLabSolution(sessionId: string, init?: Reque
   return unwrapEnvelope(envelope)
 }
 
+export async function fetchProjectLabSession(sessionId: string, init?: RequestInit): Promise<ProjectsLabSessionResponse> {
+  const envelope = await apiGet<ApiEnvelope<ProjectsLabSessionResponse>>(`/api/v1/projects/lab/sessions/${encodeURIComponent(sessionId)}`, init)
+  return unwrapEnvelope(envelope)
+}
+
+export async function explainProjectLabNode(
+  sessionId: string,
+  request: ProjectsLabNodeExplainRequest,
+  init?: RequestInit
+): Promise<ProjectsLabNodeExplainResult> {
+  const envelope = await apiPost<ApiEnvelope<ProjectsLabNodeExplainResult>>(
+    `/api/v1/projects/lab/sessions/${encodeURIComponent(sessionId)}/explain-node`,
+    request,
+    init
+  )
+  return unwrapEnvelope(envelope)
+}
+
+export async function saveProjectLabSession(
+  sessionId: string,
+  request: ProjectsLabSaveRequest,
+  init?: RequestInit
+): Promise<ProjectsLabSessionResponse> {
+  const envelope = await apiPost<ApiEnvelope<ProjectsLabSessionResponse>>(
+    `/api/v1/projects/lab/sessions/${encodeURIComponent(sessionId)}/save`,
+    request,
+    init
+  )
+  return unwrapEnvelope(envelope)
+}
+
+export async function createProjectCollection(
+  request: ProjectsCollectionCreateRequest,
+  init?: RequestInit
+): Promise<ProjectsCollectionMutationResult> {
+  const envelope = await apiPost<ApiEnvelope<ProjectsCollectionMutationResult>>("/api/v1/projects/collections", request, init)
+  return unwrapEnvelope(envelope)
+}
+
+export async function addProjectCollectionItem(
+  collectionId: string,
+  request: ProjectsCollectionItemCreateRequest,
+  init?: RequestInit
+): Promise<ProjectsCollectionMutationResult> {
+  const envelope = await apiPost<ApiEnvelope<ProjectsCollectionMutationResult>>(
+    `/api/v1/projects/collections/${encodeURIComponent(collectionId)}/items`,
+    request,
+    init
+  )
+  return unwrapEnvelope(envelope)
+}
+
+export async function generateProjectCollection(
+  request: ProjectsCollectionGenerateRequest,
+  init?: RequestInit
+): Promise<ProjectsCollectionMutationResult> {
+  const envelope = await apiPost<ApiEnvelope<ProjectsCollectionMutationResult>>("/api/v1/projects/collections/generate", request, init)
+  return unwrapEnvelope(envelope)
+}
+
 export async function addProjectWatchlistItem(
   request: ProjectsWatchlistCreateRequest,
   init?: RequestInit
@@ -166,6 +271,15 @@ export async function patchProjectWatchlistItem(
 export async function deleteProjectWatchlistItem(itemId: string, init?: RequestInit): Promise<ProjectsWatchlistDeleteResult> {
   const envelope = await apiDelete<ApiEnvelope<ProjectsWatchlistDeleteResult>>(
     `/api/v1/projects/watchlist/${encodeURIComponent(itemId)}`,
+    init
+  )
+  return unwrapEnvelope(envelope)
+}
+
+export async function refreshProjectWatchlistItem(itemId: string, init?: RequestInit): Promise<ProjectsWatchlistRefreshResult> {
+  const envelope = await apiPost<ApiEnvelope<ProjectsWatchlistRefreshResult>>(
+    `/api/v1/projects/watchlist/${encodeURIComponent(itemId)}/refresh`,
+    undefined,
     init
   )
   return unwrapEnvelope(envelope)
@@ -260,7 +374,7 @@ export async function fetchProjectProductSection(
 }
 
 function unwrapEnvelope<T>(envelope: ApiEnvelope<T>): T {
-  if (envelope.success && envelope.data) {
+  if ((envelope.success || envelope.ok) && envelope.data) {
     return envelope.data
   }
   const error = envelope.error

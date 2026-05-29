@@ -15,6 +15,7 @@ import {
   fetchProjectProductSection,
   fetchProjectsHome,
   generateProjectLabSolution,
+  recordProjectInteraction,
   projectProductSection,
   startProjectLabSession,
 } from "@/lib/projects/api"
@@ -202,7 +203,7 @@ function ToolsView({ data }: { data: ProjectsApiToolResult }) {
           title={tool.project.name}
           subtitle={`${labelize(tool.profile.tool_type)} / ${tool.profile.integration_difficulty}`}
           body={tool.fit_reason ?? tool.project.description ?? ""}
-          href={`/projects/${tool.project.slug}`}
+          href={`/projects/tools/${encodeURIComponent(tool.project.id)}`}
         />
       ))}
     </section>
@@ -214,7 +215,13 @@ function CasesView({ data }: { data: ProjectsApiCaseResult }) {
   return (
     <section className="grid gap-4 lg:grid-cols-2">
       {data.cases.map((item) => (
-        <SimplePanel key={item.id} title={item.title} subtitle={`${item.business_domain} / ${item.module_type}`} body={String(item.design_summary ?? item.problem ?? "")} />
+        <SimplePanel
+          key={item.id}
+          title={item.title}
+          subtitle={`${item.business_domain} / ${item.module_type}`}
+          body={String(item.design_summary ?? item.problem ?? "")}
+          href={`/projects/cases/${encodeURIComponent(item.id)}`}
+        />
       ))}
     </section>
   )
@@ -225,7 +232,13 @@ function CollectionsView({ data }: { data: ProjectsApiCollectionResult }) {
   return (
     <section className="grid gap-4 lg:grid-cols-2">
       {data.collections.map((item) => (
-        <SimplePanel key={item.id} title={item.title} subtitle={`${item.item_count ?? 0} items`} body={item.description} />
+        <SimplePanel
+          key={item.id}
+          title={item.title}
+          subtitle={`${item.item_count ?? 0} items`}
+          body={item.description}
+          href={`/projects/collections/${encodeURIComponent(item.slug)}`}
+        />
       ))}
     </section>
   )
@@ -243,6 +256,12 @@ function WatchlistView({ data, onChanged }: { data: ProjectsApiWatchlistResult; 
         priority,
       }),
     onSuccess: () => {
+      void recordProjectInteraction({
+        event_type: "watch_added",
+        target_type: "project",
+        target_id: projectId.trim(),
+        action_value: priority,
+      })
       setProjectId("")
       setReason("")
       setPriority("medium")
@@ -306,6 +325,12 @@ function LabView({ data }: { data: ProductData }) {
         selected_case_ids: selectedCaseIds,
       }),
     onSuccess: (result) => {
+      void recordProjectInteraction({
+        event_type: "lab_started",
+        target_type: "lab_session",
+        target_id: result.session.id,
+        query_text: problem.trim(),
+      })
       setSession(result.session)
       setSolution(null)
       setAnswer("")
@@ -317,6 +342,12 @@ function LabView({ data }: { data: ProductData }) {
       return answerProjectLabQuestion(session.id, { question_id: activeQuestion.id, answer: answer.trim() })
     },
     onSuccess: (result) => {
+      void recordProjectInteraction({
+        event_type: "question_answered",
+        target_type: "lab_session",
+        target_id: session?.id,
+        action_value: activeQuestion?.id,
+      })
       setSession(result.session)
       setAnswer("")
     },
@@ -327,6 +358,11 @@ function LabView({ data }: { data: ProductData }) {
       return generateProjectLabSolution(session.id)
     },
     onSuccess: (result) => {
+      void recordProjectInteraction({
+        event_type: "solution_generated",
+        target_type: "lab_session",
+        target_id: session?.id,
+      })
       setSession(result.session)
       setSolution(result)
     },
@@ -383,7 +419,12 @@ function LabView({ data }: { data: ProductData }) {
             {answerQuestion.isError ? <p className="text-sm text-destructive">{answerQuestion.error instanceof Error ? answerQuestion.error.message : "Answer failed"}</p> : null}
             {generateSolution.isError ? <p className="text-sm text-destructive">{generateSolution.error instanceof Error ? generateSolution.error.message : "Solution failed"}</p> : null}
             {solution ? (
-              <pre className="max-h-72 overflow-auto rounded-md bg-[#111827] p-3 text-xs text-white">{JSON.stringify(solution.solution, null, 2)}</pre>
+              <div className="space-y-3">
+                <Button asChild variant="outline" size="sm">
+                  <Link href={`/projects/lab/${encodeURIComponent(solution.session.id)}`}>Open Session Detail</Link>
+                </Button>
+                <pre className="max-h-72 overflow-auto rounded-md bg-[#111827] p-3 text-xs text-white">{JSON.stringify(solution.solution, null, 2)}</pre>
+              </div>
             ) : null}
           </>
         ) : (

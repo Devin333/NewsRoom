@@ -226,6 +226,21 @@ export type ProjectsApiListResult = {
   metrics: ProjectsApiMetric[]
 }
 
+export type ProjectsApiProjectDetail = {
+  project: ProjectsApiProject
+  sources: Array<Record<string, unknown>>
+  metrics: Array<Record<string, unknown>>
+  growth: Array<Record<string, unknown>>
+  capabilities: Array<Record<string, unknown>>
+  tool_profile?: ProjectsApiTool["profile"] | null
+  cases: ProjectsApiCase[]
+  collections?: ProjectsApiCollection[]
+  watch_status?: ProjectsApiWatchlistItem | null
+  recommended_actions?: Array<Record<string, unknown>>
+  ranking?: Record<string, unknown>
+  meta: ProjectsApiMeta
+}
+
 export type ProjectsApiTool = {
   project: ProjectsApiProject
   profile: {
@@ -274,6 +289,37 @@ export type ProjectsApiCaseResult = {
   meta: ProjectsApiMeta
 }
 
+export type ProjectsCaseExplainRequest = {
+  style?: "plain" | "technical" | "migration"
+  user_context?: string | null
+}
+
+export type ProjectsCaseExplainResult = {
+  case_id: string
+  style: "plain" | "technical" | "migration"
+  summary: string
+  key_points: string[]
+  component_explanations: Array<Record<string, unknown>>
+  pattern_explanations: Array<Record<string, unknown>>
+  migration_notes: string[]
+  source_refs: string[]
+}
+
+export type ProjectsCaseMapRequest = {
+  user_context: string
+  target_module?: string | null
+  constraints?: string[]
+}
+
+export type ProjectsCaseMapResult = {
+  case_id: string
+  fit_score: number
+  reusable_components: Array<Record<string, unknown>>
+  migration_steps: string[]
+  cautions: string[]
+  source_refs: string[]
+}
+
 export type ProjectsApiCollection = Record<string, unknown> & {
   id: string
   slug: string
@@ -285,6 +331,38 @@ export type ProjectsApiCollection = Record<string, unknown> & {
 export type ProjectsApiCollectionResult = {
   collections: ProjectsApiCollection[]
   meta: ProjectsApiMeta
+}
+
+export type ProjectsCollectionMutationResult = {
+  collection: ProjectsApiCollection
+  meta: ProjectsApiMeta
+}
+
+export type ProjectsCollectionCreateRequest = {
+  title: string
+  description: string
+  collection_type?: string
+  tags?: string[]
+  target_audience?: string[]
+  learning_goals?: string[]
+}
+
+export type ProjectsCollectionItemCreateRequest = {
+  item_type: "project" | "tool" | "case" | "pattern" | "external_link"
+  item_id?: string | null
+  external_url?: string | null
+  title: string
+  reason: string
+  order?: number | null
+  difficulty?: string | null
+  recommended_action?: string | null
+}
+
+export type ProjectsCollectionGenerateRequest = {
+  topic: string
+  project_ids?: string[]
+  case_ids?: string[]
+  collection_type?: string
 }
 
 export type ProjectsApiWatchlistItem = Record<string, unknown> & {
@@ -360,6 +438,24 @@ export type ProjectsLabSolutionResult = {
   solution: Record<string, unknown>
 }
 
+export type ProjectsLabNodeExplainRequest = {
+  node_id: string
+  style?: "plain" | "technical"
+}
+
+export type ProjectsLabNodeExplainResult = {
+  session_id: string
+  node_id: string
+  title: string
+  explanation: string
+  related_nodes: Array<Record<string, unknown>>
+}
+
+export type ProjectsLabSaveRequest = {
+  status?: "saved" | "adopted" | "archived"
+  note?: string | null
+}
+
 export type ProjectsWatchlistCreateRequest = {
   project_id: string
   user_id?: string | null
@@ -385,6 +481,12 @@ export type ProjectsWatchlistItemResponse = {
 export type ProjectsWatchlistDeleteResult = {
   deleted: boolean
   item_id: string
+}
+
+export type ProjectsWatchlistRefreshResult = {
+  item: ProjectsApiWatchlistItem
+  signals: Array<Record<string, unknown>>
+  meta: ProjectsApiMeta
 }
 
 export type ProjectsInteractionRequest = {

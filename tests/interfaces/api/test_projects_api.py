@@ -17,7 +17,8 @@ def test_projects_api_registers_product_routes_with_envelope() -> None:
     assert payload["success"] is True
     assert payload["request_id"] == "req-projects"
     assert payload["data"]["hot"][0]["id"] == "project-1"
-    assert service.calls[0] == ("get_home", {"limit": 6, "user_id": None})
+    assert payload["ok"] is True
+    assert service.calls[0] == ("get_home", {"limit": 6, "user_id": "anonymous"})
 
 
 def test_projects_api_hot_rising_tools_cases_collections_and_detail_routes() -> None:
@@ -33,6 +34,8 @@ def test_projects_api_hot_rising_tools_cases_collections_and_detail_routes() -> 
         "/api/v1/projects/cases/case-1",
         "/api/v1/projects/collections",
         "/api/v1/projects/collections/collection-1",
+        "/api/v1/projects/lab/sessions/session-1",
+        "/api/v1/projects/evolution/proposals",
         "/api/v1/projects/project-1",
     ]
 
@@ -54,23 +57,63 @@ def test_projects_api_mutation_routes_use_service_boundary() -> None:
         json={"question_id": "question-1", "answer": "release cadence"},
     )
     solution = client.post("/api/v1/projects/lab/sessions/session-1/generate-solution")
+    explain_node = client.post(
+        "/api/v1/projects/lab/sessions/session-1/explain-node",
+        json={"node_id": "node-1"},
+    )
+    save_session = client.post("/api/v1/projects/lab/sessions/session-1/save", json={"status": "saved"})
+    explain_case = client.post("/api/v1/projects/cases/case-1/explain", json={"style": "plain"})
+    map_case = client.post(
+        "/api/v1/projects/cases/case-1/map-to-context",
+        json={"user_context": "Need workflow design"},
+    )
+    create_collection = client.post(
+        "/api/v1/projects/collections",
+        json={"title": "Workflow Picks", "description": "Real project collection."},
+    )
+    add_collection_item = client.post(
+        "/api/v1/projects/collections/collection-1/items",
+        json={"item_type": "project", "item_id": "project-1", "title": "Project One", "reason": "Relevant."},
+    )
+    generate_collection = client.post("/api/v1/projects/collections/generate", json={"topic": "workflow"})
     add_watch = client.post(
         "/api/v1/projects/watchlist",
         json={"project_id": "project-1", "watch_reason": "Track releases"},
     )
     patch_watch = client.patch("/api/v1/projects/watchlist/watch-1", json={"priority": "high"})
+    refresh_watch = client.post("/api/v1/projects/watchlist/watch-1/refresh")
     delete_watch = client.delete("/api/v1/projects/watchlist/watch-1")
     event = client.post(
         "/api/v1/projects/interactions",
         json={"event_type": "view", "target_type": "project", "target_id": "project-1"},
     )
 
-    for response in [compare, recommend, session, answer, solution, add_watch, patch_watch, delete_watch, event]:
+    for response in [
+        compare,
+        recommend,
+        session,
+        answer,
+        solution,
+        explain_node,
+        save_session,
+        explain_case,
+        map_case,
+        create_collection,
+        add_collection_item,
+        generate_collection,
+        add_watch,
+        patch_watch,
+        refresh_watch,
+        delete_watch,
+        event,
+    ]:
         assert response.status_code == 200
         assert response.json()["success"] is True
+        assert response.json()["ok"] is True
 
     assert ("compare_tools", {"project_ids": ["project-1"]}) in service.calls
     assert ("record_interaction", {"event_type": "view", "target_id": "project-1"}) in service.calls
+    assert ("patch_watchlist", {"item_id": "watch-1", "priority": "high", "user_id": "anonymous"}) in service.calls
 
 
 def test_projects_api_not_found_errors_use_standard_envelope() -> None:
@@ -82,6 +125,7 @@ def test_projects_api_not_found_errors_use_standard_envelope() -> None:
 
     assert response.status_code == 404
     assert payload["success"] is False
+    assert payload["ok"] is False
     assert payload["request_id"] == "req-missing"
     assert payload["error"]["code"] == "project_not_found"
 
@@ -145,6 +189,14 @@ class _FakeProjectApplicationService:
         self.calls.append(("get_case_detail", {"case_id": case_id}))
         return _case()
 
+    def explain_case(self, case_id, request):
+        self.calls.append(("explain_case", {"case_id": case_id, "style": request.style}))
+        return {"case_id": case_id, "style": request.style, "summary": "Plain case explanation.", "source_refs": []}
+
+    def map_case_to_context(self, case_id, request):
+        self.calls.append(("map_case_to_context", {"case_id": case_id, "user_context": request.user_context}))
+        return {"case_id": case_id, "fit_score": 0.8, "migration_steps": ["Reuse source-backed component."]}
+
     def list_collections(self):
         self.calls.append(("list_collections", {}))
         return {"collections": [_collection()], "meta": _meta()}
@@ -153,8 +205,24 @@ class _FakeProjectApplicationService:
         self.calls.append(("get_collection", {"slug": slug}))
         return _collection()
 
+    def create_collection(self, request):
+        self.calls.append(("create_collection", {"title": request.title, "created_by": request.created_by}))
+        return {"collection": _collection(), "meta": _meta()}
+
+    def add_collection_item(self, collection_id, request):
+        self.calls.append(("add_collection_item", {"collection_id": collection_id, "item_type": request.item_type}))
+        return {"collection": _collection(), "meta": _meta()}
+
+    def generate_collection(self, request):
+        self.calls.append(("generate_collection", {"topic": request.topic, "created_by": request.created_by}))
+        return {"collection": _collection(), "meta": _meta()}
+
     def start_lab_session(self, request):
-        self.calls.append(("start_lab_session", {"user_problem": request.user_problem}))
+        self.calls.append(("start_lab_session", {"user_problem": request.user_problem, "user_id": request.user_id}))
+        return _session()
+
+    def get_lab_session(self, session_id):
+        self.calls.append(("get_lab_session", {"session_id": session_id}))
         return _session()
 
     def answer_lab_question(self, session_id, request):
@@ -165,6 +233,14 @@ class _FakeProjectApplicationService:
         self.calls.append(("generate_lab_solution", {"session_id": session_id}))
         return {"session": _session(), "solution": {"id": "solution-1"}}
 
+    def explain_lab_node(self, session_id, request):
+        self.calls.append(("explain_lab_node", {"session_id": session_id, "node_id": request.node_id}))
+        return {"session_id": session_id, "node_id": request.node_id, "title": "Node", "explanation": "Node explanation."}
+
+    def save_lab_session(self, session_id, request):
+        self.calls.append(("save_lab_session", {"session_id": session_id, "status": request.status}))
+        return _session()
+
     def list_watchlist(self, *, user_id=None):
         self.calls.append(("list_watchlist", {"user_id": user_id}))
         return {"items": [], "meta": _meta()}
@@ -173,17 +249,25 @@ class _FakeProjectApplicationService:
         self.calls.append(("add_watchlist", {"project_id": request.project_id}))
         return {"id": "watch-1", "user_id": "anonymous", "project_id": request.project_id, "watch_reason": request.watch_reason, "status": "active"}
 
-    def patch_watchlist(self, item_id, request):
-        self.calls.append(("patch_watchlist", {"item_id": item_id, "priority": request.priority}))
+    def patch_watchlist(self, item_id, request, *, user_id=None):
+        self.calls.append(("patch_watchlist", {"item_id": item_id, "priority": request.priority, "user_id": user_id}))
         return {"id": item_id, "user_id": "anonymous", "project_id": "project-1", "watch_reason": "Track", "priority": request.priority, "status": "active"}
 
-    def delete_watchlist(self, item_id):
-        self.calls.append(("delete_watchlist", {"item_id": item_id}))
+    def refresh_watchlist(self, item_id, *, user_id=None):
+        self.calls.append(("refresh_watchlist", {"item_id": item_id, "user_id": user_id}))
+        return {"item": {"id": item_id, "user_id": "anonymous", "project_id": "project-1", "watch_reason": "Track"}, "signals": [], "meta": _meta()}
+
+    def delete_watchlist(self, item_id, *, user_id=None):
+        self.calls.append(("delete_watchlist", {"item_id": item_id, "user_id": user_id}))
         return {"deleted": True, "item_id": item_id}
 
     def record_interaction(self, request):
         self.calls.append(("record_interaction", {"event_type": request.event_type, "target_id": request.target_id}))
         return {"id": "event-1", "event_type": request.event_type, "target_type": request.target_type, "target_id": request.target_id}
+
+    def list_evolution_proposals(self):
+        self.calls.append(("list_evolution_proposals", {}))
+        return {"proposals": []}
 
 
 def _project():
@@ -199,7 +283,7 @@ def _collection():
 
 
 def _session():
-    return {"id": "session-1", "user_problem": "Need agent workflow", "graph_state": {"session_id": "session-1"}, "questions": [], "status": "active"}
+    return {"id": "session-1", "user_problem": "Need agent workflow", "graph_state": {"session_id": "session-1", "nodes": [{"id": "node-1"}]}, "questions": [], "status": "active"}
 
 
 def _meta():

@@ -1,13 +1,13 @@
-import { notFound } from "next/navigation"
-import { ProjectDetailPanel } from "@/features/projects/components/project-detail-panel"
-import { getProjectDetail } from "@/lib/projects/data-source"
+import { Suspense } from "react"
+import { PageSkeleton } from "@/components/common/loading-skeleton"
+import { ProjectV1DetailPage } from "@/features/projects/components/projects-detail-pages"
 
 export const dynamic = "force-dynamic"
 
-export default async function ProjectDetailPage({ params }: { params: { slug: string } }) {
-  const result = await getProjectDetail(params.slug)
-  if (!result) {
-    notFound()
-  }
-  return <ProjectDetailPanel project={result.project} />
+export default function ProjectDetailPage({ params }: { params: { slug: string } }) {
+  return (
+    <Suspense fallback={<PageSkeleton />}>
+      <ProjectV1DetailPage projectId={params.slug} />
+    </Suspense>
+  )
 }

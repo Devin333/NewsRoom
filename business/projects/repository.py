@@ -12,6 +12,7 @@ from business.projects.bridge import ProjectRadarBridge
 from business.projects.models import (
     EvolutionProposal,
     LabSession,
+    ProjectCollection,
     ProjectDataset,
     UserProjectInteractionEvent,
     WatchlistItem,
@@ -30,6 +31,7 @@ MANIFEST_CANDIDATE = "manifest.json"
 class ProjectState(PrimitiveModel):
     watchlist_items: list[WatchlistItem] = Field(default_factory=list)
     lab_sessions: list[LabSession] = Field(default_factory=list)
+    user_collections: list[ProjectCollection] = Field(default_factory=list)
     interaction_events: list[UserProjectInteractionEvent] = Field(default_factory=list)
     evolution_proposals: list[EvolutionProposal] = Field(default_factory=list)
 
@@ -106,6 +108,19 @@ class ProjectStateRepository:
         return ProjectState.model_validate(payload)
 
     def save(self, state: ProjectState) -> ProjectState:
+        with _state_lock(self.path):
+            return self._save_unlocked(state)
+
+    def update(self, updater) -> ProjectState:
+        with _state_lock(self.path):
+            payload = _read_json(self.path)
+            current = ProjectState.model_validate(payload) if isinstance(payload, dict) else ProjectState()
+            updated = updater(current)
+            if not isinstance(updated, ProjectState):
+                raise TypeError("ProjectStateRepository.update callback must return ProjectState")
+            return self._save_unlocked(updated)
+
+    def _save_unlocked(self, state: ProjectState) -> ProjectState:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp_path = self.path.with_suffix(f"{self.path.suffix}.tmp")
         tmp_path.write_text(
@@ -116,24 +131,19 @@ class ProjectStateRepository:
         return state
 
     def replace_watchlist(self, items: list[WatchlistItem]) -> ProjectState:
-        state = self.load()
-        updated = state.model_copy(update={"watchlist_items": list(items)})
-        return self.save(updated)
+        return self.update(lambda state: state.model_copy(update={"watchlist_items": list(items)}))
 
     def replace_lab_sessions(self, sessions: list[LabSession]) -> ProjectState:
-        state = self.load()
-        updated = state.model_copy(update={"lab_sessions": list(sessions)})
-        return self.save(updated)
+        return self.update(lambda state: state.model_copy(update={"lab_sessions": list(sessions)}))
+
+    def replace_user_collections(self, collections: list[ProjectCollection]) -> ProjectState:
+        return self.update(lambda state: state.model_copy(update={"user_collections": list(collections)}))
 
     def append_interaction(self, event: UserProjectInteractionEvent) -> ProjectState:
-        state = self.load()
-        updated = state.model_copy(update={"interaction_events": [*state.interaction_events, event]})
-        return self.save(updated)
+        return self.update(lambda state: state.model_copy(update={"interaction_events": [*state.interaction_events, event]}))
 
     def replace_evolution_proposals(self, proposals: list[EvolutionProposal]) -> ProjectState:
-        state = self.load()
-        updated = state.model_copy(update={"evolution_proposals": list(proposals)})
-        return self.save(updated)
+        return self.update(lambda state: state.model_copy(update={"evolution_proposals": list(proposals)}))
 
 
 def _read_json(path: Path) -> Any | None:
@@ -178,11 +188,26 @@ def _manifest_artifact_paths(run_dir: Path, manifest: dict[str, Any]) -> list[Pa
 
 def _paths_from_manifest_value(run_dir: Path, value: Any) -> list[Path]:
     if isinstance(value, str):
-        return [run_dir / value]
+        path = _safe_manifest_path(run_dir, value)
+        return [path] if path is not None else []
     if isinstance(value, dict):
         candidates = [value.get("path"), value.get("relative_path"), value.get("artifact_path"), value.get("file")]
-        return [run_dir / str(candidate) for candidate in candidates if candidate]
+        paths = [_safe_manifest_path(run_dir, str(candidate)) for candidate in candidates if candidate]
+        return [path for path in paths if path is not None]
     return []
+
+
+def _safe_manifest_path(run_dir: Path, value: str) -> Path | None:
+    candidate = Path(value)
+    if candidate.is_absolute():
+        return None
+    try:
+        resolved_run_dir = run_dir.resolve()
+        resolved_candidate = (run_dir / candidate).resolve()
+        resolved_candidate.relative_to(resolved_run_dir)
+    except (OSError, ValueError):
+        return None
+    return resolved_candidate
 
 
 def _manifest_mentions_project_radar(manifest: Any) -> bool:
@@ -231,3 +256,40 @@ def _is_relative_to(path: Path, parent: Path) -> bool:
         return True
     except ValueError:
         return False
+
+
+class _state_lock:
+    def __init__(self, path: Path) -> None:
+        self.lock_path = path.with_suffix(f"{path.suffix}.lock")
+        self.handle = None
+
+    def __enter__(self):
+        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
+        self.handle = self.lock_path.open("a+b")
+        if self.handle.tell() == 0:
+            self.handle.write(b"\0")
+            self.handle.flush()
+        self.handle.seek(0)
+        if os.name == "nt":
+            import msvcrt
+
+            msvcrt.locking(self.handle.fileno(), msvcrt.LK_LOCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(self.handle.fileno(), fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        if self.handle is None:
+            return
+        if os.name == "nt":
+            import msvcrt
+
+            self.handle.seek(0)
+            msvcrt.locking(self.handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(self.handle.fileno(), fcntl.LOCK_UN)
+        self.handle.close()

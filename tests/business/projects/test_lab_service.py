@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from business.projects.dto import LabAnswerRequest, LabSessionRequest
+from business.projects.dto import LabAnswerRequest, LabNodeExplainRequest, LabSaveRequest, LabSessionRequest
 from business.projects.models import ProjectDataset
 from business.projects.repository import ProjectStateRepository
 from business.projects.service import ProjectDomainService
@@ -29,15 +29,29 @@ def test_lab_session_generates_profile_graph_question_and_solution(tmp_path) -> 
         session.id,
         LabAnswerRequest(question_id=session.questions[0].id, answer="Release quality score"),
     )
+    fetched = service.get_lab_session(session.id)
+    explained = service.explain_lab_node(
+        session.id,
+        LabNodeExplainRequest(node_id=session.graph_state.nodes[0].id),
+    )
     solution = service.generate_lab_solution(session.id)
+    saved = service.save_lab_session(session.id, LabSaveRequest(status="saved", note="Ready for backlog review."))
 
     assert session.requirement_profile["matched_case_count"] == 1
     assert session.graph_state.nodes
     assert session.questions
+    assert fetched is not None
+    assert fetched.id == session.id
+    assert explained is not None
+    assert "original user problem" in explained.explanation
     assert answered is not None
     assert answered.questions[0].answered_value == "Release quality score"
     assert solution is not None
     assert solution.solution["solution_json"]["data_policy"] == "real_project_radar_only"
+    assert solution.solution["solution_json"]["minimum_viable_version"]
+    assert solution.solution["solution_json"]["non_goals"]
+    assert saved is not None
+    assert saved.status.value == "saved"
 
 
 def test_lab_session_without_cases_does_not_invent_case_references(tmp_path) -> None:

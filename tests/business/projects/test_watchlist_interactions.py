@@ -60,3 +60,30 @@ def test_watchlist_rejects_unknown_project(tmp_path) -> None:
         assert "project not found" in str(exc)
     else:
         raise AssertionError("unknown project should be rejected")
+
+
+def test_watchlist_mutations_are_scoped_to_owner(tmp_path) -> None:
+    service = ProjectDomainService(
+        artifact_repository=_StaticArtifactRepository(),
+        state_repository=ProjectStateRepository(tmp_path / "state.json"),
+    )
+
+    item = service.add_watchlist(
+        WatchlistCreateRequest(
+            project_id="project-langfuse",
+            user_id="owner-a",
+            watch_reason="Track releases.",
+        )
+    )
+
+    assert service.patch_watchlist(item.id, request=_patch_request(priority="high"), user_id="owner-b") is None
+    assert service.refresh_watchlist(item.id, user_id="owner-b") is None
+    assert service.delete_watchlist(item.id, user_id="owner-b") is False
+    assert service.list_watchlist(user_id="owner-a").items[0].id == item.id
+    assert service.patch_watchlist(item.id, request=_patch_request(priority="high"), user_id="owner-a") is not None
+
+
+def _patch_request(**kwargs):
+    from business.projects.dto import WatchlistPatchRequest
+
+    return WatchlistPatchRequest(**kwargs)

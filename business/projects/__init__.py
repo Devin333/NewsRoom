@@ -1,8 +1,15 @@
 from business.projects.bridge import ProjectRadarBridge
 from business.projects.dto import (
+    CaseExplainRequest,
+    CaseMapRequest,
     CaseSearchQuery,
+    CollectionCreateRequest,
+    CollectionGenerateRequest,
+    CollectionItemCreateRequest,
     InteractionRequest,
     LabAnswerRequest,
+    LabNodeExplainRequest,
+    LabSaveRequest,
     LabSessionRequest,
     ProjectListQuery,
     ToolCompareRequest,
@@ -35,11 +42,18 @@ from business.projects.repository import ProjectArtifactRepository, ProjectState
 from business.projects.service import ProjectDomainService
 
 __all__ = [
+    "CaseExplainRequest",
+    "CaseMapRequest",
     "CaseSearchQuery",
+    "CollectionCreateRequest",
+    "CollectionGenerateRequest",
+    "CollectionItemCreateRequest",
     "CollectionType",
     "InteractionRequest",
     "IntegrationDifficulty",
     "LabAnswerRequest",
+    "LabNodeExplainRequest",
+    "LabSaveRequest",
     "LabSession",
     "LabSessionRequest",
     "LabSessionStatus",

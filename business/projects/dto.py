@@ -5,7 +5,7 @@ from typing import Any, Literal
 from pydantic import Field
 
 from business.foundation import PrimitiveModel
-from business.projects.enums import IntegrationDifficulty
+from business.projects.enums import CollectionType, IntegrationDifficulty
 from business.projects.models import (
     LabSession,
     ModuleCase,
@@ -169,8 +169,73 @@ class CaseSearchResult(PrimitiveModel):
     meta: DatasetMeta = Field(default_factory=DatasetMeta)
 
 
+class CaseExplainRequest(PrimitiveModel):
+    style: Literal["plain", "technical", "migration"] = "plain"
+    user_context: str | None = None
+
+
+class CaseExplainResult(PrimitiveModel):
+    case_id: str
+    style: Literal["plain", "technical", "migration"]
+    summary: str
+    key_points: list[str] = Field(default_factory=list)
+    component_explanations: list[dict[str, Any]] = Field(default_factory=list)
+    pattern_explanations: list[dict[str, Any]] = Field(default_factory=list)
+    migration_notes: list[str] = Field(default_factory=list)
+    source_refs: list[str] = Field(default_factory=list)
+
+
+class CaseMapRequest(PrimitiveModel):
+    user_context: str
+    target_module: str | None = None
+    constraints: list[str] = Field(default_factory=list)
+
+
+class CaseMapResult(PrimitiveModel):
+    case_id: str
+    fit_score: float
+    reusable_components: list[dict[str, Any]] = Field(default_factory=list)
+    migration_steps: list[str] = Field(default_factory=list)
+    cautions: list[str] = Field(default_factory=list)
+    source_refs: list[str] = Field(default_factory=list)
+
+
 class CollectionSearchResult(PrimitiveModel):
     collections: list[ProjectCollection] = Field(default_factory=list)
+    meta: DatasetMeta = Field(default_factory=DatasetMeta)
+
+
+class CollectionCreateRequest(PrimitiveModel):
+    title: str
+    description: str
+    collection_type: CollectionType = CollectionType.TOPIC
+    tags: list[str] = Field(default_factory=list)
+    target_audience: list[str] = Field(default_factory=list)
+    learning_goals: list[str] = Field(default_factory=list)
+    created_by: str | None = None
+
+
+class CollectionItemCreateRequest(PrimitiveModel):
+    item_type: Literal["project", "tool", "case", "pattern", "external_link"]
+    item_id: str | None = None
+    external_url: str | None = None
+    title: str
+    reason: str
+    order: int | None = None
+    difficulty: str | None = None
+    recommended_action: str | None = None
+
+
+class CollectionGenerateRequest(PrimitiveModel):
+    topic: str
+    project_ids: list[str] = Field(default_factory=list)
+    case_ids: list[str] = Field(default_factory=list)
+    collection_type: CollectionType = CollectionType.TOPIC
+    created_by: str | None = None
+
+
+class CollectionMutationResult(PrimitiveModel):
+    collection: ProjectCollection
     meta: DatasetMeta = Field(default_factory=DatasetMeta)
 
 
@@ -194,6 +259,24 @@ class LabSolutionResult(PrimitiveModel):
     solution: dict[str, Any]
 
 
+class LabNodeExplainRequest(PrimitiveModel):
+    node_id: str
+    style: Literal["plain", "technical"] = "plain"
+
+
+class LabNodeExplainResult(PrimitiveModel):
+    session_id: str
+    node_id: str
+    title: str
+    explanation: str
+    related_nodes: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class LabSaveRequest(PrimitiveModel):
+    status: Literal["saved", "adopted", "archived"] = "saved"
+    note: str | None = None
+
+
 class WatchlistCreateRequest(PrimitiveModel):
     project_id: str
     user_id: str | None = None
@@ -214,6 +297,12 @@ class WatchlistPatchRequest(PrimitiveModel):
 
 class WatchlistResult(PrimitiveModel):
     items: list[WatchlistItem] = Field(default_factory=list)
+    meta: DatasetMeta = Field(default_factory=DatasetMeta)
+
+
+class WatchlistRefreshResult(PrimitiveModel):
+    item: WatchlistItem
+    signals: list[dict[str, Any]] = Field(default_factory=list)
     meta: DatasetMeta = Field(default_factory=DatasetMeta)
 
 

@@ -18,13 +18,15 @@ _REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 
 
 def success(data: dict[str, Any] | BaseModel | None = None) -> dict[str, Any]:
-    return model_to_dict(
+    payload = model_to_dict(
         ApiResponse(
             success=True,
             data=model_to_dict(data) if data is not None else None,
             request_id=current_request_id(),
         )
     )
+    payload["ok"] = True
+    return payload
 
 
 def error(
@@ -50,7 +52,9 @@ def error(
         ),
         request_id=request_id,
     )
-    return JSONResponse(status_code=status_code, content=model_to_dict(payload), headers=headers)
+    content = model_to_dict(payload)
+    content["ok"] = False
+    return JSONResponse(status_code=status_code, content=content, headers=headers)
 
 
 def model_to_dict(value: Any) -> dict[str, Any]:
