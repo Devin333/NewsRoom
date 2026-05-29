@@ -20,6 +20,7 @@ from interfaces.services.paper_reader_interaction_service import PaperReaderInte
 from interfaces.services.paper_reader_notes_service import PaperReaderNotesApplicationService
 from interfaces.services.paper_user_state_service import PaperUserStateApplicationService
 from interfaces.services.paper_visual_compiler_service import PaperVisualCompilerApplicationService
+from interfaces.services.project_service import ProjectApplicationService
 from interfaces.services.report_service import ReportApplicationService
 from interfaces.services.run_inspection_service import RunInspectionService
 from interfaces.services.run_operation_service import RunOperationApplicationService
@@ -54,6 +55,7 @@ PaperReaderInteractionServiceFactory = Callable[[], PaperReaderInteractionApplic
 PaperReaderNotesServiceFactory = Callable[[], PaperReaderNotesApplicationService]
 PaperUserStateServiceFactory = Callable[[], PaperUserStateApplicationService]
 PaperVisualCompilerServiceFactory = Callable[[], PaperVisualCompilerApplicationService]
+ProjectServiceFactory = Callable[[], ProjectApplicationService]
 
 
 @dataclass(frozen=True)
@@ -81,6 +83,7 @@ class ApiServices:
     paper_reader_notes_service_factory: PaperReaderNotesServiceFactory
     paper_user_state_service_factory: PaperUserStateServiceFactory
     paper_visual_compiler_service_factory: PaperVisualCompilerServiceFactory
+    project_service_factory: ProjectServiceFactory
 
 
 @dataclass(frozen=True)
@@ -121,6 +124,7 @@ def build_api_services(
     paper_reader_notes_service_factory: PaperReaderNotesServiceFactory = PaperReaderNotesApplicationService,
     paper_user_state_service_factory: PaperUserStateServiceFactory = PaperUserStateApplicationService,
     paper_visual_compiler_service_factory: PaperVisualCompilerServiceFactory = PaperVisualCompilerApplicationService,
+    project_service_factory: ProjectServiceFactory = ProjectApplicationService,
 ) -> ApiServices:
     return ApiServices(
         worker_service_factory=worker_service_factory,
@@ -146,6 +150,7 @@ def build_api_services(
         paper_reader_notes_service_factory=paper_reader_notes_service_factory,
         paper_user_state_service_factory=paper_user_state_service_factory,
         paper_visual_compiler_service_factory=paper_visual_compiler_service_factory,
+        project_service_factory=project_service_factory,
     )
 
 

@@ -20,7 +20,7 @@ export function formatDate(value: string | undefined): string {
   if (!value) return "-"
   const time = Date.parse(value)
   if (!Number.isFinite(time)) return value
-  return new Intl.DateTimeFormat("zh-CN", { month: "short", day: "numeric", year: "numeric" }).format(time)
+  return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" }).format(time)
 }
 
 export function labelize(value: string): string {

@@ -51,6 +51,7 @@ from interfaces.services.paper_reader_interaction_service import PaperReaderInte
 from interfaces.services.paper_reader_notes_service import PaperReaderNotesApplicationService
 from interfaces.services.paper_user_state_service import PaperUserStateApplicationService
 from interfaces.services.paper_visual_compiler_service import PaperVisualCompilerApplicationService
+from interfaces.services.project_service import ProjectApplicationService
 from interfaces.services.report_service import ReportApplicationService
 from interfaces.services.run_inspection_service import RunInspectionService
 from interfaces.services.run_operation_service import RunOperationApplicationService
@@ -86,6 +87,7 @@ PaperReaderInteractionServiceFactory = Callable[[], PaperReaderInteractionApplic
 PaperReaderNotesServiceFactory = Callable[[], PaperReaderNotesApplicationService]
 PaperUserStateServiceFactory = Callable[[], PaperUserStateApplicationService]
 PaperVisualCompilerServiceFactory = Callable[[], PaperVisualCompilerApplicationService]
+ProjectServiceFactory = Callable[[], ProjectApplicationService]
 AuditEmitterFactory = Callable[[], AuditEmitter | None]
 ApiKeyRoles = Mapping[str, str | Sequence[str]]
 
@@ -115,6 +117,7 @@ def create_app(
     paper_reader_notes_service_factory: PaperReaderNotesServiceFactory = PaperReaderNotesApplicationService,
     paper_user_state_service_factory: PaperUserStateServiceFactory = PaperUserStateApplicationService,
     paper_visual_compiler_service_factory: PaperVisualCompilerServiceFactory = PaperVisualCompilerApplicationService,
+    project_service_factory: ProjectServiceFactory = ProjectApplicationService,
     audit_emitter_factory: AuditEmitterFactory | None = audit_emitter_from_env,
     api_token: str | None = None,
     api_keys: ApiKeyRoles | None = None,
@@ -271,6 +274,7 @@ def create_app(
         paper_reader_notes_service_factory=paper_reader_notes_service_factory,
         paper_user_state_service_factory=paper_user_state_service_factory,
         paper_visual_compiler_service_factory=paper_visual_compiler_service_factory,
+        project_service_factory=project_service_factory,
     )
     helpers = ApiRouteHelpers(
         success=_success,
@@ -728,6 +732,8 @@ def _required_api_permission(method: str, path: str) -> str | None:
         return "read:reports"
     if resource == "papers":
         return "read:reports"
+    if resource == "projects":
+        return "read:reports" if method == "GET" else "write:runs"
     if resource in {"workers", "queues"}:
         return "read:reports"
     if resource == "schedules":

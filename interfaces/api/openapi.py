@@ -29,6 +29,7 @@ OPENAPI_TAGS = [
     {"name": "health", "description": "Health and diagnostics endpoints."},
     {"name": "runs", "description": "Workflow run creation and inspection."},
     {"name": "reports", "description": "Report catalog, detail, search, and actions."},
+    {"name": "projects", "description": "Projects product module, rankings, tools, cases, lab, collections, and watchlist."},
     {"name": "boards", "description": "Business board output DTO generation."},
     {"name": "memory", "description": "Memory search and indexing."},
     {"name": "sources", "description": "Source catalog, health, and probes."},

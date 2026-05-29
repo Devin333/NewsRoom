@@ -16,6 +16,7 @@ from interfaces.services.paper_service import PapersApplicationService
 from interfaces.services.paper_reader_interaction_service import PaperReaderInteractionApplicationService
 from interfaces.services.paper_reader_notes_service import PaperReaderNotesApplicationService
 from interfaces.services.paper_user_state_service import PaperUserStateApplicationService
+from interfaces.services.project_service import ProjectApplicationService, ProjectsApplicationService
 from interfaces.services.report_service import ReportApplicationService
 from interfaces.services.run_inspection_service import RunInspectionService
 from interfaces.services.source_service import SourceApplicationService
@@ -39,6 +40,8 @@ __all__ = [
     "PaperReaderInteractionApplicationService",
     "PaperReaderNotesApplicationService",
     "PaperUserStateApplicationService",
+    "ProjectApplicationService",
+    "ProjectsApplicationService",
     "ReportApplicationService",
     "RunInspectionService",
     "RunApplicationService",

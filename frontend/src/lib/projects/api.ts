@@ -1,4 +1,4 @@
-import { apiGet } from "@/lib/api/client"
+import { apiDelete, apiGet, apiPatch, apiPost } from "@/lib/api/client"
 import type {
   ProjectClientRequest,
   ProjectDetailResult,
@@ -7,6 +7,26 @@ import type {
   ProjectListResult,
   ProjectProductRoute,
   ProjectProductSection,
+  ProjectsApiCaseResult,
+  ProjectsApiCollectionResult,
+  ProjectsApiHomeResult,
+  ProjectsApiListResult,
+  ProjectsApiToolResult,
+  ProjectsApiWatchlistResult,
+  ProjectsInteractionRequest,
+  ProjectsInteractionResponse,
+  ProjectsLabAnswerRequest,
+  ProjectsLabSessionRequest,
+  ProjectsLabSessionResponse,
+  ProjectsLabSolutionResult,
+  ProjectsToolCompareRequest,
+  ProjectsToolCompareResult,
+  ProjectsToolRecommendRequest,
+  ProjectsToolRecommendResult,
+  ProjectsWatchlistCreateRequest,
+  ProjectsWatchlistDeleteResult,
+  ProjectsWatchlistItemResponse,
+  ProjectsWatchlistPatchRequest,
 } from "@/types/projects"
 
 type ApiEnvelope<T> = {
@@ -50,55 +70,164 @@ export async function fetchProjectDetailResult(slug: string, init?: RequestInit)
   return unwrapEnvelope(envelope)
 }
 
+export async function fetchProjectsHome(params: { limit?: number; user_id?: string } = {}, init?: RequestInit): Promise<ProjectsApiHomeResult> {
+  const envelope = await apiGet<ApiEnvelope<ProjectsApiHomeResult>>(`/api/v1/projects${queryString(params)}`, init)
+  return unwrapEnvelope(envelope)
+}
+
+export async function fetchProjectsHot(params: ProjectListParams = {}, init?: RequestInit): Promise<ProjectsApiListResult> {
+  const envelope = await apiGet<ApiEnvelope<ProjectsApiListResult>>(`/api/v1/projects/hot${queryString(toApiListParams(params))}`, init)
+  return unwrapEnvelope(envelope)
+}
+
+export async function fetchProjectsRising(params: ProjectListParams = {}, init?: RequestInit): Promise<ProjectsApiListResult> {
+  const envelope = await apiGet<ApiEnvelope<ProjectsApiListResult>>(`/api/v1/projects/rising${queryString(toApiListParams(params))}`, init)
+  return unwrapEnvelope(envelope)
+}
+
+export async function fetchProjectsTools(params: ProjectListParams = {}, init?: RequestInit): Promise<ProjectsApiToolResult> {
+  const envelope = await apiGet<ApiEnvelope<ProjectsApiToolResult>>(`/api/v1/projects/tools${queryString(toApiListParams(params))}`, init)
+  return unwrapEnvelope(envelope)
+}
+
+export async function fetchProjectsCases(params: ProjectListParams = {}, init?: RequestInit): Promise<ProjectsApiCaseResult> {
+  const envelope = await apiGet<ApiEnvelope<ProjectsApiCaseResult>>(`/api/v1/projects/cases${queryString(toApiListParams(params))}`, init)
+  return unwrapEnvelope(envelope)
+}
+
+export async function fetchProjectsCollections(init?: RequestInit): Promise<ProjectsApiCollectionResult> {
+  const envelope = await apiGet<ApiEnvelope<ProjectsApiCollectionResult>>("/api/v1/projects/collections", init)
+  return unwrapEnvelope(envelope)
+}
+
+export async function fetchProjectsWatchlist(params: { user_id?: string } = {}, init?: RequestInit): Promise<ProjectsApiWatchlistResult> {
+  const envelope = await apiGet<ApiEnvelope<ProjectsApiWatchlistResult>>(`/api/v1/projects/watchlist${queryString(params)}`, init)
+  return unwrapEnvelope(envelope)
+}
+
+export async function compareProjectTools(request: ProjectsToolCompareRequest, init?: RequestInit): Promise<ProjectsToolCompareResult> {
+  const envelope = await apiPost<ApiEnvelope<ProjectsToolCompareResult>>("/api/v1/projects/tools/compare", request, init)
+  return unwrapEnvelope(envelope)
+}
+
+export async function recommendProjectTools(request: ProjectsToolRecommendRequest, init?: RequestInit): Promise<ProjectsToolRecommendResult> {
+  const envelope = await apiPost<ApiEnvelope<ProjectsToolRecommendResult>>("/api/v1/projects/tools/recommend", request, init)
+  return unwrapEnvelope(envelope)
+}
+
+export async function startProjectLabSession(request: ProjectsLabSessionRequest, init?: RequestInit): Promise<ProjectsLabSessionResponse> {
+  const envelope = await apiPost<ApiEnvelope<ProjectsLabSessionResponse>>("/api/v1/projects/lab/sessions", request, init)
+  return unwrapEnvelope(envelope)
+}
+
+export async function answerProjectLabQuestion(
+  sessionId: string,
+  request: ProjectsLabAnswerRequest,
+  init?: RequestInit
+): Promise<ProjectsLabSessionResponse> {
+  const envelope = await apiPost<ApiEnvelope<ProjectsLabSessionResponse>>(
+    `/api/v1/projects/lab/sessions/${encodeURIComponent(sessionId)}/answer`,
+    request,
+    init
+  )
+  return unwrapEnvelope(envelope)
+}
+
+export async function generateProjectLabSolution(sessionId: string, init?: RequestInit): Promise<ProjectsLabSolutionResult> {
+  const envelope = await apiPost<ApiEnvelope<ProjectsLabSolutionResult>>(
+    `/api/v1/projects/lab/sessions/${encodeURIComponent(sessionId)}/generate-solution`,
+    undefined,
+    init
+  )
+  return unwrapEnvelope(envelope)
+}
+
+export async function addProjectWatchlistItem(
+  request: ProjectsWatchlistCreateRequest,
+  init?: RequestInit
+): Promise<ProjectsWatchlistItemResponse> {
+  const envelope = await apiPost<ApiEnvelope<ProjectsWatchlistItemResponse>>("/api/v1/projects/watchlist", request, init)
+  return unwrapEnvelope(envelope)
+}
+
+export async function patchProjectWatchlistItem(
+  itemId: string,
+  request: ProjectsWatchlistPatchRequest,
+  init?: RequestInit
+): Promise<ProjectsWatchlistItemResponse> {
+  const envelope = await apiPatch<ApiEnvelope<ProjectsWatchlistItemResponse>>(
+    `/api/v1/projects/watchlist/${encodeURIComponent(itemId)}`,
+    request,
+    init
+  )
+  return unwrapEnvelope(envelope)
+}
+
+export async function deleteProjectWatchlistItem(itemId: string, init?: RequestInit): Promise<ProjectsWatchlistDeleteResult> {
+  const envelope = await apiDelete<ApiEnvelope<ProjectsWatchlistDeleteResult>>(
+    `/api/v1/projects/watchlist/${encodeURIComponent(itemId)}`,
+    init
+  )
+  return unwrapEnvelope(envelope)
+}
+
+export async function recordProjectInteraction(
+  request: ProjectsInteractionRequest,
+  init?: RequestInit
+): Promise<ProjectsInteractionResponse> {
+  const envelope = await apiPost<ApiEnvelope<ProjectsInteractionResponse>>("/api/v1/projects/interactions", request, init)
+  return unwrapEnvelope(envelope)
+}
+
 export const PROJECT_PRODUCT_SECTIONS: ProjectProductSection[] = [
   {
     id: "hot",
-    title: "热门项目",
-    description: "按趋势、Star velocity 和证据强度聚合的近期高热度项目。",
+    title: "Hot Projects",
+    description: "Projects ranked by external heat, internal behavior, technical relevance, freshness, and source trust.",
     href: "/projects/hot",
-    params: { sort: "trending", period: "weekly", limit: 18 },
+    params: { sort: "trending", limit: 18 },
   },
   {
     id: "rising",
-    title: "上升项目",
-    description: "优先展示新增、Rising 和增长明显的项目。",
+    title: "Rising Projects",
+    description: "Projects ranked by velocity, novelty, update cadence, early quality, and attention growth.",
     href: "/projects/rising",
-    params: { sort: "growth", period: "monthly", limit: 18 },
+    params: { sort: "growth", limit: 18 },
   },
   {
     id: "tools",
-    title: "工具箱",
-    description: "面向工程落地的 Agent、RAG、推理和评测工具。",
+    title: "Tools",
+    description: "Real Project Radar tools grouped by capability, integration surface, and deployment fit.",
     href: "/projects/tools",
     params: { sort: "activity", source: "github", limit: 18 },
   },
   {
     id: "cases",
-    title: "案例",
-    description: "结合论文、新闻与社区引用，观察项目被采用和讨论的证据。",
+    title: "Cases",
+    description: "Module cases derived from real projects, capabilities, and public source references.",
     href: "/projects/cases",
     params: { sort: "quality", limit: 18 },
   },
   {
     id: "lab",
-    title: "实验室",
-    description: "偏新、实验性或快速迭代的项目观察入口。",
+    title: "Lab",
+    description: "A design lab that starts from your requirement profile and real-derived project cases.",
     href: "/projects/lab",
-    params: { sort: "newest", period: "monthly", limit: 18 },
+    params: { sort: "newest", limit: 18 },
   },
   {
     id: "collections",
-    title: "集合",
-    description: "按主题、语言和成熟度组织真实 Project Radar 记录。",
+    title: "Collections",
+    description: "Topic collections generated from real Project Radar projects without synthetic filler.",
     href: "/projects/collections",
     params: { sort: "trending", limit: 48 },
   },
   {
     id: "watchlist",
-    title: "关注列表",
-    description: "基于真实雷达信号生成的候选关注项目。",
+    title: "Watchlist",
+    description: "Projects you are tracking, backed by local Projects state and real project identifiers.",
     href: "/projects/watchlist",
-    params: { sort: "quality", period: "monthly", limit: 24 },
+    params: { sort: "quality", limit: 24 },
   },
 ]
 
@@ -107,7 +236,7 @@ export function projectProductSection(route: ProjectProductRoute): ProjectProduc
     return {
       id: "home",
       title: "Projects",
-      description: "Project Radar 的产品首页，汇总开源项目增长、工程采用和跨模块证据。",
+      description: "A productized Projects home built on real Project Radar artifacts.",
       href: "/projects",
       params: { sort: "trending", limit: 24 },
     }
@@ -118,9 +247,16 @@ export function projectProductSection(route: ProjectProductRoute): ProjectProduc
 export async function fetchProjectProductSection(
   route: ProjectProductRoute,
   request: ProjectClientRequest = {}
-): Promise<ProjectListResult> {
-  const section = projectProductSection(route)
-  return fetchProjects({ ...section.params, ...request.params }, request.init)
+): Promise<ProjectsApiHomeResult | ProjectsApiListResult | ProjectsApiToolResult | ProjectsApiCaseResult | ProjectsApiCollectionResult | ProjectsApiWatchlistResult> {
+  const params = { ...projectProductSection(route).params, ...request.params }
+  if (route === "home") return fetchProjectsHome({ limit: params.limit }, request.init)
+  if (route === "hot") return fetchProjectsHot(params, request.init)
+  if (route === "rising") return fetchProjectsRising(params, request.init)
+  if (route === "tools") return fetchProjectsTools(params, request.init)
+  if (route === "cases") return fetchProjectsCases(params, request.init)
+  if (route === "collections") return fetchProjectsCollections(request.init)
+  if (route === "watchlist") return fetchProjectsWatchlist({}, request.init)
+  return fetchProjectsHome({ limit: params.limit }, request.init)
 }
 
 function unwrapEnvelope<T>(envelope: ApiEnvelope<T>): T {
@@ -136,7 +272,7 @@ function unwrapEnvelope<T>(envelope: ApiEnvelope<T>): T {
   )
 }
 
-function queryString(params: ProjectListParams): string {
+function queryString(params: Record<string, unknown>): string {
   const searchParams = new URLSearchParams()
   for (const [key, value] of Object.entries(params)) {
     if (value === undefined || value === null || value === "") continue
@@ -144,4 +280,17 @@ function queryString(params: ProjectListParams): string {
   }
   const text = searchParams.toString()
   return text ? `?${text}` : ""
+}
+
+function toApiListParams(params: ProjectListParams): Record<string, unknown> {
+  return {
+    q: params.q,
+    category: params.category,
+    tag: params.topic,
+    source: params.source,
+    sort: params.sort,
+    page: params.page,
+    page_size: params.pageSize,
+    limit: params.limit,
+  }
 }

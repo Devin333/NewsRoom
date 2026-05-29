@@ -167,6 +167,254 @@ export type ProjectClientRequest = {
   init?: RequestInit
 }
 
+export type ProjectsApiSource = "backend" | "artifact" | "none"
+
+export type ProjectsApiDataState = "ready" | "partial" | "empty"
+
+export type ProjectsApiMeta = {
+  source: ProjectsApiSource
+  source_run_id?: string | null
+  generated_at?: string | null
+  data_state: ProjectsApiDataState
+  notices: string[]
+}
+
+export type ProjectsApiMetric = {
+  label: string
+  value: string | number
+  hint?: string | null
+}
+
+export type ProjectsApiPageInfo = {
+  page: number
+  page_size: number
+  total: number
+  has_next: boolean
+  next_cursor?: string | null
+}
+
+export type ProjectsApiProject = {
+  id: string
+  slug: string
+  name: string
+  tagline?: string | null
+  description?: string | null
+  canonical_url?: string | null
+  website_url?: string | null
+  github_url?: string | null
+  docs_url?: string | null
+  demo_url?: string | null
+  project_type: string
+  category?: string | null
+  tags: string[]
+  source_confidence: number
+  hot_score?: number | null
+  rising_score?: number | null
+  rank?: number | null
+  rank_reason?: string | null
+  metric_summary: Record<string, unknown>
+  capability_count: number
+  case_count: number
+  source_count: number
+  updated_at?: string | null
+}
+
+export type ProjectsApiListResult = {
+  items: ProjectsApiProject[]
+  page: ProjectsApiPageInfo
+  meta: ProjectsApiMeta
+  metrics: ProjectsApiMetric[]
+}
+
+export type ProjectsApiTool = {
+  project: ProjectsApiProject
+  profile: {
+    project_id: string
+    tool_type: string
+    input_types: string[]
+    output_types: string[]
+    is_open_source?: boolean | null
+    license?: string | null
+    local_deployable?: boolean | null
+    has_api?: boolean | null
+    has_cli?: boolean | null
+    has_python_sdk?: boolean | null
+    has_docker?: boolean | null
+    integration_difficulty: "low" | "medium" | "high"
+    recommended_integration?: "direct_use" | "wrap_as_service" | "reference_only" | null
+    target_modules: string[]
+    setup_commands: string[]
+    usage_example?: string | null
+    known_limits: string[]
+    experiment_status: "untested" | "runnable" | "failed" | "adopted"
+  }
+  capabilities: Array<Record<string, unknown>>
+  fit_reason?: string | null
+}
+
+export type ProjectsApiToolResult = {
+  tools: ProjectsApiTool[]
+  page: ProjectsApiPageInfo
+  meta: ProjectsApiMeta
+}
+
+export type ProjectsApiCase = Record<string, unknown> & {
+  id: string
+  project_id: string
+  title: string
+  business_domain: string
+  module_type: string
+  problem?: string
+  design_summary?: string
+}
+
+export type ProjectsApiCaseResult = {
+  cases: ProjectsApiCase[]
+  page: ProjectsApiPageInfo
+  meta: ProjectsApiMeta
+}
+
+export type ProjectsApiCollection = Record<string, unknown> & {
+  id: string
+  slug: string
+  title: string
+  description: string
+  item_count?: number
+}
+
+export type ProjectsApiCollectionResult = {
+  collections: ProjectsApiCollection[]
+  meta: ProjectsApiMeta
+}
+
+export type ProjectsApiWatchlistItem = Record<string, unknown> & {
+  id: string
+  project_id: string
+  watch_reason: string
+  priority: "low" | "medium" | "high"
+  status: "active" | "paused" | "archived"
+}
+
+export type ProjectsApiWatchlistResult = {
+  items: ProjectsApiWatchlistItem[]
+  meta: ProjectsApiMeta
+}
+
+export type ProjectsToolCompareRequest = {
+  project_ids: string[]
+}
+
+export type ProjectsToolCompareResult = {
+  tools: ProjectsApiTool[]
+  matrix: Array<Record<string, unknown>>
+  recommendation?: string | null
+  meta: ProjectsApiMeta
+}
+
+export type ProjectsToolRecommendRequest = {
+  problem: string
+  target_module?: string | null
+  input_type?: string | null
+  output_type?: string | null
+  deployment?: string | null
+  max_difficulty?: "low" | "medium" | "high" | null
+  limit?: number
+}
+
+export type ProjectsToolRecommendResult = {
+  tools: ProjectsApiTool[]
+  reasoning: string[]
+  meta: ProjectsApiMeta
+}
+
+export type ProjectsLabSessionRequest = {
+  user_problem: string
+  user_id?: string | null
+  business_domain?: string | null
+  module_type?: string | null
+  target_goal?: string | null
+  current_project_context?: string | null
+  selected_case_ids?: string[]
+}
+
+export type ProjectsLabAnswerRequest = {
+  question_id: string
+  answer: unknown
+}
+
+export type ProjectsLabSession = Record<string, unknown> & {
+  id: string
+  user_problem: string
+  selected_case_ids: string[]
+  questions: Array<Record<string, unknown> & { id: string; question: string; answered_value?: unknown }>
+  current_stage: string
+  generated_solution?: string | null
+}
+
+export type ProjectsLabSessionResponse = {
+  session: ProjectsLabSession
+}
+
+export type ProjectsLabSolutionResult = {
+  session: ProjectsLabSession
+  solution: Record<string, unknown>
+}
+
+export type ProjectsWatchlistCreateRequest = {
+  project_id: string
+  user_id?: string | null
+  watch_reason: string
+  watch_topics?: string[]
+  priority?: "low" | "medium" | "high"
+  notify_on?: string[]
+}
+
+export type ProjectsWatchlistPatchRequest = {
+  watch_reason?: string | null
+  watch_topics?: string[] | null
+  priority?: "low" | "medium" | "high" | null
+  status?: "active" | "paused" | "archived" | null
+  notify_on?: string[] | null
+  next_action?: string | null
+}
+
+export type ProjectsWatchlistItemResponse = {
+  item: ProjectsApiWatchlistItem
+}
+
+export type ProjectsWatchlistDeleteResult = {
+  deleted: boolean
+  item_id: string
+}
+
+export type ProjectsInteractionRequest = {
+  event_type: string
+  target_type: "project" | "tool" | "case" | "component" | "collection" | "lab_session" | "solution" | "watchlist"
+  target_id?: string | null
+  user_id?: string | null
+  session_id?: string | null
+  query_text?: string | null
+  action_value?: string | null
+  signal_strength?: number
+  metadata?: Record<string, unknown>
+}
+
+export type ProjectsInteractionResponse = {
+  event: Record<string, unknown> & { id: string }
+}
+
+export type ProjectsApiHomeResult = {
+  hot: ProjectsApiProject[]
+  rising: ProjectsApiProject[]
+  tools: ProjectsApiProject[]
+  cases: ProjectsApiCase[]
+  collections: ProjectsApiCollection[]
+  watchlist: ProjectsApiWatchlistItem[]
+  recommendations: Array<Record<string, unknown>>
+  meta: ProjectsApiMeta
+  metrics: ProjectsApiMetric[]
+}
+
 export type ProjectMetric = {
   label: string
   value: string | number
