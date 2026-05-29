@@ -4,10 +4,10 @@ import { ProjectsProductPage } from "@/features/projects/components/projects-pro
 
 export const dynamic = "force-dynamic"
 
-export default function ProjectsPage() {
+export default function ProjectsHotPage() {
   return (
     <Suspense fallback={<PageSkeleton />}>
-      <ProjectsProductPage route="home" />
+      <ProjectsProductPage route="hot" />
     </Suspense>
   )
 }

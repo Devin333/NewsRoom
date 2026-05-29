@@ -31,6 +31,24 @@ export type ProjectSort = "trending" | "newest" | "stars" | "activity" | "growth
 
 export type ProjectDataState = "ready" | "partial" | "empty"
 
+export type ProjectProductRoute =
+  | "home"
+  | "hot"
+  | "rising"
+  | "tools"
+  | "cases"
+  | "lab"
+  | "collections"
+  | "watchlist"
+
+export type ProjectProductSection = {
+  id: ProjectProductRoute
+  title: string
+  description: string
+  href: string
+  params: ProjectListParams
+}
+
 export type ProjectScores = {
   trendScore?: number
   starVelocityScore?: number
@@ -142,6 +160,11 @@ export type ProjectListParams = {
   pageSize?: number
   limit?: number
   cursor?: string
+}
+
+export type ProjectClientRequest = {
+  params?: ProjectListParams
+  init?: RequestInit
 }
 
 export type ProjectMetric = {
