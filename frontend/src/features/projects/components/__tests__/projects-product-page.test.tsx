@@ -8,6 +8,7 @@ import {
   fetchProjectProductSection,
   fetchProjectsHome,
   generateProjectLabSolution,
+  recordProjectInteraction,
   startProjectLabSession,
 } from "@/lib/projects/api"
 
@@ -20,6 +21,7 @@ vi.mock("@/lib/projects/api", async (importOriginal) => {
     fetchProjectProductSection: vi.fn(),
     fetchProjectsHome: vi.fn(),
     generateProjectLabSolution: vi.fn(),
+    recordProjectInteraction: vi.fn(),
     startProjectLabSession: vi.fn(),
   }
 })
@@ -31,6 +33,7 @@ describe("ProjectsProductPage", () => {
     vi.mocked(fetchProjectsHome).mockReset()
     vi.mocked(fetchProjectProductSection).mockReset()
     vi.mocked(generateProjectLabSolution).mockReset()
+    vi.mocked(recordProjectInteraction).mockReset()
     vi.mocked(startProjectLabSession).mockReset()
   })
 

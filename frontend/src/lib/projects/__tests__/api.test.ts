@@ -1,18 +1,31 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/lib/api/client"
 import {
+  addProjectCollectionItem,
   addProjectWatchlistItem,
   answerProjectLabQuestion,
   compareProjectTools,
+  createProjectCollection,
   deleteProjectWatchlistItem,
+  explainProjectCase,
+  explainProjectLabNode,
+  fetchProjectCaseDetail,
+  fetchProjectCollectionDetail,
   fetchProjectDetail,
+  fetchProjectLabSession,
+  fetchProjectToolDetail,
+  fetchProjectV1Detail,
   fetchProjects,
   fetchProjectsHot,
   fetchProjectsHome,
+  generateProjectCollection,
   generateProjectLabSolution,
+  mapProjectCaseToContext,
   patchProjectWatchlistItem,
   recommendProjectTools,
   recordProjectInteraction,
+  refreshProjectWatchlistItem,
+  saveProjectLabSession,
   startProjectLabSession,
 } from "@/lib/projects/api"
 
@@ -91,9 +104,9 @@ describe("projects API client", () => {
     expect(project.repoUrl).toBe("https://github.com/openai/codex")
   })
 
-  it("uses backend Projects API v1 for product routes", async () => {
+  it("uses backend Projects API v1 for product routes and ok envelopes", async () => {
     vi.mocked(apiGet).mockResolvedValueOnce({
-      success: true,
+      ok: true,
       data: {
         hot: [],
         rising: [],
@@ -107,8 +120,9 @@ describe("projects API client", () => {
       },
     })
 
-    await fetchProjectsHome({ limit: 6 })
+    const home = await fetchProjectsHome({ limit: 6 })
     expect(apiGet).toHaveBeenCalledWith("/api/v1/projects?limit=6", undefined)
+    expect(home.meta.data_state).toBe("empty")
 
     vi.mocked(apiGet).mockResolvedValueOnce({
       success: true,
@@ -122,6 +136,246 @@ describe("projects API client", () => {
 
     await fetchProjectsHot({ q: "agent", topic: "workflow", pageSize: 18, limit: 18 })
     expect(apiGet).toHaveBeenCalledWith("/api/v1/projects/hot?q=agent&tag=workflow&page_size=18&limit=18", undefined)
+  })
+
+  it("uses Projects API v1 detail routes", async () => {
+    vi.mocked(apiGet)
+      .mockResolvedValueOnce({
+        ok: true,
+        data: {
+          project: apiProject("project-1"),
+          sources: [],
+          metrics: [],
+          growth: [],
+          capabilities: [],
+          tool_profile: null,
+          cases: [],
+          collections: [],
+          watch_status: null,
+          recommended_actions: [],
+          ranking: {},
+          meta: readyMeta(),
+        },
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        data: apiTool("tool-1"),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        data: apiCase("case-1"),
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        data: apiCollection("agent-collections"),
+      })
+
+    const projectDetail = await fetchProjectV1Detail("org/project")
+    expect(apiGet).toHaveBeenCalledWith("/api/v1/projects/org%2Fproject", undefined)
+    expect(projectDetail.project.id).toBe("project-1")
+
+    const tool = await fetchProjectToolDetail("tool/1")
+    expect(apiGet).toHaveBeenCalledWith("/api/v1/projects/tools/tool%2F1", undefined)
+    expect(tool.profile.project_id).toBe("tool-1")
+
+    const projectCase = await fetchProjectCaseDetail("case/1")
+    expect(apiGet).toHaveBeenCalledWith("/api/v1/projects/cases/case%2F1", undefined)
+    expect(projectCase.title).toBe("Workflow case")
+
+    const collection = await fetchProjectCollectionDetail("agent/collections")
+    expect(apiGet).toHaveBeenCalledWith("/api/v1/projects/collections/agent%2Fcollections", undefined)
+    expect(collection.slug).toBe("agent-collections")
+  })
+
+  it("uses Projects API v1 case explain and map routes", async () => {
+    vi.mocked(apiPost)
+      .mockResolvedValueOnce({
+        success: true,
+        data: {
+          case_id: "case-1",
+          style: "migration",
+          summary: "Reusable workflow orchestration pattern.",
+          key_points: ["Keep ingestion isolated"],
+          component_explanations: [],
+          pattern_explanations: [],
+          migration_notes: ["Map queue boundaries first"],
+          source_refs: ["source-1"],
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        data: {
+          case_id: "case-1",
+          fit_score: 0.82,
+          reusable_components: [],
+          migration_steps: ["Adopt scheduler"],
+          cautions: ["Verify retry semantics"],
+          source_refs: ["source-1"],
+        },
+      })
+
+    const explanation = await explainProjectCase("case/1", {
+      style: "migration",
+      user_context: "Newsroom ingestion pipeline",
+    })
+    expect(apiPost).toHaveBeenCalledWith(
+      "/api/v1/projects/cases/case%2F1/explain",
+      { style: "migration", user_context: "Newsroom ingestion pipeline" },
+      undefined
+    )
+    expect(explanation.summary).toContain("workflow")
+
+    const mapped = await mapProjectCaseToContext("case/1", {
+      user_context: "Newsroom ingestion pipeline",
+      target_module: "collection",
+      constraints: ["local deploy"],
+    })
+    expect(apiPost).toHaveBeenCalledWith(
+      "/api/v1/projects/cases/case%2F1/map-to-context",
+      {
+        user_context: "Newsroom ingestion pipeline",
+        target_module: "collection",
+        constraints: ["local deploy"],
+      },
+      undefined
+    )
+    expect(mapped.fit_score).toBe(0.82)
+  })
+
+  it("uses Projects API v1 Lab get, explain, and save routes", async () => {
+    vi.mocked(apiGet).mockResolvedValueOnce({
+      ok: true,
+      data: {
+        session: labSession("session-1"),
+      },
+    })
+    vi.mocked(apiPost)
+      .mockResolvedValueOnce({
+        success: true,
+        data: {
+          session_id: "session-1",
+          node_id: "node-1",
+          title: "Queue boundary",
+          explanation: "This node separates collection from analysis.",
+          related_nodes: [],
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        data: {
+          session: {
+            ...labSession("session-1"),
+            status: "saved",
+          },
+        },
+      })
+
+    const session = await fetchProjectLabSession("session/1")
+    expect(apiGet).toHaveBeenCalledWith("/api/v1/projects/lab/sessions/session%2F1", undefined)
+    expect(session.session.current_stage).toBe("clarifying")
+
+    const nodeExplanation = await explainProjectLabNode("session/1", { node_id: "node-1", style: "plain" })
+    expect(apiPost).toHaveBeenCalledWith(
+      "/api/v1/projects/lab/sessions/session%2F1/explain-node",
+      { node_id: "node-1", style: "plain" },
+      undefined
+    )
+    expect(nodeExplanation.title).toBe("Queue boundary")
+
+    const saved = await saveProjectLabSession("session/1", { status: "saved", note: "Keep for sprint planning" })
+    expect(apiPost).toHaveBeenCalledWith(
+      "/api/v1/projects/lab/sessions/session%2F1/save",
+      { status: "saved", note: "Keep for sprint planning" },
+      undefined
+    )
+    expect(saved.session.status).toBe("saved")
+  })
+
+  it("uses Projects API v1 collection mutation routes", async () => {
+    vi.mocked(apiPost)
+      .mockResolvedValueOnce({
+        success: true,
+        data: {
+          collection: apiCollection("newsroom-agents"),
+          meta: readyMeta(),
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        data: {
+          collection: { ...apiCollection("newsroom-agents"), item_count: 2 },
+          meta: readyMeta(),
+        },
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        data: {
+          collection: apiCollection("generated-rag"),
+          meta: readyMeta(),
+        },
+      })
+
+    const created = await createProjectCollection({
+      title: "Newsroom Agents",
+      description: "Production agent projects",
+      tags: ["agent"],
+      target_audience: ["editorial engineering"],
+      learning_goals: ["Evaluate orchestration fit"],
+    })
+    expect(apiPost).toHaveBeenCalledWith(
+      "/api/v1/projects/collections",
+      {
+        title: "Newsroom Agents",
+        description: "Production agent projects",
+        tags: ["agent"],
+        target_audience: ["editorial engineering"],
+        learning_goals: ["Evaluate orchestration fit"],
+      },
+      undefined
+    )
+    expect(created.collection.slug).toBe("newsroom-agents")
+
+    const updated = await addProjectCollectionItem("collection/1", {
+      item_type: "project",
+      item_id: "project-1",
+      title: "AgentKit",
+      reason: "Representative orchestration project",
+      order: 1,
+      difficulty: "medium",
+      recommended_action: "prototype",
+    })
+    expect(apiPost).toHaveBeenCalledWith(
+      "/api/v1/projects/collections/collection%2F1/items",
+      {
+        item_type: "project",
+        item_id: "project-1",
+        title: "AgentKit",
+        reason: "Representative orchestration project",
+        order: 1,
+        difficulty: "medium",
+        recommended_action: "prototype",
+      },
+      undefined
+    )
+    expect(updated.collection.item_count).toBe(2)
+
+    const generated = await generateProjectCollection({
+      topic: "RAG operations",
+      project_ids: ["project-1"],
+      case_ids: ["case-1"],
+      collection_type: "learning_path",
+    })
+    expect(apiPost).toHaveBeenCalledWith(
+      "/api/v1/projects/collections/generate",
+      {
+        topic: "RAG operations",
+        project_ids: ["project-1"],
+        case_ids: ["case-1"],
+        collection_type: "learning_path",
+      },
+      undefined
+    )
+    expect(generated.collection.slug).toBe("generated-rag")
   })
 
   it("covers Projects API v1 mutations", async () => {
@@ -172,4 +426,107 @@ describe("projects API client", () => {
       undefined
     )
   })
+
+  it("uses Projects API v1 watchlist refresh route", async () => {
+    vi.mocked(apiPost).mockResolvedValueOnce({
+      ok: true,
+      data: {
+        item: {
+          id: "watch-1",
+          project_id: "project-1",
+          watch_reason: "Track releases",
+          priority: "high",
+          status: "active",
+        },
+        signals: [{ type: "release", title: "New release" }],
+        meta: readyMeta(),
+      },
+    })
+
+    const refreshed = await refreshProjectWatchlistItem("watch/1")
+    expect(apiPost).toHaveBeenCalledWith("/api/v1/projects/watchlist/watch%2F1/refresh", undefined, undefined)
+    expect(refreshed.signals).toHaveLength(1)
+  })
 })
+
+function readyMeta() {
+  return { source: "artifact", source_run_id: "run-project-radar", data_state: "ready", notices: [] }
+}
+
+function apiProject(id: string) {
+  return {
+    id,
+    slug: id,
+    name: "AgentKit",
+    description: "Real Project Radar project.",
+    github_url: "https://github.com/acme/agentkit",
+    project_type: "tool",
+    tags: ["agent"],
+    source_confidence: 0.9,
+    hot_score: 0.8,
+    metric_summary: { github_stars: 100, github_forks: 5, stars_delta_7d: 10 },
+    capability_count: 1,
+    case_count: 1,
+    source_count: 1,
+  }
+}
+
+function apiTool(id: string) {
+  return {
+    project: apiProject(id),
+    profile: {
+      project_id: id,
+      tool_type: "agent_runtime",
+      input_types: ["text"],
+      output_types: ["workflow"],
+      is_open_source: true,
+      license: "MIT",
+      local_deployable: true,
+      has_api: true,
+      has_cli: true,
+      has_python_sdk: true,
+      has_docker: true,
+      integration_difficulty: "medium",
+      recommended_integration: "wrap_as_service",
+      target_modules: ["collection"],
+      setup_commands: ["pip install agentkit"],
+      usage_example: "agentkit run",
+      known_limits: ["Requires queue tuning"],
+      experiment_status: "runnable",
+    },
+    capabilities: [],
+    fit_reason: "Matches workflow orchestration needs.",
+  }
+}
+
+function apiCase(id: string) {
+  return {
+    id,
+    project_id: "project-1",
+    title: "Workflow case",
+    business_domain: "newsroom",
+    module_type: "collection",
+    problem: "Coordinate ingestion and analysis.",
+    design_summary: "Use an explicit orchestration boundary.",
+  }
+}
+
+function apiCollection(slug: string) {
+  return {
+    id: slug,
+    slug,
+    title: "Agent Collections",
+    description: "Curated real Project Radar projects.",
+    item_count: 1,
+  }
+}
+
+function labSession(id: string) {
+  return {
+    id,
+    user_problem: "Need a newsroom workflow module",
+    selected_case_ids: ["case-1"],
+    current_stage: "clarifying",
+    questions: [{ id: "q-context", question: "Which workflow stage needs help?" }],
+  }
+}
