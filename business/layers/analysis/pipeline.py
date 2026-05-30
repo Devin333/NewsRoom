@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone as _tz
+UTC = _tz.utc
 from typing import Any
 
 from pydantic import Field

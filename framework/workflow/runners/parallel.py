@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
-from datetime import UTC, datetime
+from datetime import datetime, timezone as _tz
+UTC = _tz.utc
 from hashlib import sha256
 import re
 import time

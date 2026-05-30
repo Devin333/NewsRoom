@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import UTC, datetime
+from datetime import datetime, timezone as _tz
+UTC = _tz.utc
 from hashlib import sha256
 from html import unescape
 from typing import Any, Callable

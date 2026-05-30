@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import re
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone as _tz
+UTC = _tz.utc
 
 from business.foundation.models.source import Lineage, NormalizedSourceItem, RawSourceItem, SourceReliability, SourceType
 from business.layers.signal.source_processing.language import detect_language

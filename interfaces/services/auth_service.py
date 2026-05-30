@@ -7,7 +7,8 @@ import os
 import re
 import secrets
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone as _tz
+UTC = _tz.utc
 from pathlib import Path
 from typing import Any, Protocol
 

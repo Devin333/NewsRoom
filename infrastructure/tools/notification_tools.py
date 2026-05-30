@@ -3,7 +3,8 @@ from __future__ import annotations
 import json
 import smtplib
 import ssl
-from datetime import UTC, datetime
+from datetime import datetime, timezone as _tz
+UTC = _tz.utc
 from email.message import EmailMessage
 from email.utils import format_datetime, getaddresses, make_msgid, parsedate_to_datetime
 from pathlib import Path

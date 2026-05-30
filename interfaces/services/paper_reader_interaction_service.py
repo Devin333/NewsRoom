@@ -5,7 +5,8 @@ import os
 import secrets
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import datetime, timezone as _tz
+UTC = _tz.utc
 from pathlib import Path
 from typing import Any, Literal, Protocol
 

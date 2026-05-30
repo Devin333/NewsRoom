@@ -4,7 +4,8 @@ import hashlib
 import math
 import re
 from collections.abc import Mapping, Sequence
-from datetime import UTC, datetime
+from datetime import datetime, timezone as _tz
+UTC = _tz.utc
 from pathlib import Path
 from typing import Any
 

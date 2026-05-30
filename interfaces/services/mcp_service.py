@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone as _tz
+UTC = _tz.utc
 from typing import Any, Callable, Literal, cast
 from urllib.parse import parse_qs, unquote, urlsplit
 

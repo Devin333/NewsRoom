@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field, is_dataclass, replace
-from datetime import UTC, datetime
+from datetime import datetime, timezone as _tz
+UTC = _tz.utc
 from typing import Any, Protocol, cast
 
 from business.memory.claim_consolidation import ClaimConsolidator

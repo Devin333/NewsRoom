@@ -4,7 +4,8 @@ import json
 import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime
+from datetime import datetime, timezone as _tz
+UTC = _tz.utc
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, Protocol

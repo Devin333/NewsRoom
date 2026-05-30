@@ -3,7 +3,10 @@ from __future__ import annotations
 import json
 import os
 import re
-import tomllib
+try:
+    import tomllib
+except ImportError:
+    import tomli as tomllib  # type: ignore[no-redef]
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any

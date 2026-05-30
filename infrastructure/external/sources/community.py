@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import datetime, timezone as _tz
+UTC = _tz.utc
 from hashlib import sha256
 from typing import Any, Callable
 from urllib.error import HTTPError

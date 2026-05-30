@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
-from datetime import UTC, datetime
+from datetime import datetime, timezone as _tz
+UTC = _tz.utc
 from typing import Any, Callable
 
 from framework.workers.approval import ApprovalAlreadyDecidedError, ApprovalNotFoundError

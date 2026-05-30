@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import html
 import re
-from datetime import UTC, datetime
+from datetime import datetime, timezone as _tz
+UTC = _tz.utc
 from typing import Any
 
 from business.foundation import canonicalize_url

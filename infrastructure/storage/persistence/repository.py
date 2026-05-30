@@ -5,7 +5,8 @@ import os
 import re
 import tempfile
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime, timezone as _tz
+UTC = _tz.utc
 from pathlib import Path
 from typing import Any, Protocol
 

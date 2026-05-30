@@ -5,7 +5,8 @@ import json
 from collections.abc import Iterable, Iterator, Mapping
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field, is_dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone as _tz
+UTC = _tz.utc
 from enum import StrEnum
 from typing import Any
 

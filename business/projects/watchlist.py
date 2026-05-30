@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone as _tz
+UTC = _tz.utc
 
 from business.projects.dto import WatchlistCreateRequest, WatchlistPatchRequest
 from business.projects.models import ProjectDataset, WatchSignal, WatchlistItem, stable_id

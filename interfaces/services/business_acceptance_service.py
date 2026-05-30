@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone as _tz
+UTC = _tz.utc
 from pathlib import Path
 from typing import Any
 from uuid import uuid4

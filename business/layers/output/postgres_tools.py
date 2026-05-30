@@ -209,7 +209,8 @@ def _source_error(value: Any, *, source_id: str) -> OutputSourceError | None:
 def _optional_datetime(value: Any):
     if value is None:
         return None
-    from datetime import UTC, datetime
+    from datetime import datetime, timezone as _tz
+    UTC = _tz.utc
 
     parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     if parsed.tzinfo is None:

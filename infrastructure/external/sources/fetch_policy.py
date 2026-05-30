@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from collections import defaultdict, deque
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone as _tz
+UTC = _tz.utc
 from math import ceil
 from typing import Any, Callable, TypeVar
 from urllib.error import HTTPError, URLError

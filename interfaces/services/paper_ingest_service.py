@@ -8,7 +8,8 @@ import re
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone as _tz
+UTC = _tz.utc
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError

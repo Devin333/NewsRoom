@@ -377,7 +377,8 @@ def _guard_status(guards: list[BusinessRegressionGuardResult]) -> str:
 
 
 def _utc_now():
-    from datetime import UTC, datetime
+    from datetime import datetime, timezone as _tz
+    UTC = _tz.utc
 
     return datetime.now(UTC)
 

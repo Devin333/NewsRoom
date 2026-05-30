@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import re
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import datetime, timezone as _tz
+UTC = _tz.utc
 from hashlib import sha256
 
 from business.foundation.models.source import DedupResult, DuplicateGroup, NormalizedSourceItem, SourceReliability
