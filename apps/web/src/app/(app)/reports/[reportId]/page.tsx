@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation"
 import { StatusBadge } from "@/components/common/StatusBadge"
 import { ReportViewer } from "@/components/reports/ReportViewer"
+import { ReportExportBar } from "@/components/reports/ReportExportBar"
 import { safeApiGet } from "@/lib/api-client"
 import { formatDateTime, formatScore, stringifyJson } from "@/lib/format"
 import type { ReportDetail, ReportMarkdown, ReportQuality } from "@/lib/types"
@@ -46,7 +47,10 @@ export default async function ReportDetailPage({ params }: { params: Promise<{ r
       {/* Markdown */}
       {md && (
         <div className="rounded-xl border border-line bg-white p-5 shadow-card">
-          <h2 className="mb-4 text-sm font-semibold text-ink">Report</h2>
+          <div className="mb-4 flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-ink">Report</h2>
+            <ReportExportBar reportId={reportId} title={r.title ?? reportId} markdown={md} />
+          </div>
           <ReportViewer markdown={md} />
         </div>
       )}
