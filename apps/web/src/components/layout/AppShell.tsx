@@ -2,6 +2,7 @@
 
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
+import { MobileNav } from "./MobileNav"
 
 const navItems = [
   { href: "/", label: "Dashboard", icon: "⊞" },
@@ -26,26 +27,19 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="min-h-screen bg-surface text-ink">
-      {/* Sidebar */}
+      {/* Sidebar — desktop only */}
       <aside className="fixed inset-y-0 left-0 hidden w-56 flex-col border-r border-line bg-white lg:flex">
-        {/* Logo */}
         <div className="flex h-14 items-center gap-2.5 border-b border-line px-4">
           <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-accent text-xs font-bold text-white">N</div>
           <span className="text-sm font-semibold text-ink">NewsRoom</span>
         </div>
-
-        {/* Nav */}
         <nav className="flex-1 overflow-y-auto px-2 py-3">
           {navItems.map((item) => {
             const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href)
             return (
-              <Link
-                key={item.href}
-                href={item.href}
+              <Link key={item.href} href={item.href}
                 className={`flex items-center gap-2.5 rounded-md px-3 py-2 text-sm transition-colors mb-0.5 ${
-                  active
-                    ? "bg-accent/8 text-accent font-medium"
-                    : "text-muted hover:bg-surface hover:text-ink"
+                  active ? "bg-accent/8 text-accent font-medium" : "text-muted hover:bg-surface hover:text-ink"
                 }`}
               >
                 <span className="text-base leading-none opacity-70">{item.icon}</span>
@@ -54,11 +48,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             )
           })}
         </nav>
-
-        {/* Footer */}
         <div className="border-t border-line p-2">
-          <button
-            onClick={handleLogout}
+          <button onClick={handleLogout}
             className="flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-sm text-muted transition-colors hover:bg-surface hover:text-ink"
           >
             <span className="text-base leading-none opacity-70">→</span>
@@ -67,16 +58,19 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       </aside>
 
-      {/* Mobile header */}
+      {/* Mobile top header */}
       <header className="sticky top-0 z-10 flex h-14 items-center border-b border-line bg-white px-4 lg:hidden">
         <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-accent text-xs font-bold text-white">N</div>
         <span className="ml-2.5 text-sm font-semibold">NewsRoom</span>
       </header>
 
-      {/* Main */}
+      {/* Main content */}
       <div className="lg:pl-56">
-        <main className="mx-auto max-w-6xl px-6 py-8">{children}</main>
+        <main className="mx-auto max-w-6xl px-6 py-8 pb-24 lg:pb-8">{children}</main>
       </div>
+
+      {/* Mobile bottom nav */}
+      <MobileNav />
     </div>
   )
 }
