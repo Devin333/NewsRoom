@@ -1,14 +1,54 @@
 import type { Benchmark, BenchmarkRef, MethodRef, Paper, PaperMethod, PaperTask, TaskRef } from "@/lib/papers/types"
 
 const taskRefs = {
+  // agents
   agents: { id: "task-agents", slug: "agents", name: "Agents", nameZh: "智能体" },
   codingAgents: { id: "task-coding-agents", slug: "coding-agents", name: "Coding Agents", nameZh: "代码智能体" },
   computerUseAgents: { id: "task-computer-use-agents", slug: "computer-use-agents", name: "Computer Use Agents", nameZh: "计算机操作智能体" },
-  documentUnderstanding: { id: "task-document-understanding", slug: "document-understanding", name: "Document Understanding", nameZh: "文档理解" },
-  visualQuestionAnswering: { id: "task-visual-question-answering", slug: "visual-question-answering", name: "Visual QA", nameZh: "视觉问答" },
-  languageModeling: { id: "task-language-modeling", slug: "language-modeling", name: "Language Modeling", nameZh: "语言模型" },
+  multiAgentSystems: { id: "task-multi-agent-systems", slug: "multi-agent-systems", name: "Multi-Agent Systems", nameZh: "多智能体系统" },
+  // language-models
+  languageModeling: { id: "task-language-modeling", slug: "language-modeling", name: "Language Modeling", nameZh: "语言建模" },
+  instructionFollowing: { id: "task-instruction-following", slug: "instruction-following", name: "Instruction Following", nameZh: "指令跟随" },
+  longContext: { id: "task-long-context", slug: "long-context", name: "Long Context", nameZh: "长上下文" },
+  textGeneration: { id: "task-text-generation", slug: "text-generation", name: "Text Generation", nameZh: "文本生成" },
+  // reasoning
   reasoning: { id: "task-reasoning", slug: "reasoning", name: "Reasoning", nameZh: "推理" },
-  inferenceServing: { id: "task-inference-serving", slug: "inference-serving", name: "Inference Serving", nameZh: "推理服务" }
+  mathematicalReasoning: { id: "task-mathematical-reasoning", slug: "mathematical-reasoning", name: "Mathematical Reasoning", nameZh: "数学推理" },
+  codeReasoning: { id: "task-code-reasoning", slug: "code-reasoning", name: "Code Reasoning", nameZh: "代码推理" },
+  // multimodal
+  visualQuestionAnswering: { id: "task-visual-question-answering", slug: "visual-question-answering", name: "Visual QA", nameZh: "视觉问答" },
+  documentUnderstanding: { id: "task-document-understanding", slug: "document-understanding", name: "Document Understanding", nameZh: "文档理解" },
+  imageGeneration: { id: "task-image-generation", slug: "image-generation", name: "Image Generation", nameZh: "图像生成" },
+  videoUnderstanding: { id: "task-video-understanding", slug: "video-understanding", name: "Video Understanding", nameZh: "视频理解" },
+  // computer-vision
+  objectDetection: { id: "task-object-detection", slug: "object-detection", name: "Object Detection", nameZh: "目标检测" },
+  imageSegmentation: { id: "task-image-segmentation", slug: "image-segmentation", name: "Image Segmentation", nameZh: "图像分割" },
+  // code-ai
+  codeGeneration: { id: "task-code-generation", slug: "code-generation", name: "Code Generation", nameZh: "代码生成" },
+  codeReview: { id: "task-code-review", slug: "code-review", name: "Code Review", nameZh: "代码审查" },
+  // retrieval-knowledge
+  rag: { id: "task-rag", slug: "retrieval-augmented-generation", name: "Retrieval-Augmented Generation", nameZh: "检索增强生成" },
+  knowledgeGraphs: { id: "task-knowledge-graphs", slug: "knowledge-graphs", name: "Knowledge Graphs", nameZh: "知识图谱" },
+  // systems-infra
+  inferenceServing: { id: "task-inference-serving", slug: "inference-serving", name: "Inference Serving", nameZh: "推理服务" },
+  modelQuantization: { id: "task-model-quantization", slug: "model-quantization", name: "Model Quantization", nameZh: "模型量化" },
+  distributedTraining: { id: "task-distributed-training", slug: "distributed-training", name: "Distributed Training", nameZh: "分布式训练" },
+  // data-evaluation
+  benchmarking: { id: "task-benchmarking", slug: "benchmarking", name: "Benchmarking", nameZh: "基准评测" },
+  datasetCreation: { id: "task-dataset-creation", slug: "dataset-creation", name: "Dataset Creation", nameZh: "数据集构建" },
+  // security-safety
+  safetyAlignment: { id: "task-safety-alignment", slug: "safety-alignment", name: "Safety & Alignment", nameZh: "安全与对齐" },
+  adversarialRobustness: { id: "task-adversarial-robustness", slug: "adversarial-robustness", name: "Adversarial Robustness", nameZh: "对抗鲁棒性" },
+  // speech-audio
+  speechRecognition: { id: "task-speech-recognition", slug: "speech-recognition", name: "Speech Recognition", nameZh: "语音识别" },
+  audioGeneration: { id: "task-audio-generation", slug: "audio-generation", name: "Audio Generation", nameZh: "音频生成" },
+  // ai-for-science
+  proteinStructure: { id: "task-protein-structure", slug: "protein-structure", name: "Protein Structure", nameZh: "蛋白质结构" },
+  molecularGeneration: { id: "task-molecular-generation", slug: "molecular-generation", name: "Molecular Generation", nameZh: "分子生成" },
+  // human-ai-interaction
+  humanFeedback: { id: "task-human-feedback", slug: "human-feedback", name: "Human Feedback & RLHF", nameZh: "人类反馈与RLHF" },
+  // robotics-embodied
+  embodiedAI: { id: "task-embodied-ai", slug: "embodied-ai", name: "Embodied AI", nameZh: "具身智能" },
 } satisfies Record<string, TaskRef>
 
 const methodRefs = {
@@ -32,6 +72,7 @@ const benchmarkRefs = {
 } satisfies Record<string, BenchmarkRef>
 
 export const paperTasks: PaperTask[] = [
+  // ── Agents ──────────────────────────────────────────────────────────────────
   {
     ...taskRefs.agents,
     group: "agents",
@@ -128,6 +169,253 @@ export const paperTasks: PaperTask[] = [
     sisterTasks: [taskRefs.agents, taskRefs.codingAgents, taskRefs.documentUnderstanding],
     commonMethods: [methodRefs.react, methodRefs.toolUse, methodRefs.planning]
   }
+  {
+    ...taskRefs.multiAgentSystems,
+    group: "agents",
+    description: "Coordination, communication, and collaboration between multiple autonomous agents.",
+    descriptionZh: "多个自主智能体之间的协调、通信与协作。",
+    paperCount: 0, benchmarkCount: 0, methodCount: 3, trendSignal: "+2.1x",
+    sisterTasks: [taskRefs.agents, taskRefs.codingAgents],
+    commonMethods: [methodRefs.agent, methodRefs.planning, methodRefs.toolUse]
+  },
+  // ── Language Models ──────────────────────────────────────────────────────────
+  {
+    ...taskRefs.instructionFollowing,
+    group: "language-models",
+    description: "Training and evaluating models to follow natural language instructions accurately.",
+    descriptionZh: "训练和评估模型准确遵循自然语言指令的能力。",
+    paperCount: 0, benchmarkCount: 0, methodCount: 3, trendSignal: "+11%",
+    sisterTasks: [taskRefs.languageModeling, taskRefs.reasoning],
+    commonMethods: [methodRefs.postTraining, methodRefs.llm, methodRefs.chainOfThought]
+  },
+  {
+    ...taskRefs.longContext,
+    group: "language-models",
+    description: "Extending context windows and improving retrieval over long documents.",
+    descriptionZh: "扩展上下文窗口并改善对长文档的检索能力。",
+    paperCount: 0, benchmarkCount: 0, methodCount: 2, trendSignal: "+18%",
+    sisterTasks: [taskRefs.languageModeling, taskRefs.rag],
+    commonMethods: [methodRefs.llm, methodRefs.postTraining]
+  },
+  {
+    ...taskRefs.textGeneration,
+    group: "language-models",
+    description: "Open-ended and constrained text generation, summarization, and translation.",
+    descriptionZh: "开放式和受限文本生成、摘要与翻译。",
+    paperCount: 0, benchmarkCount: 0, methodCount: 3, trendSignal: "+8%",
+    sisterTasks: [taskRefs.languageModeling, taskRefs.instructionFollowing],
+    commonMethods: [methodRefs.llm, methodRefs.postTraining, methodRefs.chainOfThought]
+  },
+  // ── Reasoning ────────────────────────────────────────────────────────────────
+  {
+    ...taskRefs.mathematicalReasoning,
+    group: "reasoning",
+    description: "Solving mathematical problems requiring symbolic manipulation and multi-step proof.",
+    descriptionZh: "解决需要符号操作和多步证明的数学问题。",
+    paperCount: 0, benchmarkCount: 0, methodCount: 3, trendSignal: "+1.5x",
+    sisterTasks: [taskRefs.reasoning, taskRefs.codeReasoning],
+    commonMethods: [methodRefs.chainOfThought, methodRefs.planning, methodRefs.llm]
+  },
+  {
+    ...taskRefs.codeReasoning,
+    group: "reasoning",
+    description: "Understanding, tracing, and reasoning about program behavior and semantics.",
+    descriptionZh: "理解、追踪和推理程序行为与语义。",
+    paperCount: 0, benchmarkCount: 0, methodCount: 3, trendSignal: "+1.3x",
+    sisterTasks: [taskRefs.reasoning, taskRefs.codingAgents],
+    commonMethods: [methodRefs.chainOfThought, methodRefs.agent, methodRefs.toolUse]
+  },
+  // ── Multimodal ───────────────────────────────────────────────────────────────
+  {
+    ...taskRefs.imageGeneration,
+    group: "multimodal",
+    description: "Generating high-fidelity images from text prompts or reference images.",
+    descriptionZh: "从文本提示或参考图像生成高保真图像。",
+    paperCount: 0, benchmarkCount: 0, methodCount: 2, trendSignal: "+14%",
+    sisterTasks: [taskRefs.visualQuestionAnswering, taskRefs.videoUnderstanding],
+    commonMethods: [methodRefs.llm, methodRefs.postTraining]
+  },
+  {
+    ...taskRefs.videoUnderstanding,
+    group: "multimodal",
+    description: "Temporal reasoning, action recognition, and captioning over video streams.",
+    descriptionZh: "对视频流进行时序推理、动作识别和字幕生成。",
+    paperCount: 0, benchmarkCount: 0, methodCount: 2, trendSignal: "+16%",
+    sisterTasks: [taskRefs.visualQuestionAnswering, taskRefs.imageGeneration],
+    commonMethods: [methodRefs.llm, methodRefs.postTraining]
+  },
+  // ── Computer Vision ──────────────────────────────────────────────────────────
+  {
+    ...taskRefs.objectDetection,
+    group: "computer-vision",
+    description: "Localizing and classifying objects in images and video frames.",
+    descriptionZh: "在图像和视频帧中定位和分类目标。",
+    paperCount: 0, benchmarkCount: 0, methodCount: 2, trendSignal: "+7%",
+    sisterTasks: [taskRefs.imageSegmentation, taskRefs.visualQuestionAnswering],
+    commonMethods: [methodRefs.llm, methodRefs.toolUse]
+  },
+  {
+    ...taskRefs.imageSegmentation,
+    group: "computer-vision",
+    description: "Pixel-level understanding including semantic, instance, and panoptic segmentation.",
+    descriptionZh: "像素级理解，包括语义分割、实例分割和全景分割。",
+    paperCount: 0, benchmarkCount: 0, methodCount: 2, trendSignal: "+9%",
+    sisterTasks: [taskRefs.objectDetection, taskRefs.documentUnderstanding],
+    commonMethods: [methodRefs.toolUse, methodRefs.llm]
+  },
+  // ── Code AI ──────────────────────────────────────────────────────────────────
+  {
+    ...taskRefs.codeGeneration,
+    group: "code-ai",
+    description: "Generating correct, efficient code from natural language specifications.",
+    descriptionZh: "从自然语言规范生成正确、高效的代码。",
+    paperCount: 0, benchmarkCount: 0, methodCount: 3, trendSignal: "+1.4x",
+    sisterTasks: [taskRefs.codingAgents, taskRefs.codeReasoning],
+    commonMethods: [methodRefs.llm, methodRefs.postTraining, methodRefs.agent]
+  },
+  {
+    ...taskRefs.codeReview,
+    group: "code-ai",
+    description: "Automated review, bug detection, and patch suggestion for code changes.",
+    descriptionZh: "对代码变更进行自动审查、缺陷检测和补丁建议。",
+    paperCount: 0, benchmarkCount: 0, methodCount: 2, trendSignal: "+12%",
+    sisterTasks: [taskRefs.codingAgents, taskRefs.codeGeneration],
+    commonMethods: [methodRefs.llm, methodRefs.agent]
+  },
+  // ── Retrieval & Knowledge ────────────────────────────────────────────────────
+  {
+    ...taskRefs.rag,
+    group: "retrieval-knowledge",
+    description: "Augmenting generation with retrieved documents, passages, or structured knowledge.",
+    descriptionZh: "通过检索文档、段落或结构化知识来增强生成能力。",
+    paperCount: 0, benchmarkCount: 0, methodCount: 3, trendSignal: "+1.6x",
+    sisterTasks: [taskRefs.languageModeling, taskRefs.longContext, taskRefs.knowledgeGraphs],
+    commonMethods: [methodRefs.llm, methodRefs.toolUse, methodRefs.agent]
+  },
+  {
+    ...taskRefs.knowledgeGraphs,
+    group: "retrieval-knowledge",
+    description: "Building, querying, and reasoning over structured knowledge representations.",
+    descriptionZh: "构建、查询和推理结构化知识表示。",
+    paperCount: 0, benchmarkCount: 0, methodCount: 2, trendSignal: "+10%",
+    sisterTasks: [taskRefs.rag, taskRefs.reasoning],
+    commonMethods: [methodRefs.llm, methodRefs.toolUse]
+  },
+  // ── Systems & Infra ──────────────────────────────────────────────────────────
+  {
+    ...taskRefs.modelQuantization,
+    group: "systems-infra",
+    description: "Reducing model precision and size while preserving accuracy for efficient deployment.",
+    descriptionZh: "在保持精度的同时降低模型精度和大小以实现高效部署。",
+    paperCount: 0, benchmarkCount: 0, methodCount: 2, trendSignal: "+13%",
+    sisterTasks: [taskRefs.inferenceServing, taskRefs.distributedTraining],
+    commonMethods: [methodRefs.llm, methodRefs.postTraining]
+  },
+  {
+    ...taskRefs.distributedTraining,
+    group: "systems-infra",
+    description: "Parallelism strategies, communication optimization, and fault tolerance for large-scale training.",
+    descriptionZh: "大规模训练的并行策略、通信优化和容错机制。",
+    paperCount: 0, benchmarkCount: 0, methodCount: 2, trendSignal: "+11%",
+    sisterTasks: [taskRefs.inferenceServing, taskRefs.modelQuantization],
+    commonMethods: [methodRefs.llm, methodRefs.postTraining]
+  },
+  // ── Data & Evaluation ────────────────────────────────────────────────────────
+  {
+    ...taskRefs.benchmarking,
+    group: "data-evaluation",
+    description: "Designing and running evaluations to measure model capabilities and limitations.",
+    descriptionZh: "设计和运行评估以衡量模型能力和局限性。",
+    paperCount: 0, benchmarkCount: 0, methodCount: 2, trendSignal: "+15%",
+    sisterTasks: [taskRefs.safetyAlignment, taskRefs.datasetCreation],
+    commonMethods: [methodRefs.llm, methodRefs.chainOfThought]
+  },
+  {
+    ...taskRefs.datasetCreation,
+    group: "data-evaluation",
+    description: "Collecting, annotating, and curating datasets for training and evaluation.",
+    descriptionZh: "收集、标注和整理用于训练和评估的数据集。",
+    paperCount: 0, benchmarkCount: 0, methodCount: 1, trendSignal: "+8%",
+    sisterTasks: [taskRefs.benchmarking],
+    commonMethods: [methodRefs.llm]
+  },
+  // ── Security & Safety ────────────────────────────────────────────────────────
+  {
+    ...taskRefs.safetyAlignment,
+    group: "security-safety",
+    description: "Aligning model behavior with human values, reducing harmful outputs and jailbreaks.",
+    descriptionZh: "使模型行为与人类价值观对齐，减少有害输出和越狱行为。",
+    paperCount: 0, benchmarkCount: 0, methodCount: 3, trendSignal: "+1.8x",
+    sisterTasks: [taskRefs.humanFeedback, taskRefs.benchmarking],
+    commonMethods: [methodRefs.postTraining, methodRefs.llm, methodRefs.agent]
+  },
+  {
+    ...taskRefs.adversarialRobustness,
+    group: "security-safety",
+    description: "Defending models against adversarial inputs, prompt injection, and distribution shift.",
+    descriptionZh: "防御模型对抗对抗性输入、提示注入和分布偏移。",
+    paperCount: 0, benchmarkCount: 0, methodCount: 2, trendSignal: "+9%",
+    sisterTasks: [taskRefs.safetyAlignment, taskRefs.benchmarking],
+    commonMethods: [methodRefs.llm, methodRefs.postTraining]
+  },
+  // ── Speech & Audio ───────────────────────────────────────────────────────────
+  {
+    ...taskRefs.speechRecognition,
+    group: "speech-audio",
+    description: "Transcribing and understanding spoken language across languages and domains.",
+    descriptionZh: "跨语言和领域转录和理解口语。",
+    paperCount: 0, benchmarkCount: 0, methodCount: 2, trendSignal: "+7%",
+    sisterTasks: [taskRefs.audioGeneration, taskRefs.languageModeling],
+    commonMethods: [methodRefs.llm, methodRefs.postTraining]
+  },
+  {
+    ...taskRefs.audioGeneration,
+    group: "speech-audio",
+    description: "Generating speech, music, and environmental audio from text or reference signals.",
+    descriptionZh: "从文本或参考信号生成语音、音乐和环境音频。",
+    paperCount: 0, benchmarkCount: 0, methodCount: 2, trendSignal: "+12%",
+    sisterTasks: [taskRefs.speechRecognition, taskRefs.imageGeneration],
+    commonMethods: [methodRefs.llm, methodRefs.postTraining]
+  },
+  // ── AI for Science ───────────────────────────────────────────────────────────
+  {
+    ...taskRefs.proteinStructure,
+    group: "ai-for-science",
+    description: "Predicting and designing protein 3D structures and functions.",
+    descriptionZh: "预测和设计蛋白质三维结构与功能。",
+    paperCount: 0, benchmarkCount: 0, methodCount: 2, trendSignal: "+14%",
+    sisterTasks: [taskRefs.molecularGeneration],
+    commonMethods: [methodRefs.llm, methodRefs.postTraining]
+  },
+  {
+    ...taskRefs.molecularGeneration,
+    group: "ai-for-science",
+    description: "Generating novel molecules and materials with desired properties.",
+    descriptionZh: "生成具有所需属性的新型分子和材料。",
+    paperCount: 0, benchmarkCount: 0, methodCount: 2, trendSignal: "+11%",
+    sisterTasks: [taskRefs.proteinStructure],
+    commonMethods: [methodRefs.llm, methodRefs.postTraining]
+  },
+  // ── Human-AI Interaction ─────────────────────────────────────────────────────
+  {
+    ...taskRefs.humanFeedback,
+    group: "human-ai-interaction",
+    description: "Learning from human preferences, RLHF, and interactive feedback loops.",
+    descriptionZh: "从人类偏好、RLHF和交互式反馈循环中学习。",
+    paperCount: 0, benchmarkCount: 0, methodCount: 3, trendSignal: "+1.2x",
+    sisterTasks: [taskRefs.safetyAlignment, taskRefs.instructionFollowing],
+    commonMethods: [methodRefs.postTraining, methodRefs.llm, methodRefs.agent]
+  },
+  // ── Robotics & Embodied ──────────────────────────────────────────────────────
+  {
+    ...taskRefs.embodiedAI,
+    group: "robotics-embodied",
+    description: "Agents that perceive, plan, and act in physical or simulated 3D environments.",
+    descriptionZh: "在物理或模拟三维环境中感知、规划和行动的智能体。",
+    paperCount: 0, benchmarkCount: 0, methodCount: 3, trendSignal: "+1.7x",
+    sisterTasks: [taskRefs.agents, taskRefs.computerUseAgents],
+    commonMethods: [methodRefs.agent, methodRefs.planning, methodRefs.llm]
+  },
 ]
 
 export const paperMethods: PaperMethod[] = [
