@@ -168,7 +168,7 @@ export const paperTasks: PaperTask[] = [
     trendSignal: "+1.1x",
     sisterTasks: [taskRefs.agents, taskRefs.codingAgents, taskRefs.documentUnderstanding],
     commonMethods: [methodRefs.react, methodRefs.toolUse, methodRefs.planning]
-  }
+  },
   {
     ...taskRefs.multiAgentSystems,
     group: "agents",
