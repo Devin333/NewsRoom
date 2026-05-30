@@ -4,26 +4,27 @@ import { useState } from "react"
 import { StatusBadge } from "@/components/common/StatusBadge"
 import { formatDateTime } from "@/lib/format"
 import { safeApiPost } from "@/lib/api-client"
+import { useToast } from "@/components/common/Toast"
 import type { ApprovalItem, ApprovalResumeContext, ApprovalWorkflowResumeResult } from "@/lib/types"
 
 export function ApprovalTable({ approvals }: { approvals: ApprovalItem[] }) {
+  const toast = useToast()
   const [loading, setLoading] = useState<string | null>(null)
-  const [results, setResults] = useState<Record<string, string>>({})
 
   async function act(approvalId: string, action: string) {
     setLoading(`${approvalId}:${action}`)
-    let msg = ""
     if (action === "approve" || action === "reject") {
       const res = await safeApiPost(`/api/v1/approvals/${approvalId}/${action}`, {})
-      msg = res.ok ? `${action}d` : (res.errorMessage ?? "failed")
+      res.ok ? toast(`Approval ${action}d`, "success") : toast(res.errorMessage ?? "Failed", "error")
     } else if (action === "resume-context") {
       const res = await safeApiPost<ApprovalResumeContext>(`/api/v1/approvals/${approvalId}/resume-context`, {})
-      msg = res.ok ? "Context retrieved" : (res.errorMessage ?? "failed")
+      res.ok ? toast("Context retrieved", "success") : toast(res.errorMessage ?? "Failed", "error")
     } else if (action === "resume-workflow") {
       const res = await safeApiPost<ApprovalWorkflowResumeResult>(`/api/v1/approvals/${approvalId}/resume-workflow`, {})
-      msg = res.ok ? `Workflow resumed → ${res.data?.run_id ?? ""}` : (res.errorMessage ?? "failed")
+      res.ok
+        ? toast(`Workflow resumed → ${res.data?.run_id ?? ""}`, "success")
+        : toast(res.errorMessage ?? "Failed", "error")
     }
-    setResults((p) => ({ ...p, [approvalId]: msg }))
     setLoading(null)
   }
 
@@ -49,11 +50,10 @@ export function ApprovalTable({ approvals }: { approvals: ApprovalItem[] }) {
             <div className="flex shrink-0 flex-wrap gap-2">
               {(["approve", "reject", "resume-context", "resume-workflow"] as const).map((action) => {
                 const isLoading = loading === `${a.approval_id}:${action}`
-                const variant = action === "approve"
-                  ? "bg-good text-white hover:bg-good/90"
-                  : action === "reject"
-                  ? "bg-bad text-white hover:bg-bad/90"
-                  : "border border-line bg-white text-ink hover:bg-surface"
+                const variant =
+                  action === "approve" ? "bg-good text-white hover:bg-good/90" :
+                  action === "reject"  ? "bg-bad text-white hover:bg-bad/90" :
+                  "border border-line bg-white text-ink hover:bg-surface"
                 return (
                   <button
                     key={action}
@@ -67,9 +67,6 @@ export function ApprovalTable({ approvals }: { approvals: ApprovalItem[] }) {
               })}
             </div>
           </div>
-          {results[a.approval_id] && (
-            <p className="mt-2 text-xs text-muted">{results[a.approval_id]}</p>
-          )}
         </div>
       ))}
     </div>
