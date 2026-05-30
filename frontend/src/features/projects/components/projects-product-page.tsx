@@ -55,8 +55,13 @@ const routeIcons: Record<ProjectProductRoute, ComponentType<{ className?: string
 
 export function ProjectsProductPage({ route }: ProjectsProductPageProps) {
   const section = useMemo(() => projectProductSection(route), [route])
+  const searchParams = useSearchParams()
+  const urlCategory = searchParams.get("category") ?? undefined
   const [query, setQuery] = useState("")
-  const queryParams = useMemo(() => ({ q: query.trim() || undefined, limit: route === "home" ? 6 : 18 }), [query, route])
+  const queryParams = useMemo(
+    () => ({ q: query.trim() || undefined, limit: route === "home" ? 6 : 18, category: urlCategory }),
+    [query, route, urlCategory]
+  )
 
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: ["projects", "product-v1", route, queryParams],

@@ -12,10 +12,10 @@ import { PaperStream } from "@/components/papers/shared/paper-stream"
 import { Button } from "@/components/ui/button"
 import { comicSansFont } from "@/lib/fonts"
 import { fetchPapers } from "@/lib/papers/api"
-import { fetchProjectsCollections } from "@/lib/projects/api"
-import type { ProjectDomain } from "@/components/papers/papers-domain-sidebar"
+import { fetchProjectsHome } from "@/lib/projects/api"
+import { buildPaperPortalMetrics, deriveTopPaperDomains, deriveProjectCategoryDomains } from "@/lib/papers/metrics"
+import type { ProjectCategoryDomain } from "@/lib/papers/metrics"
 import { papersCopy, t } from "@/lib/papers/copy"
-import { buildPaperPortalMetrics, deriveTopPaperDomains } from "@/lib/papers/metrics"
 import type { Locale, Paper, PaperPeriod, PaperSort } from "@/lib/papers/types"
 
 const PAPER_DASHBOARD_LIMIT = 5000
@@ -38,7 +38,7 @@ export function TrendingPapersPage({ locale, papers }: { locale: Locale; papers:
   const [selectedPaperId, setSelectedPaperId] = useState<string | null>(deepLinkedPaperId)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [projectDomains, setProjectDomains] = useState<ProjectDomain[]>([])
+  const [projectDomains, setProjectDomains] = useState<ProjectCategoryDomain[]>([])
   const pageOffset = (page - 1) * PAPER_PAGE_SIZE
   const portalMetrics = useMemo(
     () => buildPaperPortalMetrics(dashboardPapers, paperTotalCount),
@@ -73,17 +73,10 @@ export function TrendingPapersPage({ locale, papers }: { locale: Locale; papers:
   }, [deepLinkedPaperId])
 
   useEffect(() => {
-    fetchProjectsCollections()
+    fetchProjectsHome({ limit: 50 })
       .then((result) => {
-        const domains: ProjectDomain[] = result.collections
-          .slice(0, 4)
-          .map((c) => ({
-            id: c.id,
-            slug: c.slug,
-            name: c.title,
-            count: c.item_count ?? 0,
-          }))
-        setProjectDomains(domains)
+        const all = [...result.hot, ...result.rising, ...result.tools]
+        setProjectDomains(deriveProjectCategoryDomains(all))
       })
       .catch(() => {})
   }, [])

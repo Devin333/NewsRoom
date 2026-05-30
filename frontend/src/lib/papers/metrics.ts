@@ -150,3 +150,43 @@ function mergeTaskRef(existing: TaskRef, next: TaskRef): TaskRef {
     )
   }
 }
+
+// ── Project category sidebar ──────────────────────────────────────────────────
+
+export type ProjectCategoryDomain = {
+  slug: string
+  name: string
+  count: number
+}
+
+const CATEGORY_LABELS: Record<string, string> = {
+  agent_framework: "Agent Frameworks",
+  rag:             "RAG",
+  llm_infra:       "LLM Infra",
+  inference:       "Inference",
+  evaluation:      "Evaluation",
+  coding:          "Coding",
+  multimodal:      "Multimodal",
+  data:            "Data",
+  memory:          "Memory",
+  workflow:        "Workflow",
+}
+
+export function deriveProjectCategoryDomains(
+  projects: Array<{ category?: string | null }>,
+  limit = 4
+): ProjectCategoryDomain[] {
+  const counts = new Map<string, number>()
+  for (const p of projects) {
+    const cat = p.category
+    if (cat) counts.set(cat, (counts.get(cat) ?? 0) + 1)
+  }
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, limit)
+    .map(([slug, count]) => ({
+      slug,
+      name: CATEGORY_LABELS[slug] ?? slug.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
+      count,
+    }))
+}
