@@ -194,52 +194,193 @@ function ProjectsHome({ data }: { data: ProjectsApiHomeResult }) {
 }
 
 function ToolsView({ data }: { data: ProjectsApiToolResult }) {
+  const [hasApi, setHasApi] = useState(false)
+  const [hasCli, setHasCli] = useState(false)
+  const [hasPython, setHasPython] = useState(false)
+  const [hasDocker, setHasDocker] = useState(false)
+  const [difficulty, setDifficulty] = useState<string>("")
+
+  const filtered = data.tools.filter((tool) => {
+    if (hasApi && !tool.profile.has_api) return false
+    if (hasCli && !tool.profile.has_cli) return false
+    if (hasPython && !tool.profile.has_python_sdk) return false
+    if (hasDocker && !tool.profile.has_docker) return false
+    if (difficulty && tool.profile.integration_difficulty !== difficulty) return false
+    return true
+  })
+
   if (!data.tools.length) return <ProjectEmptyState title="No Real-Derived Tools" />
   return (
-    <section className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">
-      {data.tools.map((tool) => (
-        <SimplePanel
-          key={tool.project.id}
-          title={tool.project.name}
-          subtitle={`${labelize(tool.profile.tool_type)} / ${tool.profile.integration_difficulty}`}
-          body={tool.fit_reason ?? tool.project.description ?? ""}
-          href={`/projects/tools/${encodeURIComponent(tool.project.id)}`}
-        />
-      ))}
+    <section className="grid gap-4 lg:grid-cols-[minmax(0,16rem)_1fr]">
+      <div className="rounded-md border border-[#d8dee7] bg-white p-4 shadow-sm dark:border-border dark:bg-card h-fit">
+        <h3 className="text-sm font-semibold text-[#202124] dark:text-foreground mb-3">Filters</h3>
+        <div className="space-y-3">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" checked={hasApi} onChange={(e) => setHasApi(e.target.checked)} className="rounded" />
+            <span className="text-sm text-[#4b5563] dark:text-muted-foreground">Has API</span>
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" checked={hasCli} onChange={(e) => setHasCli(e.target.checked)} className="rounded" />
+            <span className="text-sm text-[#4b5563] dark:text-muted-foreground">Has CLI</span>
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" checked={hasPython} onChange={(e) => setHasPython(e.target.checked)} className="rounded" />
+            <span className="text-sm text-[#4b5563] dark:text-muted-foreground">Python SDK</span>
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" checked={hasDocker} onChange={(e) => setHasDocker(e.target.checked)} className="rounded" />
+            <span className="text-sm text-[#4b5563] dark:text-muted-foreground">Docker</span>
+          </label>
+          <div className="pt-2 border-t border-[#e5e7eb] dark:border-border">
+            <label className="text-xs font-semibold text-[#667085] dark:text-muted-foreground block mb-2">Difficulty</label>
+            <select
+              value={difficulty}
+              onChange={(e) => setDifficulty(e.target.value)}
+              className="w-full rounded-md border border-input bg-card px-2 py-1 text-sm"
+            >
+              <option value="">All</option>
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">
+        {filtered.map((tool) => (
+          <SimplePanel
+            key={tool.project.id}
+            title={tool.project.name}
+            subtitle={`${labelize(tool.profile.tool_type)} / ${tool.profile.integration_difficulty}`}
+            body={tool.fit_reason ?? tool.project.description ?? ""}
+            href={`/projects/tools/${encodeURIComponent(tool.project.id)}`}
+          />
+        ))}
+      </div>
     </section>
   )
 }
 
 function CasesView({ data }: { data: ProjectsApiCaseResult }) {
+  const [q, setQ] = useState("")
+  const [domain, setDomain] = useState("")
+  const [moduleType, setModuleType] = useState("")
+  const [difficulty, setDifficulty] = useState("")
+
+  const domains = Array.from(new Set(data.cases.map((c) => c.business_domain).filter(Boolean)))
+  const moduleTypes = Array.from(new Set(data.cases.map((c) => c.module_type).filter(Boolean)))
+
+  const filtered = data.cases.filter((c) => {
+    if (q && !`${c.title} ${c.design_summary ?? ""} ${c.problem ?? ""}`.toLowerCase().includes(q.toLowerCase())) return false
+    if (domain && c.business_domain !== domain) return false
+    if (moduleType && c.module_type !== moduleType) return false
+    if (difficulty && (c as any).difficulty !== difficulty) return false
+    return true
+  })
+
   if (!data.cases.length) return <ProjectEmptyState title="No Real-Derived Cases" />
   return (
-    <section className="grid gap-4 lg:grid-cols-2">
-      {data.cases.map((item) => (
-        <SimplePanel
-          key={item.id}
-          title={item.title}
-          subtitle={`${item.business_domain} / ${item.module_type}`}
-          body={String(item.design_summary ?? item.problem ?? "")}
-          href={`/projects/cases/${encodeURIComponent(item.id)}`}
-        />
-      ))}
+    <section className="space-y-4">
+      <div className="flex flex-wrap gap-3 rounded-md border border-[#d8dee7] bg-white p-4 shadow-sm dark:border-border dark:bg-card">
+        <div className="relative flex-1 min-w-48">
+          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input value={q} onChange={(e) => setQ(e.target.value)} className="pl-9 h-9" placeholder="Search cases" />
+        </div>
+        <select value={domain} onChange={(e) => setDomain(e.target.value)} className="rounded-md border border-input bg-card px-2 py-1 text-sm">
+          <option value="">All domains</option>
+          {domains.map((d) => <option key={d} value={d}>{labelize(d)}</option>)}
+        </select>
+        <select value={moduleType} onChange={(e) => setModuleType(e.target.value)} className="rounded-md border border-input bg-card px-2 py-1 text-sm">
+          <option value="">All modules</option>
+          {moduleTypes.map((m) => <option key={m} value={m}>{labelize(m)}</option>)}
+        </select>
+        <select value={difficulty} onChange={(e) => setDifficulty(e.target.value)} className="rounded-md border border-input bg-card px-2 py-1 text-sm">
+          <option value="">All difficulty</option>
+          <option value="low">Low</option>
+          <option value="medium">Medium</option>
+          <option value="high">High</option>
+        </select>
+      </div>
+      {!filtered.length ? <ProjectEmptyState title="No matching cases" /> : (
+        <div className="grid gap-4 lg:grid-cols-2">
+          {filtered.map((item) => (
+            <Link key={item.id} href={`/projects/cases/${encodeURIComponent(item.id)}`}>
+              <article className="h-full rounded-md border border-[#d8dee7] bg-white p-4 shadow-sm transition-colors hover:border-primary/40 dark:border-border dark:bg-card">
+                <div className="flex flex-wrap gap-2 mb-2">
+                  <Badge variant="info">{labelize(item.module_type)}</Badge>
+                  <Badge variant="muted">{labelize(item.business_domain)}</Badge>
+                  {(item as any).difficulty && <Badge variant="muted">{(item as any).difficulty}</Badge>}
+                  {(item as any).migration_level && <Badge variant="muted">reuse: {(item as any).migration_level}</Badge>}
+                </div>
+                <h3 className="text-base font-semibold text-[#202124] dark:text-foreground">{item.title}</h3>
+                <p className="mt-2 line-clamp-3 text-sm leading-6 text-[#4b5563] dark:text-muted-foreground">
+                  {String(item.design_summary ?? item.problem ?? "")}
+                </p>
+                {(item as any).suitable_for?.length > 0 && (
+                  <p className="mt-2 text-xs text-[#667085] dark:text-muted-foreground">
+                    For: {(item as any).suitable_for.slice(0, 3).join(", ")}
+                  </p>
+                )}
+              </article>
+            </Link>
+          ))}
+        </div>
+      )}
     </section>
   )
 }
 
 function CollectionsView({ data }: { data: ProjectsApiCollectionResult }) {
+  const [q, setQ] = useState("")
+  const [tag, setTag] = useState("")
+
+  const allTags = Array.from(new Set(data.collections.flatMap((c) => (c as any).tags ?? []).filter(Boolean)))
+
+  const filtered = data.collections.filter((c) => {
+    if (q && !`${c.title} ${c.description}`.toLowerCase().includes(q.toLowerCase())) return false
+    if (tag && !((c as any).tags ?? []).includes(tag)) return false
+    return true
+  })
+
   if (!data.collections.length) return <ProjectEmptyState title="No Real-Derived Collections" />
   return (
-    <section className="grid gap-4 lg:grid-cols-2">
-      {data.collections.map((item) => (
-        <SimplePanel
-          key={item.id}
-          title={item.title}
-          subtitle={`${item.item_count ?? 0} items`}
-          body={item.description}
-          href={`/projects/collections/${encodeURIComponent(item.slug)}`}
-        />
-      ))}
+    <section className="space-y-4">
+      <div className="flex flex-wrap gap-3 rounded-md border border-[#d8dee7] bg-white p-4 shadow-sm dark:border-border dark:bg-card">
+        <div className="relative flex-1 min-w-48">
+          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input value={q} onChange={(e) => setQ(e.target.value)} className="pl-9 h-9" placeholder="Search collections" />
+        </div>
+        {allTags.length > 0 && (
+          <select value={tag} onChange={(e) => setTag(e.target.value)} className="rounded-md border border-input bg-card px-2 py-1 text-sm">
+            <option value="">All tags</option>
+            {allTags.map((t) => <option key={t} value={t}>{labelize(t)}</option>)}
+          </select>
+        )}
+      </div>
+      {!filtered.length ? <ProjectEmptyState title="No matching collections" /> : (
+        <div className="grid gap-4 lg:grid-cols-2">
+          {filtered.map((item) => (
+            <Link key={item.id} href={`/projects/collections/${encodeURIComponent(item.slug)}`}>
+              <article className="h-full rounded-md border border-[#d8dee7] bg-white p-4 shadow-sm transition-colors hover:border-primary/40 dark:border-border dark:bg-card">
+                <div className="flex flex-wrap gap-2 mb-2">
+                  {(item as any).collection_type && <Badge variant="info">{labelize((item as any).collection_type)}</Badge>}
+                  <Badge variant="muted">{item.item_count ?? 0} items</Badge>
+                  {((item as any).tags ?? []).slice(0, 3).map((t: string) => (
+                    <Badge key={t} variant="muted">{labelize(t)}</Badge>
+                  ))}
+                </div>
+                <h3 className="text-base font-semibold text-[#202124] dark:text-foreground">{item.title}</h3>
+                <p className="mt-2 line-clamp-3 text-sm leading-6 text-[#4b5563] dark:text-muted-foreground">{item.description}</p>
+                {(item as any).learning_goals?.length > 0 && (
+                  <p className="mt-2 text-xs text-[#667085] dark:text-muted-foreground">
+                    Goals: {(item as any).learning_goals.slice(0, 2).join("; ")}
+                  </p>
+                )}
+              </article>
+            </Link>
+          ))}
+        </div>
+      )}
     </section>
   )
 }
@@ -298,9 +439,7 @@ function WatchlistView({ data, onChanged }: { data: ProjectsApiWatchlistResult; 
       </form>
       <div className="grid gap-4 lg:grid-cols-2">
         {data.items.length ? (
-          data.items.map((item) => (
-            <SimplePanel key={item.id} title={item.project_id} subtitle={`${item.priority} / ${item.status}`} body={item.watch_reason} />
-          ))
+          data.items.map((item) => <WatchItemCard key={item.id} item={item} />)
         ) : (
           <ProjectEmptyState title="No Watchlist Items" />
         )}
@@ -399,6 +538,7 @@ function LabView({ data }: { data: ProductData }) {
               <p className="font-medium text-[#202124] dark:text-foreground">{session.current_stage}</p>
               <p className="mt-1 text-muted-foreground">{session.user_problem}</p>
             </div>
+            <LabGraph graph={(session as any).graph_state} />
             {activeQuestion ? (
               <div className="space-y-3">
                 <p className="text-sm font-medium text-[#202124] dark:text-foreground">{activeQuestion.question}</p>
@@ -528,4 +668,83 @@ function uniqueProjects(projects: ProjectsApiProject[]): ProjectsApiProject[] {
     result.push(project)
   }
   return result
+}
+
+function WatchItemCard({ item }: { item: ProjectsApiWatchlistItem }) {
+  const signals: any[] = (item as any).signals ?? []
+  const pc = item.priority === "high" ? "text-red-600" : item.priority === "medium" ? "text-amber-600" : "text-[#667085]"
+  return (
+    <article className="rounded-md border border-[#d8dee7] bg-white p-4 shadow-sm dark:border-border dark:bg-card">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="truncate font-mono text-xs text-[#667085]">{item.project_id}</p>
+          <p className="mt-1 text-sm font-semibold text-[#202124] dark:text-foreground">{item.watch_reason}</p>
+        </div>
+        <span className={`shrink-0 text-xs font-semibold ${pc}`}>{item.priority}</span>
+      </div>
+      <div className="mt-2 flex flex-wrap gap-1">
+        <Badge variant={item.status === "active" ? "info" : "muted"}>{item.status}</Badge>
+        {((item as any).watch_topics ?? []).map((t: string) => <Badge key={t} variant="muted">{t}</Badge>)}
+      </div>
+      {(item as any).last_change_summary && (
+        <p className="mt-2 text-xs text-[#4b5563] dark:text-muted-foreground">{(item as any).last_change_summary}</p>
+      )}
+      {signals.length > 0 && (
+        <div className="mt-3 border-t border-[#e5e7eb] pt-3 dark:border-border">
+          <p className="mb-2 text-xs font-semibold text-[#667085]">Signals</p>
+          <div className="space-y-2">
+            {signals.map((s: any, i: number) => (
+              <div key={i} className="flex items-start gap-2">
+                <span className={`mt-1 size-2 shrink-0 rounded-full ${s.severity === "high" ? "bg-red-500" : s.severity === "medium" ? "bg-amber-400" : "bg-[#d1d5db]"}`} />
+                <div className="min-w-0">
+                  <p className="text-xs font-medium text-[#202124] dark:text-foreground">{s.title}</p>
+                  <p className="text-xs text-[#667085]">{s.summary}</p>
+                  {s.source_url && <a href={s.source_url} target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline">source ↗</a>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </article>
+  )
+}
+
+const NODE_COLORS: Record<string, string> = {
+  user_problem: "#0f172a", case: "#2563eb", solution: "#16a34a",
+  question: "#d97706", feedback: "#7c3aed", pattern: "#0891b2", component: "#be185d",
+}
+
+function LabGraph({ graph }: { graph?: any }) {
+  if (!graph?.nodes?.length) return null
+  const nodes: any[] = graph.nodes
+  const edges: any[] = graph.edges ?? []
+  const focused: string[] = graph.focused_node_ids ?? []
+  const cx = 200, cy = 120, r = 90
+  const pos: Record<string, { x: number; y: number }> = {}
+  nodes.forEach((n: any, i: number) => {
+    const a = (2 * Math.PI * i) / nodes.length - Math.PI / 2
+    pos[n.id] = { x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) }
+  })
+  return (
+    <div className="rounded-md border border-[#e5e7eb] bg-[#f8fafc] p-2 dark:border-border dark:bg-background">
+      <p className="mb-1 text-xs font-semibold text-[#667085]">Graph — {nodes.length} nodes, {edges.length} edges</p>
+      <svg viewBox="0 0 400 240" className="w-full" style={{ maxHeight: 200 }}>
+        {edges.map((e: any, i: number) => {
+          const s = pos[e.source_id], t = pos[e.target_id]
+          return s && t ? <line key={i} x1={s.x} y1={s.y} x2={t.x} y2={t.y} stroke="#d1d5db" strokeWidth={1.5} /> : null
+        })}
+        {nodes.map((n: any) => {
+          const p = pos[n.id]; if (!p) return null
+          const color = NODE_COLORS[n.node_type] ?? "#6b7280"
+          return (
+            <g key={n.id}>
+              <circle cx={p.x} cy={p.y} r={focused.includes(n.id) ? 10 : 7} fill={color} opacity={focused.includes(n.id) ? 1 : 0.7} />
+              <text x={p.x} y={p.y + 18} textAnchor="middle" fontSize={8} fill="#374151">{n.title.slice(0, 14)}</text>
+            </g>
+          )
+        })}
+      </svg>
+    </div>
+  )
 }
