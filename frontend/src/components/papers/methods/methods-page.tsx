@@ -81,7 +81,7 @@ export function MethodsPage({ locale }: { locale: Locale }) {
           </p>
         ) : null}
         {methodGroups.map((group) => (
-          <div key={group.area} className="space-y-3">
+          <div key={group.area} id={group.area.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "")} className="space-y-3">
             <div className="flex items-center justify-between gap-3 border-b border-border pb-2">
               <h2 className="text-base font-semibold text-[#334155] dark:text-foreground">{group.area}</h2>
               <span className="text-xs text-muted-foreground">{group.methods.length} {t(papersCopy.methods, locale)}</span>

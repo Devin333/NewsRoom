@@ -190,3 +190,39 @@ export function deriveProjectCategoryDomains(
       count,
     }))
 }
+
+// ── Method area sidebar ───────────────────────────────────────────────────────
+
+export type MethodAreaDomain = {
+  slug: string   // URL-safe area slug, e.g. "prompt-engineering"
+  name: string   // Display name, e.g. "Prompt Engineering"
+  count: number  // number of papers using methods in this area
+}
+
+export function deriveMethodAreaDomains(
+  papers: Paper[],
+  limit = 4
+): MethodAreaDomain[] {
+  const paperIds = new Map<string, Set<string>>() // area slug → paper id set
+  const areaNames = new Map<string, string>()
+
+  for (const paper of publishedPapers(papers)) {
+    for (const method of paper.methodRefs ?? []) {
+      const area = (method as { area?: string }).area
+      if (!area) continue
+      const slug = area.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "")
+      if (!paperIds.has(slug)) paperIds.set(slug, new Set())
+      paperIds.get(slug)!.add(paper.id)
+      if (!areaNames.has(slug)) areaNames.set(slug, area)
+    }
+  }
+
+  return [...paperIds.entries()]
+    .sort((a, b) => b[1].size - a[1].size)
+    .slice(0, limit)
+    .map(([slug, ids]) => ({
+      slug,
+      name: areaNames.get(slug) ?? slug,
+      count: ids.size,
+    }))
+}
