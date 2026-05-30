@@ -18,25 +18,33 @@ export function PapersHero({
   variant?: "default" | "editorial"
 }) {
   if (variant === "editorial") {
-    const [firstWord, ...rest] = title.split(" ")
+    const [leadingTitle, accentTitle] = splitEditorialTitle(title)
     return (
-      <section className="grid gap-8 pt-8 pb-10 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-end">
-        <div>
+      <section className="grid gap-6 pt-5 pb-6 lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-start xl:grid-cols-[minmax(0,1fr)_21rem]">
+        <div className="min-w-0">
           {eyebrow ? (
             <p className="mb-5 text-xs font-medium uppercase tracking-[0.18em] text-[#334155]/55">
               {eyebrow}
             </p>
           ) : null}
-          <h1 className="max-w-5xl break-keep text-5xl font-black leading-none tracking-normal text-[#334155] sm:text-6xl lg:text-7xl dark:text-foreground">
-            {firstWord}{" "}
-            <span className="bg-gradient-to-r from-emerald-600 via-teal-600 to-blue-600 bg-clip-text text-transparent">
-              {rest.join(" ")}
-            </span>
+          <h1 className="max-w-4xl break-keep text-4xl font-black leading-[0.96] tracking-normal text-[#334155] sm:text-5xl lg:text-6xl dark:text-foreground">
+            {accentTitle ? (
+              <>
+                {leadingTitle}{" "}
+                <span className="bg-gradient-to-r from-emerald-600 via-teal-600 to-blue-600 bg-clip-text text-transparent">
+                  {accentTitle}
+                </span>
+              </>
+            ) : (
+              leadingTitle
+            )}
           </h1>
-          <p className="mt-6 max-w-3xl text-base leading-7 text-[#334155]/70 dark:text-muted-foreground">{subtitle}</p>
+          <p className="mt-4 max-w-2xl text-sm leading-6 text-[#334155]/70 dark:text-muted-foreground sm:text-[0.95rem]">
+            {subtitle}
+          </p>
         </div>
-        <div className="w-full max-w-[22rem] space-y-3 justify-self-start sm:justify-self-end">
-          <div className="rounded-3xl border border-[#dbe3dc] bg-white/85 p-4 shadow-[0_24px_60px_rgba(15,23,42,0.10)] dark:border-border dark:bg-card">
+        <div className="w-full max-w-[21rem] space-y-2.5 justify-self-start sm:justify-self-end">
+          <div className="rounded-2xl border border-[#dbe3dc] bg-white/85 p-3.5 shadow-[0_18px_42px_rgba(15,23,42,0.08)] dark:border-border dark:bg-card">
             <div className="grid grid-cols-3 gap-2">
               {stats.map((stat) => (
                 <SummaryCard key={stat.label} label={stat.label} value={stat.value} compact />
@@ -61,4 +69,12 @@ export function PapersHero({
       </div>
     </section>
   )
+}
+
+function splitEditorialTitle(title: string): [string, string | null] {
+  const [firstWord, ...rest] = title.trim().split(/\s+/)
+  if (!rest.length) {
+    return [title, null]
+  }
+  return [firstWord, rest.join(" ")]
 }

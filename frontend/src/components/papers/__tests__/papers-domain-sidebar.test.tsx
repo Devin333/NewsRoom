@@ -1,10 +1,14 @@
 import { render, screen } from "@testing-library/react"
 import { describe, expect, it } from "vitest"
 import { PapersDomainSidebar, countPapersForTask } from "@/components/papers/papers-domain-sidebar"
+import type { MethodAreaDomain } from "@/lib/papers/metrics"
 import type { Paper, TaskRef } from "@/lib/papers/types"
 
 const agents: TaskRef = { id: "task-agents", slug: "agents", name: "Agents" }
 const reasoning: TaskRef = { id: "task-reasoning", slug: "reasoning", name: "Reasoning" }
+const methods: MethodAreaDomain[] = [
+  { slug: "fine-tuning", name: "Fine-Tuning", count: 20 }
+]
 
 const papers: Paper[] = [
   paper("one", [agents, reasoning]),
@@ -16,15 +20,16 @@ describe("PapersDomainSidebar", () => {
   it("counts visible domain values from the real public paper stream", () => {
     render(
       <PapersDomainSidebar
-        topDomains={[agents, reasoning]}
-        trendingDomains={[agents]}
-        papers={papers}
+        methodAreas={methods}
+        topTasks={[agents, reasoning]}
+        dashboardPapers={papers}
         locale="en"
       />
     )
 
-    expect(screen.getAllByLabelText("Agents papers: 2")).toHaveLength(2)
-    expect(screen.getByLabelText("Reasoning papers: 1")).toBeInTheDocument()
+    expect(screen.getByRole("link", { name: /Fine-Tuning\s*20/i })).toBeInTheDocument()
+    expect(screen.getByRole("link", { name: /Agents\s*2/i })).toBeInTheDocument()
+    expect(screen.getByRole("link", { name: /Reasoning\s*1/i })).toBeInTheDocument()
     expect(screen.queryByText("33,503")).not.toBeInTheDocument()
     expect(screen.queryByText("1.5x")).not.toBeInTheDocument()
   })

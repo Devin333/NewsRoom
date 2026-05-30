@@ -1,6 +1,6 @@
 "use client"
 
-import type { CSSProperties, MouseEvent, ReactNode } from "react"
+import { Fragment, type CSSProperties, type MouseEvent, type ReactNode } from "react"
 import { Bell, BookOpen, Github, Heart } from "lucide-react"
 import { PaperTags } from "@/components/papers/paper-tags"
 import { PaperThumbnail } from "@/components/papers/paper-thumbnail"
@@ -29,10 +29,10 @@ export function PaperRow({
 }) {
   const paperHref = paperPdfUrl(paper) ?? paper.paperUrl ?? paper.arxivUrl
   const repoHref = paper.repoUrl?.startsWith("https://github.com/") && paper.repoUrl !== "https://github.com/" ? paper.repoUrl : undefined
-  const authors = paper.authors ?? []
   const tasks = paper.taskRefs ?? []
   const methods = paper.methodRefs ?? []
   const tags = paper.tags ?? []
+  const metadata = [paper.authors?.slice(0, 3).join(", "), formatPaperDate(paper.publishedAt, locale), paper.venue].filter(Boolean)
 
   function handleRowClick(event: MouseEvent<HTMLElement>) {
     const target = event.target
@@ -45,10 +45,10 @@ export function PaperRow({
   return (
     <article
       data-testid="paper-row"
-      className="cursor-pointer py-7 transition-colors first:pt-6 last:pb-3"
+      className="group cursor-pointer rounded-[1.75rem] px-3 py-7 transition-colors first:pt-6 last:pb-3 hover:bg-[#f7faf7]/80 sm:px-4 dark:hover:bg-card/40"
       onClick={handleRowClick}
     >
-      <div className="grid gap-7 lg:grid-cols-[11rem_minmax(0,1fr)_10rem] 2xl:grid-cols-[12rem_minmax(0,1fr)_10rem]">
+      <div className="grid gap-6 lg:grid-cols-[10.5rem_minmax(0,1fr)] xl:gap-8">
         <div
           role="button"
           tabIndex={0}
@@ -65,10 +65,10 @@ export function PaperRow({
           <PaperThumbnail paper={paper} locale={locale} />
         </div>
 
-        <div className="min-w-0">
+        <div className="min-w-0 space-y-4">
           <button type="button" className="block text-left" onClick={() => onPreview(paper)}>
             <h2
-              className="text-balance text-xl font-black leading-7 text-[#334155] sm:text-2xl dark:text-foreground"
+              className="max-w-5xl text-balance text-xl font-black leading-7 text-[#334155] sm:text-[1.72rem] sm:leading-8 dark:text-foreground"
               style={PAPER_ROW_TITLE_FONT}
             >
               {paperTitle(paper, locale)}
@@ -76,32 +76,51 @@ export function PaperRow({
           </button>
 
           <p
-            className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-[#334155]/55 dark:text-muted-foreground"
+            className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5 text-sm text-[#334155]/55 dark:text-muted-foreground"
             style={PAPER_ROW_BODY_FONT}
           >
-            <span>{authors.slice(0, 3).join(", ")}</span>
-            <span aria-hidden="true">·</span>
-            <span>{formatPaperDate(paper.publishedAt, locale)}</span>
-            {paper.venue ? (
-              <>
-                <span aria-hidden="true">·</span>
-                <span>{paper.venue}</span>
-              </>
-            ) : null}
+            {metadata.map((item, index) => (
+              <Fragment key={`${paper.id}-meta-${index}`}>
+                {index > 0 ? <PaperMetaSeparator /> : null}
+                <span className={index === 0 ? "font-semibold text-[#334155]/68 dark:text-foreground/80" : undefined}>{item}</span>
+              </Fragment>
+            ))}
           </p>
 
           <p
-            className="mt-3 line-clamp-3 max-w-[90rem] text-base leading-7 text-[#334155]/70 dark:text-muted-foreground"
+            className="line-clamp-3 max-w-4xl text-[0.98rem] leading-7 text-[#334155]/72 dark:text-muted-foreground"
             style={PAPER_ROW_BODY_FONT}
           >
             {paperSnippet(paper, locale)}
           </p>
 
-          <div className="mt-4">
+          <div>
             <PaperTags tasks={tasks} methods={methods} tags={tags} locale={locale} />
           </div>
+
+          <div className="flex flex-wrap gap-2.5">
+            {paperHref ? (
+              <PaperActionPill
+                href={paperHref}
+                ariaLabel={t(papersCopy.openPaper, locale)}
+                icon={<BookOpen className="size-4" />}
+                value={paperMetricValue(paper.citationCount)}
+                label={translate(locale, "papers.reader.cites")}
+              />
+            ) : null}
+            {repoHref ? (
+              <PaperActionPill
+                href={repoHref}
+                ariaLabel={t(papersCopy.openCode, locale)}
+                icon={<Github className="size-4" />}
+                value={paperMetricValue(paper.githubStars)}
+                label={translate(locale, "papers.reader.stars")}
+              />
+            ) : null}
+          </div>
+
           {paper.userState?.favorite || paper.userState?.subscribed ? (
-            <div className="mt-3 flex flex-wrap gap-2 text-xs font-semibold text-[#334155]/60 dark:text-muted-foreground">
+            <div className="flex flex-wrap gap-2 text-xs font-semibold text-[#334155]/60 dark:text-muted-foreground">
               {paper.userState.favorite ? (
                 <span className="inline-flex items-center gap-1 rounded-sm bg-[#eef4ef] px-2 py-1 dark:bg-secondary">
                   <Heart className="size-3 fill-current" />
@@ -116,53 +135,17 @@ export function PaperRow({
               ) : null}
             </div>
           ) : null}
-
-          <div className="mt-5 flex flex-wrap gap-2 lg:hidden">
-            {paperHref ? (
-              <Button asChild variant="outline" size="sm" aria-label={t(papersCopy.openPaper, locale)} className="rounded-full bg-white dark:bg-card">
-                <a href={paperHref} target="_blank" rel="noreferrer">
-                  <BookOpen className="size-4" />
-                  <span>{paperMetricValue(paper.citationCount)} {translate(locale, "papers.reader.cites")}</span>
-                </a>
-              </Button>
-            ) : null}
-            {repoHref ? (
-              <Button asChild variant="outline" size="sm" aria-label={t(papersCopy.openCode, locale)} className="rounded-full bg-white dark:bg-card">
-                <a href={repoHref} target="_blank" rel="noreferrer">
-                  <Github className="size-4" />
-                  <span>{paperMetricValue(paper.githubStars)} {translate(locale, "papers.reader.stars")}</span>
-                </a>
-              </Button>
-            ) : null}
-          </div>
-        </div>
-
-        <div className="hidden border-l border-[#e2e7e2] pl-6 lg:flex lg:flex-col lg:items-center lg:justify-center lg:gap-5 dark:border-border">
-          {paperHref ? (
-            <PaperActionMetric
-              href={paperHref}
-              ariaLabel={t(papersCopy.openPaper, locale)}
-              icon={<BookOpen className="size-4" />}
-              value={paperMetricValue(paper.citationCount)}
-              label={translate(locale, "papers.reader.cites").toUpperCase()}
-            />
-          ) : null}
-          {repoHref ? (
-            <PaperActionMetric
-              href={repoHref}
-              ariaLabel={t(papersCopy.openCode, locale)}
-              icon={<Github className="size-4" />}
-              value={paperMetricValue(paper.githubStars)}
-              label={translate(locale, "papers.reader.stars").toUpperCase()}
-            />
-          ) : null}
         </div>
       </div>
     </article>
   )
 }
 
-function PaperActionMetric({
+function PaperMetaSeparator() {
+  return <span aria-hidden="true" className="size-1 rounded-full bg-[#94a3b8]/60" />
+}
+
+function PaperActionPill({
   href,
   ariaLabel,
   icon,
@@ -176,21 +159,21 @@ function PaperActionMetric({
   label: string
 }) {
   return (
-    <a
-      href={href}
-      target="_blank"
-      rel="noreferrer"
+    <Button
+      asChild
+      variant="outline"
+      size="sm"
       aria-label={ariaLabel}
-      className="group flex min-h-16 w-20 flex-col items-center justify-center rounded-md text-center text-[#334155] transition-colors hover:bg-[#eef4ef] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/50 dark:text-foreground dark:hover:bg-secondary"
+      className="h-auto rounded-full border-[#dbe3dc] bg-white px-3.5 py-2 text-left hover:bg-[#eef4ef] dark:border-border dark:bg-card dark:hover:bg-secondary"
     >
-      <span className="flex items-center justify-center gap-1.5 text-base font-black leading-5">
-        <span className="text-[#334155]/80 dark:text-muted-foreground">{icon}</span>
-        <span>{value}</span>
-      </span>
-      <span className="mt-1 text-[0.65rem] font-semibold uppercase tracking-[0.12em] text-[#334155]/55 dark:text-muted-foreground">
-        {label}
-      </span>
-    </a>
+      <a href={href} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2.5">
+        <span className="text-[#334155]/65 dark:text-muted-foreground">{icon}</span>
+        <span className="font-semibold text-[#334155] dark:text-foreground">{value}</span>
+        <span className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-[#334155]/55 dark:text-muted-foreground">
+          {label}
+        </span>
+      </a>
+    </Button>
   )
 }
 
