@@ -37,7 +37,6 @@ export function TrendingPapersPage({ locale, papers }: { locale: Locale; papers:
   const [selectedPaperId, setSelectedPaperId] = useState<string | null>(deepLinkedPaperId)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [methodAreas, setMethodAreas] = useState<MethodAreaDomain[]>([])
   const pageOffset = (page - 1) * PAPER_PAGE_SIZE
   const portalMetrics = useMemo(
     () => buildPaperPortalMetrics(dashboardPapers, paperTotalCount),
