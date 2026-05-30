@@ -12,8 +12,10 @@ import { PaperStream } from "@/components/papers/shared/paper-stream"
 import { Button } from "@/components/ui/button"
 import { comicSansFont } from "@/lib/fonts"
 import { fetchPapers } from "@/lib/papers/api"
+import { fetchProjectsCollections } from "@/lib/projects/api"
+import type { ProjectDomain } from "@/components/papers/papers-domain-sidebar"
 import { papersCopy, t } from "@/lib/papers/copy"
-import { buildPaperPortalMetrics, deriveTopPaperDomains, deriveTrendingPaperDomains } from "@/lib/papers/metrics"
+import { buildPaperPortalMetrics, deriveTopPaperDomains } from "@/lib/papers/metrics"
 import type { Locale, Paper, PaperPeriod, PaperSort } from "@/lib/papers/types"
 
 const PAPER_DASHBOARD_LIMIT = 5000
@@ -36,13 +38,13 @@ export function TrendingPapersPage({ locale, papers }: { locale: Locale; papers:
   const [selectedPaperId, setSelectedPaperId] = useState<string | null>(deepLinkedPaperId)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [projectDomains, setProjectDomains] = useState<ProjectDomain[]>([])
   const pageOffset = (page - 1) * PAPER_PAGE_SIZE
   const portalMetrics = useMemo(
     () => buildPaperPortalMetrics(dashboardPapers, paperTotalCount),
     [dashboardPapers, paperTotalCount]
   )
   const topDomains = useMemo(() => deriveTopPaperDomains(dashboardPapers), [dashboardPapers])
-  const trendingDomains = useMemo(() => deriveTrendingPaperDomains(dashboardPapers), [dashboardPapers])
   const selectedPaper = useMemo(
     () =>
       visiblePapers.find((paper) => paper.id === selectedPaperId || paper.slug === selectedPaperId) ??
@@ -69,6 +71,22 @@ export function TrendingPapersPage({ locale, papers }: { locale: Locale; papers:
   useEffect(() => {
     setSelectedPaperId(deepLinkedPaperId)
   }, [deepLinkedPaperId])
+
+  useEffect(() => {
+    fetchProjectsCollections()
+      .then((result) => {
+        const domains: ProjectDomain[] = result.collections
+          .slice(0, 4)
+          .map((c) => ({
+            id: c.id,
+            slug: c.slug,
+            name: c.title,
+            count: c.item_count ?? 0,
+          }))
+        setProjectDomains(domains)
+      })
+      .catch(() => {})
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -169,7 +187,7 @@ export function TrendingPapersPage({ locale, papers }: { locale: Locale; papers:
         </div>
       ) : null}
       <div className="mt-8 grid gap-12 xl:grid-cols-[15rem_minmax(0,1fr)] 2xl:grid-cols-[16rem_minmax(0,1fr)] 2xl:gap-16">
-        <PapersDomainSidebar topDomains={topDomains} trendingDomains={trendingDomains} papers={visiblePapers} locale={locale} />
+        <PapersDomainSidebar topDomains={topDomains} projectDomains={projectDomains} papers={visiblePapers} locale={locale} />
         <div className="space-y-3">
           {isLoading ? (
             <p className="text-sm text-[#334155]/55 dark:text-muted-foreground">

@@ -5,6 +5,7 @@ import { ArrowRight, Binoculars, Boxes, FlaskConical, Flame, FolderKanban, GitBr
 import type { ComponentType } from "react"
 import { useMemo, useState } from "react"
 import { useMutation, useQuery } from "@tanstack/react-query"
+import { useSearchParams } from "next/navigation"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -331,8 +332,9 @@ function CasesView({ data }: { data: ProjectsApiCaseResult }) {
 }
 
 function CollectionsView({ data }: { data: ProjectsApiCollectionResult }) {
+  const searchParams = useSearchParams()
   const [q, setQ] = useState("")
-  const [tag, setTag] = useState("")
+  const [tag, setTag] = useState(searchParams.get("tag") ?? "")
 
   const allTags = Array.from(new Set(data.collections.flatMap((c) => (c as any).tags ?? []).filter(Boolean)))
 

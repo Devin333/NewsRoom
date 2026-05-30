@@ -70,6 +70,7 @@ export const papersCopy = {
   methodsUsed: copy("papers.methodsUsed"),
   topDomains: copy("papers.topDomains"),
   trendingDomains: copy("papers.trendingDomains"),
+  projectDomains: copy("papers.projectDomains"),
   contentPanel: copy("papers.contentPanel"),
   benchmarksTitle: copy("papers.benchmarksTitle"),
   papersUnderTask: copy("papers.papersUnderTask"),
