@@ -1,4 +1,7 @@
+"use client"
+
 import Link from "next/link"
+import { usePathname, useRouter } from "next/navigation"
 
 const navItems = [
   { href: "/", label: "Dashboard" },
@@ -12,24 +15,44 @@ const navItems = [
 ]
 
 export function AppShell({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname()
+  const router = useRouter()
+
+  async function handleLogout() {
+    await fetch("/api/auth/logout", { method: "POST" })
+    router.push("/login")
+    router.refresh()
+  }
+
   return (
     <div className="min-h-screen bg-surface text-ink">
-      <aside className="fixed inset-y-0 left-0 hidden w-64 border-r border-line bg-white px-4 py-5 lg:block">
+      <aside className="fixed inset-y-0 left-0 hidden w-64 flex-col border-r border-line bg-white px-4 py-5 lg:flex">
         <div className="mb-8">
           <p className="text-lg font-semibold tracking-normal">NewsRoom</p>
           <p className="text-xs text-muted">Interface Console</p>
         </div>
-        <nav className="space-y-1">
-          {navItems.map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              className="block rounded-md px-3 py-2 text-sm font-medium text-muted hover:bg-surface hover:text-ink"
-            >
-              {item.label}
-            </Link>
-          ))}
+        <nav className="flex-1 space-y-1">
+          {navItems.map((item) => {
+            const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href)
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={`block rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+                  active ? "bg-surface text-ink" : "text-muted hover:bg-surface hover:text-ink"
+                }`}
+              >
+                {item.label}
+              </Link>
+            )
+          })}
         </nav>
+        <button
+          onClick={handleLogout}
+          className="mt-4 w-full rounded-md px-3 py-2 text-left text-sm font-medium text-muted hover:bg-surface hover:text-ink"
+        >
+          Sign out
+        </button>
       </aside>
 
       <div className="lg:pl-64">
