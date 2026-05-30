@@ -1,152 +1,77 @@
 "use client"
 
-import { useState, useTransition } from "react"
-import { useRouter } from "next/navigation"
-import { ErrorState } from "@/components/common/ErrorState"
+import { useState } from "react"
 import { StatusBadge } from "@/components/common/StatusBadge"
+import { formatDateTime } from "@/lib/format"
 import { safeApiPost } from "@/lib/api-client"
-import { formatDateTime, stringifyJson } from "@/lib/format"
 import type { ApprovalItem, ApprovalResumeContext, ApprovalWorkflowResumeResult } from "@/lib/types"
 
 export function ApprovalTable({ approvals }: { approvals: ApprovalItem[] }) {
-  const router = useRouter()
-  const [error, setError] = useState<{ message?: string; requestId?: string } | null>(null)
-  const [contextPreview, setContextPreview] = useState<ApprovalResumeContext | null>(null)
-  const [resumeResult, setResumeResult] = useState<ApprovalWorkflowResumeResult | null>(null)
-  const [isPending, startTransition] = useTransition()
+  const [loading, setLoading] = useState<string | null>(null)
+  const [results, setResults] = useState<Record<string, string>>({})
 
-  async function decide(approvalId: string, decision: "approve" | "reject") {
-    if (!window.confirm(`${decision} approval ${approvalId}?`)) {
-      return
+  async function act(approvalId: string, action: string) {
+    setLoading(`${approvalId}:${action}`)
+    let msg = ""
+    if (action === "approve" || action === "reject") {
+      const res = await safeApiPost(`/api/v1/approvals/${approvalId}/${action}`, {})
+      msg = res.ok ? `${action}d` : (res.errorMessage ?? "failed")
+    } else if (action === "resume-context") {
+      const res = await safeApiPost<ApprovalResumeContext>(`/api/v1/approvals/${approvalId}/resume-context`, {})
+      msg = res.ok ? "Context retrieved" : (res.errorMessage ?? "failed")
+    } else if (action === "resume-workflow") {
+      const res = await safeApiPost<ApprovalWorkflowResumeResult>(`/api/v1/approvals/${approvalId}/resume-workflow`, {})
+      msg = res.ok ? `Workflow resumed → ${res.data?.run_id ?? ""}` : (res.errorMessage ?? "failed")
     }
-    setError(null)
-    setContextPreview(null)
-    setResumeResult(null)
-    const response = await safeApiPost(`/api/v1/approvals/${encodeURIComponent(approvalId)}/${decision}`, {
-      decided_by: "web-console"
-    })
-    if (response.ok) {
-      startTransition(() => router.refresh())
-    } else {
-      setError({ message: response.errorMessage, requestId: response.requestId })
-    }
+    setResults((p) => ({ ...p, [approvalId]: msg }))
+    setLoading(null)
   }
 
-  async function previewResumeContext(approvalId: string) {
-    setError(null)
-    setResumeResult(null)
-    const response = await safeApiPost<ApprovalResumeContext>(
-      `/api/v1/approvals/${encodeURIComponent(approvalId)}/resume-context`,
-      {}
-    )
-    if (response.ok && response.data) {
-      setContextPreview(response.data)
-    } else {
-      setError({ message: response.errorMessage, requestId: response.requestId })
-    }
-  }
-
-  async function resumeWorkflow(approvalId: string) {
-    if (!window.confirm(`resume workflow for approval ${approvalId}?`)) {
-      return
-    }
-    setError(null)
-    const response = await safeApiPost<ApprovalWorkflowResumeResult>(
-      `/api/v1/approvals/${encodeURIComponent(approvalId)}/resume-workflow`,
-      {}
-    )
-    if (response.ok && response.data) {
-      setResumeResult(response.data)
-      startTransition(() => router.refresh())
-    } else {
-      setError({ message: response.errorMessage, requestId: response.requestId })
-    }
-  }
-
-  if (!approvals.length) {
-    return <div className="rounded-lg border border-line bg-white p-4 text-sm text-muted">No pending approvals.</div>
-  }
+  if (!approvals.length) return <p className="text-sm text-muted">No pending approvals.</p>
 
   return (
     <div className="space-y-3">
-      {error ? <ErrorState message={error.message} requestId={error.requestId} /> : null}
-      <div className="overflow-x-auto rounded-lg border border-line bg-white">
-        <table className="w-full table-fixed border-collapse text-left text-sm">
-          <thead className="bg-surface text-xs uppercase text-muted">
-            <tr>
-              <th className="w-48 px-4 py-3 font-medium">Approval</th>
-              <th className="w-44 px-4 py-3 font-medium">Action</th>
-              <th className="w-32 px-4 py-3 font-medium">Status</th>
-              <th className="w-40 px-4 py-3 font-medium">Risk</th>
-              <th className="w-44 px-4 py-3 font-medium">Created</th>
-              <th className="w-[34rem] px-4 py-3 font-medium">Decision</th>
-            </tr>
-          </thead>
-          <tbody>
-            {approvals.map((approval) => (
-              <tr key={approval.approval_id} className="border-t border-line">
-                <td className="truncate px-4 py-3 font-medium text-ink">{approval.approval_id}</td>
-                <td className="truncate px-4 py-3 text-muted">{approval.requested_action ?? "unknown"}</td>
-                <td className="px-4 py-3">
-                  <StatusBadge status={approval.status} />
-                </td>
-                <td className="truncate px-4 py-3 text-muted">{approval.risk_level ?? "n/a"}</td>
-                <td className="truncate px-4 py-3 text-muted">{formatDateTime(approval.created_at)}</td>
-                <td className="flex gap-2 px-4 py-3">
+      {approvals.map((a) => (
+        <div key={a.approval_id} className="rounded-lg border border-line bg-white p-4 shadow-card">
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <StatusBadge status={a.risk_level ?? a.status} />
+                <span className="font-mono text-xs text-subtle">{a.approval_id.slice(0, 12)}…</span>
+              </div>
+              <p className="mt-1.5 text-sm font-medium text-ink">{a.requested_action ?? "Approval required"}</p>
+              {a.reason && <p className="mt-0.5 text-xs text-muted">{a.reason}</p>}
+              <p className="mt-1 text-xs text-subtle">
+                {a.requested_by && <span>by {a.requested_by} · </span>}
+                {a.created_at && formatDateTime(a.created_at)}
+              </p>
+            </div>
+            <div className="flex shrink-0 flex-wrap gap-2">
+              {(["approve", "reject", "resume-context", "resume-workflow"] as const).map((action) => {
+                const isLoading = loading === `${a.approval_id}:${action}`
+                const variant = action === "approve"
+                  ? "bg-good text-white hover:bg-good/90"
+                  : action === "reject"
+                  ? "bg-bad text-white hover:bg-bad/90"
+                  : "border border-line bg-white text-ink hover:bg-surface"
+                return (
                   <button
-                    className="rounded-md border border-good/30 px-3 py-1 text-xs font-medium text-good disabled:opacity-50"
-                    disabled={isPending}
-                    onClick={() => decide(approval.approval_id, "approve")}
-                    type="button"
+                    key={action}
+                    onClick={() => act(a.approval_id, action)}
+                    disabled={!!loading}
+                    className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-50 ${variant}`}
                   >
-                    Approve
+                    {isLoading ? "…" : action.replace("-", " ")}
                   </button>
-                  <button
-                    className="rounded-md border border-bad/30 px-3 py-1 text-xs font-medium text-bad disabled:opacity-50"
-                    disabled={isPending}
-                    onClick={() => decide(approval.approval_id, "reject")}
-                    type="button"
-                  >
-                    Reject
-                  </button>
-                  <button
-                    className="rounded-md border border-line px-3 py-1 text-xs font-medium text-ink disabled:opacity-50"
-                    disabled={isPending}
-                    onClick={() => previewResumeContext(approval.approval_id)}
-                    type="button"
-                  >
-                    Resume context
-                  </button>
-                  <button
-                    className="rounded-md border border-accent/30 px-3 py-1 text-xs font-medium text-accent disabled:opacity-50"
-                    disabled={isPending}
-                    onClick={() => resumeWorkflow(approval.approval_id)}
-                    type="button"
-                  >
-                    Resume workflow
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      {contextPreview ? (
-        <div className="rounded-lg border border-line bg-white p-4">
-          <h3 className="mb-2 text-sm font-semibold text-ink">Resume context preview</h3>
-          <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words text-xs text-ink">
-            {stringifyJson(contextPreview)}
-          </pre>
+                )
+              })}
+            </div>
+          </div>
+          {results[a.approval_id] && (
+            <p className="mt-2 text-xs text-muted">{results[a.approval_id]}</p>
+          )}
         </div>
-      ) : null}
-      {resumeResult ? (
-        <div className="rounded-lg border border-line bg-white p-4">
-          <h3 className="mb-2 text-sm font-semibold text-ink">Resume workflow result</h3>
-          <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words text-xs text-ink">
-            {stringifyJson(resumeResult)}
-          </pre>
-        </div>
-      ) : null}
+      ))}
     </div>
   )
 }

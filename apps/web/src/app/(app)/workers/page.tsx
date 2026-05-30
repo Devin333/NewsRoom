@@ -1,70 +1,49 @@
-import Link from "next/link"
-import { ErrorState } from "@/components/common/ErrorState"
 import { WorkerStatusTable } from "@/components/workers/WorkerStatusTable"
+import { EmptyState } from "@/components/common/EmptyState"
 import { safeApiGet } from "@/lib/api-client"
-import type { QueueStatus, WorkerStatusResponse } from "@/lib/types"
-
-const STALE_OPTIONS = [30, 60, 300]
+import Link from "next/link"
+import type { WorkerStatusResponse } from "@/lib/types"
 
 export default async function WorkersPage({
   searchParams
 }: {
-  searchParams: { stale_after_seconds?: string }
+  searchParams: Promise<{ stale?: string }>
 }) {
-  const staleAfterSeconds = normalizeStaleAfterSeconds(searchParams.stale_after_seconds)
-  const [workers, queues] = await Promise.all([
-    safeApiGet<WorkerStatusResponse>(`/api/v1/workers?stale_after_seconds=${staleAfterSeconds}`),
-    safeApiGet<{ queues?: QueueStatus[] }>("/api/v1/queues")
-  ])
-
-  const workerRows = workers.data?.workers ?? []
-  const queueRows = workers.data?.queues ?? queues.data?.queues ?? []
+  const sp = await searchParams
+  const stale = [30, 60, 300].includes(Number(sp.stale)) ? Number(sp.stale) : 60
+  const res = await safeApiGet<WorkerStatusResponse>(`/api/v1/workers?stale_after_seconds=${stale}`)
 
   return (
-    <main className="space-y-6">
-      <header className="flex flex-col gap-4 border-b border-line pb-4 lg:flex-row lg:items-end lg:justify-between">
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold text-ink">Workers</h1>
-          <p className="text-sm text-muted">Worker state, queue depth, stale workers, and dead letter signals.</p>
+          <h1 className="text-xl font-semibold text-ink">Workers</h1>
+          <p className="mt-0.5 text-sm text-muted">Worker and queue status</p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          {STALE_OPTIONS.map((option) => (
-            <FilterLink
-              key={option}
-              active={staleAfterSeconds === option}
-              href={`/workers?stale_after_seconds=${option}`}
-              label={`Stale ${option}s`}
-            />
+        <div className="flex items-center gap-1.5 text-xs text-muted">
+          Stale after
+          {[30, 60, 300].map((n) => (
+            <Link
+              key={n}
+              href={`/workers?stale=${n}`}
+              className={`rounded px-2 py-0.5 ${stale === n ? "bg-ink text-white" : "hover:text-ink"}`}
+            >
+              {n}s
+            </Link>
           ))}
         </div>
-      </header>
+      </div>
 
-      {workers.ok || queues.ok ? (
-        <WorkerStatusTable workers={workerRows} queues={queueRows} />
-      ) : (
-        <ErrorState message={workers.errorMessage ?? queues.errorMessage} requestId={workers.requestId ?? queues.requestId} />
-      )}
-    </main>
+      <div className="rounded-xl border border-line bg-white p-5 shadow-card">
+        {res.ok && res.data ? (
+          <WorkerStatusTable
+            workers={res.data.workers ?? []}
+            queues={res.data.queues ?? []}
+          />
+        ) : (
+          <EmptyState title="No worker data" message={res.errorMessage} />
+        )}
+      </div>
+    </div>
   )
-}
-
-function FilterLink({ active, href, label }: { active: boolean; href: string; label: string }) {
-  return (
-    <Link
-      href={href}
-      className={`rounded-md border px-3 py-2 text-sm font-medium ${
-        active ? "border-accent bg-accent text-white" : "border-line bg-white text-muted hover:text-ink"
-      }`}
-    >
-      {label}
-    </Link>
-  )
-}
-
-function normalizeStaleAfterSeconds(value?: string): number {
-  const parsed = Number(value)
-  if (!Number.isFinite(parsed) || parsed < 0) {
-    return 60
-  }
-  return Math.min(Math.floor(parsed), 3600)
 }

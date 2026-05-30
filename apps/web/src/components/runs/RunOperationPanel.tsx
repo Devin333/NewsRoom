@@ -1,121 +1,75 @@
 "use client"
 
-import { useState, useTransition } from "react"
-import { useRouter } from "next/navigation"
-import { ErrorState } from "@/components/common/ErrorState"
+import { useState } from "react"
 import { safeApiPost } from "@/lib/api-client"
 import type { RunOperationResult } from "@/lib/types"
 
-type OperationKey = "cancel" | "rerun-from-step" | "skip-step" | "mark-blocked-resolved"
-
-const operationLabels: Record<OperationKey, string> = {
-  cancel: "Cancel run",
-  "rerun-from-step": "Rerun from step",
-  "skip-step": "Skip step",
-  "mark-blocked-resolved": "Mark blocked resolved"
-}
+const OPERATIONS = [
+  { value: "cancel", label: "Cancel run" },
+  { value: "rerun-from-step", label: "Rerun from step" },
+  { value: "skip-step", label: "Skip step" },
+  { value: "mark-blocked-resolved", label: "Mark blocked resolved" }
+]
 
 export function RunOperationPanel({ runId }: { runId: string }) {
-  const router = useRouter()
-  const [operation, setOperation] = useState<OperationKey>("cancel")
-  const [reason, setReason] = useState("")
+  const [op, setOp] = useState(OPERATIONS[0].value)
   const [stepId, setStepId] = useState("")
+  const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<RunOperationResult | null>(null)
-  const [error, setError] = useState<{ message?: string; requestId?: string } | null>(null)
-  const [isPending, startTransition] = useTransition()
+  const [error, setError] = useState("")
 
-  async function submit() {
-    const label = operationLabels[operation]
-    if (!window.confirm(`${label}?`)) {
-      return
-    }
-    setError(null)
+  const needsStep = op === "rerun-from-step" || op === "skip-step"
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    setLoading(true)
+    setError("")
     setResult(null)
-    const body = buildBody(operation, reason, stepId)
-    const response = await safeApiPost<RunOperationResult>(
-      `/api/v1/runs/${encodeURIComponent(runId)}/operations/${operation}`,
-      body
-    )
-    if (response.ok && response.data) {
-      setResult(response.data)
-      startTransition(() => router.refresh())
-    } else {
-      setError({ message: response.errorMessage, requestId: response.requestId })
-    }
+    const body = needsStep ? { step_id: stepId } : {}
+    const res = await safeApiPost<RunOperationResult>(`/api/v1/runs/${runId}/operations/${op}`, body)
+    if (res.ok && res.data) setResult(res.data)
+    else setError(res.errorMessage ?? "Operation failed")
+    setLoading(false)
   }
-
-  const needsStep = operation === "rerun-from-step" || operation === "skip-step"
 
   return (
-    <section className="rounded-lg border border-line bg-white p-4">
-      <h2 className="text-base font-semibold text-ink">Operations</h2>
-      <div className="mt-4 grid gap-3">
-        <label className="grid gap-1 text-sm">
-          <span className="font-medium text-muted">Operation</span>
+    <form onSubmit={handleSubmit} className="space-y-3">
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="flex-1 min-w-40">
+          <label className="mb-1 block text-xs font-medium text-muted">Operation</label>
           <select
-            className="h-10 rounded-md border border-line bg-white px-3 text-ink"
-            value={operation}
-            onChange={(event) => setOperation(event.target.value as OperationKey)}
+            value={op}
+            onChange={(e) => setOp(e.target.value)}
+            className="w-full rounded-md border border-line bg-white px-3 py-2 text-sm text-ink focus:border-accent focus:outline-none"
           >
-            {Object.entries(operationLabels).map(([value, label]) => (
-              <option key={value} value={value}>
-                {label}
-              </option>
-            ))}
+            {OPERATIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
-        </label>
-        {needsStep ? (
-          <label className="grid gap-1 text-sm">
-            <span className="font-medium text-muted">Step ID</span>
+        </div>
+        {needsStep && (
+          <div className="flex-1 min-w-40">
+            <label className="mb-1 block text-xs font-medium text-muted">Step ID</label>
             <input
-              className="h-10 rounded-md border border-line px-3 text-ink"
               value={stepId}
-              onChange={(event) => setStepId(event.target.value)}
+              onChange={(e) => setStepId(e.target.value)}
+              placeholder="step_id"
+              className="w-full rounded-md border border-line bg-white px-3 py-2 text-sm text-ink placeholder:text-subtle focus:border-accent focus:outline-none"
             />
-          </label>
-        ) : null}
-        <label className="grid gap-1 text-sm">
-          <span className="font-medium text-muted">Reason</span>
-          <input
-            className="h-10 rounded-md border border-line px-3 text-ink"
-            value={reason}
-            onChange={(event) => setReason(event.target.value)}
-          />
-        </label>
+          </div>
+        )}
         <button
-          className="h-10 rounded-md bg-accent px-4 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
-          disabled={isPending || (needsStep && !stepId)}
-          onClick={submit}
-          type="button"
+          type="submit"
+          disabled={loading || (needsStep && !stepId)}
+          className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-accent-hover disabled:opacity-50"
         >
-          Apply
+          {loading ? "Running…" : "Execute"}
         </button>
       </div>
-      {result ? (
-        <div className="mt-3 rounded-md border border-good/30 bg-good/10 p-3 text-sm text-good">
-          <p>
-            {result.operation_type} {result.status}: {result.message}
-          </p>
-          {result.new_run_id ? <p className="mt-1 font-mono text-xs">new_run_id={result.new_run_id}</p> : null}
-          {result.details ? (
-            <pre className="mt-2 whitespace-pre-wrap break-words text-xs text-ink">{JSON.stringify(result.details, null, 2)}</pre>
-          ) : null}
+      {error && <p className="text-sm text-bad">{error}</p>}
+      {result && (
+        <div className="rounded-md border border-good/20 bg-good/5 px-3 py-2 text-sm text-good">
+          {result.message} {result.new_run_id && <span className="font-mono text-xs">→ {result.new_run_id}</span>}
         </div>
-      ) : null}
-      {error ? <div className="mt-3"><ErrorState message={error.message} requestId={error.requestId} /></div> : null}
-    </section>
+      )}
+    </form>
   )
-}
-
-function buildBody(operation: OperationKey, reason: string, stepId: string) {
-  if (operation === "rerun-from-step") {
-    return { step_id: stepId }
-  }
-  if (operation === "skip-step") {
-    return { step_id: stepId, reason: reason || null }
-  }
-  if (operation === "mark-blocked-resolved") {
-    return { reason: reason || null, resolution_type: "manual" }
-  }
-  return { reason: reason || null }
 }

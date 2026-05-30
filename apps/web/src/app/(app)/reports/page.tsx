@@ -1,64 +1,46 @@
 import Link from "next/link"
-import { ErrorState } from "@/components/common/ErrorState"
 import { ReportList } from "@/components/reports/ReportList"
+import { EmptyState } from "@/components/common/EmptyState"
 import { safeApiGet } from "@/lib/api-client"
-import type { ReportList as ReportListData } from "@/lib/types"
-
-const LIMIT_OPTIONS = [20, 50, 100]
+import type { ReportList as ReportListType } from "@/lib/types"
 
 export default async function ReportsPage({
   searchParams
 }: {
-  searchParams: { limit?: string }
+  searchParams: Promise<{ limit?: string }>
 }) {
-  const limit = normalizeLimit(searchParams.limit)
-  const reports = await safeApiGet<ReportListData>(`/api/v1/reports?limit=${limit}`)
+  const sp = await searchParams
+  const limit = [20, 50, 100].includes(Number(sp.limit)) ? Number(sp.limit) : 20
+  const res = await safeApiGet<ReportListType>(`/api/v1/reports?limit=${limit}`)
 
   return (
-    <main className="space-y-6">
-      <header className="flex flex-col gap-4 border-b border-line pb-4 lg:flex-row lg:items-end lg:justify-between">
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold text-ink">Reports</h1>
-          <p className="text-sm text-muted">Generated reports, quality scores, and report detail links.</p>
+          <h1 className="text-xl font-semibold text-ink">Reports</h1>
+          <p className="mt-0.5 text-sm text-muted">Generated intelligence reports</p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          {LIMIT_OPTIONS.map((option) => (
-            <FilterLink
-              key={option}
-              active={limit === option}
-              href={`/reports?limit=${option}`}
-              label={`Limit ${option}`}
-            />
+        <div className="flex items-center gap-1.5 text-xs text-muted">
+          Show
+          {[20, 50, 100].map((n) => (
+            <Link
+              key={n}
+              href={`/reports?limit=${n}`}
+              className={`rounded px-2 py-0.5 ${limit === n ? "bg-ink text-white" : "hover:text-ink"}`}
+            >
+              {n}
+            </Link>
           ))}
         </div>
-      </header>
+      </div>
 
-      {reports.ok && reports.data ? (
-        <ReportList reports={reports.data.reports ?? []} />
-      ) : (
-        <ErrorState message={reports.errorMessage} requestId={reports.requestId} />
-      )}
-    </main>
+      <div className="rounded-xl border border-line bg-white p-5 shadow-card">
+        {res.ok && res.data?.reports?.length ? (
+          <ReportList reports={res.data.reports} />
+        ) : (
+          <EmptyState title="No reports found" message={res.errorMessage} />
+        )}
+      </div>
+    </div>
   )
-}
-
-function FilterLink({ active, href, label }: { active: boolean; href: string; label: string }) {
-  return (
-    <Link
-      href={href}
-      className={`rounded-md border px-3 py-2 text-sm font-medium ${
-        active ? "border-accent bg-accent text-white" : "border-line bg-white text-muted hover:text-ink"
-      }`}
-    >
-      {label}
-    </Link>
-  )
-}
-
-function normalizeLimit(value?: string): number {
-  const parsed = Number(value)
-  if (!Number.isFinite(parsed) || parsed < 1) {
-    return 20
-  }
-  return Math.min(Math.floor(parsed), 100)
 }

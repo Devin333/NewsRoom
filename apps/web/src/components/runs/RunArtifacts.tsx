@@ -1,34 +1,34 @@
-import { EmptyState } from "@/components/common/EmptyState"
-import { formatNumber } from "@/lib/format"
 import type { RunArtifact } from "@/lib/types"
 
-export function RunArtifacts({ artifacts }: { artifacts: RunArtifact[] }) {
-  if (!artifacts.length) {
-    return <EmptyState title="No artifacts" message="No artifact references were returned for this run." />
-  }
+function fmtBytes(n: number | null | undefined) {
+  if (!n) return "—"
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
+  return `${(n / 1024 / 1024).toFixed(1)} MB`
+}
 
+export function RunArtifacts({ artifacts }: { artifacts: RunArtifact[] }) {
+  if (!artifacts.length) return <p className="text-sm text-muted">No artifacts.</p>
   return (
-    <div className="overflow-x-auto rounded-lg border border-line bg-white">
-      <table className="w-full table-fixed border-collapse text-left text-sm">
-        <thead className="bg-surface text-xs uppercase text-muted">
-          <tr>
-            <th className="w-48 px-4 py-3 font-medium">Key</th>
-            <th className="w-56 px-4 py-3 font-medium">Path</th>
-            <th className="w-40 px-4 py-3 font-medium">Type</th>
-            <th className="w-24 px-4 py-3 font-medium">Size</th>
+    <table className="w-full text-sm">
+      <thead>
+        <tr className="border-b border-line">
+          <th className="pb-3 pr-4 text-left text-xs font-medium text-muted">Key</th>
+          <th className="pb-3 pr-4 text-left text-xs font-medium text-muted">Path</th>
+          <th className="pb-3 pr-4 text-left text-xs font-medium text-muted">Type</th>
+          <th className="pb-3 text-right text-xs font-medium text-muted">Size</th>
+        </tr>
+      </thead>
+      <tbody className="divide-y divide-line">
+        {artifacts.map((a) => (
+          <tr key={a.artifact_key}>
+            <td className="py-2.5 pr-4 font-mono text-xs text-ink">{a.artifact_key}</td>
+            <td className="py-2.5 pr-4 font-mono text-xs text-muted">{a.relative_path ?? "—"}</td>
+            <td className="py-2.5 pr-4 text-xs text-muted">{a.content_type ?? "—"}</td>
+            <td className="py-2.5 text-right font-mono text-xs text-muted">{fmtBytes(a.size_bytes)}</td>
           </tr>
-        </thead>
-        <tbody>
-          {artifacts.map((artifact) => (
-            <tr key={artifact.artifact_key} className="border-t border-line">
-              <td className="truncate px-4 py-3 font-medium text-ink">{artifact.artifact_key}</td>
-              <td className="truncate px-4 py-3 text-muted">{artifact.relative_path ?? "n/a"}</td>
-              <td className="truncate px-4 py-3 text-muted">{artifact.content_type ?? "n/a"}</td>
-              <td className="truncate px-4 py-3 text-muted">{formatNumber(artifact.size_bytes)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+        ))}
+      </tbody>
+    </table>
   )
 }

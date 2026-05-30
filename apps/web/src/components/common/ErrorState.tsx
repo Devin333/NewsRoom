@@ -1,20 +1,20 @@
 export function ErrorState({
-  title = "Request failed",
+  title = "Something went wrong",
   message,
-  requestId,
-  details
+  details,
+  requestId
 }: {
   title?: string
   message?: string
-  requestId?: string
   details?: string
+  requestId?: string
 }) {
   return (
-    <div className="rounded-lg border border-bad/30 bg-bad/5 p-4 text-sm">
-      <p className="font-semibold text-bad">{title}</p>
-      {message ? <p className="mt-1 text-ink">{message}</p> : null}
-      {details ? <p className="mt-1 whitespace-pre-wrap text-muted">{details}</p> : null}
-      {requestId ? <p className="mt-2 font-mono text-xs text-muted">request_id={requestId}</p> : null}
+    <div className="rounded-lg border border-bad/20 bg-bad/5 p-4">
+      <p className="text-sm font-medium text-bad">{title}</p>
+      {message && <p className="mt-1 text-sm text-muted">{message}</p>}
+      {details && <pre className="mt-2 overflow-x-auto rounded bg-white p-2 font-mono text-xs text-ink">{details}</pre>}
+      {requestId && <p className="mt-2 font-mono text-xs text-subtle">req: {requestId}</p>}
     </div>
   )
 }

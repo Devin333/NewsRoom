@@ -1,7 +1,6 @@
-import { EmptyState } from "@/components/common/EmptyState"
 import { StatusBadge } from "@/components/common/StatusBadge"
-import { formatDateTime, formatNumber } from "@/lib/format"
-import type { QueueStatus, WorkerStatus } from "@/lib/types"
+import { formatDateTime } from "@/lib/format"
+import type { WorkerStatus, QueueStatus } from "@/lib/types"
 
 export function WorkerStatusTable({
   workers,
@@ -11,64 +10,60 @@ export function WorkerStatusTable({
   queues: QueueStatus[]
 }) {
   return (
-    <div className="grid gap-6 xl:grid-cols-[1fr_1fr]">
-      <section className="space-y-3">
-        <h2 className="text-lg font-semibold text-ink">Workers</h2>
-        {workers.length ? (
-          <Table
-            headers={["Worker", "Status", "Queues", "Heartbeat"]}
-            rows={workers.map((worker) => [
-              worker.worker_id ?? "unknown",
-              <StatusBadge key="status" status={worker.status ?? "unknown"} />,
-              worker.queue_names?.join(", ") ?? "n/a",
-              formatDateTime(worker.last_heartbeat_at)
-            ])}
-          />
-        ) : (
-          <EmptyState title="No workers" message="No worker status records were returned." />
-        )}
-      </section>
-      <section className="space-y-3">
-        <h2 className="text-lg font-semibold text-ink">Queues</h2>
-        {queues.length ? (
-          <Table
-            headers={["Queue", "Pending", "Leased", "Dead letters"]}
-            rows={queues.map((queue) => [
-              queue.queue_name ?? "unknown",
-              formatNumber(queue.pending_count),
-              formatNumber(queue.leased_count ?? queue.pending_count),
-              formatNumber(queue.dead_letter_count)
-            ])}
-          />
-        ) : (
-          <EmptyState title="No queues" message="No queue status records were returned." />
-        )}
-      </section>
-    </div>
-  )
-}
-
-function Table({ headers, rows }: { headers: string[]; rows: React.ReactNode[][] }) {
-  return (
-    <div className="overflow-x-auto rounded-lg border border-line bg-white">
-      <table className="w-full table-fixed border-collapse text-left text-sm">
-        <thead className="bg-surface text-xs uppercase text-muted">
-          <tr>
-            {headers.map((header) => (
-              <th key={header} className="w-40 px-4 py-3 font-medium">{header}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, index) => (
-            <tr key={index} className="border-t border-line">
-              {row.map((cell, cellIndex) => (
-                <td key={cellIndex} className="truncate px-4 py-3 text-muted">{cell}</td>
-              ))}
+    <div className="grid gap-6 lg:grid-cols-2">
+      <div>
+        <h3 className="mb-3 text-sm font-semibold text-ink">Workers</h3>
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-line">
+              <th className="pb-2 pr-4 text-left text-xs font-medium text-muted">ID</th>
+              <th className="pb-2 pr-4 text-left text-xs font-medium text-muted">Status</th>
+              <th className="pb-2 text-left text-xs font-medium text-muted">Heartbeat</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody className="divide-y divide-line">
+            {workers.length ? workers.map((w, i) => (
+              <tr key={w.worker_id ?? i}>
+                <td className="py-2.5 pr-4 font-mono text-xs text-ink">{w.worker_id ?? "—"}</td>
+                <td className="py-2.5 pr-4">
+                  <StatusBadge status={w.stale ? "unavailable" : (w.status ?? "unknown")} />
+                </td>
+                <td className="py-2.5 text-xs text-muted">
+                  {w.last_heartbeat_at ? formatDateTime(w.last_heartbeat_at) : "—"}
+                </td>
+              </tr>
+            )) : (
+              <tr><td colSpan={3} className="py-4 text-center text-xs text-muted">No workers</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      <div>
+        <h3 className="mb-3 text-sm font-semibold text-ink">Queues</h3>
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-line">
+              <th className="pb-2 pr-4 text-left text-xs font-medium text-muted">Queue</th>
+              <th className="pb-2 pr-4 text-right text-xs font-medium text-muted">Pending</th>
+              <th className="pb-2 pr-4 text-right text-xs font-medium text-muted">Leased</th>
+              <th className="pb-2 text-right text-xs font-medium text-muted">Dead</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-line">
+            {queues.length ? queues.map((q, i) => (
+              <tr key={q.queue_name ?? i}>
+                <td className="py-2.5 pr-4 font-mono text-xs text-ink">{q.queue_name ?? "—"}</td>
+                <td className="py-2.5 pr-4 text-right text-xs text-muted">{q.pending_count ?? 0}</td>
+                <td className="py-2.5 pr-4 text-right text-xs text-muted">{q.leased_count ?? 0}</td>
+                <td className="py-2.5 text-right text-xs text-muted">{q.dead_letter_count ?? 0}</td>
+              </tr>
+            )) : (
+              <tr><td colSpan={4} className="py-4 text-center text-xs text-muted">No queues</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }

@@ -1,13 +1,9 @@
-import { EmptyState } from "@/components/common/EmptyState"
-
-export function ReportViewer({ markdown }: { markdown?: string | null }) {
-  if (!markdown) {
-    return <EmptyState title="No markdown" message="This report did not include a markdown body." />
-  }
-
+export function ReportViewer({ markdown }: { markdown: string }) {
   return (
-    <article className="max-h-[48rem] overflow-auto rounded-lg border border-line bg-white p-5">
-      <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-6 text-ink">{markdown}</pre>
-    </article>
+    <div className="prose prose-sm max-w-none">
+      <pre className="whitespace-pre-wrap rounded-lg border border-line bg-surface p-5 font-sans text-sm leading-relaxed text-ink">
+        {markdown}
+      </pre>
+    </div>
   )
 }

@@ -1,70 +1,69 @@
 import Link from "next/link"
-import { ErrorState } from "@/components/common/ErrorState"
 import { RunTable } from "@/components/runs/RunTable"
+import { EmptyState } from "@/components/common/EmptyState"
 import { safeApiGet } from "@/lib/api-client"
 import type { RunList } from "@/lib/types"
 
-const RUN_STATUS_OPTIONS = ["running", "succeeded", "failed", "blocked", "cancelled"]
+const STATUSES = ["all", "running", "succeeded", "failed", "blocked", "cancelled"]
 
 export default async function RunsPage({
   searchParams
 }: {
-  searchParams: { status?: string; limit?: string }
+  searchParams: Promise<{ status?: string; limit?: string }>
 }) {
-  const limit = normalizeLimit(searchParams.limit)
-  const status = searchParams.status || undefined
-  const query = new URLSearchParams({ limit: String(limit) })
-  if (status) {
-    query.set("status", status)
-  }
-  const runs = await safeApiGet<RunList>(`/api/v1/runs?${query.toString()}`)
+  const sp = await searchParams
+  const status = STATUSES.includes(sp.status ?? "") ? sp.status : undefined
+  const limit = Math.min(100, Math.max(1, Number(sp.limit) || 20))
+
+  const path = status ? `/api/v1/runs?status=${status}&limit=${limit}` : `/api/v1/runs?limit=${limit}`
+  const res = await safeApiGet<RunList>(path)
 
   return (
-    <main className="space-y-6">
-      <header className="flex flex-col gap-4 border-b border-line pb-4 lg:flex-row lg:items-end lg:justify-between">
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold text-ink">Runs</h1>
-          <p className="text-sm text-muted">Workflow run history and current execution status.</p>
+          <h1 className="text-xl font-semibold text-ink">Runs</h1>
+          <p className="mt-0.5 text-sm text-muted">Workflow execution history</p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <FilterLink active={!status} href={`/runs?limit=${limit}`} label="All" />
-          {RUN_STATUS_OPTIONS.map((option) => (
-            <FilterLink
-              key={option}
-              active={status === option}
-              href={`/runs?status=${option}&limit=${limit}`}
-              label={option}
-            />
+      </div>
+
+      {/* Filters */}
+      <div className="flex flex-wrap items-center gap-2">
+        {STATUSES.map((s) => {
+          const active = (s === "all" && !status) || s === status
+          return (
+            <Link
+              key={s}
+              href={s === "all" ? "/runs" : `/runs?status=${s}`}
+              className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                active ? "bg-ink text-white" : "bg-white border border-line text-muted hover:text-ink"
+              }`}
+            >
+              {s}
+            </Link>
+          )
+        })}
+        <div className="ml-auto flex items-center gap-1.5 text-xs text-muted">
+          Show
+          {[20, 50, 100].map((n) => (
+            <Link
+              key={n}
+              href={`/runs?${status ? `status=${status}&` : ""}limit=${n}`}
+              className={`rounded px-2 py-0.5 ${limit === n ? "bg-ink text-white" : "hover:text-ink"}`}
+            >
+              {n}
+            </Link>
           ))}
         </div>
-      </header>
+      </div>
 
-      {runs.ok && runs.data ? (
-        <RunTable runs={runs.data.runs ?? []} />
-      ) : (
-        <ErrorState message={runs.errorMessage} requestId={runs.requestId} />
-      )}
-    </main>
+      <div className="rounded-xl border border-line bg-white p-5 shadow-card">
+        {res.ok && res.data?.runs?.length ? (
+          <RunTable runs={res.data.runs} />
+        ) : (
+          <EmptyState title="No runs found" message={res.errorMessage} />
+        )}
+      </div>
+    </div>
   )
-}
-
-function FilterLink({ active, href, label }: { active: boolean; href: string; label: string }) {
-  return (
-    <Link
-      href={href}
-      className={`rounded-md border px-3 py-2 text-sm font-medium ${
-        active ? "border-accent bg-accent text-white" : "border-line bg-white text-muted hover:text-ink"
-      }`}
-    >
-      {label}
-    </Link>
-  )
-}
-
-function normalizeLimit(value?: string): number {
-  const parsed = Number(value)
-  if (!Number.isFinite(parsed) || parsed < 1) {
-    return 20
-  }
-  return Math.min(Math.floor(parsed), 100)
 }

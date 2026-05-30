@@ -1,42 +1,35 @@
 import Link from "next/link"
-import { EmptyState } from "@/components/common/EmptyState"
 import { StatusBadge } from "@/components/common/StatusBadge"
 import { formatDateTime } from "@/lib/format"
 import type { RunListItem } from "@/lib/types"
 
 export function RunTable({ runs }: { runs: RunListItem[] }) {
-  if (!runs.length) {
-    return <EmptyState title="No runs found" message="No workflow runs match the current filters." />
-  }
-
   return (
-    <div className="overflow-x-auto rounded-lg border border-line bg-white">
-      <table className="w-full table-fixed border-collapse text-left text-sm">
-        <thead className="bg-surface text-xs uppercase text-muted">
-          <tr>
-            <th className="w-48 px-4 py-3 font-medium">Run</th>
-            <th className="w-36 px-4 py-3 font-medium">Workflow</th>
-            <th className="w-32 px-4 py-3 font-medium">Profile</th>
-            <th className="w-32 px-4 py-3 font-medium">Status</th>
-            <th className="w-44 px-4 py-3 font-medium">Started</th>
-            <th className="w-44 px-4 py-3 font-medium">Finished</th>
-            <th className="w-24 px-4 py-3 font-medium">Action</th>
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-line">
+            <th className="pb-3 pr-4 text-left text-xs font-medium text-muted">Run ID</th>
+            <th className="pb-3 pr-4 text-left text-xs font-medium text-muted">Workflow</th>
+            <th className="pb-3 pr-4 text-left text-xs font-medium text-muted">Profile</th>
+            <th className="pb-3 pr-4 text-left text-xs font-medium text-muted">Status</th>
+            <th className="pb-3 pr-4 text-left text-xs font-medium text-muted">Started</th>
+            <th className="pb-3 text-left text-xs font-medium text-muted">Finished</th>
+            <th className="pb-3 text-right text-xs font-medium text-muted"></th>
           </tr>
         </thead>
-        <tbody>
+        <tbody className="divide-y divide-line">
           {runs.map((run) => (
-            <tr key={run.run_id} className="border-t border-line">
-              <td className="truncate px-4 py-3 font-medium text-ink">{run.run_id}</td>
-              <td className="truncate px-4 py-3 text-muted">{run.workflow_id ?? "unknown"}</td>
-              <td className="truncate px-4 py-3 text-muted">{run.profile ?? "n/a"}</td>
-              <td className="px-4 py-3">
-                <StatusBadge status={run.status} />
-              </td>
-              <td className="truncate px-4 py-3 text-muted">{formatDateTime(run.started_at)}</td>
-              <td className="truncate px-4 py-3 text-muted">{formatDateTime(run.finished_at)}</td>
-              <td className="px-4 py-3">
-                <Link className="font-medium text-accent hover:underline" href={`/runs/${encodeURIComponent(run.run_id)}`}>
-                  Open
+            <tr key={run.run_id} className="group">
+              <td className="py-3 pr-4 font-mono text-xs text-ink">{run.run_id.slice(0, 12)}…</td>
+              <td className="py-3 pr-4 text-muted">{run.workflow_id ?? "—"}</td>
+              <td className="py-3 pr-4 text-muted">{run.profile ?? "—"}</td>
+              <td className="py-3 pr-4"><StatusBadge status={run.status} /></td>
+              <td className="py-3 pr-4 text-muted">{run.started_at ? formatDateTime(run.started_at) : "—"}</td>
+              <td className="py-3 text-muted">{run.finished_at ? formatDateTime(run.finished_at) : "—"}</td>
+              <td className="py-3 pl-4 text-right">
+                <Link href={`/runs/${run.run_id}`} className="text-xs text-accent opacity-0 transition-opacity group-hover:opacity-100 hover:underline">
+                  View →
                 </Link>
               </td>
             </tr>

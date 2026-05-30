@@ -5,14 +5,22 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        surface: "#f7f8fa",
-        ink: "#172033",
-        muted: "#667085",
-        line: "#d8dee8",
-        accent: "#1769aa",
-        good: "#1b7f5c",
-        warn: "#b7791f",
-        bad: "#b42318"
+        surface: "#f9fafb",
+        ink: "#111827",
+        muted: "#6b7280",
+        subtle: "#9ca3af",
+        line: "#e5e7eb",
+        accent: "#2563eb",
+        "accent-hover": "#1d4ed8",
+        good: "#16a34a",
+        warn: "#d97706",
+        bad: "#dc2626"
+      },
+      fontFamily: {
+        sans: ["Inter", "system-ui", "-apple-system", "sans-serif"]
+      },
+      boxShadow: {
+        card: "0 1px 3px 0 rgb(0 0 0 / 0.06), 0 1px 2px -1px rgb(0 0 0 / 0.04)"
       }
     }
   },
