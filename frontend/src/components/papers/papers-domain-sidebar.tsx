@@ -10,11 +10,13 @@ export function PapersDomainSidebar({
   methodAreas,
   topTasks,
   papers,
+  dashboardPapers,
   locale,
 }: {
   methodAreas: MethodAreaDomain[]
   topTasks: TaskRef[]
   papers: Paper[]
+  dashboardPapers: Paper[]
   locale: Locale
 }) {
   return (
@@ -23,7 +25,7 @@ export function PapersDomainSidebar({
       <section className="border-t border-[#d7dfd8] pt-5 dark:border-border">
         <p className="text-[0.7rem] font-semibold text-emerald-600">01/</p>
         <h2 className="mt-2 text-[0.72rem] font-black uppercase tracking-[0.18em] text-[#334155] dark:text-foreground">
-          {t(papersCopy.topDomains, locale)}
+          {t(papersCopy.methods, locale)}
         </h2>
         <div className="mt-5 grid gap-3.5">
           {methodAreas.map((area) => (
@@ -46,11 +48,11 @@ export function PapersDomainSidebar({
       <section className="border-t border-[#d7dfd8] pt-5 dark:border-border">
         <p className="text-[0.7rem] font-semibold text-sky-600">02/</p>
         <h2 className="mt-2 text-[0.72rem] font-black uppercase tracking-[0.18em] text-[#334155] dark:text-foreground">
-          {t(papersCopy.trendingDomains, locale)}
+          {t(papersCopy.tasks, locale)}
         </h2>
         <div className="mt-5 grid gap-3.5">
           {topTasks.map((task) => {
-            const count = papers.filter(
+            const count = dashboardPapers.filter(
               (p) => p.isPublished && (p.taskRefs ?? []).some((r) => r.slug === task.slug)
             ).length
             return (

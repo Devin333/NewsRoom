@@ -172,7 +172,7 @@ export function TrendingPapersPage({ locale, papers }: { locale: Locale; papers:
         </div>
       ) : null}
       <div className="mt-8 grid gap-12 xl:grid-cols-[15rem_minmax(0,1fr)] 2xl:grid-cols-[16rem_minmax(0,1fr)] 2xl:gap-16">
-        <PapersDomainSidebar methodAreas={methodAreas} topTasks={topDomains} papers={visiblePapers} locale={locale} />
+        <PapersDomainSidebar methodAreas={methodAreas} topTasks={topDomains} papers={visiblePapers} dashboardPapers={dashboardPapers} locale={locale} />
         <div className="space-y-3">
           {isLoading ? (
             <p className="text-sm text-[#334155]/55 dark:text-muted-foreground">

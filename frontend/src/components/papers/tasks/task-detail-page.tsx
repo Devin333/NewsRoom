@@ -51,9 +51,9 @@ export function TaskDetailPage({
       <InlineNotice message={notice} locale={locale} onDismiss={() => setNotice(null)} />
       <div className="grid gap-10 xl:grid-cols-[minmax(0,1fr)_18rem] 2xl:grid-cols-[minmax(0,1fr)_19rem]">
         <main className="space-y-6">
-          <BenchmarkList benchmarks={taskBenchmarks} task={task} locale={locale} onSelect={previewBenchmark} />
-          <ImplementationList papers={taskPapers} locale={locale} title={translate(locale, "papers.reader.projects")} />
           <PaperStream papers={taskPapers} locale={locale} title={t(papersCopy.papersUnderTask, locale)} onPreview={previewPaper} />
+          <BenchmarkList benchmarks={taskBenchmarks} task={task} locale={locale} onSelect={previewBenchmark} />
+          <ImplementationList papers={taskPapers} locale={locale} title={translate(locale, "papers.reader.implementations")} />
         </main>
         <aside className="space-y-8 border-t border-[#d7dfd8] pt-6 xl:sticky xl:top-24 xl:self-start xl:border-t-0 xl:pt-0 dark:border-border">
           <SisterTasksPanel tasks={task.sisterTasks} locale={locale} />
