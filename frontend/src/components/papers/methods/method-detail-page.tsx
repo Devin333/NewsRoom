@@ -16,7 +16,7 @@ import { papersCopy, t } from "@/lib/papers/copy"
 import { methodDescription, methodName } from "@/lib/papers/format"
 import { getBenchmarksForMethod, getPapersForMethod } from "@/lib/papers/catalog"
 import { papersRoutes } from "@/lib/papers/routes"
-import type { Benchmark, BenchmarkRef, Locale, Paper, PaperMethod } from "@/lib/papers/types"
+import type { Benchmark, BenchmarkRef, Locale, MethodRef, Paper, PaperMethod, TaskRef } from "@/lib/papers/types"
 
 export function MethodDetailPage({
   method,
@@ -38,6 +38,8 @@ export function MethodDetailPage({
     method.commonBenchmarks?.length ? method.commonBenchmarks : methodBenchmarks,
     methodPapers
   )
+  const relatedTasks = relatedTasksFromPapers(methodPapers)
+  const relatedMethods = relatedMethodsFromPapers(methodPapers, method.slug)
   const methodStats = deriveMethodDetailStats(methodPapers)
 
   function previewPaper(paper: Paper) {
@@ -81,12 +83,12 @@ export function MethodDetailPage({
               onPreviewPaper={previewPaper}
             />
           ) : null}
-          <RelatedTasksPanel tasks={method.relatedTasks} locale={locale} />
+          <RelatedTasksPanel tasks={relatedTasks} locale={locale} />
           <ImplementationList papers={methodPapers} locale={locale} title={translate(locale, "papers.reader.projects")} />
           <PaperStream papers={methodPapers} locale={locale} title={t(papersCopy.papersUsingMethod, locale)} onPreview={previewPaper} />
         </main>
         <aside className="space-y-6 xl:sticky xl:top-24 xl:self-start">
-          <RelatedMethodsPanel methods={method.relatedMethods} locale={locale} />
+          <RelatedMethodsPanel methods={relatedMethods} locale={locale} />
           <CommonBenchmarksPanel benchmarks={commonBenchmarks} locale={locale} onSelect={previewBenchmark} />
         </aside>
       </div>
@@ -134,4 +136,26 @@ function countImplementationsFromPapers(papers: Paper[]) {
 
 function evidenceBackedBenchmarks(benchmarks: Array<BenchmarkRef | Benchmark>, papers: Paper[]) {
   return benchmarks.filter((benchmark) => benchmarkPaperMatches(benchmark, papers).length > 0)
+}
+
+function relatedTasksFromPapers(papers: Paper[]) {
+  return uniqueRefs(papers.flatMap((paper) => paper.taskRefs ?? []))
+}
+
+function relatedMethodsFromPapers(papers: Paper[], currentMethodSlug: string) {
+  return uniqueRefs((papers.flatMap((paper) => paper.methodRefs ?? [])).filter((method) => method.slug !== currentMethodSlug))
+}
+
+function uniqueRefs<T extends TaskRef | MethodRef>(refs: T[]): T[] {
+  const seen = new Set<string>()
+  const result: T[] = []
+  for (const ref of refs) {
+    const key = ref.slug || ref.id || ref.name
+    if (!key || seen.has(key)) {
+      continue
+    }
+    seen.add(key)
+    result.push(ref)
+  }
+  return result
 }

@@ -256,7 +256,9 @@ describe("paper task and method pages", () => {
     expect(screen.getByLabelText(/papers: 1/i)).toBeInTheDocument()
     expect(screen.getByLabelText(/tasks: 1/i)).toBeInTheDocument()
     expect(screen.getByLabelText(/implementations: 0/i)).toBeInTheDocument()
-    expect(screen.queryByText("Related Tasks")).not.toBeInTheDocument()
+    const relatedTasksPanel = screen.getByText("Related Tasks").closest("section")
+    expect(relatedTasksPanel).not.toBeNull()
+    expect(within(relatedTasksPanel!).getByRole("link", { name: "Coding Agents" })).toHaveAttribute("href", "/papers/tasks/coding-agents")
     expect(screen.queryByText("Related Methods")).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole("button", { name: /SWE-bench/ }))
@@ -342,8 +344,36 @@ describe("paper task and method pages", () => {
     render(<MethodDetailPage method={methodDetail} locale="en" papers={[]} />)
 
     expect(screen.getByLabelText(/papers: 0/i)).toBeInTheDocument()
+    expect(screen.queryByText("Related Tasks")).not.toBeInTheDocument()
+    expect(screen.queryByText("Related Methods")).not.toBeInTheDocument()
     expect(screen.queryByText("Common Benchmarks")).not.toBeInTheDocument()
     expect(screen.queryByRole("button", { name: /SWE-bench/i })).not.toBeInTheDocument()
+  })
+
+  it("derives method relation panels from current matching papers", () => {
+    render(
+      <MethodDetailPage
+        method={methodDetail}
+        locale="en"
+        papers={[
+          {
+            ...methodPapers[0],
+            methodRefs: [
+              { id: "method-tool-use", slug: "tool-use", name: "Tool Use" },
+              { id: "method-planning", slug: "planning", name: "Planning" }
+            ]
+          }
+        ]}
+      />
+    )
+
+    const relatedTasksPanel = screen.getByText("Related Tasks").closest("section")
+    expect(relatedTasksPanel).not.toBeNull()
+    expect(within(relatedTasksPanel!).getByRole("link", { name: "Coding Agents" })).toHaveAttribute("href", "/papers/tasks/coding-agents")
+    const relatedMethodsPanel = screen.getByText("Related Methods").closest("section")
+    expect(relatedMethodsPanel).not.toBeNull()
+    expect(within(relatedMethodsPanel!).getByRole("link", { name: "Planning" })).toHaveAttribute("href", "/papers/methods/planning")
+    expect(within(relatedMethodsPanel!).queryByRole("link", { name: "Tool Use" })).not.toBeInTheDocument()
   })
 
   it("opens benchmark evidence from task detail instead of placeholder copy", () => {
