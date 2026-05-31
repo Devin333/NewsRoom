@@ -49,6 +49,8 @@ export function PaperDetailDrawer({
     if (paper) {
       setActivePaper(paper)
       setSummary(paper.aiSummary ?? null)
+      setSummaryStatus(paper.aiSummary ? "success" : "idle")
+      setSummaryError(null)
       setDetailError(null)
       return
     }
@@ -71,12 +73,16 @@ export function PaperDetailDrawer({
     let cancelled = false
     setActivePaper(null)
     setSummary(null)
+    setSummaryStatus("idle")
+    setSummaryError(null)
     setDetailError(null)
     fetchPaperDetail(paperId)
       .then((detail) => {
         if (!cancelled) {
           setActivePaper(detail)
           setSummary(detail.aiSummary ?? null)
+          setSummaryStatus(detail.aiSummary ? "success" : "idle")
+          setSummaryError(null)
         }
       })
       .catch((error) => {

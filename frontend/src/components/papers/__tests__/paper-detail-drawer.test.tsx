@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { PaperDetailDrawer } from "@/components/papers/shared/paper-detail-drawer"
 import { fetchPaperDetail, requestPaperSummary } from "@/lib/papers/api"
@@ -231,5 +231,32 @@ describe("PaperDetailDrawer", () => {
 
     expect(await screen.findByText("provider unavailable")).toBeInTheDocument()
     expect(screen.getByRole("button", { name: /retry/i })).toBeInTheDocument()
+  })
+
+  it("clears stale summary errors when switching to another paper", async () => {
+    vi.mocked(requestPaperSummary)
+      .mockRejectedValueOnce(new Error("provider unavailable"))
+      .mockReturnValue(new Promise(() => undefined))
+    const { rerender } = render(<PaperDetailDrawer paper={paper} locale="en" open onOpenChange={vi.fn()} />)
+
+    expect(await screen.findByText("provider unavailable")).toBeInTheDocument()
+
+    rerender(
+      <PaperDetailDrawer
+        paper={{
+          ...paper,
+          id: "paper-other",
+          slug: "other-paper",
+          title: "Other Paper",
+          aiSummary: undefined
+        }}
+        locale="en"
+        open
+        onOpenChange={vi.fn()}
+      />
+    )
+
+    await waitFor(() => expect(screen.queryByText("provider unavailable")).not.toBeInTheDocument())
+    expect(screen.getByText("Generating NewsRoom AI summary...")).toBeInTheDocument()
   })
 })
