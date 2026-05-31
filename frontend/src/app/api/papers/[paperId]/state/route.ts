@@ -2,7 +2,7 @@ import { cookies } from "next/headers"
 import { NextRequest, NextResponse } from "next/server"
 import { safeApiGet, safeApiPatch } from "@/lib/api/server"
 import { NEWSROOM_SESSION_COOKIE } from "@/lib/auth/session"
-import { requirePublicPaper } from "@/lib/papers/public-route-guard"
+import { paperRouteErrorStatus, requirePublicPaper } from "@/lib/papers/public-route-guard"
 
 export const dynamic = "force-dynamic"
 
@@ -37,7 +37,7 @@ function stateResponse(result: Awaited<ReturnType<typeof safeApiGet>>) {
   if (result.ok) {
     return NextResponse.json({ success: true, data: result.data })
   }
-  const status = result.errorCode === "auth_session_required" ? 401 : result.errorCode === "paper_state_invalid" ? 400 : 502
+  const status = paperRouteErrorStatus(result.errorCode, { invalidCodes: ["paper_state_invalid"] })
   return NextResponse.json(
     {
       success: false,

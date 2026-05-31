@@ -2,14 +2,17 @@ import { describe, expect, it, vi, beforeEach } from "vitest"
 import { NextRequest } from "next/server"
 import { POST as askPaper } from "@/app/api/papers/[paperId]/ask/route"
 import { GET as readPaper } from "@/app/api/papers/[paperId]/reader/route"
+import { POST as recordReaderEvent } from "@/app/api/papers/[paperId]/reader/events/route"
 import { POST as summarizePaper } from "@/app/api/papers/[paperId]/summary/route"
+import { PATCH as patchPaperState } from "@/app/api/papers/[paperId]/state/route"
 import { GET as getUserStates } from "@/app/api/papers/me/state/route"
-import { safeApiGet, safeApiPost } from "@/lib/api/server"
+import { safeApiGet, safeApiPatch, safeApiPost } from "@/lib/api/server"
 import { getPaperById, getPublishedPapers } from "@/lib/papers/real-data"
 import type { Paper } from "@/lib/papers/types"
 
 vi.mock("@/lib/api/server", () => ({
   safeApiGet: vi.fn(),
+  safeApiPatch: vi.fn(),
   safeApiPost: vi.fn(),
 }))
 
@@ -42,6 +45,7 @@ async function responseJson<T>(response: Response): Promise<T> {
 describe("paper public route guard", () => {
   beforeEach(() => {
     vi.mocked(safeApiGet).mockReset()
+    vi.mocked(safeApiPatch).mockReset()
     vi.mocked(safeApiPost).mockReset()
     vi.mocked(getPaperById).mockReset()
     vi.mocked(getPublishedPapers).mockReset()
@@ -116,6 +120,52 @@ describe("paper public route guard", () => {
     })
     expect(safeApiGet).toHaveBeenCalledWith("/api/v1/papers/me/state?paperIds=paper-1", {
       headers: { "x-newsroom-session": "session-token" },
+    })
+  })
+
+  it("keeps backend paper-not-found errors as not found after the public guard passes", async () => {
+    vi.mocked(getPaperById).mockResolvedValueOnce(paper)
+    vi.mocked(safeApiPost).mockResolvedValueOnce({
+      ok: false,
+      errorCode: "paper_not_found",
+      errorMessage: "paper material store is missing",
+    })
+
+    const response = await recordReaderEvent(
+      request("/api/papers/public-paper/reader/events", {
+        method: "POST",
+        body: JSON.stringify({ type: "reader_progress_sampled" }),
+      }),
+      { params: { paperId: "public-paper" } },
+    )
+
+    expect(response.status).toBe(404)
+    await expect(responseJson(response)).resolves.toMatchObject({
+      success: false,
+      error: { code: "paper_not_found" },
+    })
+  })
+
+  it("keeps invalid paper interaction payloads as bad requests", async () => {
+    vi.mocked(getPaperById).mockResolvedValueOnce(paper)
+    vi.mocked(safeApiPatch).mockResolvedValueOnce({
+      ok: false,
+      errorCode: "paper_state_invalid",
+      errorMessage: "invalid state patch",
+    })
+
+    const response = await patchPaperState(
+      request("/api/papers/public-paper/state", {
+        method: "PATCH",
+        body: JSON.stringify({ progressPercent: 200 }),
+      }),
+      { params: { paperId: "public-paper" } },
+    )
+
+    expect(response.status).toBe(400)
+    await expect(responseJson(response)).resolves.toMatchObject({
+      success: false,
+      error: { code: "paper_state_invalid" },
     })
   })
 })
