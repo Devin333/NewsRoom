@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest"
 import {
   buildPaperPortalMetrics,
+  deriveMethodAreaDomains,
   deriveTopPaperDomains,
-  deriveTrendingPaperDomains
+  deriveTrendingPaperDomains,
+  methodAreaSlug
 } from "@/lib/papers/metrics"
 import type { Paper, TaskRef } from "@/lib/papers/types"
 
@@ -45,6 +47,22 @@ describe("paper portal metrics", () => {
     expect(deriveTrendingPaperDomains(papers, 2, new Date("2026-05-27T00:00:00Z")).map((task) => task.slug)).toEqual([
       "reasoning",
       "agents"
+    ])
+  })
+
+  it("uses the same method area slug contract as method page anchors", () => {
+    const papers = [
+      paper("one", [agents], { methodRefs: [{ id: "method-one", slug: "method-one", name: "Method One", area: "Prompt Engineering" }] }),
+      paper("two", [agents], { methodRefs: [{ id: "method-two", slug: "method-two", name: "Method Two", area: "Prompt Engineering" }] }),
+      paper("draft", [agents], {
+        isPublished: false,
+        methodRefs: [{ id: "method-three", slug: "method-three", name: "Method Three", area: "Agent Memory" }]
+      })
+    ]
+
+    expect(methodAreaSlug("Prompt Engineering")).toBe("prompt-engineering")
+    expect(deriveMethodAreaDomains(papers)).toEqual([
+      { slug: "prompt-engineering", name: "Prompt Engineering", count: 2 }
     ])
   })
 })

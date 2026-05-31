@@ -199,6 +199,10 @@ export type MethodAreaDomain = {
   count: number  // number of papers using methods in this area
 }
 
+export function methodAreaSlug(area: string) {
+  return area.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "")
+}
+
 export function deriveMethodAreaDomains(
   papers: Paper[],
   limit = 4
@@ -210,7 +214,7 @@ export function deriveMethodAreaDomains(
     for (const method of paper.methodRefs ?? []) {
       const area = (method as { area?: string }).area
       if (!area) continue
-      const slug = area.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "")
+      const slug = methodAreaSlug(area)
       if (!paperIds.has(slug)) paperIds.set(slug, new Set())
       paperIds.get(slug)!.add(paper.id)
       if (!areaNames.has(slug)) areaNames.set(slug, area)

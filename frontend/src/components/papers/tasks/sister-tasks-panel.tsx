@@ -1,6 +1,6 @@
 import Link from "next/link"
 import { papersCopy, t } from "@/lib/papers/copy"
-import { taskName } from "@/lib/papers/format"
+import { formatWholeNumber, taskName } from "@/lib/papers/format"
 import { papersRoutes } from "@/lib/papers/routes"
 import type { Locale, Paper, TaskRef } from "@/lib/papers/types"
 
@@ -23,7 +23,7 @@ export function SisterTasksPanel({
       <div className="mt-4 divide-y divide-[#e8eeea] dark:divide-border">
         {tasks.map((task) => {
           const count = papers.filter(
-            (p) => p.isPublished && (p.taskRefs ?? []).some((r) => r.slug === task.slug)
+            (p) => p.isPublished !== false && (p.taskRefs ?? []).some((r) => r.slug === task.slug)
           ).length
           return (
             <Link
@@ -34,7 +34,7 @@ export function SisterTasksPanel({
               <span className="font-semibold leading-5">{taskName(task, locale)}</span>
               {count > 0 && (
                 <span className="shrink-0 text-xs text-[#334155]/45 dark:text-muted-foreground">
-                  {count.toLocaleString()}
+                  {formatWholeNumber(count, locale)}
                 </span>
               )}
             </Link>

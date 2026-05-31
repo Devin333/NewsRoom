@@ -1,6 +1,6 @@
 import Link from "next/link"
 import { papersCopy, t } from "@/lib/papers/copy"
-import { methodName } from "@/lib/papers/format"
+import { formatWholeNumber, methodName } from "@/lib/papers/format"
 import { papersRoutes } from "@/lib/papers/routes"
 import type { Locale, MethodRef, Paper } from "@/lib/papers/types"
 
@@ -23,7 +23,7 @@ export function CommonMethodsPanel({
       <div className="mt-4 divide-y divide-[#e8eeea] dark:divide-border">
         {methods.map((method) => {
           const count = papers.filter(
-            (p) => p.isPublished && (p.methodRefs ?? []).some((r) => r.slug === method.slug)
+            (p) => p.isPublished !== false && (p.methodRefs ?? []).some((r) => r.slug === method.slug)
           ).length
           return (
             <Link
@@ -34,7 +34,7 @@ export function CommonMethodsPanel({
               <span className="font-semibold leading-5">{methodName(method, locale)}</span>
               {count > 0 && (
                 <span className="shrink-0 text-xs text-[#334155]/45 dark:text-muted-foreground">
-                  {count > 0 ? (count >= 1000 ? `${(count / 1000).toFixed(1)}k` : String(count)) : ""}
+                  {formatWholeNumber(count, locale)}
                 </span>
               )}
             </Link>
