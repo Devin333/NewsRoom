@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { getPaperListResult, getPaperTasksResult, loadApiPapers } from "@/lib/papers/real-data"
+import { getPaperListResult, getPaperMethodsResult, getPaperTasksResult, loadApiPapers } from "@/lib/papers/real-data"
 import { safeApiGet } from "@/lib/api/server"
 import type { Paper } from "@/lib/papers/types"
 
@@ -126,7 +126,8 @@ describe("Papers API data loading", () => {
               id: "paper-agent",
               title: "Agent Planning Paper",
               taskRefs: [{ id: "task-agents", slug: "agents", name: "Agents" }],
-              methodRefs: [{ id: "method-planning", slug: "planning", name: "Planning" }]
+              methodRefs: [{ id: "method-planning", slug: "planning", name: "Planning" }],
+              benchmarks: [{ id: "bench-agent", name: "Agent Bench" }]
             })
           ]
         }
@@ -134,11 +135,48 @@ describe("Papers API data loading", () => {
 
     const result = await getPaperTasksResult()
     const agents = result.items.find((task) => task.slug === "agents")
+    const reasoning = result.items.find((task) => task.slug === "reasoning")
 
     expect(result.source).toBe("taxonomy")
     expect(result.dataState).toBe("degraded")
     expect(agents?.paperCount).toBe(1)
+    expect(agents?.benchmarkCount).toBe(1)
+    expect(agents?.methodCount).toBe(1)
     expect(agents?.latestPaperIds).toEqual(["paper-agent"])
+    expect(reasoning?.paperCount).toBe(0)
+    expect(reasoning?.benchmarkCount).toBe(0)
+    expect(reasoning?.methodCount).toBe(0)
+  })
+
+  it("uses taxonomy with real paper-derived method counts when method API is unavailable", async () => {
+    mockedSafeApiGet
+      .mockResolvedValueOnce({ ok: false, errorCode: "request_failed", errorMessage: "methods offline" })
+      .mockResolvedValueOnce({ ok: false, errorCode: "request_failed", errorMessage: "tasks offline" })
+      .mockResolvedValueOnce({
+        ok: true,
+        data: {
+          papers: [
+            realPaper({
+              id: "paper-tool-use",
+              title: "Tool Use Paper",
+              taskRefs: [{ id: "task-custom", slug: "custom-task", name: "Custom Task" }],
+              methodRefs: [{ id: "method-tool-use", slug: "tool-use", name: "Tool Use" }]
+            })
+          ]
+        }
+      })
+
+    const result = await getPaperMethodsResult()
+    const toolUse = result.items.find((method) => method.slug === "tool-use")
+    const planning = result.items.find((method) => method.slug === "planning")
+
+    expect(result.source).toBe("taxonomy")
+    expect(result.dataState).toBe("degraded")
+    expect(toolUse?.paperCount).toBe(1)
+    expect(toolUse?.taskCount).toBe(1)
+    expect(toolUse?.representativePaperIds).toEqual(["paper-tool-use"])
+    expect(planning?.paperCount).toBe(0)
+    expect(planning?.taskCount).toBe(0)
   })
 })
 

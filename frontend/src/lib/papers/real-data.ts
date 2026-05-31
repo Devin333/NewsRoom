@@ -2,7 +2,7 @@ import fs from "node:fs"
 import path from "node:path"
 import { safeApiGet } from "@/lib/api/server"
 import { normalizePdfUrl, paperPdfUrlFromSource, sortPapers } from "@/lib/papers/format"
-import { getBenchmarksForMethod, getBenchmarksForTask, paperMethods, paperTasks } from "@/lib/papers/catalog"
+import { getBenchmarksForMethod, paperMethods, paperTasks } from "@/lib/papers/catalog"
 import { arxivIdFromUrl, enrichPapersForPublicStream, githubRepoSlug, normalizeDoi, normalizeGithubRepoUrl } from "@/lib/papers/enrichment"
 import type { MethodRef, Paper, PaperDataState, PaperListResult, PaperMethod, PaperPeriod, PaperSort, PaperTask, TaskRef } from "@/lib/papers/types"
 
@@ -321,12 +321,13 @@ function deriveTasks(tasks: PaperTask[], papers: Paper[]): PaperTask[] {
   return tasks.map((task) => {
     const relatedPapers = papersForTask(papers, task.slug)
     const methodCount = uniqueStrings(relatedPapers.flatMap((paper) => paper.methodRefs.map((method) => method.slug))).length
+    const benchmarkCount = countBenchmarksFromPapers(relatedPapers)
     const implementationCount = relatedPapers.filter(hasImplementationSignal).length
     return {
       ...task,
       paperCount: relatedPapers.length,
-      methodCount: methodCount || task.methodCount,
-      benchmarkCount: getBenchmarksForTask(task.slug).length || task.benchmarkCount,
+      methodCount,
+      benchmarkCount,
       latestPaperIds: sortPapers(relatedPapers, "newest").slice(0, 5).map((paper) => paper.id),
       implementationCount
     }
@@ -344,7 +345,7 @@ function deriveMethods(methods: PaperMethod[], tasks: PaperTask[], papers: Paper
     return {
       ...method,
       paperCount: relatedPapers.length,
-      taskCount: relatedTasks.length || method.taskCount,
+      taskCount: relatedTaskSlugs.length,
       implementationCount,
       relatedTasks: relatedTasks.length ? relatedTasks : method.relatedTasks,
       commonBenchmarks: method.commonBenchmarks?.length ? method.commonBenchmarks : getBenchmarksForMethod(method.slug),
@@ -364,6 +365,10 @@ function papersForMethod(papers: Paper[], slug: string) {
 
 function hasImplementationSignal(paper: Paper) {
   return Boolean(normalizeGithubRepoUrl(paper.repoUrl) || paper.implementations?.length)
+}
+
+function countBenchmarksFromPapers(papers: Paper[]) {
+  return uniqueStrings(papers.flatMap((paper) => (paper.benchmarks ?? []).map((benchmark) => benchmark.id || benchmark.name))).length
 }
 
 function matchesRef(value: string, refs: Array<TaskRef | MethodRef>) {
