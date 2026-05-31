@@ -70,6 +70,25 @@ describe("paper reader server loader", () => {
     expect(getPaperById).not.toHaveBeenCalled()
   })
 
+  it("does not expose unpublished compiled document payloads", async () => {
+    vi.mocked(safeApiGet).mockResolvedValueOnce({
+      ok: true,
+      data: {
+        ...compiledPayload,
+        paper: {
+          ...paper,
+          id: "paper-draft",
+          slug: "paper-draft",
+          title: "Draft Paper",
+          isPublished: false,
+        },
+      },
+    })
+
+    await expect(loadPaperDocumentPayload("paper-draft")).resolves.toBeNull()
+    expect(getPaperById).not.toHaveBeenCalled()
+  })
+
   it("resolves a slug to the real paper id before retrying the document endpoint", async () => {
     vi.mocked(safeApiGet)
       .mockResolvedValueOnce({ ok: false, errorCode: "paper_not_found", errorMessage: "paper was not found" })

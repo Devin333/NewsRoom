@@ -9,7 +9,7 @@ type StatusApiResult = SafeApiResult<{ status: PaperCompileStatusRecord }>
 export async function loadPaperDocumentPayload(paperRef: string): Promise<PaperDocumentResponse | null> {
   const firstDocument = await getDocumentPayload(paperRef)
   if (firstDocument.ok) {
-    return firstDocument.data
+    return publicDocumentPayload(firstDocument.data)
   }
 
   const paper = await getPaperById(paperRef)
@@ -20,7 +20,7 @@ export async function loadPaperDocumentPayload(paperRef: string): Promise<PaperD
   if (paper.id !== paperRef) {
     const resolvedDocument = await getDocumentPayload(paper.id)
     if (resolvedDocument.ok) {
-      return resolvedDocument.data
+      return publicDocumentPayload(resolvedDocument.data)
     }
   }
 
@@ -42,6 +42,10 @@ export async function loadPaperDocumentPayload(paperRef: string): Promise<PaperD
       diagnostics: status.diagnostics,
     },
   }
+}
+
+function publicDocumentPayload(payload: PaperDocumentResponse): PaperDocumentResponse | null {
+  return payload.paper.isPublished === false ? null : payload
 }
 
 export async function loadPaperCompileStatus(paperRef: string): Promise<PaperCompileStatusRecord | null> {
