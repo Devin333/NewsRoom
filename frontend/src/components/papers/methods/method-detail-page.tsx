@@ -32,7 +32,7 @@ export function MethodDetailPage({
   const [notice, setNotice] = useState<string | null>(fallbackNotice ?? null)
   const [selectedPaper, setSelectedPaper] = useState<Paper | null>(null)
   const [selectedBenchmark, setSelectedBenchmark] = useState<BenchmarkRef | Benchmark | null>(null)
-  const methodPapers = papers?.filter((paper) => (paper.methodRefs ?? []).some((methodRef) => methodRef.slug === method.slug)) ?? getPapersForMethod(method.slug)
+  const methodPapers = papers?.filter((paper) => paper.isPublished !== false && (paper.methodRefs ?? []).some((methodRef) => methodRef.slug === method.slug)) ?? getPapersForMethod(method.slug)
   const methodBenchmarks = getBenchmarksForMethod(method.slug)
   const commonBenchmarks = method.commonBenchmarks?.length ? method.commonBenchmarks : methodBenchmarks
   const methodStats = deriveMethodDetailStats(method, methodPapers)

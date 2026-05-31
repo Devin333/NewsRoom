@@ -356,4 +356,31 @@ describe("paper task and method pages", () => {
     expect(stats).toEqual(["1", "0", "0"])
     expect(screen.queryByText("Task Branches")).not.toBeInTheDocument()
   })
+
+  it("excludes unpublished papers from task and method detail streams", () => {
+    const unpublishedPaper: Paper = {
+      ...methodPapers[0],
+      id: "paper-draft",
+      slug: "paper-draft",
+      title: "Draft Paper",
+      isPublished: false
+    }
+
+    const { unmount } = render(
+      <TaskDetailPage task={taskDetail} locale="en" papers={[...methodPapers, unpublishedPaper]} />
+    )
+
+    const taskHero = screen.getByRole("heading", { name: "Coding Agents" }).closest("section")
+    expect(taskHero).not.toBeNull()
+    expect(within(taskHero!).getAllByText("1", { selector: "strong" })).toHaveLength(3)
+    expect(screen.getByText("SWE-agent")).toBeInTheDocument()
+    expect(screen.queryByText("Draft Paper")).not.toBeInTheDocument()
+    unmount()
+
+    render(<MethodDetailPage method={methodDetail} locale="en" papers={[...methodPapers, unpublishedPaper]} />)
+
+    expect(screen.getByLabelText(/papers: 1/i)).toBeInTheDocument()
+    expect(screen.getByText("SWE-agent")).toBeInTheDocument()
+    expect(screen.queryByText("Draft Paper")).not.toBeInTheDocument()
+  })
 })

@@ -33,7 +33,7 @@ export function TaskDetailPage({
   const [selectedBenchmark, setSelectedBenchmark] = useState<Benchmark | null>(null)
 
   const taskPapers = papers?.filter(
-    (p) => (p.taskRefs ?? []).some((r) => r.slug === task.slug)
+    (p) => p.isPublished !== false && (p.taskRefs ?? []).some((r) => r.slug === task.slug)
   ) ?? getPapersForTask(task.slug)
 
   const taskBenchmarks = getBenchmarksForTask(task.slug)
