@@ -35,7 +35,7 @@ export function MethodDetailPage({
   const methodPapers = papers?.filter((paper) => paper.isPublished !== false && (paper.methodRefs ?? []).some((methodRef) => methodRef.slug === method.slug)) ?? getPapersForMethod(method.slug)
   const methodBenchmarks = getBenchmarksForMethod(method.slug)
   const commonBenchmarks = method.commonBenchmarks?.length ? method.commonBenchmarks : methodBenchmarks
-  const methodStats = deriveMethodDetailStats(method, methodPapers)
+  const methodStats = deriveMethodDetailStats(methodPapers)
 
   function previewPaper(paper: Paper) {
     setSelectedPaper(paper)
@@ -101,12 +101,9 @@ export function MethodDetailPage({
   )
 }
 
-function deriveMethodDetailStats(method: PaperMethod, papers: Paper[]) {
-  const taskCount =
-    new Set(papers.flatMap((paper) => (paper.taskRefs ?? []).map((task) => task.slug))).size ||
-    method.taskCount
-  const implementationCount =
-    countImplementationsFromPapers(papers)
+function deriveMethodDetailStats(papers: Paper[]) {
+  const taskCount = new Set(papers.flatMap((paper) => (paper.taskRefs ?? []).map((task) => task.slug))).size
+  const implementationCount = countImplementationsFromPapers(papers)
 
   return {
     paperCount: papers.length,

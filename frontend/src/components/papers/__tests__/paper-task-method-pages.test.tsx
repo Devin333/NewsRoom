@@ -311,6 +311,32 @@ describe("paper task and method pages", () => {
     expect(screen.queryByText("Common Benchmarks")).not.toBeInTheDocument()
   })
 
+  it("derives method detail stats from visible papers without stale taxonomy fallback", () => {
+    render(
+      <MethodDetailPage
+        method={{
+          ...methodDetail,
+          id: "method-stale-counts",
+          slug: "method-stale-counts",
+          name: "Method With Stale Counts",
+          paperCount: 9,
+          taskCount: 7,
+          implementationCount: 5,
+          commonBenchmarks: [],
+          relatedMethods: [],
+          relatedTasks: []
+        }}
+        locale="en"
+        papers={[]}
+      />
+    )
+
+    expect(screen.getByLabelText(/papers: 0/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/tasks: 0/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/implementations: 0/i)).toBeInTheDocument()
+    expect(screen.queryByText("Paper With Stale Counts")).not.toBeInTheDocument()
+  })
+
   it("opens benchmark evidence from task detail instead of placeholder copy", () => {
     render(<TaskDetailPage task={taskDetail} locale="en" papers={methodPapers} />)
 
