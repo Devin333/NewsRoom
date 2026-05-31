@@ -2,11 +2,20 @@ import { fireEvent, render, screen, within } from "@testing-library/react"
 import { describe, expect, it, vi } from "vitest"
 import { PaperDocumentReaderPage } from "@/components/papers/paper-reader"
 import { targetForPaperBlock } from "@/lib/paper-reader/interactions"
+import { triggerPaperCompile } from "@/lib/paper-reader/api"
 import type { PaperDocumentResponse } from "@/lib/paper-reader/types"
 
 vi.mock("@/lib/papers/api", () => ({
   recordReaderEvent: vi.fn().mockResolvedValue({}),
 }))
+
+vi.mock("@/lib/paper-reader/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/paper-reader/api")>()
+  return {
+    ...actual,
+    triggerPaperCompile: vi.fn(),
+  }
+})
 
 describe("PaperDocumentReaderPage", () => {
   it("renders compiled PaperDocument blocks through the Open Reader and keeps AI summary out of the body", () => {
@@ -64,6 +73,38 @@ describe("PaperDocumentReaderPage", () => {
     expect(screen.getByText("visual asset is missing")).toBeInTheDocument()
     expect(screen.queryByLabelText("Open reader paper body")).not.toBeInTheDocument()
     expect(screen.queryByText("This legacy section must never become body text.")).not.toBeInTheDocument()
+  })
+
+  it("shows the queued compile task when compile is requested", async () => {
+    vi.mocked(triggerPaperCompile).mockResolvedValueOnce({
+      enqueued: {
+        message_id: "1-0",
+        task_id: "compile-task-1",
+        task_type: "papers.visual_compile",
+        queue_name: "news:queue:memory",
+        status: "queued",
+        paper_id: "visual-paper",
+      },
+    })
+
+    render(<PaperDocumentReaderPage payload={needsReviewPayload} locale="en" />)
+    fireEvent.click(screen.getByRole("button", { name: "Compile" }))
+
+    expect(await screen.findByText(/Compile task queued/)).toBeInTheDocument()
+    expect(screen.getByText("compile-task-1")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Compile" })).toBeDisabled()
+    expect(screen.getByRole("button", { name: "Recompile" })).toBeDisabled()
+  })
+
+  it("shows compile request failures without changing status to queued", async () => {
+    vi.mocked(triggerPaperCompile).mockRejectedValueOnce(new Error("compile service unavailable"))
+
+    render(<PaperDocumentReaderPage payload={needsReviewPayload} locale="en" />)
+    fireEvent.click(screen.getByRole("button", { name: "Compile" }))
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("compile service unavailable")
+    expect(screen.getAllByText("needs_review").length).toBeGreaterThan(0)
+    expect(screen.queryByText(/Compile task queued/)).not.toBeInTheDocument()
   })
 
   it("opens source preview from visual blocks with source coordinates", () => {

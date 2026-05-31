@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState, useTransition } from "react"
+import { useMemo, useState } from "react"
 import Link from "next/link"
 import { AlertTriangle, ArrowLeft, RefreshCw } from "lucide-react"
 import { OpenReaderPage } from "@/components/papers/open-reader"
@@ -8,7 +8,7 @@ import { formatPaperDate, paperTitle } from "@/lib/papers/format"
 import type { Locale } from "@/lib/papers/types"
 import { paperDocumentToOpenReader } from "@/lib/paper-reader/open-reader-adapter"
 import { triggerPaperCompile } from "@/lib/paper-reader/api"
-import type { PaperDiagnostic, PaperDocumentResponse } from "@/lib/paper-reader/types"
+import type { PaperCompileTriggerResponse, PaperDiagnostic, PaperDocumentResponse } from "@/lib/paper-reader/types"
 import styles from "./paper-document-reader.module.css"
 
 export function PaperDocumentReaderPage({ payload, locale }: { payload: PaperDocumentResponse; locale: Locale }) {
@@ -25,15 +25,23 @@ export function PaperDocumentReaderPage({ payload, locale }: { payload: PaperDoc
 
 function CompileStatusPage({ payload, locale }: { payload: PaperDocumentResponse; locale: Locale }) {
   const { paper, status } = payload
-  const [queued, setQueued] = useState(false)
-  const [isPending, startTransition] = useTransition()
+  const [queued, setQueued] = useState<PaperCompileTriggerResponse["enqueued"] | null>(null)
+  const [compileError, setCompileError] = useState<string | null>(null)
+  const [isPending, setPending] = useState(false)
   const title = paperTitle(paper, locale)
 
-  function requestCompile(force: boolean) {
-    startTransition(async () => {
-      await triggerPaperCompile(paper.id, { force })
-      setQueued(true)
-    })
+  async function requestCompile(force: boolean) {
+    setPending(true)
+    setCompileError(null)
+    try {
+      const result = await triggerPaperCompile(paper.id, { force })
+      setQueued(result.enqueued)
+    } catch (error) {
+      setQueued(null)
+      setCompileError(error instanceof Error ? error.message : "Compile request failed")
+    } finally {
+      setPending(false)
+    }
   }
 
   return (
@@ -54,8 +62,10 @@ function CompileStatusPage({ payload, locale }: { payload: PaperDocumentResponse
         status={queued ? "queued" : status.status}
         diagnostics={status.diagnostics}
         reviewSummary={status.reviewReport?.summary}
-        onCompile={() => requestCompile(false)}
-        onRecompile={() => requestCompile(true)}
+        queued={queued}
+        error={compileError}
+        onCompile={() => void requestCompile(false)}
+        onRecompile={() => void requestCompile(true)}
         pending={isPending}
       />
     </main>
@@ -66,6 +76,8 @@ function StatusGate({
   status,
   diagnostics,
   reviewSummary,
+  queued,
+  error,
   onCompile,
   onRecompile,
   pending,
@@ -73,25 +85,34 @@ function StatusGate({
   status: string
   diagnostics: PaperDiagnostic[]
   reviewSummary?: string
+  queued: PaperCompileTriggerResponse["enqueued"] | null
+  error: string | null
   onCompile: () => void
   onRecompile: () => void
   pending: boolean
 }) {
+  const actionsDisabled = pending || Boolean(queued)
   return (
     <section className={styles.statusGate}>
       <div className={styles.statusIcon}><AlertTriangle size={22} aria-hidden="true" /></div>
       <div>
         <h2>Compiled document is not published</h2>
         <p>Status: <strong>{status}</strong></p>
+        {queued ? (
+          <p>Compile task queued: <strong>{queued.task_id}</strong></p>
+        ) : null}
+        {error ? (
+          <p role="alert">{error}</p>
+        ) : null}
         {reviewSummary ? <p>{reviewSummary}</p> : null}
         {diagnostics.length ? (
           <ul>{diagnostics.slice(0, 8).map((item) => <li key={`${item.code}-${item.message}`}>{item.message}</li>)}</ul>
         ) : null}
         <div className={styles.statusActions}>
-          <button type="button" onClick={onCompile} disabled={pending}>
-            <RefreshCw size={16} aria-hidden="true" />Compile
+          <button type="button" onClick={onCompile} disabled={actionsDisabled}>
+            <RefreshCw size={16} aria-hidden="true" />{pending ? "Queueing" : "Compile"}
           </button>
-          <button type="button" onClick={onRecompile} disabled={pending}>
+          <button type="button" onClick={onRecompile} disabled={actionsDisabled}>
             <RefreshCw size={16} aria-hidden="true" />Recompile
           </button>
         </div>
