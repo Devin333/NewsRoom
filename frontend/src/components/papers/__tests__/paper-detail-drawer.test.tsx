@@ -172,6 +172,35 @@ describe("PaperDetailDrawer", () => {
 
     expect(screen.getByText("VQA v2")).toBeInTheDocument()
     expect(screen.getAllByText("Visual QA").length).toBeGreaterThan(0)
+    expect(screen.queryByRole("link", { name: /VQA v2/ })).not.toBeInTheDocument()
+  })
+
+  it("links benchmark results only when a real source URL is recorded", () => {
+    render(
+      <PaperDetailDrawer
+        paper={{
+          ...paper,
+          benchmarks: [
+            {
+              id: "bench-vqa",
+              name: "VQA v2",
+              category: "visual-question-answering",
+              metric: "accuracy",
+              value: "86.4",
+              url: "https://paperswithcode.com/sota/visual-question-answering-on-vqa-v2-test-dev"
+            }
+          ]
+        }}
+        locale="en"
+        open
+        onOpenChange={vi.fn()}
+      />
+    )
+
+    expect(screen.getByRole("link", { name: /VQA v2/ })).toHaveAttribute(
+      "href",
+      "https://paperswithcode.com/sota/visual-question-answering-on-vqa-v2-test-dev"
+    )
   })
 
   it("renders retryable summary error state", async () => {

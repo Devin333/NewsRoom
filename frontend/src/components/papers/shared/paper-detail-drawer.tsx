@@ -18,7 +18,7 @@ import {
   paperTitle,
   taskName
 } from "@/lib/papers/format"
-import type { Locale, Paper, PaperAISummary, PaperSourceRef } from "@/lib/papers/types"
+import type { Locale, Paper, PaperAISummary, PaperBenchmarkResult, PaperSourceRef } from "@/lib/papers/types"
 import { cn } from "@/lib/utils"
 
 const CLOSE_ANIMATION_MS = 420
@@ -351,25 +351,7 @@ export function PaperDetailDrawer({
             {benchmarks.length ? (
               <div className="divide-y divide-[#d8dfd8] rounded-md border border-[#d8dfd8] bg-white dark:divide-border dark:border-border dark:bg-card">
                 {benchmarks.map((benchmark) => (
-                  <a
-                    key={benchmark.id}
-                    href={benchmark.url ?? "#"}
-                    target={benchmark.url ? "_blank" : undefined}
-                    rel={benchmark.url ? "noreferrer" : undefined}
-                    className="flex items-center justify-between gap-4 px-4 py-3 text-sm text-[#334155] dark:text-foreground"
-                  >
-                    <span className="min-w-0">
-                      <span className="block truncate font-semibold">{benchmark.name}</span>
-                      {benchmark.category ? (
-                        <span className="mt-1 inline-flex rounded-sm border border-[#d8dfd8] bg-[#eef4ef] px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-[#334155]/64 dark:border-border dark:bg-secondary dark:text-muted-foreground">
-                          {benchmarkCategoryLabel(benchmark.category, locale) ?? benchmark.category}
-                        </span>
-                      ) : null}
-                    </span>
-                    <span className="shrink-0 text-[#334155]/58">
-                      {[benchmark.metric, benchmark.value].filter(Boolean).join(" · ") || translate(locale, "papers.reader.reported")}
-                    </span>
-                  </a>
+                  <BenchmarkResultRow key={benchmark.id} benchmark={benchmark} locale={locale} />
                 ))}
               </div>
             ) : (
@@ -490,6 +472,44 @@ function AISummaryBlock({
         <RefreshCw className="size-4" />
         {translate(locale, "common.retry")}
       </button>
+    </div>
+  )
+}
+
+function BenchmarkResultRow({ benchmark, locale }: { benchmark: PaperBenchmarkResult; locale: Locale }) {
+  const resultText = [benchmark.metric, benchmark.value].filter(Boolean).join(" · ") || translate(locale, "papers.reader.reported")
+  const content = (
+    <>
+      <span className="min-w-0">
+        <span className="block truncate font-semibold">{benchmark.name}</span>
+        {benchmark.category ? (
+          <span className="mt-1 inline-flex rounded-sm border border-[#d8dfd8] bg-[#eef4ef] px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-[#334155]/64 dark:border-border dark:bg-secondary dark:text-muted-foreground">
+            {benchmarkCategoryLabel(benchmark.category, locale) ?? benchmark.category}
+          </span>
+        ) : null}
+      </span>
+      <span className="shrink-0 text-[#334155]/58">
+        {resultText}
+      </span>
+    </>
+  )
+
+  if (benchmark.url) {
+    return (
+      <a
+        href={benchmark.url}
+        target="_blank"
+        rel="noreferrer"
+        className="flex items-center justify-between gap-4 px-4 py-3 text-sm text-[#334155] transition-colors hover:bg-[#eef4ef] dark:text-foreground dark:hover:bg-secondary"
+      >
+        {content}
+      </a>
+    )
+  }
+
+  return (
+    <div className="flex items-center justify-between gap-4 px-4 py-3 text-sm text-[#334155] dark:text-foreground">
+      {content}
     </div>
   )
 }
