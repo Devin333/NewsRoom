@@ -14,6 +14,7 @@ export function CommonBenchmarksPanel({
   locale: Locale
   onSelect: (benchmark: BenchmarkRef | Benchmark) => void
 }) {
+  if (!benchmarks.length) return null
   return (
     <section className="rounded-md border border-border bg-card p-4">
       <h2 className="text-sm font-semibold">{t(papersCopy.commonBenchmarks, locale)}</h2>

@@ -5,6 +5,7 @@ import { papersRoutes } from "@/lib/papers/routes"
 import type { Locale, TaskRef } from "@/lib/papers/types"
 
 export function RelatedTasksPanel({ tasks, locale }: { tasks: TaskRef[]; locale: Locale }) {
+  if (!tasks.length) return null
   return (
     <section className="rounded-md border border-border bg-card p-4">
       <h2 className="text-sm font-semibold">{t(papersCopy.relatedTasks, locale)}</h2>

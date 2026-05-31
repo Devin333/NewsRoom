@@ -255,6 +255,8 @@ describe("paper task and method pages", () => {
     expect(screen.getByLabelText(/papers: 1/i)).toBeInTheDocument()
     expect(screen.getByLabelText(/tasks: 1/i)).toBeInTheDocument()
     expect(screen.getByLabelText(/implementations: 0/i)).toBeInTheDocument()
+    expect(screen.queryByText("Related Tasks")).not.toBeInTheDocument()
+    expect(screen.queryByText("Related Methods")).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole("button", { name: /SWE-bench/ }))
 
@@ -285,6 +287,28 @@ describe("paper task and method pages", () => {
 
     expect(screen.getByText("Entries").nextElementSibling).toHaveTextContent("1")
     expect(screen.getByText("resolved: 12.5%")).toBeInTheDocument()
+  })
+
+  it("does not render empty method relation panels", () => {
+    render(
+      <MethodDetailPage
+        method={{
+          ...methodDetail,
+          id: "method-empty",
+          slug: "method-empty",
+          name: "Empty Method",
+          commonBenchmarks: [],
+          relatedMethods: [],
+          relatedTasks: []
+        }}
+        locale="en"
+        papers={[]}
+      />
+    )
+
+    expect(screen.queryByText("Related Tasks")).not.toBeInTheDocument()
+    expect(screen.queryByText("Related Methods")).not.toBeInTheDocument()
+    expect(screen.queryByText("Common Benchmarks")).not.toBeInTheDocument()
   })
 
   it("opens benchmark evidence from task detail instead of placeholder copy", () => {
