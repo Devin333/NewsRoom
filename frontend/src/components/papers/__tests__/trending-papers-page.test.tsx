@@ -251,6 +251,55 @@ describe("TrendingPapersPage", () => {
     expect(screen.queryByRole("button", { name: "Next page" })).not.toBeInTheDocument()
   })
 
+  it("preserves backend totals when the dashboard paper window is truncated", async () => {
+    const dashboardPapers = Array.from({ length: 5000 }, (_, index): Paper => ({
+      id: `paper-${index + 1}`,
+      slug: `paper-${index + 1}`,
+      title: `Large Catalog Paper ${index + 1}`,
+      abstractSnippet: `Paper ${index + 1}.`,
+      authors: ["A"],
+      publishedAt: "2026-05-24T00:00:00Z",
+      tags: ["agents"],
+      taskRefs: [{ id: "task-agents", slug: "agents", name: "Agents" }],
+      methodRefs: [],
+      pdfUrl: `https://arxiv.org/pdf/2605.${String(index + 1).padStart(5, "0")}.pdf`,
+      repoUrl: "https://github.com/owner/large-catalog-paper",
+      isPublished: true
+    }))
+    vi.mocked(fetchPapers)
+      .mockResolvedValueOnce({
+        source: "test",
+        query: "",
+        period: "all",
+        sort: "trending",
+        paper_count: 15,
+        total_count: 5015,
+        source_count: 1,
+        limit: 15,
+        offset: 0,
+        papers: dashboardPapers.slice(0, 15)
+      })
+      .mockResolvedValueOnce({
+        source: "test",
+        query: "",
+        period: "all",
+        sort: "trending",
+        paper_count: 5000,
+        total_count: 5015,
+        source_count: 1,
+        limit: 5000,
+        offset: 0,
+        papers: dashboardPapers
+      })
+
+    render(<TrendingPapersPage locale="en" papers={[]} />)
+
+    expect(await screen.findByText("Large Catalog Paper 1")).toBeInTheDocument()
+    expect(screen.getByText("1-15 of 5015 papers")).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }))
+    expect(replace).toHaveBeenCalledWith("/papers?page=2", { scroll: false })
+  })
+
   it("recovers the visible page from dashboard data when the page request fails", async () => {
     vi.mocked(fetchPapers)
       .mockRejectedValueOnce(new Error("page offline"))

@@ -105,6 +105,7 @@ export function TrendingPapersPage({ locale, papers }: { locale: Locale; papers:
         const nextTotalCount = totalCountForPublicResults({
           pageResult,
           pagePapers,
+          dashboardResult,
           dashboardResultPapers,
           fallbackPapers: nextDashboardPapers
         })
@@ -281,24 +282,30 @@ function resultErrorMessage(result: PromiseSettledResult<PaperListResult>) {
 function totalCountForPublicResults({
   pageResult,
   pagePapers,
+  dashboardResult,
   dashboardResultPapers,
   fallbackPapers
 }: {
   pageResult: PaperListResult | null
   pagePapers: Paper[] | null
+  dashboardResult: PaperListResult | null
   dashboardResultPapers: Paper[] | null
   fallbackPapers: Paper[]
 }) {
-  if (dashboardResultPapers) {
-    return dashboardResultPapers.length
+  if (dashboardResult && dashboardResultPapers) {
+    return totalCountForFilteredResult(dashboardResult, dashboardResultPapers)
   }
   if (!pageResult || !pagePapers) {
     return fallbackPapers.length
   }
-  if (pageResult.total_count === pageResult.papers.length && pagePapers.length !== pageResult.papers.length) {
-    return pagePapers.length
+  return totalCountForFilteredResult(pageResult, pagePapers)
+}
+
+function totalCountForFilteredResult(result: PaperListResult, publicPapers: Paper[]) {
+  if (result.total_count === result.papers.length && publicPapers.length !== result.papers.length) {
+    return publicPapers.length
   }
-  return Math.max(pageResult.total_count, pagePapers.length)
+  return Math.max(result.total_count, publicPapers.length)
 }
 
 function parsePeriod(value: string | null): PaperPeriod {
