@@ -1,10 +1,16 @@
 import { NextRequest, NextResponse } from "next/server"
 import { safeApiGet } from "@/lib/api/server"
+import { requirePublicPaper } from "@/lib/papers/public-route-guard"
 
 export const dynamic = "force-dynamic"
 
 export async function GET(_request: NextRequest, { params }: { params: { paperId: string } }) {
-  const result = await safeApiGet(`/api/v1/papers/${encodeURIComponent(params.paperId)}/graph`)
+  const guard = await requirePublicPaper(params.paperId)
+  if (!guard.ok) {
+    return guard.response
+  }
+
+  const result = await safeApiGet(`/api/v1/papers/${encodeURIComponent(guard.paper.id)}/graph`)
   if (result.ok) {
     return NextResponse.json({ success: true, data: result.data })
   }

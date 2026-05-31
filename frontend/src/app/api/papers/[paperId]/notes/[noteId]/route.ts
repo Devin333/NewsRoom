@@ -2,14 +2,20 @@ import { cookies } from "next/headers"
 import { NextRequest, NextResponse } from "next/server"
 import { safeApiDelete, safeApiPatch } from "@/lib/api/server"
 import { NEWSROOM_SESSION_COOKIE } from "@/lib/auth/session"
+import { requirePublicPaper } from "@/lib/papers/public-route-guard"
 
 export const dynamic = "force-dynamic"
 
 export async function PATCH(request: NextRequest, { params }: { params: { paperId: string; noteId: string } }) {
+  const guard = await requirePublicPaper(params.paperId)
+  if (!guard.ok) {
+    return guard.response
+  }
+
   const token = cookies().get(NEWSROOM_SESSION_COOKIE)?.value
   const body = await request.json().catch(() => ({}))
   const result = await safeApiPatch(
-    `/api/v1/papers/${encodeURIComponent(params.paperId)}/notes/${encodeURIComponent(params.noteId)}`,
+    `/api/v1/papers/${encodeURIComponent(guard.paper.id)}/notes/${encodeURIComponent(params.noteId)}`,
     body,
     {
       headers: token ? { "x-newsroom-session": token } : undefined,
@@ -19,9 +25,14 @@ export async function PATCH(request: NextRequest, { params }: { params: { paperI
 }
 
 export async function DELETE(_request: NextRequest, { params }: { params: { paperId: string; noteId: string } }) {
+  const guard = await requirePublicPaper(params.paperId)
+  if (!guard.ok) {
+    return guard.response
+  }
+
   const token = cookies().get(NEWSROOM_SESSION_COOKIE)?.value
   const result = await safeApiDelete(
-    `/api/v1/papers/${encodeURIComponent(params.paperId)}/notes/${encodeURIComponent(params.noteId)}`,
+    `/api/v1/papers/${encodeURIComponent(guard.paper.id)}/notes/${encodeURIComponent(params.noteId)}`,
     {
       headers: token ? { "x-newsroom-session": token } : undefined,
     }

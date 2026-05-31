@@ -1,0 +1,121 @@
+import { describe, expect, it, vi, beforeEach } from "vitest"
+import { NextRequest } from "next/server"
+import { POST as askPaper } from "@/app/api/papers/[paperId]/ask/route"
+import { GET as readPaper } from "@/app/api/papers/[paperId]/reader/route"
+import { POST as summarizePaper } from "@/app/api/papers/[paperId]/summary/route"
+import { GET as getUserStates } from "@/app/api/papers/me/state/route"
+import { safeApiGet, safeApiPost } from "@/lib/api/server"
+import { getPaperById, getPublishedPapers } from "@/lib/papers/real-data"
+import type { Paper } from "@/lib/papers/types"
+
+vi.mock("@/lib/api/server", () => ({
+  safeApiGet: vi.fn(),
+  safeApiPost: vi.fn(),
+}))
+
+vi.mock("@/lib/papers/real-data", () => ({
+  getPaperById: vi.fn(),
+  getPublishedPapers: vi.fn(),
+}))
+
+vi.mock("next/headers", () => ({
+  cookies: () => ({
+    get: () => ({ value: "session-token" }),
+  }),
+}))
+
+const paper = {
+  id: "paper-1",
+  slug: "public-paper",
+  title: "Public Paper",
+  isPublished: true,
+} as Paper
+
+function request(path: string, init?: ConstructorParameters<typeof NextRequest>[1]) {
+  return new NextRequest(new URL(`http://localhost${path}`), init)
+}
+
+async function responseJson<T>(response: Response): Promise<T> {
+  return response.json() as Promise<T>
+}
+
+describe("paper public route guard", () => {
+  beforeEach(() => {
+    vi.mocked(safeApiGet).mockReset()
+    vi.mocked(safeApiPost).mockReset()
+    vi.mocked(getPaperById).mockReset()
+    vi.mocked(getPublishedPapers).mockReset()
+  })
+
+  it("blocks unpublished or unknown papers before summary generation reaches the backend", async () => {
+    vi.mocked(getPaperById).mockResolvedValueOnce(null)
+
+    const response = await summarizePaper(request("/api/papers/draft-paper/summary?locale=en"), {
+      params: { paperId: "draft-paper" },
+    })
+
+    expect(response.status).toBe(404)
+    await expect(responseJson(response)).resolves.toMatchObject({
+      success: false,
+      error: { code: "paper_not_found" },
+    })
+    expect(safeApiPost).not.toHaveBeenCalled()
+  })
+
+  it("uses the canonical public paper id when a deep link calls a slug route", async () => {
+    vi.mocked(getPaperById).mockResolvedValueOnce(paper)
+    vi.mocked(safeApiPost).mockResolvedValueOnce({
+      ok: true,
+      data: { answer: "grounded" },
+    })
+
+    const response = await askPaper(
+      request("/api/papers/public-paper/ask", {
+        method: "POST",
+        body: JSON.stringify({ question: "What changed?", locale: "en" }),
+      }),
+      { params: { paperId: "public-paper" } },
+    )
+
+    expect(response.status).toBe(200)
+    expect(safeApiPost).toHaveBeenCalledWith("/api/v1/papers/paper-1/ask", {
+      question: "What changed?",
+      locale: "en",
+    })
+  })
+
+  it("does not proxy reader data for non-public paper refs", async () => {
+    vi.mocked(getPaperById).mockResolvedValueOnce(null)
+
+    const response = await readPaper(request("/api/papers/draft-paper/reader?locale=en"), {
+      params: { paperId: "draft-paper" },
+    })
+
+    expect(response.status).toBe(404)
+    expect(safeApiGet).not.toHaveBeenCalled()
+  })
+
+  it("filters bulk user states down to currently public papers", async () => {
+    vi.mocked(getPaperById).mockResolvedValueOnce(paper).mockResolvedValueOnce(null)
+    vi.mocked(safeApiGet).mockResolvedValueOnce({
+      ok: true,
+      data: {
+        states: [
+          { userId: "u1", paperId: "paper-1", favorite: true, subscribed: false, readingStatus: "reading", progressPercent: 50, updatedAt: "2026-01-01T00:00:00.000Z" },
+          { userId: "u1", paperId: "draft-paper", favorite: true, subscribed: true, readingStatus: "unread", progressPercent: 0, updatedAt: "2026-01-01T00:00:00.000Z" },
+        ],
+      },
+    })
+
+    const response = await getUserStates(request("/api/papers/me/state?paperIds=public-paper,draft-paper"))
+
+    expect(response.status).toBe(200)
+    await expect(responseJson(response)).resolves.toMatchObject({
+      success: true,
+      data: { states: [{ paperId: "paper-1" }] },
+    })
+    expect(safeApiGet).toHaveBeenCalledWith("/api/v1/papers/me/state?paperIds=paper-1", {
+      headers: { "x-newsroom-session": "session-token" },
+    })
+  })
+})

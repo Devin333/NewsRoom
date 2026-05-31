@@ -1,11 +1,17 @@
 import { NextRequest, NextResponse } from "next/server"
 import { safeApiGet } from "@/lib/api/server"
+import { requirePublicPaper } from "@/lib/papers/public-route-guard"
 
 export const dynamic = "force-dynamic"
 
 export async function GET(request: NextRequest, { params }: { params: { paperId: string } }) {
+  const guard = await requirePublicPaper(params.paperId)
+  if (!guard.ok) {
+    return guard.response
+  }
+
   const locale = request.nextUrl.searchParams.get("locale") ?? "en"
-  const result = await safeApiGet(`/api/v1/papers/${encodeURIComponent(params.paperId)}/reader?locale=${locale}`)
+  const result = await safeApiGet(`/api/v1/papers/${encodeURIComponent(guard.paper.id)}/reader?locale=${locale}`)
   if (result.ok) {
     return NextResponse.json({ success: true, data: result.data })
   }
