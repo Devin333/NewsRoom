@@ -105,4 +105,47 @@ describe("public paper enrichment", () => {
       starsPerHour: undefined
     })
   })
+
+  it("enriches legacy public papers when the publish flag is absent", async () => {
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      const url = input.toString()
+      if (url.includes("api.github.com/repos/SWE-agent/SWE-agent")) {
+        return new Response(
+          JSON.stringify({
+            full_name: "SWE-agent/SWE-agent",
+            html_url: "https://github.com/SWE-agent/SWE-agent",
+            stargazers_count: 19281
+          }),
+          { status: 200 }
+        )
+      }
+
+      if (url.includes("api.openalex.org/works/")) {
+        return new Response(
+          JSON.stringify({
+            id: "https://openalex.org/W4405451285",
+            display_name: basePaper.title,
+            cited_by_count: 24
+          }),
+          { status: 200 }
+        )
+      }
+
+      return new Response("{}", { status: 404 })
+    })
+    const legacyPaper = {
+      ...basePaper,
+      id: "paper-legacy-public",
+      isPublished: undefined as unknown as boolean
+    }
+
+    const papers = await enrichPapersForPublicStream([legacyPaper], fetchImpl)
+
+    expect(papers).toHaveLength(1)
+    expect(papers[0]).toMatchObject({
+      id: "paper-legacy-public",
+      githubStars: 19281,
+      citationCount: 24
+    })
+  })
 })

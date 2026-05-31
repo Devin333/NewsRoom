@@ -107,7 +107,7 @@ export function clearPaperEnrichmentCache() {
 
 export async function enrichPaperForPublicStream(paper: Paper, fetchImpl: FetchLike = fetch) {
   const repoUrl = normalizeGithubRepoUrl(paper.repoUrl)
-  if (!paper.isPublished || !repoUrl) {
+  if (paper.isPublished === false || !repoUrl) {
     return null
   }
 
