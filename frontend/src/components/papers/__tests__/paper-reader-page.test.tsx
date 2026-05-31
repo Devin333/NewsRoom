@@ -419,6 +419,28 @@ describe("PaperReaderPage Open Reader", () => {
     })
   })
 
+  it("keeps local generated material when backend reader event sync fails", async () => {
+    vi.mocked(recordReaderEvent).mockRejectedValueOnce(new Error("event stream unavailable"))
+    const { container } = render(<PaperReaderPage reader={reader} locale="en" />)
+
+    selectParagraphText(container, "verifier checks claims")
+    fireEvent.mouseUp(container.querySelector("[data-paragraph-id]")!)
+    fireEvent.click(await screen.findByRole("button", { name: "解释选中内容" }))
+    fireEvent.click(await screen.findByRole("button", { name: "使用选中内容" }))
+
+    expect(await screen.findByText("The reader agent checks the selected claim against public paper sections.")).toBeInTheDocument()
+    expect(await screen.findByText("回答已保存在本地阅读素材，但暂时没有同步到后台事件流。")).toBeInTheDocument()
+
+    await waitFor(() => {
+      expect(container.querySelector("[data-selection-id]")).not.toBeNull()
+      const selections = JSON.parse(window.localStorage.getItem("newsroom:open-reader:reader-paper:selections") ?? "[]")
+      expect(selections[0]).toMatchObject({
+        explained: true,
+        explainAnswer: "The reader agent checks the selected claim against public paper sections."
+      })
+    })
+  })
+
   it("does not keep a highlight when generated explanation fails", async () => {
     vi.mocked(askPaper).mockRejectedValueOnce(new Error("reader backend unavailable"))
     const { container } = render(<PaperReaderPage reader={reader} locale="en" />)

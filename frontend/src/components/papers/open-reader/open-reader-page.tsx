@@ -845,7 +845,7 @@ function ReaderNotePopover({ selection, x, y, onChange }: { selection: ReaderSel
 type AssistAnswerState =
   | { status: "idle" }
   | { status: "loading" }
-  | { status: "ready"; answer: PaperReaderAnswer }
+  | { status: "ready"; answer: PaperReaderAnswer; syncWarning?: string }
   | { status: "error"; message: string }
 
 function ReaderAssistDrawer({ drawer, selection, materialSummary, locale, drawerWidth, onWidthChange, onClose, onConfirmExplain, onConfirmExample }: { drawer: DrawerState; selection?: ReaderSelection; materialSummary: ReturnType<typeof makeMaterialSummary>; locale: Locale; drawerWidth: number; onWidthChange: (width: number) => void; onClose: () => void; onConfirmExplain: (id: string, question: string, answer: string) => void; onConfirmExample: (id: string, question: string, answer: string) => void }) {
@@ -870,22 +870,30 @@ function ReaderAssistDrawer({ drawer, selection, materialSummary, locale, drawer
       const answer = await askPaper(selection.paperId, buildAssistQuestion(selection, q, mode, locale), locale)
       if (mode === "explain") onConfirmExplain(selection.id, q, answer.answer)
       if (mode === "example") onConfirmExample(selection.id, q, answer.answer)
-      void recordReaderEvent(selection.paperId, {
-        type: mode === "explain" ? "explanation_generated" : "example_generated",
-        selectionId: selection.id,
-        sectionId: selection.sectionId,
-        paragraphId: selection.paragraphId,
-        selectedText: selection.selectedText,
-        surroundingText: selection.surroundingText,
-        payload: {
-          question: q,
-          answer: answer.answer,
-          confidence: answer.confidence,
-          cached: answer.cached,
-          citations: answer.citations,
-        },
-      }).catch(() => undefined)
       setAnswerState({ status: "ready", answer })
+      try {
+        await recordReaderEvent(selection.paperId, {
+          type: mode === "explain" ? "explanation_generated" : "example_generated",
+          selectionId: selection.id,
+          sectionId: selection.sectionId,
+          paragraphId: selection.paragraphId,
+          selectedText: selection.selectedText,
+          surroundingText: selection.surroundingText,
+          payload: {
+            question: q,
+            answer: answer.answer,
+            confidence: answer.confidence,
+            cached: answer.cached,
+            citations: answer.citations,
+          },
+        })
+      } catch {
+        setAnswerState({
+          status: "ready",
+          answer,
+          syncWarning: "回答已保存在本地阅读素材，但暂时没有同步到后台事件流。"
+        })
+      }
     } catch (error) {
       setAnswerState({
         status: "error",
@@ -933,6 +941,7 @@ function AssistAnswerCard({ state, mode }: { state: AssistAnswerState; mode: Rea
       <div className={styles.drawerCard}>
         <h3>{heading}</h3>
         <p>{state.answer.answer}</p>
+        {state.syncWarning ? <p role="status" className={styles.actionHint}>{state.syncWarning}</p> : null}
         {state.answer.citations.length ? (
           <ul>
             {state.answer.citations.map((citation) => (
