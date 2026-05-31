@@ -279,6 +279,26 @@ describe("PaperReaderPage Open Reader", () => {
     })
   })
 
+  it("keeps note text when the reader clicks away immediately after typing", async () => {
+    const { container } = render(<PaperReaderPage reader={reader} locale="en" />)
+
+    selectParagraphText(container, "grounded reader agents")
+    fireEvent.mouseUp(container.querySelector("[data-paragraph-id]")!)
+    fireEvent.click(await screen.findByRole("button", { name: "笔记" }))
+    fireEvent.change(await screen.findByPlaceholderText(/写下你的理解/), { target: { value: "Saved before closing." } })
+    fireEvent.click(document.body)
+
+    await waitFor(() => {
+      expect(container.querySelector("[data-selection-id]")).not.toBeNull()
+      const selections = JSON.parse(window.localStorage.getItem("newsroom:open-reader:reader-paper:selections") ?? "[]")
+      expect(selections[0]).toMatchObject({
+        noteText: "Saved before closing.",
+        selectedText: "grounded reader agents",
+      })
+    })
+    expect(screen.queryByPlaceholderText(/写下你的理解/)).not.toBeInTheDocument()
+  })
+
   it("loads existing reading material without writing an empty selection set first", async () => {
     const selectionsKey = "newsroom:open-reader:reader-paper:selections"
     const eventsKey = "newsroom:open-reader:reader-paper:events"

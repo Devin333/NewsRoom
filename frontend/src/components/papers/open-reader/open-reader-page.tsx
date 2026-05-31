@@ -828,16 +828,20 @@ function SelectionActionMenu({ selection, x, y, onNote, onExplain, onExample, on
 function ReaderNotePopover({ selection, x, y, onChange }: { selection: ReaderSelection; x: number; y: number; onChange: (value: string) => void }) {
   const [value, setValue] = useState(selection.noteText)
   useEffect(() => { setValue(selection.noteText) }, [selection.id, selection.noteText])
-  useEffect(() => {
-    if (value === selection.noteText) return
-    const timer = window.setTimeout(() => onChange(value), 360)
-    return () => window.clearTimeout(timer)
-  }, [onChange, selection.noteText, value])
   return (
     <div className={styles.notePopover} style={floatingLayerStyle(x, y, 410, 250, 14)} data-open-reader-keep-open>
       <div className={styles.noteHead}><strong>笔记</strong><span>{selection.sectionTitle}</span></div>
       <div className={styles.selectedPreview}>{selection.selectedText}</div>
-      <textarea autoFocus value={value} placeholder="写下你的理解、疑问或复现想法。输入后自动保存。" onChange={(event) => setValue(event.target.value)} />
+      <textarea
+        autoFocus
+        value={value}
+        placeholder="写下你的理解、疑问或复现想法。输入后自动保存。"
+        onChange={(event) => {
+          const nextValue = event.target.value
+          setValue(nextValue)
+          onChange(nextValue)
+        }}
+      />
     </div>
   )
 }
