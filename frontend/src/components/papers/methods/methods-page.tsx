@@ -21,26 +21,36 @@ export function MethodsPage({ locale }: { locale: Locale }) {
 
   useEffect(() => {
     let active = true
-    Promise.all([fetchPaperMethodsResult(), fetchPaperTasksResult(), fetchPapers({ limit: 5000, period: "all" })])
-      .then(([apiMethods, apiTasks, apiPapers]) => {
+    Promise.allSettled([fetchPaperMethodsResult(), fetchPaperTasksResult(), fetchPapers({ limit: 5000, period: "all" })])
+      .then(([methodsResult, tasksResult, papersResult]) => {
         if (!active) {
           return
         }
-        setMethods(apiMethods.methods)
-        setTasks(apiTasks.tasks)
-        setPaperItems(apiPapers.papers)
-        setNotice(apiMethods.notices?.[0] ?? apiTasks.notices?.[0] ?? null)
-        setStatus(apiMethods.dataState === "ready" || !apiMethods.dataState ? "ready" : "fallback")
-      })
-      .catch(() => {
-        if (!active) {
+
+        if (methodsResult.status === "rejected") {
+          setMethods(emptyMethodCounts(paperMethods))
+          setTasks(tasksResult.status === "fulfilled" ? tasksResult.value.tasks : emptyTaskCounts(paperTasks))
+          setPaperItems(papersResult.status === "fulfilled" ? papersResult.value.papers : [])
+          setNotice(t(papersCopy.methodApiFallback, locale))
+          setStatus("fallback")
           return
         }
-        setMethods(emptyMethodCounts(paperMethods))
-        setTasks(emptyTaskCounts(paperTasks))
-        setPaperItems([])
-        setNotice(t(papersCopy.methodApiFallback, locale))
-        setStatus("fallback")
+
+        setMethods(methodsResult.value.methods)
+        setTasks(tasksResult.status === "fulfilled" ? tasksResult.value.tasks : emptyTaskCounts(paperTasks))
+        setPaperItems(papersResult.status === "fulfilled" ? papersResult.value.papers : [])
+        setNotice(combineNotices([
+          methodsResult.value.notices?.[0] ?? null,
+          tasksResult.status === "fulfilled" ? tasksResult.value.notices?.[0] ?? null : taskListUnavailableNotice(locale),
+          papersResult.status === "rejected" ? paperListUnavailableNotice(locale) : null
+        ]))
+        setStatus(
+          (methodsResult.value.dataState === "ready" || !methodsResult.value.dataState) &&
+            tasksResult.status === "fulfilled" &&
+            papersResult.status === "fulfilled"
+            ? "ready"
+            : "fallback"
+        )
       })
     return () => {
       active = false
@@ -138,4 +148,21 @@ function groupMethodsByArea(methods: PaperMethod[]) {
         left.methods.reduce((total, method) => total + method.paperCount, 0)
       return paperDelta || left.area.localeCompare(right.area)
     })
+}
+
+function taskListUnavailableNotice(locale: Locale) {
+  return locale === "zh"
+    ? "任务目录 API 暂不可用；方法目录保留真实分类数据，任务统计暂时不可用。"
+    : "Task taxonomy API is unavailable; method taxonomy remains live, but task totals are temporarily unavailable."
+}
+
+function paperListUnavailableNotice(locale: Locale) {
+  return locale === "zh"
+    ? "论文列表 API 暂不可用；方法目录保留真实分类数据，论文统计暂时不可用。"
+    : "Paper list API is unavailable; method taxonomy remains live, but paper totals are temporarily unavailable."
+}
+
+function combineNotices(notices: Array<string | null | undefined>) {
+  const uniqueNotices = [...new Set(notices.filter((notice): notice is string => Boolean(notice)))]
+  return uniqueNotices.length ? uniqueNotices.join(" ") : null
 }

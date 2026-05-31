@@ -20,24 +20,31 @@ export function TasksPage({ locale }: { locale: Locale }) {
 
   useEffect(() => {
     let active = true
-    Promise.all([fetchPaperTasksResult(), fetchPapers({ limit: 5000, period: "all" })])
-      .then(([apiTasks, apiPapers]) => {
+    Promise.allSettled([fetchPaperTasksResult(), fetchPapers({ limit: 5000, period: "all" })])
+      .then(([tasksResult, papersResult]) => {
         if (!active) {
           return
         }
-        setTasks(apiTasks.tasks)
-        setPaperItems(apiPapers.papers)
-        setNotice(apiTasks.notices?.[0] ?? null)
-        setStatus(apiTasks.dataState === "ready" || !apiTasks.dataState ? "ready" : "fallback")
-      })
-      .catch(() => {
-        if (!active) {
+
+        if (tasksResult.status === "rejected") {
+          setTasks(emptyTaskCounts(paperTasks))
+          setPaperItems(papersResult.status === "fulfilled" ? papersResult.value.papers : [])
+          setNotice(t(papersCopy.taskApiFallback, locale))
+          setStatus("fallback")
           return
         }
-        setTasks(emptyTaskCounts(paperTasks))
-        setPaperItems([])
-        setNotice(t(papersCopy.taskApiFallback, locale))
-        setStatus("fallback")
+
+        setTasks(tasksResult.value.tasks)
+        setPaperItems(papersResult.status === "fulfilled" ? papersResult.value.papers : [])
+        setNotice(combineNotices([
+          tasksResult.value.notices?.[0] ?? null,
+          papersResult.status === "rejected" ? paperListUnavailableNotice(locale) : null
+        ]))
+        setStatus(
+          (tasksResult.value.dataState === "ready" || !tasksResult.value.dataState) && papersResult.status === "fulfilled"
+            ? "ready"
+            : "fallback"
+        )
       })
     return () => {
       active = false
@@ -100,4 +107,15 @@ function emptyTaskCounts(tasks: PaperTask[]): PaperTask[] {
     latestPaperIds: [],
     implementationCount: 0
   }))
+}
+
+function paperListUnavailableNotice(locale: Locale) {
+  return locale === "zh"
+    ? "论文列表 API 暂不可用；任务目录保留真实分类数据，论文统计暂时不可用。"
+    : "Paper list API is unavailable; task taxonomy remains live, but paper totals are temporarily unavailable."
+}
+
+function combineNotices(notices: Array<string | null | undefined>) {
+  const uniqueNotices = [...new Set(notices.filter((notice): notice is string => Boolean(notice)))]
+  return uniqueNotices.length ? uniqueNotices.join(" ") : null
 }

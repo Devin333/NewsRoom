@@ -155,6 +155,17 @@ describe("paper task and method pages", () => {
     expect(await screen.findByText("Paper task API is unavailable; showing taxonomy with real paper-derived counts.")).toBeInTheDocument()
   })
 
+  it("keeps API-backed tasks visible when only paper totals fail", async () => {
+    vi.mocked(fetchPaperTasksResult).mockResolvedValueOnce({ tasks: apiTasks, dataState: "ready", source: "backend", notices: [] })
+    vi.mocked(fetchPapers).mockRejectedValueOnce(new Error("paper list offline"))
+
+    render(<TasksPage locale="en" />)
+
+    expect(await screen.findByText("Backend Task")).toBeInTheDocument()
+    expect(screen.getByText("Paper list API is unavailable; task taxonomy remains live, but paper totals are temporarily unavailable.")).toBeInTheDocument()
+    expect(screen.queryByText("Paper task API is unavailable; showing taxonomy with real paper-derived counts.")).not.toBeInTheDocument()
+  })
+
   it("renders API-backed methods and visible method fallback", async () => {
     vi.mocked(fetchPaperMethodsResult).mockResolvedValueOnce({ methods: apiMethods, dataState: "ready", source: "backend", notices: [] })
     vi.mocked(fetchPaperTasksResult).mockResolvedValueOnce({ tasks: apiTasks, dataState: "ready", source: "backend", notices: [] })
@@ -174,6 +185,18 @@ describe("paper task and method pages", () => {
     render(<MethodsPage locale="en" />)
 
     expect(await screen.findByText("Paper method API is unavailable; showing taxonomy with real paper-derived counts.")).toBeInTheDocument()
+  })
+
+  it("keeps API-backed methods visible when task taxonomy is temporarily unavailable", async () => {
+    vi.mocked(fetchPaperMethodsResult).mockResolvedValueOnce({ methods: apiMethods, dataState: "ready", source: "backend", notices: [] })
+    vi.mocked(fetchPaperTasksResult).mockRejectedValueOnce(new Error("tasks offline"))
+    vi.mocked(fetchPapers).mockResolvedValueOnce(paperResult)
+
+    render(<MethodsPage locale="en" />)
+
+    expect(await screen.findByText("Backend Method")).toBeInTheDocument()
+    expect(screen.getByText("Task taxonomy API is unavailable; method taxonomy remains live, but task totals are temporarily unavailable.")).toBeInTheDocument()
+    expect(screen.queryByText("Paper method API is unavailable; showing taxonomy with real paper-derived counts.")).not.toBeInTheDocument()
   })
 
   it("opens benchmark evidence from method detail instead of placeholder copy", () => {
