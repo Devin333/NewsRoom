@@ -74,15 +74,14 @@ export function useOpenReaderSelections(paperId: string) {
   useEffect(() => {
     if (typeof window === "undefined") return
     setSelectionsLoaded(false)
+    const storedSelections = safeJsonParse<unknown[]>(window.localStorage.getItem(selectionsKey), [])
+    const storedEvents = safeJsonParse<unknown[]>(window.localStorage.getItem(eventsKey), [])
     dispatch({
       type: "load",
-      state: {
-        selections: safeJsonParse<ReaderSelection[]>(window.localStorage.getItem(selectionsKey), []),
-        events: safeJsonParse<ReaderEvent[]>(window.localStorage.getItem(eventsKey), []),
-      },
+      state: normalizeLoadedSelectionState(paperId, storedSelections, storedEvents),
     })
     setSelectionsLoaded(true)
-  }, [eventsKey, selectionsKey])
+  }, [eventsKey, paperId, selectionsKey])
 
   useEffect(() => {
     if (typeof window === "undefined" || !selectionsLoaded) return
@@ -143,6 +142,52 @@ export function useOpenReaderSelections(paperId: string) {
     confirmExample,
     toggleConfused,
   }
+}
+
+function normalizeLoadedSelectionState(paperId: string, selections: unknown[], events: unknown[]): SelectionState {
+  const keptSelections = selections
+    .filter(isStoredSelection)
+    .filter((selection) => selection.paperId === paperId && shouldKeepSelection(selection))
+  const keptSelectionIds = new Set(keptSelections.map((selection) => selection.id))
+  return {
+    selections: keptSelections,
+    events: events
+      .filter(isStoredEvent)
+      .filter((event) => event.paperId === paperId)
+      .filter((event) => !event.selectionId || keptSelectionIds.has(event.selectionId)),
+  }
+}
+
+function isStoredSelection(value: unknown): value is ReaderSelection {
+  if (!value || typeof value !== "object") return false
+  const selection = value as Partial<ReaderSelection>
+  return typeof selection.id === "string"
+    && typeof selection.paperId === "string"
+    && typeof selection.sectionId === "string"
+    && typeof selection.sectionTitle === "string"
+    && typeof selection.paragraphId === "string"
+    && typeof selection.selectedText === "string"
+    && typeof selection.surroundingText === "string"
+    && typeof selection.startOffset === "number"
+    && typeof selection.endOffset === "number"
+    && typeof selection.noteText === "string"
+    && typeof selection.explainQuestion === "string"
+    && typeof selection.exampleQuestion === "string"
+    && typeof selection.explained === "boolean"
+    && typeof selection.exampled === "boolean"
+    && typeof selection.confused === "boolean"
+    && typeof selection.createdAt === "string"
+    && typeof selection.updatedAt === "string"
+}
+
+function isStoredEvent(value: unknown): value is ReaderEvent {
+  if (!value || typeof value !== "object") return false
+  const event = value as Partial<ReaderEvent>
+  return typeof event.id === "string"
+    && typeof event.type === "string"
+    && typeof event.paperId === "string"
+    && typeof event.createdAt === "string"
+    && (event.selectionId === undefined || typeof event.selectionId === "string")
 }
 
 function selectionReducer(state: SelectionState, action: SelectionAction): SelectionState {

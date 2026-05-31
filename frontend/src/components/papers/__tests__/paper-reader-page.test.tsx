@@ -345,6 +345,56 @@ describe("PaperReaderPage Open Reader", () => {
     setItemSpy.mockRestore()
   })
 
+  it("drops stale temporary selections from localStorage on load", async () => {
+    const selectionsKey = "newsroom:open-reader:reader-paper:selections"
+    const eventsKey = "newsroom:open-reader:reader-paper:events"
+    window.localStorage.setItem(selectionsKey, JSON.stringify([
+      {
+        id: "selection-stale-temp",
+        paperId: "reader-paper",
+        sectionId: "reader-paper:abstract",
+        sectionTitle: "Abstract",
+        paragraphId: "reader-paper:abstract:p1",
+        selectedText: "grounded reader agents",
+        surroundingText: "The paper introduces grounded reader agents that inspect claims before answering.",
+        startOffset: 21,
+        endOffset: 43,
+        noteText: "",
+        explainQuestion: "",
+        explainAnswer: "",
+        exampleQuestion: "",
+        exampleAnswer: "",
+        explained: false,
+        exampled: false,
+        confused: false,
+        createdAt: "2026-05-24T00:00:00Z",
+        updatedAt: "2026-05-24T00:00:00Z",
+      }
+    ]))
+    window.localStorage.setItem(eventsKey, JSON.stringify([
+      {
+        id: "event-stale-temp",
+        type: "selection_created",
+        paperId: "reader-paper",
+        selectionId: "selection-stale-temp",
+        paragraphId: "reader-paper:abstract:p1",
+        sectionId: "reader-paper:abstract",
+        selectedText: "grounded reader agents",
+        createdAt: "2026-05-24T00:00:00Z",
+      }
+    ]))
+
+    const { container } = render(<PaperReaderPage reader={reader} locale="en" />)
+
+    await waitFor(() => {
+      expect(container.querySelector("[data-selection-id='selection-stale-temp']")).toBeNull()
+      expect(JSON.parse(window.localStorage.getItem(selectionsKey) ?? "[]")).toEqual([])
+      expect(JSON.parse(window.localStorage.getItem(eventsKey) ?? "[]")).toEqual([])
+    })
+    fireEvent.click(screen.getByRole("button", { name: /阅读素材/ }))
+    expect(await screen.findByText("还没有素材。")).toBeInTheDocument()
+  })
+
   it("removes empty note selections and removes cleared notes without other material", async () => {
     const { container } = render(<PaperReaderPage reader={reader} locale="en" />)
 
