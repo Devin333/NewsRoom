@@ -102,7 +102,12 @@ export function TrendingPapersPage({ locale, papers }: { locale: Locale; papers:
         const nextVisiblePapers =
           pagePapers ??
           nextDashboardPapers.slice(pageOffset, pageOffset + PAPER_PAGE_SIZE)
-        const nextTotalCount = dashboardResultPapers?.length ?? pagePapers?.length ?? nextDashboardPapers.length
+        const nextTotalCount = totalCountForPublicResults({
+          pageResult,
+          pagePapers,
+          dashboardResultPapers,
+          fallbackPapers: nextDashboardPapers
+        })
         const nextNotices = [
           ...(pageResult?.notices ?? []),
           ...(dashboardResult?.notices ?? []),
@@ -271,6 +276,29 @@ function resultErrorMessage(result: PromiseSettledResult<PaperListResult>) {
     return null
   }
   return result.reason instanceof Error ? result.reason.message : "Papers request failed"
+}
+
+function totalCountForPublicResults({
+  pageResult,
+  pagePapers,
+  dashboardResultPapers,
+  fallbackPapers
+}: {
+  pageResult: PaperListResult | null
+  pagePapers: Paper[] | null
+  dashboardResultPapers: Paper[] | null
+  fallbackPapers: Paper[]
+}) {
+  if (dashboardResultPapers) {
+    return dashboardResultPapers.length
+  }
+  if (!pageResult || !pagePapers) {
+    return fallbackPapers.length
+  }
+  if (pageResult.total_count === pageResult.papers.length && pagePapers.length !== pageResult.papers.length) {
+    return pagePapers.length
+  }
+  return pageResult.total_count
 }
 
 function parsePeriod(value: string | null): PaperPeriod {

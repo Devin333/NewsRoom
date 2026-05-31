@@ -189,6 +189,44 @@ describe("TrendingPapersPage", () => {
     expect(screen.getByLabelText(/tasks: 2/i)).toBeInTheDocument()
   })
 
+  it("keeps backend pagination totals when only the dashboard request fails", async () => {
+    const pagedPapers = Array.from({ length: 45 }, (_, index): Paper => ({
+      id: `paper-${index + 1}`,
+      slug: `paper-${index + 1}`,
+      title: `Dashboard Offline Paper ${index + 1}`,
+      abstractSnippet: `Paper ${index + 1}.`,
+      authors: ["A"],
+      publishedAt: "2026-05-24T00:00:00Z",
+      tags: ["agents"],
+      taskRefs: [{ id: "task-agents", slug: "agents", name: "Agents" }],
+      methodRefs: [],
+      pdfUrl: `https://arxiv.org/pdf/2605.${String(index + 1).padStart(5, "0")}.pdf`,
+      repoUrl: "https://github.com/owner/paged-paper",
+      isPublished: true
+    }))
+    vi.mocked(fetchPapers)
+      .mockResolvedValueOnce({
+        source: "test",
+        query: "",
+        period: "all",
+        sort: "trending",
+        paper_count: 15,
+        total_count: pagedPapers.length,
+        source_count: 1,
+        limit: 15,
+        offset: 0,
+        papers: pagedPapers.slice(0, 15)
+      })
+      .mockRejectedValueOnce(new Error("dashboard offline"))
+
+    render(<TrendingPapersPage locale="en" papers={pagedPapers} />)
+
+    expect(await screen.findByText("Dashboard Offline Paper 1")).toBeInTheDocument()
+    expect(screen.getByText("1-15 of 45 papers")).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }))
+    expect(replace).toHaveBeenCalledWith("/papers?page=2", { scroll: false })
+  })
+
   it("recovers the visible page from dashboard data when the page request fails", async () => {
     vi.mocked(fetchPapers)
       .mockRejectedValueOnce(new Error("page offline"))
