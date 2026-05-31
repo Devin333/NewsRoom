@@ -270,6 +270,16 @@ describe("PaperReaderPage Open Reader", () => {
         noteText: "Important reader-agent claim.",
         selectedText: "grounded reader agents",
       })
+      expect(recordReaderEvent).toHaveBeenCalledWith("reader-paper", expect.objectContaining({
+        type: "note_updated",
+        sectionId: "reader-paper:abstract",
+        paragraphId: "reader-paper:abstract:p1",
+        selectedText: "grounded reader agents",
+        payload: expect.objectContaining({
+          sectionTitle: "Abstract",
+          noteText: "Important reader-agent claim.",
+        }),
+      }))
     })
 
     fireEvent.click(document.body)
@@ -557,6 +567,29 @@ describe("PaperReaderPage Open Reader", () => {
     })
   })
 
+  it("keeps local notes when backend note sync fails", async () => {
+    vi.mocked(recordReaderEvent).mockRejectedValueOnce(new Error("event stream unavailable"))
+    const { container } = render(<PaperReaderPage reader={reader} locale="en" />)
+
+    selectParagraphText(container, "grounded reader agents")
+    fireEvent.mouseUp(container.querySelector("[data-paragraph-id]")!)
+    fireEvent.click(await screen.findByRole("button", { name: "笔记" }))
+    fireEvent.change(await screen.findByPlaceholderText(/写下你的理解/), { target: { value: "Local note remains available." } })
+
+    await waitFor(() => {
+      expect(container.querySelector("[data-selection-id]")).not.toBeNull()
+      const selections = JSON.parse(window.localStorage.getItem("newsroom:open-reader:reader-paper:selections") ?? "[]")
+      expect(selections[0]).toMatchObject({
+        noteText: "Local note remains available.",
+        selectedText: "grounded reader agents",
+      })
+      expect(recordReaderEvent).toHaveBeenCalledWith("reader-paper", expect.objectContaining({
+        type: "note_updated",
+        payload: expect.objectContaining({ noteText: "Local note remains available." }),
+      }))
+    })
+  })
+
   it("does not keep a highlight when generated explanation fails", async () => {
     vi.mocked(askPaper).mockRejectedValueOnce(new Error("reader backend unavailable"))
     const { container } = render(<PaperReaderPage reader={reader} locale="en" />)
@@ -585,6 +618,13 @@ describe("PaperReaderPage Open Reader", () => {
     const mark = await waitFor(() => {
       const current = container.querySelector<HTMLElement>("[data-selection-id]")
       expect(current).not.toBeNull()
+      expect(recordReaderEvent).toHaveBeenCalledWith("reader-paper", expect.objectContaining({
+        type: "confusion_marked",
+        sectionId: "reader-paper:method",
+        paragraphId: "reader-paper:method:p1",
+        selectedText: "planning, retrieval",
+        payload: expect.objectContaining({ sectionTitle: "Method" }),
+      }))
       return current!
     })
     fireEvent.click(mark)
@@ -594,6 +634,10 @@ describe("PaperReaderPage Open Reader", () => {
       expect(container.querySelector("[data-selection-id]")).toBeNull()
       const selections = JSON.parse(window.localStorage.getItem("newsroom:open-reader:reader-paper:selections") ?? "[]")
       expect(selections).toEqual([])
+      expect(recordReaderEvent).toHaveBeenCalledWith("reader-paper", expect.objectContaining({
+        type: "confusion_unmarked",
+        selectedText: "planning, retrieval",
+      }))
     })
   })
 

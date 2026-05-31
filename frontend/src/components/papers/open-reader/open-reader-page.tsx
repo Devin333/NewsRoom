@@ -6,7 +6,7 @@ import { ArrowLeft, Eye, X } from "lucide-react"
 import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react"
 import { formatPaperDate, paperTitle } from "@/lib/papers/format"
 import { askPaper, recordReaderEvent } from "@/lib/papers/api"
-import type { Locale, PaperReaderAnswer } from "@/lib/papers/types"
+import type { Locale, PaperReaderAnswer, ReaderEventCreate, ReaderEventType } from "@/lib/papers/types"
 import { paperAssetUrl, paperSourcePreviewUrl } from "@/lib/paper-reader/api"
 import { targetForPaperBlock } from "@/lib/paper-reader/interactions"
 import type { PaperInlineSpan, PaperReference, PaperSourceRegion } from "@/lib/paper-reader/types"
@@ -147,6 +147,20 @@ export function OpenReaderPage({ reader, locale, backHref = "/papers", visualLay
     setDrawer({ mode: "materials" })
   }
 
+  function syncSelectionEvent(selection: ReaderSelection, type: ReaderEventType, payload: Record<string, unknown> = {}) {
+    void recordReaderEvent(paper.id, buildReaderSelectionEvent(selection, type, payload)).catch(() => undefined)
+  }
+
+  function changeNote(selection: ReaderSelection, noteText: string) {
+    updateNote(selection.id, noteText)
+    syncSelectionEvent(selection, "note_updated", { noteText })
+  }
+
+  function changeConfusion(selection: ReaderSelection) {
+    toggleConfused(selection.id)
+    syncSelectionEvent(selection, selection.confused ? "confusion_unmarked" : "confusion_marked")
+  }
+
   function openSourcePreview(visual: OpenReaderVisualBlock) {
     if (!visual.source && !visual.asset) return
     const useAssetPreview = visual.asset?.metadata?.sourceProvider === "arxiv-source" && visual.asset.kind !== "page"
@@ -230,12 +244,12 @@ export function OpenReaderPage({ reader, locale, backHref = "/papers", visualLay
           onNote={() => { setMenu(null); setNote({ selectionId: menuSelection.id, x: menu.x, y: menu.y }) }}
           onExplain={() => { setMenu(null); setDrawer({ mode: "explain", selectionId: menuSelection.id }) }}
           onExample={() => { setMenu(null); setDrawer({ mode: "example", selectionId: menuSelection.id }) }}
-          onToggleConfused={() => { toggleConfused(menuSelection.id); setMenu(null) }}
+          onToggleConfused={() => { changeConfusion(menuSelection); setMenu(null) }}
         />
       ) : null}
 
       {note && noteSelection ? (
-        <ReaderNotePopover selection={noteSelection} x={note.x} y={note.y} onChange={(value) => updateNote(noteSelection.id, value)} />
+        <ReaderNotePopover selection={noteSelection} x={note.x} y={note.y} onChange={(value) => changeNote(noteSelection, value)} />
       ) : null}
 
       {drawer ? (
@@ -266,6 +280,32 @@ export function OpenReaderPage({ reader, locale, backHref = "/papers", visualLay
       ) : null}
     </main>
   )
+}
+
+function buildReaderSelectionEvent(
+  selection: ReaderSelection,
+  type: ReaderEventType,
+  payload: Record<string, unknown> = {},
+): ReaderEventCreate {
+  return {
+    type,
+    selectionId: selection.id,
+    target: {
+      targetType: "text_selection",
+      blockId: selection.blockId,
+      sectionId: selection.sectionId,
+      paragraphId: selection.paragraphId,
+      pageNumber: selection.pageNumber,
+    },
+    sectionId: selection.sectionId,
+    paragraphId: selection.paragraphId,
+    selectedText: selection.selectedText,
+    surroundingText: selection.surroundingText,
+    payload: {
+      sectionTitle: selection.sectionTitle,
+      ...payload,
+    },
+  }
 }
 
 type SectionContentItem =
@@ -876,21 +916,20 @@ function ReaderAssistDrawer({ drawer, selection, materialSummary, locale, drawer
       if (mode === "example") onConfirmExample(selection.id, q, answer.answer)
       setAnswerState({ status: "ready", answer })
       try {
-        await recordReaderEvent(selection.paperId, {
-          type: mode === "explain" ? "explanation_generated" : "example_generated",
-          selectionId: selection.id,
-          sectionId: selection.sectionId,
-          paragraphId: selection.paragraphId,
-          selectedText: selection.selectedText,
-          surroundingText: selection.surroundingText,
-          payload: {
-            question: q,
-            answer: answer.answer,
-            confidence: answer.confidence,
-            cached: answer.cached,
-            citations: answer.citations,
-          },
-        })
+        await recordReaderEvent(
+          selection.paperId,
+          buildReaderSelectionEvent(
+            selection,
+            mode === "explain" ? "explanation_generated" : "example_generated",
+            {
+              question: q,
+              answer: answer.answer,
+              confidence: answer.confidence,
+              cached: answer.cached,
+              citations: answer.citations,
+            },
+          ),
+        )
       } catch {
         setAnswerState({
           status: "ready",
