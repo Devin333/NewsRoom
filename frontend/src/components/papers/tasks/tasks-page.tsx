@@ -9,6 +9,7 @@ import { orderedTaskGroups, taskGroupLabel } from "@/lib/papers/categories"
 import { papersCopy, t } from "@/lib/papers/copy"
 import { benchmarks, paperTasks } from "@/lib/papers/catalog"
 import { fetchPaperTasksResult, fetchPapers } from "@/lib/papers/api"
+import { deriveTasksFromPapers } from "@/lib/papers/taxonomy-fallback"
 import type { Locale, Paper, PaperTask } from "@/lib/papers/types"
 
 export function TasksPage({ locale }: { locale: Locale }) {
@@ -27,7 +28,7 @@ export function TasksPage({ locale }: { locale: Locale }) {
         }
 
         if (tasksResult.status === "rejected") {
-          setTasks(emptyTaskCounts(paperTasks))
+          setTasks(papersResult.status === "fulfilled" ? deriveTasksFromPapers(paperTasks, papersResult.value.papers) : emptyTaskCounts(paperTasks))
           setPaperItems(papersResult.status === "fulfilled" ? papersResult.value.papers : [])
           setNotice(t(papersCopy.taskApiFallback, locale))
           setStatus("fallback")

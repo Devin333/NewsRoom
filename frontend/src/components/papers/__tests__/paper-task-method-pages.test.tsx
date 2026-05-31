@@ -40,6 +40,34 @@ const paperResult: PaperListResult = {
   ]
 }
 
+const fallbackPaperResult: PaperListResult = {
+  ...paperResult,
+  papers: [
+    {
+      id: "paper-derived-agent",
+      slug: "paper-derived-agent",
+      title: "Derived Agent Paper",
+      abstractSnippet: "A paper used to derive fallback taxonomy counts.",
+      authors: ["A"],
+      publishedAt: "2026-05-24T00:00:00Z",
+      tags: ["agents"],
+      taskRefs: [{ id: "task-agents", slug: "agents", name: "Agents" }],
+      methodRefs: [{ id: "method-tool-use", slug: "tool-use", name: "Tool Use", area: "Agents" }],
+      benchmarks: [
+        {
+          id: "benchmark-derived",
+          name: "Derived Bench",
+          category: "agents",
+          metric: "score",
+          value: "72"
+        }
+      ],
+      repoUrl: "https://github.com/owner/derived-agent",
+      isPublished: true
+    }
+  ]
+}
+
 const apiTasks = [
   {
     id: "task-backend",
@@ -155,6 +183,16 @@ describe("paper task and method pages", () => {
     expect(await screen.findByText("Paper task API is unavailable; showing taxonomy with real paper-derived counts.")).toBeInTheDocument()
   })
 
+  it("derives task fallback counts from the live paper list when task API fails", async () => {
+    vi.mocked(fetchPaperTasksResult).mockRejectedValueOnce(new Error("offline"))
+    vi.mocked(fetchPapers).mockResolvedValueOnce(fallbackPaperResult)
+
+    render(<TasksPage locale="en" />)
+
+    expect(await screen.findByText("Paper task API is unavailable; showing taxonomy with real paper-derived counts.")).toBeInTheDocument()
+    expect(screen.getByRole("link", { name: /Agents\s+1 Papers/i })).toBeInTheDocument()
+  })
+
   it("keeps API-backed tasks visible when only paper totals fail", async () => {
     vi.mocked(fetchPaperTasksResult).mockResolvedValueOnce({ tasks: apiTasks, dataState: "ready", source: "backend", notices: [] })
     vi.mocked(fetchPapers).mockRejectedValueOnce(new Error("paper list offline"))
@@ -185,6 +223,17 @@ describe("paper task and method pages", () => {
     render(<MethodsPage locale="en" />)
 
     expect(await screen.findByText("Paper method API is unavailable; showing taxonomy with real paper-derived counts.")).toBeInTheDocument()
+  })
+
+  it("derives method fallback counts from the live paper list when method API fails", async () => {
+    vi.mocked(fetchPaperMethodsResult).mockRejectedValueOnce(new Error("offline"))
+    vi.mocked(fetchPaperTasksResult).mockResolvedValueOnce({ tasks: apiTasks, dataState: "ready", source: "backend", notices: [] })
+    vi.mocked(fetchPapers).mockResolvedValueOnce(fallbackPaperResult)
+
+    render(<MethodsPage locale="en" />)
+
+    expect(await screen.findByText("Paper method API is unavailable; showing taxonomy with real paper-derived counts.")).toBeInTheDocument()
+    expect(screen.getByRole("link", { name: /Tool Use.*1 Papers.*1 Tasks/i })).toBeInTheDocument()
   })
 
   it("keeps API-backed methods visible when task taxonomy is temporarily unavailable", async () => {

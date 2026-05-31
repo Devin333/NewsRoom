@@ -9,6 +9,7 @@ import { papersCopy, t } from "@/lib/papers/copy"
 import { paperMethods, paperTasks } from "@/lib/papers/catalog"
 import { fetchPaperMethodsResult, fetchPaperTasksResult, fetchPapers } from "@/lib/papers/api"
 import { methodAreaSlug } from "@/lib/papers/metrics"
+import { deriveMethodsFromPapers } from "@/lib/papers/taxonomy-fallback"
 import type { Locale, Paper, PaperMethod, PaperTask } from "@/lib/papers/types"
 
 export function MethodsPage({ locale }: { locale: Locale }) {
@@ -28,7 +29,7 @@ export function MethodsPage({ locale }: { locale: Locale }) {
         }
 
         if (methodsResult.status === "rejected") {
-          setMethods(emptyMethodCounts(paperMethods))
+          setMethods(papersResult.status === "fulfilled" ? deriveMethodsFromPapers(paperMethods, papersResult.value.papers) : emptyMethodCounts(paperMethods))
           setTasks(tasksResult.status === "fulfilled" ? tasksResult.value.tasks : emptyTaskCounts(paperTasks))
           setPaperItems(papersResult.status === "fulfilled" ? papersResult.value.papers : [])
           setNotice(t(papersCopy.methodApiFallback, locale))
