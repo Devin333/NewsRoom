@@ -5,7 +5,7 @@ import { BenchmarkList } from "@/components/papers/tasks/benchmark-list"
 import { CommonMethodsPanel } from "@/components/papers/tasks/common-methods-panel"
 import { SisterTasksPanel } from "@/components/papers/tasks/sister-tasks-panel"
 import { PapersMicrobar } from "@/components/papers/papers-microbar"
-import { BenchmarkEvidencePanel } from "@/components/papers/shared/benchmark-evidence-panel"
+import { BenchmarkEvidencePanel, benchmarkPaperMatches } from "@/components/papers/shared/benchmark-evidence-panel"
 import { InlineNotice } from "@/components/papers/shared/inline-notice"
 import { ImplementationList } from "@/components/papers/shared/implementation-list"
 import { PaperDetailDrawer } from "@/components/papers/shared/paper-detail-drawer"
@@ -36,7 +36,10 @@ export function TaskDetailPage({
     (p) => p.isPublished !== false && (p.taskRefs ?? []).some((r) => r.slug === task.slug)
   ) ?? getPapersForTask(task.slug)
 
-  const taskBenchmarks = getBenchmarksForTask(task.slug)
+  const taskBenchmarks = getBenchmarksForTask(task.slug).map((benchmark) => ({
+    ...benchmark,
+    entryCount: benchmarkPaperMatches(benchmark, taskPapers).length
+  }))
   const taskStats = deriveTaskDetailStats(taskPapers, taskBenchmarks)
 
   function previewBenchmark(benchmark: Benchmark) {
@@ -147,7 +150,9 @@ export function TaskDetailPage({
 }
 
 function deriveTaskDetailStats(papers: Paper[], taskBenchmarks: Benchmark[]) {
-  const benchmarkCount = taskBenchmarks.length || countBenchmarksFromPapers(papers)
+  const benchmarkCount = taskBenchmarks.length
+    ? taskBenchmarks.filter((benchmark) => (benchmark.entryCount ?? 0) > 0).length
+    : countBenchmarksFromPapers(papers)
   const methodCount = new Set(papers.flatMap((paper) => (paper.methodRefs ?? []).map((method) => method.slug))).size
 
   return {

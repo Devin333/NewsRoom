@@ -384,6 +384,28 @@ describe("paper task and method pages", () => {
     expect(screen.queryByText("Task Branches")).not.toBeInTheDocument()
   })
 
+  it("derives task benchmark stats and entries from current evidence", () => {
+    render(
+      <TaskDetailPage
+        task={{
+          ...taskDetail,
+          benchmarkCount: 9,
+          methodCount: 7
+        }}
+        locale="en"
+        papers={[]}
+      />
+    )
+
+    const hero = screen.getByRole("heading", { name: "Coding Agents" }).closest("section")
+    expect(hero).not.toBeNull()
+    const stats = within(hero!)
+      .getAllByText(/^\d+$/)
+      .map((node) => node.textContent)
+    expect(stats).toEqual(["0", "0", "0"])
+    expect(screen.getByRole("button", { name: /SWE-bench.*0 entries/i })).toBeInTheDocument()
+  })
+
   it("excludes unpublished papers from task and method detail streams", () => {
     const unpublishedPaper: Paper = {
       ...methodPapers[0],

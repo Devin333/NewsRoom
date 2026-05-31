@@ -117,7 +117,7 @@ function emptyMessage(context: BenchmarkEvidenceContext, locale: Locale) {
     : "No paper under this method records a structured result or direct text mention for this benchmark yet."
 }
 
-function benchmarkPaperMatches(benchmark: BenchmarkRef | Benchmark, papers: Paper[]) {
+export function benchmarkPaperMatches(benchmark: BenchmarkRef | Benchmark, papers: Paper[]) {
   return papers.flatMap((paper) => {
     const result = (paper.benchmarks ?? []).find((item) => benchmarkResultMatches(item, benchmark))
     if (result) {
