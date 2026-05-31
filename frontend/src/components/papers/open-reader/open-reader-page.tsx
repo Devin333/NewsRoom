@@ -200,11 +200,11 @@ export function OpenReaderPage({ reader, locale, backHref = "/papers", visualLay
       className={`${styles.openReader} ${themeClass}`}
       style={{ ["--reader-font-size" as string]: `${settings.fontSize}px`, ["--reader-content-width" as string]: `${settings.contentWidth}px` }}
     >
-      <Link className={styles.readerBackButton} href={backHref} aria-label="返回论文列表">
+      <Link className={styles.readerBackButton} href={backHref} aria-label={readerCopy(locale).backToPapers}>
         <ArrowLeft aria-hidden="true" className={styles.readerMarkIcon} />
       </Link>
 
-      <ReaderSettingsDock settings={settings} onChange={patchSettings} />
+      <ReaderSettingsDock settings={settings} locale={locale} onChange={patchSettings} />
 
       <article className={styles.readerLayout}>
         <section className={styles.titleBlock}>
@@ -244,13 +244,14 @@ export function OpenReaderPage({ reader, locale, backHref = "/papers", visualLay
         </section>
       </article>
 
-      <FloatingToc paperId={paper.id} items={toc} activeSectionId={activeSectionId} materialCount={materials.selections.length} onNavigate={(id) => sectionRefs.current.get(id)?.scrollIntoView({ behavior: "smooth", block: "start" })} onOpenMaterials={openMaterials} />
+      <FloatingToc paperId={paper.id} items={toc} activeSectionId={activeSectionId} materialCount={materials.selections.length} locale={locale} onNavigate={(id) => sectionRefs.current.get(id)?.scrollIntoView({ behavior: "smooth", block: "start" })} onOpenMaterials={openMaterials} />
 
       {menu && menuSelection ? (
         <SelectionActionMenu
           selection={menuSelection}
           x={menu.x}
           y={menu.y}
+          locale={locale}
           onNote={() => { setMenu(null); setNote({ selectionId: menuSelection.id, x: menu.x, y: menu.y }) }}
           onExplain={() => { setMenu(null); setDrawer({ mode: "explain", selectionId: menuSelection.id }) }}
           onExample={() => { setMenu(null); setDrawer({ mode: "example", selectionId: menuSelection.id }) }}
@@ -259,7 +260,7 @@ export function OpenReaderPage({ reader, locale, backHref = "/papers", visualLay
       ) : null}
 
       {note && noteSelection ? (
-        <ReaderNotePopover selection={noteSelection} x={note.x} y={note.y} onChange={(value) => changeNote(noteSelection, value)} />
+        <ReaderNotePopover selection={noteSelection} x={note.x} y={note.y} locale={locale} onChange={(value) => changeNote(noteSelection, value)} />
       ) : null}
 
       {drawer ? (
@@ -777,21 +778,22 @@ function scrollToReaderTarget(id: string) {
   document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" })
 }
 
-function ReaderSettingsDock({ settings, onChange }: { settings: ReaderSettings; onChange: (patch: Partial<ReaderSettings>) => void }) {
+function ReaderSettingsDock({ settings, locale, onChange }: { settings: ReaderSettings; locale: Locale; onChange: (patch: Partial<ReaderSettings>) => void }) {
+  const copy = readerCopy(locale)
   return (
     <aside className={styles.settingsDock} data-open-reader-keep-open>
-      <button type="button" className={styles.settingsOrb} aria-label="阅读设置">Aa</button>
+      <button type="button" className={styles.settingsOrb} aria-label={copy.readerSettings}>Aa</button>
       <div className={styles.settingsPanel}>
-        <div className={styles.settingsTitle}>阅读设置</div>
-        <div className={styles.settingRow}><label>字体大小</label><input type="range" min={12} max={38} value={settings.fontSize} onChange={(event) => onChange({ fontSize: Number(event.target.value) })} /></div>
-        <div className={styles.settingRow}><label>文本宽度</label><input type="range" min={520} max={2000} value={settings.contentWidth} onChange={(event) => onChange({ contentWidth: Number(event.target.value) })} /></div>
-        <div className={styles.themeRow}>{(["light", "warm", "dark"] as const).map((theme) => <button key={theme} type="button" className={`${styles.themeButton} ${settings.theme === theme ? styles.activeTheme : ""}`} onClick={() => onChange({ theme })}>{theme === "light" ? "浅色" : theme === "warm" ? "暖色" : "深色"}</button>)}</div>
+        <div className={styles.settingsTitle}>{copy.readerSettings}</div>
+        <div className={styles.settingRow}><label>{copy.fontSize}</label><input type="range" min={12} max={38} value={settings.fontSize} onChange={(event) => onChange({ fontSize: Number(event.target.value) })} /></div>
+        <div className={styles.settingRow}><label>{copy.textWidth}</label><input type="range" min={520} max={2000} value={settings.contentWidth} onChange={(event) => onChange({ contentWidth: Number(event.target.value) })} /></div>
+        <div className={styles.themeRow}>{(["light", "warm", "dark"] as const).map((theme) => <button key={theme} type="button" className={`${styles.themeButton} ${settings.theme === theme ? styles.activeTheme : ""}`} onClick={() => onChange({ theme })}>{copy.themes[theme]}</button>)}</div>
       </div>
     </aside>
   )
 }
 
-function FloatingToc({ paperId, items, activeSectionId, materialCount, onNavigate, onOpenMaterials }: { paperId: string; items: ReaderTocItem[]; activeSectionId: string | null; materialCount: number; onNavigate: (id: string) => void; onOpenMaterials: () => void }) {
+function FloatingToc({ paperId, items, activeSectionId, materialCount, locale, onNavigate, onOpenMaterials }: { paperId: string; items: ReaderTocItem[]; activeSectionId: string | null; materialCount: number; locale: Locale; onNavigate: (id: string) => void; onOpenMaterials: () => void }) {
   const rootRef = useRef<HTMLDivElement | null>(null)
   const [side, setSide] = useState<"left" | "right">("left")
   const [dragging, setDragging] = useState(false)
@@ -834,11 +836,13 @@ function FloatingToc({ paperId, items, activeSectionId, materialCount, onNavigat
     return () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp) }
   }, [dragging, positionKey])
 
+  const copy = readerCopy(locale)
+
   return (
     <div ref={rootRef} className={`${styles.floatingToc} ${side === "right" ? styles.sideRight : styles.sideLeft}`} style={position ? { left: position.x, top: position.y, bottom: "auto" } : undefined} data-open-reader-keep-open>
-      <button type="button" className={styles.tocOrb} onMouseDown={(event) => { const rect = rootRef.current?.getBoundingClientRect(); if (rect) { offsetRef.current = { x: event.clientX - rect.left, y: event.clientY - rect.top }; setDragging(true); event.preventDefault() } }}>目</button>
+      <button type="button" className={styles.tocOrb} aria-label={copy.tableOfContents} onMouseDown={(event) => { const rect = rootRef.current?.getBoundingClientRect(); if (rect) { offsetRef.current = { x: event.clientX - rect.left, y: event.clientY - rect.top }; setDragging(true); event.preventDefault() } }}>{copy.tocOrb}</button>
       <nav className={styles.tocPanel}>
-        <div className={styles.tocPanelTitle}>悬浮目录 · 可拖动</div>
+        <div className={styles.tocPanelTitle}>{copy.floatingToc}</div>
         {items.map((item) => {
           const level = normalizeTocLevel(item.level)
           const depth = Math.max(0, level - 1)
@@ -856,38 +860,40 @@ function FloatingToc({ paperId, items, activeSectionId, materialCount, onNavigat
                 {item.sectionNumber ? " " : null}
                 <span className={styles.tocTitle}>{item.title}</span>
               </span>
-              <small>{item.paragraphCount} 段</small>
+              <small>{copy.paragraphCount(item.paragraphCount)}</small>
             </button>
           )
         })}
-        <button type="button" className={styles.tocLink} onClick={onOpenMaterials}><span>阅读素材</span><small>{materialCount}</small></button>
+        <button type="button" className={styles.tocLink} onClick={onOpenMaterials}><span>{copy.materials}</span><small>{materialCount}</small></button>
       </nav>
     </div>
   )
 }
 
-function SelectionActionMenu({ selection, x, y, onNote, onExplain, onExample, onToggleConfused }: { selection: ReaderSelection; x: number; y: number; onNote: () => void; onExplain: () => void; onExample: () => void; onToggleConfused: () => void }) {
+function SelectionActionMenu({ selection, x, y, locale, onNote, onExplain, onExample, onToggleConfused }: { selection: ReaderSelection; x: number; y: number; locale: Locale; onNote: () => void; onExplain: () => void; onExample: () => void; onToggleConfused: () => void }) {
+  const copy = readerCopy(locale)
   return (
     <div className={styles.selectionMenu} style={floatingLayerStyle(x, y, 230, 190, 10)} data-open-reader-keep-open>
-      <button type="button" className={styles.menuItem} onClick={onNote}>笔记</button>
-      <button type="button" className={styles.menuItem} onClick={onExplain}>解释选中内容</button>
-      <button type="button" className={styles.menuItem} onClick={onExample}>举例说明</button>
-      <button type="button" className={`${styles.menuItem} ${selection.confused ? styles.dangerMenuItem : ""}`} onClick={onToggleConfused}>{selection.confused ? "取消标记为不懂" : "标记为不懂"}</button>
+      <button type="button" className={styles.menuItem} onClick={onNote}>{copy.note}</button>
+      <button type="button" className={styles.menuItem} onClick={onExplain}>{copy.explainSelection}</button>
+      <button type="button" className={styles.menuItem} onClick={onExample}>{copy.exampleSelection}</button>
+      <button type="button" className={`${styles.menuItem} ${selection.confused ? styles.dangerMenuItem : ""}`} onClick={onToggleConfused}>{selection.confused ? copy.unmarkConfused : copy.markConfused}</button>
     </div>
   )
 }
 
-function ReaderNotePopover({ selection, x, y, onChange }: { selection: ReaderSelection; x: number; y: number; onChange: (value: string) => void }) {
+function ReaderNotePopover({ selection, x, y, locale, onChange }: { selection: ReaderSelection; x: number; y: number; locale: Locale; onChange: (value: string) => void }) {
   const [value, setValue] = useState(selection.noteText)
   useEffect(() => { setValue(selection.noteText) }, [selection.id, selection.noteText])
+  const copy = readerCopy(locale)
   return (
     <div className={styles.notePopover} style={floatingLayerStyle(x, y, 410, 250, 14)} data-open-reader-keep-open>
-      <div className={styles.noteHead}><strong>笔记</strong><span>{selection.sectionTitle}</span></div>
+      <div className={styles.noteHead}><strong>{copy.note}</strong><span>{selection.sectionTitle}</span></div>
       <div className={styles.selectedPreview}>{selection.selectedText}</div>
       <textarea
         autoFocus
         value={value}
-        placeholder="写下你的理解、疑问或复现想法。输入后自动保存。"
+        placeholder={copy.notePlaceholder}
         onChange={(event) => {
           const nextValue = event.target.value
           setValue(nextValue)
@@ -915,7 +921,8 @@ function ReaderAssistDrawer({ drawer, selection, materialSummary, locale, drawer
     window.addEventListener("mousemove", onMove); window.addEventListener("mouseup", onUp)
     return () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp) }
   }, [onWidthChange])
-  const title = drawer.mode === "materials" ? "阅读素材汇总" : drawer.mode === "example" ? "举例说明" : "解释选中内容"
+  const copy = readerCopy(locale)
+  const title = drawer.mode === "materials" ? copy.materialSummary : drawer.mode === "example" ? copy.exampleSelection : copy.explainSelection
   async function confirm(useDefault: boolean) {
     if (!selection) return
     const q = useDefault ? "" : question.trim()
@@ -946,7 +953,7 @@ function ReaderAssistDrawer({ drawer, selection, materialSummary, locale, drawer
         setAnswerState({
           status: "ready",
           answer,
-          syncWarning: "回答已保存在本地阅读素材，但暂时没有同步到后台事件流。"
+          syncWarning: copy.syncWarning
         })
       }
     } catch (error) {
@@ -959,11 +966,11 @@ function ReaderAssistDrawer({ drawer, selection, materialSummary, locale, drawer
   return (
     <aside className={styles.assistDrawer} style={{ width: `min(${drawerWidth}px, calc(100vw - 44px))` }} data-open-reader-keep-open>
       <div className={styles.drawerResizeHandle} onMouseDown={(event) => { resizingRef.current = true; document.body.classList.add(styles.drawerResizingBody); event.preventDefault(); event.stopPropagation() }} />
-      <div className={styles.drawerHead}><strong>{title}</strong><button type="button" className={styles.drawerClose} onClick={onClose}>关闭</button></div>
-      <div className={styles.drawerBody}>{drawer.mode === "materials" ? <MaterialSummary summary={materialSummary} /> : selection ? <>
-        <div className={styles.drawerCard}><h3>选中内容</h3><p>{selection.selectedText}</p></div>
-        <div className={styles.drawerCard}><h3>{drawer.mode === "example" ? "你想要哪种例子？" : "你具体不懂哪里？"}</h3><textarea value={question} placeholder={drawer.mode === "example" ? "可选：比如“用工程实现举例”。不填则基于选中内容生成例子。" : "可选：比如“这句话和上一句有什么关系？” 不填则基于选中内容解释。"} onChange={(event) => setQuestion(event.target.value)} /><div className={styles.drawerActions}><button className={`${styles.smallButton} ${styles.primaryButton}`} disabled={answerState.status === "loading"} onClick={() => void confirm(false)}>{answerState.status === "loading" ? "生成中" : drawer.mode === "example" ? "生成例子" : "生成解释"}</button><button className={styles.smallButton} disabled={answerState.status === "loading"} onClick={() => void confirm(true)}>使用选中内容</button></div><div className={styles.actionHint}>生成成功后才会保留高亮并记录到阅读素材；失败不会留下伪答案。</div></div>
-        <AssistAnswerCard state={answerState} mode={drawer.mode} />
+      <div className={styles.drawerHead}><strong>{title}</strong><button type="button" className={styles.drawerClose} onClick={onClose}>{copy.close}</button></div>
+      <div className={styles.drawerBody}>{drawer.mode === "materials" ? <MaterialSummary summary={materialSummary} locale={locale} /> : selection ? <>
+        <div className={styles.drawerCard}><h3>{copy.selectedContent}</h3><p>{selection.selectedText}</p></div>
+        <div className={styles.drawerCard}><h3>{drawer.mode === "example" ? copy.examplePrompt : copy.explainPrompt}</h3><textarea value={question} placeholder={drawer.mode === "example" ? copy.examplePlaceholder : copy.explainPlaceholder} onChange={(event) => setQuestion(event.target.value)} /><div className={styles.drawerActions}><button className={`${styles.smallButton} ${styles.primaryButton}`} disabled={answerState.status === "loading"} onClick={() => void confirm(false)}>{answerState.status === "loading" ? copy.generating : drawer.mode === "example" ? copy.generateExample : copy.generateExplanation}</button><button className={styles.smallButton} disabled={answerState.status === "loading"} onClick={() => void confirm(true)}>{copy.useSelection}</button></div><div className={styles.actionHint}>{copy.confirmHint}</div></div>
+        <AssistAnswerCard state={answerState} mode={drawer.mode} locale={locale} />
       </> : null}</div>
     </aside>
   )
@@ -983,13 +990,14 @@ function buildAssistQuestion(selection: ReaderSelection, question: string, mode:
   ].filter(Boolean).join("\n")
 }
 
-function AssistAnswerCard({ state, mode }: { state: AssistAnswerState; mode: ReaderAssistMode }) {
-  const heading = mode === "example" ? "举例说明" : "解释"
+function AssistAnswerCard({ state, mode, locale }: { state: AssistAnswerState; mode: ReaderAssistMode; locale: Locale }) {
+  const copy = readerCopy(locale)
+  const heading = mode === "example" ? copy.exampleSelection : copy.explanation
   if (state.status === "loading") {
-    return <div className={styles.drawerCard}><h3>正在生成</h3><p>正在调用论文问答接口，并基于当前论文公开 section 生成回答。</p></div>
+    return <div className={styles.drawerCard}><h3>{copy.generatingTitle}</h3><p>{copy.generatingDescription}</p></div>
   }
   if (state.status === "error") {
-    return <div className={styles.drawerCard}><h3>生成失败</h3><p>{state.message}</p></div>
+    return <div className={styles.drawerCard}><h3>{copy.generationFailed}</h3><p>{state.message}</p></div>
   }
   if (state.status === "ready") {
     return (
@@ -1004,19 +1012,142 @@ function AssistAnswerCard({ state, mode }: { state: AssistAnswerState; mode: Rea
             ))}
           </ul>
         ) : null}
-        <p className={styles.actionHint}>置信度：{Math.round(state.answer.confidence * 100)}%{state.answer.cached ? " / 缓存结果" : ""}</p>
+        <p className={styles.actionHint}>{copy.confidence}: {Math.round(state.answer.confidence * 100)}%{state.answer.cached ? ` / ${copy.cachedResult}` : ""}</p>
       </div>
     )
   }
-  return <div className={styles.drawerCard}><h3>等待生成</h3><p>你可以补充自己的疑问，也可以直接使用选中内容。未生成前，这次选择不会被保留为高亮。</p></div>
+  return <div className={styles.drawerCard}><h3>{copy.waitingTitle}</h3><p>{copy.waitingDescription}</p></div>
 }
 
-function MaterialSummary({ summary }: { summary: ReturnType<typeof makeMaterialSummary> }) {
+function MaterialSummary({ summary, locale }: { summary: ReturnType<typeof makeMaterialSummary>; locale: Locale }) {
+  const copy = readerCopy(locale)
   return <>
-    <div className={styles.drawerCard}><h3>给后台 Agent 的素材</h3><p>笔记、解释请求、举例请求、标记不懂都会记录。后续后台 Agent 可以基于这些素材生成完整笔记、困惑点列表和个性化复习建议。</p></div>
-    <div className={styles.drawerCard}><h3>统计</h3><ul><li>笔记：{summary.stats.noteCount}</li><li>解释：{summary.stats.explainedCount}</li><li>举例：{summary.stats.exampledCount}</li><li>不懂：{summary.stats.confusedCount}</li></ul></div>
-    <div className={styles.drawerCard}><h3>选中内容与读者输入</h3>{summary.selections.length ? summary.selections.slice().reverse().map((selection) => <article key={selection.id} className={`${styles.materialItem} ${selection.confused ? styles.confusedItem : selection.explained ? styles.explainItem : selection.exampled ? styles.exampleItem : ""}`}><small>{selection.sectionTitle} / {selection.paragraphId}{selection.noteText.trim() ? " · 笔记" : ""}{selection.explained ? " · 请求解释" : ""}{selection.exampled ? " · 请求举例" : ""}{selection.confused ? " · 标记不懂" : ""}</small><p><b>原文：</b>{selection.selectedText}</p>{selection.noteText.trim() ? <p><b>笔记：</b>{selection.noteText}</p> : null}{selection.explainQuestion.trim() ? <p><b>解释疑问：</b>{selection.explainQuestion}</p> : null}{selection.explainAnswer?.trim() ? <p><b>解释结果：</b>{selection.explainAnswer}</p> : null}{selection.exampleQuestion.trim() ? <p><b>举例需求：</b>{selection.exampleQuestion}</p> : null}{selection.exampleAnswer?.trim() ? <p><b>举例结果：</b>{selection.exampleAnswer}</p> : null}</article>) : <p className={styles.mutedText}>还没有素材。</p>}</div>
+    <div className={styles.drawerCard}><h3>{copy.agentMaterials}</h3><p>{copy.agentMaterialsDescription}</p></div>
+    <div className={styles.drawerCard}><h3>{copy.stats}</h3><ul><li>{copy.note}: {summary.stats.noteCount}</li><li>{copy.explanation}: {summary.stats.explainedCount}</li><li>{copy.example}: {summary.stats.exampledCount}</li><li>{copy.confused}: {summary.stats.confusedCount}</li></ul></div>
+    <div className={styles.drawerCard}><h3>{copy.selectionInputs}</h3>{summary.selections.length ? summary.selections.slice().reverse().map((selection) => <article key={selection.id} className={`${styles.materialItem} ${selection.confused ? styles.confusedItem : selection.explained ? styles.explainItem : selection.exampled ? styles.exampleItem : ""}`}><small>{selection.sectionTitle} / {selection.paragraphId}{selection.noteText.trim() ? ` · ${copy.note}` : ""}{selection.explained ? ` · ${copy.explanationRequested}` : ""}{selection.exampled ? ` · ${copy.exampleRequested}` : ""}{selection.confused ? ` · ${copy.markedConfused}` : ""}</small><p><b>{copy.originalText}: </b>{selection.selectedText}</p>{selection.noteText.trim() ? <p><b>{copy.note}: </b>{selection.noteText}</p> : null}{selection.explainQuestion.trim() ? <p><b>{copy.explainQuestion}: </b>{selection.explainQuestion}</p> : null}{selection.explainAnswer?.trim() ? <p><b>{copy.explainAnswer}: </b>{selection.explainAnswer}</p> : null}{selection.exampleQuestion.trim() ? <p><b>{copy.exampleQuestion}: </b>{selection.exampleQuestion}</p> : null}{selection.exampleAnswer?.trim() ? <p><b>{copy.exampleAnswer}: </b>{selection.exampleAnswer}</p> : null}</article>) : <p className={styles.mutedText}>{copy.noMaterials}</p>}</div>
   </>
+}
+
+function readerCopy(locale: Locale) {
+  if (locale === "zh") {
+    return {
+      backToPapers: "返回论文列表",
+      readerSettings: "阅读设置",
+      fontSize: "字体大小",
+      textWidth: "文本宽度",
+      themes: {
+        light: "浅色",
+        warm: "暖色",
+        dark: "深色",
+      },
+      tableOfContents: "目录",
+      tocOrb: "目",
+      floatingToc: "悬浮目录 · 可拖动",
+      paragraphCount: (count: number) => `${count} 段`,
+      materials: "阅读素材",
+      note: "笔记",
+      explainSelection: "解释选中内容",
+      exampleSelection: "举例说明",
+      markConfused: "标记为不懂",
+      unmarkConfused: "取消标记为不懂",
+      notePlaceholder: "写下你的理解、疑问或复现想法。输入后自动保存。",
+      materialSummary: "阅读素材汇总",
+      syncWarning: "回答已保存在本地阅读素材，但暂时没有同步到后台事件流。",
+      close: "关闭",
+      selectedContent: "选中内容",
+      examplePrompt: "你想要哪种例子？",
+      explainPrompt: "你具体不懂哪里？",
+      examplePlaceholder: "可选：比如“用工程实现举例”。不填则基于选中内容生成例子。",
+      explainPlaceholder: "可选：比如“这句话和上一句有什么关系？” 不填则基于选中内容解释。",
+      generating: "生成中",
+      generateExample: "生成例子",
+      generateExplanation: "生成解释",
+      useSelection: "使用选中内容",
+      confirmHint: "生成成功后才会保留高亮并记录到阅读素材；失败不会留下伪答案。",
+      explanation: "解释",
+      generatingTitle: "正在生成",
+      generatingDescription: "正在调用论文问答接口，并基于当前论文公开 section 生成回答。",
+      generationFailed: "生成失败",
+      confidence: "置信度",
+      cachedResult: "缓存结果",
+      waitingTitle: "等待生成",
+      waitingDescription: "你可以补充自己的疑问，也可以直接使用选中内容。未生成前，这次选择不会被保留为高亮。",
+      agentMaterials: "给后台 Agent 的素材",
+      agentMaterialsDescription: "笔记、解释请求、举例请求、标记不懂都会记录。后续后台 Agent 可以基于这些素材生成完整笔记、困惑点列表和个性化复习建议。",
+      stats: "统计",
+      example: "举例",
+      confused: "不懂",
+      selectionInputs: "选中内容与读者输入",
+      explanationRequested: "请求解释",
+      exampleRequested: "请求举例",
+      markedConfused: "标记不懂",
+      originalText: "原文",
+      explainQuestion: "解释疑问",
+      explainAnswer: "解释结果",
+      exampleQuestion: "举例需求",
+      exampleAnswer: "举例结果",
+      noMaterials: "还没有素材。",
+    }
+  }
+
+  return {
+    backToPapers: "Back to papers",
+    readerSettings: "Reader settings",
+    fontSize: "Font size",
+    textWidth: "Text width",
+    themes: {
+      light: "Light",
+      warm: "Warm",
+      dark: "Dark",
+    },
+    tableOfContents: "Table of contents",
+    tocOrb: "TOC",
+    floatingToc: "Floating contents · drag to move",
+    paragraphCount: (count: number) => `${count} ${count === 1 ? "paragraph" : "paragraphs"}`,
+    materials: "Reading materials",
+    note: "Note",
+    explainSelection: "Explain selection",
+    exampleSelection: "Show example",
+    markConfused: "Mark as unclear",
+    unmarkConfused: "Clear unclear mark",
+    notePlaceholder: "Write your understanding, question, or reproduction idea. Notes save automatically.",
+    materialSummary: "Reading materials",
+    syncWarning: "The answer was saved to local reading materials, but it has not synced to the backend event stream yet.",
+    close: "Close",
+    selectedContent: "Selected content",
+    examplePrompt: "What kind of example do you want?",
+    explainPrompt: "What do you want clarified?",
+    examplePlaceholder: "Optional: for example, ask for an implementation-oriented example. Leave empty to use the selected passage.",
+    explainPlaceholder: "Optional: for example, ask how this sentence relates to the previous one. Leave empty to explain the selected passage.",
+    generating: "Generating",
+    generateExample: "Generate example",
+    generateExplanation: "Generate explanation",
+    useSelection: "Use selection",
+    confirmHint: "Highlights and reading materials are kept only after generation succeeds; failed requests do not create fake answers.",
+    explanation: "Explanation",
+    generatingTitle: "Generating",
+    generatingDescription: "Calling the paper Q&A endpoint and grounding the answer in public sections of this paper.",
+    generationFailed: "Generation failed",
+    confidence: "Confidence",
+    cachedResult: "cached result",
+    waitingTitle: "Waiting to generate",
+    waitingDescription: "Add your own question or use the selected content directly. This selection will not be kept as a highlight before generation.",
+    agentMaterials: "Materials for backend agents",
+    agentMaterialsDescription: "Notes, explanation requests, example requests, and unclear marks are recorded so backend agents can later build full notes, confusion lists, and personalized review suggestions.",
+    stats: "Stats",
+    example: "Example",
+    confused: "Unclear",
+    selectionInputs: "Selections and reader input",
+    explanationRequested: "explanation requested",
+    exampleRequested: "example requested",
+    markedConfused: "marked unclear",
+    originalText: "Original text",
+    explainQuestion: "Explanation question",
+    explainAnswer: "Explanation answer",
+    exampleQuestion: "Example request",
+    exampleAnswer: "Example answer",
+    noMaterials: "No materials yet.",
+  }
 }
 
 function floatingLayerStyle(x: number, y: number, width: number, height: number, padding: number): CSSProperties {

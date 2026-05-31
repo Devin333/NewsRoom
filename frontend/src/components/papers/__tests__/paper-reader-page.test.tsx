@@ -171,9 +171,9 @@ describe("PaperReaderPage Open Reader", () => {
 
     expect(screen.getByRole("heading", { name: "Reader Paper" })).toBeInTheDocument()
     expect(screen.getByText("Open Reader")).toBeInTheDocument()
-    expect(screen.getByRole("link", { name: "返回论文列表" })).toHaveAttribute("href", "/papers")
-    expect(screen.getByRole("button", { name: "阅读设置" })).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "目" })).toBeInTheDocument()
+    expect(screen.getByRole("link", { name: "Back to papers" })).toHaveAttribute("href", "/papers")
+    expect(screen.getByRole("button", { name: "Reader settings" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Table of contents" })).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "Ask" })).not.toBeInTheDocument()
     expect(screen.queryByText(/PDF viewer/i)).not.toBeInTheDocument()
   })
@@ -205,7 +205,7 @@ describe("PaperReaderPage Open Reader", () => {
     const sliders = Array.from(container.querySelectorAll<HTMLInputElement>('input[type="range"]'))
     fireEvent.change(sliders[0], { target: { value: "28" } })
     fireEvent.change(sliders[1], { target: { value: "960" } })
-    fireEvent.click(screen.getByRole("button", { name: "深色" }))
+    fireEvent.click(screen.getByRole("button", { name: "Dark" }))
 
     await waitFor(() => {
       const stored = JSON.parse(window.localStorage.getItem("newsroom:open-reader:reader-paper:settings") ?? "{}")
@@ -249,7 +249,7 @@ describe("PaperReaderPage Open Reader", () => {
   it("persists the floating TOC drag position to localStorage", async () => {
     render(<PaperReaderPage reader={reader} locale="en" />)
 
-    fireEvent.mouseDown(screen.getByRole("button", { name: "目" }), { clientX: 28, clientY: 800 })
+    fireEvent.mouseDown(screen.getByRole("button", { name: "Table of contents" }), { clientX: 28, clientY: 800 })
     fireEvent.mouseMove(window, { clientX: 180, clientY: 860 })
     fireEvent.mouseUp(window)
 
@@ -265,10 +265,10 @@ describe("PaperReaderPage Open Reader", () => {
     selectParagraphText(container, "grounded reader agents")
     fireEvent.mouseUp(container.querySelector("[data-paragraph-id]")!)
 
-    expect(await screen.findByRole("button", { name: "笔记" })).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "解释选中内容" })).toBeInTheDocument()
-    expect(screen.queryByPlaceholderText(/写下你的理解/)).not.toBeInTheDocument()
-    expect(screen.queryByText("解释选中内容", { selector: "strong" })).not.toBeInTheDocument()
+    expect(await screen.findByRole("button", { name: "Note" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Explain selection" })).toBeInTheDocument()
+    expect(screen.queryByPlaceholderText(/Write your understanding/)).not.toBeInTheDocument()
+    expect(screen.queryByText("Explain selection", { selector: "strong" })).not.toBeInTheDocument()
   })
 
   it("keeps note highlights only after note text is entered", async () => {
@@ -276,8 +276,8 @@ describe("PaperReaderPage Open Reader", () => {
 
     selectParagraphText(container, "grounded reader agents")
     fireEvent.mouseUp(container.querySelector("[data-paragraph-id]")!)
-    fireEvent.click(await screen.findByRole("button", { name: "笔记" }))
-    fireEvent.change(await screen.findByPlaceholderText(/写下你的理解/), { target: { value: "Important reader-agent claim." } })
+    fireEvent.click(await screen.findByRole("button", { name: "Note" }))
+    fireEvent.change(await screen.findByPlaceholderText(/Write your understanding/), { target: { value: "Important reader-agent claim." } })
 
     await waitFor(() => {
       const selections = JSON.parse(window.localStorage.getItem("newsroom:open-reader:reader-paper:selections") ?? "[]")
@@ -300,7 +300,7 @@ describe("PaperReaderPage Open Reader", () => {
     fireEvent.click(document.body)
     await waitFor(() => {
       expect(container.querySelector("[data-selection-id]")).not.toBeNull()
-      expect(screen.queryByPlaceholderText(/写下你的理解/)).not.toBeInTheDocument()
+      expect(screen.queryByPlaceholderText(/Write your understanding/)).not.toBeInTheDocument()
     })
   })
 
@@ -309,8 +309,8 @@ describe("PaperReaderPage Open Reader", () => {
 
     selectParagraphText(container, "grounded reader agents")
     fireEvent.mouseUp(container.querySelector("[data-paragraph-id]")!)
-    fireEvent.click(await screen.findByRole("button", { name: "笔记" }))
-    fireEvent.change(await screen.findByPlaceholderText(/写下你的理解/), { target: { value: "Saved before closing." } })
+    fireEvent.click(await screen.findByRole("button", { name: "Note" }))
+    fireEvent.change(await screen.findByPlaceholderText(/Write your understanding/), { target: { value: "Saved before closing." } })
     fireEvent.click(document.body)
 
     await waitFor(() => {
@@ -321,7 +321,7 @@ describe("PaperReaderPage Open Reader", () => {
         selectedText: "grounded reader agents",
       })
     })
-    expect(screen.queryByPlaceholderText(/写下你的理解/)).not.toBeInTheDocument()
+    expect(screen.queryByPlaceholderText(/Write your understanding/)).not.toBeInTheDocument()
   })
 
   it("loads existing reading material without writing an empty selection set first", async () => {
@@ -365,7 +365,7 @@ describe("PaperReaderPage Open Reader", () => {
         noteText: "Persisted note from the previous reading session.",
       })
     ])
-    fireEvent.click(screen.getByRole("button", { name: /阅读素材/ }))
+    fireEvent.click(screen.getByRole("button", { name: /Reading materials/ }))
     expect(await screen.findByText(/Persisted note from the previous reading session/)).toBeInTheDocument()
     setItemSpy.mockRestore()
   })
@@ -451,7 +451,7 @@ describe("PaperReaderPage Open Reader", () => {
       })
     })
 
-    fireEvent.click(screen.getByRole("button", { name: /阅读素材/ }))
+    fireEvent.click(screen.getByRole("button", { name: /Reading materials/ }))
     expect(await screen.findByText(/Remote backend note/)).toBeInTheDocument()
     expect(screen.getByText(/The reader agent claim explains the paper's evidence-first framing/)).toBeInTheDocument()
   })
@@ -502,8 +502,8 @@ describe("PaperReaderPage Open Reader", () => {
       expect(JSON.parse(window.localStorage.getItem(selectionsKey) ?? "[]")).toEqual([])
       expect(JSON.parse(window.localStorage.getItem(eventsKey) ?? "[]")).toEqual([])
     })
-    fireEvent.click(screen.getByRole("button", { name: /阅读素材/ }))
-    expect(await screen.findByText("还没有素材。")).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: /Reading materials/ }))
+    expect(await screen.findByText("No materials yet.")).toBeInTheDocument()
   })
 
   it("removes empty note selections and removes cleared notes without other material", async () => {
@@ -511,7 +511,7 @@ describe("PaperReaderPage Open Reader", () => {
 
     selectParagraphText(container, "grounded reader agents")
     fireEvent.mouseUp(container.querySelector("[data-paragraph-id]")!)
-    fireEvent.click(await screen.findByRole("button", { name: "笔记" }))
+    fireEvent.click(await screen.findByRole("button", { name: "Note" }))
     fireEvent.click(document.body)
 
     await waitFor(() => {
@@ -521,8 +521,8 @@ describe("PaperReaderPage Open Reader", () => {
 
     selectParagraphText(container, "verifier checks claims")
     fireEvent.mouseUp(container.querySelector("[data-paragraph-id]")!)
-    fireEvent.click(await screen.findByRole("button", { name: "笔记" }))
-    fireEvent.change(await screen.findByPlaceholderText(/写下你的理解/), { target: { value: "Check the evidence path." } })
+    fireEvent.click(await screen.findByRole("button", { name: "Note" }))
+    fireEvent.change(await screen.findByPlaceholderText(/Write your understanding/), { target: { value: "Check the evidence path." } })
     await waitFor(() => {
       expect(container.querySelector("[data-selection-id]")).not.toBeNull()
       const selections = JSON.parse(window.localStorage.getItem("newsroom:open-reader:reader-paper:selections") ?? "[]")
@@ -531,8 +531,8 @@ describe("PaperReaderPage Open Reader", () => {
 
     const mark = container.querySelector<HTMLElement>("[data-selection-id]")!
     fireEvent.click(mark)
-    fireEvent.click(await screen.findByRole("button", { name: "笔记" }))
-    fireEvent.change(await screen.findByPlaceholderText(/写下你的理解/), { target: { value: "" } })
+    fireEvent.click(await screen.findByRole("button", { name: "Note" }))
+    fireEvent.change(await screen.findByPlaceholderText(/Write your understanding/), { target: { value: "" } })
 
     await waitFor(() => {
       expect(container.querySelector("[data-selection-id]")).toBeNull()
@@ -545,9 +545,9 @@ describe("PaperReaderPage Open Reader", () => {
 
     selectParagraphText(container, "grounded reader agents")
     fireEvent.mouseUp(container.querySelector("[data-paragraph-id]")!)
-    fireEvent.click(await screen.findByRole("button", { name: "解释选中内容" }))
-    expect(await screen.findByText("等待生成")).toBeInTheDocument()
-    fireEvent.click(screen.getByRole("button", { name: "关闭" }))
+    fireEvent.click(await screen.findByRole("button", { name: "Explain selection" }))
+    expect(await screen.findByText("Waiting to generate")).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "Close" }))
 
     await waitFor(() => {
       expect(container.querySelector("[data-selection-id]")).toBeNull()
@@ -559,13 +559,13 @@ describe("PaperReaderPage Open Reader", () => {
 
     selectParagraphText(container, "grounded reader agents")
     fireEvent.mouseUp(container.querySelector("[data-paragraph-id]")!)
-    fireEvent.click(await screen.findByRole("button", { name: "解释选中内容" }))
-    expect(await screen.findByText("等待生成")).toBeInTheDocument()
+    fireEvent.click(await screen.findByRole("button", { name: "Explain selection" }))
+    expect(await screen.findByText("Waiting to generate")).toBeInTheDocument()
 
     fireEvent.click(document.body)
 
     await waitFor(() => {
-      expect(screen.queryByText("等待生成")).not.toBeInTheDocument()
+      expect(screen.queryByText("Waiting to generate")).not.toBeInTheDocument()
       expect(container.querySelector("[data-selection-id]")).toBeNull()
     })
   })
@@ -575,8 +575,8 @@ describe("PaperReaderPage Open Reader", () => {
 
     selectParagraphText(container, "verifier checks claims")
     fireEvent.mouseUp(container.querySelector("[data-paragraph-id]")!)
-    fireEvent.click(await screen.findByRole("button", { name: "解释选中内容" }))
-    fireEvent.click(await screen.findByRole("button", { name: "使用选中内容" }))
+    fireEvent.click(await screen.findByRole("button", { name: "Explain selection" }))
+    fireEvent.click(await screen.findByRole("button", { name: "Use selection" }))
 
     expect(await screen.findByText("The reader agent checks the selected claim against public paper sections.")).toBeInTheDocument()
     expect(screen.getByText(/Abstract: The verifier checks claims against evidence/)).toBeInTheDocument()
@@ -606,9 +606,9 @@ describe("PaperReaderPage Open Reader", () => {
       })
     })
 
-    fireEvent.click(screen.getByRole("button", { name: "关闭" }))
-    fireEvent.click(screen.getByRole("button", { name: /阅读素材/ }))
-    expect(await screen.findByText(/解释结果：/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "Close" }))
+    fireEvent.click(screen.getByRole("button", { name: /Reading materials/ }))
+    expect(await screen.findByText(/Explanation answer:/)).toBeInTheDocument()
     expect(screen.getByText(/The reader agent checks the selected claim against public paper sections/)).toBeInTheDocument()
   })
 
@@ -617,9 +617,9 @@ describe("PaperReaderPage Open Reader", () => {
 
     selectParagraphText(container, "long-horizon reading")
     fireEvent.mouseUp(container.querySelectorAll("[data-paragraph-id]")[1])
-    fireEvent.click(await screen.findByRole("button", { name: "举例说明" }))
-    fireEvent.change(await screen.findByPlaceholderText(/用工程实现举例/), { target: { value: "Use an engineering example." } })
-    fireEvent.click(await screen.findByRole("button", { name: "生成例子" }))
+    fireEvent.click(await screen.findByRole("button", { name: "Show example" }))
+    fireEvent.change(await screen.findByPlaceholderText(/implementation-oriented example/), { target: { value: "Use an engineering example." } })
+    fireEvent.click(await screen.findByRole("button", { name: "Generate example" }))
 
     expect(await screen.findByText("The reader agent checks the selected claim against public paper sections.")).toBeInTheDocument()
     expect(vi.mocked(askPaper).mock.calls[0][1]).toContain("Reader question: Use an engineering example.")
@@ -652,11 +652,11 @@ describe("PaperReaderPage Open Reader", () => {
 
     selectParagraphText(container, "verifier checks claims")
     fireEvent.mouseUp(container.querySelector("[data-paragraph-id]")!)
-    fireEvent.click(await screen.findByRole("button", { name: "解释选中内容" }))
-    fireEvent.click(await screen.findByRole("button", { name: "使用选中内容" }))
+    fireEvent.click(await screen.findByRole("button", { name: "Explain selection" }))
+    fireEvent.click(await screen.findByRole("button", { name: "Use selection" }))
 
     expect(await screen.findByText("The reader agent checks the selected claim against public paper sections.")).toBeInTheDocument()
-    expect(await screen.findByText("回答已保存在本地阅读素材，但暂时没有同步到后台事件流。")).toBeInTheDocument()
+    expect(await screen.findByText("The answer was saved to local reading materials, but it has not synced to the backend event stream yet.")).toBeInTheDocument()
 
     await waitFor(() => {
       expect(container.querySelector("[data-selection-id]")).not.toBeNull()
@@ -674,8 +674,8 @@ describe("PaperReaderPage Open Reader", () => {
 
     selectParagraphText(container, "grounded reader agents")
     fireEvent.mouseUp(container.querySelector("[data-paragraph-id]")!)
-    fireEvent.click(await screen.findByRole("button", { name: "笔记" }))
-    fireEvent.change(await screen.findByPlaceholderText(/写下你的理解/), { target: { value: "Local note remains available." } })
+    fireEvent.click(await screen.findByRole("button", { name: "Note" }))
+    fireEvent.change(await screen.findByPlaceholderText(/Write your understanding/), { target: { value: "Local note remains available." } })
 
     await waitFor(() => {
       expect(container.querySelector("[data-selection-id]")).not.toBeNull()
@@ -697,12 +697,12 @@ describe("PaperReaderPage Open Reader", () => {
 
     selectParagraphText(container, "verifier checks claims")
     fireEvent.mouseUp(container.querySelector("[data-paragraph-id]")!)
-    fireEvent.click(await screen.findByRole("button", { name: "解释选中内容" }))
-    fireEvent.click(await screen.findByRole("button", { name: "使用选中内容" }))
+    fireEvent.click(await screen.findByRole("button", { name: "Explain selection" }))
+    fireEvent.click(await screen.findByRole("button", { name: "Use selection" }))
 
     expect(await screen.findByText("reader backend unavailable")).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole("button", { name: "关闭" }))
+    fireEvent.click(screen.getByRole("button", { name: "Close" }))
     await waitFor(() => {
       expect(container.querySelector("[data-selection-id]")).toBeNull()
       expect(JSON.parse(window.localStorage.getItem("newsroom:open-reader:reader-paper:selections") ?? "[]")).toEqual([])
@@ -714,7 +714,7 @@ describe("PaperReaderPage Open Reader", () => {
 
     selectParagraphText(container, "planning, retrieval")
     fireEvent.mouseUp(container.querySelectorAll("[data-paragraph-id]")[1])
-    fireEvent.click(await screen.findByRole("button", { name: "标记为不懂" }))
+    fireEvent.click(await screen.findByRole("button", { name: "Mark as unclear" }))
 
     const mark = await waitFor(() => {
       const current = container.querySelector<HTMLElement>("[data-selection-id]")
@@ -729,7 +729,7 @@ describe("PaperReaderPage Open Reader", () => {
       return current!
     })
     fireEvent.click(mark)
-    fireEvent.click(await screen.findByRole("button", { name: "取消标记为不懂" }))
+    fireEvent.click(await screen.findByRole("button", { name: "Clear unclear mark" }))
 
     await waitFor(() => {
       expect(container.querySelector("[data-selection-id]")).toBeNull()
@@ -747,20 +747,20 @@ describe("PaperReaderPage Open Reader", () => {
 
     selectParagraphText(container, "grounded reader agents")
     fireEvent.mouseUp(container.querySelector("[data-paragraph-id]")!)
-    expect(await screen.findByRole("button", { name: "笔记" })).toBeInTheDocument()
+    expect(await screen.findByRole("button", { name: "Note" })).toBeInTheDocument()
 
     fireEvent.click(document.body)
     await waitFor(() => {
-      expect(screen.queryByRole("button", { name: "笔记" })).not.toBeInTheDocument()
+      expect(screen.queryByRole("button", { name: "Note" })).not.toBeInTheDocument()
       expect(container.querySelector("[data-selection-id]")).toBeNull()
     })
 
     selectParagraphText(container, "verifier checks claims")
     fireEvent.mouseUp(container.querySelector("[data-paragraph-id]")!)
-    expect(await screen.findByRole("button", { name: "笔记" })).toBeInTheDocument()
+    expect(await screen.findByRole("button", { name: "Note" })).toBeInTheDocument()
     fireEvent.keyDown(document, { key: "Escape" })
     await waitFor(() => {
-      expect(screen.queryByRole("button", { name: "笔记" })).not.toBeInTheDocument()
+      expect(screen.queryByRole("button", { name: "Note" })).not.toBeInTheDocument()
       expect(container.querySelector("[data-selection-id]")).toBeNull()
     })
   })

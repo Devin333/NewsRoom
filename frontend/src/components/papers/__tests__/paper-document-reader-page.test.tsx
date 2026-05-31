@@ -76,6 +76,14 @@ describe("PaperDocumentReaderPage", () => {
       "src",
       "/api/papers/visual-paper/assets/asset-figure-1",
     )
+    expect(screen.getByLabelText("Reader settings")).toBeInTheDocument()
+    expect(screen.getByText("Font size")).toBeInTheDocument()
+    expect(screen.getByText("Text width")).toBeInTheDocument()
+    expect(screen.getByText("Floating contents · drag to move")).toBeInTheDocument()
+    expect(screen.getByText("Reading materials")).toBeInTheDocument()
+    expect(screen.queryByLabelText("阅读设置")).not.toBeInTheDocument()
+    expect(screen.queryByText("字体大小")).not.toBeInTheDocument()
+    expect(screen.queryByText("悬浮目录 · 可拖动")).not.toBeInTheDocument()
   })
 
   it("renders the compiled outline as a numbered hierarchy", () => {
