@@ -7,7 +7,7 @@ import { TaskSection } from "@/components/papers/tasks/task-section"
 import { InlineNotice } from "@/components/papers/shared/inline-notice"
 import { orderedTaskGroups, taskGroupLabel } from "@/lib/papers/categories"
 import { papersCopy, t } from "@/lib/papers/copy"
-import { benchmarks, paperTasks } from "@/lib/papers/catalog"
+import { paperTasks } from "@/lib/papers/catalog"
 import { fetchPaperTasksResult, fetchPapers } from "@/lib/papers/api"
 import { deriveTasksFromPapers } from "@/lib/papers/taxonomy-fallback"
 import type { Locale, Paper, PaperTask } from "@/lib/papers/types"
@@ -54,7 +54,7 @@ export function TasksPage({ locale }: { locale: Locale }) {
 
   const taskItems = status === "loading" ? [] : tasks
   const taskPaperItems = status === "loading" ? [] : paperItems
-  const benchmarkCount = status === "fallback" ? benchmarks.length : taskItems.reduce((total, task) => total + task.benchmarkCount, 0)
+  const benchmarkCount = taskItems.reduce((total, task) => total + task.benchmarkCount, 0)
   const visibleTaskGroups = orderedTaskGroups(taskItems)
 
   return (

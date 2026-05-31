@@ -191,6 +191,7 @@ describe("paper task and method pages", () => {
     render(<TasksPage locale="en" />)
 
     expect(await screen.findByText("Paper task API is unavailable; showing taxonomy with real paper-derived counts.")).toBeInTheDocument()
+    expect(screen.getByLabelText(/benchmarks: 1/i)).toBeInTheDocument()
     expect(screen.getByRole("link", { name: /Agents\s+1 Papers/i })).toBeInTheDocument()
   })
 
