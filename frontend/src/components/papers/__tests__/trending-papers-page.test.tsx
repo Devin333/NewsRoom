@@ -111,6 +111,30 @@ describe("TrendingPapersPage", () => {
     expect(screen.queryByRole("textbox", { name: /search papers/i })).not.toBeInTheDocument()
   })
 
+  it("does not flash unpublished papers while the first list request is pending", () => {
+    vi.mocked(fetchPapers).mockReturnValue(new Promise(() => undefined))
+
+    render(
+      <TrendingPapersPage
+        locale="en"
+        papers={[
+          ...papers,
+          {
+            ...papers[0],
+            id: "paper-draft",
+            slug: "paper-draft",
+            title: "Draft Paper",
+            isPublished: false
+          }
+        ]}
+      />
+    )
+
+    expect(screen.getByText("Agent Paper")).toBeInTheDocument()
+    expect(screen.queryByText("Draft Paper")).not.toBeInTheDocument()
+    expect(screen.getByLabelText(/papers: 2/i)).toBeInTheDocument()
+  })
+
   it("keeps the backend page when the dashboard request fails", async () => {
     vi.mocked(fetchPapers)
       .mockResolvedValueOnce({

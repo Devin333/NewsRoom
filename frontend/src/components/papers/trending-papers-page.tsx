@@ -31,9 +31,10 @@ export function TrendingPapersPage({ locale, papers }: { locale: Locale; papers:
   const page = parsePage(searchParams.get("page"))
   const query = searchParams.get("q") ?? ""
   const deepLinkedPaperId = searchParams.get("paper")
-  const [dashboardPapers, setDashboardPapers] = useState(papers)
-  const [visiblePapers, setVisiblePapers] = useState(papers.slice(0, PAPER_PAGE_SIZE))
-  const [paperTotalCount, setPaperTotalCount] = useState(papers.filter((paper) => paper.isPublished !== false).length)
+  const initialPublishedPapers = useMemo(() => publicPapers(papers), [papers])
+  const [dashboardPapers, setDashboardPapers] = useState(initialPublishedPapers)
+  const [visiblePapers, setVisiblePapers] = useState(initialPublishedPapers.slice(0, PAPER_PAGE_SIZE))
+  const [paperTotalCount, setPaperTotalCount] = useState(initialPublishedPapers.length)
   const [selectedPaperId, setSelectedPaperId] = useState<string | null>(deepLinkedPaperId)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -297,10 +298,7 @@ function fallbackPaperQuery(
 ) {
   const search = query.trim().toLowerCase()
   const periodStart = paperPeriodStart(period)
-  const filtered = papers.filter((paper) => {
-    if (paper.isPublished === false) {
-      return false
-    }
+  const filtered = publicPapers(papers).filter((paper) => {
     if (periodStart && new Date(paper.publishedAt).getTime() < periodStart.getTime()) {
       return false
     }
@@ -322,6 +320,10 @@ function fallbackPaperQuery(
     return haystack.includes(search)
   })
   return sortPapers(filtered, sort)
+}
+
+function publicPapers(papers: Paper[]) {
+  return papers.filter((paper) => paper.isPublished !== false)
 }
 
 function paperPeriodStart(period: PaperPeriod) {
