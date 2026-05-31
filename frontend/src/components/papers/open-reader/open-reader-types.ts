@@ -83,7 +83,9 @@ export interface ReaderSelection {
   endOffset: number
   noteText: string
   explainQuestion: string
+  explainAnswer?: string
   exampleQuestion: string
+  exampleAnswer?: string
   explained: boolean
   exampled: boolean
   confused: boolean

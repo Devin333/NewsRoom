@@ -356,8 +356,17 @@ describe("PaperReaderPage Open Reader", () => {
     await waitFor(() => {
       expect(container.querySelector("[data-selection-id]")).not.toBeNull()
       const selections = JSON.parse(window.localStorage.getItem("newsroom:open-reader:reader-paper:selections") ?? "[]")
-      expect(selections[0]).toMatchObject({ explained: true, selectedText: "verifier checks claims" })
+      expect(selections[0]).toMatchObject({
+        explained: true,
+        selectedText: "verifier checks claims",
+        explainAnswer: "The reader agent checks the selected claim against public paper sections."
+      })
     })
+
+    fireEvent.click(screen.getByRole("button", { name: "关闭" }))
+    fireEvent.click(screen.getByRole("button", { name: /阅读素材/ }))
+    expect(await screen.findByText(/解释结果：/)).toBeInTheDocument()
+    expect(screen.getByText(/The reader agent checks the selected claim against public paper sections/)).toBeInTheDocument()
   })
 
   it("keeps a highlight and records material only after an example is generated", async () => {
@@ -378,6 +387,7 @@ describe("PaperReaderPage Open Reader", () => {
       expect(selections[0]).toMatchObject({
         exampled: true,
         exampleQuestion: "Use an engineering example.",
+        exampleAnswer: "The reader agent checks the selected claim against public paper sections.",
         selectedText: "long-horizon reading",
       })
     })

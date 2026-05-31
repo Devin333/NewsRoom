@@ -247,8 +247,8 @@ export function OpenReaderPage({ reader, locale, backHref = "/papers", visualLay
           drawerWidth={settings.drawerWidth}
           onWidthChange={(drawerWidth) => patchSettings({ drawerWidth })}
           onClose={() => { setDrawer(null); discardAllTemp() }}
-          onConfirmExplain={(selectionId, question) => confirmExplain(selectionId, question)}
-          onConfirmExample={(selectionId, question) => confirmExample(selectionId, question)}
+          onConfirmExplain={(selectionId, question, answer) => confirmExplain(selectionId, question, answer)}
+          onConfirmExample={(selectionId, question, answer) => confirmExample(selectionId, question, answer)}
         />
       ) : null}
 
@@ -848,7 +848,7 @@ type AssistAnswerState =
   | { status: "ready"; answer: PaperReaderAnswer }
   | { status: "error"; message: string }
 
-function ReaderAssistDrawer({ drawer, selection, materialSummary, locale, drawerWidth, onWidthChange, onClose, onConfirmExplain, onConfirmExample }: { drawer: DrawerState; selection?: ReaderSelection; materialSummary: ReturnType<typeof makeMaterialSummary>; locale: Locale; drawerWidth: number; onWidthChange: (width: number) => void; onClose: () => void; onConfirmExplain: (id: string, question: string) => void; onConfirmExample: (id: string, question: string) => void }) {
+function ReaderAssistDrawer({ drawer, selection, materialSummary, locale, drawerWidth, onWidthChange, onClose, onConfirmExplain, onConfirmExample }: { drawer: DrawerState; selection?: ReaderSelection; materialSummary: ReturnType<typeof makeMaterialSummary>; locale: Locale; drawerWidth: number; onWidthChange: (width: number) => void; onClose: () => void; onConfirmExplain: (id: string, question: string, answer: string) => void; onConfirmExample: (id: string, question: string, answer: string) => void }) {
   const [question, setQuestion] = useState("")
   const [answerState, setAnswerState] = useState<AssistAnswerState>({ status: "idle" })
   const resizingRef = useRef(false)
@@ -868,8 +868,8 @@ function ReaderAssistDrawer({ drawer, selection, materialSummary, locale, drawer
     setAnswerState({ status: "loading" })
     try {
       const answer = await askPaper(selection.paperId, buildAssistQuestion(selection, q, mode, locale), locale)
-      if (mode === "explain") onConfirmExplain(selection.id, q)
-      if (mode === "example") onConfirmExample(selection.id, q)
+      if (mode === "explain") onConfirmExplain(selection.id, q, answer.answer)
+      if (mode === "example") onConfirmExample(selection.id, q, answer.answer)
       setAnswerState({ status: "ready", answer })
     } catch (error) {
       setAnswerState({
@@ -936,7 +936,7 @@ function MaterialSummary({ summary }: { summary: ReturnType<typeof makeMaterialS
   return <>
     <div className={styles.drawerCard}><h3>给后台 Agent 的素材</h3><p>笔记、解释请求、举例请求、标记不懂都会记录。后续后台 Agent 可以基于这些素材生成完整笔记、困惑点列表和个性化复习建议。</p></div>
     <div className={styles.drawerCard}><h3>统计</h3><ul><li>笔记：{summary.stats.noteCount}</li><li>解释：{summary.stats.explainedCount}</li><li>举例：{summary.stats.exampledCount}</li><li>不懂：{summary.stats.confusedCount}</li></ul></div>
-    <div className={styles.drawerCard}><h3>选中内容与读者输入</h3>{summary.selections.length ? summary.selections.slice().reverse().map((selection) => <article key={selection.id} className={`${styles.materialItem} ${selection.confused ? styles.confusedItem : selection.explained ? styles.explainItem : selection.exampled ? styles.exampleItem : ""}`}><small>{selection.sectionTitle} / {selection.paragraphId}{selection.noteText.trim() ? " · 笔记" : ""}{selection.explained ? " · 请求解释" : ""}{selection.exampled ? " · 请求举例" : ""}{selection.confused ? " · 标记不懂" : ""}</small><p><b>原文：</b>{selection.selectedText}</p>{selection.noteText.trim() ? <p><b>笔记：</b>{selection.noteText}</p> : null}{selection.explainQuestion.trim() ? <p><b>解释疑问：</b>{selection.explainQuestion}</p> : null}{selection.exampleQuestion.trim() ? <p><b>举例需求：</b>{selection.exampleQuestion}</p> : null}</article>) : <p className={styles.mutedText}>还没有素材。</p>}</div>
+    <div className={styles.drawerCard}><h3>选中内容与读者输入</h3>{summary.selections.length ? summary.selections.slice().reverse().map((selection) => <article key={selection.id} className={`${styles.materialItem} ${selection.confused ? styles.confusedItem : selection.explained ? styles.explainItem : selection.exampled ? styles.exampleItem : ""}`}><small>{selection.sectionTitle} / {selection.paragraphId}{selection.noteText.trim() ? " · 笔记" : ""}{selection.explained ? " · 请求解释" : ""}{selection.exampled ? " · 请求举例" : ""}{selection.confused ? " · 标记不懂" : ""}</small><p><b>原文：</b>{selection.selectedText}</p>{selection.noteText.trim() ? <p><b>笔记：</b>{selection.noteText}</p> : null}{selection.explainQuestion.trim() ? <p><b>解释疑问：</b>{selection.explainQuestion}</p> : null}{selection.explainAnswer?.trim() ? <p><b>解释结果：</b>{selection.explainAnswer}</p> : null}{selection.exampleQuestion.trim() ? <p><b>举例需求：</b>{selection.exampleQuestion}</p> : null}{selection.exampleAnswer?.trim() ? <p><b>举例结果：</b>{selection.exampleAnswer}</p> : null}</article>) : <p className={styles.mutedText}>还没有素材。</p>}</div>
   </>
 }
 

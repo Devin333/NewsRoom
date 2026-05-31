@@ -15,8 +15,8 @@ type SelectionAction =
   | { type: "discard"; selectionId: string }
   | { type: "discard_all_temp" }
   | { type: "update_note"; selectionId: string; noteText: string }
-  | { type: "confirm_explain"; selectionId: string; question: string }
-  | { type: "confirm_example"; selectionId: string; question: string }
+  | { type: "confirm_explain"; selectionId: string; question: string; answer: string }
+  | { type: "confirm_example"; selectionId: string; question: string; answer: string }
   | { type: "toggle_confused"; selectionId: string }
 
 const EMPTY_STATE: SelectionState = { selections: [], events: [] }
@@ -109,7 +109,9 @@ export function useOpenReaderSelections(paperId: string) {
       endOffset: input.endOffset,
       noteText: "",
       explainQuestion: "",
+      explainAnswer: "",
       exampleQuestion: "",
+      exampleAnswer: "",
       explained: false,
       exampled: false,
       confused: false,
@@ -123,8 +125,8 @@ export function useOpenReaderSelections(paperId: string) {
   const discardSelection = useCallback((selectionId: string) => dispatch({ type: "discard", selectionId }), [])
   const discardAllTemp = useCallback(() => dispatch({ type: "discard_all_temp" }), [])
   const updateNote = useCallback((selectionId: string, noteText: string) => dispatch({ type: "update_note", selectionId, noteText }), [])
-  const confirmExplain = useCallback((selectionId: string, question: string) => dispatch({ type: "confirm_explain", selectionId, question }), [])
-  const confirmExample = useCallback((selectionId: string, question: string) => dispatch({ type: "confirm_example", selectionId, question }), [])
+  const confirmExplain = useCallback((selectionId: string, question: string, answer: string) => dispatch({ type: "confirm_explain", selectionId, question, answer }), [])
+  const confirmExample = useCallback((selectionId: string, question: string, answer: string) => dispatch({ type: "confirm_example", selectionId, question, answer }), [])
   const toggleConfused = useCallback((selectionId: string) => dispatch({ type: "toggle_confused", selectionId }), [])
 
   return {
@@ -216,10 +218,34 @@ function selectionReducer(state: SelectionState, action: SelectionAction): Selec
     }
 
     case "confirm_explain":
-      return updateSelection(state, action.selectionId, (selection) => ({ ...selection, explained: true, explainQuestion: action.question, updatedAt: nowIso() }), "explanation_generated", { question: action.question })
+      return updateSelection(
+        state,
+        action.selectionId,
+        (selection) => ({
+          ...selection,
+          explained: true,
+          explainQuestion: action.question,
+          explainAnswer: action.answer,
+          updatedAt: nowIso()
+        }),
+        "explanation_generated",
+        { question: action.question, answer: action.answer }
+      )
 
     case "confirm_example":
-      return updateSelection(state, action.selectionId, (selection) => ({ ...selection, exampled: true, exampleQuestion: action.question, updatedAt: nowIso() }), "example_generated", { question: action.question })
+      return updateSelection(
+        state,
+        action.selectionId,
+        (selection) => ({
+          ...selection,
+          exampled: true,
+          exampleQuestion: action.question,
+          exampleAnswer: action.answer,
+          updatedAt: nowIso()
+        }),
+        "example_generated",
+        { question: action.question, answer: action.answer }
+      )
 
     case "toggle_confused": {
       const target = state.selections.find((item) => item.id === action.selectionId)
