@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import Link from "next/link"
 import { ChevronDown, Menu, Search } from "lucide-react"
 import { AccountMenu } from "@/components/auth/account-menu"
@@ -30,6 +30,11 @@ export function ResearchHeader({
 }) {
   const [activeGroupId, setActiveGroupId] = useState<string | null>(null)
   const [mobileOpen, setMobileOpen] = useState(false)
+  const [searchQuery, setSearchQuery] = useState("")
+
+  useEffect(() => {
+    setSearchQuery(currentSearchQuery())
+  }, [pathname])
 
   function handleGroupBlur(event: React.FocusEvent<HTMLDivElement>) {
     const nextFocus = event.relatedTarget
@@ -37,6 +42,16 @@ export function ResearchHeader({
       return
     }
     setActiveGroupId(null)
+  }
+
+  function submitSearch(event: React.FormEvent<HTMLFormElement>) {
+    const query = searchQuery.trim()
+    if (!query) {
+      event.preventDefault()
+      window.location.assign("/papers")
+      return
+    }
+    setMobileOpen(false)
   }
 
   return (
@@ -98,14 +113,17 @@ export function ResearchHeader({
           </nav>
         </div>
 
-        <div className="relative ml-auto hidden w-[min(26rem,32vw)] md:block">
+        <form className="relative ml-auto hidden w-[min(26rem,32vw)] md:block" action="/papers" method="get" onSubmit={submitSearch} role="search">
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
+            name="q"
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
             className="h-10 rounded-full border-[#d7dfd8] bg-white pl-9 shadow-sm dark:border-border dark:bg-card"
             placeholder={t(papersCopy.searchPlaceholder, locale)}
             style={comicSansFont}
           />
-        </div>
+        </form>
         <div className="hidden items-center gap-2 sm:flex">
           <PapersThemeToggle theme={theme} locale={locale} onThemeChange={onThemeChange} />
           <PapersLanguageToggle locale={locale} onLocaleChange={onLocaleChange} />
@@ -125,10 +143,17 @@ export function ResearchHeader({
               <p className="text-sm font-semibold">{t(papersCopy.brand, locale)}</p>
               <p className="text-xs text-muted-foreground">{t(papersCopy.brandSubline, locale)}</p>
             </div>
-            <div className="relative mb-4">
+            <form className="relative mb-4" action="/papers" method="get" onSubmit={submitSearch} role="search">
               <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-              <Input className="h-9 pl-9" placeholder={t(papersCopy.searchPlaceholder, locale)} style={comicSansFont} />
-            </div>
+              <Input
+                name="q"
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                className="h-9 pl-9"
+                placeholder={t(papersCopy.searchPlaceholder, locale)}
+                style={comicSansFont}
+              />
+            </form>
             <div className="mb-4 flex flex-wrap items-center gap-2 sm:hidden">
               <PapersThemeToggle theme={theme} locale={locale} onThemeChange={onThemeChange} />
               <PapersLanguageToggle locale={locale} onLocaleChange={onLocaleChange} />
@@ -175,6 +200,13 @@ export function ResearchHeader({
       </div>
     </header>
   )
+}
+
+function currentSearchQuery() {
+  if (typeof window === "undefined") {
+    return ""
+  }
+  return new URLSearchParams(window.location.search).get("q") ?? ""
 }
 
 type HeaderCopy = Record<Locale, string>

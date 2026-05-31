@@ -170,7 +170,7 @@ function PaperActionPill({
         <span className="text-[#334155]/65 dark:text-muted-foreground">{icon}</span>
         <span className="font-semibold text-[#334155] dark:text-foreground">{value}</span>
         <span className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-[#334155]/55 dark:text-muted-foreground">
-          {label}
+          {label.toUpperCase()}
         </span>
       </a>
     </Button>

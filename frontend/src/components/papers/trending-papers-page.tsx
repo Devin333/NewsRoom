@@ -13,8 +13,8 @@ import { Button } from "@/components/ui/button"
 import { comicSansFont } from "@/lib/fonts"
 import { fetchPapers } from "@/lib/papers/api"
 import { buildPaperPortalMetrics, deriveTopPaperDomains, deriveMethodAreaDomains } from "@/lib/papers/metrics"
-import type { MethodAreaDomain } from "@/lib/papers/metrics"
 import { papersCopy, t } from "@/lib/papers/copy"
+import { sortPapers } from "@/lib/papers/format"
 import type { Locale, Paper, PaperPeriod, PaperSort } from "@/lib/papers/types"
 
 const PAPER_DASHBOARD_LIMIT = 5000
@@ -37,6 +37,7 @@ export function TrendingPapersPage({ locale, papers }: { locale: Locale; papers:
   const [selectedPaperId, setSelectedPaperId] = useState<string | null>(deepLinkedPaperId)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [notices, setNotices] = useState<string[]>([])
   const pageOffset = (page - 1) * PAPER_PAGE_SIZE
   const portalMetrics = useMemo(
     () => buildPaperPortalMetrics(dashboardPapers, paperTotalCount),
@@ -86,6 +87,7 @@ export function TrendingPapersPage({ locale, papers }: { locale: Locale; papers:
           setVisiblePapers(pageResult.papers)
           setDashboardPapers(dashboardResult.papers)
           setPaperTotalCount(pageResult.total_count)
+          setNotices([...(pageResult.notices ?? []), ...(dashboardResult.notices ?? [])])
           const nextTotalPages = Math.max(1, Math.ceil(pageResult.total_count / PAPER_PAGE_SIZE))
           if (pageResult.total_count > 0 && page > nextTotalPages) {
             updatePage(nextTotalPages)
@@ -94,9 +96,11 @@ export function TrendingPapersPage({ locale, papers }: { locale: Locale; papers:
       })
       .catch((requestError) => {
         if (!cancelled) {
-          setVisiblePapers(papers.slice(pageOffset, pageOffset + PAPER_PAGE_SIZE))
-          setDashboardPapers(papers)
-          setPaperTotalCount(papers.filter((paper) => paper.isPublished !== false).length)
+          const fallbackPapers = fallbackPaperQuery(papers, { query, period, sort })
+          setVisiblePapers(fallbackPapers.slice(pageOffset, pageOffset + PAPER_PAGE_SIZE))
+          setDashboardPapers(fallbackPapers)
+          setPaperTotalCount(fallbackPapers.length)
+          setNotices([t(papersCopy.apiUnavailableCache, locale)])
           setError(requestError instanceof Error ? requestError.message : "Papers request failed")
         }
       })
@@ -108,7 +112,7 @@ export function TrendingPapersPage({ locale, papers }: { locale: Locale; papers:
     return () => {
       cancelled = true
     }
-  }, [page, pageOffset, papers, period, query, sort, updatePage])
+  }, [locale, page, pageOffset, papers, period, query, sort, updatePage])
 
   function previewPaper(paper: Paper) {
     updateQuery({ paper: paper.id })
@@ -165,10 +169,10 @@ export function TrendingPapersPage({ locale, papers }: { locale: Locale; papers:
         aside={<PaperPeriodTabs value={period} locale={locale} hrefForPeriod={periodHref} onChange={updatePeriod} fullWidth />}
       />
       <div className="mt-6 border-t border-[#d7dfd8] dark:border-border" />
-      {error ? (
+      {error || notices.length ? (
         <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-          {t(papersCopy.apiUnavailableCache, locale)}
-          {error}
+          {[...new Set(notices)].join(" ")}
+          {error ? ` ${error}` : null}
         </div>
       ) : null}
       <div className="mt-8 grid gap-12 xl:grid-cols-[15rem_minmax(0,1fr)] 2xl:grid-cols-[16rem_minmax(0,1fr)] 2xl:gap-16">
@@ -224,6 +228,57 @@ function parseSort(value: string | null): PaperSort {
 function parsePage(value: string | null): number {
   const parsed = Number(value)
   return Number.isInteger(parsed) && parsed > 0 ? parsed : 1
+}
+
+function fallbackPaperQuery(
+  papers: Paper[],
+  {
+    query,
+    period,
+    sort
+  }: {
+    query: string
+    period: PaperPeriod
+    sort: PaperSort
+  }
+) {
+  const search = query.trim().toLowerCase()
+  const periodStart = paperPeriodStart(period)
+  const filtered = papers.filter((paper) => {
+    if (paper.isPublished === false) {
+      return false
+    }
+    if (periodStart && new Date(paper.publishedAt).getTime() < periodStart.getTime()) {
+      return false
+    }
+    if (!search) {
+      return true
+    }
+
+    const haystack = [
+      paper.title,
+      paper.titleZh,
+      paper.abstractSnippet,
+      paper.abstractSnippetZh,
+      paper.authors.join(" "),
+      paper.tags.join(" "),
+      paper.taskRefs.map((task) => `${task.slug} ${task.name} ${task.nameZh ?? ""}`).join(" "),
+      paper.methodRefs.map((method) => `${method.slug} ${method.name} ${method.nameZh ?? ""}`).join(" ")
+    ].join(" ").toLowerCase()
+
+    return haystack.includes(search)
+  })
+  return sortPapers(filtered, sort)
+}
+
+function paperPeriodStart(period: PaperPeriod) {
+  const days = period === "daily" ? 1 : period === "weekly" ? 7 : period === "monthly" ? 30 : 0
+  if (!days) {
+    return null
+  }
+  const start = new Date()
+  start.setDate(start.getDate() - days)
+  return start
 }
 
 function PaperPagination({

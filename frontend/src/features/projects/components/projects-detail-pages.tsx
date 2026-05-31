@@ -5,7 +5,6 @@ import { ArrowLeft, ExternalLink } from "lucide-react"
 import { useMutation, useQuery } from "@tanstack/react-query"
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import {
   explainProjectCase,
   fetchProjectCaseDetail,
@@ -19,6 +18,8 @@ import {
 import type { ProjectsApiCollection, ProjectsApiProjectDetail, ProjectsApiTool } from "@/types/projects"
 import { ProjectEmptyState, ProjectErrorState, ProjectLoadingState, ProjectSourceLine } from "@/features/projects/components/project-product-state"
 import { formatScore, labelize } from "@/features/projects/components/project-format"
+
+type UnknownRecord = Record<string, unknown>
 
 export function ProjectV1DetailPage({ projectId }: { projectId: string }) {
   const query = useQuery({
@@ -66,8 +67,8 @@ export function ProjectCaseDetailPage({ caseId }: { caseId: string }) {
       <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_24rem]">
         <div className="space-y-4">
           <Panel title="Problem" body={String(item.problem ?? "")} />
-          <JsonPanel title="Components" value={item.components ?? []} />
-          <JsonPanel title="Patterns" value={item.patterns ?? []} />
+          <ComponentsPanel components={item.components} />
+          <PatternsPanel patterns={item.patterns} />
         </div>
         <aside className="space-y-3 rounded-md border border-[#d8dee7] bg-white p-4 shadow-sm dark:border-border dark:bg-card">
           <h2 className="text-base font-semibold text-[#202124] dark:text-foreground">Apply Context</h2>
@@ -127,10 +128,10 @@ export function ProjectLabSessionPage({ sessionId }: { sessionId: string }) {
         </Button>
       </div>
       <section className="grid gap-4 lg:grid-cols-2">
-        <JsonPanel title="Requirement Profile" value={session.requirement_profile ?? {}} />
-        <JsonPanel title="Graph" value={session.graph_state ?? {}} />
-        <JsonPanel title="Questions" value={session.questions} />
-        <JsonPanel title="Solution" value={session.solution_json ?? session.generated_solution ?? {}} />
+        <RequirementProfilePanel profile={session.requirement_profile} />
+        <GraphPanel graph={session.graph_state} />
+        <QuestionsPanel questions={session.questions} />
+        <SolutionPanel solution={session.solution_json ?? session.generated_solution} />
       </section>
     </main>
   )
@@ -150,14 +151,14 @@ function ProjectV1Detail({ data }: { data: ProjectsApiProjectDetail }) {
       </section>
       <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_24rem]">
         <div className="space-y-4">
-          <JsonPanel title="Capabilities" value={data.capabilities} />
-          <JsonPanel title="Cases" value={data.cases} />
-          <JsonPanel title="Metrics" value={data.metrics} />
+          <CapabilitiesPanel capabilities={data.capabilities} />
+          <CasesPanel cases={data.cases} />
+          <MetricsPanel metrics={data.metrics} />
         </div>
         <aside className="space-y-4">
           <LinkPanel project={project} />
-          <JsonPanel title="Watch" value={data.watch_status ?? { status: "not_watched" }} />
-          <JsonPanel title="Recommended Actions" value={data.recommended_actions ?? []} />
+          <WatchPanel status={data.watch_status} />
+          <ActionsPanel actions={data.recommended_actions} />
         </aside>
       </section>
     </main>
@@ -170,8 +171,8 @@ function ToolDetail({ tool }: { tool: ProjectsApiTool }) {
       <BackLink href="/projects/tools" label="Tools" />
       <Header title={tool.project.name} eyebrow={tool.profile.tool_type} body={tool.fit_reason ?? tool.project.description ?? ""} />
       <section className="grid gap-4 lg:grid-cols-2">
-        <JsonPanel title="Integration Profile" value={tool.profile} />
-        <JsonPanel title="Capabilities" value={tool.capabilities} />
+        <IntegrationProfilePanel profile={tool.profile} />
+        <CapabilitiesPanel capabilities={tool.capabilities} />
       </section>
     </main>
   )
@@ -182,7 +183,7 @@ function CollectionDetail({ collection }: { collection: ProjectsApiCollection })
     <main className="space-y-6 font-papers-research">
       <BackLink href="/projects/collections" label="Collections" />
       <Header title={collection.title} eyebrow={`${collection.item_count ?? 0} items`} body={collection.description} />
-      <JsonPanel title="Sections" value={collection.sections ?? []} />
+      <SectionsPanel sections={collection.sections} />
     </main>
   )
 }
@@ -243,4 +244,321 @@ function JsonPanel({ title, value }: { title: string; value: unknown }) {
       <pre className="mt-3 max-h-96 overflow-auto rounded-md bg-[#111827] p-3 text-xs leading-5 text-white">{JSON.stringify(value, null, 2)}</pre>
     </section>
   )
+}
+
+function CapabilitiesPanel({ capabilities }: { capabilities: unknown[] }) {
+  const items = Array.isArray(capabilities) ? capabilities : []
+  return (
+    <section className="rounded-md border border-[#d8dee7] bg-white p-4 shadow-sm dark:border-border dark:bg-card">
+      <h2 className="text-sm font-semibold text-[#202124] dark:text-foreground">Capabilities</h2>
+      <div className="mt-3 space-y-2">
+        {items.length ? (
+          items.map((cap, idx) => {
+            const record = asRecord(cap)
+            const name = textValue(record?.name) || textValue(cap)
+            const description = textValue(record?.description)
+            return (
+            <div key={idx} className="rounded-md bg-[#f8fafc] p-2 dark:bg-background">
+              <p className="text-xs font-semibold text-[#202124] dark:text-foreground">{name}</p>
+              {description ? <p className="mt-1 text-xs text-[#4b5563] dark:text-muted-foreground">{description}</p> : null}
+            </div>
+          )})
+        ) : (
+          <p className="text-xs text-muted-foreground">No capabilities available</p>
+        )}
+      </div>
+    </section>
+  )
+}
+
+function CasesPanel({ cases }: { cases: unknown[] }) {
+  const items = Array.isArray(cases) ? cases : []
+  return (
+    <section className="rounded-md border border-[#d8dee7] bg-white p-4 shadow-sm dark:border-border dark:bg-card">
+      <h2 className="text-sm font-semibold text-[#202124] dark:text-foreground">Cases</h2>
+      <div className="mt-3 space-y-2">
+        {items.length ? (
+          items.map((item, idx) => {
+            const record = asRecord(item)
+            const title = textValue(record?.title) || textValue(item)
+            const moduleType = textValue(record?.module_type)
+            return (
+              <div key={idx} className="rounded-md bg-[#f8fafc] p-2 dark:bg-background">
+                <p className="text-xs font-semibold text-[#202124] dark:text-foreground">{title}</p>
+                {moduleType ? <p className="text-xs text-[#667085] dark:text-muted-foreground">{moduleType}</p> : null}
+              </div>
+            )
+          })
+        ) : (
+          <p className="text-xs text-muted-foreground">No cases available</p>
+        )}
+      </div>
+    </section>
+  )
+}
+
+function MetricsPanel({ metrics }: { metrics: unknown[] }) {
+  const m = Array.isArray(metrics) && metrics.length > 0 ? asRecord(metrics[0]) : null
+  if (!m) return null
+  const fields: [string, string | number][] = [
+    ["Stars", displayValue(m.github_stars)],
+    ["Forks", displayValue(m.github_forks)],
+    ["Quality", numericValue(m.quality_score) !== undefined ? formatScore(numericValue(m.quality_score)) : undefined],
+    ["Activity", numericValue(m.activity_score) !== undefined ? formatScore(numericValue(m.activity_score)) : undefined],
+    ["Evidence", numericValue(m.evidence_score) !== undefined ? formatScore(numericValue(m.evidence_score)) : undefined],
+    ["Mentions", displayValue(m.source_mentions)],
+  ].filter((field): field is [string, string | number] => field[1] !== undefined && field[1] !== null)
+  return (
+    <section className="rounded-md border border-[#d8dee7] bg-white p-4 shadow-sm dark:border-border dark:bg-card">
+      <h2 className="text-sm font-semibold text-[#202124] dark:text-foreground">Metrics</h2>
+      <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+        {fields.map(([label, value]) => (
+          <div key={label} className="rounded-md bg-[#f8fafc] p-2 dark:bg-background">
+            <p className="text-[#667085] dark:text-muted-foreground">{label}</p>
+            <p className="font-semibold text-[#202124] dark:text-foreground">{value}</p>
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function WatchPanel({ status }: { status?: unknown }) {
+  const watchStatus = textValue(asRecord(status)?.status) || "not_watched"
+  return (
+    <section className="rounded-md border border-[#d8dee7] bg-white p-4 shadow-sm dark:border-border dark:bg-card">
+      <h2 className="text-sm font-semibold text-[#202124] dark:text-foreground">Watch Status</h2>
+      <p className="mt-2 text-xs text-[#4b5563] dark:text-muted-foreground">{watchStatus}</p>
+    </section>
+  )
+}
+
+function ActionsPanel({ actions }: { actions?: unknown }) {
+  const items = Array.isArray(actions) ? actions : []
+  if (!items.length) return null
+  return (
+    <section className="rounded-md border border-[#d8dee7] bg-white p-4 shadow-sm dark:border-border dark:bg-card">
+      <h2 className="text-sm font-semibold text-[#202124] dark:text-foreground">Recommended</h2>
+      <div className="mt-2 space-y-1">
+        {items.map((action, idx) => {
+          const title = textValue(asRecord(action)?.title) || textValue(action)
+          return <p key={idx} className="text-xs text-[#4b5563] dark:text-muted-foreground">• {title}</p>
+        })}
+      </div>
+    </section>
+  )
+}
+
+function IntegrationProfilePanel({ profile }: { profile: ProjectsApiTool["profile"] }) {
+  return (
+    <section className="rounded-md border border-[#d8dee7] bg-white p-4 shadow-sm dark:border-border dark:bg-card">
+      <h2 className="text-sm font-semibold text-[#202124] dark:text-foreground">Integration Profile</h2>
+      <div className="mt-3 space-y-2 text-xs">
+        <div className="flex justify-between">
+          <span className="text-[#667085] dark:text-muted-foreground">Type</span>
+          <span className="font-semibold text-[#202124] dark:text-foreground">{profile.tool_type}</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-[#667085] dark:text-muted-foreground">Difficulty</span>
+          <span className="font-semibold text-[#202124] dark:text-foreground">{profile.integration_difficulty}</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-[#667085] dark:text-muted-foreground">Has API</span>
+          <span className="font-semibold text-[#202124] dark:text-foreground">{profile.has_api ? "Yes" : "No"}</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-[#667085] dark:text-muted-foreground">Has CLI</span>
+          <span className="font-semibold text-[#202124] dark:text-foreground">{profile.has_cli ? "Yes" : "No"}</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-[#667085] dark:text-muted-foreground">Python SDK</span>
+          <span className="font-semibold text-[#202124] dark:text-foreground">{profile.has_python_sdk ? "Yes" : "No"}</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-[#667085] dark:text-muted-foreground">Docker</span>
+          <span className="font-semibold text-[#202124] dark:text-foreground">{profile.has_docker ? "Yes" : "No"}</span>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function ComponentsPanel({ components }: { components?: unknown }) {
+  const items = Array.isArray(components) ? components : []
+  return (
+    <section className="rounded-md border border-[#d8dee7] bg-white p-4 shadow-sm dark:border-border dark:bg-card">
+      <h2 className="text-sm font-semibold text-[#202124] dark:text-foreground">Components</h2>
+      <div className="mt-3 space-y-2">
+        {items.length ? (
+          items.map((comp, idx) => {
+            const record = asRecord(comp)
+            return (
+              <div key={idx} className="rounded-md bg-[#f8fafc] p-2 dark:bg-background">
+                <p className="text-xs font-semibold text-[#202124] dark:text-foreground">{textValue(record?.name) || "Unnamed component"}</p>
+                {record?.component_type ? <p className="text-xs text-[#667085] dark:text-muted-foreground">{textValue(record.component_type)}</p> : null}
+                {record?.responsibility ? <p className="mt-1 text-xs text-[#4b5563] dark:text-muted-foreground">{textValue(record.responsibility)}</p> : null}
+              </div>
+            )
+          })
+        ) : (
+          <p className="text-xs text-muted-foreground">No components available</p>
+        )}
+      </div>
+    </section>
+  )
+}
+
+function PatternsPanel({ patterns }: { patterns?: unknown }) {
+  const items = Array.isArray(patterns) ? patterns : []
+  return (
+    <section className="rounded-md border border-[#d8dee7] bg-white p-4 shadow-sm dark:border-border dark:bg-card">
+      <h2 className="text-sm font-semibold text-[#202124] dark:text-foreground">Patterns</h2>
+      <div className="mt-3 space-y-2">
+        {items.length ? (
+          items.map((pat, idx) => {
+            const record = asRecord(pat)
+            return (
+              <div key={idx} className="rounded-md bg-[#f8fafc] p-2 dark:bg-background">
+                <p className="text-xs font-semibold text-[#202124] dark:text-foreground">{textValue(record?.name) || "Unnamed pattern"}</p>
+                {record?.pattern_type ? <p className="text-xs text-[#667085] dark:text-muted-foreground">{textValue(record.pattern_type)}</p> : null}
+                {record?.explanation ? <p className="mt-1 text-xs text-[#4b5563] dark:text-muted-foreground">{textValue(record.explanation)}</p> : null}
+              </div>
+            )
+          })
+        ) : (
+          <p className="text-xs text-muted-foreground">No patterns available</p>
+        )}
+      </div>
+    </section>
+  )
+}
+
+function SectionsPanel({ sections }: { sections?: unknown }) {
+  const items = Array.isArray(sections) ? sections : []
+  return (
+    <section className="rounded-md border border-[#d8dee7] bg-white p-4 shadow-sm dark:border-border dark:bg-card">
+      <h2 className="text-sm font-semibold text-[#202124] dark:text-foreground">Sections</h2>
+      <div className="mt-3 space-y-3">
+        {items.length ? (
+          items.map((sec, idx) => {
+            const record = asRecord(sec)
+            const sectionItems = Array.isArray(record?.items) ? record.items : []
+            return (
+              <div key={idx} className="rounded-md bg-[#f8fafc] p-3 dark:bg-background">
+                <p className="text-xs font-semibold text-[#202124] dark:text-foreground">{textValue(record?.title) || "Untitled section"}</p>
+                {sectionItems.length ? (
+                  <div className="mt-2 space-y-1">
+                    {sectionItems.map((item, i) => (
+                      <p key={i} className="text-xs text-[#4b5563] dark:text-muted-foreground">• {textValue(asRecord(item)?.title) || textValue(item)}</p>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            )
+          })
+        ) : (
+          <p className="text-xs text-muted-foreground">No sections available</p>
+        )}
+      </div>
+    </section>
+  )
+}
+
+function RequirementProfilePanel({ profile }: { profile?: unknown }) {
+  const record = asRecord(profile)
+  if (!record) return null
+  return (
+    <section className="rounded-md border border-[#d8dee7] bg-white p-4 shadow-sm dark:border-border dark:bg-card">
+      <h2 className="text-sm font-semibold text-[#202124] dark:text-foreground">Requirement Profile</h2>
+      <div className="mt-3 space-y-1 text-xs">
+        {Object.entries(record).map(([key, value]) => (
+          <div key={key} className="flex justify-between">
+            <span className="text-[#667085] dark:text-muted-foreground">{key}</span>
+            <span className="font-semibold text-[#202124] dark:text-foreground">{String(value)}</span>
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function GraphPanel({ graph }: { graph?: unknown }) {
+  const record = asRecord(graph)
+  if (!record) return null
+  const nodeCount = Array.isArray(record.nodes) ? record.nodes.length : 0
+  const edgeCount = Array.isArray(record.edges) ? record.edges.length : 0
+  return (
+    <section className="rounded-md border border-[#d8dee7] bg-white p-4 shadow-sm dark:border-border dark:bg-card">
+      <h2 className="text-sm font-semibold text-[#202124] dark:text-foreground">Graph</h2>
+      <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+        <div className="rounded-md bg-[#f8fafc] p-2 dark:bg-background">
+          <p className="text-[#667085] dark:text-muted-foreground">Nodes</p>
+          <p className="font-semibold text-[#202124] dark:text-foreground">{nodeCount}</p>
+        </div>
+        <div className="rounded-md bg-[#f8fafc] p-2 dark:bg-background">
+          <p className="text-[#667085] dark:text-muted-foreground">Edges</p>
+          <p className="font-semibold text-[#202124] dark:text-foreground">{edgeCount}</p>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function QuestionsPanel({ questions }: { questions?: unknown }) {
+  const items = Array.isArray(questions) ? questions : []
+  return (
+    <section className="rounded-md border border-[#d8dee7] bg-white p-4 shadow-sm dark:border-border dark:bg-card">
+      <h2 className="text-sm font-semibold text-[#202124] dark:text-foreground">Questions</h2>
+      <div className="mt-3 space-y-2">
+        {items.length ? (
+          items.map((question, idx) => {
+            const record = asRecord(question)
+            const answeredValue = record?.answered_value
+            return (
+              <div key={idx} className="rounded-md bg-[#f8fafc] p-2 dark:bg-background">
+                <p className="text-xs font-semibold text-[#202124] dark:text-foreground">Q{idx + 1}</p>
+                <p className="mt-1 text-xs text-[#4b5563] dark:text-muted-foreground">{textValue(record?.question)}</p>
+                {answeredValue ? <p className="mt-1 text-xs text-[#667085] dark:text-muted-foreground">Answer: {String(answeredValue)}</p> : null}
+              </div>
+            )
+          })
+        ) : (
+          <p className="text-xs text-muted-foreground">No questions available</p>
+        )}
+      </div>
+    </section>
+  )
+}
+
+function SolutionPanel({ solution }: { solution?: unknown }) {
+  if (!solution) return null
+  const text = typeof solution === "string" ? solution : JSON.stringify(solution, null, 2)
+  return (
+    <section className="rounded-md border border-[#d8dee7] bg-white p-4 shadow-sm dark:border-border dark:bg-card">
+      <h2 className="text-sm font-semibold text-[#202124] dark:text-foreground">Solution</h2>
+      <pre className="mt-3 max-h-96 overflow-auto rounded-md bg-[#111827] p-3 text-xs leading-5 text-white whitespace-pre-wrap break-words">{text}</pre>
+    </section>
+  )
+}
+
+function asRecord(value: unknown): UnknownRecord | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as UnknownRecord : null
+}
+
+function textValue(value: unknown): string {
+  if (typeof value === "string") {
+    return value
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value)
+  }
+  return ""
+}
+
+function displayValue(value: unknown): string | number | undefined {
+  return typeof value === "string" || typeof value === "number" ? value : undefined
+}
+
+function numericValue(value: unknown): number | undefined {
+  return typeof value === "number" ? value : undefined
 }

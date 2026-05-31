@@ -22,7 +22,7 @@ async function json(response: Response) {
 }
 
 function pdfResponse(init?: ResponseInit) {
-  return new Response(new Blob(["%PDF-1.7"], { type: "application/pdf" }), {
+  return new Response(new TextEncoder().encode("%PDF-1.7"), {
     status: 200,
     headers: {
       "content-length": "8",

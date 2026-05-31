@@ -10,7 +10,6 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
-  PROJECT_PRODUCT_SECTIONS,
   addProjectWatchlistItem,
   answerProjectLabQuestion,
   fetchProjectProductSection,
@@ -24,6 +23,7 @@ import { formatScore, labelize } from "@/features/projects/components/project-fo
 import { ProjectProductCard } from "@/features/projects/components/project-product-card"
 import { ProjectDegradedNotice, ProjectEmptyState, ProjectErrorState, ProjectLoadingState, ProjectSourceLine } from "@/features/projects/components/project-product-state"
 import type {
+  ProjectCategoryAlias,
   ProjectProductRoute,
   ProjectProductSection,
   ProjectsApiCaseResult,
@@ -33,6 +33,7 @@ import type {
   ProjectsApiMeta,
   ProjectsApiProject,
   ProjectsApiToolResult,
+  ProjectsApiWatchlistItem,
   ProjectsApiWatchlistResult,
   ProjectsLabSession,
   ProjectsLabSolutionResult,
@@ -41,6 +42,8 @@ import type {
 type ProjectsProductPageProps = {
   route: ProjectProductRoute
 }
+
+type UnknownRecord = Record<string, unknown>
 
 const routeIcons: Record<ProjectProductRoute, ComponentType<{ className?: string }>> = {
   home: GitBranch,
@@ -56,7 +59,7 @@ const routeIcons: Record<ProjectProductRoute, ComponentType<{ className?: string
 export function ProjectsProductPage({ route }: ProjectsProductPageProps) {
   const section = useMemo(() => projectProductSection(route), [route])
   const searchParams = useSearchParams()
-  const urlCategory = searchParams.get("category") ?? undefined
+  const urlCategory = projectCategoryAlias(searchParams?.get("category") ?? null)
   const [query, setQuery] = useState("")
   const queryParams = useMemo(
     () => ({ q: query.trim() || undefined, limit: route === "home" ? 6 : 18, category: urlCategory }),
@@ -83,6 +86,31 @@ export function ProjectsProductPage({ route }: ProjectsProductPageProps) {
       <RouteContent route={route} data={data} onRefresh={() => void refetch()} />
     </main>
   )
+}
+
+function projectCategoryAlias(value: string | null): ProjectCategoryAlias | undefined {
+  if (!value) {
+    return undefined
+  }
+  const aliases: ProjectCategoryAlias[] = [
+    "agent_framework",
+    "rag",
+    "llm_infra",
+    "inference",
+    "evaluation",
+    "coding",
+    "multimodal",
+    "data",
+    "memory",
+    "workflow",
+    "agent",
+    "devtool",
+    "framework",
+    "infra",
+    "llm",
+    "dataset",
+  ]
+  return aliases.includes(value as ProjectCategoryAlias) ? (value as ProjectCategoryAlias) : undefined
 }
 
 function ProjectHero({
@@ -280,7 +308,7 @@ function CasesView({ data }: { data: ProjectsApiCaseResult }) {
     if (q && !`${c.title} ${c.design_summary ?? ""} ${c.problem ?? ""}`.toLowerCase().includes(q.toLowerCase())) return false
     if (domain && c.business_domain !== domain) return false
     if (moduleType && c.module_type !== moduleType) return false
-    if (difficulty && (c as any).difficulty !== difficulty) return false
+    if (difficulty && textValue(c.difficulty) !== difficulty) return false
     return true
   })
 
@@ -315,16 +343,16 @@ function CasesView({ data }: { data: ProjectsApiCaseResult }) {
                 <div className="flex flex-wrap gap-2 mb-2">
                   <Badge variant="info">{labelize(item.module_type)}</Badge>
                   <Badge variant="muted">{labelize(item.business_domain)}</Badge>
-                  {(item as any).difficulty && <Badge variant="muted">{(item as any).difficulty}</Badge>}
-                  {(item as any).migration_level && <Badge variant="muted">reuse: {(item as any).migration_level}</Badge>}
+                  {textValue(item.difficulty) ? <Badge variant="muted">{textValue(item.difficulty)}</Badge> : null}
+                  {textValue(item.migration_level) ? <Badge variant="muted">reuse: {textValue(item.migration_level)}</Badge> : null}
                 </div>
                 <h3 className="text-base font-semibold text-[#202124] dark:text-foreground">{item.title}</h3>
                 <p className="mt-2 line-clamp-3 text-sm leading-6 text-[#4b5563] dark:text-muted-foreground">
                   {String(item.design_summary ?? item.problem ?? "")}
                 </p>
-                {(item as any).suitable_for?.length > 0 && (
+                {stringArray(item.suitable_for).length > 0 && (
                   <p className="mt-2 text-xs text-[#667085] dark:text-muted-foreground">
-                    For: {(item as any).suitable_for.slice(0, 3).join(", ")}
+                    For: {stringArray(item.suitable_for).slice(0, 3).join(", ")}
                   </p>
                 )}
               </article>
@@ -339,13 +367,13 @@ function CasesView({ data }: { data: ProjectsApiCaseResult }) {
 function CollectionsView({ data }: { data: ProjectsApiCollectionResult }) {
   const searchParams = useSearchParams()
   const [q, setQ] = useState("")
-  const [tag, setTag] = useState(searchParams.get("tag") ?? "")
+  const [tag, setTag] = useState(searchParams?.get("tag") ?? "")
 
-  const allTags = Array.from(new Set(data.collections.flatMap((c) => (c as any).tags ?? []).filter(Boolean)))
+  const allTags = Array.from(new Set(data.collections.flatMap((c) => stringArray(c.tags))))
 
   const filtered = data.collections.filter((c) => {
     if (q && !`${c.title} ${c.description}`.toLowerCase().includes(q.toLowerCase())) return false
-    if (tag && !((c as any).tags ?? []).includes(tag)) return false
+    if (tag && !stringArray(c.tags).includes(tag)) return false
     return true
   })
 
@@ -370,17 +398,17 @@ function CollectionsView({ data }: { data: ProjectsApiCollectionResult }) {
             <Link key={item.id} href={`/projects/collections/${encodeURIComponent(item.slug)}`}>
               <article className="h-full rounded-md border border-[#d8dee7] bg-white p-4 shadow-sm transition-colors hover:border-primary/40 dark:border-border dark:bg-card">
                 <div className="flex flex-wrap gap-2 mb-2">
-                  {(item as any).collection_type && <Badge variant="info">{labelize((item as any).collection_type)}</Badge>}
+                  {textValue(item.collection_type) ? <Badge variant="info">{labelize(textValue(item.collection_type))}</Badge> : null}
                   <Badge variant="muted">{item.item_count ?? 0} items</Badge>
-                  {((item as any).tags ?? []).slice(0, 3).map((t: string) => (
+                  {stringArray(item.tags).slice(0, 3).map((t) => (
                     <Badge key={t} variant="muted">{labelize(t)}</Badge>
                   ))}
                 </div>
                 <h3 className="text-base font-semibold text-[#202124] dark:text-foreground">{item.title}</h3>
                 <p className="mt-2 line-clamp-3 text-sm leading-6 text-[#4b5563] dark:text-muted-foreground">{item.description}</p>
-                {(item as any).learning_goals?.length > 0 && (
+                {stringArray(item.learning_goals).length > 0 && (
                   <p className="mt-2 text-xs text-[#667085] dark:text-muted-foreground">
-                    Goals: {(item as any).learning_goals.slice(0, 2).join("; ")}
+                    Goals: {stringArray(item.learning_goals).slice(0, 2).join("; ")}
                   </p>
                 )}
               </article>
@@ -545,7 +573,7 @@ function LabView({ data }: { data: ProductData }) {
               <p className="font-medium text-[#202124] dark:text-foreground">{session.current_stage}</p>
               <p className="mt-1 text-muted-foreground">{session.user_problem}</p>
             </div>
-            <LabGraph graph={(session as any).graph_state} />
+            <LabGraph graph={session.graph_state} />
             {activeQuestion ? (
               <div className="space-y-3">
                 <p className="text-sm font-medium text-[#202124] dark:text-foreground">{activeQuestion.question}</p>
@@ -678,7 +706,9 @@ function uniqueProjects(projects: ProjectsApiProject[]): ProjectsApiProject[] {
 }
 
 function WatchItemCard({ item }: { item: ProjectsApiWatchlistItem }) {
-  const signals: any[] = (item as any).signals ?? []
+  const signals = recordArray(item.signals)
+  const watchTopics = stringArray(item.watch_topics)
+  const lastChangeSummary = textValue(item.last_change_summary)
   const pc = item.priority === "high" ? "text-red-600" : item.priority === "medium" ? "text-amber-600" : "text-[#667085]"
   return (
     <article className="rounded-md border border-[#d8dee7] bg-white p-4 shadow-sm dark:border-border dark:bg-card">
@@ -691,22 +721,22 @@ function WatchItemCard({ item }: { item: ProjectsApiWatchlistItem }) {
       </div>
       <div className="mt-2 flex flex-wrap gap-1">
         <Badge variant={item.status === "active" ? "info" : "muted"}>{item.status}</Badge>
-        {((item as any).watch_topics ?? []).map((t: string) => <Badge key={t} variant="muted">{t}</Badge>)}
+        {watchTopics.map((t) => <Badge key={t} variant="muted">{t}</Badge>)}
       </div>
-      {(item as any).last_change_summary && (
-        <p className="mt-2 text-xs text-[#4b5563] dark:text-muted-foreground">{(item as any).last_change_summary}</p>
-      )}
+      {lastChangeSummary ? (
+        <p className="mt-2 text-xs text-[#4b5563] dark:text-muted-foreground">{lastChangeSummary}</p>
+      ) : null}
       {signals.length > 0 && (
         <div className="mt-3 border-t border-[#e5e7eb] pt-3 dark:border-border">
           <p className="mb-2 text-xs font-semibold text-[#667085]">Signals</p>
           <div className="space-y-2">
-            {signals.map((s: any, i: number) => (
+            {signals.map((signal, i) => (
               <div key={i} className="flex items-start gap-2">
-                <span className={`mt-1 size-2 shrink-0 rounded-full ${s.severity === "high" ? "bg-red-500" : s.severity === "medium" ? "bg-amber-400" : "bg-[#d1d5db]"}`} />
+                <span className={`mt-1 size-2 shrink-0 rounded-full ${signal.severity === "high" ? "bg-red-500" : signal.severity === "medium" ? "bg-amber-400" : "bg-[#d1d5db]"}`} />
                 <div className="min-w-0">
-                  <p className="text-xs font-medium text-[#202124] dark:text-foreground">{s.title}</p>
-                  <p className="text-xs text-[#667085]">{s.summary}</p>
-                  {s.source_url && <a href={s.source_url} target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline">source ↗</a>}
+                  <p className="text-xs font-medium text-[#202124] dark:text-foreground">{textValue(signal.title)}</p>
+                  <p className="text-xs text-[#667085]">{textValue(signal.summary)}</p>
+                  {textValue(signal.source_url) ? <a href={textValue(signal.source_url)} target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline">source ↗</a> : null}
                 </div>
               </div>
             ))}
@@ -722,36 +752,60 @@ const NODE_COLORS: Record<string, string> = {
   question: "#d97706", feedback: "#7c3aed", pattern: "#0891b2", component: "#be185d",
 }
 
-function LabGraph({ graph }: { graph?: any }) {
-  if (!graph?.nodes?.length) return null
-  const nodes: any[] = graph.nodes
-  const edges: any[] = graph.edges ?? []
-  const focused: string[] = graph.focused_node_ids ?? []
+function LabGraph({ graph }: { graph?: unknown }) {
+  const record = asRecord(graph)
+  const nodes = recordArray(record?.nodes)
+  if (!nodes.length) return null
+  const edges = recordArray(record?.edges)
+  const focused = stringArray(record?.focused_node_ids)
   const cx = 200, cy = 120, r = 90
   const pos: Record<string, { x: number; y: number }> = {}
-  nodes.forEach((n: any, i: number) => {
+  nodes.forEach((node, i) => {
     const a = (2 * Math.PI * i) / nodes.length - Math.PI / 2
-    pos[n.id] = { x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) }
+    const id = textValue(node.id)
+    if (id) {
+      pos[id] = { x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) }
+    }
   })
   return (
     <div className="rounded-md border border-[#e5e7eb] bg-[#f8fafc] p-2 dark:border-border dark:bg-background">
       <p className="mb-1 text-xs font-semibold text-[#667085]">Graph — {nodes.length} nodes, {edges.length} edges</p>
       <svg viewBox="0 0 400 240" className="w-full" style={{ maxHeight: 200 }}>
-        {edges.map((e: any, i: number) => {
-          const s = pos[e.source_id], t = pos[e.target_id]
+        {edges.map((edge, i) => {
+          const s = pos[textValue(edge.source_id)]
+          const t = pos[textValue(edge.target_id)]
           return s && t ? <line key={i} x1={s.x} y1={s.y} x2={t.x} y2={t.y} stroke="#d1d5db" strokeWidth={1.5} /> : null
         })}
-        {nodes.map((n: any) => {
-          const p = pos[n.id]; if (!p) return null
-          const color = NODE_COLORS[n.node_type] ?? "#6b7280"
+        {nodes.map((node) => {
+          const id = textValue(node.id)
+          const p = pos[id]; if (!p) return null
+          const color = NODE_COLORS[textValue(node.node_type)] ?? "#6b7280"
           return (
-            <g key={n.id}>
-              <circle cx={p.x} cy={p.y} r={focused.includes(n.id) ? 10 : 7} fill={color} opacity={focused.includes(n.id) ? 1 : 0.7} />
-              <text x={p.x} y={p.y + 18} textAnchor="middle" fontSize={8} fill="#374151">{n.title.slice(0, 14)}</text>
+            <g key={id}>
+              <circle cx={p.x} cy={p.y} r={focused.includes(id) ? 10 : 7} fill={color} opacity={focused.includes(id) ? 1 : 0.7} />
+              <text x={p.x} y={p.y + 18} textAnchor="middle" fontSize={8} fill="#374151">{textValue(node.title).slice(0, 14)}</text>
             </g>
           )
         })}
       </svg>
     </div>
   )
+}
+
+function asRecord(value: unknown): UnknownRecord | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as UnknownRecord : null
+}
+
+function textValue(value: unknown): string {
+  if (typeof value === "string") return value
+  if (typeof value === "number" || typeof value === "boolean") return String(value)
+  return ""
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.map(textValue).filter(Boolean) : []
+}
+
+function recordArray(value: unknown): UnknownRecord[] {
+  return Array.isArray(value) ? value.map(asRecord).filter((item): item is UnknownRecord => Boolean(item)) : []
 }
