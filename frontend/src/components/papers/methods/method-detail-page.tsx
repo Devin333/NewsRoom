@@ -6,7 +6,7 @@ import { RelatedMethodsPanel } from "@/components/papers/methods/related-methods
 import { RelatedTasksPanel } from "@/components/papers/methods/related-tasks-panel"
 import { PapersHero } from "@/components/papers/papers-hero"
 import { PapersMicrobar } from "@/components/papers/papers-microbar"
-import { BenchmarkEvidencePanel } from "@/components/papers/shared/benchmark-evidence-panel"
+import { BenchmarkEvidencePanel, benchmarkPaperMatches } from "@/components/papers/shared/benchmark-evidence-panel"
 import { InlineNotice } from "@/components/papers/shared/inline-notice"
 import { ImplementationList } from "@/components/papers/shared/implementation-list"
 import { PaperDetailDrawer } from "@/components/papers/shared/paper-detail-drawer"
@@ -34,7 +34,10 @@ export function MethodDetailPage({
   const [selectedBenchmark, setSelectedBenchmark] = useState<BenchmarkRef | Benchmark | null>(null)
   const methodPapers = papers?.filter((paper) => paper.isPublished !== false && (paper.methodRefs ?? []).some((methodRef) => methodRef.slug === method.slug)) ?? getPapersForMethod(method.slug)
   const methodBenchmarks = getBenchmarksForMethod(method.slug)
-  const commonBenchmarks = method.commonBenchmarks?.length ? method.commonBenchmarks : methodBenchmarks
+  const commonBenchmarks = evidenceBackedBenchmarks(
+    method.commonBenchmarks?.length ? method.commonBenchmarks : methodBenchmarks,
+    methodPapers
+  )
   const methodStats = deriveMethodDetailStats(methodPapers)
 
   function previewPaper(paper: Paper) {
@@ -127,4 +130,8 @@ function countImplementationsFromPapers(papers: Paper[]) {
     }
   }
   return seen.size
+}
+
+function evidenceBackedBenchmarks(benchmarks: Array<BenchmarkRef | Benchmark>, papers: Paper[]) {
+  return benchmarks.filter((benchmark) => benchmarkPaperMatches(benchmark, papers).length > 0)
 }

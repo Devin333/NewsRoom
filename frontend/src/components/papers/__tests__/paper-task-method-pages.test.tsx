@@ -338,6 +338,14 @@ describe("paper task and method pages", () => {
     expect(screen.queryByText("Paper With Stale Counts")).not.toBeInTheDocument()
   })
 
+  it("hides method common benchmarks without current paper evidence", () => {
+    render(<MethodDetailPage method={methodDetail} locale="en" papers={[]} />)
+
+    expect(screen.getByLabelText(/papers: 0/i)).toBeInTheDocument()
+    expect(screen.queryByText("Common Benchmarks")).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /SWE-bench/i })).not.toBeInTheDocument()
+  })
+
   it("opens benchmark evidence from task detail instead of placeholder copy", () => {
     render(<TaskDetailPage task={taskDetail} locale="en" papers={methodPapers} />)
 
