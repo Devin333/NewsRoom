@@ -298,7 +298,7 @@ function totalCountForPublicResults({
   if (pageResult.total_count === pageResult.papers.length && pagePapers.length !== pageResult.papers.length) {
     return pagePapers.length
   }
-  return pageResult.total_count
+  return Math.max(pageResult.total_count, pagePapers.length)
 }
 
 function parsePeriod(value: string | null): PaperPeriod {

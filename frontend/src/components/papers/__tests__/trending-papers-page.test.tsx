@@ -227,6 +227,30 @@ describe("TrendingPapersPage", () => {
     expect(replace).toHaveBeenCalledWith("/papers?page=2", { scroll: false })
   })
 
+  it("keeps pagination totals at least as large as the current public page", async () => {
+    vi.mocked(fetchPapers)
+      .mockResolvedValueOnce({
+        source: "test",
+        query: "",
+        period: "all",
+        sort: "trending",
+        paper_count: 2,
+        total_count: 0,
+        source_count: 1,
+        limit: 15,
+        offset: 0,
+        papers
+      })
+      .mockRejectedValueOnce(new Error("dashboard offline"))
+
+    render(<TrendingPapersPage locale="en" papers={[]} />)
+
+    expect(await screen.findByText("Agent Paper")).toBeInTheDocument()
+    expect(screen.getByLabelText(/papers: 2/i)).toBeInTheDocument()
+    expect(screen.queryByText(/of 0 papers/i)).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Next page" })).not.toBeInTheDocument()
+  })
+
   it("recovers the visible page from dashboard data when the page request fails", async () => {
     vi.mocked(fetchPapers)
       .mockRejectedValueOnce(new Error("page offline"))
