@@ -3,11 +3,12 @@ import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { PaperReaderPage } from "@/components/papers/shared/paper-reader-page"
-import { askPaper, recordReaderEvent } from "@/lib/papers/api"
+import { askPaper, fetchReaderMaterials, recordReaderEvent } from "@/lib/papers/api"
 import type { PaperReaderPayload } from "@/lib/papers/types"
 
 vi.mock("@/lib/papers/api", () => ({
   askPaper: vi.fn(),
+  fetchReaderMaterials: vi.fn(),
   recordReaderEvent: vi.fn().mockResolvedValue({}),
 }))
 
@@ -129,6 +130,20 @@ describe("PaperReaderPage Open Reader", () => {
     document.documentElement.style.removeProperty("--open-reader-progress")
     Element.prototype.scrollIntoView = function scrollIntoView() {}
     vi.mocked(askPaper).mockReset()
+    vi.mocked(fetchReaderMaterials).mockReset()
+    vi.mocked(fetchReaderMaterials).mockResolvedValue({
+      paperId: "reader-paper",
+      userId: "reader-user",
+      selections: [],
+      events: [],
+      stats: {
+        noteCount: 0,
+        explainedCount: 0,
+        exampledCount: 0,
+        confusedCount: 0,
+        materialCount: 0,
+      },
+    })
     vi.mocked(recordReaderEvent).mockReset()
     vi.mocked(recordReaderEvent).mockResolvedValue({} as Awaited<ReturnType<typeof recordReaderEvent>>)
     vi.mocked(askPaper).mockResolvedValue({
@@ -353,6 +368,92 @@ describe("PaperReaderPage Open Reader", () => {
     fireEvent.click(screen.getByRole("button", { name: /阅读素材/ }))
     expect(await screen.findByText(/Persisted note from the previous reading session/)).toBeInTheDocument()
     setItemSpy.mockRestore()
+  })
+
+  it("merges backend reader materials into the local Open Reader state", async () => {
+    vi.mocked(fetchReaderMaterials).mockResolvedValueOnce({
+      paperId: "reader-paper",
+      userId: "reader-user",
+      selections: [
+        {
+          selectionId: "selection-remote-note",
+          id: "selection-remote-note",
+          userId: "reader-user",
+          paperId: "reader-paper",
+          target: {
+            targetType: "text_selection",
+            sectionId: "reader-paper:abstract",
+            paragraphId: "reader-paper:abstract:p1",
+          },
+          sectionId: "reader-paper:abstract",
+          sectionTitle: "Abstract",
+          paragraphId: "reader-paper:abstract:p1",
+          selectedText: "grounded reader agents",
+          surroundingText: "The paper introduces grounded reader agents that inspect claims before answering.",
+          noteText: "Remote backend note.",
+          explainQuestion: "Why is this important?",
+          exampleQuestion: undefined,
+          explained: true,
+          exampled: false,
+          confused: false,
+          status: "explained",
+          createdAt: "2026-05-24T00:00:00Z",
+          updatedAt: "2026-05-24T00:10:00Z",
+        }
+      ],
+      events: [
+        {
+          eventId: "event-remote-explanation",
+          type: "explanation_generated",
+          eventType: "explanation_generated",
+          userId: "reader-user",
+          paperId: "reader-paper",
+          selectionId: "selection-remote-note",
+          target: {
+            targetType: "text_selection",
+            sectionId: "reader-paper:abstract",
+            paragraphId: "reader-paper:abstract:p1",
+          },
+          sectionId: "reader-paper:abstract",
+          paragraphId: "reader-paper:abstract:p1",
+          selectedText: "grounded reader agents",
+          surroundingText: "The paper introduces grounded reader agents that inspect claims before answering.",
+          payload: {
+            sectionTitle: "Abstract",
+            startOffset: 21,
+            endOffset: 43,
+            question: "Why is this important?",
+            answer: "The reader agent claim explains the paper's evidence-first framing.",
+          },
+          createdAt: "2026-05-24T00:10:00Z",
+        }
+      ],
+      stats: {
+        noteCount: 1,
+        explainedCount: 1,
+        exampledCount: 0,
+        confusedCount: 0,
+        materialCount: 1,
+      },
+    })
+
+    const { container } = render(<PaperReaderPage reader={reader} locale="en" />)
+
+    await waitFor(() => {
+      expect(container.querySelector("[data-selection-id='selection-remote-note']")).not.toBeNull()
+      const selections = JSON.parse(window.localStorage.getItem("newsroom:open-reader:reader-paper:selections") ?? "[]")
+      expect(selections[0]).toMatchObject({
+        id: "selection-remote-note",
+        noteText: "Remote backend note.",
+        explainAnswer: "The reader agent claim explains the paper's evidence-first framing.",
+        startOffset: 21,
+        endOffset: 43,
+      })
+    })
+
+    fireEvent.click(screen.getByRole("button", { name: /阅读素材/ }))
+    expect(await screen.findByText(/Remote backend note/)).toBeInTheDocument()
+    expect(screen.getByText(/The reader agent claim explains the paper's evidence-first framing/)).toBeInTheDocument()
   })
 
   it("drops stale temporary selections from localStorage on load", async () => {

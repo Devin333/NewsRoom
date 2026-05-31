@@ -8,6 +8,19 @@ import type { PaperDocumentResponse } from "@/lib/paper-reader/types"
 import { useUiStore } from "@/stores/ui-store"
 
 vi.mock("@/lib/papers/api", () => ({
+  fetchReaderMaterials: vi.fn().mockResolvedValue({
+    paperId: "visual-paper",
+    userId: "reader-user",
+    selections: [],
+    events: [],
+    stats: {
+      noteCount: 0,
+      explainedCount: 0,
+      exampledCount: 0,
+      confusedCount: 0,
+      materialCount: 0,
+    },
+  }),
   recordReaderEvent: vi.fn().mockResolvedValue({}),
 }))
 

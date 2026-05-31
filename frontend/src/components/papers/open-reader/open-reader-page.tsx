@@ -5,7 +5,7 @@ import Image from "next/image"
 import { ArrowLeft, Eye, X } from "lucide-react"
 import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react"
 import { formatPaperDate, paperTitle } from "@/lib/papers/format"
-import { askPaper, recordReaderEvent } from "@/lib/papers/api"
+import { askPaper, fetchReaderMaterials, recordReaderEvent } from "@/lib/papers/api"
 import type { Locale, PaperReaderAnswer, ReaderEventCreate, ReaderEventType } from "@/lib/papers/types"
 import { paperAssetUrl, paperSourcePreviewUrl } from "@/lib/paper-reader/api"
 import { targetForPaperBlock } from "@/lib/paper-reader/interactions"
@@ -27,7 +27,7 @@ export function OpenReaderPage({ reader, locale, backHref = "/papers", visualLay
   const visualsBySection = useMemo(() => groupVisualsBySection(visualLayer?.blocks ?? []), [visualLayer])
   const references = visualLayer?.references ?? []
   const { settings, patchSettings } = useOpenReaderSettings(paper.id)
-  const { selections, events, createTempSelection, discardAllTemp, updateNote, confirmExplain, confirmExample, toggleConfused } = useOpenReaderSelections(paper.id)
+  const { selections, events, createTempSelection, discardAllTemp, updateNote, confirmExplain, confirmExample, toggleConfused, mergeRemoteMaterials } = useOpenReaderSelections(paper.id)
   const materials = useMemo(() => makeMaterialSummary(paper.id, selections, events), [paper.id, selections, events])
 
   const contentRef = useRef<HTMLElement | null>(null)
@@ -50,6 +50,16 @@ export function OpenReaderPage({ reader, locale, backHref = "/papers", visualLay
   const menuSelection = menu ? selections.find((item) => item.id === menu.selectionId) : undefined
   const noteSelection = note ? selections.find((item) => item.id === note.selectionId) : undefined
   const drawerSelection = drawer?.selectionId ? selections.find((item) => item.id === drawer.selectionId) : undefined
+
+  useEffect(() => {
+    let cancelled = false
+    void fetchReaderMaterials(paper.id)
+      .then((remoteMaterials) => {
+        if (!cancelled) mergeRemoteMaterials(remoteMaterials)
+      })
+      .catch(() => undefined)
+    return () => { cancelled = true }
+  }, [mergeRemoteMaterials, paper.id])
 
   useEffect(() => {
     function onClick(event: MouseEvent) {
@@ -303,6 +313,8 @@ function buildReaderSelectionEvent(
     surroundingText: selection.surroundingText,
     payload: {
       sectionTitle: selection.sectionTitle,
+      startOffset: selection.startOffset,
+      endOffset: selection.endOffset,
       ...payload,
     },
   }

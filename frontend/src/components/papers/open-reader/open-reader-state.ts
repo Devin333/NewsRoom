@@ -1,7 +1,8 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useReducer, useState } from "react"
-import type { ReaderEvent, ReaderSelection, ReaderSettings, ReaderTheme, ReaderParagraph } from "./open-reader-types"
+import type { ReaderEvent as BackendReaderEvent, ReaderMaterialSummary as BackendReaderMaterialSummary, ReaderSelection as BackendReaderSelection } from "@/lib/papers/types"
+import type { ReaderEvent, ReaderEventType, ReaderSelection, ReaderSettings, ReaderTheme, ReaderParagraph } from "./open-reader-types"
 import { clamp, createId, createReaderEvent, DEFAULT_READER_SETTINGS, getSurroundingText, nowIso, READER_SETTINGS_LAYOUT_VERSION, safeJsonParse, shouldKeepSelection, storageKey } from "./open-reader-utils"
 
 interface SelectionState {
@@ -18,6 +19,7 @@ type SelectionAction =
   | { type: "confirm_explain"; selectionId: string; question: string; answer: string }
   | { type: "confirm_example"; selectionId: string; question: string; answer: string }
   | { type: "toggle_confused"; selectionId: string }
+  | { type: "merge_remote"; state: SelectionState }
 
 const EMPTY_STATE: SelectionState = { selections: [], events: [] }
 
@@ -130,6 +132,7 @@ export function useOpenReaderSelections(paperId: string) {
   const confirmExplain = useCallback((selectionId: string, question: string, answer: string) => dispatch({ type: "confirm_explain", selectionId, question, answer }), [])
   const confirmExample = useCallback((selectionId: string, question: string, answer: string) => dispatch({ type: "confirm_example", selectionId, question, answer }), [])
   const toggleConfused = useCallback((selectionId: string) => dispatch({ type: "toggle_confused", selectionId }), [])
+  const mergeRemoteMaterials = useCallback((materials: BackendReaderMaterialSummary) => dispatch({ type: "merge_remote", state: backendMaterialsToSelectionState(materials) }), [])
 
   return {
     selections: state.selections,
@@ -141,7 +144,106 @@ export function useOpenReaderSelections(paperId: string) {
     confirmExplain,
     confirmExample,
     toggleConfused,
+    mergeRemoteMaterials,
   }
+}
+
+function backendMaterialsToSelectionState(materials: BackendReaderMaterialSummary): SelectionState {
+  const events = materials.events.map(toLocalReaderEvent).filter(isReaderEvent)
+  return normalizeLoadedSelectionState(
+    materials.paperId,
+    materials.selections.map((selection) => toLocalReaderSelection(selection, materials.events)),
+    events,
+  )
+}
+
+function toLocalReaderSelection(selection: BackendReaderSelection, events: BackendReaderEvent[]): ReaderSelection {
+  const relatedEvents = events.filter((event) => event.selectionId === selection.selectionId)
+  const explanation = lastEventPayload(relatedEvents, "explanation_generated")
+  const example = lastEventPayload(relatedEvents, "example_generated")
+  const placement = lastEventPayload(relatedEvents, "selection_created")
+    ?? lastEventPayload(relatedEvents, "note_updated")
+    ?? explanation
+    ?? example
+  const fallbackSectionTitle = payloadString(lastEventPayload(relatedEvents, "selection_created"), "sectionTitle")
+    ?? payloadString(lastEventPayload(relatedEvents, "note_updated"), "sectionTitle")
+    ?? selection.sectionTitle
+    ?? selection.sectionId
+    ?? "Selection"
+  return {
+    id: selection.selectionId,
+    paperId: selection.paperId,
+    sectionId: selection.sectionId ?? selection.target.sectionId ?? "",
+    sectionTitle: fallbackSectionTitle,
+    paragraphId: selection.paragraphId ?? selection.target.paragraphId ?? "",
+    blockId: selection.target.blockId,
+    pageNumber: selection.target.pageNumber,
+    selectedText: selection.selectedText,
+    surroundingText: selection.surroundingText,
+    startOffset: payloadNumber(placement, "startOffset") ?? 0,
+    endOffset: payloadNumber(placement, "endOffset") ?? selection.selectedText.length,
+    noteText: selection.noteText ?? "",
+    explainQuestion: selection.explainQuestion ?? payloadString(explanation, "question") ?? payloadString(explanation, "explainQuestion") ?? "",
+    explainAnswer: payloadString(explanation, "answer") ?? "",
+    exampleQuestion: selection.exampleQuestion ?? payloadString(example, "question") ?? payloadString(example, "exampleQuestion") ?? "",
+    exampleAnswer: payloadString(example, "answer") ?? payloadString(example, "example") ?? "",
+    explained: selection.explained,
+    exampled: selection.exampled,
+    confused: selection.confused,
+    createdAt: selection.createdAt,
+    updatedAt: selection.updatedAt,
+  }
+}
+
+function toLocalReaderEvent(event: BackendReaderEvent): ReaderEvent | null {
+  if (!isLocalReaderEventType(event.type)) return null
+  return {
+    id: event.eventId,
+    type: event.type,
+    paperId: event.paperId,
+    selectionId: event.selectionId,
+    paragraphId: event.paragraphId,
+    blockId: event.target?.blockId,
+    sectionId: event.sectionId,
+    pageNumber: event.target?.pageNumber,
+    selectedText: event.selectedText,
+    surroundingText: event.surroundingText,
+    payload: event.payload,
+    createdAt: event.createdAt,
+  }
+}
+
+function lastEventPayload(events: BackendReaderEvent[], type: BackendReaderEvent["type"]) {
+  return events.filter((event) => event.type === type).at(-1)?.payload
+}
+
+function payloadString(payload: Record<string, unknown> | undefined, key: string) {
+  const value = payload?.[key]
+  return typeof value === "string" ? value : undefined
+}
+
+function payloadNumber(payload: Record<string, unknown> | undefined, key: string) {
+  const value = payload?.[key]
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined
+}
+
+function isLocalReaderEventType(type: string): type is ReaderEventType {
+  return [
+    "selection_created",
+    "selection_discarded",
+    "note_updated",
+    "explanation_generated",
+    "example_generated",
+    "confusion_marked",
+    "confusion_unmarked",
+    "reader_settings_changed",
+    "drawer_resized",
+    "toc_navigated",
+  ].includes(type)
+}
+
+function isReaderEvent(event: ReaderEvent | null): event is ReaderEvent {
+  return event !== null
 }
 
 function normalizeLoadedSelectionState(paperId: string, selections: unknown[], events: unknown[]): SelectionState {
@@ -194,6 +296,9 @@ function selectionReducer(state: SelectionState, action: SelectionAction): Selec
   switch (action.type) {
     case "load":
       return action.state
+
+    case "merge_remote":
+      return mergeSelectionStates(state, action.state)
 
     case "create_temp":
       return {
@@ -319,6 +424,19 @@ function selectionReducer(state: SelectionState, action: SelectionAction): Selec
 
     default:
       return state
+  }
+}
+
+function mergeSelectionStates(local: SelectionState, remote: SelectionState): SelectionState {
+  const selections = new Map<string, ReaderSelection>()
+  for (const selection of remote.selections) selections.set(selection.id, selection)
+  for (const selection of local.selections) selections.set(selection.id, selection)
+  const events = new Map<string, ReaderEvent>()
+  for (const event of remote.events) events.set(event.id, event)
+  for (const event of local.events) events.set(event.id, event)
+  return {
+    selections: Array.from(selections.values()),
+    events: Array.from(events.values()),
   }
 }
 
