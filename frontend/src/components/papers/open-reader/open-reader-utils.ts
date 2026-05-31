@@ -276,19 +276,3 @@ export function makeMaterialSummary(paperId: string, selections: ReaderSelection
     },
   }
 }
-
-export function mockExplain(selection: ReaderSelection, question: string, locale: Locale) {
-  if (locale === "zh") {
-    const prefix = question.trim() ? `你补充的疑问是：“${question.trim()}”。` : "你没有补充具体疑问，所以系统使用默认解释。"
-    return `${prefix}这段位于「${selection.sectionTitle}」。结合上下文看，它主要是在说明一个论文主张、方法步骤、实验结论或限制条件。当前上下文是：${selection.surroundingText}`
-  }
-  return `This selection appears in ${selection.sectionTitle}. In context, it likely states a claim, method step, experimental finding, or limitation. Context: ${selection.surroundingText}`
-}
-
-export function mockExample(selection: ReaderSelection, question: string, locale: Locale) {
-  if (locale === "zh") {
-    const prefix = question.trim() ? `你补充的举例需求是：“${question.trim()}”。` : "你没有指定例子类型，所以系统使用默认类比。"
-    return `${prefix}可以把它想象成：一个学生读论文时，不能只凭印象说“这篇论文很强”，而要指出“作者声称 X”，再找到实验表格、方法段落或引用来证明 X。如果找不到证据，这个结论就应该暂时标记为不确定。`
-  }
-  return `Imagine a reader who cannot just say “this paper is strong”; they must state “the authors claim X” and find a table, method paragraph, or citation that supports X.`
-}

@@ -5,13 +5,13 @@ import Image from "next/image"
 import { ArrowLeft, Eye, X } from "lucide-react"
 import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react"
 import { formatPaperDate, paperTitle } from "@/lib/papers/format"
-import { recordReaderEvent } from "@/lib/papers/api"
-import type { Locale } from "@/lib/papers/types"
+import { askPaper, recordReaderEvent } from "@/lib/papers/api"
+import type { Locale, PaperReaderAnswer } from "@/lib/papers/types"
 import { paperAssetUrl, paperSourcePreviewUrl } from "@/lib/paper-reader/api"
 import { targetForPaperBlock } from "@/lib/paper-reader/interactions"
 import type { PaperInlineSpan, PaperReference, PaperSourceRegion } from "@/lib/paper-reader/types"
-import type { DrawerState, NotePopoverState, OpenReaderPageProps, OpenReaderVisualBlock, ReaderParagraph, ReaderSelection, ReaderSettings, ReaderTocItem, SelectionMenuState } from "./open-reader-types"
-import { buildReaderParagraphs, buildReaderToc, clamp, getSelectionOffsetsWithinElement, getSelectionStatus, makeMaterialSummary, mockExample, mockExplain, safeJsonParse, storageKey } from "./open-reader-utils"
+import type { DrawerState, NotePopoverState, OpenReaderPageProps, OpenReaderVisualBlock, ReaderAssistMode, ReaderParagraph, ReaderSelection, ReaderSettings, ReaderTocItem, SelectionMenuState } from "./open-reader-types"
+import { buildReaderParagraphs, buildReaderToc, clamp, getSelectionOffsetsWithinElement, getSelectionStatus, makeMaterialSummary, safeJsonParse, storageKey } from "./open-reader-utils"
 import { useOpenReaderSelections, useOpenReaderSettings } from "./open-reader-state"
 import { EquationRenderer, InlineMathRenderer } from "./equation-renderer"
 import styles from "./open-reader.module.css"
@@ -842,11 +842,17 @@ function ReaderNotePopover({ selection, x, y, onChange }: { selection: ReaderSel
   )
 }
 
+type AssistAnswerState =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "ready"; answer: PaperReaderAnswer }
+  | { status: "error"; message: string }
+
 function ReaderAssistDrawer({ drawer, selection, materialSummary, locale, drawerWidth, onWidthChange, onClose, onConfirmExplain, onConfirmExample }: { drawer: DrawerState; selection?: ReaderSelection; materialSummary: ReturnType<typeof makeMaterialSummary>; locale: Locale; drawerWidth: number; onWidthChange: (width: number) => void; onClose: () => void; onConfirmExplain: (id: string, question: string) => void; onConfirmExample: (id: string, question: string) => void }) {
   const [question, setQuestion] = useState("")
-  const [generated, setGenerated] = useState("")
+  const [answerState, setAnswerState] = useState<AssistAnswerState>({ status: "idle" })
   const resizingRef = useRef(false)
-  useEffect(() => { setQuestion(""); setGenerated("") }, [drawer.mode, drawer.selectionId])
+  useEffect(() => { setQuestion(""); setAnswerState({ status: "idle" }) }, [drawer.mode, drawer.selectionId])
   useEffect(() => {
     function onMove(event: MouseEvent) { if (!resizingRef.current) return; onWidthChange(Math.max(360, Math.min(Math.min(window.innerWidth - 80, 920), window.innerWidth - event.clientX - 22))) }
     function onUp() { resizingRef.current = false; document.body.classList.remove(styles.drawerResizingBody) }
@@ -854,11 +860,23 @@ function ReaderAssistDrawer({ drawer, selection, materialSummary, locale, drawer
     return () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp) }
   }, [onWidthChange])
   const title = drawer.mode === "materials" ? "阅读素材汇总" : drawer.mode === "example" ? "举例说明" : "解释选中内容"
-  function confirm(useDefault: boolean) {
+  async function confirm(useDefault: boolean) {
     if (!selection) return
     const q = useDefault ? "" : question.trim()
-    if (drawer.mode === "explain") { onConfirmExplain(selection.id, q); setGenerated(mockExplain(selection, q, locale)) }
-    if (drawer.mode === "example") { onConfirmExample(selection.id, q); setGenerated(mockExample(selection, q, locale)) }
+    const mode = drawer.mode
+    if (mode !== "explain" && mode !== "example") return
+    setAnswerState({ status: "loading" })
+    try {
+      const answer = await askPaper(selection.paperId, buildAssistQuestion(selection, q, mode, locale), locale)
+      if (mode === "explain") onConfirmExplain(selection.id, q)
+      if (mode === "example") onConfirmExample(selection.id, q)
+      setAnswerState({ status: "ready", answer })
+    } catch (error) {
+      setAnswerState({
+        status: "error",
+        message: error instanceof Error && error.message ? error.message : "Reader assistant is temporarily unavailable.",
+      })
+    }
   }
   return (
     <aside className={styles.assistDrawer} style={{ width: `min(${drawerWidth}px, calc(100vw - 44px))` }} data-open-reader-keep-open>
@@ -866,11 +884,52 @@ function ReaderAssistDrawer({ drawer, selection, materialSummary, locale, drawer
       <div className={styles.drawerHead}><strong>{title}</strong><button type="button" className={styles.drawerClose} onClick={onClose}>关闭</button></div>
       <div className={styles.drawerBody}>{drawer.mode === "materials" ? <MaterialSummary summary={materialSummary} /> : selection ? <>
         <div className={styles.drawerCard}><h3>选中内容</h3><p>{selection.selectedText}</p></div>
-        <div className={styles.drawerCard}><h3>{drawer.mode === "example" ? "你想要哪种例子？" : "你具体不懂哪里？"}</h3><textarea value={question} placeholder={drawer.mode === "example" ? "可选：比如“用工程实现举例”。不填则使用默认例子。" : "可选：比如“这句话和上一句有什么关系？” 不填则使用默认解释。"} onChange={(event) => setQuestion(event.target.value)} /><div className={styles.drawerActions}><button className={`${styles.smallButton} ${styles.primaryButton}`} onClick={() => confirm(false)}>{drawer.mode === "example" ? "生成例子" : "生成解释"}</button><button className={styles.smallButton} onClick={() => confirm(true)}>使用默认</button></div><div className={styles.actionHint}>只有点击生成或使用默认后，才会保留高亮并记录到阅读素材。</div></div>
-        <div className={styles.drawerCard}><h3>{generated ? (drawer.mode === "example" ? "举例说明" : "解释") : "等待生成"}</h3><p>{generated || "你可以补充自己的疑问，也可以直接使用默认。未生成前，这次选择不会被保留为高亮。"}</p></div>
+        <div className={styles.drawerCard}><h3>{drawer.mode === "example" ? "你想要哪种例子？" : "你具体不懂哪里？"}</h3><textarea value={question} placeholder={drawer.mode === "example" ? "可选：比如“用工程实现举例”。不填则基于选中内容生成例子。" : "可选：比如“这句话和上一句有什么关系？” 不填则基于选中内容解释。"} onChange={(event) => setQuestion(event.target.value)} /><div className={styles.drawerActions}><button className={`${styles.smallButton} ${styles.primaryButton}`} disabled={answerState.status === "loading"} onClick={() => void confirm(false)}>{answerState.status === "loading" ? "生成中" : drawer.mode === "example" ? "生成例子" : "生成解释"}</button><button className={styles.smallButton} disabled={answerState.status === "loading"} onClick={() => void confirm(true)}>使用选中内容</button></div><div className={styles.actionHint}>生成成功后才会保留高亮并记录到阅读素材；失败不会留下伪答案。</div></div>
+        <AssistAnswerCard state={answerState} mode={drawer.mode} />
       </> : null}</div>
     </aside>
   )
+}
+
+function buildAssistQuestion(selection: ReaderSelection, question: string, mode: "explain" | "example", locale: Locale) {
+  const intent = mode === "example"
+    ? locale === "zh" ? "请基于论文公开 section，为选中内容给出一个贴近论文语境的例子。" : "Use the public paper sections to give a concrete example for the selected passage."
+    : locale === "zh" ? "请基于论文公开 section，解释选中内容在论文中的含义。" : "Use the public paper sections to explain what the selected passage means in this paper."
+  const userQuestion = question.trim()
+  return [
+    intent,
+    `Section: ${selection.sectionTitle}`,
+    `Selected text: ${selection.selectedText}`,
+    `Local context: ${selection.surroundingText}`,
+    userQuestion ? `Reader question: ${userQuestion}` : null,
+  ].filter(Boolean).join("\n")
+}
+
+function AssistAnswerCard({ state, mode }: { state: AssistAnswerState; mode: ReaderAssistMode }) {
+  const heading = mode === "example" ? "举例说明" : "解释"
+  if (state.status === "loading") {
+    return <div className={styles.drawerCard}><h3>正在生成</h3><p>正在调用论文问答接口，并基于当前论文公开 section 生成回答。</p></div>
+  }
+  if (state.status === "error") {
+    return <div className={styles.drawerCard}><h3>生成失败</h3><p>{state.message}</p></div>
+  }
+  if (state.status === "ready") {
+    return (
+      <div className={styles.drawerCard}>
+        <h3>{heading}</h3>
+        <p>{state.answer.answer}</p>
+        {state.answer.citations.length ? (
+          <ul>
+            {state.answer.citations.map((citation) => (
+              <li key={citation.id}>{citation.label}{citation.textExcerpt ? `: ${citation.textExcerpt}` : ""}</li>
+            ))}
+          </ul>
+        ) : null}
+        <p className={styles.actionHint}>置信度：{Math.round(state.answer.confidence * 100)}%{state.answer.cached ? " / 缓存结果" : ""}</p>
+      </div>
+    )
+  }
+  return <div className={styles.drawerCard}><h3>等待生成</h3><p>你可以补充自己的疑问，也可以直接使用选中内容。未生成前，这次选择不会被保留为高亮。</p></div>
 }
 
 function MaterialSummary({ summary }: { summary: ReturnType<typeof makeMaterialSummary> }) {

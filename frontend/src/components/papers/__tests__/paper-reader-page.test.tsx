@@ -1,9 +1,15 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { beforeEach, describe, expect, it } from "vitest"
+import { beforeEach, describe, expect, it, vi } from "vitest"
 import { PaperReaderPage } from "@/components/papers/shared/paper-reader-page"
+import { askPaper } from "@/lib/papers/api"
 import type { PaperReaderPayload } from "@/lib/papers/types"
+
+vi.mock("@/lib/papers/api", () => ({
+  askPaper: vi.fn(),
+  recordReaderEvent: vi.fn().mockResolvedValue({}),
+}))
 
 const reader: PaperReaderPayload = {
   paper: {
@@ -122,6 +128,25 @@ describe("PaperReaderPage Open Reader", () => {
     window.localStorage.clear()
     document.documentElement.style.removeProperty("--open-reader-progress")
     Element.prototype.scrollIntoView = function scrollIntoView() {}
+    vi.mocked(askPaper).mockReset()
+    vi.mocked(askPaper).mockResolvedValue({
+      paperId: "reader-paper",
+      locale: "en",
+      question: "generated question",
+      answer: "The reader agent checks the selected claim against public paper sections.",
+      citations: [
+        {
+          id: "section-reader-paper-abstract",
+          label: "Abstract",
+          sourceType: "section",
+          sectionId: "reader-paper:abstract",
+          textExcerpt: "The verifier checks claims against evidence.",
+        },
+      ],
+      confidence: 0.82,
+      generatedAt: "2026-05-24T00:00:00Z",
+      cached: false,
+    })
   })
 
   it("renders the quiet Open Reader instead of the old PDF and assistant panels", () => {
@@ -322,7 +347,11 @@ describe("PaperReaderPage Open Reader", () => {
     selectParagraphText(container, "verifier checks claims")
     fireEvent.mouseUp(container.querySelector("[data-paragraph-id]")!)
     fireEvent.click(await screen.findByRole("button", { name: "解释选中内容" }))
-    fireEvent.click(await screen.findByRole("button", { name: "使用默认" }))
+    fireEvent.click(await screen.findByRole("button", { name: "使用选中内容" }))
+
+    expect(await screen.findByText("The reader agent checks the selected claim against public paper sections.")).toBeInTheDocument()
+    expect(screen.getByText(/Abstract: The verifier checks claims against evidence/)).toBeInTheDocument()
+    expect(vi.mocked(askPaper).mock.calls[0][1]).toContain("Selected text: verifier checks claims")
 
     await waitFor(() => {
       expect(container.querySelector("[data-selection-id]")).not.toBeNull()
@@ -340,6 +369,9 @@ describe("PaperReaderPage Open Reader", () => {
     fireEvent.change(await screen.findByPlaceholderText(/用工程实现举例/), { target: { value: "Use an engineering example." } })
     fireEvent.click(await screen.findByRole("button", { name: "生成例子" }))
 
+    expect(await screen.findByText("The reader agent checks the selected claim against public paper sections.")).toBeInTheDocument()
+    expect(vi.mocked(askPaper).mock.calls[0][1]).toContain("Reader question: Use an engineering example.")
+
     await waitFor(() => {
       expect(container.querySelector("[data-selection-id]")).not.toBeNull()
       const selections = JSON.parse(window.localStorage.getItem("newsroom:open-reader:reader-paper:selections") ?? "[]")
@@ -348,6 +380,24 @@ describe("PaperReaderPage Open Reader", () => {
         exampleQuestion: "Use an engineering example.",
         selectedText: "long-horizon reading",
       })
+    })
+  })
+
+  it("does not keep a highlight when generated explanation fails", async () => {
+    vi.mocked(askPaper).mockRejectedValueOnce(new Error("reader backend unavailable"))
+    const { container } = render(<PaperReaderPage reader={reader} locale="en" />)
+
+    selectParagraphText(container, "verifier checks claims")
+    fireEvent.mouseUp(container.querySelector("[data-paragraph-id]")!)
+    fireEvent.click(await screen.findByRole("button", { name: "解释选中内容" }))
+    fireEvent.click(await screen.findByRole("button", { name: "使用选中内容" }))
+
+    expect(await screen.findByText("reader backend unavailable")).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole("button", { name: "关闭" }))
+    await waitFor(() => {
+      expect(container.querySelector("[data-selection-id]")).toBeNull()
+      expect(JSON.parse(window.localStorage.getItem("newsroom:open-reader:reader-paper:selections") ?? "[]")).toEqual([])
     })
   })
 
