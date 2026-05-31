@@ -68,12 +68,17 @@ export function deriveMethodsFromPapers(seedMethods: PaperMethod[], papers: Pape
 
 function latestPaperIds(papers: Paper[]) {
   return [...papers]
-    .sort((left, right) => new Date(right.publishedAt).getTime() - new Date(left.publishedAt).getTime())
+    .sort((left, right) => paperTime(right) - paperTime(left) || left.id.localeCompare(right.id))
     .map((paper) => paper.id)
 }
 
 function publishedPapers(papers: Paper[]) {
   return papers.filter((paper) => paper.isPublished !== false)
+}
+
+function paperTime(paper: Paper) {
+  const time = new Date(paper.publishedAt).getTime()
+  return Number.isFinite(time) ? time : 0
 }
 
 function addRepositoryKey(keys: Set<string>, value?: string) {
