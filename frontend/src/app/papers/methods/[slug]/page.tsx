@@ -21,7 +21,7 @@ export default async function PapersMethodDetailPageRoute({ params }: { params: 
     <MethodDetailPageClient
       method={method}
       papers={await getPublishedPapers()}
-      fallbackNotice={result.source === "backend" ? null : result.notices[0] ?? null}
+      fallbackNotice={result.notices[0] ?? null}
     />
   )
 }

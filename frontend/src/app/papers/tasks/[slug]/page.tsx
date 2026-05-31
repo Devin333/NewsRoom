@@ -21,7 +21,7 @@ export default async function PapersTaskDetailPageRoute({ params }: { params: { 
     <TaskDetailPageClient
       task={task}
       papers={await getPublishedPapers()}
-      fallbackNotice={result.source === "backend" ? null : result.notices[0] ?? null}
+      fallbackNotice={result.notices[0] ?? null}
     />
   )
 }
