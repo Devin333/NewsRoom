@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, within } from "@testing-library/react"
-import { describe, expect, it, vi } from "vitest"
+import { beforeEach, describe, expect, it, vi } from "vitest"
 import { PaperDocumentReaderPage } from "@/components/papers/paper-reader"
 import { PaperDocumentReaderPageClient } from "@/app/papers/[slug]/read/paper-document-reader-page-client"
 import { targetForPaperBlock } from "@/lib/paper-reader/interactions"
@@ -20,6 +20,10 @@ vi.mock("@/lib/paper-reader/api", async (importOriginal) => {
 })
 
 describe("PaperDocumentReaderPage", () => {
+  beforeEach(() => {
+    vi.mocked(triggerPaperCompile).mockReset()
+  })
+
   it("uses the current UI locale when rendered from the read route client", () => {
     useUiStore.setState({ locale: "en" })
 
@@ -116,6 +120,25 @@ describe("PaperDocumentReaderPage", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("compile service unavailable")
     expect(screen.getAllByText("needs_review").length).toBeGreaterThan(0)
     expect(screen.queryByText(/Compile task queued/)).not.toBeInTheDocument()
+  })
+
+  it("does not allow duplicate compile requests while the backend status is already queued", () => {
+    render(
+      <PaperDocumentReaderPage
+        payload={{
+          ...needsReviewPayload,
+          status: {
+            ...needsReviewPayload.status,
+            status: "queued",
+          },
+        }}
+        locale="en"
+      />,
+    )
+
+    expect(screen.getByRole("button", { name: "Compile" })).toBeDisabled()
+    expect(screen.getByRole("button", { name: "Recompile" })).toBeDisabled()
+    expect(triggerPaperCompile).not.toHaveBeenCalled()
   })
 
   it("opens source preview from visual blocks with source coordinates", () => {

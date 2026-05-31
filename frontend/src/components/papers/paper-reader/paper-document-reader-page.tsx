@@ -91,7 +91,8 @@ function StatusGate({
   onRecompile: () => void
   pending: boolean
 }) {
-  const actionsDisabled = pending || Boolean(queued)
+  const compileInProgress = queued || status === "queued" || status === "compiling"
+  const actionsDisabled = pending || Boolean(compileInProgress)
   return (
     <section className={styles.statusGate}>
       <div className={styles.statusIcon}><AlertTriangle size={22} aria-hidden="true" /></div>
