@@ -37,6 +37,15 @@ describe("PapersDomainSidebar", () => {
   it("ignores unpublished papers when counting tasks", () => {
     expect(countPapersForTask(papers, "agents")).toBe(2)
   })
+
+  it("keeps legacy public papers when the publish flag is absent", () => {
+    const legacyPaper = {
+      ...paper("legacy", [agents]),
+      isPublished: undefined as unknown as boolean
+    }
+
+    expect(countPapersForTask([legacyPaper], "agents")).toBe(1)
+  })
 })
 
 function paper(id: string, taskRefs: TaskRef[], isPublished = true): Paper {

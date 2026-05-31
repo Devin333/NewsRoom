@@ -96,11 +96,13 @@ export function TrendingPapersPage({ locale, papers }: { locale: Locale; papers:
         }
 
         const fallbackPapers = dashboardResult ? [] : fallbackPaperQuery(papers, { query, period, sort })
-        const nextDashboardPapers = dashboardResult?.papers ?? fallbackPapers
+        const pagePapers = pageResult ? publicPapers(pageResult.papers) : null
+        const dashboardResultPapers = dashboardResult ? publicPapers(dashboardResult.papers) : null
+        const nextDashboardPapers = dashboardResultPapers ?? fallbackPapers
         const nextVisiblePapers =
-          pageResult?.papers ??
+          pagePapers ??
           nextDashboardPapers.slice(pageOffset, pageOffset + PAPER_PAGE_SIZE)
-        const nextTotalCount = pageResult?.total_count ?? dashboardResult?.total_count ?? nextDashboardPapers.length
+        const nextTotalCount = dashboardResultPapers?.length ?? pagePapers?.length ?? nextDashboardPapers.length
         const nextNotices = [
           ...(pageResult?.notices ?? []),
           ...(dashboardResult?.notices ?? []),

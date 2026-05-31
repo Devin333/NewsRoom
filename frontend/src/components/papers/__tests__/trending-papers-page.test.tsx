@@ -135,6 +135,35 @@ describe("TrendingPapersPage", () => {
     expect(screen.getByLabelText(/papers: 2/i)).toBeInTheDocument()
   })
 
+  it("filters unpublished papers returned by list and dashboard requests", async () => {
+    const draftPaper: Paper = {
+      ...papers[0],
+      id: "paper-draft",
+      slug: "paper-draft",
+      title: "Draft Paper",
+      isPublished: false
+    }
+    vi.mocked(fetchPapers).mockResolvedValue({
+      source: "test",
+      query: "",
+      period: "all",
+      sort: "trending",
+      paper_count: 2,
+      total_count: 2,
+      source_count: 1,
+      limit: 5000,
+      offset: 0,
+      papers: [papers[0], draftPaper]
+    })
+
+    render(<TrendingPapersPage locale="en" papers={[]} />)
+
+    expect(await screen.findByText("Agent Paper")).toBeInTheDocument()
+    expect(screen.queryByText("Draft Paper")).not.toBeInTheDocument()
+    expect(screen.getByLabelText(/papers: 1/i)).toBeInTheDocument()
+    expect(screen.getByRole("link", { name: /Agents\s*1/i })).toBeInTheDocument()
+  })
+
   it("keeps the backend page when the dashboard request fails", async () => {
     vi.mocked(fetchPapers)
       .mockResolvedValueOnce({

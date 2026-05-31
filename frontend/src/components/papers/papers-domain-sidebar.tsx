@@ -102,6 +102,6 @@ function SidebarSection({
 
 export function countPapersForTask(papers: Paper[], taskSlug: string) {
   return papers.filter(
-    (paper) => paper.isPublished && (paper.taskRefs ?? []).some((taskRef) => taskRef.slug === taskSlug)
+    (paper) => paper.isPublished !== false && (paper.taskRefs ?? []).some((taskRef) => taskRef.slug === taskSlug)
   ).length
 }
