@@ -18,6 +18,7 @@ import {
   paperTitle,
   taskName
 } from "@/lib/papers/format"
+import { papersRoutes } from "@/lib/papers/routes"
 import type { Locale, Paper, PaperAISummary, PaperBenchmarkResult, PaperSourceRef } from "@/lib/papers/types"
 import { cn } from "@/lib/utils"
 
@@ -278,7 +279,7 @@ export function PaperDetailDrawer({
               </Button>
             ) : null}
             <Button asChild className="rounded-md">
-              <Link href={`/papers/${encodeURIComponent(activePaper.slug || activePaper.id)}/read`}>
+              <Link href={papersRoutes.reader(activePaper.slug || activePaper.id)}>
                 <BookOpen className="size-4" />
                 {translate(locale, "papers.reader.openReader")}
               </Link>
@@ -336,7 +337,7 @@ export function PaperDetailDrawer({
             <TaxonomyLinks
               items={tasks.map((task) => ({
                 id: task.id,
-                href: `/papers/tasks/${encodeURIComponent(task.slug)}`,
+                href: papersRoutes.taskDetail(task.slug),
                 label: taskName(task, locale),
                 variant: "task" as const,
               }))}
@@ -348,7 +349,7 @@ export function PaperDetailDrawer({
             <TaxonomyLinks
               items={methods.map((method) => ({
                 id: method.id,
-                href: `/papers/methods/${encodeURIComponent(method.slug)}`,
+                href: papersRoutes.methodDetail(method.slug),
                 label: methodName(method, locale),
                 variant: "method" as const,
               }))}

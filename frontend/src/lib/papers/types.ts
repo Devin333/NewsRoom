@@ -13,6 +13,7 @@ export type PaperModuleRoute =
   | `/papers/tasks/${string}`
   | "/papers/methods"
   | `/papers/methods/${string}`
+  | `/papers/${string}/read`
 
 export type PaperSort = "trending" | "newest" | "most_cited"
 export type PaperPeriod = "daily" | "weekly" | "monthly" | "all"

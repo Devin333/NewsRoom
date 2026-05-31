@@ -79,6 +79,26 @@ describe("PaperDetailDrawer", () => {
     expect(screen.getByRole("link", { name: /open reader/i })).toHaveAttribute("href", "/papers/segment-anything/read")
   })
 
+  it("uses encoded Research routes for reader and taxonomy links", () => {
+    render(
+      <PaperDetailDrawer
+        paper={{
+          ...paper,
+          slug: "segment anything/v2",
+          taskRefs: [{ id: "task-special", slug: "visual qa/v2", name: "Visual QA v2", group: "multimodal" }],
+          methodRefs: [{ id: "method-special", slug: "tool use/v2", name: "Tool Use v2", area: "Agents" }]
+        }}
+        locale="en"
+        open
+        onOpenChange={vi.fn()}
+      />
+    )
+
+    expect(screen.getByRole("link", { name: /open reader/i })).toHaveAttribute("href", "/papers/segment%20anything%2Fv2/read")
+    expect(screen.getByRole("link", { name: "Visual QA v2" })).toHaveAttribute("href", "/papers/tasks/visual%20qa%2Fv2")
+    expect(screen.getByRole("link", { name: "Tool Use v2" })).toHaveAttribute("href", "/papers/methods/tool%20use%2Fv2")
+  })
+
   it("notifies when dismissed", () => {
     const onOpenChange = vi.fn()
     render(<PaperDetailDrawer paper={paper} locale="en" open onOpenChange={onOpenChange} />)
