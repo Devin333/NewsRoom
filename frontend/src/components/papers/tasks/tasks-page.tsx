@@ -27,16 +27,18 @@ export function TasksPage({ locale }: { locale: Locale }) {
           return
         }
 
+        const publicPaperItems = papersResult.status === "fulfilled" ? publicPapers(papersResult.value.papers) : []
+
         if (tasksResult.status === "rejected") {
-          setTasks(papersResult.status === "fulfilled" ? deriveTasksFromPapers(paperTasks, papersResult.value.papers) : emptyTaskCounts(paperTasks))
-          setPaperItems(papersResult.status === "fulfilled" ? papersResult.value.papers : [])
+          setTasks(papersResult.status === "fulfilled" ? deriveTasksFromPapers(paperTasks, publicPaperItems) : emptyTaskCounts(paperTasks))
+          setPaperItems(publicPaperItems)
           setNotice(t(papersCopy.taskApiFallback, locale))
           setStatus("fallback")
           return
         }
 
         setTasks(tasksResult.value.tasks)
-        setPaperItems(papersResult.status === "fulfilled" ? papersResult.value.papers : [])
+        setPaperItems(publicPaperItems)
         setNotice(combineNotices([
           tasksResult.value.notices?.[0] ?? null,
           papersResult.status === "rejected" ? paperListUnavailableNotice(locale) : null
@@ -108,6 +110,10 @@ function emptyTaskCounts(tasks: PaperTask[]): PaperTask[] {
     latestPaperIds: [],
     implementationCount: 0
   }))
+}
+
+function publicPapers(papers: Paper[]) {
+  return papers.filter((paper) => paper.isPublished !== false)
 }
 
 function paperListUnavailableNotice(locale: Locale) {

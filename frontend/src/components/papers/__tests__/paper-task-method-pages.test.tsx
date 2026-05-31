@@ -195,6 +195,31 @@ describe("paper task and method pages", () => {
     expect(screen.getByRole("link", { name: /Agents\s+1 Papers/i })).toBeInTheDocument()
   })
 
+  it("excludes unpublished papers from task fallback counts and page stats", async () => {
+    vi.mocked(fetchPaperTasksResult).mockRejectedValueOnce(new Error("offline"))
+    vi.mocked(fetchPapers).mockResolvedValueOnce({
+      ...fallbackPaperResult,
+      paper_count: 2,
+      total_count: 2,
+      papers: [
+        ...fallbackPaperResult.papers,
+        {
+          ...fallbackPaperResult.papers[0],
+          id: "paper-derived-draft",
+          slug: "paper-derived-draft",
+          title: "Derived Draft Paper",
+          isPublished: false
+        }
+      ]
+    })
+
+    render(<TasksPage locale="en" />)
+
+    expect(await screen.findByRole("link", { name: /Agents\s+1 Papers/i })).toBeInTheDocument()
+    expect(screen.getByLabelText(/papers: 1/i)).toBeInTheDocument()
+    expect(screen.queryByText("Derived Draft Paper")).not.toBeInTheDocument()
+  })
+
   it("keeps API-backed tasks visible when only paper totals fail", async () => {
     vi.mocked(fetchPaperTasksResult).mockResolvedValueOnce({ tasks: apiTasks, dataState: "ready", source: "backend", notices: [] })
     vi.mocked(fetchPapers).mockRejectedValueOnce(new Error("paper list offline"))
@@ -236,6 +261,32 @@ describe("paper task and method pages", () => {
 
     expect(await screen.findByText("Paper method API is unavailable; showing taxonomy with real paper-derived counts.")).toBeInTheDocument()
     expect(screen.getByRole("link", { name: /Tool Use.*1 Papers.*1 Tasks/i })).toBeInTheDocument()
+  })
+
+  it("excludes unpublished papers from method fallback counts and page stats", async () => {
+    vi.mocked(fetchPaperMethodsResult).mockRejectedValueOnce(new Error("offline"))
+    vi.mocked(fetchPaperTasksResult).mockResolvedValueOnce({ tasks: apiTasks, dataState: "ready", source: "backend", notices: [] })
+    vi.mocked(fetchPapers).mockResolvedValueOnce({
+      ...fallbackPaperResult,
+      paper_count: 2,
+      total_count: 2,
+      papers: [
+        ...fallbackPaperResult.papers,
+        {
+          ...fallbackPaperResult.papers[0],
+          id: "paper-derived-draft",
+          slug: "paper-derived-draft",
+          title: "Derived Draft Paper",
+          isPublished: false
+        }
+      ]
+    })
+
+    render(<MethodsPage locale="en" />)
+
+    expect(await screen.findByRole("link", { name: /Tool Use.*1 Papers.*1 Tasks/i })).toBeInTheDocument()
+    expect(screen.getByLabelText(/papers: 1/i)).toBeInTheDocument()
+    expect(screen.queryByText("Derived Draft Paper")).not.toBeInTheDocument()
   })
 
   it("keeps API-backed methods visible when task taxonomy is temporarily unavailable", async () => {

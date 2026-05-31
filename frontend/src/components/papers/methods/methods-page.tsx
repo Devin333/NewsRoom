@@ -28,10 +28,12 @@ export function MethodsPage({ locale }: { locale: Locale }) {
           return
         }
 
+        const publicPaperItems = papersResult.status === "fulfilled" ? publicPapers(papersResult.value.papers) : []
+
         if (methodsResult.status === "rejected") {
-          setMethods(papersResult.status === "fulfilled" ? deriveMethodsFromPapers(paperMethods, papersResult.value.papers) : emptyMethodCounts(paperMethods))
+          setMethods(papersResult.status === "fulfilled" ? deriveMethodsFromPapers(paperMethods, publicPaperItems) : emptyMethodCounts(paperMethods))
           setTasks(tasksResult.status === "fulfilled" ? tasksResult.value.tasks : emptyTaskCounts(paperTasks))
-          setPaperItems(papersResult.status === "fulfilled" ? papersResult.value.papers : [])
+          setPaperItems(publicPaperItems)
           setNotice(t(papersCopy.methodApiFallback, locale))
           setStatus("fallback")
           return
@@ -39,7 +41,7 @@ export function MethodsPage({ locale }: { locale: Locale }) {
 
         setMethods(methodsResult.value.methods)
         setTasks(tasksResult.status === "fulfilled" ? tasksResult.value.tasks : emptyTaskCounts(paperTasks))
-        setPaperItems(papersResult.status === "fulfilled" ? papersResult.value.papers : [])
+        setPaperItems(publicPaperItems)
         setNotice(combineNotices([
           methodsResult.value.notices?.[0] ?? null,
           tasksResult.status === "fulfilled" ? tasksResult.value.notices?.[0] ?? null : taskListUnavailableNotice(locale),
@@ -130,6 +132,10 @@ function emptyMethodCounts(methods: PaperMethod[]): PaperMethod[] {
     representativePaperIds: [],
     relatedProjectIds: []
   }))
+}
+
+function publicPapers(papers: Paper[]) {
+  return papers.filter((paper) => paper.isPublished !== false)
 }
 
 function groupMethodsByArea(methods: PaperMethod[]) {
