@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { PaperReaderPage } from "@/components/papers/shared/paper-reader-page"
-import { askPaper } from "@/lib/papers/api"
+import { askPaper, recordReaderEvent } from "@/lib/papers/api"
 import type { PaperReaderPayload } from "@/lib/papers/types"
 
 vi.mock("@/lib/papers/api", () => ({
@@ -129,6 +129,8 @@ describe("PaperReaderPage Open Reader", () => {
     document.documentElement.style.removeProperty("--open-reader-progress")
     Element.prototype.scrollIntoView = function scrollIntoView() {}
     vi.mocked(askPaper).mockReset()
+    vi.mocked(recordReaderEvent).mockReset()
+    vi.mocked(recordReaderEvent).mockResolvedValue({} as Awaited<ReturnType<typeof recordReaderEvent>>)
     vi.mocked(askPaper).mockResolvedValue({
       paperId: "reader-paper",
       locale: "en",
@@ -352,6 +354,20 @@ describe("PaperReaderPage Open Reader", () => {
     expect(await screen.findByText("The reader agent checks the selected claim against public paper sections.")).toBeInTheDocument()
     expect(screen.getByText(/Abstract: The verifier checks claims against evidence/)).toBeInTheDocument()
     expect(vi.mocked(askPaper).mock.calls[0][1]).toContain("Selected text: verifier checks claims")
+    await waitFor(() => {
+      expect(recordReaderEvent).toHaveBeenCalledWith("reader-paper", expect.objectContaining({
+        type: "explanation_generated",
+        selectionId: expect.any(String),
+        sectionId: "reader-paper:abstract",
+        paragraphId: "reader-paper:abstract:p1",
+        selectedText: "verifier checks claims",
+        payload: expect.objectContaining({
+          answer: "The reader agent checks the selected claim against public paper sections.",
+          confidence: 0.82,
+          cached: false
+        })
+      }))
+    })
 
     await waitFor(() => {
       expect(container.querySelector("[data-selection-id]")).not.toBeNull()
@@ -380,6 +396,16 @@ describe("PaperReaderPage Open Reader", () => {
 
     expect(await screen.findByText("The reader agent checks the selected claim against public paper sections.")).toBeInTheDocument()
     expect(vi.mocked(askPaper).mock.calls[0][1]).toContain("Reader question: Use an engineering example.")
+    await waitFor(() => {
+      expect(recordReaderEvent).toHaveBeenCalledWith("reader-paper", expect.objectContaining({
+        type: "example_generated",
+        selectedText: "long-horizon reading",
+        payload: expect.objectContaining({
+          question: "Use an engineering example.",
+          answer: "The reader agent checks the selected claim against public paper sections."
+        })
+      }))
+    })
 
     await waitFor(() => {
       expect(container.querySelector("[data-selection-id]")).not.toBeNull()

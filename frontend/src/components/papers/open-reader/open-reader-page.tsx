@@ -870,6 +870,21 @@ function ReaderAssistDrawer({ drawer, selection, materialSummary, locale, drawer
       const answer = await askPaper(selection.paperId, buildAssistQuestion(selection, q, mode, locale), locale)
       if (mode === "explain") onConfirmExplain(selection.id, q, answer.answer)
       if (mode === "example") onConfirmExample(selection.id, q, answer.answer)
+      void recordReaderEvent(selection.paperId, {
+        type: mode === "explain" ? "explanation_generated" : "example_generated",
+        selectionId: selection.id,
+        sectionId: selection.sectionId,
+        paragraphId: selection.paragraphId,
+        selectedText: selection.selectedText,
+        surroundingText: selection.surroundingText,
+        payload: {
+          question: q,
+          answer: answer.answer,
+          confidence: answer.confidence,
+          cached: answer.cached,
+          citations: answer.citations,
+        },
+      }).catch(() => undefined)
       setAnswerState({ status: "ready", answer })
     } catch (error) {
       setAnswerState({
