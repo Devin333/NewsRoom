@@ -354,5 +354,6 @@ describe("paper task and method pages", () => {
       .getAllByText(/^\d+$/)
       .map((node) => node.textContent)
     expect(stats).toEqual(["1", "0", "0"])
+    expect(screen.queryByText("Task Branches")).not.toBeInTheDocument()
   })
 })

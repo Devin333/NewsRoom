@@ -18,6 +18,7 @@ export function BenchmarkList({
   onSelect: (benchmark: Benchmark) => void
 }) {
   const visibleItems = benchmarks.length ? benchmarkItems(benchmarks) : branchItems(task)
+  if (!visibleItems.length) return null
 
   return (
     <section className="border-t border-[#d7dfd8] pt-6 dark:border-border">
