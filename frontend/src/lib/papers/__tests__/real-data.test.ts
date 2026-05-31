@@ -108,6 +108,30 @@ describe("Papers API data loading", () => {
     expect(mockedSafeApiGet).toHaveBeenCalledWith("/api/v1/papers/paper-draft")
   })
 
+  it("marks the paper list empty when the backend only returns unpublished papers", async () => {
+    mockedSafeApiGet.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        papers: [
+          realPaper({
+            id: "paper-draft",
+            slug: "paper-draft",
+            title: "Draft Paper",
+            isPublished: false
+          })
+        ]
+      }
+    })
+
+    const result = await getPaperListResult()
+
+    expect(result.source).toBe("empty")
+    expect(result.dataState).toBe("empty")
+    expect(result.total_count).toBe(0)
+    expect(result.papers).toEqual([])
+    expect(result.notices).toContain("No public papers are available from backend, tracked cache, or artifacts.")
+  })
+
   it("filters and sorts real paper fallback results for the BFF list", async () => {
     mockedSafeApiGet.mockResolvedValueOnce({
       ok: true,

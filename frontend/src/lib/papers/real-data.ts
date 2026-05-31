@@ -114,9 +114,10 @@ export async function getPublishedPapers() {
 
 export async function getPublishedPaperData(): Promise<PaperRuntimeData> {
   const apiPapers = await loadApiPapers()
-  if (apiPapers.length) {
+  const publicApiPapers = normalizeRuntimePapers(apiPapers)
+  if (publicApiPapers.length) {
     return {
-      papers: normalizeRuntimePapers(apiPapers),
+      papers: publicApiPapers,
       source: "backend",
       dataState: "ready",
       notices: []
@@ -124,22 +125,24 @@ export async function getPublishedPaperData(): Promise<PaperRuntimeData> {
   }
 
   const cachedPapers = loadCachedPapers()
-  if (cachedPapers.length) {
+  const publicCachedPapers = normalizeRuntimePapers(cachedPapers)
+  if (publicCachedPapers.length) {
     return {
-      papers: normalizeRuntimePapers(cachedPapers),
+      papers: publicCachedPapers,
       source: "cache",
       dataState: "degraded",
-      notices: ["Backend paper API is unavailable; showing tracked paper cache."]
+      notices: [apiPapers.length ? "Backend paper API returned no public papers; showing tracked paper cache." : "Backend paper API is unavailable; showing tracked paper cache."]
     }
   }
 
   const extractedPapers = loadLatestExtractedPapers()
-  if (extractedPapers.length) {
+  const publicExtractedPapers = normalizeRuntimePapers(await enrichPapersForPublicStream(extractedPapers))
+  if (publicExtractedPapers.length) {
     return {
-      papers: normalizeRuntimePapers(await enrichPapersForPublicStream(extractedPapers)),
+      papers: publicExtractedPapers,
       source: "artifact",
       dataState: "degraded",
-      notices: ["Backend paper API and tracked cache are unavailable; showing latest Paper Radar artifacts."]
+      notices: [apiPapers.length || cachedPapers.length ? "No public backend or tracked cache papers are available; showing latest public Paper Radar artifacts." : "Backend paper API and tracked cache are unavailable; showing latest Paper Radar artifacts."]
     }
   }
 
@@ -147,7 +150,7 @@ export async function getPublishedPaperData(): Promise<PaperRuntimeData> {
     papers: [],
     source: "empty",
     dataState: "empty",
-    notices: ["No backend, tracked cache, or artifact papers are available."]
+    notices: [apiPapers.length || cachedPapers.length || extractedPapers.length ? "No public papers are available from backend, tracked cache, or artifacts." : "No backend, tracked cache, or artifact papers are available."]
   }
 }
 
