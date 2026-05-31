@@ -111,6 +111,56 @@ describe("TrendingPapersPage", () => {
     expect(screen.queryByRole("textbox", { name: /search papers/i })).not.toBeInTheDocument()
   })
 
+  it("keeps the backend page when the dashboard request fails", async () => {
+    vi.mocked(fetchPapers)
+      .mockResolvedValueOnce({
+        source: "test",
+        query: "",
+        period: "all",
+        sort: "trending",
+        paper_count: 1,
+        total_count: 1,
+        source_count: 1,
+        limit: 15,
+        offset: 0,
+        papers: [papers[0]]
+      })
+      .mockRejectedValueOnce(new Error("dashboard offline"))
+
+    render(<TrendingPapersPage locale="en" papers={papers} />)
+
+    expect(await screen.findByText("Agent Paper")).toBeInTheDocument()
+    expect(screen.queryByText("Reasoning Paper")).not.toBeInTheDocument()
+    expect(screen.getByText(/API unavailable; showing real cached papers/i)).toBeInTheDocument()
+    expect(screen.queryByText(/dashboard offline/i)).not.toBeInTheDocument()
+    expect(screen.getByLabelText(/tasks: 2/i)).toBeInTheDocument()
+  })
+
+  it("recovers the visible page from dashboard data when the page request fails", async () => {
+    vi.mocked(fetchPapers)
+      .mockRejectedValueOnce(new Error("page offline"))
+      .mockResolvedValueOnce({
+        source: "test",
+        query: "",
+        period: "all",
+        sort: "trending",
+        paper_count: 2,
+        total_count: 2,
+        source_count: 1,
+        limit: 5000,
+        offset: 0,
+        papers
+      })
+
+    render(<TrendingPapersPage locale="en" papers={[]} />)
+
+    expect(await screen.findByText("Agent Paper")).toBeInTheDocument()
+    expect(screen.getAllByText("Reasoning Paper").length).toBeGreaterThan(0)
+    expect(screen.getByText(/Page request failed; list recovered from available dashboard data/i)).toBeInTheDocument()
+    expect(screen.getByText(/page offline/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/papers: 2/i)).toBeInTheDocument()
+  })
+
   it("loads paginated paper pages from the URL", async () => {
     query = "page=2"
     const pagedPapers = Array.from({ length: 60 }, (_, index): Paper => {

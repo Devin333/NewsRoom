@@ -15,7 +15,7 @@ import { fetchPapers } from "@/lib/papers/api"
 import { buildPaperPortalMetrics, deriveTopPaperDomains, deriveMethodAreaDomains } from "@/lib/papers/metrics"
 import { papersCopy, t } from "@/lib/papers/copy"
 import { sortPapers } from "@/lib/papers/format"
-import type { Locale, Paper, PaperPeriod, PaperSort } from "@/lib/papers/types"
+import type { Locale, Paper, PaperListResult, PaperPeriod, PaperSort } from "@/lib/papers/types"
 
 const PAPER_DASHBOARD_LIMIT = 5000
 const PAPER_PAGE_SIZE = 15
@@ -78,20 +78,43 @@ export function TrendingPapersPage({ locale, papers }: { locale: Locale; papers:
     let cancelled = false
     setIsLoading(true)
     setError(null)
-    Promise.all([
+    Promise.allSettled([
       fetchPapers({ q: query, period, sort, limit: PAPER_PAGE_SIZE, offset: pageOffset }),
       fetchPapers({ q: query, period, sort, limit: PAPER_DASHBOARD_LIMIT })
     ])
-      .then(([pageResult, dashboardResult]) => {
-        if (!cancelled) {
-          setVisiblePapers(pageResult.papers)
-          setDashboardPapers(dashboardResult.papers)
-          setPaperTotalCount(pageResult.total_count)
-          setNotices([...(pageResult.notices ?? []), ...(dashboardResult.notices ?? [])])
-          const nextTotalPages = Math.max(1, Math.ceil(pageResult.total_count / PAPER_PAGE_SIZE))
-          if (pageResult.total_count > 0 && page > nextTotalPages) {
-            updatePage(nextTotalPages)
-          }
+      .then(([pageSettled, dashboardSettled]) => {
+        if (cancelled) {
+          return
+        }
+
+        const pageResult = fulfilledValue(pageSettled)
+        const dashboardResult = fulfilledValue(dashboardSettled)
+
+        if (!pageResult && !dashboardResult) {
+          throw firstRejectedReason(pageSettled, dashboardSettled) ?? new Error("Papers request failed")
+        }
+
+        const fallbackPapers = dashboardResult ? [] : fallbackPaperQuery(papers, { query, period, sort })
+        const nextDashboardPapers = dashboardResult?.papers ?? fallbackPapers
+        const nextVisiblePapers =
+          pageResult?.papers ??
+          nextDashboardPapers.slice(pageOffset, pageOffset + PAPER_PAGE_SIZE)
+        const nextTotalCount = pageResult?.total_count ?? dashboardResult?.total_count ?? nextDashboardPapers.length
+        const nextNotices = [
+          ...(pageResult?.notices ?? []),
+          ...(dashboardResult?.notices ?? []),
+          ...rejectedNotices(pageSettled, dashboardSettled, locale)
+        ]
+
+        setVisiblePapers(nextVisiblePapers)
+        setDashboardPapers(nextDashboardPapers)
+        setPaperTotalCount(nextTotalCount)
+        setNotices(nextNotices)
+        setError(pageResult ? null : resultErrorMessage(pageSettled))
+
+        const nextTotalPages = Math.max(1, Math.ceil(nextTotalCount / PAPER_PAGE_SIZE))
+        if (nextTotalCount > 0 && page > nextTotalPages) {
+          updatePage(nextTotalPages)
         }
       })
       .catch((requestError) => {
@@ -215,6 +238,36 @@ export function TrendingPapersPage({ locale, papers }: { locale: Locale; papers:
       />
     </div>
   )
+}
+
+function fulfilledValue(result: PromiseSettledResult<PaperListResult>): PaperListResult | null {
+  return result.status === "fulfilled" ? result.value : null
+}
+
+function firstRejectedReason(...results: PromiseSettledResult<PaperListResult>[]): unknown {
+  return results.find((result) => result.status === "rejected")?.reason
+}
+
+function rejectedNotices(
+  pageResult: PromiseSettledResult<PaperListResult>,
+  dashboardResult: PromiseSettledResult<PaperListResult>,
+  locale: Locale
+) {
+  const notices: string[] = []
+  if (pageResult.status === "rejected") {
+    notices.push(locale === "zh" ? "当前页论文请求失败，已从可用仪表盘数据恢复列表。" : "Page request failed; list recovered from available dashboard data.")
+  }
+  if (dashboardResult.status === "rejected") {
+    notices.push(t(papersCopy.apiUnavailableCache, locale))
+  }
+  return notices
+}
+
+function resultErrorMessage(result: PromiseSettledResult<PaperListResult>) {
+  if (result.status !== "rejected") {
+    return null
+  }
+  return result.reason instanceof Error ? result.reason.message : "Papers request failed"
 }
 
 function parsePeriod(value: string | null): PaperPeriod {
