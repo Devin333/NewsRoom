@@ -69,9 +69,11 @@ export function useOpenReaderSelections(paperId: string) {
   const selectionsKey = useMemo(() => storageKey(paperId, "selections"), [paperId])
   const eventsKey = useMemo(() => storageKey(paperId, "events"), [paperId])
   const [state, dispatch] = useReducer(selectionReducer, EMPTY_STATE)
+  const [selectionsLoaded, setSelectionsLoaded] = useState(false)
 
   useEffect(() => {
     if (typeof window === "undefined") return
+    setSelectionsLoaded(false)
     dispatch({
       type: "load",
       state: {
@@ -79,13 +81,14 @@ export function useOpenReaderSelections(paperId: string) {
         events: safeJsonParse<ReaderEvent[]>(window.localStorage.getItem(eventsKey), []),
       },
     })
+    setSelectionsLoaded(true)
   }, [eventsKey, selectionsKey])
 
   useEffect(() => {
-    if (typeof window === "undefined") return
+    if (typeof window === "undefined" || !selectionsLoaded) return
     window.localStorage.setItem(selectionsKey, JSON.stringify(state.selections))
     window.localStorage.setItem(eventsKey, JSON.stringify(state.events))
-  }, [eventsKey, selectionsKey, state])
+  }, [eventsKey, selectionsKey, selectionsLoaded, state])
 
   const createTempSelection = useCallback((input: {
     paragraph: ReaderParagraph
