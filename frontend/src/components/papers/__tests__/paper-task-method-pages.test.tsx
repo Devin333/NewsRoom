@@ -1,9 +1,10 @@
-import { render, screen } from "@testing-library/react"
+import { fireEvent, render, screen } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import { MethodDetailPage } from "@/components/papers/methods/method-detail-page"
 import { MethodsPage } from "@/components/papers/methods/methods-page"
 import { TasksPage } from "@/components/papers/tasks/tasks-page"
 import { fetchPaperMethodsResult, fetchPapers, fetchPaperTasksResult } from "@/lib/papers/api"
-import type { PaperListResult } from "@/lib/papers/types"
+import type { Paper, PaperListResult, PaperMethod } from "@/lib/papers/types"
 
 vi.mock("@/lib/papers/api", () => ({
   fetchPaperMethodsResult: vi.fn(),
@@ -68,6 +69,52 @@ const apiMethods = [
   }
 ]
 
+const methodDetail: PaperMethod = {
+  id: "method-tool-use",
+  slug: "tool-use",
+  name: "Tool Use",
+  description: "Uses external tools and environments.",
+  paperCount: 2,
+  taskCount: 1,
+  implementationCount: 1,
+  area: "Agents",
+  relatedTasks: [],
+  relatedMethods: [],
+  commonBenchmarks: [
+    {
+      id: "benchmark-swe-bench",
+      slug: "swe-bench",
+      name: "SWE-bench",
+      category: "software-engineering"
+    }
+  ]
+}
+
+const methodPapers: Paper[] = [
+  {
+    id: "paper-swe",
+    slug: "paper-swe",
+    title: "SWE-agent",
+    abstractSnippet: "Agent-computer interfaces evaluated on software engineering tasks.",
+    authors: ["A"],
+    publishedAt: "2026-05-24T00:00:00Z",
+    tags: ["agents"],
+    taskRefs: [],
+    methodRefs: [{ id: "method-tool-use", slug: "tool-use", name: "Tool Use" }],
+    benchmarks: [
+      {
+        id: "benchmark-swe-bench",
+        name: "SWE-bench",
+        category: "software-engineering",
+        metric: "resolved",
+        value: "12.5%"
+      }
+    ],
+    paperUrl: "https://arxiv.org/abs/2605.00001",
+    isPublished: true
+  }
+]
+
 describe("paper task and method pages", () => {
   beforeEach(() => {
     vi.mocked(fetchPaperMethodsResult).mockReset()
@@ -113,5 +160,16 @@ describe("paper task and method pages", () => {
     render(<MethodsPage locale="en" />)
 
     expect(await screen.findByText("Paper method API is unavailable; showing taxonomy with real paper-derived counts.")).toBeInTheDocument()
+  })
+
+  it("opens benchmark evidence from method detail instead of placeholder copy", () => {
+    render(<MethodDetailPage method={methodDetail} locale="en" papers={methodPapers} />)
+
+    fireEvent.click(screen.getByRole("button", { name: /SWE-bench/ }))
+
+    expect(screen.getByText("Benchmark Evidence")).toBeInTheDocument()
+    expect(screen.getByText(/recorded benchmark fields/i)).toBeInTheDocument()
+    expect(screen.getByText("resolved: 12.5%")).toBeInTheDocument()
+    expect(screen.queryByText(/placeholder action/i)).not.toBeInTheDocument()
   })
 })
