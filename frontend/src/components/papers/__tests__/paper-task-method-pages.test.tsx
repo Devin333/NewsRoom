@@ -251,6 +251,10 @@ describe("paper task and method pages", () => {
   it("opens benchmark evidence from method detail instead of placeholder copy", () => {
     render(<MethodDetailPage method={methodDetail} locale="en" papers={methodPapers} />)
 
+    expect(screen.getByLabelText(/papers: 1/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/tasks: 1/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/implementations: 0/i)).toBeInTheDocument()
+
     fireEvent.click(screen.getByRole("button", { name: /SWE-bench/ }))
 
     expect(screen.getByText("Benchmark Evidence")).toBeInTheDocument()

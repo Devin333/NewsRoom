@@ -35,6 +35,7 @@ export function MethodDetailPage({
   const methodPapers = papers?.filter((paper) => (paper.methodRefs ?? []).some((methodRef) => methodRef.slug === method.slug)) ?? getPapersForMethod(method.slug)
   const methodBenchmarks = getBenchmarksForMethod(method.slug)
   const commonBenchmarks = method.commonBenchmarks?.length ? method.commonBenchmarks : methodBenchmarks
+  const methodStats = deriveMethodDetailStats(method, methodPapers)
 
   function previewPaper(paper: Paper) {
     setSelectedPaper(paper)
@@ -59,9 +60,9 @@ export function MethodDetailPage({
         title={methodName(method, locale)}
         subtitle={methodDescription(method, locale)}
         stats={[
-          { label: t(papersCopy.papers, locale), value: method.paperCount },
-          { label: t(papersCopy.tasks, locale), value: method.taskCount },
-          { label: t(papersCopy.implementations, locale), value: method.implementationCount ?? 0 }
+          { label: t(papersCopy.papers, locale), value: methodStats.paperCount },
+          { label: t(papersCopy.tasks, locale), value: methodStats.taskCount },
+          { label: t(papersCopy.implementations, locale), value: methodStats.implementationCount }
         ]}
       />
       <InlineNotice message={notice} locale={locale} onDismiss={() => setNotice(null)} />
@@ -98,4 +99,35 @@ export function MethodDetailPage({
       />
     </div>
   )
+}
+
+function deriveMethodDetailStats(method: PaperMethod, papers: Paper[]) {
+  const taskCount =
+    new Set(papers.flatMap((paper) => (paper.taskRefs ?? []).map((task) => task.slug))).size ||
+    method.taskCount
+  const implementationCount =
+    countImplementationsFromPapers(papers)
+
+  return {
+    paperCount: papers.length,
+    taskCount,
+    implementationCount,
+  }
+}
+
+function countImplementationsFromPapers(papers: Paper[]) {
+  const seen = new Set<string>()
+  for (const paper of papers) {
+    const implementations = paper.implementations?.length
+      ? paper.implementations
+      : paper.repoUrl?.startsWith("https://github.com/")
+        ? [{ repoUrl: paper.repoUrl }]
+        : []
+    for (const implementation of implementations) {
+      if (implementation.repoUrl) {
+        seen.add(implementation.repoUrl)
+      }
+    }
+  }
+  return seen.size
 }
