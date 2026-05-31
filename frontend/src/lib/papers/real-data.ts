@@ -206,7 +206,7 @@ export async function getPaperTasksResult(): Promise<PaperTaxonomyResult<PaperTa
   return {
     items: tasks,
     source,
-    dataState: apiTasks.length ? "ready" : paperData.dataState === "empty" ? "empty" : "degraded",
+    dataState: taxonomyDataState(apiTasks.length > 0, paperData.dataState),
     notices: apiTasks.length
       ? paperData.notices
       : ["Paper task API is unavailable; showing taxonomy with real paper-derived counts.", ...paperData.notices]
@@ -221,7 +221,7 @@ export async function getPaperMethodsResult(): Promise<PaperTaxonomyResult<Paper
   return {
     items: methods,
     source,
-    dataState: apiMethods.length ? "ready" : paperData.dataState === "empty" ? "empty" : "degraded",
+    dataState: taxonomyDataState(apiMethods.length > 0, paperData.dataState),
     notices: apiMethods.length
       ? paperData.notices
       : ["Paper method API is unavailable; showing taxonomy with real paper-derived counts.", ...paperData.notices]
@@ -279,6 +279,13 @@ function normalizeRuntimePaper(paper: Paper): Paper {
     repoUrl,
     implementations
   }
+}
+
+function taxonomyDataState(hasApiTaxonomy: boolean, paperDataState: PaperDataState): PaperDataState {
+  if (!hasApiTaxonomy) {
+    return paperDataState === "empty" ? "empty" : "degraded"
+  }
+  return paperDataState
 }
 
 function filterPapers(

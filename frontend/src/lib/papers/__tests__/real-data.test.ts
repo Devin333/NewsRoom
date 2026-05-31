@@ -7,6 +7,15 @@ vi.mock("@/lib/api/server", () => ({
   safeApiGet: vi.fn()
 }))
 
+vi.mock("node:fs", () => ({
+  default: {
+    existsSync: vi.fn(() => false),
+    readFileSync: vi.fn(),
+    readdirSync: vi.fn(() => []),
+    statSync: vi.fn()
+  }
+}))
+
 const mockedSafeApiGet = vi.mocked(safeApiGet)
 
 describe("Papers API data loading", () => {
@@ -148,6 +157,42 @@ describe("Papers API data loading", () => {
     expect(reasoning?.methodCount).toBe(0)
   })
 
+  it("marks API-backed task taxonomy empty when paper data is unavailable", async () => {
+    mockedSafeApiGet
+      .mockResolvedValueOnce({
+        ok: true,
+        data: {
+          tasks: [
+            {
+              id: "task-live",
+              slug: "live-task",
+              name: "Live Task",
+              group: "agents",
+              description: "A backend task.",
+              paperCount: 9,
+              benchmarkCount: 4,
+              methodCount: 3,
+              sisterTasks: [],
+              commonMethods: []
+            }
+          ]
+        }
+      })
+      .mockResolvedValueOnce({ ok: false, errorCode: "request_failed", errorMessage: "papers offline" })
+
+    const result = await getPaperTasksResult()
+
+    expect(result.source).toBe("backend")
+    expect(result.dataState).toBe("empty")
+    expect(result.notices).toContain("No backend, tracked cache, or artifact papers are available.")
+    expect(result.items[0]).toMatchObject({
+      slug: "live-task",
+      paperCount: 0,
+      benchmarkCount: 0,
+      methodCount: 0
+    })
+  })
+
   it("uses taxonomy with real paper-derived method counts when method API is unavailable", async () => {
     mockedSafeApiGet
       .mockResolvedValueOnce({ ok: false, errorCode: "request_failed", errorMessage: "methods offline" })
@@ -177,6 +222,43 @@ describe("Papers API data loading", () => {
     expect(toolUse?.representativePaperIds).toEqual(["paper-tool-use"])
     expect(planning?.paperCount).toBe(0)
     expect(planning?.taskCount).toBe(0)
+  })
+
+  it("marks API-backed method taxonomy empty when paper data is unavailable", async () => {
+    mockedSafeApiGet
+      .mockResolvedValueOnce({
+        ok: true,
+        data: {
+          methods: [
+            {
+              id: "method-live",
+              slug: "live-method",
+              name: "Live Method",
+              description: "A backend method.",
+              paperCount: 9,
+              taskCount: 4,
+              implementationCount: 2,
+              area: "Agents",
+              relatedTasks: [],
+              relatedMethods: []
+            }
+          ]
+        }
+      })
+      .mockResolvedValueOnce({ ok: false, errorCode: "request_failed", errorMessage: "tasks offline" })
+      .mockResolvedValueOnce({ ok: false, errorCode: "request_failed", errorMessage: "papers offline" })
+
+    const result = await getPaperMethodsResult()
+
+    expect(result.source).toBe("backend")
+    expect(result.dataState).toBe("empty")
+    expect(result.notices).toContain("No backend, tracked cache, or artifact papers are available.")
+    expect(result.items[0]).toMatchObject({
+      slug: "live-method",
+      paperCount: 0,
+      taskCount: 0,
+      implementationCount: 0
+    })
   })
 })
 
