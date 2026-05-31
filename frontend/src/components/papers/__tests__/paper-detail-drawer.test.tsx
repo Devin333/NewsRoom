@@ -96,6 +96,28 @@ describe("PaperDetailDrawer", () => {
     expect(fetchPaperDetail).toHaveBeenCalledWith("paper-segment-anything")
   })
 
+  it("keeps the deep-linked drawer open while paper detail is loading", () => {
+    vi.mocked(fetchPaperDetail).mockReturnValue(new Promise(() => undefined))
+
+    render(<PaperDetailDrawer paper={null} paperId="paper-segment-anything" locale="en" open onOpenChange={vi.fn()} />)
+
+    expect(screen.getByRole("dialog", { name: /paper detail/i })).toBeInTheDocument()
+    expect(screen.getByText("Loading...")).toBeInTheDocument()
+    expect(requestPaperSummary).not.toHaveBeenCalled()
+  })
+
+  it("shows deep-linked paper detail failures inside a dismissible drawer", async () => {
+    const onOpenChange = vi.fn()
+    vi.mocked(fetchPaperDetail).mockRejectedValue(new Error("paper detail unavailable"))
+
+    render(<PaperDetailDrawer paper={null} paperId="paper-segment-anything" locale="en" open onOpenChange={onOpenChange} />)
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("paper detail unavailable")
+    fireEvent.click(screen.getByRole("button", { name: /dismiss/i }))
+
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
   it("renders summary loading and success states", async () => {
     render(<PaperDetailDrawer paper={paper} locale="en" open onOpenChange={vi.fn()} />)
 

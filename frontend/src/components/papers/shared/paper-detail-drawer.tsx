@@ -69,6 +69,8 @@ export function PaperDetailDrawer({
     }
 
     let cancelled = false
+    setActivePaper(null)
+    setSummary(null)
     setDetailError(null)
     fetchPaperDetail(paperId)
       .then((detail) => {
@@ -131,11 +133,37 @@ export function PaperDetailDrawer({
     return () => window.removeEventListener("keydown", handleKeyDown)
   }, [onOpenChange, open])
 
-  if (!activePaper) {
+  if (!activePaper && (!open || !paperId)) {
     return null
   }
 
-  const isVisible = open && Boolean(activePaper)
+  const isVisible = open && Boolean(activePaper || paperId)
+
+  if (!activePaper) {
+    return (
+      <PaperDetailFrame
+        isVisible={isVisible}
+        locale={locale}
+        closeHref={closeHref}
+        eyebrow={translate(locale, "papers.reader.paper")}
+        onOpenChange={onOpenChange}
+      >
+        <div className="min-h-0 flex-1 overflow-y-auto px-7 py-7">
+          {detailError ? (
+            <div role="alert" className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">
+              {detailError}
+            </div>
+          ) : (
+            <div className="flex items-center gap-3 rounded-md border border-[#d8dfd8] bg-white px-4 py-4 text-sm text-[#334155]/68 dark:border-border dark:bg-card dark:text-muted-foreground">
+              <RefreshCw className="size-4 animate-spin" />
+              {translate(locale, "papers.reader.loading")}
+            </div>
+          )}
+        </div>
+      </PaperDetailFrame>
+    )
+  }
+
   const title = paperTitle(activePaper, locale)
   const pdfHref = paperPdfUrl(activePaper)
   const arxivHref = activePaper.arxivUrl
@@ -156,140 +184,115 @@ export function PaperDetailDrawer({
   const evidenceRefs = activePaper.evidenceRefs ?? []
 
   return (
-    <>
-      <div
-        className={cn(
-          "fixed inset-0 z-50 bg-[#0f172a]/25 backdrop-blur-sm transition-[opacity,backdrop-filter] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)]",
-          isVisible ? "opacity-100" : "pointer-events-none opacity-0 backdrop-blur-0"
-        )}
-        aria-hidden="true"
-        onClick={() => onOpenChange(false)}
-      />
-      <aside
-        className={cn(
-          "fixed inset-y-0 right-0 z-50 flex w-[min(58rem,96vw)] flex-col border-l border-[#d8dfd8] bg-[#f7f9f6] shadow-[-24px_0_70px_rgba(15,23,42,0.18)] transition-[transform,opacity] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] dark:border-border dark:bg-background xl:w-[min(76rem,72vw)] 2xl:w-[clamp(72rem,73vw,94rem)]",
-          isVisible ? "translate-x-0 opacity-100" : "pointer-events-none translate-x-full opacity-0"
-        )}
-        aria-label="Paper detail"
-        aria-modal="true"
-        role="dialog"
-      >
-        <div className="flex items-center justify-between border-b border-[#d8dfd8] px-7 py-5 dark:border-border">
-          <div className="text-xs uppercase tracking-[0.16em] text-[#334155]/55">
-            {translate(locale, "papers.reader.trending")}
-            {arxivHref ? <span> / {arxivIdFromUrl(arxivHref)}</span> : null}
+    <PaperDetailFrame
+      isVisible={isVisible}
+      locale={locale}
+      closeHref={closeHref}
+      eyebrow={
+        <>
+          {translate(locale, "papers.reader.trending")}
+          {arxivHref ? <span> / {arxivIdFromUrl(arxivHref)}</span> : null}
+        </>
+      }
+      onOpenChange={onOpenChange}
+    >
+      <div className="min-h-0 flex-1 overflow-y-auto px-7 py-7">
+        {detailError ? (
+          <div role="alert" className="mb-5 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">
+            {detailError}
           </div>
-          <a
-            href={closeHref ?? "/papers"}
-            role="button"
-            className="rounded-full p-2 text-[#334155]/55 transition-colors hover:bg-white hover:text-[#334155] dark:hover:bg-card dark:hover:text-foreground"
-            aria-label={t(papersCopy.dismiss, locale)}
-              onClick={(event) => {
-                event.preventDefault()
-                onOpenChange(false)
-              }}
-            >
-              <X className="size-5" />
-          </a>
-        </div>
-
-        <div className="min-h-0 flex-1 overflow-y-auto px-7 py-7">
-          {detailError ? (
-            <div className="mb-5 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">
-              {detailError}
-            </div>
-          ) : null}
-          <header>
-            <h2 className="max-w-4xl text-3xl font-black leading-tight text-[#334155] dark:text-foreground sm:text-4xl">
-              {title}
-            </h2>
-            <div className="mt-5 flex flex-wrap items-center gap-x-3 gap-y-2 text-sm text-[#334155]/55 dark:text-muted-foreground">
-              <span>{activePaper.venue ?? translate(locale, "papers.reader.paper")}</span>
-              <span aria-hidden="true">/</span>
-              <span>{formatPaperDate(activePaper.publishedAt, locale)}</span>
-              {typeof citationCount === "number" ? (
-                <>
-                  <span aria-hidden="true">/</span>
-                  <span className="inline-flex items-center gap-1">
-                    <Quote className="size-4" />
-                    {formatCompactNumber(citationCount)} {translate(locale, "papers.reader.openAlexCitations")}
-                  </span>
-                </>
-              ) : null}
-            </div>
-            <p className="mt-5 border-t border-[#d8dfd8] pt-5 text-base leading-7 text-[#334155] dark:border-border dark:text-foreground">
-              {authors.join(", ")}
-            </p>
-            <div className="mt-4 flex flex-wrap gap-2">
-              {activePaper.userState?.favorite ? (
-                <Badge variant="accent" className="rounded-sm">
-                  <Heart className="mr-1 size-3 fill-current" />
-                  {translate(locale, "papers.reader.favorite")}
-                </Badge>
-              ) : null}
-              {activePaper.userState?.subscribed ? (
-                <Badge variant="muted" className="rounded-sm">
-                  <Bell className="mr-1 size-3" />
-                  {translate(locale, "papers.reader.subscribed")}
-                </Badge>
-              ) : null}
-              {pdfHref ? (
-                <Button asChild variant="outline" className="rounded-md bg-white dark:bg-card">
-                  <a href={pdfHref} target="_blank" rel="noreferrer">
-                    <FileText className="size-4" />
-                    {translate(locale, "papers.reader.viewPdf")}
-                  </a>
-                </Button>
-              ) : null}
-              {arxivHref ? (
-                <Button asChild variant="outline" className="rounded-md bg-white dark:bg-card">
-                  <a href={arxivHref} target="_blank" rel="noreferrer">
-                    <ExternalLink className="size-4" />
-                    {translate(locale, "papers.reader.arxivPage")}
-                  </a>
-                </Button>
-              ) : null}
-              {repoHref ? (
-                <Button asChild variant="outline" className="rounded-md bg-white dark:bg-card">
-                  <a href={repoHref} target="_blank" rel="noreferrer">
-                    <Github className="size-4" />
-                    {translate(locale, "papers.reader.code")}
-                    {typeof activePaper.githubStars === "number" ? (
-                      <span className="text-[#334155]/55">/ {formatCompactNumber(activePaper.githubStars)} {translate(locale, "papers.reader.stars")}</span>
-                    ) : null}
-                  </a>
-                </Button>
-              ) : null}
-              {projectHref ? (
-                <Button asChild variant="outline" className="rounded-md bg-white dark:bg-card">
-                  <a href={projectHref} target="_blank" rel="noreferrer">
-                    <Globe2 className="size-4" />
-                    {translate(locale, "papers.reader.projectPage")}
-                  </a>
-                </Button>
-              ) : null}
-              <Button asChild className="rounded-md">
-                <Link href={`/papers/${encodeURIComponent(activePaper.slug || activePaper.id)}`}>
-                  <BookOpen className="size-4" />
-                  {translate(locale, "papers.reader.openReader")}
-                </Link>
+        ) : null}
+        <header>
+          <h2 className="max-w-4xl text-3xl font-black leading-tight text-[#334155] dark:text-foreground sm:text-4xl">
+            {title}
+          </h2>
+          <div className="mt-5 flex flex-wrap items-center gap-x-3 gap-y-2 text-sm text-[#334155]/55 dark:text-muted-foreground">
+            <span>{activePaper.venue ?? translate(locale, "papers.reader.paper")}</span>
+            <span aria-hidden="true">/</span>
+            <span>{formatPaperDate(activePaper.publishedAt, locale)}</span>
+            {typeof citationCount === "number" ? (
+              <>
+                <span aria-hidden="true">/</span>
+                <span className="inline-flex items-center gap-1">
+                  <Quote className="size-4" />
+                  {formatCompactNumber(citationCount)} {translate(locale, "papers.reader.openAlexCitations")}
+                </span>
+              </>
+            ) : null}
+          </div>
+          <p className="mt-5 border-t border-[#d8dfd8] pt-5 text-base leading-7 text-[#334155] dark:border-border dark:text-foreground">
+            {authors.join(", ")}
+          </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            {activePaper.userState?.favorite ? (
+              <Badge variant="accent" className="rounded-sm">
+                <Heart className="mr-1 size-3 fill-current" />
+                {translate(locale, "papers.reader.favorite")}
+              </Badge>
+            ) : null}
+            {activePaper.userState?.subscribed ? (
+              <Badge variant="muted" className="rounded-sm">
+                <Bell className="mr-1 size-3" />
+                {translate(locale, "papers.reader.subscribed")}
+              </Badge>
+            ) : null}
+            {pdfHref ? (
+              <Button asChild variant="outline" className="rounded-md bg-white dark:bg-card">
+                <a href={pdfHref} target="_blank" rel="noreferrer">
+                  <FileText className="size-4" />
+                  {translate(locale, "papers.reader.viewPdf")}
+                </a>
               </Button>
-            </div>
-          </header>
+            ) : null}
+            {arxivHref ? (
+              <Button asChild variant="outline" className="rounded-md bg-white dark:bg-card">
+                <a href={arxivHref} target="_blank" rel="noreferrer">
+                  <ExternalLink className="size-4" />
+                  {translate(locale, "papers.reader.arxivPage")}
+                </a>
+              </Button>
+            ) : null}
+            {repoHref ? (
+              <Button asChild variant="outline" className="rounded-md bg-white dark:bg-card">
+                <a href={repoHref} target="_blank" rel="noreferrer">
+                  <Github className="size-4" />
+                  {translate(locale, "papers.reader.code")}
+                  {typeof activePaper.githubStars === "number" ? (
+                    <span className="text-[#334155]/55">/ {formatCompactNumber(activePaper.githubStars)} {translate(locale, "papers.reader.stars")}</span>
+                  ) : null}
+                </a>
+              </Button>
+            ) : null}
+            {projectHref ? (
+              <Button asChild variant="outline" className="rounded-md bg-white dark:bg-card">
+                <a href={projectHref} target="_blank" rel="noreferrer">
+                  <Globe2 className="size-4" />
+                  {translate(locale, "papers.reader.projectPage")}
+                </a>
+              </Button>
+            ) : null}
+            <Button asChild className="rounded-md">
+              <Link href={`/papers/${encodeURIComponent(activePaper.slug || activePaper.id)}`}>
+                <BookOpen className="size-4" />
+                {translate(locale, "papers.reader.openReader")}
+              </Link>
+            </Button>
+          </div>
+        </header>
 
-          <DetailSection title="NewsRoom AI" meta={summary?.cached ? translate(locale, "papers.reader.cached") : translate(locale, "papers.reader.onDemand")}>
-            <AISummaryBlock
-              status={summaryStatus}
-              summary={summary}
-              error={summaryError}
-              locale={locale}
-              onRetry={() => {
-                setSummary(null)
-                setSummaryStatus("idle")
-                setSummaryRetry((count) => count + 1)
-              }}
-            />
-          </DetailSection>
+        <DetailSection title="NewsRoom AI" meta={summary?.cached ? translate(locale, "papers.reader.cached") : translate(locale, "papers.reader.onDemand")}>
+          <AISummaryBlock
+            status={summaryStatus}
+            summary={summary}
+            error={summaryError}
+            locale={locale}
+            onRetry={() => {
+              setSummary(null)
+              setSummaryStatus("idle")
+              setSummaryRetry((count) => count + 1)
+            }}
+          />
+        </DetailSection>
 
           <DetailSection title={translate(locale, "papers.reader.abstract")}>
             <p className="max-w-5xl text-base leading-8 text-[#334155]/74 dark:text-muted-foreground">
@@ -395,26 +398,81 @@ export function PaperDetailDrawer({
             />
           </DetailSection>
 
-          <DetailSection title={translate(locale, "papers.reader.heat")} meta={translate(locale, "papers.reader.realSignalsOnly")}>
-            <div className="flex flex-wrap gap-3 text-sm text-[#334155]/72 dark:text-muted-foreground">
-              <MetricPill
-                icon={<ThermometerSun className="size-4" />}
-                label={translate(locale, "papers.reader.newsroomHeat")}
-                value={typeof activePaper.newsroomHeatScore === "number" ? activePaper.newsroomHeatScore.toFixed(1) : "N/A"}
-              />
-              <MetricPill
-                icon={<Github className="size-4" />}
-                label={translate(locale, "papers.reader.githubStars")}
-                value={typeof activePaper.githubStars === "number" ? formatCompactNumber(activePaper.githubStars) : "N/A"}
-              />
-              <MetricPill
-                icon={<Quote className="size-4" />}
-                label={translate(locale, "papers.reader.openAlexCitations")}
-                value={typeof citationCount === "number" ? formatCompactNumber(citationCount) : "N/A"}
-              />
-            </div>
-          </DetailSection>
+        <DetailSection title={translate(locale, "papers.reader.heat")} meta={translate(locale, "papers.reader.realSignalsOnly")}>
+          <div className="flex flex-wrap gap-3 text-sm text-[#334155]/72 dark:text-muted-foreground">
+            <MetricPill
+              icon={<ThermometerSun className="size-4" />}
+              label={translate(locale, "papers.reader.newsroomHeat")}
+              value={typeof activePaper.newsroomHeatScore === "number" ? activePaper.newsroomHeatScore.toFixed(1) : "N/A"}
+            />
+            <MetricPill
+              icon={<Github className="size-4" />}
+              label={translate(locale, "papers.reader.githubStars")}
+              value={typeof activePaper.githubStars === "number" ? formatCompactNumber(activePaper.githubStars) : "N/A"}
+            />
+            <MetricPill
+              icon={<Quote className="size-4" />}
+              label={translate(locale, "papers.reader.openAlexCitations")}
+              value={typeof citationCount === "number" ? formatCompactNumber(citationCount) : "N/A"}
+            />
+          </div>
+        </DetailSection>
+      </div>
+    </PaperDetailFrame>
+  )
+}
+
+function PaperDetailFrame({
+  children,
+  closeHref,
+  eyebrow,
+  isVisible,
+  locale,
+  onOpenChange
+}: {
+  children: ReactNode
+  closeHref?: string
+  eyebrow: ReactNode
+  isVisible: boolean
+  locale: Locale
+  onOpenChange: (open: boolean) => void
+}) {
+  return (
+    <>
+      <div
+        className={cn(
+          "fixed inset-0 z-50 bg-[#0f172a]/25 backdrop-blur-sm transition-[opacity,backdrop-filter] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)]",
+          isVisible ? "opacity-100" : "pointer-events-none opacity-0 backdrop-blur-0"
+        )}
+        aria-hidden="true"
+        onClick={() => onOpenChange(false)}
+      />
+      <aside
+        className={cn(
+          "fixed inset-y-0 right-0 z-50 flex w-[min(58rem,96vw)] flex-col border-l border-[#d8dfd8] bg-[#f7f9f6] shadow-[-24px_0_70px_rgba(15,23,42,0.18)] transition-[transform,opacity] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] dark:border-border dark:bg-background xl:w-[min(76rem,72vw)] 2xl:w-[clamp(72rem,73vw,94rem)]",
+          isVisible ? "translate-x-0 opacity-100" : "pointer-events-none translate-x-full opacity-0"
+        )}
+        aria-label="Paper detail"
+        aria-modal="true"
+        role="dialog"
+      >
+        <div className="flex items-center justify-between border-b border-[#d8dfd8] px-7 py-5 dark:border-border">
+          <div className="text-xs uppercase tracking-[0.16em] text-[#334155]/55">{eyebrow}</div>
+          <a
+            href={closeHref ?? "/papers"}
+            role="button"
+            className="rounded-full p-2 text-[#334155]/55 transition-colors hover:bg-white hover:text-[#334155] dark:hover:bg-card dark:hover:text-foreground"
+            aria-label={t(papersCopy.dismiss, locale)}
+            onClick={(event) => {
+              event.preventDefault()
+              onOpenChange(false)
+            }}
+          >
+            <X className="size-5" />
+          </a>
         </div>
+
+        {children}
       </aside>
     </>
   )
