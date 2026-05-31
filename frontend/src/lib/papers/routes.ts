@@ -7,3 +7,11 @@ export const papersRoutes = {
   methods: "/papers/methods",
   methodDetail: (slug: string) => `/papers/methods/${encodeURIComponent(slug)}` as PaperModuleRoute
 } satisfies Record<string, PaperModuleRoute | ((slug: string) => PaperModuleRoute)>
+
+export function decodePaperRouteSlug(slug: string) {
+  try {
+    return decodeURIComponent(slug)
+  } catch {
+    return slug
+  }
+}
