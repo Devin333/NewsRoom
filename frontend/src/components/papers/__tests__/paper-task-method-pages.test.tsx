@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { MethodDetailPage } from "@/components/papers/methods/method-detail-page"
 import { MethodsPage } from "@/components/papers/methods/methods-page"
+import { TaskDetailPage } from "@/components/papers/tasks/task-detail-page"
 import { TasksPage } from "@/components/papers/tasks/tasks-page"
 import { fetchPaperMethodsResult, fetchPapers, fetchPaperTasksResult } from "@/lib/papers/api"
 import type { Paper, PaperListResult, PaperMethod } from "@/lib/papers/types"
@@ -99,7 +100,7 @@ const methodPapers: Paper[] = [
     authors: ["A"],
     publishedAt: "2026-05-24T00:00:00Z",
     tags: ["agents"],
-    taskRefs: [],
+    taskRefs: [{ id: "task-coding", slug: "coding-agents", name: "Coding Agents" }],
     methodRefs: [{ id: "method-tool-use", slug: "tool-use", name: "Tool Use" }],
     benchmarks: [
       {
@@ -114,6 +115,19 @@ const methodPapers: Paper[] = [
     isPublished: true
   }
 ]
+
+const taskDetail = {
+  id: "task-coding",
+  slug: "coding-agents",
+  name: "Coding Agents",
+  group: "code-ai",
+  description: "Agents that solve software engineering tasks.",
+  paperCount: 1,
+  benchmarkCount: 1,
+  methodCount: 1,
+  sisterTasks: [],
+  commonMethods: []
+}
 
 describe("paper task and method pages", () => {
   beforeEach(() => {
@@ -169,6 +183,17 @@ describe("paper task and method pages", () => {
 
     expect(screen.getByText("Benchmark Evidence")).toBeInTheDocument()
     expect(screen.getByText(/recorded benchmark fields/i)).toBeInTheDocument()
+    expect(screen.getByText("resolved: 12.5%")).toBeInTheDocument()
+    expect(screen.queryByText(/placeholder action/i)).not.toBeInTheDocument()
+  })
+
+  it("opens benchmark evidence from task detail instead of placeholder copy", () => {
+    render(<TaskDetailPage task={taskDetail} locale="en" papers={methodPapers} />)
+
+    fireEvent.click(screen.getByRole("button", { name: /SWE-bench/ }))
+
+    expect(screen.getByText("Benchmark Evidence")).toBeInTheDocument()
+    expect(screen.getByText(/recorded benchmark fields on papers in this task/i)).toBeInTheDocument()
     expect(screen.getByText("resolved: 12.5%")).toBeInTheDocument()
     expect(screen.queryByText(/placeholder action/i)).not.toBeInTheDocument()
   })

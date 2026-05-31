@@ -5,6 +5,7 @@ import { BenchmarkList } from "@/components/papers/tasks/benchmark-list"
 import { CommonMethodsPanel } from "@/components/papers/tasks/common-methods-panel"
 import { SisterTasksPanel } from "@/components/papers/tasks/sister-tasks-panel"
 import { PapersMicrobar } from "@/components/papers/papers-microbar"
+import { BenchmarkEvidencePanel } from "@/components/papers/shared/benchmark-evidence-panel"
 import { InlineNotice } from "@/components/papers/shared/inline-notice"
 import { ImplementationList } from "@/components/papers/shared/implementation-list"
 import { PaperDetailDrawer } from "@/components/papers/shared/paper-detail-drawer"
@@ -29,6 +30,7 @@ export function TaskDetailPage({
 }) {
   const [notice, setNotice] = useState<string | null>(fallbackNotice ?? null)
   const [selectedPaper, setSelectedPaper] = useState<Paper | null>(null)
+  const [selectedBenchmark, setSelectedBenchmark] = useState<Benchmark | null>(null)
 
   const taskPapers = papers?.filter(
     (p) => (p.taskRefs ?? []).some((r) => r.slug === task.slug)
@@ -39,6 +41,13 @@ export function TaskDetailPage({
   const methodsUsed =
     new Set(taskPapers.flatMap((p) => (p.methodRefs ?? []).map((m) => m.slug))).size ||
     task.methodCount
+
+  function previewBenchmark(benchmark: Benchmark) {
+    setSelectedBenchmark(benchmark)
+    if (notice && notice !== fallbackNotice) {
+      setNotice(null)
+    }
+  }
 
   return (
     <div className="space-y-8">
@@ -95,13 +104,21 @@ export function TaskDetailPage({
       {/* Main + sidebar */}
       <div className="grid gap-10 xl:grid-cols-[minmax(0,1fr)_18rem] 2xl:grid-cols-[minmax(0,1fr)_19rem]">
         <main className="space-y-10">
+          {selectedBenchmark ? (
+            <BenchmarkEvidencePanel
+              benchmark={selectedBenchmark}
+              context={{ type: "task", task }}
+              papers={taskPapers}
+              locale={locale}
+              onClose={() => setSelectedBenchmark(null)}
+              onPreviewPaper={(paper) => setSelectedPaper(paper)}
+            />
+          ) : null}
           <BenchmarkList
             benchmarks={taskBenchmarks}
             task={task}
             locale={locale}
-            onSelect={(b: Benchmark) =>
-              setNotice(`${b.name}: ${t(papersCopy.benchmarkPreview, locale)}`)
-            }
+            onSelect={previewBenchmark}
           />
           <PaperStream
             papers={taskPapers}
