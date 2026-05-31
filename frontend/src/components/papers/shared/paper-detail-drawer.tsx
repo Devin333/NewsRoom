@@ -278,7 +278,7 @@ export function PaperDetailDrawer({
               </Button>
             ) : null}
             <Button asChild className="rounded-md">
-              <Link href={`/papers/${encodeURIComponent(activePaper.slug || activePaper.id)}`}>
+              <Link href={`/papers/${encodeURIComponent(activePaper.slug || activePaper.id)}/read`}>
                 <BookOpen className="size-4" />
                 {translate(locale, "papers.reader.openReader")}
               </Link>

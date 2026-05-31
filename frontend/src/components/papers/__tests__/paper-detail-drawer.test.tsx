@@ -76,7 +76,7 @@ describe("PaperDetailDrawer", () => {
     ).toBeTruthy()
     expect(screen.getByRole("link", { name: /view pdf/i })).toHaveAttribute("href", "https://arxiv.org/pdf/2304.02643.pdf")
     expect(screen.getByRole("link", { name: /code/i })).toHaveAttribute("href", "https://github.com/facebookresearch/segment-anything")
-    expect(screen.getByRole("link", { name: /open reader/i })).toHaveAttribute("href", "/papers/segment-anything")
+    expect(screen.getByRole("link", { name: /open reader/i })).toHaveAttribute("href", "/papers/segment-anything/read")
   })
 
   it("notifies when dismissed", () => {
