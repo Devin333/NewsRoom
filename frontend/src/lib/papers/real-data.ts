@@ -189,10 +189,10 @@ export async function getPaperListResult(query: PaperListQuery = {}): Promise<Pa
 export async function getPaperById(paperId: string): Promise<Paper | null> {
   const result = await safeApiGet<{ paper?: unknown }>(`/api/v1/papers/${encodeURIComponent(paperId)}`)
   if (result.ok && isPaper(result.data?.paper)) {
-    return normalizeRuntimePaper(result.data.paper)
+    return normalizePublicPaper(result.data.paper)
   }
   if (result.ok && isPaper(result.data)) {
-    return normalizeRuntimePaper(result.data)
+    return normalizePublicPaper(result.data)
   }
 
   const data = await getPublishedPaperData()
@@ -256,6 +256,10 @@ export async function loadApiPaperMethods(): Promise<PaperMethod[]> {
 
 function normalizeRuntimePapers(papers: Paper[]) {
   return papers.filter((paper) => paper.isPublished !== false).map(normalizeRuntimePaper)
+}
+
+function normalizePublicPaper(paper: Paper) {
+  return paper.isPublished === false ? null : normalizeRuntimePaper(paper)
 }
 
 function normalizeRuntimePaper(paper: Paper): Paper {

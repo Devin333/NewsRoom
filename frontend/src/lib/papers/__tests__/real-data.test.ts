@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { getPaperListResult, getPaperMethodsResult, getPaperTasksResult, loadApiPapers } from "@/lib/papers/real-data"
+import { getPaperById, getPaperListResult, getPaperMethodsResult, getPaperTasksResult, loadApiPapers } from "@/lib/papers/real-data"
 import { safeApiGet } from "@/lib/api/server"
 import type { Paper } from "@/lib/papers/types"
 
@@ -89,6 +89,23 @@ describe("Papers API data loading", () => {
     })
 
     await expect(loadApiPapers()).resolves.toEqual([])
+  })
+
+  it("does not expose unpublished papers through detail lookup", async () => {
+    mockedSafeApiGet.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        paper: realPaper({
+          id: "paper-draft",
+          slug: "paper-draft",
+          title: "Draft Paper",
+          isPublished: false
+        })
+      }
+    })
+
+    await expect(getPaperById("paper-draft")).resolves.toBeNull()
+    expect(mockedSafeApiGet).toHaveBeenCalledWith("/api/v1/papers/paper-draft")
   })
 
   it("filters and sorts real paper fallback results for the BFF list", async () => {
