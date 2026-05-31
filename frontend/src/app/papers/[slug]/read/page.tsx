@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation"
-import { PaperDocumentReaderPage } from "@/components/papers/paper-reader"
+import { PaperDocumentReaderPageClient } from "@/app/papers/[slug]/read/paper-document-reader-page-client"
 import { loadPaperDocumentPayload } from "@/lib/paper-reader/server-loader"
 
 export const dynamic = "force-dynamic"
@@ -10,5 +10,5 @@ export default async function PaperDocumentReadRoute({ params }: { params: { slu
     notFound()
   }
 
-  return <PaperDocumentReaderPage payload={payload} locale="zh" />
+  return <PaperDocumentReaderPageClient payload={payload} />
 }

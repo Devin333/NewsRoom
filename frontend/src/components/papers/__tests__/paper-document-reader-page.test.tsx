@@ -1,9 +1,11 @@
 import { fireEvent, render, screen, within } from "@testing-library/react"
 import { describe, expect, it, vi } from "vitest"
 import { PaperDocumentReaderPage } from "@/components/papers/paper-reader"
+import { PaperDocumentReaderPageClient } from "@/app/papers/[slug]/read/paper-document-reader-page-client"
 import { targetForPaperBlock } from "@/lib/paper-reader/interactions"
 import { triggerPaperCompile } from "@/lib/paper-reader/api"
 import type { PaperDocumentResponse } from "@/lib/paper-reader/types"
+import { useUiStore } from "@/stores/ui-store"
 
 vi.mock("@/lib/papers/api", () => ({
   recordReaderEvent: vi.fn().mockResolvedValue({}),
@@ -18,6 +20,15 @@ vi.mock("@/lib/paper-reader/api", async (importOriginal) => {
 })
 
 describe("PaperDocumentReaderPage", () => {
+  it("uses the current UI locale when rendered from the read route client", () => {
+    useUiStore.setState({ locale: "en" })
+
+    render(<PaperDocumentReaderPageClient payload={needsReviewPayload} />)
+
+    expect(screen.getByText(/May 24, 2026/)).toBeInTheDocument()
+    expect(screen.queryByText(/2026年5月24日/)).not.toBeInTheDocument()
+  })
+
   it("renders compiled PaperDocument blocks through the Open Reader and keeps AI summary out of the body", () => {
     render(<PaperDocumentReaderPage payload={compiledPayload} locale="en" />)
 
