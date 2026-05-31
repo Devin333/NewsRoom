@@ -13,7 +13,16 @@ export function SisterTasksPanel({
   papers: Paper[]
   locale: Locale
 }) {
-  if (!tasks.length) return null
+  const visibleTasks = tasks
+    .map((task) => ({
+      task,
+      count: papers.filter(
+        (p) => p.isPublished !== false && (p.taskRefs ?? []).some((r) => r.slug === task.slug)
+      ).length
+    }))
+    .filter((item) => item.count > 0)
+
+  if (!visibleTasks.length) return null
   return (
     <section className="border-t border-[#d7dfd8] pt-5 dark:border-border">
       <p className="text-[0.68rem] font-black text-emerald-700 dark:text-emerald-400">01/</p>
@@ -21,10 +30,7 @@ export function SisterTasksPanel({
         {t(papersCopy.sisterTasks, locale)}
       </h2>
       <div className="mt-4 divide-y divide-[#e8eeea] dark:divide-border">
-        {tasks.map((task) => {
-          const count = papers.filter(
-            (p) => p.isPublished !== false && (p.taskRefs ?? []).some((r) => r.slug === task.slug)
-          ).length
+        {visibleTasks.map(({ task, count }) => {
           return (
             <Link
               key={task.id}
@@ -32,11 +38,9 @@ export function SisterTasksPanel({
               className="flex items-baseline justify-between gap-3 py-2.5 text-sm text-[#334155]/72 transition-colors hover:text-emerald-700 dark:text-muted-foreground dark:hover:text-foreground"
             >
               <span className="font-semibold leading-5">{taskName(task, locale)}</span>
-              {count > 0 && (
-                <span className="shrink-0 text-xs text-[#334155]/45 dark:text-muted-foreground">
-                  {formatWholeNumber(count, locale)}
-                </span>
-              )}
+              <span className="shrink-0 text-xs text-[#334155]/45 dark:text-muted-foreground">
+                {formatWholeNumber(count, locale)}
+              </span>
             </Link>
           )
         })}

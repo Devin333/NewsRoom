@@ -29,6 +29,20 @@ describe("task relation panels", () => {
     expect(screen.getByRole("link", { name: /Planning\s*2/i })).toHaveAttribute("href", "/papers/methods/planning")
     expect(screen.getByRole("link", { name: /Agent Memory\s*1/i })).toHaveAttribute("href", "/papers/methods/agent-memory")
   })
+
+  it("hides related task and method entries without visible paper evidence", () => {
+    render(
+      <>
+        <SisterTasksPanel tasks={[agents, reasoning]} papers={[paper("draft-task", [agents], [planning], false)]} locale="en" />
+        <CommonMethodsPanel methods={[planning, memory]} papers={[paper("unrelated", [agents], [], true)]} locale="en" />
+      </>
+    )
+
+    expect(screen.queryByText("Sister Tasks")).not.toBeInTheDocument()
+    expect(screen.queryByText("Common Methods")).not.toBeInTheDocument()
+    expect(screen.queryByRole("link", { name: /Agents/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole("link", { name: /Planning/i })).not.toBeInTheDocument()
+  })
 })
 
 function paper(id: string, taskRefs: TaskRef[], methodRefs: MethodRef[], isPublished = true): Paper {
