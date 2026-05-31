@@ -27,7 +27,7 @@ export function BenchmarkEvidencePanel({
   const category = benchmark.category ? benchmark.category : undefined
   const metric = "metric" in benchmark ? benchmark.metric : undefined
   const bestValue = "bestValue" in benchmark ? benchmark.bestValue : undefined
-  const entryCount = "entryCount" in benchmark ? benchmark.entryCount : matches.length
+  const entryCount = matches.length
 
   return (
     <section className="rounded-md border border-border bg-card p-4">

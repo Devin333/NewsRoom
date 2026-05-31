@@ -2,6 +2,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { MethodDetailPage } from "@/components/papers/methods/method-detail-page"
 import { MethodsPage } from "@/components/papers/methods/methods-page"
+import { BenchmarkEvidencePanel } from "@/components/papers/shared/benchmark-evidence-panel"
 import { TaskDetailPage } from "@/components/papers/tasks/task-detail-page"
 import { TasksPage } from "@/components/papers/tasks/tasks-page"
 import { fetchPaperMethodsResult, fetchPapers, fetchPaperTasksResult } from "@/lib/papers/api"
@@ -261,6 +262,29 @@ describe("paper task and method pages", () => {
     expect(screen.getByText(/recorded benchmark fields/i)).toBeInTheDocument()
     expect(screen.getByText("resolved: 12.5%")).toBeInTheDocument()
     expect(screen.queryByText(/placeholder action/i)).not.toBeInTheDocument()
+  })
+
+  it("shows benchmark evidence entries from current matching papers", () => {
+    render(
+      <BenchmarkEvidencePanel
+        benchmark={{
+          id: "benchmark-swe-bench",
+          slug: "swe-bench",
+          name: "SWE-bench",
+          category: "software-engineering",
+          taskSlug: "coding-agents",
+          entryCount: 99
+        }}
+        context={{ type: "method", method: methodDetail }}
+        papers={methodPapers}
+        locale="en"
+        onClose={vi.fn()}
+        onPreviewPaper={vi.fn()}
+      />
+    )
+
+    expect(screen.getByText("Entries").nextElementSibling).toHaveTextContent("1")
+    expect(screen.getByText("resolved: 12.5%")).toBeInTheDocument()
   })
 
   it("opens benchmark evidence from task detail instead of placeholder copy", () => {
