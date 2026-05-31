@@ -37,10 +37,7 @@ export function TaskDetailPage({
   ) ?? getPapersForTask(task.slug)
 
   const taskBenchmarks = getBenchmarksForTask(task.slug)
-
-  const methodsUsed =
-    new Set(taskPapers.flatMap((p) => (p.methodRefs ?? []).map((m) => m.slug))).size ||
-    task.methodCount
+  const taskStats = deriveTaskDetailStats(taskPapers, taskBenchmarks)
 
   function previewBenchmark(benchmark: Benchmark) {
     setSelectedBenchmark(benchmark)
@@ -81,7 +78,7 @@ export function TaskDetailPage({
           <span aria-hidden="true" className="text-[#d7dfd8]">·</span>
           <span>
             <strong className="font-black text-[#334155] dark:text-foreground">
-              {formatWholeNumber(taskBenchmarks.length || task.benchmarkCount, locale)}
+              {formatWholeNumber(taskStats.benchmarkCount, locale)}
             </strong>{" "}
             <span className="text-[0.72rem] font-black uppercase tracking-[0.12em]">
               {t(papersCopy.benchmarks, locale)}
@@ -90,7 +87,7 @@ export function TaskDetailPage({
           <span aria-hidden="true" className="text-[#d7dfd8]">·</span>
           <span>
             <strong className="font-black text-[#334155] dark:text-foreground">
-              {formatWholeNumber(methodsUsed, locale)}
+              {formatWholeNumber(taskStats.methodCount, locale)}
             </strong>{" "}
             <span className="text-[0.72rem] font-black uppercase tracking-[0.12em]">
               {t(papersCopy.methodsUsed, locale)}
@@ -147,4 +144,24 @@ export function TaskDetailPage({
       />
     </div>
   )
+}
+
+function deriveTaskDetailStats(papers: Paper[], taskBenchmarks: Benchmark[]) {
+  const benchmarkCount = taskBenchmarks.length || countBenchmarksFromPapers(papers)
+  const methodCount = new Set(papers.flatMap((paper) => (paper.methodRefs ?? []).map((method) => method.slug))).size
+
+  return {
+    benchmarkCount,
+    methodCount,
+  }
+}
+
+function countBenchmarksFromPapers(papers: Paper[]) {
+  const seen = new Set<string>()
+  for (const paper of papers) {
+    for (const benchmark of paper.benchmarks ?? []) {
+      seen.add(benchmark.id || benchmark.name)
+    }
+  }
+  return seen.size
 }

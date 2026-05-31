@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react"
+import { fireEvent, render, screen, within } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { MethodDetailPage } from "@/components/papers/methods/method-detail-page"
 import { MethodsPage } from "@/components/papers/methods/methods-page"
@@ -272,5 +272,39 @@ describe("paper task and method pages", () => {
     expect(screen.getByText(/recorded benchmark fields on papers in this task/i)).toBeInTheDocument()
     expect(screen.getByText("resolved: 12.5%")).toBeInTheDocument()
     expect(screen.queryByText(/placeholder action/i)).not.toBeInTheDocument()
+  })
+
+  it("derives task detail stats from visible papers instead of stale task totals", () => {
+    render(
+      <TaskDetailPage
+        task={{
+          ...taskDetail,
+          id: "task-custom",
+          slug: "custom-task",
+          name: "Custom Task",
+          benchmarkCount: 9,
+          methodCount: 7
+        }}
+        locale="en"
+        papers={[
+          {
+            ...methodPapers[0],
+            id: "paper-custom",
+            slug: "paper-custom",
+            title: "Custom Paper",
+            taskRefs: [{ id: "task-custom", slug: "custom-task", name: "Custom Task" }],
+            methodRefs: [],
+            benchmarks: []
+          }
+        ]}
+      />
+    )
+
+    const hero = screen.getByRole("heading", { name: "Custom Task" }).closest("section")
+    expect(hero).not.toBeNull()
+    const stats = within(hero!)
+      .getAllByText(/^\d+$/)
+      .map((node) => node.textContent)
+    expect(stats).toEqual(["1", "0", "0"])
   })
 })
