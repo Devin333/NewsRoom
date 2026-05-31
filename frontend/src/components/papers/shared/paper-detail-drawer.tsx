@@ -48,6 +48,14 @@ export function PaperDetailDrawer({
 
   useEffect(() => {
     if (paper) {
+      if (!isPublicPaper(paper)) {
+        setActivePaper(null)
+        setSummary(null)
+        setSummaryStatus("idle")
+        setSummaryError(null)
+        setDetailError("Paper detail is not available.")
+        return
+      }
       setActivePaper(paper)
       setSummary(paper.aiSummary ?? null)
       setSummaryStatus(paper.aiSummary ? "success" : "idle")
@@ -80,6 +88,13 @@ export function PaperDetailDrawer({
     fetchPaperDetail(paperId)
       .then((detail) => {
         if (!cancelled) {
+          if (!isPublicPaper(detail)) {
+            setActivePaper(null)
+            setSummary(null)
+            setSummaryStatus("idle")
+            setDetailError("Paper detail is not available.")
+            return
+          }
           setActivePaper(detail)
           setSummary(detail.aiSummary ?? null)
           setSummaryStatus(detail.aiSummary ? "success" : "idle")
@@ -427,6 +442,10 @@ export function PaperDetailDrawer({
       </div>
     </PaperDetailFrame>
   )
+}
+
+function isPublicPaper(paper: Paper) {
+  return paper.isPublished !== false
 }
 
 function PaperDetailFrame({

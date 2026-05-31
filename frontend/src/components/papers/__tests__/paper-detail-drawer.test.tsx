@@ -138,6 +138,16 @@ describe("PaperDetailDrawer", () => {
     expect(onOpenChange).toHaveBeenCalledWith(false)
   })
 
+  it("does not expose unpublished paper details returned by a deep link", async () => {
+    vi.mocked(fetchPaperDetail).mockResolvedValue({ ...paper, id: "paper-draft", slug: "paper-draft", title: "Draft Paper", isPublished: false })
+
+    render(<PaperDetailDrawer paper={null} paperId="paper-draft" locale="en" open onOpenChange={vi.fn()} />)
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Paper detail is not available.")
+    expect(screen.queryByText("Draft Paper")).not.toBeInTheDocument()
+    expect(requestPaperSummary).not.toHaveBeenCalled()
+  })
+
   it("renders summary loading and success states", async () => {
     render(<PaperDetailDrawer paper={paper} locale="en" open onOpenChange={vi.fn()} />)
 
