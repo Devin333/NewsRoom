@@ -108,6 +108,20 @@ describe("PaperDocumentReaderPage", () => {
     expect(detailsLink).toHaveAttribute("data-level", "2")
   })
 
+  it("renders textless raster table models as reader-native tables instead of image fallbacks", () => {
+    render(<PaperDocumentReaderPage payload={compiledPayload} locale="en" />)
+
+    const article = screen.getByLabelText("Open reader paper body")
+    const table = within(article).getByRole("table", { name: "Table 2" })
+    const tableBlock = document.querySelector<HTMLElement>('[data-block-id="block-table-raster"]')
+    if (!tableBlock) throw new Error("Expected raster table block to be rendered")
+
+    expect(table.querySelectorAll("th,td")).toHaveLength(4)
+    expect(table.querySelector("th")).toHaveStyle({ backgroundColor: "#d4ebd1" })
+    expect(table.querySelector("td")).toHaveStyle({ backgroundColor: "#f3cccc" })
+    expect(tableBlock.querySelector("img")).toBeNull()
+  })
+
   it("blocks article rendering for non-compiled documents", () => {
     render(<PaperDocumentReaderPage payload={needsReviewPayload} locale="en" />)
 
@@ -444,6 +458,46 @@ const compiledPayload: PaperDocumentResponse = {
         },
       },
       {
+        id: "block-table-raster",
+        paperId: "visual-paper",
+        type: "table",
+        text: "Table 2: Raster-only table.",
+        pageNumber: 1,
+        sectionId: "block-heading-1",
+        assetId: "asset-table-raster",
+        label: "Table 2",
+        caption: "Table 2: Raster-only table.",
+        source: { pageNumber: 1, bbox: { x0: 20, y0: 170, x1: 320, y1: 270 } },
+        metadata: {
+          sourceKind: "pdf-raster-table-model",
+          tableModel: {
+            version: 1,
+            styleSchemaVersion: 2,
+            sourceKind: "pdf-raster-table-model",
+            textExtraction: "unavailable",
+            alignments: ["center", "center"],
+            rows: [
+              {
+                rowStyle: { backgroundColor: "#d4ebd1" },
+                rulesBefore: ["toprule"],
+                cells: [
+                  { text: "", html: "", style: { backgroundColor: "#d4ebd1" } },
+                  { text: "", html: "", style: { backgroundColor: "#d4ebd1" } },
+                ],
+              },
+              {
+                rulesAfter: ["bottomrule"],
+                cells: [
+                  { text: "", html: "", style: { backgroundColor: "#f3cccc" } },
+                  { text: "", html: "" },
+                ],
+              },
+            ],
+          },
+          tableHtml: "<table><tbody><tr><td></td><td></td></tr><tr><td></td><td></td></tr></tbody></table>",
+        },
+      },
+      {
         id: "block-heading-2",
         paperId: "visual-paper",
         type: "heading",
@@ -498,6 +552,21 @@ const compiledPayload: PaperDocumentResponse = {
         caption: "Table 1: Real table from the TeX source.",
         source: { pageNumber: 1, bbox: { x0: 0, y0: 0, x1: 420, y1: 150 } },
         metadata: { sourceProvider: "arxiv-source", sourceKind: "tex-table-html" },
+      },
+      {
+        assetId: "asset-table-raster",
+        paperId: "visual-paper",
+        kind: "table",
+        fileName: "assets/asset-table-raster.png",
+        mimeType: "image/png",
+        width: 300,
+        height: 100,
+        checksum: "checksum-raster-table",
+        pageNumber: 1,
+        label: "Table 2",
+        caption: "Table 2: Raster-only table.",
+        source: { pageNumber: 1, bbox: { x0: 20, y0: 170, x1: 320, y1: 270 } },
+        metadata: { sourceKind: "pdf-raster-table-model" },
       },
     ],
   },

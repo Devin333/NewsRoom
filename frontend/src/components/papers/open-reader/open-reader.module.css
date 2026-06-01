@@ -388,6 +388,8 @@
 .paperTableCell {
   padding: 6px 12px;
   border: 0;
+  min-width: 42px;
+  height: 26px;
   vertical-align: middle;
   white-space: nowrap;
 }
