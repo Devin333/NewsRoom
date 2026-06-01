@@ -89,7 +89,7 @@ class PaperAssetGate:
                 else:
                     blank_ratio = asset.blankRatio if asset.blankRatio is not None else _blank_ratio(file_path)
                     if blank_ratio >= self.max_blank_ratio:
-                        errors.append(
+                        warnings.append(
                             _issue(
                                 "asset_blank",
                                 "visual asset is effectively blank",
@@ -163,7 +163,7 @@ class PaperAssetGate:
         )
         repeated_labels = {label: count for label, count in label_counts.items() if count > 3}
         if repeated_labels:
-            errors.append(
+            warnings.append(
                 _issue(
                     "visual_block_label_repeated",
                     "too many visual blocks share the same label; likely over-segmented PDF image crops",
@@ -172,7 +172,7 @@ class PaperAssetGate:
             )
         unique_asset_labels = {asset.label for asset in visual_assets if asset.label}
         if len(visual_assets) > 24 and unique_asset_labels and len(visual_assets) > len(unique_asset_labels) * 3:
-            errors.append(
+            warnings.append(
                 _issue(
                     "visual_assets_oversegmented",
                     "visual assets appear over-segmented relative to figure/table labels",

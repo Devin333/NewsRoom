@@ -252,7 +252,7 @@ def test_visual_compiler_keeps_two_column_prose_out_of_image_figure_crop(tmp_pat
     assert "Reference Image" not in body_text
 
 
-def test_asset_gate_blocks_oversegmented_visual_labels(tmp_path) -> None:
+def test_asset_gate_warns_about_oversegmented_visual_labels_without_blocking_reader(tmp_path) -> None:
     paper_dir = tmp_path / "oversegmented"
     assets_dir = paper_dir / "assets"
     assets_dir.mkdir(parents=True)
@@ -316,8 +316,66 @@ def test_asset_gate_blocks_oversegmented_visual_labels(tmp_path) -> None:
 
     gate_report = PaperAssetGate().validate(document=document, manifest=manifest, paper_dir=paper_dir)
 
-    assert gate_report["passed"] is False
-    assert any(error["code"] == "visual_block_label_repeated" for error in gate_report["errors"])
+    assert gate_report["passed"] is True
+    assert any(warning["code"] == "visual_block_label_repeated" for warning in gate_report["warnings"])
+
+
+def test_asset_gate_warns_about_blank_visual_assets_without_blocking_reader(tmp_path) -> None:
+    paper_dir = tmp_path / "blank-asset"
+    assets_dir = paper_dir / "assets"
+    assets_dir.mkdir(parents=True)
+    file_path = assets_dir / "figure.png"
+    file_path.write_bytes(_sample_png_bytes())
+    source = PaperSourceRegion(pageNumber=1, bbox=(72.0, 120.0, 240.0, 180.0))
+    asset = PaperVisualAsset(
+        assetId="blank-asset",
+        paperId="blank-paper",
+        kind="figure",
+        fileName="assets/figure.png",
+        mimeType="image/png",
+        width=40,
+        height=40,
+        checksum=_sha256(file_path.read_bytes()),
+        pageNumber=1,
+        label="Figure 1",
+        caption="Figure 1: Blank source crop.",
+        source=source,
+        blankRatio=1.0,
+    )
+    block = PaperBlock(
+        id="figure-block",
+        paperId="blank-paper",
+        type="figure",
+        text="Figure 1: Blank source crop.",
+        pageNumber=1,
+        assetId="blank-asset",
+        label="Figure 1",
+        caption="Figure 1: Blank source crop.",
+        source=source,
+    )
+    document = PaperDocument(
+        paperId="blank-paper",
+        schemaVersion="paper_document_v1",
+        status="compiled",
+        title="Blank Asset Paper",
+        compiledAt="2026-05-28T00:00:00Z",
+        sourceHash="hash",
+        paper={},
+        outline=(),
+        blocks=(block,),
+    )
+    manifest = PaperAssetManifest(
+        paperId="blank-paper",
+        schemaVersion="paper_document_v1",
+        createdAt="2026-05-28T00:00:00Z",
+        sourceHash="hash",
+        assets=(asset,),
+    )
+
+    gate_report = PaperAssetGate().validate(document=document, manifest=manifest, paper_dir=paper_dir)
+
+    assert gate_report["passed"] is True
+    assert any(warning["code"] == "asset_blank" for warning in gate_report["warnings"])
 
 
 def test_asset_gate_blocks_structured_table_block_without_model_metadata(tmp_path) -> None:
