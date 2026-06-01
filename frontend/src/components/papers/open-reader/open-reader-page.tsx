@@ -580,6 +580,8 @@ function OpenReaderVisualBlockView({
   const isEquation = block.type === "equation"
   const tableModel = isPaperTableModel(block.metadata?.tableModel) ? block.metadata?.tableModel : undefined
   const tableHtml = typeof block.metadata?.tableHtml === "string" ? block.metadata.tableHtml : undefined
+  const renderTableModel = Boolean(tableModel && (!isTextlessRasterTable(tableModel) || hasTableReadableText(tableModel)))
+  const renderTableHtml = Boolean(tableHtml && (!tableModel || renderTableModel))
   const canPreview = Boolean(visual.source || asset)
 
   return (
@@ -591,9 +593,9 @@ function OpenReaderVisualBlockView({
       ) : null}
       {isEquation ? (
         <EquationRenderer value={equationText} />
-      ) : tableModel ? (
+      ) : renderTableModel && tableModel ? (
         <PaperTable model={tableModel} label={label} />
-      ) : tableHtml ? (
+      ) : renderTableHtml && tableHtml ? (
         <div className={styles.paperTableScroll} dangerouslySetInnerHTML={{ __html: tableHtml }} />
       ) : asset ? (
         <Image
@@ -667,6 +669,7 @@ function SourcePreviewModal({
 }
 
 type PaperTableModel = {
+  textExtraction?: string
   alignments?: string[]
   rows: Array<{
     cells: Array<{
@@ -694,6 +697,14 @@ type PaperTableStyle = {
 
 function isPaperTableModel(value: unknown): value is PaperTableModel {
   return Boolean(value && typeof value === "object" && Array.isArray((value as PaperTableModel).rows))
+}
+
+function isTextlessRasterTable(model: PaperTableModel) {
+  return model.textExtraction === "unavailable" && !hasTableReadableText(model)
+}
+
+function hasTableReadableText(model: PaperTableModel) {
+  return model.rows.some((row) => row.cells.some((cell) => `${cell.text ?? ""}${stripHtml(cell.html ?? "")}`.trim()))
 }
 
 function PaperTable({ model, label }: { model: PaperTableModel; label: string }) {
@@ -817,6 +828,10 @@ function escapeHtml(value: string) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;")
+}
+
+function stripHtml(value: string) {
+  return value.replace(/<[^>]*>/g, " ")
 }
 
 type ParagraphSegment = {

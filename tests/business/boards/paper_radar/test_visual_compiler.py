@@ -189,6 +189,86 @@ def test_visual_compiler_builds_structured_pdf_table_model_with_styles(tmp_path)
     assert "Ours 0.99 +0.12" not in body_text
 
 
+def test_visual_compiler_refines_caption_only_table_regions_to_real_table_grid(tmp_path) -> None:
+    output_dir = tmp_path / "caption-only-table"
+    compiler = PyMuPDFPaperCompiler(dpi=96, layout_provider=_CaptionOnlyTableLayoutProvider(), max_visual_assets_per_page=4)
+
+    draft = compiler.compile(
+        pdf_bytes=_styled_pdf_table_bytes(),
+        paper={
+            "id": "caption-only-table-paper",
+            "title": "Caption Only Table Paper",
+            "abstractSnippet": "AI summary must remain outside the body.",
+        },
+        output_dir=output_dir,
+        source_pdf_url="https://arxiv.org/pdf/2605.00007.pdf",
+        started_at=datetime(2026, 5, 28, tzinfo=timezone.utc),
+        finished_at=datetime(2026, 5, 28, tzinfo=timezone.utc),
+    )
+
+    table_blocks = [block for block in draft.document.blocks if block.type == "table"]
+    assert len(table_blocks) == 1
+    assert table_blocks[0].source is not None
+    assert table_blocks[0].source.bbox[1] < 260
+    assert table_blocks[0].metadata["tableModel"]["styleSchemaVersion"] == 2
+    assert table_blocks[0].metadata["tableText"] == "Method | Score | Delta\nOurs | 0.99 | +0.12\nBaseline | 0.72 | -0.03"
+
+
+def test_visual_compiler_extracts_table_when_caption_and_rows_share_one_pdf_text_block(tmp_path) -> None:
+    output_dir = tmp_path / "single-block-table"
+    compiler = PyMuPDFPaperCompiler(dpi=96, max_visual_assets_per_page=4)
+
+    draft = compiler.compile(
+        pdf_bytes=_single_text_block_table_pdf_bytes(),
+        paper={
+            "id": "single-block-table-paper",
+            "title": "Single Block Table Paper",
+            "abstractSnippet": "AI summary must remain outside the body.",
+        },
+        output_dir=output_dir,
+        source_pdf_url="https://arxiv.org/pdf/2605.00008.pdf",
+        started_at=datetime(2026, 5, 28, tzinfo=timezone.utc),
+        finished_at=datetime(2026, 5, 28, tzinfo=timezone.utc),
+    )
+
+    table_blocks = [block for block in draft.document.blocks if block.type == "table"]
+    assert len(table_blocks) == 1
+    table_text = table_blocks[0].metadata["tableText"]
+    assert "Clinical Features | Group A | Group B | p-value" in table_text
+    assert "Age | 63.9 | 62.7 | 0.26" in table_text
+    assert "Tables Table 1" not in table_text
+
+
+def test_visual_compiler_builds_raster_table_model_for_image_only_tables(tmp_path) -> None:
+    output_dir = tmp_path / "image-only-table"
+    compiler = PyMuPDFPaperCompiler(dpi=96, max_visual_assets_per_page=4)
+
+    draft = compiler.compile(
+        pdf_bytes=_image_only_table_pdf_bytes(),
+        paper={
+            "id": "image-only-table-paper",
+            "title": "Image Only Table Paper",
+            "abstractSnippet": "AI summary must remain outside the body.",
+        },
+        output_dir=output_dir,
+        source_pdf_url="https://arxiv.org/pdf/2605.00009.pdf",
+        started_at=datetime(2026, 5, 28, tzinfo=timezone.utc),
+        finished_at=datetime(2026, 5, 28, tzinfo=timezone.utc),
+    )
+
+    table_blocks = [block for block in draft.document.blocks if block.type == "table"]
+    assert len(table_blocks) == 1
+    table_model = table_blocks[0].metadata["tableModel"]
+    assert table_model["sourceKind"] == "pdf-raster-table-model"
+    assert table_model["styleSchemaVersion"] == 2
+    assert table_model["textExtraction"] == "unavailable"
+    assert len(table_model["rows"]) == 3
+    assert all(len(row["cells"]) == 3 for row in table_model["rows"])
+    assert table_model["rows"][0]["rowStyle"]["backgroundColor"].startswith("#")
+    assert table_model["rows"][2]["cells"][0]["style"]["backgroundColor"].startswith("#")
+    assert table_blocks[0].metadata["tableHtml"].startswith("<table")
+
+
 def test_visual_compiler_prefers_model_equation_text_over_overlapping_pdf_prose(tmp_path) -> None:
     output_dir = tmp_path / "model-equation-text"
     compiler = PyMuPDFPaperCompiler(dpi=96, layout_provider=_ModelEquationTextLayoutProvider(), max_visual_assets_per_page=8)
@@ -501,6 +581,67 @@ def test_model_layout_provider_env_factory_requires_explicit_enablement() -> Non
     )
 
     assert isinstance(provider, OpenAICompatiblePaperLayoutProvider)
+
+
+def test_model_layout_provider_preserves_table_model_metadata() -> None:
+    def transport(_request, _timeout):
+        content = json.dumps(
+            {
+                "regions": [
+                    {
+                        "kind": "table",
+                        "label": "Table 1",
+                        "caption": "Table 1: Vision parsed table.",
+                        "bbox": {"x0": 10, "y0": 20, "x1": 210, "y1": 120},
+                        "tableModel": {
+                            "rows": [
+                                {
+                                    "cells": [
+                                        {"text": "Method", "align": "left", "style": {"backgroundColor": "#d4ebd1"}},
+                                        {"text": "Score", "align": "center", "style": {"backgroundColor": "#d4ebd1"}},
+                                    ],
+                                    "rowStyle": {"backgroundColor": "#d4ebd1"},
+                                    "rulesBefore": ["toprule"],
+                                },
+                                {
+                                    "cells": [
+                                        {"text": "Ours", "align": "left"},
+                                        {"text": "0.99", "align": "center"},
+                                    ],
+                                    "rulesBefore": ["midrule"],
+                                    "rulesAfter": ["bottomrule"],
+                                },
+                            ]
+                        },
+                    }
+                ]
+            }
+        )
+        return json.dumps({"choices": [{"message": {"content": content}}]}).encode("utf-8")
+
+    provider = OpenAICompatiblePaperLayoutProvider(
+        base_url="https://model.example/v1",
+        api_key="test-key",
+        model="vision-table-model",
+        transport=transport,
+    )
+
+    detection = provider.detect_regions(
+        page_image_bytes=b"fake-png-bytes",
+        page_number=1,
+        page_width=300,
+        page_height=400,
+        rendered_width=300,
+        rendered_height=400,
+        captions=(),
+    )
+
+    assert len(detection.regions) == 1
+    region = detection.regions[0]
+    assert region.kind == "table"
+    assert region.metadata["sourceKind"] == "model-vision-table-model"
+    assert region.metadata["sourceMapping"] == "model-vision"
+    assert region.metadata["tableModel"]["rows"][0]["cells"][0]["text"] == "Method"
 
 
 def test_arxiv_source_compiler_uses_tex_body_equations_and_source_assets(tmp_path) -> None:
@@ -1354,6 +1495,73 @@ def _styled_pdf_table_bytes() -> bytes:
     return payload
 
 
+def _single_text_block_table_pdf_bytes() -> bytes:
+    import fitz
+
+    document = fitz.open()
+    page = document.new_page(width=612, height=792)
+    page.insert_text((72, 72), "Single Block Table Paper", fontsize=20)
+    page.insert_textbox(
+        fitz.Rect(72, 110, 540, 230),
+        (
+            "Tables\n"
+            "Table 1 Baseline clinical characteristics of patients.\n"
+            "Clinical Features                Group A                Group B                p-value\n"
+            "Age                              63.9                   62.7                   0.26\n"
+            "Female                           27                     482                    0.00\n"
+        ),
+        fontsize=10,
+    )
+    for y in (154, 178, 226):
+        page.draw_line((72, y), (540, y), color=(0.05, 0.05, 0.05), width=1)
+    for x in (72, 180, 340, 496, 540):
+        page.draw_line((x, 154), (x, 226), color=(0.2, 0.2, 0.2), width=0.6)
+    payload = document.tobytes()
+    document.close()
+    return payload
+
+
+def _image_only_table_pdf_bytes() -> bytes:
+    import fitz
+
+    table_document = fitz.open()
+    table_page = table_document.new_page(width=420, height=170)
+    table_rect = fitz.Rect(20, 20, 400, 140)
+    table_page.draw_rect(fitz.Rect(20, 20, 400, 60), fill=(0.83, 0.92, 0.82), color=None)
+    table_page.draw_rect(fitz.Rect(20, 100, 146, 140), fill=(0.96, 0.82, 0.82), color=None)
+    for y in (20, 60, 100, 140):
+        table_page.draw_line((20, y), (400, y), color=(0, 0, 0), width=1.8)
+    for x in (20, 146, 273, 400):
+        table_page.draw_line((x, 20), (x, 140), color=(0, 0, 0), width=1.8)
+    for x, y, text in (
+        (36, 42, "Method"),
+        (170, 42, "Score"),
+        (296, 42, "Delta"),
+        (36, 82, "Ours"),
+        (174, 82, "0.99"),
+        (300, 82, "+0.12"),
+        (36, 122, "Base"),
+        (174, 122, "0.72"),
+        (300, 122, "-0.03"),
+    ):
+        table_page.insert_text((x, y), text, fontsize=18)
+    pixmap = table_page.get_pixmap(matrix=fitz.Matrix(3, 3), alpha=False)
+
+    document = fitz.open()
+    page = document.new_page(width=612, height=792)
+    page.insert_text((72, 72), "Image Only Table Paper", fontsize=20)
+    page.insert_text(
+        (96, 112),
+        "Table 1: Image-only table with colored cells.",
+        fontsize=10,
+    )
+    page.insert_image(fitz.Rect(96, 130, 516, 300), pixmap=pixmap)
+    payload = document.tobytes()
+    document.close()
+    table_document.close()
+    return payload
+
+
 def _model_equation_text_pdf_bytes() -> bytes:
     import fitz
 
@@ -1752,6 +1960,23 @@ class _StyledPdfTableLayoutProvider:
                     label="Table 1",
                     caption="Table 1: Styled PDF table with real cell colors.",
                     bbox=(120, 200, 520, 330),
+                    confidence=0.99,
+                ),
+            )
+        )
+
+
+class _CaptionOnlyTableLayoutProvider:
+    provider_name = "caption-only-table-layout-v1"
+
+    def detect_regions(self, **_kwargs):
+        return PaperLayoutDetection(
+            regions=(
+                PaperLayoutRegion(
+                    kind="table",
+                    label="Table 1",
+                    caption="Table 1: Styled PDF table with real cell colors.",
+                    bbox=(120, 344, 520, 366),
                     confidence=0.99,
                 ),
             )

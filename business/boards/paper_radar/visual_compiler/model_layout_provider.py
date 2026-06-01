@@ -205,6 +205,21 @@ class OpenAICompatiblePaperLayoutProvider(PaperVisualLayoutProvider):
                         "caption": "figure or table caption text from the paper, not a summary",
                         "equationText": "standalone equation text or LaTeX when kind is equation",
                         "bbox": {"x0": 0, "y0": 0, "x1": page_width, "y1": page_height},
+                        "tableModel": {
+                            "rows": [
+                                {
+                                    "cells": [
+                                        {
+                                            "text": "exact visible cell text",
+                                            "align": "left | center | right",
+                                            "style": {"color": "#000000", "backgroundColor": "#ffffff"},
+                                        }
+                                    ],
+                                    "rowStyle": {"backgroundColor": "#ffffff"},
+                                    "rulesBefore": ["toprule | midrule | bottomrule"],
+                                }
+                            ]
+                        },
                         "confidence": 0.0,
                     }
                 ]
@@ -221,6 +236,7 @@ class OpenAICompatiblePaperLayoutProvider(PaperVisualLayoutProvider):
                         "Return strict JSON only. Do not summarize, translate, or rewrite the paper. "
                         "Detect real figures, tables, and standalone equations. "
                         "Use the paper caption text if it is visible or provided. "
+                        "For tables, include tableModel rows and cells when the cell text is legible; preserve visible background and text colors as #RRGGBB. "
                         "For equations, return equationText as readable LaTeX or plain math text; equations are not image assets. "
                         "Bounding boxes must be in PDF page points with top-left origin. "
                         "Prefer one complete region for a multi-panel figure instead of many tiny sub-images. "
@@ -318,6 +334,7 @@ def _layout_detection_from_payload(
                     "provider": OpenAICompatiblePaperLayoutProvider.provider_name,
                     "rawIndex": index,
                     "equationText": _optional_text(item.get("equationText") or item.get("latex") or item.get("formula")),
+                    **_table_metadata_from_region_item(item),
                 },
             )
         )
@@ -331,6 +348,23 @@ def _region_items(payload: Mapping[str, Any]) -> Sequence[Any]:
         if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
             return value
     return ()
+
+
+def _table_metadata_from_region_item(item: Mapping[str, Any]) -> Mapping[str, Any]:
+    metadata: dict[str, Any] = {}
+    table_model = item.get("tableModel") or item.get("table")
+    if isinstance(table_model, Mapping):
+        metadata["tableModel"] = dict(table_model)
+    table_text = _optional_text(item.get("tableText"))
+    if table_text:
+        metadata["tableText"] = table_text
+    table_html = _optional_text(item.get("tableHtml"))
+    if table_html:
+        metadata["tableHtml"] = table_html
+    if metadata:
+        metadata["sourceKind"] = _optional_text(item.get("sourceKind")) or "model-vision-table-model"
+        metadata["sourceMapping"] = "model-vision"
+    return metadata
 
 
 def _normalize_bbox(
