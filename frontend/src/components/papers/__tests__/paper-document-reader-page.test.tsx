@@ -2,6 +2,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { PaperDocumentReaderPage } from "@/components/papers/paper-reader"
 import { PaperDocumentReaderPageClient } from "@/app/papers/[slug]/read/paper-document-reader-page-client"
+import { EquationRenderer, InlineMathRenderer } from "@/components/papers/open-reader/equation-renderer"
 import { targetForPaperBlock } from "@/lib/paper-reader/interactions"
 import { fetchPaperDocument, triggerPaperCompile } from "@/lib/paper-reader/api"
 import type { PaperDocumentResponse } from "@/lib/paper-reader/types"
@@ -90,6 +91,19 @@ describe("PaperDocumentReaderPage", () => {
     expect(screen.queryByLabelText("阅读设置")).not.toBeInTheDocument()
     expect(screen.queryByText("字体大小")).not.toBeInTheDocument()
     expect(screen.queryByText("悬浮目录 · 可拖动")).not.toBeInTheDocument()
+  })
+
+  it("falls back to readable math text when KaTeX cannot render a formula", () => {
+    render(
+      <div>
+        <EquationRenderer value={String.raw`\unsupportedmacro{\mathbf{x}} + \beta`} />
+        <InlineMathRenderer value={String.raw`\unsupportedmacro{\mathbf{y}}`} fallback="y" />
+      </div>,
+    )
+
+    expect(screen.getByText("x + beta")).toBeInTheDocument()
+    expect(screen.getByText("y")).toBeInTheDocument()
+    expect(screen.queryByText(/\\unsupportedmacro/)).not.toBeInTheDocument()
   })
 
   it("renders the compiled outline as a numbered hierarchy", () => {

@@ -27,6 +27,7 @@ _LATEX_ENV_LEAK_PATTERN = re.compile(r"\\(?:begin|end)\s*\{[^}]{1,80}\}")
 _LATEX_TEXT_COMMAND_LEAK_PATTERN = re.compile(
     r"\\(?:mathrm|textrm|text|textsc|texttt|mathbf|mathcal|mathbb|mathsf|operatorname|emph|textbf|textit)\*?\s*\{"
 )
+_LATEX_READER_COMMAND_LEAK_PATTERN = re.compile(r"\\(?:[A-Za-z]+|[,;:!]|\\)")
 _TABLE_ALIGNMENT_LEAK_PATTERN = re.compile(r"(?:^|\s)[lcr]{2,}(?:\s*&|$)|(?:^|[^&])&[^&]+&")
 _CONTROL_CHARACTER_PATTERN = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
 _EMPTY_INLINE_MARKUP_PATTERN = re.compile(r"<(?:strong|b|em|i|span)(?:\s[^>]*)?>\s*</(?:strong|b|em|i|span)>", re.IGNORECASE)
@@ -354,6 +355,9 @@ def _symbol_findings(text: str, *, skip_latex_commands: bool) -> list[dict[str, 
     command = None if skip_latex_commands else _LATEX_TEXT_COMMAND_LEAK_PATTERN.search(text)
     if command:
         findings.append({"code": "latex_text_command_visible", "message": "raw LaTeX text command is visible in reader-facing text", "sample": _sample(_context(text, command.start(), command.end()))})
+    generic_command = None if skip_latex_commands or env or command else _LATEX_READER_COMMAND_LEAK_PATTERN.search(text)
+    if generic_command:
+        findings.append({"code": "latex_command_visible", "message": "raw LaTeX command is visible in reader-facing text", "sample": _sample(_context(text, generic_command.start(), generic_command.end()))})
     return findings
 
 
@@ -363,8 +367,7 @@ def _reader_text_surfaces(*, document: Mapping[str, Any], manifest: Mapping[str,
         block_id = _text(block.get("id"))
         block_type = _text(block.get("type"))
         metadata = _mapping(block.get("metadata")) or {}
-        inline_spans = metadata.get("inlineSpans")
-        skip_latex = block_type == "equation" or (block_type in {"paragraph", "heading"} and isinstance(inline_spans, list) and bool(inline_spans))
+        skip_latex = block_type == "equation"
         for surface_name, value in (
             ("block.text", block.get("text")),
             ("block.caption", block.get("caption")),

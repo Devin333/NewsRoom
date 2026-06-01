@@ -8,6 +8,7 @@ Research Reader artifacts can pass the existing asset gate while still exposing 
 - Persist a reusable issue memory journal keyed by stable fingerprints so repeated reader artifact failures return prior locator context.
 - Route `PaperAssetGate` through the framework reviewer while keeping deterministic file integrity checks in the visual compiler boundary.
 - Fix source-first TeX parsing for top-level tabular link tables, text wrapper commands, URL commands, equation size wrappers, and table inline math.
+- Store reader paragraph math as readable fallback text while preserving original LaTeX only in structured math spans, and make the frontend fall back to readable text when KaTeX cannot render a formula.
 - Tighten the Research paper detail drawer width so title clicks do not create a full-window drawer.
 
 ## Capabilities

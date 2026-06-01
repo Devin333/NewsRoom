@@ -12,7 +12,7 @@ export function EquationRenderer({ value }: { value: string }) {
     try {
       return katex.renderToString(stripEquationDelimiters(normalized), {
         displayMode: true,
-        throwOnError: false,
+        throwOnError: true,
         strict: "ignore",
         trust: false,
       })
@@ -22,7 +22,7 @@ export function EquationRenderer({ value }: { value: string }) {
   }, [normalized])
 
   if (!rendered) {
-    return <pre className={styles.equationPlain}>{normalized || value}</pre>
+    return <pre className={styles.equationPlain}>{readableMathFallback(normalized || value)}</pre>
   }
 
   return (
@@ -41,7 +41,7 @@ export function InlineMathRenderer({ value, fallback }: { value: string; fallbac
     try {
       return katex.renderToString(stripEquationDelimiters(normalized), {
         displayMode: false,
-        throwOnError: false,
+        throwOnError: true,
         strict: "ignore",
         trust: false,
       })
@@ -51,7 +51,7 @@ export function InlineMathRenderer({ value, fallback }: { value: string; fallbac
   }, [normalized])
 
   if (!rendered) {
-    return <span className={styles.inlineMathPlain}>{fallback || normalized || value}</span>
+    return <span className={styles.inlineMathPlain}>{fallback || readableMathFallback(normalized || value)}</span>
   }
 
   return (
@@ -81,4 +81,87 @@ function stripEquationDelimiters(value: string) {
     }
   }
   return trimmed
+}
+
+function readableMathFallback(value: string) {
+  let text = stripEquationDelimiters(normalizeEquation(value))
+  text = replaceSimpleFractions(text)
+  text = stripMathWrappers(text)
+  const replacements: Record<string, string> = {
+    "\\alpha": "alpha",
+    "\\beta": "beta",
+    "\\gamma": "gamma",
+    "\\delta": "delta",
+    "\\epsilon": "epsilon",
+    "\\varepsilon": "epsilon",
+    "\\lambda": "lambda",
+    "\\mu": "mu",
+    "\\sigma": "sigma",
+    "\\tau": "tau",
+    "\\theta": "theta",
+    "\\phi": "phi",
+    "\\psi": "psi",
+    "\\omega": "omega",
+    "\\Delta": "Delta",
+    "\\Sigma": "Sigma",
+    "\\circ": "deg",
+    "\\times": "x",
+    "\\cdot": "*",
+    "\\pm": "+/-",
+    "\\in": "in",
+    "\\sim": "~",
+    "\\leq": "<=",
+    "\\le": "<=",
+    "\\geq": ">=",
+    "\\ge": ">=",
+    "\\neq": "!=",
+    "\\to": "->",
+    "\\rightarrow": "->",
+    "\\leftarrow": "<-",
+    "\\ldots": "...",
+    "\\cdots": "...",
+    "\\dots": "...",
+    "\\sum": "sum",
+  }
+  for (const [source, target] of Object.entries(replacements).sort((left, right) => right[0].length - left[0].length)) {
+    text = text.split(source).join(target)
+  }
+  return text
+    .replace(/\\[,;:!]/g, " ")
+    .replace(/\\\|/g, "|")
+    .replace(/\\\{/g, "(")
+    .replace(/\\\}/g, ")")
+    .replace(/\\([_%&])/g, "$1")
+    .replace(/\\[A-Za-z]+\*?\s*\{\s*([^{}]*?)\s*\}/g, "$1")
+    .replace(/\\([A-Za-z]+)\*?/g, "$1")
+    .replace(/\^\s*\{\s*([^{}]+?)\s*\}/g, "^$1")
+    .replace(/_\s*\{\s*([^{}]+?)\s*\}/g, "_$1")
+    .replace(/[{}]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+}
+
+function replaceSimpleFractions(value: string) {
+  let text = value
+  let previous = ""
+  const fractionPattern = /\\(?:dfrac|tfrac|frac)\s*\{([^{}]*)\}\s*\{([^{}]*)\}/g
+  while (previous !== text) {
+    previous = text
+    text = text.replace(fractionPattern, (_match, numerator: string, denominator: string) => {
+      return `${readableMathFallback(numerator)}/${readableMathFallback(denominator)}`
+    })
+  }
+  return text
+}
+
+function stripMathWrappers(value: string) {
+  let text = value
+  let previous = ""
+  const wrapperPattern = /\\(?:mathbf|mathrm|mathcal|mathbb|mathsf|mathtt|textrm|text|operatorname|hat|bar|tilde|vec|boldsymbol|bm)\*?\s*\{([^{}]*)\}/g
+  while (previous !== text) {
+    previous = text
+    text = text.replace(/\\sqrt\s*\{([^{}]*)\}/g, (_match, body: string) => `sqrt(${readableMathFallback(body)})`)
+    text = text.replace(wrapperPattern, "$1")
+  }
+  return text.replace(/\\(?:left|right)/g, "")
 }

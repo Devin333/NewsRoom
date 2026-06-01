@@ -29,6 +29,15 @@ The source-first TeX compiler SHALL prevent parser syntax from leaking into read
 - **WHEN** equations or table cells include TeX text wrappers, URL commands, fraction commands, or size environments
 - **THEN** reader-facing text and table HTML SHALL preserve readable source content without exposing unsupported raw parser syntax.
 
+#### Scenario: Inline math is shown in paragraphs
+- **WHEN** a paragraph contains inline TeX math
+- **THEN** paragraph text and inline span fallback text SHALL be readable without raw LaTeX commands
+- **AND** the original TeX SHALL remain available only as structured span metadata for math rendering.
+
+#### Scenario: Frontend math rendering cannot parse a formula
+- **WHEN** KaTeX cannot render an inline or display formula
+- **THEN** the reader SHALL display readable fallback math text instead of exposing raw LaTeX commands to the user.
+
 ### Requirement: Paper detail drawer stays a side panel
 The Research paper detail drawer SHALL remain a side drawer and SHALL NOT occupy the entire viewport on wide screens.
 

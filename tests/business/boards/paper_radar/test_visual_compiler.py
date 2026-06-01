@@ -676,6 +676,7 @@ def test_arxiv_source_compiler_uses_tex_body_equations_and_source_assets(tmp_pat
     figure_blocks = [block for block in draft.document.blocks if block.type == "figure"]
     table_blocks = [block for block in draft.document.blocks if block.type == "table"]
     paragraph_blocks = [block for block in draft.document.blocks if block.type == "paragraph"]
+    paragraph_text = "\n".join(block.text for block in paragraph_blocks)
     references = draft.document.auxiliary.get("references")
 
     assert gate_report["passed"] is True
@@ -699,10 +700,13 @@ def test_arxiv_source_compiler_uses_tex_body_equations_and_source_assets(tmp_pat
     assert "Section 1.1" in body_text
     assert "Orient Anything [?]" in body_text
     assert "[1, 2]" in body_text
-    assert r"\mathcal{F} = \{F_i\}_{i=0}^{M}" in body_text
-    assert r"F_i \in \mathbb{R}^{B \times L \times C}" in body_text
-    assert r"k^\circ \in \{5^\circ,10^\circ,15^\circ,20^\circ\}" in body_text
-    assert '"Recall"@ k^\\circ' in body_text
+    assert r"\mathcal" not in paragraph_text
+    assert r"\mathbb" not in paragraph_text
+    assert r"\mathbf" not in paragraph_text
+    assert "F = (F_i)_i=0^M" in paragraph_text
+    assert "F_i in R^B x L x C" in paragraph_text
+    assert "k^deg in (5^deg,10^deg,15^deg,20^deg)" in paragraph_text
+    assert '"Recall"@ k^deg' in paragraph_text
     assert any(block.metadata.get("inlineSpans") for block in paragraph_blocks)
     math_spans = [
         span
@@ -723,6 +727,7 @@ def test_arxiv_source_compiler_uses_tex_body_equations_and_source_assets(tmp_pat
         if span.get("type") == "citation"
     ]
     assert any(span.get("latex") == r"\mathcal{F} = \{F_i\}_{i=0}^{M}" for span in math_spans)
+    assert any(span.get("text") == "F = (F_i)_i=0^M" for span in math_spans)
     assert any(span.get("text") == "Figure 1(b)" and span.get("targetBlockId") == figure_blocks[0].id for span in ref_spans)
     assert any(span.get("text") == "Table 1" and span.get("targetBlockId") == table_blocks[0].id for span in ref_spans)
     assert any(span.get("text") == "Section 1.1" and span.get("sectionId") for span in ref_spans)

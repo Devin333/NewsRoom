@@ -22,3 +22,4 @@
 - [x] 4.3 Run targeted backend and frontend tests.
 - [x] 4.4 Run strict OpenSpec validation and type/compile checks where available.
 - [x] 4.5 Commit the completed code and OpenSpec change.
+- [x] 4.6 Recompile Cambrian-P and verify reader-facing fields and rendered page no longer expose `rll`, HTML entities, or raw inline LaTeX commands.

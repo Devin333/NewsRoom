@@ -139,6 +139,45 @@ def test_paper_reader_artifact_reviewer_detects_equation_table_and_symbol_gates(
     }
 
 
+def test_paper_reader_artifact_reviewer_blocks_raw_latex_in_inline_paragraph_text(tmp_path) -> None:
+    reviewer = PaperReaderArtifactReviewSubAgent(clock=lambda: datetime(2026, 6, 1, tzinfo=timezone.utc))
+    document = _document(
+        "paper-inline-latex",
+        text=r"The pose token is \mathbf{c}_{\text{first}} in the reader text.",
+        blocks=[
+            {
+                "id": "paragraph-raw-math",
+                "paperId": "paper-inline-latex",
+                "type": "paragraph",
+                "text": r"The pose token is \mathbf{c}_{\text{first}} in the reader text.",
+                "source": {"pageNumber": 1, "bbox": {"x0": 0, "y0": 0, "x1": 10, "y1": 10}},
+                "metadata": {
+                    "inlineSpans": [
+                        {
+                            "type": "math",
+                            "text": "c_first",
+                            "latex": r"\mathbf{c}_{\text{first}}",
+                            "start": 18,
+                            "end": 45,
+                        }
+                    ]
+                },
+            }
+        ],
+    )
+
+    result = reviewer.review(
+        document=document,
+        manifest=_manifest("paper-inline-latex"),
+        paper_dir=tmp_path,
+        memory_path=tmp_path / "memory.json",
+    )
+
+    assert result["passed"] is False
+    assert any(error["code"] == "latex_text_command_visible" for error in result["errors"])
+    assert {gate["name"]: gate["passed"] for gate in result["gates"]}["symbol"] is False
+
+
 def test_paper_reader_artifact_reviewer_execute_returns_subagent_result(tmp_path) -> None:
     reviewer = PaperReaderArtifactReviewSubAgent(clock=lambda: datetime(2026, 6, 1, tzinfo=timezone.utc))
 

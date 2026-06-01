@@ -94,6 +94,73 @@ _TEXT_COMMAND_NAMES = {
     "scriptsize",
     "mbox",
 }
+_MATH_TEXT_COMMAND_NAMES = _TEXT_COMMAND_NAMES | {
+    "operatorname",
+    "mathsf",
+    "mathtt",
+    "boldsymbol",
+    "bm",
+    "hat",
+    "bar",
+    "tilde",
+    "vec",
+    "widehat",
+    "widetilde",
+}
+_MATH_SYMBOL_REPLACEMENTS = {
+    r"\alpha": "alpha",
+    r"\beta": "beta",
+    r"\gamma": "gamma",
+    r"\delta": "delta",
+    r"\epsilon": "epsilon",
+    r"\varepsilon": "epsilon",
+    r"\lambda": "lambda",
+    r"\mu": "mu",
+    r"\sigma": "sigma",
+    r"\tau": "tau",
+    r"\theta": "theta",
+    r"\phi": "phi",
+    r"\psi": "psi",
+    r"\omega": "omega",
+    r"\Delta": "Delta",
+    r"\Sigma": "Sigma",
+    r"\circ": "deg",
+    r"\mathcal": "",
+    r"\mathbb": "",
+    r"\mathbf": "",
+    r"\mathrm": "",
+    r"\text": "",
+    r"\dag": "dagger",
+    r"\dagger": "dagger",
+    r"\uparrow": "up",
+    r"\downarrow": "down",
+    r"\pm": "+/-",
+    r"\times": "x",
+    r"\cdot": "*",
+    r"\in": "in",
+    r"\sim": "~",
+    r"\leq": "<=",
+    r"\le": "<=",
+    r"\geq": ">=",
+    r"\ge": ">=",
+    r"\neq": "!=",
+    r"\to": "->",
+    r"\rightarrow": "->",
+    r"\leftarrow": "<-",
+    r"\ldots": "...",
+    r"\cdots": "...",
+    r"\dots": "...",
+    r"\sum": "sum",
+    r"\prod": "prod",
+    r"\min": "min",
+    r"\max": "max",
+    r"\argmax": "argmax",
+    r"\argmin": "argmin",
+    r"\lfloor": "floor(",
+    r"\rfloor": ")",
+    r"\lceil": "ceil(",
+    r"\rceil": ")",
+}
 _COMMAND_WITH_TEXT_ARG = re.compile(
     r"\\(?:textbf|textit|textsc|texttt|textnormal|emph|mathbf|mathrm|mathcal|mathbb|textrm|text|underline|sout|small|large|Large|LARGE|footnotesize|scriptsize|mbox)(?![A-Za-z])\s*\{(?P<body>.*?)\}",
     re.DOTALL,
@@ -1957,7 +2024,7 @@ def _needs_join_space(left: str, right: str) -> bool:
 
 
 def _inline_math_fallback_text(latex: str) -> str:
-    normalized = _clean_equation_text(latex)
+    normalized = _inline_math_text(latex)
     return normalized or latex.strip()
 
 
@@ -2138,45 +2205,73 @@ def _citation_replacement(raw: str, body: str) -> str:
 def _inline_math_text(body: str) -> str:
     text = _clean_equation_text(body)
     text = _replace_fraction_commands(text)
-    replacements = {
-        r"\alpha": "alpha",
-        r"\beta": "beta",
-        r"\gamma": "gamma",
-        r"\delta": "delta",
-        r"\epsilon": "epsilon",
-        r"\varepsilon": "epsilon",
-        r"\lambda": "lambda",
-        r"\mu": "mu",
-        r"\sigma": "sigma",
-        r"\tau": "tau",
-        r"\theta": "theta",
-        r"\phi": "phi",
-        r"\psi": "psi",
-        r"\omega": "omega",
-        r"\Delta": "Delta",
-        r"\Sigma": "Sigma",
-        r"\mathcal": "",
-        r"\mathbf": "",
-        r"\mathrm": "",
-        r"\text": "",
-        r"\dag": "dagger",
-        r"\dagger": "dagger",
-        r"\uparrow": "up",
-        r"\downarrow": "down",
-        r"\pm": "+/-",
-        r"\times": "x",
-        r"\leq": "<=",
-        r"\geq": ">=",
-    }
-    for key, value in sorted(replacements.items(), key=lambda item: len(item[0]), reverse=True):
+    text = _replace_math_wrapping_commands(text)
+    text = _replace_latex_spacing_commands(text)
+    text = text.replace(r"\|", "|").replace(r"\\", " ")
+    text = text.replace(r"\{", "(").replace(r"\}", ")")
+    text = text.replace(r"\_", "_").replace(r"\%", "%").replace(r"\&", "&")
+    for key, value in sorted(_MATH_SYMBOL_REPLACEMENTS.items(), key=lambda item: len(item[0]), reverse=True):
         text = text.replace(key, value)
     text = re.sub(r"\^\s*\{?\s*dagger\s*\}?", "dagger", text)
-    text = re.sub(r"\^\s*\{?\s*([A-Za-z0-9+\-/]+)\s*\}?", r"^\1", text)
-    text = re.sub(r"_\s*\{?\s*([A-Za-z0-9+\-/]+)\s*\}?", r"_\1", text)
-    text = _LATEX_COMMAND_PATTERN.sub("", text)
+    text = re.sub(r"\^\s*\{\s*([^{}]+?)\s*\}", lambda match: f"^{_inline_math_text(match.group(1))}", text)
+    text = re.sub(r"_\s*\{\s*([^{}]+?)\s*\}", lambda match: f"_{_inline_math_text(match.group(1))}", text)
+    text = re.sub(r"\\[A-Za-z]+\*?\s*\{\s*([^{}]*?)\s*\}", lambda match: _inline_math_text(match.group(1)), text)
+    text = re.sub(r"\^\s*([A-Za-z0-9+\-/*]+)", r"^\1", text)
+    text = re.sub(r"_\s*([A-Za-z0-9+\-/*]+)", r"_\1", text)
+    text = re.sub(r"\\([A-Za-z]+)\*?", lambda match: match.group(1), text)
     text = re.sub(r"[{}]", "", text)
+    text = text.replace(" ,", ",").replace("( ", "(").replace(" )", ")")
     text = _WHITESPACE_PATTERN.sub(" ", text).strip(" ,.;")
     return text
+
+
+def _replace_math_wrapping_commands(value: str) -> str:
+    text = value
+    previous = None
+    while previous != text:
+        previous = text
+        text = _strip_math_wrapping_commands_once(text)
+    return text
+
+
+def _strip_math_wrapping_commands_once(value: str) -> str:
+    output: list[str] = []
+    position = 0
+    while position < len(value):
+        match = re.search(r"\\(?P<name>[A-Za-z]+)\*?", value[position:])
+        if not match:
+            output.append(value[position:])
+            break
+        command_start = position + match.start()
+        command_end = position + match.end()
+        name = match.group("name")
+        output.append(value[position:command_start])
+        if name in {"left", "right"}:
+            position = command_end
+            continue
+        if name == "sqrt":
+            cursor = _skip_tex_space(value, command_end)
+            body_group = _balanced_group(value, cursor) if cursor < len(value) and value[cursor] == "{" else None
+            if body_group is None:
+                output.append(value[command_start:command_end])
+                position = command_end
+                continue
+            output.append(f"sqrt({_inline_math_text(body_group[0])})")
+            position = body_group[1]
+            continue
+        if name in _MATH_TEXT_COMMAND_NAMES:
+            cursor = _skip_tex_space(value, command_end)
+            body_group = _balanced_group(value, cursor) if cursor < len(value) and value[cursor] == "{" else None
+            if body_group is None:
+                output.append(value[command_start:command_end])
+                position = command_end
+                continue
+            output.append(body_group[0])
+            position = body_group[1]
+            continue
+        output.append(value[command_start:command_end])
+        position = command_end
+    return "".join(output)
 
 
 def _replace_fraction_commands(value: str) -> str:
