@@ -9,6 +9,10 @@ export function middleware(request: NextRequest) {
   const { pathname, search } = request.nextUrl
   const surface = getFrontendSurface()
 
+  if (isTemporaryFrontendAuthDisabled() && isLoginPath(pathname)) {
+    return redirectToLoginBypassTarget(request, surface)
+  }
+
   if (isPublicPath(pathname, surface)) {
     return NextResponse.next()
   }
@@ -19,6 +23,16 @@ export function middleware(request: NextRequest) {
   }
 
   if (!isProtectedPath(pathname)) {
+    return NextResponse.next()
+  }
+
+  if (isTemporaryFrontendAuthDisabled()) {
+    if (surface === "admin" && pathname === "/") {
+      const studioUrl = request.nextUrl.clone()
+      studioUrl.pathname = "/studio"
+      studioUrl.search = ""
+      return NextResponse.redirect(studioUrl)
+    }
     return NextResponse.next()
   }
 
@@ -40,11 +54,19 @@ export function middleware(request: NextRequest) {
   return NextResponse.redirect(loginUrl)
 }
 
+function isTemporaryFrontendAuthDisabled() {
+  return process.env.NEWSROOM_ENABLE_FRONTEND_AUTH !== "true"
+}
+
+function isLoginPath(pathname: string) {
+  return pathname === "/login" || pathname.startsWith("/login/") || pathname.startsWith("/login?")
+}
+
 function isPublicPath(pathname: string, surface: FrontendSurface) {
   return (
     (surface === "portal" && pathname === "/") ||
     (surface === "portal" && isResearchReadPath(pathname)) ||
-    pathname.startsWith("/login") ||
+    isLoginPath(pathname) ||
     pathname.startsWith("/api/") ||
     pathname.startsWith("/_next/") ||
     pathname === "/favicon.ico"
@@ -97,6 +119,21 @@ function redirectToSurface(request: NextRequest, origin: string | undefined, tar
   redirectUrl.pathname = fallbackPath
   redirectUrl.search = ""
   return NextResponse.redirect(redirectUrl)
+}
+
+function redirectToLoginBypassTarget(request: NextRequest, surface: FrontendSurface) {
+  const targetPath = safeNextPath(
+    request.nextUrl.searchParams.get("next"),
+    surface === "admin" ? "/studio" : "/"
+  )
+  return NextResponse.redirect(new URL(targetPath, request.nextUrl.origin))
+}
+
+function safeNextPath(value: string | null, fallback: string) {
+  if (!value || !value.startsWith("/") || value.startsWith("//") || isLoginPath(value)) {
+    return fallback
+  }
+  return value
 }
 
 export const config = {

@@ -12,11 +12,13 @@ describe("auth middleware", () => {
   const originalSurface = process.env.NEWSROOM_FRONTEND_SURFACE
   const originalPortalOrigin = process.env.NEWSROOM_PORTAL_ORIGIN
   const originalAdminOrigin = process.env.NEWSROOM_ADMIN_ORIGIN
+  const originalEnableFrontendAuth = process.env.NEWSROOM_ENABLE_FRONTEND_AUTH
 
   afterEach(() => {
     restoreEnv("NEWSROOM_FRONTEND_SURFACE", originalSurface)
     restoreEnv("NEWSROOM_PORTAL_ORIGIN", originalPortalOrigin)
     restoreEnv("NEWSROOM_ADMIN_ORIGIN", originalAdminOrigin)
+    restoreEnv("NEWSROOM_ENABLE_FRONTEND_AUTH", originalEnableFrontendAuth)
   })
 
   it("keeps anonymous Research read routes public", () => {
@@ -44,9 +46,28 @@ describe("auth middleware", () => {
     expect(response.headers.get("location")).toBeNull()
   })
 
-  it("keeps login and auth APIs public", () => {
-    expect(middleware(request("/login")).headers.get("location")).toBeNull()
+  it("bypasses login while frontend auth is temporarily disabled", () => {
+    expect(middleware(request("/login")).headers.get("location")).toBe("http://localhost/")
+    expect(middleware(request("/login?next=%2Freports")).headers.get("location")).toBe("http://localhost/reports")
+    expect(middleware(request("/login?next=https%3A%2F%2Fexample.com")).headers.get("location")).toBe("http://localhost/")
     expect(middleware(request("/api/auth/session")).headers.get("location")).toBeNull()
+  })
+
+  it("allows anonymous Portal routes while frontend auth is temporarily disabled", () => {
+    process.env.NEWSROOM_FRONTEND_SURFACE = "portal"
+
+    expect(middleware(request("/reports")).headers.get("location")).toBeNull()
+    expect(middleware(request("/news")).headers.get("location")).toBeNull()
+    expect(middleware(request("/topics")).headers.get("location")).toBeNull()
+    expect(middleware(request("/search")).headers.get("location")).toBeNull()
+  })
+
+  it("restores the login gate when frontend auth is explicitly enabled", () => {
+    process.env.NEWSROOM_FRONTEND_SURFACE = "portal"
+    process.env.NEWSROOM_ENABLE_FRONTEND_AUTH = "true"
+
+    expect(middleware(request("/reports")).headers.get("location")).toBe("http://localhost/login?next=%2Freports")
+    expect(middleware(request("/login")).headers.get("location")).toBeNull()
   })
 
   it("redirects management routes away from the Portal surface", () => {
@@ -68,16 +89,14 @@ describe("auth middleware", () => {
     expect(response.headers.get("location")).toBe("http://localhost:3001/papers?period=weekly")
   })
 
-  it("protects Studio and Admin root in Admin surface mode", () => {
+  it("allows Studio in Admin surface mode while frontend auth is temporarily disabled", () => {
     process.env.NEWSROOM_FRONTEND_SURFACE = "admin"
 
-    expect(middleware(request("/")).headers.get("location")).toBe("http://localhost/login?next=%2F")
-    expect(middleware(request("/studio/runs")).headers.get("location")).toBe(
-      "http://localhost/login?next=%2Fstudio%2Fruns"
-    )
+    expect(middleware(request("/")).headers.get("location")).toBe("http://localhost/studio")
+    expect(middleware(request("/studio/runs")).headers.get("location")).toBeNull()
   })
 
-  it("redirects authenticated Admin root to Studio", () => {
+  it("keeps authenticated Admin root redirecting to Studio", () => {
     process.env.NEWSROOM_FRONTEND_SURFACE = "admin"
 
     const response = middleware(request("/", "newsroom_session=session-token"))
