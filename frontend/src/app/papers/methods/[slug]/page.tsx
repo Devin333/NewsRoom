@@ -1,17 +1,16 @@
 import { notFound } from "next/navigation"
 import { MethodDetailPageClient } from "@/app/papers/methods/[slug]/method-detail-page-client"
-import { getMethodBySlug, paperMethods } from "@/lib/papers/catalog"
 import { getPaperMethodsResult, getPublishedPapers } from "@/lib/papers/real-data"
 import { decodePaperRouteSlug } from "@/lib/papers/routes"
 
 export function generateStaticParams() {
-  return paperMethods.map((method) => ({ slug: method.slug }))
+  return []
 }
 
 export default async function PapersMethodDetailPageRoute({ params }: { params: { slug: string } }) {
   const slug = decodePaperRouteSlug(params.slug)
   const result = await getPaperMethodsResult()
-  const method = result.items.find((item) => item.slug === slug) ?? fallbackMethod(result, slug)
+  const method = result.items.find((item) => item.slug === slug && item.paperCount > 0)
 
   if (!method) {
     notFound()
@@ -24,8 +23,4 @@ export default async function PapersMethodDetailPageRoute({ params }: { params: 
       fallbackNotice={result.notices[0] ?? null}
     />
   )
-}
-
-function fallbackMethod(result: Awaited<ReturnType<typeof getPaperMethodsResult>>, slug: string) {
-  return result.source === "taxonomy" && result.dataState !== "empty" ? getMethodBySlug(slug) : null
 }

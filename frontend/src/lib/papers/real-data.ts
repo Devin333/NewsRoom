@@ -2,9 +2,22 @@ import fs from "node:fs"
 import path from "node:path"
 import { safeApiGet } from "@/lib/api/server"
 import { normalizePdfUrl, paperPdfUrlFromSource, sortPapers } from "@/lib/papers/format"
-import { getBenchmarksForMethod, paperMethods, paperTasks } from "@/lib/papers/catalog"
+import { paperMethods, paperTasks } from "@/lib/papers/catalog"
 import { arxivIdFromUrl, enrichPapersForPublicStream, githubRepoSlug, normalizeDoi, normalizeGithubRepoUrl } from "@/lib/papers/enrichment"
-import type { MethodRef, Paper, PaperDataState, PaperListResult, PaperMethod, PaperPeriod, PaperSort, PaperTask, TaskRef } from "@/lib/papers/types"
+import type {
+  BenchmarkRef,
+  MethodRef,
+  Paper,
+  PaperBenchmarkResult,
+  PaperDataState,
+  PaperImplementation,
+  PaperListResult,
+  PaperMethod,
+  PaperPeriod,
+  PaperSort,
+  PaperTask,
+  TaskRef
+} from "@/lib/papers/types"
 
 type SourceSignal = {
   authors?: unknown
@@ -91,6 +104,13 @@ export type PaperRuntimeData = {
   dataState: PaperDataState
   notices: string[]
   collectedAt?: string
+}
+
+export type PaperResearchDataset = PaperRuntimeData & {
+  tasks: PaperTask[]
+  methods: PaperMethod[]
+  taskTaxonomySource: "backend" | "taxonomy"
+  methodTaxonomySource: "backend" | "taxonomy"
 }
 
 export type PaperListQuery = {
@@ -207,29 +227,45 @@ export async function getPaperById(paperId: string): Promise<Paper | null> {
 export async function getPaperTasksResult(): Promise<PaperTaxonomyResult<PaperTask>> {
   const [apiTasks, paperData] = await Promise.all([loadApiPaperTasks(), getPublishedPaperData()])
   const source = apiTasks.length ? "backend" : "taxonomy"
-  const tasks = deriveTasks(apiTasks.length ? apiTasks : paperTasks, paperData.papers)
+  const tasks = deriveTasks(apiTasks, paperData.papers)
   return {
     items: tasks,
     source,
     dataState: taxonomyDataState(apiTasks.length > 0, paperData.dataState),
     notices: apiTasks.length
       ? paperData.notices
-      : ["Paper task API is unavailable; showing taxonomy with real paper-derived counts.", ...paperData.notices]
+      : ["Paper task API is unavailable; showing taxonomy derived from real paper references.", ...paperData.notices]
   }
 }
 
 export async function getPaperMethodsResult(): Promise<PaperTaxonomyResult<PaperMethod>> {
   const [apiMethods, apiTasks, paperData] = await Promise.all([loadApiPaperMethods(), loadApiPaperTasks(), getPublishedPaperData()])
   const source = apiMethods.length ? "backend" : "taxonomy"
-  const tasks = deriveTasks(apiTasks.length ? apiTasks : paperTasks, paperData.papers)
-  const methods = deriveMethods(apiMethods.length ? apiMethods : paperMethods, tasks, paperData.papers)
+  const tasks = deriveTasks(apiTasks, paperData.papers)
+  const methods = deriveMethods(apiMethods, tasks, paperData.papers)
   return {
     items: methods,
     source,
     dataState: taxonomyDataState(apiMethods.length > 0, paperData.dataState),
     notices: apiMethods.length
       ? paperData.notices
-      : ["Paper method API is unavailable; showing taxonomy with real paper-derived counts.", ...paperData.notices]
+      : ["Paper method API is unavailable; showing taxonomy derived from real paper references.", ...paperData.notices]
+  }
+}
+
+export async function getPaperResearchDataset(): Promise<PaperResearchDataset> {
+  const [apiTasks, apiMethods, paperData] = await Promise.all([
+    loadApiPaperTasks(),
+    loadApiPaperMethods(),
+    getPublishedPaperData()
+  ])
+  const tasks = deriveTasks(apiTasks, paperData.papers)
+  return {
+    ...paperData,
+    tasks,
+    methods: deriveMethods(apiMethods, tasks, paperData.papers),
+    taskTaxonomySource: apiTasks.length ? "backend" : "taxonomy",
+    methodTaxonomySource: apiMethods.length ? "backend" : "taxonomy"
   }
 }
 
@@ -269,6 +305,8 @@ function normalizePublicPaper(paper: Paper) {
 
 function normalizeRuntimePaper(paper: Paper): Paper {
   const repoUrl = normalizeGithubRepoUrl(paper.repoUrl)
+  const taskRefs = taskRefsFromRecord(paper as unknown as Record<string, unknown>)
+  const methodRefs = methodRefsFromRecord(paper as unknown as Record<string, unknown>)
   const implementations = paper.implementations?.length
     ? paper.implementations
     : repoUrl
@@ -285,6 +323,9 @@ function normalizeRuntimePaper(paper: Paper): Paper {
 
   return {
     ...paper,
+    tags: Array.isArray(paper.tags) ? paper.tags : [],
+    taskRefs,
+    methodRefs,
     repoUrl,
     implementations
   }
@@ -334,57 +375,241 @@ function filterPapers(
 }
 
 function deriveTasks(tasks: PaperTask[], papers: Paper[]): PaperTask[] {
-  return tasks.map((task) => {
-    const relatedPapers = papersForTask(papers, task.slug)
-    const methodCount = uniqueStrings(relatedPapers.flatMap((paper) => paper.methodRefs.map((method) => method.slug))).length
-    const benchmarkCount = countBenchmarksFromPapers(relatedPapers)
-    const implementationCount = relatedPapers.filter(hasImplementationSignal).length
-    return {
-      ...task,
-      paperCount: relatedPapers.length,
-      methodCount,
-      benchmarkCount,
-      latestPaperIds: sortPapers(relatedPapers, "newest").slice(0, 5).map((paper) => paper.id),
-      implementationCount
+  const metadataBySlug = taskMetadataBySlug(tasks)
+  const records = new Map<string, {
+    ref: TaskRef
+    papers: Paper[]
+    methods: Map<string, MethodRef>
+    sisterTasks: Map<string, TaskRef>
+    benchmarks: Map<string, PaperBenchmarkResult>
+  }>()
+
+  for (const paper of papers.filter((item) => item.isPublished !== false)) {
+    for (const task of uniqueRefs(paper.taskRefs ?? [])) {
+      if (!task.slug) {
+        continue
+      }
+      const record = records.get(task.slug) ?? {
+        ref: task,
+        papers: [],
+        methods: new Map<string, MethodRef>(),
+        sisterTasks: new Map<string, TaskRef>(),
+        benchmarks: new Map<string, PaperBenchmarkResult>()
+      }
+      record.papers.push(paper)
+      for (const method of uniqueRefs(paper.methodRefs ?? [])) {
+        if (method.slug) {
+          record.methods.set(method.slug, method)
+        }
+      }
+      for (const sibling of uniqueRefs(paper.taskRefs ?? [])) {
+        if (sibling.slug && sibling.slug !== task.slug) {
+          record.sisterTasks.set(sibling.slug, sibling)
+        }
+      }
+      for (const benchmark of paper.benchmarks ?? []) {
+        if (!benchmark.taskSlug || benchmark.taskSlug === task.slug) {
+          record.benchmarks.set(benchmark.id || benchmark.name, benchmark)
+        }
+      }
+      records.set(task.slug, record)
     }
-  })
+  }
+
+  return Array.from(records.values())
+    .map((record) => {
+      const metadata = metadataBySlug.get(record.ref.slug)
+      const relatedPapers = record.papers
+      return {
+        id: record.ref.id || metadata?.id || `task-${record.ref.slug}`,
+        slug: record.ref.slug,
+        name: record.ref.name || metadata?.name || titleizeSlug(record.ref.slug),
+        nameZh: cleanLocalizedText(record.ref.nameZh) ?? cleanLocalizedText(metadata?.nameZh),
+        group: record.ref.group || metadata?.group || "general",
+        description: metadata?.description || `Derived from ${relatedPapers.length} public papers tagged with ${record.ref.name || titleizeSlug(record.ref.slug)}.`,
+        descriptionZh: cleanLocalizedText(metadata?.descriptionZh),
+        paperCount: relatedPapers.length,
+        benchmarkCount: record.benchmarks.size,
+        methodCount: record.methods.size,
+        sisterTasks: topRefs(record.sisterTasks.values()),
+        commonMethods: topRefs(record.methods.values()),
+        latestPaperIds: sortPapers(relatedPapers, "newest").slice(0, 5).map((paper) => paper.id),
+        implementationCount: countImplementationSignals(relatedPapers)
+      }
+    })
+    .sort((left, right) => right.paperCount - left.paperCount || left.name.localeCompare(right.name))
 }
 
 function deriveMethods(methods: PaperMethod[], tasks: PaperTask[], papers: Paper[]): PaperMethod[] {
+  const metadataBySlug = methodMetadataBySlug(methods)
   const taskBySlug = new Map(tasks.map((task) => [task.slug, task]))
+  const records = new Map<string, {
+    ref: MethodRef
+    papers: Paper[]
+    tasks: Map<string, TaskRef>
+    relatedMethods: Map<string, MethodRef>
+    benchmarks: Map<string, BenchmarkRef>
+  }>()
 
-  return methods.map((method) => {
-    const relatedPapers = papersForMethod(papers, method.slug)
-    const relatedTaskSlugs = uniqueStrings(relatedPapers.flatMap((paper) => paper.taskRefs.map((task) => task.slug)))
-    const relatedTasks = relatedTaskSlugs.map((slug) => taskBySlug.get(slug)).filter(isPaperTask)
-    const implementationCount = relatedPapers.filter(hasImplementationSignal).length
-    return {
-      ...method,
-      paperCount: relatedPapers.length,
-      taskCount: relatedTaskSlugs.length,
-      implementationCount,
-      relatedTasks: relatedTasks.length ? relatedTasks : method.relatedTasks,
-      commonBenchmarks: method.commonBenchmarks?.length ? method.commonBenchmarks : getBenchmarksForMethod(method.slug),
-      representativePaperIds: sortPapers(relatedPapers, "trending").slice(0, 5).map((paper) => paper.id),
-      relatedProjectIds: relatedPapers.flatMap((paper) => paper.implementations?.map((item) => item.id) ?? [])
+  for (const paper of papers.filter((item) => item.isPublished !== false)) {
+    for (const method of uniqueRefs(paper.methodRefs ?? [])) {
+      if (!method.slug) {
+        continue
+      }
+      const record = records.get(method.slug) ?? {
+        ref: method,
+        papers: [],
+        tasks: new Map<string, TaskRef>(),
+        relatedMethods: new Map<string, MethodRef>(),
+        benchmarks: new Map<string, BenchmarkRef>()
+      }
+      record.papers.push(paper)
+      for (const task of uniqueRefs(paper.taskRefs ?? [])) {
+        if (task.slug) {
+          record.tasks.set(task.slug, task)
+        }
+      }
+      for (const sibling of uniqueRefs(paper.methodRefs ?? [])) {
+        if (sibling.slug && sibling.slug !== method.slug) {
+          record.relatedMethods.set(sibling.slug, sibling)
+        }
+      }
+      for (const benchmark of paper.benchmarks ?? []) {
+        const ref = benchmarkRef(benchmark)
+        record.benchmarks.set(ref.id, ref)
+      }
+      records.set(method.slug, record)
     }
-  })
+  }
+
+  return Array.from(records.values())
+    .map((record) => {
+      const metadata = metadataBySlug.get(record.ref.slug)
+      const relatedPapers = record.papers
+      const relatedTasks = Array.from(record.tasks.values())
+        .map((task) => taskBySlug.get(task.slug) ?? task)
+        .filter(isTaskRef)
+      return {
+        id: record.ref.id || metadata?.id || `method-${record.ref.slug}`,
+        slug: record.ref.slug,
+        name: record.ref.name || metadata?.name || titleizeSlug(record.ref.slug),
+        nameZh: cleanLocalizedText(record.ref.nameZh) ?? cleanLocalizedText(metadata?.nameZh),
+        description: metadata?.description || `Derived from ${relatedPapers.length} public papers using ${record.ref.name || titleizeSlug(record.ref.slug)}.`,
+        descriptionZh: cleanLocalizedText(metadata?.descriptionZh),
+        paperCount: relatedPapers.length,
+        taskCount: record.tasks.size,
+        implementationCount: countImplementationSignals(relatedPapers),
+        area: record.ref.area || metadata?.area || methodArea(record.ref.name || metadata?.name || record.ref.slug),
+        relatedTasks: topRefs(relatedTasks),
+        relatedMethods: topRefs(record.relatedMethods.values()),
+        commonBenchmarks: Array.from(record.benchmarks.values()).slice(0, 8),
+        representativePaperIds: sortPapers(relatedPapers, "trending").slice(0, 5).map((paper) => paper.id),
+        relatedProjectIds: relatedProjectIds(relatedPapers)
+      }
+    })
+    .sort((left, right) => right.paperCount - left.paperCount || left.name.localeCompare(right.name))
 }
 
-function papersForTask(papers: Paper[], slug: string) {
-  return papers.filter((paper) => paper.taskRefs.some((task) => task.slug === slug))
+function taskMetadataBySlug(apiTasks: PaperTask[]) {
+  const records = new Map<string, PaperTask>()
+  for (const task of paperTasks) {
+    records.set(task.slug, task)
+  }
+  for (const task of apiTasks) {
+    records.set(task.slug, task)
+  }
+  return records
 }
 
-function papersForMethod(papers: Paper[], slug: string) {
-  return papers.filter((paper) => paper.methodRefs.some((method) => method.slug === slug))
+function methodMetadataBySlug(apiMethods: PaperMethod[]) {
+  const records = new Map<string, PaperMethod>()
+  for (const method of paperMethods) {
+    records.set(method.slug, method)
+  }
+  for (const method of apiMethods) {
+    records.set(method.slug, method)
+  }
+  return records
 }
 
-function hasImplementationSignal(paper: Paper) {
-  return Boolean(normalizeGithubRepoUrl(paper.repoUrl) || paper.implementations?.length)
+function topRefs<T extends { name: string; slug: string }>(refs: Iterable<T>): T[] {
+  return Array.from(refs)
+    .filter((ref) => ref.slug && ref.name)
+    .sort((left, right) => left.name.localeCompare(right.name))
+    .slice(0, 8)
 }
 
-function countBenchmarksFromPapers(papers: Paper[]) {
-  return uniqueStrings(papers.flatMap((paper) => (paper.benchmarks ?? []).map((benchmark) => benchmark.id || benchmark.name))).length
+function benchmarkRef(benchmark: PaperBenchmarkResult): BenchmarkRef {
+  const slug = slugify(benchmark.name) || benchmark.id
+  return {
+    id: benchmark.id || slug,
+    slug,
+    name: benchmark.name,
+    category: benchmark.category
+  }
+}
+
+function countImplementationSignals(papers: Paper[]) {
+  return implementationKeys(papers).size
+}
+
+function relatedProjectIds(papers: Paper[]) {
+  return Array.from(implementationKeys(papers))
+}
+
+function implementationKeys(papers: Paper[]) {
+  const keys = new Set<string>()
+  for (const paper of papers) {
+    addImplementationKey(keys, paper.repoUrl)
+    for (const implementation of paper.implementations ?? []) {
+      addImplementationKey(keys, implementation.repoUrl || implementation.id)
+    }
+  }
+  return keys
+}
+
+function addImplementationKey(keys: Set<string>, value?: string) {
+  const normalized = normalizeGithubRepoUrl(value) ?? text(value).toLowerCase().replace(/\.git$/i, "")
+  if (normalized) {
+    keys.add(normalized)
+  }
+}
+
+function methodArea(value: string) {
+  const normalized = lower(value)
+  if (normalized.includes("agent") || normalized.includes("tool") || normalized.includes("planning")) {
+    return "Agents"
+  }
+  if (normalized.includes("retrieval") || normalized.includes("rag") || normalized.includes("knowledge")) {
+    return "Retrieval"
+  }
+  if (normalized.includes("vision") || normalized.includes("multimodal")) {
+    return "Multimodal"
+  }
+  if (normalized.includes("language") || normalized.includes("llm") || normalized.includes("model")) {
+    return "Language Models"
+  }
+  return "Unclassified"
+}
+
+function titleizeSlug(value: string) {
+  return value
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ")
+}
+
+function cleanLocalizedText(value: string | undefined) {
+  const cleaned = text(value)
+  if (!cleaned || /[�€�]|銆|鏅|璁|鐨|浠|绾|鍏|涓|鎺|妯|涔|鍥|闈|瑙|噯|瀹|鐮|蹇|淇|杈|紝/.test(cleaned)) {
+    return undefined
+  }
+  return cleaned
+}
+
+function isTaskRef(value: unknown): value is TaskRef {
+  return isRecord(value) && Boolean(text(value.slug) && text(value.name))
 }
 
 function matchesRef(value: string, refs: Array<TaskRef | MethodRef>) {
@@ -509,9 +734,11 @@ function cachedPaperToPaper(value: unknown): Paper | null {
   }
 
   const tags = cachedTags(value.tags)
-  const taskRefs = inferTasks(title, `${abstractSnippet} ${tags.join(" ")}`, "arxiv")
-  const methodRefs = inferMethods(title, `${abstractSnippet} ${tags.join(" ")}`)
+  const taskRefs = taskRefsFromRecord(value)
+  const methodRefs = methodRefsFromRecord(value)
   const repoUrl = normalizeGithubRepoUrl(text(value.repoUrl))
+  const implementations = implementationsFromRecord(value)
+  const benchmarks = benchmarksFromRecord(value)
 
   return {
     id,
@@ -529,6 +756,8 @@ function cachedPaperToPaper(value: unknown): Paper | null {
     arxivUrl,
     pdfUrl,
     repoUrl,
+    implementations,
+    benchmarks,
     sourceRefs: [
       {
         sourceId: text(value.sourceId) || id,
@@ -670,11 +899,13 @@ function signalToPaper(signal: SourceSignal, index: number): Paper | null {
   const sourceType = text(signal.source_type) || text(raw.source_type) || text(signal.source?.source_type)
   const sourceName = text(signal.source_name) || text(raw.source_name) || text(signal.source?.source_name)
   const publishedAt = text(signal.published_at) || text(raw.published_at) || text(signal.collected_at) || new Date().toISOString()
-  const taskRefs = inferTasks(title, summary, sourceType)
-  const methodRefs = inferMethods(title, summary)
+  const taskRefs = taskRefsFromRecords(signal, raw)
+  const methodRefs = methodRefsFromRecords(signal, raw)
   const pdfUrl = realPdfUrl(signal, raw, urls)
   const repoUrl = realRepoUrl(signal, raw, urls)
   const citationDoi = realCitationDoi(signal, raw, urls)
+  const implementations = implementationsFromRecords(signal, raw)
+  const benchmarks = benchmarksFromRecords(signal, raw)
 
   return {
     id: text(signal.signal_id) || text(raw.source_item_id) || `real-paper-${index + 1}`,
@@ -692,6 +923,8 @@ function signalToPaper(signal: SourceSignal, index: number): Paper | null {
     arxivUrl: sourceType === "arxiv" || url.includes("arxiv.org") ? url : undefined,
     pdfUrl,
     repoUrl,
+    implementations,
+    benchmarks,
     sourceRefs: [
       {
         sourceId: text(signal.source_id) || text(raw.source_id),
@@ -732,60 +965,159 @@ function dedupeSignals(signals: SourceSignal[]) {
   return result
 }
 
-function inferTasks(title: string, summary: string, sourceType: string) {
-  const content = `${title} ${summary}`.toLowerCase()
-  const candidates: TaskRef[] = []
+function taskRefsFromRecords(...records: SourceSignal[]) {
+  return uniqueRefs(records.flatMap((record) => taskRefsFromRecord(record as Record<string, unknown>)))
+}
 
-  pushIf(candidates, "coding", "coding-agents")
-  pushIf(candidates, "code", "coding-agents")
-  pushIf(candidates, "agent", "agents")
-  pushIf(candidates, "reason", "reasoning")
-  pushIf(candidates, "education", "language-modeling")
-  pushIf(candidates, "geometry", "reasoning")
-  pushIf(candidates, "review", "coding-agents")
-  pushIf(candidates, "model", "language-modeling")
+function methodRefsFromRecords(...records: SourceSignal[]) {
+  return uniqueRefs(records.flatMap((record) => methodRefsFromRecord(record as Record<string, unknown>)))
+}
 
-  if (sourceType === "arxiv") {
-    pushIf(candidates, "paper", "language-modeling")
+function taskRefsFromRecord(record: Record<string, unknown>): TaskRef[] {
+  return explicitRefs(record, ["taskRefs", "task_refs", "tasks"])
+    .map((item) => taskRefFromValue(item))
+    .filter((ref): ref is TaskRef => Boolean(ref))
+}
+
+function methodRefsFromRecord(record: Record<string, unknown>): MethodRef[] {
+  return explicitRefs(record, ["methodRefs", "method_refs", "methods"])
+    .map((item) => methodRefFromValue(item))
+    .filter((ref): ref is MethodRef => Boolean(ref))
+}
+
+function taskRefFromValue(value: unknown): TaskRef | null {
+  const record = isRecord(value) ? value : null
+  const label = record ? text(record.name) || text(record.label) || text(record.title) : text(value)
+  const explicitSlug = record ? text(record.slug) || text(record.taskSlug) || text(record.task_slug) : ""
+  const metadata = taskMetadata(explicitSlug || label)
+  const slug = explicitSlug || metadata?.slug || slugify(label)
+  if (!slug) {
+    return null
   }
+  return {
+    id: record ? text(record.id) || `task-${slug}` : metadata?.id || `task-${slug}`,
+    slug,
+    name: label || metadata?.name || titleizeSlug(slug),
+    nameZh: cleanLocalizedText(record ? text(record.nameZh) || text(record.name_zh) : undefined) ?? cleanLocalizedText(metadata?.nameZh),
+    group: (record ? text(record.group) : "") || metadata?.group,
+    confidence: record ? numberValue(record.confidence) : undefined,
+    evidence: record ? text(record.evidence) || undefined : undefined
+  }
+}
 
-  return candidates.length ? uniqueRefs(candidates) : [requiredTask("agents")]
+function methodRefFromValue(value: unknown): MethodRef | null {
+  const record = isRecord(value) ? value : null
+  const label = record ? text(record.name) || text(record.label) || text(record.title) : text(value)
+  const explicitSlug = record ? text(record.slug) || text(record.methodSlug) || text(record.method_slug) : ""
+  const metadata = methodMetadata(explicitSlug || label)
+  const slug = explicitSlug || metadata?.slug || slugify(label)
+  if (!slug) {
+    return null
+  }
+  return {
+    id: record ? text(record.id) || `method-${slug}` : metadata?.id || `method-${slug}`,
+    slug,
+    name: label || metadata?.name || titleizeSlug(slug),
+    nameZh: cleanLocalizedText(record ? text(record.nameZh) || text(record.name_zh) : undefined) ?? cleanLocalizedText(metadata?.nameZh),
+    area: (record ? text(record.area) : "") || metadata?.area,
+    confidence: record ? numberValue(record.confidence) : undefined,
+    evidence: record ? text(record.evidence) || undefined : undefined
+  }
+}
 
-  function pushIf(target: TaskRef[], needle: string, slug: string) {
-    if (content.includes(needle)) {
-      target.push(requiredTask(slug))
+function explicitRefs(record: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = record[key]
+    if (Array.isArray(value)) {
+      return value
     }
   }
+  return []
 }
 
-function inferMethods(title: string, summary: string) {
-  const content = `${title} ${summary}`.toLowerCase()
-  const candidates: MethodRef[] = []
+function taskMetadata(value: string) {
+  const normalized = lower(slugify(value) || value)
+  return paperTasks.find((task) =>
+    lower(task.slug) === normalized ||
+    lower(task.name) === lower(value) ||
+    lower(task.nameZh ?? "") === lower(value)
+  )
+}
 
-  pushIf(candidates, "rag", "rag")
-  pushIf(candidates, "retrieval", "rag")
-  pushIf(candidates, "agent", "agent")
-  pushIf(candidates, "codex", "tool-use")
-  pushIf(candidates, "coding", "tool-use")
-  pushIf(candidates, "review", "tool-use")
-  pushIf(candidates, "model", "large-language-model")
-  pushIf(candidates, "geometry", "chain-of-thought")
+function methodMetadata(value: string) {
+  const normalized = lower(slugify(value) || value)
+  return paperMethods.find((method) =>
+    lower(method.slug) === normalized ||
+    lower(method.name) === lower(value) ||
+    lower(method.nameZh ?? "") === lower(value)
+  )
+}
 
-  return candidates.length ? uniqueRefs(candidates) : [requiredMethod("large-language-model")]
+function implementationsFromRecords(...records: SourceSignal[]) {
+  return records.flatMap((record) => implementationsFromRecord(record as Record<string, unknown>))
+}
 
-  function pushIf(target: MethodRef[], needle: string, slug: string) {
-    if (content.includes(needle)) {
-      target.push(requiredMethod(slug))
-    }
+function implementationsFromRecord(record: Record<string, unknown>): PaperImplementation[] {
+  return arrayFromKeys(record, ["implementations", "projects", "repositories"])
+    .map((item) => implementationFromValue(item))
+    .filter((implementation): implementation is PaperImplementation => Boolean(implementation))
+}
+
+function implementationFromValue(value: unknown): PaperImplementation | null {
+  const record = isRecord(value) ? value : null
+  const repoUrl = normalizeGithubRepoUrl(record ? text(record.repoUrl) || text(record.repo_url) || text(record.url) : text(value))
+  if (!repoUrl) {
+    return null
+  }
+  const name = record ? text(record.name) || text(record.fullName) || text(record.full_name) : ""
+  const repoSlug = githubRepoSlug(repoUrl)
+  return {
+    id: record ? text(record.id) || repoSlug || repoUrl : repoSlug || repoUrl,
+    name: name || repoSlug || repoUrl,
+    repoUrl,
+    provider: record ? text(record.provider) || "GitHub" : "GitHub",
+    githubStars: record ? numberValue(record.githubStars) || numberValue(record.stars) : undefined
   }
 }
 
-function requiredTask(slug: string) {
-  return paperTasks.find((task) => task.slug === slug) ?? paperTasks[0]
+function benchmarksFromRecords(...records: SourceSignal[]) {
+  return records.flatMap((record) => benchmarksFromRecord(record as Record<string, unknown>))
 }
 
-function requiredMethod(slug: string) {
-  return paperMethods.find((method) => method.slug === slug) ?? paperMethods[0]
+function benchmarksFromRecord(record: Record<string, unknown>): PaperBenchmarkResult[] {
+  return arrayFromKeys(record, ["benchmarks", "benchmarkResults", "benchmark_results"])
+    .map((item) => benchmarkFromValue(item))
+    .filter((benchmark): benchmark is PaperBenchmarkResult => Boolean(benchmark))
+}
+
+function benchmarkFromValue(value: unknown): PaperBenchmarkResult | null {
+  const record = isRecord(value) ? value : null
+  const name = record ? text(record.name) || text(record.label) || text(record.title) : text(value)
+  if (!name) {
+    return null
+  }
+  const id = record ? text(record.id) || slugify(name) : slugify(name)
+  return {
+    id,
+    name,
+    category: record ? text(record.category) || undefined : undefined,
+    metric: record ? text(record.metric) || undefined : undefined,
+    value: record ? text(record.value) || numberValue(record.value) : undefined,
+    taskSlug: record ? text(record.taskSlug) || text(record.task_slug) || undefined : undefined,
+    url: record ? text(record.url) || undefined : undefined,
+    confidence: record ? numberValue(record.confidence) : undefined,
+    evidence: record ? text(record.evidence) || undefined : undefined
+  }
+}
+
+function arrayFromKeys(record: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = record[key]
+    if (Array.isArray(value)) {
+      return value
+    }
+  }
+  return []
 }
 
 function uniqueRefs<T extends { slug: string }>(refs: T[]) {

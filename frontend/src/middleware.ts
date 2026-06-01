@@ -43,11 +43,16 @@ export function middleware(request: NextRequest) {
 function isPublicPath(pathname: string, surface: FrontendSurface) {
   return (
     (surface === "portal" && pathname === "/") ||
+    (surface === "portal" && isResearchReadPath(pathname)) ||
     pathname.startsWith("/login") ||
     pathname.startsWith("/api/") ||
     pathname.startsWith("/_next/") ||
     pathname === "/favicon.ico"
   )
+}
+
+function isResearchReadPath(pathname: string) {
+  return pathname === "/papers" || pathname.startsWith("/papers/")
 }
 
 function isProtectedPath(pathname: string) {

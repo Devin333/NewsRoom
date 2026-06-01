@@ -19,14 +19,14 @@ describe("auth middleware", () => {
     restoreEnv("NEWSROOM_ADMIN_ORIGIN", originalAdminOrigin)
   })
 
-  it("redirects anonymous Reader Portal requests to login", () => {
+  it("keeps anonymous Research read routes public", () => {
     process.env.NEWSROOM_FRONTEND_SURFACE = "portal"
-    const response = middleware(request("/papers/reader-paper?panel=summary"))
 
-    expect(response.status).toBe(307)
-    expect(response.headers.get("location")).toBe(
-      "http://localhost/login?next=%2Fpapers%2Freader-paper%3Fpanel%3Dsummary"
-    )
+    expect(middleware(request("/papers")).headers.get("location")).toBeNull()
+    expect(middleware(request("/papers/reader-paper?panel=summary")).headers.get("location")).toBeNull()
+    expect(middleware(request("/papers/reader-paper/read")).headers.get("location")).toBeNull()
+    expect(middleware(request("/papers/tasks/agents")).headers.get("location")).toBeNull()
+    expect(middleware(request("/papers/methods/tool-use")).headers.get("location")).toBeNull()
   })
 
   it("allows protected routes when the session cookie exists", () => {

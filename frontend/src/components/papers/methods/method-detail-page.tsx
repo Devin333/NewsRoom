@@ -12,9 +12,8 @@ import { ImplementationList } from "@/components/papers/shared/implementation-li
 import { PaperDetailDrawer } from "@/components/papers/shared/paper-detail-drawer"
 import { PaperStream } from "@/components/papers/shared/paper-stream"
 import { translate } from "@/lib/i18n"
-import { papersCopy, t } from "@/lib/papers/copy"
+import { localizedResearchNotice, papersCopy, t } from "@/lib/papers/copy"
 import { methodDescription, methodName } from "@/lib/papers/format"
-import { getBenchmarksForMethod, getPapersForMethod } from "@/lib/papers/catalog"
 import { papersRoutes } from "@/lib/papers/routes"
 import type { Benchmark, BenchmarkRef, Locale, MethodRef, Paper, PaperMethod, TaskRef } from "@/lib/papers/types"
 
@@ -29,13 +28,13 @@ export function MethodDetailPage({
   papers?: Paper[]
   fallbackNotice?: string | null
 }) {
-  const [notice, setNotice] = useState<string | null>(fallbackNotice ?? null)
+  const fallbackMessage = localizedResearchNotice(fallbackNotice, locale)
+  const [notice, setNotice] = useState<string | null>(fallbackMessage)
   const [selectedPaper, setSelectedPaper] = useState<Paper | null>(null)
   const [selectedBenchmark, setSelectedBenchmark] = useState<BenchmarkRef | Benchmark | null>(null)
-  const methodPapers = papers?.filter((paper) => paper.isPublished !== false && (paper.methodRefs ?? []).some((methodRef) => methodRef.slug === method.slug)) ?? getPapersForMethod(method.slug)
-  const methodBenchmarks = getBenchmarksForMethod(method.slug)
+  const methodPapers = papers?.filter((paper) => paper.isPublished !== false && (paper.methodRefs ?? []).some((methodRef) => methodRef.slug === method.slug)) ?? []
   const commonBenchmarks = evidenceBackedBenchmarks(
-    method.commonBenchmarks?.length ? method.commonBenchmarks : methodBenchmarks,
+    method.commonBenchmarks ?? [],
     methodPapers
   )
   const relatedTasks = relatedTasksFromPapers(methodPapers)
@@ -48,7 +47,7 @@ export function MethodDetailPage({
 
   function previewBenchmark(benchmark: BenchmarkRef | Benchmark) {
     setSelectedBenchmark(benchmark)
-    if (notice && notice !== fallbackNotice) {
+    if (notice && notice !== fallbackMessage) {
       setNotice(null)
     }
   }

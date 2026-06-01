@@ -121,6 +121,56 @@ export const taskGroupLabels: Record<string, Localized> = {
   infra: copy("papers.group.infra")
 }
 
+const researchNoticeCopy: Record<string, Localized> = {
+  "Backend paper API returned no public papers; showing tracked paper cache.": {
+    zh: "后端论文 API 未返回公开论文，正在显示已跟踪的真实缓存论文。",
+    en: "Backend paper API returned no public papers; showing tracked paper cache."
+  },
+  "Backend paper API is unavailable; showing tracked paper cache.": {
+    zh: "后端论文 API 暂不可用，正在显示已跟踪的真实缓存论文。",
+    en: "Backend paper API is unavailable; showing tracked paper cache."
+  },
+  "No public backend or tracked cache papers are available; showing latest public Paper Radar artifacts.": {
+    zh: "后端和已跟踪缓存暂无公开论文，正在显示最新公开 Paper Radar 产物。",
+    en: "No public backend or tracked cache papers are available; showing latest public Paper Radar artifacts."
+  },
+  "Backend paper API and tracked cache are unavailable; showing latest Paper Radar artifacts.": {
+    zh: "后端论文 API 和已跟踪缓存暂不可用，正在显示最新 Paper Radar 产物。",
+    en: "Backend paper API and tracked cache are unavailable; showing latest Paper Radar artifacts."
+  },
+  "No public papers are available from backend, tracked cache, or artifacts.": {
+    zh: "后端、已跟踪缓存和产物中暂无公开论文。",
+    en: "No public papers are available from backend, tracked cache, or artifacts."
+  },
+  "No backend, tracked cache, or artifact papers are available.": {
+    zh: "后端、已跟踪缓存和产物中都暂无可用论文。",
+    en: "No backend, tracked cache, or artifact papers are available."
+  },
+  "Paper task API is unavailable; showing taxonomy derived from real paper references.": {
+    zh: "论文任务 API 暂不可用，正在显示由真实论文引用聚合的任务目录。",
+    en: "Paper task API is unavailable; showing taxonomy derived from real paper references."
+  },
+  "Paper task API is unavailable; showing taxonomy with real paper-derived counts.": {
+    zh: "论文任务 API 暂不可用，正在显示由真实论文引用聚合的任务目录。",
+    en: "Paper task API is unavailable; showing taxonomy derived from real paper references."
+  },
+  "Paper method API is unavailable; showing taxonomy derived from real paper references.": {
+    zh: "论文方法 API 暂不可用，正在显示由真实论文引用聚合的方法目录。",
+    en: "Paper method API is unavailable; showing taxonomy derived from real paper references."
+  },
+  "Paper method API is unavailable; showing taxonomy with real paper-derived counts.": {
+    zh: "论文方法 API 暂不可用，正在显示由真实论文引用聚合的方法目录。",
+    en: "Paper method API is unavailable; showing taxonomy derived from real paper references."
+  }
+}
+
+export function localizedResearchNotice(value: string | null | undefined, locale: Locale) {
+  if (!value) {
+    return null
+  }
+  return researchNoticeCopy[value]?.[locale] ?? value
+}
+
 export function t(value: Localized | undefined, locale: Locale, fallback = "") {
   if (!value) {
     return fallback

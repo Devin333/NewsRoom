@@ -1,7 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { TrendingPapersPage } from "@/components/papers/trending-papers-page"
-import { comicSansFontFamily } from "@/lib/fonts"
 import { fetchPapers, requestPaperSummary } from "@/lib/papers/api"
 import type { Paper } from "@/lib/papers/types"
 
@@ -91,10 +90,10 @@ describe("TrendingPapersPage", () => {
     expect(screen.getByLabelText(/papers: 2/i)).toBeInTheDocument()
     expect(screen.getByLabelText(/tasks: 2/i)).toBeInTheDocument()
     expect(screen.getByLabelText(/repos(?:itories)?: 2/i)).toBeInTheDocument()
-    expect(screen.getByText(/frontend user view/i).closest("span")).toHaveStyle({ fontFamily: comicSansFontFamily })
-    expect(screen.getByLabelText("Paper period")).toHaveStyle({ fontFamily: comicSansFontFamily })
-    expect(screen.getByLabelText("Paper sort")).toHaveStyle({ fontFamily: comicSansFontFamily })
-    expect(screen.getAllByRole("link", { name: /Agents/i })[0]).toHaveStyle({ fontFamily: comicSansFontFamily })
+    expect(screen.getByText(/frontend user view/i).closest("span")).not.toHaveAttribute("style")
+    expect(screen.getByLabelText("Paper period")).not.toHaveAttribute("style")
+    expect(screen.getByLabelText("Paper sort")).not.toHaveAttribute("style")
+    expect(screen.getAllByRole("link", { name: /Agents/i })[0]).not.toHaveAttribute("style")
     expect(screen.queryByRole("textbox", { name: /search papers/i })).not.toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "Search" })).not.toBeInTheDocument()
 

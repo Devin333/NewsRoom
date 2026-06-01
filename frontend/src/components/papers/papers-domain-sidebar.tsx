@@ -1,5 +1,4 @@
 import Link from "next/link"
-import { comicSansFont } from "@/lib/fonts"
 import { papersCopy, t } from "@/lib/papers/copy"
 import { formatWholeNumber, taskName } from "@/lib/papers/format"
 import { papersRoutes } from "@/lib/papers/routes"
@@ -87,7 +86,6 @@ function SidebarSection({
               "group flex items-center justify-between gap-3 rounded-xl border border-transparent bg-[#f7faf7] px-3 py-3 text-[#334155] transition-all dark:bg-background/70 dark:text-foreground",
               rowAccentClass
             )}
-            style={comicSansFont}
           >
             <span className="text-sm font-semibold leading-5">{item.label}</span>
             <span className={cn("rounded-full px-2.5 py-1 text-[0.68rem] font-semibold", countAccentClass)}>

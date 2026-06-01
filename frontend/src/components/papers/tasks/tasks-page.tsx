@@ -6,10 +6,8 @@ import { PapersMicrobar } from "@/components/papers/papers-microbar"
 import { TaskSection } from "@/components/papers/tasks/task-section"
 import { InlineNotice } from "@/components/papers/shared/inline-notice"
 import { orderedTaskGroups, taskGroupLabel } from "@/lib/papers/categories"
-import { papersCopy, t } from "@/lib/papers/copy"
-import { paperTasks } from "@/lib/papers/catalog"
+import { localizedResearchNotice, papersCopy, t } from "@/lib/papers/copy"
 import { fetchPaperTasksResult, fetchPapers } from "@/lib/papers/api"
-import { deriveTasksFromPapers } from "@/lib/papers/taxonomy-fallback"
 import type { Locale, Paper, PaperTask } from "@/lib/papers/types"
 
 export function TasksPage({ locale }: { locale: Locale }) {
@@ -30,17 +28,17 @@ export function TasksPage({ locale }: { locale: Locale }) {
         const publicPaperItems = papersResult.status === "fulfilled" ? publicPapers(papersResult.value.papers) : []
 
         if (tasksResult.status === "rejected") {
-          setTasks(papersResult.status === "fulfilled" ? tasksForPublicPapers(publicPaperItems) : emptyTaskCounts(paperTasks))
+          setTasks([])
           setPaperItems(publicPaperItems)
           setNotice(t(papersCopy.taskApiFallback, locale))
           setStatus("fallback")
           return
         }
 
-        setTasks(tasksResult.value.dataState === "empty" && papersResult.status === "fulfilled" ? [] : tasksResult.value.tasks)
+        setTasks(tasksResult.value.tasks.filter((task) => task.paperCount > 0))
         setPaperItems(publicPaperItems)
         setNotice(combineNotices([
-          tasksResult.value.notices?.[0] ?? null,
+          localizedResearchNotice(tasksResult.value.notices?.[0] ?? null, locale),
           papersResult.status === "rejected" ? paperListUnavailableNotice(locale) : null
         ]))
         setStatus(
@@ -54,8 +52,8 @@ export function TasksPage({ locale }: { locale: Locale }) {
     }
   }, [locale])
 
-  const taskItems = status === "loading" ? [] : tasks
-  const taskPaperItems = status === "loading" ? [] : paperItems
+  const taskItems = status === "loading" ? [] : tasks.filter((task) => task.paperCount > 0)
+  const taskPaperItems = status === "loading" ? [] : paperItems.filter((paper) => (paper.taskRefs ?? []).length > 0)
   const benchmarkCount = taskItems.reduce((total, task) => total + task.benchmarkCount, 0)
   const visibleTaskGroups = orderedTaskGroups(taskItems)
 
@@ -101,28 +99,13 @@ export function TasksPage({ locale }: { locale: Locale }) {
   )
 }
 
-function emptyTaskCounts(tasks: PaperTask[]): PaperTask[] {
-  return tasks.map((task) => ({
-    ...task,
-    paperCount: 0,
-    benchmarkCount: 0,
-    methodCount: 0,
-    latestPaperIds: [],
-    implementationCount: 0
-  }))
-}
-
-function tasksForPublicPapers(papers: Paper[]) {
-  return papers.length ? deriveTasksFromPapers(paperTasks, papers) : []
-}
-
 function publicPapers(papers: Paper[]) {
   return papers.filter((paper) => paper.isPublished !== false)
 }
 
 function paperListUnavailableNotice(locale: Locale) {
   return locale === "zh"
-    ? "论文列表 API 暂不可用；任务目录保留真实分类数据，论文统计暂时不可用。"
+    ? "论文列表 API 暂不可用；任务目录仍显示已验证分类，论文统计暂时不可用。"
     : "Paper list API is unavailable; task taxonomy remains live, but paper totals are temporarily unavailable."
 }
 

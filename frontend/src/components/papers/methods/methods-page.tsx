@@ -5,11 +5,9 @@ import { MethodCard } from "@/components/papers/methods/method-card"
 import { PapersHero } from "@/components/papers/papers-hero"
 import { PapersMicrobar } from "@/components/papers/papers-microbar"
 import { InlineNotice } from "@/components/papers/shared/inline-notice"
-import { papersCopy, t } from "@/lib/papers/copy"
-import { paperMethods, paperTasks } from "@/lib/papers/catalog"
+import { localizedResearchNotice, papersCopy, t } from "@/lib/papers/copy"
 import { fetchPaperMethodsResult, fetchPaperTasksResult, fetchPapers } from "@/lib/papers/api"
 import { methodAreaSlug } from "@/lib/papers/metrics"
-import { deriveMethodsFromPapers } from "@/lib/papers/taxonomy-fallback"
 import type { Locale, Paper, PaperMethod, PaperTask } from "@/lib/papers/types"
 
 export function MethodsPage({ locale }: { locale: Locale }) {
@@ -31,20 +29,22 @@ export function MethodsPage({ locale }: { locale: Locale }) {
         const publicPaperItems = papersResult.status === "fulfilled" ? publicPapers(papersResult.value.papers) : []
 
         if (methodsResult.status === "rejected") {
-          setMethods(papersResult.status === "fulfilled" ? methodsForPublicPapers(publicPaperItems) : emptyMethodCounts(paperMethods))
-          setTasks(tasksResult.status === "fulfilled" ? tasksResult.value.tasks : emptyTaskCounts(paperTasks))
+          setMethods([])
+          setTasks(tasksResult.status === "fulfilled" ? tasksResult.value.tasks.filter((task) => task.paperCount > 0) : [])
           setPaperItems(publicPaperItems)
           setNotice(t(papersCopy.methodApiFallback, locale))
           setStatus("fallback")
           return
         }
 
-        setMethods(methodsResult.value.dataState === "empty" && papersResult.status === "fulfilled" ? [] : methodsResult.value.methods)
-        setTasks(tasksResult.status === "fulfilled" ? tasksResult.value.tasks : emptyTaskCounts(paperTasks))
+        setMethods(methodsResult.value.methods.filter((method) => method.paperCount > 0))
+        setTasks(tasksResult.status === "fulfilled" ? tasksResult.value.tasks.filter((task) => task.paperCount > 0) : [])
         setPaperItems(publicPaperItems)
         setNotice(combineNotices([
-          methodsResult.value.notices?.[0] ?? null,
-          tasksResult.status === "fulfilled" ? tasksResult.value.notices?.[0] ?? null : taskListUnavailableNotice(locale),
+          localizedResearchNotice(methodsResult.value.notices?.[0] ?? null, locale),
+          tasksResult.status === "fulfilled"
+            ? localizedResearchNotice(tasksResult.value.notices?.[0] ?? null, locale)
+            : taskListUnavailableNotice(locale),
           papersResult.status === "rejected" ? paperListUnavailableNotice(locale) : null
         ]))
         setStatus(
@@ -60,9 +60,9 @@ export function MethodsPage({ locale }: { locale: Locale }) {
     }
   }, [locale])
 
-  const methodItems = status === "loading" ? [] : methods
-  const taskItems = status === "loading" ? [] : tasks
-  const paperItemsForStats = status === "loading" ? [] : paperItems
+  const methodItems = status === "loading" ? [] : methods.filter((method) => method.paperCount > 0)
+  const taskItems = status === "loading" ? [] : tasks.filter((task) => task.paperCount > 0)
+  const paperItemsForStats = status === "loading" ? [] : paperItems.filter((paper) => (paper.methodRefs ?? []).length > 0)
   const methodGroups = groupMethodsByArea(methodItems)
 
   return (
@@ -112,32 +112,6 @@ export function MethodsPage({ locale }: { locale: Locale }) {
   )
 }
 
-function emptyTaskCounts(tasks: PaperTask[]): PaperTask[] {
-  return tasks.map((task) => ({
-    ...task,
-    paperCount: 0,
-    benchmarkCount: 0,
-    methodCount: 0,
-    latestPaperIds: [],
-    implementationCount: 0
-  }))
-}
-
-function emptyMethodCounts(methods: PaperMethod[]): PaperMethod[] {
-  return methods.map((method) => ({
-    ...method,
-    paperCount: 0,
-    taskCount: 0,
-    implementationCount: 0,
-    representativePaperIds: [],
-    relatedProjectIds: []
-  }))
-}
-
-function methodsForPublicPapers(papers: Paper[]) {
-  return papers.length ? deriveMethodsFromPapers(paperMethods, papers) : []
-}
-
 function publicPapers(papers: Paper[]) {
   return papers.filter((paper) => paper.isPublished !== false)
 }
@@ -163,13 +137,13 @@ function groupMethodsByArea(methods: PaperMethod[]) {
 
 function taskListUnavailableNotice(locale: Locale) {
   return locale === "zh"
-    ? "任务目录 API 暂不可用；方法目录保留真实分类数据，任务统计暂时不可用。"
+    ? "任务目录 API 暂不可用；方法目录仍显示已验证分类，任务统计暂时不可用。"
     : "Task taxonomy API is unavailable; method taxonomy remains live, but task totals are temporarily unavailable."
 }
 
 function paperListUnavailableNotice(locale: Locale) {
   return locale === "zh"
-    ? "论文列表 API 暂不可用；方法目录保留真实分类数据，论文统计暂时不可用。"
+    ? "论文列表 API 暂不可用；方法目录仍显示已验证分类，论文统计暂时不可用。"
     : "Paper list API is unavailable; method taxonomy remains live, but paper totals are temporarily unavailable."
 }
 

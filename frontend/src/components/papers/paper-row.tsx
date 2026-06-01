@@ -1,6 +1,6 @@
 "use client"
 
-import { Fragment, type CSSProperties, type MouseEvent, type ReactNode } from "react"
+import { Fragment, type MouseEvent, type ReactNode } from "react"
 import Link from "next/link"
 import { Bell, BookOpen, Github, Heart } from "lucide-react"
 import { PaperTags } from "@/components/papers/paper-tags"
@@ -11,14 +11,6 @@ import { papersCopy, t } from "@/lib/papers/copy"
 import { formatCompactNumber, formatPaperDate, paperPdfUrl, paperSnippet, paperTitle } from "@/lib/papers/format"
 import { papersRoutes } from "@/lib/papers/routes"
 import type { Locale, Paper } from "@/lib/papers/types"
-
-const PAPER_ROW_BODY_FONT: CSSProperties = {
-  fontFamily: "\"Comic Sans MS\", \"Comic Sans\", cursive"
-}
-
-const PAPER_ROW_TITLE_FONT: CSSProperties = {
-  fontFamily: "Comic Sans MS, \"Courier New\", monospace"
-}
 
 export function PaperRow({
   paper,
@@ -69,18 +61,12 @@ export function PaperRow({
 
         <div className="min-w-0 space-y-4">
           <Link href={papersRoutes.detail(paper.slug || paper.id)} className="block text-left">
-            <h2
-              className="max-w-5xl text-balance text-xl font-black leading-7 text-[#334155] sm:text-[1.72rem] sm:leading-8 dark:text-foreground"
-              style={PAPER_ROW_TITLE_FONT}
-            >
+            <h2 className="max-w-5xl text-balance text-xl font-black leading-7 text-[#334155] sm:text-[1.72rem] sm:leading-8 dark:text-foreground">
               {paperTitle(paper, locale)}
             </h2>
           </Link>
 
-          <p
-            className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5 text-sm text-[#334155]/55 dark:text-muted-foreground"
-            style={PAPER_ROW_BODY_FONT}
-          >
+          <p className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5 text-sm text-[#334155]/55 dark:text-muted-foreground">
             {metadata.map((item, index) => (
               <Fragment key={`${paper.id}-meta-${index}`}>
                 {index > 0 ? <PaperMetaSeparator /> : null}
@@ -89,10 +75,7 @@ export function PaperRow({
             ))}
           </p>
 
-          <p
-            className="line-clamp-3 max-w-4xl text-[0.98rem] leading-7 text-[#334155]/72 dark:text-muted-foreground"
-            style={PAPER_ROW_BODY_FONT}
-          >
+          <p className="line-clamp-3 max-w-4xl text-[0.98rem] leading-7 text-[#334155]/72 dark:text-muted-foreground">
             {paperSnippet(paper, locale)}
           </p>
 

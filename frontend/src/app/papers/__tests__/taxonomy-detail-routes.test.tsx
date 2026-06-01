@@ -119,6 +119,19 @@ describe("paper taxonomy detail routes", () => {
     expect(getPublishedPapers).not.toHaveBeenCalled()
   })
 
+  it("does not show task detail pages for zero-paper taxonomy items", async () => {
+    vi.mocked(getPaperTasksResult).mockResolvedValueOnce({
+      items: [{ ...task, paperCount: 0, benchmarkCount: 0, methodCount: 0 }],
+      source: "backend",
+      dataState: "ready",
+      notices: []
+    })
+
+    await expect(PapersTaskDetailPageRoute({ params: { slug: "backend-task" } })).rejects.toThrow("NEXT_NOT_FOUND")
+    expect(notFound).toHaveBeenCalled()
+    expect(getPublishedPapers).not.toHaveBeenCalled()
+  })
+
   it("does not show static method detail pages when backend taxonomy excludes the slug", async () => {
     vi.mocked(getPaperMethodsResult).mockResolvedValueOnce({
       items: [method],
@@ -128,6 +141,19 @@ describe("paper taxonomy detail routes", () => {
     })
 
     await expect(PapersMethodDetailPageRoute({ params: { slug: "large-language-model" } })).rejects.toThrow("NEXT_NOT_FOUND")
+    expect(notFound).toHaveBeenCalled()
+    expect(getPublishedPapers).not.toHaveBeenCalled()
+  })
+
+  it("does not show method detail pages for zero-paper taxonomy items", async () => {
+    vi.mocked(getPaperMethodsResult).mockResolvedValueOnce({
+      items: [{ ...method, paperCount: 0, taskCount: 0, implementationCount: 0 }],
+      source: "backend",
+      dataState: "ready",
+      notices: []
+    })
+
+    await expect(PapersMethodDetailPageRoute({ params: { slug: "backend-method" } })).rejects.toThrow("NEXT_NOT_FOUND")
     expect(notFound).toHaveBeenCalled()
     expect(getPublishedPapers).not.toHaveBeenCalled()
   })

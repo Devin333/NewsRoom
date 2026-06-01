@@ -103,7 +103,7 @@ describe("Papers API data loading", () => {
   })
 
   it("loads cached papers from the shared ingest cache path", () => {
-    mockedExistsSync.mockImplementation((filePath) => String(filePath).endsWith(".newsroom/papers/arxiv-papers.json"))
+    mockedExistsSync.mockImplementation((filePath) => String(filePath).replace(/\\/g, "/").endsWith(".newsroom/papers/arxiv-papers.json"))
     mockedReadFileSync.mockReturnValue(JSON.stringify({
       papers: [
         realPaper({
@@ -117,15 +117,38 @@ describe("Papers API data loading", () => {
 
     const papers = loadCachedPapers()
 
-    expect(mockedReadFileSync).toHaveBeenCalledWith(
-      expect.stringContaining(".newsroom/papers/arxiv-papers.json"),
-      "utf8"
-    )
+    expect(String(mockedReadFileSync.mock.calls[0]?.[0]).replace(/\\/g, "/")).toContain(".newsroom/papers/arxiv-papers.json")
+    expect(mockedReadFileSync.mock.calls[0]?.[1]).toBe("utf8")
     expect(papers).toHaveLength(1)
     expect(papers[0]).toMatchObject({
       id: "cache-paper",
       title: "Shared Cache Paper"
     })
+  })
+
+  it("does not infer cached paper taxonomy refs from title, abstract, or tags", () => {
+    mockedExistsSync.mockImplementation((filePath) => String(filePath).replace(/\\/g, "/").endsWith(".newsroom/papers/arxiv-papers.json"))
+    mockedReadFileSync.mockReturnValue(JSON.stringify({
+      papers: [
+        {
+          id: "cache-agent-paper",
+          slug: "cache-agent-paper",
+          title: "Agent Coding Reasoning Model Paper",
+          abstractSnippet: "An agent model paper about coding, reasoning, and retrieval.",
+          authors: ["Alice Example"],
+          publishedAt: "2026-05-24T00:00:00Z",
+          tags: ["agent", "model", "retrieval"],
+          paperUrl: "https://arxiv.org/abs/2605.12345",
+          isPublished: true
+        }
+      ]
+    }))
+
+    const papers = loadCachedPapers()
+
+    expect(papers).toHaveLength(1)
+    expect(papers[0].taskRefs).toEqual([])
+    expect(papers[0].methodRefs).toEqual([])
   })
 
   it("does not expose unpublished papers through detail lookup", async () => {
@@ -222,17 +245,16 @@ describe("Papers API data loading", () => {
 
     const result = await getPaperTasksResult()
     const agents = result.items.find((task) => task.slug === "agents")
-    const reasoning = result.items.find((task) => task.slug === "reasoning")
 
     expect(result.source).toBe("taxonomy")
     expect(result.dataState).toBe("degraded")
+    expect(result.notices).toContain("Paper task API is unavailable; showing taxonomy derived from real paper references.")
     expect(agents?.paperCount).toBe(1)
+    expect(agents?.description).toBe("Agent systems that reason, call tools, use memory, and complete multi-step tasks.")
     expect(agents?.benchmarkCount).toBe(1)
     expect(agents?.methodCount).toBe(1)
     expect(agents?.latestPaperIds).toEqual(["paper-agent"])
-    expect(reasoning?.paperCount).toBe(0)
-    expect(reasoning?.benchmarkCount).toBe(0)
-    expect(reasoning?.methodCount).toBe(0)
+    expect(result.items.find((task) => task.slug === "reasoning")).toBeUndefined()
   })
 
   it("marks API-backed task taxonomy empty when paper data is unavailable", async () => {
@@ -263,12 +285,7 @@ describe("Papers API data loading", () => {
     expect(result.source).toBe("backend")
     expect(result.dataState).toBe("empty")
     expect(result.notices).toContain("No backend, tracked cache, or artifact papers are available.")
-    expect(result.items[0]).toMatchObject({
-      slug: "live-task",
-      paperCount: 0,
-      benchmarkCount: 0,
-      methodCount: 0
-    })
+    expect(result.items).toEqual([])
   })
 
   it("uses taxonomy with real paper-derived method counts when method API is unavailable", async () => {
@@ -291,15 +308,14 @@ describe("Papers API data loading", () => {
 
     const result = await getPaperMethodsResult()
     const toolUse = result.items.find((method) => method.slug === "tool-use")
-    const planning = result.items.find((method) => method.slug === "planning")
 
     expect(result.source).toBe("taxonomy")
     expect(result.dataState).toBe("degraded")
+    expect(result.notices).toContain("Paper method API is unavailable; showing taxonomy derived from real paper references.")
     expect(toolUse?.paperCount).toBe(1)
     expect(toolUse?.taskCount).toBe(1)
     expect(toolUse?.representativePaperIds).toEqual(["paper-tool-use"])
-    expect(planning?.paperCount).toBe(0)
-    expect(planning?.taskCount).toBe(0)
+    expect(result.items.find((method) => method.slug === "planning")).toBeUndefined()
   })
 
   it("marks API-backed method taxonomy empty when paper data is unavailable", async () => {
@@ -331,12 +347,7 @@ describe("Papers API data loading", () => {
     expect(result.source).toBe("backend")
     expect(result.dataState).toBe("empty")
     expect(result.notices).toContain("No backend, tracked cache, or artifact papers are available.")
-    expect(result.items[0]).toMatchObject({
-      slug: "live-method",
-      paperCount: 0,
-      taskCount: 0,
-      implementationCount: 0
-    })
+    expect(result.items).toEqual([])
   })
 })
 

@@ -5,15 +5,14 @@ import { BenchmarkList } from "@/components/papers/tasks/benchmark-list"
 import { CommonMethodsPanel } from "@/components/papers/tasks/common-methods-panel"
 import { SisterTasksPanel } from "@/components/papers/tasks/sister-tasks-panel"
 import { PapersMicrobar } from "@/components/papers/papers-microbar"
-import { BenchmarkEvidencePanel, benchmarkPaperMatches } from "@/components/papers/shared/benchmark-evidence-panel"
+import { BenchmarkEvidencePanel } from "@/components/papers/shared/benchmark-evidence-panel"
 import { InlineNotice } from "@/components/papers/shared/inline-notice"
 import { ImplementationList } from "@/components/papers/shared/implementation-list"
 import { PaperDetailDrawer } from "@/components/papers/shared/paper-detail-drawer"
 import { PaperStream } from "@/components/papers/shared/paper-stream"
 import { translate } from "@/lib/i18n"
-import { papersCopy, t } from "@/lib/papers/copy"
+import { localizedResearchNotice, papersCopy, t } from "@/lib/papers/copy"
 import { formatWholeNumber, taskDescription, taskName } from "@/lib/papers/format"
-import { getBenchmarksForTask, getPapersForTask } from "@/lib/papers/catalog"
 import { papersRoutes } from "@/lib/papers/routes"
 import type { Benchmark, Locale, Paper, PaperTask } from "@/lib/papers/types"
 
@@ -28,23 +27,21 @@ export function TaskDetailPage({
   papers?: Paper[]
   fallbackNotice?: string | null
 }) {
-  const [notice, setNotice] = useState<string | null>(fallbackNotice ?? null)
+  const fallbackMessage = localizedResearchNotice(fallbackNotice, locale)
+  const [notice, setNotice] = useState<string | null>(fallbackMessage)
   const [selectedPaper, setSelectedPaper] = useState<Paper | null>(null)
   const [selectedBenchmark, setSelectedBenchmark] = useState<Benchmark | null>(null)
 
   const taskPapers = papers?.filter(
     (p) => p.isPublished !== false && (p.taskRefs ?? []).some((r) => r.slug === task.slug)
-  ) ?? getPapersForTask(task.slug)
+  ) ?? []
 
-  const taskBenchmarks = getBenchmarksForTask(task.slug).map((benchmark) => ({
-    ...benchmark,
-    entryCount: benchmarkPaperMatches(benchmark, taskPapers).length
-  }))
+  const taskBenchmarks = benchmarksForTask(task.slug, taskPapers)
   const taskStats = deriveTaskDetailStats(taskPapers, taskBenchmarks)
 
   function previewBenchmark(benchmark: Benchmark) {
     setSelectedBenchmark(benchmark)
-    if (notice && notice !== fallbackNotice) {
+    if (notice && notice !== fallbackMessage) {
       setNotice(null)
     }
   }
@@ -159,6 +156,31 @@ function deriveTaskDetailStats(papers: Paper[], taskBenchmarks: Benchmark[]) {
     benchmarkCount,
     methodCount,
   }
+}
+
+function benchmarksForTask(taskSlug: string, papers: Paper[]): Benchmark[] {
+  const records = new Map<string, Benchmark>()
+  for (const paper of papers) {
+    for (const benchmark of paper.benchmarks ?? []) {
+      if (benchmark.taskSlug && benchmark.taskSlug !== taskSlug) {
+        continue
+      }
+      const slug = benchmark.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || benchmark.id
+      const id = benchmark.id || slug
+      const existing = records.get(id)
+      records.set(id, {
+        id,
+        slug,
+        name: benchmark.name,
+        category: benchmark.category,
+        taskSlug,
+        entryCount: (existing?.entryCount ?? 0) + 1,
+        metric: benchmark.metric,
+        bestValue: benchmark.value
+      })
+    }
+  }
+  return Array.from(records.values()).sort((left, right) => right.entryCount - left.entryCount || left.name.localeCompare(right.name))
 }
 
 function countBenchmarksFromPapers(papers: Paper[]) {

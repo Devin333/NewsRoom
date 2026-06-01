@@ -10,11 +10,10 @@ import { PaperDetailDrawer } from "@/components/papers/shared/paper-detail-drawe
 import { PaperPeriodTabs } from "@/components/papers/shared/paper-period-tabs"
 import { PaperStream } from "@/components/papers/shared/paper-stream"
 import { Button } from "@/components/ui/button"
-import { comicSansFont } from "@/lib/fonts"
 import { fetchPapers } from "@/lib/papers/api"
-import { buildPaperPortalMetrics, deriveTopPaperDomains, deriveMethodAreaDomains } from "@/lib/papers/metrics"
-import { papersCopy, t } from "@/lib/papers/copy"
+import { localizedResearchNotice, papersCopy, t } from "@/lib/papers/copy"
 import { sortPapers } from "@/lib/papers/format"
+import { buildPaperPortalMetrics, deriveMethodAreaDomains, deriveTopPaperDomains } from "@/lib/papers/metrics"
 import type { Locale, Paper, PaperListResult, PaperPeriod, PaperSort } from "@/lib/papers/types"
 
 const PAPER_DASHBOARD_LIMIT = 5000
@@ -73,8 +72,6 @@ export function TrendingPapersPage({ locale, papers }: { locale: Locale; papers:
     setSelectedPaperId(deepLinkedPaperId)
   }, [deepLinkedPaperId])
 
-
-
   useEffect(() => {
     let cancelled = false
     setIsLoading(true)
@@ -113,7 +110,7 @@ export function TrendingPapersPage({ locale, papers }: { locale: Locale; papers:
           ...(pageResult?.notices ?? []),
           ...(dashboardResult?.notices ?? []),
           ...rejectedNotices(pageSettled, dashboardSettled, locale)
-        ]
+        ].map((notice) => localizedResearchNotice(notice, locale) ?? notice)
 
         setVisiblePapers(nextVisiblePapers)
         setDashboardPapers(nextDashboardPapers)
@@ -296,7 +293,7 @@ function paperEmptyDescription({
       ? "当前搜索或筛选下没有公开论文匹配。可以清空搜索，或稍后在论文入库完成后重试。"
       : "No public papers match the current search or filters. Clear the search, or retry after paper ingest finishes."
   }
-  if (error || notices.some((notice) => /no .*papers|unavailable|cache|artifact/i.test(notice))) {
+  if (error || notices.some((notice) => /no .*papers|unavailable|cache|artifact|暂无|不可用/i.test(notice))) {
     return locale === "zh"
       ? "请先运行论文入库，或将 NEWSROOM_PAPERS_DATA_PATH 指向真实论文缓存，然后刷新页面。"
       : "Run paper ingest, or set NEWSROOM_PAPERS_DATA_PATH to a real papers cache, then refresh."
@@ -435,7 +432,6 @@ function PaperPagination({
     <nav
       aria-label={locale === "zh" ? "论文分页" : "Paper pagination"}
       className="flex flex-col gap-3 border-t border-[#d8dfd8] py-6 sm:flex-row sm:items-center sm:justify-between dark:border-border"
-      style={comicSansFont}
     >
       <p className="text-xs font-medium text-[#334155]/62 dark:text-muted-foreground">{rangeLabel}</p>
       <div className="flex flex-wrap items-center gap-2">
