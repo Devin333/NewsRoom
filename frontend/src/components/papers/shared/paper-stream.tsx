@@ -14,6 +14,7 @@ export function PaperStream({
   papers,
   locale,
   title,
+  emptyDescription,
   sort: controlledSort,
   onSortChange,
   onPreview
@@ -21,6 +22,7 @@ export function PaperStream({
   papers: Paper[]
   locale: Locale
   title: string
+  emptyDescription?: string
   sort?: PaperSort
   onSortChange?: (sort: PaperSort) => void
   onPreview: (paper: Paper) => void
@@ -72,7 +74,10 @@ export function PaperStream({
         </>
       ) : (
         <div className="rounded-md border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
-          {t(papersCopy.noPapers, locale)}
+          <p>{t(papersCopy.noPapers, locale)}</p>
+          {emptyDescription ? (
+            <p className="mx-auto mt-2 max-w-2xl leading-6">{emptyDescription}</p>
+          ) : null}
         </div>
       )}
     </section>

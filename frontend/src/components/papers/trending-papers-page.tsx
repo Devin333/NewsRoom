@@ -219,6 +219,7 @@ export function TrendingPapersPage({ locale, papers }: { locale: Locale; papers:
             papers={visiblePapers}
             locale={locale}
             title=""
+            emptyDescription={paperEmptyDescription({ query, notices, error, locale })}
             sort={sort}
             onSortChange={updateSort}
             onPreview={previewPaper}
@@ -277,6 +278,32 @@ function resultErrorMessage(result: PromiseSettledResult<PaperListResult>) {
     return null
   }
   return result.reason instanceof Error ? result.reason.message : "Papers request failed"
+}
+
+function paperEmptyDescription({
+  query,
+  notices,
+  error,
+  locale
+}: {
+  query: string
+  notices: string[]
+  error: string | null
+  locale: Locale
+}) {
+  if (query.trim()) {
+    return locale === "zh"
+      ? "当前搜索或筛选下没有公开论文匹配。可以清空搜索，或稍后在论文入库完成后重试。"
+      : "No public papers match the current search or filters. Clear the search, or retry after paper ingest finishes."
+  }
+  if (error || notices.some((notice) => /no .*papers|unavailable|cache|artifact/i.test(notice))) {
+    return locale === "zh"
+      ? "请先运行论文入库，或将 NEWSROOM_PAPERS_DATA_PATH 指向真实论文缓存，然后刷新页面。"
+      : "Run paper ingest, or set NEWSROOM_PAPERS_DATA_PATH to a real papers cache, then refresh."
+  }
+  return locale === "zh"
+    ? "当前还没有可展示的公开论文。"
+    : "There are no public papers to display yet."
 }
 
 function totalCountForPublicResults({

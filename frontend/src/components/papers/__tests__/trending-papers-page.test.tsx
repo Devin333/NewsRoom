@@ -325,6 +325,52 @@ describe("TrendingPapersPage", () => {
     expect(screen.getByLabelText(/papers: 2/i)).toBeInTheDocument()
   })
 
+  it("shows an actionable empty state when no local paper data is available", async () => {
+    vi.mocked(fetchPapers).mockResolvedValue({
+      source: "empty",
+      query: "",
+      period: "all",
+      sort: "trending",
+      paper_count: 0,
+      total_count: 0,
+      source_count: 0,
+      limit: 5000,
+      offset: 0,
+      dataState: "empty",
+      notices: ["No backend, tracked cache, or artifact papers are available."],
+      papers: []
+    })
+
+    render(<TrendingPapersPage locale="en" papers={[]} />)
+
+    expect(await screen.findByText("No verified papers yet")).toBeInTheDocument()
+    expect(screen.getByText("Run paper ingest, or set NEWSROOM_PAPERS_DATA_PATH to a real papers cache, then refresh.")).toBeInTheDocument()
+  })
+
+  it("keeps search empty state separate from missing data guidance", async () => {
+    query = "q=missing"
+    vi.mocked(fetchPapers).mockResolvedValue({
+      source: "test",
+      query: "missing",
+      period: "all",
+      sort: "trending",
+      paper_count: 0,
+      total_count: 0,
+      source_count: 1,
+      limit: 5000,
+      offset: 0,
+      dataState: "ready",
+      notices: [],
+      papers: []
+    })
+
+    render(<TrendingPapersPage locale="en" papers={[]} />)
+
+    expect(await screen.findByText("No verified papers yet")).toBeInTheDocument()
+    expect(screen.getByText("No public papers match the current search or filters. Clear the search, or retry after paper ingest finishes.")).toBeInTheDocument()
+    expect(screen.queryByText(/NEWSROOM_PAPERS_DATA_PATH/)).not.toBeInTheDocument()
+  })
+
   it("loads paginated paper pages from the URL", async () => {
     query = "page=2"
     const pagedPapers = Array.from({ length: 60 }, (_, index): Paper => {
