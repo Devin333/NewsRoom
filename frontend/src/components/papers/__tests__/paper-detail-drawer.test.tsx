@@ -60,7 +60,11 @@ describe("PaperDetailDrawer", () => {
   it("renders paper detail sections and real actions", () => {
     render(<PaperDetailDrawer paper={paper} locale="en" open onOpenChange={vi.fn()} />)
 
-    expect(screen.getByRole("dialog", { name: /paper detail/i })).toBeInTheDocument()
+    const dialog = screen.getByRole("dialog", { name: /paper detail/i })
+    expect(dialog).toBeInTheDocument()
+    expect(dialog).toHaveClass("w-[min(44rem,92vw)]")
+    expect(dialog).toHaveClass("2xl:w-[56rem]")
+    expect(dialog.className).not.toContain("94rem")
     expect(screen.getByRole("heading", { name: "Segment Anything" })).toBeInTheDocument()
     expect(screen.getByText("NewsRoom AI")).toBeInTheDocument()
     expect(screen.getByText("Abstract")).toBeInTheDocument()

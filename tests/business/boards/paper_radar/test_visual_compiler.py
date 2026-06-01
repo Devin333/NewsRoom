@@ -855,6 +855,45 @@ def test_arxiv_source_compiler_emits_captionof_children_and_clean_captions(tmp_p
     assert [item["key"] for item in draft.document.auxiliary["references"]] == ["chen2025xverse", "chen2025lamic"]
 
 
+def test_arxiv_source_compiler_handles_top_level_tabular_and_equation_wrappers(tmp_path) -> None:
+    compiler = ArxivSourcePaperCompiler(source_fetcher=lambda _arxiv_id, _max_bytes: _top_level_tabular_arxiv_source_tarball())
+
+    attempt = compiler.try_compile(
+        paper={"id": "top-level-tabular-paper", "title": "Fallback Title", "arxivId": "2605.88888v1"},
+        output_dir=tmp_path / "top-level-tabular-source",
+        source_pdf_url="https://arxiv.org/pdf/2605.88888v1.pdf",
+        pdf_bytes=_sample_pdf_bytes(),
+        started_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        finished_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+    )
+
+    assert attempt.draft is not None
+    draft = attempt.draft
+    gate_report = PaperAssetGate().validate(
+        document=draft.document,
+        manifest=draft.manifest,
+        paper_dir=tmp_path / "top-level-tabular-source",
+    )
+
+    body_text = "\n".join(block.text for block in draft.document.blocks if block.type == "paragraph")
+    table_blocks = [block for block in draft.document.blocks if block.type == "table"]
+    equation_blocks = [block for block in draft.document.blocks if block.type == "equation"]
+    table_cells = [
+        cell
+        for block in table_blocks
+        for row in block.metadata["tableModel"]["rows"]
+        for cell in row["cells"]
+    ]
+
+    assert gate_report["passed"] is True
+    assert "rll & Website &" not in body_text
+    assert "Website" in {cell["text"] for cell in table_cells}
+    assert "https://example.com/project" in {cell["text"] for cell in table_cells}
+    assert any("SmallCaps" in block.text for block in draft.document.blocks if block.type == "paragraph")
+    assert equation_blocks[0].text == r"\bar{d} = \frac{1}{N-1}"
+    assert "\\begin{small}" not in equation_blocks[0].text
+
+
 def test_source_first_compiler_falls_back_to_pdf_when_arxiv_source_unavailable(tmp_path) -> None:
     source_compiler = ArxivSourcePaperCompiler(source_fetcher=lambda _arxiv_id, _max_bytes: None)
     fallback_compiler = PyMuPDFPaperCompiler(dpi=96)
@@ -1172,7 +1211,7 @@ def test_paper_document_api_blocks_uncompiled_body_and_serves_compiled_assets(tm
 
     uncompiled = client.get("/api/v1/papers/visual-paper/document")
     assert uncompiled.status_code == 200
-    assert uncompiled.json()["data"]["status"]["status"] == "queued"
+    assert uncompiled.json()["data"]["status"]["status"] == "not_compiled"
     assert uncompiled.json()["data"]["document"] is None
 
     compile_response = client.post("/api/v1/papers/visual-paper/compile", json={"force": True, "runId": "api-run"})
@@ -1883,6 +1922,52 @@ We refer to Table~\ref{tab:mm_reasoning_subject_driven}, Table~\ref{tab:vlm_base
 }
 """,
         "img/figure.pdf": _sample_figure_pdf_bytes(),
+    }
+    stream = BytesIO()
+    with tarfile.open(fileobj=stream, mode="w:gz") as archive:
+        for name, content in files.items():
+            data = content.encode("utf-8") if isinstance(content, str) else content
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            archive.addfile(info, BytesIO(data))
+    return stream.getvalue()
+
+
+def _top_level_tabular_arxiv_source_tarball() -> bytes:
+    files = {
+        "00README.json": json.dumps(
+            {
+                "sources": [
+                    {
+                        "usage": "toplevel",
+                        "filename": "main.tex",
+                    }
+                ],
+                "spec_version": 1,
+            }
+        ),
+        "main.tex": r"""
+\documentclass{article}
+\title{Top Level Tabular Paper}
+\begin{document}
+\maketitle
+
+\begin{center}
+\begin{tabular}{rll}
+  \worldwideweb{} & \textbf{Website} & \url{https://example.com/project}\\
+  \github{} & \textbf{\textsc{SmallCaps} Code} & \href{https://github.com/example/project}{\nolinkurl{https://github.com/example/project}}\\
+\end{tabular}
+\end{center}
+
+\section{Body}
+This paragraph keeps \textsc{SmallCaps} and \texttt{MonoText} wrappers readable.
+\[
+\begin{small}
+\bar{d} = \frac{1}{N-1}
+\end{small}
+\]
+\end{document}
+""",
     }
     stream = BytesIO()
     with tarfile.open(fileobj=stream, mode="w:gz") as archive:

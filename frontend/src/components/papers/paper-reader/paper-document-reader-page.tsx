@@ -188,6 +188,8 @@ function formatReaderStatus(status: string, locale: Locale) {
   switch (status) {
     case "compiled":
       return translate(locale, "papers.reader.statusCompiled")
+    case "not_compiled":
+      return translate(locale, "papers.reader.statusNotCompiled")
     case "queued":
       return translate(locale, "papers.reader.statusQueued")
     case "compiling":

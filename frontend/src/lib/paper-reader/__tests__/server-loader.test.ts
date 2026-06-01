@@ -171,7 +171,7 @@ describe("paper reader server loader", () => {
       manifest: null,
       status: {
         paperId: paper.id,
-        status: "queued",
+        status: "not_compiled",
         diagnostics: [{ code: "not_found", message: "Not Found" }],
       },
     })
@@ -193,7 +193,7 @@ describe("paper reader server loader", () => {
 
     expect(status).toMatchObject({
       paperId: paper.id,
-      status: "queued",
+      status: "not_compiled",
       diagnostics: [{ code: "not_found", message: "Not Found" }],
     })
   })

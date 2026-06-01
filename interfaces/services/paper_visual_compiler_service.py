@@ -191,7 +191,7 @@ class PaperVisualCompilerApplicationService:
             return status
         return PaperCompileStatusRecord(
             paperId=resolved_id,
-            status="queued",
+            status="not_compiled",
             updatedAt=_iso(self.clock()),
             diagnostics=(
                 {

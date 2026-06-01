@@ -206,6 +206,24 @@ describe("PaperDocumentReaderPage", () => {
     expect(triggerPaperCompile).not.toHaveBeenCalled()
   })
 
+  it("allows compile requests when the backend reports not compiled", () => {
+    render(
+      <PaperDocumentReaderPage
+        payload={{
+          ...needsReviewPayload,
+          status: {
+            ...needsReviewPayload.status,
+            status: "not_compiled",
+          },
+        }}
+        locale="en"
+      />,
+    )
+
+    expect(screen.getByRole("button", { name: "Compile" })).not.toBeDisabled()
+    expect(screen.getByRole("button", { name: "Recompile" })).not.toBeDisabled()
+  })
+
   it("opens source preview from visual blocks with source coordinates", () => {
     render(<PaperDocumentReaderPage payload={compiledPayload} locale="en" />)
 

@@ -68,11 +68,15 @@ _BLOCK_MATH_ENVS = {
     "multline*",
 }
 _FIGURE_ENVS = {"figure", "figure*", "wrapfigure"}
-_TABLE_ENVS = {"table", "table*", "wraptable"}
+_TABLE_ENVS = {"table", "table*", "wraptable", "tabular", "tabularx", "array"}
+_RAW_TABULAR_ENVS = {"tabular", "tabularx", "array"}
 _SKIP_ENVS = {"algorithm", "algorithmic"}
 _TEXT_COMMAND_NAMES = {
     "textbf",
     "textit",
+    "textsc",
+    "texttt",
+    "textnormal",
     "emph",
     "mathbf",
     "mathrm",
@@ -88,12 +92,15 @@ _TEXT_COMMAND_NAMES = {
     "LARGE",
     "footnotesize",
     "scriptsize",
+    "mbox",
 }
 _COMMAND_WITH_TEXT_ARG = re.compile(
-    r"\\(?:textbf|textit|emph|mathbf|mathrm|mathcal|mathbb|textrm|text|underline|sout|small|large|Large|LARGE|footnotesize|scriptsize)(?![A-Za-z])\s*\{(?P<body>.*?)\}",
+    r"\\(?:textbf|textit|textsc|texttt|textnormal|emph|mathbf|mathrm|mathcal|mathbb|textrm|text|underline|sout|small|large|Large|LARGE|footnotesize|scriptsize|mbox)(?![A-Za-z])\s*\{(?P<body>.*?)\}",
     re.DOTALL,
 )
 _CITE_COMMAND_PATTERN = re.compile(r"~?\\(?:cite|citep|citet|citealp|citeauthor|ref|autoref|eqref|url)\*?(?:\[[^\]]*\]){0,2}\{(?P<body>[^}]*)\}")
+_URL_COMMAND_PATTERN = re.compile(r"\\(?:url|nolinkurl)\s*\{(?P<body>[^{}]*)\}")
+_HREF_COMMAND_PATTERN = re.compile(r"\\href\s*\{(?P<url>[^{}]*)\}\s*\{(?P<body>[^{}]*(?:\{[^{}]*\}[^{}]*)*)\}", re.DOTALL)
 _DOLLAR_BLOCK_MATH_PATTERN = re.compile(r"\$\$(?P<body>.*?)\$\$", re.DOTALL)
 _INLINE_MATH_PATTERN = re.compile(r"\$(?P<body>(?:\\.|[^$]){1,240}?)\$")
 _LATEX_COMMAND_PATTERN = re.compile(r"\\[A-Za-z]+\*?(?:\s*\[[^\]]*\])?(?:\s*\{[^{}]*\})?")
@@ -741,6 +748,8 @@ class _TexDocumentParser:
                 body = tex[env.end() : end_match.start()]
                 kind = "equation" if name in _BLOCK_MATH_ENVS else "figure" if name in _FIGURE_ENVS else "table" if name in _TABLE_ENVS else "skip" if name in _SKIP_ENVS else None
                 if kind:
+                    if name in _RAW_TABULAR_ENVS:
+                        body = tex[env.start() : end_match.end()]
                     candidates.append((env.start(), end_match.end(), kind, body))
                     break
             env = _ENV_START_PATTERN.search(tex, env.end())
@@ -1722,6 +1731,7 @@ def _clean_equation_text(tex: str) -> str:
     text = tex.strip()
     text = re.sub(r"\\label\s*\{[^}]*\}", "", text)
     text = re.sub(r"\\tag\s*\{[^}]*\}", "", text)
+    text = re.sub(r"\\(?:begin|end)\s*\{(?:small|scriptsize|footnotesize|tiny|large|Large|LARGE)\}", " ", text)
     text = _strip_comments(text)
     text = _WHITESPACE_PATTERN.sub(" ", text)
     text = re.sub(r"\n\s*", " ", text)
@@ -1736,6 +1746,7 @@ def _clean_text(tex: str | None) -> str:
     text = _LABEL_PATTERN.sub("", text)
     text = _INCLUDE_GRAPHICS_PATTERN.sub("", text)
     text = re.sub(r"\\(?:begin|end)\s*\{[^}]+\}", "\n", text)
+    text = _replace_link_commands_for_text(text)
     text = _CITE_COMMAND_PATTERN.sub(lambda match: _citation_replacement(match.group(0), match.group("body")), text)
     previous = None
     while previous != text:
@@ -1782,6 +1793,7 @@ def _clean_text_preserving_inline(tex: str | None, *, strip_inline_tokens: bool 
     text = _LABEL_PATTERN.sub("", text)
     text = _INCLUDE_GRAPHICS_PATTERN.sub("", text)
     text = re.sub(r"\\(?:begin|end)\s*\{[^}]+\}", "\n", text)
+    text = _replace_link_commands_for_text(text)
     if strip_inline_tokens:
         text = _INLINE_TOKEN_PATTERN.sub(lambda match: _inline_token_fallback_text(match.group(0)), text)
     text = _replace_text_commands(text)
@@ -1794,6 +1806,18 @@ def _clean_text_preserving_inline(tex: str | None, *, strip_inline_tokens: bool 
     text = re.sub(r"\s*\n\s*", " ", text)
     text = _PUNCT_SPACE_PATTERN.sub(r"\1", text)
     return text.strip()
+
+
+def _replace_link_commands_for_text(value: str) -> str:
+    text = value
+    previous = None
+    while previous != text:
+        previous = text
+        text = _HREF_COMMAND_PATTERN.sub(
+            lambda match: _clean_text_preserving_inline(match.group("body")) or match.group("url").strip(),
+            text,
+        )
+    return _URL_COMMAND_PATTERN.sub(lambda match: match.group("body").strip(), text)
 
 
 def _inline_token_fallback_text(raw: str) -> str:
@@ -2113,6 +2137,7 @@ def _citation_replacement(raw: str, body: str) -> str:
 
 def _inline_math_text(body: str) -> str:
     text = _clean_equation_text(body)
+    text = _replace_fraction_commands(text)
     replacements = {
         r"\alpha": "alpha",
         r"\beta": "beta",
@@ -2152,6 +2177,44 @@ def _inline_math_text(body: str) -> str:
     text = re.sub(r"[{}]", "", text)
     text = _WHITESPACE_PATTERN.sub(" ", text).strip(" ,.;")
     return text
+
+
+def _replace_fraction_commands(value: str) -> str:
+    text = value
+    position = 0
+    output: list[str] = []
+    while position < len(text):
+        match = re.search(r"\\(?:dfrac|tfrac|frac)(?![A-Za-z])", text[position:])
+        if not match:
+            output.append(text[position:])
+            break
+        start = position + match.start()
+        command_end = position + match.end()
+        numerator_start = _skip_tex_space(text, command_end)
+        numerator = _balanced_group(text, numerator_start) if numerator_start < len(text) and text[numerator_start] == "{" else None
+        if numerator is None:
+            output.append(text[position:command_end])
+            position = command_end
+            continue
+        denominator_start = _skip_tex_space(text, numerator[1])
+        denominator = _balanced_group(text, denominator_start) if denominator_start < len(text) and text[denominator_start] == "{" else None
+        if denominator is None:
+            output.append(text[position:numerator[1]])
+            position = numerator[1]
+            continue
+        output.append(text[position:start])
+        output.append(f"{_fraction_part(_inline_math_text(numerator[0]))}/{_fraction_part(_inline_math_text(denominator[0]))}")
+        position = denominator[1]
+    return "".join(output)
+
+
+def _fraction_part(value: str) -> str:
+    text = value.strip()
+    if not text:
+        return ""
+    if re.fullmatch(r"[A-Za-z0-9_.#-]+", text):
+        return text
+    return f"({text})"
 
 
 def _table_plain_text(tex: str) -> str:
@@ -2319,17 +2382,22 @@ def _cell_model_from_tex(cell_tex: str) -> dict[str, Any]:
 
 def _latex_inline_html(tex: str) -> str:
     text = tex.strip()
+    text = _replace_link_commands_for_html(text)
     text = _CITE_COMMAND_PATTERN.sub(lambda match: html.escape(_citation_replacement(match.group(0), match.group("body"))), text)
     text = _replace_inline_command(text, "textbf", "strong")
     text = _replace_inline_command(text, "bf", "strong")
     text = _replace_inline_command(text, "textit", "em")
     text = _replace_inline_command(text, "it", "em")
+    text = _replace_inline_text_wrapper(text, "textsc")
+    text = _replace_inline_text_wrapper(text, "texttt")
+    text = _replace_inline_text_wrapper(text, "textnormal")
+    text = _replace_inline_text_wrapper(text, "mbox")
     text = _replace_inline_command(text, "underline", "u")
     text = _replace_inline_command(text, "sout", "s")
     text = _replace_color_commands(text)
     text = _replace_scoped_color_declarations(text)
     text = _replace_makecell(text)
-    text = _INLINE_MATH_PATTERN.sub(lambda match: f"<span class=\"paperTableMath\">{html.escape(_clean_equation_text(match.group('body')))}</span>", text)
+    text = _INLINE_MATH_PATTERN.sub(lambda match: f"<span class=\"paperTableMath\">{html.escape(_inline_math_text(match.group('body')))}</span>", text)
     text = text.replace("\\\\", "<br />")
     replacements = {
         r"\uparrow": "&uarr;",
@@ -2348,6 +2416,18 @@ def _latex_inline_html(tex: str) -> str:
     return _sanitize_table_inline_html(text).strip()
 
 
+def _replace_link_commands_for_html(value: str) -> str:
+    text = value
+    previous = None
+    while previous != text:
+        previous = text
+        text = _HREF_COMMAND_PATTERN.sub(
+            lambda match: _latex_inline_html(match.group("body")) or html.escape(match.group("url").strip()),
+            text,
+        )
+    return _URL_COMMAND_PATTERN.sub(lambda match: html.escape(match.group("body").strip()), text)
+
+
 def _replace_inline_command(value: str, command: str, tag: str) -> str:
     pattern = re.compile(rf"\\{command}\s*\{{(?P<body>[^{{}}]*(?:\{{[^{{}}]*\}}[^{{}}]*)*)\}}", re.DOTALL)
     previous = None
@@ -2355,6 +2435,16 @@ def _replace_inline_command(value: str, command: str, tag: str) -> str:
     while previous != text:
         previous = text
         text = pattern.sub(lambda match: f"<{tag}>{_latex_inline_html(match.group('body'))}</{tag}>", text)
+    return text
+
+
+def _replace_inline_text_wrapper(value: str, command: str) -> str:
+    pattern = re.compile(rf"\\{command}\s*\{{(?P<body>[^{{}}]*(?:\{{[^{{}}]*\}}[^{{}}]*)*)\}}", re.DOTALL)
+    previous = None
+    text = value
+    while previous != text:
+        previous = text
+        text = pattern.sub(lambda match: _latex_inline_html(match.group("body")), text)
     return text
 
 

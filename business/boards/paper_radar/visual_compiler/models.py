@@ -11,6 +11,7 @@ PAPER_TABLE_MODEL_STYLE_SCHEMA_VERSION = 2
 PaperBlockType = Literal["heading", "paragraph", "figure", "table", "equation"]
 PaperVisualAssetKind = Literal["page", "figure", "table", "equation"]
 PaperCompileStatus = Literal[
+    "not_compiled",
     "queued",
     "compiling",
     "needs_review",
@@ -550,7 +551,7 @@ def _asset_kind(value: Any) -> PaperVisualAssetKind | None:
 
 def _status(value: Any) -> PaperCompileStatus | None:
     text = _text(value)
-    if text in {"queued", "compiling", "needs_review", "compile_failed", "review_failed", "compiled"}:
+    if text in {"not_compiled", "queued", "compiling", "needs_review", "compile_failed", "review_failed", "compiled"}:
         return text  # type: ignore[return-value]
     return None
 

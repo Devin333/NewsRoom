@@ -1,6 +1,7 @@
 import type { Paper, PaperAISummary } from "@/lib/papers/types"
 
 export type PaperDocumentStatus =
+  | "not_compiled"
   | "queued"
   | "compiling"
   | "needs_review"

@@ -172,7 +172,7 @@ function PaperDetailFrame({
       />
       <aside
         className={cn(
-          "fixed inset-y-0 right-0 z-50 flex w-[min(58rem,96vw)] flex-col border-l border-[#d8dfd8] bg-[#f7f9f6] shadow-[-24px_0_70px_rgba(15,23,42,0.18)] transition-[transform,opacity] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] dark:border-border dark:bg-background xl:w-[min(76rem,72vw)] 2xl:w-[clamp(72rem,73vw,94rem)]",
+          "fixed inset-y-0 right-0 z-50 flex w-[min(44rem,92vw)] flex-col border-l border-[#d8dfd8] bg-[#f7f9f6] shadow-[-24px_0_70px_rgba(15,23,42,0.18)] transition-[transform,opacity] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] dark:border-border dark:bg-background lg:w-[min(48rem,64vw)] xl:w-[min(52rem,56vw)] 2xl:w-[56rem]",
           isVisible ? "translate-x-0 opacity-100" : "pointer-events-none translate-x-full opacity-0"
         )}
         aria-label="Paper detail"

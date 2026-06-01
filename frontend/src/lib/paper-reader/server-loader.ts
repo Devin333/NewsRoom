@@ -154,7 +154,7 @@ function fallbackCompileStatus(
 ): PaperCompileStatusRecord {
   return {
     paperId: paper.id,
-    status: "queued",
+    status: "not_compiled",
     updatedAt: new Date().toISOString(),
     diagnostics: [
       {
