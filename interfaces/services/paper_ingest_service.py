@@ -17,6 +17,8 @@ from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 
 from business.boards.paper_radar.public_mapper import sanitize_public_payload
+from business.boards.paper_radar.agents import PaperAnalysisOrchestrator, PaperAnalysisRequest
+from framework.agent.session import AgentSharedWorkspace, InMemoryAgentSessionStore
 from framework.llm import (
     DEFAULT_MODEL_ROUTE_ID,
     LLMConfigurationError,
@@ -58,6 +60,7 @@ PAPERS_INGEST_ARXIV_QUERY_ENV = "NEWSROOM_PAPERS_INGEST_ARXIV_QUERY"
 PAPERS_INGEST_ARXIV_USER_AGENT_ENV = "NEWSROOM_PAPERS_INGEST_ARXIV_USER_AGENT"
 PAPERS_CLASSIFIER_MODEL_ROUTE_ENV = "NEWSROOM_PAPERS_CLASSIFIER_MODEL_ROUTE"
 PAPERS_CLASSIFIER_MAX_CHARS_ENV = "NEWSROOM_PAPERS_CLASSIFIER_MAX_CHARS"
+PAPERS_USE_AGENT_ANALYSIS_ENV = "NEWSROOM_PAPERS_USE_AGENT_ANALYSIS"
 PAPERS_PDF_MAX_BYTES_ENV = "NEWSROOM_PAPERS_PDF_MAX_BYTES"
 PAPERS_OPENALEX_API_KEY_ENV = "OPENALEX_API_KEY"
 PAPERS_OPENALEX_API_KEY_FALLBACK_ENV = "NEWSROOM_OPENALEX_API_KEY"
@@ -115,6 +118,7 @@ class PaperIngestConfig:
     classifier_model_route: str = DEFAULT_MODEL_ROUTE_ID
     classifier_max_chars: int = DEFAULT_CLASSIFIER_MAX_CHARS
     pdf_max_bytes: int = DEFAULT_PDF_MAX_BYTES
+    use_agent_analysis: bool = False
 
     @classmethod
     def from_env(cls) -> PaperIngestConfig:
@@ -133,6 +137,7 @@ class PaperIngestConfig:
             or DEFAULT_MODEL_ROUTE_ID,
             classifier_max_chars=_positive_int_env(PAPERS_CLASSIFIER_MAX_CHARS_ENV, DEFAULT_CLASSIFIER_MAX_CHARS),
             pdf_max_bytes=_positive_int_env(PAPERS_PDF_MAX_BYTES_ENV, DEFAULT_PDF_MAX_BYTES),
+            use_agent_analysis=_bool_env(PAPERS_USE_AGENT_ANALYSIS_ENV, False),
         )
 
     def with_overrides(
@@ -150,6 +155,7 @@ class PaperIngestConfig:
             classifier_model_route=self.classifier_model_route,
             classifier_max_chars=self.classifier_max_chars,
             pdf_max_bytes=self.pdf_max_bytes,
+            use_agent_analysis=self.use_agent_analysis,
         )
 
 
@@ -435,6 +441,7 @@ class PaperIngestApplicationService:
         pdf_fetcher: Callable[[str, int], bytes] | None = None,
         citation_client: PaperOpenAlexCitationClient | None = None,
         llm_client_factory: Callable[[str], Any] | None = None,
+        paper_analysis_orchestrator: PaperAnalysisOrchestrator | None = None,
         config: PaperIngestConfig | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
@@ -462,6 +469,7 @@ class PaperIngestApplicationService:
         self.pdf_fetcher = pdf_fetcher or _fetch_pdf_bytes
         self.citation_client = citation_client or PaperOpenAlexCitationClient()
         self.llm_client_factory = llm_client_factory or _default_llm_client_factory
+        self.paper_analysis_orchestrator = paper_analysis_orchestrator or _default_paper_analysis_orchestrator()
         self.clock = clock or (lambda: datetime.now(UTC))
 
     def run_daily_ingest(
@@ -728,6 +736,9 @@ class PaperIngestApplicationService:
                     repo_url=repo_url,
                     github_stars=github_stars,
                     config=resolved_config,
+                    run_id=normalized_run_id,
+                    paper_id=paper_id,
+                    page_sections=cached_sections,
                 )
                 taxonomy = self._normalize_classification(
                     classification,
@@ -1130,6 +1141,9 @@ class PaperIngestApplicationService:
             repo_url=repo_url,
             github_stars=metadata.stargazers_count,
             config=config,
+            run_id=run_id,
+            paper_id=paper_id,
+            page_sections=extraction.sections,
         )
         taxonomy = self._normalize_classification(classification, config=config, run_id=run_id, paper_id=paper_id)
         low_confidence_items = taxonomy.get("lowConfidenceItems") or []
@@ -1284,6 +1298,92 @@ class PaperIngestApplicationService:
         return citation
 
     def _classify_paper(
+        self,
+        candidate: RawSourceItem,
+        *,
+        full_text: str,
+        repo_url: str,
+        github_stars: int,
+        config: PaperIngestConfig,
+        run_id: str | None = None,
+        paper_id: str | None = None,
+        page_sections: Sequence[Mapping[str, Any]] = (),
+    ) -> Mapping[str, Any]:
+        if config.use_agent_analysis:
+            try:
+                return self._classify_paper_with_agent_analysis(
+                    candidate,
+                    full_text=full_text,
+                    repo_url=repo_url,
+                    github_stars=github_stars,
+                    run_id=run_id,
+                    paper_id=paper_id,
+                    page_sections=page_sections,
+                )
+            except Exception as exc:
+                self.state.record_prompt_memory(
+                    {
+                        "memoryId": _stable_id(
+                            "prompt-memory",
+                            paper_id or _candidate_paper_id(candidate),
+                            run_id or "agent-analysis",
+                            "agent_analysis_fallback",
+                        ),
+                        "createdAt": _iso(self.clock()),
+                        "failureType": "agent_analysis_failed",
+                        "inputFeature": candidate.title,
+                        "rootCause": str(exc),
+                        "repairAction": "fallback_to_legacy_classifier",
+                        "result": "fallback",
+                    }
+                )
+        return self._classify_paper_with_llm(
+            candidate,
+            full_text=full_text,
+            repo_url=repo_url,
+            github_stars=github_stars,
+            config=config,
+        )
+
+    def _classify_paper_with_agent_analysis(
+        self,
+        candidate: RawSourceItem,
+        *,
+        full_text: str,
+        repo_url: str,
+        github_stars: int,
+        run_id: str | None,
+        paper_id: str | None,
+        page_sections: Sequence[Mapping[str, Any]],
+    ) -> Mapping[str, Any]:
+        resolved_paper_id = paper_id or _candidate_paper_id(candidate)
+        analysis = self.paper_analysis_orchestrator.analyze_paper(
+            PaperAnalysisRequest(
+                paper_id=resolved_paper_id,
+                run_id=run_id or f"paper-analysis-{_stable_id('run', resolved_paper_id)[:12]}",
+                title=candidate.title,
+                abstract=candidate.summary or "",
+                full_text=full_text,
+                page_sections=tuple(page_sections),
+                repo_url=repo_url,
+                github_stars=github_stars,
+                metadata={
+                    "source": candidate.source_id,
+                    "sourceItemId": candidate.source_item_id,
+                    "tags": list(candidate.tags),
+                },
+            )
+        )
+        profile = dict(analysis.final_profile)
+        if not profile.get("taskRefs") or not profile.get("methodRefs"):
+            raise PaperIngestError(
+                "agent analysis did not produce publishable tasks and methods",
+                code="agent_analysis_empty",
+                step="classify",
+            )
+        return profile
+
+    def _classify_paper_with_llm(
         self,
         candidate: RawSourceItem,
         *,
@@ -2178,6 +2278,12 @@ def _default_llm_client_factory(route: str) -> Any:
     return build_openai_compatible_client_from_config(route_id=route)
 
 
+def _default_paper_analysis_orchestrator() -> PaperAnalysisOrchestrator:
+    return PaperAnalysisOrchestrator(
+        workspace=AgentSharedWorkspace(InMemoryAgentSessionStore()),
+    )
+
+
 def _papers_data_path(configured_path: str | Path | None) -> Path:
     if configured_path is not None:
         return Path(configured_path).expanduser().resolve()
@@ -2809,3 +2915,10 @@ def _float_env(name: str, default: float) -> float:
     except ValueError:
         return default
     return parsed if parsed > 0 else default
+
+
+def _bool_env(name: str, default: bool) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().casefold() in {"1", "true", "yes", "on"}

@@ -160,12 +160,16 @@ def _disable_nested_subagents(agent: "AgentSpec") -> "AgentSpec":
 
 
 def _child_inputs(task: SubAgentTask) -> dict[str, Any]:
-    return {
+    child_inputs = {
         "subagent_task": task.task,
         "handoff_reason": task.handoff_reason,
         "parent_agent_id": task.parent_agent_id,
         **deepcopy(task.inputs),
     }
+    session_id = task.metadata.get("session_id")
+    if "session_id" not in child_inputs and session_id:
+        child_inputs["session_id"] = str(session_id)
+    return child_inputs
 
 
 def _optional_metadata_str(metadata: dict[str, Any], key: str) -> str | None:

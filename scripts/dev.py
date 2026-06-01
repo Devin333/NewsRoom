@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import subprocess
@@ -34,68 +35,53 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "compile":
         return _run(_compile_command(), env=env)
     if args.command == "test":
-        return _run([sys.executable, "-m", "pytest", "-q"], env=env)
+        return _run(_pytest_command("-q"), env=env)
     if args.command == "test-workflows":
         return _run(
-            [
-                sys.executable,
-                "-m",
-                "pytest",
+            _pytest_command(
                 "tests/framework/workflow",
                 "tests/business/boards/cross_board/workflows",
                 "-q",
-            ],
+            ),
             env=env,
         )
     if args.command == "test-workflow-runtime-contracts":
         return _run(
-            [
-                sys.executable,
-                "-m",
-                "pytest",
+            _pytest_command(
                 "tests/framework/workflow",
                 "-q",
-            ],
+            ),
             env=env,
         )
     if args.command == "test-workflow-domain":
         return _run(
-            [
-                sys.executable,
-                "-m",
-                "pytest",
+            _pytest_command(
                 "tests/business/boards/cross_board/workflows",
                 "-q",
-            ],
+            ),
             env=env,
         )
     if args.command == "test-services":
-        return _run([sys.executable, "-m", "pytest", "tests/interfaces/services", "-q"], env=env)
+        return _run(_pytest_command("tests/interfaces/services", "-q"), env=env)
     if args.command == "test-interfaces":
         return _run(
-            [
-                sys.executable,
-                "-m",
-                "pytest",
+            _pytest_command(
                 "tests/interfaces",
                 "-q",
-            ],
+            ),
             env=env,
         )
     if args.command == "test-api":
-        return _run([sys.executable, "-m", "pytest", "tests/interfaces/api", "-q"], env=env)
+        return _run(_pytest_command("tests/interfaces/api", "-q"), env=env)
     if args.command == "test-cli":
-        return _run([sys.executable, "-m", "pytest", "tests/interfaces/cli", "-q"], env=env)
+        return _run(_pytest_command("tests/interfaces/cli", "-q"), env=env)
     if args.command == "test-mcp":
-        return _run([sys.executable, "-m", "pytest", "tests/interfaces/mcp", "-q"], env=env)
+        return _run(_pytest_command("tests/interfaces/mcp", "-q"), env=env)
     if args.command == "test-sdk":
-        return _run([sys.executable, "-m", "pytest", "tests/sdk", "-q"], env=env)
+        return _run(_pytest_command("tests/sdk", "-q"), env=env)
     if args.command == "test-prd-daily":
         return _run(
-            [
-                sys.executable,
-                "-m",
-                "pytest",
+            _pytest_command(
                 "tests/framework/agent",
                 "tests/framework/llm/test_clients_cache_prompt_redaction.py",
                 "tests/interfaces/services/test_run_service_agentic_daily.py",
@@ -124,19 +110,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "tests/infrastructure/storage/test_artifact_store.py",
                 "tests/infrastructure/storage/test_backup_restore.py",
                 "-q",
-            ],
+            ),
             env=env,
         )
     if args.command == "test-api-contracts":
         return _run(
-            [
-                sys.executable,
-                "-m",
-                "pytest",
+            _pytest_command(
                 "tests/interfaces/api/test_api_contracts.py",
                 "tests/interfaces/api/test_openapi_contract.py",
                 "-q",
-            ],
+            ),
             env=env,
         )
     if args.command == "export-openapi":
@@ -146,30 +129,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "interface-smoke":
         commands = [
             _compile_command(),
-            [
-                sys.executable,
-                "-m",
-                "pytest",
+            _pytest_command(
                 "tests/interfaces/api/test_api_current_baseline.py",
                 "tests/interfaces/mcp/test_mcp_current_baseline.py",
                 "-q",
-            ],
-            [
-                sys.executable,
-                "-m",
-                "pytest",
+            ),
+            _pytest_command(
                 "tests/interfaces/api/test_api_contracts.py",
                 "tests/interfaces/api/test_openapi_contract.py",
                 "-q",
-            ],
+            ),
             _export_openapi_command(),
-            [
-                sys.executable,
-                "-m",
-                "pytest",
+            _pytest_command(
                 "tests/interfaces/cli/test_cli_current_baseline.py",
                 "-q",
-            ],
+            ),
             _mcp_smoke_command(),
             _api_smoke_command(),
             _web_check_command(),
@@ -319,6 +293,12 @@ def _add_operation_base_args(parser: argparse.ArgumentParser) -> None:
 
 def _compile_command() -> list[str]:
     return [sys.executable, "-m", "compileall", "-q", *COMPILE_PATHS]
+
+
+def _pytest_command(*args: str) -> list[str]:
+    if importlib.util.find_spec("pytest") is not None:
+        return [sys.executable, "-m", "pytest", *args]
+    return ["pytest", *args]
 
 
 def _export_openapi_command() -> list[str]:

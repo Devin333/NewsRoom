@@ -12,6 +12,7 @@ from interfaces.services.paper_ingest_service import (
     PaperIngestConfig,
     PaperPdfExtraction,
 )
+from business.boards.paper_radar.agents import PaperAnalysisResult
 from interfaces.services.paper_reader_cache_repository import TextExtractionRepository
 from interfaces.services.paper_taxonomy_categories import (
     BENCHMARK_CATEGORIES,
@@ -103,6 +104,76 @@ def test_paper_ingest_publishes_github_arxiv_paper_with_thumbnail_and_taxonomy(t
     assert paper["classification"]["confidence"] == 0.92
     assert (state_dir / "taxonomy-events.json").exists()
     assert text_repo.read_latest_sections("arxiv-2605.00001")
+
+
+def test_paper_ingest_uses_agent_analysis_when_enabled(tmp_path) -> None:
+    cache_path = tmp_path / "papers.json"
+    orchestrator = _FakePaperAnalysisOrchestrator(
+        {
+            "primaryTaskGroup": "agents",
+            "taskRefs": [{"id": "task-agents", "slug": "agents", "name": "Agents", "group": "agents", "confidence": 0.9}],
+            "methodRefs": [{"id": "method-language-models", "slug": "language-models", "name": "Language Models", "area": "Language Models", "confidence": 0.9}],
+            "benchmarks": [{"name": "SWE-bench", "category": "software-engineering", "metric": "resolved", "value": 32.4, "confidence": 0.9}],
+            "confidence": 0.9,
+            "evidenceSummary": "Agent analysis evidence.",
+        }
+    )
+    llm_client = _FakeLLMClient(
+        {
+            "primaryTaskGroup": "code-ai",
+            "taskRefs": [{"slug": "code-ai", "name": "Code AI", "group": "code-ai", "confidence": 0.9}],
+            "methodRefs": [{"slug": "fallback", "name": "Fallback", "area": "Language Models", "confidence": 0.9}],
+            "confidence": 0.9,
+        }
+    )
+    service = _service(
+        tmp_path,
+        cache_path=cache_path,
+        source_items=[_candidate("2605.01001", summary="Code is available at https://github.com/example/agent-analysis.")],
+        pdf_text="The paper studies agent planning and reports SWE-bench 32.4% resolved.",
+        llm_client=llm_client,
+        paper_analysis_orchestrator=orchestrator,
+        config=PaperIngestConfig(candidate_limit=100, min_github_stars=50, auto_taxonomy_confidence=0.85, use_agent_analysis=True),
+    )
+
+    result = service.run_daily_ingest(run_id="agent-analysis-run")
+
+    paper = json.loads(cache_path.read_text(encoding="utf-8"))["papers"][0]
+    assert result.published_count == 1
+    assert orchestrator.requests[0].paper_id == "arxiv-2605.01001"
+    assert orchestrator.requests[0].full_text is not None
+    assert llm_client.calls == 0
+    assert paper["taskRefs"][0]["slug"] == "agents"
+    assert paper["classification"]["evidenceSummary"] == "Agent analysis evidence."
+
+
+def test_paper_ingest_falls_back_when_agent_analysis_fails(tmp_path) -> None:
+    cache_path = tmp_path / "papers.json"
+    llm_client = _FakeLLMClient(
+        {
+            "primaryTaskGroup": "code-ai",
+            "taskRefs": [{"slug": "code-ai", "name": "Code AI", "group": "code-ai", "confidence": 0.9}],
+            "methodRefs": [{"slug": "fallback-method", "name": "Fallback Method", "area": "Language Models", "confidence": 0.9}],
+            "confidence": 0.9,
+            "evidenceSummary": "Fallback classifier evidence.",
+        }
+    )
+    service = _service(
+        tmp_path,
+        cache_path=cache_path,
+        source_items=[_candidate("2605.01002", summary="Code is available at https://github.com/example/fallback-analysis.")],
+        llm_client=llm_client,
+        paper_analysis_orchestrator=_FailingPaperAnalysisOrchestrator(),
+        config=PaperIngestConfig(candidate_limit=100, min_github_stars=50, auto_taxonomy_confidence=0.85, use_agent_analysis=True),
+    )
+
+    result = service.run_daily_ingest(run_id="agent-fallback-run")
+
+    paper = json.loads(cache_path.read_text(encoding="utf-8"))["papers"][0]
+    assert result.published_count == 1
+    assert llm_client.calls == 1
+    assert paper["classification"]["evidenceSummary"] == "Fallback classifier evidence."
+    assert any(item["repairAction"] == "fallback_to_legacy_classifier" for item in service.state.list_prompt_memory(limit=10))
 
 
 def test_paper_ingest_extracts_explicit_github_from_pdf_text(tmp_path) -> None:
@@ -952,6 +1023,8 @@ def _service(
     llm_payload: dict[str, Any] | None = None,
     llm_client: Any | None = None,
     citation_client: Any | None = None,
+    paper_analysis_orchestrator: Any | None = None,
+    config: PaperIngestConfig | None = None,
 ) -> PaperIngestApplicationService:
     return PaperIngestApplicationService(
         source_service=_FakeSourceService(source_items),
@@ -972,7 +1045,8 @@ def _service(
                 "confidence": 0.9,
             }
         ),
-        config=PaperIngestConfig(candidate_limit=100, min_github_stars=50, auto_taxonomy_confidence=0.85),
+        paper_analysis_orchestrator=paper_analysis_orchestrator,
+        config=config or PaperIngestConfig(candidate_limit=100, min_github_stars=50, auto_taxonomy_confidence=0.85),
         clock=_fixed_clock,
     )
 
@@ -1155,14 +1229,37 @@ class _FailingPdfProcessor:
 class _FakeLLMClient:
     def __init__(self, payload: Mapping[str, Any]) -> None:
         self.payload = payload
+        self.calls = 0
 
     def complete(self, request):
+        self.calls += 1
         class Response:
             content = ""
 
         response = Response()
         response.content = json.dumps(self.payload)
         return response
+
+
+class _FakePaperAnalysisOrchestrator:
+    def __init__(self, final_profile: Mapping[str, Any]) -> None:
+        self.final_profile = dict(final_profile)
+        self.requests: list[Any] = []
+
+    def analyze_paper(self, request) -> PaperAnalysisResult:
+        self.requests.append(request)
+        return PaperAnalysisResult(
+            paper_id=request.paper_id,
+            run_id=request.run_id,
+            session_id=request.session_id,
+            final_profile=self.final_profile,
+            agent_outputs={"paper_final_profile": self.final_profile},
+        )
+
+
+class _FailingPaperAnalysisOrchestrator:
+    def analyze_paper(self, request) -> PaperAnalysisResult:
+        raise RuntimeError("agent analysis failed")
 
 
 class _SequencedLLMClient:
