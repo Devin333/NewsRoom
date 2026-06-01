@@ -25,6 +25,7 @@ from business.boards.paper_radar.visual_compiler.model_layout_provider import (
 from business.boards.paper_radar.visual_compiler.models import (
     PaperAssetManifest,
     PaperBlock,
+    PaperCompileInfo,
     PaperDocument,
     PaperSourceRegion,
     PaperVisualAsset,
@@ -36,6 +37,7 @@ from framework.workers import Task
 from framework.workers.models import TaskStatus
 from interfaces.api import create_app
 from interfaces.services.paper_service import PapersApplicationService
+from interfaces.services import paper_visual_compiler_service as pvc_service
 from interfaces.services.paper_visual_compiler_service import PaperVisualCompilerApplicationService
 
 
@@ -697,13 +699,14 @@ def test_visual_compile_backfill_plan_uses_real_published_status(tmp_path) -> No
         diagnostics=({"code": "pdf_fetch_failed", "message": "temporary download failure"},),
     )
     service.compile_paper("compiled-paper", force=True, run_id="compiled-seed")
+    _write_stale_table_artifact(service, "stale-table-paper")
 
     plan = service.plan_visual_compile_backfill(run_id="backfill-run")
 
-    assert plan.scanned_count == 4
+    assert plan.scanned_count == 5
     assert plan.skipped_no_pdf_count == 1
-    assert [candidate.paper_id for candidate in plan.candidates] == ["missing-paper", "failed-paper"]
-    assert [candidate.reason for candidate in plan.candidates] == ["missing_status", "compile_failed"]
+    assert [candidate.paper_id for candidate in plan.candidates] == ["missing-paper", "failed-paper", "stale-table-paper"]
+    assert [candidate.reason for candidate in plan.candidates] == ["missing_status", "compile_failed", "table_style_schema_outdated"]
 
     forced = service.plan_visual_compile_backfill(force=True, limit=2, run_id="force-run")
     assert forced.candidate_count == 2
@@ -742,6 +745,12 @@ def test_visual_compile_backfill_worker_handler_expands_candidates(tmp_path) -> 
     assert result.output["candidateCount"] == 1
     assert result.output["enqueuedCount"] == 1
     assert enqueued == [{"paper_id": "missing-paper", "force": False, "run_id": "reader-backfill-test"}]
+
+
+def test_reader_pdf_fetch_limit_allows_large_published_papers(monkeypatch) -> None:
+    monkeypatch.delenv("NEWSROOM_PAPERS_PDF_MAX_BYTES", raising=False)
+
+    assert pvc_service._pdf_max_bytes() >= 160_000_000
 
 
 def test_source_comparison_blocks_untraceable_reader_blocks(tmp_path) -> None:
@@ -876,6 +885,7 @@ def _visual_backfill_service(tmp_path) -> PaperVisualCompilerApplicationService:
         ("missing-paper", "Missing Paper", "https://arxiv.org/pdf/2605.00001.pdf"),
         ("failed-paper", "Failed Paper", "https://arxiv.org/pdf/2605.00002.pdf"),
         ("compiled-paper", "Visual Compiler Paper", "https://arxiv.org/pdf/2605.00003.pdf"),
+        ("stale-table-paper", "Stale Table Paper", "https://arxiv.org/pdf/2605.00004.pdf"),
         ("no-pdf-paper", "No PDF Paper", None),
     ):
         payload = {
@@ -902,6 +912,78 @@ def _visual_backfill_service(tmp_path) -> PaperVisualCompilerApplicationService:
         reviewer=HeuristicPaperDocumentReviewer(verdict="pass"),
         pdf_fetcher=lambda _url, _max_bytes: _sample_pdf_bytes(),
         clock=lambda: datetime(2026, 5, 28, tzinfo=timezone.utc),
+    )
+
+
+def _write_stale_table_artifact(service: PaperVisualCompilerApplicationService, paper_id: str) -> None:
+    source = PaperSourceRegion(pageNumber=1, bbox=(72.0, 120.0, 240.0, 180.0))
+    document = PaperDocument(
+        paperId=paper_id,
+        schemaVersion="paper_document_v1",
+        status="compiled",
+        title="Stale Table Paper",
+        compiledAt="2026-05-28T00:00:00Z",
+        sourceHash="hash",
+        paper={},
+        outline=(),
+        blocks=(
+            PaperBlock(
+                id="table-block",
+                paperId=paper_id,
+                type="table",
+                text="Table 1: Old table.",
+                pageNumber=1,
+                assetId="table-asset",
+                label="Table 1",
+                caption="Table 1: Old table.",
+                source=source,
+                metadata={"tableModel": {"version": 1, "rows": [{"cells": [{"text": "Old"}]}]}, "tableHtml": "<table></table>"},
+            ),
+        ),
+    )
+    manifest = PaperAssetManifest(
+        paperId=paper_id,
+        schemaVersion="paper_document_v1",
+        createdAt="2026-05-28T00:00:00Z",
+        sourceHash="hash",
+        assets=(
+            PaperVisualAsset(
+                assetId="table-asset",
+                paperId=paper_id,
+                kind="table",
+                fileName="assets/table.html",
+                mimeType="text/html",
+                width=320,
+                height=120,
+                checksum="checksum",
+                pageNumber=1,
+                label="Table 1",
+                caption="Table 1: Old table.",
+                source=source,
+                metadata={"tableModel": {"version": 1, "rows": [{"cells": [{"text": "Old"}]}]}, "tableHtml": "<table></table>"},
+            ),
+        ),
+    )
+    compile_info = PaperCompileInfo(
+        paperId=paper_id,
+        status="compiled",
+        provider="test",
+        sourceHash="hash",
+        startedAt="2026-05-28T00:00:00Z",
+        finishedAt="2026-05-28T00:00:00Z",
+        sourcePdfUrl="https://arxiv.org/pdf/2605.00004.pdf",
+        pageCount=1,
+        blockCount=1,
+        assetCount=1,
+    )
+    service.repository.write_artifacts(
+        document=document,
+        manifest=manifest,
+        compile_info=compile_info,
+        review_report=None,
+        gate_report={"passed": True},
+        status="compiled",
+        updated_at="2026-05-28T00:00:00Z",
     )
 
 

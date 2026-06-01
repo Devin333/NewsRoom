@@ -6,6 +6,7 @@ from typing import Any, Literal
 
 
 PAPER_DOCUMENT_SCHEMA_VERSION = "paper_document_v1"
+PAPER_TABLE_MODEL_STYLE_SCHEMA_VERSION = 2
 
 PaperBlockType = Literal["heading", "paragraph", "figure", "table", "equation"]
 PaperVisualAssetKind = Literal["page", "figure", "table", "equation"]

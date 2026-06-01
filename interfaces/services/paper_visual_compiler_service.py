@@ -30,7 +30,10 @@ from business.boards.paper_radar.visual_compiler import (
     build_model_layout_provider_from_env,
 )
 from business.boards.paper_radar.source_comparison_memory import PaperSourceComparisonMemoryService
-from business.boards.paper_radar.visual_compiler.models import PAPER_DOCUMENT_SCHEMA_VERSION
+from business.boards.paper_radar.visual_compiler.models import (
+    PAPER_DOCUMENT_SCHEMA_VERSION,
+    PAPER_TABLE_MODEL_STYLE_SCHEMA_VERSION,
+)
 from business.boards.paper_radar.visual_compiler.base import PaperCompilerError
 from business.boards.paper_radar.visual_compiler.reviewer import LLMPaperDocumentReviewer, PaperDocumentReviewer
 from interfaces.services.paper_ingest_service import DEFAULT_PDF_MAX_BYTES, PAPERS_PDF_MAX_BYTES_ENV
@@ -40,6 +43,7 @@ from interfaces.services.paper_service import PaperNotFoundError, PapersApplicat
 
 PAPER_VISUAL_COMPILE_TASK_TYPE = "papers.visual_compile"
 PAPER_VISUAL_COMPILE_BACKFILL_TASK_TYPE = "papers.visual_compile_backfill"
+DEFAULT_READER_PDF_MAX_BYTES = 160_000_000
 
 
 class PaperVisualCompileError(RuntimeError):
@@ -199,20 +203,22 @@ class PaperVisualCompilerApplicationService:
         resolved_id = paper["id"]
         existing = self.repository.read_status(resolved_id)
         if existing is not None and existing.status == "compiled" and not force:
-            published = self.repository.read_published_document(resolved_id)
-            document = published[0] if published else None
-            manifest = published[1] if published else None
-            return PaperVisualCompileResult(
-                paper_id=resolved_id,
-                status="compiled",
-                document=document,
-                manifest=manifest,
-                compile_info=existing.compileInfo,
-                review_report=existing.reviewReport,
-                source_comparison_report=existing.sourceComparisonReport,
-                gate_report=existing.gateReport,
-                diagnostics=existing.diagnostics,
-            )
+            refresh_reason = self._backfill_reason(resolved_id, force=False)
+            if refresh_reason is None:
+                published = self.repository.read_published_document(resolved_id)
+                document = published[0] if published else None
+                manifest = published[1] if published else None
+                return PaperVisualCompileResult(
+                    paper_id=resolved_id,
+                    status="compiled",
+                    document=document,
+                    manifest=manifest,
+                    compile_info=existing.compileInfo,
+                    review_report=existing.reviewReport,
+                    source_comparison_report=existing.sourceComparisonReport,
+                    gate_report=existing.gateReport,
+                    diagnostics=existing.diagnostics,
+                )
 
         started = self.clock()
         self.repository.write_status(
@@ -538,8 +544,12 @@ class PaperVisualCompilerApplicationService:
             return status.status
         if status.compileInfo is None or status.compileInfo.status != "compiled":
             return "compile_info_incomplete"
-        if self.repository.read_published_document(paper_id) is None:
+        published = self.repository.read_published_document(paper_id)
+        if published is None:
             return "published_document_missing"
+        document, _manifest = published
+        if _document_has_outdated_table_style_schema(document):
+            return "table_style_schema_outdated"
         if status.sourceComparisonReport is None:
             return "source_comparison_missing"
         if not status.sourceComparisonReport.passed:
@@ -614,6 +624,31 @@ def _source_memory_diagnostics(result: Mapping[str, Any]) -> tuple[Mapping[str, 
             "message": error,
         },
     )
+
+
+def _document_has_outdated_table_style_schema(document: PaperDocument) -> bool:
+    for block in document.blocks:
+        if block.type != "table":
+            continue
+        table_model = block.metadata.get("tableModel")
+        if not isinstance(table_model, Mapping):
+            return True
+        if _positive_table_schema_version(table_model.get("styleSchemaVersion")) < PAPER_TABLE_MODEL_STYLE_SCHEMA_VERSION:
+            return True
+    return False
+
+
+def _positive_table_schema_version(value: Any) -> int:
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, int):
+        return max(0, value)
+    if isinstance(value, str):
+        try:
+            return max(0, int(value.strip()))
+        except ValueError:
+            return 0
+    return 0
 
 
 def _source_pdf_url(paper: Mapping[str, Any]) -> str | None:
@@ -692,9 +727,9 @@ def _pdf_max_bytes() -> int:
         try:
             parsed = int(value)
         except ValueError:
-            parsed = DEFAULT_PDF_MAX_BYTES
-        return parsed if parsed > 0 else DEFAULT_PDF_MAX_BYTES
-    return DEFAULT_PDF_MAX_BYTES
+            parsed = DEFAULT_READER_PDF_MAX_BYTES
+        return parsed if parsed > 0 else DEFAULT_READER_PDF_MAX_BYTES
+    return max(DEFAULT_PDF_MAX_BYTES, DEFAULT_READER_PDF_MAX_BYTES)
 
 
 def _text(value: Any) -> str:

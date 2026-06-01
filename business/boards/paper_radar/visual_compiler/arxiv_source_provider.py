@@ -20,6 +20,7 @@ from zipfile import ZipFile
 from business.boards.paper_radar.visual_compiler.base import PaperCompileDraft, PaperCompilerError
 from business.boards.paper_radar.visual_compiler.models import (
     PAPER_DOCUMENT_SCHEMA_VERSION,
+    PAPER_TABLE_MODEL_STYLE_SCHEMA_VERSION,
     PaperAssetManifest,
     PaperBlock,
     PaperCompileInfo,
@@ -2215,6 +2216,7 @@ def _table_model_from_tex(tex: str) -> Mapping[str, Any] | None:
         return None
     return {
         "version": 1,
+        "styleSchemaVersion": PAPER_TABLE_MODEL_STYLE_SCHEMA_VERSION,
         "columnSpec": column_spec,
         "alignments": _column_alignments(column_spec),
         "rowcolors": rowcolors,
