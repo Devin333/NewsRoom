@@ -92,6 +92,12 @@ def test_worker_service_enqueue_source_health_uses_source_queue() -> None:
     assert queue.enqueued[0] is result.task
 
 
+def test_worker_service_default_redis_queue_uses_news_dead_letter_queue() -> None:
+    service = WorkerApplicationService(redis_url="redis://127.0.0.1:6379/15", handlers={})
+
+    assert service.queue.dead_letter_queue_name == DEFAULT_DEAD_LETTER_QUEUE
+
+
 def test_worker_service_enqueue_paper_ingest_uses_paper_queue() -> None:
     queue = _FakeQueue()
     service = WorkerApplicationService(queue=queue, handlers={})
@@ -138,6 +144,27 @@ def test_worker_service_run_once_requeues_failed_task_before_max_attempts() -> N
     assert result.success is False
     assert queue.enqueued == [task]
     assert queue.dead_letters == []
+    assert queue.acked == [(DEFAULT_DAILY_QUEUE, "1-0")]
+
+
+def test_worker_service_run_once_dead_letters_non_retryable_task() -> None:
+    task = Task(
+        task_type="daily_intelligence.run",
+        payload={"topic": "AI"},
+        task_id="task-1",
+        attempts=1,
+        max_attempts=3,
+    )
+    queue = _FakeQueue(leased=LeasedTask(DEFAULT_DAILY_QUEUE, "1-0", task))
+    handler = _FakeHandler(success=False, retryable=False)
+    service = WorkerApplicationService(queue=queue, handlers={handler.task_type: handler})
+
+    result = service.run_once(worker_id="worker-1", block_ms=10)
+
+    assert result.success is False
+    assert result.retryable is False
+    assert queue.enqueued == []
+    assert queue.dead_letters == [(task, "failed")]
     assert queue.acked == [(DEFAULT_DAILY_QUEUE, "1-0")]
 
 
@@ -421,13 +448,15 @@ class _FakeWorkerRegistry:
 class _FakeHandler:
     task_type = "daily_intelligence.run"
 
-    def __init__(self, *, success) -> None:
+    def __init__(self, *, success, retryable=True) -> None:
         self.success = success
+        self.retryable = retryable
 
     def handle(self, task):
         return TaskResult(
             task_id=task.task_id,
             success=self.success,
+            retryable=self.retryable,
             status=TaskStatus.SUCCEEDED if self.success else TaskStatus.FAILED,
             workflow_run_id="workflow-1" if self.success else None,
             error_type=None if self.success else "FakeFailure",

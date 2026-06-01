@@ -43,6 +43,7 @@ class TaskResult:
     task_id: str
     success: bool
     status: TaskStatus
+    retryable: bool = True
     workflow_run_id: str | None = None
     task_status: TaskStatus | None = None
     run_status: str | None = None
@@ -62,6 +63,7 @@ class TaskResult:
         return {
             "task_id": self.task_id,
             "success": self.success,
+            "retryable": self.retryable,
             "status": self.status.value,
             "task_status": task_status.value,
             "run_status": self.run_status,

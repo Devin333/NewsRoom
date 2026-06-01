@@ -83,6 +83,7 @@ class WorkerRunOnceResult:
     task_id: str | None = None
     task_type: str | None = None
     success: bool | None = None
+    retryable: bool | None = None
     task_status: TaskStatus | None = None
     workflow_run_id: str | None = None
     error_type: str | None = None
@@ -98,6 +99,7 @@ class WorkerRunOnceResult:
             "task_id": self.task_id,
             "task_type": self.task_type,
             "success": self.success,
+            "retryable": self.retryable,
             "task_status": self.task_status.value if self.task_status else None,
             "workflow_run_id": self.workflow_run_id,
             "error_type": self.error_type,
@@ -182,7 +184,7 @@ class WorkerApplicationService:
         redis_client = None
         if queue is None:
             redis_client = _redis_client_from_url(redis_url)
-        self.queue = queue or RedisStreamTaskQueue(redis_client)
+        self.queue = queue or RedisStreamTaskQueue(redis_client, dead_letter_queue_name=DEFAULT_DEAD_LETTER_QUEUE)
         self.worker_registry = worker_registry
         if self.worker_registry is None and queue is None:
             self.worker_registry = RedisWorkerRegistry(redis_client)
@@ -438,6 +440,7 @@ class WorkerApplicationService:
             task_id=leased.task.task_id,
             task_type=leased.task.task_type,
             success=result.success,
+            retryable=result.retryable,
             task_status=result.status,
             workflow_run_id=result.workflow_run_id,
             error_type=result.error_type,
@@ -599,7 +602,7 @@ class WorkerApplicationService:
 
     def _requeue_or_dead_letter(self, task: Task, result: TaskResult) -> None:
         reason = result.error_message or result.error_type or "task failed"
-        if task.attempts >= task.max_attempts:
+        if not result.retryable or task.attempts >= task.max_attempts:
             self.queue.move_to_dead_letter(task, reason)
             return
         task.status = TaskStatus.FAILED

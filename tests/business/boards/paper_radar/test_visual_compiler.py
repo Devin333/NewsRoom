@@ -26,6 +26,7 @@ from business.boards.paper_radar.visual_compiler.models import (
     PaperSourceRegion,
     PaperVisualAsset,
 )
+from business.boards.paper_radar.visual_compiler import reviewer as reviewer_module
 from business.boards.paper_radar.visual_compiler.reviewer import HeuristicPaperDocumentReviewer
 from business.boards.paper_radar.worker_handlers import PaperVisualCompileTaskHandler
 from framework.workers import Task
@@ -559,6 +560,33 @@ def test_visual_compile_worker_handler_uses_same_compile_path(tmp_path) -> None:
     assert result.status == TaskStatus.SUCCEEDED
     assert result.output["status"] == "compiled"
     assert service.get_compile_status("visual-paper").status == "compiled"
+
+
+def test_visual_compile_worker_handler_does_not_retry_review_failures(tmp_path) -> None:
+    service = _visual_service(tmp_path, reviewer=HeuristicPaperDocumentReviewer(verdict="fail"))
+    handler = PaperVisualCompileTaskHandler(service)
+
+    result = handler.handle(Task(task_type=handler.task_type, payload={"paper_id": "visual-paper", "force": True}))
+
+    assert result.success is False
+    assert result.retryable is False
+    assert result.status == TaskStatus.FAILED
+    assert result.output["status"] == "review_failed"
+    assert service.get_compile_status("visual-paper").status == "review_failed"
+
+
+def test_default_paper_review_client_factory_uses_model_route(monkeypatch) -> None:
+    calls = []
+    client = object()
+
+    def fake_build_client(*args, **kwargs):
+        calls.append((args, kwargs))
+        return client
+
+    monkeypatch.setattr(reviewer_module, "build_openai_compatible_client_from_config", fake_build_client)
+
+    assert reviewer_module._default_llm_client_factory("writer-primary") is client
+    assert calls == [((), {"route_id": "writer-primary"})]
 
 
 def test_paper_document_api_blocks_uncompiled_body_and_serves_compiled_assets(tmp_path) -> None:

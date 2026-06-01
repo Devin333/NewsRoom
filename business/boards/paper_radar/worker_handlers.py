@@ -86,11 +86,14 @@ class PaperVisualCompileTaskHandler:
             run_id=_optional_text(task.payload.get("run_id") or task.payload.get("runId")),
         )
         payload = result.to_dict()
-        failed = payload.get("status") in {"compile_failed", "review_failed"}
+        status = payload.get("status")
+        failed = status in {"compile_failed", "review_failed"}
+        retryable = status != "review_failed"
         needs_review = payload.get("status") == "needs_review"
         return TaskResult(
             task_id=task.task_id,
             success=not failed,
+            retryable=retryable,
             status=TaskStatus.WAITING_FOR_APPROVAL if needs_review else TaskStatus.FAILED if failed else TaskStatus.SUCCEEDED,
             workflow_run_id=f"paper-visual-compile:{paper_id}",
             run_status=str(payload.get("status") or "compiled"),

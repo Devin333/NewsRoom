@@ -219,4 +219,4 @@ def _iso(value: datetime) -> str:
 
 
 def _default_llm_client_factory(route: str):
-    return build_openai_compatible_client_from_config(route)
+    return build_openai_compatible_client_from_config(route_id=route)
