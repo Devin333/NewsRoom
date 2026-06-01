@@ -9,6 +9,7 @@
 - [x] 2.2 Add `papers.visual_compile_backfill` worker task and enqueue API that expands candidates into `papers.visual_compile` tasks.
 - [x] 2.3 Add backend ops route and local background fallback for triggering backfill when the worker queue is unavailable.
 - [x] 2.4 Add schedule helper/CLI support for periodic visual compile backfill.
+- [x] 2.5 Ensure local ingest fallback sends newly published paper IDs through the same visual compiler runtime when Redis is unavailable.
 
 ## 3. Studio UI
 

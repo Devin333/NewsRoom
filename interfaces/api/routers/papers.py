@@ -302,6 +302,7 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
             paper_ingest_service = services.paper_ingest_service_factory()
             _start_paper_ingest_background(
                 paper_ingest_service,
+                services.paper_visual_compiler_service_factory(),
                 candidate_limit=request.candidateLimit,
                 min_github_stars=request.minGithubStars,
                 run_id=run_id,
@@ -1137,6 +1138,7 @@ def _is_worker_queue_unavailable(exc: Exception) -> bool:
 
 def _start_paper_ingest_background(
     paper_ingest_service,
+    paper_visual_compiler_service,
     *,
     candidate_limit: int | None,
     min_github_stars: int | None,
@@ -1146,6 +1148,7 @@ def _start_paper_ingest_background(
         target=_run_paper_ingest_background,
         kwargs={
             "paper_ingest_service": paper_ingest_service,
+            "paper_visual_compiler_service": paper_visual_compiler_service,
             "candidate_limit": candidate_limit,
             "min_github_stars": min_github_stars,
             "run_id": run_id,
@@ -1156,17 +1159,27 @@ def _start_paper_ingest_background(
 
 def _run_paper_ingest_background(
     paper_ingest_service,
+    paper_visual_compiler_service,
     *,
     candidate_limit: int | None,
     min_github_stars: int | None,
     run_id: str,
 ) -> None:
     try:
-        paper_ingest_service.run_daily_ingest(
+        result = paper_ingest_service.run_daily_ingest(
             candidate_limit=candidate_limit,
             min_github_stars=min_github_stars,
             run_id=run_id,
         )
+        payload = result.to_dict() if hasattr(result, "to_dict") else {}
+        if not isinstance(payload, dict):
+            return
+        for paper_id in payload.get("publishedPaperIds") or []:
+            if isinstance(paper_id, str) and paper_id.strip():
+                try:
+                    paper_visual_compiler_service.compile_paper(paper_id, force=False, run_id=run_id)
+                except Exception:
+                    continue
     except Exception:
         return
 

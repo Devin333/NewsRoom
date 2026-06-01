@@ -632,10 +632,12 @@ def test_papers_ops_visual_compile_backfill_trigger_enqueues_worker_task() -> No
 def test_papers_ops_ingest_trigger_falls_back_to_local_background_when_worker_queue_is_down() -> None:
     worker = _UnavailablePaperWorkerService()
     ingest = _RecordingPaperIngestService()
+    visual_compiler = _RecordingPaperVisualCompilerService()
     client = TestClient(
         create_app(
             worker_service_factory=lambda: worker,
             paper_ingest_service_factory=lambda: ingest,
+            paper_visual_compiler_service_factory=lambda: visual_compiler,
             audit_emitter_factory=None,
         )
     )
@@ -650,10 +652,14 @@ def test_papers_ops_ingest_trigger_falls_back_to_local_background_when_worker_qu
     assert payload["queue_name"] == "local:background"
     assert payload["mode"] == "local_background"
     for _ in range(100):
-        if ingest.calls:
+        if ingest.calls and len(visual_compiler.compile_calls) == 2:
             break
         time.sleep(0.01)
     assert ingest.calls == [(100, 50, "paper-local-run")]
+    assert visual_compiler.compile_calls == [
+        ("paper-1", False, "paper-local-run"),
+        ("paper-2", False, "paper-local-run"),
+    ]
 
 
 def test_papers_ops_classification_backfill_trigger_runs_local_background() -> None:
@@ -876,7 +882,11 @@ class _RecordingPaperIngestService(_FakePaperIngestService):
 
         class Result:
             def to_dict(self):
-                return {"runId": run_id, "status": "succeeded"}
+                return {
+                    "runId": run_id,
+                    "status": "succeeded",
+                    "publishedPaperIds": ["paper-1", "paper-2"],
+                }
 
         return Result()
 
@@ -914,6 +924,23 @@ class _RecordingPaperIngestService(_FakePaperIngestService):
                     "blockedCount": 0,
                     "updatedPaperIds": [],
                     "errors": [],
+                }
+
+        return Result()
+
+
+class _RecordingPaperVisualCompilerService:
+    def __init__(self) -> None:
+        self.compile_calls = []
+
+    def compile_paper(self, paper_id, *, force=False, run_id=None):
+        self.compile_calls.append((paper_id, force, run_id))
+
+        class Result:
+            def to_dict(self):
+                return {
+                    "paperId": paper_id,
+                    "status": "compiled",
                 }
 
         return Result()

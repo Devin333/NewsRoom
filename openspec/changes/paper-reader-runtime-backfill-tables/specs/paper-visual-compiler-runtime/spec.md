@@ -7,6 +7,10 @@ The system SHALL compile papers through worker tasks and SHALL provide a backfil
 - **WHEN** a paper ingest completes with published paper IDs
 - **THEN** the system enqueues `papers.visual_compile` for each published paper without blocking ingest completion.
 
+#### Scenario: Local ingest fallback compiles published papers
+- **WHEN** the ops ingest trigger falls back to local background execution because the worker queue is unavailable
+- **THEN** the fallback runs the same visual compiler runtime for each published paper ID returned by ingest without blocking the trigger response.
+
 #### Scenario: Backfill expands missing Reader artifacts
 - **WHEN** `papers.visual_compile_backfill` is processed
 - **THEN** the handler scans real published papers and enqueues `papers.visual_compile` for papers with no compiled status, non-compiled status, missing published document, or missing/passing source-comparison proof.

@@ -360,6 +360,50 @@ def test_paper_ingest_task_handler_calls_ingest_service() -> None:
     assert result.status == TaskStatus.SUCCEEDED
     assert result.workflow_run_id == "paper-run-1"
     assert result.output["publishedCount"] == 1
+    assert result.output["visualCompileEnqueued"] == []
+
+
+def test_paper_ingest_task_handler_enqueues_visual_compile_for_published_papers() -> None:
+    enqueued = []
+
+    def enqueue_visual_compile(*, paper_id):
+        enqueued.append(paper_id)
+
+        class Result:
+            def to_dict(self):
+                return {
+                    "task_id": f"compile-{paper_id}",
+                    "task_type": "papers.visual_compile",
+                    "paper_id": paper_id,
+                }
+
+        return Result()
+
+    handler = PaperIngestTaskHandler(
+        _FakePaperIngestService(),
+        visual_compile_enqueue=enqueue_visual_compile,
+    )
+    task = Task(
+        task_type="papers.ingest_github_arxiv_daily",
+        payload={"candidate_limit": 100, "min_github_stars": 50, "run_id": "paper-run-1"},
+        task_id="task-paper",
+    )
+
+    result = handler.handle(task)
+
+    assert result.success is True
+    assert enqueued == ["paper-1"]
+    assert result.output["visualCompileEnqueued"] == [
+        {
+            "paperId": "paper-1",
+            "queued": True,
+            "enqueued": {
+                "task_id": "compile-paper-1",
+                "task_type": "papers.visual_compile",
+                "paper_id": "paper-1",
+            },
+        }
+    ]
 
 
 def test_worker_service_run_loop_stops_after_max_tasks() -> None:
@@ -573,6 +617,7 @@ class _FakePaperIngestService:
                     "runId": "paper-run-1",
                     "status": "succeeded",
                     "publishedCount": 1,
+                    "publishedPaperIds": ["paper-1"],
                 }
 
         return Result()
