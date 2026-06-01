@@ -6,7 +6,7 @@ import type { PaperCompileStatusRecord, PaperDocumentResponse } from "@/lib/pape
 type DocumentApiResult = SafeApiResult<PaperDocumentResponse>
 type StatusApiResult = SafeApiResult<{ status: PaperCompileStatusRecord }>
 
-const DOCUMENT_LOAD_TIMEOUT_MS = 2500
+const DOCUMENT_LOAD_TIMEOUT_MS = 8000
 const STATUS_LOAD_TIMEOUT_MS = 1200
 const REQUEST_TIMEOUT_CODE = "request_timeout"
 
@@ -68,7 +68,7 @@ async function getDocumentPayload(paperId: string): Promise<DocumentApiResult> {
   return safeApiGetWithTimeout<PaperDocumentResponse>(
     `/api/v1/papers/${encodeURIComponent(paperId)}/document`,
     DOCUMENT_LOAD_TIMEOUT_MS,
-    "Reader document request timed out before a compiled document became available.",
+    "Reader document request timed out before the compiled document could be loaded.",
   )
 }
 

@@ -125,7 +125,7 @@ describe("paper reader server loader", () => {
     vi.mocked(getPaperById).mockResolvedValueOnce(paper)
 
     const payloadPromise = loadPaperDocumentPayload(paper.slug)
-    await vi.advanceTimersByTimeAsync(2500)
+    await vi.advanceTimersByTimeAsync(8000)
     const payload = await payloadPromise
 
     expect(payload).toMatchObject({
@@ -138,7 +138,7 @@ describe("paper reader server loader", () => {
         diagnostics: [
           {
             code: "request_timeout",
-            message: "Reader document request timed out before a compiled document became available.",
+            message: "Reader document request timed out before the compiled document could be loaded.",
           },
         ],
       },
