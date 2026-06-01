@@ -91,7 +91,10 @@ class PaperSourceComparer:
             errors.append(_issue("error", "page_assets_missing", "manifest is missing native PDF page assets"))
 
         for block in document.blocks:
-            problem = _source_region_problem(block.source)
+            problem = _source_region_problem(
+                block.source,
+                enforce_page_bounds=not _uses_synthetic_source_mapping(block.metadata),
+            )
             if problem:
                 errors.append(
                     _issue(
@@ -289,7 +292,7 @@ def _source_pdf_metrics(path: Path | None, *, warnings: list[Mapping[str, Any]])
     return metrics
 
 
-def _source_region_problem(region: PaperSourceRegion | None) -> str | None:
+def _source_region_problem(region: PaperSourceRegion | None, *, enforce_page_bounds: bool = True) -> str | None:
     if region is None:
         return "missing"
     if region.pageNumber <= 0:
@@ -302,11 +305,15 @@ def _source_region_problem(region: PaperSourceRegion | None) -> str | None:
         return "non_positive_bbox"
     if x0 < 0 or y0 < 0:
         return "negative_bbox"
-    if region.pageWidth is not None and x1 > region.pageWidth + 1:
+    if enforce_page_bounds and region.pageWidth is not None and x1 > region.pageWidth + 1:
         return "bbox_exceeds_page_width"
-    if region.pageHeight is not None and y1 > region.pageHeight + 1:
+    if enforce_page_bounds and region.pageHeight is not None and y1 > region.pageHeight + 1:
         return "bbox_exceeds_page_height"
     return None
+
+
+def _uses_synthetic_source_mapping(metadata: Mapping[str, Any]) -> bool:
+    return metadata.get("sourceMapping") == "synthetic" or metadata.get("sourceProvider") == "arxiv-source"
 
 
 def _lessons(

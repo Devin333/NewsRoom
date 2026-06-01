@@ -12,6 +12,7 @@ from business.boards.paper_radar.visual_compiler import (
     PaperCompileDraft,
     PaperLayoutDetection,
     PaperLayoutRegion,
+    PaperSourceComparer,
     PaperVisualCompilerRepository,
     PyMuPDFPaperCompiler,
     SourceFirstPaperCompiler,
@@ -433,6 +434,22 @@ def test_arxiv_source_compiler_uses_tex_body_equations_and_source_assets(tmp_pat
     table_assets = [asset for asset in draft.manifest.assets if asset.kind == "table"]
     assert table_assets and table_assets[0].mimeType.startswith("text/html")
     assert table_assets[0].metadata.get("sourceKind") == "tex-table-html"
+
+    comparison = PaperSourceComparer().compare(
+        document=draft.document,
+        manifest=draft.manifest,
+        compile_info=draft.compile_info,
+        paper_dir=tmp_path / "arxiv-source",
+        paper={
+            "id": "arxiv-source-paper",
+            "title": "Fallback Title",
+            "arxivId": "2605.12345v1",
+        },
+        gate_report=gate_report,
+        created_at=datetime(2026, 5, 28, tzinfo=timezone.utc),
+    )
+    assert comparison.passed is True
+    assert any(item["code"] == "synthetic_source_mapping" for item in comparison.warnings)
 
 
 def test_arxiv_source_compiler_cleans_old_visual_assets(tmp_path) -> None:
