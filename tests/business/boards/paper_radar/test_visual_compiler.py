@@ -721,6 +721,25 @@ def test_visual_compile_worker_handler_succeeds_when_ai_review_fails(tmp_path) -
     assert service.get_compile_status("visual-paper").status == "compiled"
 
 
+def test_visual_compile_worker_handler_does_not_retry_terminal_pdf_source_failures(tmp_path) -> None:
+    def missing_pdf(url, _max_bytes):
+        raise HTTPError(url, 404, "Not Found", hdrs=None, fp=None)
+
+    service = _visual_service(
+        tmp_path,
+        reviewer=HeuristicPaperDocumentReviewer(verdict="pass"),
+        pdf_fetcher=missing_pdf,
+    )
+    handler = PaperVisualCompileTaskHandler(service)
+
+    result = handler.handle(Task(task_type=handler.task_type, payload={"paper_id": "visual-paper", "force": True}))
+
+    assert result.success is False
+    assert result.status == TaskStatus.FAILED
+    assert result.retryable is False
+    assert result.error_type == "compile_failed"
+
+
 def test_visual_compile_backfill_plan_uses_real_published_status(tmp_path) -> None:
     service = _visual_backfill_service(tmp_path)
     service.repository.write_status(

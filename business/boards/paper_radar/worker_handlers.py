@@ -90,6 +90,8 @@ class PaperVisualCompileTaskHandler:
         status = payload.get("status")
         failed = status in {"compile_failed", "review_failed"}
         retryable = status != "review_failed"
+        if failed:
+            retryable = _diagnostics_retryable(payload.get("diagnostics"))
         needs_review = payload.get("status") == "needs_review"
         return TaskResult(
             task_id=task.task_id,
@@ -197,6 +199,14 @@ def _first_diagnostic_message(value: Any) -> str | None:
             if isinstance(item, dict) and isinstance(item.get("message"), str):
                 return item["message"]
     return None
+
+
+def _diagnostics_retryable(value: Any) -> bool:
+    if isinstance(value, list):
+        for item in value:
+            if isinstance(item, dict) and item.get("retryable") is False:
+                return False
+    return True
 
 
 class PaperReaderFeedbackTaskHandler:
