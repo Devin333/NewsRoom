@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone as _tz
@@ -44,6 +45,9 @@ from interfaces.services.paper_service import PaperNotFoundError, PapersApplicat
 PAPER_VISUAL_COMPILE_TASK_TYPE = "papers.visual_compile"
 PAPER_VISUAL_COMPILE_BACKFILL_TASK_TYPE = "papers.visual_compile_backfill"
 DEFAULT_READER_PDF_MAX_BYTES = 160_000_000
+PDF_FETCH_RETRY_ATTEMPTS = 3
+PDF_FETCH_RETRY_DELAY_SECONDS = 1.0
+TERMINAL_PDF_FETCH_CODES = {"source_pdf_not_found", "source_pdf_unavailable", "source_pdf_too_large"}
 
 
 class PaperVisualCompileError(RuntimeError):
@@ -264,13 +268,7 @@ class PaperVisualCompilerApplicationService:
         try:
             pdf_bytes = self.pdf_fetcher(source_pdf_url, _pdf_max_bytes())
         except (HTTPError, URLError, TimeoutError, OSError, ValueError) as exc:
-            diagnostics = (
-                {
-                    "severity": "error",
-                    "code": "pdf_fetch_failed",
-                    "message": str(exc),
-                },
-            )
+            diagnostics = (_pdf_fetch_failure_diagnostic(exc),)
             status = self.repository.write_status(
                 resolved_id,
                 status="compile_failed",
@@ -568,6 +566,8 @@ class PaperVisualCompilerApplicationService:
         if status is None:
             return "missing_status"
         if status.status != "compiled":
+            if status.status == "compile_failed" and _is_terminal_pdf_fetch_failure(status.diagnostics):
+                return None
             return status.status
         if status.compileInfo is None or status.compileInfo.status != "compiled":
             return "compile_info_incomplete"
@@ -731,6 +731,26 @@ def _ai_panel_payload(paper: Mapping[str, Any], status: PaperCompileStatusRecord
 
 
 def _fetch_pdf_bytes(url: str, max_bytes: int) -> bytes:
+    last_error: Exception | None = None
+    for attempt in range(1, PDF_FETCH_RETRY_ATTEMPTS + 1):
+        try:
+            return _fetch_pdf_bytes_once(url, max_bytes)
+        except HTTPError as exc:
+            if not _is_retryable_http_error(exc) or attempt >= PDF_FETCH_RETRY_ATTEMPTS:
+                raise
+            last_error = exc
+        except (URLError, TimeoutError, OSError) as exc:
+            if attempt >= PDF_FETCH_RETRY_ATTEMPTS:
+                raise
+            last_error = exc
+        if PDF_FETCH_RETRY_DELAY_SECONDS > 0:
+            time.sleep(PDF_FETCH_RETRY_DELAY_SECONDS)
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("PDF fetch retry loop exited unexpectedly")
+
+
+def _fetch_pdf_bytes_once(url: str, max_bytes: int) -> bytes:
     request = Request(
         url,
         headers={
@@ -746,6 +766,41 @@ def _fetch_pdf_bytes(url: str, max_bytes: int) -> bytes:
     if len(payload) > max_bytes:
         raise ValueError("PDF exceeds configured maximum size")
     return payload
+
+
+def _is_retryable_http_error(error: HTTPError) -> bool:
+    return getattr(error, "code", None) in {408, 425, 429, 500, 502, 503, 504}
+
+
+def _pdf_fetch_failure_diagnostic(error: Exception) -> Mapping[str, Any]:
+    code = "pdf_fetch_failed"
+    retryable = True
+    if isinstance(error, HTTPError):
+        if error.code == 404:
+            code = "source_pdf_not_found"
+            retryable = False
+        elif error.code in {401, 403, 410, 451}:
+            code = "source_pdf_unavailable"
+            retryable = False
+        elif not _is_retryable_http_error(error):
+            code = "source_pdf_unavailable"
+            retryable = False
+    elif isinstance(error, ValueError) and "PDF exceeds configured maximum size" in str(error):
+        code = "source_pdf_too_large"
+        retryable = False
+    return {
+        "severity": "error",
+        "code": code,
+        "message": str(error),
+        "retryable": retryable,
+    }
+
+
+def _is_terminal_pdf_fetch_failure(diagnostics: Sequence[Mapping[str, Any]]) -> bool:
+    for item in diagnostics:
+        if _text(item.get("code")) in TERMINAL_PDF_FETCH_CODES:
+            return True
+    return False
 
 
 def _pdf_max_bytes() -> int:

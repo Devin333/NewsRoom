@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from dataclasses import replace
 from io import BytesIO
 import tarfile
+from urllib.error import HTTPError, URLError
 
 from fastapi.testclient import TestClient
 
@@ -783,6 +784,67 @@ def test_reader_pdf_fetch_limit_allows_large_published_papers(monkeypatch) -> No
     assert pvc_service._pdf_max_bytes() >= 160_000_000
 
 
+def test_default_pdf_fetcher_retries_transient_download_errors(monkeypatch) -> None:
+    calls = 0
+
+    class Response:
+        headers = {"Content-Length": "9"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self, _size):
+            return b"%PDF fake"
+
+    def flaky_urlopen(_request, *, timeout):
+        nonlocal calls
+        calls += 1
+        if calls < 3:
+            raise URLError("connection reset")
+        return Response()
+
+    monkeypatch.setattr(pvc_service, "urlopen", flaky_urlopen)
+    monkeypatch.setattr(pvc_service.time, "sleep", lambda _seconds: None)
+
+    assert pvc_service._fetch_pdf_bytes("https://arxiv.org/pdf/2605.00001.pdf", 100) == b"%PDF fake"
+    assert calls == 3
+
+
+def test_pdf_fetch_404_records_terminal_source_diagnostic(tmp_path) -> None:
+    def missing_pdf(url, _max_bytes):
+        raise HTTPError(url, 404, "Not Found", hdrs=None, fp=None)
+
+    service = _visual_service(
+        tmp_path,
+        reviewer=HeuristicPaperDocumentReviewer(verdict="pass"),
+        pdf_fetcher=missing_pdf,
+    )
+
+    result = service.compile_paper("visual-paper", force=True)
+    status = service.get_compile_status("visual-paper")
+
+    assert result.status == "compile_failed"
+    assert status.diagnostics[0]["code"] == "source_pdf_not_found"
+    assert status.diagnostics[0]["retryable"] is False
+
+
+def test_backfill_skips_terminal_pdf_source_failures(tmp_path) -> None:
+    service = _visual_backfill_service(tmp_path)
+    service.repository.write_status(
+        "failed-paper",
+        status="compile_failed",
+        updated_at="2026-05-28T00:00:00Z",
+        diagnostics=({"code": "source_pdf_not_found", "message": "HTTP Error 404: Not Found", "retryable": False},),
+    )
+
+    plan = service.plan_visual_compile_backfill(run_id="backfill-run")
+
+    assert "failed-paper" not in [candidate.paper_id for candidate in plan.candidates]
+
+
 def test_source_comparison_blocks_untraceable_reader_blocks(tmp_path) -> None:
     service = _visual_service(
         tmp_path,
@@ -872,7 +934,7 @@ def test_paper_document_api_blocks_uncompiled_body_and_serves_compiled_assets(tm
     assert preview_response.headers["content-type"] == "image/png"
 
 
-def _visual_service(tmp_path, *, reviewer, compiler=None, source_memory_service=None) -> PaperVisualCompilerApplicationService:
+def _visual_service(tmp_path, *, reviewer, compiler=None, source_memory_service=None, pdf_fetcher=None) -> PaperVisualCompilerApplicationService:
     cache_path = tmp_path / "papers.json"
     cache_path.write_text(
         json.dumps(
@@ -903,7 +965,7 @@ def _visual_service(tmp_path, *, reviewer, compiler=None, source_memory_service=
         compiler=compiler or PyMuPDFPaperCompiler(),
         reviewer=reviewer,
         source_memory_service=source_memory_service,
-        pdf_fetcher=lambda _url, _max_bytes: _sample_pdf_bytes(),
+        pdf_fetcher=pdf_fetcher or (lambda _url, _max_bytes: _sample_pdf_bytes()),
         clock=lambda: datetime(2026, 5, 28, tzinfo=timezone.utc),
     )
 
