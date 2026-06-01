@@ -19,7 +19,7 @@ The Research Reader compiler SHALL convert source comparison outcomes into intel
 
 #### Scenario: Memory backend is unavailable
 - **WHEN** source comparison finishes but the memory repository is not configured or fails
-- **THEN** the compile SHALL keep the source comparison report artifact and diagnostics
+- **THEN** the compile SHALL keep the source comparison report artifact, diagnostics, and a replayable local memory journal
 - **AND** the compile SHALL NOT fail solely because memory storage is unavailable.
 
 ### Requirement: Source comparison practices are reusable

@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from business.boards.paper_radar.reader_feedback import PaperReaderFeedbackService
@@ -210,18 +212,43 @@ def test_source_comparison_memory_ingests_lessons_as_evidence_decision_and_event
     assert repository.events[0].evidence_ids == [item.evidence_id for item in repository.evidence]
 
 
-def test_source_comparison_memory_failure_is_non_throwing() -> None:
-    service = PaperSourceComparisonMemoryService(repository=_FailingMemoryRepository())
+def test_source_comparison_memory_writes_local_journal_without_repository(tmp_path) -> None:
+    service = PaperSourceComparisonMemoryService(repository=None)
+    journal_path = tmp_path / "source-comparison-memory.json"
 
     result = service.ingest_source_comparison(
         report=_source_comparison_report(passed=True),
         compile_info=_compile_info(),
         paper={"id": "paper-1"},
         artifact_ref="visual-compiler/paper-1/source-comparison-report.json",
+        journal_path=journal_path,
+    )
+
+    payload = json.loads(journal_path.read_text(encoding="utf-8"))
+    assert result.attempted is True
+    assert result.saved is False
+    assert result.journal_ref == str(journal_path.resolve())
+    assert payload["comparison_passed"] is True
+    assert len(payload["evidence"]) == 2
+    assert payload["decisions"][0]["decision"] == "allow"
+
+
+def test_source_comparison_memory_failure_is_non_throwing(tmp_path) -> None:
+    service = PaperSourceComparisonMemoryService(repository=_FailingMemoryRepository())
+    journal_path = tmp_path / "source-comparison-memory.json"
+
+    result = service.ingest_source_comparison(
+        report=_source_comparison_report(passed=True),
+        compile_info=_compile_info(),
+        paper={"id": "paper-1"},
+        artifact_ref="visual-compiler/paper-1/source-comparison-report.json",
+        journal_path=journal_path,
     )
 
     assert result.attempted is True
     assert result.saved is False
+    assert result.journal_ref == str(journal_path.resolve())
+    assert journal_path.exists()
     assert result.error == "memory unavailable"
 
 

@@ -17,11 +17,11 @@ The system SHALL run AI review only as auxiliary diagnostics after deterministic
 The system SHALL compare compiled Reader output against native paper/source invariants before publication and SHALL block publication on hard source-comparison failures.
 
 #### Scenario: Compiled output is source-traceable
-- **WHEN** a compiled document has real paper metadata, readable body blocks, source coordinates, complete figure/table assets, and valid source PDF/page references
+- **WHEN** a compiled document has real paper metadata, readable body blocks, native-text grounding, source coordinates, complete figure/table assets, and valid source PDF/page references
 - **THEN** source comparison SHALL pass
 - **AND** the repository SHALL store a source comparison report with metrics, warnings, and learned lessons.
 
 #### Scenario: Compiled output is missing reader-critical content or visuals
-- **WHEN** a compiled document has no readable body, missing figure/table assets, invalid source coordinates, missing source PDF references, or missing required paper identity
+- **WHEN** a compiled document has no readable body, unsupported reader text, missing figure/table assets, invalid source coordinates, missing source PDF references, or missing required paper identity
 - **THEN** source comparison SHALL fail with hard errors
 - **AND** the repository SHALL NOT publish the document body to readers.

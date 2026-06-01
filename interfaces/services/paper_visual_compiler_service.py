@@ -315,6 +315,7 @@ class PaperVisualCompilerApplicationService:
             compile_info=draft.compile_info,
             paper=paper,
             artifact_ref=str((self.repository.paper_dir(resolved_id) / "source-comparison-report.json").resolve()),
+            journal_path=self.repository.paper_dir(resolved_id) / "source-comparison-memory.json",
         )
         memory_diagnostics = _source_memory_diagnostics(memory_result.to_dict())
         if not source_comparison_report.passed:

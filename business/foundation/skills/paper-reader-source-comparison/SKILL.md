@@ -48,16 +48,17 @@ Compare the compiled output against native-source invariants:
 - Every reader body block has a valid source region.
 - Every figure/table block references an existing manifest asset of the same kind.
 - Every figure/table asset appears in a reader block.
+- Reader text is grounded in native PDF/source text, with coverage metrics recorded.
 - The native source PDF is stored and page assets exist for source previews.
 - The compiled document, manifest, and compile info share paper id and source hash.
 - AI review findings are diagnostic only; they do not block publication when source comparison passes.
 
 ## Outputs
 
-Produce a source comparison report with metrics, hard errors, warnings, and lessons. Publish only when hard errors are empty. Store lessons as memory evidence, publication decisions, and engineering-practice events.
+Produce a source comparison report with metrics, hard errors, warnings, and lessons. Publish only when hard errors are empty. Store lessons as memory evidence, publication decisions, and engineering-practice events. When the central memory backend is unavailable, keep a local replayable memory journal beside the comparison report.
 
 ## Failure Modes
 
-Block publication when body content is empty, source coordinates are invalid, source PDF references are missing, figure/table assets are missing or unbound, or document/manifest/source hashes disagree.
+Block publication when body content is empty, reader text is not grounded in the native paper, source coordinates are invalid, source PDF references are missing, figure/table assets are missing or unbound, or document/manifest/source hashes disagree.
 
 Do not block publication solely because AI review is unavailable or returns a non-approval verdict; keep that result as a warning for later improvement.

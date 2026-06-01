@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone as _tz
+from pathlib import Path
 from typing import Any
 
 from business.boards.paper_radar.visual_compiler.models import PaperCompileInfo, PaperSourceComparisonReport
@@ -21,6 +23,7 @@ class SourceComparisonMemoryIngestionResult:
     evidence_count: int = 0
     decision_count: int = 0
     event_count: int = 0
+    journal_ref: str | None = None
     error: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -30,6 +33,7 @@ class SourceComparisonMemoryIngestionResult:
             "evidence_count": self.evidence_count,
             "decision_count": self.decision_count,
             "event_count": self.event_count,
+            "journal_ref": self.journal_ref,
             "error": self.error,
         }
 
@@ -45,6 +49,7 @@ class PaperSourceComparisonMemoryService:
         compile_info: PaperCompileInfo,
         paper: Mapping[str, Any] | None = None,
         artifact_ref: str | None = None,
+        journal_path: str | Path | None = None,
     ) -> SourceComparisonMemoryIngestionResult:
         lessons = [dict(item) for item in report.lessons]
         if not lessons:
@@ -53,20 +58,43 @@ class PaperSourceComparisonMemoryService:
         evidence = _evidence_from_report(report=report, compile_info=compile_info, lessons=lessons, artifact_ref=artifact_ref)
         decision = _decision_from_report(report=report, compile_info=compile_info, paper=paper, artifact_ref=artifact_ref)
         event = _event_from_report(report=report, compile_info=compile_info, evidence=evidence, artifact_ref=artifact_ref)
+        journal_ref = _write_journal(
+            journal_path,
+            report=report,
+            evidence=evidence,
+            decisions=[decision],
+            events=[event],
+        )
         if self.repository is None:
-            return SourceComparisonMemoryIngestionResult(attempted=True, saved=False)
+            return SourceComparisonMemoryIngestionResult(
+                attempted=True,
+                saved=False,
+                evidence_count=len(evidence),
+                decision_count=1,
+                event_count=1,
+                journal_ref=journal_ref,
+            )
         try:
             self.repository.save_evidence(evidence)
             self.repository.save_decisions([decision])
             self.repository.save_events([event])
         except Exception as exc:
-            return SourceComparisonMemoryIngestionResult(attempted=True, saved=False, error=str(exc))
+            return SourceComparisonMemoryIngestionResult(
+                attempted=True,
+                saved=False,
+                evidence_count=len(evidence),
+                decision_count=1,
+                event_count=1,
+                journal_ref=journal_ref,
+                error=str(exc),
+            )
         return SourceComparisonMemoryIngestionResult(
             attempted=True,
             saved=True,
             evidence_count=len(evidence),
             decision_count=1,
             event_count=1,
+            journal_ref=journal_ref,
         )
 
 
@@ -183,6 +211,33 @@ def _event_from_report(
 
 def _run_id(report: PaperSourceComparisonReport, compile_info: PaperCompileInfo) -> str:
     return f"paper-source-comparison:{report.paperId}:{compile_info.sourceHash[:12]}"
+
+
+def _write_journal(
+    journal_path: str | Path | None,
+    *,
+    report: PaperSourceComparisonReport,
+    evidence: list[EvidenceMemory],
+    decisions: list[DecisionMemory],
+    events: list[EventMemory],
+) -> str | None:
+    if journal_path is None:
+        return None
+    path = Path(journal_path).expanduser().resolve()
+    payload = {
+        "paper_id": report.paperId,
+        "created_at": report.createdAt,
+        "comparison_passed": report.passed,
+        "report": report.to_dict(),
+        "evidence": [item.to_payload() for item in evidence],
+        "decisions": [item.to_payload() for item in decisions],
+        "events": [item.to_payload() for item in events],
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = path.with_suffix(f"{path.suffix}.tmp")
+    temp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    temp_path.replace(path)
+    return str(path)
 
 
 def _parse_time(value: str) -> datetime:

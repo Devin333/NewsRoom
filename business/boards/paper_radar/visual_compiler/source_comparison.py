@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
+from collections import Counter
 from collections.abc import Mapping
 from datetime import datetime, timezone as _tz
 from pathlib import Path
@@ -49,8 +51,17 @@ class PaperSourceComparer:
         readable_text_blocks = [block for block in text_blocks if block.text.strip()]
         visual_block_asset_ids = {block.assetId for block in visual_blocks if block.assetId}
 
+        provider = compile_info.provider
+        source_package_backed = _source_package_backed(provider=provider, document=document)
         source_pdf_path = self._source_pdf_path(manifest=manifest, paper_dir=paper_dir, errors=errors)
         source_pdf_metrics = _source_pdf_metrics(source_pdf_path, warnings=warnings)
+        text_alignment_metrics = _text_alignment_metrics(
+            source_pdf_path=source_pdf_path,
+            compiled_text=_compiled_reader_text(document),
+            source_package_backed=source_package_backed,
+            errors=errors,
+            warnings=warnings,
+        )
 
         if document.paperId != manifest.paperId or document.paperId != compile_info.paperId:
             errors.append(
@@ -182,7 +193,6 @@ class PaperSourceComparer:
                     )
                 )
 
-        provider = compile_info.provider
         if "fallback" in provider:
             warnings.append(
                 _issue(
@@ -216,6 +226,7 @@ class PaperSourceComparer:
             "manifestProvider": manifest.provider,
             "sourcePdfPresent": source_pdf_path is not None and source_pdf_path.exists(),
             **source_pdf_metrics,
+            **text_alignment_metrics,
         }
         if gate_report is not None:
             metrics["assetGatePassed"] = bool(gate_report.get("passed"))
@@ -290,6 +301,117 @@ def _source_pdf_metrics(path: Path | None, *, warnings: list[Mapping[str, Any]])
     finally:
         pdf.close()
     return metrics
+
+
+def _text_alignment_metrics(
+    *,
+    source_pdf_path: Path | None,
+    compiled_text: str,
+    source_package_backed: bool,
+    errors: list[Mapping[str, Any]],
+    warnings: list[Mapping[str, Any]],
+) -> dict[str, Any]:
+    compiled_tokens = _tokens(compiled_text)
+    metrics: dict[str, Any] = {
+        "compiledTextTokenCount": len(compiled_tokens),
+        "sourcePackageBacked": source_package_backed,
+    }
+    if source_pdf_path is None or not source_pdf_path.exists():
+        return metrics
+    native_text = _native_pdf_text(source_pdf_path, warnings=warnings)
+    native_tokens = _tokens(native_text)
+    metrics["nativeTextTokenCount"] = len(native_tokens)
+    if not native_tokens:
+        warnings.append(_issue("warning", "native_text_unavailable", "native PDF text could not be extracted for content coverage comparison"))
+        return metrics
+    if not compiled_tokens:
+        errors.append(_issue("error", "compiled_text_missing", "compiled Reader document has no text to compare with the native paper"))
+        return metrics
+
+    native_counts = Counter(native_tokens)
+    compiled_counts = Counter(compiled_tokens)
+    native_total = sum(native_counts.values())
+    compiled_total = sum(compiled_counts.values())
+    native_covered = sum(min(native_counts[token], compiled_counts.get(token, 0)) for token in native_counts)
+    compiled_grounded = sum(min(compiled_counts[token], native_counts.get(token, 0)) for token in compiled_counts)
+    native_coverage = native_covered / native_total if native_total else 0.0
+    compiled_grounding = compiled_grounded / compiled_total if compiled_total else 0.0
+    metrics["nativeTextCoverage"] = round(native_coverage, 6)
+    metrics["compiledTextGrounding"] = round(compiled_grounding, 6)
+
+    if compiled_total >= 40 and compiled_grounding < 0.8:
+        issue = _issue(
+            "warning" if source_package_backed else "error",
+            "compiled_text_not_grounded",
+            (
+                "compiled Reader text contains too much content that is not supported by the native paper text"
+                if not source_package_backed
+                else "compiled Reader text has low PDF grounding, but the Reader body is source-package backed"
+            ),
+            compiledTextGrounding=round(compiled_grounding, 6),
+            minimum=0.8,
+            sourcePackageBacked=source_package_backed,
+        )
+        if source_package_backed:
+            warnings.append(issue)
+        else:
+            errors.append(issue)
+    if native_total >= 80 and native_coverage < 0.45:
+        issue = _issue(
+            "warning" if source_package_backed else "error",
+            "native_text_coverage_low",
+            (
+                "compiled Reader text covers too little of the native paper text"
+                if not source_package_backed
+                else "native PDF text coverage is low, but the Reader body is source-package backed"
+            ),
+            nativeTextCoverage=round(native_coverage, 6),
+            minimum=0.45,
+            sourcePackageBacked=source_package_backed,
+        )
+        if source_package_backed:
+            warnings.append(issue)
+        else:
+            errors.append(issue)
+    return metrics
+
+
+def _native_pdf_text(path: Path, *, warnings: list[Mapping[str, Any]]) -> str:
+    try:
+        import fitz  # type: ignore[import-not-found]
+
+        pdf = fitz.open(path)
+    except Exception as exc:
+        warnings.append(
+            _issue(
+                "warning",
+                "native_text_extract_failed",
+                "native PDF text extraction failed",
+                reason=str(exc),
+            )
+        )
+        return ""
+    try:
+        return "\n".join(page.get_text("text") for page in pdf)
+    finally:
+        pdf.close()
+
+
+def _compiled_reader_text(document: PaperDocument) -> str:
+    parts: list[str] = []
+    for block in document.blocks:
+        parts.extend([block.text, block.caption or "", block.label or ""])
+    return "\n".join(part for part in parts if part)
+
+
+def _tokens(value: str) -> list[str]:
+    return re.findall(r"[a-z0-9][a-z0-9_\-]{2,}", value.casefold())
+
+
+def _source_package_backed(*, provider: str, document: PaperDocument) -> bool:
+    if "+fallback:" in provider:
+        return False
+    return provider.startswith("arxiv-source-tex-v1") or isinstance(document.auxiliary.get("arxivSource"), Mapping)
 
 
 def _source_region_problem(region: PaperSourceRegion | None, *, enforce_page_bounds: bool = True) -> str | None:

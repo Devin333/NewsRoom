@@ -53,6 +53,8 @@ def test_visual_compiler_publishes_pdf_blocks_and_keeps_ai_summary_out_of_body(t
     assert any(block["type"] == "figure" and block.get("assetId") for block in payload["document"]["blocks"])
     assert any(asset["kind"] == "page" for asset in payload["manifest"]["assets"])
     assert payload["ai"]["signals"]["abstractSnippet"] == "Generated AI summary should stay outside body."
+    assert "compiledTextGrounding" in payload["status"]["sourceComparisonReport"]["metrics"]
+    assert (service.repository.paper_dir("visual-paper") / "source-comparison-memory.json").exists()
 
 
 def test_asset_gate_blocks_missing_visual_asset_file(tmp_path) -> None:
@@ -627,6 +629,22 @@ def test_source_comparison_blocks_untraceable_reader_blocks(tmp_path) -> None:
     assert (service.repository.paper_dir("visual-paper") / "source-comparison-report.json").exists()
 
 
+def test_source_comparison_blocks_reader_text_not_grounded_in_native_pdf(tmp_path) -> None:
+    service = _visual_service(
+        tmp_path,
+        reviewer=HeuristicPaperDocumentReviewer(verdict="pass"),
+        compiler=_HallucinatedTextCompiler(PyMuPDFPaperCompiler()),
+    )
+
+    result = service.compile_paper("visual-paper", force=True)
+    payload = service.get_document_payload("visual-paper")
+
+    assert result.status == "needs_review"
+    assert payload["document"] is None
+    assert payload["status"]["sourceComparisonReport"]["passed"] is False
+    assert any(item["code"] == "compiled_text_not_grounded" for item in payload["status"]["diagnostics"])
+
+
 def test_default_paper_review_client_factory_uses_model_route(monkeypatch) -> None:
     calls = []
     client = object()
@@ -727,6 +745,29 @@ class _MissingParagraphSourceCompiler:
         blocks = list(draft.document.blocks)
         paragraph_index = next(index for index, block in enumerate(blocks) if block.type == "paragraph")
         blocks[paragraph_index] = replace(blocks[paragraph_index], source=None)
+        return PaperCompileDraft(
+            document=replace(draft.document, blocks=tuple(blocks)),
+            manifest=draft.manifest,
+            compile_info=draft.compile_info,
+        )
+
+    def render_source_preview(self, **kwargs):
+        return self.delegate.render_source_preview(**kwargs)
+
+
+class _HallucinatedTextCompiler:
+    def __init__(self, delegate) -> None:
+        self.delegate = delegate
+
+    def compile(self, **kwargs) -> PaperCompileDraft:
+        draft = self.delegate.compile(**kwargs)
+        blocks = []
+        unsupported = " ".join(f"unsupportedtoken{index}" for index in range(220))
+        for block in draft.document.blocks:
+            if block.type in {"heading", "paragraph", "equation"}:
+                blocks.append(replace(block, text=unsupported))
+            else:
+                blocks.append(block)
         return PaperCompileDraft(
             document=replace(draft.document, blocks=tuple(blocks)),
             manifest=draft.manifest,
