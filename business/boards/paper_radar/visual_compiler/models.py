@@ -365,6 +365,62 @@ class PaperReviewReport:
 
 
 @dataclass(frozen=True)
+class PaperSourceComparisonReport:
+    paperId: str
+    passed: bool
+    comparer: str
+    createdAt: str
+    summary: str
+    metrics: Mapping[str, Any] = field(default_factory=dict)
+    errors: tuple[Mapping[str, Any], ...] = ()
+    warnings: tuple[Mapping[str, Any], ...] = ()
+    lessons: tuple[Mapping[str, Any], ...] = ()
+    raw: Mapping[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "paperId": self.paperId,
+            "passed": self.passed,
+            "comparer": self.comparer,
+            "createdAt": self.createdAt,
+            "summary": self.summary,
+            "metrics": dict(self.metrics),
+            "errors": [dict(item) for item in self.errors],
+            "warnings": [dict(item) for item in self.warnings],
+            "lessons": [dict(item) for item in self.lessons],
+        }
+        if self.raw:
+            payload["raw"] = dict(self.raw)
+        return payload
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any] | None) -> PaperSourceComparisonReport | None:
+        if not isinstance(payload, Mapping):
+            return None
+        paper_id = _text(payload.get("paperId"))
+        comparer = _text(payload.get("comparer"))
+        created_at = _text(payload.get("createdAt"))
+        summary = _text(payload.get("summary"))
+        passed = payload.get("passed")
+        if not paper_id or not comparer or not created_at or not isinstance(passed, bool):
+            return None
+        metrics = payload.get("metrics")
+        raw = payload.get("raw")
+        return cls(
+            paperId=paper_id,
+            passed=passed,
+            comparer=comparer,
+            createdAt=created_at,
+            summary=summary,
+            metrics=dict(metrics) if isinstance(metrics, Mapping) else {},
+            errors=tuple(dict(item) for item in _sequence(payload.get("errors")) if isinstance(item, Mapping)),
+            warnings=tuple(dict(item) for item in _sequence(payload.get("warnings")) if isinstance(item, Mapping)),
+            lessons=tuple(dict(item) for item in _sequence(payload.get("lessons")) if isinstance(item, Mapping)),
+            raw=dict(raw) if isinstance(raw, Mapping) else {},
+        )
+
+
+@dataclass(frozen=True)
 class PaperDocument:
     paperId: str
     schemaVersion: str
@@ -436,6 +492,7 @@ class PaperCompileStatusRecord:
     compileInfo: PaperCompileInfo | None = None
     reviewReport: PaperReviewReport | None = None
     gateReport: Mapping[str, Any] | None = None
+    sourceComparisonReport: PaperSourceComparisonReport | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -450,6 +507,8 @@ class PaperCompileStatusRecord:
             payload["reviewReport"] = self.reviewReport.to_dict()
         if self.gateReport is not None:
             payload["gateReport"] = dict(self.gateReport)
+        if self.sourceComparisonReport is not None:
+            payload["sourceComparisonReport"] = self.sourceComparisonReport.to_dict()
         return payload
 
     @classmethod
@@ -470,6 +529,7 @@ class PaperCompileStatusRecord:
             compileInfo=PaperCompileInfo.from_dict(payload.get("compileInfo")),
             reviewReport=PaperReviewReport.from_dict(payload.get("reviewReport")),
             gateReport=dict(gate_report) if isinstance(gate_report, Mapping) else None,
+            sourceComparisonReport=PaperSourceComparisonReport.from_dict(payload.get("sourceComparisonReport")),
         )
 
 

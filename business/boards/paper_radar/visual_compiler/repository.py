@@ -14,6 +14,7 @@ from business.boards.paper_radar.visual_compiler.models import (
     PaperCompileStatusRecord,
     PaperDocument,
     PaperReviewReport,
+    PaperSourceComparisonReport,
 )
 
 
@@ -47,6 +48,9 @@ class PaperVisualCompilerRepository:
 
     def read_review_report(self, paper_id: str) -> PaperReviewReport | None:
         return PaperReviewReport.from_dict(_read_json_object(self.paper_dir(paper_id) / "review-report.json"))
+
+    def read_source_comparison_report(self, paper_id: str) -> PaperSourceComparisonReport | None:
+        return PaperSourceComparisonReport.from_dict(_read_json_object(self.paper_dir(paper_id) / "source-comparison-report.json"))
 
     def read_status(self, paper_id: str) -> PaperCompileStatusRecord | None:
         return PaperCompileStatusRecord.from_dict(_read_json_object(self.paper_dir(paper_id) / "status.json"))
@@ -86,6 +90,7 @@ class PaperVisualCompilerRepository:
         compile_info: PaperCompileInfo | None = None,
         review_report: PaperReviewReport | None = None,
         gate_report: Mapping[str, Any] | None = None,
+        source_comparison_report: PaperSourceComparisonReport | None = None,
     ) -> PaperCompileStatusRecord:
         record = PaperCompileStatusRecord(
             paperId=paper_id,
@@ -95,6 +100,7 @@ class PaperVisualCompilerRepository:
             compileInfo=compile_info,
             reviewReport=review_report,
             gateReport=dict(gate_report) if isinstance(gate_report, Mapping) else None,
+            sourceComparisonReport=source_comparison_report,
         )
         _write_json_object(self.paper_dir(paper_id) / "status.json", record.to_dict())
         return record
@@ -107,6 +113,7 @@ class PaperVisualCompilerRepository:
         compile_info: PaperCompileInfo,
         review_report: PaperReviewReport | None,
         gate_report: Mapping[str, Any] | None,
+        source_comparison_report: PaperSourceComparisonReport | None = None,
         status: PaperCompileStatus,
         updated_at: str,
         diagnostics: Sequence[Mapping[str, Any]] = (),
@@ -119,6 +126,8 @@ class PaperVisualCompilerRepository:
             _write_json_object(paper_dir / "review-report.json", review_report.to_dict())
         if gate_report is not None:
             _write_json_object(paper_dir / "gate-report.json", dict(gate_report))
+        if source_comparison_report is not None:
+            _write_json_object(paper_dir / "source-comparison-report.json", source_comparison_report.to_dict())
         return self.write_status(
             document.paperId,
             status=status,
@@ -127,6 +136,7 @@ class PaperVisualCompilerRepository:
             compile_info=compile_info,
             review_report=review_report,
             gate_report=gate_report,
+            source_comparison_report=source_comparison_report,
         )
 
 

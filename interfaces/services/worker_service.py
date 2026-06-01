@@ -37,6 +37,7 @@ from infrastructure.storage.workers import (
 from interfaces.services.memory_service import MemoryApplicationService
 from interfaces.services.paper_ingest_service import PAPER_INGEST_TASK_TYPE, PaperIngestApplicationService
 from interfaces.services.paper_reader_interaction_service import LocalJsonPaperReaderInteractionRepository
+from interfaces.services.paper_reader_memory_repository import paper_reader_memory_repository_from_env
 from interfaces.services.paper_visual_compiler_service import PaperVisualCompilerApplicationService
 from interfaces.services.run_service import RunApplicationService
 from interfaces.services.source_service import SourceApplicationService
@@ -714,16 +715,4 @@ def _paper_reader_feedback_dedup_key(
 
 
 def _paper_reader_feedback_service_from_env() -> PaperReaderFeedbackService:
-    return PaperReaderFeedbackService(repository=_paper_reader_memory_repository_from_env())
-
-
-def _paper_reader_memory_repository_from_env():
-    if os.environ.get("NEWS_MEMORY_POSTGRES_ENABLED", "").lower() not in {"1", "true", "yes", "on"}:
-        return None
-    dsn = os.environ.get("NEWS_DATABASE_DSN")
-    if not dsn:
-        return None
-    from infrastructure.storage.postgres.memory_repository import PostgresIntelligenceMemoryRepository
-    from infrastructure.storage.postgres.repository import PostgresRepository
-
-    return PostgresIntelligenceMemoryRepository(PostgresRepository(dsn))
+    return PaperReaderFeedbackService(repository=paper_reader_memory_repository_from_env())

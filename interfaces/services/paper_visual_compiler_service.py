@@ -22,15 +22,19 @@ from business.boards.paper_radar.visual_compiler import (
     PaperDocument,
     PaperLayoutProviderConfigurationError,
     PaperReviewReport,
+    PaperSourceComparer,
+    PaperSourceComparisonReport,
     PaperVisualCompilerRepository,
     PyMuPDFPaperCompiler,
     SourceFirstPaperCompiler,
     build_model_layout_provider_from_env,
 )
+from business.boards.paper_radar.source_comparison_memory import PaperSourceComparisonMemoryService
 from business.boards.paper_radar.visual_compiler.models import PAPER_DOCUMENT_SCHEMA_VERSION
 from business.boards.paper_radar.visual_compiler.base import PaperCompilerError
 from business.boards.paper_radar.visual_compiler.reviewer import LLMPaperDocumentReviewer, PaperDocumentReviewer
 from interfaces.services.paper_ingest_service import DEFAULT_PDF_MAX_BYTES, PAPERS_PDF_MAX_BYTES_ENV
+from interfaces.services.paper_reader_memory_repository import paper_reader_memory_repository_from_env
 from interfaces.services.paper_service import PaperNotFoundError, PapersApplicationService
 
 
@@ -60,6 +64,7 @@ class PaperVisualCompileResult:
     manifest: PaperAssetManifest | None
     compile_info: PaperCompileInfo | None
     review_report: PaperReviewReport | None
+    source_comparison_report: PaperSourceComparisonReport | None
     gate_report: Mapping[str, Any] | None
     diagnostics: tuple[Mapping[str, Any], ...]
 
@@ -71,6 +76,7 @@ class PaperVisualCompileResult:
             "manifest": self.manifest.to_dict() if self.manifest is not None and self.status == "compiled" else None,
             "compileInfo": self.compile_info.to_dict() if self.compile_info is not None else None,
             "reviewReport": self.review_report.to_dict() if self.review_report is not None else None,
+            "sourceComparisonReport": self.source_comparison_report.to_dict() if self.source_comparison_report is not None else None,
             "gateReport": dict(self.gate_report) if self.gate_report is not None else None,
             "diagnostics": [dict(item) for item in self.diagnostics],
         }
@@ -84,7 +90,9 @@ class PaperVisualCompilerApplicationService:
         repository: PaperVisualCompilerRepository | None = None,
         compiler: PaperCompiler | None = None,
         asset_gate: PaperAssetGate | None = None,
+        source_comparer: PaperSourceComparer | None = None,
         reviewer: PaperDocumentReviewer | None = None,
+        source_memory_service: PaperSourceComparisonMemoryService | None = None,
         pdf_fetcher: Callable[[str, int], bytes] | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
@@ -92,7 +100,11 @@ class PaperVisualCompilerApplicationService:
         self.repository = repository or PaperVisualCompilerRepository()
         self.compiler = compiler or _default_paper_compiler()
         self.asset_gate = asset_gate or PaperAssetGate()
+        self.source_comparer = source_comparer or PaperSourceComparer()
         self.reviewer = reviewer or LLMPaperDocumentReviewer(clock=clock)
+        self.source_memory_service = source_memory_service or PaperSourceComparisonMemoryService(
+            repository=paper_reader_memory_repository_from_env()
+        )
         self.pdf_fetcher = pdf_fetcher or _fetch_pdf_bytes
         self.clock = clock or (lambda: datetime.now(UTC))
 
@@ -152,6 +164,7 @@ class PaperVisualCompilerApplicationService:
                 manifest=manifest,
                 compile_info=existing.compileInfo,
                 review_report=existing.reviewReport,
+                source_comparison_report=existing.sourceComparisonReport,
                 gate_report=existing.gateReport,
                 diagnostics=existing.diagnostics,
             )
@@ -192,6 +205,7 @@ class PaperVisualCompilerApplicationService:
                 manifest=None,
                 compile_info=None,
                 review_report=None,
+                source_comparison_report=None,
                 gate_report=None,
                 diagnostics=diagnostics,
             )
@@ -228,6 +242,7 @@ class PaperVisualCompilerApplicationService:
                 manifest=None,
                 compile_info=None,
                 review_report=None,
+                source_comparison_report=None,
                 gate_report=None,
                 diagnostics=diagnostics,
             )
@@ -252,6 +267,7 @@ class PaperVisualCompilerApplicationService:
                 manifest=None,
                 compile_info=None,
                 review_report=None,
+                source_comparison_report=None,
                 gate_report=None,
                 diagnostics=diagnostics,
             )
@@ -280,6 +296,57 @@ class PaperVisualCompilerApplicationService:
                 manifest=None,
                 compile_info=compile_info,
                 review_report=None,
+                source_comparison_report=None,
+                gate_report=gate_report,
+                diagnostics=status.diagnostics,
+            )
+
+        source_comparison_report = self.source_comparer.compare(
+            document=draft.document,
+            manifest=draft.manifest,
+            compile_info=draft.compile_info,
+            paper_dir=self.repository.paper_dir(resolved_id),
+            paper=paper,
+            gate_report=gate_report,
+            created_at=self.clock(),
+        )
+        memory_result = self.source_memory_service.ingest_source_comparison(
+            report=source_comparison_report,
+            compile_info=draft.compile_info,
+            paper=paper,
+            artifact_ref=str((self.repository.paper_dir(resolved_id) / "source-comparison-report.json").resolve()),
+        )
+        memory_diagnostics = _source_memory_diagnostics(memory_result.to_dict())
+        if not source_comparison_report.passed:
+            comparison_diagnostics = (
+                *tuple(source_comparison_report.errors),
+                *tuple(source_comparison_report.warnings),
+                *memory_diagnostics,
+            )
+            compile_info = _compile_info_with_status(
+                draft.compile_info,
+                "needs_review",
+                diagnostics=(*draft.compile_info.diagnostics, *comparison_diagnostics),
+            )
+            status = self.repository.write_artifacts(
+                document=_document_with_status(draft.document, "needs_review"),
+                manifest=draft.manifest,
+                compile_info=compile_info,
+                review_report=None,
+                gate_report=gate_report,
+                source_comparison_report=source_comparison_report,
+                status="needs_review",
+                updated_at=_iso(self.clock()),
+                diagnostics=comparison_diagnostics,
+            )
+            return PaperVisualCompileResult(
+                paper_id=resolved_id,
+                status=status.status,
+                document=None,
+                manifest=None,
+                compile_info=compile_info,
+                review_report=None,
+                source_comparison_report=source_comparison_report,
                 gate_report=gate_report,
                 diagnostics=status.diagnostics,
             )
@@ -289,82 +356,29 @@ class PaperVisualCompilerApplicationService:
             manifest=draft.manifest,
             gate_report=gate_report,
         )
-        if review_report.verdict == "unavailable":
-            diagnostics = (
-                {
-                    "severity": "warning",
-                    "code": "ai_review_unavailable",
-                    "message": review_report.summary,
-                },
-            )
-            document = _document_with_status(draft.document, "compiled")
-            compile_info = _compile_info_with_status(
-                draft.compile_info,
-                "compiled",
-                diagnostics=(*draft.compile_info.diagnostics, *diagnostics),
-            )
-            status = self.repository.write_artifacts(
-                document=document,
-                manifest=draft.manifest,
-                compile_info=compile_info,
-                review_report=review_report,
-                gate_report=gate_report,
-                status="compiled",
-                updated_at=_iso(self.clock()),
-                diagnostics=(*tuple(gate_report.get("warnings") or ()), *diagnostics),
-            )
-            return PaperVisualCompileResult(
-                paper_id=resolved_id,
-                status=status.status,
-                document=document,
-                manifest=draft.manifest,
-                compile_info=compile_info,
-                review_report=review_report,
-                gate_report=gate_report,
-                diagnostics=status.diagnostics,
-            )
-
-        if review_report.verdict != "pass":
-            diagnostics = (
-                {
-                    "severity": "error",
-                    "code": "ai_review_rejected",
-                    "message": review_report.summary,
-                },
-            )
-            compile_info = _compile_info_with_status(draft.compile_info, "review_failed", diagnostics=diagnostics)
-            status = self.repository.write_artifacts(
-                document=_document_with_status(draft.document, "review_failed"),
-                manifest=draft.manifest,
-                compile_info=compile_info,
-                review_report=review_report,
-                gate_report=gate_report,
-                status="review_failed",
-                updated_at=_iso(self.clock()),
-                diagnostics=diagnostics,
-            )
-            return PaperVisualCompileResult(
-                paper_id=resolved_id,
-                status=status.status,
-                document=None,
-                manifest=None,
-                compile_info=compile_info,
-                review_report=review_report,
-                gate_report=gate_report,
-                diagnostics=status.diagnostics,
-            )
 
         document = _document_with_status(draft.document, "compiled")
-        compile_info = _compile_info_with_status(draft.compile_info, "compiled", diagnostics=draft.compile_info.diagnostics)
+        diagnostics = (
+            *tuple(gate_report.get("warnings") or ()),
+            *tuple(source_comparison_report.warnings),
+            *_review_diagnostics(review_report),
+            *memory_diagnostics,
+        )
+        compile_info = _compile_info_with_status(
+            draft.compile_info,
+            "compiled",
+            diagnostics=(*draft.compile_info.diagnostics, *diagnostics),
+        )
         status = self.repository.write_artifacts(
             document=document,
             manifest=draft.manifest,
             compile_info=compile_info,
             review_report=review_report,
             gate_report=gate_report,
+            source_comparison_report=source_comparison_report,
             status="compiled",
             updated_at=_iso(self.clock()),
-            diagnostics=tuple(gate_report.get("warnings") or ()),
+            diagnostics=diagnostics,
         )
         return PaperVisualCompileResult(
             paper_id=resolved_id,
@@ -373,6 +387,7 @@ class PaperVisualCompilerApplicationService:
             manifest=draft.manifest,
             compile_info=compile_info,
             review_report=review_report,
+            source_comparison_report=source_comparison_report,
             gate_report=gate_report,
             diagnostics=status.diagnostics,
         )
@@ -451,6 +466,39 @@ def _compile_info_with_status(
         blockCount=compile_info.blockCount,
         assetCount=compile_info.assetCount,
         diagnostics=tuple(dict(item) for item in diagnostics),
+    )
+
+
+def _review_diagnostics(review_report: PaperReviewReport) -> tuple[Mapping[str, Any], ...]:
+    if review_report.verdict == "pass":
+        return ()
+    if review_report.verdict == "unavailable":
+        return (
+            {
+                "severity": "warning",
+                "code": "ai_review_unavailable",
+                "message": review_report.summary,
+            },
+        )
+    return (
+        {
+            "severity": "warning",
+            "code": "ai_review_non_blocking_failed",
+            "message": review_report.summary,
+        },
+    )
+
+
+def _source_memory_diagnostics(result: Mapping[str, Any]) -> tuple[Mapping[str, Any], ...]:
+    error = _text(result.get("error"))
+    if not error:
+        return ()
+    return (
+        {
+            "severity": "warning",
+            "code": "source_comparison_memory_failed",
+            "message": error,
+        },
     )
 
 

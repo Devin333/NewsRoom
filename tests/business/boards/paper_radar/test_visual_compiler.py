@@ -1,5 +1,6 @@
 import json
 from datetime import datetime, timezone
+from dataclasses import replace
 from io import BytesIO
 import tarfile
 
@@ -8,6 +9,7 @@ from fastapi.testclient import TestClient
 from business.boards.paper_radar.visual_compiler import (
     ArxivSourcePaperCompiler,
     PaperAssetGate,
+    PaperCompileDraft,
     PaperLayoutDetection,
     PaperLayoutRegion,
     PaperVisualCompilerRepository,
@@ -538,16 +540,18 @@ def test_arxiv_source_connector_builds_official_source_url_and_normalizes_ids() 
     assert isinstance(ArxivSourceConnector(), ArxivSourceConnector)
 
 
-def test_visual_compiler_review_failure_blocks_document_payload(tmp_path) -> None:
+def test_visual_compiler_publishes_with_warning_when_ai_review_fails(tmp_path) -> None:
     service = _visual_service(tmp_path, reviewer=HeuristicPaperDocumentReviewer(verdict="fail"))
 
     result = service.compile_paper("visual-paper", force=True)
     payload = service.get_document_payload("visual-paper")
 
-    assert result.status == "review_failed"
-    assert payload["document"] is None
-    assert payload["manifest"] is None
+    assert result.status == "compiled"
+    assert payload["document"]["status"] == "compiled"
+    assert payload["manifest"] is not None
     assert payload["status"]["reviewReport"]["verdict"] == "fail"
+    assert payload["status"]["sourceComparisonReport"]["passed"] is True
+    assert any(item["code"] == "ai_review_non_blocking_failed" for item in payload["status"]["diagnostics"])
 
 
 def test_visual_compiler_publishes_with_warning_when_ai_review_unavailable(tmp_path) -> None:
@@ -560,6 +564,7 @@ def test_visual_compiler_publishes_with_warning_when_ai_review_unavailable(tmp_p
     assert payload["document"]["status"] == "compiled"
     assert payload["manifest"] is not None
     assert payload["status"]["reviewReport"]["verdict"] == "unavailable"
+    assert payload["status"]["sourceComparisonReport"]["passed"] is True
     assert any(item["code"] == "ai_review_unavailable" for item in payload["status"]["diagnostics"])
 
 
@@ -575,17 +580,34 @@ def test_visual_compile_worker_handler_uses_same_compile_path(tmp_path) -> None:
     assert service.get_compile_status("visual-paper").status == "compiled"
 
 
-def test_visual_compile_worker_handler_does_not_retry_review_failures(tmp_path) -> None:
+def test_visual_compile_worker_handler_succeeds_when_ai_review_fails(tmp_path) -> None:
     service = _visual_service(tmp_path, reviewer=HeuristicPaperDocumentReviewer(verdict="fail"))
     handler = PaperVisualCompileTaskHandler(service)
 
     result = handler.handle(Task(task_type=handler.task_type, payload={"paper_id": "visual-paper", "force": True}))
 
-    assert result.success is False
-    assert result.retryable is False
-    assert result.status == TaskStatus.FAILED
-    assert result.output["status"] == "review_failed"
-    assert service.get_compile_status("visual-paper").status == "review_failed"
+    assert result.success is True
+    assert result.status == TaskStatus.SUCCEEDED
+    assert result.output["status"] == "compiled"
+    assert service.get_compile_status("visual-paper").status == "compiled"
+
+
+def test_source_comparison_blocks_untraceable_reader_blocks(tmp_path) -> None:
+    service = _visual_service(
+        tmp_path,
+        reviewer=HeuristicPaperDocumentReviewer(verdict="pass"),
+        compiler=_MissingParagraphSourceCompiler(PyMuPDFPaperCompiler()),
+    )
+
+    result = service.compile_paper("visual-paper", force=True)
+    payload = service.get_document_payload("visual-paper")
+
+    assert result.status == "needs_review"
+    assert payload["document"] is None
+    assert payload["manifest"] is None
+    assert payload["status"]["sourceComparisonReport"]["passed"] is False
+    assert any(item["code"] == "block_source_invalid" for item in payload["status"]["diagnostics"])
+    assert (service.repository.paper_dir("visual-paper") / "source-comparison-report.json").exists()
 
 
 def test_default_paper_review_client_factory_uses_model_route(monkeypatch) -> None:
@@ -643,7 +665,7 @@ def test_paper_document_api_blocks_uncompiled_body_and_serves_compiled_assets(tm
     assert preview_response.headers["content-type"] == "image/png"
 
 
-def _visual_service(tmp_path, *, reviewer) -> PaperVisualCompilerApplicationService:
+def _visual_service(tmp_path, *, reviewer, compiler=None, source_memory_service=None) -> PaperVisualCompilerApplicationService:
     cache_path = tmp_path / "papers.json"
     cache_path.write_text(
         json.dumps(
@@ -671,11 +693,31 @@ def _visual_service(tmp_path, *, reviewer) -> PaperVisualCompilerApplicationServ
     return PaperVisualCompilerApplicationService(
         papers_service=papers_service,
         repository=PaperVisualCompilerRepository(tmp_path / "visual-compiler"),
-        compiler=PyMuPDFPaperCompiler(),
+        compiler=compiler or PyMuPDFPaperCompiler(),
         reviewer=reviewer,
+        source_memory_service=source_memory_service,
         pdf_fetcher=lambda _url, _max_bytes: _sample_pdf_bytes(),
         clock=lambda: datetime(2026, 5, 28, tzinfo=timezone.utc),
     )
+
+
+class _MissingParagraphSourceCompiler:
+    def __init__(self, delegate) -> None:
+        self.delegate = delegate
+
+    def compile(self, **kwargs) -> PaperCompileDraft:
+        draft = self.delegate.compile(**kwargs)
+        blocks = list(draft.document.blocks)
+        paragraph_index = next(index for index, block in enumerate(blocks) if block.type == "paragraph")
+        blocks[paragraph_index] = replace(blocks[paragraph_index], source=None)
+        return PaperCompileDraft(
+            document=replace(draft.document, blocks=tuple(blocks)),
+            manifest=draft.manifest,
+            compile_info=draft.compile_info,
+        )
+
+    def render_source_preview(self, **kwargs):
+        return self.delegate.render_source_preview(**kwargs)
 
 
 def _sample_pdf_bytes() -> bytes:
