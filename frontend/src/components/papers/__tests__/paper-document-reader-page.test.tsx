@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import { PaperDocumentReaderPage } from "@/components/papers/paper-reader"
 import { PaperDocumentReaderPageClient } from "@/app/papers/[slug]/read/paper-document-reader-page-client"
 import { targetForPaperBlock } from "@/lib/paper-reader/interactions"
-import { triggerPaperCompile } from "@/lib/paper-reader/api"
+import { fetchPaperDocument, triggerPaperCompile } from "@/lib/paper-reader/api"
 import type { PaperDocumentResponse } from "@/lib/paper-reader/types"
 import { useUiStore } from "@/stores/ui-store"
 
@@ -28,12 +28,15 @@ vi.mock("@/lib/paper-reader/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/paper-reader/api")>()
   return {
     ...actual,
+    fetchPaperDocument: vi.fn(),
     triggerPaperCompile: vi.fn(),
   }
 })
 
 describe("PaperDocumentReaderPage", () => {
   beforeEach(() => {
+    vi.mocked(fetchPaperDocument).mockReset()
+    vi.mocked(fetchPaperDocument).mockRejectedValue(new Error("document is still preparing"))
     vi.mocked(triggerPaperCompile).mockReset()
   })
 
@@ -112,6 +115,19 @@ describe("PaperDocumentReaderPage", () => {
     expect(screen.queryByText("visual asset is missing")).not.toBeInTheDocument()
     expect(screen.queryByLabelText("Open reader paper body")).not.toBeInTheDocument()
     expect(screen.queryByText("This legacy section must never become body text.")).not.toBeInTheDocument()
+  })
+
+  it("switches from the status gate to the compiled reader after background compilation finishes", async () => {
+    vi.mocked(fetchPaperDocument).mockResolvedValueOnce(compiledPayload)
+
+    render(<PaperDocumentReaderPage payload={needsReviewPayload} locale="en" />)
+
+    expect(screen.getByText("Reader document is not ready yet.")).toBeInTheDocument()
+    expect(await screen.findByLabelText("Open reader paper body")).toBeInTheDocument()
+    expect(fetchPaperDocument).toHaveBeenCalledWith(
+      "visual-paper",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    )
   })
 
   it("shows the queued compile task when compile is requested", async () => {

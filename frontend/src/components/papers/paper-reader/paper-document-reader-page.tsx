@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import Link from "next/link"
 import { AlertTriangle, ArrowLeft, RefreshCw } from "lucide-react"
 import { OpenReaderPage } from "@/components/papers/open-reader"
@@ -8,20 +8,69 @@ import { translate } from "@/lib/i18n"
 import { formatPaperDate, paperTitle } from "@/lib/papers/format"
 import type { Locale } from "@/lib/papers/types"
 import { paperDocumentToOpenReader } from "@/lib/paper-reader/open-reader-adapter"
-import { triggerPaperCompile } from "@/lib/paper-reader/api"
+import { fetchPaperDocument, triggerPaperCompile } from "@/lib/paper-reader/api"
 import type { PaperCompileTriggerResponse, PaperDiagnostic, PaperDocumentResponse } from "@/lib/paper-reader/types"
 import styles from "./paper-document-reader.module.css"
 
+const DOCUMENT_POLL_INTERVAL_MS = 5000
+
 export function PaperDocumentReaderPage({ payload, locale }: { payload: PaperDocumentResponse; locale: Locale }) {
-  const { document, manifest, status } = payload
-  const compiled = status.status === "compiled" && document && manifest
-  const adapted = useMemo(() => (compiled ? paperDocumentToOpenReader(payload) : null), [compiled, payload])
+  const [currentPayload, setCurrentPayload] = useState(payload)
+
+  useEffect(() => {
+    setCurrentPayload(payload)
+  }, [payload])
+
+  const compiled = hasCompiledDocument(currentPayload)
+
+  useEffect(() => {
+    if (compiled) {
+      return undefined
+    }
+
+    let cancelled = false
+    let inFlight: AbortController | null = null
+
+    async function refreshDocument() {
+      inFlight?.abort()
+      const controller = new AbortController()
+      inFlight = controller
+
+      try {
+        const nextPayload = await fetchPaperDocument(currentPayload.paper.id, {
+          signal: controller.signal,
+        })
+        if (!cancelled) {
+          setCurrentPayload(nextPayload)
+        }
+      } catch {
+        // The status gate already explains that the document is still being prepared.
+      }
+    }
+
+    void refreshDocument()
+    const interval = window.setInterval(() => {
+      void refreshDocument()
+    }, DOCUMENT_POLL_INTERVAL_MS)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(interval)
+      inFlight?.abort()
+    }
+  }, [compiled, currentPayload.paper.id])
+
+  const adapted = useMemo(() => (compiled ? paperDocumentToOpenReader(currentPayload) : null), [compiled, currentPayload])
 
   if (adapted) {
     return <OpenReaderPage reader={adapted.reader} locale={locale} visualLayer={adapted.visualLayer} />
   }
 
-  return <CompileStatusPage payload={payload} locale={locale} />
+  return <CompileStatusPage payload={currentPayload} locale={locale} />
+}
+
+function hasCompiledDocument(payload: PaperDocumentResponse) {
+  return payload.status.status === "compiled" && Boolean(payload.document && payload.manifest)
 }
 
 function CompileStatusPage({ payload, locale }: { payload: PaperDocumentResponse; locale: Locale }) {
