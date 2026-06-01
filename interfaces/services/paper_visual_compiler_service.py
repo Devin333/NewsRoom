@@ -289,11 +289,46 @@ class PaperVisualCompilerApplicationService:
             manifest=draft.manifest,
             gate_report=gate_report,
         )
+        if review_report.verdict == "unavailable":
+            diagnostics = (
+                {
+                    "severity": "warning",
+                    "code": "ai_review_unavailable",
+                    "message": review_report.summary,
+                },
+            )
+            document = _document_with_status(draft.document, "compiled")
+            compile_info = _compile_info_with_status(
+                draft.compile_info,
+                "compiled",
+                diagnostics=(*draft.compile_info.diagnostics, *diagnostics),
+            )
+            status = self.repository.write_artifacts(
+                document=document,
+                manifest=draft.manifest,
+                compile_info=compile_info,
+                review_report=review_report,
+                gate_report=gate_report,
+                status="compiled",
+                updated_at=_iso(self.clock()),
+                diagnostics=(*tuple(gate_report.get("warnings") or ()), *diagnostics),
+            )
+            return PaperVisualCompileResult(
+                paper_id=resolved_id,
+                status=status.status,
+                document=document,
+                manifest=draft.manifest,
+                compile_info=compile_info,
+                review_report=review_report,
+                gate_report=gate_report,
+                diagnostics=status.diagnostics,
+            )
+
         if review_report.verdict != "pass":
             diagnostics = (
                 {
                     "severity": "error",
-                    "code": "ai_review_unavailable" if review_report.verdict == "unavailable" else "ai_review_rejected",
+                    "code": "ai_review_rejected",
                     "message": review_report.summary,
                 },
             )

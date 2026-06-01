@@ -550,6 +550,19 @@ def test_visual_compiler_review_failure_blocks_document_payload(tmp_path) -> Non
     assert payload["status"]["reviewReport"]["verdict"] == "fail"
 
 
+def test_visual_compiler_publishes_with_warning_when_ai_review_unavailable(tmp_path) -> None:
+    service = _visual_service(tmp_path, reviewer=HeuristicPaperDocumentReviewer(verdict="unavailable"))
+
+    result = service.compile_paper("visual-paper", force=True)
+    payload = service.get_document_payload("visual-paper")
+
+    assert result.status == "compiled"
+    assert payload["document"]["status"] == "compiled"
+    assert payload["manifest"] is not None
+    assert payload["status"]["reviewReport"]["verdict"] == "unavailable"
+    assert any(item["code"] == "ai_review_unavailable" for item in payload["status"]["diagnostics"])
+
+
 def test_visual_compile_worker_handler_uses_same_compile_path(tmp_path) -> None:
     service = _visual_service(tmp_path, reviewer=HeuristicPaperDocumentReviewer(verdict="pass"))
     handler = PaperVisualCompileTaskHandler(service)
