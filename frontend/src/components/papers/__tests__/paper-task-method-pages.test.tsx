@@ -231,7 +231,7 @@ describe("paper task and method pages", () => {
 
     expect(await screen.findByText("Task taxonomy is built from verified paper references.")).toBeInTheDocument()
     expect(screen.getByLabelText(/benchmarks: 1/i)).toBeInTheDocument()
-    expect(screen.getByRole("link", { name: /Agents\s+1 Papers/i })).toBeInTheDocument()
+    expect(screen.getByRole("link", { name: /Agents\s+Verified refs \/ 1 papers \/ updated May 24, 2026/i })).toBeInTheDocument()
     expect(screen.queryByRole("link", { name: /Reasoning/i })).not.toBeInTheDocument()
   })
 
@@ -260,7 +260,7 @@ describe("paper task and method pages", () => {
 
     render(<TasksPage locale="en" />)
 
-    expect(await screen.findByRole("link", { name: /Agents\s+1 Papers/i })).toBeInTheDocument()
+    expect(await screen.findByRole("link", { name: /Agents\s+Verified refs \/ 1 papers \/ updated May 24, 2026/i })).toBeInTheDocument()
     expect(screen.getByLabelText(/papers: 1/i)).toBeInTheDocument()
     expect(screen.queryByText("Derived Draft Paper")).not.toBeInTheDocument()
   })

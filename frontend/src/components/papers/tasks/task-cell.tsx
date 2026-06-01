@@ -6,7 +6,15 @@ import { taskName } from "@/lib/papers/format"
 import { papersRoutes } from "@/lib/papers/routes"
 import type { Locale, PaperTask } from "@/lib/papers/types"
 
-export function TaskCell({ task, locale }: { task: PaperTask; locale: Locale }) {
+export function TaskCell({
+  task,
+  locale,
+  sourceDescription
+}: {
+  task: PaperTask
+  locale: Locale
+  sourceDescription: string
+}) {
   return (
     <Link
       href={papersRoutes.taskDetail(task.slug)}
@@ -15,7 +23,7 @@ export function TaskCell({ task, locale }: { task: PaperTask; locale: Locale }) 
       <div className="flex items-start justify-between gap-3">
         <div>
           <h3 className="text-sm font-semibold">{taskName(task, locale)}</h3>
-          <p className="mt-2 text-xs text-muted-foreground">{task.paperCount} {t(papersCopy.papers, locale)}</p>
+          <p className="mt-2 text-xs text-muted-foreground">{sourceDescription}</p>
         </div>
         <ArrowRight className="size-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
       </div>

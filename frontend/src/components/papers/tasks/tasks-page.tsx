@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button"
 import { orderedTaskGroups, taskGroupLabel } from "@/lib/papers/categories"
 import { localizedResearchNotice, papersCopy, t } from "@/lib/papers/copy"
 import { fetchPaperTasksResult, fetchPapers } from "@/lib/papers/api"
+import { taxonomySourceDescription } from "@/lib/papers/taxonomy-source"
 import type { Locale, Paper, PaperTask } from "@/lib/papers/types"
 
 type TaxonomySort = "paper_count" | "recent" | "benchmark"
@@ -61,6 +62,7 @@ export function TasksPage({ locale }: { locale: Locale }) {
   const taskPaperCount = taskPaperItems.length || paperCountFromTasks(taskItems)
   const benchmarkCount = taskItems.reduce((total, task) => total + task.benchmarkCount, 0)
   const visibleTaskGroups = orderedTaskGroups(taskItems)
+  const latestByTask = latestPaperTimeBySlug(paperItems, "task")
 
   return (
     <div className="space-y-6">
@@ -100,6 +102,7 @@ export function TasksPage({ locale }: { locale: Locale }) {
             title={taskGroupLabel(group, locale)}
             tasks={taskItems.filter((task) => task.group === group)}
             locale={locale}
+            sourceDescription={(task) => taxonomySourceDescription(locale, task.paperCount, latestByTask.get(task.slug))}
           />
         ))}
       </div>

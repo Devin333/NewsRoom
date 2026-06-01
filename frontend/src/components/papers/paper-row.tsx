@@ -1,8 +1,10 @@
 "use client"
 
+"use client"
+
 import { Fragment, type MouseEvent, type ReactNode } from "react"
 import Link from "next/link"
-import { Bell, BookOpen, ExternalLink, Eye, FileText, Github, Heart, Quote } from "lucide-react"
+import { Bell, BookMarked, BookOpen, Clock3, ExternalLink, Eye, FileText, Github, GitCompareArrows, Heart, Quote } from "lucide-react"
 import { PaperTags } from "@/components/papers/paper-tags"
 import { PaperThumbnail } from "@/components/papers/paper-thumbnail"
 import { Button } from "@/components/ui/button"
@@ -11,6 +13,7 @@ import { papersCopy, t } from "@/lib/papers/copy"
 import { formatCompactNumber, formatPaperDate, paperPdfUrl, paperSnippet, paperTitle } from "@/lib/papers/format"
 import { papersRoutes } from "@/lib/papers/routes"
 import type { Locale, Paper } from "@/lib/papers/types"
+import { usePaperWorkspaceStore, type PaperWorkspaceList } from "@/stores/paper-workspace-store"
 
 export function PaperRow({
   paper,
@@ -29,6 +32,10 @@ export function PaperRow({
   const methods = paper.methodRefs ?? []
   const tags = paper.tags ?? []
   const metadata = [paper.authors?.slice(0, 3).join(", "), formatPaperDate(paper.publishedAt, locale), paper.venue].filter(Boolean)
+  const readingListActive = usePaperWorkspaceStore((state) => state.hasPaper("readingList", paper.id))
+  const compareActive = usePaperWorkspaceStore((state) => state.hasPaper("compare", paper.id))
+  const laterActive = usePaperWorkspaceStore((state) => state.hasPaper("later", paper.id))
+  const togglePaper = usePaperWorkspaceStore((state) => state.togglePaper)
 
   function handleRowClick(event: MouseEvent<HTMLElement>) {
     const target = event.target
@@ -126,6 +133,33 @@ export function PaperRow({
             ) : null}
           </div>
 
+          <div className="flex flex-wrap items-center gap-2">
+            <WorkspaceActionButton
+              list="readingList"
+              active={readingListActive}
+              paper={paper}
+              locale={locale}
+              icon={<BookMarked className="size-3.5" />}
+              onToggle={togglePaper}
+            />
+            <WorkspaceActionButton
+              list="compare"
+              active={compareActive}
+              paper={paper}
+              locale={locale}
+              icon={<GitCompareArrows className="size-3.5" />}
+              onToggle={togglePaper}
+            />
+            <WorkspaceActionButton
+              list="later"
+              active={laterActive}
+              paper={paper}
+              locale={locale}
+              icon={<Clock3 className="size-3.5" />}
+              onToggle={togglePaper}
+            />
+          </div>
+
           {paper.userState?.favorite || paper.userState?.subscribed ? (
             <div className="flex flex-wrap gap-2 text-xs font-semibold text-[#334155]/60 dark:text-muted-foreground">
               {paper.userState.favorite ? (
@@ -146,6 +180,48 @@ export function PaperRow({
       </div>
     </article>
   )
+}
+
+function WorkspaceActionButton({
+  list,
+  active,
+  paper,
+  locale,
+  icon,
+  onToggle
+}: {
+  list: PaperWorkspaceList
+  active: boolean
+  paper: Paper
+  locale: Locale
+  icon: ReactNode
+  onToggle: (list: PaperWorkspaceList, paperId: string) => void
+}) {
+  const label = workspaceLabel(list, active, locale)
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      aria-pressed={active}
+      aria-label={`${label} ${paper.title}`}
+      className={[
+        "h-7 rounded-full border-[#dbe3dc] px-2.5 text-left text-[0.72rem] shadow-none",
+        active
+          ? "bg-[#172033] text-white hover:bg-[#172033]/90 dark:bg-primary dark:text-primary-foreground"
+          : "bg-white text-[#334155]/70 hover:bg-[#eef4ef] dark:border-border dark:bg-card dark:text-muted-foreground dark:hover:bg-secondary"
+      ].join(" ")}
+      onClick={() => onToggle(list, paper.id)}
+    >
+      <span className={active ? "text-white" : "text-[#334155]/60 dark:text-muted-foreground"}>{icon}</span>
+      <span className="font-semibold">{label}</span>
+    </Button>
+  )
+}
+
+function workspaceLabel(list: PaperWorkspaceList, active: boolean, locale: Locale) {
+  const key = `papers.workspace.${active ? "remove" : "add"}.${list}`
+  return translate(locale, key)
 }
 
 function PaperMetaSeparator() {

@@ -6,7 +6,15 @@ import { methodName } from "@/lib/papers/format"
 import { papersRoutes } from "@/lib/papers/routes"
 import type { Locale, PaperMethod } from "@/lib/papers/types"
 
-export function MethodCard({ method, locale }: { method: PaperMethod; locale: Locale }) {
+export function MethodCard({
+  method,
+  locale,
+  sourceDescription
+}: {
+  method: PaperMethod
+  locale: Locale
+  sourceDescription: string
+}) {
   return (
     <Link
       href={papersRoutes.methodDetail(method.slug)}
@@ -18,6 +26,7 @@ export function MethodCard({ method, locale }: { method: PaperMethod; locale: Lo
           <p className="mt-2 text-sm leading-6 text-muted-foreground">
             {method.paperCount} {t(papersCopy.papers, locale)} · {method.taskCount} {t(papersCopy.tasks, locale)} · {method.area}
           </p>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">{sourceDescription}</p>
         </div>
         <ArrowRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
       </div>

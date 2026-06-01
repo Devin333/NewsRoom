@@ -14,6 +14,7 @@ Research now uses real paper data, but several UI states still sound like implem
 - Fix duplicate React keys in benchmark result rendering.
 - Add lightweight paper-feed filters for PDF, code, benchmark, and citation availability.
 - Add taxonomy sorting and clearer real-data source wording.
+- Add local paper workspace actions for reading list, comparison, and read-later triage.
 
 ## Impact
 

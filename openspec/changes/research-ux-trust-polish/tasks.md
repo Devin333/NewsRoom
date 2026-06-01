@@ -23,6 +23,8 @@
 - [x] 4.2 Add explicit Preview/Read/PDF/Code actions on paper cards.
 - [x] 4.3 Defer PDF thumbnail rendering beyond the first visible rows.
 - [x] 4.4 Move related papers before benchmarks/relations on detail pages.
+- [x] 4.5 Add local reading list, compare, and read-later workspace actions on paper cards.
+- [x] 4.6 Show per-category verified refs source wording with paper counts and latest update context when available.
 
 ## 5. Verification
 

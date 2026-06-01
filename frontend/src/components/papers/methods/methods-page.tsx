@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button"
 import { localizedResearchNotice, papersCopy, t } from "@/lib/papers/copy"
 import { fetchPaperMethodsResult, fetchPaperTasksResult, fetchPapers } from "@/lib/papers/api"
 import { methodAreaSlug } from "@/lib/papers/metrics"
+import { taxonomySourceDescription } from "@/lib/papers/taxonomy-source"
 import type { Locale, Paper, PaperMethod, PaperTask } from "@/lib/papers/types"
 
 type TaxonomySort = "paper_count" | "recent" | "benchmark"
@@ -70,6 +71,7 @@ export function MethodsPage({ locale }: { locale: Locale }) {
   const methodPaperCount = paperItemsForStats.length || paperCountFromMethods(methodItems)
   const methodTaskCount = taskItems.length || taskCountFromMethods(methodItems)
   const methodGroups = groupMethodsByArea(methodItems)
+  const latestByMethod = latestPaperTimeByMethodSlug(paperItems)
 
   return (
     <div className="space-y-6">
@@ -111,7 +113,12 @@ export function MethodsPage({ locale }: { locale: Locale }) {
             </div>
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
               {group.methods.map((method) => (
-                <MethodCard key={method.id} method={method} locale={locale} />
+                <MethodCard
+                  key={method.id}
+                  method={method}
+                  locale={locale}
+                  sourceDescription={taxonomySourceDescription(locale, method.paperCount, latestByMethod.get(method.slug))}
+                />
               ))}
             </div>
           </div>

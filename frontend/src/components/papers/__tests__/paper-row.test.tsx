@@ -1,7 +1,8 @@
-import { render, screen } from "@testing-library/react"
+import { fireEvent, render, screen } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { PaperRow } from "@/components/papers/paper-row"
 import type { Paper } from "@/lib/papers/types"
+import { usePaperWorkspaceStore } from "@/stores/paper-workspace-store"
 import { useUiStore } from "@/stores/ui-store"
 
 const paper: Paper = {
@@ -25,6 +26,7 @@ const paper: Paper = {
 describe("PaperRow", () => {
   beforeEach(() => {
     useUiStore.setState({ locale: "en" })
+    usePaperWorkspaceStore.getState().clear()
   })
 
   it("links PDF and GitHub actions to real destinations and avoids stars per hour copy", () => {
@@ -90,5 +92,24 @@ describe("PaperRow", () => {
 
     expect(screen.getByText("Favorite")).toBeInTheDocument()
     expect(screen.getByText("Subscribed")).toBeInTheDocument()
+  })
+
+  it("supports local reading list, compare, and read-later workspace actions", () => {
+    render(<PaperRow paper={paper} locale="en" onPreview={vi.fn()} />)
+
+    const readingList = screen.getByRole("button", { name: /add to reading list/i })
+    const compare = screen.getByRole("button", { name: /add to compare/i })
+    const later = screen.getByRole("button", { name: /read later/i })
+
+    fireEvent.click(readingList)
+    fireEvent.click(compare)
+    fireEvent.click(later)
+
+    expect(screen.getByRole("button", { name: /in reading list/i })).toHaveAttribute("aria-pressed", "true")
+    expect(screen.getByRole("button", { name: /in compare/i })).toHaveAttribute("aria-pressed", "true")
+    expect(screen.getByRole("button", { name: /saved for later/i })).toHaveAttribute("aria-pressed", "true")
+    expect(usePaperWorkspaceStore.getState().readingList).toContain(paper.id)
+    expect(usePaperWorkspaceStore.getState().compare).toContain(paper.id)
+    expect(usePaperWorkspaceStore.getState().later).toContain(paper.id)
   })
 })
