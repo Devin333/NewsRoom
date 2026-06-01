@@ -2,6 +2,7 @@ import type { ReactElement } from "react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import PapersMethodDetailPageRoute from "@/app/papers/methods/[slug]/page"
 import PapersTaskDetailPageRoute from "@/app/papers/tasks/[slug]/page"
+import { notFound } from "next/navigation"
 import { getPaperMethodsResult, getPaperTasksResult, getPublishedPapers } from "@/lib/papers/real-data"
 import type { Paper, PaperMethod, PaperTask } from "@/lib/papers/types"
 
@@ -103,5 +104,31 @@ describe("paper taxonomy detail routes", () => {
     expect(element.props.method).toBe(method)
     expect(element.props.papers).toBe(papers)
     expect(element.props.fallbackNotice).toBe("Backend paper API is unavailable; showing tracked paper cache.")
+  })
+
+  it("does not show static task detail pages when public taxonomy data is empty", async () => {
+    vi.mocked(getPaperTasksResult).mockResolvedValueOnce({
+      items: [],
+      source: "taxonomy",
+      dataState: "empty",
+      notices: ["No public papers are available."]
+    })
+
+    await expect(PapersTaskDetailPageRoute({ params: { slug: "coding-agents" } })).rejects.toThrow("NEXT_NOT_FOUND")
+    expect(notFound).toHaveBeenCalled()
+    expect(getPublishedPapers).not.toHaveBeenCalled()
+  })
+
+  it("does not show static method detail pages when backend taxonomy excludes the slug", async () => {
+    vi.mocked(getPaperMethodsResult).mockResolvedValueOnce({
+      items: [method],
+      source: "backend",
+      dataState: "ready",
+      notices: []
+    })
+
+    await expect(PapersMethodDetailPageRoute({ params: { slug: "large-language-model" } })).rejects.toThrow("NEXT_NOT_FOUND")
+    expect(notFound).toHaveBeenCalled()
+    expect(getPublishedPapers).not.toHaveBeenCalled()
   })
 })

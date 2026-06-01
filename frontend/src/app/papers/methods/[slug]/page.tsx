@@ -11,7 +11,7 @@ export function generateStaticParams() {
 export default async function PapersMethodDetailPageRoute({ params }: { params: { slug: string } }) {
   const slug = decodePaperRouteSlug(params.slug)
   const result = await getPaperMethodsResult()
-  const method = result.items.find((item) => item.slug === slug) ?? getMethodBySlug(slug)
+  const method = result.items.find((item) => item.slug === slug) ?? fallbackMethod(result, slug)
 
   if (!method) {
     notFound()
@@ -24,4 +24,8 @@ export default async function PapersMethodDetailPageRoute({ params }: { params: 
       fallbackNotice={result.notices[0] ?? null}
     />
   )
+}
+
+function fallbackMethod(result: Awaited<ReturnType<typeof getPaperMethodsResult>>, slug: string) {
+  return result.source === "taxonomy" && result.dataState !== "empty" ? getMethodBySlug(slug) : null
 }
