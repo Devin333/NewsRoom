@@ -44,7 +44,7 @@ The system SHALL represent source-package tables as structured Reader table mode
 
 #### Scenario: TeX table produces structured style metadata
 - **WHEN** a TeX table contains row colors, cell colors, booktabs rules, `cmidrule`, `multicolumn`, or `multirow`
-- **THEN** the compiler emits a `tableModel` carrying row rules, row/cell color classes, span values, alignments, and sanitized inline HTML.
+- **THEN** the compiler emits a `tableModel` carrying row rules, row/cell color classes, exact safe CSS color values, span values, alignments, and sanitized inline HTML.
 
 #### Scenario: Table without structured metadata is blocked
 - **WHEN** a table visual asset is stored as structured HTML but lacks `tableModel` or `tableHtml`

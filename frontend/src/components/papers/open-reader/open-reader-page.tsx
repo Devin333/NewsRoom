@@ -676,11 +676,19 @@ type PaperTableModel = {
       rowspan?: number
       align?: string
       classes?: string[]
+      style?: PaperTableStyle | null
     }>
     rulesBefore?: string[]
     rowColor?: string | null
+    rowStyle?: PaperTableStyle | null
     zebra?: string | null
+    zebraStyle?: PaperTableStyle | null
   }>
+}
+
+type PaperTableStyle = {
+  color?: string
+  backgroundColor?: string
 }
 
 function isPaperTableModel(value: unknown): value is PaperTableModel {
@@ -698,8 +706,9 @@ function PaperTable({ model, label }: { model: PaperTableModel; label: string })
               ...(row.rulesBefore ?? []).map(tableRuleClass).filter(Boolean),
               tableClass(row.rowColor ?? row.zebra),
             ].filter(Boolean).join(" ")
+            const rowStyle = tableStyle(row.rowStyle ?? row.zebraStyle)
             return (
-              <tr key={rowIndex} className={rowClasses}>
+              <tr key={rowIndex} className={rowClasses} style={rowStyle}>
                 {row.cells.map((cell, cellIndex) => {
                   const Tag = rowIndex === 0 ? "th" : "td"
                   const align = cell.align || model.alignments?.[cellIndex]
@@ -712,6 +721,7 @@ function PaperTable({ model, label }: { model: PaperTableModel; label: string })
                     <Tag
                       key={cellIndex}
                       className={className}
+                      style={tableStyle(cell.style)}
                       colSpan={Math.max(1, cell.colspan ?? 1)}
                       rowSpan={Math.max(1, cell.rowspan ?? 1)}
                       dangerouslySetInnerHTML={{ __html: cell.html || escapeHtml(cell.text || "") }}
@@ -753,6 +763,22 @@ function tableClass(value?: string | null) {
     paperTableColorNeutral: styles.paperTableColorNeutral,
   }
   return map[value] ?? ""
+}
+
+function tableStyle(value?: PaperTableStyle | null): CSSProperties | undefined {
+  if (!value || typeof value !== "object") return undefined
+  const style: CSSProperties = {}
+  if (isSafeCssColor(value.color)) {
+    style.color = value.color
+  }
+  if (isSafeCssColor(value.backgroundColor)) {
+    style.backgroundColor = value.backgroundColor
+  }
+  return Object.keys(style).length ? style : undefined
+}
+
+function isSafeCssColor(value: unknown): value is string {
+  return typeof value === "string" && /^#[0-9a-fA-F]{6}$/.test(value)
 }
 
 function tableRuleClass(value?: string | null) {

@@ -67,6 +67,8 @@ describe("PaperDocumentReaderPage", () => {
     expect(within(article).getByLabelText("y = Wx + b (1)")).toBeInTheDocument()
     expect(within(article).getByRole("table", { name: "Table 1" })).toBeInTheDocument()
     expect(within(article).getByText("0.99")).toBeInTheDocument()
+    expect(within(article).getByText("Ours").closest("td")).toHaveStyle({ backgroundColor: "#d9ead3" })
+    expect(within(article).getByText("0.99").closest("td")).toHaveStyle({ color: "#cc0000" })
     expect(within(article).queryByText("UNKNOWN")).not.toBeInTheDocument()
     expect(within(article).queryByText("unknown")).not.toBeInTheDocument()
     expect(screen.queryByText("Figure 1", { selector: "span" })).not.toBeInTheDocument()
@@ -404,9 +406,10 @@ const compiledPayload: PaperDocumentResponse = {
               },
               {
                 rulesBefore: ["midrule"],
+                rowStyle: { backgroundColor: "#f2f2f2" },
                 cells: [
-                  { text: "Ours", html: "Ours", classes: ["paperTableColorGray"] },
-                  { text: "0.99", html: "<strong>0.99</strong>", classes: ["paperTableColorBlue"] },
+                  { text: "Ours", html: "Ours", classes: ["paperTableColorGray"], style: { backgroundColor: "#d9ead3" } },
+                  { text: "0.99", html: "<strong>0.99</strong>", classes: ["paperTableColorBlue"], style: { color: "#cc0000" } },
                 ],
               },
             ],

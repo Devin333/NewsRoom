@@ -193,6 +193,32 @@ th.paperTableCell {
 }
 """.strip()
 
+_TABLE_NAMED_COLORS: dict[str, tuple[int, int, int]] = {
+    "black": (0, 0, 0),
+    "white": (255, 255, 255),
+    "red": (255, 0, 0),
+    "green": (0, 128, 0),
+    "blue": (0, 0, 255),
+    "cyan": (0, 255, 255),
+    "magenta": (255, 0, 255),
+    "yellow": (255, 255, 0),
+    "orange": (255, 165, 0),
+    "purple": (128, 0, 128),
+    "violet": (143, 0, 255),
+    "brown": (150, 75, 0),
+    "teal": (0, 128, 128),
+    "olive": (128, 128, 0),
+    "lime": (0, 255, 0),
+    "pink": (255, 192, 203),
+    "gray": (128, 128, 128),
+    "grey": (128, 128, 128),
+    "lightgray": (211, 211, 211),
+    "lightgrey": (211, 211, 211),
+    "darkgray": (64, 64, 64),
+    "darkgrey": (64, 64, 64),
+    "uoftcoolgray": (216, 220, 226),
+}
+
 
 @dataclass(frozen=True)
 class ArxivSourceCompileAttempt:
@@ -2160,9 +2186,12 @@ def _table_model_from_tex(tex: str) -> Mapping[str, Any] | None:
                 row_tex = row_tex[cmidrule_match.end():].strip()
                 leading = True
         row_color = None
-        rowcolor_match = re.match(r"\\rowcolor\s*\{(?P<color>[^{}]*)\}", row_tex)
+        row_style = None
+        rowcolor_match = re.match(r"\\rowcolor(?:\[(?P<model>[^\]]+)\])?\s*\{(?P<color>[^{}]*)\}", row_tex)
         if rowcolor_match:
-            row_color = _latex_color_class(rowcolor_match.group("color"))
+            row_color_spec = _latex_color_spec(rowcolor_match.group("color"), model=rowcolor_match.group("model"), role="background")
+            row_color = row_color_spec.get("className") if row_color_spec else None
+            row_style = row_color_spec.get("style") if row_color_spec else None
             row_tex = row_tex[rowcolor_match.end():].strip()
         if not row_tex:
             continue
@@ -2174,7 +2203,9 @@ def _table_model_from_tex(tex: str) -> Mapping[str, Any] | None:
                 "cells": cells,
                 "rulesBefore": pending_rules,
                 "rowColor": row_color,
+                "rowStyle": row_style,
                 "zebra": _zebra_row_class(len(rows), rowcolors),
+                "zebraStyle": _zebra_row_style(len(rows), rowcolors),
             }
         )
         pending_rules = []
@@ -2238,6 +2269,7 @@ def _cell_model_from_tex(cell_tex: str) -> dict[str, Any]:
     rowspan = 1
     align = None
     classes: list[str] = []
+    style: dict[str, str] = {}
     multicolumn = re.fullmatch(r"\\multicolumn\s*\{(?P<span>\d+)\}\s*\{(?P<align>[^{}]*)\}\s*\{(?P<body>.*)\}", cell, re.DOTALL)
     if multicolumn:
         colspan = max(1, int(multicolumn.group("span")))
@@ -2247,11 +2279,16 @@ def _cell_model_from_tex(cell_tex: str) -> dict[str, Any]:
     if multirow:
         rowspan = max(1, abs(int(multirow.group("span"))))
         cell = multirow.group("body").strip()
-    cellcolor = re.match(r"\\cellcolor\s*\{(?P<color>[^{}]*)\}(?P<body>.*)", cell, re.DOTALL)
+    cellcolor = re.match(r"\\cellcolor(?:\[(?P<model>[^\]]+)\])?\s*\{(?P<color>[^{}]*)\}(?P<body>.*)", cell, re.DOTALL)
     if cellcolor:
-        color_class = _latex_color_class(cellcolor.group("color"))
-        if color_class:
-            classes.append(color_class)
+        color_spec = _latex_color_spec(cellcolor.group("color"), model=cellcolor.group("model"), role="background")
+        if color_spec:
+            color_class = color_spec.get("className")
+            if color_class:
+                classes.append(str(color_class))
+            color_style = color_spec.get("style")
+            if isinstance(color_style, Mapping):
+                style.update({str(key): str(value) for key, value in color_style.items() if value})
         cell = cellcolor.group("body").strip()
     html_value = _latex_inline_html(cell)
     text_value = _clean_text(cell)
@@ -2262,6 +2299,7 @@ def _cell_model_from_tex(cell_tex: str) -> dict[str, Any]:
         "rowspan": rowspan,
         "align": align,
         "classes": classes,
+        "style": style,
     }
 
 
@@ -2308,12 +2346,12 @@ def _replace_inline_command(value: str, command: str, tag: str) -> str:
 
 def _replace_color_commands(value: str) -> str:
     text = value
-    pattern = re.compile(r"\\(?:textcolor|color)\s*\{(?P<color>[^{}]*)\}\s*\{(?P<body>[^{}]*(?:\{[^{}]*\}[^{}]*)*)\}", re.DOTALL)
+    pattern = re.compile(r"\\(?:textcolor|color)(?:\[(?P<model>[^\]]+)\])?\s*\{(?P<color>[^{}]*)\}\s*\{(?P<body>[^{}]*(?:\{[^{}]*\}[^{}]*)*)\}", re.DOTALL)
     previous = None
     while previous != text:
         previous = text
         text = pattern.sub(
-            lambda match: f"<span class=\"{html.escape(_latex_color_class(match.group('color')) or 'paperTableColorNeutral')}\">{_latex_inline_html(match.group('body'))}</span>",
+            lambda match: _table_color_span(match.group("color"), _latex_inline_html(match.group("body")), model=match.group("model")),
             text,
         )
     return text
@@ -2322,23 +2360,22 @@ def _replace_color_commands(value: str) -> str:
 def _replace_scoped_color_declarations(value: str) -> str:
     text = value
     scoped_pattern = re.compile(
-        r"\{\s*\\color\s*\{(?P<color>[^{}]*)\}\s*(?P<body>[^{}]*(?:\{[^{}]*\}[^{}]*)*)\}",
+        r"\{\s*\\color(?:\[(?P<model>[^\]]+)\])?\s*\{(?P<color>[^{}]*)\}\s*(?P<body>[^{}]*(?:\{[^{}]*\}[^{}]*)*)\}",
         re.DOTALL,
     )
-    declaration_pattern = re.compile(r"^\\color\s*\{(?P<color>[^{}]*)\}\s*(?P<body>.+)$", re.DOTALL)
+    declaration_pattern = re.compile(r"^\\color(?:\[(?P<model>[^\]]+)\])?\s*\{(?P<color>[^{}]*)\}\s*(?P<body>.+)$", re.DOTALL)
 
-    def render(color: str, body: str) -> str:
-        css_class = html.escape(_latex_color_class(color) or "paperTableColorNeutral")
-        return f"<span class=\"{css_class}\">{_latex_inline_html(body)}</span>"
+    def render(color: str, body: str, model: str | None = None) -> str:
+        return _table_color_span(color, _latex_inline_html(body), model=model)
 
     previous = None
     while previous != text:
         previous = text
-        text = scoped_pattern.sub(lambda match: render(match.group("color"), match.group("body")), text)
+        text = scoped_pattern.sub(lambda match: render(match.group("color"), match.group("body"), match.group("model")), text)
 
     declaration = declaration_pattern.match(text.strip())
     if declaration:
-        return render(declaration.group("color"), declaration.group("body"))
+        return render(declaration.group("color"), declaration.group("body"), declaration.group("model"))
     return text
 
 
@@ -2351,7 +2388,7 @@ def _sanitize_table_inline_html(value: str) -> str:
     allowed_patterns = (
         re.compile(r"</?(?:strong|em|u|s)>", re.IGNORECASE),
         re.compile(r"<br\s*/?>", re.IGNORECASE),
-        re.compile(r"<span class=\"paperTable(?:Math|ColorRed|ColorBlue|ColorGray|ColorNeutral)\">", re.IGNORECASE),
+        re.compile(r"<span class=\"paperTable(?:Math|ColorRed|ColorBlue|ColorGray|ColorNeutral)\"(?: style=\"color: #[0-9a-fA-F]{6}\")?>", re.IGNORECASE),
         re.compile(r"</span>", re.IGNORECASE),
     )
     entity_pattern = re.compile(r"&(?:uarr|darr|dagger|amp|lt|gt|quot|#39);")
@@ -2379,10 +2416,14 @@ def _rowcolors_from_tex(tex: str) -> Mapping[str, Any] | None:
     match = _ROWCOLORS_PATTERN.search(tex)
     if not match:
         return None
+    odd_spec = _latex_color_spec(match.group("odd"), role="background")
+    even_spec = _latex_color_spec(match.group("even"), role="background")
     return {
         "start": int(match.group("start")),
-        "odd": _latex_color_class(match.group("odd")),
-        "even": _latex_color_class(match.group("even")),
+        "odd": odd_spec.get("className") if odd_spec else None,
+        "even": even_spec.get("className") if even_spec else None,
+        "oddStyle": odd_spec.get("style") if odd_spec else None,
+        "evenStyle": even_spec.get("style") if even_spec else None,
     }
 
 
@@ -2397,6 +2438,46 @@ def _zebra_row_class(index: int, rowcolors: Mapping[str, Any] | None) -> str | N
     return str(value) if value else None
 
 
+def _zebra_row_style(index: int, rowcolors: Mapping[str, Any] | None) -> Mapping[str, str] | None:
+    if not rowcolors:
+        return None
+    start = int(rowcolors.get("start") or 0)
+    if start <= 0 or index + 1 < start:
+        return None
+    key = "oddStyle" if (index + 1 - start) % 2 == 0 else "evenStyle"
+    value = rowcolors.get(key)
+    return dict(value) if isinstance(value, Mapping) and value else None
+
+
+def _latex_color_spec(value: str | None, *, model: str | None = None, role: str) -> Mapping[str, Any] | None:
+    css_color = _latex_color_css(value, model=model)
+    css_class = _latex_color_class(value)
+    if css_color is None and css_class is None:
+        return None
+    style_key = "backgroundColor" if role == "background" else "color"
+    payload: dict[str, Any] = {}
+    if css_class:
+        payload["className"] = css_class
+    if css_color:
+        payload["style"] = {style_key: css_color}
+    return payload
+
+
+def _table_color_span(color: str, body_html: str, *, model: str | None = None) -> str:
+    color_spec = _latex_color_spec(color, model=model, role="foreground")
+    css_class = "paperTableColorNeutral"
+    if isinstance(color_spec, Mapping) and color_spec.get("className"):
+        css_class = str(color_spec["className"])
+    css_class = html.escape(css_class)
+    style = color_spec.get("style") if color_spec else None
+    style_attr = ""
+    if isinstance(style, Mapping):
+        css_color = style.get("color")
+        if isinstance(css_color, str) and _is_safe_table_css_color(css_color):
+            style_attr = f" style=\"color: {html.escape(css_color)}\""
+    return f"<span class=\"{css_class}\"{style_attr}>{body_html}</span>"
+
+
 def _latex_color_class(value: str | None) -> str | None:
     normalized = (value or "").strip().casefold()
     if not normalized or normalized in {"white", "none"}:
@@ -2408,6 +2489,98 @@ def _latex_color_class(value: str | None) -> str | None:
     if "gray" in normalized or "grey" in normalized or "uoftcoolgray" in normalized:
         return "paperTableColorGray"
     return "paperTableColorNeutral"
+
+
+def _latex_color_css(value: str | None, *, model: str | None = None) -> str | None:
+    rgb = _latex_color_rgb(value, model=model)
+    if rgb is None:
+        return None
+    return "#%02x%02x%02x" % rgb
+
+
+def _latex_color_rgb(value: str | None, *, model: str | None = None) -> tuple[int, int, int] | None:
+    normalized = (value or "").strip()
+    normalized_model = (model or "").strip()
+    if not normalized or normalized.casefold() in {"none", "transparent"}:
+        return None
+    if normalized_model:
+        parsed = _latex_model_color_rgb(normalized, normalized_model)
+        if parsed is not None:
+            return parsed
+    hex_match = re.fullmatch(r"#?(?P<hex>[0-9a-fA-F]{6}|[0-9a-fA-F]{3})", normalized)
+    if hex_match:
+        value_hex = hex_match.group("hex")
+        if len(value_hex) == 3:
+            value_hex = "".join(char * 2 for char in value_hex)
+        return tuple(int(value_hex[index : index + 2], 16) for index in (0, 2, 4))  # type: ignore[return-value]
+    return _xcolor_expression_rgb(normalized)
+
+
+def _latex_model_color_rgb(value: str, model: str) -> tuple[int, int, int] | None:
+    model_key = model.casefold()
+    if model_key == "html":
+        return _latex_color_rgb(value)
+    parts = [part.strip() for part in value.split(",") if part.strip()]
+    if model == "rgb" and len(parts) == 3:
+        floats = [_parse_float(part) for part in parts]
+        if any(item is None for item in floats):
+            return None
+        return tuple(_clamp_channel(float(item) * 255) for item in floats)  # type: ignore[arg-type, return-value]
+    if model in {"RGB", "rgb255"} and len(parts) == 3:
+        ints = [_parse_float(part) for part in parts]
+        if any(item is None for item in ints):
+            return None
+        return tuple(_clamp_channel(float(item)) for item in ints)  # type: ignore[arg-type, return-value]
+    if model_key == "gray":
+        gray = _parse_float(value)
+        if gray is None:
+            return None
+        channel = _clamp_channel(gray * 255)
+        return (channel, channel, channel)
+    return None
+
+
+def _xcolor_expression_rgb(value: str) -> tuple[int, int, int] | None:
+    parts = [part.strip() for part in value.split("!") if part.strip()]
+    if not parts:
+        return None
+    rgb = _named_table_color_rgb(parts[0])
+    if rgb is None:
+        return None
+    index = 1
+    while index < len(parts):
+        percent = _parse_float(parts[index])
+        if percent is None:
+            return None
+        other = _named_table_color_rgb(parts[index + 1]) if index + 1 < len(parts) else _TABLE_NAMED_COLORS["white"]
+        if other is None:
+            return None
+        ratio = max(0.0, min(100.0, percent)) / 100.0
+        rgb = tuple(_clamp_channel(channel * ratio + other_channel * (1.0 - ratio)) for channel, other_channel in zip(rgb, other))  # type: ignore[assignment]
+        index += 2
+    return rgb
+
+
+def _named_table_color_rgb(value: str) -> tuple[int, int, int] | None:
+    normalized = value.strip().replace(" ", "").casefold()
+    if normalized in _TABLE_NAMED_COLORS:
+        return _TABLE_NAMED_COLORS[normalized]
+    return _latex_color_rgb(normalized) if re.fullmatch(r"#?[0-9a-fA-F]{6}|[0-9a-fA-F]{3}", normalized) else None
+
+
+def _parse_float(value: str) -> float | None:
+    try:
+        return float(value.strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _clamp_channel(value: float) -> int:
+    return max(0, min(255, int(round(value))))
+
+
+def _is_safe_table_css_color(value: str) -> bool:
+    return re.fullmatch(r"#[0-9a-fA-F]{6}", value) is not None
 
 
 def _column_alignments(spec: str) -> list[str]:
@@ -2449,6 +2622,7 @@ def _table_model_html(model: Mapping[str, Any], *, label: str) -> str:
         row_color = row.get("rowColor") or row.get("zebra")
         if isinstance(row_color, str) and row_color:
             row_classes.append(row_color)
+        row_style = _table_style_attr(row.get("rowStyle") if row.get("rowStyle") else row.get("zebraStyle"))
         cells_html: list[str] = []
         for cell_index, cell in enumerate(row.get("cells", [])):
             if not isinstance(cell, Mapping):
@@ -2466,10 +2640,31 @@ def _table_model_html(model: Mapping[str, Any], *, label: str) -> str:
                 attrs.append(f'colspan="{colspan}"')
             if rowspan > 1:
                 attrs.append(f'rowspan="{rowspan}"')
+            cell_style = _table_style_attr(cell.get("style"))
+            if cell_style:
+                attrs.append(cell_style)
             value = str(cell.get("html") or html.escape(str(cell.get("text") or "")))
             cells_html.append(f"<{tag} {' '.join(attrs)}>{value}</{tag}>")
-        rows_html.append(f"<tr class=\"{' '.join(html.escape(item) for item in row_classes)}\">{''.join(cells_html)}</tr>")
+        row_attrs = [f"class=\"{' '.join(html.escape(item) for item in row_classes)}\""]
+        if row_style:
+            row_attrs.append(row_style)
+        rows_html.append(f"<tr {' '.join(row_attrs)}>{''.join(cells_html)}</tr>")
     return f"<table class=\"paperCompiledTable\" aria-label=\"{html.escape(label)}\"><tbody>{''.join(rows_html)}</tbody></table>"
+
+
+def _table_style_attr(value: Any) -> str:
+    if not isinstance(value, Mapping):
+        return ""
+    declarations: list[str] = []
+    color = value.get("color")
+    if isinstance(color, str) and _is_safe_table_css_color(color):
+        declarations.append(f"color: {color}")
+    background = value.get("backgroundColor")
+    if isinstance(background, str) and _is_safe_table_css_color(background):
+        declarations.append(f"background-color: {background}")
+    if not declarations:
+        return ""
+    return f"style=\"{html.escape('; '.join(declarations))}\""
 
 
 def _table_asset_html(table_html: str) -> str:

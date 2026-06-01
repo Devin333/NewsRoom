@@ -499,10 +499,16 @@ def test_arxiv_source_compiler_uses_tex_body_equations_and_source_assets(tmp_pat
     assert any(cell["text"] == "Shared header" and cell["colspan"] == 2 and cell["align"] == "center" for cell in table_cells)
     assert any(cell["text"] == "0.88" and cell["rowspan"] == 2 for cell in table_cells)
     assert any(row["rowColor"] == "paperTableColorBlue" for row in table_model["rows"])
+    assert any((row.get("rowStyle") or {}).get("backgroundColor") == "#e6e6ff" for row in table_model["rows"])
     assert any("cmidrule" in row.get("rulesBefore", []) for row in table_model["rows"])
     assert any(row["zebra"] == "paperTableColorGray" for row in table_model["rows"])
+    assert any((row.get("zebraStyle") or {}).get("backgroundColor") == "#dfdfdf" for row in table_model["rows"])
     assert any("paperTableColorGray" in cell["classes"] for cell in table_cells)
+    assert any(cell["text"] == "Ours" and cell.get("style", {}).get("backgroundColor") == "#c0c0c0" for cell in table_cells)
+    assert any(cell["text"] == "Exact" and cell.get("style", {}).get("backgroundColor") == "#d9ead3" for cell in table_cells)
     assert "paperTableColorRed" in table_blocks[0].metadata["tableHtml"]
+    assert "style=\"color: #ff0000\"" in table_blocks[0].metadata["tableHtml"]
+    assert "style=\"color: #cc0000\"" in table_blocks[0].metadata["tableHtml"]
     assert any(asset.kind == "figure" and asset.metadata.get("sourceFile") == "img/figure.pdf" for asset in draft.manifest.assets)
     table_assets = [asset for asset in draft.manifest.assets if asset.kind == "table"]
     assert table_assets and table_assets[0].mimeType.startswith("text/html")
@@ -1206,6 +1212,7 @@ q(\mathbf{x}_t\mid\mathbf{x}_0) = \mathcal{N}(\mathbf{x}_t; \sqrt{\alpha_t}\math
 Group B & \\
 \textcolor{gray}{\sout{Baseline}} & {\color{red} (-0.10)} \\
 \cellcolor{gray!50}Ours & \cellcolor{gray!50}\textbf{0.99} \\
+\cellcolor[HTML]{D9EAD3}Exact & \textcolor[HTML]{CC0000}{1.00} \\
 \bottomrule
 \end{tabular}
 \end{table}
