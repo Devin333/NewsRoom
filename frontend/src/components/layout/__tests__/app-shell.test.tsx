@@ -1,7 +1,6 @@
 import { fireEvent, render, screen, within } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { AppShell } from "@/components/layout/app-shell"
-import { comicSansFontFamily } from "@/lib/fonts"
 import { useUiStore } from "@/stores/ui-store"
 
 const navigationState = vi.hoisted(() => ({
@@ -37,8 +36,8 @@ describe("AppShell", () => {
     expect(screen.getByRole("button", { name: "Today" })).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Trends" })).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Reports" })).toBeInTheDocument()
-    expect(screen.getByRole("navigation", { name: "Portal modules" })).toHaveStyle({ fontFamily: comicSansFontFamily })
-    expect(screen.getByPlaceholderText(/search papers/i)).toHaveStyle({ fontFamily: comicSansFontFamily })
+    expect(screen.getByRole("navigation", { name: "Portal modules" })).not.toHaveAttribute("style")
+    expect(screen.getByPlaceholderText(/search papers/i)).not.toHaveAttribute("style")
     expect(screen.getByPlaceholderText(/search papers/i)).toBeInTheDocument()
     expect(screen.queryByRole("link", { name: "Today" })).not.toBeInTheDocument()
   })

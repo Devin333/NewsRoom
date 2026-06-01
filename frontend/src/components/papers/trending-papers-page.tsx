@@ -197,25 +197,25 @@ export function TrendingPapersPage({ locale, papers }: { locale: Locale; papers:
         ]}
         aside={<PaperPeriodTabs value={period} locale={locale} hrefForPeriod={periodHref} onChange={updatePeriod} fullWidth />}
       />
-      <div className="mt-6 border-t border-[#d7dfd8] dark:border-border" />
+      <div className="mt-3 border-t border-[#dfe5df] dark:border-border" />
       {error || notices.length ? (
-        <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+        <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50/90 px-4 py-3 text-sm leading-6 text-amber-900">
           {[...new Set(notices)].join(" ")}
           {error ? ` ${error}` : null}
         </div>
       ) : null}
-      <div className="mt-8 grid gap-12 xl:grid-cols-[15rem_minmax(0,1fr)] 2xl:grid-cols-[16rem_minmax(0,1fr)] 2xl:gap-16">
+      <div className="mt-6 grid gap-6 xl:grid-cols-[14rem_minmax(0,1fr)] 2xl:grid-cols-[15rem_minmax(0,1fr)]">
         <PapersDomainSidebar methodAreas={methodAreas} topTasks={topDomains} dashboardPapers={dashboardPapers} locale={locale} />
         <div className="space-y-3">
           {isLoading ? (
-            <p className="text-sm text-[#334155]/55 dark:text-muted-foreground">
+            <p className="rounded-lg border border-[#dfe5df] bg-white/60 px-4 py-3 text-sm text-[#334155]/60 dark:border-border dark:bg-card/40 dark:text-muted-foreground">
               {t(papersCopy.updatingPapers, locale)}
             </p>
           ) : null}
           <PaperStream
             papers={visiblePapers}
             locale={locale}
-            title=""
+            title={locale === "zh" ? "论文流" : "Paper feed"}
             emptyDescription={paperEmptyDescription({ query, notices, error, locale })}
             sort={sort}
             onSortChange={updateSort}
@@ -431,7 +431,7 @@ function PaperPagination({
   return (
     <nav
       aria-label={locale === "zh" ? "论文分页" : "Paper pagination"}
-      className="flex flex-col gap-3 border-t border-[#d8dfd8] py-6 sm:flex-row sm:items-center sm:justify-between dark:border-border"
+      className="flex flex-col gap-3 rounded-xl border border-[#dfe5df] bg-white/60 px-4 py-4 sm:flex-row sm:items-center sm:justify-between dark:border-border dark:bg-card/40"
     >
       <p className="text-xs font-medium text-[#334155]/62 dark:text-muted-foreground">{rangeLabel}</p>
       <div className="flex flex-wrap items-center gap-2">
@@ -439,7 +439,7 @@ function PaperPagination({
           type="button"
           variant="outline"
           size="icon"
-          className="size-8 bg-white dark:bg-card"
+          className="size-8 rounded-lg bg-white shadow-none dark:bg-card"
           aria-label={previousLabel}
           disabled={safePage <= 1}
           onClick={() => onPageChange(safePage - 1)}
@@ -453,7 +453,7 @@ function PaperPagination({
               type="button"
               variant={item === safePage ? "default" : "outline"}
               size="sm"
-              className="h-8 min-w-8 px-2"
+              className="h-8 min-w-8 rounded-lg px-2 shadow-none"
               aria-label={locale === "zh" ? `第 ${item} 页` : `Page ${item}`}
               aria-current={item === safePage ? "page" : undefined}
               onClick={() => onPageChange(item)}
@@ -470,7 +470,7 @@ function PaperPagination({
           type="button"
           variant="outline"
           size="icon"
-          className="size-8 bg-white dark:bg-card"
+          className="size-8 rounded-lg bg-white shadow-none dark:bg-card"
           aria-label={nextLabel}
           disabled={safePage >= totalPages}
           onClick={() => onPageChange(safePage + 1)}

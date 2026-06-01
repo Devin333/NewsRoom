@@ -16,16 +16,16 @@ export function PaperSortTabs({
   onChange: (sort: PaperSort) => void
 }) {
   return (
-    <div className="inline-flex gap-5" aria-label="Paper sort">
+    <div className="inline-flex rounded-lg border border-[#dfe5df] bg-white/75 p-1 dark:border-border dark:bg-card" aria-label="Paper sort">
       {sorts.map((sort) => (
         <button
           key={sort}
           type="button"
           className={cn(
-            "relative h-8 text-sm font-medium transition-colors after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:origin-left after:scale-x-0 after:bg-emerald-600 after:transition-transform",
+            "h-8 rounded-md px-3 text-sm font-medium transition-colors",
             value === sort
-              ? "text-[#334155] after:scale-x-100 dark:text-foreground"
-              : "text-[#334155]/55 hover:text-[#334155] dark:text-muted-foreground"
+              ? "bg-[#172033] text-white shadow-sm dark:bg-primary dark:text-primary-foreground"
+              : "text-[#334155]/58 hover:bg-[#eef2ec] hover:text-[#172033] dark:text-muted-foreground dark:hover:bg-secondary"
           )}
           onClick={() => onChange(sort)}
         >

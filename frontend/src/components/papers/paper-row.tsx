@@ -39,10 +39,10 @@ export function PaperRow({
   return (
     <article
       data-testid="paper-row"
-      className="group cursor-pointer rounded-[1.75rem] px-3 py-7 transition-colors first:pt-6 last:pb-3 hover:bg-[#f7faf7]/80 sm:px-4 dark:hover:bg-card/40"
+      className="group cursor-pointer rounded-xl px-3 py-5 transition-colors first:pt-5 last:pb-3 hover:bg-white/70 sm:px-4 dark:hover:bg-card/45"
       onClick={handleRowClick}
     >
-      <div className="grid gap-6 lg:grid-cols-[10.5rem_minmax(0,1fr)] xl:gap-8">
+      <div className="grid gap-5 lg:grid-cols-[8.5rem_minmax(0,1fr)] xl:gap-6">
         <div
           role="button"
           tabIndex={0}
@@ -60,8 +60,8 @@ export function PaperRow({
         </div>
 
         <div className="min-w-0 space-y-4">
-          <Link href={papersRoutes.detail(paper.slug || paper.id)} className="block text-left">
-            <h2 className="max-w-5xl text-balance text-xl font-black leading-7 text-[#334155] sm:text-[1.72rem] sm:leading-8 dark:text-foreground">
+          <Link href={papersRoutes.detail(paper.slug || paper.id)} className="block text-left hover:text-primary">
+            <h2 className="max-w-4xl text-balance text-xl font-semibold leading-7 text-[#1f2933] sm:text-[1.35rem] sm:leading-8 dark:text-foreground">
               {paperTitle(paper, locale)}
             </h2>
           </Link>
@@ -75,7 +75,7 @@ export function PaperRow({
             ))}
           </p>
 
-          <p className="line-clamp-3 max-w-4xl text-[0.98rem] leading-7 text-[#334155]/72 dark:text-muted-foreground">
+          <p className="line-clamp-3 max-w-4xl text-[0.95rem] leading-6 text-[#334155]/72 dark:text-muted-foreground">
             {paperSnippet(paper, locale)}
           </p>
 
@@ -149,7 +149,7 @@ function PaperActionPill({
       variant="outline"
       size="sm"
       aria-label={ariaLabel}
-      className="h-auto rounded-full border-[#dbe3dc] bg-white px-3.5 py-2 text-left hover:bg-[#eef4ef] dark:border-border dark:bg-card dark:hover:bg-secondary"
+      className="h-auto rounded-lg border-[#dbe3dc] bg-white px-3 py-1.5 text-left shadow-none hover:bg-[#eef4ef] dark:border-border dark:bg-card dark:hover:bg-secondary"
     >
       <a href={href} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2.5">
         <span className="text-[#334155]/65 dark:text-muted-foreground">{icon}</span>

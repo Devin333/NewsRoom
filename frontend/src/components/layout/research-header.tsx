@@ -9,7 +9,6 @@ import { PapersThemeToggle } from "@/components/papers/shared/theme-toggle"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Sheet, SheetClose, SheetContent, SheetDescription, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
-import { comicSansFont } from "@/lib/fonts"
 import { papersCopy, t } from "@/lib/papers/copy"
 import type { Locale } from "@/lib/papers/types"
 import { cn } from "@/lib/utils"
@@ -55,10 +54,10 @@ export function ResearchHeader({
   }
 
   return (
-    <header className="sticky top-0 z-40 border-b border-[#dfe5df] bg-white/90 backdrop-blur dark:border-border dark:bg-card/95">
-      <div className="mx-auto flex min-h-[64px] max-w-[1920px] items-center gap-5 px-4 py-2 sm:px-6 2xl:px-0">
+    <header className="sticky top-0 z-40 border-b border-[#e2e7df] bg-white/90 backdrop-blur-xl dark:border-border dark:bg-card/95">
+      <div className="mx-auto flex min-h-[60px] max-w-[1440px] items-center gap-4 px-4 py-2 sm:px-6 lg:px-8">
         <Link href="/papers" className="flex shrink-0 items-center gap-3" aria-label="NewsRoom Research">
-          <span className="flex size-9 items-center justify-center rounded-full bg-[#0f172a] text-sm font-black text-white">
+          <span className="flex size-9 items-center justify-center rounded-xl bg-[#172033] text-sm font-black text-white shadow-sm">
             N
           </span>
           <span>
@@ -77,7 +76,7 @@ export function ResearchHeader({
             }
           }}
         >
-          <nav className="flex items-center gap-2" aria-label="Portal modules" style={comicSansFont}>
+          <nav className="flex items-center gap-1.5" aria-label="Portal modules">
             {researchHeaderGroups.map((group) => {
               const active = activeGroupId === group.id
               const current = isNavGroupCurrent(pathname, group)
@@ -94,8 +93,8 @@ export function ResearchHeader({
                   <button
                     type="button"
                     className={cn(
-                      "inline-flex h-9 items-center gap-1 rounded-full px-4 text-sm font-medium text-[#334155] transition-colors hover:bg-[#eef3ef] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:text-foreground dark:hover:bg-secondary",
-                      (active || current) && "bg-[#eef3ef] text-[#0f172a] dark:bg-secondary dark:text-foreground"
+                      "inline-flex h-9 items-center gap-1 rounded-full px-3.5 text-sm font-medium text-[#334155]/75 transition-colors hover:bg-[#eef2ec] hover:text-[#172033] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:text-foreground dark:hover:bg-secondary",
+                      (active || current) && "bg-[#eef2ec] text-[#172033] dark:bg-secondary dark:text-foreground"
                     )}
                     aria-expanded={active}
                     aria-controls={dropdownId}
@@ -119,9 +118,8 @@ export function ResearchHeader({
             name="q"
             value={searchQuery}
             onChange={(event) => setSearchQuery(event.target.value)}
-            className="h-10 rounded-full border-[#d7dfd8] bg-white pl-9 shadow-sm dark:border-border dark:bg-card"
+            className="h-10 rounded-full border-[#d9e0d8] bg-[#fbfcfa] pl-9 shadow-none transition-colors focus-visible:bg-white dark:border-border dark:bg-card"
             placeholder={t(papersCopy.searchPlaceholder, locale)}
-            style={comicSansFont}
           />
         </form>
         <div className="hidden items-center gap-2 sm:flex">
@@ -151,14 +149,13 @@ export function ResearchHeader({
                 onChange={(event) => setSearchQuery(event.target.value)}
                 className="h-9 pl-9"
                 placeholder={t(papersCopy.searchPlaceholder, locale)}
-                style={comicSansFont}
               />
             </form>
             <div className="mb-4 flex flex-wrap items-center gap-2 sm:hidden">
               <PapersThemeToggle theme={theme} locale={locale} onThemeChange={onThemeChange} />
               <PapersLanguageToggle locale={locale} onLocaleChange={onLocaleChange} />
             </div>
-            <nav className="space-y-4" aria-label="Research mobile navigation" style={comicSansFont}>
+            <nav className="space-y-4" aria-label="Research mobile navigation">
               {researchHeaderGroups.map((group) => (
                 <div key={group.id}>
                   <p className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
@@ -236,7 +233,7 @@ function ResearchHeaderDropdown({
 }) {
   return (
     <div id={id} className="absolute left-0 top-full z-50 w-[min(30rem,calc(100vw-2rem))] pt-2">
-      <div className="rounded-md border border-border bg-popover p-3 text-popover-foreground shadow-soft">
+      <div className="rounded-xl border border-[#dfe5df] bg-white p-2.5 text-popover-foreground shadow-[0_18px_50px_rgba(15,23,42,0.12)] dark:border-border dark:bg-popover">
         <div className="grid gap-1">
           {group.items.map((item) => {
             const current = isNavItemCurrent(pathname, item)
@@ -249,8 +246,8 @@ function ResearchHeaderDropdown({
                 key={item.href}
                 href={item.href}
                 className={cn(
-                  "group rounded-md px-3 py-2 transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                  current && "bg-emerald-50 text-emerald-950 dark:bg-emerald-950/20"
+                  "group rounded-lg px-3 py-2.5 transition-colors hover:bg-[#f3f6f2] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:hover:bg-secondary",
+                  current && "bg-[#edf6f0] text-emerald-950 dark:bg-emerald-950/20"
                 )}
                 aria-current={current ? "page" : undefined}
                 aria-labelledby={labelId}
@@ -349,7 +346,7 @@ const researchHeaderGroups: HeaderNavGroup[] = [
       {
         href: "/projects",
         label: { zh: "项目总览", en: "Projects" },
-        description: { zh: "热门、新星、工具、案例、实验室和关注列表的统一入口。", en: "Unified entry for hot, rising, tools, cases, Lab, collections, and watchlist." }
+        description: { zh: "热门、新星、工具、案例、实验室、合集和关注列表的统一入口。", en: "Unified entry for hot, rising, tools, cases, Lab, collections, and watchlist." }
       },
       {
         href: "/projects/hot",
