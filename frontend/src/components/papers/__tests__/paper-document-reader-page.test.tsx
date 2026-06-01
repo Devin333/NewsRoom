@@ -72,6 +72,7 @@ describe("PaperDocumentReaderPage", () => {
     expect(within(article).getByText("0.99")).toBeInTheDocument()
     expect(within(article).getByText("Ours").closest("td")).toHaveStyle({ backgroundColor: "#d9ead3" })
     expect(within(article).getByText("0.99").closest("td")).toHaveStyle({ color: "#cc0000" })
+    expect(within(article).getByText("0.99").closest("tr")?.className).toContain("ruleAfter")
     expect(within(article).queryByText("UNKNOWN")).not.toBeInTheDocument()
     expect(within(article).queryByText("unknown")).not.toBeInTheDocument()
     expect(screen.queryByText("Figure 1", { selector: "span" })).not.toBeInTheDocument()
@@ -422,6 +423,7 @@ const compiledPayload: PaperDocumentResponse = {
               },
               {
                 rulesBefore: ["midrule"],
+                rulesAfter: ["bottomrule"],
                 rowStyle: { backgroundColor: "#f2f2f2" },
                 cells: [
                   { text: "Ours", html: "Ours", classes: ["paperTableColorGray"], style: { backgroundColor: "#d9ead3" } },

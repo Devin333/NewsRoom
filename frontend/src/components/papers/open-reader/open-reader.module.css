@@ -409,6 +409,14 @@
   border-top: 1.8px solid #101826;
 }
 
+.ruleAfter_bottomrule > .paperTableCell {
+  border-bottom: 1.8px solid #101826;
+}
+
+.ruleAfter_midrule > .paperTableCell {
+  border-bottom: 1.4px solid #313b4d;
+}
+
 .alignLeft {
   text-align: left;
 }

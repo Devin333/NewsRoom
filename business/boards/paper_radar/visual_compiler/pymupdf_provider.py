@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import math
 import re
 from collections.abc import Mapping, Sequence
@@ -11,6 +12,7 @@ from typing import Any
 
 from business.boards.paper_radar.visual_compiler.models import (
     PAPER_DOCUMENT_SCHEMA_VERSION,
+    PAPER_TABLE_MODEL_STYLE_SCHEMA_VERSION,
     PaperAssetManifest,
     PaperBlock,
     PaperCompileInfo,
@@ -307,6 +309,22 @@ class PyMuPDFPaperCompiler:
                     caption = _caption_for_model_region(region, captions, page_height=page_height) if region.kind in {"figure", "table"} else None
                     label = region.label or _caption_label(caption) or _default_visual_label(region.kind)
                     caption_text = region.caption or _caption_text(caption) or label
+                    metadata = {
+                        "layoutProvider": self.layout_provider.provider_name,
+                        "layoutConfidence": region.confidence,
+                        **dict(region.metadata),
+                    }
+                    if region.kind == "table":
+                        metadata.update(
+                            _table_metadata_for_crop(
+                                region.bbox,
+                                text_blocks,
+                                page=page,
+                                page_width=page_width,
+                                page_height=page_height,
+                                label=label,
+                            )
+                        )
                     asset = self._crop_visual_asset(
                         page=page,
                         matrix=matrix,
@@ -319,11 +337,7 @@ class PyMuPDFPaperCompiler:
                         page_width=page_width,
                         page_height=page_height,
                         assets_dir=assets_dir,
-                        metadata={
-                            "layoutProvider": self.layout_provider.provider_name,
-                            "layoutConfidence": region.confidence,
-                            **dict(region.metadata),
-                        },
+                        metadata=metadata,
                     )
                     if asset is None or asset.assetId in visual_keys:
                         continue
@@ -360,6 +374,18 @@ class PyMuPDFPaperCompiler:
                 page_width=page_width,
                 page_height=page_height,
             )
+            metadata = {"imageBlockCount": len(group["bboxes"])}
+            if caption["kind"] == "table":
+                metadata.update(
+                    _table_metadata_for_crop(
+                        crop_bbox,
+                        text_blocks,
+                        page=page,
+                        page_width=page_width,
+                        page_height=page_height,
+                        label=caption["label"],
+                    )
+                )
             asset = self._crop_visual_asset(
                 page=page,
                 matrix=matrix,
@@ -372,7 +398,7 @@ class PyMuPDFPaperCompiler:
                 page_width=page_width,
                 page_height=page_height,
                 assets_dir=assets_dir,
-                metadata={"imageBlockCount": len(group["bboxes"])},
+                metadata=metadata,
             )
             if asset is None or asset.assetId in visual_keys:
                 continue
@@ -402,6 +428,18 @@ class PyMuPDFPaperCompiler:
             if any(_rects_close(caption["bbox"], asset.source.bbox if asset.source else None) for asset, _, _ in visual_assets):
                 continue
             crop_bbox = _caption_visual_bbox(caption, page_width=page_width, page_height=page_height)
+            metadata = {}
+            if caption["kind"] == "table":
+                metadata.update(
+                    _table_metadata_for_crop(
+                        crop_bbox,
+                        text_blocks,
+                        page=page,
+                        page_width=page_width,
+                        page_height=page_height,
+                        label=caption["label"],
+                    )
+                )
             asset = self._crop_visual_asset(
                 page=page,
                 matrix=matrix,
@@ -414,6 +452,7 @@ class PyMuPDFPaperCompiler:
                 page_width=page_width,
                 page_height=page_height,
                 assets_dir=assets_dir,
+                metadata=metadata,
             )
             if asset is None or asset.assetId in visual_keys:
                 diagnostics.append(
@@ -528,6 +567,11 @@ class PyMuPDFPaperCompiler:
             )
 
         for visual_index, (asset, y, x) in enumerate(visual_assets, start=1):
+            block_metadata = {"visualIndex": visual_index}
+            if asset.kind == "table":
+                table_metadata = _table_metadata_from_asset(asset)
+                if table_metadata:
+                    block_metadata.update(table_metadata)
             content_items.append(
                 (
                     y,
@@ -543,7 +587,7 @@ class PyMuPDFPaperCompiler:
                         label=asset.label,
                         caption=asset.caption,
                         source=asset.source,
-                        metadata={"visualIndex": visual_index},
+                        metadata=block_metadata,
                     ),
                 )
             )
@@ -669,37 +713,105 @@ class PyMuPDFPaperCompiler:
 
 def _page_text_blocks(page: Any) -> list[dict[str, Any]]:
     payload = page.get_text("dict")
+    page_words = _page_word_items(page)
     blocks: list[dict[str, Any]] = []
     for raw_block in payload.get("blocks", []):
         if raw_block.get("type") != 0:
             continue
+        block_number = raw_block.get("number")
         lines = raw_block.get("lines") or []
         line_texts: list[str] = []
         font_sizes: list[float] = []
+        line_items: list[dict[str, Any]] = []
         for line in lines:
             spans = line.get("spans") or []
-            text = "".join(str(span.get("text") or "") for span in spans)
-            text = _normalize_space(text)
+            raw_text = "".join(str(span.get("text") or "") for span in spans)
+            text = _normalize_space(raw_text)
+            span_items: list[dict[str, Any]] = []
+            span_bboxes: list[tuple[float, float, float, float]] = []
             if text:
                 line_texts.append(text)
             for span in spans:
                 size = span.get("size")
                 if isinstance(size, (int, float)) and math.isfinite(size):
                     font_sizes.append(float(size))
+                span_text = _normalize_space(str(span.get("text") or ""))
+                span_bbox = _bbox_tuple(span.get("bbox"))
+                if span_text and span_bbox is not None:
+                    span_bboxes.append(span_bbox)
+                    span_items.append(
+                        {
+                            "text": span_text,
+                            "bbox": span_bbox,
+                            "color": _pdf_color_to_hex(span.get("color")),
+                        }
+                    )
+            line_bbox = _bbox_tuple(line.get("bbox")) or (_merged_bbox(span_bboxes) if span_bboxes else None)
+            if text and line_bbox is not None:
+                line_items.append(
+                    {
+                        "text": text,
+                        "rawText": raw_text,
+                        "bbox": line_bbox,
+                        "spans": span_items,
+                    }
+                )
         text = _normalize_pdf_text_lines(line_texts)
         bbox = _bbox_tuple(raw_block.get("bbox"))
         if not text or bbox is None:
             continue
+        block_words = [
+            word
+            for word in page_words
+            if (
+                (block_number is not None and word.get("blockNumber") == block_number)
+                or _rect_center_inside(word["bbox"], _expand_bbox_xy(bbox, page_width=float(page.rect.width), page_height=float(page.rect.height), margin_x=1.0, margin_y=1.0))
+            )
+        ]
+        for line_item in line_items:
+            line_bbox = line_item["bbox"]
+            line_item["words"] = [
+                word
+                for word in block_words
+                if word.get("lineNumber") is None or _rect_center_inside(word["bbox"], _expand_bbox_xy(line_bbox, page_width=float(page.rect.width), page_height=float(page.rect.height), margin_x=2.0, margin_y=2.0))
+            ]
         blocks.append(
             {
                 "text": text,
                 "bbox": bbox,
                 "fontSize": max(font_sizes) if font_sizes else None,
                 "lineCount": len(line_texts),
+                "lines": line_items,
+                "words": block_words,
             }
         )
     blocks.sort(key=lambda item: (item["bbox"][1], item["bbox"][0]))
     return _merge_caption_continuations(blocks)
+
+
+def _page_word_items(page: Any) -> list[dict[str, Any]]:
+    try:
+        raw_words = page.get_text("words", sort=True)
+    except Exception:
+        return []
+    words: list[dict[str, Any]] = []
+    for raw_word in raw_words:
+        if not isinstance(raw_word, Sequence) or len(raw_word) < 5:
+            continue
+        bbox = _bbox_tuple(raw_word[:4])
+        text = _normalize_space(str(raw_word[4] or ""))
+        if bbox is None or not text:
+            continue
+        words.append(
+            {
+                "text": text,
+                "bbox": bbox,
+                "blockNumber": raw_word[5] if len(raw_word) > 5 and isinstance(raw_word[5], int) else None,
+                "lineNumber": raw_word[6] if len(raw_word) > 6 and isinstance(raw_word[6], int) else None,
+                "wordNumber": raw_word[7] if len(raw_word) > 7 and isinstance(raw_word[7], int) else None,
+            }
+        )
+    return words
 
 
 def _merge_caption_continuations(blocks: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1016,6 +1128,631 @@ def _looks_like_table_row(text: str) -> bool:
     numeric_ratio = len(numbers) / max(1, len(tokens))
     citation_count = len(re.findall(r"\[[0-9, ]+\]", compact))
     return numeric_ratio >= 0.28 or citation_count >= 2
+
+
+def _table_metadata_for_crop(
+    crop_bbox: tuple[float, float, float, float],
+    text_blocks: Sequence[Mapping[str, Any]],
+    *,
+    page: Any,
+    page_width: float,
+    page_height: float,
+    label: str,
+) -> Mapping[str, Any]:
+    model = _table_model_for_crop(
+        crop_bbox,
+        text_blocks,
+        page=page,
+        page_width=page_width,
+        page_height=page_height,
+        label=label,
+    )
+    if not model:
+        return {}
+    table_html = _table_model_html(model, label=label)
+    return {
+        "sourceKind": "pdf-text-table-model",
+        "sourceMapping": "pdf-fallback",
+        "tableModel": model,
+        "tableHtml": table_html,
+        "tableText": _table_model_text(model),
+    }
+
+
+def _table_metadata_from_asset(asset: PaperVisualAsset) -> Mapping[str, Any]:
+    metadata = asset.metadata if isinstance(asset.metadata, Mapping) else {}
+    table_model = metadata.get("tableModel")
+    table_html = metadata.get("tableHtml")
+    if not isinstance(table_model, Mapping) or not isinstance(table_html, str) or not table_html.strip():
+        return {}
+    return {
+        key: metadata[key]
+        for key in ("sourceKind", "sourceMapping", "tableModel", "tableHtml", "tableText")
+        if key in metadata and metadata[key] not in (None, "", [], {})
+    }
+
+
+def _table_model_for_crop(
+    crop_bbox: tuple[float, float, float, float],
+    text_blocks: Sequence[Mapping[str, Any]],
+    *,
+    page: Any,
+    page_width: float,
+    page_height: float,
+    label: str,
+) -> Mapping[str, Any] | None:
+    words = _table_words_for_crop(crop_bbox, text_blocks, page_width=page_width, page_height=page_height)
+    if not words:
+        return None
+    row_groups = _cluster_table_rows(words)
+    if not row_groups:
+        return None
+    drawings = _table_drawing_primitives(page, crop_bbox)
+    rows_with_geometry = _table_rows_from_word_groups(row_groups, text_blocks=text_blocks, drawings=drawings)
+    multi_cell_rows = [row for row in rows_with_geometry if len(row["cells"]) >= 2]
+    if not multi_cell_rows:
+        return None
+    first_y = min(row["bbox"][1] for row in multi_cell_rows)
+    last_y = max(row["bbox"][3] for row in multi_cell_rows)
+    rows_with_geometry = [
+        row
+        for row in rows_with_geometry
+        if first_y - 18 <= row["bbox"][1] <= last_y + 18
+        and (len(row["cells"]) >= 2 or _looks_like_table_heading_row(row["text"]))
+    ]
+    if not rows_with_geometry:
+        return None
+
+    max_columns = min(20, max(len(row["cells"]) for row in rows_with_geometry))
+    alignments = _infer_table_alignments(rows_with_geometry, max_columns)
+    rows: list[dict[str, Any]] = []
+    horizontal_rules = drawings["horizontalRules"]
+    for row_index, row in enumerate(rows_with_geometry):
+        row_bbox = row["bbox"]
+        row_payload: dict[str, Any] = {
+            "cells": [
+                _table_cell_payload(
+                    cell,
+                    text_blocks=text_blocks,
+                    fills=drawings["fills"],
+                    default_align=alignments[min(cell_index, len(alignments) - 1)] if alignments else "center",
+                    header=row_index == 0,
+                )
+                for cell_index, cell in enumerate(row["cells"][:max_columns])
+            ],
+            "rulesBefore": _rules_before_row(row_bbox, row_index=row_index, horizontal_rules=horizontal_rules),
+        }
+        row_style = _table_background_style(row_bbox, drawings["fills"], min_overlap=0.58)
+        if row_style:
+            row_payload["rowStyle"] = row_style
+        if row_index == len(rows_with_geometry) - 1:
+            rules_after = _rules_after_row(row_bbox, horizontal_rules=horizontal_rules)
+            if rules_after:
+                row_payload["rulesAfter"] = rules_after
+        rows.append(row_payload)
+
+    if rows and "rulesAfter" not in rows[-1]:
+        rows[-1]["rulesAfter"] = ["bottomrule"]
+    return {
+        "version": 1,
+        "styleSchemaVersion": PAPER_TABLE_MODEL_STYLE_SCHEMA_VERSION,
+        "sourceKind": "pdf-text-table-model",
+        "alignments": alignments,
+        "rows": rows,
+    }
+
+
+def _table_words_for_crop(
+    crop_bbox: tuple[float, float, float, float],
+    text_blocks: Sequence[Mapping[str, Any]],
+    *,
+    page_width: float,
+    page_height: float,
+) -> list[dict[str, Any]]:
+    guard = _expand_bbox_xy(
+        crop_bbox,
+        page_width=page_width,
+        page_height=page_height,
+        margin_x=max(3.0, page_width * 0.006),
+        margin_y=max(3.0, page_height * 0.006),
+    )
+    caption_bboxes = [
+        bbox
+        for block in text_blocks
+        if _caption_info(block) is not None
+        for bbox in [block.get("bbox")]
+        if isinstance(bbox, tuple)
+    ]
+    words: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for block in text_blocks:
+        block_words = block.get("words")
+        if not isinstance(block_words, Sequence):
+            continue
+        for word in block_words:
+            if not isinstance(word, Mapping):
+                continue
+            text = _normalize_space(str(word.get("text") or ""))
+            bbox = word.get("bbox")
+            if not text or not isinstance(bbox, tuple):
+                continue
+            if not _rect_center_inside(bbox, guard):
+                continue
+            if any(_rect_center_inside(bbox, caption_bbox) for caption_bbox in caption_bboxes):
+                continue
+            if _is_structural_table_noise(text):
+                continue
+            key = (text, _bbox_key(bbox))
+            if key in seen:
+                continue
+            seen.add(key)
+            words.append({"text": text, "bbox": bbox})
+    words.sort(key=lambda item: (item["bbox"][1], item["bbox"][0]))
+    return words
+
+
+def _cluster_table_rows(words: Sequence[Mapping[str, Any]]) -> list[list[dict[str, Any]]]:
+    groups: list[list[dict[str, Any]]] = []
+    heights = [
+        max(1.0, word["bbox"][3] - word["bbox"][1])
+        for word in words
+        if isinstance(word.get("bbox"), tuple)
+    ]
+    tolerance = max(4.0, _median(heights) * 0.72)
+    centers: list[float] = []
+    for word in sorted(words, key=lambda item: ((item["bbox"][1] + item["bbox"][3]) / 2, item["bbox"][0])):
+        bbox = word["bbox"]
+        center = (bbox[1] + bbox[3]) / 2
+        target_index = next((index for index, row_center in enumerate(centers) if abs(center - row_center) <= tolerance), None)
+        item = {"text": str(word["text"]), "bbox": bbox}
+        if target_index is None:
+            groups.append([item])
+            centers.append(center)
+            continue
+        groups[target_index].append(item)
+        centers[target_index] = (centers[target_index] * (len(groups[target_index]) - 1) + center) / len(groups[target_index])
+    for group in groups:
+        group.sort(key=lambda item: item["bbox"][0])
+    groups.sort(key=lambda group: (_merged_bbox([item["bbox"] for item in group])[1], _merged_bbox([item["bbox"] for item in group])[0]))
+    return groups
+
+
+def _table_rows_from_word_groups(
+    row_groups: Sequence[Sequence[Mapping[str, Any]]],
+    *,
+    text_blocks: Sequence[Mapping[str, Any]],
+    drawings: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for group in row_groups:
+        cells = _split_table_row_cells(group)
+        if not cells:
+            continue
+        row_bbox = _merged_bbox([cell["bbox"] for cell in cells])
+        row_text = " ".join(str(cell["text"]) for cell in cells)
+        if _caption_info({"text": row_text, "bbox": row_bbox}) is not None:
+            continue
+        rows.append({"bbox": row_bbox, "cells": cells, "text": row_text})
+    return rows
+
+
+def _split_table_row_cells(words: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    ordered = [word for word in words if isinstance(word.get("bbox"), tuple) and _normalize_space(str(word.get("text") or ""))]
+    ordered.sort(key=lambda item: item["bbox"][0])
+    if not ordered:
+        return []
+    heights = [max(1.0, word["bbox"][3] - word["bbox"][1]) for word in ordered]
+    widths = [max(1.0, word["bbox"][2] - word["bbox"][0]) for word in ordered]
+    gap_threshold = max(10.0, _median(heights) * 1.35, min(38.0, _median(widths) * 0.92))
+    cells: list[list[Mapping[str, Any]]] = [[ordered[0]]]
+    for previous, current in zip(ordered, ordered[1:]):
+        gap = current["bbox"][0] - previous["bbox"][2]
+        if gap > gap_threshold:
+            cells.append([current])
+        else:
+            cells[-1].append(current)
+    return [
+        {
+            "text": _normalize_space(" ".join(str(word["text"]) for word in cell_words)),
+            "bbox": _merged_bbox([word["bbox"] for word in cell_words]),
+        }
+        for cell_words in cells
+        if _normalize_space(" ".join(str(word["text"]) for word in cell_words))
+    ]
+
+
+def _table_cell_payload(
+    cell: Mapping[str, Any],
+    *,
+    text_blocks: Sequence[Mapping[str, Any]],
+    fills: Sequence[Mapping[str, Any]],
+    default_align: str,
+    header: bool,
+) -> dict[str, Any]:
+    text = _normalize_space(str(cell.get("text") or ""))
+    bbox = cell["bbox"]
+    style = _table_text_style(bbox, text_blocks)
+    background_style = _table_background_style(bbox, fills, min_overlap=0.42)
+    if background_style:
+        style = {**style, **background_style}
+    html_text = html.escape(text)
+    payload: dict[str, Any] = {
+        "text": text,
+        "html": f"<strong>{html_text}</strong>" if header else html_text,
+        "colspan": 1,
+        "rowspan": 1,
+        "align": _infer_cell_alignment(bbox, default_align=default_align),
+        "classes": [],
+        "style": style,
+    }
+    if not style:
+        payload["style"] = {}
+    return payload
+
+
+def _infer_table_alignments(rows: Sequence[Mapping[str, Any]], max_columns: int) -> list[str]:
+    alignments: list[str] = []
+    for column_index in range(max_columns):
+        values: list[str] = []
+        for row in rows:
+            cells = row.get("cells")
+            if not isinstance(cells, Sequence) or column_index >= len(cells):
+                continue
+            cell = cells[column_index]
+            if isinstance(cell, Mapping) and isinstance(cell.get("bbox"), tuple):
+                values.append(_infer_cell_alignment(cell["bbox"], default_align="center"))
+        if values:
+            alignments.append(max({"left", "center", "right"}, key=values.count))
+        else:
+            alignments.append("center")
+    return alignments
+
+
+def _infer_cell_alignment(bbox: tuple[float, float, float, float], *, default_align: str) -> str:
+    width = bbox[2] - bbox[0]
+    if width <= 0:
+        return default_align if default_align in {"left", "center", "right"} else "center"
+    # PDF fallback has no TeX column spec. Text-heavy first columns are normally left aligned;
+    # compact numeric columns are usually centered in arXiv tables.
+    return default_align if default_align in {"left", "center", "right"} else "center"
+
+
+def _table_text_style(
+    bbox: tuple[float, float, float, float],
+    text_blocks: Sequence[Mapping[str, Any]],
+) -> dict[str, str]:
+    colors: list[str] = []
+    for block in text_blocks:
+        lines = block.get("lines")
+        if not isinstance(lines, Sequence):
+            continue
+        for line in lines:
+            if not isinstance(line, Mapping):
+                continue
+            spans = line.get("spans")
+            if not isinstance(spans, Sequence):
+                continue
+            for span in spans:
+                if not isinstance(span, Mapping):
+                    continue
+                span_bbox = span.get("bbox")
+                color = span.get("color")
+                if not isinstance(span_bbox, tuple) or not isinstance(color, str):
+                    continue
+                if color.lower() in {"#000000", "#111111", "#1a1a1a"}:
+                    continue
+                if _intersection_over_min_area(span_bbox, bbox) >= 0.35 or _rect_center_inside(span_bbox, bbox):
+                    colors.append(color.lower())
+    if not colors:
+        return {}
+    dominant = max(set(colors), key=colors.count)
+    return {"color": dominant} if _is_safe_table_css_color(dominant) else {}
+
+
+def _table_background_style(
+    bbox: tuple[float, float, float, float],
+    fills: Sequence[Mapping[str, Any]],
+    *,
+    min_overlap: float,
+) -> dict[str, str]:
+    candidates: list[tuple[float, float, str]] = []
+    for fill in fills:
+        fill_bbox = fill.get("bbox")
+        color = fill.get("color")
+        if not isinstance(fill_bbox, tuple) or not isinstance(color, str):
+            continue
+        overlap = _intersection_over_min_area(bbox, fill_bbox)
+        if overlap >= min_overlap or _rect_center_inside(bbox, fill_bbox):
+            fill_area = max(1.0, (fill_bbox[2] - fill_bbox[0]) * (fill_bbox[3] - fill_bbox[1]))
+            candidates.append((overlap, -fill_area, color))
+    if not candidates:
+        return {}
+    color = sorted(candidates, key=lambda item: (item[0], item[1]), reverse=True)[0][2].lower()
+    return {"backgroundColor": color} if _is_safe_table_css_color(color) else {}
+
+
+def _table_drawing_primitives(page: Any, crop_bbox: tuple[float, float, float, float]) -> Mapping[str, Any]:
+    try:
+        drawings = page.get_drawings()
+    except Exception:
+        return {"fills": [], "horizontalRules": []}
+    fills: list[dict[str, Any]] = []
+    horizontal_rules: list[dict[str, Any]] = []
+    crop_width = crop_bbox[2] - crop_bbox[0]
+    for drawing in drawings:
+        if not isinstance(drawing, Mapping):
+            continue
+        fill_color = _pdf_color_to_hex(drawing.get("fill"))
+        stroke_color = _pdf_color_to_hex(drawing.get("color"))
+        rect = _rect_like(drawing.get("rect"))
+        if rect is not None and _intersection_over_min_area(rect, crop_bbox) > 0:
+            if fill_color and _is_visible_table_fill(fill_color):
+                fills.append({"bbox": rect, "color": fill_color.lower()})
+            if stroke_color and _is_visible_table_rule(stroke_color):
+                horizontal_rules.extend(_horizontal_rules_from_rect(rect, crop_bbox=crop_bbox, crop_width=crop_width, color=stroke_color))
+        items = drawing.get("items")
+        if not isinstance(items, Sequence):
+            continue
+        for item in items:
+            if not isinstance(item, Sequence) or not item:
+                continue
+            op = item[0]
+            if op == "l" and len(item) >= 3:
+                p0 = _point_xy(item[1])
+                p1 = _point_xy(item[2])
+                if p0 is not None and p1 is not None:
+                    rule = _horizontal_rule_from_points(p0, p1, crop_bbox=crop_bbox, crop_width=crop_width, color=stroke_color)
+                    if rule is not None:
+                        horizontal_rules.append(rule)
+            elif op == "re" and len(item) >= 2:
+                item_rect = _rect_like(item[1])
+                if item_rect is None or _intersection_over_min_area(item_rect, crop_bbox) <= 0:
+                    continue
+                if fill_color and _is_visible_table_fill(fill_color):
+                    fills.append({"bbox": item_rect, "color": fill_color.lower()})
+                if stroke_color and _is_visible_table_rule(stroke_color):
+                    horizontal_rules.extend(_horizontal_rules_from_rect(item_rect, crop_bbox=crop_bbox, crop_width=crop_width, color=stroke_color))
+    return {
+        "fills": _dedupe_drawing_items(fills),
+        "horizontalRules": _dedupe_drawing_items(horizontal_rules),
+    }
+
+
+def _horizontal_rules_from_rect(
+    rect: tuple[float, float, float, float],
+    *,
+    crop_bbox: tuple[float, float, float, float],
+    crop_width: float,
+    color: str | None,
+) -> list[dict[str, Any]]:
+    return [
+        rule
+        for rule in (
+            _horizontal_rule_from_points((rect[0], rect[1]), (rect[2], rect[1]), crop_bbox=crop_bbox, crop_width=crop_width, color=color),
+            _horizontal_rule_from_points((rect[0], rect[3]), (rect[2], rect[3]), crop_bbox=crop_bbox, crop_width=crop_width, color=color),
+        )
+        if rule is not None
+    ]
+
+
+def _horizontal_rule_from_points(
+    p0: tuple[float, float],
+    p1: tuple[float, float],
+    *,
+    crop_bbox: tuple[float, float, float, float],
+    crop_width: float,
+    color: str | None,
+) -> dict[str, Any] | None:
+    if abs(p0[1] - p1[1]) > 1.25:
+        return None
+    x0, x1 = sorted((p0[0], p1[0]))
+    y = (p0[1] + p1[1]) / 2
+    if y < crop_bbox[1] - 2 or y > crop_bbox[3] + 2:
+        return None
+    if min(x1, crop_bbox[2]) - max(x0, crop_bbox[0]) < max(32.0, crop_width * 0.18):
+        return None
+    return {"x0": x0, "x1": x1, "y": y, "color": (color or "#111111").lower()}
+
+
+def _rules_before_row(
+    row_bbox: tuple[float, float, float, float],
+    *,
+    row_index: int,
+    horizontal_rules: Sequence[Mapping[str, Any]],
+) -> list[str]:
+    row_height = max(1.0, row_bbox[3] - row_bbox[1])
+    nearby = [
+        rule
+        for rule in horizontal_rules
+        if isinstance(rule.get("y"), (int, float)) and abs(float(rule["y"]) - row_bbox[1]) <= max(4.0, row_height * 0.35)
+    ]
+    if row_index == 0:
+        return ["toprule"]
+    if nearby or row_index == 1:
+        return ["midrule"]
+    return []
+
+
+def _rules_after_row(
+    row_bbox: tuple[float, float, float, float],
+    *,
+    horizontal_rules: Sequence[Mapping[str, Any]],
+) -> list[str]:
+    row_height = max(1.0, row_bbox[3] - row_bbox[1])
+    if any(
+        isinstance(rule.get("y"), (int, float)) and abs(float(rule["y"]) - row_bbox[3]) <= max(4.0, row_height * 0.35)
+        for rule in horizontal_rules
+    ):
+        return ["bottomrule"]
+    return []
+
+
+def _table_model_html(model: Mapping[str, Any], *, label: str) -> str:
+    alignments = [str(item) for item in model.get("alignments", [])]
+    rows_html: list[str] = []
+    for row in model.get("rows", []):
+        if not isinstance(row, Mapping):
+            continue
+        row_classes = ["paperTableRow"]
+        row_classes.extend(f"rule-{rule}" for rule in row.get("rulesBefore", []) if isinstance(rule, str))
+        row_classes.extend(f"rule-after-{rule}" for rule in row.get("rulesAfter", []) if isinstance(rule, str))
+        row_style = _table_style_attr(row.get("rowStyle") if row.get("rowStyle") else row.get("zebraStyle"))
+        cells_html: list[str] = []
+        for cell_index, cell in enumerate(row.get("cells", [])):
+            if not isinstance(cell, Mapping):
+                continue
+            tag = "th" if not rows_html else "td"
+            align = cell.get("align") or (alignments[cell_index] if cell_index < len(alignments) else None)
+            classes = ["paperTableCell"]
+            if align in {"left", "center", "right"}:
+                classes.append(f"align-{align}")
+            classes.extend(str(item) for item in cell.get("classes", []) if isinstance(item, str) and item)
+            attrs = [f'class="{" ".join(html.escape(item) for item in classes)}"']
+            colspan = int(cell.get("colspan") or 1)
+            rowspan = int(cell.get("rowspan") or 1)
+            if colspan > 1:
+                attrs.append(f'colspan="{colspan}"')
+            if rowspan > 1:
+                attrs.append(f'rowspan="{rowspan}"')
+            cell_style = _table_style_attr(cell.get("style"))
+            if cell_style:
+                attrs.append(cell_style)
+            value = str(cell.get("html") or html.escape(str(cell.get("text") or "")))
+            cells_html.append(f"<{tag} {' '.join(attrs)}>{value}</{tag}>")
+        row_attrs = [f"class=\"{' '.join(html.escape(item) for item in row_classes)}\""]
+        if row_style:
+            row_attrs.append(row_style)
+        rows_html.append(f"<tr {' '.join(row_attrs)}>{''.join(cells_html)}</tr>")
+    return f"<table class=\"paperCompiledTable\" aria-label=\"{html.escape(label)}\"><tbody>{''.join(rows_html)}</tbody></table>"
+
+
+def _table_style_attr(value: Any) -> str:
+    if not isinstance(value, Mapping):
+        return ""
+    declarations: list[str] = []
+    color = value.get("color")
+    if isinstance(color, str) and _is_safe_table_css_color(color):
+        declarations.append(f"color: {color}")
+    background = value.get("backgroundColor")
+    if isinstance(background, str) and _is_safe_table_css_color(background):
+        declarations.append(f"background-color: {background}")
+    if not declarations:
+        return ""
+    return f"style=\"{html.escape('; '.join(declarations))}\""
+
+
+def _table_model_text(model: Mapping[str, Any]) -> str:
+    lines: list[str] = []
+    for row in model.get("rows", []):
+        if not isinstance(row, Mapping):
+            continue
+        cells = [
+            str(cell.get("text") or "").strip()
+            for cell in row.get("cells", [])
+            if isinstance(cell, Mapping) and str(cell.get("text") or "").strip()
+        ]
+        if cells:
+            lines.append(" | ".join(cells))
+    return "\n".join(lines)
+
+
+def _looks_like_table_heading_row(text: str) -> bool:
+    compact = _normalize_space(text)
+    if not compact or len(compact) > 90:
+        return False
+    if re.search(r"[.!?]\s*$", compact):
+        return False
+    return len(_WORD_PATTERN.findall(compact)) <= 12
+
+
+def _is_structural_table_noise(value: str) -> bool:
+    normalized = value.strip()
+    if not normalized:
+        return True
+    if normalized in {"[", "]", "{", "}", "|"}:
+        return True
+    return len(normalized) <= 1 and not normalized.isalnum()
+
+
+def _dedupe_drawing_items(items: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    seen: set[tuple[str, str]] = set()
+    deduped: list[dict[str, Any]] = []
+    for item in items:
+        bbox = item.get("bbox")
+        y = item.get("y")
+        color = str(item.get("color") or "")
+        key = (_bbox_key(bbox) if isinstance(bbox, tuple) else str(round(float(y), 2)) if isinstance(y, (int, float)) else "", color)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(dict(item))
+    return deduped
+
+
+def _rect_like(value: Any) -> tuple[float, float, float, float] | None:
+    if value is None:
+        return None
+    for attrs in (("x0", "y0", "x1", "y1"), ("left", "top", "right", "bottom")):
+        coords = [getattr(value, attr, None) for attr in attrs]
+        if all(isinstance(coord, (int, float)) and math.isfinite(float(coord)) for coord in coords):
+            return (float(coords[0]), float(coords[1]), float(coords[2]), float(coords[3]))
+    return _bbox_tuple(value)
+
+
+def _point_xy(value: Any) -> tuple[float, float] | None:
+    x = getattr(value, "x", None)
+    y = getattr(value, "y", None)
+    if isinstance(x, (int, float)) and isinstance(y, (int, float)) and math.isfinite(float(x)) and math.isfinite(float(y)):
+        return (float(x), float(y))
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)) and len(value) >= 2:
+        x_value, y_value = value[0], value[1]
+        if isinstance(x_value, (int, float)) and isinstance(y_value, (int, float)):
+            return (float(x_value), float(y_value))
+    return None
+
+
+def _pdf_color_to_hex(value: Any) -> str | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, int):
+        return f"#{(value >> 16) & 255:02x}{(value >> 8) & 255:02x}{value & 255:02x}"
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)) and len(value) >= 3:
+        channels: list[int] = []
+        for item in value[:3]:
+            if not isinstance(item, (int, float)) or not math.isfinite(float(item)):
+                return None
+            number = float(item)
+            channels.append(max(0, min(255, int(round(number * 255 if number <= 1 else number)))))
+        return f"#{channels[0]:02x}{channels[1]:02x}{channels[2]:02x}"
+    return None
+
+
+def _is_safe_table_css_color(value: str) -> bool:
+    return re.fullmatch(r"#[0-9a-fA-F]{6}", value) is not None
+
+
+def _is_visible_table_fill(value: str) -> bool:
+    if not _is_safe_table_css_color(value):
+        return False
+    r, g, b = int(value[1:3], 16), int(value[3:5], 16), int(value[5:7], 16)
+    return (r + g + b) / 3 < 245
+
+
+def _is_visible_table_rule(value: str) -> bool:
+    if not _is_safe_table_css_color(value):
+        return False
+    r, g, b = int(value[1:3], 16), int(value[3:5], 16), int(value[5:7], 16)
+    return (r + g + b) / 3 < 245
+
+
+def _median(values: Sequence[float]) -> float:
+    if not values:
+        return 1.0
+    ordered = sorted(values)
+    middle = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[middle]
+    return (ordered[middle - 1] + ordered[middle]) / 2
 
 
 def _text_block_overlaps_visual_asset(

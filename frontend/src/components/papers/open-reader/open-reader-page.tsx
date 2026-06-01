@@ -679,6 +679,7 @@ type PaperTableModel = {
       style?: PaperTableStyle | null
     }>
     rulesBefore?: string[]
+    rulesAfter?: string[]
     rowColor?: string | null
     rowStyle?: PaperTableStyle | null
     zebra?: string | null
@@ -704,6 +705,7 @@ function PaperTable({ model, label }: { model: PaperTableModel; label: string })
             const rowClasses = [
               styles.paperTableRow,
               ...(row.rulesBefore ?? []).map(tableRuleClass).filter(Boolean),
+              ...(row.rulesAfter ?? []).map(tableRuleAfterClass).filter(Boolean),
               tableClass(row.rowColor ?? row.zebra),
             ].filter(Boolean).join(" ")
             const rowStyle = tableStyle(row.rowStyle ?? row.zebraStyle)
@@ -789,6 +791,16 @@ function tableRuleClass(value?: string | null) {
     bottomrule: styles.rule_bottomrule,
     cmidrule: styles.rule_cmidrule,
     hline: styles.rule_midrule,
+  }
+  return map[value] ?? ""
+}
+
+function tableRuleAfterClass(value?: string | null) {
+  if (!value) return ""
+  const map: Record<string, string> = {
+    bottomrule: styles.ruleAfter_bottomrule,
+    midrule: styles.ruleAfter_midrule,
+    hline: styles.ruleAfter_midrule,
   }
   return map[value] ?? ""
 }

@@ -133,6 +133,9 @@ def test_visual_compiler_uses_model_layout_provider_for_table_and_figure_crops(t
     assert {block.type for block in visual_blocks} == {"figure", "table"}
     assert any(asset.kind == "table" and asset.metadata.get("layoutProvider") == "fake-model-layout-v1" for asset in draft.manifest.assets)
     assert any(asset.kind == "figure" and asset.metadata.get("layoutProvider") == "fake-model-layout-v1" for asset in draft.manifest.assets)
+    table_blocks = [block for block in visual_blocks if block.type == "table"]
+    assert table_blocks[0].metadata["tableModel"]["styleSchemaVersion"] == 2
+    assert table_blocks[0].metadata["tableText"] == "Method | Score | Delta"
     assert not any(asset.kind == "equation" for asset in draft.manifest.assets)
     assert equation_blocks
     assert all(block.assetId is None for block in equation_blocks)
@@ -140,6 +143,50 @@ def test_visual_compiler_uses_model_layout_provider_for_table_and_figure_crops(t
     assert any("y = Wx + b" in block.text for block in equation_blocks)
     assert all("Figure 1" not in block.text for block in equation_blocks)
     assert "AI summary must remain outside the body." not in "\n".join(block.text for block in draft.document.blocks)
+
+
+def test_visual_compiler_builds_structured_pdf_table_model_with_styles(tmp_path) -> None:
+    output_dir = tmp_path / "styled-pdf-table"
+    compiler = PyMuPDFPaperCompiler(dpi=96, layout_provider=_StyledPdfTableLayoutProvider(), max_visual_assets_per_page=4)
+
+    draft = compiler.compile(
+        pdf_bytes=_styled_pdf_table_bytes(),
+        paper={
+            "id": "styled-pdf-table-paper",
+            "title": "Styled PDF Table Paper",
+            "abstractSnippet": "AI summary must remain outside the body.",
+        },
+        output_dir=output_dir,
+        source_pdf_url="https://arxiv.org/pdf/2605.00006.pdf",
+        started_at=datetime(2026, 5, 28, tzinfo=timezone.utc),
+        finished_at=datetime(2026, 5, 28, tzinfo=timezone.utc),
+    )
+    gate_report = PaperAssetGate().validate(
+        document=draft.document,
+        manifest=draft.manifest,
+        paper_dir=output_dir,
+    )
+
+    table_blocks = [block for block in draft.document.blocks if block.type == "table"]
+    table_assets = [asset for asset in draft.manifest.assets if asset.kind == "table"]
+    assert gate_report["passed"] is True
+    assert len(table_blocks) == 1
+    assert len(table_assets) == 1
+    table_model = table_blocks[0].metadata["tableModel"]
+    assert table_model["styleSchemaVersion"] == 2
+    assert table_assets[0].metadata["tableModel"]["styleSchemaVersion"] == 2
+    assert table_blocks[0].metadata["sourceKind"] == "pdf-text-table-model"
+    assert table_blocks[0].metadata["tableText"] == "Method | Score | Delta\nOurs | 0.99 | +0.12\nBaseline | 0.72 | -0.03"
+    assert table_model["rows"][0]["rulesBefore"] == ["toprule"]
+    assert "midrule" in table_model["rows"][1]["rulesBefore"]
+    assert table_model["rows"][-1]["rulesAfter"] == ["bottomrule"]
+    cells = [cell for row in table_model["rows"] for cell in row["cells"]]
+    assert any(cell["text"] == "Ours" and cell.get("style", {}).get("backgroundColor") == "#e6f0ff" for cell in cells)
+    assert any(cell["text"] == "0.99" and cell.get("style", {}).get("backgroundColor") == "#d9ead3" for cell in cells)
+    assert any(cell["text"] == "+0.12" and cell.get("style", {}).get("color") == "#cc0000" for cell in cells)
+    assert "<strong>Method</strong>" in table_blocks[0].metadata["tableHtml"]
+    body_text = "\n".join(block.text for block in draft.document.blocks if block.type == "paragraph")
+    assert "Ours 0.99 +0.12" not in body_text
 
 
 def test_visual_compiler_prefers_model_equation_text_over_overlapping_pdf_prose(tmp_path) -> None:
@@ -1271,6 +1318,42 @@ def _layout_provider_pdf_bytes() -> bytes:
     return payload
 
 
+def _styled_pdf_table_bytes() -> bytes:
+    import fitz
+
+    document = fitz.open()
+    page = document.new_page(width=612, height=792)
+    page.insert_text((72, 72), "Styled PDF Table Paper", fontsize=20)
+    page.insert_textbox(
+        fitz.Rect(72, 112, 540, 170),
+        "This paragraph is real paper text from the PDF. The table below should be reconstructed as Reader-native cells.",
+        fontsize=11,
+    )
+    table_rect = fitz.Rect(120, 200, 520, 330)
+    header_y = 222
+    ours_y = 258
+    baseline_y = 294
+    page.draw_rect(fitz.Rect(120, 236, 520, 272), color=None, fill=(230 / 255, 240 / 255, 255 / 255), width=0)
+    page.draw_rect(fitz.Rect(280, 236, 400, 272), color=None, fill=(217 / 255, 234 / 255, 211 / 255), width=0)
+    for y in (200, 236, 330):
+        page.draw_line((table_rect.x0, y), (table_rect.x1, y), color=(0.05, 0.05, 0.05), width=1.2)
+    for x in (120, 280, 400, 520):
+        page.draw_line((x, table_rect.y0), (x, table_rect.y1), color=(0.25, 0.25, 0.25), width=0.6)
+    page.insert_text((132, header_y), "Method", fontsize=10)
+    page.insert_text((304, header_y), "Score", fontsize=10)
+    page.insert_text((424, header_y), "Delta", fontsize=10)
+    page.insert_text((132, ours_y), "Ours", fontsize=10)
+    page.insert_text((304, ours_y), "0.99", fontsize=10)
+    page.insert_text((424, ours_y), "+0.12", fontsize=10, color=(0.8, 0.0, 0.0))
+    page.insert_text((132, baseline_y), "Baseline", fontsize=10)
+    page.insert_text((304, baseline_y), "0.72", fontsize=10)
+    page.insert_text((424, baseline_y), "-0.03", fontsize=10)
+    page.insert_text((120, 350), "Table 1: Styled PDF table with real cell colors.", fontsize=10)
+    payload = document.tobytes()
+    document.close()
+    return payload
+
+
 def _model_equation_text_pdf_bytes() -> bytes:
     import fitz
 
@@ -1653,6 +1736,23 @@ class _FakeLayoutProvider:
                     caption=None,
                     bbox=(150, 430, 390, 460),
                     confidence=0.96,
+                ),
+            )
+        )
+
+
+class _StyledPdfTableLayoutProvider:
+    provider_name = "styled-pdf-table-layout-v1"
+
+    def detect_regions(self, **_kwargs):
+        return PaperLayoutDetection(
+            regions=(
+                PaperLayoutRegion(
+                    kind="table",
+                    label="Table 1",
+                    caption="Table 1: Styled PDF table with real cell colors.",
+                    bbox=(120, 200, 520, 330),
+                    confidence=0.99,
                 ),
             )
         )
