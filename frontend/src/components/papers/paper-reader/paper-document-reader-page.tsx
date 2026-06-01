@@ -194,6 +194,8 @@ function formatReaderStatus(status: string, locale: Locale) {
       return translate(locale, "papers.reader.statusCompiling")
     case "needs_review":
       return translate(locale, "papers.reader.statusNeedsReview")
+    case "compile_failed":
+    case "review_failed":
     case "failed":
       return translate(locale, "papers.reader.statusFailed")
     default:
@@ -202,8 +204,12 @@ function formatReaderStatus(status: string, locale: Locale) {
 }
 
 function readerDiagnosticMessage(diagnostic: PaperDiagnostic, locale: Locale) {
-  if (diagnostic.code.toLowerCase().includes("asset")) {
+  const code = diagnostic.code.toLowerCase()
+  if (code.includes("asset")) {
     return translate(locale, "papers.reader.diagnosticAssetUnavailable")
+  }
+  if (code.startsWith("source_pdf_")) {
+    return translate(locale, "papers.reader.noVerifiedPdf")
   }
 
   return translate(locale, "papers.reader.diagnosticUnavailable")

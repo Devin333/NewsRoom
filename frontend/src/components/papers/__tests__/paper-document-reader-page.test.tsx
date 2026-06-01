@@ -118,6 +118,15 @@ describe("PaperDocumentReaderPage", () => {
     expect(screen.queryByText("This legacy section must never become body text.")).not.toBeInTheDocument()
   })
 
+  it("shows terminal source PDF failures as failed instead of pending preparation", () => {
+    render(<PaperDocumentReaderPage payload={sourcePdfFailedPayload} locale="en" />)
+
+    expect(screen.getAllByText("Failed").length).toBeGreaterThan(0)
+    expect(screen.getByText("No verified PDF")).toBeInTheDocument()
+    expect(screen.queryByText("The reader document is still being prepared. You can retry later or open the PDF.")).not.toBeInTheDocument()
+    expect(screen.queryByLabelText("Open reader paper body")).not.toBeInTheDocument()
+  })
+
   it("switches from the status gate to the compiled reader after background compilation finishes", async () => {
     vi.mocked(fetchPaperDocument).mockResolvedValueOnce(compiledPayload)
 
@@ -520,5 +529,20 @@ const needsReviewPayload: PaperDocumentResponse = {
   manifest: null,
   ai: {
     diagnostics: [{ severity: "error", code: "asset_file_missing", message: "visual asset is missing" }],
+  },
+}
+
+const sourcePdfFailedPayload: PaperDocumentResponse = {
+  ...compiledPayload,
+  status: {
+    paperId: "visual-paper",
+    status: "compile_failed",
+    updatedAt: "2026-05-28T00:00:00Z",
+    diagnostics: [{ severity: "error", code: "source_pdf_not_found", message: "HTTP Error 404: Not Found" }],
+  },
+  document: null,
+  manifest: null,
+  ai: {
+    diagnostics: [{ severity: "error", code: "source_pdf_not_found", message: "HTTP Error 404: Not Found" }],
   },
 }
