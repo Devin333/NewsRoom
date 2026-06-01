@@ -1,5 +1,6 @@
+import fs from "node:fs"
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { getPaperById, getPaperListResult, getPaperMethodsResult, getPaperTasksResult, loadApiPapers } from "@/lib/papers/real-data"
+import { getPaperById, getPaperListResult, getPaperMethodsResult, getPaperTasksResult, loadApiPapers, loadCachedPapers } from "@/lib/papers/real-data"
 import { safeApiGet } from "@/lib/api/server"
 import type { Paper } from "@/lib/papers/types"
 
@@ -17,10 +18,20 @@ vi.mock("node:fs", () => ({
 }))
 
 const mockedSafeApiGet = vi.mocked(safeApiGet)
+const mockedExistsSync = vi.mocked(fs.existsSync)
+const mockedReadFileSync = vi.mocked(fs.readFileSync)
+const mockedReaddirSync = vi.mocked(fs.readdirSync)
+const mockedStatSync = vi.mocked(fs.statSync)
 
 describe("Papers API data loading", () => {
   beforeEach(() => {
     mockedSafeApiGet.mockReset()
+    mockedExistsSync.mockReset()
+    mockedExistsSync.mockReturnValue(false)
+    mockedReadFileSync.mockReset()
+    mockedReaddirSync.mockReset()
+    mockedReaddirSync.mockReturnValue([])
+    mockedStatSync.mockReset()
   })
 
   it("loads real papers from the backend API without inventing missing metrics", async () => {
@@ -89,6 +100,32 @@ describe("Papers API data loading", () => {
     })
 
     await expect(loadApiPapers()).resolves.toEqual([])
+  })
+
+  it("loads cached papers from the shared ingest cache path", () => {
+    mockedExistsSync.mockImplementation((filePath) => String(filePath).endsWith(".newsroom/papers/arxiv-papers.json"))
+    mockedReadFileSync.mockReturnValue(JSON.stringify({
+      papers: [
+        realPaper({
+          id: "cache-paper",
+          slug: "cache-paper",
+          title: "Shared Cache Paper",
+          paperUrl: "https://arxiv.org/abs/2605.99999"
+        })
+      ]
+    }))
+
+    const papers = loadCachedPapers()
+
+    expect(mockedReadFileSync).toHaveBeenCalledWith(
+      expect.stringContaining(".newsroom/papers/arxiv-papers.json"),
+      "utf8"
+    )
+    expect(papers).toHaveLength(1)
+    expect(papers[0]).toMatchObject({
+      id: "cache-paper",
+      title: "Shared Cache Paper"
+    })
   })
 
   it("does not expose unpublished papers through detail lookup", async () => {

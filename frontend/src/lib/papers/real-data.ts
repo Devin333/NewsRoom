@@ -81,7 +81,9 @@ const MAX_ARTIFACT_BYTES = 8_000_000
 const API_PAPER_LOAD_LIMIT = 5000
 const PAPER_SOURCE_TYPES = new Set(["arxiv", "paper_index"])
 const BLOCKED_SOURCE_TYPES = new Set(["official_blog", "ai_news", "rss", "blog", "press_release"])
-const LOCAL_PAPER_CACHE_PATH = path.resolve(process.cwd(), "data", "papers", "arxiv-papers.json")
+const PAPERS_DATA_PATH_ENV = "NEWSROOM_PAPERS_DATA_PATH"
+const SHARED_PAPER_CACHE_PATH = path.resolve(projectRoot(), ".newsroom", "papers", "arxiv-papers.json")
+const LEGACY_FRONTEND_PAPER_CACHE_PATH = path.resolve(projectRoot(), "frontend", "data", "papers", "arxiv-papers.json")
 
 export type PaperRuntimeData = {
   papers: Paper[]
@@ -455,9 +457,27 @@ function isPaperMethod(value: unknown): value is PaperMethod {
 }
 
 export function loadCachedPapers(): Paper[] {
-  const cache = readPaperCollectionCache(LOCAL_PAPER_CACHE_PATH)
-  const rawPapers = Array.isArray(cache?.papers) ? cache.papers : []
-  return rawPapers.map(cachedPaperToPaper).filter(isPaper)
+  for (const cachePath of paperCachePaths()) {
+    const cache = readPaperCollectionCache(cachePath)
+    if (cache) {
+      const rawPapers = Array.isArray(cache.papers) ? cache.papers : []
+      return rawPapers.map(cachedPaperToPaper).filter(isPaper)
+    }
+  }
+  return []
+}
+
+function paperCachePaths() {
+  const configuredPath = process.env[PAPERS_DATA_PATH_ENV]?.trim()
+  if (configuredPath) {
+    return [path.resolve(projectRoot(), configuredPath)]
+  }
+  return uniqueStrings([SHARED_PAPER_CACHE_PATH, LEGACY_FRONTEND_PAPER_CACHE_PATH])
+}
+
+function projectRoot() {
+  const cwd = process.cwd()
+  return path.basename(cwd) === "frontend" ? path.resolve(cwd, "..") : cwd
 }
 
 function readPaperCollectionCache(filePath: string): PaperCollectionCache | null {

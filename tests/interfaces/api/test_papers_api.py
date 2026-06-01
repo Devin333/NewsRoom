@@ -1,6 +1,6 @@
 import json
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 
@@ -104,6 +104,7 @@ def test_papers_api_filters_query(monkeypatch, tmp_path) -> None:
 
 def test_papers_api_supports_period_sort_task_method_and_pagination(monkeypatch, tmp_path) -> None:
     cache_path = tmp_path / "papers.json"
+    fresh_published_at = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat().replace("+00:00", "Z")
     cache_path.write_text(
         json.dumps(
             {
@@ -115,7 +116,7 @@ def test_papers_api_supports_period_sort_task_method_and_pagination(monkeypatch,
                         "title": "Agent ReAct Paper",
                         "abstractSnippet": "Agent paper using ReAct.",
                         "authors": ["A"],
-                        "publishedAt": "2026-05-24T12:00:00Z",
+                        "publishedAt": fresh_published_at,
                         "citationCount": 5,
                         "githubStars": 100,
                         "tags": ["agent"],
