@@ -1,11 +1,12 @@
 import { notFound } from "next/navigation"
 import { PaperDocumentReaderPageClient } from "@/app/papers/[slug]/read/paper-document-reader-page-client"
 import { loadPaperDocumentPayload } from "@/lib/paper-reader/server-loader"
+import { decodePaperRouteSlug } from "@/lib/papers/routes"
 
 export const dynamic = "force-dynamic"
 
 export default async function PaperDocumentReadRoute({ params }: { params: { slug: string } }) {
-  const payload = await loadPaperDocumentPayload(params.slug)
+  const payload = await loadPaperDocumentPayload(decodePaperRouteSlug(params.slug))
   if (!payload) {
     notFound()
   }
