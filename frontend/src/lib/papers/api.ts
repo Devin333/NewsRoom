@@ -1,4 +1,5 @@
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/lib/api/client"
+import type { PaperFeatureFilter } from "@/lib/papers/filters"
 import type {
   Locale,
   Paper,
@@ -49,6 +50,7 @@ export type PaperListParams = {
   offset?: number
   task?: string
   method?: string
+  has?: string | PaperFeatureFilter[]
 }
 
 export type PaperSummaryRequestOptions = {

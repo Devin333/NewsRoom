@@ -33,12 +33,19 @@ describe("PaperRow", () => {
     expect(screen.getByRole("link", { name: paper.title })).toHaveAttribute("href", "/papers/swe-agent-agent-computer-interfaces")
     expect(screen.getAllByRole("link", { name: /open paper pdf/i })[0]).toHaveAttribute("href", "https://arxiv.org/pdf/2405.15793.pdf")
     expect(screen.getAllByRole("link", { name: /open github repository/i })[0]).toHaveAttribute("href", "https://github.com/SWE-agent/SWE-agent")
-    expect(screen.getAllByText("24").length).toBeGreaterThan(0)
-    expect(screen.getByText("CITES")).toBeInTheDocument()
-    expect(screen.getAllByText("19.3K").length).toBeGreaterThan(0)
-    expect(screen.getByText("STARS")).toBeInTheDocument()
+    expect(screen.getByText(/24 Cites/i)).toBeInTheDocument()
+    expect(screen.getByText(/19.3K Stars/i)).toBeInTheDocument()
+    expect(screen.getAllByRole("button", { name: /preview/i })).not.toHaveLength(0)
+    expect(screen.getByRole("link", { name: /read/i })).toHaveAttribute("href", "/papers/swe-agent-agent-computer-interfaces/read")
     expect(screen.queryByText(/stars \/ hr/i)).not.toBeInTheDocument()
     expect(screen.queryByText(/github momentum/i)).not.toBeInTheDocument()
+  })
+
+  it("hides unavailable citation metrics instead of rendering N/A", () => {
+    render(<PaperRow paper={{ ...paper, citationCount: undefined }} locale="en" onPreview={vi.fn()} />)
+
+    expect(screen.queryByText("N/A")).not.toBeInTheDocument()
+    expect(screen.queryByText("Cites")).not.toBeInTheDocument()
   })
 
   it("uses product typography for paper metadata and abstract copy", () => {

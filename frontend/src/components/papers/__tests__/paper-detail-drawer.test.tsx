@@ -132,7 +132,7 @@ describe("PaperDetailDrawer", () => {
 
     render(<PaperDetailDrawer paper={null} paperId="paper-segment-anything" locale="en" open onOpenChange={onOpenChange} />)
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("paper detail unavailable")
+    expect(await screen.findByRole("alert")).toHaveTextContent("Paper detail is temporarily unavailable.")
     fireEvent.click(screen.getByRole("button", { name: /dismiss/i }))
 
     expect(onOpenChange).toHaveBeenCalledWith(false)
@@ -143,7 +143,7 @@ describe("PaperDetailDrawer", () => {
 
     render(<PaperDetailDrawer paper={null} paperId="paper-draft" locale="en" open onOpenChange={vi.fn()} />)
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Paper detail is not available.")
+    expect(await screen.findByRole("alert")).toHaveTextContent("Paper detail is temporarily unavailable.")
     expect(screen.queryByText("Draft Paper")).not.toBeInTheDocument()
     expect(requestPaperSummary).not.toHaveBeenCalled()
   })
@@ -259,7 +259,7 @@ describe("PaperDetailDrawer", () => {
     vi.mocked(requestPaperSummary).mockRejectedValue(new Error("provider unavailable"))
     render(<PaperDetailDrawer paper={paper} locale="en" open onOpenChange={vi.fn()} />)
 
-    expect(await screen.findByText("provider unavailable")).toBeInTheDocument()
+    expect(await screen.findByText("AI summary is temporarily unavailable. You can keep reading the original abstract.")).toBeInTheDocument()
     expect(screen.getByRole("button", { name: /retry/i })).toBeInTheDocument()
   })
 
@@ -269,7 +269,7 @@ describe("PaperDetailDrawer", () => {
       .mockReturnValue(new Promise(() => undefined))
     const { rerender } = render(<PaperDetailDrawer paper={paper} locale="en" open onOpenChange={vi.fn()} />)
 
-    expect(await screen.findByText("provider unavailable")).toBeInTheDocument()
+    expect(await screen.findByText("AI summary is temporarily unavailable. You can keep reading the original abstract.")).toBeInTheDocument()
 
     rerender(
       <PaperDetailDrawer
@@ -286,7 +286,7 @@ describe("PaperDetailDrawer", () => {
       />
     )
 
-    await waitFor(() => expect(screen.queryByText("provider unavailable")).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.queryByText("AI summary is temporarily unavailable. You can keep reading the original abstract.")).not.toBeInTheDocument())
     expect(screen.getByText("Generating NewsRoom AI summary...")).toBeInTheDocument()
   })
 })

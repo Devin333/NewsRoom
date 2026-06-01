@@ -1,6 +1,7 @@
 import fs from "node:fs"
 import path from "node:path"
 import { safeApiGet } from "@/lib/api/server"
+import { paperMatchesFeatureFilters, parsePaperFeatureFilters, type PaperFeatureFilter } from "@/lib/papers/filters"
 import { normalizePdfUrl, paperPdfUrlFromSource, sortPapers } from "@/lib/papers/format"
 import { paperMethods, paperTasks } from "@/lib/papers/catalog"
 import { arxivIdFromUrl, enrichPapersForPublicStream, githubRepoSlug, normalizeDoi, normalizeGithubRepoUrl } from "@/lib/papers/enrichment"
@@ -97,6 +98,19 @@ const BLOCKED_SOURCE_TYPES = new Set(["official_blog", "ai_news", "rss", "blog",
 const PAPERS_DATA_PATH_ENV = "NEWSROOM_PAPERS_DATA_PATH"
 const SHARED_PAPER_CACHE_PATH = path.resolve(projectRoot(), ".newsroom", "papers", "arxiv-papers.json")
 const LEGACY_FRONTEND_PAPER_CACHE_PATH = path.resolve(projectRoot(), "frontend", "data", "papers", "arxiv-papers.json")
+const TASK_SLUG_ALIASES: Record<string, string> = {
+  "task-agent-task-completion": "agent-task-completion",
+  "task-language-models": "language-models"
+}
+const METHOD_SLUG_ALIASES: Record<string, string> = {
+  "method-language-models": "language-models",
+  "method-large-language-models": "large-language-model"
+}
+const PAPER_CACHE_NOTICE = "Using verified cached paper data while the live paper index refreshes."
+const PAPER_ARTIFACT_NOTICE = "Using the latest verified Paper Radar artifacts while cached paper data refreshes."
+const PAPER_EMPTY_NOTICE = "No verified public paper data is available yet."
+const TASK_TAXONOMY_NOTICE = "Task taxonomy is built from verified paper references while the curated directory refreshes."
+const METHOD_TAXONOMY_NOTICE = "Method taxonomy is built from verified paper references while the curated directory refreshes."
 
 export type PaperRuntimeData = {
   papers: Paper[]
@@ -119,6 +133,7 @@ export type PaperListQuery = {
   sort?: PaperSort
   task?: string
   method?: string
+  has?: PaperFeatureFilter[] | string
   limit?: number
   offset?: number
 }
@@ -153,7 +168,8 @@ export async function getPublishedPaperData(): Promise<PaperRuntimeData> {
       papers: publicCachedPapers,
       source: "cache",
       dataState: "degraded",
-      notices: [apiPapers.length ? "Backend paper API returned no public papers; showing tracked paper cache." : "Backend paper API is unavailable; showing tracked paper cache."]
+      notices: [PAPER_CACHE_NOTICE],
+      collectedAt: latestPaperTimestamp(publicCachedPapers)
     }
   }
 
@@ -164,7 +180,8 @@ export async function getPublishedPaperData(): Promise<PaperRuntimeData> {
       papers: publicExtractedPapers,
       source: "artifact",
       dataState: "degraded",
-      notices: [apiPapers.length || cachedPapers.length ? "No public backend or tracked cache papers are available; showing latest public Paper Radar artifacts." : "Backend paper API and tracked cache are unavailable; showing latest Paper Radar artifacts."]
+      notices: [PAPER_ARTIFACT_NOTICE],
+      collectedAt: latestPaperTimestamp(publicExtractedPapers)
     }
   }
 
@@ -172,7 +189,7 @@ export async function getPublishedPaperData(): Promise<PaperRuntimeData> {
     papers: [],
     source: "empty",
     dataState: "empty",
-    notices: [apiPapers.length || cachedPapers.length || extractedPapers.length ? "No public papers are available from backend, tracked cache, or artifacts." : "No backend, tracked cache, or artifact papers are available."]
+    notices: [PAPER_EMPTY_NOTICE]
   }
 }
 
@@ -180,13 +197,15 @@ export async function getPaperListResult(query: PaperListQuery = {}): Promise<Pa
   const data = await getPublishedPaperData()
   const period = parsePaperPeriod(query.period)
   const sort = parsePaperSort(query.sort)
+  const has = parsePaperFeatureFilters(query.has)
   const limit = positiveInteger(query.limit, 1000)
   const offset = Math.max(0, positiveInteger(query.offset, 0))
   const filtered = filterPapers(data.papers, {
     q: query.q,
     period,
     task: query.task,
-    method: query.method
+    method: query.method,
+    has
   })
   const sorted = sortPapers(filtered, sort)
   const papers = sorted.slice(offset, offset + limit)
@@ -234,7 +253,7 @@ export async function getPaperTasksResult(): Promise<PaperTaxonomyResult<PaperTa
     dataState: taxonomyDataState(apiTasks.length > 0, paperData.dataState),
     notices: apiTasks.length
       ? paperData.notices
-      : ["Paper task API is unavailable; showing taxonomy derived from real paper references.", ...paperData.notices]
+      : [TASK_TAXONOMY_NOTICE, ...paperData.notices]
   }
 }
 
@@ -249,7 +268,7 @@ export async function getPaperMethodsResult(): Promise<PaperTaxonomyResult<Paper
     dataState: taxonomyDataState(apiMethods.length > 0, paperData.dataState),
     notices: apiMethods.length
       ? paperData.notices
-      : ["Paper method API is unavailable; showing taxonomy derived from real paper references.", ...paperData.notices]
+      : [METHOD_TAXONOMY_NOTICE, ...paperData.notices]
   }
 }
 
@@ -340,7 +359,7 @@ function taxonomyDataState(hasApiTaxonomy: boolean, paperDataState: PaperDataSta
 
 function filterPapers(
   papers: Paper[],
-  query: { q?: string; period: PaperPeriod; task?: string; method?: string }
+  query: { q?: string; period: PaperPeriod; task?: string; method?: string; has: PaperFeatureFilter[] }
 ) {
   const search = lower(query.q ?? "")
   const periodStart = periodStartDate(query.period)
@@ -349,10 +368,13 @@ function filterPapers(
     if (periodStart && new Date(paper.publishedAt).getTime() < periodStart.getTime()) {
       return false
     }
-    if (query.task && !matchesRef(query.task, paper.taskRefs)) {
+    if (query.task && !matchesRef(query.task, paper.taskRefs, "task")) {
       return false
     }
-    if (query.method && !matchesRef(query.method, paper.methodRefs)) {
+    if (query.method && !matchesRef(query.method, paper.methodRefs, "method")) {
+      return false
+    }
+    if (!paperMatchesFeatureFilters(paper, query.has)) {
       return false
     }
     if (!search) {
@@ -385,7 +407,7 @@ function deriveTasks(tasks: PaperTask[], papers: Paper[]): PaperTask[] {
   }>()
 
   for (const paper of papers.filter((item) => item.isPublished !== false)) {
-    for (const task of uniqueRefs(paper.taskRefs ?? [])) {
+    for (const task of uniqueRefs((paper.taskRefs ?? []).map(normalizeTaskRef))) {
       if (!task.slug) {
         continue
       }
@@ -397,18 +419,18 @@ function deriveTasks(tasks: PaperTask[], papers: Paper[]): PaperTask[] {
         benchmarks: new Map<string, PaperBenchmarkResult>()
       }
       record.papers.push(paper)
-      for (const method of uniqueRefs(paper.methodRefs ?? [])) {
+      for (const method of uniqueRefs((paper.methodRefs ?? []).map(normalizeMethodRef))) {
         if (method.slug) {
           record.methods.set(method.slug, method)
         }
       }
-      for (const sibling of uniqueRefs(paper.taskRefs ?? [])) {
+      for (const sibling of uniqueRefs((paper.taskRefs ?? []).map(normalizeTaskRef))) {
         if (sibling.slug && sibling.slug !== task.slug) {
           record.sisterTasks.set(sibling.slug, sibling)
         }
       }
       for (const benchmark of paper.benchmarks ?? []) {
-        if (!benchmark.taskSlug || benchmark.taskSlug === task.slug) {
+        if (!benchmark.taskSlug || canonicalTaskSlug(benchmark.taskSlug) === task.slug) {
           record.benchmarks.set(benchmark.id || benchmark.name, benchmark)
         }
       }
@@ -426,8 +448,8 @@ function deriveTasks(tasks: PaperTask[], papers: Paper[]): PaperTask[] {
         name: record.ref.name || metadata?.name || titleizeSlug(record.ref.slug),
         nameZh: cleanLocalizedText(record.ref.nameZh) ?? cleanLocalizedText(metadata?.nameZh),
         group: record.ref.group || metadata?.group || "general",
-        description: metadata?.description || `Derived from ${relatedPapers.length} public papers tagged with ${record.ref.name || titleizeSlug(record.ref.slug)}.`,
-        descriptionZh: cleanLocalizedText(metadata?.descriptionZh),
+        description: metadata?.description || `Aggregated from ${relatedPapers.length} public papers tagged with ${record.ref.name || titleizeSlug(record.ref.slug)}.`,
+        descriptionZh: cleanLocalizedText(metadata?.descriptionZh) ?? `由 ${relatedPapers.length} 篇真实公开论文引用聚合。`,
         paperCount: relatedPapers.length,
         benchmarkCount: record.benchmarks.size,
         methodCount: record.methods.size,
@@ -452,7 +474,7 @@ function deriveMethods(methods: PaperMethod[], tasks: PaperTask[], papers: Paper
   }>()
 
   for (const paper of papers.filter((item) => item.isPublished !== false)) {
-    for (const method of uniqueRefs(paper.methodRefs ?? [])) {
+    for (const method of uniqueRefs((paper.methodRefs ?? []).map(normalizeMethodRef))) {
       if (!method.slug) {
         continue
       }
@@ -464,12 +486,12 @@ function deriveMethods(methods: PaperMethod[], tasks: PaperTask[], papers: Paper
         benchmarks: new Map<string, BenchmarkRef>()
       }
       record.papers.push(paper)
-      for (const task of uniqueRefs(paper.taskRefs ?? [])) {
+      for (const task of uniqueRefs((paper.taskRefs ?? []).map(normalizeTaskRef))) {
         if (task.slug) {
           record.tasks.set(task.slug, task)
         }
       }
-      for (const sibling of uniqueRefs(paper.methodRefs ?? [])) {
+      for (const sibling of uniqueRefs((paper.methodRefs ?? []).map(normalizeMethodRef))) {
         if (sibling.slug && sibling.slug !== method.slug) {
           record.relatedMethods.set(sibling.slug, sibling)
         }
@@ -494,8 +516,8 @@ function deriveMethods(methods: PaperMethod[], tasks: PaperTask[], papers: Paper
         slug: record.ref.slug,
         name: record.ref.name || metadata?.name || titleizeSlug(record.ref.slug),
         nameZh: cleanLocalizedText(record.ref.nameZh) ?? cleanLocalizedText(metadata?.nameZh),
-        description: metadata?.description || `Derived from ${relatedPapers.length} public papers using ${record.ref.name || titleizeSlug(record.ref.slug)}.`,
-        descriptionZh: cleanLocalizedText(metadata?.descriptionZh),
+        description: metadata?.description || `Aggregated from ${relatedPapers.length} public papers using ${record.ref.name || titleizeSlug(record.ref.slug)}.`,
+        descriptionZh: cleanLocalizedText(metadata?.descriptionZh) ?? `由 ${relatedPapers.length} 篇真实公开论文引用聚合。`,
         paperCount: relatedPapers.length,
         taskCount: record.tasks.size,
         implementationCount: countImplementationSignals(relatedPapers),
@@ -513,10 +535,11 @@ function deriveMethods(methods: PaperMethod[], tasks: PaperTask[], papers: Paper
 function taskMetadataBySlug(apiTasks: PaperTask[]) {
   const records = new Map<string, PaperTask>()
   for (const task of paperTasks) {
-    records.set(task.slug, task)
+    records.set(canonicalTaskSlug(task.slug), { ...task, slug: canonicalTaskSlug(task.slug) })
   }
   for (const task of apiTasks) {
-    records.set(task.slug, task)
+    const slug = canonicalTaskSlug(task.slug)
+    records.set(slug, { ...task, slug })
   }
   return records
 }
@@ -524,10 +547,11 @@ function taskMetadataBySlug(apiTasks: PaperTask[]) {
 function methodMetadataBySlug(apiMethods: PaperMethod[]) {
   const records = new Map<string, PaperMethod>()
   for (const method of paperMethods) {
-    records.set(method.slug, method)
+    records.set(canonicalMethodSlug(method.slug), { ...method, slug: canonicalMethodSlug(method.slug) })
   }
   for (const method of apiMethods) {
-    records.set(method.slug, method)
+    const slug = canonicalMethodSlug(method.slug)
+    records.set(slug, { ...method, slug })
   }
   return records
 }
@@ -592,6 +616,56 @@ function methodArea(value: string) {
   return "Unclassified"
 }
 
+function normalizeTaskRef(ref: TaskRef): TaskRef {
+  const slug = canonicalTaskSlug(ref.slug || ref.name)
+  const metadata = taskMetadata(slug)
+  return {
+    ...ref,
+    id: metadata?.id || ref.id || `task-${slug}`,
+    slug,
+    name: ref.name || metadata?.name || titleizeSlug(slug),
+    nameZh: cleanLocalizedText(ref.nameZh) ?? cleanLocalizedText(metadata?.nameZh),
+    group: ref.group || metadata?.group
+  }
+}
+
+function normalizeMethodRef(ref: MethodRef): MethodRef {
+  const slug = canonicalMethodSlug(ref.slug || ref.name)
+  const metadata = methodMetadata(slug)
+  return {
+    ...ref,
+    id: metadata?.id || ref.id || `method-${slug}`,
+    slug,
+    name: ref.name || metadata?.name || titleizeSlug(slug),
+    nameZh: cleanLocalizedText(ref.nameZh) ?? cleanLocalizedText(metadata?.nameZh),
+    area: ref.area || metadata?.area
+  }
+}
+
+function canonicalTaskSlug(value: string) {
+  return canonicalTaxonomySlug(value, "task", TASK_SLUG_ALIASES)
+}
+
+function canonicalMethodSlug(value: string) {
+  return canonicalTaxonomySlug(value, "method", METHOD_SLUG_ALIASES)
+}
+
+function canonicalTaxonomySlug(value: string, kind: "task" | "method", aliases: Record<string, string>) {
+  const normalized = slugify(value) || lower(value).trim()
+  if (!normalized) {
+    return ""
+  }
+  const aliased = aliases[normalized]
+  if (aliased) {
+    return aliased
+  }
+  const prefix = `${kind}-`
+  if (normalized.startsWith(prefix) && normalized.length > prefix.length) {
+    return normalized.slice(prefix.length)
+  }
+  return normalized
+}
+
 function titleizeSlug(value: string) {
   return value
     .split(/[-_\s]+/)
@@ -612,9 +686,13 @@ function isTaskRef(value: unknown): value is TaskRef {
   return isRecord(value) && Boolean(text(value.slug) && text(value.name))
 }
 
-function matchesRef(value: string, refs: Array<TaskRef | MethodRef>) {
+function matchesRef(value: string, refs: Array<TaskRef | MethodRef>, kind: "task" | "method") {
   const normalized = lower(value)
-  return refs.some((ref) => lower(ref.slug) === normalized || lower(ref.name) === normalized || lower(ref.nameZh ?? "") === normalized)
+  const canonicalSlug = kind === "task" ? canonicalTaskSlug(value) : canonicalMethodSlug(value)
+  return refs.some((ref) => {
+    const refSlug = kind === "task" ? canonicalTaskSlug(ref.slug) : canonicalMethodSlug(ref.slug)
+    return refSlug === canonicalSlug || lower(ref.slug) === normalized || lower(ref.name) === normalized || lower(ref.nameZh ?? "") === normalized
+  })
 }
 
 function periodStartDate(period: PaperPeriod) {
@@ -990,16 +1068,17 @@ function taskRefFromValue(value: unknown): TaskRef | null {
   const label = record ? text(record.name) || text(record.label) || text(record.title) : text(value)
   const explicitSlug = record ? text(record.slug) || text(record.taskSlug) || text(record.task_slug) : ""
   const metadata = taskMetadata(explicitSlug || label)
-  const slug = explicitSlug || metadata?.slug || slugify(label)
+  const slug = canonicalTaskSlug(explicitSlug || metadata?.slug || label)
   if (!slug) {
     return null
   }
+  const canonicalMetadata = taskMetadata(slug) ?? metadata
   return {
-    id: record ? text(record.id) || `task-${slug}` : metadata?.id || `task-${slug}`,
+    id: canonicalMetadata?.id || (record ? text(record.id) || `task-${slug}` : `task-${slug}`),
     slug,
-    name: label || metadata?.name || titleizeSlug(slug),
-    nameZh: cleanLocalizedText(record ? text(record.nameZh) || text(record.name_zh) : undefined) ?? cleanLocalizedText(metadata?.nameZh),
-    group: (record ? text(record.group) : "") || metadata?.group,
+    name: label || canonicalMetadata?.name || titleizeSlug(slug),
+    nameZh: cleanLocalizedText(record ? text(record.nameZh) || text(record.name_zh) : undefined) ?? cleanLocalizedText(canonicalMetadata?.nameZh),
+    group: (record ? text(record.group) : "") || canonicalMetadata?.group,
     confidence: record ? numberValue(record.confidence) : undefined,
     evidence: record ? text(record.evidence) || undefined : undefined
   }
@@ -1010,16 +1089,17 @@ function methodRefFromValue(value: unknown): MethodRef | null {
   const label = record ? text(record.name) || text(record.label) || text(record.title) : text(value)
   const explicitSlug = record ? text(record.slug) || text(record.methodSlug) || text(record.method_slug) : ""
   const metadata = methodMetadata(explicitSlug || label)
-  const slug = explicitSlug || metadata?.slug || slugify(label)
+  const slug = canonicalMethodSlug(explicitSlug || metadata?.slug || label)
   if (!slug) {
     return null
   }
+  const canonicalMetadata = methodMetadata(slug) ?? metadata
   return {
-    id: record ? text(record.id) || `method-${slug}` : metadata?.id || `method-${slug}`,
+    id: canonicalMetadata?.id || (record ? text(record.id) || `method-${slug}` : `method-${slug}`),
     slug,
-    name: label || metadata?.name || titleizeSlug(slug),
-    nameZh: cleanLocalizedText(record ? text(record.nameZh) || text(record.name_zh) : undefined) ?? cleanLocalizedText(metadata?.nameZh),
-    area: (record ? text(record.area) : "") || metadata?.area,
+    name: label || canonicalMetadata?.name || titleizeSlug(slug),
+    nameZh: cleanLocalizedText(record ? text(record.nameZh) || text(record.name_zh) : undefined) ?? cleanLocalizedText(canonicalMetadata?.nameZh),
+    area: (record ? text(record.area) : "") || canonicalMetadata?.area,
     confidence: record ? numberValue(record.confidence) : undefined,
     evidence: record ? text(record.evidence) || undefined : undefined
   }
@@ -1036,7 +1116,7 @@ function explicitRefs(record: Record<string, unknown>, keys: string[]) {
 }
 
 function taskMetadata(value: string) {
-  const normalized = lower(slugify(value) || value)
+  const normalized = canonicalTaskSlug(value)
   return paperTasks.find((task) =>
     lower(task.slug) === normalized ||
     lower(task.name) === lower(value) ||
@@ -1045,7 +1125,7 @@ function taskMetadata(value: string) {
 }
 
 function methodMetadata(value: string) {
-  const normalized = lower(slugify(value) || value)
+  const normalized = canonicalMethodSlug(value)
   return paperMethods.find((method) =>
     lower(method.slug) === normalized ||
     lower(method.name) === lower(value) ||
@@ -1289,6 +1369,16 @@ function slugify(value: string) {
 
 function uniqueStrings(values: string[]) {
   return values.filter((value, index, all) => all.indexOf(value) === index)
+}
+
+function latestPaperTimestamp(papers: Paper[]) {
+  const timestamps = papers
+    .map((paper) => new Date(paper.publishedAt).getTime())
+    .filter((value) => Number.isFinite(value))
+  if (!timestamps.length) {
+    return undefined
+  }
+  return new Date(Math.max(...timestamps)).toISOString()
 }
 
 function numberValue(value: unknown) {

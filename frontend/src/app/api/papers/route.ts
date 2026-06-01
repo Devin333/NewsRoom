@@ -12,6 +12,7 @@ export async function GET(request: NextRequest) {
     sort: parseSort(params.get("sort")),
     task: params.get("task") ?? undefined,
     method: params.get("method") ?? undefined,
+    has: params.get("has") ?? undefined,
     limit: numberParam(params.get("limit")) ?? numberParam(params.get("pageSize")),
     offset: numberParam(params.get("offset"))
   })

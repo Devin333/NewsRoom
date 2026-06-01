@@ -1,5 +1,7 @@
 import type { Metadata } from "next"
 import "@/app/globals.css"
+import "@/components/papers/open-reader/open-reader.module.css"
+import "@/components/papers/paper-reader/paper-document-reader.module.css"
 import "katex/dist/katex.min.css"
 import "reactflow/dist/style.css"
 import { AppShell } from "@/components/layout/app-shell"

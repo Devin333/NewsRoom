@@ -105,8 +105,9 @@ describe("PaperDocumentReaderPage", () => {
   it("blocks article rendering for non-compiled documents", () => {
     render(<PaperDocumentReaderPage payload={needsReviewPayload} locale="en" />)
 
-    expect(screen.getByText("Compiled document is not published")).toBeInTheDocument()
-    expect(screen.getByText("visual asset is missing")).toBeInTheDocument()
+    expect(screen.getByText("Reader document is not ready yet.")).toBeInTheDocument()
+    expect(screen.getByText("Some reader assets are still being prepared.")).toBeInTheDocument()
+    expect(screen.queryByText("visual asset is missing")).not.toBeInTheDocument()
     expect(screen.queryByLabelText("Open reader paper body")).not.toBeInTheDocument()
     expect(screen.queryByText("This legacy section must never become body text.")).not.toBeInTheDocument()
   })
@@ -138,8 +139,9 @@ describe("PaperDocumentReaderPage", () => {
     render(<PaperDocumentReaderPage payload={needsReviewPayload} locale="en" />)
     fireEvent.click(screen.getByRole("button", { name: "Compile" }))
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("compile service unavailable")
-    expect(screen.getAllByText("needs_review").length).toBeGreaterThan(0)
+    expect(await screen.findByRole("alert")).toHaveTextContent("Reader compilation is temporarily unavailable. You can still open the PDF or paper detail.")
+    expect(screen.queryByText("compile service unavailable")).not.toBeInTheDocument()
+    expect(screen.getAllByText("Needs review").length).toBeGreaterThan(0)
     expect(screen.queryByText(/Compile task queued/)).not.toBeInTheDocument()
   })
 

@@ -122,45 +122,69 @@ export const taskGroupLabels: Record<string, Localized> = {
 }
 
 const researchNoticeCopy: Record<string, Localized> = {
+  "Using verified cached paper data while the live paper index refreshes.": {
+    zh: "正在使用已缓存的真实论文数据。",
+    en: "Using verified cached paper data."
+  },
+  "Using the latest verified Paper Radar artifacts while cached paper data refreshes.": {
+    zh: "正在使用最新的真实 Paper Radar 论文产物。",
+    en: "Using the latest verified Paper Radar paper artifacts."
+  },
+  "No verified public paper data is available yet.": {
+    zh: "当前暂无可展示的真实公开论文数据。",
+    en: "No verified public paper data is available yet."
+  },
+  "No public papers are available.": {
+    zh: "当前暂无可展示的真实公开论文数据。",
+    en: "No verified public paper data is available yet."
+  },
+  "Task taxonomy is built from verified paper references while the curated directory refreshes.": {
+    zh: "任务目录正在使用真实论文引用聚合结果。",
+    en: "Task taxonomy is built from verified paper references."
+  },
+  "Method taxonomy is built from verified paper references while the curated directory refreshes.": {
+    zh: "方法目录正在使用真实论文引用聚合结果。",
+    en: "Method taxonomy is built from verified paper references."
+  },
   "Backend paper API returned no public papers; showing tracked paper cache.": {
-    zh: "后端论文 API 未返回公开论文，正在显示已跟踪的真实缓存论文。",
-    en: "Backend paper API returned no public papers; showing tracked paper cache."
+    zh: "正在使用已缓存的真实论文数据。",
+    en: "Using verified cached paper data."
   },
   "Backend paper API is unavailable; showing tracked paper cache.": {
-    zh: "后端论文 API 暂不可用，正在显示已跟踪的真实缓存论文。",
-    en: "Backend paper API is unavailable; showing tracked paper cache."
+    zh: "正在使用已缓存的真实论文数据。",
+    en: "Using verified cached paper data."
   },
   "No public backend or tracked cache papers are available; showing latest public Paper Radar artifacts.": {
-    zh: "后端和已跟踪缓存暂无公开论文，正在显示最新公开 Paper Radar 产物。",
-    en: "No public backend or tracked cache papers are available; showing latest public Paper Radar artifacts."
+    zh: "正在使用最新的真实 Paper Radar 论文产物。",
+    en: "Using the latest verified Paper Radar paper artifacts."
   },
   "Backend paper API and tracked cache are unavailable; showing latest Paper Radar artifacts.": {
-    zh: "后端论文 API 和已跟踪缓存暂不可用，正在显示最新 Paper Radar 产物。",
-    en: "Backend paper API and tracked cache are unavailable; showing latest Paper Radar artifacts."
+    zh: "正在使用最新的真实 Paper Radar 论文产物。",
+    en: "Using the latest verified Paper Radar paper artifacts."
   },
   "No public papers are available from backend, tracked cache, or artifacts.": {
-    zh: "后端、已跟踪缓存和产物中暂无公开论文。",
-    en: "No public papers are available from backend, tracked cache, or artifacts."
+    zh: "当前暂无可展示的真实公开论文数据。",
+    en: "No verified public paper data is available yet."
   },
   "No backend, tracked cache, or artifact papers are available.": {
-    zh: "后端、已跟踪缓存和产物中都暂无可用论文。",
-    en: "No backend, tracked cache, or artifact papers are available."
+    zh: "当前暂无可展示的真实公开论文数据。",
+    en: "No verified public paper data is available yet."
   },
   "Paper task API is unavailable; showing taxonomy derived from real paper references.": {
-    zh: "论文任务 API 暂不可用，正在显示由真实论文引用聚合的任务目录。",
-    en: "Paper task API is unavailable; showing taxonomy derived from real paper references."
+    zh: "任务目录正在使用真实论文引用聚合结果。",
+    en: "Task taxonomy is built from verified paper references."
   },
   "Paper task API is unavailable; showing taxonomy with real paper-derived counts.": {
-    zh: "论文任务 API 暂不可用，正在显示由真实论文引用聚合的任务目录。",
-    en: "Paper task API is unavailable; showing taxonomy derived from real paper references."
+    zh: "任务目录正在使用真实论文引用聚合结果。",
+    en: "Task taxonomy is built from verified paper references."
   },
   "Paper method API is unavailable; showing taxonomy derived from real paper references.": {
-    zh: "论文方法 API 暂不可用，正在显示由真实论文引用聚合的方法目录。",
-    en: "Paper method API is unavailable; showing taxonomy derived from real paper references."
+    zh: "方法目录正在使用真实论文引用聚合结果。",
+    en: "Method taxonomy is built from verified paper references."
   },
   "Paper method API is unavailable; showing taxonomy with real paper-derived counts.": {
-    zh: "论文方法 API 暂不可用，正在显示由真实论文引用聚合的方法目录。",
-    en: "Paper method API is unavailable; showing taxonomy derived from real paper references."
+    zh: "方法目录正在使用真实论文引用聚合结果。",
+    en: "Method taxonomy is built from verified paper references."
   }
 }
 

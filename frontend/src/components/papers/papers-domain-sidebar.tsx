@@ -10,15 +10,17 @@ export function PapersDomainSidebar({
   methodAreas,
   topTasks,
   dashboardPapers,
-  locale
+  locale,
+  className
 }: {
   methodAreas: MethodAreaDomain[]
   topTasks: TaskRef[]
   dashboardPapers: Paper[]
   locale: Locale
+  className?: string
 }) {
   return (
-    <aside className="space-y-3 xl:sticky xl:top-24">
+    <aside className={cn("space-y-3 xl:sticky xl:top-24", className)}>
       <SidebarSection
         accent="emerald"
         index="01"
@@ -77,13 +79,13 @@ function SidebarSection({
           {formatWholeNumber(items.length, locale)}
         </span>
       </div>
-      <div className="mt-3 grid gap-2">
+      <div className="mt-3 flex gap-2 overflow-x-auto xl:grid xl:overflow-visible">
         {items.map((item) => (
           <Link
             key={item.key}
             href={item.href}
             className={cn(
-              "group flex items-center justify-between gap-3 rounded-lg border border-transparent bg-[#f7faf5] px-3 py-2.5 text-[#334155] transition-all dark:bg-background/70 dark:text-foreground",
+              "group flex shrink-0 items-center justify-between gap-3 rounded-full border border-transparent bg-[#f7faf5] px-3 py-2 text-[#334155] transition-all xl:shrink xl:rounded-lg xl:py-2.5 dark:bg-background/70 dark:text-foreground",
               rowAccentClass
             )}
           >

@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { ChevronLeft, ChevronRight } from "lucide-react"
+import { BarChart3, ChevronLeft, ChevronRight, FileText, Github, Quote } from "lucide-react"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { PapersDomainSidebar } from "@/components/papers/papers-domain-sidebar"
 import { PapersHero } from "@/components/papers/papers-hero"
@@ -10,14 +10,18 @@ import { PaperDetailDrawer } from "@/components/papers/shared/paper-detail-drawe
 import { PaperPeriodTabs } from "@/components/papers/shared/paper-period-tabs"
 import { PaperStream } from "@/components/papers/shared/paper-stream"
 import { Button } from "@/components/ui/button"
+import { translate } from "@/lib/i18n"
+import type { TranslationKey } from "@/lib/i18n/translations"
 import { fetchPapers } from "@/lib/papers/api"
 import { localizedResearchNotice, papersCopy, t } from "@/lib/papers/copy"
+import { paperFeatureFilters, paperMatchesFeatureFilters, parsePaperFeatureFilters, serializePaperFeatureFilters, type PaperFeatureFilter } from "@/lib/papers/filters"
 import { sortPapers } from "@/lib/papers/format"
 import { buildPaperPortalMetrics, deriveMethodAreaDomains, deriveTopPaperDomains } from "@/lib/papers/metrics"
 import type { Locale, Paper, PaperListResult, PaperPeriod, PaperSort } from "@/lib/papers/types"
 
 const PAPER_DASHBOARD_LIMIT = 5000
 const PAPER_PAGE_SIZE = 15
+type PaperDataContext = { source?: string; collectedAt?: string }
 
 export function TrendingPapersPage({ locale, papers }: { locale: Locale; papers: Paper[] }) {
   const router = useRouter()
@@ -29,15 +33,17 @@ export function TrendingPapersPage({ locale, papers }: { locale: Locale; papers:
   const sort = parseSort(searchParams.get("sort"))
   const page = parsePage(searchParams.get("page"))
   const query = searchParams.get("q") ?? ""
+  const featureFilters = useMemo(() => parsePaperFeatureFilters(searchParams.get("has")), [searchText])
   const deepLinkedPaperId = searchParams.get("paper")
-  const initialPublishedPapers = useMemo(() => publicPapers(papers), [papers])
+  const initialPublishedPapers = useMemo(() => fallbackPaperQuery(papers, { query, period, sort, has: featureFilters }), [featureFilters, papers, period, query, sort])
   const [dashboardPapers, setDashboardPapers] = useState(initialPublishedPapers)
   const [visiblePapers, setVisiblePapers] = useState(initialPublishedPapers.slice(0, PAPER_PAGE_SIZE))
   const [paperTotalCount, setPaperTotalCount] = useState(initialPublishedPapers.length)
   const [selectedPaperId, setSelectedPaperId] = useState<string | null>(deepLinkedPaperId)
   const [isLoading, setIsLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [hasDataIssue, setHasDataIssue] = useState(false)
   const [notices, setNotices] = useState<string[]>([])
+  const [dataContext, setDataContext] = useState<PaperDataContext>({})
   const pageOffset = (page - 1) * PAPER_PAGE_SIZE
   const portalMetrics = useMemo(
     () => buildPaperPortalMetrics(dashboardPapers, paperTotalCount),
@@ -75,10 +81,11 @@ export function TrendingPapersPage({ locale, papers }: { locale: Locale; papers:
   useEffect(() => {
     let cancelled = false
     setIsLoading(true)
-    setError(null)
+    setHasDataIssue(false)
+    const has = serializePaperFeatureFilters(featureFilters)
     Promise.allSettled([
-      fetchPapers({ q: query, period, sort, limit: PAPER_PAGE_SIZE, offset: pageOffset }),
-      fetchPapers({ q: query, period, sort, limit: PAPER_DASHBOARD_LIMIT })
+      fetchPapers({ q: query, period, sort, ...(has ? { has } : {}), limit: PAPER_PAGE_SIZE, offset: pageOffset }),
+      fetchPapers({ q: query, period, sort, ...(has ? { has } : {}), limit: PAPER_DASHBOARD_LIMIT })
     ])
       .then(([pageSettled, dashboardSettled]) => {
         if (cancelled) {
@@ -92,7 +99,7 @@ export function TrendingPapersPage({ locale, papers }: { locale: Locale; papers:
           throw firstRejectedReason(pageSettled, dashboardSettled) ?? new Error("Papers request failed")
         }
 
-        const fallbackPapers = dashboardResult ? [] : fallbackPaperQuery(papers, { query, period, sort })
+        const fallbackPapers = dashboardResult ? [] : fallbackPaperQuery(papers, { query, period, sort, has: featureFilters })
         const pagePapers = pageResult ? publicPapers(pageResult.papers) : null
         const dashboardResultPapers = dashboardResult ? publicPapers(dashboardResult.papers) : null
         const nextDashboardPapers = dashboardResultPapers ?? fallbackPapers
@@ -116,21 +123,29 @@ export function TrendingPapersPage({ locale, papers }: { locale: Locale; papers:
         setDashboardPapers(nextDashboardPapers)
         setPaperTotalCount(nextTotalCount)
         setNotices(nextNotices)
-        setError(pageResult ? null : resultErrorMessage(pageSettled))
+        setHasDataIssue(pageSettled.status === "rejected" || dashboardSettled.status === "rejected")
+        setDataContext({
+          source: dashboardResult?.source ?? pageResult?.source ?? (nextDashboardPapers.length ? "cache" : undefined),
+          collectedAt: dashboardResult?.collectedAt ?? pageResult?.collectedAt
+        })
 
         const nextTotalPages = Math.max(1, Math.ceil(nextTotalCount / PAPER_PAGE_SIZE))
         if (nextTotalCount > 0 && page > nextTotalPages) {
           updatePage(nextTotalPages)
         }
       })
-      .catch((requestError) => {
+      .catch(() => {
         if (!cancelled) {
-          const fallbackPapers = fallbackPaperQuery(papers, { query, period, sort })
+          const fallbackPapers = fallbackPaperQuery(papers, { query, period, sort, has: featureFilters })
           setVisiblePapers(fallbackPapers.slice(pageOffset, pageOffset + PAPER_PAGE_SIZE))
           setDashboardPapers(fallbackPapers)
           setPaperTotalCount(fallbackPapers.length)
           setNotices([t(papersCopy.apiUnavailableCache, locale)])
-          setError(requestError instanceof Error ? requestError.message : "Papers request failed")
+          setHasDataIssue(true)
+          setDataContext({
+            source: fallbackPapers.length ? "cache" : "empty",
+            collectedAt: latestPaperTimestamp(fallbackPapers)
+          })
         }
       })
       .finally(() => {
@@ -141,7 +156,7 @@ export function TrendingPapersPage({ locale, papers }: { locale: Locale; papers:
     return () => {
       cancelled = true
     }
-  }, [locale, page, pageOffset, papers, period, query, sort, updatePage])
+  }, [featureFilters, locale, page, pageOffset, papers, period, query, sort, updatePage])
 
   function previewPaper(paper: Paper) {
     updateQuery({ paper: paper.id })
@@ -166,6 +181,13 @@ export function TrendingPapersPage({ locale, papers }: { locale: Locale; papers:
 
   function updateSort(nextSort: PaperSort) {
     updateQuery({ sort: nextSort === "trending" ? null : nextSort, page: null, paper: null })
+  }
+
+  function updateFeatureFilter(filter: PaperFeatureFilter) {
+    const nextFilters = featureFilters.includes(filter)
+      ? featureFilters.filter((item) => item !== filter)
+      : [...featureFilters, filter]
+    updateQuery({ has: serializePaperFeatureFilters(nextFilters) || null, page: null, paper: null })
   }
 
   function closeDrawer() {
@@ -198,25 +220,22 @@ export function TrendingPapersPage({ locale, papers }: { locale: Locale; papers:
         aside={<PaperPeriodTabs value={period} locale={locale} hrefForPeriod={periodHref} onChange={updatePeriod} fullWidth />}
       />
       <div className="mt-3 border-t border-[#dfe5df] dark:border-border" />
-      {error || notices.length ? (
-        <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50/90 px-4 py-3 text-sm leading-6 text-amber-900">
-          {[...new Set(notices)].join(" ")}
-          {error ? ` ${error}` : null}
-        </div>
+      {notices.length || hasDataIssue ? (
+        <ResearchStatusNotice notices={notices} context={dataContext} locale={locale} />
       ) : null}
       <div className="mt-6 grid gap-6 xl:grid-cols-[14rem_minmax(0,1fr)] 2xl:grid-cols-[15rem_minmax(0,1fr)]">
-        <PapersDomainSidebar methodAreas={methodAreas} topTasks={topDomains} dashboardPapers={dashboardPapers} locale={locale} />
-        <div className="space-y-3">
+        <div className="space-y-3 xl:order-2">
           {isLoading ? (
             <p className="rounded-lg border border-[#dfe5df] bg-white/60 px-4 py-3 text-sm text-[#334155]/60 dark:border-border dark:bg-card/40 dark:text-muted-foreground">
               {t(papersCopy.updatingPapers, locale)}
             </p>
           ) : null}
+          <PaperFeatureFilterBar selected={featureFilters} locale={locale} onToggle={updateFeatureFilter} />
           <PaperStream
             papers={visiblePapers}
             locale={locale}
             title={locale === "zh" ? "论文流" : "Paper feed"}
-            emptyDescription={paperEmptyDescription({ query, notices, error, locale })}
+            emptyDescription={paperEmptyDescription({ query, hasFilters: featureFilters.length > 0, notices, hasDataIssue, locale })}
             sort={sort}
             onSortChange={updateSort}
             onPreview={previewPaper}
@@ -230,6 +249,13 @@ export function TrendingPapersPage({ locale, papers }: { locale: Locale; papers:
             onPageChange={updatePage}
           />
         </div>
+        <PapersDomainSidebar
+          className="xl:order-1"
+          methodAreas={methodAreas}
+          topTasks={topDomains}
+          dashboardPapers={dashboardPapers}
+          locale={locale}
+        />
       </div>
       <PaperDetailDrawer
         paper={selectedPaper}
@@ -262,7 +288,7 @@ function rejectedNotices(
 ) {
   const notices: string[] = []
   if (pageResult.status === "rejected") {
-    notices.push(locale === "zh" ? "当前页论文请求失败，已从可用仪表盘数据恢复列表。" : "Page request failed; list recovered from available dashboard data.")
+    notices.push(locale === "zh" ? "当前列表已从可用的真实论文数据恢复。" : "The list recovered from available verified paper data.")
   }
   if (dashboardResult.status === "rejected") {
     notices.push(t(papersCopy.apiUnavailableCache, locale))
@@ -270,33 +296,28 @@ function rejectedNotices(
   return notices
 }
 
-function resultErrorMessage(result: PromiseSettledResult<PaperListResult>) {
-  if (result.status !== "rejected") {
-    return null
-  }
-  return result.reason instanceof Error ? result.reason.message : "Papers request failed"
-}
-
 function paperEmptyDescription({
   query,
+  hasFilters,
   notices,
-  error,
+  hasDataIssue,
   locale
 }: {
   query: string
+  hasFilters: boolean
   notices: string[]
-  error: string | null
+  hasDataIssue: boolean
   locale: Locale
 }) {
-  if (query.trim()) {
+  if (query.trim() || hasFilters) {
     return locale === "zh"
       ? "当前搜索或筛选下没有公开论文匹配。可以清空搜索，或稍后在论文入库完成后重试。"
       : "No public papers match the current search or filters. Clear the search, or retry after paper ingest finishes."
   }
-  if (error || notices.some((notice) => /no .*papers|unavailable|cache|artifact|暂无|不可用/i.test(notice))) {
+  if (hasDataIssue || notices.some((notice) => /no .*paper|unavailable|cache|artifact|暂无|不可用/i.test(notice))) {
     return locale === "zh"
-      ? "请先运行论文入库，或将 NEWSROOM_PAPERS_DATA_PATH 指向真实论文缓存，然后刷新页面。"
-      : "Run paper ingest, or set NEWSROOM_PAPERS_DATA_PATH to a real papers cache, then refresh."
+      ? "当前没有可展示的真实论文数据。请稍后刷新，或确认论文入库已经完成。"
+      : "No verified paper data is available yet. Refresh after paper ingest completes."
   }
   return locale === "zh"
     ? "当前还没有可展示的公开论文。"
@@ -350,11 +371,13 @@ function fallbackPaperQuery(
   {
     query,
     period,
-    sort
+    sort,
+    has
   }: {
     query: string
     period: PaperPeriod
     sort: PaperSort
+    has: PaperFeatureFilter[]
   }
 ) {
   const search = query.trim().toLowerCase()
@@ -364,7 +387,7 @@ function fallbackPaperQuery(
       return false
     }
     if (!search) {
-      return true
+      return paperMatchesFeatureFilters(paper, has)
     }
 
     const haystack = [
@@ -378,7 +401,7 @@ function fallbackPaperQuery(
       paper.methodRefs.map((method) => `${method.slug} ${method.name} ${method.nameZh ?? ""}`).join(" ")
     ].join(" ").toLowerCase()
 
-    return haystack.includes(search)
+    return haystack.includes(search) && paperMatchesFeatureFilters(paper, has)
   })
   return sortPapers(filtered, sort)
 }
@@ -395,6 +418,111 @@ function paperPeriodStart(period: PaperPeriod) {
   const start = new Date()
   start.setDate(start.getDate() - days)
   return start
+}
+
+function PaperFeatureFilterBar({
+  selected,
+  locale,
+  onToggle
+}: {
+  selected: PaperFeatureFilter[]
+  locale: Locale
+  onToggle: (filter: PaperFeatureFilter) => void
+}) {
+  return (
+    <div className="flex gap-2 overflow-x-auto rounded-xl border border-[#dfe5df] bg-white/60 p-2 dark:border-border dark:bg-card/40" aria-label={locale === "zh" ? "论文筛选" : "Paper filters"}>
+      {paperFeatureFilters.map((filter) => {
+        const active = selected.includes(filter)
+        return (
+          <Button
+            key={filter}
+            type="button"
+            variant={active ? "default" : "outline"}
+            size="sm"
+            className="h-8 shrink-0 rounded-full px-3 text-xs shadow-none"
+            aria-pressed={active}
+            onClick={() => onToggle(filter)}
+          >
+            {filterIcon(filter)}
+            {filterLabel(filter, locale)}
+          </Button>
+        )
+      })}
+    </div>
+  )
+}
+
+function ResearchStatusNotice({
+  notices,
+  context,
+  locale
+}: {
+  notices: string[]
+  context: PaperDataContext
+  locale: Locale
+}) {
+  const message = [...new Set(notices)].filter(Boolean).join(" ") || t(papersCopy.apiUnavailableCache, locale)
+  const source = paperDataSourceLabel(context.source, locale)
+  const updated = context.collectedAt ? formatDataUpdatedAt(context.collectedAt, locale) : null
+  const meta = [source, updated].filter(Boolean).join(locale === "zh" ? " · " : " · ")
+
+  return (
+    <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50/90 px-4 py-3 text-sm leading-6 text-amber-900">
+      <p>{message}</p>
+      {meta ? <p className="mt-1 text-xs text-amber-900/70">{meta}</p> : null}
+    </div>
+  )
+}
+
+function filterIcon(filter: PaperFeatureFilter) {
+  if (filter === "pdf") return <FileText className="size-3.5" aria-hidden="true" />
+  if (filter === "code") return <Github className="size-3.5" aria-hidden="true" />
+  if (filter === "benchmark") return <BarChart3 className="size-3.5" aria-hidden="true" />
+  return <Quote className="size-3.5" aria-hidden="true" />
+}
+
+function filterLabel(filter: PaperFeatureFilter, locale: Locale) {
+  return translate(locale, `papers.paperFilter.${filter}` as TranslationKey) || fallbackFilterLabel(filter, locale)
+}
+
+function fallbackFilterLabel(filter: PaperFeatureFilter, locale: Locale) {
+  const labels: Record<PaperFeatureFilter, Record<Locale, string>> = {
+    pdf: { zh: "有 PDF", en: "PDF" },
+    code: { zh: "有代码", en: "Code" },
+    benchmark: { zh: "有评测", en: "Benchmarks" },
+    citation: { zh: "有引用", en: "Citations" }
+  }
+  return labels[filter][locale]
+}
+
+function paperDataSourceLabel(source: string | undefined, locale: Locale) {
+  if (source === "backend") {
+    return locale === "zh" ? "来源：实时论文索引" : "Source: live paper index"
+  }
+  if (source === "artifact") {
+    return locale === "zh" ? "来源：Paper Radar 产物" : "Source: Paper Radar artifacts"
+  }
+  if (source === "empty") {
+    return locale === "zh" ? "来源：暂无可用真实论文数据" : "Source: no verified paper data yet"
+  }
+  return locale === "zh" ? "来源：已缓存真实论文数据" : "Source: verified cached papers"
+}
+
+function formatDataUpdatedAt(value: string, locale: Locale) {
+  const date = new Date(value)
+  if (!Number.isFinite(date.getTime())) {
+    return null
+  }
+  return `${locale === "zh" ? "最近更新" : "Updated"}：${new Intl.DateTimeFormat(locale === "zh" ? "zh-CN" : "en-US", {
+    year: "numeric",
+    month: "short",
+    day: "numeric"
+  }).format(date)}`
+}
+
+function latestPaperTimestamp(papers: Paper[]) {
+  const timestamps = papers.map((paper) => new Date(paper.publishedAt).getTime()).filter((value) => Number.isFinite(value))
+  return timestamps.length ? new Date(Math.max(...timestamps)).toISOString() : undefined
 }
 
 function PaperPagination({

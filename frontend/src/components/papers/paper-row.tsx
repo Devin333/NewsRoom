@@ -2,7 +2,7 @@
 
 import { Fragment, type MouseEvent, type ReactNode } from "react"
 import Link from "next/link"
-import { Bell, BookOpen, Github, Heart } from "lucide-react"
+import { Bell, BookOpen, ExternalLink, Eye, FileText, Github, Heart, Quote } from "lucide-react"
 import { PaperTags } from "@/components/papers/paper-tags"
 import { PaperThumbnail } from "@/components/papers/paper-thumbnail"
 import { Button } from "@/components/ui/button"
@@ -15,13 +15,15 @@ import type { Locale, Paper } from "@/lib/papers/types"
 export function PaperRow({
   paper,
   locale,
-  onPreview
+  onPreview,
+  renderPdfPreview = true
 }: {
   paper: Paper
   locale: Locale
   onPreview: (paper: Paper) => void
+  renderPdfPreview?: boolean
 }) {
-  const paperHref = paperPdfUrl(paper) ?? paper.paperUrl ?? paper.arxivUrl
+  const pdfHref = paperPdfUrl(paper)
   const repoHref = paper.repoUrl?.startsWith("https://github.com/") && paper.repoUrl !== "https://github.com/" ? paper.repoUrl : undefined
   const tasks = paper.taskRefs ?? []
   const methods = paper.methodRefs ?? []
@@ -56,7 +58,7 @@ export function PaperRow({
           }}
           aria-label={`Preview ${paper.title}`}
         >
-          <PaperThumbnail paper={paper} locale={locale} />
+          <PaperThumbnail paper={paper} locale={locale} renderPdfPreview={renderPdfPreview} />
         </div>
 
         <div className="min-w-0 space-y-4">
@@ -83,24 +85,44 @@ export function PaperRow({
             <PaperTags tasks={tasks} methods={methods} tags={tags} locale={locale} />
           </div>
 
-          <div className="flex flex-wrap gap-2.5">
-            {paperHref ? (
-              <PaperActionPill
-                href={paperHref}
+          <div className="flex flex-wrap items-center gap-2.5">
+            <PaperActionButton
+              type="button"
+              ariaLabel={`${translate(locale, "papers.previewPaper")} ${paper.title}`}
+              icon={<Eye className="size-4" />}
+              label={translate(locale, "papers.previewPaper")}
+              onClick={() => onPreview(paper)}
+            />
+            <PaperActionLink
+              href={papersRoutes.reader(paper.slug || paper.id)}
+              ariaLabel={`${translate(locale, "papers.readPaper")} ${paper.title}`}
+              icon={<BookOpen className="size-4" />}
+              label={translate(locale, "papers.readPaper")}
+            />
+            {pdfHref ? (
+              <PaperActionLink
+                href={pdfHref}
+                external
                 ariaLabel={t(papersCopy.openPaper, locale)}
-                icon={<BookOpen className="size-4" />}
-                value={paperMetricValue(paper.citationCount)}
-                label={translate(locale, "papers.reader.cites")}
+                icon={<FileText className="size-4" />}
+                label="PDF"
               />
             ) : null}
             {repoHref ? (
-              <PaperActionPill
+              <PaperActionLink
                 href={repoHref}
+                external
                 ariaLabel={t(papersCopy.openCode, locale)}
                 icon={<Github className="size-4" />}
-                value={paperMetricValue(paper.githubStars)}
-                label={translate(locale, "papers.reader.stars")}
+                label={translate(locale, "papers.reader.code")}
+                meta={typeof paper.githubStars === "number" ? `${formatCompactNumber(paper.githubStars)} ${translate(locale, "papers.reader.stars")}` : undefined}
               />
+            ) : null}
+            {typeof paper.citationCount === "number" ? (
+              <span className="inline-flex h-8 items-center gap-2 rounded-full border border-transparent bg-[#f4f7f3] px-3 text-xs font-semibold text-[#334155]/65 dark:bg-secondary dark:text-muted-foreground">
+                <Quote className="size-3.5" />
+                {formatCompactNumber(paper.citationCount)} {translate(locale, "papers.reader.cites")}
+              </span>
             ) : null}
           </div>
 
@@ -130,38 +152,75 @@ function PaperMetaSeparator() {
   return <span aria-hidden="true" className="size-1 rounded-full bg-[#94a3b8]/60" />
 }
 
-function PaperActionPill({
+function PaperActionLink({
   href,
   ariaLabel,
   icon,
-  value,
-  label
+  label,
+  meta,
+  external = false
 }: {
   href: string
   ariaLabel: string
   icon: ReactNode
-  value: string
   label: string
+  meta?: string
+  external?: boolean
 }) {
+  const content = (
+    <>
+      <span className="text-[#334155]/65 dark:text-muted-foreground">{icon}</span>
+      <span className="font-semibold text-[#334155] dark:text-foreground">{label}</span>
+      {meta ? <span className="text-[#334155]/50 dark:text-muted-foreground">{meta}</span> : null}
+      {external ? <ExternalLink className="size-3.5 text-[#334155]/45 dark:text-muted-foreground" aria-hidden="true" /> : null}
+    </>
+  )
+
   return (
     <Button
       asChild
       variant="outline"
       size="sm"
       aria-label={ariaLabel}
-      className="h-auto rounded-lg border-[#dbe3dc] bg-white px-3 py-1.5 text-left shadow-none hover:bg-[#eef4ef] dark:border-border dark:bg-card dark:hover:bg-secondary"
+      className="h-8 rounded-full border-[#dbe3dc] bg-white px-3 text-left text-xs shadow-none hover:bg-[#eef4ef] dark:border-border dark:bg-card dark:hover:bg-secondary"
     >
-      <a href={href} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2.5">
-        <span className="text-[#334155]/65 dark:text-muted-foreground">{icon}</span>
-        <span className="font-semibold text-[#334155] dark:text-foreground">{value}</span>
-        <span className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-[#334155]/55 dark:text-muted-foreground">
-          {label.toUpperCase()}
-        </span>
-      </a>
+      {external ? (
+        <a href={href} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2">
+          {content}
+        </a>
+      ) : (
+        <Link href={href} className="inline-flex items-center gap-2">
+          {content}
+        </Link>
+      )}
     </Button>
   )
 }
 
-function paperMetricValue(value?: number) {
-  return typeof value === "number" ? formatCompactNumber(value) : "N/A"
+function PaperActionButton({
+  ariaLabel,
+  icon,
+  label,
+  onClick,
+  type
+}: {
+  ariaLabel: string
+  icon: ReactNode
+  label: string
+  onClick: () => void
+  type: "button"
+}) {
+  return (
+    <Button
+      type={type}
+      variant="outline"
+      size="sm"
+      aria-label={ariaLabel}
+      className="h-8 rounded-full border-[#dbe3dc] bg-white px-3 text-left text-xs shadow-none hover:bg-[#eef4ef] dark:border-border dark:bg-card dark:hover:bg-secondary"
+      onClick={onClick}
+    >
+      <span className="text-[#334155]/65 dark:text-muted-foreground">{icon}</span>
+      <span className="font-semibold text-[#334155] dark:text-foreground">{label}</span>
+    </Button>
+  )
 }

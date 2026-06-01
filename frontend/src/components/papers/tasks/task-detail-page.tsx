@@ -111,17 +111,17 @@ export function TaskDetailPage({
               onPreviewPaper={(paper) => setSelectedPaper(paper)}
             />
           ) : null}
-          <BenchmarkList
-            benchmarks={taskBenchmarks}
-            task={task}
-            locale={locale}
-            onSelect={previewBenchmark}
-          />
           <PaperStream
             papers={taskPapers}
             locale={locale}
             title={t(papersCopy.papersUnderTask, locale)}
             onPreview={(p) => setSelectedPaper(p)}
+          />
+          <BenchmarkList
+            benchmarks={taskBenchmarks}
+            task={task}
+            locale={locale}
+            onSelect={previewBenchmark}
           />
           <ImplementationList
             papers={taskPapers}

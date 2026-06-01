@@ -4,7 +4,15 @@ import { translate } from "@/lib/i18n"
 import { paperPdfUrl } from "@/lib/papers/format"
 import type { Locale, Paper } from "@/lib/papers/types"
 
-export function PaperThumbnail({ paper, locale }: { paper: Paper; locale: Locale }) {
+export function PaperThumbnail({
+  paper,
+  locale,
+  renderPdfPreview = true
+}: {
+  paper: Paper
+  locale: Locale
+  renderPdfPreview?: boolean
+}) {
   const pdfUrl = paperPdfUrl(paper)
 
   if (paper.thumbnailUrl) {
@@ -17,7 +25,7 @@ export function PaperThumbnail({ paper, locale }: { paper: Paper; locale: Locale
     )
   }
 
-  if (pdfUrl) {
+  if (pdfUrl && renderPdfPreview) {
     return (
       <PdfPageThumbnail
         pdfUrl={pdfUrl}
@@ -28,6 +36,14 @@ export function PaperThumbnail({ paper, locale }: { paper: Paper; locale: Locale
     )
   }
 
+  if (pdfUrl) {
+    return <PaperPlaceholder label={translate(locale, "papers.reader.pdfPreviewDeferred")} />
+  }
+
+  return <PaperPlaceholder label={translate(locale, "papers.reader.noVerifiedPdf")} />
+}
+
+function PaperPlaceholder({ label }: { label: string }) {
   return (
     <div className="relative h-44 w-32 shrink-0 overflow-hidden rounded-sm border border-[#d6d2c8] bg-[#fbfaf6] shadow-[0_8px_20px_rgba(15,23,42,0.08)] dark:border-border dark:bg-card">
       <div className="absolute inset-x-0 top-0 h-8 bg-[#eef6f1]" />
@@ -39,7 +55,7 @@ export function PaperThumbnail({ paper, locale }: { paper: Paper; locale: Locale
           <span className="block h-1.5 w-16 rounded-full bg-slate-200 dark:bg-slate-700" />
         </div>
         <p className="mt-auto text-[0.62rem] font-semibold uppercase tracking-[0.14em] text-slate-400">
-          {translate(locale, "papers.reader.noVerifiedPdf")}
+          {label}
         </p>
       </div>
     </div>

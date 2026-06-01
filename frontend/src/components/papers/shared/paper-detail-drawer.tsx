@@ -33,7 +33,7 @@ export function PaperDetailDrawer({
     if (paper) {
       if (!isPublicPaper(paper)) {
         setActivePaper(null)
-        setDetailError("Paper detail is not available.")
+        setDetailError(translate(locale, "papers.reader.detailUnavailable"))
         return
       }
       setActivePaper(paper)
@@ -46,7 +46,7 @@ export function PaperDetailDrawer({
 
     const timeout = window.setTimeout(() => setActivePaper(null), CLOSE_ANIMATION_MS)
     return () => window.clearTimeout(timeout)
-  }, [open, paper, paperId])
+  }, [locale, open, paper, paperId])
 
   useEffect(() => {
     if (!open || !paperId) {
@@ -64,21 +64,21 @@ export function PaperDetailDrawer({
         if (!cancelled) {
           if (!isPublicPaper(detail)) {
             setActivePaper(null)
-            setDetailError("Paper detail is not available.")
+            setDetailError(translate(locale, "papers.reader.detailUnavailable"))
             return
           }
           setActivePaper(detail)
         }
       })
-      .catch((error) => {
+      .catch(() => {
         if (!cancelled) {
-          setDetailError(error instanceof Error ? error.message : "Paper detail request failed")
+          setDetailError(translate(locale, "papers.reader.detailUnavailable"))
         }
       })
     return () => {
       cancelled = true
     }
-  }, [open, paper, paperId])
+  }, [locale, open, paper, paperId])
 
   useEffect(() => {
     if (!open) {

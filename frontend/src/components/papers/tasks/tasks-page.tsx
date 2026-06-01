@@ -5,10 +5,13 @@ import { PapersHero } from "@/components/papers/papers-hero"
 import { PapersMicrobar } from "@/components/papers/papers-microbar"
 import { TaskSection } from "@/components/papers/tasks/task-section"
 import { InlineNotice } from "@/components/papers/shared/inline-notice"
+import { Button } from "@/components/ui/button"
 import { orderedTaskGroups, taskGroupLabel } from "@/lib/papers/categories"
 import { localizedResearchNotice, papersCopy, t } from "@/lib/papers/copy"
 import { fetchPaperTasksResult, fetchPapers } from "@/lib/papers/api"
 import type { Locale, Paper, PaperTask } from "@/lib/papers/types"
+
+type TaxonomySort = "paper_count" | "recent" | "benchmark"
 
 export function TasksPage({ locale }: { locale: Locale }) {
   const [tasks, setTasks] = useState<PaperTask[]>([])
@@ -16,6 +19,7 @@ export function TasksPage({ locale }: { locale: Locale }) {
   const [status, setStatus] = useState<"loading" | "ready" | "fallback">("loading")
   const [notice, setNotice] = useState<string | null>(null)
   const [fallbackNoticeVisible, setFallbackNoticeVisible] = useState(true)
+  const [sort, setSort] = useState<TaxonomySort>("paper_count")
 
   useEffect(() => {
     let active = true
@@ -52,8 +56,9 @@ export function TasksPage({ locale }: { locale: Locale }) {
     }
   }, [locale])
 
-  const taskItems = status === "loading" ? [] : tasks.filter((task) => task.paperCount > 0)
+  const taskItems = status === "loading" ? [] : sortTasks(tasks.filter((task) => task.paperCount > 0), paperItems, sort)
   const taskPaperItems = status === "loading" ? [] : paperItems.filter((paper) => (paper.taskRefs ?? []).length > 0)
+  const taskPaperCount = taskPaperItems.length || paperCountFromTasks(taskItems)
   const benchmarkCount = taskItems.reduce((total, task) => total + task.benchmarkCount, 0)
   const visibleTaskGroups = orderedTaskGroups(taskItems)
 
@@ -66,7 +71,7 @@ export function TasksPage({ locale }: { locale: Locale }) {
         subtitle={t(papersCopy.tasksSubtitle, locale)}
         stats={[
           { label: t(papersCopy.tasks, locale), value: taskItems.length },
-          { label: t(papersCopy.papers, locale), value: taskPaperItems.length },
+          { label: t(papersCopy.papers, locale), value: taskPaperCount },
           { label: t(papersCopy.benchmarks, locale), value: benchmarkCount }
         ]}
       />
@@ -78,6 +83,9 @@ export function TasksPage({ locale }: { locale: Locale }) {
         />
       ) : null}
       <div className="space-y-6">
+        {status !== "loading" && taskItems.length > 0 ? (
+          <TaxonomySortControls value={sort} locale={locale} onChange={setSort} />
+        ) : null}
         {status === "loading" ? (
           <p className="text-sm text-[#334155]/60 dark:text-muted-foreground">{t(papersCopy.loadingTasks, locale)}</p>
         ) : null}
@@ -103,13 +111,80 @@ function publicPapers(papers: Paper[]) {
   return papers.filter((paper) => paper.isPublished !== false)
 }
 
+function paperCountFromTasks(tasks: PaperTask[]) {
+  const ids = new Set(tasks.flatMap((task) => task.latestPaperIds ?? []))
+  return ids.size || tasks.reduce((total, task) => total + task.paperCount, 0)
+}
+
 function paperListUnavailableNotice(locale: Locale) {
   return locale === "zh"
-    ? "论文列表 API 暂不可用；任务目录仍显示已验证分类，论文统计暂时不可用。"
-    : "Paper list API is unavailable; task taxonomy remains live, but paper totals are temporarily unavailable."
+    ? "论文列表正在刷新；任务目录仍使用已验证分类。"
+    : "Paper list is refreshing; task taxonomy remains available from verified data."
 }
 
 function combineNotices(notices: Array<string | null | undefined>) {
   const uniqueNotices = [...new Set(notices.filter((notice): notice is string => Boolean(notice)))]
   return uniqueNotices.length ? uniqueNotices.join(" ") : null
+}
+
+function TaxonomySortControls({
+  value,
+  locale,
+  onChange
+}: {
+  value: TaxonomySort
+  locale: Locale
+  onChange: (value: TaxonomySort) => void
+}) {
+  const items: TaxonomySort[] = ["paper_count", "recent", "benchmark"]
+  return (
+    <div className="flex gap-2 overflow-x-auto" aria-label={locale === "zh" ? "任务排序" : "Task sorting"}>
+      {items.map((item) => (
+        <Button
+          key={item}
+          type="button"
+          variant={item === value ? "default" : "outline"}
+          size="sm"
+          className="h-8 shrink-0 rounded-full px-3 text-xs shadow-none"
+          onClick={() => onChange(item)}
+        >
+          {sortLabel(item, locale)}
+        </Button>
+      ))}
+    </div>
+  )
+}
+
+function sortTasks(tasks: PaperTask[], papers: Paper[], sort: TaxonomySort) {
+  const latestByTask = latestPaperTimeBySlug(papers, "task")
+  return [...tasks].sort((left, right) => {
+    if (sort === "recent") {
+      return (latestByTask.get(right.slug) ?? 0) - (latestByTask.get(left.slug) ?? 0) || right.paperCount - left.paperCount
+    }
+    if (sort === "benchmark") {
+      return right.benchmarkCount - left.benchmarkCount || right.paperCount - left.paperCount
+    }
+    return right.paperCount - left.paperCount || left.name.localeCompare(right.name)
+  })
+}
+
+function latestPaperTimeBySlug(papers: Paper[], kind: "task" | "method") {
+  const records = new Map<string, number>()
+  for (const paper of publicPapers(papers)) {
+    const time = new Date(paper.publishedAt).getTime()
+    if (!Number.isFinite(time)) {
+      continue
+    }
+    const refs = kind === "task" ? paper.taskRefs : paper.methodRefs
+    for (const ref of refs ?? []) {
+      records.set(ref.slug, Math.max(records.get(ref.slug) ?? 0, time))
+    }
+  }
+  return records
+}
+
+function sortLabel(value: TaxonomySort, locale: Locale) {
+  if (value === "recent") return locale === "zh" ? "最近更新" : "Recent"
+  if (value === "benchmark") return locale === "zh" ? "有评测" : "Benchmarks"
+  return locale === "zh" ? "按论文数" : "Paper count"
 }

@@ -82,9 +82,9 @@ export function MethodDetailPage({
               onPreviewPaper={previewPaper}
             />
           ) : null}
+          <PaperStream papers={methodPapers} locale={locale} title={t(papersCopy.papersUsingMethod, locale)} onPreview={previewPaper} />
           <RelatedTasksPanel tasks={relatedTasks} locale={locale} />
           <ImplementationList papers={methodPapers} locale={locale} title={translate(locale, "papers.reader.projects")} />
-          <PaperStream papers={methodPapers} locale={locale} title={t(papersCopy.papersUsingMethod, locale)} onPreview={previewPaper} />
         </main>
         <aside className="space-y-6 xl:sticky xl:top-24 xl:self-start">
           <RelatedMethodsPanel methods={relatedMethods} locale={locale} />

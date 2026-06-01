@@ -183,7 +183,7 @@ describe("TrendingPapersPage", () => {
 
     expect(await screen.findByText("Agent Paper")).toBeInTheDocument()
     expect(screen.queryByText("Reasoning Paper")).not.toBeInTheDocument()
-    expect(screen.getByText(/API unavailable; showing real cached papers/i)).toBeInTheDocument()
+    expect(screen.getByText(/Using verified cached paper data/i)).toBeInTheDocument()
     expect(screen.queryByText(/dashboard offline/i)).not.toBeInTheDocument()
     expect(screen.getByLabelText(/tasks: 2/i)).toBeInTheDocument()
   })
@@ -319,8 +319,8 @@ describe("TrendingPapersPage", () => {
 
     expect(await screen.findByText("Agent Paper")).toBeInTheDocument()
     expect(screen.getAllByText("Reasoning Paper").length).toBeGreaterThan(0)
-    expect(screen.getByText(/Page request failed; list recovered from available dashboard data/i)).toBeInTheDocument()
-    expect(screen.getByText(/page offline/i)).toBeInTheDocument()
+    expect(screen.getByText(/The list recovered from available verified paper data/i)).toBeInTheDocument()
+    expect(screen.queryByText(/page offline/i)).not.toBeInTheDocument()
     expect(screen.getByLabelText(/papers: 2/i)).toBeInTheDocument()
   })
 
@@ -336,14 +336,14 @@ describe("TrendingPapersPage", () => {
       limit: 5000,
       offset: 0,
       dataState: "empty",
-      notices: ["No backend, tracked cache, or artifact papers are available."],
+      notices: ["No verified public paper data is available yet."],
       papers: []
     })
 
     render(<TrendingPapersPage locale="en" papers={[]} />)
 
     expect(await screen.findByText("No verified papers yet")).toBeInTheDocument()
-    expect(screen.getByText("Run paper ingest, or set NEWSROOM_PAPERS_DATA_PATH to a real papers cache, then refresh.")).toBeInTheDocument()
+    expect(screen.getByText("No verified paper data is available yet. Refresh after paper ingest completes.")).toBeInTheDocument()
   })
 
   it("keeps search empty state separate from missing data guidance", async () => {

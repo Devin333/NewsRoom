@@ -52,8 +52,8 @@ export function PaperStream({
       {sortedPapers.length ? (
         <>
           <div className="divide-y divide-[#e1e7df] px-1 dark:divide-border">
-            {visiblePapers.map((paper) => (
-              <PaperRow key={paper.id} paper={paper} locale={locale} onPreview={onPreview} />
+            {visiblePapers.map((paper, index) => (
+              <PaperRow key={paper.id} paper={paper} locale={locale} onPreview={onPreview} renderPdfPreview={index < 3} />
             ))}
           </div>
           {hasMore ? (

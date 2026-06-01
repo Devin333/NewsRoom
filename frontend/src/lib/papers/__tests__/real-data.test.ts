@@ -189,7 +189,7 @@ describe("Papers API data loading", () => {
     expect(result.dataState).toBe("empty")
     expect(result.total_count).toBe(0)
     expect(result.papers).toEqual([])
-    expect(result.notices).toContain("No public papers are available from backend, tracked cache, or artifacts.")
+    expect(result.notices).toContain("No verified public paper data is available yet.")
   })
 
   it("filters and sorts real paper fallback results for the BFF list", async () => {
@@ -248,13 +248,81 @@ describe("Papers API data loading", () => {
 
     expect(result.source).toBe("taxonomy")
     expect(result.dataState).toBe("degraded")
-    expect(result.notices).toContain("Paper task API is unavailable; showing taxonomy derived from real paper references.")
+    expect(result.notices).toContain("Task taxonomy is built from verified paper references while the curated directory refreshes.")
     expect(agents?.paperCount).toBe(1)
     expect(agents?.description).toBe("Agent systems that reason, call tools, use memory, and complete multi-step tasks.")
     expect(agents?.benchmarkCount).toBe(1)
     expect(agents?.methodCount).toBe(1)
     expect(agents?.latestPaperIds).toEqual(["paper-agent"])
     expect(result.items.find((task) => task.slug === "reasoning")).toBeUndefined()
+  })
+
+  it("canonicalizes prefixed task and method slugs before public aggregation", async () => {
+    mockedSafeApiGet
+      .mockResolvedValueOnce({ ok: false, errorCode: "request_failed", errorMessage: "tasks offline" })
+      .mockResolvedValueOnce({
+        ok: true,
+        data: {
+          papers: [
+            realPaper({
+              id: "paper-language-one",
+              title: "Language Models One",
+              taskRefs: [{ id: "task-prefixed-language", slug: "task-language-models", name: "Language Models" }],
+              methodRefs: [{ id: "method-prefixed-language", slug: "method-language-models", name: "Language Models" }]
+            }),
+            realPaper({
+              id: "paper-language-two",
+              title: "Language Models Two",
+              taskRefs: [{ id: "task-language", slug: "language-models", name: "Language Models" }],
+              methodRefs: [{ id: "method-language", slug: "language-models", name: "Language Models" }]
+            })
+          ]
+        }
+      })
+
+    const taskResult = await getPaperTasksResult()
+    const languageTasks = taskResult.items.filter((task) => task.name === "Language Models" || task.slug.includes("language-model"))
+
+    expect(languageTasks).toHaveLength(1)
+    expect(languageTasks[0]).toMatchObject({
+      slug: "language-models",
+      paperCount: 2,
+      descriptionZh: "由 2 篇真实公开论文引用聚合。"
+    })
+
+    mockedSafeApiGet.mockReset()
+    mockedSafeApiGet
+      .mockResolvedValueOnce({ ok: false, errorCode: "request_failed", errorMessage: "methods offline" })
+      .mockResolvedValueOnce({ ok: false, errorCode: "request_failed", errorMessage: "tasks offline" })
+      .mockResolvedValueOnce({
+        ok: true,
+        data: {
+          papers: [
+            realPaper({
+              id: "paper-method-one",
+              title: "Language Method One",
+              taskRefs: [{ id: "task-language", slug: "language-models", name: "Language Models" }],
+              methodRefs: [{ id: "method-prefixed-language", slug: "method-language-models", name: "Language Models" }]
+            }),
+            realPaper({
+              id: "paper-method-two",
+              title: "Language Method Two",
+              taskRefs: [{ id: "task-language", slug: "language-models", name: "Language Models" }],
+              methodRefs: [{ id: "method-language", slug: "language-models", name: "Language Models" }]
+            })
+          ]
+        }
+      })
+
+    const methodResult = await getPaperMethodsResult()
+    const languageMethods = methodResult.items.filter((method) => method.name === "Language Models" || method.slug.includes("language-model"))
+
+    expect(languageMethods).toHaveLength(1)
+    expect(languageMethods[0]).toMatchObject({
+      slug: "language-models",
+      paperCount: 2,
+      descriptionZh: "由 2 篇真实公开论文引用聚合。"
+    })
   })
 
   it("marks API-backed task taxonomy empty when paper data is unavailable", async () => {
@@ -284,7 +352,7 @@ describe("Papers API data loading", () => {
 
     expect(result.source).toBe("backend")
     expect(result.dataState).toBe("empty")
-    expect(result.notices).toContain("No backend, tracked cache, or artifact papers are available.")
+    expect(result.notices).toContain("No verified public paper data is available yet.")
     expect(result.items).toEqual([])
   })
 
@@ -311,7 +379,7 @@ describe("Papers API data loading", () => {
 
     expect(result.source).toBe("taxonomy")
     expect(result.dataState).toBe("degraded")
-    expect(result.notices).toContain("Paper method API is unavailable; showing taxonomy derived from real paper references.")
+    expect(result.notices).toContain("Method taxonomy is built from verified paper references while the curated directory refreshes.")
     expect(toolUse?.paperCount).toBe(1)
     expect(toolUse?.taskCount).toBe(1)
     expect(toolUse?.representativePaperIds).toEqual(["paper-tool-use"])
@@ -346,7 +414,7 @@ describe("Papers API data loading", () => {
 
     expect(result.source).toBe("backend")
     expect(result.dataState).toBe("empty")
-    expect(result.notices).toContain("No backend, tracked cache, or artifact papers are available.")
+    expect(result.notices).toContain("No verified public paper data is available yet.")
     expect(result.items).toEqual([])
   })
 })

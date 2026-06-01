@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react"
+﻿import { fireEvent, render, screen, within } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { MethodDetailPage } from "@/components/papers/methods/method-detail-page"
 import { MethodsPage } from "@/components/papers/methods/methods-page"
@@ -215,7 +215,7 @@ describe("paper task and method pages", () => {
 
     render(<TasksPage locale="en" />)
 
-    expect(await screen.findByText("Paper task API is unavailable; showing taxonomy derived from real paper references.")).toBeInTheDocument()
+    expect(await screen.findByText("Task taxonomy is built from verified paper references.")).toBeInTheDocument()
   })
 
   it("renders BFF real-derived task fallback without static zero-paper items", async () => {
@@ -223,13 +223,13 @@ describe("paper task and method pages", () => {
       tasks: fallbackTasks,
       dataState: "degraded",
       source: "taxonomy",
-      notices: ["Paper task API is unavailable; showing taxonomy derived from real paper references."]
+      notices: ["Task taxonomy is built from verified paper references."]
     })
     vi.mocked(fetchPapers).mockResolvedValueOnce(fallbackPaperResult)
 
     render(<TasksPage locale="en" />)
 
-    expect(await screen.findByText("Paper task API is unavailable; showing taxonomy derived from real paper references.")).toBeInTheDocument()
+    expect(await screen.findByText("Task taxonomy is built from verified paper references.")).toBeInTheDocument()
     expect(screen.getByLabelText(/benchmarks: 1/i)).toBeInTheDocument()
     expect(screen.getByRole("link", { name: /Agents\s+1 Papers/i })).toBeInTheDocument()
     expect(screen.queryByRole("link", { name: /Reasoning/i })).not.toBeInTheDocument()
@@ -240,7 +240,7 @@ describe("paper task and method pages", () => {
       tasks: fallbackTasks,
       dataState: "degraded",
       source: "taxonomy",
-      notices: ["Paper task API is unavailable; showing taxonomy derived from real paper references."]
+      notices: ["Task taxonomy is built from verified paper references."]
     })
     vi.mocked(fetchPapers).mockResolvedValueOnce({
       ...fallbackPaperResult,
@@ -272,8 +272,9 @@ describe("paper task and method pages", () => {
     render(<TasksPage locale="en" />)
 
     expect(await screen.findByText("Backend Task")).toBeInTheDocument()
-    expect(screen.getByText("Paper list API is unavailable; task taxonomy remains live, but paper totals are temporarily unavailable.")).toBeInTheDocument()
-    expect(screen.queryByText("Paper task API is unavailable; showing taxonomy derived from real paper references.")).not.toBeInTheDocument()
+    expect(screen.getByText("Paper list is refreshing; task taxonomy remains available from verified data.")).toBeInTheDocument()
+    expect(screen.getByLabelText(/papers: 1/i)).toBeInTheDocument()
+    expect(screen.queryByText("Task taxonomy is built from verified paper references.")).not.toBeInTheDocument()
   })
 
   it("shows a true empty task state when there are no public papers", async () => {
@@ -299,7 +300,7 @@ describe("paper task and method pages", () => {
 
     render(<TasksPage locale="en" />)
 
-    expect(await screen.findByText("No public papers are available.")).toBeInTheDocument()
+    expect(await screen.findByText("No verified public paper data is available yet.")).toBeInTheDocument()
     expect(screen.getByLabelText(/tasks: 0/i)).toBeInTheDocument()
     expect(screen.getByLabelText(/papers: 0/i)).toBeInTheDocument()
     expect(screen.getByText("No verified papers yet")).toBeInTheDocument()
@@ -324,7 +325,7 @@ describe("paper task and method pages", () => {
 
     render(<MethodsPage locale="en" />)
 
-    expect(await screen.findByText("Paper method API is unavailable; showing taxonomy derived from real paper references.")).toBeInTheDocument()
+    expect(await screen.findByText("Method taxonomy is built from verified paper references.")).toBeInTheDocument()
   })
 
   it("renders BFF real-derived method fallback without static zero-paper items", async () => {
@@ -332,14 +333,14 @@ describe("paper task and method pages", () => {
       methods: fallbackMethods,
       dataState: "degraded",
       source: "taxonomy",
-      notices: ["Paper method API is unavailable; showing taxonomy derived from real paper references."]
+      notices: ["Method taxonomy is built from verified paper references."]
     })
     vi.mocked(fetchPaperTasksResult).mockResolvedValueOnce({ tasks: fallbackTasks, dataState: "degraded", source: "taxonomy", notices: [] })
     vi.mocked(fetchPapers).mockResolvedValueOnce(fallbackPaperResult)
 
     render(<MethodsPage locale="en" />)
 
-    expect(await screen.findByText("Paper method API is unavailable; showing taxonomy derived from real paper references.")).toBeInTheDocument()
+    expect(await screen.findByText("Method taxonomy is built from verified paper references.")).toBeInTheDocument()
     expect(screen.getByRole("link", { name: /Tool Use.*1 Papers.*1 Tasks/i })).toBeInTheDocument()
     expect(screen.queryByRole("link", { name: /Planning/i })).not.toBeInTheDocument()
   })
@@ -349,7 +350,7 @@ describe("paper task and method pages", () => {
       methods: fallbackMethods,
       dataState: "degraded",
       source: "taxonomy",
-      notices: ["Paper method API is unavailable; showing taxonomy derived from real paper references."]
+      notices: ["Method taxonomy is built from verified paper references."]
     })
     vi.mocked(fetchPaperTasksResult).mockResolvedValueOnce({ tasks: fallbackTasks, dataState: "degraded", source: "taxonomy", notices: [] })
     vi.mocked(fetchPapers).mockResolvedValueOnce({
@@ -383,8 +384,21 @@ describe("paper task and method pages", () => {
     render(<MethodsPage locale="en" />)
 
     expect(await screen.findByText("Backend Method")).toBeInTheDocument()
-    expect(screen.getByText("Task taxonomy API is unavailable; method taxonomy remains live, but task totals are temporarily unavailable.")).toBeInTheDocument()
-    expect(screen.queryByText("Paper method API is unavailable; showing taxonomy derived from real paper references.")).not.toBeInTheDocument()
+    expect(screen.getByText("Task taxonomy is refreshing; method taxonomy remains available from verified data.")).toBeInTheDocument()
+    expect(screen.getByLabelText(/tasks: 1/i)).toBeInTheDocument()
+    expect(screen.queryByText("Method taxonomy is built from verified paper references.")).not.toBeInTheDocument()
+  })
+
+  it("keeps method paper stats from taxonomy when only paper totals fail", async () => {
+    vi.mocked(fetchPaperMethodsResult).mockResolvedValueOnce({ methods: apiMethods, dataState: "ready", source: "backend", notices: [] })
+    vi.mocked(fetchPaperTasksResult).mockResolvedValueOnce({ tasks: apiTasks, dataState: "ready", source: "backend", notices: [] })
+    vi.mocked(fetchPapers).mockRejectedValueOnce(new Error("paper list offline"))
+
+    render(<MethodsPage locale="en" />)
+
+    expect(await screen.findByText("Backend Method")).toBeInTheDocument()
+    expect(screen.getByText("Paper list is refreshing; method taxonomy remains available from verified data.")).toBeInTheDocument()
+    expect(screen.getByLabelText(/papers: 1/i)).toBeInTheDocument()
   })
 
   it("shows a true empty method state when there are no public papers", async () => {
@@ -416,7 +430,7 @@ describe("paper task and method pages", () => {
 
     render(<MethodsPage locale="en" />)
 
-    expect(await screen.findByText("No public papers are available.")).toBeInTheDocument()
+    expect(await screen.findByText("No verified public paper data is available yet.")).toBeInTheDocument()
     expect(screen.getByLabelText(/methods: 0/i)).toBeInTheDocument()
     expect(screen.getByLabelText(/papers: 0/i)).toBeInTheDocument()
     expect(screen.getByText("No verified papers yet")).toBeInTheDocument()
@@ -644,3 +658,4 @@ describe("paper task and method pages", () => {
     expect(screen.queryByText("Draft Paper")).not.toBeInTheDocument()
   })
 })
+

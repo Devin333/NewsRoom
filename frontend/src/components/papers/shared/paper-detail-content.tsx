@@ -63,7 +63,7 @@ export function PaperDetailContent({
       .catch((error) => {
         if (!cancelled) {
           setSummaryStatus("error")
-          setSummaryError(error instanceof Error ? error.message : "AI summary request failed")
+          setSummaryError(error instanceof Error ? error.name : "summary_request_failed")
         }
       })
 
@@ -255,8 +255,8 @@ export function PaperDetailContent({
       <DetailSection title="Benchmarks / SOTA" meta={translate(locale, "papers.reader.results", { count: benchmarks.length })}>
         {benchmarks.length ? (
           <div className="divide-y divide-[#d8dfd8] rounded-md border border-[#d8dfd8] bg-white dark:divide-border dark:border-border dark:bg-card">
-            {benchmarks.map((benchmark) => (
-              <BenchmarkResultRow key={benchmark.id} benchmark={benchmark} locale={locale} />
+            {benchmarks.map((benchmark, index) => (
+              <BenchmarkResultRow key={benchmarkResultKey(benchmark, index)} benchmark={benchmark} locale={locale} />
             ))}
           </div>
         ) : (
@@ -301,23 +301,7 @@ export function PaperDetailContent({
       </DetailSection>
 
       <DetailSection title={translate(locale, "papers.reader.heat")} meta={translate(locale, "papers.reader.realSignalsOnly")}>
-        <div className="flex flex-wrap gap-3 text-sm text-[#334155]/72 dark:text-muted-foreground">
-          <MetricPill
-            icon={<ThermometerSun className="size-4" />}
-            label={translate(locale, "papers.reader.newsroomHeat")}
-            value={typeof paper.newsroomHeatScore === "number" ? paper.newsroomHeatScore.toFixed(1) : "N/A"}
-          />
-          <MetricPill
-            icon={<Github className="size-4" />}
-            label={translate(locale, "papers.reader.githubStars")}
-            value={typeof paper.githubStars === "number" ? formatCompactNumber(paper.githubStars) : "N/A"}
-          />
-          <MetricPill
-            icon={<Quote className="size-4" />}
-            label={translate(locale, "papers.reader.openAlexCitations")}
-            value={typeof citationCount === "number" ? formatCompactNumber(citationCount) : "N/A"}
-          />
-        </div>
+        <MetricPills paper={paper} citationCount={citationCount} locale={locale} />
       </DetailSection>
     </>
   )
@@ -340,7 +324,7 @@ function matchingSummary(paper: Paper, locale: Locale) {
 function AISummaryBlock({
   status,
   summary,
-  error,
+  error: _error,
   locale,
   onRetry
 }: {
@@ -384,13 +368,24 @@ function AISummaryBlock({
   }
   return (
     <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-900">
-      <p>{error ?? translate(locale, "papers.reader.summaryUnavailable")}</p>
-      <button type="button" className="mt-3 inline-flex items-center gap-2 font-semibold" onClick={onRetry}>
+      <p>{translate(locale, "papers.reader.summaryUnavailable")}</p>
+      <button type="button" className="mt-3 inline-flex items-center gap-2 rounded-full border border-amber-300 bg-white/70 px-3 py-1 text-xs font-semibold" onClick={onRetry}>
         <RefreshCw className="size-4" />
         {translate(locale, "common.retry")}
       </button>
     </div>
   )
+}
+
+function benchmarkResultKey(benchmark: PaperBenchmarkResult, index: number) {
+  return [
+    benchmark.id,
+    benchmark.name,
+    benchmark.metric,
+    benchmark.value,
+    benchmark.taskSlug,
+    index
+  ].filter(Boolean).join(":")
 }
 
 function BenchmarkResultRow({ benchmark, locale }: { benchmark: PaperBenchmarkResult; locale: Locale }) {
@@ -530,6 +525,49 @@ function MetricPill({ icon, label, value }: { icon: ReactNode; label: string; va
       <span className="font-semibold text-[#334155] dark:text-foreground">{value}</span>
       <span>{label}</span>
     </span>
+  )
+}
+
+function MetricPills({ paper, citationCount, locale }: { paper: Paper; citationCount?: number; locale: Locale }) {
+  type MetricItem = { key: string; icon: ReactNode; label: string; value: string }
+  const metrics: Array<MetricItem | null> = [
+    typeof paper.newsroomHeatScore === "number"
+      ? {
+          key: "heat",
+          icon: <ThermometerSun className="size-4" />,
+          label: translate(locale, "papers.reader.newsroomHeat"),
+          value: paper.newsroomHeatScore.toFixed(1)
+        }
+      : null,
+    typeof paper.githubStars === "number"
+      ? {
+          key: "stars",
+          icon: <Github className="size-4" />,
+          label: translate(locale, "papers.reader.githubStars"),
+          value: formatCompactNumber(paper.githubStars)
+        }
+      : null,
+    typeof citationCount === "number"
+      ? {
+          key: "citations",
+          icon: <Quote className="size-4" />,
+          label: translate(locale, "papers.reader.openAlexCitations"),
+          value: formatCompactNumber(citationCount)
+        }
+      : null
+  ]
+  const visibleMetrics = metrics.filter((metric): metric is MetricItem => Boolean(metric))
+
+  if (!visibleMetrics.length) {
+    return <EmptyState text={translate(locale, "papers.reader.noMetricSignals")} />
+  }
+
+  return (
+    <div className="flex flex-wrap gap-3 text-sm text-[#334155]/72 dark:text-muted-foreground">
+      {visibleMetrics.map((metric) => (
+        <MetricPill key={metric.key} icon={metric.icon} label={metric.label} value={metric.value} />
+      ))}
+    </div>
   )
 }
 
