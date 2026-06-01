@@ -16,6 +16,17 @@ import { useOpenReaderSelections, useOpenReaderSettings } from "./open-reader-st
 import { EquationRenderer, InlineMathRenderer } from "./equation-renderer"
 import styles from "./open-reader.module.css"
 
+const INITIAL_READER_SECTION_COUNT = 6
+const READER_SECTION_BATCH_SIZE = 8
+const READER_IDLE_TIMEOUT_MS = 700
+const READER_IDLE_FALLBACK_DELAY_MS = 80
+
+type SectionRenderWindow = {
+  paperId: string
+  tocLength: number
+  count: number
+}
+
 export function OpenReaderPage({ reader, locale, backHref = "/papers", visualLayer }: OpenReaderPageProps) {
   const paper = reader.paper
   const title = paperTitle(paper, locale)
@@ -26,14 +37,24 @@ export function OpenReaderPage({ reader, locale, backHref = "/papers", visualLay
   )
   const visualsBySection = useMemo(() => groupVisualsBySection(visualLayer?.blocks ?? []), [visualLayer])
   const references = visualLayer?.references ?? []
+  const paragraphsById = useMemo(() => mapParagraphsById(paragraphs), [paragraphs])
+  const sectionContentById = useMemo(
+    () => mapSectionContent(toc, paragraphs, visualsBySection),
+    [paragraphs, toc, visualsBySection],
+  )
   const { settings, patchSettings } = useOpenReaderSettings(paper.id)
   const { selections, events, createTempSelection, discardAllTemp, updateNote, confirmExplain, confirmExample, toggleConfused, mergeRemoteMaterials } = useOpenReaderSelections(paper.id)
   const materials = useMemo(() => makeMaterialSummary(paper.id, selections, events), [paper.id, selections, events])
+  const selectionsByParagraph = useMemo(() => mapSelectionsByParagraph(selections), [selections])
 
   const contentRef = useRef<HTMLElement | null>(null)
   const paragraphRefs = useRef(new Map<string, HTMLParagraphElement>())
   const sectionRefs = useRef(new Map<string, HTMLElement>())
 
+  const [sectionRenderWindow, setSectionRenderWindow] = useState<SectionRenderWindow>(() => createInitialSectionWindow(paper.id, toc.length))
+  const renderedSectionCount = getRenderedSectionCount(sectionRenderWindow, paper.id, toc.length)
+  const visibleToc = toc.slice(0, renderedSectionCount)
+  const allSectionsRendered = renderedSectionCount >= toc.length
   const [activeSectionId, setActiveSectionId] = useState<string | null>(toc[0]?.id ?? null)
   const [menu, setMenu] = useState<SelectionMenuState | null>(null)
   const [note, setNote] = useState<NotePopoverState | null>(null)
@@ -53,13 +74,29 @@ export function OpenReaderPage({ reader, locale, backHref = "/papers", visualLay
 
   useEffect(() => {
     let cancelled = false
-    void fetchReaderMaterials(paper.id)
-      .then((remoteMaterials) => {
-        if (!cancelled) mergeRemoteMaterials(remoteMaterials)
-      })
-      .catch(() => undefined)
-    return () => { cancelled = true }
+    const cancelIdleTask = scheduleReaderIdleTask(() => {
+      void fetchReaderMaterials(paper.id)
+        .then((remoteMaterials) => {
+          if (!cancelled) mergeRemoteMaterials(remoteMaterials)
+        })
+        .catch(() => undefined)
+    })
+    return () => {
+      cancelled = true
+      cancelIdleTask()
+    }
   }, [mergeRemoteMaterials, paper.id])
+
+  useEffect(() => {
+    setSectionRenderWindow(createInitialSectionWindow(paper.id, toc.length))
+  }, [paper.id, toc.length])
+
+  useEffect(() => {
+    if (renderedSectionCount >= toc.length) return undefined
+    return scheduleReaderIdleTask(() => {
+      expandRenderedSectionsTo(renderedSectionCount + READER_SECTION_BATCH_SIZE)
+    })
+  }, [paper.id, renderedSectionCount, toc.length])
 
   useEffect(() => {
     function onClick(event: MouseEvent) {
@@ -127,7 +164,7 @@ export function OpenReaderPage({ reader, locale, backHref = "/papers", visualLay
       const paragraphEl = closestParagraph(range.commonAncestorContainer)
       if (!paragraphEl || !contentRef.current?.contains(paragraphEl)) return
       const paragraphId = paragraphEl.dataset.paragraphId
-      const paragraph = paragraphs.find((item) => item.id === paragraphId)
+      const paragraph = paragraphId ? paragraphsById.get(paragraphId) : undefined
       if (!paragraph) return
       const offsets = getSelectionOffsetsWithinElement(paragraphEl, range)
       if (!offsets) return
@@ -155,6 +192,32 @@ export function OpenReaderPage({ reader, locale, backHref = "/papers", visualLay
     setMenu(null)
     setNote(null)
     setDrawer({ mode: "materials" })
+  }
+
+  function expandRenderedSectionsTo(count: number) {
+    setSectionRenderWindow((current) => {
+      const currentCount = getRenderedSectionCount(current, paper.id, toc.length)
+      return {
+        paperId: paper.id,
+        tocLength: toc.length,
+        count: Math.min(toc.length, Math.max(currentCount, count)),
+      }
+    })
+  }
+
+  function scrollToSection(id: string) {
+    sectionRefs.current.get(id)?.scrollIntoView({ behavior: "smooth", block: "start" })
+  }
+
+  function handleTocNavigate(id: string) {
+    const targetIndex = toc.findIndex((item) => item.id === id)
+    if (targetIndex < 0) return
+    if (targetIndex >= renderedSectionCount) {
+      expandRenderedSectionsTo(targetIndex + 1)
+      window.setTimeout(() => scrollToSection(id), 0)
+      return
+    }
+    scrollToSection(id)
   }
 
   function syncSelectionEvent(selection: ReaderSelection, type: ReaderEventType, payload: Record<string, unknown> = {}) {
@@ -214,10 +277,8 @@ export function OpenReaderPage({ reader, locale, backHref = "/papers", visualLay
         </section>
 
         <section ref={contentRef} className={styles.paperCard} aria-label="Open reader paper body" data-open-reader-body onMouseUp={handleMouseUp}>
-          {toc.map((section) => {
-            const sectionParagraphs = paragraphs.filter((paragraph) => paragraph.sectionId === section.id)
-            const sectionVisuals = visualsBySection.get(section.id) ?? []
-            const sectionItems = buildSectionItems(sectionParagraphs, sectionVisuals)
+          {visibleToc.map((section) => {
+            const sectionItems = sectionContentById.get(section.id) ?? []
             return (
               <section key={section.id} ref={bindSection(section.id)} className={styles.readerSection}>
                 <SectionHeading section={section} />
@@ -226,7 +287,7 @@ export function OpenReaderPage({ reader, locale, backHref = "/papers", visualLay
                       key={item.paragraph.id}
                       paragraph={item.paragraph}
                       paragraphRef={bindParagraph(item.paragraph.id)}
-                      selections={selections.filter((selection) => selection.paragraphId === item.paragraph.id)}
+                      selections={selectionsByParagraph.get(item.paragraph.id) ?? []}
                       onOpenSelectionMenu={openSelectionMenu}
                     />
                   ) : (
@@ -240,11 +301,11 @@ export function OpenReaderPage({ reader, locale, backHref = "/papers", visualLay
               </section>
             )
           })}
-          <ReferencesSection references={references} />
+          {allSectionsRendered ? <ReferencesSection references={references} /> : null}
         </section>
       </article>
 
-      <FloatingToc paperId={paper.id} items={toc} activeSectionId={activeSectionId} materialCount={materials.selections.length} locale={locale} onNavigate={(id) => sectionRefs.current.get(id)?.scrollIntoView({ behavior: "smooth", block: "start" })} onOpenMaterials={openMaterials} />
+      <FloatingToc paperId={paper.id} items={toc} activeSectionId={activeSectionId} materialCount={materials.selections.length} locale={locale} onNavigate={handleTocNavigate} onOpenMaterials={openMaterials} />
 
       {menu && menuSelection ? (
         <SelectionActionMenu
@@ -324,6 +385,75 @@ function buildReaderSelectionEvent(
 type SectionContentItem =
   | { type: "paragraph"; order: number; paragraph: ReaderParagraph }
   | { type: "visual"; order: number; visual: OpenReaderVisualBlock }
+
+function createInitialSectionWindow(paperId: string, tocLength: number): SectionRenderWindow {
+  return {
+    paperId,
+    tocLength,
+    count: initialReaderSectionCount(tocLength),
+  }
+}
+
+function initialReaderSectionCount(tocLength: number) {
+  if (tocLength <= 0) return 0
+  return Math.min(tocLength, INITIAL_READER_SECTION_COUNT)
+}
+
+function getRenderedSectionCount(windowState: SectionRenderWindow, paperId: string, tocLength: number) {
+  if (windowState.paperId !== paperId || windowState.tocLength !== tocLength) {
+    return initialReaderSectionCount(tocLength)
+  }
+  return Math.min(tocLength, Math.max(initialReaderSectionCount(tocLength), windowState.count))
+}
+
+function scheduleReaderIdleTask(callback: () => void) {
+  if (typeof window === "undefined") return () => undefined
+  const win = window as Window & typeof globalThis & {
+    requestIdleCallback?: (handler: () => void, options?: { timeout?: number }) => number
+    cancelIdleCallback?: (handle: number) => void
+  }
+
+  if (typeof win.requestIdleCallback === "function") {
+    const handle = win.requestIdleCallback(callback, { timeout: READER_IDLE_TIMEOUT_MS })
+    return () => win.cancelIdleCallback?.(handle)
+  }
+
+  const handle = window.setTimeout(callback, READER_IDLE_FALLBACK_DELAY_MS)
+  return () => window.clearTimeout(handle)
+}
+
+function mapParagraphsById(paragraphs: ReaderParagraph[]) {
+  return new Map(paragraphs.map((paragraph) => [paragraph.id, paragraph]))
+}
+
+function mapSelectionsByParagraph(selections: ReaderSelection[]) {
+  const map = new Map<string, ReaderSelection[]>()
+  for (const selection of selections) {
+    const paragraphSelections = map.get(selection.paragraphId) ?? []
+    paragraphSelections.push(selection)
+    map.set(selection.paragraphId, paragraphSelections)
+  }
+  return map
+}
+
+function mapSectionContent(
+  toc: ReaderTocItem[],
+  paragraphs: ReaderParagraph[],
+  visualsBySection: Map<string, OpenReaderVisualBlock[]>,
+) {
+  const paragraphsBySection = new Map<string, ReaderParagraph[]>()
+  for (const paragraph of paragraphs) {
+    const sectionParagraphs = paragraphsBySection.get(paragraph.sectionId) ?? []
+    sectionParagraphs.push(paragraph)
+    paragraphsBySection.set(paragraph.sectionId, sectionParagraphs)
+  }
+
+  const map = new Map<string, SectionContentItem[]>()
+  for (const section of toc) {
+    map.set(section.id, buildSectionItems(paragraphsBySection.get(section.id) ?? [], visualsBySection.get(section.id) ?? []))
+  }
+  return map
+}
 
 function mergeReaderToc(paragraphToc: ReaderTocItem[], outline: ReaderTocItem[], visualBlocks: OpenReaderVisualBlock[]) {
   const paragraphCounts = new Map(paragraphToc.map((item) => [item.id, item.paragraphCount]))
@@ -978,8 +1108,8 @@ function ReaderAssistDrawer({ drawer, selection, materialSummary, locale, drawer
 
 function buildAssistQuestion(selection: ReaderSelection, question: string, mode: "explain" | "example", locale: Locale) {
   const intent = mode === "example"
-    ? locale === "zh" ? "请基于论文公开 section，为选中内容给出一个贴近论文语境的例子。" : "Use the public paper sections to give a concrete example for the selected passage."
-    : locale === "zh" ? "请基于论文公开 section，解释选中内容在论文中的含义。" : "Use the public paper sections to explain what the selected passage means in this paper."
+    ? locale === "zh" ? "请基于论文公开章节，为选中内容给出一个贴近论文语境的例子。" : "Use the public paper sections to give a concrete example for the selected passage."
+    : locale === "zh" ? "请基于论文公开章节，解释选中内容在论文中的含义。" : "Use the public paper sections to explain what the selected passage means in this paper."
   const userQuestion = question.trim()
   return [
     intent,
@@ -1066,7 +1196,7 @@ function readerCopy(locale: Locale) {
       confirmHint: "生成成功后才会保留高亮并记录到阅读素材；失败不会留下伪答案。",
       explanation: "解释",
       generatingTitle: "正在生成",
-      generatingDescription: "正在调用论文问答接口，并基于当前论文公开 section 生成回答。",
+      generatingDescription: "正在调用论文问答接口，并基于当前论文公开章节生成回答。",
       generationFailed: "生成失败",
       confidence: "置信度",
       cachedResult: "缓存结果",

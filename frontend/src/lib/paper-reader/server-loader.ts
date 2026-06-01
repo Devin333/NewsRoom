@@ -6,6 +6,10 @@ import type { PaperCompileStatusRecord, PaperDocumentResponse } from "@/lib/pape
 type DocumentApiResult = SafeApiResult<PaperDocumentResponse>
 type StatusApiResult = SafeApiResult<{ status: PaperCompileStatusRecord }>
 
+const DOCUMENT_LOAD_TIMEOUT_MS = 2500
+const STATUS_LOAD_TIMEOUT_MS = 1200
+const REQUEST_TIMEOUT_CODE = "request_timeout"
+
 export async function loadPaperDocumentPayload(paperRef: string): Promise<PaperDocumentResponse | null> {
   const firstDocument = await getDocumentPayload(paperRef)
   if (firstDocument.ok) {
@@ -17,7 +21,7 @@ export async function loadPaperDocumentPayload(paperRef: string): Promise<PaperD
     return null
   }
 
-  if (paper.id !== paperRef) {
+  if (paper.id !== paperRef && firstDocument.errorCode !== REQUEST_TIMEOUT_CODE) {
     const resolvedDocument = await getDocumentPayload(paper.id)
     if (resolvedDocument.ok) {
       return publicDocumentPayload(resolvedDocument.data)
@@ -61,11 +65,47 @@ export async function loadPaperCompileStatus(paperRef: string): Promise<PaperCom
 }
 
 async function getDocumentPayload(paperId: string): Promise<DocumentApiResult> {
-  return safeApiGet<PaperDocumentResponse>(`/api/v1/papers/${encodeURIComponent(paperId)}/document`)
+  return safeApiGetWithTimeout<PaperDocumentResponse>(
+    `/api/v1/papers/${encodeURIComponent(paperId)}/document`,
+    DOCUMENT_LOAD_TIMEOUT_MS,
+    "Reader document request timed out before a compiled document became available.",
+  )
 }
 
 async function getCompileStatus(paperId: string): Promise<StatusApiResult> {
-  return safeApiGet<{ status: PaperCompileStatusRecord }>(`/api/v1/papers/${encodeURIComponent(paperId)}/compile-status`)
+  return safeApiGetWithTimeout<{ status: PaperCompileStatusRecord }>(
+    `/api/v1/papers/${encodeURIComponent(paperId)}/compile-status`,
+    STATUS_LOAD_TIMEOUT_MS,
+    "Reader compile status request timed out.",
+  )
+}
+
+async function safeApiGetWithTimeout<T>(
+  path: string,
+  timeoutMs: number,
+  timeoutMessage: string,
+): Promise<SafeApiResult<T>> {
+  const controller = new AbortController()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeoutResult = new Promise<SafeApiResult<T>>((resolve) => {
+    timer = setTimeout(() => {
+      controller.abort()
+      resolve({
+        ok: false,
+        errorCode: REQUEST_TIMEOUT_CODE,
+        errorMessage: timeoutMessage,
+      })
+    }, timeoutMs)
+  })
+
+  try {
+    return await Promise.race([
+      safeApiGet<T>(path, { signal: controller.signal }),
+      timeoutResult,
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
 }
 
 async function getBestCompileStatus(
@@ -87,20 +127,24 @@ function withDocumentDiagnostic(
   status: PaperCompileStatusRecord,
   documentResult: Extract<DocumentApiResult, { ok: false }>,
 ): PaperCompileStatusRecord {
+  const diagnostics = [
+    ...status.diagnostics,
+    {
+      severity: "warning" as const,
+      code: documentResult.errorCode,
+      message: documentResult.errorMessage,
+    },
+  ]
   if (status.status !== "compiled") {
-    return status
+    return {
+      ...status,
+      diagnostics,
+    }
   }
   return {
     ...status,
     status: "queued",
-    diagnostics: [
-      ...status.diagnostics,
-      {
-        severity: "warning",
-        code: documentResult.errorCode,
-        message: documentResult.errorMessage,
-      },
-    ],
+    diagnostics,
   }
 }
 

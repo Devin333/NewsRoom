@@ -124,6 +124,21 @@ const onlyPageDumpReader: PaperReaderPayload = {
   ],
 }
 
+const longReader: PaperReaderPayload = {
+  ...reader,
+  sections: Array.from({ length: 10 }, (_, index) => {
+    const number = index + 1
+    return {
+      id: `reader-paper:section-${number}`,
+      paperId: "reader-paper",
+      title: `Section ${number}`,
+      level: 1,
+      textExcerpt: `Body for section ${number}.`,
+      sectionType: number === 1 ? "abstract" as const : "unknown" as const,
+    }
+  }),
+}
+
 describe("PaperReaderPage Open Reader", () => {
   beforeEach(() => {
     window.localStorage.clear()
@@ -176,6 +191,53 @@ describe("PaperReaderPage Open Reader", () => {
     expect(screen.getByRole("button", { name: "Table of contents" })).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "Ask" })).not.toBeInTheDocument()
     expect(screen.queryByText(/PDF viewer/i)).not.toBeInTheDocument()
+  })
+
+  it("renders readable Chinese Reader chrome", () => {
+    render(<PaperReaderPage reader={reader} locale="zh" />)
+
+    expect(screen.getByLabelText("阅读设置")).toBeInTheDocument()
+    expect(screen.getByText("字体大小")).toBeInTheDocument()
+    expect(screen.getByText("悬浮目录 · 可拖动")).toBeInTheDocument()
+    expect(screen.queryByText(/闃|鎽|鐩/)).not.toBeInTheDocument()
+  })
+
+  it("defers reader material sync until after the initial reader render", async () => {
+    render(<PaperReaderPage reader={reader} locale="en" />)
+
+    expect(screen.getByText("The paper introduces grounded reader agents that inspect claims before answering. The verifier checks claims against evidence.")).toBeInTheDocument()
+    expect(fetchReaderMaterials).not.toHaveBeenCalled()
+
+    await waitFor(() => {
+      expect(fetchReaderMaterials).toHaveBeenCalledWith("reader-paper")
+    })
+  })
+
+  it("renders long papers progressively after the first section window", async () => {
+    render(<PaperReaderPage reader={longReader} locale="en" />)
+
+    expect(screen.getByText("Body for section 1.")).toBeInTheDocument()
+    expect(screen.getByText("Body for section 6.")).toBeInTheDocument()
+    expect(screen.queryByText("Body for section 7.")).not.toBeInTheDocument()
+
+    await waitFor(() => {
+      expect(screen.getByText("Body for section 7.")).toBeInTheDocument()
+    })
+  })
+
+  it("expands progressive rendering before jumping to a hidden TOC section", async () => {
+    const scrollIntoView = vi.fn()
+    Element.prototype.scrollIntoView = scrollIntoView
+
+    render(<PaperReaderPage reader={longReader} locale="en" />)
+
+    expect(screen.queryByText("Body for section 9.")).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: /Section 9/ }))
+
+    await waitFor(() => {
+      expect(screen.getByText("Body for section 9.")).toBeInTheDocument()
+      expect(scrollIntoView).toHaveBeenCalled()
+    })
   })
 
   it("renders clean semantic sections before PDF page dumps", () => {

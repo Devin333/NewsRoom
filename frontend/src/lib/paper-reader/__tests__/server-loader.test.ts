@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from "vitest"
+import { afterEach, describe, expect, it, vi, beforeEach } from "vitest"
 import { safeApiGet } from "@/lib/api/server"
 import { getPaperById } from "@/lib/papers/real-data"
 import type { Paper } from "@/lib/papers/types"
@@ -63,6 +63,10 @@ describe("paper reader server loader", () => {
     vi.mocked(getPaperById).mockReset()
   })
 
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
   it("returns the published document when the visual compiler API has it", async () => {
     vi.mocked(safeApiGet).mockResolvedValueOnce({ ok: true, data: compiledPayload })
 
@@ -99,6 +103,56 @@ describe("paper reader server loader", () => {
     expect(safeApiGet).toHaveBeenNthCalledWith(
       2,
       `/api/v1/papers/${encodeURIComponent(paper.id)}/document`,
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    )
+  })
+
+  it("returns a real-paper fallback payload when the document endpoint times out", async () => {
+    vi.useFakeTimers()
+    vi.mocked(safeApiGet)
+      .mockImplementationOnce(hangingSafeApiGet)
+      .mockResolvedValueOnce({
+        ok: true,
+        data: {
+          status: {
+            paperId: paper.id,
+            status: "queued",
+            updatedAt: "2026-05-28T00:00:00Z",
+            diagnostics: [],
+          },
+        },
+      })
+    vi.mocked(getPaperById).mockResolvedValueOnce(paper)
+
+    const payloadPromise = loadPaperDocumentPayload(paper.slug)
+    await vi.advanceTimersByTimeAsync(2500)
+    const payload = await payloadPromise
+
+    expect(payload).toMatchObject({
+      paper: { id: paper.id },
+      document: null,
+      manifest: null,
+      status: {
+        paperId: paper.id,
+        status: "queued",
+        diagnostics: [
+          {
+            code: "request_timeout",
+            message: "Reader document request timed out before a compiled document became available.",
+          },
+        ],
+      },
+    })
+    expect(safeApiGet).toHaveBeenCalledTimes(2)
+    expect(safeApiGet).toHaveBeenNthCalledWith(
+      1,
+      `/api/v1/papers/${encodeURIComponent(paper.slug)}/document`,
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    )
+    expect(safeApiGet).toHaveBeenNthCalledWith(
+      2,
+      `/api/v1/papers/${encodeURIComponent(paper.id)}/compile-status`,
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     )
   })
 
@@ -144,3 +198,7 @@ describe("paper reader server loader", () => {
     })
   })
 })
+
+function hangingSafeApiGet() {
+  return new Promise(() => undefined) as ReturnType<typeof safeApiGet>
+}
