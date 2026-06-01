@@ -30,14 +30,14 @@ export function TasksPage({ locale }: { locale: Locale }) {
         const publicPaperItems = papersResult.status === "fulfilled" ? publicPapers(papersResult.value.papers) : []
 
         if (tasksResult.status === "rejected") {
-          setTasks(papersResult.status === "fulfilled" ? deriveTasksFromPapers(paperTasks, publicPaperItems) : emptyTaskCounts(paperTasks))
+          setTasks(papersResult.status === "fulfilled" ? tasksForPublicPapers(publicPaperItems) : emptyTaskCounts(paperTasks))
           setPaperItems(publicPaperItems)
           setNotice(t(papersCopy.taskApiFallback, locale))
           setStatus("fallback")
           return
         }
 
-        setTasks(tasksResult.value.tasks)
+        setTasks(tasksResult.value.dataState === "empty" && papersResult.status === "fulfilled" ? [] : tasksResult.value.tasks)
         setPaperItems(publicPaperItems)
         setNotice(combineNotices([
           tasksResult.value.notices?.[0] ?? null,
@@ -110,6 +110,10 @@ function emptyTaskCounts(tasks: PaperTask[]): PaperTask[] {
     latestPaperIds: [],
     implementationCount: 0
   }))
+}
+
+function tasksForPublicPapers(papers: Paper[]) {
+  return papers.length ? deriveTasksFromPapers(paperTasks, papers) : []
 }
 
 function publicPapers(papers: Paper[]) {

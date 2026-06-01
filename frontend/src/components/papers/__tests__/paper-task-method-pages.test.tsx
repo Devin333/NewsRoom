@@ -231,6 +231,36 @@ describe("paper task and method pages", () => {
     expect(screen.queryByText("Paper task API is unavailable; showing taxonomy with real paper-derived counts.")).not.toBeInTheDocument()
   })
 
+  it("shows a true empty task state when there are no public papers", async () => {
+    vi.mocked(fetchPaperTasksResult).mockResolvedValueOnce({
+      tasks: [
+        {
+          ...apiTasks[0],
+          paperCount: 0,
+          benchmarkCount: 0,
+          methodCount: 0,
+        },
+      ],
+      dataState: "empty",
+      source: "backend",
+      notices: ["No public papers are available."],
+    })
+    vi.mocked(fetchPapers).mockResolvedValueOnce({
+      ...paperResult,
+      paper_count: 0,
+      total_count: 0,
+      papers: [],
+    })
+
+    render(<TasksPage locale="en" />)
+
+    expect(await screen.findByText("No public papers are available.")).toBeInTheDocument()
+    expect(screen.getByLabelText(/tasks: 0/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/papers: 0/i)).toBeInTheDocument()
+    expect(screen.getByText("No verified papers yet")).toBeInTheDocument()
+    expect(screen.queryByRole("link", { name: /Backend Task/i })).not.toBeInTheDocument()
+  })
+
   it("renders API-backed methods and visible method fallback", async () => {
     vi.mocked(fetchPaperMethodsResult).mockResolvedValueOnce({ methods: apiMethods, dataState: "ready", source: "backend", notices: [] })
     vi.mocked(fetchPaperTasksResult).mockResolvedValueOnce({ tasks: apiTasks, dataState: "ready", source: "backend", notices: [] })
@@ -299,6 +329,42 @@ describe("paper task and method pages", () => {
     expect(await screen.findByText("Backend Method")).toBeInTheDocument()
     expect(screen.getByText("Task taxonomy API is unavailable; method taxonomy remains live, but task totals are temporarily unavailable.")).toBeInTheDocument()
     expect(screen.queryByText("Paper method API is unavailable; showing taxonomy with real paper-derived counts.")).not.toBeInTheDocument()
+  })
+
+  it("shows a true empty method state when there are no public papers", async () => {
+    vi.mocked(fetchPaperMethodsResult).mockResolvedValueOnce({
+      methods: [
+        {
+          ...apiMethods[0],
+          paperCount: 0,
+          taskCount: 0,
+          implementationCount: 0,
+        },
+      ],
+      dataState: "empty",
+      source: "backend",
+      notices: ["No public papers are available."],
+    })
+    vi.mocked(fetchPaperTasksResult).mockResolvedValueOnce({
+      tasks: [],
+      dataState: "empty",
+      source: "backend",
+      notices: [],
+    })
+    vi.mocked(fetchPapers).mockResolvedValueOnce({
+      ...paperResult,
+      paper_count: 0,
+      total_count: 0,
+      papers: [],
+    })
+
+    render(<MethodsPage locale="en" />)
+
+    expect(await screen.findByText("No public papers are available.")).toBeInTheDocument()
+    expect(screen.getByLabelText(/methods: 0/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/papers: 0/i)).toBeInTheDocument()
+    expect(screen.getByText("No verified papers yet")).toBeInTheDocument()
+    expect(screen.queryByRole("link", { name: /Backend Method/i })).not.toBeInTheDocument()
   })
 
   it("opens benchmark evidence from method detail instead of placeholder copy", () => {
