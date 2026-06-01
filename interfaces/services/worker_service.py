@@ -12,9 +12,11 @@ from business.boards.cross_board.worker_handlers import DailyIntelligenceTaskHan
 from business.boards.paper_radar.reader_feedback import PaperReaderFeedbackService
 from business.boards.paper_radar.worker_handlers import (
     PAPER_READER_FEEDBACK_TASK_TYPE,
+    PAPER_VISUAL_COMPILE_BACKFILL_TASK_TYPE,
     PAPER_VISUAL_COMPILE_TASK_TYPE,
     PaperIngestTaskHandler,
     PaperReaderFeedbackTaskHandler,
+    PaperVisualCompileBackfillTaskHandler,
     PaperVisualCompileTaskHandler,
 )
 from business.layers.output.worker_handlers import MemoryReindexTaskHandler
@@ -71,6 +73,7 @@ class EnqueuedTaskResult:
             "run_id": self.task.payload.get("run_id"),
             "paper_id": self.task.payload.get("paper_id"),
             "force": self.task.payload.get("force"),
+            "limit": self.task.payload.get("limit"),
         }
 
 
@@ -206,6 +209,14 @@ class WorkerApplicationService:
                 ),
                 PaperVisualCompileTaskHandler.task_type: PaperVisualCompileTaskHandler(
                     paper_visual_compiler_service=PaperVisualCompilerApplicationService()
+                ),
+                PaperVisualCompileBackfillTaskHandler.task_type: PaperVisualCompileBackfillTaskHandler(
+                    paper_visual_compiler_service=PaperVisualCompilerApplicationService(),
+                    visual_compile_enqueue=lambda *, paper_id, force=False, run_id=None: self.enqueue_paper_visual_compile(
+                        paper_id=paper_id,
+                        force=force,
+                        run_id=run_id,
+                    ),
                 ),
                 PaperReaderFeedbackTaskHandler.task_type: PaperReaderFeedbackTaskHandler(
                     event_repository=LocalJsonPaperReaderInteractionRepository(),
@@ -378,6 +389,33 @@ class WorkerApplicationService:
             queue_name=queue_name,
             payload=payload,
             dedup_key=None if force or run_id else f"{queue_name}:paper-visual-compile:{resolved_paper_id}",
+        )
+        message_id = self.queue.enqueue(task)
+        return EnqueuedTaskResult(task=task, message_id=str(message_id))
+
+    def enqueue_paper_visual_compile_backfill(
+        self,
+        *,
+        limit: int | None = None,
+        force: bool = False,
+        run_id: str | None = None,
+        queue_name: str = DEFAULT_PAPER_QUEUE,
+    ) -> EnqueuedTaskResult:
+        if limit is not None and limit <= 0:
+            raise ValueError("limit must be greater than zero")
+        payload: dict[str, Any] = {
+            "force": bool(force),
+        }
+        if limit is not None:
+            payload["limit"] = int(limit)
+        if run_id:
+            payload["run_id"] = run_id
+        _reject_secret_payload_keys(payload)
+        task = Task(
+            task_type=PAPER_VISUAL_COMPILE_BACKFILL_TASK_TYPE,
+            queue_name=queue_name,
+            payload=payload,
+            dedup_key=None if force or run_id else f"{queue_name}:paper-visual-compile-backfill:missing",
         )
         message_id = self.queue.enqueue(task)
         return EnqueuedTaskResult(task=task, message_id=str(message_id))

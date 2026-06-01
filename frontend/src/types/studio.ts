@@ -241,3 +241,16 @@ export type PaperIngestTriggerResult = {
   mode?: "worker_queue" | "local_background" | string
   fallback_reason?: string
 }
+
+export type PaperVisualCompileBackfillTriggerResult = {
+  message_id: string
+  task_id: string
+  task_type: string
+  queue_name: string
+  status: string
+  run_id?: string
+  force?: boolean
+  limit?: number | null
+  mode?: "worker_queue" | "local_background" | string
+  fallback_reason?: string
+}

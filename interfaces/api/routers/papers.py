@@ -12,7 +12,10 @@ from fastapi.responses import FileResponse
 from interfaces.api.deps import ApiRouteHelpers, ApiServices
 from interfaces.services.auth_service import AuthSessionInvalidError
 from interfaces.services.paper_ingest_service import PAPER_INGEST_TASK_TYPE
-from interfaces.services.paper_visual_compiler_service import PAPER_VISUAL_COMPILE_TASK_TYPE
+from interfaces.services.paper_visual_compiler_service import (
+    PAPER_VISUAL_COMPILE_BACKFILL_TASK_TYPE,
+    PAPER_VISUAL_COMPILE_TASK_TYPE,
+)
 from interfaces.services.paper_reader_interaction_service import ReaderSelectionNotFoundError
 from interfaces.services.paper_reader_notes_service import PaperReaderNoteNotFoundError
 from interfaces.services.paper_service import (
@@ -50,6 +53,12 @@ class PaperIngestTriggerRequest(BaseModel):
 
 
 class PaperVisualCompileRequest(BaseModel):
+    force: bool = False
+    runId: str | None = Field(default=None, min_length=1, max_length=120)
+
+
+class PaperVisualCompileBackfillTriggerRequest(BaseModel):
+    limit: int | None = Field(default=None, ge=1, le=100_000)
     force: bool = False
     runId: str | None = Field(default=None, min_length=1, max_length=120)
 
@@ -370,6 +379,54 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
                 }
             }
         )
+
+    @router.post("/api/v1/papers/ops/visual-compile/trigger")
+    def trigger_paper_visual_compile_backfill(request: PaperVisualCompileBackfillTriggerRequest):
+        try:
+            result = services.worker_service_factory().enqueue_paper_visual_compile_backfill(
+                limit=request.limit,
+                force=request.force,
+                run_id=request.runId,
+            )
+        except ValueError as exc:
+            return helpers.error(
+                status_code=400,
+                code="paper_visual_compile_backfill_invalid",
+                message=str(exc),
+                user_action_required=True,
+            )
+        except Exception as exc:
+            if not _is_worker_queue_unavailable(exc):
+                return helpers.error(
+                    status_code=503,
+                    code="paper_visual_compile_backfill_unavailable",
+                    message=str(exc),
+                    retryable=True,
+                )
+            run_id = request.runId or f"paper-visual-compile-backfill-local-{uuid4().hex[:12]}"
+            _start_paper_visual_compile_backfill_background(
+                services.paper_visual_compiler_service_factory(),
+                limit=request.limit,
+                force=request.force,
+                run_id=run_id,
+            )
+            return helpers.success(
+                {
+                    "enqueued": {
+                        "message_id": "local-background",
+                        "task_id": f"{run_id}:local-background",
+                        "task_type": PAPER_VISUAL_COMPILE_BACKFILL_TASK_TYPE,
+                        "queue_name": "local:background",
+                        "status": "queued",
+                        "run_id": run_id,
+                        "force": request.force,
+                        "limit": request.limit,
+                        "mode": "local_background",
+                        "fallback_reason": "worker_queue_unavailable",
+                    }
+                }
+            )
+        return helpers.success({"enqueued": result.to_dict()})
 
     @router.get("/api/v1/papers/assets/thumbnails/{file_name}")
     def get_paper_thumbnail(file_name: str):
@@ -1214,6 +1271,44 @@ def _run_paper_visual_compile_background(
 ) -> None:
     try:
         paper_visual_compiler_service.compile_paper(paper_id, force=force, run_id=run_id)
+    except Exception:
+        return
+
+
+def _start_paper_visual_compile_backfill_background(
+    paper_visual_compiler_service,
+    *,
+    limit: int | None,
+    force: bool,
+    run_id: str,
+) -> None:
+    Thread(
+        target=_run_paper_visual_compile_backfill_background,
+        kwargs={
+            "paper_visual_compiler_service": paper_visual_compiler_service,
+            "limit": limit,
+            "force": force,
+            "run_id": run_id,
+        },
+        daemon=True,
+    ).start()
+
+
+def _run_paper_visual_compile_backfill_background(
+    paper_visual_compiler_service,
+    *,
+    limit: int | None,
+    force: bool,
+    run_id: str,
+) -> None:
+    try:
+        plan = paper_visual_compiler_service.plan_visual_compile_backfill(
+            limit=limit,
+            force=force,
+            run_id=run_id,
+        )
+        for candidate in plan.candidates:
+            paper_visual_compiler_service.compile_paper(candidate.paper_id, force=force, run_id=run_id)
     except Exception:
         return
 

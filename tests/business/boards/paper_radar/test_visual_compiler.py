@@ -31,7 +31,7 @@ from business.boards.paper_radar.visual_compiler.models import (
 )
 from business.boards.paper_radar.visual_compiler import reviewer as reviewer_module
 from business.boards.paper_radar.visual_compiler.reviewer import HeuristicPaperDocumentReviewer
-from business.boards.paper_radar.worker_handlers import PaperVisualCompileTaskHandler
+from business.boards.paper_radar.worker_handlers import PaperVisualCompileBackfillTaskHandler, PaperVisualCompileTaskHandler
 from framework.workers import Task
 from framework.workers.models import TaskStatus
 from interfaces.api import create_app
@@ -317,6 +317,69 @@ def test_asset_gate_blocks_oversegmented_visual_labels(tmp_path) -> None:
     assert any(error["code"] == "visual_block_label_repeated" for error in gate_report["errors"])
 
 
+def test_asset_gate_blocks_structured_table_block_without_model_metadata(tmp_path) -> None:
+    paper_dir = tmp_path / "table-model-missing"
+    assets_dir = paper_dir / "assets"
+    assets_dir.mkdir(parents=True)
+    table_path = assets_dir / "table.html"
+    table_html = "<table><tr><td>Score</td></tr></table>"
+    table_path.write_text(table_html, encoding="utf-8")
+    source = PaperSourceRegion(pageNumber=1, bbox=(72.0, 120.0, 240.0, 180.0))
+    asset = PaperVisualAsset(
+        assetId="table-asset",
+        paperId="table-paper",
+        kind="table",
+        fileName="assets/table.html",
+        mimeType="text/html",
+        width=320,
+        height=120,
+        checksum=_sha256(table_path.read_bytes()),
+        pageNumber=1,
+        label="Table 1",
+        caption="Table 1: Structured result table.",
+        source=source,
+        blankRatio=0.0,
+        metadata={
+            "tableModel": {"version": 1, "rows": [{"cells": [{"text": "Score"}]}]},
+            "tableHtml": table_html,
+        },
+    )
+    block = PaperBlock(
+        id="table-block",
+        paperId="table-paper",
+        type="table",
+        text="Table 1: Structured result table.",
+        pageNumber=1,
+        assetId="table-asset",
+        label="Table 1",
+        caption="Table 1: Structured result table.",
+        source=source,
+    )
+    document = PaperDocument(
+        paperId="table-paper",
+        schemaVersion="paper_document_v1",
+        status="needs_review",
+        title="Table Paper",
+        compiledAt="2026-05-28T00:00:00Z",
+        sourceHash="hash",
+        paper={},
+        outline=(),
+        blocks=(block,),
+    )
+    manifest = PaperAssetManifest(
+        paperId="table-paper",
+        schemaVersion="paper_document_v1",
+        createdAt="2026-05-28T00:00:00Z",
+        sourceHash="hash",
+        assets=(asset,),
+    )
+
+    gate_report = PaperAssetGate().validate(document=document, manifest=manifest, paper_dir=paper_dir)
+
+    assert gate_report["passed"] is False
+    assert any(error["code"] == "table_block_model_missing" for error in gate_report["errors"])
+
+
 def test_model_layout_provider_env_factory_requires_explicit_enablement() -> None:
     assert build_model_layout_provider_from_env({}) is None
 
@@ -430,7 +493,15 @@ def test_arxiv_source_compiler_uses_tex_body_equations_and_source_assets(tmp_pat
     assert "\\dag" not in figure_blocks[0].caption
     assert table_blocks and table_blocks[0].assetId
     assert table_blocks[0].label == "Table 1"
-    assert table_blocks[0].metadata["tableModel"]["rows"]
+    table_model = table_blocks[0].metadata["tableModel"]
+    assert table_model["rows"]
+    table_cells = [cell for row in table_model["rows"] for cell in row["cells"]]
+    assert any(cell["text"] == "Shared header" and cell["colspan"] == 2 and cell["align"] == "center" for cell in table_cells)
+    assert any(cell["text"] == "0.88" and cell["rowspan"] == 2 for cell in table_cells)
+    assert any(row["rowColor"] == "paperTableColorBlue" for row in table_model["rows"])
+    assert any("cmidrule" in row.get("rulesBefore", []) for row in table_model["rows"])
+    assert any(row["zebra"] == "paperTableColorGray" for row in table_model["rows"])
+    assert any("paperTableColorGray" in cell["classes"] for cell in table_cells)
     assert "paperTableColorRed" in table_blocks[0].metadata["tableHtml"]
     assert any(asset.kind == "figure" and asset.metadata.get("sourceFile") == "img/figure.pdf" for asset in draft.manifest.assets)
     table_assets = [asset for asset in draft.manifest.assets if asset.kind == "table"]
@@ -611,6 +682,62 @@ def test_visual_compile_worker_handler_succeeds_when_ai_review_fails(tmp_path) -
     assert service.get_compile_status("visual-paper").status == "compiled"
 
 
+def test_visual_compile_backfill_plan_uses_real_published_status(tmp_path) -> None:
+    service = _visual_backfill_service(tmp_path)
+    service.repository.write_status(
+        "failed-paper",
+        status="compile_failed",
+        updated_at="2026-05-28T00:00:00Z",
+        diagnostics=({"code": "pdf_fetch_failed", "message": "temporary download failure"},),
+    )
+    service.compile_paper("compiled-paper", force=True, run_id="compiled-seed")
+
+    plan = service.plan_visual_compile_backfill(run_id="backfill-run")
+
+    assert plan.scanned_count == 4
+    assert plan.skipped_no_pdf_count == 1
+    assert [candidate.paper_id for candidate in plan.candidates] == ["missing-paper", "failed-paper"]
+    assert [candidate.reason for candidate in plan.candidates] == ["missing_status", "compile_failed"]
+
+    forced = service.plan_visual_compile_backfill(force=True, limit=2, run_id="force-run")
+    assert forced.candidate_count == 2
+    assert all(candidate.reason == "forced" for candidate in forced.candidates)
+
+
+def test_visual_compile_backfill_worker_handler_expands_candidates(tmp_path) -> None:
+    service = _visual_backfill_service(tmp_path)
+    enqueued: list[dict[str, object]] = []
+
+    def enqueue(*, paper_id, force=False, run_id=None):
+        enqueued.append({"paper_id": paper_id, "force": force, "run_id": run_id})
+
+        class Result:
+            def to_dict(self):
+                return {
+                    "task_type": "papers.visual_compile",
+                    "paper_id": paper_id,
+                    "force": force,
+                    "run_id": run_id,
+                }
+
+        return Result()
+
+    handler = PaperVisualCompileBackfillTaskHandler(service, visual_compile_enqueue=enqueue)
+
+    result = handler.handle(
+        Task(
+            task_type=handler.task_type,
+            payload={"limit": 1, "run_id": "reader-backfill-test"},
+        )
+    )
+
+    assert result.success is True
+    assert result.status == TaskStatus.SUCCEEDED
+    assert result.output["candidateCount"] == 1
+    assert result.output["enqueuedCount"] == 1
+    assert enqueued == [{"paper_id": "missing-paper", "force": False, "run_id": "reader-backfill-test"}]
+
+
 def test_source_comparison_blocks_untraceable_reader_blocks(tmp_path) -> None:
     service = _visual_service(
         tmp_path,
@@ -731,6 +858,42 @@ def _visual_service(tmp_path, *, reviewer, compiler=None, source_memory_service=
         compiler=compiler or PyMuPDFPaperCompiler(),
         reviewer=reviewer,
         source_memory_service=source_memory_service,
+        pdf_fetcher=lambda _url, _max_bytes: _sample_pdf_bytes(),
+        clock=lambda: datetime(2026, 5, 28, tzinfo=timezone.utc),
+    )
+
+
+def _visual_backfill_service(tmp_path) -> PaperVisualCompilerApplicationService:
+    cache_path = tmp_path / "papers-backfill.json"
+    papers = []
+    for paper_id, title, pdf_url in (
+        ("missing-paper", "Missing Paper", "https://arxiv.org/pdf/2605.00001.pdf"),
+        ("failed-paper", "Failed Paper", "https://arxiv.org/pdf/2605.00002.pdf"),
+        ("compiled-paper", "Visual Compiler Paper", "https://arxiv.org/pdf/2605.00003.pdf"),
+        ("no-pdf-paper", "No PDF Paper", None),
+    ):
+        payload = {
+            "id": paper_id,
+            "slug": paper_id,
+            "title": title,
+            "abstractSnippet": "Backfill test paper.",
+            "authors": ["A"],
+            "publishedAt": "2026-05-24T00:00:00Z",
+            "venue": "arXiv",
+            "tags": ["cs.AI"],
+            "paperUrl": f"https://arxiv.org/abs/{paper_id}" if pdf_url else f"https://example.com/papers/{paper_id}",
+            "isPublished": True,
+        }
+        if pdf_url:
+            payload["pdfUrl"] = pdf_url
+        papers.append(payload)
+    cache_path.write_text(json.dumps({"papers": papers}), encoding="utf-8")
+    papers_service = PapersApplicationService(papers_data_path=cache_path)
+    return PaperVisualCompilerApplicationService(
+        papers_service=papers_service,
+        repository=PaperVisualCompilerRepository(tmp_path / "visual-compiler-backfill"),
+        compiler=PyMuPDFPaperCompiler(),
+        reviewer=HeuristicPaperDocumentReviewer(verdict="pass"),
         pdf_fetcher=lambda _url, _max_bytes: _sample_pdf_bytes(),
         clock=lambda: datetime(2026, 5, 28, tzinfo=timezone.utc),
     )
@@ -1037,6 +1200,10 @@ q(\mathbf{x}_t\mid\mathbf{x}_0) = \mathcal{N}(\mathbf{x}_t; \sqrt{\alpha_t}\math
 \toprule
 \textbf{Method} & \textbf{Score ($\uparrow$)} \\
 \midrule
+\multicolumn{2}{c}{Shared header} \\
+\cmidrule(lr){1-2}
+\rowcolor{blue!10} Group A & \multirow{2}{*}{0.88} \\
+Group B & \\
 \textcolor{gray}{\sout{Baseline}} & {\color{red} (-0.10)} \\
 \cellcolor{gray!50}Ours & \cellcolor{gray!50}\textbf{0.99} \\
 \bottomrule

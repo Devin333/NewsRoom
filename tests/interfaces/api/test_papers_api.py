@@ -610,6 +610,25 @@ def test_papers_ops_ingest_trigger_enqueues_worker_task() -> None:
     assert response.json()["data"]["enqueued"]["task_type"] == "papers.ingest_github_arxiv_daily"
 
 
+def test_papers_ops_visual_compile_backfill_trigger_enqueues_worker_task() -> None:
+    worker = _FakePaperWorkerService()
+    client = TestClient(
+        create_app(
+            worker_service_factory=lambda: worker,
+            audit_emitter_factory=None,
+        )
+    )
+
+    response = client.post(
+        "/api/v1/papers/ops/visual-compile/trigger",
+        json={"limit": 25, "force": True, "runId": "reader-backfill-run"},
+    )
+
+    assert response.status_code == 200
+    assert worker.visual_backfill_calls == [(25, True, "reader-backfill-run")]
+    assert response.json()["data"]["enqueued"]["task_type"] == "papers.visual_compile_backfill"
+
+
 def test_papers_ops_ingest_trigger_falls_back_to_local_background_when_worker_queue_is_down() -> None:
     worker = _UnavailablePaperWorkerService()
     ingest = _RecordingPaperIngestService()
@@ -802,6 +821,7 @@ class _FakePaperIngestService:
 class _FakePaperWorkerService:
     def __init__(self) -> None:
         self.calls = []
+        self.visual_backfill_calls = []
 
     def enqueue_paper_ingest(self, *, candidate_limit=None, min_github_stars=None, run_id=None):
         self.calls.append((candidate_limit, min_github_stars, run_id))
@@ -818,9 +838,30 @@ class _FakePaperWorkerService:
 
         return Result()
 
+    def enqueue_paper_visual_compile_backfill(self, *, limit=None, force=False, run_id=None):
+        self.visual_backfill_calls.append((limit, force, run_id))
+
+        class Result:
+            def to_dict(self):
+                return {
+                    "message_id": "2-0",
+                    "task_id": "task-reader-backfill",
+                    "task_type": "papers.visual_compile_backfill",
+                    "queue_name": "news:queue:papers",
+                    "status": "queued",
+                    "limit": limit,
+                    "force": force,
+                    "run_id": run_id,
+                }
+
+        return Result()
+
 
 class _UnavailablePaperWorkerService:
     def enqueue_paper_ingest(self, *, candidate_limit=None, min_github_stars=None, run_id=None):
+        raise ConnectionError("Redis connection refused on 127.0.0.1:6379")
+
+    def enqueue_paper_visual_compile_backfill(self, *, limit=None, force=False, run_id=None):
         raise ConnectionError("Redis connection refused on 127.0.0.1:6379")
 
 

@@ -8,7 +8,7 @@ from typing import Any, Protocol
 
 from business.boards.cross_board.profiles import DAILY_PROFILE_CHOICES
 from interfaces.cli.commands.dispatch import CommandHandler, call_handler
-from interfaces.services.schedule_service import DEFAULT_SCHEDULE_STORE_PATH, ScheduleApplicationService
+from interfaces.services.schedule_service import DEFAULT_PAPER_QUEUE, DEFAULT_SCHEDULE_STORE_PATH, ScheduleApplicationService
 from interfaces.services.worker_service import DEFAULT_DAILY_QUEUE
 
 
@@ -63,6 +63,40 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     _add_store_path(add_daily_parser)
     add_daily_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     add_daily_parser.set_defaults(handler=add_daily_schedule_from_cli)
+
+    add_paper_reader_backfill_parser = schedules_subparsers.add_parser(
+        "add-paper-reader-backfill",
+        help="Create or update a Paper Reader visual compile backfill schedule",
+    )
+    add_paper_reader_backfill_parser.add_argument(
+        "--schedule-id",
+        default="papers-visual-compile-backfill",
+        help="Schedule id",
+    )
+    add_paper_reader_backfill_parser.add_argument(
+        "--name",
+        default="Paper Reader visual compile backfill",
+        help="Schedule name",
+    )
+    add_paper_reader_backfill_parser.add_argument(
+        "--trigger-type",
+        choices=["interval", "manual"],
+        default="interval",
+        help="Schedule trigger type",
+    )
+    add_paper_reader_backfill_parser.add_argument(
+        "--interval-seconds",
+        type=int,
+        default=21600,
+        help="Interval in seconds for interval schedules",
+    )
+    add_paper_reader_backfill_parser.add_argument("--run-at", default=None, help="Optional first due time as ISO datetime")
+    add_paper_reader_backfill_parser.add_argument("--limit", type=int, default=None, help="Maximum papers to enqueue per run")
+    add_paper_reader_backfill_parser.add_argument("--force", action="store_true", help="Recompile papers even when already compiled")
+    add_paper_reader_backfill_parser.add_argument("--queue-name", default=DEFAULT_PAPER_QUEUE, help="Queue name")
+    _add_store_path(add_paper_reader_backfill_parser)
+    add_paper_reader_backfill_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    add_paper_reader_backfill_parser.set_defaults(handler=add_paper_reader_backfill_schedule_from_cli)
 
     tick_parser = schedules_subparsers.add_parser("tick", help="Evaluate schedules and enqueue due tasks")
     _add_store_path(tick_parser)
@@ -124,6 +158,10 @@ def add_daily_schedule_from_cli(args: argparse.Namespace) -> int:
     return add_daily_schedule(args, schedule_service_factory=ScheduleApplicationService)
 
 
+def add_paper_reader_backfill_schedule_from_cli(args: argparse.Namespace) -> int:
+    return add_paper_reader_backfill_schedule(args, schedule_service_factory=ScheduleApplicationService)
+
+
 def tick_schedules_from_cli(args: argparse.Namespace) -> int:
     return tick_schedules(args, schedule_service_factory=ScheduleApplicationService)
 
@@ -176,6 +214,38 @@ def add_daily_schedule(
         profile=args.profile,
         topic=args.topic,
         source_limit=args.source_limit,
+        queue_name=args.queue_name,
+    )
+    payload = result.to_dict()
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        spec_payload = payload["schedule"]["spec"]
+        print(f"schedule_id={spec_payload['schedule_id']}")
+        print(f"trigger_type={spec_payload['trigger_type']}")
+        print(f"task_type={spec_payload['task_type']}")
+        print(f"queue_name={spec_payload['queue_name']}")
+    return 0
+
+
+def add_paper_reader_backfill_schedule(
+    args: argparse.Namespace,
+    *,
+    schedule_service_factory: ScheduleServiceFactory,
+) -> int:
+    if args.trigger_type == "interval" and args.interval_seconds <= 0:
+        raise SystemExit("--interval-seconds must be greater than zero")
+    if args.limit is not None and args.limit <= 0:
+        raise SystemExit("--limit must be greater than zero")
+    run_at = parse_cli_datetime(args.run_at)
+    result = schedule_service_factory(store_path=args.store_path).upsert_paper_visual_compile_backfill_schedule(
+        schedule_id=args.schedule_id,
+        name=args.name,
+        trigger_type=args.trigger_type,
+        interval_seconds=args.interval_seconds if args.trigger_type == "interval" else None,
+        run_at=run_at if args.trigger_type == "interval" else None,
+        limit=args.limit,
+        force=args.force,
         queue_name=args.queue_name,
     )
     payload = result.to_dict()
@@ -295,6 +365,8 @@ __all__ = [
     "ScheduleServiceFactory",
     "add_daily_schedule",
     "add_daily_schedule_from_cli",
+    "add_paper_reader_backfill_schedule",
+    "add_paper_reader_backfill_schedule_from_cli",
     "add_schedules_commands",
     "call_handler",
     "list_schedules",

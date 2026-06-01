@@ -9,6 +9,7 @@ from framework.workers.models import Task, TaskResult, TaskStatus
 
 PAPER_READER_FEEDBACK_TASK_TYPE = "paper_reader.feedback_ingest"
 PAPER_VISUAL_COMPILE_TASK_TYPE = "papers.visual_compile"
+PAPER_VISUAL_COMPILE_BACKFILL_TASK_TYPE = "papers.visual_compile_backfill"
 
 
 class PaperIngestTaskHandler:
@@ -100,6 +101,72 @@ class PaperVisualCompileTaskHandler:
             output=handler_output(payload, run_id=f"paper-visual-compile:{paper_id}"),
             error_type=str(payload.get("status")) if failed or needs_review else None,
             error_message=_first_diagnostic_message(payload.get("diagnostics")) if failed or needs_review else None,
+        )
+
+
+class PaperVisualCompileBackfillTaskHandler:
+    task_type = PAPER_VISUAL_COMPILE_BACKFILL_TASK_TYPE
+
+    def __init__(self, paper_visual_compiler_service: Any, visual_compile_enqueue: Any) -> None:
+        self.paper_visual_compiler_service = paper_visual_compiler_service
+        self.visual_compile_enqueue = visual_compile_enqueue
+
+    def handle(self, task: Task) -> TaskResult:
+        limit = _optional_positive_int(task.payload.get("limit"), field_name="limit")
+        force = _truthy(task.payload.get("force"))
+        run_id = _optional_text(task.payload.get("run_id") or task.payload.get("runId"))
+        plan = self.paper_visual_compiler_service.plan_visual_compile_backfill(
+            limit=limit,
+            force=force,
+            run_id=run_id,
+        )
+        enqueued: list[dict[str, Any]] = []
+        errors: list[dict[str, Any]] = []
+        for candidate in plan.candidates:
+            try:
+                result = self.visual_compile_enqueue(
+                    paper_id=candidate.paper_id,
+                    force=force,
+                    run_id=run_id,
+                )
+            except Exception as exc:
+                error = {
+                    "paperId": candidate.paper_id,
+                    "queued": False,
+                    "reason": type(exc).__name__,
+                    "message": str(exc),
+                }
+                errors.append(error)
+                enqueued.append(error)
+                continue
+            to_dict = getattr(result, "to_dict", None)
+            enqueued.append(
+                {
+                    "paperId": candidate.paper_id,
+                    "queued": True,
+                    "reason": candidate.reason,
+                    "enqueued": to_dict() if callable(to_dict) else result,
+                }
+            )
+        payload = plan.to_dict()
+        payload.update(
+            {
+                "enqueued": enqueued,
+                "enqueuedCount": sum(1 for item in enqueued if item.get("queued")),
+                "errorCount": len(errors),
+                "errors": errors,
+            }
+        )
+        return TaskResult(
+            task_id=task.task_id,
+            success=not errors,
+            retryable=bool(errors),
+            status=TaskStatus.FAILED if errors else TaskStatus.SUCCEEDED,
+            workflow_run_id=run_id or f"paper-visual-compile-backfill:{task.task_id}",
+            run_status="failed" if errors else "succeeded",
+            output=handler_output(payload, run_id=run_id),
+            error_type="paper_visual_compile_backfill_enqueue_failed" if errors else None,
+            error_message=errors[0]["message"] if errors else None,
         )
 
 
@@ -209,6 +276,12 @@ def _optional_text(value: Any) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _optional_positive_int(value: Any, *, field_name: str) -> int | None:
+    if value is None or value == "":
+        return None
+    return _positive_int(value, default=1, field_name=field_name)
 
 
 def _positive_int(value: Any, *, default: int, field_name: str) -> int:

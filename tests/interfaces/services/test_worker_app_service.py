@@ -112,6 +112,30 @@ def test_worker_service_enqueue_paper_ingest_uses_paper_queue() -> None:
     assert queue.enqueued[0] is result.task
 
 
+def test_worker_service_enqueue_paper_visual_compile_backfill_uses_paper_queue() -> None:
+    queue = _FakeQueue()
+    service = WorkerApplicationService(queue=queue, handlers={})
+
+    result = service.enqueue_paper_visual_compile_backfill(limit=25, force=False, run_id="reader-backfill")
+
+    assert result.task.task_type == "papers.visual_compile_backfill"
+    assert result.task.queue_name == DEFAULT_PAPER_QUEUE
+    assert result.task.payload == {"force": False, "limit": 25, "run_id": "reader-backfill"}
+    assert result.task.dedup_key is None
+    assert result.to_dict()["limit"] == 25
+    assert result.message_id == "1-0"
+    assert queue.enqueued[0] is result.task
+
+
+def test_worker_service_enqueue_paper_visual_compile_backfill_uses_stable_dedup_key_without_run_id() -> None:
+    queue = _FakeQueue()
+    service = WorkerApplicationService(queue=queue, handlers={})
+
+    result = service.enqueue_paper_visual_compile_backfill()
+
+    assert result.task.dedup_key == "news:queue:papers:paper-visual-compile-backfill:missing"
+
+
 def test_worker_service_run_once_acks_success() -> None:
     task = Task(task_type="daily_intelligence.run", payload={"topic": "AI"}, task_id="task-1")
     queue = _FakeQueue(leased=LeasedTask(DEFAULT_DAILY_QUEUE, "1-0", task))

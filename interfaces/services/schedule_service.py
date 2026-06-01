@@ -10,6 +10,7 @@ from typing import Any, Callable
 
 from framework.workers.models import Task
 from interfaces.services.paper_ingest_service import PAPER_INGEST_TASK_TYPE
+from interfaces.services.paper_visual_compiler_service import PAPER_VISUAL_COMPILE_BACKFILL_TASK_TYPE
 from framework.workers.scheduler import (
     EnqueuedScheduleTask,
     ScheduleEvaluation,
@@ -181,6 +182,40 @@ class ScheduleApplicationService:
                 "candidate_limit": candidate_limit,
                 "min_github_stars": min_github_stars,
             },
+            queue_name=queue_name,
+            interval_seconds=effective_interval_seconds if trigger_type == "interval" else None,
+            run_at=run_at if trigger_type == "interval" else None,
+        )
+        return self.upsert_schedule(ScheduleRecord(spec=spec, next_run_at=spec.run_at))
+
+    def upsert_paper_visual_compile_backfill_schedule(
+        self,
+        *,
+        schedule_id: str = "papers-visual-compile-backfill",
+        name: str = "Paper Reader visual compile backfill",
+        trigger_type: str = "interval",
+        interval_seconds: int | None = 21600,
+        run_at: datetime | None = None,
+        limit: int | None = None,
+        force: bool = False,
+        queue_name: str = DEFAULT_PAPER_QUEUE,
+    ) -> ScheduleUpsertResult:
+        effective_interval_seconds = interval_seconds if interval_seconds is not None else 21600
+        if trigger_type == "interval" and effective_interval_seconds <= 0:
+            raise ValueError("interval_seconds must be greater than zero")
+        if limit is not None and limit <= 0:
+            raise ValueError("limit must be greater than zero")
+        payload_template: dict[str, Any] = {
+            "force": bool(force),
+        }
+        if limit is not None:
+            payload_template["limit"] = limit
+        spec = ScheduleSpec(
+            schedule_id=schedule_id,
+            name=name,
+            trigger_type=trigger_type,
+            task_type=PAPER_VISUAL_COMPILE_BACKFILL_TASK_TYPE,
+            payload_template=payload_template,
             queue_name=queue_name,
             interval_seconds=effective_interval_seconds if trigger_type == "interval" else None,
             run_at=run_at if trigger_type == "interval" else None,

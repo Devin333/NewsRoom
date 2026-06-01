@@ -39,6 +39,7 @@ from interfaces.services.paper_service import PaperNotFoundError, PapersApplicat
 
 
 PAPER_VISUAL_COMPILE_TASK_TYPE = "papers.visual_compile"
+PAPER_VISUAL_COMPILE_BACKFILL_TASK_TYPE = "papers.visual_compile_backfill"
 
 
 class PaperVisualCompileError(RuntimeError):
@@ -79,6 +80,50 @@ class PaperVisualCompileResult:
             "sourceComparisonReport": self.source_comparison_report.to_dict() if self.source_comparison_report is not None else None,
             "gateReport": dict(self.gate_report) if self.gate_report is not None else None,
             "diagnostics": [dict(item) for item in self.diagnostics],
+        }
+
+
+@dataclass(frozen=True)
+class PaperVisualCompileBackfillCandidate:
+    paper_id: str
+    slug: str
+    title: str
+    current_status: str
+    reason: str
+    source_pdf_url: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "paperId": self.paper_id,
+            "slug": self.slug,
+            "title": self.title,
+            "currentStatus": self.current_status,
+            "reason": self.reason,
+            "sourcePdfUrl": self.source_pdf_url,
+        }
+
+
+@dataclass(frozen=True)
+class PaperVisualCompileBackfillPlan:
+    run_id: str | None
+    force: bool
+    limit: int | None
+    scanned_count: int
+    candidate_count: int
+    skipped_count: int
+    skipped_no_pdf_count: int
+    candidates: tuple[PaperVisualCompileBackfillCandidate, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "runId": self.run_id,
+            "force": self.force,
+            "limit": self.limit,
+            "scannedCount": self.scanned_count,
+            "candidateCount": self.candidate_count,
+            "skippedCount": self.skipped_count,
+            "skippedNoPdfCount": self.skipped_no_pdf_count,
+            "candidates": [candidate.to_dict() for candidate in self.candidates],
         }
 
 
@@ -393,6 +438,56 @@ class PaperVisualCompilerApplicationService:
             diagnostics=status.diagnostics,
         )
 
+    def plan_visual_compile_backfill(
+        self,
+        *,
+        limit: int | None = None,
+        force: bool = False,
+        run_id: str | None = None,
+    ) -> PaperVisualCompileBackfillPlan:
+        if limit is not None and limit <= 0:
+            raise ValueError("limit must be greater than zero")
+
+        candidates: list[PaperVisualCompileBackfillCandidate] = []
+        scanned_count = 0
+        skipped_no_pdf_count = 0
+        for paper in self.papers_service.list_published_papers():
+            scanned_count += 1
+            paper_payload = paper.to_dict()
+            source_pdf_url = _source_pdf_url(paper_payload)
+            if not source_pdf_url:
+                skipped_no_pdf_count += 1
+                continue
+            reason = self._backfill_reason(paper_payload["id"], force=force)
+            if reason is None:
+                continue
+            status = self.repository.read_status(paper_payload["id"])
+            candidates.append(
+                PaperVisualCompileBackfillCandidate(
+                    paper_id=paper_payload["id"],
+                    slug=str(paper_payload.get("slug") or paper_payload["id"]),
+                    title=str(paper_payload.get("title") or paper_payload["id"]),
+                    current_status=status.status if status is not None else "not_compiled",
+                    reason=reason,
+                    source_pdf_url=source_pdf_url,
+                )
+            )
+            if limit is not None and len(candidates) >= limit:
+                break
+
+        candidate_count = len(candidates)
+        skipped_count = max(0, scanned_count - candidate_count - skipped_no_pdf_count)
+        return PaperVisualCompileBackfillPlan(
+            run_id=run_id,
+            force=force,
+            limit=limit,
+            scanned_count=scanned_count,
+            candidate_count=candidate_count,
+            skipped_count=skipped_count,
+            skipped_no_pdf_count=skipped_no_pdf_count,
+            candidates=tuple(candidates),
+        )
+
     def resolve_asset(self, paper_id: str, asset_id: str) -> tuple[Path, str] | None:
         paper = self._paper_dict(paper_id)
         return self.repository.resolve_asset(paper["id"], asset_id)
@@ -432,6 +527,24 @@ class PaperVisualCompilerApplicationService:
         if not payload.get("id"):
             raise PaperNotFoundError("paper not found")
         return payload
+
+    def _backfill_reason(self, paper_id: str, *, force: bool) -> str | None:
+        status = self.repository.read_status(paper_id)
+        if force:
+            return "forced"
+        if status is None:
+            return "missing_status"
+        if status.status != "compiled":
+            return status.status
+        if status.compileInfo is None or status.compileInfo.status != "compiled":
+            return "compile_info_incomplete"
+        if self.repository.read_published_document(paper_id) is None:
+            return "published_document_missing"
+        if status.sourceComparisonReport is None:
+            return "source_comparison_missing"
+        if not status.sourceComparisonReport.passed:
+            return "source_comparison_failed"
+        return None
 
 
 def _document_with_status(document: PaperDocument, status: str) -> PaperDocument:
@@ -533,6 +646,8 @@ def _normalized_pdf_url(value: Any) -> str | None:
         text = text.replace("/abs/", "/pdf/")
     if "arxiv.org/pdf/" in text and not text.casefold().endswith(".pdf"):
         text = f"{text}.pdf"
+    if "arxiv.org/pdf/" not in text and not text.casefold().endswith(".pdf"):
+        return None
     if text.startswith("https://") or text.startswith("http://"):
         return text.replace("http://", "https://", 1)
     return None

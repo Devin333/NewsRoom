@@ -386,6 +386,16 @@ class PapersApplicationService:
                 return _with_summary(paper, cached_summary)
         raise PaperNotFoundError(f"paper not found: {paper_id}")
 
+    def list_published_papers(self, *, limit: int | None = None, offset: int = 0) -> tuple[PublicPaper, ...]:
+        if limit is not None and limit <= 0:
+            raise ValueError("limit must be greater than zero")
+        if offset < 0:
+            raise ValueError("offset must be non-negative")
+        papers = self._published_papers(self._load_cache())
+        if limit is None:
+            return tuple(papers[offset:])
+        return tuple(papers[offset : offset + limit])
+
     def get_or_generate_summary(self, paper_id: str, *, locale: PaperLocale, refresh: bool = False) -> PaperAISummary:
         paper = self.get_paper(paper_id)
         route = self._summary_route()

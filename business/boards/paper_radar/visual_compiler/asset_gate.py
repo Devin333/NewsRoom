@@ -133,6 +133,16 @@ class PaperAssetGate:
                     errors.append(_issue("visual_block_label_missing", "visual block label is missing", blockId=block.id))
                 if not block.caption:
                     errors.append(_issue("visual_block_caption_missing", "visual block caption is missing", blockId=block.id))
+                if block.type == "table" and asset.mimeType.startswith("text/html"):
+                    if not isinstance(block.metadata.get("tableModel"), Mapping) or not block.metadata.get("tableHtml"):
+                        errors.append(
+                            _issue(
+                                "table_block_model_missing",
+                                "structured table block is missing table model/html metadata",
+                                blockId=block.id,
+                                assetId=asset.assetId,
+                            )
+                        )
             elif block.type == "equation":
                 if block.assetId:
                     errors.append(_issue("equation_block_asset_unexpected", "equation block must be generated as text, not an image asset", blockId=block.id, assetId=block.assetId))

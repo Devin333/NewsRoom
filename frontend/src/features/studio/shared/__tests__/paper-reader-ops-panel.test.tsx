@@ -7,6 +7,7 @@ import {
   fetchPaperReaderOpsStats,
   refreshPaperReaderSummary,
   triggerPaperIngest,
+  triggerPaperVisualCompileBackfill,
 } from "@/features/studio/shared/api/paper-reader-ops-api"
 import { useUiStore } from "@/stores/ui-store"
 import type { PaperIngestOpsState, PaperReaderOpsStats } from "@/types/studio"
@@ -15,7 +16,8 @@ vi.mock("@/features/studio/shared/api/paper-reader-ops-api", () => ({
   fetchPaperIngestOpsState: vi.fn(),
   fetchPaperReaderOpsStats: vi.fn(),
   refreshPaperReaderSummary: vi.fn(),
-  triggerPaperIngest: vi.fn()
+  triggerPaperIngest: vi.fn(),
+  triggerPaperVisualCompileBackfill: vi.fn()
 }))
 
 const readyStats: PaperReaderOpsStats = {
@@ -163,6 +165,7 @@ describe("PaperReaderOpsPanel", () => {
     vi.mocked(fetchPaperIngestOpsState).mockReset()
     vi.mocked(refreshPaperReaderSummary).mockReset()
     vi.mocked(triggerPaperIngest).mockReset()
+    vi.mocked(triggerPaperVisualCompileBackfill).mockReset()
     vi.mocked(fetchPaperIngestOpsState).mockResolvedValue(readyIngest)
     useUiStore.setState({ locale: "zh" })
   })
@@ -239,6 +242,30 @@ describe("PaperReaderOpsPanel", () => {
 
     await waitFor(() => {
       expect(triggerPaperIngest).toHaveBeenCalledWith({})
+    })
+  })
+
+  it("triggers reader compile backfill from the ops panel", async () => {
+    vi.mocked(fetchPaperReaderOpsStats).mockResolvedValue(readyStats)
+    vi.mocked(triggerPaperVisualCompileBackfill).mockResolvedValue({
+      message_id: "2-0",
+      task_id: "task-reader-backfill",
+      task_type: "papers.visual_compile_backfill",
+      queue_name: "news:queue:papers",
+      status: "queued",
+      limit: 10,
+      force: true
+    })
+
+    renderPanel()
+
+    expect(await screen.findByText("Reader 编译补齐")).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText("数量上限"), { target: { value: "10" } })
+    fireEvent.click(screen.getByLabelText("强制重编译"))
+    fireEvent.click(screen.getByRole("button", { name: /补齐 Reader/ }))
+
+    await waitFor(() => {
+      expect(triggerPaperVisualCompileBackfill).toHaveBeenCalledWith({ limit: 10, force: true })
     })
   })
 

@@ -83,6 +83,29 @@ def test_schedule_service_upserts_paper_ingest_schedule_from_application_args() 
     }
 
 
+def test_schedule_service_upserts_paper_reader_backfill_schedule_from_application_args() -> None:
+    store = InMemoryScheduleStore()
+    service = ScheduleApplicationService(store=store, queue=_FakeQueue())
+
+    result = service.upsert_paper_visual_compile_backfill_schedule(
+        schedule_id="paper-reader-backfill",
+        trigger_type="interval",
+        interval_seconds=21600,
+        limit=50,
+        force=True,
+        queue_name="news:queue:papers",
+    )
+
+    record = store.get_schedule("paper-reader-backfill")
+    assert result.to_dict()["schedule_id"] == "paper-reader-backfill"
+    assert record.spec.task_type == "papers.visual_compile_backfill"
+    assert record.spec.queue_name == "news:queue:papers"
+    assert record.spec.payload_template == {
+        "force": True,
+        "limit": 50,
+    }
+
+
 def test_schedule_service_tick_enqueues_due_schedule_and_updates_state() -> None:
     store = InMemoryScheduleStore(
         [

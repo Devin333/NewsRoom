@@ -1,6 +1,11 @@
 import { apiGet, apiPost } from "@/lib/api/client"
 import type { Locale, PaperAISummary } from "@/lib/papers/types"
-import type { PaperIngestOpsState, PaperIngestTriggerResult, PaperReaderOpsStats } from "@/types/studio"
+import type {
+  PaperIngestOpsState,
+  PaperIngestTriggerResult,
+  PaperReaderOpsStats,
+  PaperVisualCompileBackfillTriggerResult,
+} from "@/types/studio"
 
 type ApiEnvelope<T> = {
   success: boolean
@@ -52,6 +57,26 @@ export async function triggerPaperIngest({
     return envelope.data.enqueued
   }
   throw new Error(envelope.error?.message ?? "Paper ingest trigger failed")
+}
+
+export async function triggerPaperVisualCompileBackfill({
+  limit,
+  force,
+}: {
+  limit?: number
+  force?: boolean
+}): Promise<PaperVisualCompileBackfillTriggerResult> {
+  const envelope = await apiPost<ApiEnvelope<{ enqueued: PaperVisualCompileBackfillTriggerResult }>>(
+    "/api/papers/ops/visual-compile",
+    {
+      limit,
+      force,
+    }
+  )
+  if (envelope.success && envelope.data?.enqueued) {
+    return envelope.data.enqueued
+  }
+  throw new Error(envelope.error?.message ?? "Paper Reader compile backfill trigger failed")
 }
 
 export async function refreshPaperReaderSummary({

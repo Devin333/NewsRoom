@@ -10,6 +10,7 @@ from interfaces.services.worker_service import (
     DEFAULT_DAILY_QUEUE,
     DEFAULT_DEAD_LETTER_QUEUE,
     DEFAULT_MEMORY_QUEUE,
+    DEFAULT_PAPER_QUEUE,
     DEFAULT_SOURCE_QUEUE,
     WorkerApplicationService,
     WORKER_STATUS_CHOICES,
@@ -66,6 +67,18 @@ def _register_worker_tree(subparsers: argparse._SubParsersAction, command_name: 
     enqueue_source_health_parser.add_argument("--redis-url", default=None, help="Redis URL; defaults to NEWS_REDIS_URL")
     enqueue_source_health_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     enqueue_source_health_parser.set_defaults(handler=enqueue_source_health)
+
+    enqueue_paper_reader_backfill_parser = worker_subparsers.add_parser(
+        "enqueue-paper-reader-backfill",
+        help="Enqueue a Paper Reader visual compile backfill task",
+    )
+    enqueue_paper_reader_backfill_parser.add_argument("--limit", type=int, default=None, help="Maximum papers to enqueue")
+    enqueue_paper_reader_backfill_parser.add_argument("--force", action="store_true", help="Recompile already compiled papers")
+    enqueue_paper_reader_backfill_parser.add_argument("--run-id", default=None, help="Optional deterministic run id")
+    enqueue_paper_reader_backfill_parser.add_argument("--queue-name", default=DEFAULT_PAPER_QUEUE, help="Redis stream queue name")
+    enqueue_paper_reader_backfill_parser.add_argument("--redis-url", default=None, help="Redis URL; defaults to NEWS_REDIS_URL")
+    enqueue_paper_reader_backfill_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    enqueue_paper_reader_backfill_parser.set_defaults(handler=enqueue_paper_reader_backfill)
 
     run_once_parser = worker_subparsers.add_parser(
         "run-once",
@@ -225,6 +238,28 @@ def enqueue_source_health(args: argparse.Namespace) -> int:
         print(f"task_type={payload['task_type']}")
         print(f"queue_name={payload['queue_name']}")
         print(f"message_id={payload['message_id']}")
+    return 0
+
+
+def enqueue_paper_reader_backfill(args: argparse.Namespace) -> int:
+    service = _worker_service(redis_url=args.redis_url)
+    result = service.enqueue_paper_visual_compile_backfill(
+        limit=args.limit,
+        force=args.force,
+        run_id=args.run_id,
+        queue_name=args.queue_name,
+    )
+    payload = result.to_dict()
+
+    if args.json:
+        _print_json(payload)
+    else:
+        print(f"task_id={payload['task_id']}")
+        print(f"task_type={payload['task_type']}")
+        print(f"queue_name={payload['queue_name']}")
+        print(f"message_id={payload['message_id']}")
+        print(f"limit={payload['limit']}")
+        print(f"force={payload['force']}")
     return 0
 
 
@@ -394,6 +429,7 @@ __all__ = [
     "call_handler",
     "enqueue_daily",
     "enqueue_memory_reindex",
+    "enqueue_paper_reader_backfill",
     "enqueue_source_health",
     "heartbeat",
     "queues",

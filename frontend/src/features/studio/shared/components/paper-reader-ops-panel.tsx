@@ -15,6 +15,7 @@ import {
   fetchPaperReaderOpsStats,
   refreshPaperReaderSummary,
   triggerPaperIngest,
+  triggerPaperVisualCompileBackfill,
 } from "@/features/studio/shared/api/paper-reader-ops-api"
 import {
   StudioEmptyBlock,
@@ -32,6 +33,8 @@ export function PaperReaderOpsPanel({ windowHours = 24 }: { windowHours?: number
   const [paperId, setPaperId] = useState("")
   const [summaryLocale, setSummaryLocale] = useState<Locale>("en")
   const [reason, setReason] = useState("")
+  const [backfillLimit, setBackfillLimit] = useState("")
+  const [backfillForce, setBackfillForce] = useState(false)
   const ingestLimit = 20
 
   const { data, error, isError, isLoading } = useQuery({
@@ -65,6 +68,17 @@ export function PaperReaderOpsPanel({ windowHours = 24 }: { windowHours?: number
     mutationFn: () => triggerPaperIngest({}),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.studio.paperIngestOps(ingestLimit) })
+    }
+  })
+
+  const triggerVisualCompileBackfillMutation = useMutation({
+    mutationFn: () =>
+      triggerPaperVisualCompileBackfill({
+        limit: parseOptionalPositiveInt(backfillLimit),
+        force: backfillForce,
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.studio.paperReaderOpsStats(windowHours) })
     }
   })
 
@@ -135,6 +149,16 @@ export function PaperReaderOpsPanel({ windowHours = 24 }: { windowHours?: number
             triggerSuccess={triggerIngestMutation.isSuccess}
             onTrigger={() => triggerIngestMutation.mutate()}
           />
+          <PaperVisualCompileBackfillContent
+            limit={backfillLimit}
+            force={backfillForce}
+            triggering={triggerVisualCompileBackfillMutation.isPending}
+            triggerError={triggerVisualCompileBackfillMutation.error}
+            triggerSuccess={triggerVisualCompileBackfillMutation.isSuccess}
+            onLimitChange={setBackfillLimit}
+            onForceChange={setBackfillForce}
+            onTrigger={() => triggerVisualCompileBackfillMutation.mutate()}
+          />
         </div>
       </StudioPanel>
     )
@@ -156,6 +180,16 @@ export function PaperReaderOpsPanel({ windowHours = 24 }: { windowHours?: number
           triggerError={triggerIngestMutation.error}
           triggerSuccess={triggerIngestMutation.isSuccess}
           onTrigger={() => triggerIngestMutation.mutate()}
+        />
+        <PaperVisualCompileBackfillContent
+          limit={backfillLimit}
+          force={backfillForce}
+          triggering={triggerVisualCompileBackfillMutation.isPending}
+          triggerError={triggerVisualCompileBackfillMutation.error}
+          triggerSuccess={triggerVisualCompileBackfillMutation.isSuccess}
+          onLimitChange={setBackfillLimit}
+          onForceChange={setBackfillForce}
+          onTrigger={() => triggerVisualCompileBackfillMutation.mutate()}
         />
         <SummaryRefreshForm
           paperId={paperId}
@@ -232,6 +266,69 @@ function PaperReaderOpsContent({ stats }: { stats: PaperReaderOpsStats }) {
         </div>
       </section>
     </div>
+  )
+}
+
+function PaperVisualCompileBackfillContent({
+  limit,
+  force,
+  triggering,
+  triggerError,
+  triggerSuccess,
+  onLimitChange,
+  onForceChange,
+  onTrigger,
+}: {
+  limit: string
+  force: boolean
+  triggering: boolean
+  triggerError: Error | null
+  triggerSuccess: boolean
+  onLimitChange: (value: string) => void
+  onForceChange: (value: boolean) => void
+  onTrigger: () => void
+}) {
+  const { t } = useI18n()
+  const limitInvalid = limit.trim() ? parseOptionalPositiveInt(limit) === undefined : false
+  return (
+    <section className="rounded-md border border-border bg-background p-3">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold text-foreground">{t("studio.ops.readerBackfillTitle")}</h3>
+          <p className="mt-1 text-xs text-muted-foreground">{t("studio.ops.readerBackfillDescription")}</p>
+        </div>
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="min-w-32 text-xs font-semibold uppercase tracking-normal text-muted-foreground">
+            <span className="mb-1 block">{t("studio.ops.readerBackfillLimit")}</span>
+            <Input
+              type="number"
+              min={1}
+              value={limit}
+              onChange={(event) => onLimitChange(event.target.value)}
+              placeholder={t("studio.ops.readerBackfillLimitPlaceholder")}
+              disabled={triggering}
+            />
+          </label>
+          <label className="flex items-center gap-2 rounded-md border border-border px-3 py-2 text-sm text-foreground">
+            <input
+              type="checkbox"
+              checked={force}
+              onChange={(event) => onForceChange(event.target.checked)}
+              disabled={triggering}
+              className="size-4 rounded border-border"
+            />
+            {t("studio.ops.readerBackfillForce")}
+          </label>
+          <Button type="button" onClick={onTrigger} disabled={triggering || limitInvalid}>
+            <RefreshCw className="size-4" />
+            {triggering ? t("studio.ops.readerBackfillTriggering") : t("studio.ops.readerBackfillTrigger")}
+          </Button>
+        </div>
+      </div>
+      {limitInvalid ? <p className="mt-2 text-xs text-danger">{t("studio.ops.readerBackfillLimitInvalid")}</p> : null}
+      {triggerError ? <p className="mt-2 text-xs text-danger">{triggerError.message}</p> : null}
+      {triggerSuccess && !triggerError ? <p className="mt-2 text-xs text-success">{t("studio.ops.readerBackfillTriggered")}</p> : null}
+    </section>
   )
 }
 
@@ -483,4 +580,12 @@ function opsNotices(stats: PaperReaderOpsStats, t: ReturnType<typeof useI18n>["t
     notices.push(t("studio.ops.notice.noExtraction"))
   }
   return notices
+}
+
+function parseOptionalPositiveInt(value: string): number | undefined {
+  const text = value.trim()
+  if (!text) return undefined
+  if (!/^[1-9]\d*$/.test(text)) return undefined
+  const parsed = Number.parseInt(text, 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined
 }
