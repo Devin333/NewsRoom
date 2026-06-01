@@ -263,6 +263,33 @@ class PaperVisualCompilerApplicationService:
 
         try:
             pdf_bytes = self.pdf_fetcher(source_pdf_url, _pdf_max_bytes())
+        except (HTTPError, URLError, TimeoutError, OSError, ValueError) as exc:
+            diagnostics = (
+                {
+                    "severity": "error",
+                    "code": "pdf_fetch_failed",
+                    "message": str(exc),
+                },
+            )
+            status = self.repository.write_status(
+                resolved_id,
+                status="compile_failed",
+                updated_at=_iso(self.clock()),
+                diagnostics=diagnostics,
+            )
+            return PaperVisualCompileResult(
+                paper_id=resolved_id,
+                status=status.status,
+                document=None,
+                manifest=None,
+                compile_info=None,
+                review_report=None,
+                source_comparison_report=None,
+                gate_report=None,
+                diagnostics=diagnostics,
+            )
+
+        try:
             draft = self.compiler.compile(
                 pdf_bytes=pdf_bytes,
                 paper=paper,
@@ -301,7 +328,7 @@ class PaperVisualCompilerApplicationService:
             diagnostics = (
                 {
                     "severity": "error",
-                    "code": "pdf_fetch_failed",
+                    "code": "paper_visual_compile_failed",
                     "message": str(exc),
                 },
             )

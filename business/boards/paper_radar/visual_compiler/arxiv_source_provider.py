@@ -304,6 +304,18 @@ class ArxivSourcePaperCompiler:
                 *exc.diagnostics,
             )
             return ArxivSourceCompileAttempt(available=True, draft=None, diagnostics=diagnostics)
+        except Exception as exc:
+            return ArxivSourceCompileAttempt(
+                available=True,
+                draft=None,
+                diagnostics=(
+                    {
+                        "severity": "warning",
+                        "code": "arxiv_source_compile_failed",
+                        "message": str(exc),
+                    },
+                ),
+            )
 
     def compile_source_package(
         self,

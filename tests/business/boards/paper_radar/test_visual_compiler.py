@@ -632,6 +632,36 @@ def test_source_first_compiler_falls_back_to_pdf_when_arxiv_source_unavailable(t
     assert any(block.type == "figure" for block in draft.document.blocks)
 
 
+def test_source_first_compiler_falls_back_to_pdf_when_arxiv_source_compile_crashes(tmp_path, monkeypatch) -> None:
+    source_compiler = ArxivSourcePaperCompiler(source_fetcher=lambda _arxiv_id, _max_bytes: b"source-package")
+
+    def raise_missing_source_asset(**_kwargs):
+        raise FileNotFoundError("source figure asset is missing")
+
+    monkeypatch.setattr(source_compiler, "compile_source_package", raise_missing_source_asset)
+    fallback_compiler = PyMuPDFPaperCompiler(dpi=96)
+    compiler = SourceFirstPaperCompiler(source_compiler=source_compiler, fallback_compiler=fallback_compiler)
+
+    draft = compiler.compile(
+        pdf_bytes=_sample_pdf_bytes(),
+        paper={
+            "id": "source-crash-fallback-paper",
+            "title": "Source Crash Fallback Paper",
+            "abstractSnippet": "AI summary must remain outside the body.",
+            "arxivId": "2605.54322v1",
+        },
+        output_dir=tmp_path / "source-crash-fallback",
+        source_pdf_url="https://arxiv.org/pdf/2605.54322v1.pdf",
+        started_at=datetime(2026, 5, 28, tzinfo=timezone.utc),
+        finished_at=datetime(2026, 5, 28, tzinfo=timezone.utc),
+    )
+
+    assert draft.compile_info.provider.startswith("arxiv-source-tex-v1+fallback:")
+    assert any(item["code"] == "arxiv_source_compile_failed" for item in draft.compile_info.diagnostics)
+    assert any(item["code"] == "source_first_fallback_used" for item in draft.compile_info.diagnostics)
+    assert any(block.type == "figure" for block in draft.document.blocks)
+
+
 def test_arxiv_source_connector_builds_official_source_url_and_normalizes_ids() -> None:
     assert normalize_arxiv_id("https://arxiv.org/pdf/2605.26111v1.pdf") == "2605.26111v1"
     assert build_arxiv_source_url("2605.26111v1") == "https://arxiv.org/e-print/2605.26111v1"
