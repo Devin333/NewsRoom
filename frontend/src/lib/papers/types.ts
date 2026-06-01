@@ -2,6 +2,7 @@ export type Locale = "zh" | "en"
 
 export type PaperModuleSection =
   | "trending_papers"
+  | "paper_detail"
   | "tasks"
   | "task_detail"
   | "methods"
@@ -9,6 +10,7 @@ export type PaperModuleSection =
 
 export type PaperModuleRoute =
   | "/papers"
+  | `/papers/${string}`
   | "/papers/tasks"
   | `/papers/tasks/${string}`
   | "/papers/methods"

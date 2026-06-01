@@ -30,6 +30,7 @@ describe("PaperRow", () => {
   it("links PDF and GitHub actions to real destinations and avoids stars per hour copy", () => {
     render(<PaperRow paper={paper} locale="en" onPreview={vi.fn()} />)
 
+    expect(screen.getByRole("link", { name: paper.title })).toHaveAttribute("href", "/papers/swe-agent-agent-computer-interfaces")
     expect(screen.getAllByRole("link", { name: /open paper pdf/i })[0]).toHaveAttribute("href", "https://arxiv.org/pdf/2405.15793.pdf")
     expect(screen.getAllByRole("link", { name: /open github repository/i })[0]).toHaveAttribute("href", "https://github.com/SWE-agent/SWE-agent")
     expect(screen.getAllByText("24").length).toBeGreaterThan(0)

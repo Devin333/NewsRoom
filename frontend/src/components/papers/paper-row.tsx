@@ -1,6 +1,7 @@
 "use client"
 
 import { Fragment, type CSSProperties, type MouseEvent, type ReactNode } from "react"
+import Link from "next/link"
 import { Bell, BookOpen, Github, Heart } from "lucide-react"
 import { PaperTags } from "@/components/papers/paper-tags"
 import { PaperThumbnail } from "@/components/papers/paper-thumbnail"
@@ -8,6 +9,7 @@ import { Button } from "@/components/ui/button"
 import { translate } from "@/lib/i18n"
 import { papersCopy, t } from "@/lib/papers/copy"
 import { formatCompactNumber, formatPaperDate, paperPdfUrl, paperSnippet, paperTitle } from "@/lib/papers/format"
+import { papersRoutes } from "@/lib/papers/routes"
 import type { Locale, Paper } from "@/lib/papers/types"
 
 const PAPER_ROW_BODY_FONT: CSSProperties = {
@@ -66,14 +68,14 @@ export function PaperRow({
         </div>
 
         <div className="min-w-0 space-y-4">
-          <button type="button" className="block text-left" onClick={() => onPreview(paper)}>
+          <Link href={papersRoutes.detail(paper.slug || paper.id)} className="block text-left">
             <h2
               className="max-w-5xl text-balance text-xl font-black leading-7 text-[#334155] sm:text-[1.72rem] sm:leading-8 dark:text-foreground"
               style={PAPER_ROW_TITLE_FONT}
             >
               {paperTitle(paper, locale)}
             </h2>
-          </button>
+          </Link>
 
           <p
             className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5 text-sm text-[#334155]/55 dark:text-muted-foreground"
