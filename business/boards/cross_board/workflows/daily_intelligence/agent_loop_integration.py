@@ -217,9 +217,37 @@ def _report_from_output(output: dict[str, Any], output_key: str) -> dict[str, An
         output.get("report"),
     ]
     for candidate in candidates:
-        if isinstance(candidate, dict) and isinstance(candidate.get("sections"), list):
+        if _is_report_payload(candidate):
             return candidate
     return None
+
+
+def _is_report_payload(candidate: Any) -> bool:
+    if not isinstance(candidate, dict):
+        return False
+    sections = candidate.get("sections")
+    if not isinstance(sections, list):
+        return False
+    if not all(isinstance(section, dict) for section in sections):
+        return False
+    title = candidate.get("title")
+    if isinstance(title, str) and title.strip():
+        return True
+    return any(_has_report_section_fields(section) for section in sections)
+
+
+def _has_report_section_fields(section: dict[str, Any]) -> bool:
+    return any(
+        key in section
+        for key in (
+            "content",
+            "sources",
+            "source_urls",
+            "evidence_ids",
+            "citations",
+            "claim_grounding",
+        )
+    )
 
 
 def _float(value: Any, *, default: float) -> float:

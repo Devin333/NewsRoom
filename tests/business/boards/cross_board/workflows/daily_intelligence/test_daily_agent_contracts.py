@@ -47,7 +47,12 @@ def test_daily_agent_specs_define_contract_keys() -> None:
     verifier = build_verifier_agent()
     editor = build_editor_agent()
 
-    assert planner.input_keys == ["request"]
+    assert planner.input_keys == [
+        "request",
+        "evidence_bundle",
+        "source_errors",
+        "source_pipeline_metrics",
+    ]
     assert planner.output_key == "research_plan"
     assert planner.output_schema is not None
 
@@ -98,7 +103,7 @@ def test_daily_agent_specs_define_contract_keys() -> None:
 
 def test_daily_agent_tool_policies_reject_undeclared_tools() -> None:
     expected_allowed_tools = {
-        PLANNER_AGENT_ID: [],
+        PLANNER_AGENT_ID: ["daily.source_metadata"],
         ANALYST_AGENT_ID: ["daily.evidence_search", "daily.source_metadata"],
         WRITER_AGENT_ID: ["daily.evidence_search", "daily.section_draft"],
         VERIFIER_AGENT_ID: ["daily.citation_validate", "daily.evidence_search"],
@@ -124,6 +129,7 @@ def test_daily_agent_tool_policies_reject_undeclared_tools() -> None:
             "daily.evidence_search",
             "daily.source_metadata",
             "daily.citation_validate",
+            "daily.section_draft",
         } - set(expected_allowed_tools[agent.agent_id]):
             assert policy.allows(tool_name) is False
 

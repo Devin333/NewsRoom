@@ -67,7 +67,7 @@ def _planner_agent_step() -> StepSpec:
         name="Planner Agent",
         implementation=PLANNER_AGENT_ID,
         step_type=StepType.AGENT_LOOP,
-        read_keys=["request"],
+        read_keys=["request", "evidence_bundle", "source_errors", "source_pipeline_metrics"],
         write_keys=[
             "research_plan",
             "planner_notes",

@@ -53,6 +53,12 @@ def test_agentic_daily_workflow_declares_agent_steps() -> None:
     assert steps["planner_agent"].step_type == StepType.AGENT_LOOP
     assert steps["planner_agent"].metadata["agent_id"] == PLANNER_AGENT_ID
     assert steps["planner_agent"].implementation == PLANNER_AGENT_ID
+    assert steps["planner_agent"].read_keys == [
+        "request",
+        "evidence_bundle",
+        "source_errors",
+        "source_pipeline_metrics",
+    ]
 
     assert steps["analyst_agent"].step_type == StepType.AGENT_LOOP
     assert steps["analyst_agent"].metadata["agent_id"] == ANALYST_AGENT_ID

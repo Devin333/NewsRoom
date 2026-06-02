@@ -20,13 +20,15 @@ def build_planner_agent() -> AgentSpec:
         role="PlannerAgent",
         goal="Create a source-bounded research plan for the requested daily intelligence topic.",
         instructions=(
-            "Plan the report structure and research focus using only the request. "
-            "Do not fetch sources or infer facts. Return JSON only."
+            "Plan the report structure and research focus using only the request "
+            "and the provided evidence/source context. You may inspect source "
+            "metadata from the provided evidence bundle, but do not fetch sources "
+            "or infer facts. Return JSON only."
         ),
-        input_keys=["request"],
+        input_keys=["request", "evidence_bundle", "source_errors", "source_pipeline_metrics"],
         output_key="research_plan",
         validation_policy=daily_agent_validation_policy(),
-        allowed_tools=[],
+        allowed_tools=["daily.source_metadata"],
         output_schema={
             "type": "object",
             "required": ["research_plan"],

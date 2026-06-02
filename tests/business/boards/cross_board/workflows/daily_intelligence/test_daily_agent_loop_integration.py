@@ -74,6 +74,36 @@ def _verifier(**kwargs) -> AgentSpec:
     return AgentSpec(**defaults)
 
 
+def _planner(**kwargs) -> AgentSpec:
+    defaults = {
+        "agent_id": "daily.planner",
+        "name": "PlannerAgent",
+        "role": "Plan",
+        "goal": "Draft a source-bounded plan",
+        "instructions": "Return JSON",
+        "input_keys": ["request", "evidence_bundle"],
+        "output_key": "research_plan",
+        "allowed_tools": ["daily.source_metadata"],
+        "output_schema": {
+            "type": "object",
+            "required": ["research_plan"],
+            "properties": {
+                "research_plan": {
+                    "type": "object",
+                    "required": ["topic", "sections", "constraints"],
+                    "properties": {
+                        "topic": {"type": "string"},
+                        "sections": {"type": "array", "items": {"type": "string"}},
+                        "constraints": {"type": "object"},
+                    },
+                }
+            },
+        },
+    }
+    defaults.update(kwargs)
+    return AgentSpec(**defaults)
+
+
 def _bundle() -> EvidenceBundle:
     return EvidenceBundle(
         bundle_id="bundle-1",
@@ -182,6 +212,33 @@ def test_daily_judge_schema_pass_does_not_replace_quality_gate_for_citation_cove
         error.startswith("unsupported claim outside evidence:")
         for error in verdict.validation_errors
     )
+
+
+def test_daily_judge_does_not_treat_research_plan_sections_as_report_sections() -> None:
+    verdict = build_daily_output_judge().judge(
+        agent=_planner(),
+        action=AgentAction(
+            action_type="final_output",
+            output={
+                "research_plan": {
+                    "topic": "AI policy",
+                    "sections": [
+                        "Executive Summary",
+                        "Top Highlights",
+                        "Risk / Uncertainty / Verification Notes",
+                    ],
+                    "constraints": {"source_boundary": "evidence_bundle"},
+                },
+                "planner_notes": {"mode": "offline"},
+            },
+        ),
+        called_tools=[],
+        inputs={"evidence_bundle": _bundle()},
+    )
+
+    assert verdict.decision == JudgeDecision.ACCEPT
+    assert verdict.validation_errors == []
+    assert verdict.policy_violations == []
 
 
 def test_daily_judge_blocks_unsupported_evidence_id() -> None:

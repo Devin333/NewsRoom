@@ -97,6 +97,13 @@ def test_daily_agent_tool_registry_exposes_evidence_and_quality_tools() -> None:
     assert {
         tool["name"]
         for tool in tool_registry.export_schema_for_llm(
+            PLANNER_AGENT_ID,
+            agent_registry[PLANNER_AGENT_ID].resolved_tool_policy(),
+        )
+    } == {"daily.source_metadata"}
+    assert {
+        tool["name"]
+        for tool in tool_registry.export_schema_for_llm(
             ANALYST_AGENT_ID,
             agent_registry[ANALYST_AGENT_ID].resolved_tool_policy(),
         )
@@ -174,6 +181,9 @@ def test_daily_agent_runner_consumes_fake_llm_sequence() -> None:
         agent_registry[PLANNER_AGENT_ID],
         {
             "request": {"topic": "AI policy"},
+            "evidence_bundle": _evidence_bundle(),
+            "source_errors": [],
+            "source_pipeline_metrics": {},
         },
         run_id="daily-agent-registry-test",
         step_id="planner_agent",
