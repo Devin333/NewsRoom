@@ -70,6 +70,7 @@ class InMemoryAgentSessionStore:
         content: Mapping[str, object] | None = None,
         summary: str | None = None,
         metadata: Mapping[str, object] | None = None,
+        visibility: str | None = None,
     ) -> AgentSessionItem:
         items = self._items_by_session.get(session_id, [])
         for index, item in enumerate(items):
@@ -81,6 +82,7 @@ class InMemoryAgentSessionStore:
                 content=content if content is not None else item.content,
                 summary=summary if summary is not None else item.summary,
                 metadata={**dict(item.metadata), **dict(metadata or {})},
+                visibility=SessionVisibility(str(visibility)) if visibility is not None else item.visibility,
                 updated_at=_now(),
                 version=item.version + 1,
             )
@@ -93,7 +95,7 @@ class InMemoryAgentSessionStore:
                     agent_id=updated.agent_id,
                     item_id=item_id,
                     role=updated.role,
-                    payload={"status": updated.status},
+                    payload={"status": updated.status, "visibility": updated.visibility.value},
                 )
             )
             return updated

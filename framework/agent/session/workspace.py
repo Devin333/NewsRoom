@@ -131,7 +131,13 @@ class AgentSharedWorkspace:
     def mark_final(self, *, session_id: str, item_id: str) -> AgentSessionItem:
         """Mark an item as final and visible to downstream readers."""
 
-        return self._store.update_item(session_id=session_id, item_id=item_id, status="final", metadata={"final": True})
+        return self._store.update_item(
+            session_id=session_id,
+            item_id=item_id,
+            status="final",
+            visibility=SessionVisibility.FINAL.value,
+            metadata={"final": True},
+        )
 
     def reject_item(self, *, session_id: str, item_id: str, reason: str) -> AgentSessionItem:
         """Reject an item with a structured reason."""

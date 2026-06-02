@@ -29,6 +29,7 @@ class AgentSessionStore(Protocol):
         content: Mapping[str, object] | None = None,
         summary: str | None = None,
         metadata: Mapping[str, object] | None = None,
+        visibility: str | None = None,
     ) -> AgentSessionItem:
         """Update mutable item fields and record an event."""
         ...

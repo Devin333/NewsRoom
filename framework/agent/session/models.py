@@ -29,6 +29,12 @@ class AgentSessionRef:
     tenant_id: str | None = None
     user_id: str | None = None
 
+    def __post_init__(self) -> None:
+        if not str(self.session_id or "").strip():
+            raise ValueError("session_id is required")
+        if not str(self.run_id or "").strip():
+            object.__setattr__(self, "run_id", self.session_id)
+
     def to_refs(self) -> dict[str, str]:
         """Return only populated reference values."""
 
@@ -78,6 +84,8 @@ class AgentSessionItem:
             raise ValueError("role is required")
         if not isinstance(self.content, Mapping):
             raise TypeError("content must be a Mapping")
+        if not str(self.run_id or "").strip():
+            object.__setattr__(self, "run_id", self.session_id)
         object.__setattr__(self, "visibility", SessionVisibility(str(self.visibility)))
         object.__setattr__(self, "refs", dict(self.refs or {}))
         object.__setattr__(self, "metadata", dict(self.metadata or {}))
@@ -106,6 +114,8 @@ class AgentSessionEvent:
             raise ValueError("session_id is required")
         if not str(self.event_type or "").strip():
             raise ValueError("event_type is required")
+        if not str(self.run_id or "").strip():
+            object.__setattr__(self, "run_id", self.session_id)
         object.__setattr__(self, "payload", dict(self.payload or {}))
 
 
@@ -127,6 +137,8 @@ class AgentSessionSnapshot:
             object.__setattr__(self, "snapshot_id", uuid4().hex)
         if not str(self.session_id or "").strip():
             raise ValueError("session_id is required")
+        if not str(self.run_id or "").strip():
+            object.__setattr__(self, "run_id", self.session_id)
         object.__setattr__(self, "role_summaries", dict(self.role_summaries or {}))
         object.__setattr__(self, "final_items", tuple(str(item) for item in self.final_items))
         object.__setattr__(self, "source_event_ids", tuple(str(item) for item in self.source_event_ids))

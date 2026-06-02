@@ -128,6 +128,7 @@ class SQLiteAgentSessionStore:
         content: Mapping[str, object] | None = None,
         summary: str | None = None,
         metadata: Mapping[str, object] | None = None,
+        visibility: str | None = None,
     ) -> AgentSessionItem:
         current = self._get_item(session_id=session_id, item_id=item_id)
         if current is None:
@@ -138,6 +139,7 @@ class SQLiteAgentSessionStore:
             content=content if content is not None else current.content,
             summary=summary if summary is not None else current.summary,
             metadata={**dict(current.metadata), **dict(metadata or {})},
+            visibility=SessionVisibility(str(visibility)) if visibility is not None else current.visibility,
             updated_at=_now(),
             version=current.version + 1,
         )
@@ -150,10 +152,20 @@ class SQLiteAgentSessionStore:
             self._conn.execute(
                 """
                 update agent_session_items
-                   set content_json=?, summary=?, metadata_json=?, status=?, version=?, updated_at=?
+                   set content_json=?, summary=?, metadata_json=?, status=?, visibility=?, version=?, updated_at=?
                  where session_id=? and item_id=?
                 """,
-                (content_json, updated.summary, metadata_json, updated.status, updated.version, updated.updated_at, session_id, item_id),
+                (
+                    content_json,
+                    updated.summary,
+                    metadata_json,
+                    updated.status,
+                    updated.visibility.value,
+                    updated.version,
+                    updated.updated_at,
+                    session_id,
+                    item_id,
+                ),
             )
             self._append_event_no_transaction(
                 AgentSessionEvent(
@@ -163,7 +175,7 @@ class SQLiteAgentSessionStore:
                     agent_id=updated.agent_id,
                     item_id=item_id,
                     role=updated.role,
-                    payload={"status": updated.status},
+                    payload={"status": updated.status, "visibility": updated.visibility.value},
                 )
             )
         return updated

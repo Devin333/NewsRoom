@@ -4,7 +4,7 @@ from datetime import datetime
 
 import pytest
 
-from framework.agent.session import AgentSharedWorkspace, InMemoryAgentSessionStore
+from framework.agent.session import AgentSharedWorkspace, InMemoryAgentSessionStore, SessionVisibility
 
 
 def test_workspace_write_populates_created_at() -> None:
@@ -75,3 +75,20 @@ def test_workspace_rejects_non_mapping_content() -> None:
             role="observation",
             content=["not", "mapping"],  # type: ignore[arg-type]
         )
+
+
+def test_workspace_mark_final_sets_status_and_visibility() -> None:
+    workspace = AgentSharedWorkspace(InMemoryAgentSessionStore())
+    item = workspace.write(
+        session_id="session-1",
+        run_id="run-1",
+        agent_id="agent-a",
+        role="final",
+        content={"answer": "yes"},
+    )
+
+    final_item = workspace.mark_final(session_id="session-1", item_id=item.item_id)
+
+    assert final_item.status == "final"
+    assert final_item.visibility == SessionVisibility.FINAL
+    assert workspace.latest(session_id="session-1", role="final").visibility == SessionVisibility.FINAL
