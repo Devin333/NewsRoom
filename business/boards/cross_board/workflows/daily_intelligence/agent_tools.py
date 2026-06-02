@@ -74,6 +74,31 @@ def build_daily_agent_tool_registry() -> ToolRegistry:
         ),
         _validate_citations,
     )
+    registry.register(
+        ToolDefinition(
+            name="daily.section_draft",
+            description=(
+                "Build a source-bounded report section skeleton from the provided daily "
+                "evidence bundle."
+            ),
+            input_schema={
+                "type": "object",
+                "required": ["evidence_bundle", "title"],
+                "properties": {
+                    "evidence_bundle": {"type": "object"},
+                    "title": {"type": "string"},
+                    "section_id": {"type": "string"},
+                    "query": {"type": "string"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 10},
+                },
+                "additionalProperties": False,
+            },
+            side_effect="read_only",
+            concurrency_safe=True,
+            max_result_bytes=120_000,
+        ),
+        _build_section_draft,
+    )
     return registry
 
 
@@ -84,26 +109,13 @@ def _search_evidence(args: dict[str, Any]) -> dict[str, Any]:
     source_id = _optional_string(args.get("source_id"))
     source_url = _optional_string(args.get("source_url"))
     limit = max(1, min(25, int(args.get("limit") or 8)))
-    matches = []
-    for item in bundle.items:
-        if evidence_id and item.evidence_id != evidence_id:
-            continue
-        if source_id and item.source_id != source_id:
-            continue
-        if source_url and source_url not in item.source_urls:
-            continue
-        haystack = " ".join(
-            [
-                item.evidence_id,
-                item.title,
-                item.summary,
-                item.source_id,
-                *item.source_urls,
-            ]
-        ).casefold()
-        if query and query not in haystack:
-            continue
-        matches.append(item)
+    matches = _matching_evidence(
+        bundle,
+        query=query,
+        evidence_id=evidence_id,
+        source_id=source_id,
+        source_url=source_url,
+    )
     limited = matches[:limit]
     return {
         "bundle_id": bundle.bundle_id,
@@ -156,6 +168,47 @@ def _validate_citations(args: dict[str, Any]) -> dict[str, Any]:
         _verified_findings(args.get("verified_findings")),
     )
     return result.to_dict()
+
+
+def _build_section_draft(args: dict[str, Any]) -> dict[str, Any]:
+    bundle = _evidence_bundle(args["evidence_bundle"])
+    title = str(args.get("title") or "").strip()
+    if not title:
+        raise ValueError("title is required")
+    section_id = _optional_string(args.get("section_id")) or _section_id(title)
+    query = str(args.get("query") or title).strip().casefold()
+    limit = max(1, min(10, int(args.get("limit") or 5)))
+    items = _matching_evidence(
+        bundle,
+        query=query,
+        evidence_id=None,
+        source_id=None,
+        source_url=None,
+    )[:limit]
+    sources = _dedupe_text([url for item in items for url in item.source_urls])
+    evidence_ids = _dedupe_text([item.evidence_id for item in items if item.evidence_id])
+    claim_grounding = [
+        {
+            "claim_id": f"{section_id}_claim_{index}",
+            "text": _claim_text_from_evidence(item),
+            "evidence_ids": [item.evidence_id] if item.evidence_id else [],
+            "source_urls": list(item.source_urls),
+        }
+        for index, item in enumerate(items, start=1)
+    ]
+    return {
+        "bundle_id": bundle.bundle_id,
+        "matched_count": len(items),
+        "section": {
+            "section_id": section_id,
+            "title": title,
+            "content": " ".join(claim["text"] for claim in claim_grounding),
+            "sources": sources,
+            "evidence_ids": evidence_ids,
+            "claim_grounding": claim_grounding,
+        },
+        "supporting_items": [_evidence_item_summary(item) for item in items],
+    }
 
 
 def _evidence_bundle(payload: Any) -> EvidenceBundle:
@@ -213,6 +266,37 @@ def _verified_findings(payload: Any) -> VerifiedFindings | None:
     return None
 
 
+def _matching_evidence(
+    bundle: EvidenceBundle,
+    *,
+    query: str,
+    evidence_id: str | None,
+    source_id: str | None,
+    source_url: str | None,
+) -> list[EvidenceItem]:
+    matches = []
+    for item in bundle.items:
+        if evidence_id and item.evidence_id != evidence_id:
+            continue
+        if source_id and item.source_id != source_id:
+            continue
+        if source_url and source_url not in item.source_urls:
+            continue
+        haystack = " ".join(
+            [
+                item.evidence_id,
+                item.title,
+                item.summary,
+                item.source_id,
+                *item.source_urls,
+            ]
+        ).casefold()
+        if query and query not in haystack:
+            continue
+        matches.append(item)
+    return matches
+
+
 def _lineage_from_payload(payload: Any) -> Lineage | None:
     if isinstance(payload, Lineage):
         return payload
@@ -237,6 +321,27 @@ def _evidence_item_summary(item: EvidenceItem) -> dict[str, Any]:
         "publishable": item.publishable,
         "metadata": dict(item.metadata),
     }
+
+
+def _claim_text_from_evidence(item: EvidenceItem) -> str:
+    return item.summary or item.title
+
+
+def _section_id(title: str) -> str:
+    normalized = "_".join(str(title).casefold().split())
+    return "".join(character for character in normalized if character.isalnum() or character == "_") or "section"
+
+
+def _dedupe_text(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        text = str(value).strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        result.append(text)
+    return result
 
 
 def _optional_string(value: Any) -> str | None:

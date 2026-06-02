@@ -96,6 +96,12 @@ finalization 阶段的 report quality summary、quality gate metrics、quality r
 
 后续新增 finalization 规则时，应优先扩展 `DailyReportFinalizationInput` 或拆分 report finalization 子服务，不要把业务决策重新写回 workflow step。
 
+## Daily Agent Tool 边界
+
+daily agent 工具由 `agent_tools.py` 注册，只提供对当前 workflow 输入的只读能力：evidence search、source metadata、citation validation 和 source-bounded section draft。工具不得自行抓取外部来源，也不得生成 evidence bundle 之外的 source URL。
+
+writer/editor 若需要草稿或重写辅助，应调用 `daily.section_draft` 生成带 `sources`、`evidence_ids` 和 `claim_grounding` 的 section skeleton，再由 agent 输出层接受 schema 与 evidence boundary 校验。
+
 ## Agent Feedback 边界
 
 Agent 间反馈不应隐藏在各 agent output 的自由形态字段里，也不应由 `finalize_report` 反向猜测。

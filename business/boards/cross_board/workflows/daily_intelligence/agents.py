@@ -112,7 +112,7 @@ def build_writer_agent() -> AgentSpec:
         ],
         output_key="report_draft",
         validation_policy=daily_agent_validation_policy(),
-        allowed_tools=["daily.evidence_search"],
+        allowed_tools=["daily.evidence_search", "daily.section_draft"],
         output_schema={
             "type": "object",
             "required": ["report_draft"],
@@ -259,7 +259,7 @@ def build_editor_agent() -> AgentSpec:
         ],
         output_key="editor_review",
         validation_policy=daily_agent_validation_policy(),
-        allowed_tools=["daily.citation_validate"],
+        allowed_tools=["daily.citation_validate", "daily.section_draft"],
         output_schema={
             "type": "object",
             "required": ["editor_review"],

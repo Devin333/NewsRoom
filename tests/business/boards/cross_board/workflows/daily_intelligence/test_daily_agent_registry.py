@@ -91,6 +91,7 @@ def test_daily_agent_tool_registry_exposes_evidence_and_quality_tools() -> None:
         "daily.evidence_search",
         "daily.source_metadata",
         "daily.citation_validate",
+        "daily.section_draft",
     }
     assert tool_registry.validate_no_conflicts().ok is True
     assert {
@@ -100,6 +101,13 @@ def test_daily_agent_tool_registry_exposes_evidence_and_quality_tools() -> None:
             agent_registry[ANALYST_AGENT_ID].resolved_tool_policy(),
         )
     } == {"daily.evidence_search", "daily.source_metadata"}
+    assert {
+        tool["name"]
+        for tool in tool_registry.export_schema_for_llm(
+            WRITER_AGENT_ID,
+            agent_registry[WRITER_AGENT_ID].resolved_tool_policy(),
+        )
+    } == {"daily.evidence_search", "daily.section_draft"}
     assert {
         tool["name"]
         for tool in tool_registry.export_schema_for_llm(
@@ -113,7 +121,7 @@ def test_daily_agent_tool_registry_exposes_evidence_and_quality_tools() -> None:
             EDITOR_AGENT_ID,
             agent_registry[EDITOR_AGENT_ID].resolved_tool_policy(),
         )
-    } == {"daily.citation_validate"}
+    } == {"daily.citation_validate", "daily.section_draft"}
 
 
 def test_daily_agent_tools_execute_against_provided_evidence_bundle() -> None:
@@ -138,10 +146,23 @@ def test_daily_agent_tools_execute_against_provided_evidence_bundle() -> None:
             },
         }
     )
+    section = registry.require("daily.section_draft").executor(
+        {
+            "evidence_bundle": evidence_bundle,
+            "title": "Policy Summary",
+            "query": "chip policy",
+        }
+    )
 
     assert search["matched_count"] == 1
     assert search["items"][0]["evidence_id"] == "ev-1"
     assert citation["passed"] is True
+    assert section["section"]["section_id"] == "policy_summary"
+    assert section["section"]["evidence_ids"] == ["ev-1"]
+    assert section["section"]["sources"] == ["https://example.com/ai-chip-policy"]
+    assert section["section"]["claim_grounding"][0]["text"] == (
+        "Export controls and model supply chains remain central."
+    )
 
 
 def test_daily_agent_runner_consumes_fake_llm_sequence() -> None:

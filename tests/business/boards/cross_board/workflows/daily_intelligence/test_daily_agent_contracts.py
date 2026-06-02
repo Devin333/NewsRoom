@@ -100,9 +100,9 @@ def test_daily_agent_tool_policies_reject_undeclared_tools() -> None:
     expected_allowed_tools = {
         PLANNER_AGENT_ID: [],
         ANALYST_AGENT_ID: ["daily.evidence_search", "daily.source_metadata"],
-        WRITER_AGENT_ID: ["daily.evidence_search"],
+        WRITER_AGENT_ID: ["daily.evidence_search", "daily.section_draft"],
         VERIFIER_AGENT_ID: ["daily.citation_validate", "daily.evidence_search"],
-        EDITOR_AGENT_ID: ["daily.citation_validate"],
+        EDITOR_AGENT_ID: ["daily.citation_validate", "daily.section_draft"],
     }
     for agent in [
         build_planner_agent(),
