@@ -11,7 +11,11 @@ from business.boards.productized.models import (
     ProductizedEvidenceCheckInput,
     ProductizedRunState,
 )
-from business.boards.productized.output import ProductizedBoardOutputService
+from business.boards.productized.output import (
+    ProductizedBoardOutputBundleBuilder,
+    ProductizedBoardOutputService,
+    ProductizedReportWritingService,
+)
 from business.boards.productized.preparation import ProductizedSignalPreparationService
 from business.boards.productized.quality import ProductizedQualityService, ProductizedQualitySummaryService
 from business.boards.productized.ranking import ProductizedRankingService
@@ -22,6 +26,7 @@ from business.boards.productized.usecases import ProductizedBoardUseCases
 __all__ = [
     "ProductizedArtifactMetadataService",
     "ProductizedBoardOutputBundle",
+    "ProductizedBoardOutputBundleBuilder",
     "ProductizedBoardOutputService",
     "ProductizedBoardUseCases",
     "ProductizedDeduplicationService",
@@ -34,6 +39,7 @@ __all__ = [
     "ProductizedQualityService",
     "ProductizedQualitySummaryService",
     "ProductizedRankingService",
+    "ProductizedReportWritingService",
     "ProductizedRunState",
     "ProductizedSignalPreparationService",
     "ProductizedSubscriptionService",

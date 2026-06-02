@@ -1,6 +1,11 @@
 from __future__ import annotations
 
 from business.boards.ai_news.board_service import AINewsBoardService
+from business.boards.productized import (
+    ProductizedBoardOutputBundleBuilder,
+    ProductizedBoardOutputService,
+    ProductizedReportWritingService,
+)
 from business.boards.productized.models import ProductizedBoardOutputBundle, ProductizedRunState
 from business.boards.services import (
     BoardPipelineRunner,
@@ -10,6 +15,7 @@ from business.boards.services import (
 )
 from business.evaluation.fixtures import sample_signal
 from business.foundation import BoardType
+from business.foundation.skills import BusinessSkillResult, BusinessSkillRuntime
 
 
 def test_board_service_base_exposes_decomposed_boundary_services() -> None:
@@ -81,3 +87,42 @@ def test_productized_board_output_bundle_keeps_step_outputs_explicit() -> None:
     assert outputs["board_run_result"] is run_result
     assert outputs["productized_run"] is state
     assert outputs["skill_traces"] == [{"skill": "report-writing"}]
+
+
+def test_productized_board_output_service_exposes_decomposed_services() -> None:
+    service = ProductizedBoardOutputService(
+        board_service=AINewsBoardService(),
+        skill_runtime=BusinessSkillRuntime(),
+    )
+
+    assert isinstance(service.report_writing_service, ProductizedReportWritingService)
+    assert isinstance(service.bundle_builder, ProductizedBoardOutputBundleBuilder)
+
+
+def test_productized_board_output_bundle_builder_centralizes_metadata_merge() -> None:
+    board_service = AINewsBoardService()
+    result = board_service.build_board_run_result([sample_signal("ai_news")])
+    state = ProductizedRunState(
+        board_type=BoardType.AI_NEWS,
+        run_id="output-run",
+        skill_traces=[{"skill": "existing"}],
+        evidence_items=[{"source_id": "source-1"}],
+        trend_analysis={"event_analyses": []},
+    )
+    report_result = BusinessSkillResult(
+        skill_name="report-writing",
+        output={"markdown_report": "# Report\n"},
+        status="success",
+    )
+
+    bundle = ProductizedBoardOutputBundleBuilder().build(
+        result=result,
+        report_result=report_result,
+        productized_run=state,
+    )
+
+    assert bundle.summary_md == "# Report\n"
+    assert bundle.skill_traces[-1]["skill_name"] == "report-writing"
+    assert bundle.board_run_result.metadata["productized_run_state"]["run_id"] == "output-run"
+    assert bundle.board_output["metadata"]["productized_run_state"]["run_id"] == "output-run"
+    assert "evidence_items" not in bundle.board_output["metadata"]

@@ -15,9 +15,14 @@ class ProductizedBoardOutputService:
         *,
         board_service: BoardServiceBase,
         skill_runtime: BusinessSkillRuntime,
+        report_writing_service: "ProductizedReportWritingService" | None = None,
+        bundle_builder: "ProductizedBoardOutputBundleBuilder" | None = None,
     ) -> None:
         self.board_service = board_service
-        self.skill_runtime = skill_runtime
+        self.report_writing_service = report_writing_service or ProductizedReportWritingService(
+            skill_runtime=skill_runtime,
+        )
+        self.bundle_builder = bundle_builder or ProductizedBoardOutputBundleBuilder()
 
     def build(
         self,
@@ -28,17 +33,52 @@ class ProductizedBoardOutputService:
         productized_run: ProductizedRunState,
     ) -> ProductizedBoardOutputBundle:
         result = self.board_service.build_board_run_result(ranked_signals, context=context)
-        report_result = self.skill_runtime.run_report_writing(
+        report_result = self.report_writing_service.write(
+            request=request,
+            board_name=self.board_service.board_definition.name,
+            cards=result.cards,
+            productized_run=productized_run,
+        )
+        return self.bundle_builder.build(
+            result=result,
+            report_result=report_result,
+            productized_run=productized_run,
+        )
+
+
+class ProductizedReportWritingService:
+    def __init__(self, *, skill_runtime: BusinessSkillRuntime) -> None:
+        self.skill_runtime = skill_runtime
+
+    def write(
+        self,
+        *,
+        request: dict[str, Any],
+        board_name: str,
+        cards: list[Any],
+        productized_run: ProductizedRunState,
+    ) -> Any:
+        return self.skill_runtime.run_report_writing(
             {
-                "title": f"{self.board_service.board_definition.name} Summary",
+                "title": f"{board_name} Summary",
                 "audience": "subscriber",
                 "style": "concise",
             },
-            [card_report_item(card) for card in result.cards],
+            [card_report_item(card) for card in cards],
             trend_analyses=list(productized_run.trend_analysis.get("event_analyses", [])),
             run_id=productized_run.run_id,
             fail_on_skill_error=bool(request.get("fail_on_skill_error", False)),
         )
+
+
+class ProductizedBoardOutputBundleBuilder:
+    def build(
+        self,
+        *,
+        result: Any,
+        report_result: Any,
+        productized_run: ProductizedRunState,
+    ) -> ProductizedBoardOutputBundle:
         skill_traces = [*productized_run.skill_traces, report_result.to_dict()]
         run_state = productized_run.with_updates(skill_traces=skill_traces)
         result = result.model_copy(
@@ -63,4 +103,9 @@ def board_output_payload(result: Any, run_state: ProductizedRunState) -> dict[st
     return board_output
 
 
-__all__ = ["ProductizedBoardOutputService", "board_output_payload"]
+__all__ = [
+    "ProductizedBoardOutputBundleBuilder",
+    "ProductizedBoardOutputService",
+    "ProductizedReportWritingService",
+    "board_output_payload",
+]
