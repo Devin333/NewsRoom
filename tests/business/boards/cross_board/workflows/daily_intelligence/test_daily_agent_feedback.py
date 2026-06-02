@@ -44,6 +44,15 @@ def test_collect_agent_feedback_records_verifier_and_editor_rewrite_requests() -
     assert summary.rewrite_request_count == 4
     assert summary.highest_severity == "warning"
     assert summary.target_agent_ids == ["daily.writer"]
+    assert [recommendation.recommended_action for recommendation in summary.policy_recommendations] == ["rewrite"]
+    assert summary.policy_recommendations[0].target_agent_id == "daily.writer"
+    assert summary.policy_recommendations[0].source_feedback_ids == [
+        "daily-agent-feedback-1",
+        "daily-agent-feedback-2",
+        "daily-agent-feedback-3",
+        "daily-agent-feedback-4",
+    ]
+    assert summary.metadata["policy_recommendation_count"] == 1
 
 
 def test_collect_agent_feedback_records_block_and_human_review_targets() -> None:
@@ -75,6 +84,15 @@ def test_collect_agent_feedback_records_block_and_human_review_targets() -> None
     assert summary.human_review_request_count == 1
     assert summary.highest_severity == "block"
     assert summary.target_agent_ids == ["daily.publication_gate", "daily.human_review"]
+    assert [recommendation.recommended_action for recommendation in summary.policy_recommendations] == [
+        "block",
+        "human_review",
+    ]
+    assert [recommendation.target_agent_id for recommendation in summary.policy_recommendations] == [
+        "daily.publication_gate",
+        "daily.human_review",
+    ]
+    assert summary.policy_recommendations[0].priority == "block"
 
 
 def test_collect_agent_feedback_returns_empty_summary_for_clean_pass() -> None:
@@ -101,6 +119,7 @@ def test_collect_agent_feedback_returns_empty_summary_for_clean_pass() -> None:
     assert output["agent_feedback_events"] == []
     assert output["agent_feedback_summary"].event_count == 0
     assert output["agent_feedback_summary"].highest_severity == "none"
+    assert output["agent_feedback_summary"].policy_recommendations == []
 
 
 def _feedback_buffer(

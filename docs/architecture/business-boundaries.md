@@ -90,6 +90,7 @@ Agent 间反馈不应隐藏在各 agent output 的自由形态字段里，也不
 
 - verifier/editor 对 writer、human review 或 publication gate 的反馈先归一化为 `agent_feedback_events`。
 - 聚合指标写入 `agent_feedback_summary`，供 final report、blocked report、quality result 和 artifact manifest 使用。
+- `DailyAgentFeedbackPolicyService` 将 feedback events 转换为 `policy_recommendations`，作为后续 rewrite / human review / block routing 的正式策略输入。
 - 当前闭环雏形只负责“显式化反馈信号”，不在 workflow step 内直接重跑 agent 或重新收集 source。
 - 后续如需触发 writer 局部重写、planner 调整或 source recollect，应由应用层 routing / policy service 消费这些正式反馈模型。
 

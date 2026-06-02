@@ -2,10 +2,16 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import Field
-
 from framework.workflow import StepScopedDataBufferView
-from business.foundation import PrimitiveModel
+from business.boards.cross_board.workflows.daily_intelligence.agent_feedback_models import (
+    HUMAN_REVIEW_TARGET,
+    PUBLICATION_GATE_TARGET,
+    DailyAgentFeedbackEvent,
+    DailyAgentFeedbackSummary,
+)
+from business.boards.cross_board.workflows.daily_intelligence.agent_feedback_policy import (
+    DailyAgentFeedbackPolicyService,
+)
 from business.boards.cross_board.workflows.daily_intelligence.agents import (
     EDITOR_AGENT_ID,
     VERIFIER_AGENT_ID,
@@ -14,31 +20,6 @@ from business.boards.cross_board.workflows.daily_intelligence.agents import (
 from business.boards.cross_board.workflows.daily_intelligence.buffer_key_aliases import (
     with_namespaced_aliases,
 )
-
-
-HUMAN_REVIEW_TARGET = "daily.human_review"
-PUBLICATION_GATE_TARGET = "daily.publication_gate"
-
-
-class DailyAgentFeedbackEvent(PrimitiveModel):
-    feedback_id: str
-    source_agent_id: str
-    target_agent_id: str
-    feedback_type: str
-    severity: str
-    requested_action: str
-    reason: str
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
-
-class DailyAgentFeedbackSummary(PrimitiveModel):
-    event_count: int
-    rewrite_request_count: int = 0
-    human_review_request_count: int = 0
-    block_request_count: int = 0
-    highest_severity: str = "none"
-    target_agent_ids: list[str] = Field(default_factory=list)
-    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 def collect_agent_feedback(buffer: StepScopedDataBufferView) -> dict[str, Any]:
@@ -207,6 +188,7 @@ class DailyAgentFeedbackCollector:
 
 def summarize_agent_feedback(events: list[DailyAgentFeedbackEvent]) -> DailyAgentFeedbackSummary:
     target_agent_ids = _dedupe_text([event.target_agent_id for event in events])
+    policy_recommendations = DailyAgentFeedbackPolicyService().recommend(events)
     return DailyAgentFeedbackSummary(
         event_count=len(events),
         rewrite_request_count=sum(1 for event in events if event.requested_action == "rewrite"),
@@ -214,8 +196,10 @@ def summarize_agent_feedback(events: list[DailyAgentFeedbackEvent]) -> DailyAgen
         block_request_count=sum(1 for event in events if event.requested_action == "block"),
         highest_severity=_highest_severity(events),
         target_agent_ids=target_agent_ids,
+        policy_recommendations=policy_recommendations,
         metadata={
             "feedback_types": _dedupe_text([event.feedback_type for event in events]),
+            "policy_recommendation_count": len(policy_recommendations),
         },
     )
 
