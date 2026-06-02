@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from business.boards.productized.models import ProductizedEvidenceCheckInput
+from business.boards.productized.models import ProductizedEvidenceCheckInput, ProductizedRunState
+from business.foundation.skills import BusinessSkillRuntime
 
 
 class ProductizedQualityService:
@@ -49,4 +50,48 @@ class ProductizedQualityService:
         return quality
 
 
-__all__ = ["ProductizedQualityService"]
+class ProductizedQualitySummaryService:
+    def __init__(
+        self,
+        *,
+        skill_runtime: BusinessSkillRuntime,
+        quality_service: ProductizedQualityService | None = None,
+    ) -> None:
+        self.skill_runtime = skill_runtime
+        self.quality_service = quality_service or ProductizedQualityService()
+
+    def build_summary(
+        self,
+        *,
+        request: dict[str, Any],
+        board_run_result: Any,
+        productized_run: ProductizedRunState,
+    ) -> dict[str, Any]:
+        skill_traces = list(productized_run.skill_traces)
+        evidence_input = self.quality_service.evidence_check_input(
+            board_run_result=board_run_result,
+            evidence_items=productized_run.evidence_items,
+            evidence_refs=productized_run.evidence_refs,
+        )
+        evidence_check = self.skill_runtime.run_evidence_checking(
+            evidence_input.claims,
+            evidence_input.sources,
+            run_id=productized_run.run_id,
+            fail_on_skill_error=bool(request.get("fail_on_skill_error", False)),
+        )
+        skill_traces.append(evidence_check.to_dict())
+        quality = self.quality_service.merge_quality_summary(
+            board_run_result=board_run_result,
+            evidence_checking=evidence_check.output,
+            skill_traces=skill_traces,
+        )
+        run_state = productized_run.with_updates(skill_traces=skill_traces)
+        return {
+            "quality_summary": quality,
+            "evidence_checking": evidence_check.output,
+            "skill_traces": skill_traces,
+            "productized_run": run_state,
+        }
+
+
+__all__ = ["ProductizedQualityService", "ProductizedQualitySummaryService"]

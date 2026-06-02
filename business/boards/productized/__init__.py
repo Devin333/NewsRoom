@@ -13,9 +13,9 @@ from business.boards.productized.models import (
 )
 from business.boards.productized.output import ProductizedBoardOutputService
 from business.boards.productized.preparation import ProductizedSignalPreparationService
-from business.boards.productized.quality import ProductizedQualityService
+from business.boards.productized.quality import ProductizedQualityService, ProductizedQualitySummaryService
 from business.boards.productized.ranking import ProductizedRankingService
-from business.boards.productized.trends import ProductizedTrendEventService
+from business.boards.productized.trends import ProductizedTrendAnalysisService, ProductizedTrendEventService
 from business.boards.productized.usecases import ProductizedBoardUseCases
 
 __all__ = [
@@ -31,9 +31,11 @@ __all__ = [
     "ProductizedFeedbackLearningService",
     "ProductizedImprovementWorkflowService",
     "ProductizedQualityService",
+    "ProductizedQualitySummaryService",
     "ProductizedRankingService",
     "ProductizedRunState",
     "ProductizedSignalPreparationService",
+    "ProductizedTrendAnalysisService",
     "ProductizedTrendEventService",
     "analysis_context_from_request",
     "run_id_from_request",

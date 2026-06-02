@@ -15,9 +15,9 @@ from business.boards.productized.improvement import ProductizedImprovementWorkfl
 from business.boards.productized.models import ProductizedRunState
 from business.boards.productized.output import ProductizedBoardOutputService
 from business.boards.productized.preparation import ProductizedSignalPreparationService
-from business.boards.productized.quality import ProductizedQualityService
+from business.boards.productized.quality import ProductizedQualitySummaryService
 from business.boards.productized.ranking import ProductizedRankingService
-from business.boards.productized.trends import ProductizedTrendEventService
+from business.boards.productized.trends import ProductizedTrendAnalysisService
 from business.foundation import AnalysisContext, BoardType
 from business.foundation.skills import BusinessSkillRuntime
 from business.foundation.subscription import DeliveryPlanBuilder, SubscriptionPayloadBuilder
@@ -51,8 +51,12 @@ class ProductizedBoardUseCases:
         )
         self.evidence_service = ProductizedEvidenceService()
         self.ranking_service = ProductizedRankingService()
-        self.trend_event_service = ProductizedTrendEventService()
-        self.quality_service = ProductizedQualityService()
+        self.trend_analysis_service = ProductizedTrendAnalysisService(
+            skill_runtime=skill_runtime,
+        )
+        self.quality_summary_service = ProductizedQualitySummaryService(
+            skill_runtime=skill_runtime,
+        )
         self.feedback_learning_service = ProductizedFeedbackLearningService(
             feedback_service=feedback_service,
             improvement_service=improvement_service,
@@ -128,22 +132,11 @@ class ProductizedBoardUseCases:
         ranked_signals: list[Any],
         productized_run: ProductizedRunState,
     ) -> dict[str, Any]:
-        skill_traces = list(productized_run.skill_traces)
-        events = self.trend_event_service.build_events(
-            productized_run.deduplication_result,
-            ranked_signals,
+        return self.trend_analysis_service.analyze(
+            request=request,
+            ranked_signals=ranked_signals,
+            productized_run=productized_run,
         )
-        result = self.skill_runtime.run_trend_analysis(
-            events,
-            run_id=productized_run.run_id,
-            fail_on_skill_error=bool(request.get("fail_on_skill_error", False)),
-        )
-        skill_traces.append(result.to_dict())
-        run_state = productized_run.with_updates(
-            trend_analysis=result.output,
-            skill_traces=skill_traces,
-        )
-        return {"trend_analysis": result.output, "skill_traces": skill_traces, "productized_run": run_state}
 
     def build_board_output(
         self,
@@ -167,31 +160,11 @@ class ProductizedBoardUseCases:
         board_run_result: Any,
         productized_run: ProductizedRunState,
     ) -> dict[str, Any]:
-        skill_traces = list(productized_run.skill_traces)
-        evidence_input = self.quality_service.evidence_check_input(
+        return self.quality_summary_service.build_summary(
+            request=request,
             board_run_result=board_run_result,
-            evidence_items=productized_run.evidence_items,
-            evidence_refs=productized_run.evidence_refs,
+            productized_run=productized_run,
         )
-        evidence_check = self.skill_runtime.run_evidence_checking(
-            evidence_input.claims,
-            evidence_input.sources,
-            run_id=productized_run.run_id,
-            fail_on_skill_error=bool(request.get("fail_on_skill_error", False)),
-        )
-        skill_traces.append(evidence_check.to_dict())
-        quality = self.quality_service.merge_quality_summary(
-            board_run_result=board_run_result,
-            evidence_checking=evidence_check.output,
-            skill_traces=skill_traces,
-        )
-        run_state = productized_run.with_updates(skill_traces=skill_traces)
-        return {
-            "quality_summary": quality,
-            "evidence_checking": evidence_check.output,
-            "skill_traces": skill_traces,
-            "productized_run": run_state,
-        }
 
     def build_subscription_payload(
         self,

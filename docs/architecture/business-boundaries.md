@@ -62,7 +62,9 @@ Cross-board 当前边界如下：
 - `ProductizedDeduplicationService`：运行 event-deduplication skill、生成 deduplication result，并写入 `ProductizedRunState`。
 - `ProductizedRankingService`：排序 productized signals。
 - `ProductizedTrendEventService`：构建 trend-analysis 技能输入。
+- `ProductizedTrendAnalysisService`：运行 trend-analysis skill、生成 trend analysis 中间结果，并写入 `ProductizedRunState`。
 - `ProductizedQualityService`：构建 evidence-checking 输入并合并质量摘要。
+- `ProductizedQualitySummaryService`：运行 evidence-checking skill、生成正式 quality summary 输出，并写入 `ProductizedRunState`。
 - `ProductizedBoardOutputService`：构建 board run result、调用 report-writing skill、生成 `ProductizedBoardOutputBundle`。
 - `ProductizedFeedbackLearningService`：从 board run result 收集反馈和 learning signals。
 - `ProductizedImprovementWorkflowService`：从质量、反馈、订阅结果生成 recommendation、proposal、applied experiment 和 measurement。
