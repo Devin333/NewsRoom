@@ -164,6 +164,22 @@ def test_cross_board_daily_source_runtime_uses_canonical_source_config_loader() 
     )
 
 
+def test_cross_board_daily_report_finalization_uses_output_builder_boundary() -> None:
+    imports = _imports_for_file(
+        BUSINESS_ROOT / "boards" / "cross_board" / "workflows" / "daily_intelligence" / "report_finalization.py"
+    )
+
+    assert (
+        "business.boards.cross_board.workflows.daily_intelligence.report_finalization_outputs"
+        in imports
+    )
+    assert "business.foundation.models.report_output" not in imports
+    assert (
+        "business.boards.cross_board.workflows.daily_intelligence.buffer_key_aliases"
+        not in imports
+    )
+
+
 def test_cross_board_daily_source_processing_uses_business_signal_layer() -> None:
     imports = _imports_for_file(
         BUSINESS_ROOT / "boards" / "cross_board" / "workflows" / "daily_intelligence" / "source_processing.py"

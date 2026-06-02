@@ -10,6 +10,9 @@ from business.boards.cross_board.workflows.daily_intelligence.report_finalizatio
     DailyReportFinalizationInput,
     finalize_daily_report,
 )
+from business.boards.cross_board.workflows.daily_intelligence.report_finalization_outputs import (
+    build_publish_report_outputs,
+)
 from business.boards.cross_board.workflows.daily_intelligence.quality_gate_policy import (
     NON_SOCIAL_MEDIA_BYPASS_REASON,
 )
@@ -46,6 +49,33 @@ def test_report_finalization_usecase_runs_without_workflow_buffer() -> None:
     assert output["quality_result"]["route"] == "final"
     assert output["final_report"].title == "Daily Intelligence: AI policy"
     assert output["report.final"] == output["final_report"]
+
+
+def test_report_finalization_output_builder_publishes_without_routing_usecase() -> None:
+    output = build_publish_report_outputs(
+        request={"topic": "AI policy", "run_id": "run-1"},
+        final_draft=_report_draft(),
+        evidence_bundle=_evidence_bundle(),
+        verified_findings=_verified_findings(),
+        editor_decision=_editor_review("pass"),
+        verification_result={"status": "pass", "risk_level": "low"},
+        citation_check_result={"passed": True},
+        support_matrix={"coverage_ratio": 1.0},
+        quality_events=[],
+        rewrite_attempts=0,
+        rewrite_instructions=[],
+        quality_route="final",
+        agent_feedback={
+            "events": [{"feedback_id": "feedback-1"}],
+            "summary": {"event_count": 1},
+        },
+    )
+
+    assert output["quality_result"]["route"] == "final"
+    assert output["quality.result"] == output["quality_result"]
+    assert output["report.final"] == output["final_report"]
+    assert output["final_report"].metadata["agent_feedback_event_count"] == 1
+    assert output["final_report"].metadata["agent_feedback_summary"] == {"event_count": 1}
 
 
 def test_finalize_report_projects_agent_feedback_metadata() -> None:
