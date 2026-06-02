@@ -86,6 +86,8 @@ agentic daily workflow 的 `finalize_report_step.py` 是 workflow adapter，只�
 
 报告草稿输入归一化、claim grounding 归一化、以及草稿引用来源是否落在 evidence bundle 内的边界检查由 `report_draft_normalization.py` 承载。`report_finalization.py` 只消费归一化后的 draft 和明确的 source-boundary 结果，不再内联这些输入清洗 helper。
 
+finalization 阶段的 report quality summary、quality gate metrics、quality result 和 human review request 由 `report_quality_outputs.py` 构建。`report_finalization.py` 负责选择发布/阻断/重写/人工审核路线，并把这些输出 builder 组合进最终返回值。
+
 后续新增 finalization 规则时，应优先扩展 `DailyReportFinalizationInput` 或拆分 report finalization 子服务，不要把业务决策重新写回 workflow step。
 
 ## Agent Feedback 边界
