@@ -31,7 +31,9 @@ from business.boards.cross_board.workflows.daily_intelligence.source_collection 
 from business.boards.cross_board.workflows.daily_intelligence.source_dispatcher import SourceDispatcher
 from business.boards.cross_board.workflows.daily_intelligence.agent_registry import (
     build_daily_agent_registry,
-    build_daily_agent_runner,
+)
+from business.boards.cross_board.workflows.daily_intelligence.agent_runner_factory import (
+    build_profiled_daily_agent_runner,
 )
 from business.boards.cross_board.workflows.daily_intelligence.agent_tools import build_daily_agent_tool_registry
 from business.boards.cross_board.workflows.daily_intelligence.artifact_publisher import DailyIntelligenceArtifactPublisher
@@ -198,7 +200,7 @@ class AgenticDailyIntelligenceRunner:
         function_registry = self._function_registry(profile)
         tool_registry = build_daily_agent_tool_registry()
         agent_registry = build_daily_agent_registry()
-        agent_runner = build_daily_agent_runner(
+        agent_runner = build_profiled_daily_agent_runner(
             profile=profile,
             llm_client=self.llm_client,
             topic=topic,

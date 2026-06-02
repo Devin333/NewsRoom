@@ -51,22 +51,15 @@ def build_daily_agent_runner(
     conversation_store: LocalJsonConversationStore | None = None,
     topic: str | None = None,
 ) -> AgentRunner:
-    if profile in {PROFILE_AGENTIC_OFFLINE, PROFILE_LIVE_OFFLINE}:
-        if llm_client is not None:
-            resolved_llm_client = llm_client
-        else:
-            from business.boards.cross_board.workflows.daily_intelligence.agent_fixtures import (
-                build_daily_agent_fake_llm_client,
-            )
-
-            resolved_llm_client = build_daily_agent_fake_llm_client(
-                profile,
-                topic=topic,
-            )
-    else:
-        resolved_llm_client = llm_client or build_openai_compatible_client_from_config(
-            route_id=DAILY_AGENTIC_MODEL_ROUTE_ID
+    _ = topic
+    if llm_client is None and profile in {PROFILE_AGENTIC_OFFLINE, PROFILE_LIVE_OFFLINE}:
+        raise ValueError(
+            "offline daily agent runner requires an explicit llm_client; "
+            "use build_profiled_daily_agent_runner for fixture-backed offline runs"
         )
+    resolved_llm_client = llm_client or build_openai_compatible_client_from_config(
+        route_id=DAILY_AGENTIC_MODEL_ROUTE_ID
+    )
     return AgentRunner(
         llm_client=cast(Any, resolved_llm_client),
         tool_registry=build_daily_agent_tool_registry(),

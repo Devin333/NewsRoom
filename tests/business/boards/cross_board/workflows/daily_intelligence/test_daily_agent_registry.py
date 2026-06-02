@@ -43,11 +43,17 @@ def test_daily_agent_registry_contains_writer_verifier_and_editor() -> None:
 
 def test_daily_agent_registry_does_not_export_fake_llm_fixture() -> None:
     assert not hasattr(agent_registry_module, "build_daily_agent_fake_llm_client")
+    assert "agent_fixtures" not in vars(agent_registry_module)
     assert [
         name
         for name in vars(agent_registry_module)
         if name.startswith("_fake_")
     ] == []
+
+
+def test_daily_agent_registry_requires_explicit_offline_llm_client() -> None:
+    with pytest.raises(ValueError, match="requires an explicit llm_client"):
+        build_daily_agent_runner(profile=PROFILE_AGENTIC_OFFLINE)
 
 
 def test_daily_agent_tool_registry_exposes_evidence_and_quality_tools() -> None:

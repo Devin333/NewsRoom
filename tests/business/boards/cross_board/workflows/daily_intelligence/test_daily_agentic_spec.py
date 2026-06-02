@@ -7,7 +7,9 @@ from business.boards.cross_board.workflows.daily_intelligence import build_agent
 from business.boards.cross_board.workflows.daily_intelligence.agent_registry import (
     PROFILE_AGENTIC_OFFLINE,
     build_daily_agent_registry,
-    build_daily_agent_runner,
+)
+from business.boards.cross_board.workflows.daily_intelligence.agent_runner_factory import (
+    build_profiled_daily_agent_runner,
 )
 from business.boards.cross_board.workflows.daily_intelligence.agent_tools import build_daily_agent_tool_registry
 from business.boards.cross_board.workflows.daily_intelligence.agents import (
@@ -114,7 +116,7 @@ def _step_runner_registry():
     return build_default_step_runner_registry(
         function_registry,
         tool_registry=build_daily_agent_tool_registry(),
-        agent_runner=build_daily_agent_runner(profile=PROFILE_AGENTIC_OFFLINE),
+        agent_runner=build_profiled_daily_agent_runner(profile=PROFILE_AGENTIC_OFFLINE),
         agent_registry=build_daily_agent_registry(),
     )
 
