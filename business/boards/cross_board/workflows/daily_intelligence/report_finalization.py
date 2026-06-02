@@ -13,6 +13,10 @@ from business.foundation.value_normalization import (
     to_plain_dict as _to_plain_dict,
 )
 from business.layers.analysis.quality import EditorDecision
+from business.boards.cross_board.workflows.daily_intelligence.agent_feedback_finalization_policy import (
+    AgentFeedbackFinalizationPolicyDecision,
+    select_agent_feedback_finalization_policy,
+)
 from business.boards.cross_board.workflows.daily_intelligence.evidence_step import quality_event
 from business.boards.cross_board.workflows.daily_intelligence.quality_gate_policy import (
     assess_non_social_media_bypass,
@@ -113,6 +117,29 @@ def finalize_daily_report(payload: DailyReportFinalizationInput) -> dict[str, An
                 original_decision=original_decision,
                 quality_score=quality_score,
                 **bypass_assessment.event_metadata,
+            )
+        )
+    feedback_policy_decision = select_agent_feedback_finalization_policy(
+        agent_feedback.get("summary"),
+        strict_gate_required=bypass_assessment.strict_gate_required,
+    )
+    if feedback_policy_decision.should_apply:
+        editor_decision = _apply_agent_feedback_finalization_policy(
+            editor_decision,
+            feedback_policy_decision,
+        )
+        decision = editor_decision["decision"]
+        rewrite_instructions = list(editor_decision["rewrite_instructions"])
+        quality_events.append(
+            quality_event(
+                "finalize_report_agent_feedback_policy_applied",
+                recommended_action=feedback_policy_decision.recommended_action,
+                recommendation_id=(
+                    feedback_policy_decision.recommendation or {}
+                ).get("recommendation_id"),
+                target_agent_id=(
+                    feedback_policy_decision.recommendation or {}
+                ).get("target_agent_id"),
             )
         )
 
@@ -295,6 +322,38 @@ def _append_editor_reason(editor_decision: dict[str, Any], reason: str) -> dict[
     reasons.append(reason)
     next_decision["reasons"] = reasons
     return next_decision
+
+
+def _apply_agent_feedback_finalization_policy(
+    editor_decision: dict[str, Any],
+    policy_decision: AgentFeedbackFinalizationPolicyDecision,
+) -> dict[str, Any]:
+    recommended_action = policy_decision.recommended_action
+    recommendation = policy_decision.recommendation or {}
+    next_decision = _append_editor_reason(
+        editor_decision,
+        _agent_feedback_policy_reason(policy_decision),
+    )
+    if recommended_action == "block":
+        next_decision["decision"] = BLOCK_DECISION
+    elif recommended_action == "human_review":
+        next_decision["decision"] = HUMAN_REVIEW_REQUIRED_DECISION
+    elif recommended_action == "rewrite":
+        next_decision["decision"] = REWRITE_REQUIRED_DECISION
+        rewrite_instructions = list(next_decision.get("rewrite_instructions") or [])
+        reason = str(recommendation.get("reason") or "").strip()
+        if reason and reason not in rewrite_instructions:
+            rewrite_instructions.append(reason)
+        next_decision["rewrite_instructions"] = rewrite_instructions
+    return next_decision
+
+
+def _agent_feedback_policy_reason(
+    policy_decision: AgentFeedbackFinalizationPolicyDecision,
+) -> str:
+    recommendation = policy_decision.recommendation or {}
+    reason = str(recommendation.get("reason") or "agent feedback policy recommendation").strip()
+    return f"agent feedback policy recommended {policy_decision.recommended_action}: {reason}"
 
 
 def _publish_outputs(

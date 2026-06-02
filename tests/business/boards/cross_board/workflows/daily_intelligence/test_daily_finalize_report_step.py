@@ -73,6 +73,77 @@ def test_finalize_report_projects_agent_feedback_metadata() -> None:
     assert output["report.final"] == output["final_report"]
 
 
+def test_finalize_report_applies_block_feedback_policy_under_strict_gate() -> None:
+    output = finalize_report(
+        _buffer(
+            editor_review=_editor_review("pass"),
+            social_evidence=True,
+            agent_feedback_summary={
+                "event_count": 1,
+                "block_request_count": 1,
+                "highest_severity": "block",
+                "policy_recommendations": [
+                    {
+                        "recommendation_id": "policy:block",
+                        "target_agent_id": "daily.publication_gate",
+                        "recommended_action": "block",
+                        "priority": "block",
+                        "reason": "verifier blocked publication",
+                        "source_feedback_ids": ["feedback-1"],
+                    }
+                ],
+            },
+        )
+    )
+
+    assert output["quality_result"]["passed"] is False
+    assert output["quality_result"]["route"] == "blocked"
+    assert output["quality_gate_metrics"]["blocked"] is True
+    assert "final_report" not in output
+    assert any("agent feedback policy recommended block" in reason for reason in output["blocked_report"].reasons)
+    assert any(
+        event.event_type == "finalize_report_agent_feedback_policy_applied"
+        for event in output["quality_events"]
+    )
+
+
+def test_finalize_report_keeps_non_social_bypass_ahead_of_feedback_policy() -> None:
+    output = finalize_report(
+        _buffer(
+            editor_review=_EditorReviewObject(
+                decision=EditorDecision.BLOCKED,
+                quality_score=0.2,
+                reasons=["source boundary violated"],
+                rewrite_instructions=[],
+            ),
+            agent_feedback_summary={
+                "event_count": 1,
+                "block_request_count": 1,
+                "highest_severity": "block",
+                "policy_recommendations": [
+                    {
+                        "recommendation_id": "policy:block",
+                        "target_agent_id": "daily.publication_gate",
+                        "recommended_action": "block",
+                        "priority": "block",
+                        "reason": "verifier blocked publication",
+                        "source_feedback_ids": ["feedback-1"],
+                    }
+                ],
+            },
+        )
+    )
+
+    assert output["quality_result"]["passed"] is True
+    assert output["quality_result"]["route"] == "final"
+    assert output["quality_events"][0].event_type == "finalize_report_bypassed_non_social_media"
+    assert "blocked_report" not in output
+    assert all(
+        event.event_type != "finalize_report_agent_feedback_policy_applied"
+        for event in output["quality_events"]
+    )
+
+
 def test_finalize_report_rewrite_required_with_edited_draft_publishes_edit() -> None:
     edited_draft = _report_draft(title="Edited Daily Intelligence")
     edited_draft["sections"][0]["content"] = "Edited source-grounded summary."
