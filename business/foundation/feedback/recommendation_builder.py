@@ -88,6 +88,25 @@ class ImprovementRecommendationBuilder:
         self.learning_signal_builder = learning_signal_builder or LearningSignalRecommendationBuilder()
         self.quality_summary_builder = quality_summary_builder or QualitySummaryRecommendationBuilder()
 
+    def build(
+        self,
+        learning_signals: list[Any],
+        *,
+        board_type: str,
+        quality_summary: Any | None = None,
+    ) -> list[ImprovementRecommendation]:
+        recommendations = self.build_from_learning_signals(
+            learning_signals,
+            board_type=board_type,
+        )
+        recommendations.extend(
+            self.build_from_quality_summary(
+                quality_summary,
+                board_type=board_type,
+            )
+        )
+        return dedupe_recommendations(recommendations)
+
     def build_from_learning_signals(
         self,
         signals: list[Any],
@@ -111,6 +130,17 @@ class ImprovementRecommendationBuilder:
             quality_summary,
             board_type=board_type,
         )
+
+
+def dedupe_recommendations(recommendations: list[ImprovementRecommendation]) -> list[ImprovementRecommendation]:
+    seen: set[str] = set()
+    result: list[ImprovementRecommendation] = []
+    for recommendation in recommendations:
+        if recommendation.recommendation_id in seen:
+            continue
+        seen.add(recommendation.recommendation_id)
+        result.append(recommendation)
+    return result
 
 
 def _payload(value: Any) -> dict[str, Any]:
@@ -168,4 +198,5 @@ __all__ = [
     "ImprovementRecommendationBuilder",
     "LearningSignalRecommendationBuilder",
     "QualitySummaryRecommendationBuilder",
+    "dedupe_recommendations",
 ]

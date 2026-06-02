@@ -5,6 +5,8 @@ from business.foundation.feedback import (
     ImprovementRecommendationBuilder,
     LearningSignalRecommendationBuilder,
     QualitySummaryRecommendationBuilder,
+    dedupe_recommendations,
+    ImprovementRecommendation,
 )
 
 
@@ -70,3 +72,44 @@ def test_improvement_recommendation_builder_delegates_to_source_builders() -> No
 
     assert learning_recommendations[0].source == "learning_signal"
     assert quality_recommendations[0].source == "quality_summary"
+
+
+def test_improvement_recommendation_builder_builds_and_dedupes_sources() -> None:
+    recommendation = _recommendation("rec-1", source="learning_signal")
+    builder = ImprovementRecommendationBuilder(
+        learning_signal_builder=_StaticRecommendationBuilder([recommendation]),
+        quality_summary_builder=_StaticRecommendationBuilder([_recommendation("rec-1", source="quality_summary")]),
+    )
+
+    recommendations = builder.build([{"signal_type": "x"}], board_type="ai_news", quality_summary={"checks": []})
+
+    assert recommendations == [recommendation]
+
+
+def test_dedupe_recommendations_preserves_first_seen_order() -> None:
+    first = _recommendation("rec-1", source="learning_signal")
+    second = _recommendation("rec-2", source="quality_summary")
+    duplicate = _recommendation("rec-1", source="quality_summary")
+
+    assert dedupe_recommendations([first, second, duplicate]) == [first, second]
+
+
+class _StaticRecommendationBuilder:
+    def __init__(self, recommendations: list[ImprovementRecommendation]) -> None:
+        self.recommendations = recommendations
+
+    def build(self, *_args, **_kwargs) -> list[ImprovementRecommendation]:
+        return list(self.recommendations)
+
+
+def _recommendation(recommendation_id: str, *, source: str) -> ImprovementRecommendation:
+    return ImprovementRecommendation(
+        recommendation_id=recommendation_id,
+        source=source,
+        board_type="ai_news",
+        target_type="policy_threshold",
+        target_id="threshold",
+        severity="warning",
+        reason="review threshold",
+        suggested_action="review policy threshold",
+    )

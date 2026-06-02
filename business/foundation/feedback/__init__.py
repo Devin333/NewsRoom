@@ -16,6 +16,7 @@ from business.foundation.feedback.recommendation_builder import (
     ImprovementRecommendationBuilder,
     LearningSignalRecommendationBuilder,
     QualitySummaryRecommendationBuilder,
+    dedupe_recommendations,
 )
 from business.foundation.feedback.runtime_closure import (
     RuntimeQualityClosure,
@@ -54,4 +55,5 @@ __all__ = [
     "build_feedback_events_from_quality",
     "build_runtime_quality_closure",
     "dedupe_feedback_events",
+    "dedupe_recommendations",
 ]

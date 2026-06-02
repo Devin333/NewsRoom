@@ -73,6 +73,7 @@ from business.foundation.feedback import (
     build_feedback_events_from_quality,
     build_runtime_quality_closure,
     dedupe_feedback_events,
+    dedupe_recommendations,
     FeedbackLearningResult,
     FeedbackLearningService,
 )
@@ -238,6 +239,7 @@ __all__ = [
     "build_policy_candidate",
     "build_runtime_quality_closure",
     "dedupe_feedback_events",
+    "dedupe_recommendations",
     "create_policy_snapshot",
     "default_policy_profiles",
     "RadarRecommendation",

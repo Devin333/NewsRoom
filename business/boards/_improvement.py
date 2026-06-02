@@ -40,17 +40,11 @@ class BoardImprovementService:
         board_type: str,
         quality_summary: Any | None = None,
     ) -> list[ImprovementRecommendation]:
-        recommendations = self.recommendation_builder.build_from_learning_signals(
+        return self.recommendation_builder.build(
             learning_signals,
             board_type=board_type,
+            quality_summary=quality_summary,
         )
-        recommendations.extend(
-            self.recommendation_builder.build_from_quality_summary(
-                quality_summary,
-                board_type=board_type,
-            )
-        )
-        return _dedupe_recommendations(recommendations)
 
     def build_proposals(
         self,
@@ -86,17 +80,6 @@ class BoardImprovementService:
             applied_overrides=applied_overrides,
             measurement=measurement,
         )
-
-
-def _dedupe_recommendations(recommendations: list[ImprovementRecommendation]) -> list[ImprovementRecommendation]:
-    seen: set[str] = set()
-    result: list[ImprovementRecommendation] = []
-    for recommendation in recommendations:
-        if recommendation.recommendation_id in seen:
-            continue
-        seen.add(recommendation.recommendation_id)
-        result.append(recommendation)
-    return result
 
 
 __all__ = ["BoardImprovementService"]
