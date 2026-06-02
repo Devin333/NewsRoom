@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from business.boards._service import BoardServiceBase
+from business.boards.productized.metadata import ProductizedRunStateMetadataProjector
 from business.boards.productized.models import ProductizedBoardOutputBundle, ProductizedRunState
 from business.boards.productized.payloads import card_report_item, summary_markdown
 from business.foundation import AnalysisContext
@@ -97,7 +98,8 @@ def board_output_payload(result: Any, run_state: ProductizedRunState) -> dict[st
     metadata = getattr(result, "metadata", {}) or {}
     board_output = dict(getattr(result, "board_output", {}) or metadata.get("board_output") or {})
     output_metadata = dict(board_output.get("metadata") or {})
-    board_output["metadata"] = {**output_metadata, **run_state.board_output_metadata()}
+    projected_metadata = ProductizedRunStateMetadataProjector().board_output_metadata(run_state)
+    board_output["metadata"] = {**output_metadata, **projected_metadata}
     return board_output
 
 

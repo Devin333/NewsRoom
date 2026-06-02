@@ -13,6 +13,7 @@ from business.boards.productized import (
     ProductizedBoardOutputBundleBuilder,
     ProductizedBoardOutputService,
     ProductizedReportWritingService,
+    ProductizedRunStateMetadataProjector,
 )
 from business.boards.productized.models import ProductizedBoardOutputBundle, ProductizedRunState
 from business.boards.services import (
@@ -197,7 +198,7 @@ def test_pipeline_runner_preserves_annotation_and_board_output_postprocess_hook(
     assert output.cards[0].metadata["board_focus"] == "product_adoption_news"
 
 
-def test_productized_run_state_is_formal_intermediate_model() -> None:
+def test_productized_run_state_metadata_projector_owns_metadata_projection() -> None:
     state = ProductizedRunState(
         board_type=BoardType.AI_NEWS,
         run_id="run-1",
@@ -205,16 +206,19 @@ def test_productized_run_state_is_formal_intermediate_model() -> None:
         skill_traces=[{"skill": "source-reliability"}],
         evidence_items=[{"source_id": "src-1"}],
     )
+    projector = ProductizedRunStateMetadataProjector()
 
-    metadata = state.runtime_metadata()
+    metadata = projector.runtime_metadata(state)
 
     assert metadata["productized_run_state"]["schema_version"] == "business.board.productized.run_state.v1"
     assert metadata["skill_trace_metadata"] == [{"skill": "source-reliability"}]
     assert metadata["evidence_items"] == [{"source_id": "src-1"}]
 
-    board_output_metadata = state.board_output_metadata()
+    board_output_metadata = projector.board_output_metadata(state)
     assert board_output_metadata["skill_trace_metadata"] == [{"skill": "source-reliability"}]
     assert "evidence_items" not in board_output_metadata
+    assert state.runtime_metadata() == metadata
+    assert state.board_output_metadata() == board_output_metadata
 
 
 def test_productized_board_output_bundle_keeps_step_outputs_explicit() -> None:

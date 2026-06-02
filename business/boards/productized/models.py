@@ -28,23 +28,14 @@ class ProductizedRunState(PrimitiveModel):
         return self.model_copy(update=updates)
 
     def runtime_metadata(self) -> dict[str, Any]:
-        return {
-            "skill_trace_metadata": list(self.skill_traces),
-            "extracted_entities": list(self.extracted_entities),
-            "evidence_items": list(self.evidence_items),
-            "trend_analysis": dict(self.trend_analysis),
-            "deduplication_result": dict(self.deduplication_result),
-            "improvement_context": dict(self.improvement_context),
-            "productized_run_state": self.to_dict(),
-        }
+        from business.boards.productized.metadata import ProductizedRunStateMetadataProjector
+
+        return ProductizedRunStateMetadataProjector().runtime_metadata(self)
 
     def board_output_metadata(self) -> dict[str, Any]:
-        return {
-            "skill_trace_metadata": list(self.skill_traces),
-            "improvement_context": dict(self.improvement_context),
-            "trend_analysis": dict(self.trend_analysis),
-            "productized_run_state": self.to_dict(),
-        }
+        from business.boards.productized.metadata import ProductizedRunStateMetadataProjector
+
+        return ProductizedRunStateMetadataProjector().board_output_metadata(self)
 
     @classmethod
     def from_request(cls, *, request: dict[str, Any], board_type: BoardType, run_id: str) -> "ProductizedRunState":
