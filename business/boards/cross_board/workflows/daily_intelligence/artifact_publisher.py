@@ -190,6 +190,24 @@ class DailyIntelligenceArtifactPublisher:
                     )
                 )
 
+        refs.extend(
+            _write_json_artifacts_from_output(
+                context,
+                {
+                    "agent_feedback_events": "agentic/agent_feedback_events.json",
+                    "agent_feedback_summary": "agentic/agent_feedback_summary.json",
+                },
+            )
+        )
+        feedback_summary = _dict_value(output.get("agent_feedback_summary"))
+        feedback_events = _list_value(output.get("agent_feedback_events"))
+        if feedback_summary or feedback_events:
+            context.manifest["agent_feedback"] = {
+                "event_count": len(feedback_events),
+                "highest_severity": feedback_summary.get("highest_severity"),
+                "artifact": "agentic/agent_feedback_summary.json",
+            }
+
         summary = _agentic_summary(context)
         refs.append(_write_json_artifact(context, "agentic_summary", "agentic_summary.json", summary))
         context.manifest["agentic_summary"] = {
@@ -455,6 +473,8 @@ def _agentic_summary(context: ArtifactPublishContext) -> dict[str, Any]:
     editor_review = _dict_value(output.get("editor_review"))
     quality_result = _dict_value(output.get("quality_result"))
     quality_summary = _dict_value(output.get("report_quality_summary"))
+    feedback_summary = _dict_value(output.get("agent_feedback_summary"))
+    feedback_events = _list_value(output.get("agent_feedback_events"))
     final_decision = (
         editor_review.get("decision")
         or quality_result.get("decision")
@@ -472,6 +492,8 @@ def _agentic_summary(context: ArtifactPublishContext) -> dict[str, Any]:
             quality_result.get("quality_score"),
             quality_summary.get("quality_score"),
         ),
+        "feedback_event_count": len(feedback_events),
+        "feedback_highest_severity": feedback_summary.get("highest_severity"),
     }
 
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from framework.workflow import StepScopedDataBufferView
+from framework.workflow import DataBufferReadPermissionError, StepScopedDataBufferView
 from business.foundation.models.report_output import BlockedReport, FinalReport, render_markdown
 from business.foundation.value_normalization import (
     field_value as _field_value,
@@ -56,6 +56,7 @@ def finalize_report(buffer: StepScopedDataBufferView) -> dict[str, Any]:
     evidence_bundle = buffer.read("evidence_bundle")
     verified_findings = buffer.read("verified_findings")
     quality_events = read_buffer_list(buffer, "quality_events")
+    agent_feedback = _read_agent_feedback(buffer)
     try:
         report_draft = _normalize_report_draft(buffer.read("report_draft"))
     except ReportDraftNormalizationError as exc:
@@ -75,6 +76,7 @@ def finalize_report(buffer: StepScopedDataBufferView) -> dict[str, Any]:
             support_matrix=support_matrix,
             verified_findings=verified_findings,
             quality_events=quality_events,
+            agent_feedback=agent_feedback,
             route=BLOCKED_ROUTE,
             rewrite_attempts=0,
             human_review_required=False,
@@ -117,6 +119,7 @@ def finalize_report(buffer: StepScopedDataBufferView) -> dict[str, Any]:
             rewrite_attempts=0,
             rewrite_instructions=rewrite_instructions,
             quality_route=PUBLISH_ROUTE,
+            agent_feedback=agent_feedback,
         )
 
     if decision == REWRITE_REQUIRED_DECISION:
@@ -163,6 +166,7 @@ def finalize_report(buffer: StepScopedDataBufferView) -> dict[str, Any]:
                     rewrite_attempts=1,
                     rewrite_instructions=rewrite_instructions,
                     quality_route=REWRITE_ROUTE,
+                    agent_feedback=agent_feedback,
                 )
             editor_decision = _append_editor_reason(
                 editor_decision,
@@ -202,6 +206,7 @@ def finalize_report(buffer: StepScopedDataBufferView) -> dict[str, Any]:
             support_matrix=support_matrix,
             verified_findings=verified_findings,
             quality_events=quality_events,
+            agent_feedback=agent_feedback,
             route=HUMAN_REVIEW_ROUTE,
             rewrite_attempts=0,
             human_review_required=True,
@@ -232,6 +237,7 @@ def finalize_report(buffer: StepScopedDataBufferView) -> dict[str, Any]:
         support_matrix=support_matrix,
         verified_findings=verified_findings,
         quality_events=quality_events,
+        agent_feedback=agent_feedback,
         route=BLOCKED_ROUTE,
         rewrite_attempts=1 if decision == REWRITE_REQUIRED_DECISION else 0,
         human_review_required=False,
@@ -286,6 +292,7 @@ def _publish_outputs(
     rewrite_attempts: int,
     rewrite_instructions: list[str],
     quality_route: str,
+    agent_feedback: dict[str, Any],
 ) -> dict[str, Any]:
     final_report = _final_report(
         request=request,
@@ -294,6 +301,7 @@ def _publish_outputs(
         verified_findings=verified_findings,
         editor_decision=editor_decision,
         rewrite_attempts=rewrite_attempts,
+        agent_feedback=agent_feedback,
     )
     report_quality_summary = _report_quality_summary(
         editor_decision=editor_decision,
@@ -320,6 +328,7 @@ def _publish_outputs(
         human_review_required=False,
         quality_gate_metrics=quality_gate_metrics,
         citation_check_result=citation_check_result,
+        agent_feedback=agent_feedback,
     )
     return {
         "report_quality_summary": report_quality_summary,
@@ -344,6 +353,7 @@ def _blocked_outputs(
     support_matrix: dict[str, Any],
     verified_findings: Any,
     quality_events: list[Any],
+    agent_feedback: dict[str, Any],
     route: str,
     rewrite_attempts: int,
     human_review_required: bool,
@@ -374,7 +384,9 @@ def _blocked_outputs(
         human_review_required=human_review_required,
         quality_gate_metrics=quality_gate_metrics,
         citation_check_result=citation_check_result,
+        agent_feedback=agent_feedback,
     )
+    feedback_metadata = _agent_feedback_metadata(agent_feedback)
     reasons = list(editor_decision["reasons"]) or [_default_block_reason(route)]
     blocked_report = BlockedReport(
         title=report_draft.get("title") or _request_title(request),
@@ -392,6 +404,7 @@ def _blocked_outputs(
             "support_matrix": support_matrix,
             "rewrite_attempts": rewrite_attempts,
             "human_review_required": human_review_required,
+            **feedback_metadata,
         },
     )
     outputs: dict[str, Any] = {
@@ -416,6 +429,7 @@ def _final_report(
     verified_findings: Any,
     editor_decision: dict[str, Any],
     rewrite_attempts: int,
+    agent_feedback: dict[str, Any],
 ) -> FinalReport:
     source_urls = _source_urls_from_draft(draft)
     if not source_urls:
@@ -430,6 +444,7 @@ def _final_report(
             "uncertain_claims_count": _collection_count(verified_findings, "uncertain_claims"),
             "rewrite_attempts": rewrite_attempts,
             "request_topic": _field_value(request, "topic"),
+            **_agent_feedback_metadata(agent_feedback),
         }
     )
     return FinalReport(
@@ -527,6 +542,7 @@ def _quality_result(
     human_review_required: bool,
     quality_gate_metrics: dict[str, Any],
     citation_check_result: dict[str, Any],
+    agent_feedback: dict[str, Any],
 ) -> dict[str, Any]:
     passed = route in {PUBLISH_ROUTE, REWRITE_ROUTE}
     return {
@@ -561,6 +577,7 @@ def _quality_result(
                 rewrite_instructions=editor_decision["rewrite_instructions"],
                 human_review_required=human_review_required,
             ),
+            **_agent_feedback_metadata(agent_feedback),
         },
     }
 
@@ -635,6 +652,45 @@ def _invalid_report_draft_decision(reason: str) -> dict[str, Any]:
         "reasons": [f"invalid report draft format: {reason}"],
         "rewrite_instructions": [],
         "raw": {},
+    }
+
+
+def _read_agent_feedback(buffer: StepScopedDataBufferView) -> dict[str, Any]:
+    events = _read_optional_buffer_list(buffer, "agent_feedback_events")
+    summary = _read_optional_plain_dict(buffer, "agent_feedback_summary")
+    return {
+        "events": events,
+        "summary": summary,
+    }
+
+
+def _read_optional_buffer_list(buffer: StepScopedDataBufferView, key: str) -> list[Any]:
+    try:
+        if not buffer.exists(key):
+            return []
+        return read_buffer_list(buffer, key)
+    except DataBufferReadPermissionError:
+        return []
+
+
+def _read_optional_plain_dict(buffer: StepScopedDataBufferView, key: str) -> dict[str, Any]:
+    try:
+        if not buffer.exists(key):
+            return {}
+        value = buffer.read(key, required=False)
+    except DataBufferReadPermissionError:
+        return {}
+    return _to_plain_dict(value) if value is not None else {}
+
+
+def _agent_feedback_metadata(agent_feedback: dict[str, Any]) -> dict[str, Any]:
+    events = _list_value(agent_feedback.get("events"))
+    summary = _to_plain_dict(agent_feedback.get("summary"))
+    if not events and not summary:
+        return {}
+    return {
+        "agent_feedback_event_count": len(events),
+        "agent_feedback_summary": summary,
     }
 
 

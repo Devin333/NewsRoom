@@ -36,6 +36,7 @@ from business.boards.cross_board.workflows.daily_intelligence.agent_runner_facto
     build_profiled_daily_agent_runner,
 )
 from business.boards.cross_board.workflows.daily_intelligence.agent_tools import build_daily_agent_tool_registry
+from business.boards.cross_board.workflows.daily_intelligence.agent_feedback import collect_agent_feedback
 from business.boards.cross_board.workflows.daily_intelligence.artifact_publisher import DailyIntelligenceArtifactPublisher
 from business.boards.cross_board.workflows.daily_intelligence.evidence_step import build_evidence
 from business.boards.cross_board.workflows.daily_intelligence.finalize_report_step import finalize_report
@@ -185,6 +186,7 @@ class AgenticDailyIntelligenceRunner:
         registry.register("daily.deduplicate_sources", deduplicate_sources)
         registry.register("daily.rank_sources", rank_sources)
         registry.register("daily.build_evidence", build_evidence)
+        registry.register("daily.collect_agent_feedback", collect_agent_feedback)
         registry.register("daily.finalize_report", finalize_report)
         return registry
 

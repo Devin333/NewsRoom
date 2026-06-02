@@ -24,6 +24,29 @@ def test_finalize_report_pass_publishes_final_report_and_markdown() -> None:
     assert "blocked_report" not in output
 
 
+def test_finalize_report_projects_agent_feedback_metadata() -> None:
+    output = finalize_report(
+        _buffer(
+            editor_review=_editor_review("pass"),
+            agent_feedback_events=[
+                {
+                    "feedback_id": "feedback-1",
+                    "requested_action": "rewrite",
+                }
+            ],
+            agent_feedback_summary={
+                "event_count": 1,
+                "rewrite_request_count": 1,
+                "highest_severity": "warning",
+            },
+        )
+    )
+
+    assert output["final_report"].metadata["agent_feedback_event_count"] == 1
+    assert output["final_report"].metadata["agent_feedback_summary"]["rewrite_request_count"] == 1
+    assert output["quality_result"]["metadata"]["agent_feedback_summary"]["highest_severity"] == "warning"
+
+
 def test_finalize_report_rewrite_required_with_edited_draft_publishes_edit() -> None:
     edited_draft = _report_draft(title="Edited Daily Intelligence")
     edited_draft["sections"][0]["content"] = "Edited source-grounded summary."
@@ -238,6 +261,8 @@ def _buffer(
     editor_review: dict | _EditorReviewObject,
     report_draft: dict | None = None,
     edited_report_draft: dict | None = None,
+    agent_feedback_events: list[dict] | None = None,
+    agent_feedback_summary: dict | None = None,
     social_evidence: bool = False,
 ) -> DataBuffer:
     values = {
@@ -269,6 +294,10 @@ def _buffer(
     }
     if edited_report_draft is not None:
         values["edited_report_draft"] = edited_report_draft
+    if agent_feedback_events is not None:
+        values["agent_feedback_events"] = agent_feedback_events
+    if agent_feedback_summary is not None:
+        values["agent_feedback_summary"] = agent_feedback_summary
     return DataBuffer(values).scope(
         read_keys=[
             "request",
@@ -281,6 +310,8 @@ def _buffer(
             "evidence_bundle",
             "verified_findings",
             "quality_events",
+            "agent_feedback_events",
+            "agent_feedback_summary",
         ],
         optional_read_keys=["edited_report_draft"],
         write_keys=[],

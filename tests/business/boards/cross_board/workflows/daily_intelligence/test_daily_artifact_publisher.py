@@ -7,6 +7,7 @@ from framework.specs import StepSpec, WorkflowSpec, WorkflowStatus
 from framework.workflow import ArtifactPublishContext, ArtifactPublishPhase
 from business.boards.cross_board.workflows.daily_intelligence.artifact_publisher import DailyIntelligenceArtifactPublisher
 from business.boards.cross_board.workflows.daily_intelligence.profiles import LEGACY_DAILY_WORKFLOW_ID
+from business.boards.cross_board.workflows.daily_intelligence.spec_agentic import AGENTIC_WORKFLOW_ID
 
 
 def test_daily_artifact_publisher_writes_report_and_quality_manifest(tmp_path) -> None:
@@ -132,18 +133,56 @@ def test_daily_artifact_publisher_writes_source_diagnostics(tmp_path) -> None:
     assert (run_dir / "source_artifacts" / "index.json").exists()
 
 
+def test_daily_artifact_publisher_writes_agent_feedback_artifacts(tmp_path) -> None:
+    manager = ArtifactManager(tmp_path)
+    manager.start_run("run-1")
+    manifest = {"artifacts": {}}
+    context = _context(
+        manager,
+        manifest=manifest,
+        workflow_id=AGENTIC_WORKFLOW_ID,
+        output={
+            "agent_feedback_events": [
+                {
+                    "feedback_id": "feedback-1",
+                    "requested_action": "rewrite",
+                }
+            ],
+            "agent_feedback_summary": {
+                "event_count": 1,
+                "rewrite_request_count": 1,
+                "highest_severity": "warning",
+            },
+            "quality_result": {"decision": "rewrite_required", "route": "rewrite"},
+        },
+    )
+
+    DailyIntelligenceArtifactPublisher().publish(context)
+
+    run_dir = tmp_path / "run-1"
+    summary = json.loads((run_dir / "agentic" / "agent_feedback_summary.json").read_text(encoding="utf-8"))
+    agentic_summary = json.loads((run_dir / "agentic_summary.json").read_text(encoding="utf-8"))
+
+    assert manifest["artifacts"]["agent_feedback_events"] == "agentic/agent_feedback_events.json"
+    assert manifest["artifacts"]["agent_feedback_summary"] == "agentic/agent_feedback_summary.json"
+    assert manifest["agent_feedback"]["event_count"] == 1
+    assert summary["highest_severity"] == "warning"
+    assert agentic_summary["feedback_event_count"] == 1
+
+
 def _context(
     manager: ArtifactManager,
     *,
     manifest: dict,
     output: dict,
     status: WorkflowStatus = WorkflowStatus.SUCCEEDED,
+    workflow_id: str = LEGACY_DAILY_WORKFLOW_ID,
 ) -> ArtifactPublishContext:
     return ArtifactPublishContext(
         phase=ArtifactPublishPhase.TERMINAL,
         run_id="run-1",
         workflow=WorkflowSpec(
-            workflow_id=LEGACY_DAILY_WORKFLOW_ID,
+            workflow_id=workflow_id,
             name="Daily",
             version="1.0",
             start_step_id="start",

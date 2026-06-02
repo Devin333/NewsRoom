@@ -56,6 +56,10 @@ def test_agentic_daily_workflow_declares_agent_steps() -> None:
     assert steps["editor_agent"].metadata["agent_id"] == EDITOR_AGENT_ID
     assert steps["editor_agent"].implementation == EDITOR_AGENT_ID
 
+    assert steps["collect_agent_feedback"].step_type == StepType.FUNCTION
+    assert steps["collect_agent_feedback"].implementation == "daily.collect_agent_feedback"
+    assert steps["collect_agent_feedback"].required_output_keys == ["agent_feedback_summary"]
+
 
 def test_agentic_daily_workflow_reuses_source_evidence_steps() -> None:
     workflow = build_agentic_daily_intelligence_workflow(PROFILE_AGENTIC_OFFLINE)
@@ -77,7 +81,8 @@ def test_agentic_daily_workflow_routes_evidence_to_agents_to_finalize() -> None:
     assert edges["analyst-to-writer"] == ("analyst_agent", "writer_agent")
     assert edges["writer-to-verifier"] == ("writer_agent", "verifier_agent")
     assert edges["verifier-to-editor"] == ("verifier_agent", "editor_agent")
-    assert edges["editor-to-finalize"] == ("editor_agent", "finalize_report")
+    assert edges["editor-to-feedback"] == ("editor_agent", "collect_agent_feedback")
+    assert edges["feedback-to-finalize"] == ("collect_agent_feedback", "finalize_report")
 
 
 def test_agentic_daily_workflow_compile_passes_with_runner_registry() -> None:
@@ -109,6 +114,7 @@ def _step_runner_registry():
         "daily.deduplicate_sources",
         "daily.rank_sources",
         "daily.build_evidence",
+        "daily.collect_agent_feedback",
         "daily.finalize_report",
     ]:
         function_registry.register(implementation, lambda buffer: {})

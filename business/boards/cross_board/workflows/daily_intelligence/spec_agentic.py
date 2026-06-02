@@ -33,6 +33,7 @@ def build_agentic_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
             _writer_agent_step(),
             _verifier_agent_step(),
             _editor_agent_step(),
+            _collect_agent_feedback_step(),
             _finalize_report_step(),
         ],
         edges=[
@@ -46,7 +47,8 @@ def build_agentic_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
             EdgeSpec("analyst-to-writer", "analyst_agent", "writer_agent"),
             EdgeSpec("writer-to-verifier", "writer_agent", "verifier_agent"),
             EdgeSpec("verifier-to-editor", "verifier_agent", "editor_agent"),
-            EdgeSpec("editor-to-finalize", "editor_agent", "finalize_report"),
+            EdgeSpec("editor-to-feedback", "editor_agent", "collect_agent_feedback"),
+            EdgeSpec("feedback-to-finalize", "collect_agent_feedback", "finalize_report"),
         ],
         metadata={"profile": profile, "product_path": profile == PROFILE_AGENTIC_LIVE},
     )
@@ -221,6 +223,8 @@ def _finalize_report_step() -> StepSpec:
             "evidence_bundle",
             "verified_findings",
             "quality_events",
+            "agent_feedback_events",
+            "agent_feedback_summary",
         ],
         write_keys=[
             "report_quality_summary",
@@ -236,6 +240,25 @@ def _finalize_report_step() -> StepSpec:
         ],
         required_output_keys=["quality_result", "quality_gate_metrics"],
         metadata={"optional_read_keys": ["edited_report_draft"]},
+    )
+
+
+def _collect_agent_feedback_step() -> StepSpec:
+    return StepSpec(
+        step_id="collect_agent_feedback",
+        implementation="daily.collect_agent_feedback",
+        step_type=StepType.FUNCTION,
+        read_keys=[
+            "verification_result",
+            "citation_check_result",
+            "support_matrix",
+            "editor_review",
+        ],
+        write_keys=[
+            "agent_feedback_events",
+            "agent_feedback_summary",
+        ],
+        required_output_keys=["agent_feedback_summary"],
     )
 
 
