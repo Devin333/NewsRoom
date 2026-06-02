@@ -4,7 +4,7 @@ from pathlib import Path
 
 from framework.llm import LLMResponse, TokenUsage
 from framework.specs import WorkflowStatus
-from business.foundation.models.source import RawSourceItem, SourceDefinition, SourceError
+from business.foundation.models.source import RawSourceItem, SourceDefinition, SourceError, SourceFetchPolicy
 from business.layers.signal.source_config import SourceConfigError
 from business.foundation.registry.source_registry import SourceRegistry
 from business.boards.cross_board.workflows.daily_intelligence.profiles import LEGACY_DAILY_WORKFLOW_ID
@@ -816,6 +816,48 @@ web_pages:
     assert rate_limited.source_id == "b-page"
     assert rate_limited.metadata["domain"] == "example.com"
     assert rate_limited.metadata["source_health_affecting"] is False
+
+
+def test_daily_intelligence_runner_blocks_source_outside_runtime_allowed_domains(tmp_path) -> None:
+    registry = SourceRegistry(
+        [
+            SourceDefinition(
+                source_id="untrusted-feed",
+                name="Untrusted Feed",
+                source_type="rss",
+                url="https://untrusted.example/feed.xml",
+                reliability="high",
+                topics=["ai", "policy"],
+            )
+        ]
+    )
+    fetched_urls = []
+
+    def fetch_text(url: str) -> str:
+        fetched_urls.append(url)
+        raise AssertionError("disallowed source should be rejected before connector fetch")
+
+    result = DailyIntelligenceRunner(
+        artifact_root=tmp_path,
+        source_registry=registry,
+        feed_connector=FeedConnector(
+            fetch_text=fetch_text,
+            fetch_policy=SourceFetchPolicy(allowed_domains=("trusted.example",)),
+        ),
+        llm_client=_FailIfCalledLLM(),
+    ).run(profile="live", topic="AI policy", source_limit=1, run_id="daily-disallowed-domain")
+
+    assert result.status == WorkflowStatus.FAILED
+    assert fetched_urls == []
+    domain_error = next(
+        error
+        for error in result.output["source_errors"]
+        if error.error_type == "source_domain_not_allowed"
+    )
+    assert domain_error.source_id == "untrusted-feed"
+    assert domain_error.metadata["domain"] == "untrusted.example"
+    assert domain_error.metadata["allowed_domains"] == ["trusted.example"]
+    assert domain_error.metadata["source_health_affecting"] is False
 
 
 def test_daily_intelligence_runner_dispatches_registered_sync_connector(tmp_path) -> None:

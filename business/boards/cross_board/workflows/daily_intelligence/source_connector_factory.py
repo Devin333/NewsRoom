@@ -16,6 +16,7 @@ from infrastructure.external.sources import (
     RedditConnector,
     StackOverflowConnector,
 )
+from business.foundation.models.source import SourceFetchPolicy
 from business.layers.signal.source_config import build_default_source_fetch_policy
 
 from business.boards.cross_board.workflows.daily_intelligence.source_connector_bundle import (
@@ -38,9 +39,12 @@ def build_daily_source_connector_bundle(
     medium_connector: MediumConnector | None = None,
     source_config_path: str | Path | None = None,
     source_rate_limiter: DomainRateLimiter | None = None,
+    load_default_source_config: bool = True,
 ) -> DailySourceConnectorBundle:
-    default_fetch_policy = build_default_source_fetch_policy(
-        source_config_path=source_config_path
+    default_fetch_policy = (
+        build_default_source_fetch_policy(source_config_path=source_config_path)
+        if load_default_source_config
+        else SourceFetchPolicy()
     )
     default_rate_limiter = source_rate_limiter or DomainRateLimiter()
     resolved_feed_connector = feed_connector or FeedConnector(

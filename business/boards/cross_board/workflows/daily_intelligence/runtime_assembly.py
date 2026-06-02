@@ -185,6 +185,9 @@ def build_daily_source_runtime_assembly(
         medium_connector=medium_connector,
         source_config_path=source_config_path,
         source_rate_limiter=source_rate_limiter,
+        load_default_source_config=(
+            source_registry is None or source_config_path is not None
+        ),
     )
     resolved_source_health_manager = source_health_manager or BasicSourceHealthManager()
     source_dispatcher = SourceDispatcher(

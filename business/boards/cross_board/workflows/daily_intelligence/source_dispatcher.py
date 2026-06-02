@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import urlsplit
 
 from business.foundation.models.source import (
     SourceDefinition,
@@ -111,6 +112,11 @@ class SourceDispatcher:
         profile: str,
         limit: int,
     ) -> tuple[list[Any], list[SourceError], SourceFetchResult | None]:
+        fetch_policy = self.fetch_policy_for_source(source)
+        allowlist_error = _source_domain_allowlist_error(source, fetch_policy)
+        if allowlist_error is not None:
+            return [], [allowlist_error], None
+
         registered_result = fetch_with_registered_connector(
             self.source_registry,
             source,
@@ -388,6 +394,43 @@ def _business_fetch_policy(policy: Any) -> SourceFetchPolicy:
         retry_times=policy.retry_times,
         retry_on_status_codes=tuple(policy.retry_on_status_codes),
     )
+
+
+def _source_domain_allowlist_error(
+    source: SourceDefinition,
+    fetch_policy: SourceFetchPolicy | None,
+) -> SourceError | None:
+    allowed_domains = tuple(getattr(fetch_policy, "allowed_domains", ()) or ())
+    if not allowed_domains:
+        return None
+    host = (urlsplit(source.url).hostname or "").casefold()
+    if _host_matches_allowed_domain(host, allowed_domains):
+        return None
+    return SourceError(
+        source_id=source.source_id,
+        source_name=source.name,
+        error_type="source_domain_not_allowed",
+        error_message=(
+            "source URL host is not allowed by fetch policy allowed_domains: "
+            f"{host or '<missing>'}"
+        ),
+        url=source.url,
+        retryable=False,
+        metadata={
+            "phase": "fetch",
+            "retryable": False,
+            "source_health_affecting": False,
+            "workflow_blocking": False,
+            "domain": host,
+            "allowed_domains": list(allowed_domains),
+        },
+    )
+
+
+def _host_matches_allowed_domain(host: str, allowed_domains: tuple[str, ...]) -> bool:
+    if not host:
+        return False
+    return any(host == domain or host.endswith(f".{domain}") for domain in allowed_domains)
 
 
 def _connector_result(
