@@ -19,8 +19,10 @@ class OutputJudge:
     def __init__(
         self,
         *,
+        pre_output_validators: list[OutputValidator] | None = None,
         output_validators: list[OutputValidator] | None = None,
     ) -> None:
+        self._pre_output_validators = list(pre_output_validators or [])
         self._output_validators = list(output_validators or [])
 
     def judge(
@@ -67,14 +69,49 @@ class OutputJudge:
         if agent.output_key not in output:
             missing_output_keys.append(agent.output_key)
 
-        schema_errors = self._schema_errors(output, agent.output_schema)
-        validation_errors: list[str] = []
+        pre_validator_results = [
+            result
+            for validator in self._pre_output_validators
+            if (result := validator(
+                agent=agent,
+                action=action,
+                called_tools=called_tools,
+                inputs=inputs or {},
+            )).has_errors
+            or result.block
+        ]
+        pre_schema_errors: list[str] = []
+        pre_validation_errors: list[str] = []
+        pre_policy_violations: list[str] = []
+        for result in pre_validator_results:
+            missing_output_keys.extend(result.missing_output_keys)
+            pre_schema_errors.extend(result.schema_errors)
+            pre_validation_errors.extend(result.validation_errors)
+            pre_policy_violations.extend(result.policy_violations)
+        pre_blocking_results = [result for result in pre_validator_results if result.block]
+        if pre_blocking_results:
+            return JudgeVerdict(
+                decision=JudgeDecision.BLOCK,
+                confidence=1.0,
+                feedback=pre_blocking_results[0].feedback or "output validation blocked",
+                missing_output_keys=missing_output_keys,
+                schema_errors=pre_schema_errors,
+                validation_errors=pre_validation_errors,
+                policy_violations=pre_policy_violations,
+            )
+
+        schema_errors = [
+            *pre_schema_errors,
+            *self._schema_errors(output, agent.output_schema),
+        ]
+        validation_errors: list[str] = list(pre_validation_errors)
         tool_policy = agent.resolved_tool_policy()
-        policy_violations = [
+        policy_violations = list(pre_policy_violations)
+        policy_violations.extend(
             f"tool not allowed: {tool_name}"
             for tool_name in called_tools
             if not tool_policy.allows(tool_name)
-        ]
+        )
         validator_results = [
             result
             for validator in self._output_validators

@@ -10,6 +10,9 @@ from business.boards.cross_board.workflows.daily_intelligence.agent_outputs impo
     validate_report_draft,
     validate_verification_result,
 )
+from business.boards.cross_board.workflows.daily_intelligence.agent_output_budget import (
+    DAILY_AGENT_OUTPUT_BUDGET,
+)
 from business.boards.cross_board.workflows.daily_intelligence.agents import (
     ANALYST_AGENT_ID,
     EDITOR_AGENT_ID,
@@ -89,6 +92,8 @@ def test_daily_agent_specs_define_contract_keys() -> None:
     ]
     assert editor.output_key == "editor_review"
     assert editor.output_schema is not None
+    for agent in [planner, analyst, writer, verifier, editor]:
+        assert agent.validation_policy["output_budget"] == DAILY_AGENT_OUTPUT_BUDGET.to_dict()
 
 
 def test_daily_agent_tool_policies_reject_undeclared_tools() -> None:

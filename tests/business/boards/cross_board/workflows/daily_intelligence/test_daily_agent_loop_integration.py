@@ -1,13 +1,19 @@
 from __future__ import annotations
 
+import json
+
 from framework.agent import AgentAction, AgentLoopStatus, AgentSpec, JudgeDecision
 from framework.llm import FakeLLMClient
 from business.foundation.models.source import Lineage
 from business.layers.relation.evidence.models import EvidenceBundle, EvidenceItem, VerifiedClaim, VerifiedFindings
+from business.boards.cross_board.workflows.daily_intelligence.agent_output_budget import (
+    DAILY_AGENT_OUTPUT_BUDGET,
+)
 from business.boards.cross_board.workflows.daily_intelligence.agent_loop_integration import (
     _collect_evidence_ids,
     build_daily_output_judge,
 )
+from business.boards.cross_board.workflows.daily_intelligence.agents import build_writer_agent
 from business.boards.cross_board.workflows.daily_intelligence.agent_registry import build_daily_agent_runner
 
 
@@ -229,6 +235,42 @@ def test_daily_judge_blocks_verifier_grounding_with_mutated_evidence_id() -> Non
     assert verdict.policy_violations == ["evidence id outside boundary: ev-1x"]
 
 
+def test_daily_judge_blocks_oversized_output_before_evidence_boundary() -> None:
+    large_text = "x" * ((DAILY_AGENT_OUTPUT_BUDGET.max_string_bytes or 0) + 1)
+
+    verdict = build_daily_output_judge().judge(
+        agent=_writer(),
+        action=AgentAction(
+            action_type="final_output",
+            output={
+                "report_draft": {
+                    "title": "Daily Brief",
+                    "sections": [
+                        {
+                            "title": "Oversized",
+                            "content": large_text,
+                            "sources": [],
+                            "supporting_evidence_ids": ["ev-999"],
+                        }
+                    ],
+                    "metadata": {},
+                }
+            },
+        ),
+        called_tools=[],
+        inputs={"evidence_bundle": _bundle()},
+    )
+
+    assert verdict.decision == JudgeDecision.BLOCK
+    assert verdict.feedback is not None
+    assert verdict.feedback.startswith("agent output exceeds configured budget")
+    assert any("string bytes exceeded" in violation for violation in verdict.policy_violations)
+    assert not any(
+        "evidence id outside boundary" in violation
+        for violation in verdict.policy_violations
+    )
+
+
 def test_collect_evidence_ids_stops_at_configured_depth() -> None:
     payload = {}
     current = payload
@@ -239,6 +281,75 @@ def test_collect_evidence_ids_stops_at_configured_depth() -> None:
 
     assert _collect_evidence_ids(payload, max_depth=5) == set()
     assert _collect_evidence_ids(payload, max_depth=20) == {"too-deep"}
+
+
+def test_daily_agent_runner_blocks_oversized_live_writer_output_before_normalization() -> None:
+    large_text = "x" * ((DAILY_AGENT_OUTPUT_BUDGET.max_string_bytes or 0) + 1)
+    llm = FakeLLMClient(
+        [
+            json.dumps(
+                {
+                    "action_type": "final_output",
+                    "output": {
+                        "report_draft": {
+                            "title": "Daily Intelligence: AI agents",
+                            "sections": [
+                                {
+                                    "section_id": "executive_summary",
+                                    "title": "Executive Summary",
+                                    "content": large_text,
+                                    "sources": ["https://example.com/model"],
+                                    "claim_grounding": [
+                                        {
+                                            "claim_id": "claim_bad",
+                                            "text": large_text,
+                                            "evidence_ids": ["ev-1"],
+                                            "source_urls": ["https://example.com/model"],
+                                        }
+                                    ],
+                                }
+                            ],
+                            "metadata": {},
+                        }
+                    },
+                }
+            )
+        ]
+    )
+    evidence_bundle = _bundle()
+    verified_findings = VerifiedFindings(
+        accepted_claims=[
+            VerifiedClaim(
+                claim_id="claim-1",
+                claim="Vendor released a model update: The model update improves inference latency.",
+                status="accepted",
+                confidence=0.9,
+                supporting_evidence_ids=["ev-1"],
+                supporting_sources=["https://example.com/model"],
+                section_id="evidence",
+            )
+        ]
+    )
+
+    result = build_daily_agent_runner(
+        profile="agentic-live",
+        llm_client=llm,
+    ).run(
+        build_writer_agent(),
+        {
+            "request": {"topic": "AI agents", "profile": "agentic-live"},
+            "evidence_bundle": evidence_bundle,
+            "verified_findings": verified_findings,
+        },
+    )
+
+    assert result.success is False
+    assert result.status == AgentLoopStatus.BLOCKED
+    assert result.verdict is not None
+    assert any("string bytes exceeded" in violation for violation in result.verdict.policy_violations)
+    assert result.diagnostics is not None
+    assert result.diagnostics.stop_reason.value == "judge_blocked"
+    assert result.output == {}
 
 
 def test_daily_agent_runner_normalizes_agentic_live_writer_output_to_grounded_cards() -> None:

@@ -16,6 +16,11 @@ from framework.agent.loop.extensions import (
     identity_output_normalizer,
 )
 from framework.agent.loop.judge import OutputJudge
+from framework.agent.loop.output_budget import (
+    output_budget_judge_verdict,
+    resolve_agent_output_budget,
+    validate_agent_output_budget,
+)
 from framework.agent.models import (
     AgentAction,
     AgentLoopMetrics,
@@ -440,12 +445,68 @@ class AgentLoop:
                 trace.finish_iteration(iteration_trace)
                 continue
 
+            raw_output = action.output or {}
+            budget_verdict = self._output_budget_verdict(agent=agent, output=raw_output)
+            if budget_verdict is not None:
+                last_verdict = budget_verdict
+                trace.record_judge(iteration_trace, budget_verdict)
+                verdict_result = self._handle_verdict(
+                    agent=agent,
+                    action=AgentAction(
+                        action_type=action.action_type,
+                        content=action.content,
+                        output=raw_output,
+                    ),
+                    run_id=effective_run_id,
+                    metrics=metrics,
+                    events=events,
+                    trace=trace,
+                    diagnostics=diagnostics,
+                    stall_detector=stall_detector,
+                    iteration_trace=iteration_trace,
+                    verdict=budget_verdict,
+                    judge_retries=judge_retries,
+                    empty_output_retries=empty_output_retries,
+                    via_tool=None,
+                    llm_call_artifacts=llm_call_artifacts,
+                )
+                if isinstance(verdict_result, AgentLoopResult):
+                    return verdict_result
+                judge_retries, empty_output_retries, feedback = verdict_result
+                trace.finish_iteration(iteration_trace)
+                continue
+
             normalized_output = self._normalize_output(
                 agent=agent,
-                output=action.output or {},
+                output=raw_output,
                 inputs=inputs,
             )
             action = AgentAction(action_type=action.action_type, content=action.content, output=normalized_output)
+            budget_verdict = self._output_budget_verdict(agent=agent, output=normalized_output)
+            if budget_verdict is not None:
+                last_verdict = budget_verdict
+                trace.record_judge(iteration_trace, budget_verdict)
+                verdict_result = self._handle_verdict(
+                    agent=agent,
+                    action=action,
+                    run_id=effective_run_id,
+                    metrics=metrics,
+                    events=events,
+                    trace=trace,
+                    diagnostics=diagnostics,
+                    stall_detector=stall_detector,
+                    iteration_trace=iteration_trace,
+                    verdict=budget_verdict,
+                    judge_retries=judge_retries,
+                    empty_output_retries=empty_output_retries,
+                    via_tool=None,
+                    llm_call_artifacts=llm_call_artifacts,
+                )
+                if isinstance(verdict_result, AgentLoopResult):
+                    return verdict_result
+                judge_retries, empty_output_retries, feedback = verdict_result
+                trace.finish_iteration(iteration_trace)
+                continue
             verdict = self._output_judge.judge(
                 agent=agent,
                 action=action,
@@ -611,11 +672,59 @@ class AgentLoop:
             )
 
         if observation.status == ToolStatus.SUCCEEDED and _is_control_set_output(observation):
+            raw_control_output = _control_output(observation)
+            budget_verdict = self._output_budget_verdict(
+                agent=agent,
+                output=raw_control_output,
+            )
+            if budget_verdict is not None:
+                trace.record_judge(iteration_trace, budget_verdict)
+                result = self._handle_verdict(
+                    agent=agent,
+                    action=AgentAction(action_type="final_output", output=raw_control_output),
+                    run_id=run_id,
+                    metrics=metrics,
+                    events=events,
+                    trace=trace,
+                    diagnostics=diagnostics,
+                    stall_detector=stall_detector,
+                    iteration_trace=iteration_trace,
+                    verdict=budget_verdict,
+                    judge_retries=metrics.judge_retries,
+                    empty_output_retries=0,
+                    via_tool=observation.call.tool_name,
+                    llm_call_artifacts=llm_call_artifacts,
+                )
+                if isinstance(result, AgentLoopResult):
+                    return result
+                return result[2]
             control_output = self._normalize_output(
                 agent=agent,
-                output=_control_output(observation),
+                output=raw_control_output,
                 inputs=inputs,
             )
+            budget_verdict = self._output_budget_verdict(agent=agent, output=control_output)
+            if budget_verdict is not None:
+                trace.record_judge(iteration_trace, budget_verdict)
+                result = self._handle_verdict(
+                    agent=agent,
+                    action=AgentAction(action_type="final_output", output=control_output),
+                    run_id=run_id,
+                    metrics=metrics,
+                    events=events,
+                    trace=trace,
+                    diagnostics=diagnostics,
+                    stall_detector=stall_detector,
+                    iteration_trace=iteration_trace,
+                    verdict=budget_verdict,
+                    judge_retries=metrics.judge_retries,
+                    empty_output_retries=0,
+                    via_tool=observation.call.tool_name,
+                    llm_call_artifacts=llm_call_artifacts,
+                )
+                if isinstance(result, AgentLoopResult):
+                    return result
+                return result[2]
             verdict = self._output_judge.judge(
                 agent=agent,
                 action=AgentAction(
@@ -1037,6 +1146,20 @@ class AgentLoop:
         inputs: dict[str, Any],
     ) -> dict[str, Any]:
         return self._output_normalizer(agent=agent, output=output, inputs=inputs)
+
+    def _output_budget_verdict(
+        self,
+        *,
+        agent: AgentSpec,
+        output: dict[str, Any],
+    ) -> JudgeVerdict | None:
+        budget = resolve_agent_output_budget(agent.validation_policy)
+        if budget is None:
+            return None
+        check = validate_agent_output_budget(output, budget=budget)
+        if not check.has_violations:
+            return None
+        return output_budget_judge_verdict(check)
 
     def _write_tool_observation_memory(
         self,

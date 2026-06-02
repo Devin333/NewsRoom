@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from framework.agent import AgentSpec
+from business.boards.cross_board.workflows.daily_intelligence.agent_output_budget import (
+    daily_agent_validation_policy,
+)
 
 
 PLANNER_AGENT_ID = "daily.planner"
@@ -22,6 +25,7 @@ def build_planner_agent() -> AgentSpec:
         ),
         input_keys=["request"],
         output_key="research_plan",
+        validation_policy=daily_agent_validation_policy(),
         allowed_tools=[],
         output_schema={
             "type": "object",
@@ -55,6 +59,7 @@ def build_analyst_agent() -> AgentSpec:
         ),
         input_keys=["request", "research_plan", "evidence_bundle", "source_errors", "source_pipeline_metrics"],
         output_key="analysis_result",
+        validation_policy=daily_agent_validation_policy(),
         allowed_tools=["daily.evidence_search", "daily.source_metadata"],
         output_schema={
             "type": "object",
@@ -106,6 +111,7 @@ def build_writer_agent() -> AgentSpec:
             "source_pipeline_metrics",
         ],
         output_key="report_draft",
+        validation_policy=daily_agent_validation_policy(),
         allowed_tools=["daily.evidence_search"],
         output_schema={
             "type": "object",
@@ -176,6 +182,7 @@ def build_verifier_agent() -> AgentSpec:
             "verified_findings",
         ],
         output_key="verification_result",
+        validation_policy=daily_agent_validation_policy(),
         allowed_tools=["daily.citation_validate", "daily.evidence_search"],
         output_schema={
             "type": "object",
@@ -251,6 +258,7 @@ def build_editor_agent() -> AgentSpec:
             "evidence_bundle",
         ],
         output_key="editor_review",
+        validation_policy=daily_agent_validation_policy(),
         allowed_tools=["daily.citation_validate"],
         output_schema={
             "type": "object",

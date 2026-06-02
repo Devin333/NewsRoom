@@ -4,6 +4,7 @@ from typing import Any
 
 from framework.agent import (
     AgentAction,
+    AgentOutputBudgetValidator,
     AgentSpec,
     OutputJudge,
     OutputValidationResult,
@@ -12,11 +13,19 @@ from business.foundation.models.source import Lineage
 from business.layers.relation.evidence.models import EvidenceBundle, EvidenceItem, VerifiedFindings
 from business.layers.analysis.quality.citation_checker import CitationChecker
 from business.boards.cross_board.workflows.daily_intelligence.grounded_writer import normalize_daily_writer_output
+from business.boards.cross_board.workflows.daily_intelligence.agent_output_budget import (
+    DAILY_AGENT_OUTPUT_BUDGET,
+)
 from business.boards.cross_board.workflows.daily_intelligence.profiles import PROFILE_AGENTIC_LIVE
 
 
 def build_daily_output_judge() -> OutputJudge:
-    return OutputJudge(output_validators=[DailyEvidenceOutputValidator()])
+    return OutputJudge(
+        pre_output_validators=[
+            AgentOutputBudgetValidator(default_budget=DAILY_AGENT_OUTPUT_BUDGET)
+        ],
+        output_validators=[DailyEvidenceOutputValidator()],
+    )
 
 
 def normalize_daily_agent_output(
