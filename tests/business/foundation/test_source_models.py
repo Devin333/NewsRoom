@@ -9,6 +9,7 @@ from business.foundation.models.source import (
     SourceDefinition,
     SourceError,
     SourceFetchRequest,
+    SourceFetchPolicy,
     SourceFetchResult,
     SourcePipelineEvent,
     SourcePipelineMetrics,
@@ -90,6 +91,18 @@ def test_source_fetch_request_validates_fetch_policy_bounds() -> None:
             source_type="rss",
             max_redirects=-1,
         )
+
+
+def test_source_fetch_policy_normalizes_allowed_domains() -> None:
+    policy = SourceFetchPolicy(allowed_domains=["Example.com", ".openai.com", "example.com"])
+
+    assert policy.allowed_domains == ("example.com", "openai.com")
+    assert policy.to_dict()["allowed_domains"] == ["example.com", "openai.com"]
+
+
+def test_source_fetch_policy_rejects_url_shaped_allowed_domains() -> None:
+    with pytest.raises(ValueError, match="domain names"):
+        SourceFetchPolicy(allowed_domains=["https://example.com"])
 
 
 def test_raw_source_item_serializes_artifact_refs() -> None:

@@ -1,9 +1,11 @@
 import json
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import pytest
 
 from business.foundation.models.source import SourceFetchPolicy
+from business.foundation.registry.source_registry import FETCHABLE_SOURCE_TYPES
 from business.layers.signal.source_config import (
     SourceConfigError,
     load_source_definitions,
@@ -70,6 +72,7 @@ def test_load_source_fetch_policy_reads_top_level_fetch_config(tmp_path) -> None
                     "user_agent": "NewsRoomFetchTest/1.0",
                     "respect_robots": False,
                     "rate_limit_per_domain_per_minute": 12,
+                    "allowed_domains": ["Example.com", ".openai.com", "example.com"],
                     "retry_times": 3,
                     "retry_on_status_codes": [429, 503],
                 },
@@ -95,6 +98,7 @@ def test_load_source_fetch_policy_reads_top_level_fetch_config(tmp_path) -> None
     assert policy.user_agent == "NewsRoomFetchTest/1.0"
     assert policy.respect_robots is False
     assert policy.rate_limit_per_domain_per_minute == 12
+    assert policy.allowed_domains == ("example.com", "openai.com")
     assert policy.retry_times == 3
     assert policy.retry_on_status_codes == (429, 503)
 
@@ -216,6 +220,78 @@ def test_load_source_registry_rejects_source_url_credentials(tmp_path) -> None:
 
     with pytest.raises(SourceConfigError, match=r"url\.query\.api_key"):
         load_source_registry(config_path)
+
+
+def test_load_source_registry_rejects_source_url_outside_allowed_domains(tmp_path) -> None:
+    config_path = tmp_path / "sources.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "fetch": {"allowed_domains": ["trusted.example"]},
+                "sources": [
+                    {
+                        "source_id": "bad",
+                        "name": "Bad",
+                        "source_type": "rss",
+                        "url": "https://untrusted.example/rss.xml",
+                        "topics": ["ai"],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SourceConfigError, match="bad.url"):
+        load_source_registry(config_path)
+
+
+def test_load_source_registry_allows_subdomains_from_allowed_domains(tmp_path) -> None:
+    config_path = tmp_path / "sources.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "fetch": {"allowed_domains": ["example.com"]},
+                "sources": [
+                    {
+                        "source_id": "openai",
+                        "name": "OpenAI News",
+                        "source_type": "rss",
+                        "url": "https://news.example.com/rss.xml",
+                        "topics": ["ai"],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    registry = load_source_registry(config_path)
+
+    assert registry.get("openai").url == "https://news.example.com/rss.xml"
+
+
+def test_load_source_fetch_policy_rejects_url_shaped_allowed_domain(tmp_path) -> None:
+    config_path = tmp_path / "sources.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "fetch": {"allowed_domains": ["https://example.com"]},
+                "sources": [
+                    {
+                        "source_id": "openai",
+                        "name": "OpenAI News",
+                        "source_type": "rss",
+                        "url": "https://example.com/rss.xml",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SourceConfigError, match="allowed_domains"):
+        load_source_fetch_policy(config_path)
 
 
 def test_load_source_registry_requires_supported_file_type(tmp_path) -> None:
@@ -348,9 +424,21 @@ medium_feeds:
 
 def test_tracked_sources_config_uses_real_live_urls() -> None:
     registry = load_source_registry(Path("configs/sources.yaml"))
+    fetch_policy = load_source_fetch_policy(Path("configs/sources.yaml"))
     sources = registry.list_sources(enabled_only=False)
 
     assert len(sources) >= 3
     assert all(not source.url.startswith("fixture://") for source in sources)
     assert {source.source_type.value for source in sources} >= {"rss", "official_blog", "arxiv"}
     assert registry.get("arxiv-cs-ai").metadata["query"] == "cat:cs.AI"
+    assert fetch_policy.allowed_domains
+    assert all(
+        source.source_type not in FETCHABLE_SOURCE_TYPES
+        or _host_is_allowed(source.url, fetch_policy.allowed_domains)
+        for source in sources
+    )
+
+
+def _host_is_allowed(url: str, allowed_domains: tuple[str, ...]) -> bool:
+    host = (urlsplit(url).hostname or "").casefold()
+    return any(host == domain or host.endswith(f".{domain}") for domain in allowed_domains)

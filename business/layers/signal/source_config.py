@@ -8,9 +8,10 @@ except ImportError:
     import tomli as tomllib  # type: ignore[no-redef]
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from business.foundation.models.source import SourceDefinition, SourceFetchPolicy
-from business.foundation.registry.source_registry import SourceRegistry
+from business.foundation.registry.source_registry import FETCHABLE_SOURCE_TYPES, SourceRegistry
 
 
 class SourceConfigError(ValueError):
@@ -103,6 +104,8 @@ _FETCH_POLICY_FIELDS = {
     "user_agent",
     "respect_robots",
     "rate_limit_per_domain_per_minute",
+    "allowed_domains",
+    "allowed_source_domains",
     "retry_times",
     "retry_on_status_codes",
 }
@@ -111,6 +114,10 @@ _FETCH_POLICY_FIELDS = {
 def load_source_definitions(path: str | Path) -> list[SourceDefinition]:
     config_path = Path(path)
     payload = _load_payload(config_path)
+    return _source_definitions_from_payload(payload)
+
+
+def _source_definitions_from_payload(payload: Any) -> list[SourceDefinition]:
     source_payloads = _source_payloads(payload)
     definitions = []
     for index, source_payload in enumerate(source_payloads):
@@ -122,8 +129,12 @@ def load_source_definitions(path: str | Path) -> list[SourceDefinition]:
 
 
 def load_source_registry(path: str | Path, *, validate: bool = True) -> SourceRegistry:
-    registry = SourceRegistry(load_source_definitions(path))
+    payload = _load_payload(Path(path))
+    definitions = _source_definitions_from_payload(payload)
+    fetch_policy = _source_fetch_policy_from_payload(payload)
+    registry = SourceRegistry(definitions)
     if validate:
+        _validate_source_url_allowlist(definitions, allowed_domains=fetch_policy.allowed_domains)
         validation = registry.validate()
         if not validation.is_valid:
             issues = "; ".join(
@@ -136,6 +147,10 @@ def load_source_registry(path: str | Path, *, validate: bool = True) -> SourceRe
 
 def load_source_fetch_policy(path: str | Path) -> SourceFetchPolicy:
     payload = _load_payload(Path(path))
+    return _source_fetch_policy_from_payload(payload)
+
+
+def _source_fetch_policy_from_payload(payload: Any) -> SourceFetchPolicy:
     if isinstance(payload, list):
         return SourceFetchPolicy()
     if not isinstance(payload, dict):
@@ -309,6 +324,12 @@ def _source_fetch_policy(payload: dict[str, Any]) -> SourceFetchPolicy:
             if rate_limit is None
             else _int_value(rate_limit, field_name="fetch.rate_limit_per_domain_per_minute")
         )
+    allowed_domains = _first_present(payload, "allowed_domains", "allowed_source_domains")
+    if allowed_domains is not None:
+        values["allowed_domains"] = _list_value(
+            allowed_domains,
+            field_name="fetch.allowed_domains",
+        )
     if "retry_times" in payload:
         values["retry_times"] = _int_value(payload["retry_times"], field_name="fetch.retry_times")
     if "retry_on_status_codes" in payload:
@@ -320,6 +341,33 @@ def _source_fetch_policy(payload: dict[str, Any]) -> SourceFetchPolicy:
         return SourceFetchPolicy(**values)
     except ValueError as exc:
         raise SourceConfigError(f"invalid source fetch config: {exc}") from exc
+
+
+def _validate_source_url_allowlist(
+    definitions: list[SourceDefinition],
+    *,
+    allowed_domains: tuple[str, ...],
+) -> None:
+    if not allowed_domains:
+        return
+    issues: list[str] = []
+    for source in definitions:
+        if source.source_type not in FETCHABLE_SOURCE_TYPES:
+            continue
+        host = (urlsplit(source.url).hostname or "").casefold()
+        if _host_matches_allowed_domain(host, allowed_domains):
+            continue
+        issues.append(
+            f"{source.source_id}.url: source URL host is not allowed by fetch.allowed_domains: {host or '<missing>'}"
+        )
+    if issues:
+        raise SourceConfigError(f"source config validation failed: {'; '.join(issues)}")
+
+
+def _host_matches_allowed_domain(host: str, allowed_domains: tuple[str, ...]) -> bool:
+    if not host:
+        return False
+    return any(host == domain or host.endswith(f".{domain}") for domain in allowed_domains)
 
 
 def _string_list(value: Any) -> list[str]:
@@ -336,6 +384,12 @@ def _dict_value(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise SourceConfigError("source metadata must be an object")
     return dict(value)
+
+
+def _list_value(value: Any, *, field_name: str) -> list[Any]:
+    if not isinstance(value, list):
+        raise SourceConfigError(f"{field_name} must be a list")
+    return list(value)
 
 
 def _optional_text(value: Any) -> str | None:
@@ -385,6 +439,13 @@ def _int_value(value: Any, *, field_name: str) -> int:
         return int(value)
     except (TypeError, ValueError) as exc:
         raise SourceConfigError(f"{field_name} must be an integer") from exc
+
+
+def _first_present(payload: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        if key in payload:
+            return payload[key]
+    return None
 
 
 def _int_tuple_value(value: Any, *, field_name: str) -> tuple[int, ...]:

@@ -384,6 +384,7 @@ def _business_fetch_policy(policy: Any) -> SourceFetchPolicy:
         user_agent=policy.user_agent,
         respect_robots=policy.respect_robots,
         rate_limit_per_domain_per_minute=policy.rate_limit_per_domain_per_minute,
+        allowed_domains=tuple(getattr(policy, "allowed_domains", ()) or ()),
         retry_times=policy.retry_times,
         retry_on_status_codes=tuple(policy.retry_on_status_codes),
     )

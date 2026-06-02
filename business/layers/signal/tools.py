@@ -42,7 +42,7 @@ def register_source_tools(
     source_runtime: SourceToolRuntime | None = None,
 ) -> None:
     fetch_policy = _coerce_fetch_policy(fetch_policy)
-    allowed_domain_tuple = _allowed_domains(allowed_domains)
+    allowed_domain_tuple = _allowed_domains(allowed_domains) or tuple(fetch_policy.allowed_domains)
     health_manager = health_manager or BasicSourceHealthManager()
     rate_limiter = rate_limiter or SourceDomainRateLimiter()
     registry.register(
@@ -604,6 +604,7 @@ def _fetch_policy(args: dict[str, Any], default_policy: SourceFetchPolicy) -> So
         respect_robots=respect_robots,
         user_agent=str(args.get("user_agent") or default_policy.user_agent),
         rate_limit_per_domain_per_minute=default_policy.rate_limit_per_domain_per_minute,
+        allowed_domains=default_policy.allowed_domains,
         retry_times=default_policy.retry_times,
         retry_on_status_codes=default_policy.retry_on_status_codes,
     )
@@ -621,6 +622,7 @@ def _coerce_fetch_policy(policy: Any | None) -> SourceFetchPolicy:
         respect_robots=bool(getattr(policy, "respect_robots")),
         user_agent=str(getattr(policy, "user_agent")),
         rate_limit_per_domain_per_minute=getattr(policy, "rate_limit_per_domain_per_minute"),
+        allowed_domains=tuple(getattr(policy, "allowed_domains", ()) or ()),
         retry_times=int(getattr(policy, "retry_times")),
         retry_on_status_codes=tuple(getattr(policy, "retry_on_status_codes")),
     )

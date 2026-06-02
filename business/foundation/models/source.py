@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone as _tz
 UTC = _tz.utc
 from enum import Enum
 from typing import Any
+from urllib.parse import urlsplit
 
 
 class SourceType(str, Enum):
@@ -40,6 +42,10 @@ class SourceHealthStatus(str, Enum):
 
 
 DEFAULT_SOURCE_FETCH_RETRY_STATUS_CODES = (429, 500, 502, 503, 504)
+_DOMAIN_NAME_RE = re.compile(
+    r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+    r"(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$"
+)
 
 
 def utc_now() -> datetime:
@@ -184,6 +190,7 @@ class SourceFetchPolicy:
     user_agent: str = "news-intelligence-system"
     respect_robots: bool = True
     rate_limit_per_domain_per_minute: int | None = None
+    allowed_domains: tuple[str, ...] = ()
     retry_times: int = 2
     retry_on_status_codes: tuple[int, ...] = DEFAULT_SOURCE_FETCH_RETRY_STATUS_CODES
 
@@ -201,6 +208,11 @@ class SourceFetchPolicy:
             and self.rate_limit_per_domain_per_minute < 1
         ):
             raise ValueError("rate_limit_per_domain_per_minute must be at least 1")
+        object.__setattr__(
+            self,
+            "allowed_domains",
+            _normalize_allowed_domains(self.allowed_domains),
+        )
         if self.retry_times < 0:
             raise ValueError("retry_times must be non-negative")
         retry_on_status_codes = tuple(int(code) for code in self.retry_on_status_codes)
@@ -217,6 +229,7 @@ class SourceFetchPolicy:
             "user_agent": self.user_agent,
             "respect_robots": self.respect_robots,
             "rate_limit_per_domain_per_minute": self.rate_limit_per_domain_per_minute,
+            "allowed_domains": list(self.allowed_domains),
             "retry_times": self.retry_times,
             "retry_on_status_codes": list(self.retry_on_status_codes),
         }
@@ -1080,3 +1093,32 @@ def _parse_datetime_required(value: Any, label: str) -> datetime:
     if parsed is None:
         raise ValueError(f"{label} is required")
     return parsed
+
+
+def _normalize_allowed_domains(value: Any) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, (list, tuple, set)):
+        raise ValueError("allowed_domains must be a list")
+    domains: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        domain = _normalize_allowed_domain(item)
+        if domain not in seen:
+            domains.append(domain)
+            seen.add(domain)
+    return tuple(domains)
+
+
+def _normalize_allowed_domain(value: Any) -> str:
+    text = str(value or "").strip().casefold().rstrip(".").lstrip(".")
+    if not text:
+        raise ValueError("allowed_domains must contain non-empty domain names")
+    parsed = urlsplit(text)
+    if parsed.scheme or parsed.netloc or parsed.path != text or parsed.query or parsed.fragment:
+        raise ValueError("allowed_domains entries must be domain names, not URLs")
+    if "@" in text or ":" in text or "/" in text or "\\" in text:
+        raise ValueError("allowed_domains entries must be domain names, not URLs")
+    if _DOMAIN_NAME_RE.fullmatch(text) is None:
+        raise ValueError(f"allowed_domains entry is not a valid domain name: {text}")
+    return text

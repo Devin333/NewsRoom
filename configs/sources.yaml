@@ -3,6 +3,32 @@ fetch:
   max_bytes: 1000000
   respect_robots: true
   rate_limit_per_domain_per_minute: 30
+  allowed_domains:
+    - openai.com
+    - anthropic.com
+    - deepmind.google
+    - blog.google
+    - meta.com
+    - microsoft.com
+    - alibabacloud.com
+    - huggingface.co
+    - jiqizhixin.com
+    - arxiv.org
+    - github.com
+    - firebaseio.com
+    - reddit.com
+    - stackexchange.com
+    - dev.to
+    - medium.com
+    - paperswithcode.com
+    - modelscope.cn
+    - producthunt.com
+    - zhihu.com
+    - v2ex.com
+    - juejin.cn
+    - csdn.net
+    - aliyun.com
+    - tencent.com
   retry_times: 2
   retry_on_status_codes: [429, 500, 502, 503, 504]
 
