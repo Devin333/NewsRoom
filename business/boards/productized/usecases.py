@@ -6,6 +6,7 @@ from business.boards._feedback import BoardFeedbackService
 from business.boards._improvement import BoardImprovementService
 from business.boards._service import BoardServiceBase
 from business.boards.productized.artifacts import ProductizedArtifactMetadataService
+from business.boards.productized.context import analysis_context_from_request, run_id_from_request
 from business.boards.productized.evidence import ProductizedEvidenceService
 from business.boards.productized.feedback import ProductizedFeedbackLearningService
 from business.boards.productized.improvement import ProductizedImprovementWorkflowService
@@ -13,16 +14,14 @@ from business.boards.productized.models import ProductizedRunState
 from business.boards.productized.output import ProductizedBoardOutputService
 from business.boards.productized.payloads import (
     signal_item_payload,
-    source_reliability_content_payload,
-    source_reliability_source_payload,
 )
+from business.boards.productized.preparation import ProductizedSignalPreparationService
 from business.boards.productized.quality import ProductizedQualityService
 from business.boards.productized.ranking import ProductizedRankingService
 from business.boards.productized.trends import ProductizedTrendEventService
-from business.foundation import AnalysisContext, BoardType, RunContext
+from business.foundation import AnalysisContext, BoardType
 from business.foundation.skills import BusinessSkillRuntime
 from business.foundation.subscription import DeliveryPlanBuilder, SubscriptionPayloadBuilder
-from business.layers.signal import SignalPipeline
 
 
 class ProductizedBoardUseCases:
@@ -40,7 +39,11 @@ class ProductizedBoardUseCases:
         self.skill_runtime = skill_runtime
         self.feedback_service = feedback_service
         self.improvement_service = improvement_service
-        self.signal_pipeline = SignalPipeline()
+        self.signal_preparation_service = ProductizedSignalPreparationService(
+            board_type=board_type,
+            skill_runtime=skill_runtime,
+            improvement_service=improvement_service,
+        )
         self.evidence_service = ProductizedEvidenceService()
         self.ranking_service = ProductizedRankingService()
         self.trend_event_service = ProductizedTrendEventService()
@@ -59,48 +62,7 @@ class ProductizedBoardUseCases:
         )
 
     def prepare_signals(self, request: dict[str, Any]) -> dict[str, Any]:
-        run_id = run_id_from_request(request, self.board_type)
-        context = analysis_context_from_request(self.board_type, request, run_id)
-        raw_signals = list(request.get("signals") or [])
-        pipeline_result = self.signal_pipeline.coerce_signals(
-            raw_signals,
-            context=context,
-            board_type=self.board_type,
-            topic=request.get("topic"),
-        )
-        skill_traces: list[dict[str, Any]] = []
-        reliability_results = []
-        for signal in pipeline_result.signals:
-            source_result = self.skill_runtime.run_source_reliability(
-                source_reliability_source_payload(signal),
-                source_reliability_content_payload(signal),
-                run_id=run_id,
-                fail_on_skill_error=bool(request.get("fail_on_skill_error", False)),
-            )
-            reliability_results.append(source_result.output)
-            skill_traces.append(source_result.to_dict())
-        improvement_context = self.improvement_service.apply_approved_overrides(
-            run_id=run_id,
-            board_type=self.board_type.value,
-        )
-        run_state = ProductizedRunState.from_request(
-            request=request,
-            board_type=self.board_type,
-            run_id=run_id,
-        ).with_updates(
-            skill_traces=skill_traces,
-            source_reliability_results=reliability_results,
-            improvement_context=improvement_context.to_dict(),
-        )
-        return {
-            "context": context,
-            "raw_signals": raw_signals,
-            "prepared_signals": pipeline_result.signals,
-            "source_reliability_results": reliability_results,
-            "skill_traces": skill_traces,
-            "improvement_context": improvement_context.to_dict(),
-            "productized_run": run_state,
-        }
+        return self.signal_preparation_service.prepare(request)
 
     def classify_board_signals(self, *, context: AnalysisContext, prepared_signals: list[Any]) -> dict[str, Any]:
         return {"board_signals": self.board_service.select_signals(prepared_signals, context=context)}
@@ -312,19 +274,5 @@ class ProductizedBoardUseCases:
                 subscription_payload=subscription_payload,
             )
         }
-
-
-def analysis_context_from_request(board_type: BoardType, request: dict[str, Any], run_id: str) -> AnalysisContext:
-    return AnalysisContext(
-        run_context=RunContext(run_id=run_id, run_type="board_productized", profile="productized"),
-        board_type=board_type,
-        metadata={"topic": request.get("topic"), "productized": True},
-        enable_llm=False,
-    )
-
-
-def run_id_from_request(request: dict[str, Any], board_type: BoardType) -> str:
-    return str(request.get("run_id") or f"{board_type.value}-productized-run")
-
 
 __all__ = ["ProductizedBoardUseCases", "analysis_context_from_request", "run_id_from_request"]

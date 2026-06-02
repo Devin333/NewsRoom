@@ -57,6 +57,7 @@ Cross-board 当前边界如下：
 `ProductizedBoardUseCases` 是工作流应用入口，不直接持有大段输出拼装逻辑。专用服务包括：
 
 - `ProductizedEvidenceService`：构建证据 refs/items。
+- `ProductizedSignalPreparationService`：解析 productized run context、coerce raw signals、运行 source reliability skill，并写入 `ProductizedRunState`。
 - `ProductizedRankingService`：排序 productized signals。
 - `ProductizedTrendEventService`：构建 trend-analysis 技能输入。
 - `ProductizedQualityService`：构建 evidence-checking 输入并合并质量摘要。
