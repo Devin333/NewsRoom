@@ -119,6 +119,7 @@ class ProductizedBoardSteps:
             feedback_events=buffer.read("feedback_events"),
             learning_signals=buffer.read("learning_signals"),
             subscription_payload=buffer.read("subscription_payload"),
+            productized_run=buffer.read("productized_run"),
         )
 
     def publish_board_artifacts(self, buffer: Any) -> dict[str, Any]:

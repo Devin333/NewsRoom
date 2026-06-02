@@ -193,6 +193,7 @@ class ProductizedBoardUseCases:
         feedback_events: list[dict[str, Any]],
         learning_signals: list[dict[str, Any]],
         subscription_payload: dict[str, Any],
+        productized_run: ProductizedRunState | None = None,
     ) -> dict[str, Any]:
         return self.improvement_workflow_service.build_outputs(
             request=request,
@@ -202,6 +203,7 @@ class ProductizedBoardUseCases:
             feedback_events=feedback_events,
             learning_signals=learning_signals,
             subscription_payload=subscription_payload,
+            productized_run=productized_run,
         )
 
     def publish_board_artifacts(

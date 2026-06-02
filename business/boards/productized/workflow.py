@@ -86,7 +86,16 @@ _READ_KEYS = {
     "build_quality_summary": ["request", "board_run_result", "productized_run"],
     "build_subscription_payload": ["request", "board_run_result", "board_output", "quality_summary"],
     "build_feedback_events": ["board_run_result"],
-    "build_improvement_recommendations": ["request", "board_run_result", "quality_summary", "cards", "feedback_events", "learning_signals", "subscription_payload"],
+    "build_improvement_recommendations": [
+        "request",
+        "board_run_result",
+        "quality_summary",
+        "cards",
+        "feedback_events",
+        "learning_signals",
+        "subscription_payload",
+        "productized_run",
+    ],
     "publish_board_artifacts": ["request", "cards", "quality_summary", "subscription_payload"],
 }
 

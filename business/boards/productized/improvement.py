@@ -28,6 +28,7 @@ class ProductizedImprovementWorkflowService:
         feedback_events: list[dict[str, Any]],
         learning_signals: list[dict[str, Any]],
         subscription_payload: dict[str, Any],
+        productized_run: Any | None = None,
     ) -> dict[str, Any]:
         if self.board_type is None:
             raise ValueError("board_type is required for productized improvement workflow outputs")
@@ -41,6 +42,7 @@ class ProductizedImprovementWorkflowService:
             feedback_events=feedback_events,
             learning_signals=learning_signals,
             subscription_payload=subscription_payload,
+            productized_run=productized_run,
         )
 
     def build(
@@ -55,6 +57,7 @@ class ProductizedImprovementWorkflowService:
         feedback_events: list[dict[str, Any]],
         learning_signals: list[dict[str, Any]],
         subscription_payload: dict[str, Any],
+        productized_run: Any | None = None,
     ) -> dict[str, Any]:
         parsed_feedback = [
             BusinessFeedbackEvent.model_validate(item)
@@ -83,6 +86,7 @@ class ProductizedImprovementWorkflowService:
                 cards=cards,
                 board_run_result=board_run_result,
                 subscription_payload=subscription_payload,
+                productized_run=productized_run,
             ),
         )
         report = self.improvement_service.build_report(
@@ -111,12 +115,13 @@ def measurement_snapshot(
     cards: list[dict[str, Any]],
     board_run_result: Any,
     subscription_payload: dict[str, Any],
+    productized_run: Any | None = None,
 ) -> dict[str, Any]:
     return {
         "quality_score": quality_summary.get("score") if isinstance(quality_summary, dict) else None,
         "card_count": len(cards),
         "evidence_coverage": evidence_coverage(cards),
-        "duplicate_rate": duplicate_rate(board_run_result),
+        "duplicate_rate": duplicate_rate(board_run_result, productized_run=productized_run),
         "empty_output": len(cards) == 0,
         "subscription_match": 1.0 if subscription_payload.get("targets") else 0.0,
     }
@@ -128,18 +133,60 @@ def evidence_coverage(cards: list[dict[str, Any]]) -> float:
     return round(sum(1 for card in cards if card.get("evidence_refs")) / len(cards), 4)
 
 
-def duplicate_rate(result: Any) -> float:
-    metadata = getattr(result, "metadata", {}) or {}
-    dedupe = metadata.get("deduplication_result")
+def duplicate_rate(result: Any = None, *, productized_run: Any | None = None) -> float:
+    dedupe = deduplication_result_for_measurement(
+        board_run_result=result,
+        productized_run=productized_run,
+    )
     groups = dedupe.get("event_groups") if isinstance(dedupe, dict) else []
     if not groups:
         return 0.0
-    duplicate_groups = [group for group in groups if isinstance(group, dict) and len(group.get("item_ids") or []) > 1]
+    duplicate_groups = [
+        group
+        for group in groups
+        if isinstance(group, dict) and len(group.get("item_ids") or []) > 1
+    ]
     return round(len(duplicate_groups) / len(groups), 4)
+
+
+def deduplication_result_for_measurement(
+    *,
+    board_run_result: Any = None,
+    productized_run: Any | None = None,
+) -> dict[str, Any]:
+    formal = _deduplication_result_from_productized_run(productized_run)
+    if formal is not None:
+        return formal
+    return _deduplication_result_from_board_result(board_run_result) or {}
+
+
+def _deduplication_result_from_productized_run(productized_run: Any | None) -> dict[str, Any] | None:
+    if productized_run is None:
+        return None
+    if isinstance(productized_run, dict):
+        value = productized_run.get("deduplication_result")
+    else:
+        value = getattr(productized_run, "deduplication_result", None)
+    return dict(value) if isinstance(value, dict) else None
+
+
+def _deduplication_result_from_board_result(result: Any) -> dict[str, Any] | None:
+    metadata = getattr(result, "metadata", {}) or {}
+    if not isinstance(metadata, dict):
+        return None
+    productized_state = metadata.get("productized_run_state")
+    if (
+        isinstance(productized_state, dict)
+        and isinstance(productized_state.get("deduplication_result"), dict)
+    ):
+        return dict(productized_state["deduplication_result"])
+    dedupe = metadata.get("deduplication_result")
+    return dict(dedupe) if isinstance(dedupe, dict) else None
 
 
 __all__ = [
     "ProductizedImprovementWorkflowService",
+    "deduplication_result_for_measurement",
     "duplicate_rate",
     "evidence_coverage",
     "measurement_snapshot",

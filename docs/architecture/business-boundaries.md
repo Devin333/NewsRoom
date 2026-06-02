@@ -140,6 +140,7 @@ selection、quality、references 等领域规则位于 `business/boards/domain/`
 - `ProductizedRankingService` 委托 `BoardSignalRankingService` 排序 signals，并返回正式 `ranked_signals` step 输出。
 - `ProductizedBoardOutputBundleBuilder` 负责 artifact-facing metadata 合并，并生成 `ProductizedBoardOutputBundle`。
 - `ProductizedImprovementWorkflowService` 负责 recommendation、proposal、policy experiment application、measurement 和 report 输出。
+- `ProductizedImprovementWorkflowService` 的 measurement 输入优先消费正式 `ProductizedRunState`，例如从 `deduplication_result` 计算 duplicate rate；`metadata` 仅作为历史 board result 兜底。
 
 跨 step 的运行态中间结果使用 `ProductizedRunState`。`metadata` 只保留对外 artifact 和历史兼容字段。
 
