@@ -131,6 +131,20 @@ def test_daily_agent_tool_registry_exposes_evidence_and_quality_tools() -> None:
     } == {"daily.citation_validate", "daily.section_draft"}
 
 
+def test_daily_agent_tool_registry_delegates_to_business_service() -> None:
+    service = _RecordingAgentToolService()
+    registry = build_daily_agent_tool_registry(service=service)
+
+    output = registry.require("daily.evidence_search").executor(
+        {"evidence_bundle": {}, "query": "policy"}
+    )
+
+    assert output == {"tool": "daily.evidence_search"}
+    assert service.calls == [
+        ("search_evidence", {"evidence_bundle": {}, "query": "policy"})
+    ]
+
+
 def test_daily_agent_tools_execute_against_provided_evidence_bundle() -> None:
     registry = build_daily_agent_tool_registry()
     evidence_bundle = _evidence_bundle()
@@ -302,3 +316,24 @@ def _evidence_bundle() -> dict:
 
 def _fixture_request() -> LLMRequest:
     return LLMRequest(messages=[{"role": "user", "content": "fixture"}])
+
+
+class _RecordingAgentToolService:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def search_evidence(self, args: dict) -> dict:
+        self.calls.append(("search_evidence", dict(args)))
+        return {"tool": "daily.evidence_search"}
+
+    def source_metadata(self, args: dict) -> dict:
+        self.calls.append(("source_metadata", dict(args)))
+        return {"tool": "daily.source_metadata"}
+
+    def validate_citations(self, args: dict) -> dict:
+        self.calls.append(("validate_citations", dict(args)))
+        return {"tool": "daily.citation_validate"}
+
+    def build_section_draft(self, args: dict) -> dict:
+        self.calls.append(("build_section_draft", dict(args)))
+        return {"tool": "daily.section_draft"}
