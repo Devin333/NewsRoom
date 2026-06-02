@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import pytest
 
+import business.boards.cross_board.workflows.daily_intelligence.agent_registry as agent_registry_module
 from framework.agent import AgentLoopStatus
 from business.foundation.models.source import Lineage
 from business.layers.relation.evidence.models import EvidenceBundle, EvidenceItem
+from business.boards.cross_board.workflows.daily_intelligence.agent_fixtures import (
+    build_daily_agent_fake_llm_client,
+)
 from business.boards.cross_board.workflows.daily_intelligence.agent_registry import (
     PROFILE_AGENTIC_OFFLINE,
-    build_daily_agent_fake_llm_client,
     build_daily_agent_registry,
     build_daily_agent_runner,
 )
@@ -36,6 +39,15 @@ def test_daily_agent_registry_contains_writer_verifier_and_editor() -> None:
     assert registry[WRITER_AGENT_ID].agent_id == WRITER_AGENT_ID
     assert registry[VERIFIER_AGENT_ID].agent_id == VERIFIER_AGENT_ID
     assert registry[EDITOR_AGENT_ID].agent_id == EDITOR_AGENT_ID
+
+
+def test_daily_agent_registry_does_not_export_fake_llm_fixture() -> None:
+    assert not hasattr(agent_registry_module, "build_daily_agent_fake_llm_client")
+    assert [
+        name
+        for name in vars(agent_registry_module)
+        if name.startswith("_fake_")
+    ] == []
 
 
 def test_daily_agent_tool_registry_exposes_evidence_and_quality_tools() -> None:

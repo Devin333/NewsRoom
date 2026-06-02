@@ -17,6 +17,9 @@ from business.boards.cross_board.workflows.daily_intelligence.agents import (
     VERIFIER_AGENT_ID,
     WRITER_AGENT_ID,
 )
+from business.boards.cross_board.workflows.daily_intelligence.source_evidence_steps import (
+    build_source_and_evidence_steps,
+)
 
 
 def test_agentic_daily_workflow_start_and_terminal_steps() -> None:
@@ -50,6 +53,14 @@ def test_agentic_daily_workflow_declares_agent_steps() -> None:
     assert steps["editor_agent"].step_type == StepType.AGENT_LOOP
     assert steps["editor_agent"].metadata["agent_id"] == EDITOR_AGENT_ID
     assert steps["editor_agent"].implementation == EDITOR_AGENT_ID
+
+
+def test_agentic_daily_workflow_reuses_source_evidence_steps() -> None:
+    workflow = build_agentic_daily_intelligence_workflow(PROFILE_AGENTIC_OFFLINE)
+
+    assert _step_signatures(workflow.steps[:6]) == _step_signatures(
+        build_source_and_evidence_steps()
+    )
 
 
 def test_agentic_daily_workflow_routes_evidence_to_agents_to_finalize() -> None:
@@ -106,3 +117,16 @@ def _step_runner_registry():
         agent_runner=build_daily_agent_runner(profile=PROFILE_AGENTIC_OFFLINE),
         agent_registry=build_daily_agent_registry(),
     )
+
+
+def _step_signatures(steps) -> list[tuple[str, str, tuple[str, ...], tuple[str, ...], tuple[str, ...]]]:
+    return [
+        (
+            step.step_id,
+            step.implementation,
+            tuple(step.read_keys),
+            tuple(step.write_keys),
+            tuple(step.required_output_keys),
+        )
+        for step in steps
+    ]

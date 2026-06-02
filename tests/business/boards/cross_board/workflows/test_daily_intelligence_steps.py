@@ -13,6 +13,9 @@ from business.boards.cross_board.workflows.daily_intelligence.spec import (
     WORKFLOW_ID,
     build_daily_intelligence_workflow,
 )
+from business.boards.cross_board.workflows.daily_intelligence.source_evidence_steps import (
+    build_source_and_evidence_steps,
+)
 from business.boards.cross_board.workflows.daily_intelligence.steps import (
     AllSourcesFailedError,
     build_evidence,
@@ -44,6 +47,9 @@ def test_daily_intelligence_workflow_spec_is_valid_and_profile_aware() -> None:
         "draft_report",
         "quality_gate",
     ]
+    assert _step_signatures(live.steps[:6]) == _step_signatures(
+        build_source_and_evidence_steps()
+    )
     assert [edge.target_step_id for edge in live.edges] == [
         "require_sources",
         "normalize_sources",
@@ -327,3 +333,16 @@ def _apply(buffer: DataBuffer, function, read_keys: list[str]) -> dict:
     for key, value in outputs.items():
         buffer.write(key, value)
     return outputs
+
+
+def _step_signatures(steps) -> list[tuple[str, str, tuple[str, ...], tuple[str, ...], tuple[str, ...]]]:
+    return [
+        (
+            step.step_id,
+            step.implementation,
+            tuple(step.read_keys),
+            tuple(step.write_keys),
+            tuple(step.required_output_keys),
+        )
+        for step in steps
+    ]

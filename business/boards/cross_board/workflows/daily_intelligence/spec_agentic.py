@@ -9,6 +9,9 @@ from business.boards.cross_board.workflows.daily_intelligence.agents import (
     VERIFIER_AGENT_ID,
     WRITER_AGENT_ID,
 )
+from business.boards.cross_board.workflows.daily_intelligence.source_evidence_steps import (
+    build_source_and_evidence_steps,
+)
 
 
 AGENTIC_WORKFLOW_ID = "daily-intelligence-agentic"
@@ -24,7 +27,7 @@ def build_agentic_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
         start_step_id="collect_sources",
         terminal_step_ids=["finalize_report"],
         steps=[
-            *_source_and_evidence_steps(),
+            *build_source_and_evidence_steps(),
             _planner_agent_step(),
             _analyst_agent_step(),
             _writer_agent_step(),
@@ -47,162 +50,6 @@ def build_agentic_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
         ],
         metadata={"profile": profile, "product_path": profile == PROFILE_AGENTIC_LIVE},
     )
-
-
-def _source_and_evidence_steps() -> list[StepSpec]:
-    return [
-        StepSpec(
-            step_id="collect_sources",
-            implementation="daily.collect_sources",
-            read_keys=["request"],
-            write_keys=[
-                "raw_items",
-                "source_errors",
-                "skipped_sources",
-                "failed_sources",
-                "source_fetch_requests",
-                "source_fetch_results",
-                "source_health_updates",
-                "source_health_report",
-                "source_events",
-                "source_pipeline_metrics",
-                "source_connector_dispatch_report",
-                "source_error_policy_report",
-                "source_fallback_report",
-                "source_selection_report",
-                "source_coverage_report",
-            ],
-            required_output_keys=[
-                "raw_items",
-                "source_errors",
-                "skipped_sources",
-                "failed_sources",
-                "source_fetch_requests",
-                "source_fetch_results",
-                "source_health_updates",
-                "source_health_report",
-                "source_events",
-                "source_pipeline_metrics",
-                "source_connector_dispatch_report",
-                "source_error_policy_report",
-                "source_fallback_report",
-                "source_selection_report",
-                "source_coverage_report",
-            ],
-        ),
-        StepSpec(
-            step_id="require_sources",
-            implementation="daily.require_sources",
-            read_keys=["raw_items", "source_errors"],
-            write_keys=["source_collection_status"],
-            required_output_keys=["source_collection_status"],
-        ),
-        StepSpec(
-            step_id="normalize_sources",
-            implementation="daily.normalize_sources",
-            read_keys=[
-                "raw_items",
-                "source_errors",
-                "source_events",
-                "source_pipeline_metrics",
-            ],
-            write_keys=[
-                "normalized_items",
-                "source_errors",
-                "source_events",
-                "source_pipeline_metrics",
-            ],
-            required_output_keys=[
-                "normalized_items",
-                "source_errors",
-                "source_events",
-                "source_pipeline_metrics",
-            ],
-        ),
-        StepSpec(
-            step_id="deduplicate_sources",
-            implementation="daily.deduplicate_sources",
-            read_keys=[
-                "normalized_items",
-                "source_errors",
-                "source_events",
-                "source_pipeline_metrics",
-            ],
-            write_keys=[
-                "deduplicated_items",
-                "source_errors",
-                "source_duplicate_groups",
-                "source_events",
-                "source_pipeline_metrics",
-            ],
-            required_output_keys=[
-                "deduplicated_items",
-                "source_errors",
-                "source_duplicate_groups",
-                "source_events",
-                "source_pipeline_metrics",
-            ],
-        ),
-        StepSpec(
-            step_id="rank_sources",
-            implementation="daily.rank_sources",
-            read_keys=[
-                "deduplicated_items",
-                "request",
-                "source_errors",
-                "skipped_sources",
-                "failed_sources",
-                "source_selection_report",
-                "source_events",
-                "source_pipeline_metrics",
-            ],
-            write_keys=[
-                "ranked_items",
-                "source_errors",
-                "source_events",
-                "source_pipeline_metrics",
-                "source_coverage_report",
-                "source_quality_scores",
-                "source_quality_summary_report",
-                "source_ranking_scores",
-                "source_freshness_report",
-                "source_traceability_report",
-                "source_governance_report",
-            ],
-            required_output_keys=[
-                "ranked_items",
-                "source_errors",
-                "source_events",
-                "source_pipeline_metrics",
-                "source_coverage_report",
-                "source_quality_scores",
-                "source_quality_summary_report",
-                "source_ranking_scores",
-                "source_freshness_report",
-                "source_traceability_report",
-                "source_governance_report",
-            ],
-        ),
-        StepSpec(
-            step_id="build_evidence",
-            implementation="daily.build_evidence",
-            read_keys=["ranked_items"],
-            write_keys=[
-                "evidence_bundle",
-                "evidence_scores",
-                "candidate_claims",
-                "verified_findings",
-                "quality_events",
-            ],
-            required_output_keys=[
-                "evidence_bundle",
-                "evidence_scores",
-                "candidate_claims",
-                "verified_findings",
-                "quality_events",
-            ],
-        ),
-    ]
 
 
 def _planner_agent_step() -> StepSpec:

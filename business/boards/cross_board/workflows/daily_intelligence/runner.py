@@ -44,7 +44,6 @@ from business.boards.cross_board.workflows.daily_intelligence.source_config impo
     build_default_source_fetch_policy,
     build_default_source_registry,
 )
-from business.boards.cross_board.workflows.daily_intelligence.source_connector_bundle import CONNECTOR_FIELD_NAMES
 from business.boards.cross_board.workflows.daily_intelligence.spec import (
     WORKFLOW_ID,
     WORKFLOW_VERSION,
@@ -119,15 +118,67 @@ class DailyIntelligenceRunner:
         self.llm_client = self.runtime.llm_client
         self.recall_service = self.runtime.recall_service
         self.report_writer = self.runtime.report_writer
-        for field_name in CONNECTOR_FIELD_NAMES:
-            setattr(self, field_name, getattr(self.source_dispatcher, field_name))
         self.source_runtime_assembly = DailySourceRuntimeAssembly(
             source_registry=self.source_registry,
-            **{field_name: getattr(self, field_name) for field_name in CONNECTOR_FIELD_NAMES},
+            feed_connector=self.source_dispatcher.feed_connector,
+            html_connector=self.source_dispatcher.html_connector,
+            manual_connector=self.source_dispatcher.manual_connector,
+            arxiv_connector=self.source_dispatcher.arxiv_connector,
+            github_connector=self.source_dispatcher.github_connector,
+            hackernews_connector=self.source_dispatcher.hackernews_connector,
+            reddit_connector=self.source_dispatcher.reddit_connector,
+            lobsters_connector=self.source_dispatcher.lobsters_connector,
+            stackoverflow_connector=self.source_dispatcher.stackoverflow_connector,
+            devto_connector=self.source_dispatcher.devto_connector,
+            medium_connector=self.source_dispatcher.medium_connector,
             source_health_manager=self.source_health_manager,
             source_dispatcher=self.source_dispatcher,
             source_collector=self.source_collector,
         )
+
+    @property
+    def feed_connector(self) -> DailyFeedSourceConnector:
+        return self.source_runtime_assembly.feed_connector
+
+    @property
+    def html_connector(self) -> DailyHtmlSourceConnector:
+        return self.source_runtime_assembly.html_connector
+
+    @property
+    def manual_connector(self) -> DailyManualSourceConnector:
+        return self.source_runtime_assembly.manual_connector
+
+    @property
+    def arxiv_connector(self) -> DailyArxivSourceConnector:
+        return self.source_runtime_assembly.arxiv_connector
+
+    @property
+    def github_connector(self) -> DailyGithubSourceConnector:
+        return self.source_runtime_assembly.github_connector
+
+    @property
+    def hackernews_connector(self) -> DailyHackerNewsSourceConnector:
+        return self.source_runtime_assembly.hackernews_connector
+
+    @property
+    def reddit_connector(self) -> DailyRedditSourceConnector:
+        return self.source_runtime_assembly.reddit_connector
+
+    @property
+    def lobsters_connector(self) -> DailyLobstersSourceConnector:
+        return self.source_runtime_assembly.lobsters_connector
+
+    @property
+    def stackoverflow_connector(self) -> DailyStackOverflowSourceConnector:
+        return self.source_runtime_assembly.stackoverflow_connector
+
+    @property
+    def devto_connector(self) -> DailyDevToSourceConnector:
+        return self.source_runtime_assembly.devto_connector
+
+    @property
+    def medium_connector(self) -> DailyMediumSourceConnector:
+        return self.source_runtime_assembly.medium_connector
 
     def _function_registry(self, profile: str) -> FunctionStepRegistry:
         return build_daily_intelligence_registry(

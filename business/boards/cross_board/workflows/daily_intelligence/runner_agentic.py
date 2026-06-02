@@ -11,7 +11,6 @@ from business.layers.signal.indexing import source_artifact_ref_extractor
 from business.foundation.registry.source_registry import SourceRegistry
 from business.layers.signal.source_health import BasicSourceHealthManager
 from business.boards.cross_board.workflows.daily_intelligence.runtime_assembly import (
-    apply_daily_source_runtime_assembly,
     build_daily_source_runtime_assembly,
 )
 from business.boards.cross_board.workflows.daily_intelligence.source_connector_ports import (
@@ -29,6 +28,7 @@ from business.boards.cross_board.workflows.daily_intelligence.source_connector_p
     DailyStackOverflowSourceConnector,
 )
 from business.boards.cross_board.workflows.daily_intelligence.source_collection import DailySourceCollector
+from business.boards.cross_board.workflows.daily_intelligence.source_dispatcher import SourceDispatcher
 from business.boards.cross_board.workflows.daily_intelligence.agent_registry import (
     build_daily_agent_registry,
     build_daily_agent_runner,
@@ -109,9 +109,64 @@ class AgenticDailyIntelligenceRunner:
             source_config_path=source_config_path,
             source_rate_limiter=source_rate_limiter,
         )
-        apply_daily_source_runtime_assembly(self, self.source_runtime_assembly)
         self.source_collector: DailySourceCollector = self.source_runtime_assembly.source_collector
         self.llm_client = llm_client
+
+    @property
+    def source_registry(self) -> SourceRegistry:
+        return self.source_runtime_assembly.source_registry
+
+    @property
+    def source_health_manager(self) -> BasicSourceHealthManager:
+        return self.source_runtime_assembly.source_health_manager
+
+    @property
+    def source_dispatcher(self) -> SourceDispatcher:
+        return self.source_runtime_assembly.source_dispatcher
+
+    @property
+    def feed_connector(self) -> DailyFeedSourceConnector:
+        return self.source_runtime_assembly.feed_connector
+
+    @property
+    def html_connector(self) -> DailyHtmlSourceConnector:
+        return self.source_runtime_assembly.html_connector
+
+    @property
+    def manual_connector(self) -> DailyManualSourceConnector:
+        return self.source_runtime_assembly.manual_connector
+
+    @property
+    def arxiv_connector(self) -> DailyArxivSourceConnector:
+        return self.source_runtime_assembly.arxiv_connector
+
+    @property
+    def github_connector(self) -> DailyGithubSourceConnector:
+        return self.source_runtime_assembly.github_connector
+
+    @property
+    def hackernews_connector(self) -> DailyHackerNewsSourceConnector:
+        return self.source_runtime_assembly.hackernews_connector
+
+    @property
+    def reddit_connector(self) -> DailyRedditSourceConnector:
+        return self.source_runtime_assembly.reddit_connector
+
+    @property
+    def lobsters_connector(self) -> DailyLobstersSourceConnector:
+        return self.source_runtime_assembly.lobsters_connector
+
+    @property
+    def stackoverflow_connector(self) -> DailyStackOverflowSourceConnector:
+        return self.source_runtime_assembly.stackoverflow_connector
+
+    @property
+    def devto_connector(self) -> DailyDevToSourceConnector:
+        return self.source_runtime_assembly.devto_connector
+
+    @property
+    def medium_connector(self) -> DailyMediumSourceConnector:
+        return self.source_runtime_assembly.medium_connector
 
     def _function_registry(self, profile: str) -> FunctionStepRegistry:
         validate_daily_profile(profile)
