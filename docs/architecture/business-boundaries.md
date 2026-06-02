@@ -120,11 +120,11 @@ non-social-media bypass 判定统一由 `quality_gate_policy.assess_non_social_m
 
 agentic daily workflow 的 `finalize_report_step.py` 是 workflow adapter，只负责读取 `request`、draft、quality、evidence 和 agent feedback buffer key，并组装 `DailyReportFinalizationInput`。
 
-最终报告发布、blocked / human review 路由、rewrite 结果校验、quality result、artifact refs 和 agent feedback metadata 投影由 `report_finalization.py` 的 `finalize_daily_report()` 承载。该 usecase 不依赖 `framework.workflow`，因此可以脱离 `DataBuffer` 单独测试。
+最终报告发布、blocked / human review 路由、rewrite 结果校验、quality result、artifact refs、agent feedback metadata 和补源质量策略投影由 `report_finalization.py` 的 `finalize_daily_report()` 承载。该 usecase 不依赖 `framework.workflow`，因此可以脱离 `DataBuffer` 单独测试。
 
 报告草稿输入归一化、claim grounding 归一化、以及草稿引用来源是否落在 evidence bundle 内的边界检查由 `report_draft_normalization.py` 承载。`report_finalization.py` 只消费归一化后的 draft 和明确的 source-boundary 结果，不再内联这些输入清洗 helper。
 
-finalization 阶段的 report quality summary、quality gate metrics、quality result 和 human review request 由 `report_quality_outputs.py` 构建。`FinalReport`、`BlockedReport`、markdown、命名空间 alias 和 agent feedback metadata 投影由 `report_finalization_outputs.py` 构建。`report_finalization.py` 负责选择发布/阻断/重写/人工审核路线，并把这些输出 builder 组合进最终返回值。
+finalization 阶段的 report quality summary、quality gate metrics、quality result 和 human review request 由 `report_quality_outputs.py` 构建。`FinalReport`、`BlockedReport`、markdown、命名空间 alias、agent feedback metadata 和补源质量摘要投影由 `report_finalization_outputs.py` 构建。`report_finalization.py` 负责选择发布/阻断/重写/人工审核路线，并把这些输出 builder 组合进最终返回值。
 
 后续新增 finalization 规则时，应优先扩展 `DailyReportFinalizationInput` 或拆分 report finalization 子服务，不要把业务决策重新写回 workflow step。
 
@@ -145,6 +145,7 @@ Agent 间反馈不应隐藏在各 agent output 的自由形态字段里，也不
 - analyst 只能通过显式 `analysis_result.evidence_gaps`、`source_recollection_requests` 或 `missing_information` 生成 `daily.source_recollect` recommendation；collector 不从自然语言 notes 中猜测缺口。`collect_agent_feedback` 只负责调用 `DailySourceRecollectionService` 和 `DailySourceRecollectionExecutionService`，由 application service 将 recommendation 转换为正式 `DailySourceRecollectionProfile` 与 `DailySourceRecollectionExecutionPlan`，再通过 `source_recollection_profile` / `sources.recollection_profile` 和 `source_recollection_execution_plan` / `sources.recollection_execution_plan` 交给 `recollect_sources` 与后续 planner 消费；feedback step 不直接抓源，也不把 loop state 或 query 统计塞进 `metadata`。
 - `DailySourceRecollectionExecutor` 必须输出 `source_recollection_execution_report` / `sources.recollection_execution_report`，用正式 `DailySourceRecollectionExecutionReport` 承载 task 状态、fetch request/result、raw item 和 error 计数；planner、artifact publisher 和后续 quality gate 只能消费该报告，不从 `source_events` 或 raw item `metadata` 反推补源质量。
 - `DailySourceRecollectionQualityService` 消费 execution report 并输出 `source_recollection_quality_assessment` / `sources.recollection_quality_assessment`，其中包含阈值结果、decision、severity、route 和 recommended_action；executor 只负责调用该 service 并写 buffer，artifact publisher 只投影 assessment，不重新实现阈值策略。
+- `select_source_recollection_finalization_policy()` 在 strict quality gate 场景消费该 assessment；当补源结果不足时，`finalize_daily_report()` 将发布路线调整为 `human_review`，并把补源质量摘要投影到 `quality_result`、`human_review_request` 和 blocked report metadata。
 - `finalize_daily_report()` 在 strict quality gate 场景消费这些 recommendation，并可将发布路线调整为 blocked / human review / rewrite；non-social-media bypass 仍由统一 bypass policy 优先决定。
 - 当前闭环雏形允许 writer 根据 verifier feedback 做一次 source-bounded rewrite，也允许 analyst evidence gap 触发一次 planner/source recollect route，并由 `DailySourceRecollectionExecutor` 消费 `DailySourceRecollectionExecutionPlan` 执行 source fetch，随后重新进入 normalize / deduplicate / rank / evidence pipeline，再回到 planner。editor 产出的 rewrite / edited draft 仍由 finalization 消费。
 

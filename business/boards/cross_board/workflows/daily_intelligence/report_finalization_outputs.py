@@ -37,6 +37,7 @@ def build_publish_report_outputs(
     rewrite_instructions: list[str],
     quality_route: str,
     agent_feedback: dict[str, Any],
+    source_recollection_quality: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     final_report = _final_report(
         request=request,
@@ -44,9 +45,10 @@ def build_publish_report_outputs(
         evidence_bundle=evidence_bundle,
         verified_findings=verified_findings,
         editor_decision=editor_decision,
-        rewrite_attempts=rewrite_attempts,
-        agent_feedback=agent_feedback,
-    )
+            rewrite_attempts=rewrite_attempts,
+            agent_feedback=agent_feedback,
+            source_recollection_quality=source_recollection_quality,
+        )
     report_quality_summary = build_report_quality_summary(
         editor_decision=editor_decision,
         verification_result=verification_result,
@@ -72,7 +74,10 @@ def build_publish_report_outputs(
         human_review_required=False,
         quality_gate_metrics=quality_gate_metrics,
         citation_check_result=citation_check_result,
-        agent_feedback_metadata=_agent_feedback_metadata(agent_feedback),
+        agent_feedback_metadata=_quality_result_metadata(
+            agent_feedback,
+            source_recollection_quality,
+        ),
     )
     return with_namespaced_aliases(
         {
@@ -104,6 +109,7 @@ def build_blocked_report_outputs(
     rewrite_attempts: int,
     human_review_required: bool,
     human_review_request: dict[str, Any] | None = None,
+    source_recollection_quality: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     report_quality_summary = build_report_quality_summary(
         editor_decision=editor_decision,
@@ -130,9 +136,13 @@ def build_blocked_report_outputs(
         human_review_required=human_review_required,
         quality_gate_metrics=quality_gate_metrics,
         citation_check_result=citation_check_result,
-        agent_feedback_metadata=_agent_feedback_metadata(agent_feedback),
+        agent_feedback_metadata=_quality_result_metadata(
+            agent_feedback,
+            source_recollection_quality,
+        ),
     )
     feedback_metadata = _agent_feedback_metadata(agent_feedback)
+    source_recollection_metadata = dict(source_recollection_quality or {})
     reasons = list(editor_decision["reasons"]) or [_default_block_reason(route)]
     blocked_report = BlockedReport(
         title=report_draft.get("title") or request_title(request),
@@ -151,6 +161,7 @@ def build_blocked_report_outputs(
             "rewrite_attempts": rewrite_attempts,
             "human_review_required": human_review_required,
             **feedback_metadata,
+            **source_recollection_metadata,
         },
     )
     outputs: dict[str, Any] = {
@@ -204,6 +215,7 @@ def _final_report(
     editor_decision: dict[str, Any],
     rewrite_attempts: int,
     agent_feedback: dict[str, Any],
+    source_recollection_quality: dict[str, Any] | None = None,
 ) -> FinalReport:
     source_urls = source_urls_from_draft(draft)
     if not source_urls:
@@ -219,6 +231,7 @@ def _final_report(
             "rewrite_attempts": rewrite_attempts,
             "request_topic": _field_value(request, "topic"),
             **_agent_feedback_metadata(agent_feedback),
+            **dict(source_recollection_quality or {}),
         }
     )
     return FinalReport(
@@ -237,6 +250,16 @@ def _agent_feedback_metadata(agent_feedback: dict[str, Any]) -> dict[str, Any]:
     return {
         "agent_feedback_event_count": len(events),
         "agent_feedback_summary": summary,
+    }
+
+
+def _quality_result_metadata(
+    agent_feedback: dict[str, Any],
+    source_recollection_quality: dict[str, Any] | None,
+) -> dict[str, Any]:
+    return {
+        **_agent_feedback_metadata(agent_feedback),
+        **dict(source_recollection_quality or {}),
     }
 
 

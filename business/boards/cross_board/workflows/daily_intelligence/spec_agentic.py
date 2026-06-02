@@ -310,6 +310,7 @@ def _finalize_report_step() -> StepSpec:
             "optional_read_keys": with_namespaced_read_keys([
                 "edited_report_draft",
                 "editor_review",
+                "source_recollection_quality_assessment",
             ])
         },
     )

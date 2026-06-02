@@ -134,6 +134,12 @@ def test_finalize_report_reads_namespaced_report_quality_evidence_and_feedback_k
                 "quality.events": [],
                 "agent.feedback.events": [{"feedback_id": "feedback-1"}],
                 "agent.feedback.summary": {"event_count": 1},
+                "sources.recollection_quality_assessment": {
+                    "decision": "pass",
+                    "severity": "info",
+                    "route": "continue_source_pipeline",
+                    "recommended_action": "continue_source_pipeline",
+                },
             }
         ).scope(
             read_keys=[
@@ -147,6 +153,7 @@ def test_finalize_report_reads_namespaced_report_quality_evidence_and_feedback_k
                 "quality.events",
                 "agent.feedback.events",
                 "agent.feedback.summary",
+                "sources.recollection_quality_assessment",
             ],
             optional_read_keys=["quality.editor_review"],
             write_keys=[],
@@ -156,6 +163,72 @@ def test_finalize_report_reads_namespaced_report_quality_evidence_and_feedback_k
     assert output["quality_result"]["passed"] is True
     assert output["final_report"].title == "Daily Intelligence: AI policy"
     assert output["final_report"].metadata["agent_feedback_event_count"] == 1
+    assert (
+        output["final_report"].metadata["source_recollection_quality"]["decision"]
+        == "pass"
+    )
+
+
+def test_finalize_report_routes_insufficient_source_recollection_quality_to_human_review() -> None:
+    output = finalize_report(
+        _buffer(
+            editor_review=_editor_review("pass"),
+            social_evidence=True,
+            source_recollection_quality_assessment={
+                "plan_id": "plan-1",
+                "profile_id": "profile-1",
+                "decision": "insufficient",
+                "severity": "warning",
+                "route": "source_recollection_quality_review",
+                "recommended_action": "review_source_recollection",
+                "failed_thresholds": ["raw_item_coverage"],
+                "issues": ["source_recollection_raw_item_threshold_missed"],
+            },
+        )
+    )
+
+    assert output["quality_result"]["passed"] is False
+    assert output["quality_result"]["route"] == "human_review"
+    assert output["quality_result"]["human_review_required"] is True
+    quality_metadata = output["quality_result"]["metadata"]["source_recollection_quality"]
+    assert quality_metadata["decision"] == "insufficient"
+    assert quality_metadata["route"] == "source_recollection_quality_review"
+    assert output["human_review_request"]["metadata"]["source_recollection_quality"] == quality_metadata
+    assert output["blocked_report"].metadata["source_recollection_quality"] == quality_metadata
+    assert any(
+        "source recollection quality recommended human review" in reason
+        for reason in output["blocked_report"].reasons
+    )
+    assert any(
+        event.event_type == "finalize_report_source_recollection_quality_policy_applied"
+        for event in output["quality_events"]
+    )
+    assert "final_report" not in output
+
+
+def test_finalize_report_ignores_source_recollection_quality_policy_without_strict_gate() -> None:
+    output = finalize_report(
+        _buffer(
+            editor_review=_editor_review("pass"),
+            source_recollection_quality_assessment={
+                "plan_id": "plan-1",
+                "decision": "insufficient",
+                "severity": "warning",
+                "route": "source_recollection_quality_review",
+                "recommended_action": "review_source_recollection",
+                "failed_thresholds": ["raw_item_coverage"],
+                "issues": ["source_recollection_raw_item_threshold_missed"],
+            },
+        )
+    )
+
+    assert output["quality_result"]["passed"] is True
+    assert output["quality_result"]["route"] == "final"
+    assert output["final_report"].metadata["source_recollection_quality"]["decision"] == "insufficient"
+    assert all(
+        event.event_type != "finalize_report_source_recollection_quality_policy_applied"
+        for event in output["quality_events"]
+    )
 
 
 def test_finalize_report_applies_block_feedback_policy_under_strict_gate() -> None:
@@ -449,6 +522,7 @@ def _buffer(
     edited_report_draft: dict | None = None,
     agent_feedback_events: list[dict] | None = None,
     agent_feedback_summary: dict | None = None,
+    source_recollection_quality_assessment: dict | None = None,
     social_evidence: bool = False,
 ) -> DataBuffer:
     values = {
@@ -484,6 +558,10 @@ def _buffer(
         values["agent_feedback_events"] = agent_feedback_events
     if agent_feedback_summary is not None:
         values["agent_feedback_summary"] = agent_feedback_summary
+    if source_recollection_quality_assessment is not None:
+        values["source_recollection_quality_assessment"] = (
+            source_recollection_quality_assessment
+        )
     return DataBuffer(values).scope(
         read_keys=[
             "request",
@@ -498,6 +576,7 @@ def _buffer(
             "quality_events",
             "agent_feedback_events",
             "agent_feedback_summary",
+            "source_recollection_quality_assessment",
         ],
         optional_read_keys=["edited_report_draft"],
         write_keys=[],

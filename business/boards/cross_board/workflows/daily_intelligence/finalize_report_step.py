@@ -32,6 +32,10 @@ def finalize_report(buffer: StepScopedDataBufferView) -> dict[str, Any]:
             edited_report_draft=read_optional_buffer_value(buffer, "edited_report_draft"),
             agent_feedback_events=read_optional_buffer_list(buffer, "agent_feedback_events"),
             agent_feedback_summary=read_optional_buffer_value(buffer, "agent_feedback_summary"),
+            source_recollection_quality_assessment=read_optional_buffer_value(
+                buffer,
+                "source_recollection_quality_assessment",
+            ),
         )
     )
 

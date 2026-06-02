@@ -20,6 +20,11 @@ from business.boards.cross_board.workflows.daily_intelligence.quality_gate_polic
     assess_non_social_media_bypass,
     build_non_social_media_pass_decision,
 )
+from business.boards.cross_board.workflows.daily_intelligence.source_recollection_finalization_policy import (
+    SourceRecollectionFinalizationPolicyDecision,
+    select_source_recollection_finalization_policy,
+    source_recollection_quality_metadata,
+)
 from business.boards.cross_board.workflows.daily_intelligence.report_finalization_outputs import (
     build_blocked_report_outputs,
     build_invalid_report_draft,
@@ -73,6 +78,7 @@ class DailyReportFinalizationInput:
     edited_report_draft: Any | None = None
     agent_feedback_events: list[Any] | None = None
     agent_feedback_summary: Any | None = None
+    source_recollection_quality_assessment: Any | None = None
 
 
 def finalize_daily_report(payload: DailyReportFinalizationInput) -> dict[str, Any]:
@@ -87,6 +93,9 @@ def finalize_daily_report(payload: DailyReportFinalizationInput) -> dict[str, An
     verified_findings = payload.verified_findings
     quality_events = list(payload.quality_events)
     agent_feedback = _agent_feedback_from_input(payload)
+    source_recollection_quality = source_recollection_quality_metadata(
+        payload.source_recollection_quality_assessment
+    )
     try:
         report_draft = normalize_report_draft(payload.report_draft)
     except ReportDraftNormalizationError as exc:
@@ -107,6 +116,7 @@ def finalize_daily_report(payload: DailyReportFinalizationInput) -> dict[str, An
             verified_findings=verified_findings,
             quality_events=quality_events,
             agent_feedback=agent_feedback,
+            source_recollection_quality=source_recollection_quality,
             route=BLOCKED_ROUTE,
             rewrite_attempts=0,
             human_review_required=False,
@@ -152,6 +162,32 @@ def finalize_daily_report(payload: DailyReportFinalizationInput) -> dict[str, An
                 ).get("target_agent_id"),
             )
         )
+    source_recollection_policy_decision = select_source_recollection_finalization_policy(
+        payload.source_recollection_quality_assessment,
+        strict_gate_required=bypass_assessment.strict_gate_required,
+    )
+    if source_recollection_policy_decision.should_apply:
+        editor_decision = _apply_source_recollection_finalization_policy(
+            editor_decision,
+            source_recollection_policy_decision,
+        )
+        decision = editor_decision["decision"]
+        rewrite_instructions = list(editor_decision["rewrite_instructions"])
+        quality_events.append(
+            quality_event(
+                "finalize_report_source_recollection_quality_policy_applied",
+                recommended_action=source_recollection_policy_decision.recommended_action,
+                assessment_decision=(
+                    source_recollection_policy_decision.assessment or {}
+                ).get("decision"),
+                assessment_route=(
+                    source_recollection_policy_decision.assessment or {}
+                ).get("route"),
+                failed_thresholds=(
+                    source_recollection_policy_decision.assessment or {}
+                ).get("failed_thresholds"),
+            )
+        )
 
     if decision == PASS_DECISION:
         return build_publish_report_outputs(
@@ -175,6 +211,7 @@ def finalize_daily_report(payload: DailyReportFinalizationInput) -> dict[str, An
             rewrite_instructions=rewrite_instructions,
             quality_route=PUBLISH_ROUTE,
             agent_feedback=agent_feedback,
+            source_recollection_quality=source_recollection_quality,
         )
 
     if decision == REWRITE_REQUIRED_DECISION:
@@ -223,6 +260,7 @@ def finalize_daily_report(payload: DailyReportFinalizationInput) -> dict[str, An
                     rewrite_instructions=rewrite_instructions,
                     quality_route=REWRITE_ROUTE,
                     agent_feedback=agent_feedback,
+                    source_recollection_quality=source_recollection_quality,
                 )
             editor_decision = _append_editor_reason(
                 editor_decision,
@@ -263,6 +301,7 @@ def finalize_daily_report(payload: DailyReportFinalizationInput) -> dict[str, An
             verified_findings=verified_findings,
             quality_events=quality_events,
             agent_feedback=agent_feedback,
+            source_recollection_quality=source_recollection_quality,
             route=HUMAN_REVIEW_ROUTE,
             rewrite_attempts=0,
             human_review_required=True,
@@ -273,6 +312,7 @@ def finalize_daily_report(payload: DailyReportFinalizationInput) -> dict[str, An
                 editor_decision=editor_decision,
                 verification_result=verification_result,
                 fallback_title=request_title(request),
+                source_recollection_quality=source_recollection_quality,
             ),
         )
 
@@ -295,6 +335,7 @@ def finalize_daily_report(payload: DailyReportFinalizationInput) -> dict[str, An
         verified_findings=verified_findings,
         quality_events=quality_events,
         agent_feedback=agent_feedback,
+        source_recollection_quality=source_recollection_quality,
         route=BLOCKED_ROUTE,
         rewrite_attempts=1 if decision == REWRITE_REQUIRED_DECISION else 0,
         human_review_required=False,
@@ -355,12 +396,35 @@ def _apply_agent_feedback_finalization_policy(
     return next_decision
 
 
+def _apply_source_recollection_finalization_policy(
+    editor_decision: dict[str, Any],
+    policy_decision: SourceRecollectionFinalizationPolicyDecision,
+) -> dict[str, Any]:
+    next_decision = _append_editor_reason(
+        editor_decision,
+        _source_recollection_policy_reason(policy_decision),
+    )
+    if next_decision["decision"] != BLOCK_DECISION:
+        next_decision["decision"] = HUMAN_REVIEW_REQUIRED_DECISION
+        next_decision["rewrite_instructions"] = []
+    return next_decision
+
+
 def _agent_feedback_policy_reason(
     policy_decision: AgentFeedbackFinalizationPolicyDecision,
 ) -> str:
     recommendation = policy_decision.recommendation or {}
     reason = str(recommendation.get("reason") or "agent feedback policy recommendation").strip()
     return f"agent feedback policy recommended {policy_decision.recommended_action}: {reason}"
+
+
+def _source_recollection_policy_reason(
+    policy_decision: SourceRecollectionFinalizationPolicyDecision,
+) -> str:
+    assessment = policy_decision.assessment or {}
+    issues = _string_list(assessment.get("issues", []))
+    detail = ", ".join(issues) if issues else "source recollection quality threshold missed"
+    return f"source recollection quality recommended human review: {detail}"
 
 
 def _agent_feedback_from_input(payload: DailyReportFinalizationInput) -> dict[str, Any]:

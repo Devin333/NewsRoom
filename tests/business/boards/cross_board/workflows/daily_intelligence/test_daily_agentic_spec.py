@@ -148,8 +148,10 @@ def test_agentic_daily_workflow_declares_agent_steps() -> None:
     assert steps["finalize_report"].metadata["optional_read_keys"] == [
         "edited_report_draft",
         "editor_review",
+        "source_recollection_quality_assessment",
         "report.edited_draft",
         "quality.editor_review",
+        "sources.recollection_quality_assessment",
     ]
     assert "quality.result" in steps["finalize_report"].write_keys
 

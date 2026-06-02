@@ -163,6 +163,7 @@ def build_human_review_request(
     editor_decision: dict[str, Any],
     verification_result: dict[str, Any],
     fallback_title: str,
+    source_recollection_quality: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     bundle_id = _field_value(evidence_bundle, "bundle_id") or "daily"
     review_id = f"review-{bundle_id}"
@@ -190,6 +191,7 @@ def build_human_review_request(
                 rewrite_instructions=editor_decision["rewrite_instructions"],
                 human_review_required=True,
             ),
+            **dict(source_recollection_quality or {}),
         },
     }
 
