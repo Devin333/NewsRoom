@@ -72,14 +72,16 @@ class BoardImprovementService:
         learning_signals: list[BusinessLearningSignal],
         recommendations: list[ImprovementRecommendation],
         proposals: list[ImprovementProposal],
-        applied_overrides: list[dict[str, Any]],
         measurement: Any,
+        applied_policy_experiments: list[dict[str, Any]] | None = None,
+        applied_overrides: list[dict[str, Any]] | None = None,
     ) -> SelfImprovementReport:
         return self.report_builder.build(
             feedback_events=feedback_events,
             learning_signals=learning_signals,
             recommendations=recommendations,
             proposals=proposals,
+            applied_policy_experiments=applied_policy_experiments,
             applied_overrides=applied_overrides,
             measurement=measurement,
         )

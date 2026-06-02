@@ -29,6 +29,8 @@ def test_self_improvement_report_builder_summarizes_high_risk_proposals() -> Non
     assert report.risks == ["proposal-1:high"]
     assert report.next_actions == ["review proposed improvements"]
     assert report.proposals[0]["proposal_id"] == "proposal-1"
+    assert report.applied_policy_experiments == [{"proposal_id": "proposal-1"}]
+    assert report.applied_overrides == report.applied_policy_experiments
     assert report.measurement == {"quality_score_delta": 0.2}
 
 
@@ -45,3 +47,17 @@ def test_self_improvement_report_builder_uses_monitoring_action_without_proposal
     assert report.risks == []
     assert report.next_actions == ["continue monitoring"]
     assert report.measurement == {}
+
+
+def test_self_improvement_report_builder_prefers_policy_experiment_field() -> None:
+    report = SelfImprovementReportBuilder().build(
+        feedback_events=[],
+        learning_signals=[],
+        recommendations=[],
+        proposals=[],
+        applied_policy_experiments=[{"proposal_id": "proposal-1", "profile_id": "profile-1"}],
+        measurement={},
+    )
+
+    assert report.applied_policy_experiments == [{"proposal_id": "proposal-1", "profile_id": "profile-1"}]
+    assert report.applied_overrides == report.applied_policy_experiments

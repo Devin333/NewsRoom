@@ -30,6 +30,7 @@ def test_productized_improvement_workflow_service_builds_outputs_from_request() 
     assert result["applied_policy_experiments"] == []
     assert result["applied_overrides"] == []
     assert result["improvement_measurement"]["card_count_delta"] == 1
+    assert result["self_improvement_report"]["applied_policy_experiments"] == []
     assert result["self_improvement_report"]["next_actions"] == ["continue monitoring"]
 
 

@@ -92,7 +92,7 @@ improvement 流程方向是：
 
 `FeedbackLearningService` 负责 feedback 去重与 learning signal 构建。`LearningSignalRecommendationBuilder` 和 `QualitySummaryRecommendationBuilder` 分别负责从 learning signal 与 quality summary 生成 recommendation；`ImprovementRecommendationBuilder` 只做来源 builder 的协调门面，并负责合并与去重 recommendation。`ImprovementProposalBuilder` 负责把 recommendation 转成 `policy_experiment` proposal 和 `PolicyExperimentProfile`。`ImprovementApplicationService` 负责从 proposal store 选择当前 board 的 proposal 并应用已批准实验。`SelfImprovementReportBuilder` 负责风险摘要、next action 和 report payload 组装。Board 层的 improvement service 只负责调用这些 service/builder、保存 proposal 和返回报告。
 
-新 proposal 不再生成 patch payload；它携带 `PolicyExperimentProfile`，用于描述目标、参数、理由、建议动作和度量指标。Productized workflow 正式输出 `applied_policy_experiments`；`applied_overrides` 作为历史 artifact/output 键暂时保留，但其内容是 applied policy experiment。旧手工 proposal 的 patch 数据只在读取历史记录时转换为实验参数。
+新 proposal 不再生成 patch payload；它携带 `PolicyExperimentProfile`，用于描述目标、参数、理由、建议动作和度量指标。Productized workflow 与 self improvement report 正式输出 `applied_policy_experiments`；`applied_overrides` 作为历史 artifact/output 键暂时保留，但其内容是 applied policy experiment。旧手工 proposal 的 patch 数据只在读取历史记录时转换为实验参数。
 
 ## Metadata 使用规则
 

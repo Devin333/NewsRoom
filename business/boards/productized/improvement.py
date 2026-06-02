@@ -90,6 +90,7 @@ class ProductizedImprovementWorkflowService:
             learning_signals=parsed_learning,
             recommendations=recommendations,
             proposals=proposals,
+            applied_policy_experiments=improvement_context.applied_policy_experiments,
             applied_overrides=improvement_context.applied_overrides,
             measurement=measurement,
         )

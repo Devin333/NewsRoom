@@ -56,4 +56,5 @@ def test_feedback_full_loop_reaches_approved_override_and_measurement() -> None:
     assert context.applied_overrides
     assert context.applied_overrides[0]["profile_id"] == proposals[0].experiment_profile.profile_id
     assert measurement.quality_score_delta == 0.35
+    assert report.applied_policy_experiments == context.applied_policy_experiments
     assert report.applied_overrides
