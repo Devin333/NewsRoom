@@ -189,6 +189,14 @@ def test_cross_board_daily_quality_gate_uses_output_builder_boundary() -> None:
         "business.boards.cross_board.workflows.daily_intelligence.quality_gate_outputs"
         in imports
     )
+    assert (
+        "business.boards.cross_board.workflows.daily_intelligence.quality_context_projection"
+        in imports
+    )
+    assert (
+        "business.boards.cross_board.workflows.daily_intelligence.memory_quality"
+        not in imports
+    )
     assert "business.foundation.models.report_output" not in imports
     assert (
         "business.boards.cross_board.workflows.daily_intelligence.buffer_key_aliases"

@@ -23,7 +23,7 @@ class DailyQualityGateOutputInput:
     verified_findings: Any
     quality_events: list[Any]
     memory_context: dict[str, Any] | None
-    historian_metadata: dict[str, Any] | None
+    historian_context: dict[str, Any] | None
     memory_quality_result: dict[str, Any]
     citation_check: Any
     support_matrix: Any
@@ -107,7 +107,7 @@ def _final_report(payload: DailyQualityGateOutputInput) -> FinalReport:
             "uncertain_claims_count": len(payload.verified_findings.uncertain_claims),
             "rewrite_attempts": payload.rewrite_attempts,
             "memory_context": payload.memory_context,
-            "historian": payload.historian_metadata,
+            "historian": payload.historian_context,
             "memory_quality_result": payload.memory_quality_result,
         },
     )
@@ -137,7 +137,7 @@ def _blocked_report(payload: DailyQualityGateOutputInput) -> BlockedReport:
             "human_review_required": payload.human_review_required,
             "remediation": list(payload.review.required_changes),
             "memory_context": payload.memory_context,
-            "historian": payload.historian_metadata,
+            "historian": payload.historian_context,
             "memory_quality_result": payload.memory_quality_result,
         },
     )

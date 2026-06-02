@@ -6,6 +6,10 @@ from business.boards.cross_board.workflows.daily_intelligence.quality_gate_outpu
     DailyQualityGateOutputInput,
     build_quality_gate_outputs,
 )
+from business.boards.cross_board.workflows.daily_intelligence.quality_context_projection import (
+    DailyQualityContextProjectionInput,
+    DailyQualityContextProjectionService,
+)
 from business.boards.cross_board.workflows.daily_intelligence.quality_gate_usecase import (
     DailyQualityGateInput,
     evaluate_daily_quality_gate,
@@ -182,7 +186,7 @@ def test_quality_gate_output_builder_publishes_without_usecase_or_workflow_buffe
             verified_findings=verified_findings,
             quality_events=[],
             memory_context={"metadata": {"memory_available": True}},
-            historian_metadata={"output": {"repeated_claims": ["known claim"]}},
+            historian_context={"output": {"repeated_claims": ["known claim"]}},
             memory_quality_result={
                 "memory_available": True,
                 "passed": True,
@@ -207,6 +211,50 @@ def test_quality_gate_output_builder_publishes_without_usecase_or_workflow_buffe
     assert output["quality.result"] == output["quality_result"]
     assert output["report.final"] == output["final_report"]
     assert output["final_report"].metadata["historian"]["output"]["repeated_claims"] == ["known claim"]
+
+
+def test_quality_context_projection_prefers_explicit_historian_context() -> None:
+    report = _report_draft()
+    report["metadata"] = {
+        "historian": {
+            "output": {"contradictions": ["report metadata contradiction"]},
+        }
+    }
+    explicit_historian = {
+        "output": {
+            "contradictions": ["explicit contradiction"],
+            "repeated_claims": ["explicit repeated claim"],
+        }
+    }
+
+    projection = DailyQualityContextProjectionService().build(
+        DailyQualityContextProjectionInput(
+            report_draft=report,
+            memory_context={
+                "query": "AI policy",
+                "topic": "AI policy",
+                "claims": [],
+                "events": [],
+                "evidence": [],
+                "entities": [],
+                "decisions": [],
+                "preferences": [],
+                "conflicts": [],
+                "metadata": {
+                    "memory_available": True,
+                    "historian": {
+                        "output": {"contradictions": ["memory metadata contradiction"]},
+                    },
+                },
+            },
+            historian_context=explicit_historian,
+        )
+    )
+
+    metadata = projection.memory_quality_result["metadata"]
+    assert projection.historian_context == explicit_historian
+    assert metadata["historian_contradictions"] == ["explicit contradiction"]
+    assert metadata["historian_repeated_claims"] == ["explicit repeated claim"]
 
 
 def test_quality_gate_uses_injected_memory_repository_for_claim_evidence() -> None:

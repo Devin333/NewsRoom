@@ -5,8 +5,9 @@ from typing import Any
 
 from business.layers.analysis.quality import EditorDecision, EditorReview, RewritePolicy
 from business.boards.cross_board.workflows.daily_intelligence.evidence_step import quality_event
-from business.boards.cross_board.workflows.daily_intelligence.memory_quality import (
-    DailyMemoryQualityService,
+from business.boards.cross_board.workflows.daily_intelligence.quality_context_projection import (
+    DailyQualityContextProjectionInput,
+    DailyQualityContextProjectionService,
 )
 from business.boards.cross_board.workflows.daily_intelligence.quality_evaluation import evaluate_report_quality
 from business.boards.cross_board.workflows.daily_intelligence.quality_gate_outputs import (
@@ -42,7 +43,7 @@ class QualityGateContext:
     verified_findings: Any
     quality_events: list[Any]
     memory_context: dict[str, Any] | None
-    historian_metadata: dict[str, Any] | None
+    historian_context: dict[str, Any] | None
     memory_quality_result: dict[str, Any]
 
 
@@ -71,17 +72,15 @@ def _load_quality_context(payload: DailyQualityGateInput) -> QualityGateContext:
     evidence_bundle = payload.evidence_bundle
     verified_findings = payload.verified_findings
     quality_events = list(payload.quality_events)
-    memory_context = payload.memory_context
-    historian_context = payload.historian_context
-    historian_metadata = _historian_metadata(historian_context, report_draft, memory_context)
-    memory_quality_result = _memory_quality_result(
-        memory_context,
-        repository=payload.memory_repository,
+    projection = DailyQualityContextProjectionService().build(
+        DailyQualityContextProjectionInput(
+            report_draft=report_draft,
+            memory_context=payload.memory_context,
+            historian_context=payload.historian_context,
+            memory_repository=payload.memory_repository,
+        )
     )
-    memory_quality_result = _with_historian_quality_metadata(
-        memory_quality_result,
-        historian_metadata,
-    )
+    memory_quality_result = projection.memory_quality_result
     if memory_quality_result["memory_available"]:
         quality_events.append(
             quality_event(
@@ -95,8 +94,8 @@ def _load_quality_context(payload: DailyQualityGateInput) -> QualityGateContext:
         evidence_bundle=evidence_bundle,
         verified_findings=verified_findings,
         quality_events=quality_events,
-        memory_context=memory_context,
-        historian_metadata=historian_metadata,
+        memory_context=projection.memory_context,
+        historian_context=projection.historian_context,
         memory_quality_result=memory_quality_result,
     )
 
@@ -236,7 +235,7 @@ def _build_quality_outputs(
             verified_findings=context.verified_findings,
             quality_events=context.quality_events,
             memory_context=context.memory_context,
-            historian_metadata=context.historian_metadata,
+            historian_context=context.historian_context,
             memory_quality_result=context.memory_quality_result,
             citation_check=evaluation.citation_check,
             support_matrix=evaluation.support_matrix,
@@ -249,51 +248,6 @@ def _build_quality_outputs(
             human_review_required=evaluation.human_review_required,
         )
     )
-
-
-def _memory_quality_result(
-    memory_context: dict[str, Any] | None,
-    *,
-    repository: IntelligenceMemoryQueryRepository | None,
-) -> dict[str, Any]:
-    return DailyMemoryQualityService().evaluate(memory_context, repository=repository)
-
-
-def _historian_metadata(
-    historian_context: dict[str, Any] | None,
-    report_draft: dict[str, Any],
-    memory_context: dict[str, Any] | None,
-) -> dict[str, Any] | None:
-    if historian_context:
-        return dict(historian_context)
-    report_metadata = report_draft.get("metadata") if isinstance(report_draft, dict) else None
-    if isinstance(report_metadata, dict) and isinstance(report_metadata.get("historian"), dict):
-        return dict(report_metadata["historian"])
-    memory_metadata = memory_context.get("metadata") if memory_context else None
-    if isinstance(memory_metadata, dict) and isinstance(memory_metadata.get("historian"), dict):
-        return dict(memory_metadata["historian"])
-    return None
-
-
-def _with_historian_quality_metadata(
-    memory_quality_result: dict[str, Any],
-    historian_metadata: dict[str, Any] | None,
-) -> dict[str, Any]:
-    if not historian_metadata:
-        return memory_quality_result
-    payload = dict(memory_quality_result)
-    metadata = dict(payload.get("metadata") or {})
-    raw_output = historian_metadata.get("output")
-    output = dict(raw_output) if isinstance(raw_output, dict) else {}
-    repeated_claims = list(output.get("repeated_claims") or [])
-    contradictions = list(output.get("contradictions") or [])
-    metadata["historian"] = historian_metadata
-    metadata["historian_repeated_claims"] = repeated_claims
-    metadata["historian_contradictions"] = contradictions
-    metadata["historian_repeated_claim_count"] = len(repeated_claims)
-    metadata["historian_contradiction_count"] = len(contradictions)
-    payload["metadata"] = metadata
-    return payload
 
 
 def _has_critical_memory_issue(memory_quality_result: dict[str, Any]) -> bool:
