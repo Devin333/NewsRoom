@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any
 
 from business.boards.cross_board.graph_models import CrossBoardGraphIntelligenceResult
@@ -10,11 +9,12 @@ from business.foundation import (
     BoardType,
     BusinessFeedbackEvent,
     BusinessQualitySnapshot,
-    RegressionGuardRunner,
-    build_policy_candidate,
     quality_snapshot_from_checks,
 )
-from business.foundation.feedback import FeedbackAggregator, LearningSignalBuilder
+from business.foundation.feedback import RuntimeQualityClosure, build_runtime_quality_closure
+
+
+CrossBoardLearningClosure = RuntimeQualityClosure
 
 
 class CrossBoardRunResultEnricher:
@@ -41,7 +41,7 @@ class CrossBoardRunResultEnricher:
             "cross_board_graph_quality": graph_result.quality_summary.to_dict() if graph_result is not None and graph_result.quality_summary is not None else None,
             "cross_board_learning_signals": [signal.to_dict() for signal in learning.learning_signals],
             "cross_board_policy_candidates": [candidate.to_dict() for candidate in learning.policy_candidates],
-            "cross_board_regression_guard_results": [guard.to_dict() for guard in learning.regression_guard_results],
+            "cross_board_regression_guard_results": [guard.to_dict() for guard in learning.guard_results],
         }
         return result.model_copy(
             update={
@@ -50,13 +50,6 @@ class CrossBoardRunResultEnricher:
                 "metadata": metadata,
             }
         )
-
-
-@dataclass(frozen=True)
-class CrossBoardLearningClosure:
-    learning_signals: list[Any]
-    policy_candidates: list[Any]
-    regression_guard_results: list[Any]
 
 
 def insight_quality_checks(cross_insights: list[Any]) -> list[Any]:
@@ -133,20 +126,9 @@ def merged_quality_summary(base: BusinessQualitySnapshot | None, checks: list[An
 
 
 def cross_board_learning_closure(feedback: list[BusinessFeedbackEvent]) -> CrossBoardLearningClosure:
-    learning_signals = []
-    policy_candidates = []
-    regression_guard_results = []
-    grouped = FeedbackAggregator().group_by_type(feedback)
-    for events in grouped.values():
-        for learning_signal in LearningSignalBuilder().build_from_feedback(events):
-            learning_signals.append(learning_signal)
-            candidate = build_policy_candidate(learning_signal, cross_board_policy_profile())
-            policy_candidates.append(candidate)
-            regression_guard_results.append(RegressionGuardRunner().run(candidate))
-    return CrossBoardLearningClosure(
-        learning_signals=learning_signals,
-        policy_candidates=policy_candidates,
-        regression_guard_results=regression_guard_results,
+    return build_runtime_quality_closure(
+        feedback,
+        base_policy_profile=cross_board_policy_profile(),
     )
 
 

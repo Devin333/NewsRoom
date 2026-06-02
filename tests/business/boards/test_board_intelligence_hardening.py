@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from business.boards.cross_board import CrossBoardGraphIntelligenceService, CrossBoardRunResultEnricher
-from business.foundation import BoardType
+from business.boards.cross_board.run_result_enricher import cross_board_learning_closure
+from business.foundation import BoardType, BusinessFeedbackEvent
+from business.foundation.feedback import RuntimeQualityClosure
 from interfaces.services.board_service import BoardApplicationService
 
 
@@ -60,6 +62,27 @@ def test_board_run_metadata_contains_processed_relations_for_cross_board_guards(
     assert "cross_board_insights" in result.metadata
     assert "cross_board_learning_signals" in result.metadata
     assert "cross_board_policy_candidates" in result.metadata
+
+
+def test_cross_board_learning_closure_uses_foundation_feedback_runtime_closure() -> None:
+    feedback = [
+        BusinessFeedbackEvent.create(
+            target_object_type="cross_board_path",
+            target_object_id="path-1",
+            target_layer="cross_board_graph",
+            board_type=BoardType.CROSS_BOARD.value,
+            feedback_type="duplicate_evidence",
+            severity="warning",
+        )
+    ]
+
+    closure = cross_board_learning_closure(feedback)
+
+    assert isinstance(closure, RuntimeQualityClosure)
+    assert closure.feedback_events == feedback
+    assert closure.learning_signals
+    assert closure.policy_candidates
+    assert closure.guard_results
 
 
 def _sample_raw_item(signal_type: str) -> dict[str, object]:

@@ -49,7 +49,7 @@ Step 不直接执行 signal selection、ranking、evidence、quality、feedback�
 Cross-board 当前边界如下：
 
 - `CrossBoardGraphIntelligenceService`：从已处理的 signals、extraction results、relations、analysis 和 board outputs 构建 graph、paths、graph quality 和 graph insights。
-- `CrossBoardRunResultEnricher`：把 cross-board insights/graph result 附加回 `BoardRunResult`，集中处理 cross-board quality merge、feedback events、learning signals、policy candidates 和 regression guard results。
+- `CrossBoardRunResultEnricher`：把 cross-board insights/graph result 附加回 `BoardRunResult`，集中处理 cross-board quality merge 和 feedback events；learning signals、policy candidates 和 regression guard results 通过 foundation 的 `build_runtime_quality_closure` 生成。
 - `CrossBoardService`：保留公开入口和旧方法委托，不直接承载 graph/path/quality/feedback/policy candidate 组合逻辑。
 
 ## Productized 用例边界
