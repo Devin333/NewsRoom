@@ -40,10 +40,6 @@ class ProductizedBoardSteps:
         improvement_service: BoardImprovementService,
     ) -> None:
         self.board_type = board_type
-        self.board_service = board_service
-        self.skill_runtime = skill_runtime
-        self.feedback_service = feedback_service
-        self.improvement_service = improvement_service
         self.usecases = ProductizedBoardUseCases(
             board_type=board_type,
             board_service=board_service,
@@ -208,8 +204,8 @@ def _read_keys(step_id: str) -> list[str]:
         "analyze_trends": ["request", "ranked_signals", "productized_run"],
         "build_board_output": ["request", "context", "ranked_signals", "productized_run"],
         "build_quality_summary": ["request", "board_run_result", "productized_run"],
-        "build_subscription_payload": ["request", "board_run_result", "board_output", "cards", "quality_summary"],
-        "build_feedback_events": ["board_run_result", "quality_summary"],
+        "build_subscription_payload": ["request", "board_run_result", "board_output", "quality_summary"],
+        "build_feedback_events": ["board_run_result"],
         "build_improvement_recommendations": ["request", "board_run_result", "quality_summary", "cards", "feedback_events", "learning_signals", "subscription_payload"],
         "publish_board_artifacts": ["request", "cards", "quality_summary", "subscription_payload"],
     }

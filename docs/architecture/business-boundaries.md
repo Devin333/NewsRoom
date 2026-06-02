@@ -21,6 +21,7 @@ Productized workflow step 的职责是：
 3. 返回声明过的输出 key。
 
 Step 不直接执行 signal selection、ranking、evidence、quality、feedback、improvement、subscription 或 output bundle 构建逻辑。新增业务逻辑应进入 `business/boards/productized/` 的服务，或进入 `business/boards/services/` 的通用 board service。
+Step 实例只保留 `board_type` 和 `ProductizedBoardUseCases`，不保存底层 service/runtime 依赖；workflow spec 的 `read_keys` 只声明对应 step 实际读取的 buffer key。
 
 ## BoardServiceBase 边界
 
