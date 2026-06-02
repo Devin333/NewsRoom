@@ -6,6 +6,7 @@ from business.boards._feedback import BoardFeedbackService
 from business.boards._improvement import BoardImprovementService
 from business.boards._service import BoardServiceBase
 from business.boards.productized.artifacts import ProductizedArtifactMetadataService
+from business.boards.productized.classification import ProductizedSignalClassificationService
 from business.boards.productized.context import analysis_context_from_request, run_id_from_request
 from business.boards.productized.deduplication import ProductizedDeduplicationService
 from business.boards.productized.entity_extraction import ProductizedEntityExtractionService
@@ -34,7 +35,9 @@ class ProductizedBoardUseCases:
         improvement_service: BoardImprovementService,
     ) -> None:
         self.board_type = board_type
-        self.board_service = board_service
+        self.classification_service = ProductizedSignalClassificationService(
+            board_service=board_service,
+        )
         self.signal_preparation_service = ProductizedSignalPreparationService(
             board_type=board_type,
             skill_runtime=skill_runtime,
@@ -74,7 +77,10 @@ class ProductizedBoardUseCases:
         return self.signal_preparation_service.prepare(request)
 
     def classify_board_signals(self, *, context: AnalysisContext, prepared_signals: list[Any]) -> dict[str, Any]:
-        return {"board_signals": self.board_service.select_signals(prepared_signals, context=context)}
+        return self.classification_service.classify(
+            context=context,
+            prepared_signals=prepared_signals,
+        )
 
     def extract_entities(
         self,
@@ -114,7 +120,7 @@ class ProductizedBoardUseCases:
         )
 
     def rank_items(self, *, deduplicated_signals: list[Any]) -> dict[str, Any]:
-        return {"ranked_signals": self.ranking_service.rank(deduplicated_signals)}
+        return self.ranking_service.rank_outputs(deduplicated_signals=deduplicated_signals)
 
     def analyze_trends(
         self,

@@ -1,4 +1,5 @@
 from business.boards.productized.artifacts import ProductizedArtifactMetadataService
+from business.boards.productized.classification import ProductizedSignalClassificationService
 from business.boards.productized.context import analysis_context_from_request, run_id_from_request
 from business.boards.productized.deduplication import ProductizedDeduplicationService
 from business.boards.productized.entity_extraction import ProductizedEntityExtractionService
@@ -41,6 +42,7 @@ __all__ = [
     "ProductizedRankingService",
     "ProductizedReportWritingService",
     "ProductizedRunState",
+    "ProductizedSignalClassificationService",
     "ProductizedSignalPreparationService",
     "ProductizedSubscriptionService",
     "ProductizedTrendAnalysisService",
