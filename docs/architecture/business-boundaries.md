@@ -64,6 +64,8 @@ daily intelligence 的 `quality_gate_step.py` 是 workflow adapter，只负责�
 
 新增 quality gate 规则时，应优先扩展 usecase 输入模型或拆分 quality routing/output 子服务，不要把业务分支重新写回 workflow step。
 
+non-social-media bypass 判定统一由 `quality_gate_policy.assess_non_social_media_bypass()` 返回，quality gate 和 report finalization 只能消费该 assessment，不应各自重新判断或拼接 bypass 事件字段。
+
 ## Report Finalization 边界
 
 agentic daily workflow 的 `finalize_report_step.py` 是 workflow adapter，只负责读取 `request`、draft、quality、evidence 和 agent feedback buffer key，并组装 `DailyReportFinalizationInput`。

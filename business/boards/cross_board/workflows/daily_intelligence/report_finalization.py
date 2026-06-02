@@ -15,8 +15,8 @@ from business.foundation.value_normalization import (
 from business.layers.analysis.quality import EditorDecision
 from business.boards.cross_board.workflows.daily_intelligence.evidence_step import quality_event
 from business.boards.cross_board.workflows.daily_intelligence.quality_gate_policy import (
+    assess_non_social_media_bypass,
     build_non_social_media_pass_decision,
-    should_bypass_strict_quality_gate,
 )
 from business.boards.cross_board.workflows.daily_intelligence.buffer_key_aliases import (
     with_namespaced_aliases,
@@ -101,7 +101,8 @@ def finalize_daily_report(payload: DailyReportFinalizationInput) -> dict[str, An
     decision = editor_decision["decision"]
     rewrite_instructions = list(editor_decision["rewrite_instructions"])
     quality_score = editor_decision["quality_score"]
-    if should_bypass_strict_quality_gate(evidence_bundle, decision):
+    bypass_assessment = assess_non_social_media_bypass(evidence_bundle, decision)
+    if bypass_assessment.should_bypass:
         original_decision = decision
         editor_decision = build_non_social_media_pass_decision(editor_decision)
         decision = PASS_DECISION
@@ -111,6 +112,7 @@ def finalize_daily_report(payload: DailyReportFinalizationInput) -> dict[str, An
                 "finalize_report_bypassed_non_social_media",
                 original_decision=original_decision,
                 quality_score=quality_score,
+                **bypass_assessment.event_metadata,
             )
         )
 

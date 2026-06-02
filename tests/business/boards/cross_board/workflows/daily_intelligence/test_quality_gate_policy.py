@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from business.boards.cross_board.workflows.daily_intelligence.quality_gate_policy import (
     NON_SOCIAL_MEDIA_BYPASS_REASON,
+    assess_non_social_media_bypass,
     build_non_social_media_pass_decision,
     should_bypass_strict_quality_gate,
     strict_quality_gate_required,
@@ -19,6 +20,11 @@ def test_non_social_evidence_can_bypass_blocking_quality_decision() -> None:
 
     assert strict_quality_gate_required(evidence_bundle) is False
     assert should_bypass_strict_quality_gate(evidence_bundle, "blocked") is True
+    assessment = assess_non_social_media_bypass(evidence_bundle, "blocked")
+    assert assessment.should_bypass is True
+    assert assessment.strict_gate_required is False
+    assert assessment.event_metadata["bypass_reason"] == NON_SOCIAL_MEDIA_BYPASS_REASON
+    assert assessment.event_metadata["evidence_items_count"] == 1
 
     bypass_decision = build_non_social_media_pass_decision(editor_decision)
 
@@ -32,6 +38,17 @@ def test_social_evidence_requires_strict_quality_gate() -> None:
 
     assert strict_quality_gate_required(evidence_bundle) is True
     assert should_bypass_strict_quality_gate(evidence_bundle, "blocked") is False
+    assert assess_non_social_media_bypass(evidence_bundle, "blocked").should_bypass is False
+
+
+def test_non_social_pass_decision_does_not_emit_bypass() -> None:
+    evidence_bundle = _evidence_bundle(source_type="rss")
+
+    assessment = assess_non_social_media_bypass(evidence_bundle, "pass")
+
+    assert assessment.should_bypass is False
+    assert assessment.strict_gate_required is False
+    assert assessment.event_metadata["bypass_reason"] is None
 
 
 def _evidence_bundle(*, source_type: str) -> EvidenceBundle:

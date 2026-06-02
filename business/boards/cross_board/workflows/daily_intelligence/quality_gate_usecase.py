@@ -14,8 +14,8 @@ from business.boards.cross_board.workflows.daily_intelligence.memory_quality imp
 )
 from business.boards.cross_board.workflows.daily_intelligence.quality_evaluation import evaluate_report_quality
 from business.boards.cross_board.workflows.daily_intelligence.quality_gate_policy import (
+    assess_non_social_media_bypass,
     build_non_social_media_pass_review,
-    strict_quality_gate_required,
 )
 from business.boards.cross_board.workflows.daily_intelligence.quality_result_builder import (
     human_review_request as build_human_review_request,
@@ -118,13 +118,13 @@ def _evaluate_quality_gate(context: QualityGateContext) -> QualityGateEvaluation
     support_matrix = evaluation["support_matrix"]
     quality_summary = evaluation["quality_summary"]
     review = evaluation["review"]
-    strict_gate_required = strict_quality_gate_required(context.evidence_bundle)
+    bypass_assessment = assess_non_social_media_bypass(context.evidence_bundle)
 
-    if not strict_gate_required:
+    if bypass_assessment.should_bypass:
         context.quality_events.append(
             quality_event(
                 "quality_gate_bypassed_non_social_media",
-                evidence_items_count=len(context.evidence_bundle.items),
+                **bypass_assessment.event_metadata,
             )
         )
         review = build_non_social_media_pass_review(
@@ -136,7 +136,7 @@ def _evaluate_quality_gate(context: QualityGateContext) -> QualityGateEvaluation
     rewritten_report_draft = None
     rewrite_attempts = 0
 
-    if strict_gate_required and review.decision == EditorDecision.REWRITE_REQUIRED:
+    if bypass_assessment.strict_gate_required and review.decision == EditorDecision.REWRITE_REQUIRED:
         context.quality_events.append(
             quality_event(
                 "rewrite_started",
@@ -187,10 +187,10 @@ def _evaluate_quality_gate(context: QualityGateContext) -> QualityGateEvaluation
             review=review,
             quality_summary=quality_summary,
         )
-        if strict_gate_required
+        if bypass_assessment.strict_gate_required
         else None
     )
-    if strict_gate_required and _has_critical_memory_issue(context.memory_quality_result):
+    if bypass_assessment.strict_gate_required and _has_critical_memory_issue(context.memory_quality_result):
         review = replace(
             review,
             decision=EditorDecision.BLOCKED,
