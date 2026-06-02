@@ -27,6 +27,12 @@ workflow IO 声明集中在 `business/boards/productized/workflow.py`；
 step adapter 集中在 `business/boards/productized/steps.py`；
 `business/boards/_productized_steps.py` 只保留旧导入路径兼容。
 
+## Daily Runtime Assembly 边界
+
+daily intelligence 的普通 Runner 和 agentic Runner 都以 `DailyIntelligenceRuntime` 作为主装配模型。`source_runtime_assembly_from_runtime()` 只负责从 runtime 投影 connector/source collector 兼容视图，不再由各 Runner 手工拼装 connector。
+
+新增 Runner 入口时，应优先接收或构建 `DailyIntelligenceRuntime`，再按需投影 workflow-specific adapter；不要重新引入动态属性绑定或并行的初始化路径。
+
 ## Workflow Buffer Collection 规则
 
 workflow step 从 buffer 读取 list/tuple 类型集合时，应把读取值视为借用值，不能原地修改。

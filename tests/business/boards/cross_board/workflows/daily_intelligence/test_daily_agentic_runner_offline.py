@@ -6,6 +6,19 @@ from pathlib import Path
 from framework.specs import WorkflowStatus
 from business.boards.cross_board.workflows.daily_intelligence import AgenticDailyIntelligenceRunner
 from business.boards.cross_board.workflows.daily_intelligence.profiles import PROFILE_AGENTIC_OFFLINE
+from business.boards.cross_board.workflows.daily_intelligence.runtime_assembly import (
+    build_daily_intelligence_runtime,
+)
+
+
+def test_agentic_daily_runner_accepts_prebuilt_runtime(tmp_path) -> None:
+    runtime = build_daily_intelligence_runtime(artifact_root=tmp_path)
+
+    runner = AgenticDailyIntelligenceRunner(runtime=runtime)
+
+    assert runner.runtime is runtime
+    assert runner.artifact_root == tmp_path
+    assert runner.source_runtime_assembly.source_collector is runtime.source_collector
 
 
 def test_agentic_daily_runner_offline_runs_full_workflow(tmp_path) -> None:

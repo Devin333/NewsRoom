@@ -129,6 +129,29 @@ def build_daily_intelligence_runtime(
     )
 
 
+def source_runtime_assembly_from_runtime(
+    runtime: DailyIntelligenceRuntime,
+) -> DailySourceRuntimeAssembly:
+    dispatcher = runtime.source_dispatcher
+    return DailySourceRuntimeAssembly(
+        source_registry=runtime.source_registry,
+        feed_connector=dispatcher.feed_connector,
+        html_connector=dispatcher.html_connector,
+        manual_connector=dispatcher.manual_connector,
+        arxiv_connector=dispatcher.arxiv_connector,
+        github_connector=dispatcher.github_connector,
+        hackernews_connector=dispatcher.hackernews_connector,
+        reddit_connector=dispatcher.reddit_connector,
+        lobsters_connector=dispatcher.lobsters_connector,
+        stackoverflow_connector=dispatcher.stackoverflow_connector,
+        devto_connector=dispatcher.devto_connector,
+        medium_connector=dispatcher.medium_connector,
+        source_health_manager=runtime.source_health_manager,
+        source_dispatcher=runtime.source_dispatcher,
+        source_collector=runtime.source_collector,
+    )
+
+
 def build_daily_source_runtime_assembly(
     *,
     source_registry: SourceRegistry | None = None,
@@ -209,4 +232,5 @@ __all__ = [
     "DailySourceRuntimeAssembly",
     "build_daily_intelligence_runtime",
     "build_daily_source_runtime_assembly",
+    "source_runtime_assembly_from_runtime",
 ]

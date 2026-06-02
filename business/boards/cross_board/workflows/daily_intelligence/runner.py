@@ -13,8 +13,8 @@ from business.foundation.registry.source_registry import SourceRegistry
 from business.layers.signal.source_health import BasicSourceHealthManager
 from business.boards.cross_board.workflows.daily_intelligence.dependency_bundle import DailyIntelligenceRuntime
 from business.boards.cross_board.workflows.daily_intelligence.runtime_assembly import (
-    DailySourceRuntimeAssembly,
     build_daily_intelligence_runtime,
+    source_runtime_assembly_from_runtime,
 )
 from business.boards.cross_board.workflows.daily_intelligence.source_connector_ports import (
     DailyArxivSourceConnector,
@@ -118,23 +118,7 @@ class DailyIntelligenceRunner:
         self.llm_client = self.runtime.llm_client
         self.recall_service = self.runtime.recall_service
         self.report_writer = self.runtime.report_writer
-        self.source_runtime_assembly = DailySourceRuntimeAssembly(
-            source_registry=self.source_registry,
-            feed_connector=self.source_dispatcher.feed_connector,
-            html_connector=self.source_dispatcher.html_connector,
-            manual_connector=self.source_dispatcher.manual_connector,
-            arxiv_connector=self.source_dispatcher.arxiv_connector,
-            github_connector=self.source_dispatcher.github_connector,
-            hackernews_connector=self.source_dispatcher.hackernews_connector,
-            reddit_connector=self.source_dispatcher.reddit_connector,
-            lobsters_connector=self.source_dispatcher.lobsters_connector,
-            stackoverflow_connector=self.source_dispatcher.stackoverflow_connector,
-            devto_connector=self.source_dispatcher.devto_connector,
-            medium_connector=self.source_dispatcher.medium_connector,
-            source_health_manager=self.source_health_manager,
-            source_dispatcher=self.source_dispatcher,
-            source_collector=self.source_collector,
-        )
+        self.source_runtime_assembly = source_runtime_assembly_from_runtime(self.runtime)
 
     @property
     def feed_connector(self) -> DailyFeedSourceConnector:
