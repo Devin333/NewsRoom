@@ -139,6 +139,7 @@ selection、quality、references 等领域规则位于 `business/boards/domain/`
 - `ProductizedEvidenceService` 委托 `BoardEvidenceAssemblyService` 生成 evidence refs/items，并把正式中间结果写入 `ProductizedRunState`。
 - `ProductizedRankingService` 委托 `BoardSignalRankingService` 排序 signals，并返回正式 `ranked_signals` step 输出。
 - `ProductizedBoardOutputBundleBuilder` 负责 artifact-facing metadata 合并，并生成 `ProductizedBoardOutputBundle`。
+- `ProductizedBoardOutputBundleBuilder` 不再把完整 `ProductizedRunState` 合并进 `BoardRunResult.metadata`；运行态通过 `ProductizedBoardOutputBundle.run_state` 和 workflow `productized_run` key 传递。
 - `ProductizedImprovementWorkflowService` 负责 recommendation、proposal、policy experiment application、measurement 和 report 输出。
 - `ProductizedImprovementWorkflowService` 的 measurement 输入优先消费正式 `ProductizedRunState`，例如从 `deduplication_result` 计算 duplicate rate；`metadata` 仅作为历史 board result 兜底。
 

@@ -282,6 +282,6 @@ def test_productized_board_output_bundle_builder_centralizes_metadata_merge() ->
 
     assert bundle.summary_md == "# Report\n"
     assert bundle.skill_traces[-1]["skill_name"] == "report-writing"
-    assert bundle.board_run_result.metadata["productized_run_state"]["run_id"] == "output-run"
+    assert "productized_run_state" not in bundle.board_run_result.metadata
     assert bundle.board_output["metadata"]["productized_run_state"]["run_id"] == "output-run"
     assert "evidence_items" not in bundle.board_output["metadata"]

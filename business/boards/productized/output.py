@@ -81,9 +81,6 @@ class ProductizedBoardOutputBundleBuilder:
     ) -> ProductizedBoardOutputBundle:
         skill_traces = [*productized_run.skill_traces, report_result.to_dict()]
         run_state = productized_run.with_updates(skill_traces=skill_traces)
-        result = result.model_copy(
-            update={"metadata": {**dict(result.metadata), **run_state.runtime_metadata()}}
-        )
         return ProductizedBoardOutputBundle(
             board_run_result=result,
             board_output=board_output_payload(result, run_state),
