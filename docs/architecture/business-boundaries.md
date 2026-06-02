@@ -58,6 +58,8 @@ Cross-board 当前边界如下：
 
 - `ProductizedEvidenceService`：构建证据 refs/items。
 - `ProductizedSignalPreparationService`：解析 productized run context、coerce raw signals、运行 source reliability skill，并写入 `ProductizedRunState`。
+- `ProductizedEntityExtractionService`：运行 entity-extraction skill、生成正式 extracted entities 中间结果，并写入 `ProductizedRunState`。
+- `ProductizedDeduplicationService`：运行 event-deduplication skill、生成 deduplication result，并写入 `ProductizedRunState`。
 - `ProductizedRankingService`：排序 productized signals。
 - `ProductizedTrendEventService`：构建 trend-analysis 技能输入。
 - `ProductizedQualityService`：构建 evidence-checking 输入并合并质量摘要。

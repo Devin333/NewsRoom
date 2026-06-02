@@ -7,14 +7,13 @@ from business.boards._improvement import BoardImprovementService
 from business.boards._service import BoardServiceBase
 from business.boards.productized.artifacts import ProductizedArtifactMetadataService
 from business.boards.productized.context import analysis_context_from_request, run_id_from_request
+from business.boards.productized.deduplication import ProductizedDeduplicationService
+from business.boards.productized.entity_extraction import ProductizedEntityExtractionService
 from business.boards.productized.evidence import ProductizedEvidenceService
 from business.boards.productized.feedback import ProductizedFeedbackLearningService
 from business.boards.productized.improvement import ProductizedImprovementWorkflowService
 from business.boards.productized.models import ProductizedRunState
 from business.boards.productized.output import ProductizedBoardOutputService
-from business.boards.productized.payloads import (
-    signal_item_payload,
-)
 from business.boards.productized.preparation import ProductizedSignalPreparationService
 from business.boards.productized.quality import ProductizedQualityService
 from business.boards.productized.ranking import ProductizedRankingService
@@ -43,6 +42,12 @@ class ProductizedBoardUseCases:
             board_type=board_type,
             skill_runtime=skill_runtime,
             improvement_service=improvement_service,
+        )
+        self.entity_extraction_service = ProductizedEntityExtractionService(
+            skill_runtime=skill_runtime,
+        )
+        self.deduplication_service = ProductizedDeduplicationService(
+            skill_runtime=skill_runtime,
         )
         self.evidence_service = ProductizedEvidenceService()
         self.ranking_service = ProductizedRankingService()
@@ -74,21 +79,11 @@ class ProductizedBoardUseCases:
         board_signals: list[Any],
         productized_run: ProductizedRunState,
     ) -> dict[str, Any]:
-        skill_traces = list(productized_run.skill_traces)
-        extracted = []
-        for signal in board_signals:
-            result = self.skill_runtime.run_entity_extraction(
-                signal_item_payload(signal),
-                run_id=productized_run.run_id,
-                fail_on_skill_error=bool(request.get("fail_on_skill_error", False)),
-            )
-            extracted.append({"signal_id": signal.signal_id, **result.output})
-            skill_traces.append(result.to_dict())
-        run_state = productized_run.with_updates(
-            extracted_entities=extracted,
-            skill_traces=skill_traces,
+        return self.entity_extraction_service.extract(
+            request=request,
+            board_signals=board_signals,
+            productized_run=productized_run,
         )
-        return {"extracted_entities": extracted, "skill_traces": skill_traces, "productized_run": run_state}
 
     def build_evidence(
         self,
@@ -117,24 +112,11 @@ class ProductizedBoardUseCases:
         board_signals: list[Any],
         productized_run: ProductizedRunState,
     ) -> dict[str, Any]:
-        skill_traces = list(productized_run.skill_traces)
-        items = [signal_item_payload(signal) for signal in board_signals]
-        result = self.skill_runtime.run_event_deduplication(
-            items,
-            run_id=productized_run.run_id,
-            fail_on_skill_error=bool(request.get("fail_on_skill_error", False)),
+        return self.deduplication_service.deduplicate(
+            request=request,
+            board_signals=board_signals,
+            productized_run=productized_run,
         )
-        skill_traces.append(result.to_dict())
-        run_state = productized_run.with_updates(
-            deduplication_result=result.output,
-            skill_traces=skill_traces,
-        )
-        return {
-            "deduplicated_signals": board_signals,
-            "deduplication_result": result.output,
-            "skill_traces": skill_traces,
-            "productized_run": run_state,
-        }
 
     def rank_items(self, *, deduplicated_signals: list[Any]) -> dict[str, Any]:
         return {"ranked_signals": self.ranking_service.rank(deduplicated_signals)}
