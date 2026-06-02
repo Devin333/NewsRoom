@@ -14,20 +14,20 @@ from business.foundation import (
     ProcessingStatus,
     Signal,
     SignalType,
-    SourceRef,
-    SourceType,
-    make_signal_identity,
 )
-from business.foundation.primitives import ScoreFactor, canonicalize_url, ensure_utc, normalize_key
+from business.foundation.primitives import ScoreFactor
 from business.layers.signal.records import (
     NormalizedSourceItem,
     RankedSourceItem,
     RawSourceItem,
     SignalLineage,
-    SourceRankingSignals,
     deduplicate_items,
     normalize_items,
     rank_items,
+)
+from business.layers.signal.signal_projection import (
+    SourceSignalProjectionInput,
+    SourceSignalProjectionService,
 )
 from business.layers.signal.models import (
     RawSignalInput,
@@ -48,6 +48,9 @@ class SignalPipelineResult(PrimitiveModel):
 
 
 class SignalPipeline:
+    def __init__(self, projection_service: SourceSignalProjectionService | None = None) -> None:
+        self._projection_service = projection_service or SourceSignalProjectionService()
+
     def run(self, inputs: list[RawSignalInput], context: AnalysisContext) -> SignalNormalizeResult:
         raw_items: list[RawSourceItem] = []
         rejected: list[RejectedSignal] = []
@@ -177,7 +180,6 @@ class SignalPipeline:
         signal_board_type = board_type if board_type != BoardType.CROSS_BOARD else None
         return self._signal_from_source_item(
             item,
-            context=resolved_context,
             board_type=signal_board_type or _board_type_for_source_type(item.source_type, resolved_context),
             signal_type=_signal_type_for_source_type(item.source_type),
             processing_status=ProcessingStatus.NORMALIZED,
@@ -196,11 +198,12 @@ class SignalPipeline:
         source_item = _raw_item_from_normalized(item)
         return self._signal_from_source_item(
             source_item,
-            context=resolved_context,
             board_type=signal_board_type or _board_type_from_normalized_item(item, resolved_context),
             signal_type=_signal_type_for_source_type(source_item.source_type),
             processing_status=ProcessingStatus.DEDUPLICATED,
             metrics=dict(item.metadata),
+            source_reliability=item.source_reliability,
+            ranking_signals=item.ranking_signals,
         )
 
     def from_ranked_item(
@@ -216,7 +219,6 @@ class SignalPipeline:
         source_item = _raw_item_from_normalized(item.item)
         signal = self._signal_from_source_item(
             source_item,
-            context=resolved_context,
             board_type=signal_board_type or _board_type_from_ranked_item(item, resolved_context),
             signal_type=_signal_type_for_source_type(source_item.source_type),
             processing_status=ProcessingStatus.ANALYZED,
@@ -234,6 +236,8 @@ class SignalPipeline:
                 "final_score": item.final_score,
                 "rank_index": index,
             },
+            source_reliability=item.item.source_reliability,
+            ranking_signals=item.item.ranking_signals,
         )
         return signal.model_copy(
             update={
@@ -248,59 +252,23 @@ class SignalPipeline:
         self,
         item: RawSourceItem,
         *,
-        context: AnalysisContext,
         board_type: BoardType,
         signal_type: SignalType,
         processing_status: ProcessingStatus,
         metrics: dict[str, Any],
+        source_reliability: Any | None = None,
+        ranking_signals: Any | None = None,
     ) -> Signal:
-        source_ref = SourceRef(
-            source_id=item.source_id,
-            source_name=item.source_name,
-            source_type=_foundation_source_type(item.source_type),
-            source_url=canonicalize_url(item.url) or None,
-            external_id=item.source_item_id,
-        )
-        signal_id, canonical_key, content_hash = make_signal_identity(
-            signal_type=signal_type,
-            board_type=board_type,
-            source=source_ref,
-            title=item.title,
-            url=item.url,
-            published_at=item.published_at,
-        )
-        confidence_value = _source_confidence_value(item)
-        ranking_signals = _ranking_signals_from_raw_item(item)
-        return Signal(
-            signal_id=signal_id,
-            signal_type=signal_type,
-            board_type=board_type,
-            title=item.title,
-            summary=item.summary,
-            content=item.raw_content or item.summary,
-            url=canonicalize_url(item.url) or item.url,
-            language=item.language or "en",
-            source=source_ref,
-            authors=list(item.authors),
-            published_at=ensure_utc(item.published_at),
-            collected_at=ensure_utc(item.fetched_at) or item.fetched_at,
-            raw_payload=item.to_dict(),
-            metrics={
-                **{
-                    "source_reliability": item.metadata.get("source_reliability", "medium"),
-                    "source_authority_score": ranking_signals.authority_score,
-                    "canonical_url": canonicalize_url(item.url) or item.url,
-                },
-                **metrics,
-            },
-            tags=_signal_tags(item),
-            content_hash=content_hash,
-            canonical_key=canonical_key,
-            processing_status=processing_status,
-            confidence=Confidence(
-                value=confidence_value,
-                factors=_confidence_factors(item, confidence_value),
-            ),
+        return self._projection_service.project(
+            SourceSignalProjectionInput(
+                item=item,
+                board_type=board_type,
+                signal_type=signal_type,
+                processing_status=processing_status,
+                metrics=metrics,
+                source_reliability=source_reliability,
+                ranking_signals=ranking_signals,
+            )
         )
 
 
@@ -524,29 +492,6 @@ def _board_type_from_ranked_item(item: RankedSourceItem, context: AnalysisContex
     return _board_type_from_normalized_item(item.item, context)
 
 
-def _foundation_source_type(source_type: Any) -> SourceType:
-    value = _source_type_value(source_type)
-    mapping = {
-        "rss": SourceType.RSS,
-        "atom": SourceType.RSS,
-        "official_blog": SourceType.OFFICIAL_BLOG,
-        "github": SourceType.GITHUB,
-        "arxiv": SourceType.ARXIV,
-        "paper_index": SourceType.PAPER_INDEX,
-        "hackernews": SourceType.HACKERNEWS,
-        "reddit": SourceType.REDDIT,
-        "github_discussion": SourceType.GITHUB_DISCUSSION,
-        "manual": SourceType.MANUAL,
-        "html": SourceType.HTML,
-        "web_page": SourceType.WEB_PAGE,
-        "devto": SourceType.DEVTO,
-        "medium": SourceType.MEDIUM,
-        "lobsters": SourceType.LOBSTERS,
-        "stackoverflow": SourceType.STACKOVERFLOW,
-    }
-    return mapping.get(value, SourceType.HTML)
-
-
 def _domain_source_type(value: Any) -> Any:
     text = _source_type_value(value)
     if text in {"paper_index", "arxiv"}:
@@ -603,51 +548,6 @@ def _ranked_confidence_factors(item: RankedSourceItem) -> list[ScoreFactor]:
         ),
         ScoreFactor(name="authority_score", value=item.authority_score, weight=0.2),
     ]
-
-
-def _source_confidence_value(item: RawSourceItem) -> float:
-    reliability = _reliability_value(item.metadata.get("source_reliability"))
-    authority = _ranking_signals_from_raw_item(item).authority_score
-    content = 0.7 if item.summary else 0.5
-    return max(0.0, min(1.0, round(0.4 + reliability * 0.3 + authority * 0.2 + content * 0.1, 4)))
-
-
-def _confidence_factors(item: RawSourceItem, value: float) -> list[ScoreFactor]:
-    ranking_signals = _ranking_signals_from_raw_item(item)
-    return [
-        ScoreFactor(name="source_reliability", value=_reliability_value(item.metadata.get("source_reliability")), weight=0.4),
-        ScoreFactor(name="source_authority", value=ranking_signals.authority_score, weight=0.3),
-        ScoreFactor(name="content_presence", value=1.0 if item.summary or item.raw_content else 0.5, weight=0.3),
-    ]
-
-
-def _ranking_signals_from_raw_item(item: RawSourceItem) -> SourceRankingSignals:
-    return SourceRankingSignals.from_metadata(item.metadata, tags=item.tags)
-
-
-def _signal_tags(item: RawSourceItem) -> list[str]:
-    tags: list[str] = []
-    tags.extend(_ranking_signals_from_raw_item(item).tags)
-    tags.extend(_string_list(item.metadata.get("signal_tags")))
-    cleaned = []
-    seen = set()
-    for tag in tags:
-        marker = normalize_key(tag)
-        if not marker or marker in seen:
-            continue
-        seen.add(marker)
-        cleaned.append(tag)
-    return cleaned
-
-
-def _reliability_value(value: Any) -> float:
-    text = str(value or "medium").strip().casefold()
-    mapping = {
-        "high": 1.0,
-        "medium": 0.7,
-        "low": 0.4,
-    }
-    return mapping.get(text, 0.7)
 
 
 def _string_list(value: Any) -> list[str]:

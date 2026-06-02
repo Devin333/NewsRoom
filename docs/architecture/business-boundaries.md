@@ -71,6 +71,8 @@ source 处理链路的正式中间模型是：
 
 `business.layers.signal.records` 是历史导入路径兼容 facade，只允许 re-export foundation source models 和 canonical `source_processing` service；不得重新实现 normalize、deduplicate、rank 或 quality 算法。`business.layers.signal.pipeline` 消费该 facade，不直接复制 source ranking 规则。
 
+`business.layers.signal.signal_projection.SourceSignalProjectionService` 负责把 `RawSourceItem` 投影为业务 `Signal`，包括 `SourceRef`、canonical URL、metrics、tags 和 raw confidence。`SignalPipeline` 只编排 raw -> normalized -> deduplicated -> ranked -> signal 的流程，并传入处理阶段与追加 metrics；不得在 pipeline 主体里重新拼装 source projection 字段。normalized/ranked 阶段必须通过 `SourceSignalProjectionInput.source_reliability` 和 `ranking_signals` 显式传递质量输入，metadata 只允许作为 raw/legacy 输入兜底。
+
 ## Workflow Buffer Collection 规则
 
 workflow step 从 buffer 读取 list/tuple 类型集合时，应把读取值视为借用值，不能原地修改。
