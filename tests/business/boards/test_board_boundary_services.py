@@ -12,13 +12,14 @@ from business.boards.services import (
     BoardRunMetadataPayload,
     BoardPipelineRunner,
     BoardReportExtractionService,
+    BoardRunBuildService,
     BoardRunReferenceService,
     BoardRunReferences,
     BoardRunResultBuilder,
     BoardSignalSelectionService,
 )
 from business.evaluation.fixtures import sample_signal
-from business.foundation import BoardType
+from business.foundation import AnalysisContext, BoardType
 from business.foundation.skills import BusinessSkillResult, BusinessSkillRuntime
 from business.layers.output import BoardOutput, BoardOutputStats
 
@@ -31,8 +32,12 @@ def test_board_service_base_exposes_decomposed_boundary_services() -> None:
     assert isinstance(service.reference_service, BoardRunReferenceService)
     assert isinstance(service.report_service, BoardReportExtractionService)
     assert isinstance(service.result_builder, BoardRunResultBuilder)
+    assert isinstance(service.run_build_service, BoardRunBuildService)
     assert isinstance(service.result_builder.metadata_builder, BoardRunMetadataBuilder)
     assert service.result_builder.report_service is service.report_service
+    assert service.run_build_service.selection_service is service.selection_service
+    assert service.run_build_service.pipeline_runner is service.pipeline_runner
+    assert service.run_build_service.result_builder is service.result_builder
 
 
 def test_board_run_result_uses_reference_and_pipeline_snapshots() -> None:
@@ -43,6 +48,16 @@ def test_board_run_result_uses_reference_and_pipeline_snapshots() -> None:
     assert result.artifact_refs
     assert result.evidence_refs
     assert result.metadata["pipeline_snapshot"]["processed_relations"] == result.metadata["processed_relations"]
+
+
+def test_board_run_build_service_centralizes_context_resolution() -> None:
+    service = AINewsBoardService()
+    context = AnalysisContext(board_type=BoardType.PROJECT_RADAR)
+
+    resolved = service.run_build_service.resolve_context(context)
+
+    assert resolved.board_type == BoardType.AI_NEWS
+    assert service._resolve_context(context).board_type == BoardType.AI_NEWS
 
 
 def test_board_run_metadata_builder_centralizes_legacy_metadata_fields() -> None:

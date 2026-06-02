@@ -41,6 +41,7 @@ Step 实例只保留 `board_type` 和 `ProductizedBoardUseCases`，不保存底�
 - `BoardRunReferenceService`：构建 trace、manifest、artifact、evidence、memory refs。
 - `BoardRunMetadataBuilder`：生成正式 board run metadata payload，并集中隔离旧 pipeline metadata 兼容字段。
 - `BoardReportExtractionService`：从 `BoardOutput` 提取/校验 report payload，并集中处理旧 report metadata 兼容字段。
+- `BoardRunBuildService`：集中处理 context resolution、signal selection、pipeline run 与 base run result build。
 - `BoardRunResultBuilder`：组装 `BoardRunResult`，生成 pipeline snapshot，并委托 metadata builder 生成 metadata payload。
 
 `BoardServiceBase` 不再直接承载 pipeline 执行细节或默认 run result metadata 拼装。

@@ -7,6 +7,7 @@ from business.boards.services import (
     BoardPipelineRunner,
     BoardQualityService,
     BoardReportExtractionService,
+    BoardRunBuildService,
     BoardRunReferenceService,
     BoardRunResultBuilder,
     BoardSignalSelectionService,
@@ -76,6 +77,12 @@ class BoardServiceBase:
             reference_service=self.reference_service,
             report_service=self.report_service,
         )
+        self.run_build_service = BoardRunBuildService(
+            board_type=self.board_type,
+            selection_service=self.selection_service,
+            pipeline_runner=self.pipeline_runner,
+            result_builder=self.result_builder,
+        )
 
     def build_board_output(
         self,
@@ -83,12 +90,15 @@ class BoardServiceBase:
         *,
         context: AnalysisContext | None = None,
     ) -> BoardOutput:
-        resolved_context = self._resolve_context(context)
-        _selected_signals, _extraction_results, _relation_result, _analysis, output = self._run_pipeline_for_output(
+        resolved_context = self.run_build_service.resolve_context(context)
+        pipeline_run = self.run_build_service.build_output_run(
             signals,
             context=resolved_context,
+            report_title=self._report_title(),
+            report_summary=self._report_summary(),
+            output_postprocessor=self._postprocess_board_output,
         )
-        return output
+        return pipeline_run.output
 
     def build_report(
         self,
@@ -105,18 +115,18 @@ class BoardServiceBase:
         *,
         context: AnalysisContext | None = None,
     ) -> BoardRunResult:
-        resolved_context = self._resolve_context(context)
-        selected_signals, extraction_results, relation_result, analysis, output = self._run_pipeline_for_output(
+        resolved_context = self.run_build_service.resolve_context(context)
+        pipeline_run = self.run_build_service.build_output_run(
             signals,
             context=resolved_context,
+            report_title=self._report_title(),
+            report_summary=self._report_summary(),
+            output_postprocessor=self._postprocess_board_output,
         )
-        result = self._build_base_board_run_result(
-            output=output,
+        result = self.run_build_service.build_run_result(
+            pipeline_run,
             context=resolved_context,
-            signals=selected_signals,
-            extraction_results=extraction_results,
-            relation_result=relation_result,
-            analysis=analysis,
+            run_result_postprocessor=self._postprocess_run_result,
         )
         return self.apply_board_specific_policy(result)
 
@@ -126,7 +136,7 @@ class BoardServiceBase:
         *,
         context: AnalysisContext,
     ) -> tuple[list[ExtractionResult], RelationPipelineResult, AnalysisResult, BoardOutput]:
-        pipeline_run = self.pipeline_runner.run_selected(
+        pipeline_run = self.run_build_service.run_selected(
             selected_signals,
             context=context,
             report_title=self._report_title(),
@@ -150,22 +160,14 @@ class BoardServiceBase:
         relation_result: RelationPipelineResult,
         analysis: AnalysisResult,
     ) -> BoardRunResult:
-        result = self.result_builder.build(
+        return self.run_build_service.build_run_result_from_parts(
             output=output,
             context=context,
             signals=signals,
             extraction_results=extraction_results,
             relation_result=relation_result,
             analysis=analysis,
-        )
-        return self._postprocess_run_result(
-            result,
-            output=output,
-            context=context,
-            signals=signals,
-            extraction_results=extraction_results,
-            relation_result=relation_result,
-            analysis=analysis,
+            run_result_postprocessor=self._postprocess_run_result,
         )
 
     def apply_board_specific_policy(self, result: BoardRunResult) -> BoardRunResult:
@@ -177,12 +179,20 @@ class BoardServiceBase:
         *,
         context: AnalysisContext,
     ) -> tuple[list[Signal], list[ExtractionResult], RelationPipelineResult, AnalysisResult, BoardOutput]:
-        selected_signals = self._select_signals(signals, context=context)
-        extraction_results, relation_result, analysis, output = self._run_pipeline_for_selected_signals(
-            selected_signals,
+        pipeline_run = self.run_build_service.build_output_run(
+            signals,
             context=context,
+            report_title=self._report_title(),
+            report_summary=self._report_summary(),
+            output_postprocessor=self._postprocess_board_output,
         )
-        return selected_signals, extraction_results, relation_result, analysis, output
+        return (
+            pipeline_run.selected_signals,
+            pipeline_run.extraction_results,
+            pipeline_run.relation_result,
+            pipeline_run.analysis,
+            pipeline_run.output,
+        )
 
     def _postprocess_board_output(
         self,
@@ -210,17 +220,13 @@ class BoardServiceBase:
         return result
 
     def _resolve_context(self, context: AnalysisContext | None) -> AnalysisContext:
-        if context is None:
-            return AnalysisContext(board_type=self.board_type)
-        if context.board_type == self.board_type:
-            return context
-        return context.for_board(self.board_type)
+        return self.run_build_service.resolve_context(context)
 
     def _select_signals(self, signals: list[Any], *, context: AnalysisContext) -> list[Signal]:
-        return self.selection_service.select(signals, context=context)
+        return self.run_build_service.select_signals(signals, context=context)
 
     def select_signals(self, signals: list[Any], *, context: AnalysisContext) -> list[Signal]:
-        return self.selection_service.select(signals, context=context)
+        return self.run_build_service.select_signals(signals, context=context)
 
     def _report_title(self) -> str:
         return f"{self.board_definition.name} Report"
