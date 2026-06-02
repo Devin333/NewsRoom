@@ -1,5 +1,6 @@
 from business.boards.cross_board.board_service import CrossBoardService
 from business.boards.cross_board.graph_builder import CrossBoardGraphBuilder
+from business.boards.cross_board.graph_intelligence_service import CrossBoardGraphIntelligenceService
 from business.boards.cross_board.graph_models import (
     CrossBoardEvidenceChain,
     CrossBoardGraph,
@@ -17,6 +18,7 @@ from business.boards.cross_board.path_finder import CrossBoardPathFinder
 from business.boards.cross_board.insight_service import CrossBoardInsightService
 from business.boards.cross_board.intelligence_service import CrossBoardIntelligenceService
 from business.boards.cross_board.relation_view_service import RelationViewService
+from business.boards.cross_board.run_result_enricher import CrossBoardRunResultEnricher
 from business.boards.cross_board.technology_journey_service import TechnologyJourneyService
 from business.boards.cross_board.technology_radar_service import TechnologyRadarService
 from business.boards.cross_board.profiles import (
@@ -43,6 +45,7 @@ __all__ = [
     "CrossBoardGraph",
     "CrossBoardGraphBuilder",
     "CrossBoardGraphEdge",
+    "CrossBoardGraphIntelligenceService",
     "CrossBoardGraphIntelligenceResult",
     "CrossBoardGraphNode",
     "CrossBoardGraphQualitySummary",
@@ -54,6 +57,7 @@ __all__ = [
     "CrossBoardPathScoringService",
     "CrossBoardPathSearchRequest",
     "CrossBoardPathSearchResult",
+    "CrossBoardRunResultEnricher",
     "DAILY_PROFILE_CHOICES",
     "DailyIntelligenceTaskHandler",
     "LEGACY_DAILY_WORKFLOW_ID",

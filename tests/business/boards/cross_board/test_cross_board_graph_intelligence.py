@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from business.boards.cross_board import CrossBoardGraphBuilder, CrossBoardPathFinder
+from business.boards.cross_board import CrossBoardGraphBuilder, CrossBoardGraphIntelligenceService, CrossBoardPathFinder
 from business.foundation import Confidence, ObjectRef, Relation, RelationType
+from tests.business.boards.cross_board._fixtures import complete_relations
 
 
 def test_complete_cross_board_chain_generates_high_quality_path() -> None:
@@ -52,6 +53,21 @@ def test_duplicate_evidence_does_not_inflate_score() -> None:
     assert duplicate_path.path_score <= unique_path.path_score
     assert duplicate_path.guard_result is not None
     assert duplicate_path.guard_result.warnings
+
+
+def test_graph_intelligence_service_builds_processed_result_boundary() -> None:
+    result = CrossBoardGraphIntelligenceService().build_from_processed(
+        signals=[],
+        extraction_results=[],
+        relations=complete_relations(),
+    )
+
+    assert result.graph.nodes
+    assert result.paths
+    assert result.quality_summary is not None
+    assert result.metadata["signal_count"] == 0
+    assert result.metadata["relation_count"] == 4
+    assert result.metadata["path_count"] == len(result.paths)
 
 
 def _path_result(relations: list[Relation]):

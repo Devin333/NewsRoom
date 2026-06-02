@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from business.boards.cross_board import CrossBoardGraphIntelligenceService, CrossBoardRunResultEnricher
 from business.foundation import BoardType
 from interfaces.services.board_service import BoardApplicationService
 
@@ -41,8 +42,12 @@ def test_four_boards_emit_distinct_ranking_features_and_reasons() -> None:
 
 def test_board_run_metadata_contains_processed_relations_for_cross_board_guards() -> None:
     service = BoardApplicationService()
+    cross_board_service = service._services[BoardType.CROSS_BOARD]
 
-    result = service._services[BoardType.CROSS_BOARD].build_board_run_result(
+    assert isinstance(cross_board_service.graph_intelligence_service, CrossBoardGraphIntelligenceService)
+    assert isinstance(cross_board_service.run_result_enricher, CrossBoardRunResultEnricher)
+
+    result = cross_board_service.build_board_run_result(
         [
             _sample_raw_item("paper"),
             _sample_raw_item("github_project"),

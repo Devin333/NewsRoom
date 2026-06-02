@@ -42,6 +42,16 @@ Step 不直接执行 signal selection、ranking、evidence、quality、feedback�
 
 `BoardServiceBase` 不再直接承载 pipeline 执行细节或默认 run result metadata 拼装。
 
+## Board Type 专用服务边界
+
+单个 board 的复杂业务可以拆到该 board 目录下的专用 application service，但不应堆在 `BoardServiceBase` 或具体 board service 门面里。
+
+Cross-board 当前边界如下：
+
+- `CrossBoardGraphIntelligenceService`：从已处理的 signals、extraction results、relations、analysis 和 board outputs 构建 graph、paths、graph quality 和 graph insights。
+- `CrossBoardRunResultEnricher`：把 cross-board insights/graph result 附加回 `BoardRunResult`，集中处理 cross-board quality merge、feedback events、learning signals、policy candidates 和 regression guard results。
+- `CrossBoardService`：保留公开入口和旧方法委托，不直接承载 graph/path/quality/feedback/policy candidate 组合逻辑。
+
 ## Productized 用例边界
 
 `ProductizedBoardUseCases` 是工作流应用入口，不直接持有大段输出拼装逻辑。专用服务包括：
