@@ -18,6 +18,9 @@ from business.boards.cross_board.workflows.daily_intelligence.quality_gate_polic
     build_non_social_media_pass_decision,
     should_bypass_strict_quality_gate,
 )
+from business.boards.cross_board.workflows.daily_intelligence.workflow_buffer_access import (
+    read_buffer_list,
+)
 
 
 PUBLISH_ROUTE = "final"
@@ -52,7 +55,7 @@ def finalize_report(buffer: StepScopedDataBufferView) -> dict[str, Any]:
     support_matrix = _to_plain_dict(buffer.read("support_matrix"))
     evidence_bundle = buffer.read("evidence_bundle")
     verified_findings = buffer.read("verified_findings")
-    quality_events = list(buffer.read("quality_events"))
+    quality_events = read_buffer_list(buffer, "quality_events")
     try:
         report_draft = _normalize_report_draft(buffer.read("report_draft"))
     except ReportDraftNormalizationError as exc:

@@ -22,6 +22,9 @@ from business.boards.cross_board.workflows.daily_intelligence.quality_result_bui
     quality_route as build_quality_route,
 )
 from business.boards.cross_board.workflows.daily_intelligence.quality_rewrite import rewrite_report_draft
+from business.boards.cross_board.workflows.daily_intelligence.workflow_buffer_access import (
+    read_buffer_list,
+)
 from business.memory.intelligence_repository import IntelligenceMemoryQueryRepository
 
 
@@ -68,7 +71,7 @@ def _load_quality_context(
     report_draft = buffer.read("report_draft")
     evidence_bundle = buffer.read("evidence_bundle")
     verified_findings = buffer.read("verified_findings")
-    quality_events = list(buffer.read("quality_events"))
+    quality_events = read_buffer_list(buffer, "quality_events")
     memory_context = _read_memory_context(buffer)
     historian_context = _read_historian_context(buffer)
     historian_metadata = _historian_metadata(historian_context, report_draft, memory_context)

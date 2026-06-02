@@ -27,6 +27,17 @@ workflow IO 声明集中在 `business/boards/productized/workflow.py`；
 step adapter 集中在 `business/boards/productized/steps.py`；
 `business/boards/_productized_steps.py` 只保留旧导入路径兼容。
 
+## Workflow Buffer Collection 规则
+
+workflow step 从 buffer 读取 list/tuple 类型集合时，应把读取值视为借用值，不能原地修改。
+
+- 事件列表追加必须通过 `workflow_buffer_access.read_buffer_list()` 或 `append_buffer_items()` 先复制再追加。
+- step 返回新的集合值，由 workflow runner 写回声明过的 output key。
+- `buffer.read()` 结果不得直接 `.append()`、`.extend()` 或嵌套原地修改。
+- 当某个 key 需要跨 step 承载复杂中间状态时，应优先新增正式模型或命名清晰的 buffer key，不要塞进 `metadata`。
+
+当前 daily intelligence workflow 的 `source_events` 和 `quality_events` 已使用该 helper 收敛 read-copy-write 约定。
+
 ## BoardServiceBase 边界
 
 `BoardServiceBase` 是 board 门面，只保留：

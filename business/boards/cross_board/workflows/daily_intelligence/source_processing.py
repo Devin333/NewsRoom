@@ -19,6 +19,9 @@ from business.layers.signal.source_processing.error_taxonomy import classify_sou
 from business.boards.cross_board.workflows.daily_intelligence.source_error_normalization import (
     normalize_source_errors,
 )
+from business.boards.cross_board.workflows.daily_intelligence.workflow_buffer_access import (
+    append_buffer_items,
+)
 
 
 class AllSourcesFailedError(RuntimeError):
@@ -58,19 +61,20 @@ def normalize_sources(buffer: StepScopedDataBufferView) -> dict[str, Any]:
             error = _processing_source_error(raw_item, exc, phase="normalize")
             normalization_errors.append(error)
             source_errors.append(error)
-    source_events = list(buffer.read("source_events"))
-    source_events.append(
-        source_event("source_normalized", input_count=len(raw_items), output_count=len(normalized_items))
-    )
-    for error in normalization_errors:
-        source_events.append(
+    source_events = append_buffer_items(
+        buffer,
+        "source_events",
+        source_event("source_normalized", input_count=len(raw_items), output_count=len(normalized_items)),
+        *[
             source_event(
                 "source_normalization_failed",
                 error.source_id,
                 error_type=error.error_type,
                 retryable=False,
             )
-        )
+            for error in normalization_errors
+        ],
+    )
     metrics = buffer.read("source_pipeline_metrics")
     metrics.normalized_items_count = len(normalized_items)
     for error in normalization_errors:
@@ -99,23 +103,26 @@ def deduplicate_sources(buffer: StepScopedDataBufferView) -> dict[str, Any]:
         deduplicated_items = list(normalized_items)
         source_duplicate_groups = []
         duplicate_count = 0
-    source_events = list(buffer.read("source_events"))
+    source_events = append_buffer_items(
+        buffer,
+        "source_events",
+        source_event(
+            "source_deduplicated",
+            input_count=len(normalized_items),
+            output_count=len(deduplicated_items),
+            duplicate_count=duplicate_count,
+            duplicate_group_count=len(source_duplicate_groups),
+        ),
+        *[
+            source_event("source_dedup_failed", error_type=error.error_type, retryable=False)
+            for error in dedup_errors
+        ],
+    )
     metrics = buffer.read("source_pipeline_metrics")
     metrics.deduplicated_items_count = len(deduplicated_items)
     metrics.duplicate_count = duplicate_count
     for error in dedup_errors:
         metrics.record_error(error)
-    source_events.append(
-        source_event(
-            "source_deduplicated",
-            input_count=len(normalized_items),
-            output_count=len(deduplicated_items),
-            duplicate_count=metrics.duplicate_count,
-            duplicate_group_count=len(source_duplicate_groups),
-        )
-    )
-    for error in dedup_errors:
-        source_events.append(source_event("source_dedup_failed", error_type=error.error_type, retryable=False))
     return {
         "deduplicated_items": deduplicated_items,
         "source_errors": source_errors,
@@ -137,17 +144,20 @@ def rank_sources(buffer: StepScopedDataBufferView) -> dict[str, Any]:
         source_errors.append(error)
         ranking_errors = [error]
         ranked_items = _fallback_ranked_items(deduplicated_items)
-    source_events = list(buffer.read("source_events"))
-    source_events.append(
+    source_events = append_buffer_items(
+        buffer,
+        "source_events",
         source_event(
             "source_ranked",
             input_count=len(deduplicated_items),
             output_count=len(ranked_items),
             topic=request["topic"],
-        )
+        ),
+        *[
+            source_event("source_ranking_failed", error_type=error.error_type, retryable=False)
+            for error in ranking_errors
+        ],
     )
-    for error in ranking_errors:
-        source_events.append(source_event("source_ranking_failed", error_type=error.error_type, retryable=False))
     metrics = buffer.read("source_pipeline_metrics")
     metrics.ranked_items_count = len(ranked_items)
     for error in ranking_errors:
