@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from pydantic import Field
@@ -36,6 +37,14 @@ class ProductizedRunState(PrimitiveModel):
             "productized_run_state": self.to_dict(),
         }
 
+    def board_output_metadata(self) -> dict[str, Any]:
+        return {
+            "skill_trace_metadata": list(self.skill_traces),
+            "improvement_context": dict(self.improvement_context),
+            "trend_analysis": dict(self.trend_analysis),
+            "productized_run_state": self.to_dict(),
+        }
+
     @classmethod
     def from_request(cls, *, request: dict[str, Any], board_type: BoardType, run_id: str) -> "ProductizedRunState":
         return cls(
@@ -56,4 +65,33 @@ class ProductizedEvidenceCheckInput(PrimitiveModel):
     sources: list[dict[str, Any]] = Field(default_factory=list)
 
 
-__all__ = ["ProductizedEvidenceBundle", "ProductizedEvidenceCheckInput", "ProductizedRunState"]
+@dataclass(frozen=True)
+class ProductizedBoardOutputBundle:
+    board_run_result: Any
+    board_output: dict[str, Any]
+    cards: list[dict[str, Any]]
+    detail_pages: list[dict[str, Any]]
+    insights: list[dict[str, Any]]
+    summary_md: str
+    skill_traces: list[dict[str, Any]]
+    run_state: ProductizedRunState
+
+    def to_step_outputs(self) -> dict[str, Any]:
+        return {
+            "board_run_result": self.board_run_result,
+            "board_output": self.board_output,
+            "cards": self.cards,
+            "detail_pages": self.detail_pages,
+            "insights": self.insights,
+            "summary_md": self.summary_md,
+            "skill_traces": self.skill_traces,
+            "productized_run": self.run_state,
+        }
+
+
+__all__ = [
+    "ProductizedBoardOutputBundle",
+    "ProductizedEvidenceBundle",
+    "ProductizedEvidenceCheckInput",
+    "ProductizedRunState",
+]

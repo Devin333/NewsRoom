@@ -10,12 +10,11 @@ from business.boards.productized.evidence import ProductizedEvidenceService
 from business.boards.productized.feedback import ProductizedFeedbackLearningService
 from business.boards.productized.improvement import ProductizedImprovementWorkflowService
 from business.boards.productized.models import ProductizedRunState
+from business.boards.productized.output import ProductizedBoardOutputService
 from business.boards.productized.payloads import (
-    card_report_item,
     signal_item_payload,
     source_reliability_content_payload,
     source_reliability_source_payload,
-    summary_markdown,
 )
 from business.boards.productized.quality import ProductizedQualityService
 from business.boards.productized.ranking import ProductizedRankingService
@@ -54,6 +53,10 @@ class ProductizedBoardUseCases:
             improvement_service=improvement_service,
         )
         self.artifact_metadata_service = ProductizedArtifactMetadataService()
+        self.output_service = ProductizedBoardOutputService(
+            board_service=board_service,
+            skill_runtime=skill_runtime,
+        )
 
     def prepare_signals(self, request: dict[str, Any]) -> dict[str, Any]:
         run_id = run_id_from_request(request, self.board_type)
@@ -206,43 +209,12 @@ class ProductizedBoardUseCases:
         ranked_signals: list[Any],
         productized_run: ProductizedRunState,
     ) -> dict[str, Any]:
-        result = self.board_service.build_board_run_result(ranked_signals, context=context)
-        report_result = self.skill_runtime.run_report_writing(
-            {
-                "title": f"{self.board_service.board_definition.name} Summary",
-                "audience": "subscriber",
-                "style": "concise",
-            },
-            [card_report_item(card) for card in result.cards],
-            trend_analyses=list(productized_run.trend_analysis.get("event_analyses", [])),
-            run_id=productized_run.run_id,
-            fail_on_skill_error=bool(request.get("fail_on_skill_error", False)),
-        )
-        skill_traces = [*productized_run.skill_traces, report_result.to_dict()]
-        run_state = productized_run.with_updates(skill_traces=skill_traces)
-        metadata = {**dict(result.metadata), **run_state.runtime_metadata()}
-        result = result.model_copy(update={"metadata": metadata})
-        board_output = dict(result.metadata.get("board_output") or {})
-        board_output.setdefault("metadata", {})
-        if isinstance(board_output["metadata"], dict):
-            board_output["metadata"].update(
-                {
-                    "skill_trace_metadata": skill_traces,
-                    "improvement_context": dict(run_state.improvement_context),
-                    "trend_analysis": dict(run_state.trend_analysis),
-                    "productized_run_state": run_state.to_dict(),
-                }
-            )
-        return {
-            "board_run_result": result,
-            "board_output": board_output,
-            "cards": [card.to_dict() for card in result.cards],
-            "detail_pages": [page.to_dict() for page in result.detail_pages],
-            "insights": [insight.to_dict() for insight in result.insights],
-            "summary_md": report_result.output.get("markdown_report", summary_markdown(result)),
-            "skill_traces": skill_traces,
-            "productized_run": run_state,
-        }
+        return self.output_service.build(
+            request=request,
+            context=context,
+            ranked_signals=ranked_signals,
+            productized_run=productized_run,
+        ).to_step_outputs()
 
     def build_quality_summary(
         self,

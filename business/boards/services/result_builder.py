@@ -56,6 +56,11 @@ class BoardRunResultBuilder:
             signals=signals,
             relations=relation_result.relations,
         )
+        snapshot = pipeline_snapshot(
+            relation_result=relation_result,
+            analysis=analysis,
+            extraction_results=extraction_results,
+        )
         return BoardRunResult(
             board_type=self.board_type,
             run_id=run_id,
@@ -76,11 +81,8 @@ class BoardRunResultBuilder:
                 "artifact_refs": [ref.to_dict() for ref in refs.artifact_refs],
                 "evidence_refs": [ref.to_dict() for ref in refs.evidence_refs],
                 "memory_refs": [ref.to_dict() for ref in refs.memory_refs],
-                "pipeline_snapshot": pipeline_snapshot(
-                    relation_result=relation_result,
-                    analysis=analysis,
-                    extraction_results=extraction_results,
-                ),
+                "pipeline_snapshot": snapshot,
+                **legacy_pipeline_metadata(snapshot),
             },
         )
 
@@ -118,6 +120,14 @@ def pipeline_snapshot(
     }
 
 
+def legacy_pipeline_metadata(snapshot: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "processed_relations": list(snapshot["processed_relations"]),
+        "rejected_relations": list(snapshot["rejected_relations"]),
+        "analysis": dict(snapshot["analysis"]),
+    }
+
+
 def _report_payload_for_validation(payload: dict[str, object]) -> dict[str, object]:
     cleaned = _drop_serialized_computed_fields(payload)
     if isinstance(cleaned, dict):
@@ -138,4 +148,4 @@ def _drop_serialized_computed_fields(value: object) -> object:
     return value
 
 
-__all__ = ["BoardRunResultBuilder", "pipeline_snapshot", "run_id_from_context"]
+__all__ = ["BoardRunResultBuilder", "legacy_pipeline_metadata", "pipeline_snapshot", "run_id_from_context"]
