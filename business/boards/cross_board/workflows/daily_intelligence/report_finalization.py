@@ -22,6 +22,9 @@ from business.boards.cross_board.workflows.daily_intelligence.quality_gate_polic
     assess_non_social_media_bypass,
     build_non_social_media_pass_decision,
 )
+from business.boards.cross_board.workflows.daily_intelligence.quality_observability import (
+    quality_gate_observability_metrics,
+)
 from business.boards.cross_board.workflows.daily_intelligence.buffer_key_aliases import (
     with_namespaced_aliases,
 )
@@ -584,6 +587,8 @@ def _quality_gate_metrics(
         or citation_check_result.get("missing_section_sources")
     )
     unsupported_sections = _list_value(support_matrix.get("unsupported_sections"))
+    blocked = route in {BLOCKED_ROUTE, HUMAN_REVIEW_ROUTE}
+    rewrite_required = route == REWRITE_ROUTE or editor_decision["decision"] == REWRITE_REQUIRED_DECISION
     return {
         "evidence_items_count": _evidence_item_count(evidence_bundle),
         "accepted_claims_count": _collection_count(verified_findings, "accepted_claims"),
@@ -604,14 +609,19 @@ def _quality_gate_metrics(
             if isinstance(category, Mapping) and category.get("code")
         ],
         "unsupported_sections_count": len(unsupported_sections),
-        "blocked": route in {BLOCKED_ROUTE, HUMAN_REVIEW_ROUTE},
+        "blocked": blocked,
         "decision": editor_decision["decision"],
         "route": route,
         "risk_level": verification_result.get("risk_level"),
         "quality_score": editor_decision["quality_score"],
         "rewrite_attempts": rewrite_attempts,
-        "rewrite_required": route == REWRITE_ROUTE or editor_decision["decision"] == REWRITE_REQUIRED_DECISION,
+        "rewrite_required": rewrite_required,
         "human_review_required": human_review_required,
+        **quality_gate_observability_metrics(
+            blocked=blocked,
+            rewrite_required=rewrite_required,
+            human_review_required=human_review_required,
+        ),
     }
 
 

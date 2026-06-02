@@ -163,6 +163,8 @@ def test_finalize_report_rewrite_required_with_edited_draft_publishes_edit() -> 
     assert output["quality_result"]["decision"] == "rewrite_required"
     assert output["quality_result"]["route"] == "rewrite"
     assert output["quality_result"]["rewrite_attempts"] == 1
+    assert output["quality_gate_metrics"]["rewrite_rate"] == 1.0
+    assert output["quality_gate_metrics"]["block_rate"] == 0.0
     assert output["final_report"].title == "Edited Daily Intelligence"
     assert output["final_report"].sections[0]["claim_grounding"][0]["claim_id"] == "claim-1"
     assert "Edited source-grounded summary." in output["report_markdown"]
@@ -302,6 +304,8 @@ def test_finalize_report_block_decision_creates_blocked_report() -> None:
     assert output["quality_result"]["decision"] == "blocked"
     assert output["quality_result"]["route"] == "blocked"
     assert output["quality_gate_metrics"]["blocked"] is True
+    assert output["quality_gate_metrics"]["sample_count"] == 1
+    assert output["quality_gate_metrics"]["block_rate"] == 1.0
     assert output["blocked_report"].reasons == ["source boundary violated"]
     assert output["blocked_report"].metadata["quality_score"] == 0.2
 

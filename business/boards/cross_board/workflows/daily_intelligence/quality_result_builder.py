@@ -9,6 +9,9 @@ from business.layers.analysis.quality import (
     QualityGateMetrics,
     QualityResult,
 )
+from business.boards.cross_board.workflows.daily_intelligence.quality_observability import (
+    quality_gate_observability_metrics,
+)
 
 
 def human_review_request(
@@ -50,13 +53,16 @@ def quality_gate_metrics(
     review: Any,
     rewrite_attempts: int,
     human_review_required: bool,
+    memory_quality_result: Any | None = None,
 ) -> QualityGateMetrics:
+    blocked = review.decision != EditorDecision.PASS
+    rewrite_required = review.decision == EditorDecision.REWRITE_REQUIRED
     return QualityGateMetrics(
         evidence_items_count=len(evidence_bundle.items),
         unsupported_urls_count=len(citation_check.unknown_urls) + len(citation_check.unsupported_urls),
         missing_section_sources_count=len(citation_check.missing_section_sources),
         unsupported_sections_count=len(support_matrix.unsupported_sections),
-        blocked=review.decision != EditorDecision.PASS,
+        blocked=blocked,
         decision=review.decision.value,
         citation_coverage_score=citation_check.citation_coverage_score,
         support_coverage=quality_summary.support_coverage,
@@ -69,7 +75,7 @@ def quality_gate_metrics(
         claim_support_score=citation_check.claim_support_score,
         section_source_coverage_score=citation_check.section_source_coverage_score,
         rewrite_attempts=rewrite_attempts,
-        rewrite_required=review.decision == EditorDecision.REWRITE_REQUIRED,
+        rewrite_required=rewrite_required,
         human_review_required=human_review_required,
         unknown_urls_count=len(citation_check.unknown_urls),
         unsupported_evidence_ids_count=len(citation_check.unsupported_evidence_ids),
@@ -77,6 +83,12 @@ def quality_gate_metrics(
         citation_failure_categories=[
             category.code for category in citation_check.failure_categories
         ],
+        **quality_gate_observability_metrics(
+            blocked=blocked,
+            rewrite_required=rewrite_required,
+            human_review_required=human_review_required,
+            memory_quality_result=memory_quality_result,
+        ),
     )
 
 

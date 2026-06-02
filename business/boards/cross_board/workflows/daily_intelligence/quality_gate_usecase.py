@@ -240,6 +240,7 @@ def _build_quality_outputs(
         review=evaluation.review,
         rewrite_attempts=evaluation.rewrite_attempts,
         human_review_required=evaluation.human_review_required,
+        memory_quality_result=context.memory_quality_result,
     )
     quality_route = build_quality_route(
         review=evaluation.review,

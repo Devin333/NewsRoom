@@ -87,6 +87,16 @@ class QualityGateMetrics:
     unsupported_evidence_ids_count: int = 0
     citation_failure_category_count: int = 0
     citation_failure_categories: list[str] = field(default_factory=list)
+    sample_count: int = 1
+    block_count: int = 0
+    rewrite_count: int = 0
+    human_review_count: int = 0
+    memory_conflict_count: int = 0
+    memory_conflict_run_count: int = 0
+    block_rate: float = 0.0
+    rewrite_rate: float = 0.0
+    human_review_rate: float = 0.0
+    memory_conflict_rate: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -113,6 +123,16 @@ class QualityGateMetrics:
             "unsupported_evidence_ids_count": self.unsupported_evidence_ids_count,
             "citation_failure_category_count": self.citation_failure_category_count,
             "citation_failure_categories": list(self.citation_failure_categories),
+            "sample_count": self.sample_count,
+            "block_count": self.block_count,
+            "rewrite_count": self.rewrite_count,
+            "human_review_count": self.human_review_count,
+            "memory_conflict_count": self.memory_conflict_count,
+            "memory_conflict_run_count": self.memory_conflict_run_count,
+            "block_rate": self.block_rate,
+            "rewrite_rate": self.rewrite_rate,
+            "human_review_rate": self.human_review_rate,
+            "memory_conflict_rate": self.memory_conflict_rate,
         }
 
 

@@ -130,6 +130,9 @@ def test_quality_gate_records_memory_quality_metadata_without_blocking() -> None
     assert output["memory_quality_result"]["passed"] is False
     assert output["memory_quality_result"]["issues"][0]["issue_type"] == "claim_conflict"
     assert output["quality_result"].metadata["memory_quality_result"]["metadata"]["conflict_count"] == 1
+    assert output["quality_gate_metrics"].memory_conflict_count == 1
+    assert output["quality_gate_metrics"].memory_conflict_rate == 1.0
+    assert output["quality_gate_metrics"].block_rate == 0.0
     assert output["final_report"].metadata["memory_quality_result"]["memory_available"] is True
     assert any(event.event_type == "memory_quality_checked" for event in output["quality_events"])
 

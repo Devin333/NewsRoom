@@ -72,6 +72,8 @@ daily intelligence 的 `quality_gate_step.py` 是 workflow adapter，只负责�
 
 质量评估、rewrite 尝试、non-social-media bypass、human review request、memory quality metadata 投影、final/blocked report 输出构建由 `quality_gate_usecase.py` 的 `evaluate_daily_quality_gate()` 承载。该 usecase 不依赖 `framework.workflow`，可脱离 `DataBuffer` 单独测试。
 
+quality gate 的单次运行观测指标由 `quality_observability.py` 构建，输出可聚合的 count/rate 字段（例如 block、rewrite、human review、memory conflict）。workflow step 不维护历史窗口；窗口聚合应由 artifact/storage/monitoring 层消费这些正式指标完成。
+
 新增 quality gate 规则时，应优先扩展 usecase 输入模型或拆分 quality routing/output 子服务，不要把业务分支重新写回 workflow step。
 
 non-social-media bypass 判定统一由 `quality_gate_policy.assess_non_social_media_bypass()` 返回，quality gate 和 report finalization 只能消费该 assessment，不应各自重新判断或拼接 bypass 事件字段。
