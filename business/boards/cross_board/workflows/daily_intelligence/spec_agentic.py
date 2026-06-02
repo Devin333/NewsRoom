@@ -15,6 +15,9 @@ from business.boards.cross_board.workflows.daily_intelligence.source_evidence_st
 from business.boards.cross_board.workflows.daily_intelligence.buffer_key_aliases import (
     with_namespaced_write_keys,
 )
+from business.boards.cross_board.workflows.daily_intelligence.workflow_runtime_policy import (
+    daily_workflow_runtime_policy,
+)
 
 
 AGENTIC_WORKFLOW_ID = "daily-intelligence-agentic"
@@ -53,6 +56,7 @@ def build_agentic_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
             EdgeSpec("editor-to-feedback", "editor_agent", "collect_agent_feedback"),
             EdgeSpec("feedback-to-finalize", "collect_agent_feedback", "finalize_report"),
         ],
+        policies=daily_workflow_runtime_policy(),
         metadata={"profile": profile, "product_path": profile == PROFILE_AGENTIC_LIVE},
     )
 

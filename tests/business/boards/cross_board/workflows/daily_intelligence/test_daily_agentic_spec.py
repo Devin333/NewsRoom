@@ -3,6 +3,7 @@ from __future__ import annotations
 from framework.specs import StepType
 from framework.workflow import FunctionStepRegistry, WorkflowCompiler
 from framework.workflow.runners.step_runner import build_default_step_runner_registry
+from framework.workflow.runtime.timeout import workflow_timeout_budget
 from business.boards.cross_board.workflows.daily_intelligence import build_agentic_daily_intelligence_workflow
 from business.boards.cross_board.workflows.daily_intelligence.agent_registry import (
     PROFILE_AGENTIC_OFFLINE,
@@ -22,6 +23,9 @@ from business.boards.cross_board.workflows.daily_intelligence.agents import (
 from business.boards.cross_board.workflows.daily_intelligence.source_evidence_steps import (
     build_source_and_evidence_steps,
 )
+from business.boards.cross_board.workflows.daily_intelligence.workflow_runtime_policy import (
+    DAILY_WORKFLOW_TIMEOUT_SECONDS,
+)
 
 
 def test_agentic_daily_workflow_start_and_terminal_steps() -> None:
@@ -30,6 +34,16 @@ def test_agentic_daily_workflow_start_and_terminal_steps() -> None:
     assert workflow.start_step_id == "collect_sources"
     assert workflow.terminal_step_ids == ["finalize_report"]
     assert workflow.workflow_id == "daily-intelligence-agentic"
+
+
+def test_agentic_daily_workflow_declares_global_timeout_budget() -> None:
+    workflow = build_agentic_daily_intelligence_workflow(PROFILE_AGENTIC_OFFLINE)
+    budget = workflow_timeout_budget(workflow, started_monotonic=10.0)
+
+    assert workflow.policies.timeout_policy.timeout_seconds == DAILY_WORKFLOW_TIMEOUT_SECONDS
+    assert budget is not None
+    assert budget.timeout_seconds == DAILY_WORKFLOW_TIMEOUT_SECONDS
+    assert budget.policy_source == "policies.timeout_policy.timeout_seconds"
 
 
 def test_agentic_daily_workflow_declares_agent_steps() -> None:

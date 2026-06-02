@@ -33,6 +33,14 @@ daily intelligence 的普通 Runner 和 agentic Runner 都以 `DailyIntelligence
 
 新增 Runner 入口时，应优先接收或构建 `DailyIntelligenceRuntime`，再按需投影 workflow-specific adapter；不要重新引入动态属性绑定或并行的初始化路径。
 
+## Daily Workflow Timeout 边界
+
+daily intelligence 的全局运行时预算声明在业务 workflow spec 中，通过 `daily_workflow_runtime_policy()` 生成 `WorkflowPolicySpec`，由 `framework.workflow.runtime` 统一执行。
+
+- workflow-level timeout 是整条 workflow 的兜底预算，用来防止 source collection、agent loop、report finalization 或 quality gate 的组合运行无限延长。
+- connector、tool、LLM client 的 timeout 仍是各自外部调用的局部保护，不能替代 workflow-level timeout。
+- 新增 daily workflow profile 时，应复用或显式扩展该 runtime policy，不要把全局超时写入 `metadata` 或散落在 runner 装配逻辑里。
+
 ## Workflow Buffer Collection 规则
 
 workflow step 从 buffer 读取 list/tuple 类型集合时，应把读取值视为借用值，不能原地修改。

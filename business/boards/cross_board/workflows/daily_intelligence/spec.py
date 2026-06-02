@@ -12,6 +12,10 @@ from business.boards.cross_board.workflows.daily_intelligence.source_evidence_st
 from business.boards.cross_board.workflows.daily_intelligence.buffer_key_aliases import (
     with_namespaced_write_keys,
 )
+from business.boards.cross_board.workflows.daily_intelligence.workflow_runtime_policy import (
+    daily_workflow_runtime_policy,
+)
+
 WORKFLOW_ID = LEGACY_DAILY_WORKFLOW_ID
 WORKFLOW_VERSION = "0.1.0"
 
@@ -82,6 +86,7 @@ def build_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
             EdgeSpec("evidence-to-draft", "build_evidence", "draft_report"),
             EdgeSpec("draft-to-quality", "draft_report", "quality_gate"),
         ],
+        policies=daily_workflow_runtime_policy(),
         metadata={"profile": profile, "product_path": profile == PROFILE_LIVE},
     )
 

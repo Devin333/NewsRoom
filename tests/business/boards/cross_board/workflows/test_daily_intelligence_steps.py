@@ -6,6 +6,7 @@ import pytest
 
 from framework.specs import WorkflowStatus
 from framework.workflow import DataBuffer
+from framework.workflow.runtime.timeout import workflow_timeout_budget
 from business.foundation.models.source import RawSourceItem, SourceError, SourcePipelineMetrics, SourceType
 from business.boards.cross_board.workflows.daily_intelligence.spec import (
     PROFILE_LIVE,
@@ -26,6 +27,9 @@ from business.boards.cross_board.workflows.daily_intelligence.steps import (
     require_sources,
 )
 from business.boards.cross_board.workflows.daily_intelligence import source_processing
+from business.boards.cross_board.workflows.daily_intelligence.workflow_runtime_policy import (
+    DAILY_WORKFLOW_TIMEOUT_SECONDS,
+)
 
 
 def test_daily_intelligence_workflow_spec_is_valid_and_profile_aware() -> None:
@@ -66,6 +70,16 @@ def test_daily_intelligence_workflow_spec_is_valid_and_profile_aware() -> None:
     assert "historian_context" in draft_step.write_keys
     assert "historian_context" in quality_step.metadata["optional_read_keys"]
     assert "memory_query_repository" in quality_step.metadata["optional_read_keys"]
+
+
+def test_daily_intelligence_workflow_declares_global_timeout_budget() -> None:
+    workflow = build_daily_intelligence_workflow(PROFILE_LIVE)
+    budget = workflow_timeout_budget(workflow, started_monotonic=10.0)
+
+    assert workflow.policies.timeout_policy.timeout_seconds == DAILY_WORKFLOW_TIMEOUT_SECONDS
+    assert budget is not None
+    assert budget.timeout_seconds == DAILY_WORKFLOW_TIMEOUT_SECONDS
+    assert budget.policy_source == "policies.timeout_policy.timeout_seconds"
 
 
 def test_daily_source_and_quality_steps_declare_namespaced_alias_write_keys() -> None:
