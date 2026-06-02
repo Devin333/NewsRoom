@@ -141,8 +141,8 @@ selection、quality、references 等领域规则位于 `business/boards/domain/`
 - `ProductizedBoardOutputBundleBuilder` 负责 artifact-facing metadata 合并，并生成 `ProductizedBoardOutputBundle`。
 - `ProductizedBoardOutputBundleBuilder` 不再把完整 `ProductizedRunState` 合并进 `BoardRunResult.metadata`；运行态通过 `ProductizedBoardOutputBundle.run_state` 和 workflow `productized_run` key 传递。
 - `ProductizedRunStateMetadataProjector` 负责把 run state 投影成 artifact-facing 或历史兼容 metadata；`ProductizedRunState` 本身只作为正式运行态模型，旧 metadata 方法仅作薄兼容入口。
-- `ProductizedImprovementWorkflowService` 负责 recommendation、proposal、policy experiment application、measurement 和 report 输出。
-- `ProductizedImprovementWorkflowService` 的 measurement 输入优先消费正式 `ProductizedRunState`，例如从 `deduplication_result` 计算 duplicate rate；`metadata` 仅作为历史 board result 兜底。
+- `ProductizedImprovementWorkflowService` 负责 recommendation、proposal、policy experiment application 和 report 输出协调。
+- `ProductizedImprovementMeasurementService` 负责 measurement snapshot 和 delta 计算，输入优先消费正式 `ProductizedRunState`，例如从 `deduplication_result` 计算 duplicate rate；`metadata` 仅作为历史 board result 兜底。
 
 跨 step 的运行态中间结果使用 `ProductizedRunState`。`metadata` 只保留对外 artifact 和历史兼容字段。
 

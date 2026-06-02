@@ -6,6 +6,7 @@ from business.boards.productized.entity_extraction import ProductizedEntityExtra
 from business.boards.productized.evidence import ProductizedEvidenceService
 from business.boards.productized.feedback import ProductizedFeedbackLearningService
 from business.boards.productized.improvement import ProductizedImprovementWorkflowService
+from business.boards.productized.measurement import ProductizedImprovementMeasurementService
 from business.boards.productized.metadata import ProductizedRunStateMetadataProjector
 from business.boards.productized.models import (
     ProductizedBoardOutputBundle,
@@ -41,6 +42,7 @@ __all__ = [
     "ProductizedEvidenceService",
     "ProductizedFeedbackLearningService",
     "ProductizedImprovementWorkflowService",
+    "ProductizedImprovementMeasurementService",
     "ProductizedQualityService",
     "ProductizedQualitySummaryService",
     "ProductizedRankingService",

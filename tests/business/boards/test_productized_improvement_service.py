@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 from business.boards._improvement import BoardImprovementService
-from business.boards.productized import ProductizedImprovementWorkflowService, ProductizedRunState
+from business.boards.productized import (
+    ProductizedImprovementMeasurementService,
+    ProductizedImprovementWorkflowService,
+    ProductizedRunState,
+)
 from business.foundation import BoardType
 
 
@@ -36,10 +40,7 @@ def test_productized_improvement_workflow_service_builds_outputs_from_request() 
 
 
 def test_productized_improvement_measurement_reads_formal_productized_run_state() -> None:
-    service = ProductizedImprovementWorkflowService(
-        improvement_service=BoardImprovementService(),
-        board_type=BoardType.AI_NEWS,
-    )
+    service = ProductizedImprovementMeasurementService()
     productized_run = ProductizedRunState(
         board_type=BoardType.AI_NEWS,
         run_id="improvement-run",
@@ -51,21 +52,16 @@ def test_productized_improvement_measurement_reads_formal_productized_run_state(
         },
     )
 
-    result = service.build_outputs(
-        request={
-            "run_id": "improvement-run",
-            "previous_measurement_baseline": {"duplicate_rate": 0.0},
-        },
+    measurement = service.measure(
+        previous_baseline={"duplicate_rate": 0.0},
         board_run_result=StubBoardRunResult(),
         quality_summary={"score": 0.72},
         cards=[{"card_id": "card-1", "evidence_refs": [{"source_id": "source-1"}]}],
-        feedback_events=[],
-        learning_signals=[],
         subscription_payload={"targets": [{"topic": "Agent Memory"}]},
         productized_run=productized_run,
     )
 
-    assert result["improvement_measurement"]["duplicate_rate_delta"] == 0.5
+    assert measurement.to_dict()["duplicate_rate_delta"] == 0.5
 
 
 def test_productized_improvement_workflow_service_requires_board_type_for_outputs() -> None:
