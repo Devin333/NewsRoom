@@ -17,7 +17,6 @@ from business.boards.cross_board.workflows.daily_intelligence.source_config impo
     build_default_source_registry,
 )
 from business.boards.cross_board.workflows.daily_intelligence.source_connector_bundle import (
-    CONNECTOR_FIELD_NAMES,
     DailySourceConnectorBundle,
 )
 from business.boards.cross_board.workflows.daily_intelligence.source_connector_factory import (
@@ -61,7 +60,17 @@ class DailySourceRuntimeAssembly:
     @property
     def connector_bundle(self) -> DailySourceConnectorBundle:
         return DailySourceConnectorBundle(
-            **{field_name: getattr(self, field_name) for field_name in CONNECTOR_FIELD_NAMES}
+            feed_connector=self.feed_connector,
+            html_connector=self.html_connector,
+            manual_connector=self.manual_connector,
+            arxiv_connector=self.arxiv_connector,
+            github_connector=self.github_connector,
+            hackernews_connector=self.hackernews_connector,
+            reddit_connector=self.reddit_connector,
+            lobsters_connector=self.lobsters_connector,
+            stackoverflow_connector=self.stackoverflow_connector,
+            devto_connector=self.devto_connector,
+            medium_connector=self.medium_connector,
         )
 
 
@@ -159,7 +168,17 @@ def build_daily_source_runtime_assembly(
     resolved_source_health_manager = source_health_manager or BasicSourceHealthManager()
     source_dispatcher = SourceDispatcher(
         source_registry=resolved_source_registry,
-        **{field_name: getattr(connector_bundle, field_name) for field_name in CONNECTOR_FIELD_NAMES},
+        feed_connector=connector_bundle.feed_connector,
+        html_connector=connector_bundle.html_connector,
+        manual_connector=connector_bundle.manual_connector,
+        arxiv_connector=connector_bundle.arxiv_connector,
+        github_connector=connector_bundle.github_connector,
+        hackernews_connector=connector_bundle.hackernews_connector,
+        reddit_connector=connector_bundle.reddit_connector,
+        lobsters_connector=connector_bundle.lobsters_connector,
+        stackoverflow_connector=connector_bundle.stackoverflow_connector,
+        devto_connector=connector_bundle.devto_connector,
+        medium_connector=connector_bundle.medium_connector,
     )
     source_collector = DailySourceCollector(
         source_registry=resolved_source_registry,
@@ -168,28 +187,26 @@ def build_daily_source_runtime_assembly(
     )
     return DailySourceRuntimeAssembly(
         source_registry=resolved_source_registry,
-        **{field_name: getattr(connector_bundle, field_name) for field_name in CONNECTOR_FIELD_NAMES},
+        feed_connector=connector_bundle.feed_connector,
+        html_connector=connector_bundle.html_connector,
+        manual_connector=connector_bundle.manual_connector,
+        arxiv_connector=connector_bundle.arxiv_connector,
+        github_connector=connector_bundle.github_connector,
+        hackernews_connector=connector_bundle.hackernews_connector,
+        reddit_connector=connector_bundle.reddit_connector,
+        lobsters_connector=connector_bundle.lobsters_connector,
+        stackoverflow_connector=connector_bundle.stackoverflow_connector,
+        devto_connector=connector_bundle.devto_connector,
+        medium_connector=connector_bundle.medium_connector,
         source_health_manager=resolved_source_health_manager,
         source_dispatcher=source_dispatcher,
         source_collector=source_collector,
     )
 
 
-def apply_daily_source_runtime_assembly(owner: object, assembly: DailySourceRuntimeAssembly) -> None:
-    for field_name in (
-        "source_registry",
-        *CONNECTOR_FIELD_NAMES,
-        "source_health_manager",
-        "source_dispatcher",
-        "source_collector",
-    ):
-        setattr(owner, field_name, getattr(assembly, field_name))
-
-
 __all__ = [
     "DailyIntelligenceRuntime",
     "DailySourceRuntimeAssembly",
-    "apply_daily_source_runtime_assembly",
     "build_daily_intelligence_runtime",
     "build_daily_source_runtime_assembly",
 ]

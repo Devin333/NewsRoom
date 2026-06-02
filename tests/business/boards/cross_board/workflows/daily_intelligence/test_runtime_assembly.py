@@ -25,3 +25,13 @@ def test_legacy_source_runtime_assembly_still_available() -> None:
 
     assert isinstance(assembly, DailySourceRuntimeAssembly)
     assert assembly.connector_bundle.feed_connector is assembly.feed_connector
+
+
+def test_source_runtime_assembly_threads_connector_explicitly() -> None:
+    feed_connector = object()
+
+    assembly = build_daily_source_runtime_assembly(feed_connector=feed_connector)
+
+    assert assembly.feed_connector is feed_connector
+    assert assembly.source_dispatcher.feed_connector is feed_connector
+    assert assembly.connector_bundle.feed_connector is feed_connector

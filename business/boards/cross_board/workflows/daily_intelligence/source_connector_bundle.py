@@ -32,19 +32,4 @@ class DailySourceConnectorBundle:
     medium_connector: DailyMediumSourceConnector
 
 
-CONNECTOR_FIELD_NAMES = (
-    "feed_connector",
-    "html_connector",
-    "manual_connector",
-    "arxiv_connector",
-    "github_connector",
-    "hackernews_connector",
-    "reddit_connector",
-    "lobsters_connector",
-    "stackoverflow_connector",
-    "devto_connector",
-    "medium_connector",
-)
-
-
-__all__ = ["CONNECTOR_FIELD_NAMES", "DailySourceConnectorBundle"]
+__all__ = ["DailySourceConnectorBundle"]
