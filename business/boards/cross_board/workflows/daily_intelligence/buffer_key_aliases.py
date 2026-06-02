@@ -105,3 +105,7 @@ def with_namespaced_write_keys(keys: list[str]) -> list[str]:
         if namespaced_key and namespaced_key not in values:
             values.append(namespaced_key)
     return values
+
+
+def with_namespaced_read_keys(keys: list[str]) -> list[str]:
+    return with_namespaced_write_keys(keys)

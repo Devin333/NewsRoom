@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from framework.specs import StepSpec
 from business.boards.cross_board.workflows.daily_intelligence.buffer_key_aliases import (
+    with_namespaced_read_keys,
     with_namespaced_write_keys,
 )
 
@@ -50,21 +51,31 @@ def build_source_and_evidence_steps() -> list[StepSpec]:
         StepSpec(
             step_id="require_sources",
             implementation="daily.require_sources",
-            read_keys=["raw_items", "source_errors"],
+            read_keys=with_namespaced_read_keys(["raw_items", "source_errors"]),
             write_keys=with_namespaced_write_keys(["source_collection_status"]),
             required_output_keys=["source_collection_status"],
         ),
         StepSpec(
             step_id="normalize_sources",
             implementation="daily.normalize_sources",
-            read_keys=["raw_items", "source_errors", "source_events", "source_pipeline_metrics"],
+            read_keys=with_namespaced_read_keys([
+                "raw_items",
+                "source_errors",
+                "source_events",
+                "source_pipeline_metrics",
+            ]),
             write_keys=with_namespaced_write_keys(["normalized_items", "source_errors", "source_events", "source_pipeline_metrics"]),
             required_output_keys=["normalized_items", "source_errors", "source_events", "source_pipeline_metrics"],
         ),
         StepSpec(
             step_id="deduplicate_sources",
             implementation="daily.deduplicate_sources",
-            read_keys=["normalized_items", "source_errors", "source_events", "source_pipeline_metrics"],
+            read_keys=with_namespaced_read_keys([
+                "normalized_items",
+                "source_errors",
+                "source_events",
+                "source_pipeline_metrics",
+            ]),
             write_keys=with_namespaced_write_keys([
                 "deduplicated_items",
                 "source_errors",
@@ -83,7 +94,7 @@ def build_source_and_evidence_steps() -> list[StepSpec]:
         StepSpec(
             step_id="rank_sources",
             implementation="daily.rank_sources",
-            read_keys=[
+            read_keys=with_namespaced_read_keys([
                 "deduplicated_items",
                 "request",
                 "source_errors",
@@ -92,7 +103,7 @@ def build_source_and_evidence_steps() -> list[StepSpec]:
                 "source_selection_report",
                 "source_events",
                 "source_pipeline_metrics",
-            ],
+            ]),
             write_keys=with_namespaced_write_keys([
                 "ranked_items",
                 "source_errors",
@@ -123,7 +134,7 @@ def build_source_and_evidence_steps() -> list[StepSpec]:
         StepSpec(
             step_id="build_evidence",
             implementation="daily.build_evidence",
-            read_keys=["ranked_items"],
+            read_keys=with_namespaced_read_keys(["ranked_items"]),
             write_keys=with_namespaced_write_keys([
                 "evidence_bundle",
                 "evidence_scores",

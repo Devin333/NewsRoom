@@ -28,6 +28,7 @@ from business.boards.cross_board.workflows.daily_intelligence.buffer_key_aliases
 from business.foundation.models.source_error_normalization import normalize_source_errors
 from business.boards.cross_board.workflows.daily_intelligence.workflow_buffer_access import (
     append_buffer_items,
+    read_buffer_value,
 )
 
 
@@ -44,11 +45,11 @@ def source_event(event_type: str, source_id: str | None = None, **metadata: Any)
 
 
 def require_sources(buffer: StepScopedDataBufferView) -> dict[str, Any]:
-    raw_items = buffer.read("raw_items")
+    raw_items = read_buffer_value(buffer, "raw_items")
     if raw_items:
         return with_namespaced_aliases({"source_collection_status": "ready"})
 
-    source_errors = normalize_source_errors(buffer.read("source_errors"))
+    source_errors = normalize_source_errors(read_buffer_value(buffer, "source_errors"))
     error_types = [error.error_type for error in source_errors]
     raise AllSourcesFailedError(
         "all_sources_failed: no source items collected from enabled sources "
@@ -57,8 +58,8 @@ def require_sources(buffer: StepScopedDataBufferView) -> dict[str, Any]:
 
 
 def normalize_sources(buffer: StepScopedDataBufferView) -> dict[str, Any]:
-    raw_items = buffer.read("raw_items")
-    source_errors = normalize_source_errors(buffer.read("source_errors"))
+    raw_items = read_buffer_value(buffer, "raw_items")
+    source_errors = normalize_source_errors(read_buffer_value(buffer, "source_errors"))
     normalized_items = []
     normalization_errors: list[SourceError] = []
     for raw_item in raw_items:
@@ -82,7 +83,7 @@ def normalize_sources(buffer: StepScopedDataBufferView) -> dict[str, Any]:
             for error in normalization_errors
         ],
     )
-    metrics = buffer.read("source_pipeline_metrics")
+    metrics = read_buffer_value(buffer, "source_pipeline_metrics")
     metrics.normalized_items_count = len(normalized_items)
     for error in normalization_errors:
         metrics.record_error(error)
@@ -95,8 +96,8 @@ def normalize_sources(buffer: StepScopedDataBufferView) -> dict[str, Any]:
 
 
 def deduplicate_sources(buffer: StepScopedDataBufferView) -> dict[str, Any]:
-    normalized_items = buffer.read("normalized_items")
-    source_errors = normalize_source_errors(buffer.read("source_errors"))
+    normalized_items = read_buffer_value(buffer, "normalized_items")
+    source_errors = normalize_source_errors(read_buffer_value(buffer, "source_errors"))
     try:
         dedup_result = deduplicate_with_result(normalized_items)
         deduplicated_items = dedup_result.kept_items
@@ -125,7 +126,7 @@ def deduplicate_sources(buffer: StepScopedDataBufferView) -> dict[str, Any]:
             for error in dedup_errors
         ],
     )
-    metrics = buffer.read("source_pipeline_metrics")
+    metrics = read_buffer_value(buffer, "source_pipeline_metrics")
     metrics.deduplicated_items_count = len(deduplicated_items)
     metrics.duplicate_count = duplicate_count
     for error in dedup_errors:
@@ -140,9 +141,9 @@ def deduplicate_sources(buffer: StepScopedDataBufferView) -> dict[str, Any]:
 
 
 def rank_sources(buffer: StepScopedDataBufferView) -> dict[str, Any]:
-    request = buffer.read("request")
-    deduplicated_items = buffer.read("deduplicated_items")
-    source_errors = normalize_source_errors(buffer.read("source_errors"))
+    request = read_buffer_value(buffer, "request")
+    deduplicated_items = read_buffer_value(buffer, "deduplicated_items")
+    source_errors = normalize_source_errors(read_buffer_value(buffer, "source_errors"))
     try:
         ranked_items = rank_items(deduplicated_items, topic=request["topic"])
         ranking_errors: list[SourceError] = []
@@ -165,7 +166,7 @@ def rank_sources(buffer: StepScopedDataBufferView) -> dict[str, Any]:
             for error in ranking_errors
         ],
     )
-    metrics = buffer.read("source_pipeline_metrics")
+    metrics = read_buffer_value(buffer, "source_pipeline_metrics")
     metrics.ranked_items_count = len(ranked_items)
     for error in ranking_errors:
         metrics.record_error(error)
@@ -186,8 +187,8 @@ def rank_sources(buffer: StepScopedDataBufferView) -> dict[str, Any]:
         "source_coverage_report": build_source_coverage_report(
             metrics,
             source_errors=source_errors,
-            skipped_sources=buffer.read("skipped_sources"),
-            failed_sources=buffer.read("failed_sources"),
+            skipped_sources=read_buffer_value(buffer, "skipped_sources"),
+            failed_sources=read_buffer_value(buffer, "failed_sources"),
         ),
         "source_quality_scores": source_quality_scores,
         "source_quality_summary_report": source_quality_summary_report,
@@ -196,7 +197,7 @@ def rank_sources(buffer: StepScopedDataBufferView) -> dict[str, Any]:
         "source_traceability_report": source_traceability_report,
         "source_governance_report": build_source_governance_report(
             source_quality_scores=source_quality_scores,
-            source_selection_report=buffer.read("source_selection_report"),
+            source_selection_report=read_buffer_value(buffer, "source_selection_report"),
         ),
     })
 

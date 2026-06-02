@@ -58,6 +58,9 @@ def test_agentic_daily_workflow_declares_agent_steps() -> None:
         "evidence_bundle",
         "source_errors",
         "source_pipeline_metrics",
+        "evidence.bundle",
+        "sources.errors",
+        "sources.pipeline_metrics",
     ]
 
     assert steps["analyst_agent"].step_type == StepType.AGENT_LOOP
@@ -69,7 +72,9 @@ def test_agentic_daily_workflow_declares_agent_steps() -> None:
     assert steps["writer_agent"].implementation == WRITER_AGENT_ID
     assert "report.draft" in steps["writer_agent"].write_keys
     assert "agent_feedback_summary" in steps["writer_agent"].metadata["optional_read_keys"]
+    assert "agent.feedback.summary" in steps["writer_agent"].metadata["optional_read_keys"]
     assert "agent_feedback_loop_state" in steps["writer_agent"].metadata["optional_read_keys"]
+    assert "agent.feedback.loop_state" in steps["writer_agent"].metadata["optional_read_keys"]
 
     assert steps["verifier_agent"].step_type == StepType.AGENT_LOOP
     assert steps["verifier_agent"].metadata["agent_id"] == VERIFIER_AGENT_ID
@@ -91,20 +96,29 @@ def test_agentic_daily_workflow_declares_agent_steps() -> None:
         "verification_result",
         "citation_check_result",
         "support_matrix",
+        "quality.verification_result",
+        "quality.citation_check_result",
+        "quality.support_matrix",
     ]
     assert steps["collect_agent_feedback"].metadata["optional_read_keys"] == [
         "editor_review",
         "agent_feedback_loop_state",
+        "quality.editor_review",
+        "agent.feedback.loop_state",
     ]
     assert "agent.feedback.summary" in steps["collect_agent_feedback"].write_keys
     assert "agent.feedback.events" in steps["collect_agent_feedback"].write_keys
     assert "agent.feedback.route" in steps["collect_agent_feedback"].write_keys
     assert "agent.feedback.loop_state" in steps["collect_agent_feedback"].write_keys
     assert "agent_feedback_events" in steps["finalize_report"].read_keys
+    assert "agent.feedback.events" in steps["finalize_report"].read_keys
     assert "agent_feedback_route" in steps["finalize_report"].read_keys
+    assert "agent.feedback.route" in steps["finalize_report"].read_keys
     assert steps["finalize_report"].metadata["optional_read_keys"] == [
         "edited_report_draft",
         "editor_review",
+        "report.edited_draft",
+        "quality.editor_review",
     ]
     assert "quality.result" in steps["finalize_report"].write_keys
 

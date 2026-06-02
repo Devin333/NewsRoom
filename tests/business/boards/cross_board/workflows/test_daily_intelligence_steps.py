@@ -96,6 +96,20 @@ def test_daily_source_and_quality_steps_declare_namespaced_alias_write_keys() ->
     assert "report.final" in steps["quality_gate"].write_keys
 
 
+def test_daily_source_and_quality_steps_declare_namespaced_alias_read_keys() -> None:
+    workflow = build_daily_intelligence_workflow(PROFILE_LIVE)
+    steps = {step.step_id: step for step in workflow.steps}
+
+    assert "sources.raw_items" in steps["require_sources"].read_keys
+    assert "sources.normalized_items" in steps["deduplicate_sources"].read_keys
+    assert "sources.ranked_items" in steps["build_evidence"].read_keys
+    assert "evidence.bundle" in steps["draft_report"].read_keys
+    assert "sources.errors" in steps["draft_report"].read_keys
+    assert "report.draft" in steps["quality_gate"].read_keys
+    assert "quality.events" in steps["quality_gate"].read_keys
+    assert "memory.context" in steps["quality_gate"].metadata["optional_read_keys"]
+
+
 def test_require_sources_fails_with_source_error_summary() -> None:
     buffer = DataBuffer(
         {
@@ -157,6 +171,33 @@ def test_normalize_sources_returns_typed_source_errors() -> None:
 
     assert all(isinstance(error, SourceError) for error in output["source_errors"])
     assert output["source_errors"][0].error_type == "fetch_timeout"
+
+
+def test_normalize_sources_reads_namespaced_source_aliases() -> None:
+    metrics = SourcePipelineMetrics(sources_total=1, sources_fetched=1, raw_items_count=1)
+    buffer = DataBuffer(
+        {
+            "sources.raw_items": [_raw_item()],
+            "sources.errors": [],
+            "sources.events": [],
+            "sources.pipeline_metrics": metrics,
+        }
+    )
+
+    output = normalize_sources(
+        buffer.scope(
+            read_keys=[
+                "sources.raw_items",
+                "sources.errors",
+                "sources.events",
+                "sources.pipeline_metrics",
+            ],
+            write_keys=[],
+        )
+    )
+
+    assert len(output["normalized_items"]) == 1
+    assert output["source_pipeline_metrics"].normalized_items_count == 1
 
 
 def test_daily_source_steps_build_ranked_items_and_reports() -> None:

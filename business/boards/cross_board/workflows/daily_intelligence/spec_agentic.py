@@ -13,6 +13,7 @@ from business.boards.cross_board.workflows.daily_intelligence.source_evidence_st
     build_source_and_evidence_steps,
 )
 from business.boards.cross_board.workflows.daily_intelligence.buffer_key_aliases import (
+    with_namespaced_read_keys,
     with_namespaced_write_keys,
 )
 from business.boards.cross_board.workflows.daily_intelligence.workflow_runtime_policy import (
@@ -89,7 +90,12 @@ def _planner_agent_step() -> StepSpec:
         name="Planner Agent",
         implementation=PLANNER_AGENT_ID,
         step_type=StepType.AGENT_LOOP,
-        read_keys=["request", "evidence_bundle", "source_errors", "source_pipeline_metrics"],
+        read_keys=with_namespaced_read_keys([
+            "request",
+            "evidence_bundle",
+            "source_errors",
+            "source_pipeline_metrics",
+        ]),
         write_keys=[
             "research_plan",
             "planner_notes",
@@ -114,13 +120,13 @@ def _analyst_agent_step() -> StepSpec:
         name="Analyst Agent",
         implementation=ANALYST_AGENT_ID,
         step_type=StepType.AGENT_LOOP,
-        read_keys=[
+        read_keys=with_namespaced_read_keys([
             "request",
             "research_plan",
             "evidence_bundle",
             "source_errors",
             "source_pipeline_metrics",
-        ],
+        ]),
         write_keys=[
             "analysis_result",
             "analyst_notes",
@@ -145,7 +151,7 @@ def _writer_agent_step() -> StepSpec:
         name="Writer Agent",
         implementation=WRITER_AGENT_ID,
         step_type=StepType.AGENT_LOOP,
-        read_keys=[
+        read_keys=with_namespaced_read_keys([
             "request",
             "research_plan",
             "analysis_result",
@@ -153,7 +159,7 @@ def _writer_agent_step() -> StepSpec:
             "evidence_bundle",
             "source_errors",
             "source_pipeline_metrics",
-        ],
+        ]),
         write_keys=with_namespaced_write_keys([
             "report_draft",
             "writer_notes",
@@ -170,7 +176,7 @@ def _writer_agent_step() -> StepSpec:
                 WRITER_AGENT_ID,
                 prefix="writer",
             ),
-            "optional_read_keys": [
+            "optional_read_keys": with_namespaced_read_keys([
                 "citation_check_result",
                 "support_matrix",
                 "verification_result",
@@ -178,7 +184,7 @@ def _writer_agent_step() -> StepSpec:
                 "agent_feedback_summary",
                 "agent_feedback_route",
                 "agent_feedback_loop_state",
-            ],
+            ]),
         },
     )
 
@@ -189,12 +195,12 @@ def _verifier_agent_step() -> StepSpec:
         name="Verifier Agent",
         implementation=VERIFIER_AGENT_ID,
         step_type=StepType.AGENT_LOOP,
-        read_keys=[
+        read_keys=with_namespaced_read_keys([
             "report_draft",
             "evidence_bundle",
             "candidate_claims",
             "verified_findings",
-        ],
+        ]),
         write_keys=with_namespaced_write_keys([
             "citation_check_result",
             "support_matrix",
@@ -221,13 +227,13 @@ def _editor_agent_step() -> StepSpec:
         name="Editor Agent",
         implementation=EDITOR_AGENT_ID,
         step_type=StepType.AGENT_LOOP,
-        read_keys=[
+        read_keys=with_namespaced_read_keys([
             "report_draft",
             "verification_result",
             "citation_check_result",
             "support_matrix",
             "evidence_bundle",
-        ],
+        ]),
         write_keys=with_namespaced_write_keys([
             "editor_review",
             "edited_report_draft",
@@ -252,7 +258,7 @@ def _finalize_report_step() -> StepSpec:
         step_id="finalize_report",
         implementation="daily.finalize_report",
         step_type=StepType.FUNCTION,
-        read_keys=[
+        read_keys=with_namespaced_read_keys([
             "request",
             "report_draft",
             "verification_result",
@@ -264,7 +270,7 @@ def _finalize_report_step() -> StepSpec:
             "agent_feedback_events",
             "agent_feedback_summary",
             "agent_feedback_route",
-        ],
+        ]),
         write_keys=with_namespaced_write_keys([
             "report_quality_summary",
             "quality_events",
@@ -278,7 +284,12 @@ def _finalize_report_step() -> StepSpec:
             "blocked_report",
         ]),
         required_output_keys=["quality_result", "quality_gate_metrics"],
-        metadata={"optional_read_keys": ["edited_report_draft", "editor_review"]},
+        metadata={
+            "optional_read_keys": with_namespaced_read_keys([
+                "edited_report_draft",
+                "editor_review",
+            ])
+        },
     )
 
 
@@ -287,11 +298,11 @@ def _collect_agent_feedback_step() -> StepSpec:
         step_id="collect_agent_feedback",
         implementation="daily.collect_agent_feedback",
         step_type=StepType.FUNCTION,
-        read_keys=[
+        read_keys=with_namespaced_read_keys([
             "verification_result",
             "citation_check_result",
             "support_matrix",
-        ],
+        ]),
         write_keys=with_namespaced_write_keys([
             "agent_feedback_events",
             "agent_feedback_summary",
@@ -299,7 +310,12 @@ def _collect_agent_feedback_step() -> StepSpec:
             "agent_feedback_loop_state",
         ]),
         required_output_keys=["agent_feedback_summary"],
-        metadata={"optional_read_keys": ["editor_review", "agent_feedback_loop_state"]},
+        metadata={
+            "optional_read_keys": with_namespaced_read_keys([
+                "editor_review",
+                "agent_feedback_loop_state",
+            ])
+        },
     )
 
 

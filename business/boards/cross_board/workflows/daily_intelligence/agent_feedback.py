@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from framework.workflow import DataBufferReadPermissionError, StepScopedDataBufferView
+from framework.workflow import StepScopedDataBufferView
 from business.boards.cross_board.workflows.daily_intelligence.agent_feedback_models import (
     HUMAN_REVIEW_TARGET,
     PUBLICATION_GATE_TARGET,
@@ -19,6 +19,9 @@ from business.boards.cross_board.workflows.daily_intelligence.agents import (
 )
 from business.boards.cross_board.workflows.daily_intelligence.buffer_key_aliases import (
     with_namespaced_aliases,
+)
+from business.boards.cross_board.workflows.daily_intelligence.workflow_buffer_access import (
+    read_optional_buffer_value,
 )
 
 
@@ -341,12 +344,7 @@ def _dict_value(value: Any) -> dict[str, Any]:
 
 
 def _optional_buffer_dict(buffer: StepScopedDataBufferView, key: str) -> dict[str, Any]:
-    try:
-        if not buffer.exists(key):
-            return {}
-        return _dict_value(buffer.read(key, required=False))
-    except DataBufferReadPermissionError:
-        return {}
+    return _dict_value(read_optional_buffer_value(buffer, key))
 
 
 def _list_value(value: Any) -> list[Any]:

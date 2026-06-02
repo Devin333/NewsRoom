@@ -10,6 +10,7 @@ from business.boards.cross_board.workflows.daily_intelligence.source_evidence_st
     build_source_and_evidence_steps,
 )
 from business.boards.cross_board.workflows.daily_intelligence.buffer_key_aliases import (
+    with_namespaced_read_keys,
     with_namespaced_write_keys,
 )
 from business.boards.cross_board.workflows.daily_intelligence.workflow_runtime_policy import (
@@ -33,14 +34,24 @@ def build_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
             StepSpec(
                 step_id="draft_report",
                 implementation="daily.draft_report",
-                read_keys=["request", "evidence_bundle", "source_errors", "source_pipeline_metrics"],
+                read_keys=with_namespaced_read_keys([
+                    "request",
+                    "evidence_bundle",
+                    "source_errors",
+                    "source_pipeline_metrics",
+                ]),
                 write_keys=with_namespaced_write_keys(["report_draft", "memory_context", "historian_context"]),
                 required_output_keys=["report_draft"],
             ),
             StepSpec(
                 step_id="quality_gate",
                 implementation="daily.quality_gate",
-                read_keys=["report_draft", "evidence_bundle", "verified_findings", "quality_events"],
+                read_keys=with_namespaced_read_keys([
+                    "report_draft",
+                    "evidence_bundle",
+                    "verified_findings",
+                    "quality_events",
+                ]),
                 write_keys=with_namespaced_write_keys([
                     "citation_check_result",
                     "editor_review",
@@ -69,11 +80,11 @@ def build_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
                     "quality_result",
                 ],
                 metadata={
-                    "optional_read_keys": [
+                    "optional_read_keys": with_namespaced_read_keys([
                         "memory_context",
                         "historian_context",
                         "memory_query_repository",
-                    ]
+                    ])
                 },
             ),
         ],

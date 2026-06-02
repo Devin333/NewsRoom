@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from business.boards.cross_board.workflows.daily_intelligence.buffer_key_aliases import (
     with_namespaced_aliases,
+    with_namespaced_read_keys,
     with_namespaced_write_keys,
 )
 
@@ -37,4 +38,20 @@ def test_with_namespaced_write_keys_declares_aliases_after_legacy_keys() -> None
         "sources.errors",
         "quality.events",
         "quality.verification_result",
+    ]
+
+
+def test_with_namespaced_read_keys_declares_aliases_after_legacy_keys() -> None:
+    keys = with_namespaced_read_keys(
+        ["report_draft", "evidence_bundle", "quality_events", "unmapped"]
+    )
+
+    assert keys == [
+        "report_draft",
+        "evidence_bundle",
+        "quality_events",
+        "unmapped",
+        "report.draft",
+        "evidence.bundle",
+        "quality.events",
     ]

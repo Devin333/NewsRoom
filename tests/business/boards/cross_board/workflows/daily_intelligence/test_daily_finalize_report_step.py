@@ -103,6 +103,61 @@ def test_finalize_report_projects_agent_feedback_metadata() -> None:
     assert output["report.final"] == output["final_report"]
 
 
+def test_finalize_report_reads_namespaced_report_quality_evidence_and_feedback_keys() -> None:
+    output = finalize_report(
+        DataBuffer(
+            {
+                "request": {"topic": "AI policy", "run_id": "run-1"},
+                "report.draft": _report_draft(),
+                "quality.editor_review": _editor_review("pass"),
+                "quality.verification_result": {
+                    "status": "pass",
+                    "unsupported_claims": [],
+                    "missing_citations": [],
+                    "risk_level": "low",
+                    "reasons": [],
+                    "grounded_claims": [
+                        {
+                            "claim_id": "claim-1",
+                            "section_id": "summary",
+                            "status": "supported",
+                            "evidence_ids": ["ev-1"],
+                            "source_urls": ["https://example.com/source"],
+                            "reason": "explicit grounding",
+                        }
+                    ],
+                },
+                "quality.citation_check_result": {"passed": True, "unsupported_claims": []},
+                "quality.support_matrix": {"coverage_ratio": 1.0, "unsupported_sections": []},
+                "evidence.bundle": _evidence_bundle(),
+                "evidence.verified_findings": _verified_findings(),
+                "quality.events": [],
+                "agent.feedback.events": [{"feedback_id": "feedback-1"}],
+                "agent.feedback.summary": {"event_count": 1},
+            }
+        ).scope(
+            read_keys=[
+                "request",
+                "report.draft",
+                "quality.verification_result",
+                "quality.citation_check_result",
+                "quality.support_matrix",
+                "evidence.bundle",
+                "evidence.verified_findings",
+                "quality.events",
+                "agent.feedback.events",
+                "agent.feedback.summary",
+            ],
+            optional_read_keys=["quality.editor_review"],
+            write_keys=[],
+        )
+    )
+
+    assert output["quality_result"]["passed"] is True
+    assert output["final_report"].title == "Daily Intelligence: AI policy"
+    assert output["final_report"].metadata["agent_feedback_event_count"] == 1
+
+
 def test_finalize_report_applies_block_feedback_policy_under_strict_gate() -> None:
     output = finalize_report(
         _buffer(

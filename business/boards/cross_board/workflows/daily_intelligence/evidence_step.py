@@ -8,10 +8,16 @@ from business.layers.analysis.quality import QualityEvent
 from business.boards.cross_board.workflows.daily_intelligence.buffer_key_aliases import (
     with_namespaced_aliases,
 )
+from business.boards.cross_board.workflows.daily_intelligence.workflow_buffer_access import (
+    read_buffer_value,
+)
 
 
 def build_evidence(buffer: StepScopedDataBufferView) -> dict[str, Any]:
-    build_result = EvidenceBuilder().build_with_scores(buffer.read("ranked_items"), bundle_id="daily")
+    build_result = EvidenceBuilder().build_with_scores(
+        read_buffer_value(buffer, "ranked_items"),
+        bundle_id="daily",
+    )
     bundle = build_result.bundle
     if not bundle.items:
         raise RuntimeError("no valid evidence built from ranked sources")

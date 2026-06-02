@@ -88,6 +88,43 @@ def test_report_writer_normalizes_source_errors_before_source_notes() -> None:
     assert "Observed source error types: fetch_timeout." in source_notes["content"]
 
 
+def test_report_writer_reads_namespaced_source_and_evidence_keys() -> None:
+    output = ReportWriter().draft_report(
+        DataBuffer(
+            {
+                "request": {"topic": "AI policy"},
+                "evidence.bundle": _evidence_bundle(),
+                "sources.errors": [
+                    {
+                        "source_id": "feed-1",
+                        "error_type": "fetch_timeout",
+                        "error_message": "timeout",
+                    }
+                ],
+                "sources.pipeline_metrics": SourcePipelineMetrics(
+                    sources_total=2,
+                    sources_fetched=1,
+                    sources_failed=1,
+                ),
+            }
+        ).scope(
+            read_keys=[
+                "request",
+                "evidence.bundle",
+                "sources.errors",
+                "sources.pipeline_metrics",
+            ],
+            write_keys=[],
+        ),
+        PROFILE_LIVE_OFFLINE,
+    )
+
+    source_notes = next(
+        section for section in output["report_draft"]["sections"] if section["title"] == "Source Notes"
+    )
+    assert "Observed source error types: fetch_timeout." in source_notes["content"]
+
+
 def test_report_writer_attaches_historian_context_when_available() -> None:
     writer = ReportWriter(historian_context_adapter=HistorianContextAdapter(HistorianAgent(_HistorianContextService())))
 
@@ -145,6 +182,46 @@ def test_quality_gate_records_memory_quality_metadata_without_blocking() -> None
     assert output["quality_gate_metrics"].block_rate == 0.0
     assert output["final_report"].metadata["memory_quality_result"]["memory_available"] is True
     assert any(event.event_type == "memory_quality_checked" for event in output["quality_events"])
+
+
+def test_quality_gate_reads_namespaced_report_evidence_quality_and_memory_keys() -> None:
+    buffer = DataBuffer(
+        {
+            "report.draft": _report_draft(),
+            "evidence.bundle": _evidence_bundle(),
+            "evidence.verified_findings": VerifiedFindings(),
+            "quality.events": [],
+            "memory.context": {
+                "query": "AI policy",
+                "topic": "AI policy",
+                "claims": [],
+                "events": [],
+                "evidence": [],
+                "entities": [],
+                "decisions": [],
+                "preferences": [],
+                "conflicts": [{"issue_type": "claim_conflict", "message": "Historical claim conflict"}],
+                "metadata": {"memory_available": True},
+            },
+        }
+    )
+
+    output = quality_gate(
+        buffer.scope(
+            read_keys=[
+                "report.draft",
+                "evidence.bundle",
+                "evidence.verified_findings",
+                "quality.events",
+            ],
+            optional_read_keys=["memory.context"],
+            write_keys=[],
+        )
+    )
+
+    assert output["quality_result"].decision == "pass"
+    assert output["memory_quality_result"]["passed"] is False
+    assert output["quality_result"].metadata["memory_quality_result"]["metadata"]["conflict_count"] == 1
 
 
 def test_quality_gate_usecase_runs_without_workflow_buffer() -> None:

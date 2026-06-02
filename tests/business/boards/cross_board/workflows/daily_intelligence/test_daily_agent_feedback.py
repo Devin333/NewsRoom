@@ -64,6 +64,42 @@ def test_collect_agent_feedback_records_verifier_and_editor_rewrite_requests() -
     }
 
 
+def test_collect_agent_feedback_reads_namespaced_quality_and_feedback_keys() -> None:
+    output = collect_agent_feedback(
+        DataBuffer(
+            {
+                "quality.verification_result": {
+                    "status": "needs_rewrite",
+                    "risk_level": "medium",
+                    "unsupported_claims": ["unsupported claim"],
+                    "missing_citations": [],
+                    "reasons": ["rewrite unsupported claim"],
+                },
+                "quality.citation_check_result": {},
+                "quality.support_matrix": {},
+                "agent.feedback.loop_state": {
+                    "rewrite_rounds": 1,
+                    "max_rewrite_rounds": 1,
+                    "rewrite_requested": True,
+                    "rewrite_exhausted": False,
+                },
+            }
+        ).scope(
+            read_keys=[
+                "quality.verification_result",
+                "quality.citation_check_result",
+                "quality.support_matrix",
+            ],
+            optional_read_keys=["agent.feedback.loop_state"],
+            write_keys=[],
+        )
+    )
+
+    assert output["agent_feedback_route"]["decision"] == "blocked"
+    assert output["agent_feedback_route"]["reason"] == "agent feedback rewrite rounds exhausted"
+    assert output["agent_feedback_loop_state"]["rewrite_exhausted"] is True
+
+
 def test_collect_agent_feedback_records_block_and_human_review_targets() -> None:
     output = collect_agent_feedback(
         _feedback_buffer(

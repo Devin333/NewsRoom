@@ -24,6 +24,9 @@ from business.layers.relation.evidence import EvidenceBundle
 from business.boards.cross_board.workflows.daily_intelligence.buffer_key_aliases import (
     with_namespaced_aliases,
 )
+from business.boards.cross_board.workflows.daily_intelligence.workflow_buffer_access import (
+    read_buffer_value,
+)
 from business.boards.cross_board.workflows.daily_intelligence.profiles import PROFILE_LIVE, PROFILE_LIVE_OFFLINE
 from business.foundation.models.source_error_normalization import normalize_source_errors
 
@@ -47,10 +50,10 @@ class ReportWriter:
         self.historian_context_adapter = historian_context_adapter
 
     def draft_report(self, buffer: StepScopedDataBufferView, profile: str) -> dict[str, Any]:
-        request = buffer.read("request")
-        evidence_bundle = buffer.read("evidence_bundle")
-        source_errors = normalize_source_errors(buffer.read("source_errors"))
-        source_metrics = buffer.read("source_pipeline_metrics")
+        request = read_buffer_value(buffer, "request")
+        evidence_bundle = read_buffer_value(buffer, "evidence_bundle")
+        source_errors = normalize_source_errors(read_buffer_value(buffer, "source_errors"))
+        source_metrics = read_buffer_value(buffer, "source_pipeline_metrics")
         memory_result = self._memory_context(str(request["topic"]))
         memory_context = memory_result.context if memory_result is not None else None
         historian_result = self._historian_context(str(request["topic"]))
