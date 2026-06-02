@@ -4,7 +4,7 @@ from typing import Any
 
 from business.foundation import BusinessFeedbackEvent, BusinessLearningSignal
 from business.foundation.feedback import (
-    ImprovementApplier,
+    ImprovementApplicationService,
     ImprovementMeasurementBuilder,
     ImprovementProposal,
     ImprovementProposalBuilder,
@@ -23,7 +23,7 @@ class BoardImprovementService:
         self.recommendation_builder = ImprovementRecommendationBuilder()
         self.proposal_builder = ImprovementProposalBuilder()
         self.feedback_learning_service = FeedbackLearningService()
-        self.applier = ImprovementApplier()
+        self.application_service = ImprovementApplicationService(proposal_store=self.proposal_store)
         self.measurement_builder = ImprovementMeasurementBuilder()
         self.report_builder = SelfImprovementReportBuilder()
 
@@ -63,12 +63,7 @@ class BoardImprovementService:
         return proposals
 
     def apply_approved_overrides(self, *, run_id: str, board_type: str):
-        proposals = [
-            proposal
-            for proposal in self.proposal_store.list()
-            if proposal.board_type == board_type
-        ]
-        return self.applier.apply(proposals, run_id=run_id, board_type=board_type)
+        return self.application_service.apply_approved(run_id=run_id, board_type=board_type)
 
     def measure(self, before: dict[str, Any] | None, after: dict[str, Any]):
         return self.measurement_builder.measure(before, after)

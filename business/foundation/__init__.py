@@ -54,6 +54,7 @@ from business.foundation.evidence import BusinessEvidenceRef, BusinessRunManifes
 from business.foundation.feedback import (
     AppliedPolicyExperiment,
     BoardImprovementContext,
+    ImprovementApplicationService,
     ImprovementApplier,
     ImprovementMeasurement,
     ImprovementMeasurementBuilder,
@@ -205,6 +206,7 @@ __all__ = [
     "Insight",
     "InsightRepository",
     "InsightType",
+    "ImprovementApplicationService",
     "ImprovementApplier",
     "ImprovementMeasurement",
     "ImprovementMeasurementBuilder",
