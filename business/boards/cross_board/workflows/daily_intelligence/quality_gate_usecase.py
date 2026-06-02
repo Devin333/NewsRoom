@@ -3,25 +3,22 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Any
 
-from business.foundation.models.report_output import BlockedReport, FinalReport, render_markdown
 from business.layers.analysis.quality import EditorDecision, EditorReview, RewritePolicy
-from business.boards.cross_board.workflows.daily_intelligence.buffer_key_aliases import (
-    with_namespaced_aliases,
-)
 from business.boards.cross_board.workflows.daily_intelligence.evidence_step import quality_event
 from business.boards.cross_board.workflows.daily_intelligence.memory_quality import (
     DailyMemoryQualityService,
 )
 from business.boards.cross_board.workflows.daily_intelligence.quality_evaluation import evaluate_report_quality
+from business.boards.cross_board.workflows.daily_intelligence.quality_gate_outputs import (
+    DailyQualityGateOutputInput,
+    build_quality_gate_outputs,
+)
 from business.boards.cross_board.workflows.daily_intelligence.quality_gate_policy import (
     assess_non_social_media_bypass,
     build_non_social_media_pass_review,
 )
 from business.boards.cross_board.workflows.daily_intelligence.quality_result_builder import (
     human_review_request as build_human_review_request,
-    quality_gate_metrics as build_quality_gate_metrics,
-    quality_result as build_quality_result,
-    quality_route as build_quality_route,
 )
 from business.boards.cross_board.workflows.daily_intelligence.quality_rewrite import rewrite_report_draft
 from business.memory.intelligence_repository import IntelligenceMemoryQueryRepository
@@ -231,102 +228,27 @@ def _build_quality_outputs(
     context: QualityGateContext,
     evaluation: QualityGateEvaluation,
 ) -> dict[str, Any]:
-    quality_gate_metrics = build_quality_gate_metrics(
-        evidence_bundle=context.evidence_bundle,
-        verified_findings=context.verified_findings,
-        citation_check=evaluation.citation_check,
-        support_matrix=evaluation.support_matrix,
-        quality_summary=evaluation.quality_summary,
-        review=evaluation.review,
-        rewrite_attempts=evaluation.rewrite_attempts,
-        human_review_required=evaluation.human_review_required,
-        memory_quality_result=context.memory_quality_result,
-    )
-    quality_route = build_quality_route(
-        review=evaluation.review,
-        rewrite_attempts=evaluation.rewrite_attempts,
-        human_review_required=evaluation.human_review_required,
-    )
-    quality_result = build_quality_result(
-        citation_check=evaluation.citation_check,
-        support_matrix=evaluation.support_matrix,
-        quality_summary=evaluation.quality_summary,
-        review=evaluation.review,
-        quality_gate_metrics=quality_gate_metrics,
-        route=quality_route,
-        rewrite_attempts=evaluation.rewrite_attempts,
-        human_review_required=evaluation.human_review_required,
-    )
-    quality_result = _with_memory_quality_metadata(
-        quality_result,
-        memory_context=context.memory_context,
-        memory_quality_result=context.memory_quality_result,
-    )
-    outputs: dict[str, Any] = {
-        "citation_check_result": evaluation.citation_check,
-        "editor_review": evaluation.review,
-        "support_matrix": evaluation.support_matrix,
-        "report_quality_summary": evaluation.quality_summary,
-        "quality_events": context.quality_events,
-        "quality_gate_metrics": quality_gate_metrics,
-        "quality_result": quality_result,
-        "quality_route": quality_route,
-        "rewrite_policy": evaluation.rewrite_policy,
-        "rewrite_instructions": evaluation.review.rewrite_instructions,
-        "memory_quality_result": context.memory_quality_result,
-    }
-    if evaluation.rewritten_report_draft is not None:
-        outputs["rewritten_report_draft"] = evaluation.rewritten_report_draft
-    if evaluation.human_review_request is not None:
-        outputs["human_review_request"] = evaluation.human_review_request
-    if evaluation.review.decision == EditorDecision.PASS:
-        final_report = FinalReport(
-            title=evaluation.final_report_draft["title"],
-            sections=evaluation.final_report_draft["sections"],
-            source_urls=sorted(context.evidence_bundle.source_urls),
-            metadata={
-                "evidence_bundle_id": context.evidence_bundle.bundle_id,
-                "quality_score": evaluation.quality_summary.quality_score,
-                "accepted_claims_count": len(context.verified_findings.accepted_claims),
-                "rejected_claims_count": len(context.verified_findings.rejected_claims),
-                "uncertain_claims_count": len(context.verified_findings.uncertain_claims),
-                "rewrite_attempts": evaluation.rewrite_attempts,
-                "memory_context": context.memory_context,
-                "historian": context.historian_metadata,
-                "memory_quality_result": context.memory_quality_result,
-            },
+    return build_quality_gate_outputs(
+        DailyQualityGateOutputInput(
+            report_draft=context.report_draft,
+            final_report_draft=evaluation.final_report_draft,
+            evidence_bundle=context.evidence_bundle,
+            verified_findings=context.verified_findings,
+            quality_events=context.quality_events,
+            memory_context=context.memory_context,
+            historian_metadata=context.historian_metadata,
+            memory_quality_result=context.memory_quality_result,
+            citation_check=evaluation.citation_check,
+            support_matrix=evaluation.support_matrix,
+            quality_summary=evaluation.quality_summary,
+            review=evaluation.review,
+            rewrite_policy=evaluation.rewrite_policy,
+            rewritten_report_draft=evaluation.rewritten_report_draft,
+            rewrite_attempts=evaluation.rewrite_attempts,
+            human_review_request=evaluation.human_review_request,
+            human_review_required=evaluation.human_review_required,
         )
-        outputs["final_report"] = final_report
-        outputs["report_markdown"] = render_markdown(final_report)
-    else:
-        outputs["blocked_report"] = BlockedReport(
-            title=evaluation.final_report_draft.get("title", "Blocked Daily Intelligence Report"),
-            reasons=evaluation.review.reasons,
-            draft=evaluation.final_report_draft,
-            metadata={
-                "citation_check_result": evaluation.citation_check.to_dict(),
-                "citation_failure_categories": [
-                    category.to_dict()
-                    for category in evaluation.citation_check.failure_categories
-                ],
-                "editor_review": evaluation.review.to_dict(),
-                "quality_score": evaluation.quality_summary.quality_score,
-                "accepted_claims_count": evaluation.quality_summary.accepted_claims_count,
-                "rejected_claims_count": evaluation.quality_summary.rejected_claims_count,
-                "uncertain_claims_count": evaluation.quality_summary.uncertain_claims_count,
-                "unsupported_claims_count": evaluation.quality_summary.unsupported_claims_count,
-                "high_severity_unsupported_claims_count": (
-                    evaluation.quality_summary.high_severity_unsupported_claims_count
-                ),
-                "rewrite_attempts": evaluation.rewrite_attempts,
-                "human_review_required": evaluation.human_review_required,
-                "remediation": list(evaluation.review.required_changes),
-                "memory_context": context.memory_context,
-                "historian": context.historian_metadata,
-                "memory_quality_result": context.memory_quality_result,
-            },
-        )
-    return with_namespaced_aliases(outputs)
+    )
 
 
 def _memory_quality_result(
@@ -379,15 +301,3 @@ def _has_critical_memory_issue(memory_quality_result: dict[str, Any]) -> bool:
         isinstance(issue, dict) and issue.get("severity") == "critical"
         for issue in memory_quality_result.get("issues") or []
     )
-
-
-def _with_memory_quality_metadata(
-    quality_result: Any,
-    *,
-    memory_context: dict[str, Any] | None,
-    memory_quality_result: dict[str, Any],
-) -> Any:
-    metadata = dict(getattr(quality_result, "metadata", {}) or {})
-    metadata["memory_context"] = memory_context
-    metadata["memory_quality_result"] = memory_quality_result
-    return replace(quality_result, metadata=metadata)

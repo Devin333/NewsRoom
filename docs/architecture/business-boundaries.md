@@ -84,7 +84,7 @@ daily intelligence workflow 进入兼容迁移期：业务函数继续写旧 key
 
 daily intelligence 的 `quality_gate_step.py` 是 workflow adapter，只负责读取 report draft、evidence、verified findings、quality events、memory/historian context 和 injected memory repository，然后组装 `DailyQualityGateInput`。
 
-质量评估、rewrite 尝试、non-social-media bypass、human review request、memory quality metadata 投影、final/blocked report 输出构建由 `quality_gate_usecase.py` 的 `evaluate_daily_quality_gate()` 承载。该 usecase 不依赖 `framework.workflow`，可脱离 `DataBuffer` 单独测试。
+质量评估、rewrite 尝试、non-social-media bypass 和 human review 路由由 `quality_gate_usecase.py` 的 `evaluate_daily_quality_gate()` 承载。final/blocked report、markdown、quality result alias、memory quality metadata 投影由 `quality_gate_outputs.py` 构建。两者都不依赖 `framework.workflow`，可脱离 `DataBuffer` 单独测试。
 
 quality gate 的单次运行观测指标由 `quality_observability.py` 构建，输出可聚合的 count/rate 字段（例如 block、rewrite、human review、memory conflict）。workflow step 不维护历史窗口；窗口聚合应由 artifact/storage/monitoring 层消费这些正式指标完成。
 

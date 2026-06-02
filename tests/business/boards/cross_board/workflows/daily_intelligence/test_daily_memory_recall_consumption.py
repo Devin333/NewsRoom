@@ -2,12 +2,18 @@ from __future__ import annotations
 
 from business.boards.cross_board.workflows.daily_intelligence.profiles import PROFILE_LIVE_OFFLINE
 from business.boards.cross_board.workflows.daily_intelligence.quality_gate_step import quality_gate
+from business.boards.cross_board.workflows.daily_intelligence.quality_gate_outputs import (
+    DailyQualityGateOutputInput,
+    build_quality_gate_outputs,
+)
 from business.boards.cross_board.workflows.daily_intelligence.quality_gate_usecase import (
     DailyQualityGateInput,
     evaluate_daily_quality_gate,
 )
+from business.boards.cross_board.workflows.daily_intelligence.quality_evaluation import evaluate_report_quality
 from business.boards.cross_board.workflows.daily_intelligence.registry import build_daily_intelligence_registry
 from business.boards.cross_board.workflows.daily_intelligence.report_writer import ReportWriter
+from business.layers.analysis.quality import RewritePolicy
 from business.foundation.models.source import Lineage, SourcePipelineMetrics
 from business.layers.relation.evidence.models import EvidenceBundle, EvidenceItem, VerifiedFindings
 from business.memory.intelligence_context import IntelligenceMemoryContext
@@ -153,6 +159,54 @@ def test_quality_gate_usecase_runs_without_workflow_buffer() -> None:
     assert output["final_report"].title == "Daily Intelligence: AI policy"
     assert output["quality.result"] == output["quality_result"]
     assert quality_events == []
+
+
+def test_quality_gate_output_builder_publishes_without_usecase_or_workflow_buffer() -> None:
+    evidence_bundle = _evidence_bundle()
+    verified_findings = VerifiedFindings()
+    rewrite_policy = RewritePolicy()
+    evaluation = evaluate_report_quality(
+        _report_draft(),
+        evidence_bundle,
+        verified_findings,
+        quality_events=[],
+        rewrite_policy=rewrite_policy,
+        rewrite_attempts=0,
+    )
+
+    output = build_quality_gate_outputs(
+        DailyQualityGateOutputInput(
+            report_draft=_report_draft(),
+            final_report_draft=_report_draft(),
+            evidence_bundle=evidence_bundle,
+            verified_findings=verified_findings,
+            quality_events=[],
+            memory_context={"metadata": {"memory_available": True}},
+            historian_metadata={"output": {"repeated_claims": ["known claim"]}},
+            memory_quality_result={
+                "memory_available": True,
+                "passed": True,
+                "issues": [],
+                "metadata": {"memory_repository_available": True},
+            },
+            citation_check=evaluation["citation_check"],
+            support_matrix=evaluation["support_matrix"],
+            quality_summary=evaluation["quality_summary"],
+            review=evaluation["review"],
+            rewrite_policy=rewrite_policy,
+            rewritten_report_draft=None,
+            rewrite_attempts=0,
+            human_review_request=None,
+            human_review_required=False,
+        )
+    )
+
+    assert output["quality_result"].metadata["memory_quality_result"]["metadata"] == {
+        "memory_repository_available": True
+    }
+    assert output["quality.result"] == output["quality_result"]
+    assert output["report.final"] == output["final_report"]
+    assert output["final_report"].metadata["historian"]["output"]["repeated_claims"] == ["known claim"]
 
 
 def test_quality_gate_uses_injected_memory_repository_for_claim_evidence() -> None:
