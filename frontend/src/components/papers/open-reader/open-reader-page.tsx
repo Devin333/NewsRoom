@@ -62,6 +62,7 @@ export function OpenReaderPage({ reader, locale, backHref = "/papers", visualLay
   const [preview, setPreview] = useState<{
     title: string
     source?: PaperSourceRegion
+    sourceVersion?: string
     assetUrl?: string
     assetMimeType?: string
     width?: number
@@ -240,7 +241,8 @@ export function OpenReaderPage({ reader, locale, backHref = "/papers", visualLay
     setPreview({
       title: visual.block.label || visual.block.caption || visual.asset?.caption || `Page ${visual.source?.pageNumber ?? visual.asset?.pageNumber ?? 1}`,
       source: useAssetPreview ? undefined : visual.source,
-      assetUrl: useAssetPreview && visual.asset ? paperAssetUrl(paper.id, visual.asset.assetId) : undefined,
+      sourceVersion: visual.asset?.checksum,
+      assetUrl: useAssetPreview && visual.asset ? paperAssetUrl(paper.id, visual.asset.assetId, visual.asset.checksum) : undefined,
       assetMimeType: useAssetPreview ? visual.asset?.mimeType : undefined,
       width: visual.asset?.width,
       height: visual.asset?.height,
@@ -343,6 +345,7 @@ export function OpenReaderPage({ reader, locale, backHref = "/papers", visualLay
           paperId={paper.id}
           title={preview.title}
           source={preview.source}
+          sourceVersion={preview.sourceVersion}
           assetUrl={preview.assetUrl}
           assetMimeType={preview.assetMimeType}
           width={preview.width}
@@ -597,7 +600,7 @@ function OpenReaderVisualBlockView({
         <div className={styles.paperTableScroll} dangerouslySetInnerHTML={{ __html: tableHtml }} />
       ) : asset ? (
         <Image
-          src={paperAssetUrl(paperId, asset.assetId)}
+          src={paperAssetUrl(paperId, asset.assetId, asset.checksum)}
           alt={caption || label}
           className={styles.visualImage}
           loading="lazy"
@@ -617,6 +620,7 @@ function SourcePreviewModal({
   paperId,
   title,
   source,
+  sourceVersion,
   assetUrl,
   assetMimeType,
   width,
@@ -626,6 +630,7 @@ function SourcePreviewModal({
   paperId: string
   title: string
   source?: PaperSourceRegion
+  sourceVersion?: string
   assetUrl?: string
   assetMimeType?: string
   width?: number
@@ -654,7 +659,7 @@ function SourcePreviewModal({
           <Image src={assetUrl} alt={title} width={width ?? 900} height={height ?? 640} unoptimized />
         ) : source ? (
           <Image
-            src={paperSourcePreviewUrl(paperId, source)}
+            src={paperSourcePreviewUrl(paperId, source, sourceVersion)}
             alt={title}
             width={Math.max(1, Math.round((source.bbox.x1 - source.bbox.x0) * 4))}
             height={Math.max(1, Math.round((source.bbox.y1 - source.bbox.y0) * 4))}

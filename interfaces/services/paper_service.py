@@ -35,6 +35,7 @@ from business.boards.paper_radar.reader_payload_builder import (
     build_reader_payload,
 )
 from interfaces.services.paper_artifact_repository import PaperArtifactRepository
+from interfaces.services.json_file_store import locked_json_file, read_json_object, read_json_object_unlocked, write_json_object, write_json_object_unlocked
 from interfaces.services.paper_reader_cache_repository import (
     PaperReaderCacheRepository,
     TextExtractionRepository,
@@ -415,9 +416,7 @@ class PapersApplicationService:
                     return _copy_summary(cached, cached=True)
 
             summary = self._generate_summary(paper, locale=locale, route=route)
-            cache = self._read_summary_cache()
-            cache[summary_cache_key(paper, locale=locale, route=route)] = summary.to_dict() | {"cached": False}
-            self._write_summary_cache(cache)
+            self._upsert_summary_cache(summary_cache_key(paper, locale=locale, route=route), summary.to_dict() | {"cached": False})
             self._record_summary_event(
                 paper_id=paper.id,
                 locale=locale,
@@ -666,19 +665,16 @@ class PapersApplicationService:
         )
 
     def _read_summary_cache(self) -> dict[str, Any]:
-        if not self.summary_cache_path.exists():
-            return {}
-        try:
-            payload = json.loads(self.summary_cache_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return {}
-        return dict(payload) if isinstance(payload, Mapping) else {}
+        return read_json_object(self.summary_cache_path, default={})
 
     def _write_summary_cache(self, payload: Mapping[str, Any]) -> None:
-        self.summary_cache_path.parent.mkdir(parents=True, exist_ok=True)
-        temp_path = self.summary_cache_path.with_suffix(f"{self.summary_cache_path.suffix}.tmp")
-        temp_path.write_text(json.dumps(dict(payload), ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
-        temp_path.replace(self.summary_cache_path)
+        write_json_object(self.summary_cache_path, dict(payload))
+
+    def _upsert_summary_cache(self, key: str, value: Mapping[str, Any]) -> None:
+        with locked_json_file(self.summary_cache_path) as path:
+            payload = read_json_object_unlocked(path, default={})
+            payload[key] = dict(value)
+            write_json_object_unlocked(path, payload)
 
 
 def _duration_ms(started: float) -> int:

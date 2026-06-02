@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+
 from framework.agent.session import (
     AgentSessionItem,
     AgentSessionQuery,
@@ -85,3 +87,29 @@ def test_sqlite_store_can_reopen_existing_session_database(tmp_path) -> None:
 
     second = SQLiteAgentSessionStore(path)
     assert second.latest_item(session_id="session-1", role="note", status="*").content == {"value": 1}
+
+
+def test_sqlite_store_supports_shared_connection_across_threads(tmp_path) -> None:
+    store = SQLiteAgentSessionStore(tmp_path / "sessions.sqlite3")
+    store.create_session(AgentSessionRef(session_id="threaded-session", run_id="run-1"))
+
+    def append(index: int) -> str:
+        return store.append_item(
+            AgentSessionItem(
+                session_id="threaded-session",
+                run_id="run-1",
+                agent_id=f"agent-{index % 4}",
+                role="note",
+                content={"index": index},
+            )
+        ).item_id
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        item_ids = list(executor.map(append, range(30)))
+
+    items = store.query_items(AgentSessionQuery(session_id="threaded-session", roles=("note",)))
+    event_types = [event.event_type for event in store.list_events(session_id="threaded-session")]
+
+    assert len(set(item_ids)) == 30
+    assert len(items) == 30
+    assert event_types.count("item.written") == 30

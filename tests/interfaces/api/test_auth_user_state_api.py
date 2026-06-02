@@ -1,9 +1,10 @@
 import json
+from concurrent.futures import ThreadPoolExecutor
 
 from fastapi.testclient import TestClient
 
 from interfaces.api import create_app
-from interfaces.services.auth_service import AuthApplicationService
+from interfaces.services.auth_service import AuthAlreadyInitializedError, AuthApplicationService
 from interfaces.services.paper_reader_notes_service import PaperReaderNotesApplicationService
 from interfaces.services.paper_user_state_service import PaperUserStateApplicationService
 
@@ -74,6 +75,53 @@ def test_auth_bootstrap_login_logout_session_and_redaction(tmp_path) -> None:
     assert revoked.json()["data"]["session"] is None
     assert revoked.json()["data"]["initialized"] is True
     assert token
+
+
+def test_auth_bootstrap_allows_only_one_first_user_under_concurrency(tmp_path) -> None:
+    auth_service = AuthApplicationService(
+        user_store_path=tmp_path / "users.json",
+        session_store_path=tmp_path / "sessions.json",
+    )
+
+    def bootstrap(username: str) -> str:
+        try:
+            return auth_service.bootstrap(username=username, password="correct horse").user.username
+        except AuthAlreadyInitializedError:
+            return "already-initialized"
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(bootstrap, ["admin-a", "admin-b"]))
+
+    assert results.count("already-initialized") == 1
+    created = [result for result in results if result != "already-initialized"]
+    assert len(created) == 1
+    stored = json.loads((tmp_path / "users.json").read_text(encoding="utf-8"))
+    assert [user["username"] for user in stored["users"]] == created
+
+
+def test_paper_user_state_concurrent_patches_do_not_drop_fields(tmp_path) -> None:
+    state_service = PaperUserStateApplicationService(store_path=tmp_path / "user-state.json")
+
+    patches = [
+        {"favorite": True},
+        {"subscribed": True},
+        {"readingStatus": "reading", "currentPage": 7},
+        {"progressPercent": 80},
+    ]
+    with ThreadPoolExecutor(max_workers=len(patches)) as executor:
+        list(
+            executor.map(
+                lambda patch: state_service.patch_state(user_id="user-1", paper_id="paper-1", patch=patch),
+                patches,
+            )
+        )
+
+    state = state_service.get_state(user_id="user-1", paper_id="paper-1")
+    assert state.favorite is True
+    assert state.subscribed is True
+    assert state.readingStatus == "reading"
+    assert state.currentPage == 7
+    assert state.progressPercent == 80
 
 
 def test_paper_user_state_requires_auth_validates_and_isolates_users(tmp_path) -> None:
@@ -252,3 +300,41 @@ def test_paper_reader_notes_crud_requires_auth_validates_isolates_and_redacts(tm
         headers={"x-newsroom-session": first_session.sessionToken},
     )
     assert missing.status_code == 404
+
+
+def test_paper_reader_notes_concurrent_patches_do_not_drop_fields(tmp_path) -> None:
+    notes_service = PaperReaderNotesApplicationService(store_path=tmp_path / "reader-notes.json")
+    note = notes_service.create_note(
+        user_id="user-1",
+        paper_id="paper-1",
+        payload={
+            "kind": "note",
+            "pageNumber": 2,
+            "quote": "Selected public text",
+            "noteText": "Initial note.",
+        },
+    )
+    patches = [
+        {"color": "pink"},
+        {"label": "Implementation"},
+        {"anchor": {"pageNumber": 2, "quote": "Selected public text"}},
+    ]
+
+    with ThreadPoolExecutor(max_workers=len(patches)) as executor:
+        list(
+            executor.map(
+                lambda patch: notes_service.patch_note(
+                    user_id="user-1",
+                    paper_id="paper-1",
+                    note_id=note.noteId,
+                    patch=patch,
+                ),
+                patches,
+            )
+        )
+
+    updated = notes_service.list_notes(user_id="user-1", paper_id="paper-1")[0]
+    assert updated.color == "pink"
+    assert updated.label == "Implementation"
+    assert updated.anchor == {"pageNumber": 2, "quote": "Selected public text"}
+    assert updated.noteText == "Initial note."

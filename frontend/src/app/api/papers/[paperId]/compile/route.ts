@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { safeApiPost } from "@/lib/api/server"
+import { requirePaperOpsSession } from "@/lib/papers/ops-route-guard"
 import { requirePublicPaper } from "@/lib/papers/public-route-guard"
 
 export const dynamic = "force-dynamic"
@@ -8,6 +9,11 @@ export async function POST(request: NextRequest, { params }: { params: { paperId
   const guard = await requirePublicPaper(params.paperId)
   if (!guard.ok) {
     return guard.response
+  }
+
+  const opsGuard = await requirePaperOpsSession()
+  if (opsGuard) {
+    return opsGuard
   }
 
   const body = await request.json().catch(() => ({}))

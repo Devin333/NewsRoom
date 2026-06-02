@@ -120,12 +120,14 @@ describe("paper PDF proxy route", () => {
     expect(response.status).toBe(206)
     expect(response.headers.get("cache-control")).toBe("no-store")
     expect(response.headers.get("content-disposition")).toBe("inline")
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff")
     expect(response.headers.get("content-range")).toBe("bytes 0-7/8")
     expect(fetchMock).toHaveBeenCalledWith(
       "https://arxiv.org/pdf/2605.00001.pdf",
       expect.objectContaining({
         cache: "no-store",
         headers: expect.objectContaining({ Range: "bytes=0-7" }),
+        redirect: "manual",
         signal: expect.any(AbortSignal)
       })
     )
@@ -152,6 +154,44 @@ describe("paper PDF proxy route", () => {
     expect(console.warn).toHaveBeenCalledWith(expect.objectContaining({ code: "pdf_too_large" }))
   })
 
+  it("follows only validated PDF redirects", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(
+        new Response(null, {
+          status: 302,
+          headers: { location: "https://www.arxiv.org/pdf/2605.00002.pdf" },
+        }),
+      )
+      .mockResolvedValueOnce(pdfResponse())
+    globalThis.fetch = fetchMock
+
+    const response = await GET(pdfRequest("https://arxiv.org/pdf/2605.00001.pdf"))
+
+    expect(response.status).toBe(200)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "https://www.arxiv.org/pdf/2605.00002.pdf",
+      expect.objectContaining({ redirect: "manual" }),
+    )
+  })
+
+  it("rejects redirects to blocked or unsupported destinations", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(null, {
+        status: 302,
+        headers: { location: "https://127.0.0.1/pdf/2605.00001.pdf" },
+      }),
+    )
+    globalThis.fetch = fetchMock
+
+    const response = await GET(pdfRequest("https://arxiv.org/pdf/2605.00001.pdf"))
+
+    expect(response.status).toBe(400)
+    expect(await json(response)).toMatchObject({ error: { code: "blocked_pdf_host" } })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
   it("aborts slow upstream fetches with a timeout error", async () => {
     vi.useFakeTimers()
     globalThis.fetch = vi.fn((_url, init) => {
@@ -172,6 +212,32 @@ describe("paper PDF proxy route", () => {
     expect(console.warn).toHaveBeenCalledWith(expect.objectContaining({ code: "pdf_timeout" }))
   })
 
+  it("aborts slow upstream PDF bodies with a timeout error", async () => {
+    vi.useFakeTimers()
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("%PDF-"))
+          }
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/pdf"
+          }
+        }
+      )
+    )
+
+    const pending = GET(pdfRequest("https://arxiv.org/pdf/2605.00001.pdf"))
+    await vi.advanceTimersByTimeAsync(10_000)
+    const response = await pending
+
+    expect(response.status).toBe(504)
+    expect(await json(response)).toMatchObject({ error: { code: "pdf_timeout" } })
+  })
+
   it("rejects non-PDF content from allowed hosts", async () => {
     globalThis.fetch = vi.fn().mockResolvedValue(
       new Response("not a pdf", {
@@ -179,6 +245,23 @@ describe("paper PDF proxy route", () => {
         headers: {
           "content-length": "9",
           "content-type": "text/html"
+        }
+      })
+    )
+
+    const response = await GET(pdfRequest("https://openreview.net/pdf?id=abc123"))
+
+    expect(response.status).toBe(502)
+    expect(await json(response)).toMatchObject({ error: { code: "invalid_pdf_content_type" } })
+  })
+
+  it("rejects octet-stream responses without PDF magic bytes", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response("not a pdf", {
+        status: 200,
+        headers: {
+          "content-length": "9",
+          "content-type": "application/octet-stream"
         }
       })
     )

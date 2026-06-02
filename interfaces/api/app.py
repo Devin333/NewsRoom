@@ -598,6 +598,11 @@ def _normalize_api_token(api_token: str | None) -> str | None:
     return token or None
 
 
+def _api_token_from_env(env: Mapping[str, str] | None = None) -> str | None:
+    values = env if env is not None else os.environ
+    return _normalize_api_token(values.get("NEWSROOM_API_TOKEN")) or _normalize_api_token(values.get("NEWS_API_TOKEN"))
+
+
 def _build_api_key_registry(
     *,
     api_token: str | None,
@@ -731,7 +736,11 @@ def _required_api_permission(method: str, path: str) -> str | None:
     if resource == "sources":
         return "read:reports"
     if resource == "papers":
-        return "read:reports"
+        if len(parts) >= 4 and parts[3] == "ops":
+            return "papers:ops"
+        if method == "POST" and len(parts) >= 5 and parts[4] == "compile":
+            return "papers:ops"
+        return "papers:read" if method == "GET" else "papers:write"
     if resource == "projects":
         return "read:reports" if method == "GET" else "write:runs"
     if resource in {"workers", "queues"}:
@@ -873,7 +882,7 @@ def _http_error_code(status_code: int) -> str:
 load_root_env()
 
 app = create_app(
-    api_token=os.environ.get("NEWS_API_TOKEN"),
+    api_token=_api_token_from_env(),
     api_keys=_api_keys_from_env(),
     api_rate_limit_per_minute=_optional_positive_int_env("NEWS_API_RATE_LIMIT_PER_MINUTE"),
 )

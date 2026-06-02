@@ -63,15 +63,20 @@ class AgentSessionMemoryAdapter:
         if self._memory_runtime is None:
             return []
         terms = ["agent_session"]
+        filters: dict[str, Any] = {}
         if session_id:
             terms.append(session_id)
+            filters["session_id"] = session_id
         if role:
             terms.append(role)
+            filters["role"] = role
         for key, value in dict(refs or {}).items():
             terms.append(f"{key}:{value}")
+            filters[str(key)] = value
         result = self._memory_runtime.recall(
             MemoryQuery(
                 query=" ".join(terms),
+                filters=filters,
                 namespace=f"agent_session:{session_id}" if session_id else None,
                 limit=limit,
             )

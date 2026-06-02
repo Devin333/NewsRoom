@@ -61,13 +61,27 @@ export async function triggerPaperCompile(
   return unwrapEnvelope(envelope)
 }
 
-export function paperAssetUrl(paperId: string, assetId: string) {
-  return `/api/papers/${encodeURIComponent(paperId)}/assets/${encodeURIComponent(assetId)}`
+export function paperAssetUrl(paperId: string, assetId: string, version?: string | null) {
+  return withVersion(
+    `/api/papers/${encodeURIComponent(paperId)}/assets/${encodeURIComponent(assetId)}`,
+    version,
+  )
 }
 
-export function paperSourcePreviewUrl(paperId: string, source: PaperSourceRegion) {
+export function paperSourcePreviewUrl(paperId: string, source: PaperSourceRegion, version?: string | null) {
   const bbox = encodeURIComponent(JSON.stringify(source.bbox))
-  return `/api/papers/${encodeURIComponent(paperId)}/source-preview?page=${source.pageNumber}&bbox=${bbox}`
+  return withVersion(
+    `/api/papers/${encodeURIComponent(paperId)}/source-preview?page=${source.pageNumber}&bbox=${bbox}`,
+    version,
+  )
+}
+
+function withVersion(url: string, version?: string | null) {
+  const normalized = typeof version === "string" ? version.trim() : ""
+  if (!normalized) {
+    return url
+  }
+  return `${url}${url.includes("?") ? "&" : "?"}v=${encodeURIComponent(normalized.slice(0, 128))}`
 }
 
 function unwrapEnvelope<T>(envelope: ApiEnvelope<T>): T {

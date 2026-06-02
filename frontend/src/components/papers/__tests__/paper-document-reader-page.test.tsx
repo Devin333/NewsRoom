@@ -81,7 +81,7 @@ describe("PaperDocumentReaderPage", () => {
     expect(within(article).queryByText("AI generated summary must stay in the panel.")).not.toBeInTheDocument()
     expect(screen.getByRole("img", { name: "Figure 1: Real figure from the PDF." })).toHaveAttribute(
       "src",
-      "/api/papers/visual-paper/assets/asset-figure-1",
+      "/api/papers/visual-paper/assets/asset-figure-1?v=checksum",
     )
     expect(screen.getByLabelText("Reader settings")).toBeInTheDocument()
     expect(screen.getByText("Font size")).toBeInTheDocument()
@@ -272,7 +272,7 @@ describe("PaperDocumentReaderPage", () => {
 
     const preview = screen.getByRole("dialog", { name: "Source preview" })
     const frame = within(preview).getByTitle("Table 1")
-    expect(frame).toHaveAttribute("src", "/api/papers/visual-paper/assets/asset-table-1")
+    expect(frame).toHaveAttribute("src", "/api/papers/visual-paper/assets/asset-table-1?v=checksum-table")
   })
 
   it("builds reader interaction targets for visual assets", () => {

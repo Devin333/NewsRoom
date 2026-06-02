@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-import json
 import os
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone as _tz
 UTC = _tz.utc
 from pathlib import Path
 from typing import Any, Literal, Protocol
+
+from interfaces.services.json_file_store import locked_json_file, read_json_object_unlocked, write_json_object_unlocked
 
 
 DEFAULT_PAPER_USER_STATE_PATH = ".newsroom/papers/user-state.json"
@@ -66,6 +68,12 @@ class PaperUserStateRepository(Protocol):
     def get_state(self, user_id: str, paper_id: str) -> PaperUserState | None: ...
     def list_states(self, user_id: str, paper_ids: list[str] | None = None) -> list[PaperUserState]: ...
     def upsert_state(self, state: PaperUserState) -> PaperUserState: ...
+    def update_state(
+        self,
+        user_id: str,
+        paper_id: str,
+        updater: Callable[[PaperUserState], PaperUserState],
+    ) -> PaperUserState: ...
 
 
 class LocalJsonPaperUserStateRepository:
@@ -83,20 +91,37 @@ class LocalJsonPaperUserStateRepository:
         return sorted(records, key=lambda item: item.paperId)
 
     def upsert_state(self, state: PaperUserState) -> PaperUserState:
-        records = self._read_records()
-        records[_state_key(state.userId, state.paperId)] = state
-        self._write_records(records)
+        with locked_json_file(self.path) as path:
+            records = self._read_records_unlocked(path)
+            records[_state_key(state.userId, state.paperId)] = state
+            self._write_records_unlocked(path, records)
         return state
 
+    def update_state(
+        self,
+        user_id: str,
+        paper_id: str,
+        updater: Callable[[PaperUserState], PaperUserState],
+    ) -> PaperUserState:
+        with locked_json_file(self.path) as path:
+            records = self._read_records_unlocked(path)
+            key = _state_key(user_id, paper_id)
+            current = records.get(key) or PaperUserState.default(user_id=user_id, paper_id=paper_id)
+            next_state = updater(current)
+            records[key] = next_state
+            self._write_records_unlocked(path, records)
+        return next_state
+
     def _read_records(self) -> dict[str, PaperUserState]:
-        if not self.path.exists():
-            return {}
-        payload = json.loads(self.path.read_text(encoding="utf-8"))
+        with locked_json_file(self.path) as path:
+            return self._read_records_unlocked(path)
+
+    def _read_records_unlocked(self, path: Path) -> dict[str, PaperUserState]:
+        payload = read_json_object_unlocked(path, default={"states": []}, strict=True)
         states = [PaperUserState.from_dict(item) for item in payload.get("states", [])]
         return {_state_key(state.userId, state.paperId): state for state in states}
 
-    def _write_records(self, records: dict[str, PaperUserState]) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+    def _write_records_unlocked(self, path: Path, records: dict[str, PaperUserState]) -> None:
         payload = {
             "schemaVersion": "paper_user_state.v1",
             "states": [
@@ -104,9 +129,7 @@ class LocalJsonPaperUserStateRepository:
                 for record in sorted(records.values(), key=lambda item: (item.userId, item.paperId))
             ],
         }
-        temp_path = self.path.with_name(f"{self.path.name}.tmp")
-        temp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
-        temp_path.replace(self.path)
+        write_json_object_unlocked(path, payload)
 
 
 class PaperUserStateApplicationService:
@@ -128,28 +151,35 @@ class PaperUserStateApplicationService:
         return [existing.get(paper_id) or PaperUserState.default(user_id=user_id, paper_id=paper_id) for paper_id in paper_ids]
 
     def patch_state(self, *, user_id: str, paper_id: str, patch: dict[str, Any]) -> PaperUserState:
-        current = self.get_state(user_id=user_id, paper_id=paper_id)
-        now = datetime.now(UTC)
-        next_state = current
-        if "favorite" in patch:
-            next_state = replace(next_state, favorite=bool(patch["favorite"]))
-        if "subscribed" in patch:
-            next_state = replace(next_state, subscribed=bool(patch["subscribed"]))
-        if "readingStatus" in patch:
-            next_state = replace(next_state, readingStatus=_reading_status(patch["readingStatus"]))
-        if "currentPage" in patch:
-            current_page = _optional_int(patch["currentPage"])
-            if current_page is not None and current_page < 1:
-                raise ValueError("currentPage must be greater than zero")
-            next_state = replace(next_state, currentPage=current_page)
-        if "progressPercent" in patch:
-            next_state = replace(next_state, progressPercent=_progress_percent(patch["progressPercent"]))
-        if next_state.readingStatus != "unread" or next_state.currentPage is not None or next_state.progressPercent > 0:
-            next_state = replace(next_state, lastReadAt=now)
-        if next_state.progressPercent >= 100:
-            next_state = replace(next_state, readingStatus="finished")
-        next_state = replace(next_state, updatedAt=now)
-        return self.repository.upsert_state(next_state)
+        return self.repository.update_state(
+            user_id,
+            paper_id,
+            lambda current: _apply_state_patch(current, patch),
+        )
+
+
+def _apply_state_patch(current: PaperUserState, patch: dict[str, Any]) -> PaperUserState:
+    now = datetime.now(UTC)
+    next_state = current
+    if "favorite" in patch:
+        next_state = replace(next_state, favorite=bool(patch["favorite"]))
+    if "subscribed" in patch:
+        next_state = replace(next_state, subscribed=bool(patch["subscribed"]))
+    if "readingStatus" in patch:
+        next_state = replace(next_state, readingStatus=_reading_status(patch["readingStatus"]))
+    if "currentPage" in patch:
+        current_page = _optional_int(patch["currentPage"])
+        if current_page is not None and current_page < 1:
+            raise ValueError("currentPage must be greater than zero")
+        next_state = replace(next_state, currentPage=current_page)
+    if "progressPercent" in patch:
+        next_state = replace(next_state, progressPercent=_progress_percent(patch["progressPercent"]))
+    if next_state.readingStatus != "unread" or next_state.currentPage is not None or next_state.progressPercent > 0:
+        next_state = replace(next_state, lastReadAt=now)
+    if next_state.progressPercent >= 100:
+        next_state = replace(next_state, readingStatus="finished")
+    next_state = replace(next_state, updatedAt=now)
+    return next_state
 
 
 def _state_key(user_id: str, paper_id: str) -> str:

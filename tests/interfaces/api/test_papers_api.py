@@ -1,6 +1,7 @@
 import json
 import time
 from datetime import datetime, timedelta, timezone
+from threading import Event
 
 from fastapi.testclient import TestClient
 
@@ -629,6 +630,73 @@ def test_papers_ops_visual_compile_backfill_trigger_enqueues_worker_task() -> No
     assert response.json()["data"]["enqueued"]["task_type"] == "papers.visual_compile_backfill"
 
 
+def test_paper_ops_endpoints_require_ops_permission(monkeypatch, tmp_path) -> None:
+    cache_path = tmp_path / "papers.json"
+    cache_path.write_text(
+        json.dumps(
+            {
+                "papers": [
+                    {
+                        "id": "ops-permission-paper",
+                        "slug": "ops-permission-paper",
+                        "title": "Ops Permission Paper",
+                        "abstractSnippet": "A paper used to verify paper ops permissions.",
+                        "authors": ["A"],
+                        "publishedAt": "2026-05-24T00:00:00Z",
+                        "paperUrl": "https://arxiv.org/abs/2605.90001",
+                        "pdfUrl": "https://arxiv.org/pdf/2605.90001.pdf",
+                        "isPublished": True,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("NEWSROOM_PAPERS_DATA_PATH", str(cache_path))
+    worker = _FakePaperWorkerService()
+    client = TestClient(
+        create_app(
+            api_keys={
+                "read-token": "read-only",
+                "dev-token": "developer",
+                "operator-token": "operator",
+            },
+            worker_service_factory=lambda: worker,
+            audit_emitter_factory=None,
+        )
+    )
+
+    read_only = client.post(
+        "/api/v1/papers/ops/ingest/trigger",
+        headers={"Authorization": "Bearer read-token"},
+        json={"runId": "forbidden-read"},
+    )
+    developer = client.post(
+        "/api/v1/papers/ops/ingest/trigger",
+        headers={"Authorization": "Bearer dev-token"},
+        json={"runId": "forbidden-dev"},
+    )
+    compile_forbidden = client.post(
+        "/api/v1/papers/ops-permission-paper/compile",
+        headers={"Authorization": "Bearer dev-token"},
+        json={"force": True, "runId": "compile-forbidden"},
+    )
+    operator = client.post(
+        "/api/v1/papers/ops-permission-paper/compile",
+        headers={"Authorization": "Bearer operator-token"},
+        json={"force": True, "runId": "compile-allowed"},
+    )
+
+    assert read_only.status_code == 403
+    assert read_only.json()["error"]["details"]["required_permission"] == "papers:ops"
+    assert developer.status_code == 403
+    assert developer.json()["error"]["details"]["required_permission"] == "papers:ops"
+    assert compile_forbidden.status_code == 403
+    assert compile_forbidden.json()["error"]["details"]["required_permission"] == "papers:ops"
+    assert operator.status_code == 200
+    assert worker.visual_compile_calls == [("ops-permission-paper", True, "compile-allowed")]
+
+
 def test_papers_ops_ingest_trigger_falls_back_to_local_background_when_worker_queue_is_down() -> None:
     worker = _UnavailablePaperWorkerService()
     ingest = _RecordingPaperIngestService()
@@ -660,6 +728,44 @@ def test_papers_ops_ingest_trigger_falls_back_to_local_background_when_worker_qu
         ("paper-1", False, "paper-local-run"),
         ("paper-2", False, "paper-local-run"),
     ]
+
+
+def test_papers_ops_local_background_deduplicates_active_ingest_runs(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("NEWSROOM_PAPERS_OPS_STATE_DIR", str(tmp_path / "ops"))
+    worker = _UnavailablePaperWorkerService()
+    ingest = _BlockingPaperIngestService()
+    visual_compiler = _RecordingPaperVisualCompilerService()
+    client = TestClient(
+        create_app(
+            worker_service_factory=lambda: worker,
+            paper_ingest_service_factory=lambda: ingest,
+            paper_visual_compiler_service_factory=lambda: visual_compiler,
+            audit_emitter_factory=None,
+        )
+    )
+
+    first = client.post(
+        "/api/v1/papers/ops/ingest/trigger",
+        json={"candidateLimit": 100, "minGithubStars": 50, "runId": "paper-local-active-1"},
+    )
+    assert first.status_code == 200
+    assert ingest.started.wait(timeout=2)
+
+    second = client.post(
+        "/api/v1/papers/ops/ingest/trigger",
+        json={"candidateLimit": 100, "minGithubStars": 50, "runId": "paper-local-active-2"},
+    )
+    ingest.release.set()
+
+    for _ in range(100):
+        if ingest.finished.is_set():
+            break
+        time.sleep(0.01)
+
+    assert second.status_code == 200
+    assert second.json()["data"]["enqueued"]["already_running"] is True
+    assert second.json()["data"]["enqueued"]["run_id"] == "paper-local-active-1"
+    assert ingest.calls == [(100, 50, "paper-local-active-1")]
 
 
 def test_papers_ops_classification_backfill_trigger_runs_local_background() -> None:
@@ -828,6 +934,7 @@ class _FakePaperWorkerService:
     def __init__(self) -> None:
         self.calls = []
         self.visual_backfill_calls = []
+        self.visual_compile_calls = []
 
     def enqueue_paper_ingest(self, *, candidate_limit=None, min_github_stars=None, run_id=None):
         self.calls.append((candidate_limit, min_github_stars, run_id))
@@ -856,6 +963,24 @@ class _FakePaperWorkerService:
                     "queue_name": "news:queue:papers",
                     "status": "queued",
                     "limit": limit,
+                    "force": force,
+                    "run_id": run_id,
+                }
+
+        return Result()
+
+    def enqueue_paper_visual_compile(self, *, paper_id, force=False, run_id=None):
+        self.visual_compile_calls.append((paper_id, force, run_id))
+
+        class Result:
+            def to_dict(self):
+                return {
+                    "message_id": "3-0",
+                    "task_id": "task-reader-compile",
+                    "task_type": "papers.visual_compile",
+                    "queue_name": "news:queue:papers",
+                    "status": "queued",
+                    "paper_id": paper_id,
                     "force": force,
                     "run_id": run_id,
                 }
@@ -923,6 +1048,32 @@ class _RecordingPaperIngestService(_FakePaperIngestService):
                     "repairQueuedCount": 0,
                     "blockedCount": 0,
                     "updatedPaperIds": [],
+                    "errors": [],
+                }
+
+        return Result()
+
+
+class _BlockingPaperIngestService(_FakePaperIngestService):
+    def __init__(self) -> None:
+        self.calls = []
+        self.started = Event()
+        self.release = Event()
+        self.finished = Event()
+
+    def run_daily_ingest(self, *, candidate_limit=None, min_github_stars=None, run_id=None):
+        self.calls.append((candidate_limit, min_github_stars, run_id))
+        self.started.set()
+        self.release.wait(timeout=2)
+        self.finished.set()
+
+        class Result:
+            def to_dict(self):
+                return {
+                    "runId": run_id,
+                    "publishedPaperIds": [],
+                    "publishedCount": 0,
+                    "blockedCount": 0,
                     "errors": [],
                 }
 

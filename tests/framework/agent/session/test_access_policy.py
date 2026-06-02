@@ -51,9 +51,14 @@ def test_access_policy_restricts_writes_and_private_reads() -> None:
         include_private=True,
         statuses=(),
     )
+    assert workspace.query(query) == ()
     assert workspace.query(query, reader_agent_id="owner") == (item,)
     assert workspace.query(query, reader_agent_id="paper-analysis-orchestrator") == (item,)
     assert workspace.query(query, reader_agent_id="reviewer") == ()
+    assert workspace.read(session_id="session-1", roles=("private-note",), include_private=True) == ()
+    assert workspace.latest(session_id="session-1", role="private-note") is None
+    assert workspace.latest(session_id="session-1", role="private-note", include_private=True) is None
+    assert workspace.latest(session_id="session-1", role="private-note", reader_agent_id="owner", include_private=True) == item
 
 
 def test_default_policy_allows_shared_public_and_final_reads() -> None:

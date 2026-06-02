@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import secrets
 from collections.abc import Callable, Mapping, Sequence
@@ -11,6 +10,7 @@ from pathlib import Path
 from typing import Any, Literal, Protocol
 
 from framework.events.event import Event
+from interfaces.services.json_file_store import locked_json_file, read_json_object_unlocked, write_json_object_unlocked
 
 
 DEFAULT_PAPER_READER_INTERACTIONS_PATH = ".newsroom/papers/reader-interactions.json"
@@ -380,12 +380,49 @@ class LocalJsonPaperReaderInteractionRepository(ReaderEventRepository, ReaderSel
         )
 
     def append_event(self, event: ReaderEvent) -> ReaderEvent:
-        payload = self._read_payload()
-        events = [ReaderEvent.from_dict(item) for item in _sequence(payload.get("events")) if isinstance(item, Mapping)]
-        events.append(event)
-        payload["events"] = [item.to_dict() for item in sorted(events, key=lambda item: (item.createdAt or datetime.min.replace(tzinfo=UTC), item.eventId))]
-        self._write_payload(payload)
+        with locked_json_file(self.path) as path:
+            payload = self._read_payload_unlocked(path)
+            events = [ReaderEvent.from_dict(item) for item in _sequence(payload.get("events")) if isinstance(item, Mapping)]
+            events.append(event)
+            payload["events"] = [
+                item.to_dict()
+                for item in sorted(events, key=lambda item: (item.createdAt or datetime.min.replace(tzinfo=UTC), item.eventId))
+            ]
+            self._write_payload_unlocked(path, payload)
         return event
+
+    def append_event_and_update_selection(
+        self,
+        event: ReaderEvent,
+        selection_updater: Callable[[ReaderSelection | None], ReaderSelection | None] | None,
+    ) -> tuple[ReaderEvent, ReaderSelection | None]:
+        with locked_json_file(self.path) as path:
+            payload = self._read_payload_unlocked(path)
+            events = [ReaderEvent.from_dict(item) for item in _sequence(payload.get("events")) if isinstance(item, Mapping)]
+            events.append(event)
+            payload["events"] = [
+                item.to_dict()
+                for item in sorted(events, key=lambda item: (item.createdAt or datetime.min.replace(tzinfo=UTC), item.eventId))
+            ]
+            next_selection: ReaderSelection | None = None
+            if selection_updater is not None and event.selectionId is not None:
+                selections = {
+                    selection_key(item.userId, item.paperId, item.selectionId): item
+                    for item in self._selections_from_payload(payload)
+                }
+                key = selection_key(event.userId, event.paperId, event.selectionId)
+                next_selection = selection_updater(selections.get(key))
+                selections.pop(key, None)
+                if next_selection is not None:
+                    selections[
+                        selection_key(next_selection.userId, next_selection.paperId, next_selection.selectionId)
+                    ] = next_selection
+                payload["selections"] = [
+                    item.to_dict()
+                    for item in sorted(selections.values(), key=lambda value: (value.userId, value.paperId, value.selectionId))
+                ]
+            self._write_payload_unlocked(path, payload)
+        return event, next_selection
 
     def list_events(self, user_id: str, paper_id: str, *, limit: int | None = None) -> list[ReaderEvent]:
         events = [
@@ -413,18 +450,20 @@ class LocalJsonPaperReaderInteractionRepository(ReaderEventRepository, ReaderSel
         return sorted(events, key=lambda item: (item.createdAt or datetime.min.replace(tzinfo=UTC), item.eventId))[: max(0, int(limit))]
 
     def mark_events_processed(self, event_ids: Sequence[str]) -> None:
-        payload = self._read_payload()
-        processed_ids = {str(item) for item in _sequence(payload.get("processedEventIds"))}
-        processed_ids.update(str(event_id) for event_id in event_ids if str(event_id).strip())
-        payload["processedEventIds"] = sorted(processed_ids)
-        self._write_payload(payload)
+        with locked_json_file(self.path) as path:
+            payload = self._read_payload_unlocked(path)
+            processed_ids = {str(item) for item in _sequence(payload.get("processedEventIds"))}
+            processed_ids.update(str(event_id) for event_id in event_ids if str(event_id).strip())
+            payload["processedEventIds"] = sorted(processed_ids)
+            self._write_payload_unlocked(path, payload)
 
     def delete_user_paper_events(self, user_id: str, paper_id: str) -> int:
-        payload = self._read_payload()
-        events = [event for event in self._events_from_payload(payload) if not (event.userId == user_id and event.paperId == paper_id)]
-        deleted = len(_sequence(payload.get("events"))) - len(events)
-        payload["events"] = [event.to_dict() for event in events]
-        self._write_payload(payload)
+        with locked_json_file(self.path) as path:
+            payload = self._read_payload_unlocked(path)
+            events = [event for event in self._events_from_payload(payload) if not (event.userId == user_id and event.paperId == paper_id)]
+            deleted = len(_sequence(payload.get("events"))) - len(events)
+            payload["events"] = [event.to_dict() for event in events]
+            self._write_payload_unlocked(path, payload)
         return deleted
 
     def list_selections(self, user_id: str, paper_id: str) -> list[ReaderSelection]:
@@ -444,43 +483,46 @@ class LocalJsonPaperReaderInteractionRepository(ReaderEventRepository, ReaderSel
         return None
 
     def upsert_selection(self, selection: ReaderSelection) -> ReaderSelection:
-        payload = self._read_payload()
-        selections = {
-            selection_key(item.userId, item.paperId, item.selectionId): item
-            for item in self._selections_from_payload(payload)
-        }
-        selections[selection_key(selection.userId, selection.paperId, selection.selectionId)] = selection
-        payload["selections"] = [
-            item.to_dict()
-            for item in sorted(selections.values(), key=lambda value: (value.userId, value.paperId, value.selectionId))
-        ]
-        self._write_payload(payload)
+        with locked_json_file(self.path) as path:
+            payload = self._read_payload_unlocked(path)
+            selections = {
+                selection_key(item.userId, item.paperId, item.selectionId): item
+                for item in self._selections_from_payload(payload)
+            }
+            selections[selection_key(selection.userId, selection.paperId, selection.selectionId)] = selection
+            payload["selections"] = [
+                item.to_dict()
+                for item in sorted(selections.values(), key=lambda value: (value.userId, value.paperId, value.selectionId))
+            ]
+            self._write_payload_unlocked(path, payload)
         return selection
 
     def delete_selection(self, user_id: str, paper_id: str, selection_id: str) -> bool:
-        payload = self._read_payload()
-        key = selection_key(user_id, paper_id, selection_id)
-        selections = {
-            selection_key(item.userId, item.paperId, item.selectionId): item
-            for item in self._selections_from_payload(payload)
-        }
-        if key not in selections:
-            return False
-        del selections[key]
-        payload["selections"] = [item.to_dict() for item in selections.values()]
-        self._write_payload(payload)
+        with locked_json_file(self.path) as path:
+            payload = self._read_payload_unlocked(path)
+            key = selection_key(user_id, paper_id, selection_id)
+            selections = {
+                selection_key(item.userId, item.paperId, item.selectionId): item
+                for item in self._selections_from_payload(payload)
+            }
+            if key not in selections:
+                return False
+            del selections[key]
+            payload["selections"] = [item.to_dict() for item in selections.values()]
+            self._write_payload_unlocked(path, payload)
         return True
 
     def delete_user_paper_selections(self, user_id: str, paper_id: str) -> int:
-        payload = self._read_payload()
-        selections = [
-            selection
-            for selection in self._selections_from_payload(payload)
-            if not (selection.userId == user_id and selection.paperId == paper_id)
-        ]
-        deleted = len(_sequence(payload.get("selections"))) - len(selections)
-        payload["selections"] = [selection.to_dict() for selection in selections]
-        self._write_payload(payload)
+        with locked_json_file(self.path) as path:
+            payload = self._read_payload_unlocked(path)
+            selections = [
+                selection
+                for selection in self._selections_from_payload(payload)
+                if not (selection.userId == user_id and selection.paperId == paper_id)
+            ]
+            deleted = len(_sequence(payload.get("selections"))) - len(selections)
+            payload["selections"] = [selection.to_dict() for selection in selections]
+            self._write_payload_unlocked(path, payload)
         return deleted
 
     def _events(self) -> list[ReaderEvent]:
@@ -496,11 +538,13 @@ class LocalJsonPaperReaderInteractionRepository(ReaderEventRepository, ReaderSel
         return [ReaderSelection.from_dict(item) for item in _sequence(payload.get("selections")) if isinstance(item, Mapping)]
 
     def _read_payload(self) -> dict[str, Any]:
-        if not self.path.exists():
-            return {"schemaVersion": "paper_reader_interactions.v1", "events": [], "selections": [], "processedEventIds": []}
-        payload = json.loads(self.path.read_text(encoding="utf-8"))
+        with locked_json_file(self.path) as path:
+            return self._read_payload_unlocked(path)
+
+    def _read_payload_unlocked(self, path: Path) -> dict[str, Any]:
+        payload = read_json_object_unlocked(path, default=_default_payload(), strict=True)
         if not isinstance(payload, dict):
-            return {"schemaVersion": "paper_reader_interactions.v1", "events": [], "selections": [], "processedEventIds": []}
+            return _default_payload()
         payload.setdefault("schemaVersion", "paper_reader_interactions.v1")
         payload.setdefault("events", [])
         payload.setdefault("selections", [])
@@ -508,10 +552,11 @@ class LocalJsonPaperReaderInteractionRepository(ReaderEventRepository, ReaderSel
         return payload
 
     def _write_payload(self, payload: Mapping[str, Any]) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        temp_path = self.path.with_name(f"{self.path.name}.tmp")
-        temp_path.write_text(json.dumps(dict(payload), ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
-        temp_path.replace(self.path)
+        with locked_json_file(self.path) as path:
+            self._write_payload_unlocked(path, payload)
+
+    def _write_payload_unlocked(self, path: Path, payload: Mapping[str, Any]) -> None:
+        write_json_object_unlocked(path, dict(payload))
 
 
 class PaperReaderInteractionApplicationService:
@@ -532,10 +577,20 @@ class PaperReaderInteractionApplicationService:
 
     def record_event(self, *, user_id: str, paper_id: str, payload: Mapping[str, Any]) -> ReaderEventRecordResult:
         event = self._event_from_payload(user_id=user_id, paper_id=paper_id, payload=payload)
-        selection = self._selection_from_event(event)
-        stored_event = self.event_repository.append_event(event)
-        if selection is not None:
-            selection = self._persist_selection_after_event(event, selection)
+        selection_updater = self._selection_updater_for_event(event)
+        atomic_recorder = getattr(self.event_repository, "append_event_and_update_selection", None)
+        if callable(atomic_recorder) and self.event_repository is self.selection_repository:
+            stored_event, selection = atomic_recorder(event, selection_updater)
+        else:
+            stored_event = self.event_repository.append_event(event)
+            selection = None
+            if selection_updater is not None and event.selectionId is not None:
+                current = self.selection_repository.get_selection(event.userId, event.paperId, event.selectionId)
+                next_selection = selection_updater(current)
+                if next_selection is None:
+                    self.selection_repository.delete_selection(event.userId, event.paperId, event.selectionId)
+                else:
+                    selection = self.selection_repository.upsert_selection(next_selection)
         self._publish_recorded_event(stored_event)
         return ReaderEventRecordResult(
             event=stored_event,
@@ -609,10 +664,24 @@ class PaperReaderInteractionApplicationService:
             createdAt=self.clock(),
         )
 
-    def _selection_from_event(self, event: ReaderEvent) -> ReaderSelection | None:
+    def _selection_updater_for_event(
+        self,
+        event: ReaderEvent,
+    ) -> Callable[[ReaderSelection | None], ReaderSelection | None] | None:
         if event.type not in SELECTION_EVENT_TYPES or event.selectionId is None:
             return None
-        current = self.selection_repository.get_selection(event.userId, event.paperId, event.selectionId)
+
+        def update(current: ReaderSelection | None) -> ReaderSelection | None:
+            selection = self._selection_from_event(event, current)
+            if selection is None:
+                return None
+            return self._stored_selection_after_event(event, selection)
+
+        return update
+
+    def _selection_from_event(self, event: ReaderEvent, current: ReaderSelection | None) -> ReaderSelection | None:
+        if event.type not in SELECTION_EVENT_TYPES or event.selectionId is None:
+            return None
         now = event.createdAt or self.clock()
         target = event.target or (current.target if current else ReaderBlockTarget(targetType="text_selection"))
         base = current or ReaderSelection(
@@ -666,13 +735,18 @@ class PaperReaderInteractionApplicationService:
         return updated
 
     def _persist_selection_after_event(self, event: ReaderEvent, selection: ReaderSelection) -> ReaderSelection | None:
-        if event.type in {"selection_discarded", "confusion_unmarked"} and not selection.has_material:
+        stored = self._stored_selection_after_event(event, selection)
+        if stored is None:
             self.selection_repository.delete_selection(selection.userId, selection.paperId, selection.selectionId)
+            return None
+        return self.selection_repository.upsert_selection(stored)
+
+    def _stored_selection_after_event(self, event: ReaderEvent, selection: ReaderSelection) -> ReaderSelection | None:
+        if event.type in {"selection_discarded", "confusion_unmarked"} and not selection.has_material:
             return None
         if event.type == "note_updated" and not selection.noteText and not selection.has_material:
-            self.selection_repository.delete_selection(selection.userId, selection.paperId, selection.selectionId)
             return None
-        return self.selection_repository.upsert_selection(selection)
+        return selection
 
     def _publish_recorded_event(self, event: ReaderEvent) -> None:
         if self.event_publisher is None:
@@ -695,17 +769,28 @@ def selection_key(user_id: str, paper_id: str, selection_id: str) -> str:
     return f"{user_id}::{paper_id}::{selection_id}"
 
 
+def _default_payload() -> dict[str, Any]:
+    return {"schemaVersion": "paper_reader_interactions.v1", "events": [], "selections": [], "processedEventIds": []}
+
+
 def _event_patch_from_selection_patch(current: ReaderSelection, patch: Mapping[str, Any]) -> tuple[str, dict[str, Any]]:
     payload = dict(patch)
+    action_names = _selection_patch_action_names(patch)
+    if len(action_names) > 1:
+        raise ValueError("selection patch must contain only one reader action")
     if "noteText" in patch:
         return "note_updated", {"noteText": patch.get("noteText"), "sectionTitle": current.sectionTitle}
-    if bool(patch.get("explained")):
+    if "explained" in patch:
+        if not bool(patch.get("explained")):
+            raise ValueError("explained can only be set to true")
         return "explanation_generated", {
             "explainQuestion": patch.get("explainQuestion") or patch.get("question"),
             "answer": patch.get("answer"),
             "sectionTitle": current.sectionTitle,
         }
-    if bool(patch.get("exampled")):
+    if "exampled" in patch:
+        if not bool(patch.get("exampled")):
+            raise ValueError("exampled can only be set to true")
         return "example_generated", {
             "exampleQuestion": patch.get("exampleQuestion") or patch.get("question"),
             "example": patch.get("example"),
@@ -714,6 +799,14 @@ def _event_patch_from_selection_patch(current: ReaderSelection, patch: Mapping[s
     if "confused" in patch:
         return ("confusion_marked" if bool(patch.get("confused")) else "confusion_unmarked"), {"sectionTitle": current.sectionTitle}
     return "selection_updated", payload
+
+
+def _selection_patch_action_names(patch: Mapping[str, Any]) -> list[str]:
+    names: list[str] = []
+    for key in ("noteText", "explained", "exampled", "confused"):
+        if key in patch:
+            names.append(key)
+    return names
 
 
 def _question_from_payload(payload: Mapping[str, Any], field_name: str) -> str | None:

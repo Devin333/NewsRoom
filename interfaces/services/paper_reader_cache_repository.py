@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -8,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from business.boards.paper_radar.public_mapper import sanitize_public_payload
+from interfaces.services.json_file_store import read_json_object, write_json_object
 
 
 PAPERS_READER_CACHE_DIR_ENV = "NEWSROOM_PAPERS_READER_CACHE_DIR"
@@ -33,7 +35,7 @@ class PaperReaderCacheRepository:
         )
 
     def read(self, paper_id: str, source_hash: str) -> Mapping[str, Any] | None:
-        payload = _read_json_object(self.path_for(paper_id))
+        payload = _read_first_json_object(_candidate_paths(self.cache_dir, paper_id))
         if payload is None:
             return None
         if _text(payload.get("paperId")) != paper_id or _text(payload.get("sourceHash")) != source_hash:
@@ -79,7 +81,7 @@ class TextExtractionRepository:
         )
 
     def read_sections(self, paper_id: str, source_hash: str) -> tuple[Mapping[str, Any], ...]:
-        payload = _read_json_object(self.path_for(paper_id))
+        payload = _read_first_json_object(_candidate_paths(self.extraction_dir, paper_id))
         if payload is None:
             return ()
         if _text(payload.get("paperId")) != paper_id or _text(payload.get("sourceHash")) != source_hash:
@@ -87,7 +89,7 @@ class TextExtractionRepository:
         return _public_sections_from_payload(payload)
 
     def read_latest_sections(self, paper_id: str) -> tuple[Mapping[str, Any], ...]:
-        payload = _read_json_object(self.path_for(paper_id))
+        payload = _read_first_json_object(_candidate_paths(self.extraction_dir, paper_id))
         if payload is None or _text(payload.get("paperId")) != paper_id:
             return ()
         return _public_sections_from_payload(payload)
@@ -165,22 +167,26 @@ def _project_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+def _read_first_json_object(paths: Sequence[Path]) -> Mapping[str, Any] | None:
+    for path in paths:
+        payload = _read_json_object(path)
+        if payload is not None:
+            return payload
+    return None
+
+
 def _read_json_object(path: Path) -> Mapping[str, Any] | None:
     if not path.exists():
         return None
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    payload = read_json_object(path, default={})
+    if not payload:
         return None
     return payload if isinstance(payload, Mapping) else None
 
 
 def _write_json_object(path: Path, payload: Mapping[str, Any]) -> bool:
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        temp_path = path.with_suffix(f"{path.suffix}.tmp")
-        temp_path.write_text(json.dumps(dict(payload), ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
-        temp_path.replace(path)
+        write_json_object(path, dict(payload))
     except (OSError, TypeError, ValueError):
         return False
     return True
@@ -188,11 +194,22 @@ def _write_json_object(path: Path, payload: Mapping[str, Any]) -> bool:
 
 def _safe_file_key(value: str) -> str:
     normalized = re.sub(r"[^A-Za-z0-9_.-]+", "-", value.strip()).strip(".-")
-    if normalized:
-        return normalized[:120]
-    import hashlib
+    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
+    if not normalized:
+        return digest
+    prefix = normalized[: max(1, 120 - len(digest) - 1)].rstrip(".-")
+    return f"{prefix}-{digest}" if prefix else digest
 
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:24]
+
+def _candidate_paths(root: Path, paper_id: str) -> tuple[Path, ...]:
+    primary = root / f"{_safe_file_key(paper_id)}.json"
+    legacy = root / f"{_legacy_file_key(paper_id)}.json"
+    return (primary,) if legacy == primary else (primary, legacy)
+
+
+def _legacy_file_key(value: str) -> str:
+    normalized = re.sub(r"[^A-Za-z0-9_.-]+", "-", value.strip()).strip(".-")
+    return normalized[:120] if normalized else hashlib.sha256(value.encode("utf-8")).hexdigest()[:24]
 
 
 def _sequence(value: Any) -> Sequence[Any]:

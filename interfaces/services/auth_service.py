@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-import json
 import os
 import re
 import secrets
@@ -11,6 +10,8 @@ from datetime import datetime, timedelta, timezone as _tz
 UTC = _tz.utc
 from pathlib import Path
 from typing import Any, Protocol
+
+from interfaces.services.json_file_store import locked_json_file, read_json_object_unlocked, write_json_object_unlocked
 
 
 DEFAULT_AUTH_USERS_PATH = ".newsroom/auth/users.json"
@@ -147,6 +148,7 @@ class AuthUserRepository(Protocol):
     def get_user_by_username(self, username: str) -> StoredAuthUser | None: ...
     def get_user(self, user_id: str) -> StoredAuthUser | None: ...
     def add_user(self, user: StoredAuthUser) -> StoredAuthUser: ...
+    def bootstrap_first_user(self, user: StoredAuthUser) -> StoredAuthUser: ...
 
 
 class AuthSessionRepository(Protocol):
@@ -173,26 +175,37 @@ class LocalJsonAuthUserRepository:
         return self._read_records().get(user_id)
 
     def add_user(self, user: StoredAuthUser) -> StoredAuthUser:
-        records = self._read_records()
-        if user.userId in records or any(item.username.lower() == user.username.lower() for item in records.values()):
-            raise ValueError("user already exists")
-        records[user.userId] = user
-        self._write_records(records)
+        with locked_json_file(self.path) as path:
+            records = self._read_records_unlocked(path)
+            if user.userId in records or any(item.username.lower() == user.username.lower() for item in records.values()):
+                raise ValueError("user already exists")
+            records[user.userId] = user
+            self._write_records_unlocked(path, records)
+        return user
+
+    def bootstrap_first_user(self, user: StoredAuthUser) -> StoredAuthUser:
+        with locked_json_file(self.path) as path:
+            records = self._read_records_unlocked(path)
+            if records:
+                raise AuthAlreadyInitializedError("account bootstrap is already complete")
+            records[user.userId] = user
+            self._write_records_unlocked(path, records)
         return user
 
     def _read_records(self) -> dict[str, StoredAuthUser]:
-        if not self.path.exists():
-            return {}
-        payload = json.loads(self.path.read_text(encoding="utf-8"))
+        with locked_json_file(self.path) as path:
+            return self._read_records_unlocked(path)
+
+    def _read_records_unlocked(self, path: Path) -> dict[str, StoredAuthUser]:
+        payload = read_json_object_unlocked(path, default={"users": []}, strict=True)
         return {user.userId: user for user in (StoredAuthUser.from_record(item) for item in payload.get("users", []))}
 
-    def _write_records(self, records: dict[str, StoredAuthUser]) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+    def _write_records_unlocked(self, path: Path, records: dict[str, StoredAuthUser]) -> None:
         payload = {
             "schemaVersion": "newsroom_auth_users.v1",
             "users": [record.to_record() for record in sorted(records.values(), key=lambda item: item.username)],
         }
-        _write_json_atomic(self.path, payload)
+        write_json_object_unlocked(path, payload)
 
 
 class LocalJsonAuthSessionRepository:
@@ -200,9 +213,10 @@ class LocalJsonAuthSessionRepository:
         self.path = Path(path or os.environ.get("NEWSROOM_AUTH_SESSIONS_PATH") or DEFAULT_AUTH_SESSIONS_PATH)
 
     def create_session(self, session: AuthSession) -> AuthSession:
-        records = self._read_records()
-        records[session.sessionId] = session
-        self._write_records(records)
+        with locked_json_file(self.path) as path:
+            records = self._read_records_unlocked(path)
+            records[session.sessionId] = session
+            self._write_records_unlocked(path, records)
         return session
 
     def get_session_by_digest(self, token_digest: str) -> AuthSession | None:
@@ -212,36 +226,38 @@ class LocalJsonAuthSessionRepository:
         return None
 
     def revoke_session(self, token_digest: str) -> bool:
-        records = self._read_records()
-        changed = False
-        for session_id, session in list(records.items()):
-            if hmac.compare_digest(session.tokenDigest, token_digest):
-                records[session_id] = AuthSession(
-                    sessionId=session.sessionId,
-                    userId=session.userId,
-                    tokenDigest=session.tokenDigest,
-                    createdAt=session.createdAt,
-                    expiresAt=session.expiresAt,
-                    revokedAt=datetime.now(UTC),
-                )
-                changed = True
-        if changed:
-            self._write_records(records)
-        return changed
+        with locked_json_file(self.path) as path:
+            records = self._read_records_unlocked(path)
+            changed = False
+            for session_id, session in list(records.items()):
+                if hmac.compare_digest(session.tokenDigest, token_digest):
+                    records[session_id] = AuthSession(
+                        sessionId=session.sessionId,
+                        userId=session.userId,
+                        tokenDigest=session.tokenDigest,
+                        createdAt=session.createdAt,
+                        expiresAt=session.expiresAt,
+                        revokedAt=datetime.now(UTC),
+                    )
+                    changed = True
+            if changed:
+                self._write_records_unlocked(path, records)
+            return changed
 
     def _read_records(self) -> dict[str, AuthSession]:
-        if not self.path.exists():
-            return {}
-        payload = json.loads(self.path.read_text(encoding="utf-8"))
+        with locked_json_file(self.path) as path:
+            return self._read_records_unlocked(path)
+
+    def _read_records_unlocked(self, path: Path) -> dict[str, AuthSession]:
+        payload = read_json_object_unlocked(path, default={"sessions": []}, strict=True)
         return {item.sessionId: item for item in (AuthSession.from_record(record) for record in payload.get("sessions", []))}
 
-    def _write_records(self, records: dict[str, AuthSession]) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+    def _write_records_unlocked(self, path: Path, records: dict[str, AuthSession]) -> None:
         payload = {
             "schemaVersion": "newsroom_auth_sessions.v1",
             "sessions": [record.to_record() for record in sorted(records.values(), key=lambda item: item.createdAt)],
         }
-        _write_json_atomic(self.path, payload)
+        write_json_object_unlocked(path, payload)
 
 
 class AuthApplicationService:
@@ -262,9 +278,14 @@ class AuthApplicationService:
         return bool(self.users.list_users())
 
     def bootstrap(self, *, username: str, password: str) -> AuthSessionResult:
-        if self.is_initialized():
-            raise AuthAlreadyInitializedError("account bootstrap is already complete")
-        user = self._create_user(username=username, password=password, role="admin")
+        user = self._build_user(username=username, password=password, role="admin")
+        bootstrap_first = getattr(self.users, "bootstrap_first_user", None)
+        if callable(bootstrap_first):
+            user = bootstrap_first(user)
+        else:
+            if self.is_initialized():
+                raise AuthAlreadyInitializedError("account bootstrap is already complete")
+            user = self.users.add_user(user)
         return self._create_session_result(user)
 
     def login(self, *, username: str, password: str) -> AuthSessionResult:
@@ -290,11 +311,14 @@ class AuthApplicationService:
         return AuthSessionResult(user=_public_user(user), sessionId=session.sessionId, expiresAt=session.expiresAt)
 
     def _create_user(self, *, username: str, password: str, role: str) -> StoredAuthUser:
+        return self.users.add_user(self._build_user(username=username, password=password, role=role))
+
+    def _build_user(self, *, username: str, password: str, role: str) -> StoredAuthUser:
         normalized_username = _normalize_username(username)
         _validate_password(password)
         salt = secrets.token_hex(16)
         now = datetime.now(UTC)
-        user = StoredAuthUser(
+        return StoredAuthUser(
             userId=f"user_{secrets.token_hex(8)}",
             username=normalized_username,
             role=role,
@@ -304,7 +328,6 @@ class AuthApplicationService:
             passwordSalt=salt,
             passwordIterations=PASSWORD_HASH_ITERATIONS,
         )
-        return self.users.add_user(user)
 
     def _create_session_result(self, user: StoredAuthUser) -> AuthSessionResult:
         token = secrets.token_urlsafe(32)
@@ -362,12 +385,6 @@ def _verify_password(password: str, user: StoredAuthUser) -> bool:
 
 def _token_digest(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
-
-
-def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
-    temp_path = path.with_name(f"{path.name}.tmp")
-    temp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
-    temp_path.replace(path)
 
 
 def _format_datetime(value: datetime) -> str:

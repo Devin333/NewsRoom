@@ -27,6 +27,7 @@ from business.boards.paper_radar.visual_compiler.models import (
     PaperAssetManifest,
     PaperBlock,
     PaperCompileInfo,
+    PaperCompileStatusRecord,
     PaperDocument,
     PaperSourceRegion,
     PaperVisualAsset,
@@ -58,6 +59,83 @@ def test_visual_compiler_publishes_pdf_blocks_and_keeps_ai_summary_out_of_body(t
     assert payload["ai"]["signals"]["abstractSnippet"] == "Generated AI summary should stay outside body."
     assert "compiledTextGrounding" in payload["status"]["sourceComparisonReport"]["metrics"]
     assert (service.repository.paper_dir("visual-paper") / "source-comparison-memory.json").exists()
+
+
+def test_visual_compiler_repository_reads_legacy_paper_directories(tmp_path) -> None:
+    repository = PaperVisualCompilerRepository(tmp_path)
+    paper_id = "legacy-paper"
+    legacy_dir = tmp_path / paper_id
+    legacy_dir.mkdir()
+    assert repository.paper_dir(paper_id) != legacy_dir
+
+    compiled_at = "2026-05-28T00:00:00Z"
+    asset = PaperVisualAsset(
+        assetId="asset-page-1",
+        paperId=paper_id,
+        kind="page",
+        fileName="assets/page-1.png",
+        mimeType="image/png",
+        width=100,
+        height=120,
+        checksum="sha256:test",
+        pageNumber=1,
+    )
+    manifest = PaperAssetManifest(
+        paperId=paper_id,
+        schemaVersion="paper_asset_manifest_v1",
+        createdAt=compiled_at,
+        sourceHash="source-hash",
+        sourcePdfFileName="source.pdf",
+        assets=(asset,),
+    )
+    document = PaperDocument(
+        paperId=paper_id,
+        schemaVersion="paper_document_v1",
+        status="compiled",
+        title="Legacy Paper",
+        compiledAt=compiled_at,
+        sourceHash="source-hash",
+        blocks=(
+            PaperBlock(
+                id="block-1",
+                paperId=paper_id,
+                type="paragraph",
+                text="Compiled legacy body.",
+            ),
+        ),
+    )
+    compile_info = PaperCompileInfo(
+        paperId=paper_id,
+        status="compiled",
+        provider="test",
+        sourceHash="source-hash",
+        startedAt=compiled_at,
+        finishedAt=compiled_at,
+        pageCount=1,
+        blockCount=1,
+        assetCount=1,
+    )
+    status = PaperCompileStatusRecord(
+        paperId=paper_id,
+        status="compiled",
+        updatedAt=compiled_at,
+        compileInfo=compile_info,
+    )
+    (legacy_dir / "document.json").write_text(json.dumps(document.to_dict()), encoding="utf-8")
+    (legacy_dir / "manifest.json").write_text(json.dumps(manifest.to_dict()), encoding="utf-8")
+    (legacy_dir / "compile-info.json").write_text(json.dumps(compile_info.to_dict()), encoding="utf-8")
+    (legacy_dir / "status.json").write_text(json.dumps(status.to_dict()), encoding="utf-8")
+    (legacy_dir / "source.pdf").write_bytes(b"%PDF-1.7")
+    (legacy_dir / "assets").mkdir()
+    (legacy_dir / "assets" / "page-1.png").write_bytes(b"png")
+
+    published = repository.read_published_document(paper_id)
+    resolved_asset = repository.resolve_asset(paper_id, "asset-page-1")
+
+    assert published is not None
+    assert published[0].blocks[0].text == "Compiled legacy body."
+    assert resolved_asset == (legacy_dir / "assets" / "page-1.png", "image/png")
+    assert repository.existing_source_pdf_path(paper_id) == legacy_dir / "source.pdf"
 
 
 def test_asset_gate_blocks_missing_visual_asset_file(tmp_path) -> None:

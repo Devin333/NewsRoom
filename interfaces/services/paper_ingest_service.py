@@ -36,6 +36,7 @@ from infrastructure.external.sources import (
 )
 from infrastructure.external.sources.github import GithubRepository, GithubRepositoryMetadata
 from infrastructure.external.sources.models import RawSourceItem, SourceDefinition
+from interfaces.services.json_file_store import locked_json_file, read_json_object, read_json_object_unlocked, write_json_object, write_json_object_unlocked
 from interfaces.services.paper_reader_cache_repository import TextExtractionRepository
 from interfaces.services.paper_service import PAPERS_DATA_PATH_ENV
 from interfaces.services.paper_taxonomy_categories import (
@@ -1049,11 +1050,43 @@ class PaperIngestApplicationService:
         )
 
     def get_thumbnail_path(self, file_name: str) -> Path | None:
-        safe_name = _safe_file_key(file_name)
-        if safe_name != file_name:
+        if not _is_safe_file_name(file_name):
             return None
-        path = self.state.thumbnail_dir / file_name
+        path = (self.state.thumbnail_dir / file_name).resolve()
+        root = self.state.thumbnail_dir.resolve()
+        if root not in path.parents:
+            return None
         return path if path.exists() and path.is_file() else None
+
+    def record_background_failure(
+        self,
+        *,
+        run_id: str,
+        task_type: str,
+        step: str,
+        error: Exception,
+    ) -> None:
+        now = self.clock()
+        run_state = _new_run_state(run_id, started=now, config=self.config)
+        run_state.update(
+            {
+                "status": "failed",
+                "finishedAt": _iso(now),
+                "failureCount": 1,
+                "errors": [
+                    {
+                        "runId": run_id,
+                        "taskType": task_type,
+                        "step": step,
+                        "errorCode": type(error).__name__,
+                        "errorMessage": str(error),
+                        "retryable": True,
+                        "createdAt": _iso(now),
+                    }
+                ],
+            }
+        )
+        self.state.record_run(run_state)
 
     def _fetch_candidates(self, config: PaperIngestConfig) -> list[RawSourceItem]:
         if self.source_service is not None:
@@ -1089,10 +1122,7 @@ class PaperIngestApplicationService:
         return _dedupe_candidates(items)
 
     def _cached_arxiv_candidates(self, config: PaperIngestConfig) -> list[RawSourceItem]:
-        try:
-            payload = json.loads(self.papers_data_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return []
+        payload = read_json_object(self.papers_data_path, default={})
         papers = payload.get("papers") if isinstance(payload, Mapping) else None
         if not isinstance(papers, Sequence):
             return []
@@ -1785,34 +1815,39 @@ class PaperIngestApplicationService:
         }
 
     def _publish_paper(self, paper_payload: Mapping[str, Any], *, collected_at: str) -> None:
-        cache = self._read_paper_cache()
-        papers = [dict(item) for item in _sequence(cache.get("papers")) if isinstance(item, Mapping)]
-        paper_id = str(paper_payload["id"])
-        arxiv_id = _optional_text(paper_payload.get("arxivId"))
-        merged = False
-        next_papers: list[Mapping[str, Any]] = []
-        for existing in papers:
-            if existing.get("id") == paper_id or (arxiv_id and existing.get("arxivId") == arxiv_id):
-                next_papers.append(_deep_merge(existing, paper_payload))
-                merged = True
-            else:
-                next_papers.append(existing)
-        if not merged:
-            next_papers.append(dict(paper_payload))
-        cache.update(
-            {
-                "source": "papers_ingest_github_arxiv_daily",
-                "collectedAt": collected_at,
-                "papers": next_papers,
-            }
-        )
-        self._write_paper_cache(cache)
+        with locked_json_file(self.papers_data_path) as path:
+            cache = self._read_paper_cache_unlocked(path)
+            papers = [dict(item) for item in _sequence(cache.get("papers")) if isinstance(item, Mapping)]
+            paper_id = str(paper_payload["id"])
+            arxiv_id = _optional_text(paper_payload.get("arxivId"))
+            merged = False
+            next_papers: list[Mapping[str, Any]] = []
+            for existing in papers:
+                if existing.get("id") == paper_id or (arxiv_id and existing.get("arxivId") == arxiv_id):
+                    next_papers.append(_deep_merge(existing, paper_payload))
+                    merged = True
+                else:
+                    next_papers.append(existing)
+            if not merged:
+                next_papers.append(dict(paper_payload))
+            cache.update(
+                {
+                    "source": "papers_ingest_github_arxiv_daily",
+                    "collectedAt": collected_at,
+                    "papers": next_papers,
+                }
+            )
+            self._write_paper_cache_unlocked(path, cache)
 
     def _read_paper_cache(self) -> dict[str, Any]:
-        if not self.papers_data_path.exists():
+        with locked_json_file(self.papers_data_path) as path:
+            return self._read_paper_cache_unlocked(path)
+
+    def _read_paper_cache_unlocked(self, path: Path) -> dict[str, Any]:
+        if not path.exists():
             return {"source": "papers_ingest_github_arxiv_daily", "papers": []}
         try:
-            payload = json.loads(self.papers_data_path.read_text(encoding="utf-8"))
+            payload = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             raise PaperIngestError(str(exc), code="papers_cache_invalid", step="publish") from exc
         if not isinstance(payload, Mapping):
@@ -1820,13 +1855,12 @@ class PaperIngestApplicationService:
         return dict(payload)
 
     def _write_paper_cache(self, payload: Mapping[str, Any]) -> None:
-        self.papers_data_path.parent.mkdir(parents=True, exist_ok=True)
-        temp_path = self.papers_data_path.with_suffix(f"{self.papers_data_path.suffix}.tmp")
-        temp_path.write_text(
-            json.dumps(sanitize_public_payload(dict(payload)), ensure_ascii=False, indent=2, sort_keys=True),
-            encoding="utf-8",
-        )
-        temp_path.replace(self.papers_data_path)
+        with locked_json_file(self.papers_data_path) as path:
+            self._write_paper_cache_unlocked(path, payload)
+
+    def _write_paper_cache_unlocked(self, path: Path, payload: Mapping[str, Any]) -> None:
+        sanitized = sanitize_public_payload(dict(payload))
+        write_json_object_unlocked(path, dict(sanitized) if isinstance(sanitized, Mapping) else {})
 
     def _handle_failure(
         self,
@@ -1975,10 +2009,11 @@ class PaperIngestStateRepository:
         self.thumbnail_dir = self.state_dir / "thumbnails"
 
     def record_run(self, run: Mapping[str, Any]) -> None:
-        payload = _read_json(self.runs_path, default={"runs": []})
-        runs = [dict(item) for item in _sequence(payload.get("runs")) if isinstance(item, Mapping)]
-        runs = [dict(run), *[item for item in runs if item.get("runId") != run.get("runId")]][:100]
-        _write_json(self.runs_path, {"runs": runs})
+        with locked_json_file(self.runs_path) as path:
+            payload = _read_json_unlocked(path, default={"runs": []})
+            runs = [dict(item) for item in _sequence(payload.get("runs")) if isinstance(item, Mapping)]
+            runs = [dict(run), *[item for item in runs if item.get("runId") != run.get("runId")]][:100]
+            _write_json_unlocked(path, {"runs": runs})
 
     def list_runs(self, *, limit: int = 20) -> list[Mapping[str, Any]]:
         payload = _read_json(self.runs_path, default={"runs": []})
@@ -1999,39 +2034,40 @@ class PaperIngestStateRepository:
         return [dict(item) for item in _sequence(payload.get("items")) if isinstance(item, Mapping)][:limit]
 
     def reclassify_soft_blocked_items(self, *, now: Callable[[], datetime]) -> int:
-        blocked_payload = dict(_read_json(self.blocked_path, default={"items": []}))
-        blocked_items = [dict(item) for item in _sequence(blocked_payload.get("items")) if isinstance(item, Mapping)]
-        if not blocked_items:
-            return 0
+        with locked_json_file(self.blocked_path) as path:
+            blocked_payload = dict(_read_json_unlocked(path, default={"items": []}))
+            blocked_items = [dict(item) for item in _sequence(blocked_payload.get("items")) if isinstance(item, Mapping)]
+            if not blocked_items:
+                return 0
 
-        remaining_blocked: list[Mapping[str, Any]] = []
-        reclassified: list[Mapping[str, Any]] = []
-        for item in blocked_items:
-            error_code = str(item.get("errorCode") or "")
-            error_message = str(item.get("errorMessage") or "")
-            if _is_hard_block_error(error_code, error_message):
-                remaining_blocked.append(item)
-                continue
-            retry_at = now() + timedelta(minutes=DEFAULT_REPAIR_DELAY_MINUTES)
-            repair = dict(item)
-            repair.pop("reason", None)
-            repair.update(
-                {
-                    "queue": "agent_repair",
-                    "status": "queued",
-                    "retryAt": _iso(retry_at),
-                    "attemptCount": int(repair.get("attemptCount") or 0),
-                    "repairAction": _repair_action_for(error_code, str(item.get("step") or "")),
-                    "userActionRequired": False,
-                    "reclassifiedFrom": "manual_blocked",
-                    "reclassifiedAt": _iso(now()),
-                }
-            )
-            reclassified.append(repair)
+            remaining_blocked: list[Mapping[str, Any]] = []
+            reclassified: list[Mapping[str, Any]] = []
+            for item in blocked_items:
+                error_code = str(item.get("errorCode") or "")
+                error_message = str(item.get("errorMessage") or "")
+                if _is_hard_block_error(error_code, error_message):
+                    remaining_blocked.append(item)
+                    continue
+                retry_at = now() + timedelta(minutes=DEFAULT_REPAIR_DELAY_MINUTES)
+                repair = dict(item)
+                repair.pop("reason", None)
+                repair.update(
+                    {
+                        "queue": "agent_repair",
+                        "status": "queued",
+                        "retryAt": _iso(retry_at),
+                        "attemptCount": int(repair.get("attemptCount") or 0),
+                        "repairAction": _repair_action_for(error_code, str(item.get("step") or "")),
+                        "userActionRequired": False,
+                        "reclassifiedFrom": "manual_blocked",
+                        "reclassifiedAt": _iso(now()),
+                    }
+                )
+                reclassified.append(repair)
 
-        if not reclassified:
-            return 0
-        _write_json(self.blocked_path, {"items": remaining_blocked})
+            if not reclassified:
+                return 0
+            _write_json_unlocked(path, {"items": remaining_blocked})
         for item in reclassified:
             self.record_repair_item(item)
             self.record_prompt_memory(
@@ -2100,12 +2136,13 @@ class PaperIngestStateRepository:
         id_key: str,
         max_items: int = 100,
     ) -> None:
-        payload = dict(_read_json(path, default={root_key: []}))
-        existing = [dict(value) for value in _sequence(payload.get(root_key)) if isinstance(value, Mapping)]
-        item_id = item.get(id_key)
-        next_items = [dict(item), *[value for value in existing if value.get(id_key) != item_id]][:max_items]
-        payload[root_key] = next_items
-        _write_json(path, payload)
+        with locked_json_file(path) as resolved:
+            payload = dict(_read_json_unlocked(resolved, default={root_key: []}))
+            existing = [dict(value) for value in _sequence(payload.get(root_key)) if isinstance(value, Mapping)]
+            item_id = item.get(id_key)
+            next_items = [dict(item), *[value for value in existing if value.get(id_key) != item_id]][:max_items]
+            payload[root_key] = next_items
+            _write_json_unlocked(resolved, payload)
 
 
 def _classification_request(
@@ -2369,23 +2406,21 @@ def _project_root() -> Path:
 
 
 def _read_json(path: Path, *, default: Mapping[str, Any]) -> Mapping[str, Any]:
-    if not path.exists():
-        return dict(default)
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return dict(default)
-    return payload if isinstance(payload, Mapping) else dict(default)
+    return read_json_object(path, default=default, strict=True)
+
+
+def _read_json_unlocked(path: Path, *, default: Mapping[str, Any]) -> Mapping[str, Any]:
+    return read_json_object_unlocked(path, default=default, strict=True)
 
 
 def _write_json(path: Path, payload: Mapping[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = path.with_suffix(f"{path.suffix}.tmp")
-    temp_path.write_text(
-        json.dumps(sanitize_public_payload(dict(payload)), ensure_ascii=False, indent=2, sort_keys=True),
-        encoding="utf-8",
-    )
-    temp_path.replace(path)
+    sanitized = sanitize_public_payload(dict(payload))
+    write_json_object(path, dict(sanitized) if isinstance(sanitized, Mapping) else {})
+
+
+def _write_json_unlocked(path: Path, payload: Mapping[str, Any]) -> None:
+    sanitized = sanitize_public_payload(dict(payload))
+    write_json_object_unlocked(path, dict(sanitized) if isinstance(sanitized, Mapping) else {})
 
 
 def _openalex_fetch_json(request: Request, timeout_seconds: int) -> Mapping[str, Any]:
@@ -2878,7 +2913,20 @@ def _slugify(value: str | None) -> str:
 
 def _safe_file_key(value: str) -> str:
     normalized = re.sub(r"[^A-Za-z0-9_.-]+", "-", value.strip()).strip(".-")
-    return normalized[:140] if normalized else hashlib.sha256(value.encode("utf-8")).hexdigest()[:24]
+    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
+    if not normalized:
+        return digest
+    prefix = normalized[: max(1, 140 - len(digest) - 1)].rstrip(".-")
+    return f"{prefix}-{digest}" if prefix else digest
+
+
+def _is_safe_file_name(value: str) -> bool:
+    text = str(value or "").strip()
+    if not text or text != value or len(text) > 180:
+        return False
+    if "/" in text or "\\" in text or text in {".", ".."}:
+        return False
+    return bool(re.fullmatch(r"[A-Za-z0-9_.-]+", text))
 
 
 def _stable_id(*parts: str) -> str:

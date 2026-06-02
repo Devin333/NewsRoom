@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 
 from business.boards.paper_radar.public_mapper import map_paper_radar_artifact_to_public_papers
 from interfaces.services.paper_artifact_repository import PaperArtifactRepository
+from interfaces.services.paper_reader_cache_repository import PaperReaderCacheRepository, TextExtractionRepository
 from interfaces.services.paper_service import PaperListQuery, PapersApplicationService
 
 
@@ -145,7 +146,7 @@ def test_reader_cache_miss_writes_public_cache(tmp_path) -> None:
 
     reader = service.get_reader_payload("cache-paper", locale="en").to_dict()
 
-    cache_file = reader_cache_dir / "cache-paper.json"
+    cache_file = PaperReaderCacheRepository(reader_cache_dir).path_for("cache-paper")
     assert cache_file.exists()
     assert reader["sections"][0]["sectionType"] == "abstract"
     cache_record = json.loads(cache_file.read_text(encoding="utf-8"))
@@ -182,7 +183,7 @@ def test_reader_cache_reuses_valid_cache_and_rebuilds_stale_cache(tmp_path) -> N
     )
     service = PapersApplicationService(papers_data_path=cache_path, reader_cache_dir=reader_cache_dir)
     service.get_reader_payload("reuse-paper", locale="en")
-    cache_file = reader_cache_dir / "reuse-paper.json"
+    cache_file = PaperReaderCacheRepository(reader_cache_dir).path_for("reuse-paper")
     cache_record = json.loads(cache_file.read_text(encoding="utf-8"))
     cache_record["payload"]["sections"][0]["textExcerpt"] = "Cached public section."
     cache_record["payload"]["raw_payload"] = {"token": "secret"}
@@ -237,9 +238,10 @@ def test_text_extraction_artifact_adds_sections_and_text_extracted_quality(tmp_p
         text_extraction_dir=text_extraction_dir,
     )
     service.get_reader_payload("extract-paper", locale="en")
-    base_source_hash = json.loads((reader_cache_dir / "extract-paper.json").read_text(encoding="utf-8"))["baseSourceHash"]
+    reader_cache_file = PaperReaderCacheRepository(reader_cache_dir).path_for("extract-paper")
+    base_source_hash = json.loads(reader_cache_file.read_text(encoding="utf-8"))["baseSourceHash"]
     text_extraction_dir.mkdir()
-    (text_extraction_dir / "extract-paper.json").write_text(
+    TextExtractionRepository(text_extraction_dir).path_for("extract-paper").write_text(
         json.dumps(
             {
                 "paperId": "extract-paper",

@@ -1,3 +1,7 @@
+from concurrent.futures import ThreadPoolExecutor
+
+import pytest
+
 from interfaces.services.paper_reader_interaction_service import (
     LocalJsonPaperReaderInteractionRepository,
     PaperReaderInteractionApplicationService,
@@ -95,6 +99,91 @@ def test_reader_targets_cover_text_paragraph_figure_table_and_equation(tmp_path)
 
     events = service.material_summary(user_id="user-1", paper_id="paper-1").events
     assert [event.target.targetType for event in events] == target_types
+
+
+def test_reader_selection_patch_rejects_multiple_reader_actions(tmp_path) -> None:
+    service = PaperReaderInteractionApplicationService(store_path=tmp_path / "reader-interactions.json")
+    created = service.create_selection(
+        user_id="user-1",
+        paper_id="paper-1",
+        payload={"selectedText": "selected", "surroundingText": "selected surrounding"},
+    )
+    selection_id = created.selection.selectionId
+
+    with pytest.raises(ValueError, match="only one reader action"):
+        service.patch_selection(
+            user_id="user-1",
+            paper_id="paper-1",
+            selection_id=selection_id,
+            patch={"noteText": "Keep this note.", "confused": True},
+        )
+
+    selection = service.material_summary(user_id="user-1", paper_id="paper-1").selections[0]
+    assert selection.noteText is None
+    assert selection.confused is False
+    assert len(service.material_summary(user_id="user-1", paper_id="paper-1").events) == 1
+
+
+def test_reader_selection_patch_rejects_unsupported_false_generated_flags(tmp_path) -> None:
+    service = PaperReaderInteractionApplicationService(store_path=tmp_path / "reader-interactions.json")
+    created = service.create_selection(
+        user_id="user-1",
+        paper_id="paper-1",
+        payload={"selectedText": "selected", "surroundingText": "selected surrounding"},
+    )
+
+    with pytest.raises(ValueError, match="explained can only be set to true"):
+        service.patch_selection(
+            user_id="user-1",
+            paper_id="paper-1",
+            selection_id=created.selection.selectionId,
+            patch={"explained": False},
+        )
+
+
+def test_reader_interaction_repository_keeps_concurrent_events_and_selection_updates(tmp_path) -> None:
+    repository = LocalJsonPaperReaderInteractionRepository(tmp_path / "reader-interactions.json")
+    service = PaperReaderInteractionApplicationService(
+        event_repository=repository,
+        selection_repository=repository,
+    )
+    created = service.create_selection(
+        user_id="user-1",
+        paper_id="paper-1",
+        payload={"selectedText": "selected", "surroundingText": "selected surrounding"},
+    )
+    selection_id = created.selection.selectionId
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        list(
+            executor.map(
+                lambda index: service.record_event(
+                    user_id="user-1",
+                    paper_id="paper-1",
+                    payload={"type": "reader_progress_sampled", "payload": {"page": index + 1}},
+                ),
+                range(50),
+            )
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        list(
+            executor.map(
+                lambda patch: service.patch_selection(
+                    user_id="user-1",
+                    paper_id="paper-1",
+                    selection_id=selection_id,
+                    patch=patch,
+                ),
+                [{"noteText": "Keep this note."}, {"confused": True}],
+            )
+        )
+
+    summary = service.material_summary(user_id="user-1", paper_id="paper-1")
+    selection = summary.selections[0]
+    assert len(repository.list_events("user-1", "paper-1")) == 53
+    assert selection.noteText == "Keep this note."
+    assert selection.confused is True
 
 
 def test_reader_repository_isolates_users_and_marks_processed_events(tmp_path) -> None:

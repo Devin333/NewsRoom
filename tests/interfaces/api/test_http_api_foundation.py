@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 from framework.workers import Task, TaskStatus
 from interfaces.api import create_app
+from interfaces.api.app import _api_token_from_env
 from interfaces.events import AuditEmitter, InMemoryAuditSink
 from interfaces.services.run_inspection_service import RunInspectionService
 from interfaces.services.worker_service import EnqueuedTaskResult
@@ -114,6 +115,21 @@ def test_api_token_auth_allows_valid_bearer_token() -> None:
     assert response.status_code == 200
     assert payload["success"] is True
     assert payload["data"]["report_id"] == "report-1"
+
+
+def test_api_token_can_be_loaded_from_newsroom_env_alias() -> None:
+    client = TestClient(
+        create_app(
+            api_token=_api_token_from_env({"NEWSROOM_API_TOKEN": "room-token"}),
+            report_service_factory=lambda: _FakeReportService(),
+        )
+    )
+
+    missing = client.get("/api/v1/reports/latest")
+    valid = client.get("/api/v1/reports/latest", headers={"Authorization": "Bearer room-token"})
+
+    assert missing.status_code == 401
+    assert valid.status_code == 200
 
 
 def test_api_key_readonly_role_allows_read_and_blocks_write() -> None:

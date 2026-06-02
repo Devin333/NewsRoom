@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -94,16 +95,30 @@ class AgentSharedWorkspace:
         roles: Sequence[str] | None = None,
         agent_ids: Sequence[str] | None = None,
         limit: int | None = None,
+        reader_agent_id: str | None = None,
+        include_private: bool = False,
     ) -> tuple[AgentSessionItem, ...]:
         """Read shared items from one session."""
 
-        return tuple(self._store.read_items(
+        visibility = tuple(SessionVisibility) if include_private and reader_agent_id else (
+            SessionVisibility.PUBLIC,
+            SessionVisibility.SHARED,
+            SessionVisibility.FINAL,
+        )
+        items = self._store.query_items(
+            AgentSessionQuery(
                 session_id=session_id,
-                roles=roles,
-                agent_ids=agent_ids,
+                roles=tuple(str(role) for role in (roles or ())),
+                agent_ids=tuple(str(agent_id) for agent_id in (agent_ids or ())),
+                statuses=(),
+                visibility=visibility,
+                include_private=include_private and reader_agent_id is not None,
                 limit=limit,
             )
         )
+        if reader_agent_id is None:
+            return tuple(items)
+        return tuple(item for item in items if self._access_policy.can_read(agent_id=reader_agent_id, item=item))
 
     def query(
         self,
@@ -113,7 +128,8 @@ class AgentSharedWorkspace:
     ) -> tuple[AgentSessionItem, ...]:
         """Read shared items through AgentSessionQuery and access policy."""
 
-        items = self._store.query_items(query)
+        effective_query = _query_visible_to_reader(query, reader_agent_id=reader_agent_id)
+        items = self._store.query_items(effective_query)
         if reader_agent_id is None:
             return tuple(items)
         return tuple(item for item in items if self._access_policy.can_read(agent_id=reader_agent_id, item=item))
@@ -123,10 +139,28 @@ class AgentSharedWorkspace:
         *,
         session_id: str,
         role: str,
+        reader_agent_id: str | None = None,
+        include_private: bool = False,
     ) -> AgentSessionItem | None:
         """Return the latest item for a role in one session."""
 
-        return self._store.latest_item(session_id=session_id, role=role, status="*")
+        visibility = tuple(SessionVisibility) if include_private and reader_agent_id else (
+            SessionVisibility.PUBLIC,
+            SessionVisibility.SHARED,
+            SessionVisibility.FINAL,
+        )
+        items = self.query(
+            AgentSessionQuery(
+                session_id=session_id,
+                roles=(role,),
+                statuses=(),
+                visibility=visibility,
+                include_private=include_private and reader_agent_id is not None,
+                limit=1,
+            ),
+            reader_agent_id=reader_agent_id,
+        )
+        return items[-1] if items else None
 
     def mark_final(self, *, session_id: str, item_id: str) -> AgentSessionItem:
         """Mark an item as final and visible to downstream readers."""
@@ -188,3 +222,10 @@ class AgentSharedWorkspace:
 def _require_text(value: str, name: str) -> None:
     if not str(value or "").strip():
         raise ValueError(f"{name} is required")
+
+
+def _query_visible_to_reader(query: AgentSessionQuery, *, reader_agent_id: str | None) -> AgentSessionQuery:
+    if query.include_private and reader_agent_id is not None:
+        return query
+    public_visibility = tuple(item for item in query.visibility if item != SessionVisibility.PRIVATE)
+    return replace(query, visibility=public_visibility, include_private=False)

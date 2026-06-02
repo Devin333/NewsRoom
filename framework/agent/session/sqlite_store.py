@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,13 +21,14 @@ class SQLiteAgentSessionStore:
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path).expanduser().resolve()
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(self.path)
+        self._lock = threading.RLock()
+        self._conn = sqlite3.connect(self.path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._initialize()
 
     def create_session(self, ref: AgentSessionRef) -> None:
         now = _now()
-        with self._conn:
+        with self._lock, self._conn:
             self._conn.execute(
                 """
                 insert into agent_sessions (
@@ -74,7 +76,7 @@ class SQLiteAgentSessionStore:
             metadata_json = _json(stored.metadata)
         except TypeError as exc:
             raise AgentSessionStoreError(f"failed to serialize session item JSON: {exc}") from exc
-        with self._conn:
+        with self._lock, self._conn:
             self._conn.execute(
                 """
                 insert into agent_session_items (
@@ -130,55 +132,56 @@ class SQLiteAgentSessionStore:
         metadata: Mapping[str, object] | None = None,
         visibility: str | None = None,
     ) -> AgentSessionItem:
-        current = self._get_item(session_id=session_id, item_id=item_id)
-        if current is None:
-            raise KeyError(f"session item not found: {session_id}/{item_id}")
-        updated = replace(
-            current,
-            status=status or current.status,
-            content=content if content is not None else current.content,
-            summary=summary if summary is not None else current.summary,
-            metadata={**dict(current.metadata), **dict(metadata or {})},
-            visibility=SessionVisibility(str(visibility)) if visibility is not None else current.visibility,
-            updated_at=_now(),
-            version=current.version + 1,
-        )
-        try:
-            content_json = _json(updated.content)
-            metadata_json = _json(updated.metadata)
-        except TypeError as exc:
-            raise AgentSessionStoreError(f"failed to serialize updated session item JSON: {exc}") from exc
-        with self._conn:
-            self._conn.execute(
-                """
-                update agent_session_items
-                   set content_json=?, summary=?, metadata_json=?, status=?, visibility=?, version=?, updated_at=?
-                 where session_id=? and item_id=?
-                """,
-                (
-                    content_json,
-                    updated.summary,
-                    metadata_json,
-                    updated.status,
-                    updated.visibility.value,
-                    updated.version,
-                    updated.updated_at,
-                    session_id,
-                    item_id,
-                ),
+        with self._lock:
+            current = self._get_item(session_id=session_id, item_id=item_id)
+            if current is None:
+                raise KeyError(f"session item not found: {session_id}/{item_id}")
+            updated = replace(
+                current,
+                status=status or current.status,
+                content=content if content is not None else current.content,
+                summary=summary if summary is not None else current.summary,
+                metadata={**dict(current.metadata), **dict(metadata or {})},
+                visibility=SessionVisibility(str(visibility)) if visibility is not None else current.visibility,
+                updated_at=_now(),
+                version=current.version + 1,
             )
-            self._append_event_no_transaction(
-                AgentSessionEvent(
-                    session_id=session_id,
-                    run_id=updated.run_id,
-                    event_type="item.updated",
-                    agent_id=updated.agent_id,
-                    item_id=item_id,
-                    role=updated.role,
-                    payload={"status": updated.status, "visibility": updated.visibility.value},
+            try:
+                content_json = _json(updated.content)
+                metadata_json = _json(updated.metadata)
+            except TypeError as exc:
+                raise AgentSessionStoreError(f"failed to serialize updated session item JSON: {exc}") from exc
+            with self._conn:
+                self._conn.execute(
+                    """
+                    update agent_session_items
+                       set content_json=?, summary=?, metadata_json=?, status=?, visibility=?, version=?, updated_at=?
+                     where session_id=? and item_id=?
+                    """,
+                    (
+                        content_json,
+                        updated.summary,
+                        metadata_json,
+                        updated.status,
+                        updated.visibility.value,
+                        updated.version,
+                        updated.updated_at,
+                        session_id,
+                        item_id,
+                    ),
                 )
-            )
-        return updated
+                self._append_event_no_transaction(
+                    AgentSessionEvent(
+                        session_id=session_id,
+                        run_id=updated.run_id,
+                        event_type="item.updated",
+                        agent_id=updated.agent_id,
+                        item_id=item_id,
+                        role=updated.role,
+                        payload={"status": updated.status, "visibility": updated.visibility.value},
+                    )
+                )
+            return updated
 
     def query_items(self, query: AgentSessionQuery) -> list[AgentSessionItem]:
         clauses = ["session_id = ?"]
@@ -200,7 +203,8 @@ class SQLiteAgentSessionStore:
             clauses.append(f"visibility in ({','.join('?' for _ in visibility_values)})")
             params.extend(visibility_values)
         sql = f"select * from agent_session_items where {' and '.join(clauses)} order by created_at asc, rowid asc"
-        rows = self._conn.execute(sql, params).fetchall()
+        with self._lock:
+            rows = self._conn.execute(sql, params).fetchall()
         items = [_item_from_row(row) for row in rows]
         if query.refs:
             items = [item for item in items if _refs_match(item.refs, query.refs)]
@@ -241,14 +245,15 @@ class SQLiteAgentSessionStore:
 
     def append_event(self, event: AgentSessionEvent) -> AgentSessionEvent:
         stored = event if event.created_at else replace(event, created_at=_now())
-        with self._conn:
+        with self._lock, self._conn:
             self._append_event_no_transaction(stored)
         return stored
 
     def list_events(self, *, session_id: str, limit: int | None = None) -> list[AgentSessionEvent]:
         sql = "select * from agent_session_events where session_id=? order by created_at asc, rowid asc"
         params: list[Any] = [session_id]
-        rows = self._conn.execute(sql, params).fetchall()
+        with self._lock:
+            rows = self._conn.execute(sql, params).fetchall()
         events = [_event_from_row(row) for row in rows]
         if limit is not None and limit >= 0:
             events = events[-limit:] if limit else []
@@ -262,7 +267,7 @@ class SQLiteAgentSessionStore:
             source_event_ids_json = _json(stored.source_event_ids)
         except TypeError as exc:
             raise AgentSessionStoreError(f"failed to serialize session snapshot JSON: {exc}") from exc
-        with self._conn:
+        with self._lock, self._conn:
             self._conn.execute(
                 """
                 insert into agent_session_snapshots (
@@ -292,19 +297,21 @@ class SQLiteAgentSessionStore:
         return stored
 
     def latest_snapshot(self, session_id: str) -> AgentSessionSnapshot | None:
-        row = self._conn.execute(
-            "select * from agent_session_snapshots where session_id=? order by created_at desc, rowid desc limit 1",
-            (session_id,),
-        ).fetchone()
+        with self._lock:
+            row = self._conn.execute(
+                "select * from agent_session_snapshots where session_id=? order by created_at desc, rowid desc limit 1",
+                (session_id,),
+            ).fetchone()
         return _snapshot_from_row(row) if row is not None else None
 
     def close_session(self, *, session_id: str, status: str, metadata: Mapping[str, object] | None = None) -> None:
         metadata_json = _json(dict(metadata or {}))
         now = _now()
-        row = self._conn.execute("select run_id from agent_sessions where session_id=?", (session_id,)).fetchone()
-        run_id = str(row["run_id"]) if row is not None else ""
+        with self._lock:
+            row = self._conn.execute("select run_id from agent_sessions where session_id=?", (session_id,)).fetchone()
+            run_id = str(row["run_id"]) if row is not None else ""
         event_type = "session.completed" if status == "completed" else "session.failed" if status == "failed" else f"session.{status}"
-        with self._conn:
+        with self._lock, self._conn:
             self._conn.execute(
                 "update agent_sessions set status=?, updated_at=?, metadata_json=? where session_id=?",
                 (status, now, metadata_json, session_id),
@@ -314,7 +321,7 @@ class SQLiteAgentSessionStore:
     def clear_session(self, session_id: str) -> None:
         """Backward-compatible test helper for clearing a session."""
 
-        with self._conn:
+        with self._lock, self._conn:
             self._conn.execute("delete from agent_session_items where session_id=?", (session_id,))
             self._conn.execute("delete from agent_session_events where session_id=?", (session_id,))
             self._conn.execute("delete from agent_session_snapshots where session_id=?", (session_id,))
@@ -323,7 +330,8 @@ class SQLiteAgentSessionStore:
     def close(self) -> None:
         """Close the SQLite connection."""
 
-        self._conn.close()
+        with self._lock:
+            self._conn.close()
 
     def _append_event_no_transaction(self, event: AgentSessionEvent) -> AgentSessionEvent:
         stored = event if event.created_at else replace(event, created_at=_now())
@@ -353,21 +361,23 @@ class SQLiteAgentSessionStore:
         return stored
 
     def _get_item(self, *, session_id: str, item_id: str) -> AgentSessionItem | None:
-        row = self._conn.execute(
-            "select * from agent_session_items where session_id=? and item_id=?",
-            (session_id, item_id),
-        ).fetchone()
+        with self._lock:
+            row = self._conn.execute(
+                "select * from agent_session_items where session_id=? and item_id=?",
+                (session_id, item_id),
+            ).fetchone()
         return _item_from_row(row) if row is not None else None
 
     def _has_event(self, session_id: str, event_type: str) -> bool:
-        row = self._conn.execute(
-            "select 1 from agent_session_events where session_id=? and event_type=? limit 1",
-            (session_id, event_type),
-        ).fetchone()
+        with self._lock:
+            row = self._conn.execute(
+                "select 1 from agent_session_events where session_id=? and event_type=? limit 1",
+                (session_id, event_type),
+            ).fetchone()
         return row is not None
 
     def _initialize(self) -> None:
-        with self._conn:
+        with self._lock, self._conn:
             self._conn.executescript(
                 """
                 create table if not exists agent_sessions(

@@ -202,6 +202,35 @@ class PaperVisualCompilerApplicationService:
             ),
         )
 
+    def record_background_failure(
+        self,
+        *,
+        paper_id: str,
+        run_id: str,
+        task_type: str,
+        error: Exception,
+    ) -> PaperCompileStatusRecord:
+        try:
+            paper = self._paper_dict(paper_id)
+            resolved_id = paper["id"]
+        except PaperNotFoundError:
+            resolved_id = paper_id
+        return self.repository.write_status(
+            resolved_id,
+            status="compile_failed",
+            updated_at=_iso(self.clock()),
+            diagnostics=(
+                {
+                    "severity": "error",
+                    "code": "paper_visual_background_failed",
+                    "message": str(error),
+                    "runId": run_id,
+                    "taskType": task_type,
+                    "errorType": type(error).__name__,
+                },
+            ),
+        )
+
     def compile_paper(self, paper_id: str, *, force: bool = False, run_id: str | None = None) -> PaperVisualCompileResult:
         paper = self._paper_dict(paper_id)
         resolved_id = paper["id"]
@@ -538,8 +567,8 @@ class PaperVisualCompilerApplicationService:
         if not any(asset.kind == "page" and asset.pageNumber == page_number for asset in manifest.assets):
             return None
         source_file_name = manifest.sourcePdfFileName or "source.pdf"
-        source_pdf = self.repository.source_pdf_path(resolved_id, source_file_name)
-        if not source_pdf.exists():
+        source_pdf = self.repository.existing_source_pdf_path(resolved_id, source_file_name)
+        if source_pdf is None:
             return None
         bbox_hash = hashlib.sha256(json.dumps({"page": page_number, "bbox": bbox}, sort_keys=True).encode("utf-8")).hexdigest()[:16]
         output_path = self.repository.paper_dir(resolved_id) / "source-previews" / f"page-{page_number:04d}-{bbox_hash}.png"

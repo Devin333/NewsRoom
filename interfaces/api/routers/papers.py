@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import logging
+from collections.abc import Mapping
 from threading import Thread
 from typing import Any
 from uuid import uuid4
@@ -12,6 +14,7 @@ from fastapi.responses import FileResponse
 from interfaces.api.deps import ApiRouteHelpers, ApiServices
 from interfaces.services.auth_service import AuthSessionInvalidError
 from interfaces.services.paper_ingest_service import PAPER_INGEST_TASK_TYPE
+from interfaces.services.paper_ops_run_repository import PaperOpsRunRepository, new_ops_run
 from interfaces.services.paper_visual_compiler_service import (
     PAPER_VISUAL_COMPILE_BACKFILL_TASK_TYPE,
     PAPER_VISUAL_COMPILE_TASK_TYPE,
@@ -31,6 +34,10 @@ from interfaces.services.paper_service import (
     PaperSort,
     PaperSummaryUnavailableError,
 )
+
+logger = logging.getLogger(__name__)
+PAPER_CLASSIFICATION_BACKFILL_TASK_TYPE = "papers.classification_backfill"
+PAPER_CITATION_BACKFILL_TASK_TYPE = "papers.citation_backfill"
 
 
 class PaperAskRequest(BaseModel):
@@ -252,7 +259,8 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
 
     @router.get("/api/v1/papers/ops/ingest")
     def get_paper_ingest_ops(limit: int = Query(20, ge=1, le=100)):
-        ops = services.paper_ingest_service_factory().get_ops_state(limit=limit)
+        ops = dict(services.paper_ingest_service_factory().get_ops_state(limit=limit))
+        ops["localRuns"] = PaperOpsRunRepository().list_runs(limit=limit)
         return helpers.success({"ingest": ops})
 
     @router.get("/api/v1/papers/ops/ingest-runs")
@@ -299,25 +307,37 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
                     retryable=True,
             )
             run_id = request.runId or f"paper-ingest-local-{uuid4().hex[:12]}"
-            paper_ingest_service = services.paper_ingest_service_factory()
-            _start_paper_ingest_background(
-                paper_ingest_service,
-                services.paper_visual_compiler_service_factory(),
-                candidate_limit=request.candidateLimit,
-                min_github_stars=request.minGithubStars,
-                run_id=run_id,
+            operation_key = _local_operation_key(
+                PAPER_INGEST_TASK_TYPE,
+                candidateLimit=request.candidateLimit,
+                minGithubStars=request.minGithubStars,
             )
+            queued, local_run = _try_queue_local_ops_run(
+                run_id=run_id,
+                task_type=PAPER_INGEST_TASK_TYPE,
+                operation_key=operation_key,
+            )
+            resolved_run_id = str(local_run.get("runId") or run_id)
+            if queued:
+                _start_paper_ingest_background(
+                    services.paper_ingest_service_factory,
+                    services.paper_visual_compiler_service_factory,
+                    candidate_limit=request.candidateLimit,
+                    min_github_stars=request.minGithubStars,
+                    run_id=resolved_run_id,
+                )
             return helpers.success(
                 {
                     "enqueued": {
                         "message_id": "local-background",
-                        "task_id": f"{run_id}:local-background",
+                        "task_id": f"{resolved_run_id}:local-background",
                         "task_type": PAPER_INGEST_TASK_TYPE,
                         "queue_name": "local:background",
-                        "status": "queued",
-                        "run_id": run_id,
+                        "status": str(local_run.get("status") or "queued"),
+                        "run_id": resolved_run_id,
                         "mode": "local_background",
                         "fallback_reason": "worker_queue_unavailable",
+                        "already_running": not queued,
                     }
                 }
             )
@@ -326,19 +346,30 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
     @router.post("/api/v1/papers/ops/classification-backfill/trigger")
     def trigger_paper_classification_backfill(request: PaperClassificationBackfillTriggerRequest):
         run_id = request.runId or f"paper-classification-backfill-local-{uuid4().hex[:12]}"
-        paper_ingest_service = services.paper_ingest_service_factory()
-        _start_paper_classification_backfill_background(
-            paper_ingest_service,
-            limit=request.limit,
-            batch_size=request.batchSize,
+        queued, local_run = _try_queue_local_ops_run(
             run_id=run_id,
+            task_type=PAPER_CLASSIFICATION_BACKFILL_TASK_TYPE,
+            operation_key=_local_operation_key(
+                PAPER_CLASSIFICATION_BACKFILL_TASK_TYPE,
+                limit=request.limit,
+                batchSize=request.batchSize,
+            ),
         )
+        resolved_run_id = str(local_run.get("runId") or run_id)
+        if queued:
+            _start_paper_classification_backfill_background(
+                services.paper_ingest_service_factory,
+                limit=request.limit,
+                batch_size=request.batchSize,
+                run_id=resolved_run_id,
+            )
         return helpers.success(
             {
                 "backfill": {
-                    "runId": run_id,
-                    "status": "queued",
+                    "runId": resolved_run_id,
+                    "status": str(local_run.get("status") or "queued"),
                     "mode": "local_background",
+                    "alreadyRunning": not queued,
                     "limit": request.limit,
                     "batchSize": request.batchSize,
                     "scannedCount": 0,
@@ -355,19 +386,30 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
     @router.post("/api/v1/papers/ops/citation-backfill/trigger")
     def trigger_paper_citation_backfill(request: PaperCitationBackfillTriggerRequest):
         run_id = request.runId or f"paper-citation-backfill-local-{uuid4().hex[:12]}"
-        paper_ingest_service = services.paper_ingest_service_factory()
-        _start_paper_citation_backfill_background(
-            paper_ingest_service,
-            limit=request.limit,
-            batch_size=request.batchSize,
+        queued, local_run = _try_queue_local_ops_run(
             run_id=run_id,
+            task_type=PAPER_CITATION_BACKFILL_TASK_TYPE,
+            operation_key=_local_operation_key(
+                PAPER_CITATION_BACKFILL_TASK_TYPE,
+                limit=request.limit,
+                batchSize=request.batchSize,
+            ),
         )
+        resolved_run_id = str(local_run.get("runId") or run_id)
+        if queued:
+            _start_paper_citation_backfill_background(
+                services.paper_ingest_service_factory,
+                limit=request.limit,
+                batch_size=request.batchSize,
+                run_id=resolved_run_id,
+            )
         return helpers.success(
             {
                 "backfill": {
-                    "runId": run_id,
-                    "status": "queued",
+                    "runId": resolved_run_id,
+                    "status": str(local_run.get("status") or "queued"),
                     "mode": "local_background",
+                    "alreadyRunning": not queued,
                     "limit": request.limit,
                     "batchSize": request.batchSize,
                     "scannedCount": 0,
@@ -405,25 +447,37 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
                     retryable=True,
                 )
             run_id = request.runId or f"paper-visual-compile-backfill-local-{uuid4().hex[:12]}"
-            _start_paper_visual_compile_backfill_background(
-                services.paper_visual_compiler_service_factory(),
-                limit=request.limit,
-                force=request.force,
+            queued, local_run = _try_queue_local_ops_run(
                 run_id=run_id,
+                task_type=PAPER_VISUAL_COMPILE_BACKFILL_TASK_TYPE,
+                operation_key=_local_operation_key(
+                    PAPER_VISUAL_COMPILE_BACKFILL_TASK_TYPE,
+                    limit=request.limit,
+                    force=request.force,
+                ),
             )
+            resolved_run_id = str(local_run.get("runId") or run_id)
+            if queued:
+                _start_paper_visual_compile_backfill_background(
+                    services.paper_visual_compiler_service_factory,
+                    limit=request.limit,
+                    force=request.force,
+                    run_id=resolved_run_id,
+                )
             return helpers.success(
                 {
                     "enqueued": {
                         "message_id": "local-background",
-                        "task_id": f"{run_id}:local-background",
+                        "task_id": f"{resolved_run_id}:local-background",
                         "task_type": PAPER_VISUAL_COMPILE_BACKFILL_TASK_TYPE,
                         "queue_name": "local:background",
-                        "status": "queued",
-                        "run_id": run_id,
+                        "status": str(local_run.get("status") or "queued"),
+                        "run_id": resolved_run_id,
                         "force": request.force,
                         "limit": request.limit,
                         "mode": "local_background",
                         "fallback_reason": "worker_queue_unavailable",
+                        "already_running": not queued,
                     }
                 }
             )
@@ -545,24 +599,37 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
                     retryable=True,
                 )
             run_id = request.runId or f"paper-visual-compile-local-{uuid4().hex[:12]}"
-            _start_paper_visual_compile_background(
-                services.paper_visual_compiler_service_factory(),
-                paper_id=paper.id,
-                force=request.force,
+            queued, local_run = _try_queue_local_ops_run(
                 run_id=run_id,
+                task_type=PAPER_VISUAL_COMPILE_TASK_TYPE,
+                paper_id=paper.id,
+                operation_key=_local_operation_key(
+                    PAPER_VISUAL_COMPILE_TASK_TYPE,
+                    paperId=paper.id,
+                    force=request.force,
+                ),
             )
+            resolved_run_id = str(local_run.get("runId") or run_id)
+            if queued:
+                _start_paper_visual_compile_background(
+                    services.paper_visual_compiler_service_factory,
+                    paper_id=paper.id,
+                    force=request.force,
+                    run_id=resolved_run_id,
+                )
             return helpers.success(
                 {
                     "enqueued": {
                         "message_id": "local-background",
-                        "task_id": f"{run_id}:local-background",
+                        "task_id": f"{resolved_run_id}:local-background",
                         "task_type": PAPER_VISUAL_COMPILE_TASK_TYPE,
                         "queue_name": "local:background",
-                        "status": "queued",
+                        "status": str(local_run.get("status") or "queued"),
                         "paper_id": paper.id,
-                        "run_id": run_id,
+                        "run_id": resolved_run_id,
                         "mode": "local_background",
                         "fallback_reason": "worker_queue_unavailable",
+                        "already_running": not queued,
                     }
                 }
             )
@@ -1137,8 +1204,8 @@ def _is_worker_queue_unavailable(exc: Exception) -> bool:
 
 
 def _start_paper_ingest_background(
-    paper_ingest_service,
-    paper_visual_compiler_service,
+    paper_ingest_service_factory,
+    paper_visual_compiler_service_factory,
     *,
     candidate_limit: int | None,
     min_github_stars: int | None,
@@ -1147,8 +1214,8 @@ def _start_paper_ingest_background(
     Thread(
         target=_run_paper_ingest_background,
         kwargs={
-            "paper_ingest_service": paper_ingest_service,
-            "paper_visual_compiler_service": paper_visual_compiler_service,
+            "paper_ingest_service_factory": paper_ingest_service_factory,
+            "paper_visual_compiler_service_factory": paper_visual_compiler_service_factory,
             "candidate_limit": candidate_limit,
             "min_github_stars": min_github_stars,
             "run_id": run_id,
@@ -1158,14 +1225,18 @@ def _start_paper_ingest_background(
 
 
 def _run_paper_ingest_background(
-    paper_ingest_service,
-    paper_visual_compiler_service,
+    paper_ingest_service_factory,
+    paper_visual_compiler_service_factory,
     *,
     candidate_limit: int | None,
     min_github_stars: int | None,
     run_id: str,
 ) -> None:
+    paper_ingest_service = None
     try:
+        _record_local_ops_run(run_id=run_id, task_type=PAPER_INGEST_TASK_TYPE, status="running")
+        paper_ingest_service = paper_ingest_service_factory()
+        paper_visual_compiler_service = paper_visual_compiler_service_factory()
         result = paper_ingest_service.run_daily_ingest(
             candidate_limit=candidate_limit,
             min_github_stars=min_github_stars,
@@ -1173,19 +1244,43 @@ def _run_paper_ingest_background(
         )
         payload = result.to_dict() if hasattr(result, "to_dict") else {}
         if not isinstance(payload, dict):
+            _record_local_ops_run(
+                run_id=run_id,
+                task_type=PAPER_INGEST_TASK_TYPE,
+                status="failed",
+                error=RuntimeError("paper ingest returned an invalid result payload"),
+            )
             return
         for paper_id in payload.get("publishedPaperIds") or []:
             if isinstance(paper_id, str) and paper_id.strip():
                 try:
                     paper_visual_compiler_service.compile_paper(paper_id, force=False, run_id=run_id)
-                except Exception:
+                except Exception as exc:
+                    logger.exception("paper ingest background visual compile failed", extra={"run_id": run_id, "paper_id": paper_id})
+                    _record_visual_background_failure(
+                        paper_visual_compiler_service,
+                        paper_id=paper_id,
+                        run_id=run_id,
+                        task_type=PAPER_VISUAL_COMPILE_TASK_TYPE,
+                        error=exc,
+                    )
                     continue
-    except Exception:
-        return
+        _record_local_ops_run(run_id=run_id, task_type=PAPER_INGEST_TASK_TYPE, status="succeeded")
+    except Exception as exc:
+        logger.exception("paper ingest background failed", extra={"run_id": run_id})
+        _record_local_ops_run(run_id=run_id, task_type=PAPER_INGEST_TASK_TYPE, status="failed", error=exc)
+        if paper_ingest_service is not None:
+            _record_ingest_background_failure(
+                paper_ingest_service,
+                run_id=run_id,
+                task_type=PAPER_INGEST_TASK_TYPE,
+                step="background_ingest",
+                error=exc,
+            )
 
 
 def _start_paper_classification_backfill_background(
-    paper_ingest_service,
+    paper_ingest_service_factory,
     *,
     limit: int | None,
     batch_size: int,
@@ -1194,7 +1289,7 @@ def _start_paper_classification_backfill_background(
     Thread(
         target=_run_paper_classification_backfill_background,
         kwargs={
-            "paper_ingest_service": paper_ingest_service,
+            "paper_ingest_service_factory": paper_ingest_service_factory,
             "limit": limit,
             "batch_size": batch_size,
             "run_id": run_id,
@@ -1204,24 +1299,37 @@ def _start_paper_classification_backfill_background(
 
 
 def _run_paper_classification_backfill_background(
-    paper_ingest_service,
+    paper_ingest_service_factory,
     *,
     limit: int | None,
     batch_size: int,
     run_id: str,
 ) -> None:
+    paper_ingest_service = None
     try:
+        _record_local_ops_run(run_id=run_id, task_type=PAPER_CLASSIFICATION_BACKFILL_TASK_TYPE, status="running")
+        paper_ingest_service = paper_ingest_service_factory()
         paper_ingest_service.backfill_published_classification(
             limit=limit,
             batch_size=batch_size,
             run_id=run_id,
         )
-    except Exception:
-        return
+        _record_local_ops_run(run_id=run_id, task_type=PAPER_CLASSIFICATION_BACKFILL_TASK_TYPE, status="succeeded")
+    except Exception as exc:
+        logger.exception("paper classification backfill background failed", extra={"run_id": run_id})
+        _record_local_ops_run(run_id=run_id, task_type=PAPER_CLASSIFICATION_BACKFILL_TASK_TYPE, status="failed", error=exc)
+        if paper_ingest_service is not None:
+            _record_ingest_background_failure(
+                paper_ingest_service,
+                run_id=run_id,
+                task_type=PAPER_CLASSIFICATION_BACKFILL_TASK_TYPE,
+                step="classification_backfill",
+                error=exc,
+            )
 
 
 def _start_paper_citation_backfill_background(
-    paper_ingest_service,
+    paper_ingest_service_factory,
     *,
     limit: int | None,
     batch_size: int,
@@ -1230,7 +1338,7 @@ def _start_paper_citation_backfill_background(
     Thread(
         target=_run_paper_citation_backfill_background,
         kwargs={
-            "paper_ingest_service": paper_ingest_service,
+            "paper_ingest_service_factory": paper_ingest_service_factory,
             "limit": limit,
             "batch_size": batch_size,
             "run_id": run_id,
@@ -1240,24 +1348,37 @@ def _start_paper_citation_backfill_background(
 
 
 def _run_paper_citation_backfill_background(
-    paper_ingest_service,
+    paper_ingest_service_factory,
     *,
     limit: int | None,
     batch_size: int,
     run_id: str,
 ) -> None:
+    paper_ingest_service = None
     try:
+        _record_local_ops_run(run_id=run_id, task_type=PAPER_CITATION_BACKFILL_TASK_TYPE, status="running")
+        paper_ingest_service = paper_ingest_service_factory()
         paper_ingest_service.backfill_published_citations(
             limit=limit,
             batch_size=batch_size,
             run_id=run_id,
         )
-    except Exception:
-        return
+        _record_local_ops_run(run_id=run_id, task_type=PAPER_CITATION_BACKFILL_TASK_TYPE, status="succeeded")
+    except Exception as exc:
+        logger.exception("paper citation backfill background failed", extra={"run_id": run_id})
+        _record_local_ops_run(run_id=run_id, task_type=PAPER_CITATION_BACKFILL_TASK_TYPE, status="failed", error=exc)
+        if paper_ingest_service is not None:
+            _record_ingest_background_failure(
+                paper_ingest_service,
+                run_id=run_id,
+                task_type=PAPER_CITATION_BACKFILL_TASK_TYPE,
+                step="citation_backfill",
+                error=exc,
+            )
 
 
 def _start_paper_visual_compile_background(
-    paper_visual_compiler_service,
+    paper_visual_compiler_service_factory,
     *,
     paper_id: str,
     force: bool,
@@ -1266,7 +1387,7 @@ def _start_paper_visual_compile_background(
     Thread(
         target=_run_paper_visual_compile_background,
         kwargs={
-            "paper_visual_compiler_service": paper_visual_compiler_service,
+            "paper_visual_compiler_service_factory": paper_visual_compiler_service_factory,
             "paper_id": paper_id,
             "force": force,
             "run_id": run_id,
@@ -1276,20 +1397,33 @@ def _start_paper_visual_compile_background(
 
 
 def _run_paper_visual_compile_background(
-    paper_visual_compiler_service,
+    paper_visual_compiler_service_factory,
     *,
     paper_id: str,
     force: bool,
     run_id: str,
 ) -> None:
+    paper_visual_compiler_service = None
     try:
+        _record_local_ops_run(run_id=run_id, task_type=PAPER_VISUAL_COMPILE_TASK_TYPE, status="running", paper_id=paper_id)
+        paper_visual_compiler_service = paper_visual_compiler_service_factory()
         paper_visual_compiler_service.compile_paper(paper_id, force=force, run_id=run_id)
-    except Exception:
-        return
+        _record_local_ops_run(run_id=run_id, task_type=PAPER_VISUAL_COMPILE_TASK_TYPE, status="succeeded", paper_id=paper_id)
+    except Exception as exc:
+        logger.exception("paper visual compile background failed", extra={"run_id": run_id, "paper_id": paper_id})
+        _record_local_ops_run(run_id=run_id, task_type=PAPER_VISUAL_COMPILE_TASK_TYPE, status="failed", paper_id=paper_id, error=exc)
+        if paper_visual_compiler_service is not None:
+            _record_visual_background_failure(
+                paper_visual_compiler_service,
+                paper_id=paper_id,
+                run_id=run_id,
+                task_type=PAPER_VISUAL_COMPILE_TASK_TYPE,
+                error=exc,
+            )
 
 
 def _start_paper_visual_compile_backfill_background(
-    paper_visual_compiler_service,
+    paper_visual_compiler_service_factory,
     *,
     limit: int | None,
     force: bool,
@@ -1298,7 +1432,7 @@ def _start_paper_visual_compile_backfill_background(
     Thread(
         target=_run_paper_visual_compile_backfill_background,
         kwargs={
-            "paper_visual_compiler_service": paper_visual_compiler_service,
+            "paper_visual_compiler_service_factory": paper_visual_compiler_service_factory,
             "limit": limit,
             "force": force,
             "run_id": run_id,
@@ -1308,22 +1442,133 @@ def _start_paper_visual_compile_backfill_background(
 
 
 def _run_paper_visual_compile_backfill_background(
-    paper_visual_compiler_service,
+    paper_visual_compiler_service_factory,
     *,
     limit: int | None,
     force: bool,
     run_id: str,
 ) -> None:
+    paper_visual_compiler_service = None
     try:
+        _record_local_ops_run(run_id=run_id, task_type=PAPER_VISUAL_COMPILE_BACKFILL_TASK_TYPE, status="running")
+        paper_visual_compiler_service = paper_visual_compiler_service_factory()
         plan = paper_visual_compiler_service.plan_visual_compile_backfill(
             limit=limit,
             force=force,
             run_id=run_id,
         )
+        errors: list[Exception] = []
         for candidate in plan.candidates:
-            paper_visual_compiler_service.compile_paper(candidate.paper_id, force=force, run_id=run_id)
-    except Exception:
+            try:
+                paper_visual_compiler_service.compile_paper(candidate.paper_id, force=force, run_id=run_id)
+            except Exception as exc:
+                errors.append(exc)
+                logger.exception(
+                    "paper visual compile backfill candidate failed",
+                    extra={"run_id": run_id, "paper_id": candidate.paper_id},
+                )
+                _record_visual_background_failure(
+                    paper_visual_compiler_service,
+                    paper_id=candidate.paper_id,
+                    run_id=run_id,
+                    task_type=PAPER_VISUAL_COMPILE_BACKFILL_TASK_TYPE,
+                    error=exc,
+                )
+        if errors:
+            _record_local_ops_run(
+                run_id=run_id,
+                task_type=PAPER_VISUAL_COMPILE_BACKFILL_TASK_TYPE,
+                status="partial_failed",
+                error=RuntimeError(f"{len(errors)} paper visual compile backfill candidate(s) failed"),
+            )
+        else:
+            _record_local_ops_run(run_id=run_id, task_type=PAPER_VISUAL_COMPILE_BACKFILL_TASK_TYPE, status="succeeded")
+    except Exception as exc:
+        logger.exception("paper visual compile backfill background failed", extra={"run_id": run_id})
+        _record_local_ops_run(run_id=run_id, task_type=PAPER_VISUAL_COMPILE_BACKFILL_TASK_TYPE, status="failed", error=exc)
+
+
+def _record_ingest_background_failure(
+    paper_ingest_service,
+    *,
+    run_id: str,
+    task_type: str,
+    step: str,
+    error: Exception,
+) -> None:
+    recorder = getattr(paper_ingest_service, "record_background_failure", None)
+    if not callable(recorder):
         return
+    try:
+        recorder(run_id=run_id, task_type=task_type, step=step, error=error)
+    except Exception:
+        logger.exception("paper ingest background failure recording failed", extra={"run_id": run_id, "task_type": task_type})
+
+
+def _try_queue_local_ops_run(
+    *,
+    run_id: str,
+    task_type: str,
+    paper_id: str | None = None,
+    operation_key: str | None = None,
+) -> tuple[bool, Mapping[str, Any]]:
+    queued_run = new_ops_run(
+        run_id=run_id,
+        task_type=task_type,
+        status="queued",
+        paper_id=paper_id,
+        operation_key=operation_key,
+    )
+    try:
+        return PaperOpsRunRepository().try_enqueue_run(queued_run)
+    except Exception:
+        logger.exception("paper local ops run queue recording failed", extra={"run_id": run_id, "task_type": task_type})
+        return True, queued_run
+
+
+def _record_local_ops_run(
+    *,
+    run_id: str,
+    task_type: str,
+    status: str,
+    paper_id: str | None = None,
+    error: Exception | None = None,
+) -> None:
+    try:
+        PaperOpsRunRepository().record_run(
+            new_ops_run(
+                run_id=run_id,
+                task_type=task_type,
+                status=status,
+                paper_id=paper_id,
+                error=error,
+            )
+        )
+    except Exception:
+        logger.exception("paper local ops run recording failed", extra={"run_id": run_id, "task_type": task_type, "status": status})
+
+
+def _local_operation_key(task_type: str, **params: Any) -> str:
+    payload = {key: value for key, value in params.items() if value is not None}
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+    return f"{task_type}:{encoded}"
+
+
+def _record_visual_background_failure(
+    paper_visual_compiler_service,
+    *,
+    paper_id: str,
+    run_id: str,
+    task_type: str,
+    error: Exception,
+) -> None:
+    recorder = getattr(paper_visual_compiler_service, "record_background_failure", None)
+    if not callable(recorder):
+        return
+    try:
+        recorder(paper_id=paper_id, run_id=run_id, task_type=task_type, error=error)
+    except Exception:
+        logger.exception("paper visual background failure recording failed", extra={"run_id": run_id, "paper_id": paper_id})
 
 
 def _enqueue_reader_feedback_best_effort(services: ApiServices, *, paper_id: str, user_id: str) -> dict[str, Any]:
