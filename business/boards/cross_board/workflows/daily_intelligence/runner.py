@@ -44,6 +44,7 @@ from business.boards.cross_board.workflows.daily_intelligence.source_config impo
     build_default_source_fetch_policy,
     build_default_source_registry,
 )
+from business.boards.cross_board.workflows.daily_intelligence.source_dispatcher import SourceDispatcher
 from business.boards.cross_board.workflows.daily_intelligence.spec import (
     WORKFLOW_ID,
     WORKFLOW_VERSION,
@@ -111,14 +112,23 @@ class DailyIntelligenceRunner:
             source_rate_limiter=source_rate_limiter,
         )
         self.artifact_root = self.runtime.artifact_root
-        self.source_registry = self.runtime.source_registry
-        self.source_dispatcher = self.runtime.source_dispatcher
+        self.source_runtime_assembly = source_runtime_assembly_from_runtime(self.runtime)
         self.source_collector = self.runtime.source_collector
-        self.source_health_manager = self.runtime.source_health_manager
         self.llm_client = self.runtime.llm_client
         self.recall_service = self.runtime.recall_service
         self.report_writer = self.runtime.report_writer
-        self.source_runtime_assembly = source_runtime_assembly_from_runtime(self.runtime)
+
+    @property
+    def source_registry(self) -> SourceRegistry:
+        return self.source_runtime_assembly.source_registry
+
+    @property
+    def source_health_manager(self) -> BasicSourceHealthManager:
+        return self.source_runtime_assembly.source_health_manager
+
+    @property
+    def source_dispatcher(self) -> SourceDispatcher:
+        return self.source_runtime_assembly.source_dispatcher
 
     @property
     def feed_connector(self) -> DailyFeedSourceConnector:

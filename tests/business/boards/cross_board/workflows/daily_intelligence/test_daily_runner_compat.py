@@ -25,6 +25,9 @@ def test_daily_runner_accepts_prebuilt_runtime(tmp_path) -> None:
 
     assert runner.runtime is runtime
     assert runner.artifact_root == tmp_path
+    assert runner.source_registry is runner.source_runtime_assembly.source_registry
+    assert runner.source_dispatcher is runner.source_runtime_assembly.source_dispatcher
+    assert runner.source_health_manager is runner.source_runtime_assembly.source_health_manager
 
 
 def test_daily_runner_run_behavior_stays_offline(tmp_path) -> None:
