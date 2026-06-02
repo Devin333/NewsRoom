@@ -29,6 +29,7 @@ from framework.llm.clients import (
     OpenAICompatibleDeploymentConfig,
     build_openai_compatible_client_from_config,
     load_openai_compatible_deployment,
+    validate_openai_compatible_models_config,
 )
 from framework.llm.context import (
     ContextPolicy,
@@ -134,5 +135,6 @@ __all__ = [
     "estimate_request_tokens",
     "load_openai_compatible_deployment",
     "redact_sensitive_values",
+    "validate_openai_compatible_models_config",
     "validate_structured_output",
 ]

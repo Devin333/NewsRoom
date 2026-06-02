@@ -7,6 +7,7 @@ from framework.llm.clients.config import (
     OpenAICompatibleDeploymentConfig,
     build_openai_compatible_client_from_config,
     load_openai_compatible_deployment,
+    validate_openai_compatible_models_config,
 )
 from framework.llm.clients.fake import FakeLLMClient
 from framework.llm.clients.openai_compatible import (
@@ -42,4 +43,5 @@ __all__ = [
     "openai_tool_name_map",
     "parse_openai_tool_calls",
     "to_openai_tools",
+    "validate_openai_compatible_models_config",
 ]
