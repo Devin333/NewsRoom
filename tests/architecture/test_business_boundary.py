@@ -78,6 +78,16 @@ def test_signal_source_processing_does_not_import_external_source_infrastructure
     assert violations == []
 
 
+def test_signal_source_router_uses_injected_connector_boundary() -> None:
+    imported_modules = _imports_for_file(BUSINESS_ROOT / "layers" / "signal" / "source_router.py")
+    violations = _matching_forbidden(
+        imported_modules,
+        ("infrastructure.external.sources",),
+    )
+
+    assert violations == []
+
+
 def test_signal_pipeline_does_not_import_legacy_source_processing() -> None:
     violations: list[str] = []
     for path in (

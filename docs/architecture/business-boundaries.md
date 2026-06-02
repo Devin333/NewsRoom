@@ -100,6 +100,8 @@ Daily intelligence report writer 使用 `DailyReportContextMetadata` 生成 memo
 
 source connector、fetch policy、外部错误分类和具体 fetch 实现属于基础设施或适配边界。业务层需要这些能力时，应通过正式模型、端口或上层 service 注入，不把具体基础设施工具散落在处理规则里。
 
+`business/layers/signal/source_router.py` 只负责根据 `SourceType` 选择已注入 connector，并把业务层 `SourceDefinition` 传给 connector。默认 connector 装配留在 interface/infrastructure 适配路径；router 不导入或实例化具体外部 source connector。
+
 ## Foundation Skills 边界
 
 `business/foundation/skills/` 放业务技能内容包和 deterministic fallback。`BusinessSkillRuntime` 是业务层对 framework skill runner 的适配门面：

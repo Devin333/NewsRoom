@@ -2,28 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from business.foundation.models.source import SourceDefinition, SourceError, SourceType
-from infrastructure.external.sources import (
-    ArxivConnector,
-    DevToConnector,
-    DomainRateLimiter,
-    FeedConnector,
-    GithubConnector,
-    HackerNewsConnector,
-    HtmlConnector,
-    LobstersConnector,
-    ManualConnector,
-    MediumConnector,
-    RedditConnector,
-    SourceFetchPolicy,
-    StackOverflowConnector,
-)
-from infrastructure.external.sources.models import (
-    RawSourceItem,
-    SourceDefinition as InfraSourceDefinition,
-    SourceReliability as InfraSourceReliability,
-    SourceType as InfraSourceType,
-)
+from business.foundation.models.source import SourceDefinition, SourceType
 
 
 class SourceConnectorRouter:
@@ -41,54 +20,22 @@ class SourceConnectorRouter:
         medium_connector: Any | None = None,
         html_connector: Any | None = None,
         manual_connector: Any | None = None,
-        fetch_policy: SourceFetchPolicy | None = None,
-        rate_limiter: DomainRateLimiter | None = None,
+        fetch_policy: Any | None = None,
+        rate_limiter: Any | None = None,
     ) -> None:
-        self.fetch_policy = fetch_policy or SourceFetchPolicy()
-        self.rate_limiter = rate_limiter or DomainRateLimiter()
-        self.feed_connector = feed_connector or FeedConnector(
-            fetch_policy=self.fetch_policy,
-            rate_limiter=self.rate_limiter,
-        )
-        self.arxiv_connector = arxiv_connector or ArxivConnector(
-            fetch_policy=self.fetch_policy,
-            rate_limiter=self.rate_limiter,
-        )
-        self.github_connector = github_connector or GithubConnector(
-            fetch_policy=self.fetch_policy,
-            rate_limiter=self.rate_limiter,
-        )
-        self.hackernews_connector = hackernews_connector or HackerNewsConnector(
-            fetch_policy=self.fetch_policy,
-            rate_limiter=self.rate_limiter,
-        )
-        self.reddit_connector = reddit_connector or RedditConnector(
-            fetch_policy=self.fetch_policy,
-            rate_limiter=self.rate_limiter,
-        )
-        self.lobsters_connector = lobsters_connector or LobstersConnector(
-            fetch_policy=self.fetch_policy,
-            rate_limiter=self.rate_limiter,
-        )
-        self.stackoverflow_connector = stackoverflow_connector or StackOverflowConnector(
-            fetch_policy=self.fetch_policy,
-            rate_limiter=self.rate_limiter,
-        )
-        self.devto_connector = devto_connector or DevToConnector(
-            fetch_policy=self.fetch_policy,
-            rate_limiter=self.rate_limiter,
-        )
-        self.medium_connector = medium_connector or MediumConnector(
-            feed_connector=FeedConnector(
-                fetch_policy=self.fetch_policy,
-                rate_limiter=self.rate_limiter,
-            )
-        )
-        self.html_connector = html_connector or HtmlConnector(
-            fetch_policy=self.fetch_policy,
-            rate_limiter=self.rate_limiter,
-        )
-        self.manual_connector = manual_connector or ManualConnector()
+        self.fetch_policy = fetch_policy
+        self.rate_limiter = rate_limiter
+        self.feed_connector = feed_connector
+        self.arxiv_connector = arxiv_connector
+        self.github_connector = github_connector
+        self.hackernews_connector = hackernews_connector
+        self.reddit_connector = reddit_connector
+        self.lobsters_connector = lobsters_connector
+        self.stackoverflow_connector = stackoverflow_connector
+        self.devto_connector = devto_connector
+        self.medium_connector = medium_connector
+        self.html_connector = html_connector
+        self.manual_connector = manual_connector
 
     def fetch(
         self,
@@ -96,32 +43,33 @@ class SourceConnectorRouter:
         *,
         limit: int | None = None,
         query: str | None = None,
-    ) -> tuple[list[RawSourceItem], list[SourceError]]:
+    ) -> tuple[list[Any], list[Any]]:
         source_type = SourceType(source.source_type)
         connector = self._connector_for(source_type)
-        infra_source = _infra_source(source)
+        if connector is None:
+            raise ValueError(f"source connector is not configured for source_type: {source_type.value}")
         if source_type in {SourceType.RSS, SourceType.ATOM, SourceType.OFFICIAL_BLOG}:
-            return connector.fetch(infra_source, limit=limit)
+            return connector.fetch(source, limit=limit)
         if source_type == SourceType.ARXIV:
-            return connector.fetch(infra_source, query=query, limit=limit)
+            return connector.fetch(source, query=query, limit=limit)
         if source_type == SourceType.GITHUB:
-            return connector.fetch(infra_source, query=query, limit=limit)
+            return connector.fetch(source, query=query, limit=limit)
         if source_type == SourceType.HACKERNEWS:
-            return connector.fetch(infra_source, limit=limit)
+            return connector.fetch(source, limit=limit)
         if source_type == SourceType.REDDIT:
-            return connector.fetch(infra_source, limit=limit)
+            return connector.fetch(source, limit=limit)
         if source_type == SourceType.LOBSTERS:
-            return connector.fetch(infra_source, limit=limit)
+            return connector.fetch(source, limit=limit)
         if source_type == SourceType.STACKOVERFLOW:
-            return connector.fetch(infra_source, limit=limit)
+            return connector.fetch(source, limit=limit)
         if source_type == SourceType.DEVTO:
-            return connector.fetch(infra_source, limit=limit)
+            return connector.fetch(source, limit=limit)
         if source_type == SourceType.MEDIUM:
-            return connector.fetch(infra_source, limit=limit)
+            return connector.fetch(source, limit=limit)
         if source_type in {SourceType.HTML, SourceType.WEB_PAGE}:
-            return connector.fetch(infra_source, limit=limit)
+            return connector.fetch(source, limit=limit)
         if source_type == SourceType.MANUAL:
-            return connector.fetch(infra_source, limit=limit)
+            return connector.fetch(source, limit=limit)
         raise ValueError(f"unsupported source_type: {source_type.value}")
 
     def _connector_for(self, source_type: SourceType) -> Any:
@@ -148,23 +96,3 @@ class SourceConnectorRouter:
         if source_type == SourceType.MANUAL:
             return self.manual_connector
         raise ValueError(f"unsupported source_type: {source_type.value}")
-
-
-def _infra_source(source: SourceDefinition) -> InfraSourceDefinition:
-    return InfraSourceDefinition(
-        source_id=source.source_id,
-        name=source.name,
-        source_type=InfraSourceType(SourceType(source.source_type).value),
-        url=source.url,
-        reliability=InfraSourceReliability(source.reliability.value),
-        authority_score=source.authority_score,
-        enabled=source.enabled,
-        fetch_interval_seconds=source.fetch_interval_seconds,
-        respect_robots=source.respect_robots,
-        user_agent=source.user_agent,
-        topics=list(source.topics),
-        category=source.category,
-        language=source.language,
-        region=source.region,
-        metadata=dict(source.metadata),
-    )

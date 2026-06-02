@@ -100,6 +100,19 @@ def test_source_connector_router_returns_connector_errors() -> None:
     assert errors[0].error_type == "fake_error"
 
 
+def test_source_connector_router_requires_injected_connector_for_source_type() -> None:
+    router = SourceConnectorRouter()
+    source = SourceDefinition(
+        source_id="rss",
+        name="RSS",
+        source_type="rss",
+        url="https://example.com/rss.xml",
+    )
+
+    with pytest.raises(ValueError, match="source connector is not configured"):
+        router.fetch(source)
+
+
 class _FakeConnector:
     def __init__(self, *, errors: bool = False) -> None:
         self.calls = []
