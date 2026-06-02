@@ -6,6 +6,9 @@ from framework.workflow import DataBuffer
 from business.layers.relation.evidence.models import EvidenceBundle, EvidenceItem, VerifiedClaim, VerifiedFindings
 from business.layers.analysis.quality import EditorDecision
 from business.boards.cross_board.workflows.daily_intelligence.finalize_report_step import finalize_report
+from business.boards.cross_board.workflows.daily_intelligence.quality_gate_policy import (
+    NON_SOCIAL_MEDIA_BYPASS_REASON,
+)
 
 
 def test_finalize_report_pass_publishes_final_report_and_markdown() -> None:
@@ -155,6 +158,7 @@ def test_finalize_report_non_social_media_bypasses_blocking_decision() -> None:
     assert output["quality_result"]["passed"] is True
     assert output["quality_result"]["decision"] == "pass"
     assert output["quality_result"]["route"] == "final"
+    assert output["quality_result"]["reasons"] == [NON_SOCIAL_MEDIA_BYPASS_REASON]
     assert output["final_report"].title == "Daily Intelligence: AI policy"
     assert output["quality_events"][0].event_type == "finalize_report_bypassed_non_social_media"
     assert "blocked_report" not in output

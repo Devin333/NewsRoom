@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import Any
 
 from framework.workflow import DataBufferReadPermissionError, StepScopedDataBufferView
@@ -11,6 +11,10 @@ from business.boards.cross_board.workflows.daily_intelligence.memory_quality imp
     DailyMemoryQualityService,
 )
 from business.boards.cross_board.workflows.daily_intelligence.quality_evaluation import evaluate_report_quality
+from business.boards.cross_board.workflows.daily_intelligence.quality_gate_policy import (
+    build_non_social_media_pass_review,
+    strict_quality_gate_required,
+)
 from business.boards.cross_board.workflows.daily_intelligence.quality_result_builder import (
     human_review_request as build_human_review_request,
     quality_gate_metrics as build_quality_gate_metrics,
@@ -18,10 +22,32 @@ from business.boards.cross_board.workflows.daily_intelligence.quality_result_bui
     quality_route as build_quality_route,
 )
 from business.boards.cross_board.workflows.daily_intelligence.quality_rewrite import rewrite_report_draft
-from business.boards.cross_board.workflows.daily_intelligence.source_gate_policy import (
-    contains_social_media_evidence,
-)
 from business.memory.intelligence_repository import IntelligenceMemoryQueryRepository
+
+
+@dataclass(frozen=True)
+class QualityGateContext:
+    report_draft: dict[str, Any]
+    evidence_bundle: Any
+    verified_findings: Any
+    quality_events: list[Any]
+    memory_context: dict[str, Any] | None
+    historian_metadata: dict[str, Any] | None
+    memory_quality_result: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class QualityGateEvaluation:
+    citation_check: Any
+    support_matrix: Any
+    quality_summary: Any
+    review: EditorReview
+    rewrite_policy: RewritePolicy
+    final_report_draft: dict[str, Any]
+    rewritten_report_draft: dict[str, Any] | None
+    rewrite_attempts: int
+    human_review_request: Any | None
+    human_review_required: bool
 
 
 def quality_gate(
@@ -29,6 +55,16 @@ def quality_gate(
     *,
     memory_repository: IntelligenceMemoryQueryRepository | None = None,
 ) -> dict[str, Any]:
+    context = _load_quality_context(buffer, memory_repository=memory_repository)
+    evaluation = _evaluate_quality_gate(context)
+    return _build_quality_outputs(context, evaluation)
+
+
+def _load_quality_context(
+    buffer: StepScopedDataBufferView,
+    *,
+    memory_repository: IntelligenceMemoryQueryRepository | None,
+) -> QualityGateContext:
     report_draft = buffer.read("report_draft")
     evidence_bundle = buffer.read("evidence_bundle")
     verified_findings = buffer.read("verified_findings")
@@ -40,7 +76,10 @@ def quality_gate(
         memory_context,
         repository=_read_memory_query_repository(buffer, memory_repository),
     )
-    memory_quality_result = _with_historian_quality_metadata(memory_quality_result, historian_metadata)
+    memory_quality_result = _with_historian_quality_metadata(
+        memory_quality_result,
+        historian_metadata,
+    )
     if memory_quality_result["memory_available"]:
         quality_events.append(
             quality_event(
@@ -49,12 +88,24 @@ def quality_gate(
                 issue_count=len(memory_quality_result["issues"]),
             )
         )
+    return QualityGateContext(
+        report_draft=report_draft,
+        evidence_bundle=evidence_bundle,
+        verified_findings=verified_findings,
+        quality_events=quality_events,
+        memory_context=memory_context,
+        historian_metadata=historian_metadata,
+        memory_quality_result=memory_quality_result,
+    )
+
+
+def _evaluate_quality_gate(context: QualityGateContext) -> QualityGateEvaluation:
     rewrite_policy = RewritePolicy()
     evaluation = evaluate_report_quality(
-        report_draft,
-        evidence_bundle,
-        verified_findings,
-        quality_events=quality_events,
+        context.report_draft,
+        context.evidence_bundle,
+        context.verified_findings,
+        quality_events=context.quality_events,
         rewrite_policy=rewrite_policy,
         rewrite_attempts=0,
     )
@@ -62,24 +113,26 @@ def quality_gate(
     support_matrix = evaluation["support_matrix"]
     quality_summary = evaluation["quality_summary"]
     review = evaluation["review"]
-    social_media_gate_required = contains_social_media_evidence(evidence_bundle)
-    if not social_media_gate_required:
-        quality_events.append(
+    strict_gate_required = strict_quality_gate_required(context.evidence_bundle)
+
+    if not strict_gate_required:
+        context.quality_events.append(
             quality_event(
                 "quality_gate_bypassed_non_social_media",
-                evidence_items_count=len(evidence_bundle.items),
+                evidence_items_count=len(context.evidence_bundle.items),
             )
         )
-        review = _non_social_media_pass_review(
+        review = build_non_social_media_pass_review(
             citation_check=citation_check,
             quality_summary=quality_summary,
         )
-    final_report_draft = report_draft
+
+    final_report_draft = context.report_draft
     rewritten_report_draft = None
     rewrite_attempts = 0
 
-    if social_media_gate_required and review.decision == EditorDecision.REWRITE_REQUIRED:
-        quality_events.append(
+    if strict_gate_required and review.decision == EditorDecision.REWRITE_REQUIRED:
+        context.quality_events.append(
             quality_event(
                 "rewrite_started",
                 rewrite_attempt=1,
@@ -87,16 +140,16 @@ def quality_gate(
             )
         )
         rewritten_report_draft = rewrite_report_draft(
-            report_draft,
-            evidence_bundle,
+            context.report_draft,
+            context.evidence_bundle,
             review,
         )
         rewrite_attempts = 1
         evaluation = evaluate_report_quality(
             rewritten_report_draft,
-            evidence_bundle,
-            verified_findings,
-            quality_events=quality_events,
+            context.evidence_bundle,
+            context.verified_findings,
+            quality_events=context.quality_events,
             rewrite_policy=rewrite_policy,
             rewrite_attempts=rewrite_attempts,
         )
@@ -105,7 +158,7 @@ def quality_gate(
         quality_summary = evaluation["quality_summary"]
         review = evaluation["review"]
         if review.decision == EditorDecision.PASS:
-            quality_events.append(
+            context.quality_events.append(
                 quality_event(
                     "rewrite_succeeded",
                     rewrite_attempt=rewrite_attempts,
@@ -114,7 +167,7 @@ def quality_gate(
             )
             final_report_draft = rewritten_report_draft
         else:
-            quality_events.append(
+            context.quality_events.append(
                 quality_event(
                     "rewrite_failed",
                     rewrite_attempt=rewrite_attempts,
@@ -125,26 +178,29 @@ def quality_gate(
 
     human_review_request = (
         build_human_review_request(
-            evidence_bundle=evidence_bundle,
+            evidence_bundle=context.evidence_bundle,
             review=review,
             quality_summary=quality_summary,
         )
-        if social_media_gate_required
+        if strict_gate_required
         else None
     )
-    if social_media_gate_required and _has_critical_memory_issue(memory_quality_result):
+    if strict_gate_required and _has_critical_memory_issue(context.memory_quality_result):
         review = replace(
             review,
             decision=EditorDecision.BLOCKED,
             reasons=[*review.reasons, "blocked by critical memory quality issue"],
-            required_changes=[*review.required_changes, "resolve critical memory quality issue before publishing"],
+            required_changes=[
+                *review.required_changes,
+                "resolve critical memory quality issue before publishing",
+            ],
             block_reasons=[*review.block_reasons, "critical memory quality issue"],
             final_notes="blocked by memory quality",
         )
         human_review_request = None
     human_review_required = human_review_request is not None
     if human_review_request:
-        quality_events.append(
+        context.quality_events.append(
             quality_event(
                 "human_review_requested",
                 risk_level=human_review_request.risk_level,
@@ -152,97 +208,116 @@ def quality_gate(
             )
         )
 
-    quality_gate_metrics = build_quality_gate_metrics(
-        evidence_bundle=evidence_bundle,
-        verified_findings=verified_findings,
+    return QualityGateEvaluation(
         citation_check=citation_check,
         support_matrix=support_matrix,
         quality_summary=quality_summary,
         review=review,
+        rewrite_policy=rewrite_policy,
+        final_report_draft=final_report_draft,
+        rewritten_report_draft=rewritten_report_draft,
         rewrite_attempts=rewrite_attempts,
+        human_review_request=human_review_request,
         human_review_required=human_review_required,
+    )
+
+
+def _build_quality_outputs(
+    context: QualityGateContext,
+    evaluation: QualityGateEvaluation,
+) -> dict[str, Any]:
+    quality_gate_metrics = build_quality_gate_metrics(
+        evidence_bundle=context.evidence_bundle,
+        verified_findings=context.verified_findings,
+        citation_check=evaluation.citation_check,
+        support_matrix=evaluation.support_matrix,
+        quality_summary=evaluation.quality_summary,
+        review=evaluation.review,
+        rewrite_attempts=evaluation.rewrite_attempts,
+        human_review_required=evaluation.human_review_required,
     )
     quality_route = build_quality_route(
-        review=review,
-        rewrite_attempts=rewrite_attempts,
-        human_review_required=human_review_required,
+        review=evaluation.review,
+        rewrite_attempts=evaluation.rewrite_attempts,
+        human_review_required=evaluation.human_review_required,
     )
     quality_result = build_quality_result(
-        citation_check=citation_check,
-        support_matrix=support_matrix,
-        quality_summary=quality_summary,
-        review=review,
+        citation_check=evaluation.citation_check,
+        support_matrix=evaluation.support_matrix,
+        quality_summary=evaluation.quality_summary,
+        review=evaluation.review,
         quality_gate_metrics=quality_gate_metrics,
         route=quality_route,
-        rewrite_attempts=rewrite_attempts,
-        human_review_required=human_review_required,
+        rewrite_attempts=evaluation.rewrite_attempts,
+        human_review_required=evaluation.human_review_required,
     )
     quality_result = _with_memory_quality_metadata(
         quality_result,
-        memory_context=memory_context,
-        memory_quality_result=memory_quality_result,
+        memory_context=context.memory_context,
+        memory_quality_result=context.memory_quality_result,
     )
     outputs: dict[str, Any] = {
-        "citation_check_result": citation_check,
-        "editor_review": review,
-        "support_matrix": support_matrix,
-        "report_quality_summary": quality_summary,
-        "quality_events": quality_events,
+        "citation_check_result": evaluation.citation_check,
+        "editor_review": evaluation.review,
+        "support_matrix": evaluation.support_matrix,
+        "report_quality_summary": evaluation.quality_summary,
+        "quality_events": context.quality_events,
         "quality_gate_metrics": quality_gate_metrics,
         "quality_result": quality_result,
         "quality_route": quality_route,
-        "rewrite_policy": rewrite_policy,
-        "rewrite_instructions": review.rewrite_instructions,
-        "memory_quality_result": memory_quality_result,
+        "rewrite_policy": evaluation.rewrite_policy,
+        "rewrite_instructions": evaluation.review.rewrite_instructions,
+        "memory_quality_result": context.memory_quality_result,
     }
-    if rewritten_report_draft is not None:
-        outputs["rewritten_report_draft"] = rewritten_report_draft
-    if human_review_request is not None:
-        outputs["human_review_request"] = human_review_request
-    if review.decision == EditorDecision.PASS:
+    if evaluation.rewritten_report_draft is not None:
+        outputs["rewritten_report_draft"] = evaluation.rewritten_report_draft
+    if evaluation.human_review_request is not None:
+        outputs["human_review_request"] = evaluation.human_review_request
+    if evaluation.review.decision == EditorDecision.PASS:
         final_report = FinalReport(
-            title=final_report_draft["title"],
-            sections=final_report_draft["sections"],
-            source_urls=sorted(evidence_bundle.source_urls),
+            title=evaluation.final_report_draft["title"],
+            sections=evaluation.final_report_draft["sections"],
+            source_urls=sorted(context.evidence_bundle.source_urls),
             metadata={
-                "evidence_bundle_id": evidence_bundle.bundle_id,
-                "quality_score": quality_summary.quality_score,
-                "accepted_claims_count": len(verified_findings.accepted_claims),
-                "rejected_claims_count": len(verified_findings.rejected_claims),
-                "uncertain_claims_count": len(verified_findings.uncertain_claims),
-                "rewrite_attempts": rewrite_attempts,
-                "memory_context": memory_context,
-                "historian": historian_metadata,
-                "memory_quality_result": memory_quality_result,
+                "evidence_bundle_id": context.evidence_bundle.bundle_id,
+                "quality_score": evaluation.quality_summary.quality_score,
+                "accepted_claims_count": len(context.verified_findings.accepted_claims),
+                "rejected_claims_count": len(context.verified_findings.rejected_claims),
+                "uncertain_claims_count": len(context.verified_findings.uncertain_claims),
+                "rewrite_attempts": evaluation.rewrite_attempts,
+                "memory_context": context.memory_context,
+                "historian": context.historian_metadata,
+                "memory_quality_result": context.memory_quality_result,
             },
         )
         outputs["final_report"] = final_report
         outputs["report_markdown"] = render_markdown(final_report)
     else:
         outputs["blocked_report"] = BlockedReport(
-            title=final_report_draft.get("title", "Blocked Daily Intelligence Report"),
-            reasons=review.reasons,
-            draft=final_report_draft,
+            title=evaluation.final_report_draft.get("title", "Blocked Daily Intelligence Report"),
+            reasons=evaluation.review.reasons,
+            draft=evaluation.final_report_draft,
             metadata={
-                "citation_check_result": citation_check.to_dict(),
+                "citation_check_result": evaluation.citation_check.to_dict(),
                 "citation_failure_categories": [
-                    category.to_dict() for category in citation_check.failure_categories
+                    category.to_dict()
+                    for category in evaluation.citation_check.failure_categories
                 ],
-                "editor_review": review.to_dict(),
-                "quality_score": quality_summary.quality_score,
-                "accepted_claims_count": quality_summary.accepted_claims_count,
-                "rejected_claims_count": quality_summary.rejected_claims_count,
-                "uncertain_claims_count": quality_summary.uncertain_claims_count,
-                "unsupported_claims_count": quality_summary.unsupported_claims_count,
+                "editor_review": evaluation.review.to_dict(),
+                "quality_score": evaluation.quality_summary.quality_score,
+                "accepted_claims_count": evaluation.quality_summary.accepted_claims_count,
+                "rejected_claims_count": evaluation.quality_summary.rejected_claims_count,
+                "uncertain_claims_count": evaluation.quality_summary.uncertain_claims_count,
+                "unsupported_claims_count": evaluation.quality_summary.unsupported_claims_count,
                 "high_severity_unsupported_claims_count": (
-                    quality_summary.high_severity_unsupported_claims_count
+                    evaluation.quality_summary.high_severity_unsupported_claims_count
                 ),
-                "rewrite_attempts": rewrite_attempts,
-                "human_review_required": human_review_required,
-                "remediation": list(review.required_changes),
-                "memory_context": memory_context,
-                "historian": historian_metadata,
-                "memory_quality_result": memory_quality_result,
+                "rewrite_attempts": evaluation.rewrite_attempts,
+                "human_review_required": evaluation.human_review_required,
+                "remediation": list(evaluation.review.required_changes),
+                "memory_context": context.memory_context,
+                "historian": context.historian_metadata,
+                "memory_quality_result": context.memory_quality_result,
             },
         )
     return outputs
@@ -281,27 +356,6 @@ def _read_memory_query_repository(
     except DataBufferReadPermissionError:
         return None
     return value
-
-
-def _non_social_media_pass_review(*, citation_check: Any, quality_summary: Any) -> EditorReview:
-    return EditorReview(
-        decision=EditorDecision.PASS,
-        reasons=["non-social media source bypassed strict quality gate"],
-        quality_score=quality_summary.quality_score,
-        citation_score=citation_check.citation_coverage_score,
-        evidence_alignment_score=quality_summary.evidence_alignment_score,
-        readability_score=quality_summary.readability_score,
-        duplication_score=quality_summary.duplication_score,
-        unsupported_claims=list(citation_check.unsupported_claims),
-        hallucination_risks=[
-            *citation_check.unknown_urls,
-            *citation_check.unsupported_urls,
-            *citation_check.unsupported_evidence_ids,
-            *citation_check.unsupported_claims,
-        ],
-        missing_sections=list(citation_check.missing_section_sources),
-        final_notes="strict quality gate skipped for non-social media evidence",
-    )
 
 
 def _memory_quality_result(
@@ -354,6 +408,7 @@ def _has_critical_memory_issue(memory_quality_result: dict[str, Any]) -> bool:
         isinstance(issue, dict) and issue.get("severity") == "critical"
         for issue in memory_quality_result.get("issues") or []
     )
+
 
 def _with_memory_quality_metadata(
     quality_result: Any,
