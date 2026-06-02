@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any, Generic, TypeVar
 
 from pydantic import Field
@@ -21,6 +23,10 @@ from business.foundation import (
 )
 
 ServiceT = TypeVar("ServiceT", bound=BoardServiceBase)
+StageResultT = TypeVar("StageResultT")
+StageMetric = int | None | Callable[[StageResultT], int | None]
+StageWarnings = list[str] | None | Callable[[StageResultT], list[str] | None]
+StageMetadata = dict[str, Any] | None | Callable[[StageResultT], dict[str, Any] | None]
 
 
 class BoardWorkflowTrace(PrimitiveModel):
@@ -80,159 +86,136 @@ class BoardWorkflowBase(Generic[ServiceT]):
 
     def run(self, items: list[Any], *, context: AnalysisContext | None = None) -> BoardWorkflowResult:
         input_items = list(items)
-        execution = BoardWorkflowExecution(
-            workflow_id=f"{self.board_type.value}_board_workflow",
-            board_type=self.board_type.value,
-            metadata={"configured_stages": list(self.workflow_stages)},
+        run_state = _WorkflowRunState(
+            execution=BoardWorkflowExecution(
+                workflow_id=f"{self.board_type.value}_board_workflow",
+                board_type=self.board_type.value,
+                metadata={"configured_stages": list(self.workflow_stages)},
+            ),
+            publish=self._store_execution,
         )
-        self.last_execution = execution
-        current_stage_name = "resolve_context"
-        current_stage_started_at = _utc_now()
-        try:
-            current_stage_name = "resolve_context"
-            current_stage_started_at = _utc_now()
-            resolved_context = self.resolve_context(context)
-            execution = execution.add_stage(
-                stage_result(
-                    "resolve_context",
-                    started_at=current_stage_started_at,
-                    input_count=1 if context is not None else 0,
-                    output_count=1,
-                )
-            )
 
-            current_stage_name = "select_signals"
-            current_stage_started_at = _utc_now()
-            selected_signals = self.select_signals(input_items, context=resolved_context)
-            execution = execution.add_stage(
-                stage_result(
-                    "select_signals",
-                    started_at=current_stage_started_at,
-                    input_count=len(input_items),
-                    output_count=len(selected_signals),
-                    warnings=[] if selected_signals else ["board workflow selected no signals"],
-                )
-            )
-
-            current_stage_name = "run_pipeline"
-            current_stage_started_at = _utc_now()
-            extraction_results, relation_result, analysis, output = self.run_pipeline(
-                selected_signals,
-                context=resolved_context,
-            )
-            execution = execution.add_stage(
-                stage_result(
-                    "run_pipeline",
-                    started_at=current_stage_started_at,
-                    input_count=len(selected_signals),
-                    output_count=len(extraction_results),
-                    metadata={
-                        "relation_count": len(relation_result.relations),
-                        "rejected_relation_count": len(relation_result.rejected_candidates),
-                    },
-                )
-            )
-
-            current_stage_name = "build_board_run_result"
-            current_stage_started_at = _utc_now()
-            base_result = self.build_board_run_result(
+        resolved_context = run_state.run_stage(
+            "resolve_context",
+            lambda: self.resolve_context(context),
+            input_count=1 if context is not None else 0,
+            output_count=1,
+        )
+        selected_signals = run_state.run_stage(
+            "select_signals",
+            lambda: self.select_signals(input_items, context=resolved_context),
+            input_count=len(input_items),
+            output_count=lambda signals: len(signals),
+            warnings=lambda signals: [] if signals else ["board workflow selected no signals"],
+        )
+        extraction_results, relation_result, analysis, output = run_state.run_stage(
+            "run_pipeline",
+            lambda: self.run_pipeline(selected_signals, context=resolved_context),
+            input_count=len(selected_signals),
+            output_count=lambda pipeline_result: len(pipeline_result[0]),
+            metadata=lambda pipeline_result: {
+                "relation_count": len(pipeline_result[1].relations),
+                "rejected_relation_count": len(pipeline_result[1].rejected_candidates),
+            },
+        )
+        base_result = run_state.run_stage(
+            "build_board_run_result",
+            lambda: self.build_board_run_result(
                 output=output,
                 context=resolved_context,
                 selected_signals=selected_signals,
                 extraction_results=extraction_results,
                 relation_result=relation_result,
                 analysis=analysis,
-            )
-            execution = execution.add_stage(
-                stage_result(
-                    "build_board_run_result",
-                    started_at=current_stage_started_at,
-                    input_count=len(extraction_results),
-                    output_count=len(base_result.cards),
-                    warnings=[] if base_result.cards else ["board run result has no cards"],
-                )
-            )
-
-            current_stage_name = "apply_board_specific_policy"
-            current_stage_started_at = _utc_now()
-            result = self.apply_board_specific_policy(base_result)
-            execution = execution.add_stage(
-                stage_result(
-                    "apply_board_specific_policy",
-                    started_at=current_stage_started_at,
-                    input_count=len(base_result.cards),
-                    output_count=len(result.cards),
-                    warnings=[] if result.cards else ["board policy produced no cards"],
-                )
-            )
-
-            current_stage_name = "collect_quality_feedback"
-            current_stage_started_at = _utc_now()
-            warnings = self.collect_quality_feedback(result)
-            execution = execution.add_stage(
-                stage_result(
-                    "collect_quality_feedback",
-                    started_at=current_stage_started_at,
-                    input_count=len(result.cards),
-                    output_count=len(warnings),
-                    warnings=warnings,
-                )
-            )
-
-            closure = self._build_runtime_closure(result)
-            trace = self._build_trace(
+            ),
+            input_count=len(extraction_results),
+            output_count=lambda board_result: len(board_result.cards),
+            warnings=lambda board_result: [] if board_result.cards else ["board run result has no cards"],
+        )
+        result = run_state.run_stage(
+            "apply_board_specific_policy",
+            lambda: self.apply_board_specific_policy(base_result),
+            input_count=len(base_result.cards),
+            output_count=lambda board_result: len(board_result.cards),
+            warnings=lambda board_result: [] if board_result.cards else ["board policy produced no cards"],
+        )
+        warnings = run_state.run_stage(
+            "collect_quality_feedback",
+            lambda: self.collect_quality_feedback(result),
+            input_count=len(result.cards),
+            output_count=lambda quality_warnings: len(quality_warnings),
+            warnings=lambda quality_warnings: quality_warnings,
+        )
+        workflow_result = run_state.run_stage(
+            "return_workflow_result",
+            lambda: self._build_workflow_result(
                 result=result,
-                closure=closure,
+                warnings=warnings,
                 input_count=len(input_items),
                 selected_signal_count=len(selected_signals),
                 extraction_count=len(extraction_results),
                 relation_count=len(relation_result.relations),
                 rejected_relation_count=len(relation_result.rejected_candidates),
-            )
-            self._validate_result(result, trace)
-            current_stage_name = "return_workflow_result"
-            current_stage_started_at = _utc_now()
-            execution = execution.add_stage(
-                stage_result(
-                    "return_workflow_result",
-                    started_at=current_stage_started_at,
-                    input_count=len(result.cards),
-                    output_count=1,
-                )
-            ).finish()
-            self.last_execution = execution
-            return BoardWorkflowResult(
-                result=result,
-                trace=trace,
-                warnings=warnings,
-                feedback_events=closure.feedback_events,
-                learning_signals=closure.learning_signals,
-                policy_candidates=closure.policy_candidates,
-                guard_results=closure.guard_results,
-                artifact_refs=list(result.artifact_refs),
-                memory_refs=list(result.memory_refs),
-                metadata={
-                    "board_type": self.board_type.value,
-                    "board_focus": self.board_focus or _board_focus(result),
-                    "stages": list(self.workflow_stages),
-                    "quality_status": trace.quality_status,
-                    "feedback_count": trace.feedback_count,
-                    "learning_signal_count": trace.learning_signal_count,
-                    "policy_candidate_count": trace.policy_candidate_count,
-                    "guard_status": trace.guard_status,
+            ),
+            input_count=len(result.cards),
+            output_count=1,
+        )
+        execution = run_state.finish()
+        return workflow_result.model_copy(
+            update={
+                "metadata": {
+                    **workflow_result.metadata,
                     **execution.to_metadata(),
-                },
-            )
-        except Exception as exc:
-            execution = execution.add_stage(
-                stage_result(
-                    current_stage_name,
-                    started_at=current_stage_started_at,
-                    error=exc,
-                )
-            ).finish()
-            self.last_execution = execution
-            raise
+                }
+            }
+        )
+
+    def _store_execution(self, execution: BoardWorkflowExecution) -> None:
+        self.last_execution = execution
+
+    def _build_workflow_result(
+        self,
+        *,
+        result: BoardRunResult,
+        warnings: list[str],
+        input_count: int,
+        selected_signal_count: int,
+        extraction_count: int,
+        relation_count: int,
+        rejected_relation_count: int,
+    ) -> BoardWorkflowResult:
+        closure = self._build_runtime_closure(result)
+        trace = self._build_trace(
+            result=result,
+            closure=closure,
+            input_count=input_count,
+            selected_signal_count=selected_signal_count,
+            extraction_count=extraction_count,
+            relation_count=relation_count,
+            rejected_relation_count=rejected_relation_count,
+        )
+        self._validate_result(result, trace)
+        return BoardWorkflowResult(
+            result=result,
+            trace=trace,
+            warnings=warnings,
+            feedback_events=closure.feedback_events,
+            learning_signals=closure.learning_signals,
+            policy_candidates=closure.policy_candidates,
+            guard_results=closure.guard_results,
+            artifact_refs=list(result.artifact_refs),
+            memory_refs=list(result.memory_refs),
+            metadata={
+                "board_type": self.board_type.value,
+                "board_focus": self.board_focus or _board_focus(result),
+                "stages": list(self.workflow_stages),
+                "quality_status": trace.quality_status,
+                "feedback_count": trace.feedback_count,
+                "learning_signal_count": trace.learning_signal_count,
+                "policy_candidate_count": trace.policy_candidate_count,
+                "guard_status": trace.guard_status,
+            },
+        )
 
     def resolve_context(self, context: AnalysisContext | None) -> AnalysisContext:
         return self.service._resolve_context(context)
@@ -374,6 +357,87 @@ def _guard_status(guards: list[BusinessRegressionGuardResult]) -> str:
     if any(guard.warnings for guard in guards):
         return "warning"
     return "pass"
+
+
+@dataclass
+class _WorkflowRunState:
+    execution: BoardWorkflowExecution
+    publish: Callable[[BoardWorkflowExecution], None]
+
+    def __post_init__(self) -> None:
+        self.publish(self.execution)
+
+    def run_stage(
+        self,
+        stage_name: str,
+        operation: Callable[[], StageResultT],
+        *,
+        input_count: int | None = None,
+        output_count: StageMetric = None,
+        warnings: StageWarnings = None,
+        metadata: StageMetadata = None,
+    ) -> StageResultT:
+        started_at = _utc_now()
+        try:
+            result = operation()
+        except Exception as exc:
+            self._record_failed_stage(stage_name, started_at, exc)
+            raise
+        self._record_completed_stage(
+            stage_name,
+            started_at,
+            input_count=input_count,
+            output_count=_resolve_stage_value(output_count, result),
+            warnings=_resolve_stage_value(warnings, result) or [],
+            metadata=_resolve_stage_value(metadata, result) or {},
+        )
+        return result
+
+    def finish(self) -> BoardWorkflowExecution:
+        self.execution = self.execution.finish()
+        self.publish(self.execution)
+        return self.execution
+
+    def _record_completed_stage(
+        self,
+        stage_name: str,
+        started_at,
+        *,
+        input_count: int | None,
+        output_count: int | None,
+        warnings: list[str],
+        metadata: dict[str, Any],
+    ) -> None:
+        self.execution = self.execution.add_stage(
+            stage_result(
+                stage_name,
+                started_at=started_at,
+                input_count=input_count,
+                output_count=output_count,
+                warnings=warnings,
+                metadata=metadata,
+            )
+        )
+        self.publish(self.execution)
+
+    def _record_failed_stage(self, stage_name: str, started_at, exc: BaseException) -> None:
+        self.execution = self.execution.add_stage(
+            stage_result(
+                stage_name,
+                started_at=started_at,
+                error=exc,
+            )
+        ).finish()
+        self.publish(self.execution)
+
+
+def _resolve_stage_value(
+    value: StageMetric | StageWarnings | StageMetadata,
+    result: StageResultT,
+):
+    if callable(value):
+        return value(result)
+    return value
 
 
 def _utc_now():

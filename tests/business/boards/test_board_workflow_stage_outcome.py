@@ -117,6 +117,26 @@ def test_failed_stage_duration_uses_current_stage_start_time() -> None:
     assert failed.duration_ms >= 15.0
 
 
+def test_finalization_failure_is_recorded_as_return_workflow_result() -> None:
+    workflow = _FinalizationFailingWorkflow()
+
+    with pytest.raises(RuntimeError, match="finalization failed"):
+        workflow.run(sample_raw_items())
+
+    assert workflow.last_execution is not None
+    stage_names = [stage.stage_name for stage in workflow.last_execution.stages]
+    failed_stages = [
+        stage
+        for stage in workflow.last_execution.stages
+        if stage.status == WorkflowStageStatus.FAILED
+    ]
+
+    assert stage_names.count("collect_quality_feedback") == 1
+    assert failed_stages
+    assert failed_stages[0].stage_name == "return_workflow_result"
+    assert workflow.last_execution.failed_stage_count == 1
+
+
 def test_stage_result_can_carry_quality_feedback_and_guard_metadata() -> None:
     result = stage_result(
         "collect_quality_feedback",
@@ -143,6 +163,11 @@ class _SlowFailingWorkflow(AINewsWorkflow):
 
         time.sleep(0.02)
         raise RuntimeError("pipeline failed after work")
+
+
+class _FinalizationFailingWorkflow(AINewsWorkflow):
+    def _validate_result(self, result, trace) -> None:
+        raise RuntimeError("finalization failed")
 
 
 def _now():
