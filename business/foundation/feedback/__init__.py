@@ -1,5 +1,6 @@
 from business.foundation.feedback.feedback_aggregator import FeedbackAggregator
 from business.foundation.feedback.feedback_collector import FeedbackCollector
+from business.foundation.feedback.feedback_learning import FeedbackLearningResult, FeedbackLearningService, dedupe_feedback_events
 from business.foundation.feedback.improvement_applier import ImprovementApplier
 from business.foundation.feedback.improvement_proposal import ImprovementProposal
 from business.foundation.feedback.improvement_recommendation import ImprovementRecommendation
@@ -27,6 +28,8 @@ __all__ = [
     "AppliedPolicyExperiment",
     "FeedbackAggregator",
     "FeedbackCollector",
+    "FeedbackLearningResult",
+    "FeedbackLearningService",
     "ImprovementApplier",
     "ImprovementMeasurement",
     "ImprovementMeasurementBuilder",
@@ -46,4 +49,5 @@ __all__ = [
     "SelfImprovementReport",
     "build_feedback_events_from_quality",
     "build_runtime_quality_closure",
+    "dedupe_feedback_events",
 ]

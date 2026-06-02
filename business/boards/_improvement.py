@@ -12,9 +12,8 @@ from business.foundation.feedback import (
     ImprovementRecommendationBuilder,
     InMemoryImprovementProposalStore,
     SelfImprovementReport,
+    FeedbackLearningService,
 )
-from business.foundation.feedback.feedback_aggregator import FeedbackAggregator
-from business.foundation.feedback.learning_signal_builder import LearningSignalBuilder
 
 
 class BoardImprovementService:
@@ -22,25 +21,15 @@ class BoardImprovementService:
         self.proposal_store = proposal_store or InMemoryImprovementProposalStore()
         self.recommendation_builder = ImprovementRecommendationBuilder()
         self.proposal_builder = ImprovementProposalBuilder()
+        self.feedback_learning_service = FeedbackLearningService()
         self.applier = ImprovementApplier()
         self.measurement_builder = ImprovementMeasurementBuilder()
 
     def collect_feedback(self, feedback_events: list[BusinessFeedbackEvent]) -> list[BusinessFeedbackEvent]:
-        seen: set[str] = set()
-        result: list[BusinessFeedbackEvent] = []
-        for event in feedback_events:
-            if event.feedback_id in seen:
-                continue
-            seen.add(event.feedback_id)
-            result.append(event)
-        return result
+        return self.feedback_learning_service.collect(feedback_events)
 
     def build_learning_signals(self, feedback_events: list[BusinessFeedbackEvent]) -> list[BusinessLearningSignal]:
-        signals: list[BusinessLearningSignal] = []
-        grouped = FeedbackAggregator().group_by_type(feedback_events)
-        for events in grouped.values():
-            signals.extend(LearningSignalBuilder().build_from_feedback(events))
-        return signals
+        return self.feedback_learning_service.build_learning_signals(feedback_events)
 
     def build_recommendations(
         self,
