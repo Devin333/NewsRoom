@@ -13,6 +13,7 @@ from business.boards.cross_board.workflows.daily_intelligence.source_evidence_st
     build_source_and_evidence_steps,
 )
 from business.boards.cross_board.workflows.daily_intelligence.buffer_key_aliases import (
+    with_namespaced_primary_read_keys,
     with_namespaced_read_keys,
     with_namespaced_write_keys,
 )
@@ -280,7 +281,7 @@ def _finalize_report_step() -> StepSpec:
         step_id="finalize_report",
         implementation="daily.finalize_report",
         step_type=StepType.FUNCTION,
-        read_keys=with_namespaced_read_keys([
+        read_keys=with_namespaced_primary_read_keys([
             "request",
             "report_draft",
             "verification_result",
@@ -307,7 +308,7 @@ def _finalize_report_step() -> StepSpec:
         ]),
         required_output_keys=["quality_result", "quality_gate_metrics"],
         metadata={
-            "optional_read_keys": with_namespaced_read_keys([
+            "optional_read_keys": with_namespaced_primary_read_keys([
                 "edited_report_draft",
                 "editor_review",
                 "source_recollection_quality_assessment",

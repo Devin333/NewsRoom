@@ -113,3 +113,14 @@ def with_namespaced_write_keys(keys: list[str]) -> list[str]:
 
 def with_namespaced_read_keys(keys: list[str]) -> list[str]:
     return with_namespaced_write_keys(keys)
+
+
+def with_namespaced_primary_read_keys(keys: list[str]) -> list[str]:
+    values: list[str] = []
+    for key in keys:
+        namespaced_key = DAILY_BUFFER_ALIASES.get(key)
+        if namespaced_key and namespaced_key not in values:
+            values.append(namespaced_key)
+        if key not in values:
+            values.append(key)
+    return values

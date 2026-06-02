@@ -141,17 +141,36 @@ def test_agentic_daily_workflow_declares_agent_steps() -> None:
     assert "source_recollection_quality_assessment" in steps["recollect_sources"].write_keys
     assert "sources.recollection_quality_assessment" in steps["recollect_sources"].write_keys
     assert "source_recollection_quality_assessment" in steps["recollect_sources"].required_output_keys
-    assert "agent_feedback_events" in steps["finalize_report"].read_keys
-    assert "agent.feedback.events" in steps["finalize_report"].read_keys
-    assert "agent_feedback_route" in steps["finalize_report"].read_keys
-    assert "agent.feedback.route" in steps["finalize_report"].read_keys
+    assert steps["finalize_report"].read_keys == [
+        "request",
+        "report.draft",
+        "report_draft",
+        "quality.verification_result",
+        "verification_result",
+        "quality.citation_check_result",
+        "citation_check_result",
+        "quality.support_matrix",
+        "support_matrix",
+        "evidence.bundle",
+        "evidence_bundle",
+        "evidence.verified_findings",
+        "verified_findings",
+        "quality.events",
+        "quality_events",
+        "agent.feedback.events",
+        "agent_feedback_events",
+        "agent.feedback.summary",
+        "agent_feedback_summary",
+        "agent.feedback.route",
+        "agent_feedback_route",
+    ]
     assert steps["finalize_report"].metadata["optional_read_keys"] == [
-        "edited_report_draft",
-        "editor_review",
-        "source_recollection_quality_assessment",
         "report.edited_draft",
+        "edited_report_draft",
         "quality.editor_review",
+        "editor_review",
         "sources.recollection_quality_assessment",
+        "source_recollection_quality_assessment",
     ]
     assert "quality.result" in steps["finalize_report"].write_keys
 
