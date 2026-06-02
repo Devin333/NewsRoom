@@ -273,6 +273,7 @@ class DailyIntelligenceArtifactPublisher:
                 "source_recollection_profile": "source_recollection/profile.json",
                 "source_recollection_execution_plan": "source_recollection/execution_plan.json",
                 "source_recollection_execution_report": "source_recollection/execution_report.json",
+                "source_recollection_quality_assessment": "source_recollection/quality_assessment.json",
             },
         )
         output = context.output
@@ -466,6 +467,15 @@ def _update_source_recollection_manifest_fields(
         manifest["source_recollection"]["profile_artifact"] = "source_recollection/profile.json"
     if "source_recollection_execution_plan" in output:
         manifest["source_recollection"]["plan_artifact"] = "source_recollection/execution_plan.json"
+    assessment = output.get("source_recollection_quality_assessment")
+    if assessment is not None:
+        manifest["source_recollection"]["quality"] = {
+            "decision": _field_value(assessment, "decision"),
+            "severity": _field_value(assessment, "severity"),
+            "route": _field_value(assessment, "route"),
+            "recommended_action": _field_value(assessment, "recommended_action"),
+            "artifact": "source_recollection/quality_assessment.json",
+        }
 
 
 def _agentic_summary(context: ArtifactPublishContext) -> dict[str, Any]:

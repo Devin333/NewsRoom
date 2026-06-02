@@ -30,6 +30,8 @@ def build_planner_agent() -> AgentSpec:
             "do not claim they have already been fetched. If a "
             "source_recollection_execution_report is provided, use only its "
             "explicit execution status and counts when adjusting the next plan. "
+            "If a source_recollection_quality_assessment is provided, follow "
+            "its route and recommended_action as policy guidance. "
             "Return JSON only."
         ),
         input_keys=[
@@ -44,6 +46,7 @@ def build_planner_agent() -> AgentSpec:
             "source_recollection_profile",
             "source_recollection_execution_plan",
             "source_recollection_execution_report",
+            "source_recollection_quality_assessment",
         ],
         output_key="research_plan",
         validation_policy=daily_agent_validation_policy(),

@@ -136,6 +136,16 @@ def test_daily_artifact_publisher_writes_source_diagnostics(tmp_path) -> None:
                 "fetch_result_count": 1,
                 "tasks": [],
             },
+            "source_recollection_quality_assessment": {
+                "plan_id": "plan-1",
+                "profile_id": "profile-1",
+                "decision": "pass",
+                "severity": "info",
+                "route": "continue_source_pipeline",
+                "recommended_action": "continue_source_pipeline",
+                "failed_thresholds": [],
+                "issues": [],
+            },
         },
     )
 
@@ -153,6 +163,10 @@ def test_daily_artifact_publisher_writes_source_diagnostics(tmp_path) -> None:
         manifest["artifacts"]["source_recollection_execution_report"]
         == "source_recollection/execution_report.json"
     )
+    assert (
+        manifest["artifacts"]["source_recollection_quality_assessment"]
+        == "source_recollection/quality_assessment.json"
+    )
     assert manifest["artifacts"]["source_artifacts"] == "source_artifacts/index.json"
     assert manifest["source_event_count"] == 1
     assert manifest["source_recollection"] == {
@@ -166,6 +180,13 @@ def test_daily_artifact_publisher_writes_source_diagnostics(tmp_path) -> None:
         "artifact": "source_recollection/execution_report.json",
         "profile_artifact": "source_recollection/profile.json",
         "plan_artifact": "source_recollection/execution_plan.json",
+        "quality": {
+            "decision": "pass",
+            "severity": "info",
+            "route": "continue_source_pipeline",
+            "recommended_action": "continue_source_pipeline",
+            "artifact": "source_recollection/quality_assessment.json",
+        },
     }
     assert manifest["source_artifacts"]["item_count"] == 1
     assert (run_dir / "source_artifacts" / "index.json").exists()
@@ -176,6 +197,12 @@ def test_daily_artifact_publisher_writes_source_diagnostics(tmp_path) -> None:
         )
     )
     assert report["status"] == "succeeded"
+    assessment = json.loads(
+        (run_dir / "source_recollection" / "quality_assessment.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert assessment["route"] == "continue_source_pipeline"
 
 
 def test_daily_artifact_publisher_writes_agent_feedback_artifacts(tmp_path) -> None:

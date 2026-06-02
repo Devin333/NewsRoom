@@ -90,7 +90,7 @@ workflow step 从 buffer 读取 list/tuple 类型集合时，应把读取值视�
 
 daily intelligence workflow 进入兼容迁移期：业务函数继续写旧 key，同时通过 `buffer_key_aliases.with_namespaced_aliases()` 双写命名空间 key。
 
-- source 相关输出使用 `sources.*`，例如 `sources.errors`、`sources.events`、`sources.ranked_items`；补源闭环使用 `sources.recollection_profile`、`sources.recollection_execution_plan` 和 `sources.recollection_execution_report`。
+- source 相关输出使用 `sources.*`，例如 `sources.errors`、`sources.events`、`sources.ranked_items`；补源闭环使用 `sources.recollection_profile`、`sources.recollection_execution_plan`、`sources.recollection_execution_report` 和 `sources.recollection_quality_assessment`。
 - evidence 相关输出使用 `evidence.*`，例如 `evidence.bundle`、`evidence.verified_findings`。
 - quality 相关输出使用 `quality.*`，例如 `quality.events`、`quality.result`。
 - report 相关输出使用 `report.*`，例如 `report.draft`、`report.final`。
@@ -144,6 +144,7 @@ Agent 间反馈不应隐藏在各 agent output 的自由形态字段里，也不
 - `DailyAgentFeedbackRoutingService` 消费 `agent_feedback_summary` 和上一轮 `agent_feedback_loop_state`，生成新的 loop state 与 `agent_feedback_route`；对 verifier 阶段发现的问题最多触发一轮 bounded writer rewrite，第二次仍要求 rewrite 时进入 finalize/quality policy 路径，不允许无限 agent 循环。
 - analyst 只能通过显式 `analysis_result.evidence_gaps`、`source_recollection_requests` 或 `missing_information` 生成 `daily.source_recollect` recommendation；collector 不从自然语言 notes 中猜测缺口。`collect_agent_feedback` 只负责调用 `DailySourceRecollectionService` 和 `DailySourceRecollectionExecutionService`，由 application service 将 recommendation 转换为正式 `DailySourceRecollectionProfile` 与 `DailySourceRecollectionExecutionPlan`，再通过 `source_recollection_profile` / `sources.recollection_profile` 和 `source_recollection_execution_plan` / `sources.recollection_execution_plan` 交给 `recollect_sources` 与后续 planner 消费；feedback step 不直接抓源，也不把 loop state 或 query 统计塞进 `metadata`。
 - `DailySourceRecollectionExecutor` 必须输出 `source_recollection_execution_report` / `sources.recollection_execution_report`，用正式 `DailySourceRecollectionExecutionReport` 承载 task 状态、fetch request/result、raw item 和 error 计数；planner、artifact publisher 和后续 quality gate 只能消费该报告，不从 `source_events` 或 raw item `metadata` 反推补源质量。
+- `DailySourceRecollectionQualityService` 消费 execution report 并输出 `source_recollection_quality_assessment` / `sources.recollection_quality_assessment`，其中包含阈值结果、decision、severity、route 和 recommended_action；executor 只负责调用该 service 并写 buffer，artifact publisher 只投影 assessment，不重新实现阈值策略。
 - `finalize_daily_report()` 在 strict quality gate 场景消费这些 recommendation，并可将发布路线调整为 blocked / human review / rewrite；non-social-media bypass 仍由统一 bypass policy 优先决定。
 - 当前闭环雏形允许 writer 根据 verifier feedback 做一次 source-bounded rewrite，也允许 analyst evidence gap 触发一次 planner/source recollect route，并由 `DailySourceRecollectionExecutor` 消费 `DailySourceRecollectionExecutionPlan` 执行 source fetch，随后重新进入 normalize / deduplicate / rank / evidence pipeline，再回到 planner。editor 产出的 rewrite / edited draft 仍由 finalization 消费。
 
@@ -186,6 +187,7 @@ selection、quality、references 等领域规则位于 `business/boards/domain/`
 - `BoardRunResult.metadata["board_output"]`：仅作为历史兼容字段保留。
 - `ProductizedRunState`：承载 skill traces、extracted entities、evidence refs/items、deduplication result、trend analysis 和 improvement context。
 - `DailySourceRecollectionExecutionReport`：承载补源执行 task 状态、selected sources、fetch request/result、raw item 与 error 计数，并通过 `source_recollection_execution_report` / `sources.recollection_execution_report` 传递。
+- `DailySourceRecollectionQualityAssessment`：承载补源质量阈值、decision、route 和 recommended_action，并通过 `source_recollection_quality_assessment` / `sources.recollection_quality_assessment` 传递。
 
 新代码应优先读取正式字段，例如 `BoardRunResult.board_output` 和 `productized_run`，不要从 `metadata` 反向推断内部状态。
 `BoardRunApplicationResult` 是 board run 组装阶段的正式 application result model；

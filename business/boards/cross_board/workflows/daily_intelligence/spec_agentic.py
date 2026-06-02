@@ -130,6 +130,7 @@ def _planner_agent_step() -> StepSpec:
                 "source_recollection_profile",
                 "source_recollection_execution_plan",
                 "source_recollection_execution_report",
+                "source_recollection_quality_assessment",
             ]),
         },
     )
@@ -369,6 +370,7 @@ def _recollect_sources_step() -> StepSpec:
             "source_selection_report",
             "source_coverage_report",
             "source_recollection_execution_report",
+            "source_recollection_quality_assessment",
         ]),
         required_output_keys=[
             "raw_items",
@@ -387,6 +389,7 @@ def _recollect_sources_step() -> StepSpec:
             "source_selection_report",
             "source_coverage_report",
             "source_recollection_execution_report",
+            "source_recollection_quality_assessment",
         ],
         metadata={
             "optional_read_keys": with_namespaced_read_keys([

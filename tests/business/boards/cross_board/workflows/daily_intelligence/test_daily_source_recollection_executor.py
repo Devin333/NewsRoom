@@ -127,6 +127,13 @@ def test_recollect_sources_fetches_sources_from_execution_plan() -> None:
     assert report.tasks[0].selected_source_ids == ["official-blog"]
     assert report.tasks[0].fetch_request_ids == ["source-fetch-0001-official-blog"]
     assert report.tasks[0].fetch_result_ids == ["source-fetch-0001-official-blog"]
+    assessment = output["source_recollection_quality_assessment"]
+    assert output["sources.recollection_quality_assessment"] == assessment
+    assert assessment.plan_id == plan.plan_id
+    assert assessment.decision == "pass"
+    assert assessment.route == "continue_source_pipeline"
+    assert assessment.recommended_action == "continue_source_pipeline"
+    assert assessment.failed_thresholds == []
 
 
 def test_recollect_sources_outputs_skipped_execution_report_without_plan() -> None:
@@ -180,6 +187,11 @@ def test_recollect_sources_outputs_skipped_execution_report_without_plan() -> No
     assert report.reason == "missing_or_empty_execution_plan"
     assert report.task_count == 0
     assert report.raw_item_count == 0
+    assessment = output["source_recollection_quality_assessment"]
+    assert output["sources.recollection_quality_assessment"] == assessment
+    assert assessment.decision == "skipped"
+    assert assessment.route == "continue_without_recollection"
+    assert assessment.issues == ["missing_or_empty_execution_plan"]
     assert output["source_events"][-1].event_type == "source_recollection_skipped"
 
 

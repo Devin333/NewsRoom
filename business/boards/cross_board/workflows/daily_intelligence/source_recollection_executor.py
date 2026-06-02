@@ -45,6 +45,9 @@ from business.boards.cross_board.workflows.daily_intelligence.source_recollectio
 from business.boards.cross_board.workflows.daily_intelligence.source_processing import (
     source_event as _source_event,
 )
+from business.boards.cross_board.workflows.daily_intelligence.source_recollection_quality import (
+    DailySourceRecollectionQualityService,
+)
 from business.boards.cross_board.workflows.daily_intelligence.workflow_buffer_access import (
     read_buffer_value,
     read_optional_buffer_list,
@@ -60,12 +63,16 @@ class DailySourceRecollectionExecutor:
         source_dispatcher: SourceDispatcher,
         source_health_manager: BasicSourceHealthManager,
         execution_report_service: DailySourceRecollectionExecutionReportService | None = None,
+        source_recollection_quality_service: DailySourceRecollectionQualityService | None = None,
     ) -> None:
         self.source_registry = source_registry
         self.source_dispatcher = source_dispatcher
         self.source_health_manager = source_health_manager
         self.execution_report_service = (
             execution_report_service or DailySourceRecollectionExecutionReportService()
+        )
+        self.source_recollection_quality_service = (
+            source_recollection_quality_service or DailySourceRecollectionQualityService()
         )
 
     def recollect_sources(
@@ -106,11 +113,13 @@ class DailySourceRecollectionExecutor:
                     fallback_used=False,
                 ),
             )
-            output["source_recollection_execution_report"] = (
-                self.execution_report_service.skipped_report(
-                    reason="missing_or_empty_execution_plan",
-                    plan=plan,
-                )
+            execution_report = self.execution_report_service.skipped_report(
+                reason="missing_or_empty_execution_plan",
+                plan=plan,
+            )
+            output["source_recollection_execution_report"] = execution_report
+            output["source_recollection_quality_assessment"] = (
+                self.source_recollection_quality_service.assess(execution_report)
             )
             return with_namespaced_aliases(output)
 
@@ -317,11 +326,13 @@ class DailySourceRecollectionExecutor:
                 fallback_used=False,
             ),
         )
-        output["source_recollection_execution_report"] = (
-            self.execution_report_service.build_report(
-                plan=plan,
-                tasks=task_results,
-            )
+        execution_report = self.execution_report_service.build_report(
+            plan=plan,
+            tasks=task_results,
+        )
+        output["source_recollection_execution_report"] = execution_report
+        output["source_recollection_quality_assessment"] = (
+            self.source_recollection_quality_service.assess(execution_report)
         )
         return with_namespaced_aliases(output)
 
