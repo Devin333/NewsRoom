@@ -34,6 +34,7 @@ class BoardImprovementContext:
     run_id: str
     board_type: str
     applied_overrides: list[dict[str, Any]] = field(default_factory=list)
+    applied_policy_experiments: list[dict[str, Any]] = field(default_factory=list)
     skipped_overrides: list[dict[str, Any]] = field(default_factory=list)
     proposal_ids: list[str] = field(default_factory=list)
     measurement_plan: dict[str, Any] = field(default_factory=dict)

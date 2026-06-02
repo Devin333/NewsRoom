@@ -2,26 +2,24 @@ from __future__ import annotations
 
 from typing import Any
 
+from business.boards.services import (
+    BoardOutputAnnotationService,
+    BoardQualityService,
+    BoardRunReferenceService,
+    BoardRunResultBuilder,
+    BoardSignalSelectionService,
+)
 from business.foundation import (
     AnalysisContext,
-    BusinessArtifactRef,
-    BusinessEvidenceRef,
-    BusinessMemoryRef,
     BoardRegistry,
     BoardRunResult,
     BoardType,
     BusinessFeedbackEvent,
     BusinessPolicySnapshot,
-    BusinessQualityCheck,
     BusinessQualitySnapshot,
     PolicyLoader,
     Report,
     Signal,
-    SourceRef,
-    SourceReliability,
-    SourceType,
-    create_policy_snapshot,
-    quality_snapshot_from_checks,
 )
 from business.foundation.registry import default_board_registry
 from business.layers.analysis import AnalysisPipeline, AnalysisResult
@@ -51,6 +49,20 @@ class BoardServiceBase:
         self.output_pipeline = output_pipeline or BoardOutputPipeline()
         self.signal_pipeline = SignalPipeline()
         self.policy_loader = PolicyLoader()
+        self.selection_service = BoardSignalSelectionService(
+            board_type=self.board_type,
+            board_definition=self.board_definition,
+            signal_pipeline=self.signal_pipeline,
+        )
+        self.output_annotation_service = BoardOutputAnnotationService()
+        self.quality_service = BoardQualityService()
+        self.reference_service = BoardRunReferenceService()
+        self.result_builder = BoardRunResultBuilder(
+            board_type=self.board_type,
+            policy_loader=self.policy_loader,
+            quality_service=self.quality_service,
+            reference_service=self.reference_service,
+        )
 
     def build_board_output(
         self,
@@ -152,41 +164,13 @@ class BoardServiceBase:
         relation_result: RelationPipelineResult,
         analysis: AnalysisResult,
     ) -> BoardRunResult:
-        run_id = _run_id(context, self.board_type)
-        policy_snapshot = create_policy_snapshot(
-            run_id,
-            self.policy_loader.active_profiles(board_type=self.board_type),
-        )
-        report_payload = output.metadata.get("report")
-        reports = [Report.model_validate(_report_payload_for_validation(report_payload))] if isinstance(report_payload, dict) else []
-        quality_summary = self._quality_summary(output)
-        feedback_candidates = self._feedback_candidates(output, quality_summary, policy_snapshot)
-        trace_ref = _run_source_ref(run_id, "workflow_trace", self.board_type)
-        manifest_ref = _run_source_ref(run_id, "run_manifest", self.board_type)
-        artifact_refs = _artifact_refs(run_id, self.board_type, trace_ref=trace_ref, manifest_ref=manifest_ref)
-        evidence_refs = _evidence_refs(signals, relation_result.relations)
-        memory_refs = _memory_refs(context, self.board_type)
-        result = BoardRunResult(
-            board_type=self.board_type,
-            run_id=run_id,
-            cards=list(output.cards),
-            detail_pages=list(output.detail_pages),
-            insights=list(output.insights),
-            reports=reports,
-            policy_snapshot=policy_snapshot,
-            quality_summary=quality_summary,
-            feedback_candidates=feedback_candidates,
-            trace_ref=trace_ref,
-            manifest_ref=manifest_ref,
-            artifact_refs=artifact_refs,
-            evidence_refs=evidence_refs,
-            memory_refs=memory_refs,
-            metadata={
-                "board_output": output.to_dict(),
-                "artifact_refs": [ref.to_dict() for ref in artifact_refs],
-                "evidence_refs": [ref.to_dict() for ref in evidence_refs],
-                "memory_refs": [ref.to_dict() for ref in memory_refs],
-            },
+        result = self.result_builder.build(
+            output=output,
+            context=context,
+            signals=signals,
+            extraction_results=extraction_results,
+            relation_result=relation_result,
+            analysis=analysis,
         )
         return self._postprocess_run_result(
             result,
@@ -253,20 +237,10 @@ class BoardServiceBase:
         return context.for_board(self.board_type)
 
     def _select_signals(self, signals: list[Any], *, context: AnalysisContext) -> list[Signal]:
-        coerced = self.signal_pipeline.coerce_signals(
-            list(signals),
-            context=context,
-            board_type=self.board_type,
-        ).signals
-        if self.board_type == BoardType.CROSS_BOARD:
-            return sorted(coerced, key=_signal_sort_key, reverse=True)
-        selected = [
-            signal
-            for signal in coerced
-            if signal.board_type == self.board_type
-            or signal.signal_type.value in self.board_definition.signal_types
-        ]
-        return sorted(selected, key=_signal_sort_key, reverse=True)
+        return self.selection_service.select(signals, context=context)
+
+    def select_signals(self, signals: list[Any], *, context: AnalysisContext) -> list[Signal]:
+        return self.selection_service.select(signals, context=context)
 
     def _annotate_output(
         self,
@@ -278,29 +252,17 @@ class BoardServiceBase:
         relation_result: RelationPipelineResult,
         analysis: AnalysisResult,
     ) -> None:
-        output.metadata.update(
-            {
-                "board_type": self.board_type.value,
-                "board_name": self.board_definition.name,
-                "board_definition": self.board_definition.to_dict(),
-                "signal_count": len(signals),
-                "selection": {
-                    "signal_types": list(self.board_definition.signal_types),
-                    "visible_sections": list(self.board_definition.visible_sections),
-                },
-                "extraction_count": len(extraction_results),
-                "relation_count": len(relation_result.relations),
-                "rejected_relation_count": len(relation_result.rejected_candidates),
-                "analysis_metadata": dict(analysis.metadata),
-                "report": {
-                    **dict(output.metadata.get("report") or {}),
-                    "board_type": self.board_type.value,
-                    "board_name": self.board_definition.name,
-                    "title": self._report_title(),
-                    "summary": self._report_summary(),
-                },
-                "context": context.to_dict(),
-            }
+        self.output_annotation_service.annotate(
+            output,
+            board_type=self.board_type,
+            board_definition=self.board_definition,
+            context=context,
+            signals=signals,
+            extraction_results=extraction_results,
+            relation_result=relation_result,
+            analysis=analysis,
+            report_title=self._report_title(),
+            report_summary=self._report_summary(),
         )
 
     def _report_title(self) -> str:
@@ -311,24 +273,7 @@ class BoardServiceBase:
         return f"{description} generated from normalized signals."
 
     def _quality_summary(self, output: BoardOutput) -> BusinessQualitySnapshot:
-        checks = [
-            BusinessQualityCheck.create(
-                "board_has_policy_compatible_cards",
-                passed=all(card.ranking_reason for card in output.cards),
-                severity="error",
-                reason="Every board card must include ranking_reason.",
-                observed={"card_count": len(output.cards)},
-            ),
-            BusinessQualityCheck.create(
-                "top_cards_have_evidence",
-                passed=all(card.evidence_refs for card in output.cards[:3]),
-                severity="error",
-                reason="Top cards must include evidence_refs.",
-                observed={"top_card_count": len(output.cards[:3])},
-            ),
-        ]
-        score = 1.0 if all(check.passed for check in checks) else 0.5
-        return quality_snapshot_from_checks(checks, score=score, confidence=0.8)
+        return self.quality_service.build_summary(output)
 
     def _feedback_candidates(
         self,
@@ -336,124 +281,4 @@ class BoardServiceBase:
         quality_summary: BusinessQualitySnapshot,
         policy_snapshot: BusinessPolicySnapshot,
     ) -> list[BusinessFeedbackEvent]:
-        events: list[BusinessFeedbackEvent] = []
-        for check in quality_summary.checks:
-            if check.passed:
-                continue
-            events.append(
-                BusinessFeedbackEvent.create(
-                    target_object_type="board_run",
-                    target_object_id=output.board_type.value,
-                    target_layer="board",
-                    board_type=output.board_type.value,
-                    feedback_type=check.check_type,
-                    severity=check.severity,
-                    observed=check.observed,
-                    expected=check.expected,
-                    error_tags=[check.check_type],
-                    evidence_refs=list(check.evidence_refs),
-                    related_policy_profile_id=policy_snapshot.profiles[0].profile_id if policy_snapshot.profiles else None,
-                    related_policy_profile_version=policy_snapshot.profiles[0].version if policy_snapshot.profiles else None,
-                )
-            )
-        return events
-
-
-def _signal_sort_key(signal: Signal) -> tuple[int, str, str]:
-    published_at = signal.published_at
-    timestamp = int(published_at.timestamp()) if published_at is not None else 0
-    return timestamp, signal.signal_id, signal.title
-
-
-def _run_id(context: AnalysisContext, board_type: BoardType) -> str:
-    run_context = getattr(context, "run_context", None)
-    if run_context is not None and getattr(run_context, "run_id", None):
-        return str(run_context.run_id)
-    return f"{board_type.value}-run"
-
-
-def _report_payload_for_validation(payload: dict[str, object]) -> dict[str, object]:
-    cleaned = _drop_serialized_computed_fields(payload)
-    if isinstance(cleaned, dict):
-        cleaned.pop("board_name", None)
-        return cleaned
-    return dict(payload)
-
-
-def _drop_serialized_computed_fields(value: object) -> object:
-    if isinstance(value, dict):
-        return {
-            key: _drop_serialized_computed_fields(item)
-            for key, item in value.items()
-            if key != "level"
-        }
-    if isinstance(value, list):
-        return [_drop_serialized_computed_fields(item) for item in value]
-    return value
-
-
-def _run_source_ref(run_id: str, ref_type: str, board_type: BoardType) -> SourceRef:
-    return SourceRef(
-        source_name=f"{board_type.value}:{ref_type}",
-        source_type=SourceType.MANUAL,
-        url=f"business://{board_type.value}/{run_id}/{ref_type}",
-        reliability=SourceReliability.HIGH,
-        external_id=run_id,
-    )
-
-
-def _artifact_refs(
-    run_id: str,
-    board_type: BoardType,
-    *,
-    trace_ref: SourceRef,
-    manifest_ref: SourceRef,
-) -> list[BusinessArtifactRef]:
-    return [
-        BusinessArtifactRef.create(
-            "board_output",
-            label=f"{board_type.value} board output",
-            uri=f"business://{board_type.value}/{run_id}/board_output",
-            run_id=run_id,
-            trace_ref=trace_ref,
-            manifest_ref=manifest_ref,
-            metadata={
-                "board_type": board_type.value,
-                "run_id": run_id,
-                "artifact_type": "board_output",
-            },
-        )
-    ]
-
-
-def _evidence_refs(signals: list[Signal], relations) -> list[BusinessEvidenceRef]:
-    relation_ids_by_signal: dict[str, list[str]] = {}
-    for relation in relations:
-        for signal_id in relation.evidence_signal_ids:
-            relation_ids_by_signal.setdefault(signal_id, []).append(relation.relation_id)
-    refs: list[BusinessEvidenceRef] = []
-    for signal in signals:
-        refs.append(
-            BusinessEvidenceRef.from_source(
-                signal.source,
-                signal_ids=[signal.signal_id],
-                relation_ids=relation_ids_by_signal.get(signal.signal_id, []),
-                confidence=signal.confidence.value if signal.confidence is not None else None,
-                metadata={"board_type": signal.board_type.value, "signal_type": signal.signal_type.value},
-            )
-        )
-    return refs
-
-
-def _memory_refs(context: AnalysisContext, board_type: BoardType) -> list[BusinessMemoryRef]:
-    topic = context.metadata.get("topic") if isinstance(context.metadata, dict) else None
-    if not topic:
-        return []
-    return [
-        BusinessMemoryRef.create(
-            memory_type="analysis_context",
-            query=str(topic),
-            score=0.75,
-            metadata={"board_type": board_type.value},
-        )
-    ]
+        return self.quality_service.feedback_candidates(output, quality_summary, policy_snapshot)

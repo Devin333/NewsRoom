@@ -1,24 +1,69 @@
 # Business Boundaries
 
-`business/` contains NewsRoom-specific intelligence behavior. It depends on framework contracts and runtime APIs, but it does not redefine framework runtime responsibilities.
+本文档描述 NewsRoom `business/` 层的当前边界。它补充 `docs/architecture/framework-boundaries.md`：`framework/` 仍然只拥有领域无关运行时，不能导入 `business`、`interfaces` 或具体 `infrastructure`。
 
-## Areas
+## 分层职责
 
-- `business/foundation`: shared NewsRoom domain models, primitives, policies, registries, feedback concepts, and business skill package content.
-- `business/layers`: reusable domain processing layers such as signal, extraction, relation, analysis, memory, and output.
-- `business/boards`: board-level intelligence products and workflows such as AI news, paper radar, project radar, community pulse, cross-board daily intelligence, and weekly intelligence.
+- `business/foundation/`：业务基础模型、枚举、注册表、策略快照、反馈学习模型和 Skill 内容包。它不能导入 `business.layers` 或 `business.boards`。
+- `business/layers/`：可复用的业务处理流水线，包括 signal、extraction、relation、analysis、output、memory。它可以依赖 foundation，但不能依赖 boards。
+- `business/boards/services/`：board 应用服务和 domain service。selection、quality、artifact/evidence/memory refs、run result 构建放在这里，供 board service 门面和 workflow 使用。
+- `business/boards/productized/`：productized board workflow 的应用用例。这里编排 buffer 输入之外的业务动作，例如技能 payload 构造、证据构建、排序、趋势输入、质量检查输入、反馈学习、improvement、artifact metadata。
+- `business/boards/<board_type>/`：单个 board 的策略、presenter、ranking rules、runner 和 workflow 入口。它只承载 board 特化行为，不放通用 selection、质量、artifact refs 或 feedback/improvement 通用逻辑。
 
-## Skills Boundary
+## Workflow Step 边界
 
-Business skill packages live under `business/foundation/skills`. Framework Skill Runtime lives under `framework/skills`. Business skill content must not be merged into framework runtime, and framework skill execution must not be folded into agent or workflow code.
+Productized workflow step 的职责是：
 
-## Workflow Boundary
+1. 从 workflow buffer 读取声明过的 key。
+2. 调用 `ProductizedBoardUseCases` 的对应方法。
+3. 返回声明过的输出 key。
 
-Daily and weekly cross-board workflows own NewsRoom-specific source selection, evidence construction, report writing, quality policy, and artifact publishing. Workflow runners should be thin orchestration surfaces; dependency creation belongs in runtime assembly modules.
+Step 不直接执行 signal selection、ranking、evidence、quality、feedback、improvement 或 subscription 构建逻辑。新增业务逻辑应进入 `business/boards/productized/` 的服务或 `business/boards/services/` 的 board service。
 
-## Daily Intelligence Boundary
+## BoardServiceBase 边界
 
-- Runtime assembly modules build NewsRoom-specific dependency bundles, source connector bundles, and connector factories.
-- Runners orchestrate an already-assembled business workflow and should not become service locators.
-- Registries bind workflow step IDs to deterministic business functions or agent-shaped runtime functions.
-- Specs define workflow shape, steps, edges, triggers, and policies without owning infrastructure adapters.
+`BoardServiceBase` 是 board 门面。它保留：
+
+- context 解析；
+- pipeline 调用顺序；
+- board-specific policy hook；
+- 向旧调用方兼容的公开方法。
+
+以下职责已拆到独立服务：
+
+- `BoardSignalSelectionService`：coerce/filter/sort board signals。
+- `BoardQualityService`：board run quality snapshot 和 feedback candidates。
+- `BoardRunReferenceService`：trace、manifest、artifact、evidence、memory refs。
+- `BoardRunResultBuilder`：BoardRunResult 组装和 pipeline snapshot。
+- `BoardOutputAnnotationService`：BoardOutput annotation。
+
+## Improvement 边界
+
+improvement 流程的方向是：
+
+`feedback -> learning signal -> recommendation -> policy experiment profile -> applied policy experiment -> measurement`
+
+新 proposal 不再生成 patch payload；它携带 `PolicyExperimentProfile`，用于描述目标、参数、理由、建议动作和度量指标。`applied_overrides` 作为历史 artifact/output 键暂时保留，但其内容是 applied policy experiment。旧手工 proposal 的 patch 数据只在读取历史记录时转为实验参数。
+
+## Metadata 使用规则
+
+`metadata` 只能承载对外输出需要的摘要、序列化快照或兼容字段。跨 step 的运行时中间结果应使用正式 buffer key 或模型。
+
+Productized workflow 使用 `ProductizedRunState` 承载：
+
+- skill traces；
+- extracted entities；
+- evidence refs/items；
+- deduplication result；
+- trend analysis；
+- improvement context。
+
+这些字段仍会被序列化进输出 metadata，供现有 artifact 和接口兼容，但内部流程优先读写 `productized_run`。
+
+## 禁止依赖
+
+- `framework/` 不得导入 `business`、`interfaces`、具体 `infrastructure`。
+- `business/foundation/` 不得导入 `business.layers` 或 `business.boards`。
+- `business/layers/` 不得导入 `business.boards`。
+- `business/boards/` 不得导入具体存储 adapter。
+- workflow step 模块不得直接导入 lower-layer pipeline 或 subscription/improvement 具体构造器来承载业务逻辑。

@@ -107,14 +107,14 @@ def _severity(score: Any) -> str:
 
 def _target_type(signal_type: str, target_layer: str) -> str:
     if "ranking" in signal_type or "rank" in signal_type:
-        return "ranking_weight_override"
+        return "ranking_weight"
     if "source" in signal_type:
-        return "source_reliability_override"
+        return "source_reliability"
     if "skill" in signal_type:
-        return "skill_prompt_hint_override"
+        return "skill_prompt_hint"
     if "quality" in target_layer or "gate" in signal_type:
-        return "board_quality_gate_override"
-    return "policy_threshold_override"
+        return "board_quality_gate"
+    return "policy_threshold"
 
 
 def _suggested_action(signal_type: str) -> str:

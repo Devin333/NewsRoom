@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+import time
 from collections.abc import Mapping
 from contextlib import contextmanager
 from pathlib import Path
@@ -67,7 +68,7 @@ def write_json_object_unlocked(path: str | Path, payload: Mapping[str, Any]) -> 
         json.dumps(dict(payload), ensure_ascii=False, indent=2, sort_keys=True),
         encoding="utf-8",
     )
-    temp_path.replace(resolved)
+    _replace_with_retry(temp_path, resolved)
 
 
 def _path_lock(path: Path) -> threading.RLock:
@@ -77,6 +78,18 @@ def _path_lock(path: Path) -> threading.RLock:
             lock = threading.RLock()
             _PATH_LOCKS[path] = lock
         return lock
+
+
+def _replace_with_retry(temp_path: Path, resolved: Path) -> None:
+    attempts = 8 if os.name == "nt" else 1
+    for attempt in range(attempts):
+        try:
+            temp_path.replace(resolved)
+            return
+        except PermissionError:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(0.01 * (attempt + 1))
 
 
 def _lock_handle(handle: Any) -> None:

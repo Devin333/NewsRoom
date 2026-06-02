@@ -52,6 +52,7 @@ from business.foundation.models import (
 )
 from business.foundation.evidence import BusinessEvidenceRef, BusinessRunManifestRef, BusinessTraceRef
 from business.foundation.feedback import (
+    AppliedPolicyExperiment,
     BoardImprovementContext,
     ImprovementApplier,
     ImprovementMeasurement,
@@ -62,6 +63,7 @@ from business.foundation.feedback import (
     ImprovementRecommendationBuilder,
     InMemoryImprovementProposalStore,
     LocalJsonImprovementProposalStore,
+    PolicyExperimentProfile,
     RuntimeQualityClosure,
     SelfImprovementReport,
     build_feedback_events_from_quality,
@@ -140,6 +142,7 @@ from business.foundation.taxonomy import (
 
 __all__ = [
     "AnalysisContext",
+    "AppliedPolicyExperiment",
     "Badge",
     "BasePolicy",
     "BoardCard",
@@ -205,6 +208,7 @@ __all__ = [
     "LLMGateway",
     "LLMPort",
     "LocalJsonImprovementProposalStore",
+    "PolicyExperimentProfile",
     "Maturity",
     "MaturityStage",
     "ObjectRef",

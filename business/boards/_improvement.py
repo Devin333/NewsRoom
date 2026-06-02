@@ -11,7 +11,12 @@ from business.foundation.feedback import (
     ImprovementRecommendation,
     ImprovementRecommendationBuilder,
     InMemoryImprovementProposalStore,
+    PolicyExperimentProfile,
     SelfImprovementReport,
+)
+from business.foundation.feedback.policy_experiment import (
+    policy_experiment_profile_id,
+    policy_experiment_target_type,
 )
 from business.foundation.feedback.feedback_aggregator import FeedbackAggregator
 from business.foundation.feedback.learning_signal_builder import LearningSignalBuilder
@@ -70,13 +75,14 @@ class BoardImprovementService:
                 proposal_id=_stable_id("proposal", recommendation.recommendation_id, recommendation.target_type, recommendation.target_id),
                 recommendation_id=recommendation.recommendation_id,
                 board_type=recommendation.board_type,
-                change_type=_change_type(recommendation.target_type),
-                target_type=recommendation.target_type,
+                change_type="policy_experiment",
+                target_type=policy_experiment_target_type(recommendation.target_type),
                 target_id=recommendation.target_id,
-                proposed_patch=_patch_for_recommendation(recommendation),
+                proposed_patch={},
                 risk_level=_risk_level(recommendation.severity),
                 requires_approval=True,
                 status="proposed",
+                experiment_profile=_experiment_profile_for_recommendation(recommendation),
             )
             existing = self.proposal_store.get(proposal.proposal_id)
             proposals.append(existing or self.proposal_store.save(proposal))
@@ -133,23 +139,28 @@ def _dedupe_recommendations(recommendations: list[ImprovementRecommendation]) ->
 
 
 def _change_type(target_type: str) -> str:
-    supported = {
-        "ranking_weight_override",
-        "policy_threshold_override",
-        "source_reliability_override",
-        "skill_prompt_hint_override",
-        "board_quality_gate_override",
-    }
-    return target_type if target_type in supported else "policy_threshold_override"
+    return policy_experiment_target_type(target_type)
 
 
-def _patch_for_recommendation(recommendation: ImprovementRecommendation) -> dict[str, Any]:
-    return {
-        "reason": recommendation.reason,
-        "suggested_action": recommendation.suggested_action,
-        "severity": recommendation.severity,
-        "target_id": recommendation.target_id,
-    }
+def _experiment_profile_for_recommendation(recommendation: ImprovementRecommendation) -> PolicyExperimentProfile:
+    target_type = _change_type(recommendation.target_type)
+    return PolicyExperimentProfile(
+        profile_id=policy_experiment_profile_id(
+            recommendation.board_type,
+            recommendation.recommendation_id,
+            target_type,
+            recommendation.target_id,
+        ),
+        board_type=recommendation.board_type,
+        target_type=target_type,
+        target_id=recommendation.target_id,
+        parameters={
+            "severity": recommendation.severity,
+            "evidence_count": len(recommendation.evidence),
+        },
+        rationale=recommendation.reason,
+        suggested_action=recommendation.suggested_action,
+    )
 
 
 def _risk_level(severity: str) -> str:

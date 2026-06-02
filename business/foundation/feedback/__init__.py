@@ -7,6 +7,7 @@ from business.foundation.feedback.learning_signal_builder import LearningSignalB
 from business.foundation.feedback.learning_signal_store import InMemoryLearningSignalStore
 from business.foundation.feedback.measurement import ImprovementMeasurement, ImprovementMeasurementBuilder
 from business.foundation.feedback.override_policy import BoardImprovementContext, ImprovementOverride
+from business.foundation.feedback.policy_experiment import AppliedPolicyExperiment, PolicyExperimentProfile
 from business.foundation.feedback.proposal_store import InMemoryImprovementProposalStore, LocalJsonImprovementProposalStore
 from business.foundation.feedback.recommendation_builder import ImprovementRecommendationBuilder
 from business.foundation.feedback.runtime_closure import (
@@ -18,6 +19,7 @@ from business.foundation.feedback.self_improvement_report import SelfImprovement
 
 __all__ = [
     "BoardImprovementContext",
+    "AppliedPolicyExperiment",
     "FeedbackAggregator",
     "FeedbackCollector",
     "ImprovementApplier",
@@ -31,6 +33,7 @@ __all__ = [
     "InMemoryImprovementProposalStore",
     "LearningSignalBuilder",
     "LocalJsonImprovementProposalStore",
+    "PolicyExperimentProfile",
     "RuntimeQualityClosure",
     "SelfImprovementReport",
     "build_feedback_events_from_quality",

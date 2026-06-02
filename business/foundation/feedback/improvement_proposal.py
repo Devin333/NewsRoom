@@ -5,6 +5,8 @@ from datetime import datetime, timezone as _tz
 UTC = _tz.utc
 from typing import Any
 
+from business.foundation.feedback.policy_experiment import PolicyExperimentProfile
+
 
 PROPOSAL_STATUSES = {"proposed", "approved", "rejected", "applied", "superseded"}
 
@@ -21,6 +23,7 @@ class ImprovementProposal:
     risk_level: str
     requires_approval: bool
     status: str
+    experiment_profile: PolicyExperimentProfile | None = None
     created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat().replace("+00:00", "Z"))
 
     def __post_init__(self) -> None:
@@ -46,6 +49,11 @@ class ImprovementProposal:
             risk_level=str(payload.get("risk_level") or "medium"),
             requires_approval=bool(payload.get("requires_approval", True)),
             status=str(payload.get("status") or "proposed"),
+            experiment_profile=(
+                PolicyExperimentProfile.from_dict(dict(payload["experiment_profile"]))
+                if isinstance(payload.get("experiment_profile"), dict)
+                else None
+            ),
             created_at=str(payload.get("created_at") or datetime.now(UTC).isoformat().replace("+00:00", "Z")),
         )
 
