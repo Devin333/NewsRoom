@@ -182,6 +182,50 @@ def test_productized_workflow_steps_delegate_business_logic_to_productized_servi
     assert "business.foundation.subscription" not in imported_modules
 
 
+def test_daily_agent_registry_stays_fixture_free() -> None:
+    registry_path = (
+        BUSINESS_ROOT
+        / "boards"
+        / "cross_board"
+        / "workflows"
+        / "daily_intelligence"
+        / "agent_registry.py"
+    )
+    imported_modules = _imports_for_file(registry_path)
+    defined_functions = _function_defs_for_file(registry_path)
+
+    assert (
+        "business.boards.cross_board.workflows.daily_intelligence.agent_fixtures"
+        not in imported_modules
+    )
+    assert [
+        name
+        for name in defined_functions
+        if "fake" in name or "fixture" in name
+    ] == []
+
+
+def test_agentic_daily_runner_uses_explicit_fixture_runner_factory() -> None:
+    runner_path = (
+        BUSINESS_ROOT
+        / "boards"
+        / "cross_board"
+        / "workflows"
+        / "daily_intelligence"
+        / "runner_agentic.py"
+    )
+    imported_modules = _imports_for_file(runner_path)
+
+    assert (
+        "business.boards.cross_board.workflows.daily_intelligence.agent_fixtures"
+        not in imported_modules
+    )
+    assert (
+        "business.boards.cross_board.workflows.daily_intelligence.agent_runner_factory"
+        in imported_modules
+    )
+
+
 def test_board_radar_tools_do_not_import_legacy_source_modules() -> None:
     violations: list[str] = []
     for path in (
@@ -207,6 +251,15 @@ def _forbidden_imports(root: Path, *, forbidden_prefixes: tuple[str, ...]) -> li
 def _imports_for_file(path: Path) -> list[str]:
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     return _imported_modules(tree)
+
+
+def _function_defs_for_file(path: Path) -> list[str]:
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    return [
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
 
 
 def _matching_forbidden(
