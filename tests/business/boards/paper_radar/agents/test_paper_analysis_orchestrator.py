@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from collections.abc import Sequence
 
 from framework.agent.session import AgentSharedWorkspace, AgentSessionItem, InMemoryAgentSessionStore
@@ -82,6 +83,10 @@ def test_raw_full_text_is_not_written_to_workspace() -> None:
     assert "SECRET FULL TEXT" not in payload
     assert "full_text" not in payload
     assert "raw_payload" not in payload
+    source_artifacts = workspace.latest(session_id=request.session_id, role=PAPER_ROLE_SOURCE_ARTIFACTS)
+    assert source_artifacts.content["fullTextDigest"]["sha256"] == hashlib.sha256(
+        "SECRET FULL TEXT SHOULD NOT BE WRITTEN".encode("utf-8")
+    ).hexdigest()[:16]
 
 
 def test_different_paper_sessions_do_not_share_items() -> None:

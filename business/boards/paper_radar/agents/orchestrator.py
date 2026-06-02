@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -268,7 +269,7 @@ class PaperAnalysisOrchestrator:
 def _text_digest(text: str | None) -> Mapping[str, Any]:
     if not text:
         return {"available": False, "charCount": 0}
-    return {"available": True, "charCount": len(text), "prefix": str(abs(hash(text[:1000])))[:12]}
+    return {"available": True, "charCount": len(text), "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]}
 
 
 def _sequence(value: Any) -> Sequence[Any]:
