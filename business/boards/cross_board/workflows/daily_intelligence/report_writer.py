@@ -25,9 +25,7 @@ from business.boards.cross_board.workflows.daily_intelligence.buffer_key_aliases
     with_namespaced_aliases,
 )
 from business.boards.cross_board.workflows.daily_intelligence.profiles import PROFILE_LIVE, PROFILE_LIVE_OFFLINE
-from business.boards.cross_board.workflows.daily_intelligence.source_error_normalization import (
-    normalize_source_errors,
-)
+from business.foundation.models.source_error_normalization import normalize_source_errors
 
 
 logger = logging.getLogger(__name__)

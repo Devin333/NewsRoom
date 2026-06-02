@@ -249,6 +249,25 @@ def test_build_source_fallback_report_summarizes_selection_item_and_error_fallba
     assert report.rows[1]["feed_error_types"] == ["fetch_connection_error"]
 
 
+def test_build_source_fallback_report_normalizes_source_error_mappings() -> None:
+    report = build_source_fallback_report(
+        raw_items=[],
+        source_errors=[
+            {
+                "source_id": "official",
+                "error_type": "parse_error",
+                "error_message": "parse failed",
+                "retryable": False,
+                "metadata": {"official_blog_fallback_stage": "html"},
+            }
+        ],
+    )
+
+    assert report.error_fallback_count == 1
+    assert report.rows[0]["source_id"] == "official"
+    assert report.rows[0]["metadata"]["retryable"] is False
+
+
 def test_build_source_error_policy_report_counts_policy_fields() -> None:
     errors = [
         SourceError(
@@ -281,6 +300,31 @@ def test_build_source_error_policy_report_counts_policy_fields() -> None:
     assert report.operator_action_required_count == 1
     assert report.errors_by_type == {"fetch_timeout": 1, "all_sources_failed": 1}
     assert report.rows[1]["workflow_blocking"] is True
+
+
+def test_build_source_error_policy_report_normalizes_source_error_mappings() -> None:
+    report = build_source_error_policy_report(
+        [
+            {
+                "source_id": "feed",
+                "source_name": "Feed",
+                "error_type": "fetch_timeout",
+                "error_message": "timeout",
+                "retryable": "false",
+                "metadata": {
+                    "source_health_affecting": "false",
+                    "workflow_blocking": "true",
+                },
+            }
+        ]
+    )
+
+    assert report.total_error_count == 1
+    assert report.retryable_error_count == 0
+    assert report.non_retryable_error_count == 1
+    assert report.health_affecting_error_count == 0
+    assert report.workflow_blocking_error_count == 1
+    assert report.rows[0]["source_name"] == "Feed"
 
 
 def test_build_source_health_report_summarizes_statuses() -> None:

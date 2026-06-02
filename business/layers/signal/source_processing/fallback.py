@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from business.foundation.models.source import SourceFallbackReport
+from business.foundation.models.source import SourceError, SourceFallbackReport
+from business.foundation.models.source_error_normalization import normalize_source_errors
 
 
 def build_source_fallback_report(
     *,
     raw_items: list[Any],
-    source_errors: list[Any],
+    source_errors: list[SourceError | dict[str, Any]],
     source_selection_report: Any | None = None,
 ) -> SourceFallbackReport:
     rows: list[dict[str, Any]] = []
@@ -46,8 +47,8 @@ def build_source_fallback_report(
         )
 
     error_fallback_count = 0
-    for error in source_errors:
-        metadata = _metadata(error)
+    for error in normalize_source_errors(source_errors):
+        metadata = dict(error.metadata)
         stage = metadata.get("official_blog_fallback_stage")
         if not stage:
             continue
@@ -55,10 +56,10 @@ def build_source_fallback_report(
         rows.append(
             {
                 "fallback_type": "official_blog_failed_stage",
-                "source_id": _value(error, "source_id"),
-                "error_type": _value(error, "error_type"),
+                "source_id": error.source_id,
+                "error_type": error.error_type,
                 "stage": stage,
-                "metadata": {"retryable": _value(error, "retryable")},
+                "metadata": {"retryable": error.retryable},
             }
         )
 

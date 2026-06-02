@@ -9,9 +9,7 @@ from business.foundation.models.source import SourceDefinition, SourceError, Sou
 from business.foundation.registry.source_registry import SourceRegistry
 from business.layers.signal.source_processing.error_taxonomy import classify_source_exception
 from business.boards.cross_board.workflows.daily_intelligence.source_connector_ports import SourceFetchContext
-from business.boards.cross_board.workflows.daily_intelligence.source_error_normalization import (
-    normalize_source_errors,
-)
+from business.foundation.models.source_error_normalization import normalize_source_errors
 
 
 def fetch_with_registered_connector(

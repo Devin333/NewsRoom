@@ -19,9 +19,7 @@ from business.layers.signal.source_processing.error_taxonomy import classify_sou
 from business.boards.cross_board.workflows.daily_intelligence.buffer_key_aliases import (
     with_namespaced_aliases,
 )
-from business.boards.cross_board.workflows.daily_intelligence.source_error_normalization import (
-    normalize_source_errors,
-)
+from business.foundation.models.source_error_normalization import normalize_source_errors
 from business.boards.cross_board.workflows.daily_intelligence.workflow_buffer_access import (
     append_buffer_items,
 )
