@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from copy import deepcopy
 from typing import Any
 
 from framework.workflow import StepScopedDataBufferView
 from business.foundation.models.report_output import BlockedReport, FinalReport, render_markdown
+from business.foundation.value_normalization import (
+    field_value as _field_value,
+    float_value as _float_value,
+    list_value as _list_value,
+    string_list as _string_list,
+    to_plain_dict as _to_plain_dict,
+)
 from business.layers.analysis.quality import EditorDecision
 from business.boards.cross_board.workflows.daily_intelligence.evidence_step import quality_event
 from business.boards.cross_board.workflows.daily_intelligence.quality_gate_policy import (
@@ -698,46 +704,6 @@ def _collection_count(value: Any, field_name: str) -> int:
     return len(_list_value(_field_value(value, field_name, default=[])))
 
 
-def _field_value(value: Any, field_name: str, default: Any = None) -> Any:
-    if isinstance(value, Mapping):
-        return value.get(field_name, default)
-    if hasattr(value, field_name):
-        return getattr(value, field_name)
-    return default
-
-
-def _to_plain_dict(value: Any) -> dict[str, Any]:
-    if isinstance(value, Mapping):
-        return deepcopy(dict(value))
-    if hasattr(value, "to_dict"):
-        result = value.to_dict()
-        return deepcopy(result) if isinstance(result, dict) else {"value": result}
-    if value is None:
-        return {}
-    return {"value": deepcopy(value)}
-
-
-def _list_value(value: Any) -> list[Any]:
-    if value is None:
-        return []
-    if isinstance(value, list):
-        return list(value)
-    if isinstance(value, tuple | set):
-        return list(value)
-    return [value]
-
-
-def _string_list(value: Any) -> list[str]:
-    result = []
-    for item in _list_value(value):
-        if item is None:
-            continue
-        text = str(item)
-        if text:
-            result.append(text)
-    return result
-
-
 def _normalize_claim_grounding(value: Any) -> list[dict[str, Any]]:
     grounded_claims: list[dict[str, Any]] = []
     for item in _list_value(value):
@@ -754,24 +720,11 @@ def _normalize_claim_grounding(value: Any) -> list[dict[str, Any]]:
     return grounded_claims
 
 
-def _float_value(value: Any, *, default: float | None) -> float | None:
-    if value is None:
-        return default
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-
-
 def _request_title(request: Any) -> str:
     topic = _field_value(request, "topic")
     if topic:
         return f"Daily Intelligence: {topic}"
     return "Daily Intelligence Report"
-
-
-def _first_or_default(values: list[str], default: str) -> str:
-    return values[0] if values else default
 
 
 def _default_block_reason(route: str) -> str:
