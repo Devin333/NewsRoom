@@ -14,6 +14,7 @@ from business.boards.paper_radar.agents.roles import (
     PAPER_ROLE_EVIDENCE_VERIFICATION,
     PAPER_ROLE_EXPERIMENT_RESULT,
     PAPER_ROLE_FINAL_PROFILE,
+    PAPER_ROLE_MEMORY_RECORDS,
     PAPER_ROLE_QUALITY_RESULT,
     PAPER_ROLE_READER_ANSWER,
     PAPER_ROLE_REPRODUCIBILITY_RESULT,
@@ -127,6 +128,34 @@ def test_reader_agent_adapter_answers_from_final_profile_and_session_evidence() 
     assert result.output["answer"] == "The paper reports a SWE-bench result."
     assert result.output["citations"]
     assert result.output["evidence"] == result.output["citations"]
+
+
+def test_reader_agent_adapter_falls_back_to_memory_and_session_context() -> None:
+    request = PaperAnalysisRequest(paper_id="paper-1", run_id="run-1", title="Paper", abstract="Abstract")
+    memory = _item(
+        request,
+        role=PAPER_ROLE_MEMORY_RECORDS,
+        content={
+            "memoryRecords": [
+                {
+                    "summary": "Memory says this paper is about agent evaluation.",
+                    "refs": {"paperId": "paper-1"},
+                }
+            ]
+        },
+    )
+
+    result = PaperReaderAgentAdapter().run(
+        PaperAgentContext(
+            request=request,
+            shared_items=(memory,),
+            session_context_text='<shared_agent_session session_id="session-1">snapshot</shared_agent_session>',
+        )
+    )
+
+    assert result.output["answer"] == "Memory says this paper is about agent evaluation."
+    assert any(item["kind"] == "memory" for item in result.output["citations"])
+    assert any(item["kind"] == "session_snapshot" for item in result.output["citations"])
 
 
 def _item(request: PaperAnalysisRequest, *, role: str, content: dict[str, object]) -> AgentSessionItem:
