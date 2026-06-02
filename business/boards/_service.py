@@ -6,6 +6,7 @@ from business.boards.services import (
     BoardOutputAnnotationService,
     BoardPipelineRunner,
     BoardQualityService,
+    BoardReportDescriptorService,
     BoardReportExtractionService,
     BoardRunBuildService,
     BoardRunReferenceService,
@@ -69,6 +70,7 @@ class BoardServiceBase:
         )
         self.quality_service = BoardQualityService()
         self.reference_service = BoardRunReferenceService()
+        self.report_descriptor_service = BoardReportDescriptorService()
         self.report_service = BoardReportExtractionService()
         self.result_builder = BoardRunResultBuilder(
             board_type=self.board_type,
@@ -229,11 +231,10 @@ class BoardServiceBase:
         return self.run_build_service.select_signals(signals, context=context)
 
     def _report_title(self) -> str:
-        return f"{self.board_definition.name} Report"
+        return self.report_descriptor_service.build(self.board_definition).title
 
     def _report_summary(self) -> str:
-        description = self.board_definition.description or self.board_definition.name
-        return f"{description} generated from normalized signals."
+        return self.report_descriptor_service.build(self.board_definition).summary
 
     def _quality_summary(self, output: BoardOutput) -> BusinessQualitySnapshot:
         return self.quality_service.build_summary(output)

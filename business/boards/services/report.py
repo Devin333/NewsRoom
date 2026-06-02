@@ -1,7 +1,24 @@
 from __future__ import annotations
 
-from business.foundation import Report
+from dataclasses import dataclass
+
+from business.foundation import BoardDefinition, Report
 from business.layers.output import BoardOutput
+
+
+@dataclass(frozen=True)
+class BoardReportDescriptor:
+    title: str
+    summary: str
+
+
+class BoardReportDescriptorService:
+    def build(self, board_definition: BoardDefinition) -> BoardReportDescriptor:
+        description = board_definition.description or board_definition.name
+        return BoardReportDescriptor(
+            title=f"{board_definition.name} Report",
+            summary=f"{description} generated from normalized signals.",
+        )
 
 
 class BoardReportExtractionService:
@@ -44,4 +61,4 @@ def _drop_serialized_computed_fields(value: object) -> object:
     return value
 
 
-__all__ = ["BoardReportExtractionService"]
+__all__ = ["BoardReportDescriptor", "BoardReportDescriptorService", "BoardReportExtractionService"]

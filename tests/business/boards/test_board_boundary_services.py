@@ -12,6 +12,7 @@ from business.boards.services import (
     BoardRunMetadataPayload,
     BoardPipelineRunner,
     BoardPolicyApplicationService,
+    BoardReportDescriptorService,
     BoardReportExtractionService,
     BoardRunBuildService,
     BoardRunReferenceService,
@@ -32,6 +33,7 @@ def test_board_service_base_exposes_decomposed_boundary_services() -> None:
     assert isinstance(service.policy_application_service, BoardPolicyApplicationService)
     assert isinstance(service.pipeline_runner, BoardPipelineRunner)
     assert isinstance(service.reference_service, BoardRunReferenceService)
+    assert isinstance(service.report_descriptor_service, BoardReportDescriptorService)
     assert isinstance(service.report_service, BoardReportExtractionService)
     assert isinstance(service.result_builder, BoardRunResultBuilder)
     assert isinstance(service.run_build_service, BoardRunBuildService)
@@ -133,6 +135,15 @@ def test_board_report_extraction_service_centralizes_legacy_report_metadata() ->
 
     assert report.report_id == "report-1"
     assert report.board_type == BoardType.AI_NEWS
+
+
+def test_board_report_descriptor_service_centralizes_report_title_and_summary() -> None:
+    service = AINewsBoardService()
+
+    descriptor = service.report_descriptor_service.build(service.board_definition)
+
+    assert descriptor.title == service._report_title()
+    assert descriptor.summary == service._report_summary()
 
 
 def test_pipeline_runner_preserves_annotation_and_board_output_postprocess_hook() -> None:
