@@ -47,6 +47,12 @@ daily intelligence 的全局运行时预算声明在业务 workflow spec 中，�
 - connector、tool、LLM client 的 timeout 仍是各自外部调用的局部保护，不能替代 workflow-level timeout。
 - 新增 daily workflow profile 时，应复用或显式扩展该 runtime policy，不要把全局超时写入 `metadata` 或散落在 runner 装配逻辑里。
 
+## Source Config 边界
+
+`business.layers.signal.source_config` 负责 `configs/sources.yaml` 的 schema 和安全校验：顶层只允许 `fetch`、`sources` 和已登记的 PRD source sections；显式 `sources` 条目只允许正式 `SourceDefinition` 字段；connector-specific 字段必须放入 `metadata` 或使用对应 PRD section。
+
+fetch policy 的 `allowed_domains` 是 live source URL 的边界。加载 source registry 时必须校验所有 fetchable source URL 落在 allowlist 内，并拒绝 `fixture://`、URL 凭证、secret-like metadata 和拼写错误配置字段。
+
 ## Workflow Buffer Collection 规则
 
 workflow step 从 buffer 读取 list/tuple 类型集合时，应把读取值视为借用值，不能原地修改。

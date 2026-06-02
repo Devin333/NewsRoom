@@ -109,6 +109,7 @@ _FETCH_POLICY_FIELDS = {
     "retry_times",
     "retry_on_status_codes",
 }
+_TOP_LEVEL_FIELDS = {"fetch", "sources", *_PRD_SOURCE_SECTIONS}
 
 
 def load_source_definitions(path: str | Path) -> list[SourceDefinition]:
@@ -155,6 +156,7 @@ def _source_fetch_policy_from_payload(payload: Any) -> SourceFetchPolicy:
         return SourceFetchPolicy()
     if not isinstance(payload, dict):
         raise SourceConfigError("source config must be a list or an object")
+    _validate_top_level_fields(payload)
     fetch_payload = payload.get("fetch")
     if fetch_payload is None:
         return SourceFetchPolicy()
@@ -202,11 +204,15 @@ def _source_payloads(payload: Any) -> list[dict[str, Any]]:
     if isinstance(payload, list):
         values = payload
     elif isinstance(payload, dict) and isinstance(payload.get("sources"), list):
+        _validate_top_level_fields(payload)
+        explicit_sources = _object_list(payload["sources"], field="sources")
+        _validate_explicit_source_payloads(explicit_sources, field="sources")
         values = [
-            *_object_list(payload["sources"], field="sources"),
+            *explicit_sources,
             *_prd_section_payloads(payload),
         ]
     elif isinstance(payload, dict):
+        _validate_top_level_fields(payload)
         values = _prd_section_payloads(payload)
     else:
         raise SourceConfigError("source config must be a list or an object with a sources list")
@@ -218,6 +224,24 @@ def _source_payloads(payload: Any) -> list[dict[str, Any]]:
             raise SourceConfigError(f"source config entry at index {index} must be an object")
         source_payloads.append(value)
     return source_payloads
+
+
+def _validate_top_level_fields(payload: dict[str, Any]) -> None:
+    unknown_fields = sorted(set(payload) - _TOP_LEVEL_FIELDS)
+    if unknown_fields:
+        joined = ", ".join(unknown_fields)
+        raise SourceConfigError(f"unsupported source config field(s): {joined}")
+
+
+def _validate_explicit_source_payloads(values: list[dict[str, Any]], *, field: str) -> None:
+    for index, value in enumerate(values):
+        unknown_fields = sorted(set(value) - _SOURCE_DEFINITION_FIELDS)
+        if unknown_fields:
+            joined = ", ".join(unknown_fields)
+            raise SourceConfigError(
+                f"{field}[{index}] contains unsupported field(s): {joined}; "
+                "put connector-specific fields under metadata"
+            )
 
 
 def _object_list(value: Any, *, field: str) -> list[dict[str, Any]]:

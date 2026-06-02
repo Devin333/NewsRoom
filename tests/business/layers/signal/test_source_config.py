@@ -199,6 +199,52 @@ def test_load_source_registry_rejects_invalid_fetch_interval(tmp_path) -> None:
         load_source_registry(config_path)
 
 
+def test_load_source_registry_rejects_unknown_top_level_fields(tmp_path) -> None:
+    config_path = tmp_path / "sources.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "sourcez": [],
+                "sources": [
+                    {
+                        "source_id": "openai",
+                        "name": "OpenAI News",
+                        "source_type": "rss",
+                        "url": "https://openai.com/news/rss.xml",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SourceConfigError, match=r"unsupported source config field\(s\): sourcez"):
+        load_source_registry(config_path)
+
+
+def test_load_source_registry_rejects_unknown_explicit_source_fields(tmp_path) -> None:
+    config_path = tmp_path / "sources.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "sources": [
+                    {
+                        "source_id": "openai",
+                        "name": "OpenAI News",
+                        "source_type": "rss",
+                        "url": "https://openai.com/news/rss.xml",
+                        "authority_scor": 0.9,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SourceConfigError, match=r"sources\[0\].*authority_scor"):
+        load_source_registry(config_path)
+
+
 def test_load_source_registry_rejects_source_url_credentials(tmp_path) -> None:
     config_path = tmp_path / "sources.json"
     config_path.write_text(
