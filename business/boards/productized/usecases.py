@@ -35,9 +35,6 @@ class ProductizedBoardUseCases:
     ) -> None:
         self.board_type = board_type
         self.board_service = board_service
-        self.skill_runtime = skill_runtime
-        self.feedback_service = feedback_service
-        self.improvement_service = improvement_service
         self.signal_preparation_service = ProductizedSignalPreparationService(
             board_type=board_type,
             skill_runtime=skill_runtime,

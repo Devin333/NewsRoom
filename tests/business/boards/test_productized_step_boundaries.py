@@ -18,6 +18,7 @@ def test_productized_steps_keep_only_workflow_boundary_state() -> None:
     )
 
     assert set(steps.__dict__) == {"board_type", "usecases"}
+    assert not {"skill_runtime", "feedback_service", "improvement_service"} & set(steps.usecases.__dict__)
 
 
 def test_productized_workflow_declares_only_step_read_keys() -> None:
