@@ -41,6 +41,7 @@ EVIDENCE_BUFFER_ALIASES = {
 
 QUALITY_BUFFER_ALIASES = {
     "quality_events": "quality.events",
+    "verification_result": "quality.verification_result",
     "citation_check_result": "quality.citation_check_result",
     "editor_review": "quality.editor_review",
     "support_matrix": "quality.support_matrix",

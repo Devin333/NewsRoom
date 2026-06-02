@@ -16,6 +16,9 @@ from business.boards.cross_board.workflows.daily_intelligence.grounded_writer im
 from business.boards.cross_board.workflows.daily_intelligence.agent_output_budget import (
     DAILY_AGENT_OUTPUT_BUDGET,
 )
+from business.boards.cross_board.workflows.daily_intelligence.buffer_key_aliases import (
+    with_namespaced_aliases,
+)
 from business.boards.cross_board.workflows.daily_intelligence.profiles import PROFILE_AGENTIC_LIVE
 
 
@@ -35,8 +38,14 @@ def normalize_daily_agent_output(
     inputs: dict[str, Any],
 ) -> dict[str, Any]:
     if agent.agent_id != "daily.writer" or _request_profile(inputs) != PROFILE_AGENTIC_LIVE:
-        return output
-    return normalize_daily_writer_output(output=output, output_key=agent.output_key, inputs=inputs)
+        return with_namespaced_aliases(output)
+    return with_namespaced_aliases(
+        normalize_daily_writer_output(
+            output=output,
+            output_key=agent.output_key,
+            inputs=inputs,
+        )
+    )
 
 
 class DailyEvidenceOutputValidator:

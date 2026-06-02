@@ -98,6 +98,8 @@ daily intelligence workflow 进入兼容迁移期：业务函数继续写旧 key
 
 旧 key 仍是现有公开兼容面；新代码应优先声明并消费命名空间 key。后续迁移完成前，禁止在单个 step 中临时发明未登记的 dotted key。
 
+Agent loop step 的业务输出也必须走同一迁移规则：daily agent output normalizer 负责把旧业务 key 投影成命名空间 alias，agentic workflow spec 必须在对应 agent step 的 `write_keys` 中声明这些 alias，framework `AgentLoopStepRunner` 不承载 daily 专属 key 规则。
+
 `source_errors` / `sources.errors` 可以在兼容入口接收 legacy dict payload，但业务逻辑消费前必须通过 `business.foundation.models.source_error_normalization.normalize_source_errors()` 归一化为 `SourceError`，不得在业务分支里继续使用 `hasattr()` / `dict.get()` duck typing。daily 旧导入路径只作为兼容 re-export 保留。
 
 ## Quality Gate 边界

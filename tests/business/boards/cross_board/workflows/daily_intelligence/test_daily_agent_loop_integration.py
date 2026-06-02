@@ -12,6 +12,7 @@ from business.boards.cross_board.workflows.daily_intelligence.agent_output_budge
 from business.boards.cross_board.workflows.daily_intelligence.agent_loop_integration import (
     _collect_evidence_ids,
     build_daily_output_judge,
+    normalize_daily_agent_output,
 )
 from business.boards.cross_board.workflows.daily_intelligence.agents import build_writer_agent
 from business.boards.cross_board.workflows.daily_intelligence.agent_registry import build_daily_agent_runner
@@ -409,6 +410,22 @@ def test_daily_agent_runner_blocks_oversized_live_writer_output_before_normaliza
     assert result.output == {}
 
 
+def test_daily_agent_output_normalizer_projects_namespaced_buffer_aliases() -> None:
+    output = normalize_daily_agent_output(
+        agent=_verifier(),
+        output={
+            "verification_result": {"status": "pass"},
+            "citation_check_result": {"passed": True},
+            "support_matrix": {"coverage_ratio": 1.0},
+        },
+        inputs={"evidence_bundle": _bundle()},
+    )
+
+    assert output["quality.verification_result"] == output["verification_result"]
+    assert output["quality.citation_check_result"] == output["citation_check_result"]
+    assert output["quality.support_matrix"] == output["support_matrix"]
+
+
 def test_daily_agent_runner_normalizes_agentic_live_writer_output_to_grounded_cards() -> None:
     llm = FakeLLMClient(
         [
@@ -466,6 +483,7 @@ def test_daily_agent_runner_normalizes_agentic_live_writer_output_to_grounded_ca
 
     assert result.success is True
     assert result.status == AgentLoopStatus.ACCEPTED
+    assert result.output["report.draft"] == result.output["report_draft"]
     assert result.output["report_draft"]["sections"] == [
         {
             "section_id": "vendor_released_a_model_update",

@@ -67,16 +67,22 @@ def test_agentic_daily_workflow_declares_agent_steps() -> None:
     assert steps["writer_agent"].step_type == StepType.AGENT_LOOP
     assert steps["writer_agent"].metadata["agent_id"] == WRITER_AGENT_ID
     assert steps["writer_agent"].implementation == WRITER_AGENT_ID
+    assert "report.draft" in steps["writer_agent"].write_keys
     assert "agent_feedback_summary" in steps["writer_agent"].metadata["optional_read_keys"]
     assert "agent_feedback_loop_state" in steps["writer_agent"].metadata["optional_read_keys"]
 
     assert steps["verifier_agent"].step_type == StepType.AGENT_LOOP
     assert steps["verifier_agent"].metadata["agent_id"] == VERIFIER_AGENT_ID
     assert steps["verifier_agent"].implementation == VERIFIER_AGENT_ID
+    assert "quality.verification_result" in steps["verifier_agent"].write_keys
+    assert "quality.citation_check_result" in steps["verifier_agent"].write_keys
+    assert "quality.support_matrix" in steps["verifier_agent"].write_keys
 
     assert steps["editor_agent"].step_type == StepType.AGENT_LOOP
     assert steps["editor_agent"].metadata["agent_id"] == EDITOR_AGENT_ID
     assert steps["editor_agent"].implementation == EDITOR_AGENT_ID
+    assert "quality.editor_review" in steps["editor_agent"].write_keys
+    assert "report.edited_draft" in steps["editor_agent"].write_keys
 
     assert steps["collect_agent_feedback"].step_type == StepType.FUNCTION
     assert steps["collect_agent_feedback"].implementation == "daily.collect_agent_feedback"

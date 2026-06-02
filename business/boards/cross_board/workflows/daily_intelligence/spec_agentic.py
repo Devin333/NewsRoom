@@ -154,7 +154,7 @@ def _writer_agent_step() -> StepSpec:
             "source_errors",
             "source_pipeline_metrics",
         ],
-        write_keys=[
+        write_keys=with_namespaced_write_keys([
             "report_draft",
             "writer_notes",
             "writer_agent_loop_result",
@@ -163,7 +163,7 @@ def _writer_agent_step() -> StepSpec:
             "writer_agent_loop_diagnostics",
             "writer_agent_loop_trace",
             "writer_llm_call_artifacts",
-        ],
+        ]),
         required_output_keys=["report_draft"],
         metadata={
             **_agent_step_metadata(
@@ -195,7 +195,7 @@ def _verifier_agent_step() -> StepSpec:
             "candidate_claims",
             "verified_findings",
         ],
-        write_keys=[
+        write_keys=with_namespaced_write_keys([
             "citation_check_result",
             "support_matrix",
             "verification_result",
@@ -206,7 +206,7 @@ def _verifier_agent_step() -> StepSpec:
             "verifier_agent_loop_diagnostics",
             "verifier_agent_loop_trace",
             "verifier_llm_call_artifacts",
-        ],
+        ]),
         required_output_keys=["verification_result"],
         metadata=_agent_step_metadata(
             VERIFIER_AGENT_ID,
@@ -228,7 +228,7 @@ def _editor_agent_step() -> StepSpec:
             "support_matrix",
             "evidence_bundle",
         ],
-        write_keys=[
+        write_keys=with_namespaced_write_keys([
             "editor_review",
             "edited_report_draft",
             "editor_notes",
@@ -238,7 +238,7 @@ def _editor_agent_step() -> StepSpec:
             "editor_agent_loop_diagnostics",
             "editor_agent_loop_trace",
             "editor_llm_call_artifacts",
-        ],
+        ]),
         required_output_keys=["editor_review"],
         metadata=_agent_step_metadata(
             EDITOR_AGENT_ID,
