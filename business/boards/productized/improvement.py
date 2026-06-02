@@ -5,6 +5,7 @@ from typing import Any
 from business.boards._improvement import BoardImprovementService
 from business.boards.productized.context import run_id_from_request
 from business.boards.productized.measurement import (
+    ProductizedImprovementMeasurementInput,
     ProductizedImprovementMeasurementService,
     deduplication_result_for_measurement,
     duplicate_rate,
@@ -88,13 +89,15 @@ class ProductizedImprovementWorkflowService:
             run_id=run_id,
             board_type=board_type,
         )
-        measurement = self.measurement_service.measure(
+        measurement = self.measurement_service.measure_input(
             previous_baseline=request.get("previous_measurement_baseline"),
-            quality_summary=quality_summary,
-            cards=cards,
-            board_run_result=board_run_result,
-            subscription_payload=subscription_payload,
-            productized_run=productized_run,
+            measurement_input=ProductizedImprovementMeasurementInput.from_legacy_inputs(
+                quality_summary=quality_summary,
+                cards=cards,
+                subscription_payload=subscription_payload,
+                board_run_result=board_run_result,
+                productized_run=productized_run,
+            ),
         )
         report = self.improvement_service.build_report(
             feedback_events=parsed_feedback,
@@ -117,6 +120,7 @@ class ProductizedImprovementWorkflowService:
 
 __all__ = [
     "ProductizedImprovementWorkflowService",
+    "ProductizedImprovementMeasurementInput",
     "ProductizedImprovementMeasurementService",
     "deduplication_result_for_measurement",
     "duplicate_rate",

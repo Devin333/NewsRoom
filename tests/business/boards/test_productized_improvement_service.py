@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from business.boards._improvement import BoardImprovementService
 from business.boards.productized import (
+    ProductizedImprovementMeasurementInput,
     ProductizedImprovementMeasurementService,
     ProductizedImprovementWorkflowService,
     ProductizedRunState,
@@ -62,6 +63,59 @@ def test_productized_improvement_measurement_reads_formal_productized_run_state(
     )
 
     assert measurement.to_dict()["duplicate_rate_delta"] == 0.5
+
+
+def test_productized_improvement_measurement_input_removes_board_metadata_dependency() -> None:
+    service = ProductizedImprovementMeasurementService()
+    productized_run = ProductizedRunState(
+        board_type=BoardType.AI_NEWS,
+        run_id="improvement-run",
+        deduplication_result={
+            "event_groups": [
+                {"item_ids": ["signal-1", "signal-2"]},
+                {"item_ids": ["signal-3"]},
+            ]
+        },
+    )
+
+    measurement = service.measure_input(
+        previous_baseline={"duplicate_rate": 0.0},
+        measurement_input=ProductizedImprovementMeasurementInput.from_productized_run(
+            quality_summary={"score": 0.72},
+            cards=[{"card_id": "card-1", "evidence_refs": [{"source_id": "source-1"}]}],
+            subscription_payload={"targets": [{"topic": "Agent Memory"}]},
+            productized_run=productized_run,
+        ),
+    )
+
+    assert measurement.to_dict()["duplicate_rate_delta"] == 0.5
+
+
+def test_productized_improvement_measurement_prefers_empty_formal_state_over_legacy_metadata() -> None:
+    service = ProductizedImprovementMeasurementService()
+    productized_run = ProductizedRunState(
+        board_type=BoardType.AI_NEWS,
+        run_id="improvement-run",
+        deduplication_result={},
+    )
+
+    class LegacyBoardRunResult:
+        metadata = {
+            "deduplication_result": {
+                "event_groups": [{"item_ids": ["legacy-1", "legacy-2"]}]
+            }
+        }
+
+    measurement = service.measure(
+        previous_baseline={"duplicate_rate": 0.0},
+        board_run_result=LegacyBoardRunResult(),
+        quality_summary={"score": 0.72},
+        cards=[{"card_id": "card-1", "evidence_refs": [{"source_id": "source-1"}]}],
+        subscription_payload={"targets": [{"topic": "Agent Memory"}]},
+        productized_run=productized_run,
+    )
+
+    assert measurement.to_dict()["duplicate_rate_delta"] == 0.0
 
 
 def test_productized_improvement_workflow_service_requires_board_type_for_outputs() -> None:
