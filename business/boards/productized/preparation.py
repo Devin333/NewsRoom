@@ -48,7 +48,7 @@ class ProductizedSignalPreparationService:
             )
             reliability_results.append(source_result.output)
             skill_traces.append(source_result.to_dict())
-        improvement_context = self.improvement_service.apply_approved_overrides(
+        improvement_context = self.improvement_service.apply_approved_policy_experiments(
             run_id=run_id,
             board_type=self.board_type.value,
         )
