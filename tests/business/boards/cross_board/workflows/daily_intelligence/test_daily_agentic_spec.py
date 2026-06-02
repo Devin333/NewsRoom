@@ -106,18 +106,18 @@ def test_agentic_daily_workflow_declares_agent_steps() -> None:
     assert steps["collect_agent_feedback"].required_output_keys == ["agent_feedback_summary"]
     assert steps["collect_agent_feedback"].read_keys == [
         "analysis_result",
-        "verification_result",
-        "citation_check_result",
-        "support_matrix",
         "quality.verification_result",
+        "verification_result",
         "quality.citation_check_result",
+        "citation_check_result",
         "quality.support_matrix",
+        "support_matrix",
     ]
     assert steps["collect_agent_feedback"].metadata["optional_read_keys"] == [
-        "editor_review",
-        "agent_feedback_loop_state",
         "quality.editor_review",
+        "editor_review",
         "agent.feedback.loop_state",
+        "agent_feedback_loop_state",
     ]
     assert "agent.feedback.summary" in steps["collect_agent_feedback"].write_keys
     assert "agent.feedback.events" in steps["collect_agent_feedback"].write_keys
@@ -129,10 +129,31 @@ def test_agentic_daily_workflow_declares_agent_steps() -> None:
     assert "sources.recollection_execution_plan" in steps["collect_agent_feedback"].write_keys
     assert steps["recollect_sources"].step_type == StepType.FUNCTION
     assert steps["recollect_sources"].implementation == "daily.recollect_sources"
-    assert "source_recollection_execution_plan" in steps["recollect_sources"].read_keys
-    assert "sources.recollection_execution_plan" in steps["recollect_sources"].read_keys
-    assert "raw_items" in steps["recollect_sources"].metadata["optional_read_keys"]
-    assert "sources.raw_items" in steps["recollect_sources"].metadata["optional_read_keys"]
+    assert steps["recollect_sources"].read_keys == [
+        "request",
+        "sources.recollection_execution_plan",
+        "source_recollection_execution_plan",
+    ]
+    assert steps["recollect_sources"].metadata["optional_read_keys"] == [
+        "sources.raw_items",
+        "raw_items",
+        "sources.errors",
+        "source_errors",
+        "sources.skipped",
+        "skipped_sources",
+        "sources.failed",
+        "failed_sources",
+        "sources.fetch_requests",
+        "source_fetch_requests",
+        "sources.fetch_results",
+        "source_fetch_results",
+        "sources.health_updates",
+        "source_health_updates",
+        "sources.events",
+        "source_events",
+        "sources.pipeline_metrics",
+        "source_pipeline_metrics",
+    ]
     assert "sources.fetch_requests" in steps["recollect_sources"].write_keys
     assert "sources.fetch_results" in steps["recollect_sources"].write_keys
     assert "source_recollection_execution_report" in steps["recollect_sources"].write_keys

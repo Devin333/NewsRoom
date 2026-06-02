@@ -322,7 +322,7 @@ def _collect_agent_feedback_step() -> StepSpec:
         step_id="collect_agent_feedback",
         implementation="daily.collect_agent_feedback",
         step_type=StepType.FUNCTION,
-        read_keys=with_namespaced_read_keys([
+        read_keys=with_namespaced_primary_read_keys([
             "analysis_result",
             "verification_result",
             "citation_check_result",
@@ -338,7 +338,7 @@ def _collect_agent_feedback_step() -> StepSpec:
         ]),
         required_output_keys=["agent_feedback_summary"],
         metadata={
-            "optional_read_keys": with_namespaced_read_keys([
+            "optional_read_keys": with_namespaced_primary_read_keys([
                 "editor_review",
                 "agent_feedback_loop_state",
             ])
@@ -351,7 +351,7 @@ def _recollect_sources_step() -> StepSpec:
         step_id="recollect_sources",
         implementation="daily.recollect_sources",
         step_type=StepType.FUNCTION,
-        read_keys=with_namespaced_read_keys([
+        read_keys=with_namespaced_primary_read_keys([
             "request",
             "source_recollection_execution_plan",
         ]),
@@ -394,7 +394,7 @@ def _recollect_sources_step() -> StepSpec:
             "source_recollection_quality_assessment",
         ],
         metadata={
-            "optional_read_keys": with_namespaced_read_keys([
+            "optional_read_keys": with_namespaced_primary_read_keys([
                 "raw_items",
                 "source_errors",
                 "skipped_sources",
