@@ -82,6 +82,8 @@ agentic daily workflow 的 `finalize_report_step.py` 是 workflow adapter，只�
 
 最终报告发布、blocked / human review 路由、rewrite 结果校验、quality result、artifact refs 和 agent feedback metadata 投影由 `report_finalization.py` 的 `finalize_daily_report()` 承载。该 usecase 不依赖 `framework.workflow`，因此可以脱离 `DataBuffer` 单独测试。
 
+报告草稿输入归一化、claim grounding 归一化、以及草稿引用来源是否落在 evidence bundle 内的边界检查由 `report_draft_normalization.py` 承载。`report_finalization.py` 只消费归一化后的 draft 和明确的 source-boundary 结果，不再内联这些输入清洗 helper。
+
 后续新增 finalization 规则时，应优先扩展 `DailyReportFinalizationInput` 或拆分 report finalization 子服务，不要把业务决策重新写回 workflow step。
 
 ## Agent Feedback 边界

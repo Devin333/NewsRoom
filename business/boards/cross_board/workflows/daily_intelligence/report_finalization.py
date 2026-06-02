@@ -25,6 +25,13 @@ from business.boards.cross_board.workflows.daily_intelligence.quality_gate_polic
 from business.boards.cross_board.workflows.daily_intelligence.buffer_key_aliases import (
     with_namespaced_aliases,
 )
+from business.boards.cross_board.workflows.daily_intelligence.report_draft_normalization import (
+    ReportDraftNormalizationError,
+    normalize_report_draft,
+    source_urls_from_draft,
+    source_urls_from_evidence,
+    sources_outside_evidence,
+)
 
 
 PUBLISH_ROUTE = "final"
@@ -78,7 +85,7 @@ def finalize_daily_report(payload: DailyReportFinalizationInput) -> dict[str, An
     quality_events = list(payload.quality_events)
     agent_feedback = _agent_feedback_from_input(payload)
     try:
-        report_draft = _normalize_report_draft(payload.report_draft)
+        report_draft = normalize_report_draft(payload.report_draft)
     except ReportDraftNormalizationError as exc:
         quality_events.append(
             quality_event(
@@ -172,7 +179,7 @@ def finalize_daily_report(payload: DailyReportFinalizationInput) -> dict[str, An
         edited_report_draft_invalid = False
         try:
             if payload.edited_report_draft is not None:
-                edited_report_draft = _normalize_report_draft(payload.edited_report_draft)
+                edited_report_draft = normalize_report_draft(payload.edited_report_draft)
         except ReportDraftNormalizationError as exc:
             edited_report_draft_invalid = True
             editor_decision = _append_editor_reason(
@@ -187,7 +194,7 @@ def finalize_daily_report(payload: DailyReportFinalizationInput) -> dict[str, An
                 )
             )
         if edited_report_draft is not None:
-            invalid_sources = _sources_outside_evidence(
+            invalid_sources = sources_outside_evidence(
                 edited_report_draft,
                 evidence_bundle,
             )
@@ -288,10 +295,6 @@ def finalize_daily_report(payload: DailyReportFinalizationInput) -> dict[str, An
         rewrite_attempts=1 if decision == REWRITE_REQUIRED_DECISION else 0,
         human_review_required=False,
     )
-
-
-class ReportDraftNormalizationError(ValueError):
-    pass
 
 
 def normalize_editor_decision(editor_review: Any) -> dict[str, Any]:
@@ -509,9 +512,9 @@ def _final_report(
     rewrite_attempts: int,
     agent_feedback: dict[str, Any],
 ) -> FinalReport:
-    source_urls = _source_urls_from_draft(draft)
+    source_urls = source_urls_from_draft(draft)
     if not source_urls:
-        source_urls = _source_urls_from_evidence(evidence_bundle)
+        source_urls = source_urls_from_evidence(evidence_bundle)
     metadata = dict(draft.get("metadata") or {})
     metadata.update(
         {
@@ -751,42 +754,6 @@ def _agent_feedback_metadata(agent_feedback: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _normalize_report_draft(payload: Any) -> dict[str, Any]:
-    if isinstance(payload, Mapping) and "report_draft" in payload and "sections" not in payload:
-        payload = payload["report_draft"]
-    if not isinstance(payload, Mapping):
-        raise ReportDraftNormalizationError("report draft must be an object")
-    draft = dict(payload)
-    sections = draft.get("sections")
-    if not isinstance(sections, list):
-        raise ReportDraftNormalizationError("report draft sections must be a list")
-    normalized_sections = []
-    for index, section in enumerate(sections):
-        if not isinstance(section, Mapping):
-            raise ReportDraftNormalizationError(f"report draft section {index} must be an object")
-        section_payload = dict(section)
-        section_payload["title"] = str(section_payload.get("title") or f"Section {index + 1}")
-        section_payload["content"] = str(section_payload.get("content") or "")
-        section_payload["sources"] = _string_list(
-            section_payload.get("sources") or section_payload.get("source_urls") or []
-        )
-        section_payload["section_id"] = str(
-            section_payload.get("section_id")
-            or section_payload.get("id")
-            or f"section_{index + 1}"
-        )
-        section_payload["evidence_ids"] = _string_list(section_payload.get("evidence_ids") or [])
-        section_payload["claim_grounding"] = _normalize_claim_grounding(
-            section_payload.get("claim_grounding") or []
-        )
-        normalized_sections.append(section_payload)
-    draft["title"] = str(draft.get("title") or "Daily Intelligence Report")
-    draft["sections"] = normalized_sections
-    metadata = draft.get("metadata")
-    draft["metadata"] = dict(metadata) if isinstance(metadata, Mapping) else {}
-    return draft
-
-
 def _unwrap_editor_review(editor_review: Any) -> Any:
     if (
         isinstance(editor_review, Mapping)
@@ -827,37 +794,6 @@ def _route_history(
     return history or [route]
 
 
-def _source_urls_from_draft(draft: dict[str, Any]) -> set[str]:
-    urls: set[str] = set()
-    for section in draft.get("sections") or []:
-        if isinstance(section, Mapping):
-            urls.update(_string_list(section.get("sources") or section.get("source_urls") or []))
-    return urls
-
-
-def _source_urls_from_evidence(evidence_bundle: Any) -> set[str]:
-    urls = set(_string_list(_field_value(evidence_bundle, "source_urls", default=[])))
-    source_map = _field_value(evidence_bundle, "source_map", default={})
-    if isinstance(source_map, Mapping):
-        urls.update(str(url) for url in source_map if url)
-    items = _field_value(evidence_bundle, "items", default=[])
-    for item in _list_value(items):
-        urls.update(_string_list(_field_value(item, "source_urls", default=[])))
-        source_url = _field_value(item, "source_url")
-        if source_url:
-            urls.add(str(source_url))
-    return urls
-
-
-def _sources_outside_evidence(
-    draft: dict[str, Any],
-    evidence_bundle: Any,
-) -> list[str]:
-    allowed_sources = _source_urls_from_evidence(evidence_bundle)
-    draft_sources = _source_urls_from_draft(draft)
-    return sorted(source for source in draft_sources if source not in allowed_sources)
-
-
 def _evidence_item_count(evidence_bundle: Any) -> int:
     item_count = _field_value(evidence_bundle, "item_count")
     if item_count is not None:
@@ -872,22 +808,6 @@ def _collection_count(value: Any, field_name: str) -> int:
     if value is None:
         return 0
     return len(_list_value(_field_value(value, field_name, default=[])))
-
-
-def _normalize_claim_grounding(value: Any) -> list[dict[str, Any]]:
-    grounded_claims: list[dict[str, Any]] = []
-    for item in _list_value(value):
-        if not isinstance(item, Mapping):
-            continue
-        grounded_claims.append(
-            {
-                "claim_id": str(item.get("claim_id") or ""),
-                "text": str(item.get("text") or item.get("claim") or ""),
-                "evidence_ids": _string_list(item.get("evidence_ids") or []),
-                "source_urls": _string_list(item.get("source_urls") or item.get("sources") or []),
-            }
-        )
-    return grounded_claims
 
 
 def _request_title(request: Any) -> str:
