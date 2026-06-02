@@ -6,6 +6,10 @@ from framework.workflow import DataBuffer
 from business.layers.relation.evidence.models import EvidenceBundle, EvidenceItem, VerifiedClaim, VerifiedFindings
 from business.layers.analysis.quality import EditorDecision
 from business.boards.cross_board.workflows.daily_intelligence.finalize_report_step import finalize_report
+from business.boards.cross_board.workflows.daily_intelligence.report_finalization import (
+    DailyReportFinalizationInput,
+    finalize_daily_report,
+)
 from business.boards.cross_board.workflows.daily_intelligence.quality_gate_policy import (
     NON_SOCIAL_MEDIA_BYPASS_REASON,
 )
@@ -22,6 +26,26 @@ def test_finalize_report_pass_publishes_final_report_and_markdown() -> None:
     assert output["final_report"].sections[0]["claim_grounding"][0]["claim_id"] == "claim-1"
     assert "https://example.com/source" in output["report_markdown"]
     assert "blocked_report" not in output
+
+
+def test_report_finalization_usecase_runs_without_workflow_buffer() -> None:
+    output = finalize_daily_report(
+        DailyReportFinalizationInput(
+            request={"topic": "AI policy", "run_id": "run-1"},
+            report_draft=_report_draft(),
+            editor_review=_editor_review("pass"),
+            verification_result={"status": "pass", "risk_level": "low"},
+            citation_check_result={"passed": True},
+            support_matrix={"coverage_ratio": 1.0},
+            evidence_bundle=_evidence_bundle(),
+            verified_findings=_verified_findings(),
+            quality_events=[],
+        )
+    )
+
+    assert output["quality_result"]["route"] == "final"
+    assert output["final_report"].title == "Daily Intelligence: AI policy"
+    assert output["report.final"] == output["final_report"]
 
 
 def test_finalize_report_projects_agent_feedback_metadata() -> None:

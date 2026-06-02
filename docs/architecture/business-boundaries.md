@@ -50,6 +50,14 @@ daily intelligence workflow 进入兼容迁移期：业务函数继续写旧 key
 
 旧 key 仍是现有公开兼容面；新代码应优先声明并消费命名空间 key。后续迁移完成前，禁止在单个 step 中临时发明未登记的 dotted key。
 
+## Report Finalization 边界
+
+agentic daily workflow 的 `finalize_report_step.py` 是 workflow adapter，只负责读取 `request`、draft、quality、evidence 和 agent feedback buffer key，并组装 `DailyReportFinalizationInput`。
+
+最终报告发布、blocked / human review 路由、rewrite 结果校验、quality result、artifact refs 和 agent feedback metadata 投影由 `report_finalization.py` 的 `finalize_daily_report()` 承载。该 usecase 不依赖 `framework.workflow`，因此可以脱离 `DataBuffer` 单独测试。
+
+后续新增 finalization 规则时，应优先扩展 `DailyReportFinalizationInput` 或拆分 report finalization 子服务，不要把业务决策重新写回 workflow step。
+
 ## Agent Feedback 边界
 
 Agent 间反馈不应隐藏在各 agent output 的自由形态字段里，也不应由 `finalize_report` 反向猜测。
