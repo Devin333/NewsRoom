@@ -16,7 +16,7 @@ def test_assembler_outputs_readable_context() -> None:
     context = SharedSessionContextAssembler().assemble(session_id="session-1", items=[item])
 
     assert '<shared_agent_session session_id="session-1">' in context.context_text
-    assert '<item role="decision" agent_id="agent-a" confidence="0.9">' in context.context_text
+    assert '<item role="decision" agent_id="agent-a" confidence="0.9" status="active" visibility="shared">' in context.context_text
     assert "<summary>Agent decided yes.</summary>" in context.context_text
     assert "secret" not in context.context_text
     assert "token" not in context.context_text

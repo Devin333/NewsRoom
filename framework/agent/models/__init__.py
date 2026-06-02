@@ -10,7 +10,7 @@ from framework.agent.models.result import (
     JudgeVerdict,
     LLMCallArtifact,
 )
-from framework.agent.models.spec import AgentSpec
+from framework.agent.models.spec import AgentSessionContextPolicy, AgentSpec
 from framework.agent.models.status import (
     AgentLoopDiagnosticSeverity,
     AgentLoopEventType,

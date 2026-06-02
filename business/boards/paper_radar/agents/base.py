@@ -11,6 +11,8 @@ class PaperAgent(Protocol):
     """Synchronous interface for a deterministic paper analysis agent."""
 
     agent_id: str
+    required_roles: tuple[str, ...]
+    produced_role: str
 
     def run(self, context: PaperAgentContext) -> PaperAgentResult:
         """Analyze the provided context and return a structured result."""

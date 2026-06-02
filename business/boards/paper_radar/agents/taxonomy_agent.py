@@ -7,7 +7,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from business.boards.paper_radar.agents.models import PaperAgentContext, PaperAgentResult
-from business.boards.paper_radar.agents.roles import PAPER_ROLE_TAXONOMY_RESULT
+from business.boards.paper_radar.agents.roles import PAPER_ROLE_SEMANTIC_SECTIONS, PAPER_ROLE_TAXONOMY_RESULT
 from business.boards.paper_radar.taxonomy_categories import (
     AI_TASK_GROUPS,
     BENCHMARK_CATEGORIES,
@@ -65,6 +65,8 @@ class PaperTaxonomyAgent:
     """Classify paper task groups, methods, and benchmark categories."""
 
     agent_id = "paper-taxonomy-agent"
+    required_roles = (PAPER_ROLE_SEMANTIC_SECTIONS,)
+    produced_role = PAPER_ROLE_TAXONOMY_RESULT
 
     def run(self, context: PaperAgentContext) -> PaperAgentResult:
         text = _analysis_text(context.request.title, context.request.abstract, context.request.page_sections)

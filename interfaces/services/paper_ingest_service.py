@@ -18,7 +18,7 @@ from urllib.request import Request, urlopen
 
 from business.boards.paper_radar.public_mapper import sanitize_public_payload
 from business.boards.paper_radar.agents import PaperAnalysisOrchestrator, PaperAnalysisRequest
-from framework.agent.session import AgentSharedWorkspace, InMemoryAgentSessionStore
+from framework.agent.session import AgentSharedWorkspace, SQLiteAgentSessionStore
 from framework.llm import (
     DEFAULT_MODEL_ROUTE_ID,
     LLMConfigurationError,
@@ -60,7 +60,9 @@ PAPERS_INGEST_ARXIV_QUERY_ENV = "NEWSROOM_PAPERS_INGEST_ARXIV_QUERY"
 PAPERS_INGEST_ARXIV_USER_AGENT_ENV = "NEWSROOM_PAPERS_INGEST_ARXIV_USER_AGENT"
 PAPERS_CLASSIFIER_MODEL_ROUTE_ENV = "NEWSROOM_PAPERS_CLASSIFIER_MODEL_ROUTE"
 PAPERS_CLASSIFIER_MAX_CHARS_ENV = "NEWSROOM_PAPERS_CLASSIFIER_MAX_CHARS"
-PAPERS_USE_AGENT_ANALYSIS_ENV = "NEWSROOM_PAPERS_USE_AGENT_ANALYSIS"
+PAPERS_USE_LEGACY_CLASSIFIER_FALLBACK_ENV = "NEWSROOM_PAPERS_USE_LEGACY_CLASSIFIER_FALLBACK"
+PAPERS_AGENT_SESSION_STORE_PATH_ENV = "NEWSROOM_PAPERS_AGENT_SESSION_STORE_PATH"
+PAPERS_AGENT_ANALYSIS_REQUIRED_ENV = "NEWSROOM_PAPERS_AGENT_ANALYSIS_REQUIRED"
 PAPERS_PDF_MAX_BYTES_ENV = "NEWSROOM_PAPERS_PDF_MAX_BYTES"
 PAPERS_OPENALEX_API_KEY_ENV = "OPENALEX_API_KEY"
 PAPERS_OPENALEX_API_KEY_FALLBACK_ENV = "NEWSROOM_OPENALEX_API_KEY"
@@ -118,7 +120,9 @@ class PaperIngestConfig:
     classifier_model_route: str = DEFAULT_MODEL_ROUTE_ID
     classifier_max_chars: int = DEFAULT_CLASSIFIER_MAX_CHARS
     pdf_max_bytes: int = DEFAULT_PDF_MAX_BYTES
-    use_agent_analysis: bool = False
+    use_legacy_classifier_fallback: bool = True
+    agent_session_store_path: str | None = None
+    agent_analysis_required: bool = True
 
     @classmethod
     def from_env(cls) -> PaperIngestConfig:
@@ -137,7 +141,9 @@ class PaperIngestConfig:
             or DEFAULT_MODEL_ROUTE_ID,
             classifier_max_chars=_positive_int_env(PAPERS_CLASSIFIER_MAX_CHARS_ENV, DEFAULT_CLASSIFIER_MAX_CHARS),
             pdf_max_bytes=_positive_int_env(PAPERS_PDF_MAX_BYTES_ENV, DEFAULT_PDF_MAX_BYTES),
-            use_agent_analysis=_bool_env(PAPERS_USE_AGENT_ANALYSIS_ENV, False),
+            use_legacy_classifier_fallback=_bool_env(PAPERS_USE_LEGACY_CLASSIFIER_FALLBACK_ENV, True),
+            agent_session_store_path=_optional_env(PAPERS_AGENT_SESSION_STORE_PATH_ENV),
+            agent_analysis_required=_bool_env(PAPERS_AGENT_ANALYSIS_REQUIRED_ENV, True),
         )
 
     def with_overrides(
@@ -155,7 +161,9 @@ class PaperIngestConfig:
             classifier_model_route=self.classifier_model_route,
             classifier_max_chars=self.classifier_max_chars,
             pdf_max_bytes=self.pdf_max_bytes,
-            use_agent_analysis=self.use_agent_analysis,
+            use_legacy_classifier_fallback=self.use_legacy_classifier_fallback,
+            agent_session_store_path=self.agent_session_store_path,
+            agent_analysis_required=self.agent_analysis_required,
         )
 
 
@@ -469,7 +477,7 @@ class PaperIngestApplicationService:
         self.pdf_fetcher = pdf_fetcher or _fetch_pdf_bytes
         self.citation_client = citation_client or PaperOpenAlexCitationClient()
         self.llm_client_factory = llm_client_factory or _default_llm_client_factory
-        self.paper_analysis_orchestrator = paper_analysis_orchestrator or _default_paper_analysis_orchestrator()
+        self.paper_analysis_orchestrator = paper_analysis_orchestrator or _default_paper_analysis_orchestrator(self.config)
         self.clock = clock or (lambda: datetime.now(UTC))
 
     def run_daily_ingest(
@@ -1309,40 +1317,68 @@ class PaperIngestApplicationService:
         paper_id: str | None = None,
         page_sections: Sequence[Mapping[str, Any]] = (),
     ) -> Mapping[str, Any]:
-        if config.use_agent_analysis:
-            try:
-                return self._classify_paper_with_agent_analysis(
+        try:
+            return self._classify_paper_with_agent_analysis(
+                candidate,
+                full_text=full_text,
+                repo_url=repo_url,
+                github_stars=github_stars,
+                run_id=run_id,
+                paper_id=paper_id,
+                page_sections=page_sections,
+            )
+        except Exception as exc:
+            self._record_agent_analysis_fallback(
+                candidate,
+                error=exc,
+                run_id=run_id,
+                paper_id=paper_id,
+                fallback_enabled=config.use_legacy_classifier_fallback,
+            )
+            if not config.use_legacy_classifier_fallback:
+                if isinstance(exc, PaperIngestError):
+                    raise
+                raise PaperIngestError(
+                    f"paper agent analysis failed and legacy fallback is disabled: {exc}",
+                    code="agent_analysis_failed",
+                    step="classify",
+                ) from exc
+            legacy_profile = dict(
+                self._classify_paper_with_llm(
                     candidate,
                     full_text=full_text,
                     repo_url=repo_url,
                     github_stars=github_stars,
-                    run_id=run_id,
-                    paper_id=paper_id,
-                    page_sections=page_sections,
+                    config=config,
                 )
-            except Exception as exc:
-                self.state.record_prompt_memory(
-                    {
-                        "memoryId": _stable_id(
-                            "prompt-memory",
-                            paper_id or _candidate_paper_id(candidate),
-                            run_id or "agent-analysis",
-                            "agent_analysis_fallback",
-                        ),
-                        "createdAt": _iso(self.clock()),
-                        "failureType": "agent_analysis_failed",
-                        "inputFeature": candidate.title,
-                        "rootCause": str(exc),
-                        "repairAction": "fallback_to_legacy_classifier",
-                        "result": "fallback",
-                    }
-                )
-        return self._classify_paper_with_llm(
-            candidate,
-            full_text=full_text,
-            repo_url=repo_url,
-            github_stars=github_stars,
-            config=config,
+            )
+            return _mark_legacy_classifier_fallback(legacy_profile, error=exc)
+
+    def _record_agent_analysis_fallback(
+        self,
+        candidate: RawSourceItem,
+        *,
+        error: Exception,
+        run_id: str | None,
+        paper_id: str | None,
+        fallback_enabled: bool,
+    ) -> None:
+        self.state.record_prompt_memory(
+            {
+                "memoryId": _stable_id(
+                    "prompt-memory",
+                    paper_id or _candidate_paper_id(candidate),
+                    run_id or "agent-analysis",
+                    "agent_analysis_fallback",
+                ),
+                "createdAt": _iso(self.clock()),
+                "failureType": "agent_analysis_failed",
+                "inputFeature": candidate.title,
+                "rootCause": str(error),
+                "repairAction": "fallback_to_legacy_classifier" if fallback_enabled else "manual_review_agent_analysis",
+                "result": "legacy_fallback" if fallback_enabled else "blocked",
+                "legacy": fallback_enabled,
+            }
         )
 
     def _classify_paper_with_agent_analysis(
@@ -1448,7 +1484,9 @@ class PaperIngestApplicationService:
         paper_id: str,
     ) -> Mapping[str, Any]:
         taxonomy = self._taxonomy_context()
-        low_confidence: list[Mapping[str, Any]] = []
+        low_confidence: list[Mapping[str, Any]] = [
+            dict(item) for item in _sequence(payload.get("lowConfidenceItems")) if isinstance(item, Mapping)
+        ]
         task_value = payload.get("taskRefs") or payload.get("tasks")
         method_value = payload.get("methodRefs") or payload.get("methods")
         method_collections = taxonomy.get("methodCollections")
@@ -2198,8 +2236,26 @@ def _classification_record(*, taxonomy: Mapping[str, Any], classification: Mappi
             "modelMethodRefs": classification.get("methodRefs") or classification.get("methods") or [],
             "modelBenchmarks": classification.get("benchmarks") or [],
             "lowConfidenceItems": taxonomy.get("lowConfidenceItems") or [],
+            "analysisSource": classification.get("analysisSource"),
+            "legacyFallback": classification.get("legacyFallback"),
+            "warnings": classification.get("warnings") or [],
         }
     )
+
+
+def _mark_legacy_classifier_fallback(profile: dict[str, Any], *, error: Exception) -> Mapping[str, Any]:
+    warnings = list(_sequence(profile.get("warnings")))
+    warnings.append(
+        {
+            "kind": "legacy_classifier_fallback",
+            "reason": "agent_analysis_failed",
+            "message": str(error),
+        }
+    )
+    profile["analysisSource"] = "legacy_classifier"
+    profile["legacyFallback"] = True
+    profile["warnings"] = warnings
+    return sanitize_public_payload(profile)
 
 
 def _new_run_state(run_id: str, *, started: datetime, config: PaperIngestConfig) -> dict[str, Any]:
@@ -2278,10 +2334,16 @@ def _default_llm_client_factory(route: str) -> Any:
     return build_openai_compatible_client_from_config(route_id=route)
 
 
-def _default_paper_analysis_orchestrator() -> PaperAnalysisOrchestrator:
+def _default_paper_analysis_orchestrator(config: PaperIngestConfig) -> PaperAnalysisOrchestrator:
     return PaperAnalysisOrchestrator(
-        workspace=AgentSharedWorkspace(InMemoryAgentSessionStore()),
+        workspace=AgentSharedWorkspace(SQLiteAgentSessionStore(_agent_session_store_path(config))),
     )
+
+
+def _agent_session_store_path(config: PaperIngestConfig) -> Path:
+    if config.agent_session_store_path:
+        return Path(config.agent_session_store_path).expanduser().resolve()
+    return _project_root() / ".newsroom" / "paper-agent-sessions.sqlite3"
 
 
 def _papers_data_path(configured_path: str | Path | None) -> Path:
@@ -2922,3 +2984,11 @@ def _bool_env(name: str, default: bool) -> bool:
     if value is None:
         return default
     return value.strip().casefold() in {"1", "true", "yes", "on"}
+
+
+def _optional_env(name: str) -> str | None:
+    value = os.environ.get(name)
+    if value is None:
+        return None
+    text = value.strip()
+    return text or None

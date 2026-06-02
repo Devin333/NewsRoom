@@ -7,6 +7,9 @@ from framework.llm import LLMConfigurationError
 from infrastructure.external.sources.github import GithubRepositoryMetadata
 from infrastructure.external.sources.models import RawSourceItem, SourceError
 from interfaces.services.paper_ingest_service import (
+    PAPERS_AGENT_ANALYSIS_REQUIRED_ENV,
+    PAPERS_AGENT_SESSION_STORE_PATH_ENV,
+    PAPERS_USE_LEGACY_CLASSIFIER_FALLBACK_ENV,
     PaperCitationMetadata,
     PaperIngestApplicationService,
     PaperIngestConfig,
@@ -29,6 +32,20 @@ def test_paper_taxonomy_loads_pwc_method_collections_and_benchmark_categories() 
     assert normalize_method_collection("transformers") == "Transformers"
     assert len(BENCHMARK_CATEGORIES) == 40
     assert normalize_benchmark_category("question answering") == "question-answering"
+
+
+def test_paper_ingest_config_uses_final_agent_analysis_settings(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("NEWSROOM_PAPERS_USE_AGENT_ANALYSIS", "false")
+    monkeypatch.setenv(PAPERS_USE_LEGACY_CLASSIFIER_FALLBACK_ENV, "false")
+    monkeypatch.setenv(PAPERS_AGENT_ANALYSIS_REQUIRED_ENV, "true")
+    monkeypatch.setenv(PAPERS_AGENT_SESSION_STORE_PATH_ENV, str(tmp_path / "sessions.sqlite3"))
+
+    config = PaperIngestConfig.from_env()
+
+    assert not hasattr(config, "use_agent_analysis")
+    assert config.use_legacy_classifier_fallback is False
+    assert config.agent_analysis_required is True
+    assert config.agent_session_store_path == str(tmp_path / "sessions.sqlite3")
 
 
 def test_paper_ingest_publishes_github_arxiv_paper_with_thumbnail_and_taxonomy(tmp_path) -> None:
@@ -106,7 +123,7 @@ def test_paper_ingest_publishes_github_arxiv_paper_with_thumbnail_and_taxonomy(t
     assert text_repo.read_latest_sections("arxiv-2605.00001")
 
 
-def test_paper_ingest_uses_agent_analysis_when_enabled(tmp_path) -> None:
+def test_paper_ingest_uses_agent_analysis_by_default(tmp_path) -> None:
     cache_path = tmp_path / "papers.json"
     orchestrator = _FakePaperAnalysisOrchestrator(
         {
@@ -133,7 +150,7 @@ def test_paper_ingest_uses_agent_analysis_when_enabled(tmp_path) -> None:
         pdf_text="The paper studies agent planning and reports SWE-bench 32.4% resolved.",
         llm_client=llm_client,
         paper_analysis_orchestrator=orchestrator,
-        config=PaperIngestConfig(candidate_limit=100, min_github_stars=50, auto_taxonomy_confidence=0.85, use_agent_analysis=True),
+        config=PaperIngestConfig(candidate_limit=100, min_github_stars=50, auto_taxonomy_confidence=0.85),
     )
 
     result = service.run_daily_ingest(run_id="agent-analysis-run")
@@ -164,7 +181,7 @@ def test_paper_ingest_falls_back_when_agent_analysis_fails(tmp_path) -> None:
         source_items=[_candidate("2605.01002", summary="Code is available at https://github.com/example/fallback-analysis.")],
         llm_client=llm_client,
         paper_analysis_orchestrator=_FailingPaperAnalysisOrchestrator(),
-        config=PaperIngestConfig(candidate_limit=100, min_github_stars=50, auto_taxonomy_confidence=0.85, use_agent_analysis=True),
+        config=PaperIngestConfig(candidate_limit=100, min_github_stars=50, auto_taxonomy_confidence=0.85),
     )
 
     result = service.run_daily_ingest(run_id="agent-fallback-run")
@@ -173,6 +190,9 @@ def test_paper_ingest_falls_back_when_agent_analysis_fails(tmp_path) -> None:
     assert result.published_count == 1
     assert llm_client.calls == 1
     assert paper["classification"]["evidenceSummary"] == "Fallback classifier evidence."
+    assert paper["classification"]["legacyFallback"] is True
+    assert paper["classification"]["analysisSource"] == "legacy_classifier"
+    assert paper["classification"]["warnings"][0]["kind"] == "legacy_classifier_fallback"
     assert any(item["repairAction"] == "fallback_to_legacy_classifier" for item in service.state.list_prompt_memory(limit=10))
 
 
@@ -543,6 +563,7 @@ def test_paper_classification_backfill_uses_global_confidence_for_refs_without_i
         papers_data_path=cache_path,
         state_dir=tmp_path / "state",
         text_extraction_repository=text_repo,
+        paper_analysis_orchestrator=_FailingPaperAnalysisOrchestrator(),
         llm_client_factory=lambda route: _FakeLLMClient(
             {
                 "primaryTaskGroup": "language-models",
@@ -601,6 +622,7 @@ def test_paper_classification_backfill_falls_back_to_summary_and_queues_repair_w
         text_extraction_repository=TextExtractionRepository(tmp_path / "text"),
         pdf_fetcher=lambda url, max_bytes: b"%PDF fake",
         pdf_processor=_FailingPdfProcessor(ValueError("broken pdf")),
+        paper_analysis_orchestrator=_FailingPaperAnalysisOrchestrator(),
         llm_client_factory=lambda route: _FakeLLMClient(
             {
                 "primaryTaskGroup": "agents",
@@ -685,6 +707,7 @@ def test_paper_classification_backfill_flushes_completed_papers_before_later_fai
         papers_data_path=cache_path,
         state_dir=tmp_path / "state",
         text_extraction_repository=text_repo,
+        paper_analysis_orchestrator=_FailingPaperAnalysisOrchestrator(),
         llm_client_factory=lambda route: llm_client,
         config=PaperIngestConfig(candidate_limit=100, min_github_stars=50, auto_taxonomy_confidence=0.85),
         clock=_fixed_clock,

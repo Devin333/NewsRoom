@@ -1,29 +1,40 @@
-"""Session store protocol and in-memory implementation for shared agent workspaces."""
+"""Session store protocol for shared agent workspaces."""
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Protocol
 
-from framework.agent.session.models import AgentSessionItem
+from framework.agent.session.models import AgentSessionEvent, AgentSessionItem, AgentSessionRef, AgentSessionSnapshot
+from framework.agent.session.query import AgentSessionQuery
 
 
 class AgentSessionStore(Protocol):
-    """Persistence interface for generic agent session items."""
+    """Persistence interface for generic agent session state."""
 
-    def write_item(self, item: AgentSessionItem) -> None:
-        """Write one item into the store."""
+    def create_session(self, ref: AgentSessionRef) -> None:
+        """Create or update one session boundary."""
         ...
 
-    def read_items(
+    def append_item(self, item: AgentSessionItem) -> AgentSessionItem:
+        """Append one item into the store and record an event."""
+        ...
+
+    def update_item(
         self,
         *,
         session_id: str,
-        roles: Sequence[str] | None = None,
-        agent_ids: Sequence[str] | None = None,
-        limit: int | None = None,
-    ) -> list[AgentSessionItem]:
-        """Read items for one session, optionally filtered by role or agent id."""
+        item_id: str,
+        status: str | None = None,
+        content: Mapping[str, object] | None = None,
+        summary: str | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> AgentSessionItem:
+        """Update mutable item fields and record an event."""
+        ...
+
+    def query_items(self, query: AgentSessionQuery) -> list[AgentSessionItem]:
+        """Read items through the structured query model."""
         ...
 
     def latest_item(
@@ -31,53 +42,43 @@ class AgentSessionStore(Protocol):
         *,
         session_id: str,
         role: str,
+        status: str = "active",
     ) -> AgentSessionItem | None:
         """Return the latest item matching a role in a session."""
         ...
 
-    def clear_session(self, session_id: str) -> None:
-        """Clear all items for one session."""
+    def append_event(self, event: AgentSessionEvent) -> AgentSessionEvent:
+        """Append an audit event."""
+        ...
+
+    def list_events(
+        self,
+        *,
+        session_id: str,
+        limit: int | None = None,
+    ) -> list[AgentSessionEvent]:
+        """List session events."""
+        ...
+
+    def create_snapshot(self, snapshot: AgentSessionSnapshot) -> AgentSessionSnapshot:
+        """Persist one session snapshot."""
+        ...
+
+    def latest_snapshot(self, session_id: str) -> AgentSessionSnapshot | None:
+        """Return the latest snapshot for one session."""
+        ...
+
+    def close_session(
+        self,
+        *,
+        session_id: str,
+        status: str,
+        metadata: Mapping[str, object] | None = None,
+    ) -> None:
+        """Close a session with a terminal status."""
         ...
 
 
-class InMemoryAgentSessionStore:
-    """Process-local session store isolated by session id."""
+from framework.agent.session.in_memory_store import InMemoryAgentSessionStore
 
-    def __init__(self) -> None:
-        self._items_by_session: dict[str, list[AgentSessionItem]] = {}
-
-    def write_item(self, item: AgentSessionItem) -> None:
-        self._items_by_session.setdefault(item.session_id, []).append(item)
-
-    def read_items(
-        self,
-        *,
-        session_id: str,
-        roles: Sequence[str] | None = None,
-        agent_ids: Sequence[str] | None = None,
-        limit: int | None = None,
-    ) -> list[AgentSessionItem]:
-        items = list(self._items_by_session.get(session_id, []))
-        if roles is not None:
-            role_set = {str(role) for role in roles}
-            items = [item for item in items if item.role in role_set]
-        if agent_ids is not None:
-            agent_id_set = {str(agent_id) for agent_id in agent_ids}
-            items = [item for item in items if item.agent_id in agent_id_set]
-        if limit is not None and limit >= 0:
-            items = items[-limit:] if limit else []
-        return items
-
-    def latest_item(
-        self,
-        *,
-        session_id: str,
-        role: str,
-    ) -> AgentSessionItem | None:
-        for item in reversed(self._items_by_session.get(session_id, [])):
-            if item.role == role:
-                return item
-        return None
-
-    def clear_session(self, session_id: str) -> None:
-        self._items_by_session.pop(session_id, None)
+__all__ = ["AgentSessionStore", "InMemoryAgentSessionStore"]

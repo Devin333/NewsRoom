@@ -9,7 +9,8 @@ from typing import Any
 from framework.agent.session import AgentSessionItem
 
 from business.boards.paper_radar.agents.models import PaperAgentContext, PaperAgentResult
-from business.boards.paper_radar.agents.roles import PAPER_ROLE_EXPERIMENT_RESULT, PAPER_ROLE_TAXONOMY_RESULT
+from business.boards.paper_radar.agents.roles import PAPER_ROLE_EXPERIMENT_RESULT, PAPER_ROLE_SEMANTIC_SECTIONS, PAPER_ROLE_TAXONOMY_RESULT
+from business.boards.paper_radar.agents.utils.metrics import normalize_metric_value
 
 
 BENCHMARK_ALIASES: Mapping[str, tuple[str, str]] = {
@@ -41,6 +42,8 @@ class PaperExperimentAgent:
     """Extract benchmark candidates, metrics, and comparison evidence."""
 
     agent_id = "paper-experiment-agent"
+    required_roles = (PAPER_ROLE_SEMANTIC_SECTIONS, PAPER_ROLE_TAXONOMY_RESULT)
+    produced_role = PAPER_ROLE_EXPERIMENT_RESULT
 
     def run(self, context: PaperAgentContext) -> PaperAgentResult:
         taxonomy = _latest_output(context.shared_items, PAPER_ROLE_TAXONOMY_RESULT)
@@ -79,14 +82,17 @@ def _extract_benchmarks(sentences: Sequence[str], taxonomy: Mapping[str, Any]) -
         results.append(
             {
                 "id": f"bench-{slug}",
+                "claimId": f"bench-{slug}",
                 "name": benchmark_name,
                 "category": category,
                 "taskSlug": _task_slug(taxonomy),
                 "metric": metric["metric"],
                 "value": value,
                 "unit": metric.get("unit"),
+                "normalizedValue": normalize_metric_value(value, metric.get("unit")),
                 "baseline": _baseline_from_sentence(sentence),
                 "higherIsBetter": _higher_is_better(metric["metric"]),
+                "source": {"sectionId": _section_id_from_sentence(sentence)},
                 "evidence": sentence[:500],
                 "confidence": 0.86,
             }
@@ -147,6 +153,15 @@ def _baseline_from_sentence(sentence: str) -> str | None:
     if not match:
         return None
     return match.group(1).strip(" .,:;")
+
+
+def _section_id_from_sentence(sentence: str) -> str | None:
+    lowered = sentence.casefold()
+    if "table" in lowered:
+        return "results-table"
+    if "experiment" in lowered or "benchmark" in lowered:
+        return "experiments"
+    return None
 
 
 def _higher_is_better(metric: str) -> bool:

@@ -46,7 +46,16 @@ def test_workspace_sanitizes_sensitive_fields_without_mutating_input() -> None:
     assert item.content["items"] == [{"name": "kept"}]
     assert content["full_text"] == "raw paper text"
     assert item.refs == {"run_id": "run-1"}
-    assert item.metadata == {"source": "test"}
+    assert item.metadata["source"] == "test"
+    assert set(item.metadata["redacted_fields"]) >= {
+        "full_text",
+        "fullText",
+        "nested.api_key",
+        "nested.apiKey",
+        "items[0].token",
+        "refs.raw_payload",
+        "metadata.authorization",
+    }
 
 
 def test_workspace_rejects_empty_required_ids() -> None:

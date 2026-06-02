@@ -1,24 +1,32 @@
-"""Orchestrator for paper radar multi-agent analysis."""
+"""Orchestrator for the final paper radar multi-agent analysis chain."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from framework.agent.session import AgentSharedWorkspace
+from framework.agent.session import AgentSessionEvent, AgentSessionQuery, AgentSharedWorkspace, SessionVisibility
+from framework.memory.session import AgentSessionMemoryAdapter
 
 from business.boards.paper_radar.agents.base import PaperAgent
+from business.boards.paper_radar.agents.comparison_agent import PaperComparisonAgent
+from business.boards.paper_radar.agents.contribution_agent import PaperContributionAgent
+from business.boards.paper_radar.agents.evidence_verification_agent import PaperEvidenceVerificationAgent
 from business.boards.paper_radar.agents.experiment_agent import PaperExperimentAgent
+from business.boards.paper_radar.agents.memory_agent import PaperMemoryAgent
 from business.boards.paper_radar.agents.models import PaperAgentContext, PaperAgentResult, PaperAnalysisRequest, PaperAnalysisResult
 from business.boards.paper_radar.agents.profile_composer_agent import PaperProfileComposerAgent
 from business.boards.paper_radar.agents.quality_agent import PaperQualityAgent
+from business.boards.paper_radar.agents.reproducibility_agent import PaperReproducibilityAgent
 from business.boards.paper_radar.agents.roles import (
-    PAPER_ROLE_EXPERIMENT_RESULT,
+    PAPER_ROLE_BENCHMARK_CLAIMS,
     PAPER_ROLE_FINAL_PROFILE,
     PAPER_ROLE_METADATA,
-    PAPER_ROLE_QUALITY_RESULT,
-    PAPER_ROLE_TAXONOMY_RESULT,
+    PAPER_ROLE_SELECTION_DECISION,
+    PAPER_ROLE_SOURCE_ARTIFACTS,
 )
+from business.boards.paper_radar.agents.selection_agent import PaperSelectionAgent
+from business.boards.paper_radar.agents.structure_agent import PaperStructureAgent
 from business.boards.paper_radar.agents.taxonomy_agent import PaperTaxonomyAgent
 
 
@@ -26,87 +34,99 @@ ORCHESTRATOR_AGENT_ID = "paper-analysis-orchestrator"
 
 
 class PaperAnalysisOrchestrator:
-    """Coordinate paper sub-agents through a framework shared workspace."""
+    """Coordinate the final paper sub-agent chain through a shared workspace."""
 
     def __init__(
         self,
         *,
         workspace: AgentSharedWorkspace,
+        structure_agent: PaperAgent | None = None,
+        selection_agent: PaperAgent | None = None,
         taxonomy_agent: PaperAgent | None = None,
         experiment_agent: PaperAgent | None = None,
+        evidence_verification_agent: PaperAgent | None = None,
+        contribution_agent: PaperAgent | None = None,
         quality_agent: PaperAgent | None = None,
+        reproducibility_agent: PaperAgent | None = None,
+        comparison_agent: PaperAgent | None = None,
         profile_composer_agent: PaperAgent | None = None,
+        memory_agent: PaperAgent | None = None,
+        memory_adapter: AgentSessionMemoryAdapter | None = None,
     ) -> None:
         self._workspace = workspace
+        self._memory_adapter = memory_adapter or AgentSessionMemoryAdapter()
+        self._structure_agent = structure_agent or PaperStructureAgent()
+        self._selection_agent = selection_agent or PaperSelectionAgent()
         self._taxonomy_agent = taxonomy_agent or PaperTaxonomyAgent()
         self._experiment_agent = experiment_agent or PaperExperimentAgent()
+        self._evidence_verification_agent = evidence_verification_agent or PaperEvidenceVerificationAgent()
+        self._contribution_agent = contribution_agent or PaperContributionAgent()
         self._quality_agent = quality_agent or PaperQualityAgent()
+        self._reproducibility_agent = reproducibility_agent or PaperReproducibilityAgent()
+        self._comparison_agent = comparison_agent or PaperComparisonAgent(self._memory_adapter)
         self._profile_composer_agent = profile_composer_agent or PaperProfileComposerAgent()
+        self._memory_agent = memory_agent or PaperMemoryAgent(self._memory_adapter)
 
     def analyze_paper(self, request: PaperAnalysisRequest) -> PaperAnalysisResult:
-        """Run the paper analysis pipeline and return the final profile."""
+        """Run the final paper analysis workflow and return the final profile."""
 
-        session_id = request.session_id
-        self._workspace.clear(session_id)
+        self._workspace.clear(request.session_id)
+        self._workspace.create_session(request.session_ref)
         self._write_metadata(request)
+        self._write_source_artifacts(request)
+
         errors: list[str] = []
+        review_queue_items: list[Mapping[str, Any]] = []
         agent_outputs: dict[str, Any] = {}
 
-        taxonomy = self._run_agent(
-            self._taxonomy_agent,
-            request=request,
-            roles=[PAPER_ROLE_METADATA],
-            fallback_role=PAPER_ROLE_TAXONOMY_RESULT,
-        )
-        errors.extend(taxonomy.errors)
-        agent_outputs[taxonomy.role] = dict(taxonomy.output)
-        self._write_result(request, taxonomy)
+        for agent in self._workflow_agents():
+            result = self._run_agent(agent, request=request)
+            errors.extend(result.errors)
+            for warning in result.warnings:
+                review_queue_items.append({"kind": "agent_warning", "agentId": result.agent_id, "role": result.role, "reason": warning})
+            agent_outputs[result.role] = dict(result.output)
+            self._write_result(request, result)
+            if result.role == PAPER_ROLE_SELECTION_DECISION and result.output.get("decision") == "skip":
+                break
+            if result.role == PAPER_ROLE_BENCHMARK_CLAIMS:
+                continue
+            if result.role == PAPER_ROLE_FINAL_PROFILE:
+                self._workspace.mark_final(session_id=request.session_id, item_id=self._latest_item_id(request.session_id, PAPER_ROLE_FINAL_PROFILE))
 
-        experiment = self._run_agent(
-            self._experiment_agent,
-            request=request,
-            roles=[PAPER_ROLE_METADATA, PAPER_ROLE_TAXONOMY_RESULT],
-            fallback_role=PAPER_ROLE_EXPERIMENT_RESULT,
-        )
-        errors.extend(experiment.errors)
-        agent_outputs[experiment.role] = dict(experiment.output)
-        self._write_result(request, experiment)
-
-        quality = self._run_agent(
-            self._quality_agent,
-            request=request,
-            roles=[PAPER_ROLE_TAXONOMY_RESULT, PAPER_ROLE_EXPERIMENT_RESULT],
-            fallback_role=PAPER_ROLE_QUALITY_RESULT,
-        )
-        errors.extend(quality.errors)
-        agent_outputs[quality.role] = dict(quality.output)
-        self._write_result(request, quality)
-
-        profile = self._run_agent(
-            self._profile_composer_agent,
-            request=request,
-            roles=[PAPER_ROLE_TAXONOMY_RESULT, PAPER_ROLE_EXPERIMENT_RESULT, PAPER_ROLE_QUALITY_RESULT],
-            fallback_role=PAPER_ROLE_FINAL_PROFILE,
-        )
-        errors.extend(profile.errors)
-        final_profile = dict(profile.output) if profile.output else _degraded_profile(self._workspace.read(session_id=session_id), request)
-        agent_outputs[profile.role] = final_profile
-        self._write_result(request, PaperAgentResult(**{**profile.__dict__, "output": final_profile}))
-
+        final_profile = self._final_profile(request)
         low_confidence_items = tuple(item for item in _sequence(final_profile.get("lowConfidenceItems")) if isinstance(item, Mapping))
+        review_queue_items.extend(item for item in _sequence(final_profile.get("reviewQueueItems")) if isinstance(item, Mapping))
+        self._workspace.create_snapshot(session_id=request.session_id, run_id=request.run_id)
+        self._workspace.close_session(session_id=request.session_id, status="completed", metadata={"paperId": request.paper_id})
         return PaperAnalysisResult(
             paper_id=request.paper_id,
             run_id=request.run_id,
-            session_id=session_id,
+            session_id=request.session_id,
             final_profile=final_profile,
             agent_outputs=agent_outputs,
             low_confidence_items=low_confidence_items,
+            review_queue_items=tuple(review_queue_items),
             errors=tuple(errors),
+        )
+
+    def _workflow_agents(self) -> tuple[PaperAgent, ...]:
+        return (
+            self._structure_agent,
+            self._selection_agent,
+            self._taxonomy_agent,
+            self._experiment_agent,
+            self._evidence_verification_agent,
+            self._contribution_agent,
+            self._quality_agent,
+            self._reproducibility_agent,
+            self._comparison_agent,
+            self._profile_composer_agent,
+            self._memory_agent,
         )
 
     def _write_metadata(self, request: PaperAnalysisRequest) -> None:
         self._workspace.write(
-            session_id=request.session_id,
+            ref=request.session_ref,
             agent_id=ORCHESTRATOR_AGENT_ID,
             role=PAPER_ROLE_METADATA,
             content={
@@ -115,6 +135,10 @@ class PaperAnalysisOrchestrator:
                 "abstract": request.abstract,
                 "repoUrl": request.repo_url,
                 "githubStars": request.github_stars,
+                "sourceUrl": request.source_url,
+                "publishedAt": request.published_at,
+                "authors": list(request.authors),
+                "tags": list(request.tags),
                 "metadata": dict(request.metadata),
                 "sectionCount": len(request.page_sections),
             },
@@ -122,74 +146,129 @@ class PaperAnalysisOrchestrator:
             refs={"paper_id": request.paper_id, "run_id": request.run_id},
         )
 
-    def _run_agent(
-        self,
-        agent: PaperAgent,
-        *,
-        request: PaperAnalysisRequest,
-        roles: Sequence[str],
-        fallback_role: str,
-    ) -> PaperAgentResult:
-        shared_items = self._workspace.read(session_id=request.session_id, roles=roles)
+    def _write_source_artifacts(self, request: PaperAnalysisRequest) -> None:
+        content = {
+            "pdfArtifactUri": request.pdf_artifact_uri,
+            "fullTextDigest": _text_digest(request.full_text),
+            "pageSectionCount": len(request.page_sections),
+        }
+        self._workspace.write(
+            ref=request.session_ref,
+            agent_id=ORCHESTRATOR_AGENT_ID,
+            role=PAPER_ROLE_SOURCE_ARTIFACTS,
+            content=content,
+            summary="Source artifact references and text digests.",
+            refs={"paper_id": request.paper_id, "run_id": request.run_id},
+        )
+
+    def _run_agent(self, agent: PaperAgent, *, request: PaperAnalysisRequest) -> PaperAgentResult:
+        produced_role = str(getattr(agent, "produced_role", "paper_agent_result"))
+        required_roles = tuple(str(role) for role in getattr(agent, "required_roles", ()))
+        self._workspace.append_event(
+            AgentSessionEvent(
+                session_id=request.session_id,
+                run_id=request.run_id,
+                event_type="agent.started",
+                agent_id=agent.agent_id,
+                role=produced_role,
+            )
+        )
+        shared_items = self._workspace.query(
+            AgentSessionQuery(
+                session_id=request.session_id,
+                roles=required_roles,
+                statuses=(),
+                visibility=tuple(SessionVisibility),
+                include_private=True,
+            ),
+            reader_agent_id=ORCHESTRATOR_AGENT_ID,
+        )
         try:
-            return agent.run(PaperAgentContext(request=request, shared_items=shared_items))
-        except Exception as exc:  # pragma: no cover - exercised by test fakes.
-            return PaperAgentResult(
+            result = agent.run(PaperAgentContext(request=request, shared_items=shared_items))
+        except Exception as exc:  # pragma: no cover - exercised through fakes.
+            result = PaperAgentResult(
                 agent_id=getattr(agent, "agent_id", "unknown-paper-agent"),
-                role=fallback_role,
-                output={},
+                role=getattr(agent, "produced_role", "paper_agent_error"),
+                output={"warning": str(exc)},
                 summary=str(exc),
                 confidence=0.0,
                 errors=(str(exc),),
+                warnings=("agent_failed",),
             )
+            self._workspace.append_event(
+                AgentSessionEvent(
+                    session_id=request.session_id,
+                    run_id=request.run_id,
+                    event_type="agent.failed",
+                    agent_id=result.agent_id,
+                    role=result.role,
+                    payload={"error": str(exc)},
+                )
+            )
+            return result
+        self._workspace.append_event(
+            AgentSessionEvent(
+                session_id=request.session_id,
+                run_id=request.run_id,
+                event_type="agent.completed",
+                agent_id=result.agent_id,
+                role=result.role,
+                payload={"confidence": result.confidence, "warnings": list(result.warnings)},
+            )
+        )
+        return result
 
     def _write_result(self, request: PaperAnalysisRequest, result: PaperAgentResult) -> None:
         self._workspace.write(
-            session_id=request.session_id,
+            ref=request.session_ref,
             agent_id=result.agent_id,
             role=result.role,
             content=dict(result.output),
             summary=result.summary,
             confidence=result.confidence,
+            visibility=result.visibility,
             refs={"paper_id": request.paper_id, "run_id": request.run_id},
-            metadata={"errors": list(result.errors), "evidenceRefs": [dict(ref) for ref in result.evidence_refs]},
+            metadata={
+                "errors": list(result.errors),
+                "warnings": list(result.warnings),
+                "evidenceRefs": [dict(ref) for ref in result.evidence_refs],
+            },
         )
+        if result.role == "paper_experiment_result":
+            self._workspace.write(
+                ref=request.session_ref,
+                agent_id=result.agent_id,
+                role=PAPER_ROLE_BENCHMARK_CLAIMS,
+                content={"claims": list(_sequence(result.output.get("benchmarks")))},
+                summary="Benchmark claims extracted from experiment results.",
+                confidence=result.confidence,
+                refs={"paper_id": request.paper_id, "run_id": request.run_id},
+            )
+
+    def _final_profile(self, request: PaperAnalysisRequest) -> Mapping[str, Any]:
+        latest = self._workspace.latest(session_id=request.session_id, role=PAPER_ROLE_FINAL_PROFILE)
+        if latest is not None and latest.content:
+            return latest.content
+        return {
+            "taskRefs": [],
+            "methodRefs": [],
+            "benchmarks": [],
+            "classification": {"agentSessionId": request.session_id, "confidence": 0.0},
+            "aiSummary": {"summary": "Paper analysis did not produce a final profile."},
+            "lowConfidenceItems": [{"kind": "agent_error", "reason": "missing_final_profile", "action": "manual_review"}],
+            "reviewQueueItems": [{"kind": "agent_error", "reason": "missing_final_profile", "action": "manual_review"}],
+            "confidence": 0.0,
+        }
+
+    def _latest_item_id(self, session_id: str, role: str) -> str:
+        item = self._workspace.latest(session_id=session_id, role=role)
+        return item.item_id if item is not None else ""
 
 
-def _degraded_profile(items: Sequence[Any], request: PaperAnalysisRequest) -> Mapping[str, Any]:
-    taxonomy = _latest_output(items, PAPER_ROLE_TAXONOMY_RESULT)
-    experiment = _latest_output(items, PAPER_ROLE_EXPERIMENT_RESULT)
-    return {
-        "primaryTaskGroup": taxonomy.get("primaryTaskGroup"),
-        "secondaryTaskGroups": list(_sequence(taxonomy.get("secondaryTaskGroups"))),
-        "taskRefs": list(_sequence(taxonomy.get("taskRefs"))),
-        "methodRefs": list(_sequence(taxonomy.get("methodRefs"))),
-        "benchmarks": list(_sequence(experiment.get("benchmarks"))),
-        "classification": {
-            "primaryTaskGroup": taxonomy.get("primaryTaskGroup"),
-            "secondaryTaskGroups": list(_sequence(taxonomy.get("secondaryTaskGroups"))),
-            "confidence": taxonomy.get("confidence"),
-            "evidenceSummary": taxonomy.get("evidenceSummary"),
-            "agentSessionId": request.session_id,
-            "qualityScore": None,
-        },
-        "aiSummary": {
-            "experimentSummary": experiment.get("experimentSummary"),
-            "engineeringRelevance": "Generated from partial paper agent outputs.",
-            "limitations": ["One or more paper agents failed."],
-            "contributions": [],
-        },
-        "lowConfidenceItems": [{"kind": "agent_error", "reason": "degraded_profile", "action": "manual_review"}],
-        "confidence": 0.0,
-        "evidenceSummary": taxonomy.get("evidenceSummary"),
-    }
-
-
-def _latest_output(items: Sequence[Any], role: str) -> Mapping[str, Any]:
-    for item in reversed(items):
-        if getattr(item, "role", None) == role:
-            return item.content
-    return {}
+def _text_digest(text: str | None) -> Mapping[str, Any]:
+    if not text:
+        return {"available": False, "charCount": 0}
+    return {"available": True, "charCount": len(text), "prefix": str(abs(hash(text[:1000])))[:12]}
 
 
 def _sequence(value: Any) -> Sequence[Any]:

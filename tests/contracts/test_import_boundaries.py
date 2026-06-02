@@ -8,6 +8,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 FRAMEWORK_ROOT = PROJECT_ROOT / "framework"
 BUSINESS_ROOT = PROJECT_ROOT / "business"
 INTERFACES_ROOT = PROJECT_ROOT / "interfaces"
+FRAMEWORK_AGENT_SESSION_ROOT = FRAMEWORK_ROOT / "agent" / "session"
+PAPER_AGENTS_ROOT = BUSINESS_ROOT / "boards" / "paper_radar" / "agents"
 
 FRAMEWORK_FORBIDDEN_PREFIXES = (
     "business",
@@ -196,6 +198,61 @@ def test_diagnostic_service_uses_infrastructure_source_adapters() -> None:
 
     assert "business.layers.signal.source_config" in imports
     assert _matching_forbidden(imports, ("domain.sources", "sources")) == []
+
+
+def test_framework_agent_session_has_no_paper_business_terms_or_imports() -> None:
+    violations = _forbidden_imports(
+        FRAMEWORK_AGENT_SESSION_ROOT,
+        forbidden_prefixes=("business", "interfaces", "paper_radar"),
+    )
+    forbidden_terms = ("PublicPaper", "taskRefs", "methodRefs", "PaperRadar", "benchmark")
+    term_violations = []
+    for path in sorted(FRAMEWORK_AGENT_SESSION_ROOT.rglob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        for term in forbidden_terms:
+            if term in text:
+                term_violations.append(f"{path.relative_to(PROJECT_ROOT).as_posix()}: {term}")
+
+    assert violations == []
+    assert term_violations == []
+
+
+def test_paper_agents_do_not_define_session_store_or_import_sqlite() -> None:
+    violations = []
+    for path in sorted(PAPER_AGENTS_ROOT.rglob("*.py")):
+        relative_path = path.relative_to(PROJECT_ROOT).as_posix()
+        imports = _imports_for_file(path)
+        if "sqlite3" in imports:
+            violations.append(f"{relative_path}: sqlite3")
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef) and "AgentSessionStore" in node.name:
+                violations.append(f"{relative_path}: class {node.name}")
+
+    assert violations == []
+
+
+def test_paper_sub_agents_do_not_import_each_other() -> None:
+    allowed_modules = (
+        "business.boards.paper_radar.agents.base",
+        "business.boards.paper_radar.agents.models",
+        "business.boards.paper_radar.agents.roles",
+        "business.boards.paper_radar.agents.utils",
+    )
+    violations = []
+    for path in sorted(PAPER_AGENTS_ROOT.glob("*_agent.py")) + sorted(PAPER_AGENTS_ROOT.glob("*_adapter.py")):
+        if path.name in {"orchestrator.py", "__init__.py"}:
+            continue
+        for imported in _imports_for_file(path):
+            if imported.startswith("business.boards.paper_radar.agents.") and not (
+                imported == allowed_modules[0]
+                or imported == allowed_modules[1]
+                or imported == allowed_modules[2]
+                or imported.startswith(f"{allowed_modules[3]}.")
+            ):
+                violations.append(f"{path.relative_to(PROJECT_ROOT).as_posix()}: {imported}")
+
+    assert violations == []
 
 
 def _forbidden_imports(

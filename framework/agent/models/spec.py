@@ -8,6 +8,39 @@ from framework.tool import ToolPolicy
 
 
 @dataclass(frozen=True)
+class AgentSessionContextPolicy:
+    """Controls whether AgentLoop injects shared session context into prompts."""
+
+    enabled: bool = False
+    roles: tuple[str, ...] = ()
+    max_context_chars: int = 12000
+    include_content: bool = True
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "roles", tuple(str(role) for role in self.roles))
+        object.__setattr__(self, "max_context_chars", max(1, int(self.max_context_chars or 12000)))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "enabled": self.enabled,
+            "roles": list(self.roles),
+            "max_context_chars": self.max_context_chars,
+            "include_content": self.include_content,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any] | None) -> "AgentSessionContextPolicy | None":
+        if payload is None:
+            return None
+        return cls(
+            enabled=bool(payload.get("enabled", False)),
+            roles=tuple(str(item) for item in payload.get("roles", []) or []),
+            max_context_chars=int(payload.get("max_context_chars") or 12000),
+            include_content=bool(payload.get("include_content", True)),
+        )
+
+
+@dataclass(frozen=True)
 class AgentSpec:
     agent_id: str
     name: str
@@ -30,6 +63,7 @@ class AgentSpec:
     task_prompt_template: str = "Goal: {goal}\nInputs: {inputs}"
     allowed_references: list[str] = field(default_factory=list)
     allowed_subagents: list[str] = field(default_factory=list)
+    session_context_policy: AgentSessionContextPolicy | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -115,6 +149,7 @@ class AgentSpec:
             "task_prompt_template": self.task_prompt_template,
             "allowed_references": list(self.allowed_references),
             "allowed_subagents": list(self.allowed_subagents),
+            "session_context_policy": self.session_context_policy.to_dict() if self.session_context_policy else None,
             "metadata": dict(self.metadata),
         }
 
@@ -150,6 +185,7 @@ class AgentSpec:
             ),
             allowed_references=_string_list(payload.get("allowed_references", [])),
             allowed_subagents=_string_list(payload.get("allowed_subagents", [])),
+            session_context_policy=AgentSessionContextPolicy.from_dict(payload.get("session_context_policy")),
             metadata=dict(payload.get("metadata") or {}),
         )
 

@@ -41,6 +41,11 @@ from framework.agent.subagents import (
     SubAgentResult,
     SubAgentTask,
 )
+from framework.agent.session import (
+    AgentSessionQuery,
+    AgentSharedWorkspace,
+    SharedSessionContextAssembler,
+)
 from framework.agent.models.trace import AgentLoopTrace, IterationTrace
 from framework.agent.runtime.llm import (
     GlobalBudgetExceededError,
@@ -89,6 +94,8 @@ class AgentLoop:
         skill_runner: SkillRunnerProtocol | None = None,
         skill_selection_policy: SkillSelectionPolicy | None = None,
         agent_skill_runtime: AgentSkillRuntime | None = None,
+        session_workspace: AgentSharedWorkspace | None = None,
+        session_context_assembler: SharedSessionContextAssembler | None = None,
     ) -> None:
         self._llm_client = llm_client
         self._tool_executor = tool_executor
@@ -101,6 +108,8 @@ class AgentLoop:
         self._memory_runtime = memory_runtime
         self._memory_policy = memory_policy or DEFAULT_AGENT_MEMORY_POLICY
         self._memory_adapter = memory_adapter or AgentMemoryAdapter()
+        self._session_workspace = session_workspace
+        self._session_context_assembler = session_context_assembler or SharedSessionContextAssembler()
         if agent_skill_runtime is not None:
             self._skill_runtime = agent_skill_runtime
         elif skill_registry is not None and skill_runner is not None:
@@ -157,11 +166,16 @@ class AgentLoop:
                 inputs=inputs,
                 run_id=effective_run_id,
             )
+            session_context = self._session_context_for_llm(agent=agent, inputs=inputs)
+            prompt_inputs = dict(inputs)
+            prompt_inputs.pop("_agent_session_workspace", None)
+            if session_context:
+                prompt_inputs["shared_session_context"] = session_context
             skill_prompt_section = self._skill_prompt_section(agent=agent, inputs=inputs)
 
             request = self._prompt_builder.build(
                 agent,
-                inputs,
+                prompt_inputs,
                 feedback=feedback,
                 tool_observations=[
                     _prompt_safe_observation(observation, agent.resolved_tool_policy()).to_dict()
@@ -965,6 +979,41 @@ class AgentLoop:
         except Exception:
             return None
         return recall.context_block.content or None
+
+    def _session_context_for_llm(
+        self,
+        *,
+        agent: AgentSpec,
+        inputs: dict[str, Any],
+    ) -> str | None:
+        policy = agent.session_context_policy
+        if policy is None or not policy.enabled:
+            return None
+        session_id = inputs.get("session_id")
+        if not session_id:
+            return None
+        workspace = self._session_workspace or inputs.get("_agent_session_workspace")
+        if not isinstance(workspace, AgentSharedWorkspace):
+            return None
+        try:
+            items = workspace.query(
+                AgentSessionQuery(
+                    session_id=str(session_id),
+                    roles=policy.roles,
+                    limit=None,
+                    include_content=policy.include_content,
+                ),
+                reader_agent_id=agent.agent_id,
+            )
+            context = self._session_context_assembler.assemble(
+                session_id=str(session_id),
+                items=items,
+                max_context_chars=policy.max_context_chars,
+                include_content=policy.include_content,
+            )
+        except Exception:
+            return None
+        return context.context_text or None
 
     def _skill_prompt_section(
         self,

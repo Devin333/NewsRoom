@@ -4,7 +4,14 @@ from framework.agent.session import AgentSharedWorkspace, InMemoryAgentSessionSt
 
 from business.boards.paper_radar.agents.models import PaperAgentContext, PaperAgentResult, PaperAnalysisRequest
 from business.boards.paper_radar.agents.orchestrator import PaperAnalysisOrchestrator
-from business.boards.paper_radar.agents.roles import PAPER_ROLE_EXPERIMENT_RESULT, PAPER_ROLE_METADATA, PAPER_ROLE_QUALITY_RESULT, PAPER_ROLE_TAXONOMY_RESULT
+from business.boards.paper_radar.agents.roles import (
+    PAPER_ROLE_EVIDENCE_VERIFICATION,
+    PAPER_ROLE_EXPERIMENT_RESULT,
+    PAPER_ROLE_METADATA,
+    PAPER_ROLE_QUALITY_RESULT,
+    PAPER_ROLE_SEMANTIC_SECTIONS,
+    PAPER_ROLE_TAXONOMY_RESULT,
+)
 
 
 def test_experiment_and_quality_agents_receive_prior_results_from_shared_workspace() -> None:
@@ -24,12 +31,14 @@ def test_experiment_and_quality_agents_receive_prior_results_from_shared_workspa
         quality_agent=quality,
     ).analyze_paper(request)
 
-    assert experiment.received_roles == (PAPER_ROLE_METADATA, PAPER_ROLE_TAXONOMY_RESULT)
-    assert quality.received_roles == (PAPER_ROLE_TAXONOMY_RESULT, PAPER_ROLE_EXPERIMENT_RESULT)
+    assert experiment.received_roles == (PAPER_ROLE_SEMANTIC_SECTIONS, PAPER_ROLE_TAXONOMY_RESULT)
+    assert quality.received_roles == (PAPER_ROLE_TAXONOMY_RESULT, PAPER_ROLE_EXPERIMENT_RESULT, PAPER_ROLE_EVIDENCE_VERIFICATION)
 
 
 class StaticTaxonomyAgent:
     agent_id = "static-taxonomy-agent"
+    required_roles = (PAPER_ROLE_METADATA,)
+    produced_role = PAPER_ROLE_TAXONOMY_RESULT
 
     def run(self, context: PaperAgentContext) -> PaperAgentResult:
         return PaperAgentResult(
@@ -48,6 +57,8 @@ class StaticTaxonomyAgent:
 
 class CapturingExperimentAgent:
     agent_id = "capturing-experiment-agent"
+    required_roles = (PAPER_ROLE_SEMANTIC_SECTIONS, PAPER_ROLE_TAXONOMY_RESULT)
+    produced_role = PAPER_ROLE_EXPERIMENT_RESULT
 
     def __init__(self) -> None:
         self.received_roles: tuple[str, ...] = ()
@@ -64,6 +75,8 @@ class CapturingExperimentAgent:
 
 class CapturingQualityAgent:
     agent_id = "capturing-quality-agent"
+    required_roles = (PAPER_ROLE_TAXONOMY_RESULT, PAPER_ROLE_EXPERIMENT_RESULT, PAPER_ROLE_EVIDENCE_VERIFICATION)
+    produced_role = PAPER_ROLE_QUALITY_RESULT
 
     def __init__(self) -> None:
         self.received_roles: tuple[str, ...] = ()

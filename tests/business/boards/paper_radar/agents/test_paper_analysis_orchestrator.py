@@ -8,15 +8,24 @@ from framework.agent.session import AgentSharedWorkspace, AgentSessionItem, InMe
 from business.boards.paper_radar.agents.models import PaperAgentContext, PaperAgentResult, PaperAnalysisRequest
 from business.boards.paper_radar.agents.orchestrator import PaperAnalysisOrchestrator
 from business.boards.paper_radar.agents.roles import (
+    PAPER_ROLE_BENCHMARK_CLAIMS,
+    PAPER_ROLE_COMPARISON_RESULT,
+    PAPER_ROLE_CONTRIBUTION_RESULT,
+    PAPER_ROLE_EVIDENCE_VERIFICATION,
     PAPER_ROLE_EXPERIMENT_RESULT,
     PAPER_ROLE_FINAL_PROFILE,
+    PAPER_ROLE_MEMORY_RECORDS,
     PAPER_ROLE_METADATA,
     PAPER_ROLE_QUALITY_RESULT,
+    PAPER_ROLE_REPRODUCIBILITY_RESULT,
+    PAPER_ROLE_SELECTION_DECISION,
+    PAPER_ROLE_SEMANTIC_SECTIONS,
+    PAPER_ROLE_SOURCE_ARTIFACTS,
     PAPER_ROLE_TAXONOMY_RESULT,
 )
 
 
-def test_orchestrator_writes_metadata_taxonomy_experiment_quality_and_final_profile() -> None:
+def test_orchestrator_writes_final_workflow_roles_in_order() -> None:
     workspace = AgentSharedWorkspace(InMemoryAgentSessionStore())
     request = _request()
 
@@ -25,14 +34,24 @@ def test_orchestrator_writes_metadata_taxonomy_experiment_quality_and_final_prof
     roles = [item.role for item in workspace.read(session_id=request.session_id)]
     assert roles == [
         PAPER_ROLE_METADATA,
+        PAPER_ROLE_SOURCE_ARTIFACTS,
+        PAPER_ROLE_SEMANTIC_SECTIONS,
+        PAPER_ROLE_SELECTION_DECISION,
         PAPER_ROLE_TAXONOMY_RESULT,
         PAPER_ROLE_EXPERIMENT_RESULT,
+        PAPER_ROLE_BENCHMARK_CLAIMS,
+        PAPER_ROLE_EVIDENCE_VERIFICATION,
+        PAPER_ROLE_CONTRIBUTION_RESULT,
         PAPER_ROLE_QUALITY_RESULT,
+        PAPER_ROLE_REPRODUCIBILITY_RESULT,
+        PAPER_ROLE_COMPARISON_RESULT,
         PAPER_ROLE_FINAL_PROFILE,
+        PAPER_ROLE_MEMORY_RECORDS,
     ]
     assert result.final_profile["taskRefs"]
     assert result.final_profile["methodRefs"]
     assert result.final_profile["classification"]["agentSessionId"] == request.session_id
+    assert workspace.latest(session_id=request.session_id, role=PAPER_ROLE_FINAL_PROFILE).status == "final"
 
 
 def test_orchestrator_degrades_when_agent_fails() -> None:

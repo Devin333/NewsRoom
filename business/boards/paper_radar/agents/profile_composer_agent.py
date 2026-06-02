@@ -9,9 +9,14 @@ from framework.agent.session import AgentSessionItem
 
 from business.boards.paper_radar.agents.models import PaperAgentContext, PaperAgentResult
 from business.boards.paper_radar.agents.roles import (
+    PAPER_ROLE_COMPARISON_RESULT,
+    PAPER_ROLE_CONTRIBUTION_RESULT,
+    PAPER_ROLE_EVIDENCE_VERIFICATION,
     PAPER_ROLE_EXPERIMENT_RESULT,
     PAPER_ROLE_FINAL_PROFILE,
     PAPER_ROLE_QUALITY_RESULT,
+    PAPER_ROLE_REPRODUCIBILITY_RESULT,
+    PAPER_ROLE_SELECTION_DECISION,
     PAPER_ROLE_TAXONOMY_RESULT,
 )
 
@@ -20,19 +25,38 @@ class PaperProfileComposerAgent:
     """Merge prior paper agent outputs into a PublicPaper-compatible profile."""
 
     agent_id = "paper-profile-composer-agent"
+    required_roles = (
+        PAPER_ROLE_SELECTION_DECISION,
+        PAPER_ROLE_TAXONOMY_RESULT,
+        PAPER_ROLE_EXPERIMENT_RESULT,
+        PAPER_ROLE_EVIDENCE_VERIFICATION,
+        PAPER_ROLE_CONTRIBUTION_RESULT,
+        PAPER_ROLE_QUALITY_RESULT,
+        PAPER_ROLE_REPRODUCIBILITY_RESULT,
+        PAPER_ROLE_COMPARISON_RESULT,
+    )
+    produced_role = PAPER_ROLE_FINAL_PROFILE
 
     def run(self, context: PaperAgentContext) -> PaperAgentResult:
+        selection = _latest_output(context.shared_items, PAPER_ROLE_SELECTION_DECISION)
         taxonomy = _latest_output(context.shared_items, PAPER_ROLE_TAXONOMY_RESULT)
         experiment = _latest_output(context.shared_items, PAPER_ROLE_EXPERIMENT_RESULT)
+        verification = _latest_output(context.shared_items, PAPER_ROLE_EVIDENCE_VERIFICATION)
+        contribution = _latest_output(context.shared_items, PAPER_ROLE_CONTRIBUTION_RESULT)
         quality = _latest_output(context.shared_items, PAPER_ROLE_QUALITY_RESULT)
+        reproducibility = _latest_output(context.shared_items, PAPER_ROLE_REPRODUCIBILITY_RESULT)
+        comparison = _latest_output(context.shared_items, PAPER_ROLE_COMPARISON_RESULT)
         low_confidence_items = _low_confidence_items(context.shared_items, taxonomy, experiment, quality)
         confidence = _combined_confidence(taxonomy, experiment, quality)
+        benchmarks = _verified_benchmarks(experiment, verification)
+        review_queue_items = _review_queue_items(selection, low_confidence_items, quality)
         output = {
             "primaryTaskGroup": taxonomy.get("primaryTaskGroup"),
             "secondaryTaskGroups": list(_sequence(taxonomy.get("secondaryTaskGroups"))),
             "taskRefs": list(_sequence(taxonomy.get("taskRefs"))),
             "methodRefs": list(_sequence(taxonomy.get("methodRefs"))),
-            "benchmarks": list(_sequence(experiment.get("benchmarks"))),
+            "benchmarks": benchmarks,
+            "implementations": _implementations(context.request.repo_url, reproducibility),
             "confidence": confidence,
             "evidenceSummary": taxonomy.get("evidenceSummary"),
             "classification": {
@@ -42,16 +66,26 @@ class PaperProfileComposerAgent:
                 "evidenceSummary": taxonomy.get("evidenceSummary"),
                 "agentSessionId": context.request.session_id,
                 "qualityScore": quality.get("qualityScore"),
+                "noveltyScore": contribution.get("noveltyScore"),
+                "reproducibilityScore": reproducibility.get("reproducibilityScore"),
                 "evidenceStrength": quality.get("evidenceStrength"),
                 "recommendation": quality.get("recommendation"),
             },
             "aiSummary": {
+                "summary": _summary(context.request.title, taxonomy, contribution),
+                "methodSummary": taxonomy.get("evidenceSummary"),
                 "experimentSummary": experiment.get("experimentSummary"),
+                "contributionSummary": contribution.get("mainContributionSummary"),
+                "qualitySummary": f"Quality recommendation: {quality.get('recommendation')}.",
+                "reproducibilitySummary": f"Repo health: {reproducibility.get('repoHealth') or 'unknown'}.",
+                "comparisonSummary": comparison.get("comparisonSummary"),
                 "engineeringRelevance": _engineering_relevance(context.request.repo_url, quality),
                 "limitations": list(_sequence(quality.get("weaknesses"))),
-                "contributions": _contributions(context.request.title, context.request.abstract),
+                "contributions": [item.get("claim") for item in _sequence(contribution.get("contributions")) if isinstance(item, Mapping) and item.get("claim")]
+                or _contributions(context.request.title, context.request.abstract),
             },
             "lowConfidenceItems": low_confidence_items,
+            "reviewQueueItems": review_queue_items,
         }
         summary = f"Composed final profile with {len(output['taskRefs'])} task ref(s) and {len(output['benchmarks'])} benchmark(s)."
         return PaperAgentResult(
@@ -84,6 +118,27 @@ def _combined_confidence(*outputs: Mapping[str, Any]) -> float:
     return round(sum(values) / len(values), 2)
 
 
+def _verified_benchmarks(experiment: Mapping[str, Any], verification: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    verified_by_id = {
+        str(item.get("claimId")): item
+        for item in _sequence(verification.get("verifiedClaims"))
+        if isinstance(item, Mapping)
+    }
+    weak_ids = {str(item.get("claimId")) for item in _sequence(verification.get("weakClaims")) if isinstance(item, Mapping)}
+    rejected_ids = {str(item.get("claimId")) for item in _sequence(verification.get("rejectedClaims")) if isinstance(item, Mapping)}
+    result = []
+    for benchmark in _sequence(experiment.get("benchmarks")):
+        if not isinstance(benchmark, Mapping):
+            continue
+        claim_id = str(benchmark.get("claimId") or benchmark.get("id") or "")
+        if claim_id in rejected_ids:
+            continue
+        item = dict(benchmark)
+        item["verified"] = claim_id in verified_by_id and claim_id not in weak_ids
+        result.append(item)
+    return result
+
+
 def _low_confidence_items(
     items: Sequence[AgentSessionItem],
     taxonomy: Mapping[str, Any],
@@ -111,6 +166,30 @@ def _low_confidence_items(
         for error in _sequence(errors):
             result.append({"kind": "agent_error", "agentId": item.agent_id, "role": item.role, "reason": str(error), "action": "manual_review"})
     return result
+
+
+def _review_queue_items(selection: Mapping[str, Any], low_confidence_items: Sequence[Mapping[str, Any]], quality: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    items = []
+    if selection.get("decision") in {"manual_review", "repair_queue"}:
+        items.append({"kind": "selection", "reason": selection.get("reason"), "action": selection.get("decision")})
+    if quality.get("recommendation") in {"manual_review", "caution"}:
+        items.append({"kind": "quality", "reason": quality.get("recommendation"), "action": "manual_review"})
+    items.extend(dict(item) for item in low_confidence_items if isinstance(item, Mapping))
+    return items
+
+
+def _implementations(repo_url: str | None, reproducibility: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    if not repo_url:
+        return []
+    return [{"repoUrl": repo_url, "repoHealth": reproducibility.get("repoHealth"), "hasCode": reproducibility.get("hasCode")}]
+
+
+def _summary(title: str, taxonomy: Mapping[str, Any], contribution: Mapping[str, Any]) -> str:
+    contribution_summary = contribution.get("mainContributionSummary")
+    if contribution_summary:
+        return str(contribution_summary)
+    primary = taxonomy.get("primaryTaskGroup") or "AI"
+    return f"{title} is analyzed as a {primary} paper."
 
 
 def _engineering_relevance(repo_url: str | None, quality: Mapping[str, Any]) -> str:
