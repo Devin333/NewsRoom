@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from business.boards.ai_news.board_service import AINewsBoardService
-from business.boards.application import BoardServiceRuntime
+from business.boards.application import BoardRunApplicationResultBuilder, BoardServiceRuntime
 from business.boards.domain import (
     BoardEvidenceAssemblyService,
     BoardQualityService as DomainBoardQualityService,
@@ -29,7 +29,7 @@ from business.boards.services import (
     BoardSignalSelectionService,
 )
 from business.evaluation.fixtures import sample_signal
-from business.foundation import AnalysisContext, BoardType
+from business.foundation import AnalysisContext, BoardRunPipelineSnapshot, BoardType
 from business.foundation.skills import BusinessSkillResult, BusinessSkillRuntime
 from business.layers.output import BoardOutput, BoardOutputStats
 
@@ -48,6 +48,7 @@ def test_board_service_base_exposes_decomposed_boundary_services() -> None:
     assert isinstance(service.report_descriptor_service, BoardReportDescriptorService)
     assert isinstance(service.report_service, BoardReportExtractionService)
     assert isinstance(service.result_builder, BoardRunResultBuilder)
+    assert isinstance(service.result_builder.application_result_builder, BoardRunApplicationResultBuilder)
     assert isinstance(service.run_build_service, BoardRunBuildService)
     assert isinstance(service.result_builder.metadata_builder, BoardRunMetadataBuilder)
     assert service.result_builder.report_service is service.report_service
@@ -62,10 +63,31 @@ def test_board_run_result_uses_reference_and_pipeline_snapshots() -> None:
     result = service.build_board_run_result([sample_signal("ai_news")])
 
     assert result.board_output["metadata"]["board_type"] == BoardType.AI_NEWS.value
+    assert result.pipeline_snapshot is not None
+    assert result.pipeline_snapshot.schema_version == "business.board.run.pipeline_snapshot.v1"
+    assert result.report_payloads
     assert result.artifact_refs
     assert result.evidence_refs
-    assert result.metadata["pipeline_snapshot"]["processed_relations"] == result.metadata["processed_relations"]
+    assert result.pipeline_snapshot.processed_relations == result.metadata["processed_relations"]
+    assert result.metadata["pipeline_snapshot"] == result.pipeline_snapshot.to_dict()
     assert result.metadata["board_output"] == result.board_output
+
+
+def test_pipeline_run_carries_formal_snapshot_before_result_metadata() -> None:
+    service = AINewsBoardService()
+    context = AnalysisContext(board_type=BoardType.AI_NEWS)
+    selected = service.select_signals([sample_signal("ai_news")], context=context)
+
+    pipeline_run = service.run_build_service.run_selected(
+        selected,
+        context=context,
+        report_title=service._report_title(),
+        report_summary=service._report_summary(),
+    )
+
+    assert isinstance(pipeline_run.pipeline_snapshot, BoardRunPipelineSnapshot)
+    assert pipeline_run.pipeline_snapshot.extraction_count == len(pipeline_run.extraction_results)
+    assert pipeline_run.pipeline_snapshot.analysis == pipeline_run.analysis.to_dict()
 
 
 def test_board_run_build_service_centralizes_context_resolution() -> None:
@@ -99,18 +121,19 @@ def test_board_run_metadata_builder_centralizes_legacy_metadata_fields() -> None
             evidence_refs=[StubRef("evidence-1")],
             memory_refs=[StubRef("memory-1")],
         ),
-        pipeline_snapshot={
-            "processed_relations": [{"relation_id": "rel-1"}],
-            "rejected_relations": [],
-            "analysis": {"summary": "analysis"},
-        },
+        pipeline_snapshot=BoardRunPipelineSnapshot(
+            extraction_count=1,
+            processed_relations=[{"relation_id": "rel-1"}],
+            rejected_relations=[],
+            analysis={"summary": "analysis"},
+        ),
     )
 
     metadata = payload.to_result_metadata()
 
     assert isinstance(payload, BoardRunMetadataPayload)
     assert payload.schema_version == "business.board.run.metadata.v1"
-    assert metadata["pipeline_snapshot"] == payload.pipeline_snapshot
+    assert metadata["pipeline_snapshot"]["schema_version"] == "business.board.run.pipeline_snapshot.v1"
     assert metadata["processed_relations"] == [{"relation_id": "rel-1"}]
     assert metadata["analysis"] == {"summary": "analysis"}
 
@@ -145,8 +168,11 @@ def test_board_report_extraction_service_centralizes_legacy_report_metadata() ->
         },
     )
 
+    extraction = BoardReportExtractionService().extract(output)
     report = BoardReportExtractionService().require_report(output)
 
+    assert extraction.payloads[0]["board_name"] == "AI News"
+    assert extraction.reports[0] == report
     assert report.report_id == "report-1"
     assert report.board_type == BoardType.AI_NEWS
 

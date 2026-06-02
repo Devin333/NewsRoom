@@ -6,7 +6,7 @@ from typing import Any
 from business.boards.services.pipeline import BoardPipelineRun, BoardPipelineRunner
 from business.boards.services.result_builder import BoardRunResultBuilder
 from business.boards.services.selection import BoardSignalSelectionService
-from business.foundation import AnalysisContext, BoardRunResult, BoardType, Signal
+from business.foundation import AnalysisContext, BoardRunPipelineSnapshot, BoardRunResult, BoardType, Signal
 from business.layers.analysis import AnalysisResult
 from business.layers.extraction import ExtractionResult
 from business.layers.output import BoardOutput
@@ -90,6 +90,7 @@ class BoardRunBuildService:
             extraction_results=pipeline_run.extraction_results,
             relation_result=pipeline_run.relation_result,
             analysis=pipeline_run.analysis,
+            pipeline_snapshot=pipeline_run.pipeline_snapshot,
             run_result_postprocessor=run_result_postprocessor,
         )
 
@@ -102,6 +103,7 @@ class BoardRunBuildService:
         extraction_results: list[ExtractionResult],
         relation_result: RelationPipelineResult,
         analysis: AnalysisResult,
+        pipeline_snapshot: BoardRunPipelineSnapshot | None = None,
         run_result_postprocessor: RunResultPostprocessor | None = None,
     ) -> BoardRunResult:
         result = self.result_builder.build(
@@ -111,6 +113,7 @@ class BoardRunBuildService:
             extraction_results=extraction_results,
             relation_result=relation_result,
             analysis=analysis,
+            pipeline_snapshot=pipeline_snapshot,
         )
         if run_result_postprocessor is None:
             return result

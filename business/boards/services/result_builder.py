@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-from typing import Any
-
+from business.boards.application.result import BoardRunApplicationResultBuilder, run_id_from_context
 from business.boards.services.metadata import BoardRunMetadataBuilder, legacy_pipeline_metadata
+from business.boards.services.pipeline import board_pipeline_snapshot
 from business.boards.services.quality import BoardQualityService
 from business.boards.services.refs import BoardRunReferenceService
 from business.boards.services.report import BoardReportExtractionService
 from business.foundation import (
     AnalysisContext,
+    BoardRunPipelineSnapshot,
     BoardRunResult,
     BoardType,
     BusinessPolicySnapshot,
@@ -39,6 +40,13 @@ class BoardRunResultBuilder:
         self.reference_service = reference_service or BoardRunReferenceService()
         self.metadata_builder = metadata_builder or BoardRunMetadataBuilder()
         self.report_service = report_service or BoardReportExtractionService()
+        self.application_result_builder = BoardRunApplicationResultBuilder(
+            board_type=board_type,
+            policy_loader=policy_loader,
+            quality_service=self.quality_service,
+            reference_service=self.reference_service,
+            report_service=self.report_service,
+        )
 
     def build(
         self,
@@ -49,47 +57,24 @@ class BoardRunResultBuilder:
         extraction_results: list[ExtractionResult],
         relation_result: RelationPipelineResult,
         analysis: AnalysisResult,
+        pipeline_snapshot: BoardRunPipelineSnapshot | None = None,
     ) -> BoardRunResult:
-        run_id = run_id_from_context(context, self.board_type)
-        policy_snapshot = self.policy_snapshot(run_id)
-        reports = self.reports_from_output(output)
-        quality_summary = self.quality_service.build_summary(output)
-        feedback_candidates = self.quality_service.feedback_candidates(output, quality_summary, policy_snapshot)
-        refs = self.reference_service.build(
-            run_id=run_id,
-            board_type=self.board_type,
+        snapshot = pipeline_snapshot or board_pipeline_snapshot(
+            extraction_results=extraction_results,
+            relation_result=relation_result,
+            analysis=analysis,
+        )
+        application_result = self.application_result_builder.build(
+            output=output,
+            pipeline_snapshot=snapshot,
             context=context,
             signals=signals,
             relations=relation_result.relations,
         )
-        snapshot = pipeline_snapshot(
-            relation_result=relation_result,
-            analysis=analysis,
-            extraction_results=extraction_results,
-        )
         metadata_payload = self.metadata_builder.build(
-            output=output,
-            refs=refs,
-            pipeline_snapshot=snapshot,
+            application_result=application_result,
         )
-        return BoardRunResult(
-            board_type=self.board_type,
-            run_id=run_id,
-            cards=list(output.cards),
-            detail_pages=list(output.detail_pages),
-            insights=list(output.insights),
-            reports=reports,
-            board_output=output.to_dict(),
-            policy_snapshot=policy_snapshot,
-            quality_summary=quality_summary,
-            feedback_candidates=feedback_candidates,
-            trace_ref=refs.trace_ref,
-            manifest_ref=refs.manifest_ref,
-            artifact_refs=refs.artifact_refs,
-            evidence_refs=refs.evidence_refs,
-            memory_refs=refs.memory_refs,
-            metadata=metadata_payload.to_result_metadata(),
-        )
+        return application_result.to_board_run_result(metadata=metadata_payload.to_result_metadata())
 
     def policy_snapshot(self, run_id: str) -> BusinessPolicySnapshot:
         return create_policy_snapshot(
@@ -101,25 +86,17 @@ class BoardRunResultBuilder:
         return self.report_service.extract_reports(output)
 
 
-def run_id_from_context(context: AnalysisContext, board_type: BoardType) -> str:
-    run_context = getattr(context, "run_context", None)
-    if run_context is not None and getattr(run_context, "run_id", None):
-        return str(run_context.run_id)
-    return f"{board_type.value}-run"
-
-
 def pipeline_snapshot(
     *,
     relation_result: RelationPipelineResult,
     analysis: AnalysisResult,
     extraction_results: list[ExtractionResult],
-) -> dict[str, Any]:
-    return {
-        "extraction_count": len(extraction_results),
-        "processed_relations": [relation.to_dict() for relation in relation_result.relations],
-        "rejected_relations": [rejected.to_dict() for rejected in relation_result.rejected_candidates],
-        "analysis": analysis.to_dict(),
-    }
+) -> BoardRunPipelineSnapshot:
+    return board_pipeline_snapshot(
+        extraction_results=extraction_results,
+        relation_result=relation_result,
+        analysis=analysis,
+    )
 
 
 __all__ = ["BoardRunResultBuilder", "legacy_pipeline_metadata", "pipeline_snapshot", "run_id_from_context"]

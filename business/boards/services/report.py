@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
+from business.boards.application.result import BoardReportExtractionResult
 from business.foundation import BoardDefinition, Report
 from business.layers.output import BoardOutput
 
@@ -22,11 +24,15 @@ class BoardReportDescriptorService:
 
 
 class BoardReportExtractionService:
-    def extract_reports(self, output: BoardOutput) -> list[Report]:
+    def extract(self, output: BoardOutput) -> BoardReportExtractionResult:
         payload = self.report_payload(output)
         if payload is None:
-            return []
-        return [Report.model_validate(_report_payload_for_validation(payload))]
+            return BoardReportExtractionResult(reports=[], payloads=[])
+        report = Report.model_validate(_report_payload_for_validation(payload))
+        return BoardReportExtractionResult(reports=[report], payloads=[dict(payload)])
+
+    def extract_reports(self, output: BoardOutput) -> list[Report]:
+        return self.extract(output).reports
 
     def require_report(self, output: BoardOutput) -> Report:
         reports = self.extract_reports(output)
@@ -34,7 +40,7 @@ class BoardReportExtractionService:
             raise ValueError("board output does not include a report payload")
         return reports[0]
 
-    def report_payload(self, output: BoardOutput) -> dict[str, object] | None:
+    def report_payload(self, output: BoardOutput) -> dict[str, Any] | None:
         payload = output.metadata.get("report")
         if not isinstance(payload, dict):
             return None

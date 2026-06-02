@@ -58,10 +58,14 @@ selection、quality、references 等领域规则位于 `business/boards/domain/`
 本轮新增的正式字段：
 
 - `BoardRunResult.board_output`：显式承载 board output payload。
+- `BoardRunResult.pipeline_snapshot`：显式承载 pipeline snapshot，类型为 `BoardRunPipelineSnapshot`。
+- `BoardRunResult.report_payloads`：显式承载从 board output 提取的 report payload。
 - `BoardRunResult.metadata["board_output"]`：仅作为历史兼容字段保留。
 - `ProductizedRunState`：承载 skill traces、extracted entities、evidence refs/items、deduplication result、trend analysis 和 improvement context。
 
 新代码应优先读取正式字段，例如 `BoardRunResult.board_output` 和 `productized_run`，不要从 `metadata` 反向推断内部状态。
+`BoardRunApplicationResult` 是 board run 组装阶段的正式 application result model；
+`BoardRunMetadataBuilder` 只负责把它投影成旧调用方需要的 metadata 兼容字段。
 
 ## Improvement 边界
 

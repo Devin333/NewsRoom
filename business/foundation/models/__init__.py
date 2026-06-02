@@ -22,7 +22,7 @@ from business.foundation._models import (
     make_object_ref,
     make_signal_identity,
 )
-from business.foundation.models.board_run import BoardRunResult
+from business.foundation.models.board_run import BoardRunPipelineSnapshot, BoardRunResult
 from business.foundation.models.quality_loop import (
     BusinessFeedbackEvent,
     BusinessFeedbackLink,
@@ -40,6 +40,7 @@ from business.foundation.models.quality_loop import (
 __all__ = [
     "Badge",
     "BoardCard",
+    "BoardRunPipelineSnapshot",
     "BoardRunResult",
     "BusinessFeedbackEvent",
     "BusinessFeedbackLink",

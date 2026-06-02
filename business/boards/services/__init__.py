@@ -1,10 +1,11 @@
 from business.boards.services.annotation import BoardOutputAnnotationService
 from business.boards.services.metadata import BoardRunMetadataBuilder, BoardRunMetadataPayload
-from business.boards.services.pipeline import BoardPipelineRun, BoardPipelineRunner
+from business.boards.services.pipeline import BoardPipelineRun, BoardPipelineRunner, board_pipeline_snapshot
 from business.boards.services.policy import BoardPolicyApplicationProfile, BoardPolicyApplicationService
 from business.boards.services.quality import BoardQualityService
 from business.boards.services.refs import BoardRunReferenceService, BoardRunReferences
 from business.boards.services.report import (
+    BoardReportExtractionResult,
     BoardReportDescriptor,
     BoardReportDescriptorService,
     BoardReportExtractionService,
@@ -23,6 +24,7 @@ __all__ = [
     "BoardPolicyApplicationService",
     "BoardQualityService",
     "BoardReportDescriptor",
+    "BoardReportExtractionResult",
     "BoardReportDescriptorService",
     "BoardRunReferenceService",
     "BoardRunReferences",
@@ -30,4 +32,5 @@ __all__ = [
     "BoardRunResultBuilder",
     "BoardRunBuildService",
     "BoardSignalSelectionService",
+    "board_pipeline_snapshot",
 ]

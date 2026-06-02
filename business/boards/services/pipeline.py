@@ -4,7 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from business.boards.services.annotation import BoardOutputAnnotationService
-from business.foundation import AnalysisContext, BoardDefinition, BoardType, Signal
+from business.foundation import AnalysisContext, BoardDefinition, BoardRunPipelineSnapshot, BoardType, Signal
 from business.layers.analysis import AnalysisPipeline, AnalysisResult
 from business.layers.extraction import ExtractionPipeline, ExtractionResult
 from business.layers.output import BoardOutput, BoardOutputPipeline
@@ -18,6 +18,7 @@ class BoardPipelineRun:
     relation_result: RelationPipelineResult
     analysis: AnalysisResult
     output: BoardOutput
+    pipeline_snapshot: BoardRunPipelineSnapshot
 
 
 class BoardPipelineRunner:
@@ -96,7 +97,26 @@ class BoardPipelineRunner:
             relation_result=relation_result,
             analysis=analysis,
             output=output,
+            pipeline_snapshot=board_pipeline_snapshot(
+                extraction_results=extraction_results,
+                relation_result=relation_result,
+                analysis=analysis,
+            ),
         )
 
 
-__all__ = ["BoardPipelineRun", "BoardPipelineRunner"]
+def board_pipeline_snapshot(
+    *,
+    extraction_results: list[ExtractionResult],
+    relation_result: RelationPipelineResult,
+    analysis: AnalysisResult,
+) -> BoardRunPipelineSnapshot:
+    return BoardRunPipelineSnapshot(
+        extraction_count=len(extraction_results),
+        processed_relations=[relation.to_dict() for relation in relation_result.relations],
+        rejected_relations=[rejected.to_dict() for rejected in relation_result.rejected_candidates],
+        analysis=analysis.to_dict(),
+    )
+
+
+__all__ = ["BoardPipelineRun", "BoardPipelineRunner", "board_pipeline_snapshot"]

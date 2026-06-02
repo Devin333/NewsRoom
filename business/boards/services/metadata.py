@@ -4,7 +4,9 @@ from typing import Any
 
 from pydantic import Field
 
+from business.boards.application.result import BoardRunApplicationResult
 from business.boards.services.refs import BoardRunReferences
+from business.foundation import BoardRunPipelineSnapshot
 from business.foundation import PrimitiveModel
 from business.layers.output import BoardOutput
 
@@ -33,26 +35,41 @@ class BoardRunMetadataBuilder:
     def build(
         self,
         *,
-        output: BoardOutput,
-        refs: BoardRunReferences,
-        pipeline_snapshot: dict[str, Any],
+        application_result: BoardRunApplicationResult | None = None,
+        output: BoardOutput | None = None,
+        refs: BoardRunReferences | None = None,
+        pipeline_snapshot: BoardRunPipelineSnapshot | dict[str, Any] | None = None,
     ) -> BoardRunMetadataPayload:
+        if application_result is not None:
+            output = application_result.output
+            refs = application_result.refs
+            pipeline_snapshot = application_result.pipeline_snapshot
+        if output is None or refs is None or pipeline_snapshot is None:
+            raise ValueError("application_result or output/refs/pipeline_snapshot is required")
+        snapshot_payload = _pipeline_snapshot_payload(pipeline_snapshot)
         return BoardRunMetadataPayload(
             board_output=output.to_dict(),
             artifact_refs=[ref.to_dict() for ref in refs.artifact_refs],
             evidence_refs=[ref.to_dict() for ref in refs.evidence_refs],
             memory_refs=[ref.to_dict() for ref in refs.memory_refs],
-            pipeline_snapshot=pipeline_snapshot,
+            pipeline_snapshot=snapshot_payload,
             legacy_pipeline_fields=legacy_pipeline_metadata(pipeline_snapshot),
         )
 
 
-def legacy_pipeline_metadata(snapshot: dict[str, Any]) -> dict[str, Any]:
+def legacy_pipeline_metadata(snapshot: BoardRunPipelineSnapshot | dict[str, Any]) -> dict[str, Any]:
+    payload = _pipeline_snapshot_payload(snapshot)
     return {
-        "processed_relations": list(snapshot["processed_relations"]),
-        "rejected_relations": list(snapshot["rejected_relations"]),
-        "analysis": dict(snapshot["analysis"]),
+        "processed_relations": list(payload["processed_relations"]),
+        "rejected_relations": list(payload["rejected_relations"]),
+        "analysis": dict(payload["analysis"]),
     }
+
+
+def _pipeline_snapshot_payload(snapshot: BoardRunPipelineSnapshot | dict[str, Any]) -> dict[str, Any]:
+    if isinstance(snapshot, BoardRunPipelineSnapshot):
+        return snapshot.to_dict()
+    return dict(snapshot)
 
 
 __all__ = ["BoardRunMetadataBuilder", "BoardRunMetadataPayload", "legacy_pipeline_metadata"]
