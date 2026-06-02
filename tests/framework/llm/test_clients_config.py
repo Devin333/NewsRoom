@@ -116,6 +116,41 @@ def test_models_config_rejects_invalid_unselected_group_before_route_selection(t
         load_openai_compatible_deployment(path, route_id="writer")
 
 
+def test_models_config_rejects_unknown_top_level_field() -> None:
+    payload = _valid_payload()
+    payload["routez"] = {}
+
+    with pytest.raises(LLMConfigurationError, match=r"model config contains unsupported field\(s\): routez"):
+        validate_openai_compatible_models_config(payload)
+
+
+def test_models_config_rejects_unknown_deployment_field() -> None:
+    payload = _valid_payload()
+    payload["model_groups"]["writer-group"]["deployments"][0]["timeout_second"] = 30
+
+    with pytest.raises(
+        LLMConfigurationError,
+        match=r"model_groups\.writer-group\.deployments\[0\] contains unsupported field\(s\): timeout_second",
+    ):
+        validate_openai_compatible_models_config(payload)
+
+
+def test_models_config_rejects_unknown_route_field() -> None:
+    payload = _valid_payload()
+    payload["routes"]["writer"]["model_gorup"] = "writer-group"
+
+    with pytest.raises(LLMConfigurationError, match=r"routes\.writer contains unsupported field\(s\): model_gorup"):
+        validate_openai_compatible_models_config(payload)
+
+
+def test_models_config_rejects_unknown_capability_field() -> None:
+    payload = _valid_payload()
+    payload["model_groups"]["writer-group"]["deployments"][0]["capabilities"]["supports_toolz"] = True
+
+    with pytest.raises(LLMConfigurationError, match=r"capabilities contains unsupported field\(s\): supports_toolz"):
+        validate_openai_compatible_models_config(payload)
+
+
 def test_models_config_requires_api_key_reference() -> None:
     payload = _valid_payload()
     deployment = payload["model_groups"]["writer-group"]["deployments"][0]

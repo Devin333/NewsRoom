@@ -23,3 +23,7 @@
 ## Stability Rule
 
 Framework code defines reusable runtime behavior only. NewsRoom business concepts such as sources, reports, boards, evidence, claims, and daily intelligence profiles belong outside `framework`.
+
+## LLM Configuration
+
+`framework.llm` owns domain-neutral model configuration loading and schema validation. `configs/models.yaml` is validated at load time for known top-level, route, deployment, and capability fields so misspelled model config keys fail fast before any business workflow starts.

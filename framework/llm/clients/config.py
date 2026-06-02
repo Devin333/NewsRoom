@@ -35,6 +35,69 @@ _SENSITIVE_KEY_PARTS = {
     "secret",
     "token",
 }
+_TOP_LEVEL_MODEL_CONFIG_KEYS = {
+    "default_model_route",
+    "default_route",
+    "default_route_id",
+    "deployments",
+    "embeddings",
+    "model_groups",
+    "pricing",
+    "routes",
+    "schema_version",
+}
+_MODEL_GROUP_CONFIG_KEYS = {"deployments"}
+_DEPLOYMENT_CONFIG_KEYS = {
+    "api_base",
+    "api_key",
+    "api_key_env",
+    "api_url",
+    "base_url",
+    "capabilities",
+    "cooldown_seconds",
+    "deployment_id",
+    "enabled",
+    "max_retries",
+    "model",
+    "model_capabilities",
+    "provider",
+    "provider_name",
+    "timeout_seconds",
+}
+_ROUTE_CONFIG_KEYS = {
+    "budget_policy",
+    "deployment_id",
+    "fallback_deployment_ids",
+    "fallback_deployments",
+    "group",
+    "model_group",
+    "model_group_id",
+    "primary_deployment_id",
+    "required_capabilities",
+}
+_CAPABILITY_CONFIG_KEYS = {
+    "context_window_tokens",
+    "json",
+    "json_mode",
+    "max_output_tokens",
+    "multimodal",
+    "multimodal_input",
+    "parallel_tool_calls",
+    "prompt_cache",
+    "reasoning_tokens",
+    "streaming",
+    "structured_output",
+    "supports_json_mode",
+    "supports_multimodal_input",
+    "supports_parallel_tool_calls",
+    "supports_prompt_cache",
+    "supports_reasoning_tokens",
+    "supports_streaming",
+    "supports_structured_output",
+    "supports_tool_calling",
+    "tool_calling",
+    "tools",
+}
 
 
 @dataclass(frozen=True)
@@ -137,6 +200,7 @@ def validate_openai_compatible_models_config(payload: Any) -> None:
     if not isinstance(payload, dict):
         raise LLMConfigurationError("model config must be an object")
     _assert_no_literal_secrets(payload)
+    _assert_allowed_keys(payload, allowed=_TOP_LEVEL_MODEL_CONFIG_KEYS, field="model config")
 
     groups = _dict_value(payload.get("model_groups"), field="model_groups", default={})
     routes = _dict_value(payload.get("routes"), field="routes", default={})
@@ -150,6 +214,11 @@ def validate_openai_compatible_models_config(payload: Any) -> None:
         group_key = _schema_key_text(group_id, field="model_groups")
         if not isinstance(group_payload, dict):
             raise LLMConfigurationError(f"model_groups.{group_key} must be an object")
+        _assert_allowed_keys(
+            group_payload,
+            allowed=_MODEL_GROUP_CONFIG_KEYS,
+            field=f"model_groups.{group_key}",
+        )
         deployments = _deployment_list(
             group_payload.get("deployments"),
             field=f"model_groups.{group_key}.deployments",
@@ -208,6 +277,7 @@ def validate_openai_compatible_models_config(payload: Any) -> None:
 def _validate_deployment_schema(payload: dict[str, Any], *, field: str) -> str:
     if not isinstance(payload, dict):
         raise LLMConfigurationError(f"{field} must be an object")
+    _assert_allowed_keys(payload, allowed=_DEPLOYMENT_CONFIG_KEYS, field=field)
     deployment_id = _required_text(payload.get("deployment_id"), field=f"{field}.deployment_id")
     provider_kind = _required_text(payload.get("provider"), field=f"{field}.provider")
     if _ENV_PLACEHOLDER_RE.fullmatch(provider_kind) is None and provider_kind not in {
@@ -244,6 +314,7 @@ def _validate_route_schema(
     top_level_deployment_ids: set[str],
     all_deployment_ids: set[str],
 ) -> None:
+    _assert_allowed_keys(route_payload, allowed=_ROUTE_CONFIG_KEYS, field=f"routes.{route_id}")
     group_id = _optional_text(
         route_payload.get("model_group")
         or route_payload.get("model_group_id")
@@ -516,6 +587,11 @@ def _capabilities_from_payload(payload: dict[str, Any]) -> ModelCapabilities:
         return ModelCapabilities()
     if not isinstance(capability_payload, dict):
         raise LLMConfigurationError("capabilities must be an object")
+    _assert_allowed_keys(
+        capability_payload,
+        allowed=_CAPABILITY_CONFIG_KEYS,
+        field="capabilities",
+    )
     normalized = dict(capability_payload)
     context_window_tokens = normalized.pop("context_window_tokens", None)
     max_output_tokens = normalized.pop("max_output_tokens", None)
@@ -618,6 +694,21 @@ def _assert_no_literal_secrets(value: Any, *, path: str = "") -> None:
         return
     if isinstance(value, str) and _SECRET_VALUE_RE.search(value):
         raise LLMConfigurationError(f"model config field {path or '<root>'} contains a literal secret")
+
+
+def _assert_allowed_keys(
+    payload: dict[str, Any],
+    *,
+    allowed: set[str],
+    field: str,
+) -> None:
+    unknown = sorted(str(key) for key in payload if str(key) not in allowed)
+    if unknown:
+        allowed_text = ", ".join(sorted(allowed))
+        unknown_text = ", ".join(unknown)
+        raise LLMConfigurationError(
+            f"{field} contains unsupported field(s): {unknown_text}; allowed fields: {allowed_text}"
+        )
 
 
 def _is_sensitive_key(key: str) -> bool:
