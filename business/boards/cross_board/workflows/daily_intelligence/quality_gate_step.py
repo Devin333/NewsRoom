@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import Any, cast
+from typing import Any
 
 from framework.workflow import DataBufferReadPermissionError, StepScopedDataBufferView
 from business.foundation.models.report_output import BlockedReport, FinalReport, render_markdown
 from business.layers.analysis.quality import EditorDecision, EditorReview, RewritePolicy
 from business.boards.cross_board.workflows.daily_intelligence.evidence_step import quality_event
+from business.boards.cross_board.workflows.daily_intelligence.memory_quality import (
+    DailyMemoryQualityService,
+)
 from business.boards.cross_board.workflows.daily_intelligence.quality_evaluation import evaluate_report_quality
 from business.boards.cross_board.workflows.daily_intelligence.quality_result_builder import (
     human_review_request as build_human_review_request,
@@ -18,21 +21,14 @@ from business.boards.cross_board.workflows.daily_intelligence.quality_rewrite im
 from business.boards.cross_board.workflows.daily_intelligence.source_gate_policy import (
     contains_social_media_evidence,
 )
-from business.memory.intelligence_context import IntelligenceMemoryContext
-from business.memory.intelligence_models import (
-    ClaimMemory,
-    ClaimStatus,
-    DecisionMemory,
-    EntityMemory,
-    EventMemory,
-    EventType,
-    EvidenceMemory,
-    PreferenceMemory,
-)
-from business.memory.quality_memory_checks import QualityMemoryChecker
+from business.memory.intelligence_repository import IntelligenceMemoryQueryRepository
 
 
-def quality_gate(buffer: StepScopedDataBufferView) -> dict[str, Any]:
+def quality_gate(
+    buffer: StepScopedDataBufferView,
+    *,
+    memory_repository: IntelligenceMemoryQueryRepository | None = None,
+) -> dict[str, Any]:
     report_draft = buffer.read("report_draft")
     evidence_bundle = buffer.read("evidence_bundle")
     verified_findings = buffer.read("verified_findings")
@@ -40,7 +36,10 @@ def quality_gate(buffer: StepScopedDataBufferView) -> dict[str, Any]:
     memory_context = _read_memory_context(buffer)
     historian_context = _read_historian_context(buffer)
     historian_metadata = _historian_metadata(historian_context, report_draft, memory_context)
-    memory_quality_result = _memory_quality_result(memory_context)
+    memory_quality_result = _memory_quality_result(
+        memory_context,
+        repository=_read_memory_query_repository(buffer, memory_repository),
+    )
     memory_quality_result = _with_historian_quality_metadata(memory_quality_result, historian_metadata)
     if memory_quality_result["memory_available"]:
         quality_events.append(
@@ -269,6 +268,21 @@ def _read_historian_context(buffer: StepScopedDataBufferView) -> dict[str, Any] 
     return dict(value) if isinstance(value, dict) else None
 
 
+def _read_memory_query_repository(
+    buffer: StepScopedDataBufferView,
+    injected_repository: IntelligenceMemoryQueryRepository | None,
+) -> IntelligenceMemoryQueryRepository | None:
+    if injected_repository is not None:
+        return injected_repository
+    try:
+        if not buffer.exists("memory_query_repository"):
+            return None
+        value = buffer.read("memory_query_repository", required=False)
+    except DataBufferReadPermissionError:
+        return None
+    return value
+
+
 def _non_social_media_pass_review(*, citation_check: Any, quality_summary: Any) -> EditorReview:
     return EditorReview(
         decision=EditorDecision.PASS,
@@ -290,30 +304,12 @@ def _non_social_media_pass_review(*, citation_check: Any, quality_summary: Any) 
     )
 
 
-def _memory_quality_result(memory_context: dict[str, Any] | None) -> dict[str, Any]:
-    if not memory_context:
-        return {
-            "passed": True,
-            "issues": [],
-            "memory_available": False,
-            "metadata": {"reason": "memory_context_missing"},
-        }
-    context = _memory_context_from_payload(memory_context)
-    result = QualityMemoryChecker(_NoopMemoryQualityRepository()).check_report_context(context)
-    payload = result.to_dict()
-    metadata = dict(payload.get("metadata") or {})
-    metadata.update(
-        {
-            "memory_available": bool((memory_context.get("metadata") or {}).get("memory_available", True)),
-            "claim_count": len(context.claims),
-            "event_count": len(context.events),
-            "conflict_count": len(context.conflicts),
-            "critical_issue_count": len(result.critical_issues()),
-        }
-    )
-    payload["metadata"] = metadata
-    payload["memory_available"] = metadata["memory_available"]
-    return payload
+def _memory_quality_result(
+    memory_context: dict[str, Any] | None,
+    *,
+    repository: IntelligenceMemoryQueryRepository | None,
+) -> dict[str, Any]:
+    return DailyMemoryQualityService().evaluate(memory_context, repository=repository)
 
 
 def _historian_metadata(
@@ -353,131 +349,11 @@ def _with_historian_quality_metadata(
     return payload
 
 
-def _memory_context_from_payload(payload: dict[str, Any]) -> IntelligenceMemoryContext:
-    query = str(payload.get("query") or payload.get("topic") or "")
-    return IntelligenceMemoryContext(
-        query=query,
-        topic=str(payload["topic"]) if payload.get("topic") else None,
-        claims=[_claim_from_payload(item) for item in _dict_items(payload.get("claims"))],
-        events=[_event_from_payload(item) for item in _dict_items(payload.get("events"))],
-        conflicts=[dict(item) for item in _dict_items(payload.get("conflicts"))],
-        metadata=dict(payload.get("metadata") or {}),
-    )
-
-
-def _claim_from_payload(payload: dict[str, Any]) -> ClaimMemory:
-    return ClaimMemory(
-        claim_id=str(payload.get("claim_id") or payload.get("id") or "memory-claim"),
-        run_id=str(payload.get("run_id") or "memory-context"),
-        text=str(payload.get("text") or payload.get("claim") or ""),
-        status=cast(ClaimStatus, str(payload.get("status") or "active")),
-        confidence=float(payload.get("confidence") or 0.5),
-        evidence_ids=[str(item) for item in payload.get("evidence_ids") or [] if item is not None],
-        contradicted_by=[str(item) for item in payload.get("contradicted_by") or [] if item is not None],
-        metadata=dict(payload.get("metadata") or {}),
-    )
-
-
-def _event_from_payload(payload: dict[str, Any]) -> EventMemory:
-    return EventMemory(
-        event_id=str(payload.get("event_id") or payload.get("id") or "memory-event"),
-        event_type=cast(EventType, str(payload.get("event_type") or "general_news")),
-        title=str(payload.get("title") or ""),
-        summary=str(payload.get("summary") or ""),
-        run_id=str(payload.get("run_id") or "memory-context"),
-        topic=str(payload["topic"]) if payload.get("topic") else None,
-        entity_ids=[str(item) for item in payload.get("entity_ids") or [] if item is not None],
-        claim_ids=[str(item) for item in payload.get("claim_ids") or [] if item is not None],
-        evidence_ids=[str(item) for item in payload.get("evidence_ids") or [] if item is not None],
-        metadata=dict(payload.get("metadata") or {}),
-    )
-
-
-def _dict_items(value: Any) -> list[dict[str, Any]]:
-    return [dict(item) for item in value or [] if isinstance(item, dict)]
-
-
 def _has_critical_memory_issue(memory_quality_result: dict[str, Any]) -> bool:
     return any(
         isinstance(issue, dict) and issue.get("severity") == "critical"
         for issue in memory_quality_result.get("issues") or []
     )
-
-
-class _NoopMemoryQualityRepository:
-    def search_evidence(self, *, query: str, topic: str | None = None, limit: int = 8) -> list[EvidenceMemory]:
-        return []
-
-    def search_claims(self, *, query: str, topic: str | None = None, limit: int = 8) -> list[ClaimMemory]:
-        return []
-
-    def search_entities(self, *, query: str, topic: str | None = None, limit: int = 8) -> list[EntityMemory]:
-        return []
-
-    def search_events(self, *, query: str, topic: str | None = None, limit: int = 8) -> list[EventMemory]:
-        return []
-
-    def search_decisions(self, *, query: str, topic: str | None = None, limit: int = 8) -> list[DecisionMemory]:
-        return []
-
-    def search_preferences(self, *, query: str, topic: str | None = None, limit: int = 8) -> list[PreferenceMemory]:
-        return []
-
-    def get_entity(self, entity_id: str) -> EntityMemory | None:
-        return None
-
-    def find_entity_by_name(self, name: str) -> EntityMemory | None:
-        return None
-
-    def list_entities_by_type(self, entity_type: str, *, limit: int = 20) -> list[EntityMemory]:
-        return []
-
-    def get_claim(self, claim_id: str) -> ClaimMemory | None:
-        return None
-
-    def find_similar_claims(self, claim: ClaimMemory, *, limit: int = 10) -> list[ClaimMemory]:
-        return []
-
-    def list_claims_by_entity(self, entity_id: str, *, limit: int = 20) -> list[ClaimMemory]:
-        return []
-
-    def list_claims_by_topic(self, topic: str, *, limit: int = 20) -> list[ClaimMemory]:
-        return []
-
-    def list_evidence_for_claim(self, claim_id: str) -> list[EvidenceMemory]:
-        return []
-
-    def get_event(self, event_id: str) -> EventMemory | None:
-        return None
-
-    def find_similar_events(self, event: EventMemory, *, limit: int = 10) -> list[EventMemory]:
-        return []
-
-    def list_events_by_entity(self, entity_id: str, *, limit: int = 20) -> list[EventMemory]:
-        return []
-
-    def list_events_by_topic(self, topic: str, *, limit: int = 20) -> list[EventMemory]:
-        return []
-
-    def list_decisions_for_target(
-        self,
-        target_type: str,
-        target_id: str,
-        *,
-        limit: int = 20,
-    ) -> list[DecisionMemory]:
-        return []
-
-    def list_preferences(
-        self,
-        *,
-        owner_type: str,
-        owner_id: str,
-        preference_type: str | None = None,
-        limit: int = 20,
-    ) -> list[PreferenceMemory]:
-        return []
-
 
 def _with_memory_quality_metadata(
     quality_result: Any,

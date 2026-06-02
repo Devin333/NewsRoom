@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 from business.memory.intelligence_context import IntelligenceMemoryContext
@@ -21,6 +22,9 @@ from framework.workflow import StepScopedDataBufferView
 from business.foundation.models.source import SourcePipelineMetrics
 from business.layers.relation.evidence import EvidenceBundle
 from business.boards.cross_board.workflows.daily_intelligence.profiles import PROFILE_LIVE, PROFILE_LIVE_OFFLINE
+
+
+logger = logging.getLogger(__name__)
 
 
 class ReportWriter:
@@ -86,6 +90,7 @@ class ReportWriter:
 
     def _memory_context(self, topic: str) -> ReportMemoryContextResult | None:
         if self.memory_context_service is None:
+            logger.warning("Memory recall service is not configured; memory context will be skipped.")
             return None
         result = self.memory_context_service.build_context(
             ReportMemoryContextRequest(topic=topic, limit=5)

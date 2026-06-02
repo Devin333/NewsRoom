@@ -22,6 +22,7 @@ from business.boards.cross_board.workflows.daily_intelligence.steps import (
     rank_sources,
     require_sources,
 )
+from business.boards.cross_board.workflows.daily_intelligence import source_processing
 
 
 def test_daily_intelligence_workflow_spec_is_valid_and_profile_aware() -> None:
@@ -58,6 +59,7 @@ def test_daily_intelligence_workflow_spec_is_valid_and_profile_aware() -> None:
     quality_step = next(step for step in live.steps if step.step_id == "quality_gate")
     assert "historian_context" in draft_step.write_keys
     assert "historian_context" in quality_step.metadata["optional_read_keys"]
+    assert "memory_query_repository" in quality_step.metadata["optional_read_keys"]
 
 
 def test_require_sources_fails_with_source_error_summary() -> None:
@@ -123,6 +125,69 @@ def test_daily_source_steps_build_ranked_items_and_reports() -> None:
     assert metrics.normalized_items_count == 1
     assert metrics.deduplicated_items_count == 1
     assert metrics.ranked_items_count == 1
+
+
+def test_deduplicate_sources_retains_normalized_items_when_dedup_fails(monkeypatch) -> None:
+    buffer = _initial_source_buffer()
+    _apply(buffer, normalize_sources, ["raw_items", "source_errors", "source_events", "source_pipeline_metrics"])
+    normalized_items = list(buffer.read("normalized_items"))
+
+    def fail_deduplicate(_items):
+        raise RuntimeError("dedup engine failed")
+
+    monkeypatch.setattr(source_processing, "deduplicate_with_result", fail_deduplicate)
+
+    output = deduplicate_sources(
+        buffer.scope(
+            read_keys=["normalized_items", "source_errors", "source_events", "source_pipeline_metrics"],
+            write_keys=[],
+        )
+    )
+
+    assert output["deduplicated_items"] == normalized_items
+    assert output["source_duplicate_groups"] == []
+    assert any(error.metadata["phase"] == "dedup" for error in output["source_errors"])
+    assert any(event.event_type == "source_dedup_failed" for event in output["source_events"])
+    assert output["source_pipeline_metrics"].deduplicated_items_count == len(normalized_items)
+
+
+def test_rank_sources_wraps_deduplicated_items_when_ranker_fails(monkeypatch) -> None:
+    buffer = _initial_source_buffer()
+    _apply(buffer, normalize_sources, ["raw_items", "source_errors", "source_events", "source_pipeline_metrics"])
+    _apply(
+        buffer,
+        deduplicate_sources,
+        ["normalized_items", "source_errors", "source_events", "source_pipeline_metrics"],
+    )
+    deduplicated_items = list(buffer.read("deduplicated_items"))
+
+    def fail_rank(_items, *, topic):
+        raise RuntimeError("rank engine failed")
+
+    monkeypatch.setattr(source_processing, "rank_items", fail_rank)
+
+    output = rank_sources(
+        buffer.scope(
+            read_keys=[
+                "request",
+                "deduplicated_items",
+                "source_errors",
+                "skipped_sources",
+                "failed_sources",
+                "source_selection_report",
+                "source_events",
+                "source_pipeline_metrics",
+            ],
+            write_keys=[],
+        )
+    )
+
+    assert [item.item for item in output["ranked_items"]] == deduplicated_items
+    assert output["ranked_items"][0].rank_reason == "ranking_failed_fallback"
+    assert output["ranked_items"][0].metadata["ranking_fallback"] is True
+    assert any(error.metadata["phase"] == "rank" for error in output["source_errors"])
+    assert any(event.event_type == "source_ranking_failed" for event in output["source_events"])
+    assert output["source_pipeline_metrics"].ranked_items_count == len(deduplicated_items)
 
 
 def test_daily_evidence_and_quality_gate_steps_produce_final_report() -> None:

@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from framework.workflow import FunctionStepRegistry
+from business.memory.intelligence_repository import IntelligenceMemoryQueryRepository
 from business.boards.cross_board.workflows.daily_intelligence.evidence_step import build_evidence
 from business.boards.cross_board.workflows.daily_intelligence.profiles import validate_daily_profile
 from business.boards.cross_board.workflows.daily_intelligence.quality_gate_step import quality_gate
@@ -19,6 +20,7 @@ def build_daily_intelligence_registry(
     profile: str,
     collect_sources: Any,
     draft_report: Any,
+    memory_query_repository: IntelligenceMemoryQueryRepository | None = None,
 ) -> FunctionStepRegistry:
     validate_daily_profile(profile)
     registry = FunctionStepRegistry()
@@ -29,5 +31,8 @@ def build_daily_intelligence_registry(
     registry.register("daily.rank_sources", rank_sources)
     registry.register("daily.build_evidence", build_evidence)
     registry.register("daily.draft_report", lambda buffer: draft_report(buffer, profile))
-    registry.register("daily.quality_gate", quality_gate)
+    registry.register(
+        "daily.quality_gate",
+        lambda buffer: quality_gate(buffer, memory_repository=memory_query_repository),
+    )
     return registry

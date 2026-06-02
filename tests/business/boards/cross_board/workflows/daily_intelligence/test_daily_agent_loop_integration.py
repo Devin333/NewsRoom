@@ -4,7 +4,10 @@ from framework.agent import AgentAction, AgentLoopStatus, AgentSpec, JudgeDecisi
 from framework.llm import FakeLLMClient
 from business.foundation.models.source import Lineage
 from business.layers.relation.evidence.models import EvidenceBundle, EvidenceItem, VerifiedClaim, VerifiedFindings
-from business.boards.cross_board.workflows.daily_intelligence.agent_loop_integration import build_daily_output_judge
+from business.boards.cross_board.workflows.daily_intelligence.agent_loop_integration import (
+    _collect_evidence_ids,
+    build_daily_output_judge,
+)
 from business.boards.cross_board.workflows.daily_intelligence.agent_registry import build_daily_agent_runner
 
 
@@ -224,6 +227,18 @@ def test_daily_judge_blocks_verifier_grounding_with_mutated_evidence_id() -> Non
     assert verdict.decision == JudgeDecision.BLOCK
     assert verdict.feedback == "unsupported evidence id referenced"
     assert verdict.policy_violations == ["evidence id outside boundary: ev-1x"]
+
+
+def test_collect_evidence_ids_stops_at_configured_depth() -> None:
+    payload = {}
+    current = payload
+    for _ in range(12):
+        current["nested"] = {}
+        current = current["nested"]
+    current["evidence_id"] = "too-deep"
+
+    assert _collect_evidence_ids(payload, max_depth=5) == set()
+    assert _collect_evidence_ids(payload, max_depth=20) == {"too-deep"}
 
 
 def test_daily_agent_runner_normalizes_agentic_live_writer_output_to_grounded_cards() -> None:

@@ -92,6 +92,13 @@ def test_daily_agent_specs_define_contract_keys() -> None:
 
 
 def test_daily_agent_tool_policies_reject_undeclared_tools() -> None:
+    expected_allowed_tools = {
+        PLANNER_AGENT_ID: [],
+        ANALYST_AGENT_ID: ["daily.evidence_search", "daily.source_metadata"],
+        WRITER_AGENT_ID: ["daily.evidence_search"],
+        VERIFIER_AGENT_ID: ["daily.citation_validate", "daily.evidence_search"],
+        EDITOR_AGENT_ID: ["daily.citation_validate"],
+    }
     for agent in [
         build_planner_agent(),
         build_analyst_agent(),
@@ -101,11 +108,19 @@ def test_daily_agent_tool_policies_reject_undeclared_tools() -> None:
     ]:
         policy = agent.resolved_tool_policy()
 
-        assert agent.allowed_tools == []
+        assert agent.allowed_tools == expected_allowed_tools[agent.agent_id]
         assert policy.require_explicit_allowlist is True
         assert policy.allows("memory.search") is False
         assert policy.allows("quality.check_citations") is False
         assert policy.allows("source.fetch_url") is False
+        for tool_name in expected_allowed_tools[agent.agent_id]:
+            assert policy.allows(tool_name) is True
+        for tool_name in {
+            "daily.evidence_search",
+            "daily.source_metadata",
+            "daily.citation_validate",
+        } - set(expected_allowed_tools[agent.agent_id]):
+            assert policy.allows(tool_name) is False
 
 
 def test_daily_agent_output_validators_accept_valid_payloads() -> None:

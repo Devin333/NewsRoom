@@ -55,7 +55,7 @@ def build_analyst_agent() -> AgentSpec:
         ),
         input_keys=["request", "research_plan", "evidence_bundle", "source_errors", "source_pipeline_metrics"],
         output_key="analysis_result",
-        allowed_tools=[],
+        allowed_tools=["daily.evidence_search", "daily.source_metadata"],
         output_schema={
             "type": "object",
             "required": ["analysis_result"],
@@ -106,7 +106,7 @@ def build_writer_agent() -> AgentSpec:
             "source_pipeline_metrics",
         ],
         output_key="report_draft",
-        allowed_tools=[],
+        allowed_tools=["daily.evidence_search"],
         output_schema={
             "type": "object",
             "required": ["report_draft"],
@@ -176,7 +176,7 @@ def build_verifier_agent() -> AgentSpec:
             "verified_findings",
         ],
         output_key="verification_result",
-        allowed_tools=[],
+        allowed_tools=["daily.citation_validate", "daily.evidence_search"],
         output_schema={
             "type": "object",
             "required": [
@@ -251,7 +251,7 @@ def build_editor_agent() -> AgentSpec:
             "evidence_bundle",
         ],
         output_key="editor_review",
-        allowed_tools=[],
+        allowed_tools=["daily.citation_validate"],
         output_schema={
             "type": "object",
             "required": ["editor_review"],

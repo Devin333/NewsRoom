@@ -113,17 +113,19 @@ def _allowed_evidence_ids_from_inputs(inputs: dict[str, Any]) -> set[str]:
     return {item.evidence_id for item in bundle.items if item.evidence_id}
 
 
-def _collect_evidence_ids(value: Any) -> set[str]:
+def _collect_evidence_ids(value: Any, *, max_depth: int = 50) -> set[str]:
     ids: set[str] = set()
 
-    def inspect(item: Any, *, key: str | None = None) -> None:
+    def inspect(item: Any, *, key: str | None = None, depth: int = 0) -> None:
+        if depth > max_depth:
+            return
         if isinstance(item, dict):
             for child_key, child_value in item.items():
-                inspect(child_value, key=str(child_key))
+                inspect(child_value, key=str(child_key), depth=depth + 1)
             return
         if isinstance(item, list):
             for child in item:
-                inspect(child, key=key)
+                inspect(child, key=key, depth=depth + 1)
             return
         if key in {
             "evidence_id",

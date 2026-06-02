@@ -188,7 +188,13 @@ def build_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
                     "quality_gate_metrics",
                     "quality_result",
                 ],
-                metadata={"optional_read_keys": ["memory_context", "historian_context"]},
+                metadata={
+                    "optional_read_keys": [
+                        "memory_context",
+                        "historian_context",
+                        "memory_query_repository",
+                    ]
+                },
             ),
         ],
         edges=[

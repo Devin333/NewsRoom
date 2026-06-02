@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from framework.workflow import StepScopedDataBufferView
-from business.foundation.models.source import SourceError, SourcePipelineEvent
+from business.foundation.models.source import RankedSourceItem, SourceError, SourcePipelineEvent
 from business.layers.signal.source_processing import (
     build_source_coverage_report,
     build_source_freshness_report,
@@ -96,7 +96,7 @@ def deduplicate_sources(buffer: StepScopedDataBufferView) -> dict[str, Any]:
         error = _pipeline_processing_error(exc, phase="dedup")
         dedup_errors = [error]
         source_errors.append(error)
-        deduplicated_items = []
+        deduplicated_items = list(normalized_items)
         source_duplicate_groups = []
         duplicate_count = 0
     source_events = list(buffer.read("source_events"))
@@ -136,7 +136,7 @@ def rank_sources(buffer: StepScopedDataBufferView) -> dict[str, Any]:
         error = _pipeline_processing_error(exc, phase="rank")
         source_errors.append(error)
         ranking_errors = [error]
-        ranked_items = []
+        ranked_items = _fallback_ranked_items(deduplicated_items)
     source_events = list(buffer.read("source_events"))
     source_events.append(
         source_event(
@@ -221,3 +221,30 @@ def _pipeline_processing_error(exc: Exception, *, phase: str) -> SourceError:
             "original_exception_type": type(exc).__name__,
         },
     )
+
+
+def _fallback_ranked_items(items: list[Any]) -> list[RankedSourceItem]:
+    ranked_items: list[RankedSourceItem] = []
+    for index, item in enumerate(items):
+        ranked_item_id = f"rank_fallback_{item.normalized_item_id.removeprefix('norm_')}"
+        raw_lineage = item.lineage.to_dict() if item.lineage is not None else {}
+        lineage = {
+            **raw_lineage,
+            "normalized_item_id": item.normalized_item_id,
+            "ranked_item_id": ranked_item_id,
+            "ranking_fallback": True,
+        }
+        ranked_items.append(
+            RankedSourceItem(
+                ranked_item_id=ranked_item_id,
+                item=item,
+                relevance_score=0.0,
+                recency_score=0.0,
+                reliability_score=0.0,
+                novelty_score=max(0.0, 1.0 - index * 0.01),
+                final_score=0.0,
+                rank_reason="ranking_failed_fallback",
+                metadata={"lineage": lineage, "ranking_fallback": True},
+            )
+        )
+    return ranked_items

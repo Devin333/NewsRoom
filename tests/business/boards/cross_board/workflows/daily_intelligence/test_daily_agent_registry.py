@@ -38,12 +38,65 @@ def test_daily_agent_registry_contains_writer_verifier_and_editor() -> None:
     assert registry[EDITOR_AGENT_ID].agent_id == EDITOR_AGENT_ID
 
 
-def test_daily_agent_tool_registry_is_empty() -> None:
-    registry = build_daily_agent_tool_registry()
+def test_daily_agent_tool_registry_exposes_evidence_and_quality_tools() -> None:
+    tool_registry = build_daily_agent_tool_registry()
+    agent_registry = build_daily_agent_registry()
 
-    assert registry.list_tools() == []
-    assert registry.export_schema_for_llm(WRITER_AGENT_ID) == []
-    assert registry.validate_no_conflicts().tool_count == 0
+    assert {tool.name for tool in tool_registry.list_tools()} == {
+        "daily.evidence_search",
+        "daily.source_metadata",
+        "daily.citation_validate",
+    }
+    assert tool_registry.validate_no_conflicts().ok is True
+    assert {
+        tool["name"]
+        for tool in tool_registry.export_schema_for_llm(
+            ANALYST_AGENT_ID,
+            agent_registry[ANALYST_AGENT_ID].resolved_tool_policy(),
+        )
+    } == {"daily.evidence_search", "daily.source_metadata"}
+    assert {
+        tool["name"]
+        for tool in tool_registry.export_schema_for_llm(
+            VERIFIER_AGENT_ID,
+            agent_registry[VERIFIER_AGENT_ID].resolved_tool_policy(),
+        )
+    } == {"daily.citation_validate", "daily.evidence_search"}
+    assert {
+        tool["name"]
+        for tool in tool_registry.export_schema_for_llm(
+            EDITOR_AGENT_ID,
+            agent_registry[EDITOR_AGENT_ID].resolved_tool_policy(),
+        )
+    } == {"daily.citation_validate"}
+
+
+def test_daily_agent_tools_execute_against_provided_evidence_bundle() -> None:
+    registry = build_daily_agent_tool_registry()
+    evidence_bundle = _evidence_bundle()
+
+    search = registry.require("daily.evidence_search").executor(
+        {"evidence_bundle": evidence_bundle, "query": "chip policy"}
+    )
+    citation = registry.require("daily.citation_validate").executor(
+        {
+            "evidence_bundle": evidence_bundle,
+            "report": {
+                "title": "Daily Intelligence",
+                "sections": [
+                    {
+                        "title": "Summary",
+                        "content": "AI chip policy update: Export controls and model supply chains remain central.",
+                        "sources": ["https://example.com/ai-chip-policy"],
+                    }
+                ],
+            },
+        }
+    )
+
+    assert search["matched_count"] == 1
+    assert search["items"][0]["evidence_id"] == "ev-1"
+    assert citation["passed"] is True
 
 
 def test_daily_agent_runner_consumes_fake_llm_sequence() -> None:

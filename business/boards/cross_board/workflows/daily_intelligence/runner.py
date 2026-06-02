@@ -134,6 +134,9 @@ class DailyIntelligenceRunner:
             profile=profile,
             collect_sources=self.source_collector.collect_sources,
             draft_report=self.report_writer.draft_report,
+            memory_query_repository=(
+                self.recall_service.repository if self.recall_service is not None else None
+            ),
         )
 
     def run(

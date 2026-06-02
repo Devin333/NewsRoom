@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from business.boards.cross_board.workflows.daily_intelligence.profiles import PROFILE_LIVE_OFFLINE
 from business.boards.cross_board.workflows.daily_intelligence.quality_gate_step import quality_gate
+from business.boards.cross_board.workflows.daily_intelligence.registry import build_daily_intelligence_registry
 from business.boards.cross_board.workflows.daily_intelligence.report_writer import ReportWriter
 from business.foundation.models.source import Lineage, SourcePipelineMetrics
 from business.layers.relation.evidence.models import EvidenceBundle, EvidenceItem, VerifiedFindings
 from business.memory.intelligence_context import IntelligenceMemoryContext
-from business.memory.intelligence_models import ClaimMemory, EventMemory
+from business.memory.intelligence_models import ClaimMemory, EventMemory, EvidenceMemory
 from business.memory.historian_context_adapter import HistorianContextAdapter
 from business.agents.historian_agent import HistorianAgent
 from business.memory.historical_context import HistoricalContext
@@ -30,7 +31,8 @@ def test_report_writer_attaches_memory_context_when_recall_available() -> None:
     assert "Known claims:" in metadata["memory_prompt_context"]
 
 
-def test_report_writer_without_recall_keeps_memory_metadata_absent() -> None:
+def test_report_writer_without_recall_keeps_memory_metadata_absent(caplog) -> None:
+    caplog.set_level("WARNING")
     output = ReportWriter().draft_report(
         _writer_buffer().scope(
             read_keys=["request", "evidence_bundle", "source_errors", "source_pipeline_metrics"],
@@ -41,6 +43,7 @@ def test_report_writer_without_recall_keeps_memory_metadata_absent() -> None:
 
     assert output["memory_context"] is None
     assert "metadata" not in output["report_draft"]
+    assert "Memory recall service is not configured" in caplog.text
 
 
 def test_report_writer_attaches_historian_context_when_available() -> None:
@@ -97,6 +100,55 @@ def test_quality_gate_records_memory_quality_metadata_without_blocking() -> None
     assert output["quality_result"].metadata["memory_quality_result"]["metadata"]["conflict_count"] == 1
     assert output["final_report"].metadata["memory_quality_result"]["memory_available"] is True
     assert any(event.event_type == "memory_quality_checked" for event in output["quality_events"])
+
+
+def test_quality_gate_uses_injected_memory_repository_for_claim_evidence() -> None:
+    repository = _QualityMemoryRepository()
+    registry = build_daily_intelligence_registry(
+        profile=PROFILE_LIVE_OFFLINE,
+        collect_sources=lambda buffer, profile: {},
+        draft_report=lambda buffer, profile: {},
+        memory_query_repository=repository,
+    )
+    buffer = DataBuffer(
+        {
+            "report_draft": _report_draft(),
+            "evidence_bundle": _evidence_bundle(),
+            "verified_findings": VerifiedFindings(),
+            "quality_events": [],
+            "memory_context": {
+                "query": "AI policy",
+                "topic": "AI policy",
+                "claims": [
+                    {
+                        "claim_id": "claim-from-repository",
+                        "run_id": "old-run",
+                        "text": "Historical claim with repository evidence",
+                        "status": "active",
+                        "evidence_ids": [],
+                    }
+                ],
+                "events": [],
+                "conflicts": [],
+                "metadata": {"memory_available": True},
+            },
+        }
+    )
+
+    output = registry.get("daily.quality_gate")(
+        buffer.scope(
+            read_keys=["report_draft", "evidence_bundle", "verified_findings", "quality_events"],
+            optional_read_keys=["memory_context"],
+            write_keys=[],
+        )
+    )
+
+    metadata = output["memory_quality_result"]["metadata"]
+    assert repository.evidence_lookup_count == 1
+    assert output["memory_quality_result"]["passed"] is True
+    assert output["memory_quality_result"]["issues"] == []
+    assert metadata["memory_repository_available"] is True
+    assert metadata["memory_repository_source"] == "injected"
 
 
 def test_quality_gate_reads_explicit_historian_context_without_blocking() -> None:
@@ -196,6 +248,92 @@ class _HistorianContextService:
             ],
             timeline_summary="AI policy timeline",
         )
+
+
+class _QualityMemoryRepository:
+    def __init__(self) -> None:
+        self.evidence_lookup_count = 0
+
+    def list_evidence_for_claim(self, claim_id):
+        self.evidence_lookup_count += 1
+        if claim_id != "claim-from-repository":
+            return []
+        return [
+            EvidenceMemory(
+                evidence_id="memory-ev-1",
+                run_id="memory-run",
+                title="Historical evidence",
+                summary="Historical evidence summary.",
+                source_urls=["https://example.com/memory-evidence"],
+                source_item_ids=["memory-item-1"],
+                confidence=0.9,
+                topic="AI policy",
+            )
+        ]
+
+    def find_similar_events(self, event, *, limit=3):
+        return []
+
+    def search_evidence(self, *, query, topic=None, limit=8):
+        return []
+
+    def search_claims(self, *, query, topic=None, limit=8):
+        return []
+
+    def search_entities(self, *, query, topic=None, limit=8):
+        return []
+
+    def search_events(self, *, query, topic=None, limit=8):
+        return []
+
+    def search_decisions(self, *, query, topic=None, limit=8):
+        return []
+
+    def search_preferences(self, *, query, topic=None, limit=8):
+        return []
+
+    def get_entity(self, entity_id):
+        return None
+
+    def find_entity_by_name(self, name):
+        return None
+
+    def list_entities_by_type(self, entity_type, *, limit=20):
+        return []
+
+    def get_claim(self, claim_id):
+        return None
+
+    def find_similar_claims(self, claim, *, limit=10):
+        return []
+
+    def list_claims_by_entity(self, entity_id, *, limit=20):
+        return []
+
+    def list_claims_by_topic(self, topic, *, limit=20):
+        return []
+
+    def get_event(self, event_id):
+        return None
+
+    def list_events_by_entity(self, entity_id, *, limit=20):
+        return []
+
+    def list_events_by_topic(self, topic, *, limit=20):
+        return []
+
+    def list_decisions_for_target(self, target_type, target_id, *, limit=20):
+        return []
+
+    def list_preferences(
+        self,
+        *,
+        owner_type,
+        owner_id,
+        preference_type=None,
+        limit=20,
+    ):
+        return []
 
 
 def _writer_buffer() -> DataBuffer:
