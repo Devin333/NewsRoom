@@ -206,14 +206,12 @@ class ProductizedBoardUseCases:
         quality_summary: dict[str, Any],
         subscription_payload: dict[str, Any],
     ) -> dict[str, Any]:
-        return {
-            "artifact_metadata": self.artifact_metadata_service.build(
-                board_type=self.board_type,
-                request=request,
-                cards=cards,
-                quality_summary=quality_summary,
-                subscription_payload=subscription_payload,
-            )
-        }
+        return self.artifact_metadata_service.build_outputs(
+            board_type=self.board_type,
+            request=request,
+            cards=cards,
+            quality_summary=quality_summary,
+            subscription_payload=subscription_payload,
+        )
 
 __all__ = ["ProductizedBoardUseCases", "analysis_context_from_request", "run_id_from_request"]

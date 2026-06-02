@@ -31,5 +31,24 @@ class ProductizedArtifactMetadataService:
             "improvement_ready": True,
         }
 
+    def build_outputs(
+        self,
+        *,
+        board_type: BoardType,
+        request: dict[str, Any],
+        cards: list[dict[str, Any]],
+        quality_summary: dict[str, Any],
+        subscription_payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        return {
+            "artifact_metadata": self.build(
+                board_type=board_type,
+                request=request,
+                cards=cards,
+                quality_summary=quality_summary,
+                subscription_payload=subscription_payload,
+            )
+        }
+
 
 __all__ = ["ProductizedArtifactMetadataService"]
