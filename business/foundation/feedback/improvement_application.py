@@ -24,7 +24,7 @@ class ImprovementApplicationService:
             if proposal.board_type == board_type
         ]
 
-    def apply_approved(
+    def apply_approved_policy_experiments(
         self,
         *,
         run_id: str,
@@ -35,6 +35,14 @@ class ImprovementApplicationService:
             run_id=run_id,
             board_type=board_type,
         )
+
+    def apply_approved(
+        self,
+        *,
+        run_id: str,
+        board_type: str,
+    ) -> BoardImprovementContext:
+        return self.apply_approved_policy_experiments(run_id=run_id, board_type=board_type)
 
 
 __all__ = ["ImprovementApplicationService"]

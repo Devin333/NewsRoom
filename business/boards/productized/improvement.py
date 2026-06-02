@@ -72,7 +72,7 @@ class ProductizedImprovementWorkflowService:
             quality_summary=quality_summary,
         )
         proposals = self.improvement_service.build_proposals(recommendations)
-        improvement_context = self.improvement_service.apply_approved_overrides(
+        improvement_context = self.improvement_service.apply_approved_policy_experiments(
             run_id=run_id,
             board_type=board_type,
         )
@@ -96,6 +96,7 @@ class ProductizedImprovementWorkflowService:
         return {
             "improvement_recommendations": [item.to_dict() for item in recommendations],
             "improvement_proposals": [item.to_dict() for item in proposals],
+            "applied_policy_experiments": improvement_context.applied_policy_experiments,
             "applied_overrides": improvement_context.applied_overrides,
             "improvement_measurement": measurement.to_dict(),
             "self_improvement_report": report.to_dict(),

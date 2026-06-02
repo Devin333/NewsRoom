@@ -35,10 +35,11 @@ def test_feedback_full_loop_reaches_approved_override_and_measurement() -> None:
     assert proposals[0].change_type == "policy_experiment"
     assert proposals[0].experiment_profile is not None
     assert proposals[0].proposed_patch == {}
+    assert service.apply_approved_policy_experiments(run_id="before", board_type="ai_news").applied_policy_experiments == []
     assert service.apply_approved_overrides(run_id="before", board_type="ai_news").applied_overrides == []
 
     service.proposal_store.approve(proposals[0].proposal_id)
-    context = service.apply_approved_overrides(run_id="after", board_type="ai_news")
+    context = service.apply_approved_policy_experiments(run_id="after", board_type="ai_news")
     measurement = service.measure(
         {"quality_score": 0.35, "card_count": 0, "evidence_coverage": 0.0, "duplicate_rate": 0.5, "empty_output": True, "subscription_match": 0.0},
         {"quality_score": 0.7, "card_count": 2, "evidence_coverage": 1.0, "duplicate_rate": 0.0, "empty_output": False, "subscription_match": 1.0},

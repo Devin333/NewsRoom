@@ -56,8 +56,11 @@ class BoardImprovementService:
             proposals.append(existing or self.proposal_store.save(proposal))
         return proposals
 
+    def apply_approved_policy_experiments(self, *, run_id: str, board_type: str):
+        return self.application_service.apply_approved_policy_experiments(run_id=run_id, board_type=board_type)
+
     def apply_approved_overrides(self, *, run_id: str, board_type: str):
-        return self.application_service.apply_approved(run_id=run_id, board_type=board_type)
+        return self.apply_approved_policy_experiments(run_id=run_id, board_type=board_type)
 
     def measure(self, before: dict[str, Any] | None, after: dict[str, Any]):
         return self.measurement_builder.measure(before, after)
