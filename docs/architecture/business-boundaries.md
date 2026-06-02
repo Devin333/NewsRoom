@@ -55,6 +55,19 @@ fetch policy 的 `allowed_domains` 是 live source URL 的边界。加载 source
 
 daily intelligence runtime 直接从 `business.layers.signal.source_config` 加载默认 source registry 和 fetch policy；`daily_intelligence/source_config.py` 只保留 `ensure_live_source_registry()` 这类 workflow-local live gate，不再作为默认配置 loader 的 legacy adapter。
 
+## Source Processing 边界
+
+`business.layers.signal.source_processing` 承载 source 归一化、去重、质量评分、排序、freshness、traceability 和 governance 报告构建。daily workflow step 只负责 buffer read/write、错误兜底和调用这些 layer service，不直接重新实现评分、追踪或报告规则。
+
+source 处理链路的正式中间模型是：
+
+- `NormalizedSourceItem.lineage`：承载 raw -> normalized 的来源链路。
+- `RankedSourceItem.lineage`：承载 normalized -> ranked 的来源链路。
+- `RankedSourceItem.ranking_trace` / `SourceRankingTrace`：承载 ranking 组件分数、最终分数和 fallback 标记。
+- `RankedSourceItem.source_quality` / `SourceItemQualityScore`：承载 source quality 评分结果。
+
+`metadata["lineage"]` 和 `metadata["source_quality"]` 只作为 artifact-facing / legacy 输出投影保留。质量评分、ranking report 和 traceability report 必须消费正式字段；旧 payload 可以在模型构造时被投影成正式字段，但业务逻辑不得通过修改 metadata 来影响 traceability 或 quality 判断。
+
 ## Workflow Buffer Collection 规则
 
 workflow step 从 buffer 读取 list/tuple 类型集合时，应把读取值视为借用值，不能原地修改。

@@ -388,6 +388,76 @@ class NormalizedSourceItem:
 
 
 @dataclass(frozen=True)
+class SourceRankingTrace:
+    lineage: Lineage
+    relevance_score: float
+    recency_score: float
+    reliability_score: float
+    authority_score: float
+    novelty_score: float
+    duplicate_cluster_score: float
+    historical_importance_score: float
+    subscription_match_score: float
+    final_score: float
+    source_quality_score: float | None = None
+    ranking_fallback: bool = False
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = {
+            **self.lineage.to_dict(),
+            "relevance_score": round(self.relevance_score, 4),
+            "recency_score": round(self.recency_score, 4),
+            "reliability_score": round(self.reliability_score, 4),
+            "authority_score": round(self.authority_score, 4),
+            "novelty_score": round(self.novelty_score, 4),
+            "duplicate_cluster_score": round(self.duplicate_cluster_score, 4),
+            "historical_importance_score": round(self.historical_importance_score, 4),
+            "subscription_match_score": round(self.subscription_match_score, 4),
+            "source_quality_score": self.source_quality_score,
+            "final_score": round(self.final_score, 4),
+            "ranking_fallback": self.ranking_fallback,
+            "metadata": dict(self.metadata),
+        }
+        return {
+            key: value
+            for key, value in payload.items()
+            if value not in (None, {}, []) and (key != "ranking_fallback" or value is True)
+        }
+
+    @classmethod
+    def from_dict(
+        cls,
+        payload: dict[str, Any],
+        *,
+        lineage: Lineage | None = None,
+    ) -> SourceRankingTrace:
+        trace_lineage = lineage
+        if trace_lineage is None and payload.get("source_id"):
+            trace_lineage = Lineage.from_dict(payload)
+        if trace_lineage is None:
+            raise ValueError("ranking trace requires lineage")
+        return cls(
+            lineage=trace_lineage,
+            relevance_score=_float_or_default(payload.get("relevance_score"), 0.0),
+            recency_score=_float_or_default(payload.get("recency_score"), 0.0),
+            reliability_score=_float_or_default(payload.get("reliability_score"), 0.0),
+            authority_score=_float_or_default(payload.get("authority_score"), 0.0),
+            novelty_score=_float_or_default(payload.get("novelty_score"), 0.0),
+            duplicate_cluster_score=_float_or_default(payload.get("duplicate_cluster_score"), 0.0),
+            historical_importance_score=_float_or_default(
+                payload.get("historical_importance_score"),
+                0.0,
+            ),
+            subscription_match_score=_float_or_default(payload.get("subscription_match_score"), 0.0),
+            source_quality_score=_optional_float(payload.get("source_quality_score")),
+            final_score=_float_or_default(payload.get("final_score"), 0.0),
+            ranking_fallback=_metadata_bool(payload.get("ranking_fallback"), default=False),
+            metadata=dict(payload.get("metadata") or {}),
+        )
+
+
+@dataclass(frozen=True)
 class RankedSourceItem:
     ranked_item_id: str
     item: NormalizedSourceItem
@@ -401,6 +471,8 @@ class RankedSourceItem:
     historical_importance_score: float = 0.0
     subscription_match_score: float = 0.0
     source_quality_score: float | None = None
+    source_quality: SourceItemQualityScore | None = None
+    ranking_trace: SourceRankingTrace | None = None
     rank_reason: str = ""
     lineage: Lineage | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -427,6 +499,44 @@ class RankedSourceItem:
                         raw_artifact_ref=(item_lineage.raw_artifact_ref if item_lineage else None),
                         parse_artifact_ref=(item_lineage.parse_artifact_ref if item_lineage else None),
                     ),
+                )
+        if self.source_quality is None:
+            raw_quality = self.metadata.get("source_quality")
+            if isinstance(raw_quality, dict):
+                object.__setattr__(self, "source_quality", SourceItemQualityScore.from_dict(raw_quality))
+        elif isinstance(self.source_quality, dict):
+            object.__setattr__(self, "source_quality", SourceItemQualityScore.from_dict(self.source_quality))
+        if self.ranking_trace is None:
+            metadata_lineage = self.metadata.get("lineage") if isinstance(self.metadata.get("lineage"), dict) else None
+            trace_quality_score = self.source_quality_score
+            if trace_quality_score is None and self.source_quality is not None:
+                trace_quality_score = self.source_quality.quality_score
+            trace_defaults = {
+                "relevance_score": self.relevance_score,
+                "recency_score": self.recency_score,
+                "reliability_score": self.reliability_score,
+                "authority_score": self.authority_score,
+                "novelty_score": self.novelty_score,
+                "duplicate_cluster_score": self.duplicate_cluster_score,
+                "historical_importance_score": self.historical_importance_score,
+                "subscription_match_score": self.subscription_match_score,
+                "source_quality_score": trace_quality_score,
+                "final_score": self.final_score,
+            }
+            if metadata_lineage is not None:
+                object.__setattr__(
+                    self,
+                    "ranking_trace",
+                    SourceRankingTrace.from_dict(
+                        {**trace_defaults, **metadata_lineage},
+                        lineage=self.lineage,
+                    ),
+                )
+            else:
+                object.__setattr__(
+                    self,
+                    "ranking_trace",
+                    SourceRankingTrace.from_dict(trace_defaults, lineage=self.lineage),
                 )
 
 
@@ -771,6 +881,23 @@ class SourceItemQualityScore:
             "score_reason": self.score_reason,
         }
 
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> SourceItemQualityScore:
+        return cls(
+            normalized_item_id=str(payload.get("normalized_item_id") or ""),
+            source_item_id=str(payload.get("source_item_id") or ""),
+            source_id=str(payload.get("source_id") or ""),
+            quality_score=_float_or_default(payload.get("quality_score"), 0.0),
+            reliability_score=_float_or_default(payload.get("reliability_score"), 0.0),
+            authority_score=_float_or_default(payload.get("authority_score"), 0.0),
+            traceability_score=_float_or_default(payload.get("traceability_score"), 0.0),
+            freshness_score=_float_or_default(payload.get("freshness_score"), 0.0),
+            content_score=_float_or_default(payload.get("content_score"), 0.0),
+            language_score=_float_or_default(payload.get("language_score"), 0.0),
+            penalties=[str(penalty) for penalty in payload.get("penalties") or []],
+            score_reason=str(payload.get("score_reason") or ""),
+        )
+
 
 @dataclass(frozen=True)
 class SourceSelectionReport:
@@ -1052,6 +1179,19 @@ def _metadata_bool(value: Any, *, default: bool) -> bool:
     if isinstance(value, bool):
         return value
     return str(value).strip().casefold() in {"1", "true", "yes", "on"}
+
+
+def _float_or_default(value: Any, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    return _float_or_default(value, 0.0)
 
 
 def _artifact_ref(value: Any) -> Any:

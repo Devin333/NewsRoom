@@ -3,7 +3,13 @@ from __future__ import annotations
 from datetime import datetime, timezone as _tz
 UTC = _tz.utc
 
-from business.foundation.models.source import NormalizedSourceItem, RankedSourceItem, SourceReliability
+from business.foundation.models.source import (
+    Lineage,
+    NormalizedSourceItem,
+    RankedSourceItem,
+    SourceRankingTrace,
+    SourceReliability,
+)
 from business.layers.signal.source_processing.quality import score_source_item
 
 
@@ -64,22 +70,19 @@ def _rank_item(
         4,
     )
     ranked_item_id = f"rank_{item.normalized_item_id.removeprefix('norm_')}"
-    lineage = dict(item.metadata.get("lineage") or {})
-    lineage.update(
-        {
-            "normalized_item_id": item.normalized_item_id,
-            "ranked_item_id": ranked_item_id,
-            "relevance_score": round(relevance, 4),
-            "recency_score": round(recency, 4),
-            "reliability_score": round(reliability, 4),
-            "authority_score": round(authority, 4),
-            "novelty_score": round(novelty, 4),
-            "duplicate_cluster_score": round(duplicate_cluster, 4),
-            "historical_importance_score": round(historical_importance, 4),
-            "subscription_match_score": round(subscription_match, 4),
-            "source_quality_score": quality_score.quality_score,
-            "final_score": final_score,
-        }
+    lineage = lineage_from_item(item, ranked_item_id=ranked_item_id)
+    ranking_trace = SourceRankingTrace(
+        lineage=lineage,
+        relevance_score=round(relevance, 4),
+        recency_score=round(recency, 4),
+        reliability_score=round(reliability, 4),
+        authority_score=round(authority, 4),
+        novelty_score=round(novelty, 4),
+        duplicate_cluster_score=round(duplicate_cluster, 4),
+        historical_importance_score=round(historical_importance, 4),
+        subscription_match_score=round(subscription_match, 4),
+        source_quality_score=quality_score.quality_score,
+        final_score=final_score,
     )
     return RankedSourceItem(
         ranked_item_id=ranked_item_id,
@@ -100,8 +103,10 @@ def _rank_item(
             f"cluster={duplicate_cluster:.2f}; historical={historical_importance:.2f}; "
             f"subscription={subscription_match:.2f}"
         ),
-        lineage=lineage_from_item(item, ranked_item_id=ranked_item_id),
-        metadata={"lineage": lineage, "source_quality": quality_score.to_dict()},
+        lineage=lineage,
+        source_quality=quality_score,
+        ranking_trace=ranking_trace,
+        metadata={"lineage": ranking_trace.to_dict(), "source_quality": quality_score.to_dict()},
     )
 
 
@@ -182,9 +187,7 @@ def _item_tags(item: NormalizedSourceItem) -> list[str]:
     return [str(tag).casefold() for tag in tags]
 
 
-def lineage_from_item(item: NormalizedSourceItem, *, ranked_item_id: str):
-    from business.foundation.models.source import Lineage
-
+def lineage_from_item(item: NormalizedSourceItem, *, ranked_item_id: str) -> Lineage:
     lineage = item.lineage
     return Lineage(
         source_id=item.source_id,

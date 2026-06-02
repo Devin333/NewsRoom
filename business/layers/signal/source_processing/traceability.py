@@ -21,8 +21,14 @@ def build_source_traceability_report(
     issues: list[SourceTraceabilityIssue] = []
 
     for ranked in ranked_items:
-        raw_lineage = ranked.metadata.get("lineage")
-        lineage = raw_lineage if isinstance(raw_lineage, dict) else {}
+        lineage = ranked.lineage
+        actual = {
+            "source_id": lineage.source_id if lineage is not None else None,
+            "source_item_id": lineage.source_item_id if lineage is not None else None,
+            "canonical_url": lineage.canonical_url if lineage is not None else None,
+            "normalized_item_id": lineage.normalized_item_id if lineage is not None else None,
+            "ranked_item_id": lineage.ranked_item_id if lineage is not None else None,
+        }
         expected = {
             "source_id": ranked.item.source_id,
             "source_item_id": ranked.item.source_item_id,
@@ -34,7 +40,7 @@ def build_source_traceability_report(
         mismatched_fields: list[str] = []
 
         for field_name in REQUIRED_LINEAGE_FIELDS:
-            actual_value = _optional_string(lineage.get(field_name))
+            actual_value = _optional_string(actual[field_name])
             expected_value = _optional_string(expected[field_name])
             if actual_value is None:
                 missing_fields.append(field_name)

@@ -38,11 +38,10 @@ class EvidenceBuilder:
             evidence_hash = sha256(evidence_key.encode("utf-8")).hexdigest()[:16]
             evidence_id = f"ev_{evidence_hash}"
             source_lineage = ranked.lineage or item.lineage
-            raw_lineage = ranked.metadata.get("lineage") or item.metadata.get("lineage") or {}
             source_lineage_payload = (
                 source_lineage.to_dict()
                 if source_lineage is not None and hasattr(source_lineage, "to_dict")
-                else (dict(raw_lineage) if isinstance(raw_lineage, dict) else {})
+                else {}
             )
             validation_notes = _evidence_validation_notes(ranked, source_lineage)
             content_completeness = _content_completeness_score(item.title, item.summary)

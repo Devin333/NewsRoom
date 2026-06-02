@@ -78,14 +78,13 @@ def _authority_score(item: NormalizedSourceItem) -> float:
 
 
 def _traceability_score(item: NormalizedSourceItem) -> float:
-    raw_lineage = item.metadata.get("lineage")
-    lineage = raw_lineage if isinstance(raw_lineage, dict) else {}
+    lineage = item.lineage
     score = 0.0
-    if item.source_id and lineage.get("source_id"):
+    if item.source_id and lineage is not None and lineage.source_id:
         score += 0.3
-    if item.source_item_id and lineage.get("source_item_id"):
+    if item.source_item_id and lineage is not None and lineage.source_item_id:
         score += 0.3
-    if item.canonical_url and lineage.get("canonical_url"):
+    if item.canonical_url and lineage is not None and lineage.canonical_url:
         score += 0.4
     return round(min(1.0, score), 4)
 

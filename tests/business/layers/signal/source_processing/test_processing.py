@@ -832,6 +832,11 @@ def test_rank_items_prioritizes_topic_relevance_and_reliability() -> None:
 
     assert ranked[0].item.title == "AI chip export update"
     assert ranked[0].final_score > ranked[1].final_score
+    assert ranked[0].lineage.source_id == "source"
+    assert ranked[0].lineage.normalized_item_id == ranked[0].item.normalized_item_id
+    assert ranked[0].lineage.ranked_item_id == ranked[0].ranked_item_id
+    assert ranked[0].ranking_trace.final_score == ranked[0].final_score
+    assert ranked[0].source_quality.traceability_score == 1.0
     lineage = ranked[0].metadata["lineage"]
     assert lineage["source_id"] == "source"
     assert lineage["normalized_item_id"] == ranked[0].item.normalized_item_id
@@ -855,6 +860,38 @@ def test_rank_items_prioritizes_topic_relevance_and_reliability() -> None:
     assert traceability_report.traceable_item_count == 2
     assert traceability_report.issue_count == 0
     assert traceability_report.rows[0]["ranked_item_id"] == ranked[0].ranked_item_id
+
+
+def test_ranked_source_item_projects_legacy_metadata_into_formal_fields() -> None:
+    ranked = rank_items(
+        normalize_items([_raw_item("AI chip export update", "https://example.com/chips")]),
+        topic="AI chip",
+        now=datetime(2026, 5, 11, tzinfo=UTC),
+    )[0]
+
+    lineage_only = {
+        "source_id": "source",
+        "source_item_id": ranked.item.source_item_id,
+        "normalized_item_id": ranked.item.normalized_item_id,
+        "ranked_item_id": ranked.ranked_item_id,
+        "canonical_url": ranked.item.canonical_url,
+    }
+    legacy_ranked = replace(
+        ranked,
+        lineage=None,
+        source_quality=None,
+        ranking_trace=None,
+        metadata={
+            "lineage": lineage_only,
+            "source_quality": ranked.source_quality.to_dict(),
+        },
+    )
+
+    assert legacy_ranked.lineage.source_id == "source"
+    assert legacy_ranked.lineage.ranked_item_id == ranked.ranked_item_id
+    assert legacy_ranked.ranking_trace.final_score == ranked.final_score
+    assert legacy_ranked.ranking_trace.relevance_score == ranked.relevance_score
+    assert legacy_ranked.source_quality.quality_score == ranked.source_quality.quality_score
 
 
 def test_deduplicate_marks_same_event_cluster_for_ranking() -> None:
@@ -889,10 +926,16 @@ def test_build_source_traceability_report_flags_missing_and_mismatched_lineage()
         topic="AI chip",
         now=datetime(2026, 5, 11, tzinfo=UTC),
     )
-    broken_lineage = dict(ranked[0].metadata["lineage"])
-    broken_lineage.pop("canonical_url")
-    broken_lineage["source_id"] = "other-source"
-    broken_ranked = replace(ranked[0], metadata={"lineage": broken_lineage})
+    broken_lineage = replace(
+        ranked[0].lineage,
+        canonical_url=None,
+        source_id="other-source",
+    )
+    broken_ranked = replace(
+        ranked[0],
+        lineage=broken_lineage,
+        ranking_trace=replace(ranked[0].ranking_trace, lineage=broken_lineage),
+    )
 
     report = build_source_traceability_report([broken_ranked])
 

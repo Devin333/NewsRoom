@@ -3,7 +3,13 @@ from __future__ import annotations
 from typing import Any
 
 from framework.workflow import StepScopedDataBufferView
-from business.foundation.models.source import RankedSourceItem, SourceError, SourcePipelineEvent
+from business.foundation.models.source import (
+    Lineage,
+    RankedSourceItem,
+    SourceError,
+    SourcePipelineEvent,
+    SourceRankingTrace,
+)
 from business.layers.signal.source_processing import (
     build_source_coverage_report,
     build_source_freshness_report,
@@ -164,9 +170,9 @@ def rank_sources(buffer: StepScopedDataBufferView) -> dict[str, Any]:
     for error in ranking_errors:
         metrics.record_error(error)
     source_quality_scores = [
-        ranked.metadata["source_quality"]
+        ranked.source_quality.to_dict()
         for ranked in ranked_items
-        if "source_quality" in ranked.metadata
+        if ranked.source_quality is not None
     ]
     source_ranking_scores = build_source_ranking_scores(ranked_items)
     source_freshness_report = build_source_freshness_report(ranked_items)
@@ -238,13 +244,33 @@ def _fallback_ranked_items(items: list[Any]) -> list[RankedSourceItem]:
     ranked_items: list[RankedSourceItem] = []
     for index, item in enumerate(items):
         ranked_item_id = f"rank_fallback_{item.normalized_item_id.removeprefix('norm_')}"
-        raw_lineage = item.lineage.to_dict() if item.lineage is not None else {}
-        lineage = {
-            **raw_lineage,
-            "normalized_item_id": item.normalized_item_id,
-            "ranked_item_id": ranked_item_id,
-            "ranking_fallback": True,
-        }
+        item_lineage = item.lineage
+        lineage = Lineage(
+            source_id=item.source_id,
+            source_item_id=item.source_item_id,
+            normalized_item_id=item.normalized_item_id,
+            ranked_item_id=ranked_item_id,
+            raw_url=item.url,
+            canonical_url=item.canonical_url,
+            fetched_at=item.fetched_at,
+            published_at=item.published_at,
+            raw_artifact_ref=(item_lineage.raw_artifact_ref if item_lineage else None),
+            parse_artifact_ref=(item_lineage.parse_artifact_ref if item_lineage else None),
+            metadata=dict(item_lineage.metadata) if item_lineage else {},
+        )
+        ranking_trace = SourceRankingTrace(
+            lineage=lineage,
+            relevance_score=0.0,
+            recency_score=0.0,
+            reliability_score=0.0,
+            authority_score=0.0,
+            novelty_score=max(0.0, 1.0 - index * 0.01),
+            duplicate_cluster_score=0.0,
+            historical_importance_score=0.0,
+            subscription_match_score=0.0,
+            final_score=0.0,
+            ranking_fallback=True,
+        )
         ranked_items.append(
             RankedSourceItem(
                 ranked_item_id=ranked_item_id,
@@ -255,7 +281,9 @@ def _fallback_ranked_items(items: list[Any]) -> list[RankedSourceItem]:
                 novelty_score=max(0.0, 1.0 - index * 0.01),
                 final_score=0.0,
                 rank_reason="ranking_failed_fallback",
-                metadata={"lineage": lineage, "ranking_fallback": True},
+                lineage=lineage,
+                ranking_trace=ranking_trace,
+                metadata={"lineage": ranking_trace.to_dict(), "ranking_fallback": True},
             )
         )
     return ranked_items

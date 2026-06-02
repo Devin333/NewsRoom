@@ -6,9 +6,6 @@ from business.foundation.models.source import RankedSourceItem, SourceRankingSco
 def build_source_ranking_scores(ranked_items: list[RankedSourceItem]) -> list[SourceRankingScore]:
     scores: list[SourceRankingScore] = []
     for ranked in ranked_items:
-        raw_lineage = ranked.metadata.get("lineage")
-        lineage = raw_lineage if isinstance(raw_lineage, dict) else {}
-        authority_score = float(lineage.get("authority_score", 0.0))
         scores.append(
             SourceRankingScore(
                 ranked_item_id=ranked.ranked_item_id,
@@ -20,7 +17,7 @@ def build_source_ranking_scores(ranked_items: list[RankedSourceItem]) -> list[So
                 relevance_score=ranked.relevance_score,
                 recency_score=ranked.recency_score,
                 reliability_score=ranked.reliability_score,
-                authority_score=round(authority_score, 4),
+                authority_score=ranked.authority_score,
                 novelty_score=ranked.novelty_score,
                 duplicate_cluster_score=ranked.duplicate_cluster_score,
                 historical_importance_score=ranked.historical_importance_score,
