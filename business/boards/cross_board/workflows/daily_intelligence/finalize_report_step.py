@@ -19,7 +19,7 @@ def finalize_report(buffer: StepScopedDataBufferView) -> dict[str, Any]:
         DailyReportFinalizationInput(
             request=buffer.read("request"),
             report_draft=buffer.read("report_draft"),
-            editor_review=buffer.read("editor_review"),
+            editor_review=_editor_review_or_feedback_block(buffer),
             verification_result=buffer.read("verification_result"),
             citation_check_result=buffer.read("citation_check_result"),
             support_matrix=buffer.read("support_matrix"),
@@ -49,3 +49,19 @@ def _read_optional_value(buffer: StepScopedDataBufferView, key: str) -> Any | No
         return buffer.read(key, required=False)
     except DataBufferReadPermissionError:
         return None
+
+
+def _editor_review_or_feedback_block(buffer: StepScopedDataBufferView) -> Any:
+    editor_review = _read_optional_value(buffer, "editor_review")
+    if editor_review is not None:
+        return editor_review
+    route = _read_optional_value(buffer, "agent_feedback_route")
+    reason = "agent feedback blocked publication before editor review"
+    if isinstance(route, dict):
+        reason = str(route.get("reason") or reason)
+    return {
+        "decision": "blocked",
+        "quality_score": 0.0,
+        "reasons": [reason],
+        "rewrite_instructions": [],
+    }

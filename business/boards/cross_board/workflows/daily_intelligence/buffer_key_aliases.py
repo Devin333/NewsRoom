@@ -71,6 +71,8 @@ REPORT_BUFFER_ALIASES = {
 AGENT_BUFFER_ALIASES = {
     "agent_feedback_events": "agent.feedback.events",
     "agent_feedback_summary": "agent.feedback.summary",
+    "agent_feedback_route": "agent.feedback.route",
+    "agent_feedback_loop_state": "agent.feedback.loop_state",
 }
 
 DAILY_BUFFER_ALIASES = {

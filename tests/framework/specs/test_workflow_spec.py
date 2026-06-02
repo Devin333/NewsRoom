@@ -40,3 +40,40 @@ def test_workflow_spec_keeps_legacy_validation_surface() -> None:
 
     assert workflow.validation_result().valid is True
     workflow.validate()
+
+
+def test_workflow_strict_read_key_validation_accepts_bounded_feedback_cycle() -> None:
+    workflow = WorkflowSpec(
+        workflow_id="feedback-loop",
+        name="Feedback Loop",
+        version="1.0",
+        start_step_id="collect",
+        terminal_step_ids=["finish"],
+        steps=[
+            StepSpec("collect", "collect", write_keys=["evidence"]),
+            StepSpec("plan", "plan", read_keys=["evidence"], write_keys=["plan"]),
+            StepSpec(
+                "write",
+                "write",
+                read_keys=["evidence", "plan"],
+                write_keys=["draft"],
+            ),
+            StepSpec("verify", "verify", read_keys=["draft"], write_keys=["feedback"]),
+            StepSpec(
+                "finish",
+                "finish",
+                read_keys=["draft", "feedback"],
+            ),
+        ],
+        edges=[
+            EdgeSpec("collect-plan", "collect", "plan"),
+            EdgeSpec("plan-write", "plan", "write"),
+            EdgeSpec("write-verify", "write", "verify"),
+            EdgeSpec("verify-write", "verify", "write"),
+            EdgeSpec("verify-finish", "verify", "finish"),
+        ],
+    )
+
+    result = workflow.validation_result(strict=True)
+
+    assert result.valid is True

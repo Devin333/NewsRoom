@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from framework.specs import EdgeSpec, StepSpec, StepType, WorkflowSpec
+from framework.specs import EdgeCondition, EdgeSpec, StepSpec, StepType, WorkflowSpec
 from business.boards.cross_board.workflows.daily_intelligence.profiles import PROFILE_AGENTIC_LIVE
 from business.boards.cross_board.workflows.daily_intelligence.agents import (
     ANALYST_AGENT_ID,
@@ -52,9 +52,31 @@ def build_agentic_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
             EdgeSpec("planner-to-analyst", "planner_agent", "analyst_agent"),
             EdgeSpec("analyst-to-writer", "analyst_agent", "writer_agent"),
             EdgeSpec("writer-to-verifier", "writer_agent", "verifier_agent"),
-            EdgeSpec("verifier-to-editor", "verifier_agent", "editor_agent"),
+            EdgeSpec("verifier-to-feedback", "verifier_agent", "collect_agent_feedback"),
             EdgeSpec("editor-to-feedback", "editor_agent", "collect_agent_feedback"),
-            EdgeSpec("feedback-to-finalize", "collect_agent_feedback", "finalize_report"),
+            EdgeSpec(
+                "feedback-retry-to-writer",
+                "collect_agent_feedback",
+                "writer_agent",
+                condition=EdgeCondition.CONDITIONAL,
+                condition_expr="outcome.outputs.agent_feedback_route.next_step_id == 'writer_agent'",
+                priority=-10,
+            ),
+            EdgeSpec(
+                "feedback-pass-to-editor",
+                "collect_agent_feedback",
+                "editor_agent",
+                condition=EdgeCondition.CONDITIONAL,
+                condition_expr="outcome.outputs.agent_feedback_route.next_step_id == 'editor_agent'",
+            ),
+            EdgeSpec(
+                "feedback-to-finalize",
+                "collect_agent_feedback",
+                "finalize_report",
+                condition=EdgeCondition.CONDITIONAL,
+                condition_expr="outcome.outputs.agent_feedback_route.next_step_id == 'finalize_report'",
+                priority=10,
+            ),
         ],
         policies=daily_workflow_runtime_policy(),
         metadata={"profile": profile, "product_path": profile == PROFILE_AGENTIC_LIVE},
@@ -143,10 +165,21 @@ def _writer_agent_step() -> StepSpec:
             "writer_llm_call_artifacts",
         ],
         required_output_keys=["report_draft"],
-        metadata=_agent_step_metadata(
-            WRITER_AGENT_ID,
-            prefix="writer",
-        ),
+        metadata={
+            **_agent_step_metadata(
+                WRITER_AGENT_ID,
+                prefix="writer",
+            ),
+            "optional_read_keys": [
+                "citation_check_result",
+                "support_matrix",
+                "verification_result",
+                "agent_feedback_events",
+                "agent_feedback_summary",
+                "agent_feedback_route",
+                "agent_feedback_loop_state",
+            ],
+        },
     )
 
 
@@ -222,8 +255,6 @@ def _finalize_report_step() -> StepSpec:
         read_keys=[
             "request",
             "report_draft",
-            "edited_report_draft",
-            "editor_review",
             "verification_result",
             "citation_check_result",
             "support_matrix",
@@ -232,6 +263,7 @@ def _finalize_report_step() -> StepSpec:
             "quality_events",
             "agent_feedback_events",
             "agent_feedback_summary",
+            "agent_feedback_route",
         ],
         write_keys=with_namespaced_write_keys([
             "report_quality_summary",
@@ -246,7 +278,7 @@ def _finalize_report_step() -> StepSpec:
             "blocked_report",
         ]),
         required_output_keys=["quality_result", "quality_gate_metrics"],
-        metadata={"optional_read_keys": ["edited_report_draft"]},
+        metadata={"optional_read_keys": ["edited_report_draft", "editor_review"]},
     )
 
 
@@ -259,13 +291,15 @@ def _collect_agent_feedback_step() -> StepSpec:
             "verification_result",
             "citation_check_result",
             "support_matrix",
-            "editor_review",
         ],
         write_keys=with_namespaced_write_keys([
             "agent_feedback_events",
             "agent_feedback_summary",
+            "agent_feedback_route",
+            "agent_feedback_loop_state",
         ]),
         required_output_keys=["agent_feedback_summary"],
+        metadata={"optional_read_keys": ["editor_review", "agent_feedback_loop_state"]},
     )
 
 

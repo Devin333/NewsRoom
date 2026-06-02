@@ -7,8 +7,9 @@ from framework.workflow.runners._step_runner_impl import AgentLoopStepRunner
 
 
 def test_agent_loop_step_outcome_exposes_trajectory_summary() -> None:
+    agent_runner = _FakeAgentRunner()
     runner = AgentLoopStepRunner(
-        agent_runner=_FakeAgentRunner(),
+        agent_runner=agent_runner,
         agent_registry={"agent-1": object()},
     )
     runner.configure_run_context(artifact_manager=object(), run_id="run-1")
@@ -38,9 +39,53 @@ def test_agent_loop_step_outcome_exposes_trajectory_summary() -> None:
     assert outcome.trace_events[0]["event_type"] == "agent_loop_trajectory"
 
 
+def test_agent_loop_step_runner_passes_present_optional_reads() -> None:
+    agent_runner = _FakeAgentRunner()
+    runner = AgentLoopStepRunner(
+        agent_runner=agent_runner,
+        agent_registry={"agent-1": object()},
+    )
+    runner.configure_run_context(artifact_manager=object(), run_id="run-1")
+    step = StepSpec(
+        step_id="agent_step",
+        step_type=StepType.AGENT_LOOP,
+        implementation="agent-1",
+        read_keys=["required_input"],
+        write_keys=[
+            "agent_loop_result",
+            "agent_loop_metrics",
+            "agent_loop_trace",
+            "agent_loop_trajectory",
+            "agent_loop_termination_reason",
+            "agent_loop_max_steps_reached",
+        ],
+        metadata={"optional_read_keys": ["optional_input", "missing_optional"]},
+    )
+    buffer = DataBuffer(
+        {"required_input": "required", "optional_input": "optional"}
+    ).scope(
+        step.read_keys,
+        step.write_keys,
+        optional_read_keys=step.metadata["optional_read_keys"],
+        step_id=step.step_id,
+    )
+
+    outcome = runner.run(step, buffer)
+
+    assert outcome.status.value == "succeeded"
+    assert agent_runner.last_inputs == {
+        "required_input": "required",
+        "optional_input": "optional",
+    }
+
+
 class _FakeAgentRunner:
+    def __init__(self) -> None:
+        self.last_inputs: dict[str, object] | None = None
+
     def run(self, agent: object, inputs: dict[str, object], **kwargs: object) -> AgentLoopResult:
-        _ = agent, inputs, kwargs
+        _ = agent, kwargs
+        self.last_inputs = dict(inputs)
         trajectory = [
             {
                 "iteration": 1,

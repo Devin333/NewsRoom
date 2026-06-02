@@ -74,6 +74,13 @@ def test_daily_agent_specs_define_contract_keys() -> None:
         "evidence_bundle",
         "source_errors",
         "source_pipeline_metrics",
+        "citation_check_result",
+        "support_matrix",
+        "verification_result",
+        "agent_feedback_events",
+        "agent_feedback_summary",
+        "agent_feedback_route",
+        "agent_feedback_loop_state",
     ]
     assert writer.output_key == "report_draft"
     assert writer.output_schema is not None

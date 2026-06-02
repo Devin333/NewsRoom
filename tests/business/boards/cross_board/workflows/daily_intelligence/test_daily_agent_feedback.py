@@ -53,6 +53,15 @@ def test_collect_agent_feedback_records_verifier_and_editor_rewrite_requests() -
         "daily-agent-feedback-4",
     ]
     assert summary.metadata["policy_recommendation_count"] == 1
+    assert output["agent_feedback_route"]["decision"] == "pass"
+    assert output["agent_feedback_route"]["next_step_id"] == "finalize_report"
+    assert output["agent_feedback_route"]["target_agent_id"] == "daily.finalize_report"
+    assert output["agent_feedback_loop_state"] == {
+        "rewrite_rounds": 0,
+        "max_rewrite_rounds": 1,
+        "rewrite_requested": False,
+        "rewrite_exhausted": False,
+    }
 
 
 def test_collect_agent_feedback_records_block_and_human_review_targets() -> None:
@@ -93,6 +102,8 @@ def test_collect_agent_feedback_records_block_and_human_review_targets() -> None
         "daily.human_review",
     ]
     assert summary.policy_recommendations[0].priority == "block"
+    assert output["agent_feedback_route"]["decision"] == "blocked"
+    assert output["agent_feedback_route"]["next_step_id"] == "finalize_report"
 
 
 def test_collect_agent_feedback_returns_empty_summary_for_clean_pass() -> None:
@@ -120,6 +131,84 @@ def test_collect_agent_feedback_returns_empty_summary_for_clean_pass() -> None:
     assert output["agent_feedback_summary"].event_count == 0
     assert output["agent_feedback_summary"].highest_severity == "none"
     assert output["agent_feedback_summary"].policy_recommendations == []
+    assert output["agent_feedback_route"]["decision"] == "pass"
+    assert output["agent_feedback_route"]["next_step_id"] == "finalize_report"
+
+
+def test_collect_agent_feedback_routes_clean_verifier_pass_to_editor() -> None:
+    output = collect_agent_feedback(
+        _feedback_buffer(
+            verification_result={
+                "status": "pass",
+                "risk_level": "low",
+                "unsupported_claims": [],
+                "missing_citations": [],
+                "reasons": [],
+            },
+            citation_check_result={},
+            support_matrix={},
+            editor_review=None,
+        )
+    )
+
+    assert output["agent_feedback_events"] == []
+    assert output["agent_feedback_route"]["decision"] == "pass"
+    assert output["agent_feedback_route"]["next_step_id"] == "editor_agent"
+    assert output["agent_feedback_route"]["target_agent_id"] == "daily.editor"
+
+
+def test_collect_agent_feedback_can_route_verifier_feedback_before_editor_runs() -> None:
+    output = collect_agent_feedback(
+        _feedback_buffer(
+            verification_result={
+                "status": "needs_rewrite",
+                "risk_level": "medium",
+                "unsupported_claims": ["unsupported claim"],
+                "missing_citations": [],
+                "reasons": ["rewrite unsupported claim"],
+            },
+            citation_check_result={},
+            support_matrix={},
+            editor_review=None,
+        )
+    )
+
+    assert [event.feedback_type for event in output["agent_feedback_events"]] == [
+        "verification_rewrite_request"
+    ]
+    assert output["agent_feedback_route"]["decision"] == "retry_required"
+    assert output["agent_feedback_route"]["next_step_id"] == "writer_agent"
+    assert output["agent_feedback_route"]["target_agent_id"] == "daily.writer"
+    assert output["agent_feedback_loop_state"]["rewrite_rounds"] == 1
+
+
+def test_collect_agent_feedback_exhausts_bounded_writer_rewrite_loop() -> None:
+    output = collect_agent_feedback(
+        _feedback_buffer(
+            verification_result={
+                "status": "needs_rewrite",
+                "risk_level": "medium",
+                "unsupported_claims": ["unsupported claim"],
+                "missing_citations": [],
+                "reasons": ["rewrite unsupported claim"],
+            },
+            citation_check_result={},
+            support_matrix={},
+            editor_review=None,
+            agent_feedback_loop_state={
+                "rewrite_rounds": 1,
+                "max_rewrite_rounds": 1,
+                "rewrite_requested": True,
+                "rewrite_exhausted": False,
+            },
+        )
+    )
+
+    assert output["agent_feedback_route"]["decision"] == "blocked"
+    assert output["agent_feedback_route"]["next_step_id"] == "finalize_report"
+    assert output["agent_feedback_route"]["reason"] == "agent feedback rewrite rounds exhausted"
+    assert output["agent_feedback_loop_state"]["rewrite_rounds"] == 1
+    assert output["agent_feedback_loop_state"]["rewrite_exhausted"] is True
 
 
 def _feedback_buffer(
@@ -127,21 +216,25 @@ def _feedback_buffer(
     verification_result: dict,
     citation_check_result: dict,
     support_matrix: dict,
-    editor_review: dict,
+    editor_review: dict | None,
+    agent_feedback_loop_state: dict | None = None,
 ):
-    return DataBuffer(
-        {
-            "verification_result": verification_result,
-            "citation_check_result": citation_check_result,
-            "support_matrix": support_matrix,
-            "editor_review": editor_review,
-        }
-    ).scope(
+    values = {
+        "verification_result": verification_result,
+        "citation_check_result": citation_check_result,
+        "support_matrix": support_matrix,
+    }
+    if editor_review is not None:
+        values["editor_review"] = editor_review
+    if agent_feedback_loop_state is not None:
+        values["agent_feedback_loop_state"] = agent_feedback_loop_state
+    return DataBuffer(values).scope(
         read_keys=[
             "verification_result",
             "citation_check_result",
             "support_matrix",
             "editor_review",
+            "agent_feedback_loop_state",
         ],
         write_keys=[],
     )

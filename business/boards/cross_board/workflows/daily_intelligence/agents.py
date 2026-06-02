@@ -100,8 +100,10 @@ def build_writer_agent() -> AgentSpec:
             "they appear explicitly in the evidence. Each section must include "
             "section_id, title, content, sources, and claim_grounding. The content must "
             "be a compact restatement of the same claims listed in claim_grounding, not "
-            "new prose beyond them. Every claim_grounding entry must map one explicit "
-            "claim to source_urls and evidence_ids when available."
+            "new prose beyond them. If verifier or editor feedback is provided, revise "
+            "only against that bounded feedback and the provided evidence. Every "
+            "claim_grounding entry must map one explicit claim to source_urls and "
+            "evidence_ids when available."
         ),
         input_keys=[
             "request",
@@ -111,6 +113,13 @@ def build_writer_agent() -> AgentSpec:
             "evidence_bundle",
             "source_errors",
             "source_pipeline_metrics",
+            "citation_check_result",
+            "support_matrix",
+            "verification_result",
+            "agent_feedback_events",
+            "agent_feedback_summary",
+            "agent_feedback_route",
+            "agent_feedback_loop_state",
         ],
         output_key="report_draft",
         validation_policy=daily_agent_validation_policy(),

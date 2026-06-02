@@ -47,3 +47,67 @@ def test_business_predicates_can_handle_legacy_quality_conditions() -> None:
 
     assert default_decision.target_step_id is None
     assert business_decision.target_step_id == "publish"
+
+
+def test_business_predicates_route_verifier_rewrite_status() -> None:
+    workflow = WorkflowSpec(
+        workflow_id="wf",
+        name="Workflow",
+        version="1",
+        start_step_id="verify",
+        steps=[StepSpec("verify"), StepSpec("feedback"), StepSpec("publish")],
+        edges=[
+            EdgeSpec(
+                "retry",
+                "verify",
+                "feedback",
+                condition=EdgeCondition.VALIDATION_RETRY_REQUIRED,
+            ),
+            EdgeSpec(
+                "pass",
+                "verify",
+                "publish",
+                condition=EdgeCondition.VALIDATION_PASS,
+            ),
+        ],
+    )
+    outcome = StepOutcome.success(
+        "verify",
+        {"verification_result": {"status": "needs_rewrite"}},
+    )
+
+    decision = RoutingEngine(
+        predicate_registry=build_daily_intelligence_routing_predicate_registry()
+    ).decide(workflow, workflow.step_by_id("verify"), outcome)
+
+    assert decision.target_step_id == "feedback"
+
+
+def test_business_predicates_route_agent_feedback_retry() -> None:
+    workflow = WorkflowSpec(
+        workflow_id="wf",
+        name="Workflow",
+        version="1",
+        start_step_id="feedback",
+        steps=[StepSpec("feedback"), StepSpec("writer"), StepSpec("finalize")],
+        edges=[
+            EdgeSpec(
+                "retry",
+                "feedback",
+                "writer",
+                condition=EdgeCondition.VALIDATION_RETRY_REQUIRED,
+                priority=-10,
+            ),
+            EdgeSpec("finalize", "feedback", "finalize", priority=10),
+        ],
+    )
+    outcome = StepOutcome.success(
+        "feedback",
+        {"agent_feedback_route": {"decision": "retry_required"}},
+    )
+
+    decision = RoutingEngine(
+        predicate_registry=build_daily_intelligence_routing_predicate_registry()
+    ).decide(workflow, workflow.step_by_id("feedback"), outcome)
+
+    assert decision.target_step_id == "writer"

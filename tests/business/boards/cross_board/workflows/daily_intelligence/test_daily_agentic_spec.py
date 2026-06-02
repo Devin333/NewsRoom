@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from framework.specs import StepType
+from framework.specs import EdgeCondition, StepType
 from framework.workflow import FunctionStepRegistry, WorkflowCompiler
 from framework.workflow.runners.step_runner import build_default_step_runner_registry
 from framework.workflow.runtime.timeout import workflow_timeout_budget
@@ -67,6 +67,8 @@ def test_agentic_daily_workflow_declares_agent_steps() -> None:
     assert steps["writer_agent"].step_type == StepType.AGENT_LOOP
     assert steps["writer_agent"].metadata["agent_id"] == WRITER_AGENT_ID
     assert steps["writer_agent"].implementation == WRITER_AGENT_ID
+    assert "agent_feedback_summary" in steps["writer_agent"].metadata["optional_read_keys"]
+    assert "agent_feedback_loop_state" in steps["writer_agent"].metadata["optional_read_keys"]
 
     assert steps["verifier_agent"].step_type == StepType.AGENT_LOOP
     assert steps["verifier_agent"].metadata["agent_id"] == VERIFIER_AGENT_ID
@@ -79,9 +81,25 @@ def test_agentic_daily_workflow_declares_agent_steps() -> None:
     assert steps["collect_agent_feedback"].step_type == StepType.FUNCTION
     assert steps["collect_agent_feedback"].implementation == "daily.collect_agent_feedback"
     assert steps["collect_agent_feedback"].required_output_keys == ["agent_feedback_summary"]
+    assert steps["collect_agent_feedback"].read_keys == [
+        "verification_result",
+        "citation_check_result",
+        "support_matrix",
+    ]
+    assert steps["collect_agent_feedback"].metadata["optional_read_keys"] == [
+        "editor_review",
+        "agent_feedback_loop_state",
+    ]
     assert "agent.feedback.summary" in steps["collect_agent_feedback"].write_keys
     assert "agent.feedback.events" in steps["collect_agent_feedback"].write_keys
+    assert "agent.feedback.route" in steps["collect_agent_feedback"].write_keys
+    assert "agent.feedback.loop_state" in steps["collect_agent_feedback"].write_keys
     assert "agent_feedback_events" in steps["finalize_report"].read_keys
+    assert "agent_feedback_route" in steps["finalize_report"].read_keys
+    assert steps["finalize_report"].metadata["optional_read_keys"] == [
+        "edited_report_draft",
+        "editor_review",
+    ]
     assert "quality.result" in steps["finalize_report"].write_keys
 
 
@@ -104,9 +122,31 @@ def test_agentic_daily_workflow_routes_evidence_to_agents_to_finalize() -> None:
     assert edges["planner-to-analyst"] == ("planner_agent", "analyst_agent")
     assert edges["analyst-to-writer"] == ("analyst_agent", "writer_agent")
     assert edges["writer-to-verifier"] == ("writer_agent", "verifier_agent")
-    assert edges["verifier-to-editor"] == ("verifier_agent", "editor_agent")
+    assert edges["verifier-to-feedback"] == ("verifier_agent", "collect_agent_feedback")
     assert edges["editor-to-feedback"] == ("editor_agent", "collect_agent_feedback")
+    assert edges["feedback-retry-to-writer"] == ("collect_agent_feedback", "writer_agent")
+    assert edges["feedback-pass-to-editor"] == ("collect_agent_feedback", "editor_agent")
     assert edges["feedback-to-finalize"] == ("collect_agent_feedback", "finalize_report")
+
+
+def test_agentic_daily_workflow_declares_bounded_feedback_routes() -> None:
+    workflow = build_agentic_daily_intelligence_workflow(PROFILE_AGENTIC_OFFLINE)
+    edges = {edge.edge_id: edge for edge in workflow.edges}
+
+    assert edges["verifier-to-feedback"].condition == EdgeCondition.ON_SUCCESS
+    assert edges["feedback-retry-to-writer"].condition == EdgeCondition.CONDITIONAL
+    assert edges["feedback-retry-to-writer"].condition_expr == (
+        "outcome.outputs.agent_feedback_route.next_step_id == 'writer_agent'"
+    )
+    assert edges["feedback-pass-to-editor"].condition == EdgeCondition.CONDITIONAL
+    assert edges["feedback-pass-to-editor"].condition_expr == (
+        "outcome.outputs.agent_feedback_route.next_step_id == 'editor_agent'"
+    )
+    assert edges["feedback-to-finalize"].condition == EdgeCondition.CONDITIONAL
+    assert edges["feedback-to-finalize"].condition_expr == (
+        "outcome.outputs.agent_feedback_route.next_step_id == 'finalize_report'"
+    )
+    assert edges["feedback-retry-to-writer"].priority < edges["feedback-to-finalize"].priority
 
 
 def test_agentic_daily_workflow_compile_passes_with_runner_registry() -> None:

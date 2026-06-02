@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from framework.workflow import StepScopedDataBufferView
+from framework.workflow import DataBufferReadPermissionError, StepScopedDataBufferView
 from business.boards.cross_board.workflows.daily_intelligence.agent_feedback_models import (
     HUMAN_REVIEW_TARGET,
     PUBLICATION_GATE_TARGET,
@@ -22,16 +22,32 @@ from business.boards.cross_board.workflows.daily_intelligence.buffer_key_aliases
 )
 
 
+MAX_AGENT_FEEDBACK_REWRITE_ROUNDS = 1
+
+
 def collect_agent_feedback(buffer: StepScopedDataBufferView) -> dict[str, Any]:
+    editor_review = _optional_buffer_dict(buffer, "editor_review")
     events = DailyAgentFeedbackCollector().collect(
-        verification_result=_dict_value(buffer.read("verification_result")),
-        citation_check_result=_dict_value(buffer.read("citation_check_result")),
-        support_matrix=_dict_value(buffer.read("support_matrix")),
-        editor_review=_dict_value(buffer.read("editor_review")),
+        verification_result=_optional_buffer_dict(buffer, "verification_result"),
+        citation_check_result=_optional_buffer_dict(buffer, "citation_check_result"),
+        support_matrix=_optional_buffer_dict(buffer, "support_matrix"),
+        editor_review=editor_review,
+    )
+    summary = summarize_agent_feedback(events)
+    loop_state = _next_feedback_loop_state(
+        buffer,
+        summary,
+        writer_rewrite_routable=not bool(editor_review),
     )
     return with_namespaced_aliases({
         "agent_feedback_events": events,
-        "agent_feedback_summary": summarize_agent_feedback(events),
+        "agent_feedback_summary": summary,
+        "agent_feedback_route": _feedback_route(
+            summary,
+            loop_state,
+            editor_review_available=bool(editor_review),
+        ),
+        "agent_feedback_loop_state": loop_state,
     })
 
 
@@ -204,6 +220,95 @@ def summarize_agent_feedback(events: list[DailyAgentFeedbackEvent]) -> DailyAgen
     )
 
 
+def _feedback_route(
+    summary: DailyAgentFeedbackSummary,
+    loop_state: dict[str, Any],
+    *,
+    editor_review_available: bool,
+) -> dict[str, Any]:
+    if (
+        not editor_review_available
+        and loop_state["rewrite_requested"]
+        and not loop_state["rewrite_exhausted"]
+    ):
+        return {
+            "decision": "retry_required",
+            "next_step_id": "writer_agent",
+            "target_agent_id": WRITER_AGENT_ID,
+            "reason": "agent feedback requested writer rewrite",
+            "rewrite_round": loop_state["rewrite_rounds"],
+            "max_rewrite_rounds": loop_state["max_rewrite_rounds"],
+        }
+    if (
+        not editor_review_available
+        and loop_state["rewrite_requested"]
+        and loop_state["rewrite_exhausted"]
+    ):
+        return {
+            "decision": "blocked",
+            "next_step_id": "finalize_report",
+            "target_agent_id": PUBLICATION_GATE_TARGET,
+            "reason": "agent feedback rewrite rounds exhausted",
+            "rewrite_round": loop_state["rewrite_rounds"],
+            "max_rewrite_rounds": loop_state["max_rewrite_rounds"],
+        }
+    if summary.block_request_count:
+        return {
+            "decision": "blocked",
+            "next_step_id": "finalize_report",
+            "target_agent_id": PUBLICATION_GATE_TARGET,
+            "reason": "agent feedback requested publication block",
+            "rewrite_round": loop_state["rewrite_rounds"],
+            "max_rewrite_rounds": loop_state["max_rewrite_rounds"],
+        }
+    next_step_id = "finalize_report" if editor_review_available else "editor_agent"
+    target_agent_id = "daily.finalize_report" if editor_review_available else EDITOR_AGENT_ID
+    return {
+        "decision": "pass",
+        "next_step_id": next_step_id,
+        "target_agent_id": target_agent_id,
+        "reason": "no bounded agent feedback retry required",
+        "rewrite_round": loop_state["rewrite_rounds"],
+        "max_rewrite_rounds": loop_state["max_rewrite_rounds"],
+    }
+
+
+def _next_feedback_loop_state(
+    buffer: StepScopedDataBufferView,
+    summary: DailyAgentFeedbackSummary,
+    *,
+    writer_rewrite_routable: bool,
+) -> dict[str, Any]:
+    previous = _optional_buffer_dict(buffer, "agent_feedback_loop_state")
+    previous_rounds = _int_value(previous.get("rewrite_rounds"), default=0)
+    rewrite_requested = writer_rewrite_routable and _writer_rewrite_requested(summary)
+    rewrite_exhausted = (
+        rewrite_requested
+        and previous_rounds >= MAX_AGENT_FEEDBACK_REWRITE_ROUNDS
+    )
+    rewrite_rounds = previous_rounds
+    if rewrite_requested and not rewrite_exhausted:
+        rewrite_rounds += 1
+    return {
+        "rewrite_rounds": rewrite_rounds,
+        "max_rewrite_rounds": MAX_AGENT_FEEDBACK_REWRITE_ROUNDS,
+        "rewrite_requested": rewrite_requested,
+        "rewrite_exhausted": rewrite_exhausted,
+    }
+
+
+def _writer_rewrite_requested(summary: DailyAgentFeedbackSummary) -> bool:
+    if summary.rewrite_request_count <= 0:
+        return False
+    for recommendation in summary.policy_recommendations:
+        if (
+            recommendation.recommended_action == "rewrite"
+            and recommendation.target_agent_id == WRITER_AGENT_ID
+        ):
+            return True
+    return WRITER_AGENT_ID in summary.target_agent_ids
+
+
 def _feedback_event(
     *,
     source_agent_id: str,
@@ -233,6 +338,15 @@ def _dict_value(value: Any) -> dict[str, Any]:
         payload = value.to_dict()
         return payload if isinstance(payload, dict) else {}
     return {}
+
+
+def _optional_buffer_dict(buffer: StepScopedDataBufferView, key: str) -> dict[str, Any]:
+    try:
+        if not buffer.exists(key):
+            return {}
+        return _dict_value(buffer.read(key, required=False))
+    except DataBufferReadPermissionError:
+        return {}
 
 
 def _list_value(value: Any) -> list[Any]:
@@ -274,6 +388,13 @@ def _severity_from_quality_score(value: Any) -> str:
     if score < 0.8:
         return "warning"
     return "info"
+
+
+def _int_value(value: Any, *, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def _highest_severity(events: list[DailyAgentFeedbackEvent]) -> str:

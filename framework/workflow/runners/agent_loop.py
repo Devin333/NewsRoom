@@ -101,7 +101,8 @@ class AgentLoopStepRunner:
                 runner_name="AgentLoopStepRunner",
             )
 
-        inputs = {key: buffer.read(key) for key in step.read_keys if buffer.exists(key)}
+        input_keys = _agent_loop_input_keys(step)
+        inputs = {key: buffer.read(key) for key in input_keys if buffer.exists(key)}
         conversation_id = step.metadata.get("conversation_id")
         if "conversation_id_key" in step.metadata:
             conversation_id = buffer.read(str(step.metadata["conversation_id_key"]))
@@ -272,6 +273,16 @@ def _agent_loop_error_details(result_payload: dict[str, Any]) -> dict[str, Any]:
                 details["global_budget_usage"] = metrics.get("global_budget_usage")
         return details
     return {"agent_loop_status": result_payload.get("status")}
+
+
+def _agent_loop_input_keys(step: StepSpec) -> list[str]:
+    keys = [str(key) for key in step.read_keys]
+    for key in step.metadata.get("optional_read_keys", []) or []:
+        text = str(key)
+        if text not in keys:
+            keys.append(text)
+    return keys
+
 
 def _agent_loop_metrics_payload(result: Any) -> dict[str, Any]:
     metrics = result.metrics.to_dict()

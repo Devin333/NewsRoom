@@ -536,57 +536,58 @@ def _strict_keys_available_before_step(
     target_step_id: str,
     initial_keys: set[str],
 ) -> set[str]:
-    if target_step_id == workflow.start_step_id:
-        return set(initial_keys)
-    predecessors = _workflow_predecessors(workflow)
-    incoming_step_ids = predecessors.get(target_step_id, set())
-    if not incoming_step_ids:
-        return set(initial_keys)
-
-    step_by_id = {step.step_id: step for step in workflow.steps}
-    available: set[str] | None = None
-    for predecessor_step_id in incoming_step_ids:
-        predecessor_keys = _strict_keys_after_step(
-            workflow=workflow,
-            step_id=predecessor_step_id,
-            initial_keys=initial_keys,
-            visiting=set(),
-            step_by_id=step_by_id,
-            predecessors=predecessors,
-        )
-        available = predecessor_keys if available is None else available & predecessor_keys
-    return available or set(initial_keys)
+    return _strict_keys_available_before_steps(
+        workflow=workflow,
+        initial_keys=initial_keys,
+    ).get(target_step_id, set(initial_keys))
 
 
-def _strict_keys_after_step(
+def _strict_keys_available_before_steps(
     *,
     workflow: WorkflowSpec,
-    step_id: str,
     initial_keys: set[str],
-    visiting: set[str],
-    step_by_id: dict[str, StepSpec],
-    predecessors: dict[str, set[str]],
-) -> set[str]:
-    if step_id in visiting:
-        return set(initial_keys)
-    visiting = {*visiting, step_id}
-    if step_id == workflow.start_step_id:
-        before = set(initial_keys)
-    else:
-        incoming_step_ids = predecessors.get(step_id, set())
-        before: set[str] | None = None
-        for predecessor_step_id in incoming_step_ids:
-            predecessor_keys = _strict_keys_after_step(
-                workflow=workflow,
-                step_id=predecessor_step_id,
-                initial_keys=initial_keys,
-                visiting=visiting,
-                step_by_id=step_by_id,
-                predecessors=predecessors,
-            )
-            before = predecessor_keys if before is None else before & predecessor_keys
-        before = before or set(initial_keys)
-    return before | set(step_by_id[step_id].write_keys)
+) -> dict[str, set[str]]:
+    step_by_id = {step.step_id: step for step in workflow.steps}
+    predecessors = _workflow_predecessors(workflow)
+    universe = set(initial_keys)
+    for step in workflow.steps:
+        universe.update(str(key) for key in step.write_keys)
+
+    before: dict[str, set[str]] = {}
+    after: dict[str, set[str]] = {}
+    for step in workflow.steps:
+        if step.step_id == workflow.start_step_id or not predecessors.get(step.step_id):
+            before[step.step_id] = set(initial_keys)
+        else:
+            before[step.step_id] = set(universe)
+        after[step.step_id] = before[step.step_id] | set(step.write_keys)
+
+    changed = True
+    max_iterations = max(1, len(workflow.steps) * 2)
+    iteration = 0
+    while changed and iteration < max_iterations:
+        changed = False
+        iteration += 1
+        for step in workflow.steps:
+            if step.step_id == workflow.start_step_id:
+                next_before = set(initial_keys)
+            else:
+                incoming_step_ids = predecessors.get(step.step_id, set())
+                if not incoming_step_ids:
+                    next_before = set(initial_keys)
+                else:
+                    incoming_after = [
+                        after.get(predecessor_step_id, set(initial_keys))
+                        for predecessor_step_id in incoming_step_ids
+                        if predecessor_step_id in step_by_id
+                    ]
+                    next_before = set.intersection(*incoming_after) if incoming_after else set(initial_keys)
+            next_after = next_before | set(step.write_keys)
+            if next_before != before[step.step_id] or next_after != after[step.step_id]:
+                before[step.step_id] = next_before
+                after[step.step_id] = next_after
+                changed = True
+    return before
 
 
 def _workflow_predecessors(workflow: WorkflowSpec) -> dict[str, set[str]]:
