@@ -11,6 +11,7 @@ from business.boards.services import (
     BoardRunMetadataBuilder,
     BoardRunMetadataPayload,
     BoardPipelineRunner,
+    BoardPolicyApplicationService,
     BoardReportExtractionService,
     BoardRunBuildService,
     BoardRunReferenceService,
@@ -28,6 +29,7 @@ def test_board_service_base_exposes_decomposed_boundary_services() -> None:
     service = AINewsBoardService()
 
     assert isinstance(service.selection_service, BoardSignalSelectionService)
+    assert isinstance(service.policy_application_service, BoardPolicyApplicationService)
     assert isinstance(service.pipeline_runner, BoardPipelineRunner)
     assert isinstance(service.reference_service, BoardRunReferenceService)
     assert isinstance(service.report_service, BoardReportExtractionService)

@@ -36,6 +36,7 @@ Step 实例只保留 `board_type` 和 `ProductizedBoardUseCases`，不保存底�
 
 - `BoardSignalSelectionService`：coerce/filter/sort board signals。
 - `BoardPipelineRunner`：运行 extraction、relation、analysis、output pipeline，并调用 output annotation 与 board output postprocess hook。
+- `BoardPolicyApplicationService`：根据单个 board 声明的 scoring profile、policy factory、feature builder 与 presenter 应用 cards presentation 和 run result policy enhancement。
 - `BoardOutputAnnotationService`：写入 BoardOutput 的标准 annotation。
 - `BoardQualityService`：构建 board run quality snapshot 和 feedback candidates。
 - `BoardRunReferenceService`：构建 trace、manifest、artifact、evidence、memory refs。
