@@ -17,10 +17,10 @@ from business.boards.productized.output import ProductizedBoardOutputService
 from business.boards.productized.preparation import ProductizedSignalPreparationService
 from business.boards.productized.quality import ProductizedQualitySummaryService
 from business.boards.productized.ranking import ProductizedRankingService
+from business.boards.productized.subscription import ProductizedSubscriptionService
 from business.boards.productized.trends import ProductizedTrendAnalysisService
 from business.foundation import AnalysisContext, BoardType
 from business.foundation.skills import BusinessSkillRuntime
-from business.foundation.subscription import DeliveryPlanBuilder, SubscriptionPayloadBuilder
 
 
 class ProductizedBoardUseCases:
@@ -68,6 +68,9 @@ class ProductizedBoardUseCases:
         self.output_service = ProductizedBoardOutputService(
             board_service=board_service,
             skill_runtime=skill_runtime,
+        )
+        self.subscription_service = ProductizedSubscriptionService(
+            board_type=board_type,
         )
 
     def prepare_signals(self, request: dict[str, Any]) -> dict[str, Any]:
@@ -174,17 +177,12 @@ class ProductizedBoardUseCases:
         board_output: dict[str, Any],
         quality_summary: dict[str, Any],
     ) -> dict[str, Any]:
-        quality_score = quality_summary.get("score") if isinstance(quality_summary, dict) else None
-        payload = SubscriptionPayloadBuilder().build(
-            run_id=run_id_from_request(request, self.board_type),
-            board_type=self.board_type.value,
-            topic=request.get("topic"),
-            cards=board_run_result.cards,
-            summary=str(board_output.get("metadata", {}).get("report", {}).get("summary") or f"{self.board_type.value} summary"),
-            quality_score=float(quality_score) if quality_score is not None else None,
+        return self.subscription_service.build(
+            request=request,
+            board_run_result=board_run_result,
+            board_output=board_output,
+            quality_summary=quality_summary,
         )
-        delivery_plan = DeliveryPlanBuilder().build(payload)
-        return {"subscription_payload": {**payload.to_dict(), "delivery_plan": delivery_plan.to_dict()}}
 
     def build_feedback_events(self, *, board_run_result: Any) -> dict[str, Any]:
         return self.feedback_learning_service.collect(board_run_result=board_run_result)

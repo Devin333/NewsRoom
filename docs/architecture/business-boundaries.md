@@ -66,6 +66,7 @@ Cross-board 当前边界如下：
 - `ProductizedQualityService`：构建 evidence-checking 输入并合并质量摘要。
 - `ProductizedQualitySummaryService`：运行 evidence-checking skill、生成正式 quality summary 输出，并写入 `ProductizedRunState`。
 - `ProductizedBoardOutputService`：构建 board run result、调用 report-writing skill、生成 `ProductizedBoardOutputBundle`。
+- `ProductizedSubscriptionService`：构建 subscription payload 与 delivery plan，保持 workflow 输出键兼容。
 - `ProductizedFeedbackLearningService`：从 board run result 收集反馈和 learning signals。
 - `ProductizedImprovementWorkflowService`：从质量、反馈、订阅结果生成 recommendation、proposal、applied experiment 和 measurement。
 - `ProductizedArtifactMetadataService`：生成 artifact manifest metadata。
