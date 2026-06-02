@@ -20,16 +20,15 @@ Productized workflow step 的职责是：
 2. 调用 `ProductizedBoardUseCases` 的对应方法。
 3. 返回声明过的输出 key。
 
-Step 不直接执行 signal selection、ranking、evidence、quality、feedback、improvement、subscription 或 output bundle 构建逻辑。新增业务逻辑应进入 `business/boards/productized/` 的服务，或进入 `business/boards/services/` 的通用 board service。
-Step 实例只保留 `board_type` 和 `ProductizedBoardUseCases`，不保存底层 service/runtime 依赖；workflow spec 的 `read_keys` 只声明对应 step 实际读取的 buffer key。
+Step 不直接执行 signal selection、ranking、evidence、quality、feedback、improvement、subscription 或 output bundle 构建逻辑。新增业务逻辑应进入 `business/boards/productized/` 的服务，或进入 `business/boards/services/` 的通用 board service。Step 实例只保留 `board_type` 和 `ProductizedBoardUseCases`，不保存底层 service/runtime 依赖；workflow spec 的 `read_keys` 只声明对应 step 实际读取的 buffer key。
 
 ## BoardServiceBase 边界
 
 `BoardServiceBase` 是 board 门面。它保留：
 
-- context 解析；
-- 通用服务装配；
-- board-specific policy hook；
+- context 解析。
+- 通用服务装配。
+- board-specific policy hook。
 - 旧调用方兼容的公开方法。
 
 以下职责已拆到独立服务：
@@ -37,7 +36,7 @@ Step 实例只保留 `board_type` 和 `ProductizedBoardUseCases`，不保存底�
 - `BoardSignalSelectionService`：coerce/filter/sort board signals。
 - `BoardPipelineRunner`：运行 extraction、relation、analysis、output pipeline，并调用 output annotation 与 board output postprocess hook。
 - `BoardPolicyApplicationService`：根据单个 board 声明的 scoring profile、policy factory、feature builder 与 presenter 应用 cards presentation 和 run result policy enhancement。
-- `BoardOutputAnnotationService`：写入 BoardOutput 的标准 annotation。
+- `BoardOutputAnnotationService`：写入 `BoardOutput` 的标准 annotation。
 - `BoardQualityService`：构建 board run quality snapshot 和 feedback candidates。
 - `BoardRunReferenceService`：构建 trace、manifest、artifact、evidence、memory refs。
 - `BoardRunMetadataBuilder`：生成正式 board run metadata payload，并集中隔离旧 pipeline metadata 兼容字段。
@@ -55,10 +54,11 @@ Step 实例只保留 `board_type` 和 `ProductizedBoardUseCases`，不保存底�
 Cross-board 当前边界如下：
 
 - `CrossBoardGraphIntelligenceService`：从已处理的 signals、extraction results、relations、analysis 和 board outputs 构建 graph、paths、graph quality 和 graph insights。
-- `CrossBoardRunResultEnricher`：把 cross-board insights/graph result 附加回 `BoardRunResult`，集中处理 cross-board quality merge 和 feedback events；learning signals、policy candidates 和 regression guard results 通过 foundation 的 `build_runtime_quality_closure` 生成。
+- `CrossBoardRunResultEnricher`：把 cross-board insights/graph result 附加回 `BoardRunResult`，集中处理 cross-board quality merge 和 feedback events。
+- learning signals、policy candidates 和 regression guard results 通过 foundation 的 `build_runtime_quality_closure` 生成。
 - `CrossBoardService`：保留公开入口和旧方法委托，不直接承载 graph/path/quality/feedback/policy candidate 组合逻辑。
-Daily intelligence report writer 使用 `DailyReportContextMetadata` 生成 memory/historian report context metadata；旧的 `memory_context_*` 与 `historian_*` report metadata 键仅作为 artifact 兼容字段保留。
-Daily source fetch 使用 `SourceFetchResultMetadata` 生成 source/item/error/response/skip metadata；旧的顶层 `item_count`、`error_count`、`skip` 等键仅作为 fetch result 兼容字段保留。
+
+Daily intelligence report writer 使用 `DailyReportContextMetadata` 生成 memory/historian report context metadata；旧的 `memory_context_*` 与 `historian_*` report metadata 键仅作为 artifact 兼容字段保留。Daily source fetch 使用 `SourceFetchResultMetadata` 生成 source/item/error/response/skip metadata；旧的顶层 `item_count`、`error_count`、`skip` 等键仅作为 fetch result 兼容字段保留。
 
 ## Productized 用例边界
 
@@ -84,6 +84,26 @@ Daily source fetch 使用 `SourceFetchResultMetadata` 生成 source/item/error/r
 
 跨 step 的运行态中间结果使用 `ProductizedRunState`；board output 步骤使用 `ProductizedBoardOutputBundle` 显式返回 workflow 输出键。
 
+## Worker Output 边界
+
+`business/layers/worker_output.py` 集中承载 worker handler 的输出规范化：
+
+- `WorkerOutputEnvelope` 负责补齐 `run_id`、`artifact_dir` 和 `summary`。
+- `WorkerReportPayload` 负责从 `report`、`report_metadata`、`blocked_report` 这些兼容 payload 中提取正式 report status 与 summary。
+- `business/layers/_worker_utils.py` 只保留 framework task/workflow 状态映射和旧函数导出，不再直接猜测嵌套 output metadata。
+
+这保证 layer/board worker handler 继续返回旧调用方期待的字典结构，同时把隐式 report metadata 通道收敛到一个正式模型。
+
+## Foundation Skills 边界
+
+`business/foundation/skills/` 放业务技能内容包和 deterministic fallback。`BusinessSkillRuntime` 是业务层对 framework skill runner 的适配门面：
+
+- 业务调用方只读写 `BusinessSkillResult`。
+- skill runner 失败时是否 fallback 由 runtime 控制。
+- skill 内容、prompt、schema、examples 不进入 `framework/skills`。
+
+新增技能内容应放在 `business/foundation/skills/<skill-name>/`；framework 只负责扫描、校验、运行和评估，不感知 NewsRoom 业务语义。
+
 ## Improvement 边界
 
 improvement 流程方向是：
@@ -93,8 +113,8 @@ improvement 流程方向是：
 `FeedbackLearningService` 负责 feedback 去重与 learning signal 构建。`LearningSignalRecommendationBuilder` 和 `QualitySummaryRecommendationBuilder` 分别负责从 learning signal 与 quality summary 生成 recommendation；`ImprovementRecommendationBuilder` 只做来源 builder 的协调门面，并负责合并与去重 recommendation。`ImprovementProposalBuilder` 负责把 recommendation 转成 `policy_experiment` proposal 和 `PolicyExperimentProfile`。`ImprovementApplicationService` 负责从 proposal store 选择当前 board 的 proposal 并应用已批准实验。`SelfImprovementReportBuilder` 负责风险摘要、next action 和 report payload 组装。Board 层的 improvement service 只负责调用这些 service/builder、保存 proposal 和返回报告。
 
 新 proposal 不再生成 patch payload；它携带 `PolicyExperimentProfile`，用于描述目标、参数、理由、建议动作和度量指标。Productized workflow 与 self improvement report 正式输出 `applied_policy_experiments`，skipped 结果使用 `skipped_policy_experiments`；`applied_overrides`/`skipped_overrides` 作为历史 artifact/output 键暂时保留，但其内容是 policy experiment。旧手工 proposal 的 patch 数据只在读取历史记录时转换为实验参数。
-旧 `SUPPORTED_OVERRIDE_TYPES` 仅作为 `LEGACY_POLICY_EXPERIMENT_CHANGE_TYPES` 的兼容别名保留；新的业务逻辑应使用 `is_legacy_policy_experiment_change_type()` 或正式 `PolicyExperimentProfile`。
-`ImprovementProposal.proposed_patch` 仅作为旧持久化字段保留；新的业务逻辑读取 `policy_experiment_parameters` 或 `experiment_profile.parameters`。
+
+旧 `SUPPORTED_OVERRIDE_TYPES` 仅作为 `LEGACY_POLICY_EXPERIMENT_CHANGE_TYPES` 的兼容别名保留；新的业务逻辑应使用 `is_legacy_policy_experiment_change_type()` 或正式 `PolicyExperimentProfile`。`ImprovementProposal.proposed_patch` 仅作为旧持久化字段保留；新的业务逻辑读取 `policy_experiment_parameters` 或 `experiment_profile.parameters`。
 
 ## Metadata 使用规则
 
@@ -102,14 +122,16 @@ improvement 流程方向是：
 
 Productized workflow 使用 `ProductizedRunState` 承载：
 
-- skill traces；
-- extracted entities；
-- evidence refs/items；
-- deduplication result；
-- trend analysis；
+- skill traces。
+- extracted entities。
+- evidence refs/items。
+- deduplication result。
+- trend analysis。
 - improvement context。
 
 artifact-facing board output metadata 由 `ProductizedRunState.board_output_metadata()` 显式生成，只暴露当前 artifact 兼容所需字段。内部流程优先读取 `productized_run`，不通过 `board_output.metadata` 反向取中间状态。
+
+Worker-facing output metadata 由 `WorkerOutputEnvelope` 与 `WorkerReportPayload` 统一解析；新 worker handler 不应直接遍历 `report_metadata`、`blocked_report` 等旧键。
 
 ## 禁止依赖
 
