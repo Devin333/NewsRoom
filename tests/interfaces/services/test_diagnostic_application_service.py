@@ -55,6 +55,23 @@ def test_diagnostic_service_validates_tracked_source_config() -> None:
     assert check.details["source_count"] >= 3
 
 
+def test_diagnostic_service_reports_source_config_parse_error_without_exposing_file_content(
+    tmp_path: Path,
+) -> None:
+    secret = "sk-test-secret-value"
+    path = tmp_path / "sources.yaml"
+    path.write_text(f"api_key: [{secret}\n", encoding="utf-8")
+    service = DiagnosticApplicationService(env={"NEWS_SOURCES_CONFIG": str(path)}, checks=[])
+
+    check = service._check_source_config()
+
+    assert check.check_id == "source_config"
+    assert check.status == "error"
+    assert "not valid YAML" in check.message
+    assert str(path) in check.message
+    assert secret not in str(check.to_dict())
+
+
 def test_diagnostic_service_warns_for_missing_model_env_without_exposing_secret() -> None:
     service = DiagnosticApplicationService(env={}, checks=[])
 

@@ -222,6 +222,20 @@ def test_load_source_registry_rejects_unknown_top_level_fields(tmp_path) -> None
         load_source_registry(config_path)
 
 
+def test_load_source_registry_parse_error_is_source_config_error_without_file_content(tmp_path) -> None:
+    secret = "sk-test-secret-value"
+    config_path = tmp_path / "sources.json"
+    config_path.write_text(f'{{"api_key": "{secret}",', encoding="utf-8")
+
+    with pytest.raises(SourceConfigError) as exc_info:
+        load_source_registry(config_path)
+
+    message = str(exc_info.value)
+    assert "not valid JSON" in message
+    assert str(config_path) in message
+    assert secret not in message
+
+
 def test_load_source_registry_rejects_unknown_explicit_source_fields(tmp_path) -> None:
     config_path = tmp_path / "sources.json"
     config_path.write_text(

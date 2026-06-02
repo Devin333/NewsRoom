@@ -181,12 +181,17 @@ def _load_payload(path: Path) -> Any:
     if not path.exists():
         raise SourceConfigError(f"source config file does not exist: {path}")
     suffix = path.suffix.casefold()
-    if suffix == ".json":
-        return json.loads(path.read_text(encoding="utf-8"))
-    if suffix == ".toml":
-        return tomllib.loads(path.read_text(encoding="utf-8"))
-    if suffix in {".yaml", ".yml"}:
-        return _load_yaml(path)
+    try:
+        if suffix == ".json":
+            return json.loads(path.read_text(encoding="utf-8"))
+        if suffix == ".toml":
+            return tomllib.loads(path.read_text(encoding="utf-8"))
+        if suffix in {".yaml", ".yml"}:
+            return _load_yaml(path)
+    except OSError as exc:
+        raise SourceConfigError(f"could not read source config file: {path}") from exc
+    except (json.JSONDecodeError, tomllib.TOMLDecodeError) as exc:
+        raise SourceConfigError(_config_decode_error_message(path, exc, suffix=suffix)) from exc
     raise SourceConfigError(f"unsupported source config file type: {path.suffix}")
 
 
@@ -197,7 +202,41 @@ def _load_yaml(path: Path) -> Any:
         raise SourceConfigError(
             "YAML source configs require PyYAML; use JSON/TOML or install pyyaml"
         ) from exc
-    return yaml.safe_load(path.read_text(encoding="utf-8"))
+    try:
+        return yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        raise SourceConfigError(
+            _config_decode_error_message(path, exc, suffix=path.suffix.casefold())
+        ) from exc
+
+
+def _config_decode_error_message(path: Path, exc: BaseException, *, suffix: str) -> str:
+    format_name = {
+        ".json": "JSON",
+        ".toml": "TOML",
+        ".yaml": "YAML",
+        ".yml": "YAML",
+    }.get(suffix, suffix.lstrip(".").upper() or "configuration")
+    line, column = _decode_error_location(exc)
+    location = (
+        f" at line {line}, column {column}"
+        if line is not None and column is not None
+        else ""
+    )
+    return f"source config file is not valid {format_name}{location}: {path}"
+
+
+def _decode_error_location(exc: BaseException) -> tuple[int | None, int | None]:
+    line = getattr(exc, "lineno", None)
+    column = getattr(exc, "colno", None)
+    if isinstance(line, int) and isinstance(column, int):
+        return line, column
+    problem_mark = getattr(exc, "problem_mark", None)
+    mark_line = getattr(problem_mark, "line", None)
+    mark_column = getattr(problem_mark, "column", None)
+    if isinstance(mark_line, int) and isinstance(mark_column, int):
+        return mark_line + 1, mark_column + 1
+    return None, None
 
 
 def _source_payloads(payload: Any) -> list[dict[str, Any]]:
