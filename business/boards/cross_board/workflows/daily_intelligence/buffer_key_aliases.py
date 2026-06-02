@@ -31,6 +31,7 @@ SOURCE_BUFFER_ALIASES = {
     "source_selection_report": "sources.selection_report",
     "source_collection_status": "sources.collection_status",
     "source_recollection_profile": "sources.recollection_profile",
+    "source_recollection_execution_plan": "sources.recollection_execution_plan",
 }
 
 EVIDENCE_BUFFER_ALIASES = {

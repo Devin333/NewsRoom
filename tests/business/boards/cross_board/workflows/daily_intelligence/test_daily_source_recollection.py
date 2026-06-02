@@ -9,6 +9,9 @@ from business.boards.cross_board.workflows.daily_intelligence.agent_feedback_mod
 from business.boards.cross_board.workflows.daily_intelligence.source_recollection import (
     DailySourceRecollectionService,
 )
+from business.boards.cross_board.workflows.daily_intelligence.source_recollection_execution import (
+    DailySourceRecollectionExecutionService,
+)
 
 
 def test_build_profile_from_source_recollect_recommendation() -> None:
@@ -84,6 +87,27 @@ def test_build_profile_from_source_recollect_recommendation() -> None:
     assert profile.source_recollection_request_count == 1
     assert profile.missing_information_count == 1
     assert profile.metadata == {}
+    plan = DailySourceRecollectionExecutionService().build_plan(profile)
+    assert plan is not None
+    assert plan.plan_id == "daily-source-recollect-1-execution-plan"
+    assert plan.profile_id == profile.profile_id
+    assert plan.status == "ready"
+    assert plan.execution_mode == "source_fetch_execution_contract"
+    assert plan.source_recollect_round == 1
+    assert plan.max_source_recollect_rounds == 1
+    assert plan.query_count == 3
+    assert plan.task_count == 3
+    assert [task.task_id for task in plan.tasks] == [
+        "daily-source-recollect-1-task-01",
+        "daily-source-recollect-1-task-02",
+        "daily-source-recollect-1-task-03",
+    ]
+    assert [task.query for task in plan.tasks] == profile.queries
+    assert all(task.status == "ready" for task in plan.tasks)
+    assert all(task.source_feedback_ids == ["daily-agent-feedback-1"] for task in plan.tasks)
+    assert plan.recommendation_ids == [
+        "daily-agent-feedback-policy-source-recollect:daily.source_recollect"
+    ]
 
 
 def test_build_profile_ignores_non_source_recollect_route() -> None:
@@ -105,3 +129,7 @@ def test_build_profile_ignores_non_source_recollect_route() -> None:
     )
 
     assert profile is None
+
+
+def test_build_execution_plan_returns_none_without_profile() -> None:
+    assert DailySourceRecollectionExecutionService().build_plan(None) is None

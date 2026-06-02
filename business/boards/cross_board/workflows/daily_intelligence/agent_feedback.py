@@ -28,6 +28,9 @@ from business.boards.cross_board.workflows.daily_intelligence.buffer_key_aliases
 from business.boards.cross_board.workflows.daily_intelligence.source_recollection import (
     DailySourceRecollectionService,
 )
+from business.boards.cross_board.workflows.daily_intelligence.source_recollection_execution import (
+    DailySourceRecollectionExecutionService,
+)
 from business.boards.cross_board.workflows.daily_intelligence.workflow_buffer_access import (
     read_optional_buffer_value,
 )
@@ -68,6 +71,13 @@ def collect_agent_feedback(buffer: StepScopedDataBufferView) -> dict[str, Any]:
     )
     if source_recollection_profile is not None:
         outputs["source_recollection_profile"] = source_recollection_profile
+        source_recollection_execution_plan = (
+            DailySourceRecollectionExecutionService().build_plan(source_recollection_profile)
+        )
+        if source_recollection_execution_plan is not None:
+            outputs["source_recollection_execution_plan"] = (
+                source_recollection_execution_plan
+            )
     return with_namespaced_aliases(outputs)
 
 

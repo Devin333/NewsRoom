@@ -25,7 +25,9 @@ def build_planner_agent() -> AgentSpec:
             "metadata from the provided evidence bundle, but do not fetch sources "
             "or infer facts. If a source_recollection_profile is provided, use it "
             "only to refine the next research plan within the existing source "
-            "boundary. Return JSON only."
+            "boundary. If a source_recollection_execution_plan is provided, treat "
+            "its tasks as explicit source recollection work items for planning; "
+            "do not claim they have already been fetched. Return JSON only."
         ),
         input_keys=[
             "request",
@@ -37,6 +39,7 @@ def build_planner_agent() -> AgentSpec:
             "agent_feedback_route",
             "agent_feedback_loop_state",
             "source_recollection_profile",
+            "source_recollection_execution_plan",
         ],
         output_key="research_plan",
         validation_policy=daily_agent_validation_policy(),

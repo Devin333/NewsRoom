@@ -289,6 +289,16 @@ def test_collect_agent_feedback_routes_analyst_evidence_gap_to_planner() -> None
         "daily-agent-feedback-policy-source-recollect:daily.source_recollect"
     ]
     assert profile.metadata == {}
+    plan = output["source_recollection_execution_plan"]
+    assert output["sources.recollection_execution_plan"] == plan
+    assert plan.profile_id == profile.profile_id
+    assert plan.status == "ready"
+    assert plan.execution_mode == "source_fetch_execution_contract"
+    assert plan.source_recollect_round == 1
+    assert plan.query_count == 3
+    assert plan.task_count == 3
+    assert [task.query for task in plan.tasks] == profile.queries
+    assert plan.source_feedback_ids == ["daily-agent-feedback-1"]
 
 
 def test_collect_agent_feedback_exhausts_bounded_source_recollect_loop() -> None:
@@ -333,6 +343,8 @@ def test_collect_agent_feedback_exhausts_bounded_source_recollect_loop() -> None
     assert output["agent_feedback_loop_state"]["source_recollect_exhausted"] is True
     assert "source_recollection_profile" not in output
     assert "sources.recollection_profile" not in output
+    assert "source_recollection_execution_plan" not in output
+    assert "sources.recollection_execution_plan" not in output
 
 
 def test_collect_agent_feedback_exhausts_bounded_writer_rewrite_loop() -> None:

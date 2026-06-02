@@ -126,6 +126,7 @@ def _planner_agent_step() -> StepSpec:
                 "agent_feedback_route",
                 "agent_feedback_loop_state",
                 "source_recollection_profile",
+                "source_recollection_execution_plan",
             ]),
         },
     )
@@ -327,6 +328,7 @@ def _collect_agent_feedback_step() -> StepSpec:
             "agent_feedback_route",
             "agent_feedback_loop_state",
             "source_recollection_profile",
+            "source_recollection_execution_plan",
         ]),
         required_output_keys=["agent_feedback_summary"],
         metadata={

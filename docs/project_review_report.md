@@ -24,7 +24,7 @@
 
 仍建议继续推进的长期方向：
 
-- Agent 间反馈闭环目前已有 `DailyAgentFeedbackRoutingService` 承载 bounded writer rewrite / source recollect 路由，以及 analyst evidence gap -> `daily.source_recollect` recommendation -> `DailySourceRecollectionProfile` application service -> planner 重新规划的正式 profile 链路；下一轮可继续接入真实 source recollection execution service。
+- Agent 间反馈闭环目前已有 `DailyAgentFeedbackRoutingService` 承载 bounded writer rewrite / source recollect 路由，以及 analyst evidence gap -> `daily.source_recollect` recommendation -> `DailySourceRecollectionProfile` -> `DailySourceRecollectionExecutionPlan` -> planner 重新规划的正式 contract 链路；下一轮可继续让真实 source recollection executor 消费该 execution plan 并进入 source/evidence pipeline。
 - source/model 配置、workflow buffer、business layer boundary 已有基础 guard；后续应继续把 dotted key 迁移从兼容双写推进到正式消费。
 - `docs/prd1.md` 仍保留旧审查摘要，如继续作为任务入口使用，需要同步状态或改为历史附件。
 
