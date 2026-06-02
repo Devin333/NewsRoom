@@ -5,6 +5,7 @@ from typing import Any
 from business.boards.services.metadata import BoardRunMetadataBuilder, legacy_pipeline_metadata
 from business.boards.services.quality import BoardQualityService
 from business.boards.services.refs import BoardRunReferenceService
+from business.boards.services.report import BoardReportExtractionService
 from business.foundation import (
     AnalysisContext,
     BoardRunResult,
@@ -30,12 +31,14 @@ class BoardRunResultBuilder:
         quality_service: BoardQualityService | None = None,
         reference_service: BoardRunReferenceService | None = None,
         metadata_builder: BoardRunMetadataBuilder | None = None,
+        report_service: BoardReportExtractionService | None = None,
     ) -> None:
         self.board_type = board_type
         self.policy_loader = policy_loader
         self.quality_service = quality_service or BoardQualityService()
         self.reference_service = reference_service or BoardRunReferenceService()
         self.metadata_builder = metadata_builder or BoardRunMetadataBuilder()
+        self.report_service = report_service or BoardReportExtractionService()
 
     def build(
         self,
@@ -94,10 +97,7 @@ class BoardRunResultBuilder:
         )
 
     def reports_from_output(self, output: BoardOutput) -> list[Report]:
-        report_payload = output.metadata.get("report")
-        if not isinstance(report_payload, dict):
-            return []
-        return [Report.model_validate(_report_payload_for_validation(report_payload))]
+        return self.report_service.extract_reports(output)
 
 
 def run_id_from_context(context: AnalysisContext, board_type: BoardType) -> str:
@@ -119,26 +119,6 @@ def pipeline_snapshot(
         "rejected_relations": [rejected.to_dict() for rejected in relation_result.rejected_candidates],
         "analysis": analysis.to_dict(),
     }
-
-
-def _report_payload_for_validation(payload: dict[str, object]) -> dict[str, object]:
-    cleaned = _drop_serialized_computed_fields(payload)
-    if isinstance(cleaned, dict):
-        cleaned.pop("board_name", None)
-        return cleaned
-    return dict(payload)
-
-
-def _drop_serialized_computed_fields(value: object) -> object:
-    if isinstance(value, dict):
-        return {
-            key: _drop_serialized_computed_fields(item)
-            for key, item in value.items()
-            if key != "level"
-        }
-    if isinstance(value, list):
-        return [_drop_serialized_computed_fields(item) for item in value]
-    return value
 
 
 __all__ = ["BoardRunResultBuilder", "legacy_pipeline_metadata", "pipeline_snapshot", "run_id_from_context"]

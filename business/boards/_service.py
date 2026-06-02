@@ -6,6 +6,7 @@ from business.boards.services import (
     BoardOutputAnnotationService,
     BoardPipelineRunner,
     BoardQualityService,
+    BoardReportExtractionService,
     BoardRunReferenceService,
     BoardRunResultBuilder,
     BoardSignalSelectionService,
@@ -67,11 +68,13 @@ class BoardServiceBase:
         )
         self.quality_service = BoardQualityService()
         self.reference_service = BoardRunReferenceService()
+        self.report_service = BoardReportExtractionService()
         self.result_builder = BoardRunResultBuilder(
             board_type=self.board_type,
             policy_loader=self.policy_loader,
             quality_service=self.quality_service,
             reference_service=self.reference_service,
+            report_service=self.report_service,
         )
 
     def build_board_output(
@@ -94,10 +97,7 @@ class BoardServiceBase:
         context: AnalysisContext | None = None,
     ) -> Report:
         output = self.build_board_output(signals, context=context)
-        report_payload = dict(output.metadata.get("report") or {})
-        if not report_payload:
-            raise ValueError("board output does not include a report payload")
-        return Report.model_validate(report_payload)
+        return self.report_service.require_report(output)
 
     def build_board_run_result(
         self,

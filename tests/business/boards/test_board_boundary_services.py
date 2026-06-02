@@ -11,6 +11,7 @@ from business.boards.services import (
     BoardRunMetadataBuilder,
     BoardRunMetadataPayload,
     BoardPipelineRunner,
+    BoardReportExtractionService,
     BoardRunReferenceService,
     BoardRunReferences,
     BoardRunResultBuilder,
@@ -19,6 +20,7 @@ from business.boards.services import (
 from business.evaluation.fixtures import sample_signal
 from business.foundation import BoardType
 from business.foundation.skills import BusinessSkillResult, BusinessSkillRuntime
+from business.layers.output import BoardOutput, BoardOutputStats
 
 
 def test_board_service_base_exposes_decomposed_boundary_services() -> None:
@@ -27,8 +29,10 @@ def test_board_service_base_exposes_decomposed_boundary_services() -> None:
     assert isinstance(service.selection_service, BoardSignalSelectionService)
     assert isinstance(service.pipeline_runner, BoardPipelineRunner)
     assert isinstance(service.reference_service, BoardRunReferenceService)
+    assert isinstance(service.report_service, BoardReportExtractionService)
     assert isinstance(service.result_builder, BoardRunResultBuilder)
     assert isinstance(service.result_builder.metadata_builder, BoardRunMetadataBuilder)
+    assert service.result_builder.report_service is service.report_service
 
 
 def test_board_run_result_uses_reference_and_pipeline_snapshots() -> None:
@@ -76,6 +80,42 @@ def test_board_run_metadata_builder_centralizes_legacy_metadata_fields() -> None
     assert metadata["pipeline_snapshot"] == payload.pipeline_snapshot
     assert metadata["processed_relations"] == [{"relation_id": "rel-1"}]
     assert metadata["analysis"] == {"summary": "analysis"}
+
+
+def test_board_report_extraction_service_centralizes_legacy_report_metadata() -> None:
+    output = BoardOutput(
+        board_type=BoardType.AI_NEWS,
+        stats=BoardOutputStats(
+            signal_count=0,
+            card_count=0,
+            detail_page_count=0,
+            insight_count=0,
+            relation_count=0,
+            radar_item_count=0,
+        ),
+        metadata={
+            "report": {
+                "report_id": "report-1",
+                "report_type": "board",
+                "board_type": BoardType.AI_NEWS.value,
+                "board_name": "AI News",
+                "title": "AI News Report",
+                "summary": "Summary",
+                "sections": [
+                    {
+                        "title": "Highlights",
+                        "section_type": "summary",
+                        "level": "computed",
+                    }
+                ],
+            }
+        },
+    )
+
+    report = BoardReportExtractionService().require_report(output)
+
+    assert report.report_id == "report-1"
+    assert report.board_type == BoardType.AI_NEWS
 
 
 def test_pipeline_runner_preserves_annotation_and_board_output_postprocess_hook() -> None:
