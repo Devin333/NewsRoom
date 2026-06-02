@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-from framework.agent.session.models import AgentSessionItem, AgentSessionSnapshot
+from framework.agent.session.models import AgentSessionEvent, AgentSessionItem, AgentSessionSnapshot
 from framework.memory.models import MemoryQuery, MemoryWriteMode
 from framework.memory.runtime import MemoryRuntime
-from framework.memory.session.serializers import item_to_memory_record, snapshot_to_memory_record
+from framework.memory.session.serializers import event_to_memory_record, item_to_memory_record, snapshot_to_memory_record
 
 
 class AgentSessionMemoryAdapter:
@@ -50,6 +50,20 @@ class AgentSessionMemoryAdapter:
         )
         return {"available": True, "written_count": result.written_count, "memory_ids": list(result.memory_ids), "errors": list(result.errors)}
 
+    def write_event(self, event: AgentSessionEvent) -> dict[str, Any]:
+        """Write one session event to memory when runtime is available."""
+
+        if self._memory_runtime is None:
+            return {"available": False, "written_count": 0, "warnings": ["memory runtime unavailable"]}
+        result = self._memory_runtime.write(
+            records=[event_to_memory_record(event)],
+            mode=MemoryWriteMode.UPSERT,
+            actor=event.agent_id or "agent-session-runtime",
+            run_id=event.run_id,
+            namespace=f"agent_session_event:{event.session_id}",
+        )
+        return {"available": True, "written_count": result.written_count, "memory_ids": list(result.memory_ids), "errors": list(result.errors)}
+
     def recall(
         self,
         *,
@@ -70,6 +84,7 @@ class AgentSessionMemoryAdapter:
         if role:
             terms.append(role)
             filters["role"] = role
+        filters["trace_kind"] = "agent_session_item"
         for key, value in dict(refs or {}).items():
             terms.append(f"{key}:{value}")
             filters[str(key)] = value
@@ -81,4 +96,8 @@ class AgentSessionMemoryAdapter:
                 limit=limit,
             )
         )
-        return [record.to_dict() for record in result.results]
+        return [
+            record.to_dict()
+            for record in result.results
+            if record.record.metadata.get("trace_kind") == "agent_session_item"
+        ]

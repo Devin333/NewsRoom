@@ -30,6 +30,8 @@ class AgentSessionStore(Protocol):
         summary: str | None = None,
         metadata: Mapping[str, object] | None = None,
         visibility: str | None = None,
+        event_type: str | None = None,
+        event_payload: Mapping[str, object] | None = None,
     ) -> AgentSessionItem:
         """Update mutable item fields and record an event."""
         ...
@@ -77,6 +79,10 @@ class AgentSessionStore(Protocol):
         metadata: Mapping[str, object] | None = None,
     ) -> None:
         """Close a session with a terminal status."""
+        ...
+
+    def clear_session(self, session_id: str) -> None:
+        """Remove one session boundary and all related operational state."""
         ...
 
 

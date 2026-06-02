@@ -6,7 +6,7 @@ from business.boards.paper_radar.agents.evidence_verification_agent import Paper
 from business.boards.paper_radar.agents.experiment_agent import PaperExperimentAgent
 from business.boards.paper_radar.agents.memory_agent import PaperMemoryAgent
 from business.boards.paper_radar.agents.models import PaperAgentContext, PaperAgentResult, PaperAnalysisRequest, PaperAnalysisResult
-from business.boards.paper_radar.agents.orchestrator import PaperAnalysisOrchestrator
+from business.boards.paper_radar.agents.orchestrator import PaperAnalysisOrchestrator, paper_session_access_policy
 from business.boards.paper_radar.agents.profile_composer_agent import PaperProfileComposerAgent
 from business.boards.paper_radar.agents.quality_agent import PaperQualityAgent
 from business.boards.paper_radar.agents.reader_agent_adapter import PaperReaderAgentAdapter
@@ -33,4 +33,5 @@ __all__ = [
     "PaperSelectionAgent",
     "PaperStructureAgent",
     "PaperTaxonomyAgent",
+    "paper_session_access_policy",
 ]

@@ -6,6 +6,7 @@ from business.foundation.feedback import (
     LEGACY_POLICY_EXPERIMENT_CHANGE_TYPES,
     SUPPORTED_OVERRIDE_TYPES,
     PolicyExperimentProfile,
+    PolicyExperimentApplicationContext,
     is_legacy_policy_experiment_change_type,
 )
 
@@ -40,12 +41,14 @@ def test_improvement_applier_only_applies_approved_supported_proposals() -> None
 
     context = ImprovementApplier().apply(proposals, run_id="run-1", board_type="ai_news")
 
+    assert isinstance(context, PolicyExperimentApplicationContext)
     assert [item["proposal_id"] for item in context.applied_overrides] == ["approved"]
     assert context.applied_overrides[0]["target_type"] == "ranking_weight"
     assert context.applied_policy_experiments == context.applied_overrides
     assert context.skipped_policy_experiments == context.skipped_overrides
     assert context.skipped_overrides[0]["proposal_id"] == "proposed"
     assert context.measurement_plan["compare_metrics"]
+    assert context.to_dict()["applied_overrides"] == context.applied_policy_experiments
 
 
 def test_improvement_applier_applies_policy_experiment_profiles() -> None:

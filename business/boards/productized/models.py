@@ -5,6 +5,7 @@ from typing import Any
 
 from pydantic import Field
 
+from business.boards.domain import BoardEvidenceBundle
 from business.foundation import BoardType, PrimitiveModel
 
 
@@ -55,9 +56,7 @@ class ProductizedRunState(PrimitiveModel):
         )
 
 
-class ProductizedEvidenceBundle(PrimitiveModel):
-    refs: list[dict[str, Any]] = Field(default_factory=list)
-    items: list[dict[str, Any]] = Field(default_factory=list)
+ProductizedEvidenceBundle = BoardEvidenceBundle
 
 
 class ProductizedEvidenceCheckInput(PrimitiveModel):

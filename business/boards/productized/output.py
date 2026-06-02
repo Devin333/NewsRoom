@@ -97,9 +97,10 @@ class ProductizedBoardOutputBundleBuilder:
 
 
 def board_output_payload(result: Any, run_state: ProductizedRunState) -> dict[str, Any]:
-    board_output = dict(result.metadata.get("board_output") or {})
-    metadata = dict(board_output.get("metadata") or {})
-    board_output["metadata"] = {**metadata, **run_state.board_output_metadata()}
+    metadata = getattr(result, "metadata", {}) or {}
+    board_output = dict(getattr(result, "board_output", {}) or metadata.get("board_output") or {})
+    output_metadata = dict(board_output.get("metadata") or {})
+    board_output["metadata"] = {**output_metadata, **run_state.board_output_metadata()}
     return board_output
 
 

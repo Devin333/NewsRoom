@@ -11,7 +11,6 @@ from business.foundation.models.source import (
     SourceReliability,
     SourceType,
 )
-from infrastructure.external.sources import FeedConnector, HtmlConnector
 from infrastructure.external.sources.models import (
     RawSourceItem as InfraRawSourceItem,
     SourceDefinition as InfraSourceDefinition,
@@ -19,12 +18,16 @@ from infrastructure.external.sources.models import (
     SourceReliability as InfraSourceReliability,
     SourceType as InfraSourceType,
 )
+from business.boards.cross_board.workflows.daily_intelligence.source_connector_ports import (
+    DailyFeedSourceConnector,
+    DailyHtmlSourceConnector,
+)
 
 
 def fetch_official_blog(
     *,
-    feed_connector: FeedConnector,
-    html_connector: HtmlConnector,
+    feed_connector: DailyFeedSourceConnector,
+    html_connector: DailyHtmlSourceConnector,
     source: SourceDefinition,
     limit: int,
 ) -> tuple[list[Any], list[SourceError]]:

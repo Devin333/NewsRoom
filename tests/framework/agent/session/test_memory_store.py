@@ -34,12 +34,15 @@ def test_memory_runtime_store_writes_items_and_snapshots_to_memory() -> None:
     )
 
     assert [call["namespace"] for call in runtime.write_calls] == [
+        "agent_session_event:session-1",
         "agent_session:session-1",
+        "agent_session_event:session-1",
         "agent_session_snapshot:session-1",
     ]
     assert runtime.write_calls[0]["mode"] == MemoryWriteMode.UPSERT
-    assert runtime.records[0].memory_id == f"agent-session-item:{item.item_id}"
-    assert runtime.records[1].memory_id == f"agent-session-snapshot:{snapshot.snapshot_id}"
+    assert runtime.records[0].memory_id.startswith("agent-session-event:")
+    assert runtime.records[1].memory_id == f"agent-session-item:{item.item_id}"
+    assert runtime.records[3].memory_id == f"agent-session-snapshot:{snapshot.snapshot_id}"
 
 
 def test_memory_runtime_store_recalls_serialized_memory() -> None:
@@ -61,6 +64,7 @@ def test_memory_runtime_store_recalls_serialized_memory() -> None:
 
     assert recalled[0]["memory_id"] == f"agent-session-item:{stored.item_id}"
     assert runtime.recall_calls[0].query == "agent_session session-1 final paperId:paper-1"
+    assert runtime.recall_calls[0].filters["trace_kind"] == "agent_session_item"
     assert runtime.recall_calls[0].limit == 3
 
 

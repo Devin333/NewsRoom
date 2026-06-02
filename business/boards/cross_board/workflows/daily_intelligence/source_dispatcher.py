@@ -7,6 +7,7 @@ from typing import Any
 from business.foundation.models.source import (
     SourceDefinition,
     SourceError,
+    SourceFetchPolicy,
     SourceFetchRequest,
     SourceFetchResult,
     SourceReliability,
@@ -17,31 +18,30 @@ from business.foundation.models.source import (
 from business.foundation.registry.source_registry import SourceRegistry
 from infrastructure.external import sources as infra_sources
 from infrastructure.external.sources.models import SourceDefinition as InfraSourceDefinition
-from infrastructure.external.sources import (
-    ArxivConnector,
-    FeedConnector,
-    GithubConnector,
-    HackerNewsConnector,
-    HtmlConnector,
-    LobstersConnector,
-    ManualConnector,
-    MediumConnector,
-    RedditConnector,
-    SourceFetchPolicy,
-    StackOverflowConnector,
-    DevToConnector,
-    effective_fetch_policy,
-)
 from infrastructure.external.sources.models import (
     SourceReliability as InfraSourceReliability,
     SourceType as InfraSourceType,
 )
+from business.layers.signal.source_tool_runtime import effective_source_fetch_policy
 from business.boards.cross_board.workflows.daily_intelligence.source_connector_adapter import (
     connector_display_name,
     fetch_with_registered_connector,
     registered_connector_for_source,
 )
 from business.boards.cross_board.workflows.daily_intelligence.source_connector_names import source_connector_name
+from business.boards.cross_board.workflows.daily_intelligence.source_connector_ports import (
+    DailyArxivSourceConnector,
+    DailyDevToSourceConnector,
+    DailyFeedSourceConnector,
+    DailyGithubSourceConnector,
+    DailyHackerNewsSourceConnector,
+    DailyHtmlSourceConnector,
+    DailyLobstersSourceConnector,
+    DailyManualSourceConnector,
+    DailyMediumSourceConnector,
+    DailyRedditSourceConnector,
+    DailyStackOverflowSourceConnector,
+)
 from business.boards.cross_board.workflows.daily_intelligence.source_official_blog import fetch_official_blog
 
 
@@ -54,17 +54,17 @@ FetchHandler = Callable[
 @dataclass(slots=True)
 class SourceDispatcher:
     source_registry: SourceRegistry
-    feed_connector: FeedConnector
-    html_connector: HtmlConnector
-    manual_connector: ManualConnector
-    arxiv_connector: ArxivConnector
-    github_connector: GithubConnector
-    hackernews_connector: HackerNewsConnector
-    reddit_connector: RedditConnector
-    lobsters_connector: LobstersConnector
-    stackoverflow_connector: StackOverflowConnector
-    devto_connector: DevToConnector
-    medium_connector: MediumConnector
+    feed_connector: DailyFeedSourceConnector
+    html_connector: DailyHtmlSourceConnector
+    manual_connector: DailyManualSourceConnector
+    arxiv_connector: DailyArxivSourceConnector
+    github_connector: DailyGithubSourceConnector
+    hackernews_connector: DailyHackerNewsSourceConnector
+    reddit_connector: DailyRedditSourceConnector
+    lobsters_connector: DailyLobstersSourceConnector
+    stackoverflow_connector: DailyStackOverflowSourceConnector
+    devto_connector: DailyDevToSourceConnector
+    medium_connector: DailyMediumSourceConnector
     _fetch_handlers: dict[SourceType, FetchHandler] = field(init=False, repr=False)
     _connector_handlers: dict[SourceType, Callable[[], Any]] = field(init=False, repr=False)
 
@@ -335,7 +335,7 @@ class SourceDispatcher:
             feed_connector = getattr(connector, "feed_connector", None)
             policy = getattr(feed_connector, "fetch_policy", None)
         if policy is not None:
-            return effective_fetch_policy(_infra_fetch_policy(policy), _infra_source(source))
+            return effective_source_fetch_policy(_business_fetch_policy(policy), source)
         return None
 
     def _connector_for_source(self, source: SourceDefinition) -> Any:
@@ -374,7 +374,7 @@ def _infra_source(source: SourceDefinition) -> InfraSourceDefinition:
     )
 
 
-def _infra_fetch_policy(policy: Any) -> SourceFetchPolicy:
+def _business_fetch_policy(policy: Any) -> SourceFetchPolicy:
     if isinstance(policy, SourceFetchPolicy):
         return policy
     return SourceFetchPolicy(

@@ -61,6 +61,32 @@ def test_access_policy_restricts_writes_and_private_reads() -> None:
     assert workspace.latest(session_id="session-1", role="private-note", reader_agent_id="owner", include_private=True) == item
 
 
+def test_private_read_requires_private_readable_by_not_role_readable_by() -> None:
+    policy = SessionAccessPolicy(
+        (
+            SessionRoleSpec(
+                role="private-note",
+                readable_by=("reviewer",),
+                private_readable_by=("auditor",),
+                writable_by=("owner",),
+                visibility=SessionVisibility.PRIVATE,
+            ),
+        )
+    )
+    item = AgentSessionItem(
+        session_id="session-1",
+        run_id="run-1",
+        agent_id="owner",
+        role="private-note",
+        content={"value": "hidden"},
+        visibility=SessionVisibility.PRIVATE,
+    )
+
+    assert policy.can_read(agent_id="reviewer", item=item) is False
+    assert policy.can_read(agent_id="auditor", item=item) is True
+    assert policy.can_read(agent_id="owner", item=item) is True
+
+
 def test_default_policy_allows_shared_public_and_final_reads() -> None:
     policy = SessionAccessPolicy()
     for visibility in (SessionVisibility.PUBLIC, SessionVisibility.SHARED, SessionVisibility.FINAL):

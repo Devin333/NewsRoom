@@ -2,17 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from business.boards.services import (
-    BoardOutputAnnotationService,
-    BoardPipelineRunner,
-    BoardQualityService,
-    BoardReportDescriptorService,
-    BoardReportExtractionService,
-    BoardRunBuildService,
-    BoardRunReferenceService,
-    BoardRunResultBuilder,
-    BoardSignalSelectionService,
-)
+from business.boards.application import BoardServiceRuntime
 from business.foundation import (
     AnalysisContext,
     BoardRegistry,
@@ -21,16 +11,13 @@ from business.foundation import (
     BusinessFeedbackEvent,
     BusinessPolicySnapshot,
     BusinessQualitySnapshot,
-    PolicyLoader,
     Report,
     Signal,
 )
-from business.foundation.registry import default_board_registry
 from business.layers.analysis import AnalysisPipeline, AnalysisResult
 from business.layers.extraction import ExtractionPipeline, ExtractionResult
 from business.layers.output import BoardOutput, BoardOutputPipeline
 from business.layers.relation import RelationPipeline, RelationPipelineResult
-from business.layers.signal import SignalPipeline
 
 
 class BoardServiceBase:
@@ -45,46 +32,31 @@ class BoardServiceBase:
         analysis_pipeline: AnalysisPipeline | None = None,
         output_pipeline: BoardOutputPipeline | None = None,
     ) -> None:
-        self.board_registry = board_registry or default_board_registry()
-        self.board_definition = self.board_registry.get(self.board_type)
-        self.extraction_pipeline = extraction_pipeline or ExtractionPipeline()
-        self.relation_pipeline = relation_pipeline or RelationPipeline()
-        self.analysis_pipeline = analysis_pipeline or AnalysisPipeline()
-        self.output_pipeline = output_pipeline or BoardOutputPipeline()
-        self.signal_pipeline = SignalPipeline()
-        self.policy_loader = PolicyLoader()
-        self.selection_service = BoardSignalSelectionService(
+        self.runtime = BoardServiceRuntime.build(
             board_type=self.board_type,
-            board_definition=self.board_definition,
-            signal_pipeline=self.signal_pipeline,
+            board_registry=board_registry,
+            extraction_pipeline=extraction_pipeline,
+            relation_pipeline=relation_pipeline,
+            analysis_pipeline=analysis_pipeline,
+            output_pipeline=output_pipeline,
         )
-        self.output_annotation_service = BoardOutputAnnotationService()
-        self.pipeline_runner = BoardPipelineRunner(
-            board_type=self.board_type,
-            board_definition=self.board_definition,
-            extraction_pipeline=self.extraction_pipeline,
-            relation_pipeline=self.relation_pipeline,
-            analysis_pipeline=self.analysis_pipeline,
-            output_pipeline=self.output_pipeline,
-            annotation_service=self.output_annotation_service,
-        )
-        self.quality_service = BoardQualityService()
-        self.reference_service = BoardRunReferenceService()
-        self.report_descriptor_service = BoardReportDescriptorService()
-        self.report_service = BoardReportExtractionService()
-        self.result_builder = BoardRunResultBuilder(
-            board_type=self.board_type,
-            policy_loader=self.policy_loader,
-            quality_service=self.quality_service,
-            reference_service=self.reference_service,
-            report_service=self.report_service,
-        )
-        self.run_build_service = BoardRunBuildService(
-            board_type=self.board_type,
-            selection_service=self.selection_service,
-            pipeline_runner=self.pipeline_runner,
-            result_builder=self.result_builder,
-        )
+        self.board_registry = self.runtime.board_registry
+        self.board_definition = self.runtime.board_definition
+        self.extraction_pipeline = self.runtime.extraction_pipeline
+        self.relation_pipeline = self.runtime.relation_pipeline
+        self.analysis_pipeline = self.runtime.analysis_pipeline
+        self.output_pipeline = self.runtime.output_pipeline
+        self.signal_pipeline = self.runtime.signal_pipeline
+        self.policy_loader = self.runtime.policy_loader
+        self.selection_service = self.runtime.selection_service
+        self.output_annotation_service = self.runtime.output_annotation_service
+        self.pipeline_runner = self.runtime.pipeline_runner
+        self.quality_service = self.runtime.quality_service
+        self.reference_service = self.runtime.reference_service
+        self.report_descriptor_service = self.runtime.report_descriptor_service
+        self.report_service = self.runtime.report_service
+        self.result_builder = self.runtime.result_builder
+        self.run_build_service = self.runtime.run_build_service
 
     def build_board_output(
         self,

@@ -79,6 +79,7 @@ class BoardRunResultBuilder:
             detail_pages=list(output.detail_pages),
             insights=list(output.insights),
             reports=reports,
+            board_output=output.to_dict(),
             policy_snapshot=policy_snapshot,
             quality_summary=quality_summary,
             feedback_candidates=feedback_candidates,

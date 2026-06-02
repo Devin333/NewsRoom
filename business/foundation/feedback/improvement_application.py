@@ -4,7 +4,7 @@ from typing import Any
 
 from business.foundation.feedback.improvement_applier import ImprovementApplier
 from business.foundation.feedback.improvement_proposal import ImprovementProposal
-from business.foundation.feedback.override_policy import BoardImprovementContext
+from business.foundation.feedback.policy_experiment import PolicyExperimentApplicationContext
 
 
 class ImprovementApplicationService:
@@ -29,7 +29,7 @@ class ImprovementApplicationService:
         *,
         run_id: str,
         board_type: str,
-    ) -> BoardImprovementContext:
+    ) -> PolicyExperimentApplicationContext:
         return self.applier.apply(
             self.proposals_for_board(board_type),
             run_id=run_id,
@@ -41,7 +41,7 @@ class ImprovementApplicationService:
         *,
         run_id: str,
         board_type: str,
-    ) -> BoardImprovementContext:
+    ) -> PolicyExperimentApplicationContext:
         return self.apply_approved_policy_experiments(run_id=run_id, board_type=board_type)
 
 

@@ -8,6 +8,7 @@ from typing import Any, Mapping, Sequence
 
 from framework.agent.session.models import AgentSessionEvent, AgentSessionItem, AgentSessionRef, AgentSessionSnapshot, SessionVisibility
 from framework.agent.session.query import AgentSessionQuery
+from framework.agent.session.roles import SESSION_EVENT_ITEM_UPDATED
 
 
 class InMemoryAgentSessionStore:
@@ -71,6 +72,8 @@ class InMemoryAgentSessionStore:
         summary: str | None = None,
         metadata: Mapping[str, object] | None = None,
         visibility: str | None = None,
+        event_type: str | None = None,
+        event_payload: Mapping[str, object] | None = None,
     ) -> AgentSessionItem:
         items = self._items_by_session.get(session_id, [])
         for index, item in enumerate(items):
@@ -91,11 +94,15 @@ class InMemoryAgentSessionStore:
                 AgentSessionEvent(
                     session_id=session_id,
                     run_id=updated.run_id,
-                    event_type="item.updated",
+                    event_type=event_type or SESSION_EVENT_ITEM_UPDATED,
                     agent_id=updated.agent_id,
                     item_id=item_id,
                     role=updated.role,
-                    payload={"status": updated.status, "visibility": updated.visibility.value},
+                    payload={
+                        "status": updated.status,
+                        "visibility": updated.visibility.value,
+                        **dict(event_payload or {}),
+                    },
                 )
             )
             return updated

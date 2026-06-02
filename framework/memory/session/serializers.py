@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from framework.agent.session.models import AgentSessionItem, AgentSessionSnapshot
+from framework.agent.session.models import AgentSessionEvent, AgentSessionItem, AgentSessionSnapshot
 from framework.agent.session.sanitization import sanitize_session_content
 from framework.memory.models import MemoryKind, MemoryRecord, MemoryScope
 
@@ -31,11 +31,59 @@ def item_to_memory_record(item: AgentSessionItem) -> MemoryRecord:
             "agent_id": item.agent_id,
             "visibility": item.visibility.value,
             "status": item.status,
+            "trace_kind": "agent_session_item",
         },
         refs=dict(sanitize_session_content(item.refs)),
         tags=["agent_session", item.role],
         confidence=item.confidence,
         namespace=f"agent_session:{item.session_id}",
+    )
+
+
+def event_to_memory_record(event: AgentSessionEvent) -> MemoryRecord:
+    """Convert a session event into a trace memory record."""
+
+    payload = sanitize_session_content(event.payload)
+    content = {
+        "eventType": event.event_type,
+        "agentId": event.agent_id,
+        "role": event.role,
+        "itemId": event.item_id,
+        "payload": payload,
+    }
+    summary_parts = [event.event_type]
+    if event.role:
+        summary_parts.append(event.role)
+    if event.agent_id:
+        summary_parts.append(event.agent_id)
+    return MemoryRecord(
+        memory_id=f"agent-session-event:{event.event_id}",
+        content=json.dumps(content, ensure_ascii=False, sort_keys=True, default=str),
+        kind=MemoryKind.OBSERVATION,
+        scope=MemoryScope.SESSION,
+        summary=" ".join(summary_parts),
+        metadata={
+            "session_id": event.session_id,
+            "run_id": event.run_id,
+            "event_type": event.event_type,
+            "agent_id": event.agent_id,
+            "role": event.role,
+            "item_id": event.item_id,
+            "created_at": event.created_at,
+            "trace_kind": "agent_session_event",
+        },
+        refs={
+            key: value
+            for key, value in {
+                "session_id": event.session_id,
+                "run_id": event.run_id,
+                "event_id": event.event_id,
+                "item_id": event.item_id,
+            }.items()
+            if value
+        },
+        tags=["agent_session", "agent_session_event", event.event_type],
+        namespace=f"agent_session:{event.session_id}",
     )
 
 
@@ -53,6 +101,7 @@ def snapshot_to_memory_record(snapshot: AgentSessionSnapshot) -> MemoryRecord:
             "run_id": snapshot.run_id,
             "role_summaries": sanitize_session_content(snapshot.role_summaries),
             "final_items": list(snapshot.final_items),
+            "trace_kind": "agent_session_snapshot",
         },
         refs={"session_id": snapshot.session_id, "snapshot_id": snapshot.snapshot_id},
         tags=["agent_session_snapshot"],

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import Field
 
 from business.foundation._models import BoardCard, DetailPage, Insight, Report
@@ -22,6 +24,7 @@ class BoardRunResult(PrimitiveModel):
     detail_pages: list[DetailPage] = Field(default_factory=list)
     insights: list[Insight] = Field(default_factory=list)
     reports: list[Report] = Field(default_factory=list)
+    board_output: dict[str, Any] = Field(default_factory=dict)
     policy_snapshot: BusinessPolicySnapshot | None = None
     quality_summary: BusinessQualitySnapshot | None = None
     feedback_candidates: list[BusinessFeedbackEvent] = Field(default_factory=list)

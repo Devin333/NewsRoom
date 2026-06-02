@@ -6,7 +6,8 @@ import hashlib
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from framework.agent.session import AgentSessionEvent, AgentSessionQuery, AgentSharedWorkspace, SessionVisibility
+from framework.agent.session import AgentSessionEvent, AgentSharedWorkspace, SessionAccessPolicy, SessionRoleSpec, SessionVisibility
+from framework.agent.session.roles import SESSION_RETENTION_ARCHIVE, SESSION_RETENTION_SUPERSEDE
 from framework.memory.session import AgentSessionMemoryAdapter
 
 from business.boards.paper_radar.agents.base import PaperAgent
@@ -21,10 +22,22 @@ from business.boards.paper_radar.agents.quality_agent import PaperQualityAgent
 from business.boards.paper_radar.agents.reproducibility_agent import PaperReproducibilityAgent
 from business.boards.paper_radar.agents.roles import (
     PAPER_ROLE_BENCHMARK_CLAIMS,
+    PAPER_ROLE_COMPARISON_RESULT,
+    PAPER_ROLE_CONTRIBUTION_RESULT,
+    PAPER_ROLE_EVIDENCE_VERIFICATION,
+    PAPER_ROLE_EXPERIMENT_RESULT,
     PAPER_ROLE_FINAL_PROFILE,
+    PAPER_ROLE_MEMORY_RECORDS,
     PAPER_ROLE_METADATA,
+    PAPER_ROLE_QUALITY_RESULT,
+    PAPER_ROLE_READER_ANSWER,
+    PAPER_ROLE_REPAIR_HINT,
+    PAPER_ROLE_REPRODUCIBILITY_RESULT,
+    PAPER_ROLE_REVIEW_QUEUE_ITEM,
     PAPER_ROLE_SELECTION_DECISION,
+    PAPER_ROLE_SEMANTIC_SECTIONS,
     PAPER_ROLE_SOURCE_ARTIFACTS,
+    PAPER_ROLE_TAXONOMY_RESULT,
 )
 from business.boards.paper_radar.agents.selection_agent import PaperSelectionAgent
 from business.boards.paper_radar.agents.structure_agent import PaperStructureAgent
@@ -32,6 +45,8 @@ from business.boards.paper_radar.agents.taxonomy_agent import PaperTaxonomyAgent
 
 
 ORCHESTRATOR_AGENT_ID = "paper-analysis-orchestrator"
+PAPER_SESSION_CONTEXT_MAX_CHARS = 12_000
+PAPER_SESSION_RECENT_ITEMS = 12
 
 
 class PaperAnalysisOrchestrator:
@@ -71,7 +86,10 @@ class PaperAnalysisOrchestrator:
     def analyze_paper(self, request: PaperAnalysisRequest) -> PaperAnalysisResult:
         """Run the final paper analysis workflow and return the final profile."""
 
-        self._workspace.clear(request.session_id)
+        if request.analysis_mode == "audit":
+            return self._audit_session(request)
+        if request.analysis_mode == "fresh":
+            self._workspace.clear(request.session_id)
         self._workspace.create_session(request.session_ref)
         self._write_metadata(request)
         self._write_source_artifacts(request)
@@ -98,6 +116,13 @@ class PaperAnalysisOrchestrator:
         low_confidence_items = tuple(item for item in _sequence(final_profile.get("lowConfidenceItems")) if isinstance(item, Mapping))
         review_queue_items.extend(item for item in _sequence(final_profile.get("reviewQueueItems")) if isinstance(item, Mapping))
         self._workspace.create_snapshot(session_id=request.session_id, run_id=request.run_id)
+        session_context = self._workspace.assemble_context(
+            session_id=request.session_id,
+            reader_agent_id=ORCHESTRATOR_AGENT_ID,
+            include_private=True,
+            recent_limit=PAPER_SESSION_RECENT_ITEMS,
+            max_context_chars=PAPER_SESSION_CONTEXT_MAX_CHARS,
+        )
         self._workspace.close_session(session_id=request.session_id, status="completed", metadata={"paperId": request.paper_id})
         return PaperAnalysisResult(
             paper_id=request.paper_id,
@@ -108,6 +133,8 @@ class PaperAnalysisOrchestrator:
             low_confidence_items=low_confidence_items,
             review_queue_items=tuple(review_queue_items),
             errors=tuple(errors),
+            session_context_text=session_context.context_text,
+            session_events=tuple(_event_to_dict(event) for event in self._workspace.list_events(session_id=request.session_id)),
         )
 
     def _workflow_agents(self) -> tuple[PaperAgent, ...]:
@@ -174,18 +201,22 @@ class PaperAnalysisOrchestrator:
                 role=produced_role,
             )
         )
-        shared_items = self._workspace.query(
-            AgentSessionQuery(
+        shared_context = self._workspace.assemble_context(
                 session_id=request.session_id,
                 roles=required_roles,
-                statuses=(),
-                visibility=tuple(SessionVisibility),
+                reader_agent_id=ORCHESTRATOR_AGENT_ID,
                 include_private=True,
-            ),
-            reader_agent_id=ORCHESTRATOR_AGENT_ID,
+                recent_limit=PAPER_SESSION_RECENT_ITEMS,
+                max_context_chars=PAPER_SESSION_CONTEXT_MAX_CHARS,
         )
         try:
-            result = agent.run(PaperAgentContext(request=request, shared_items=shared_items))
+            result = agent.run(
+                PaperAgentContext(
+                    request=request,
+                    shared_items=shared_context.items,
+                    session_context_text=shared_context.context_text,
+                )
+            )
         except Exception as exc:  # pragma: no cover - exercised through fakes.
             result = PaperAgentResult(
                 agent_id=getattr(agent, "agent_id", "unknown-paper-agent"),
@@ -265,6 +296,60 @@ class PaperAnalysisOrchestrator:
         item = self._workspace.latest(session_id=session_id, role=role)
         return item.item_id if item is not None else ""
 
+    def _audit_session(self, request: PaperAnalysisRequest) -> PaperAnalysisResult:
+        session_context = self._workspace.assemble_context(
+            session_id=request.session_id,
+            reader_agent_id=ORCHESTRATOR_AGENT_ID,
+            include_private=True,
+            recent_limit=PAPER_SESSION_RECENT_ITEMS,
+            max_context_chars=PAPER_SESSION_CONTEXT_MAX_CHARS,
+        )
+        return PaperAnalysisResult(
+            paper_id=request.paper_id,
+            run_id=request.run_id,
+            session_id=request.session_id,
+            final_profile=self._final_profile(request),
+            agent_outputs=_agent_outputs(session_context.items),
+            session_context_text=session_context.context_text,
+            session_events=tuple(_event_to_dict(event) for event in self._workspace.list_events(session_id=request.session_id)),
+        )
+
+
+def paper_session_access_policy() -> SessionAccessPolicy:
+    """Return the default retention policy for paper analysis sessions."""
+
+    single_result_roles = (
+        PAPER_ROLE_METADATA,
+        PAPER_ROLE_SOURCE_ARTIFACTS,
+        PAPER_ROLE_SELECTION_DECISION,
+        PAPER_ROLE_SEMANTIC_SECTIONS,
+        PAPER_ROLE_TAXONOMY_RESULT,
+        PAPER_ROLE_EXPERIMENT_RESULT,
+        PAPER_ROLE_BENCHMARK_CLAIMS,
+        PAPER_ROLE_EVIDENCE_VERIFICATION,
+        PAPER_ROLE_CONTRIBUTION_RESULT,
+        PAPER_ROLE_QUALITY_RESULT,
+        PAPER_ROLE_REPRODUCIBILITY_RESULT,
+        PAPER_ROLE_COMPARISON_RESULT,
+        PAPER_ROLE_FINAL_PROFILE,
+        PAPER_ROLE_MEMORY_RECORDS,
+        PAPER_ROLE_READER_ANSWER,
+    )
+    queue_roles = (
+        PAPER_ROLE_REPAIR_HINT,
+        PAPER_ROLE_REVIEW_QUEUE_ITEM,
+    )
+    return SessionAccessPolicy(
+        tuple(
+            SessionRoleSpec(role=role, max_items=1, overflow_action=SESSION_RETENTION_SUPERSEDE)
+            for role in single_result_roles
+        )
+        + tuple(
+            SessionRoleSpec(role=role, max_items=20, overflow_action=SESSION_RETENTION_ARCHIVE)
+            for role in queue_roles
+        )
+    )
+
 
 def _text_digest(text: str | None) -> Mapping[str, Any]:
     if not text:
@@ -274,3 +359,27 @@ def _text_digest(text: str | None) -> Mapping[str, Any]:
 
 def _sequence(value: Any) -> Sequence[Any]:
     return value if isinstance(value, Sequence) and not isinstance(value, (str, bytes)) else []
+
+
+def _event_to_dict(event: AgentSessionEvent) -> Mapping[str, Any]:
+    return {
+        "eventId": event.event_id,
+        "sessionId": event.session_id,
+        "runId": event.run_id,
+        "eventType": event.event_type,
+        "agentId": event.agent_id,
+        "itemId": event.item_id,
+        "role": event.role,
+        "payload": dict(event.payload),
+        "createdAt": event.created_at,
+    }
+
+
+def _agent_outputs(items: Sequence[Any]) -> Mapping[str, Any]:
+    outputs: dict[str, Any] = {}
+    for item in items:
+        role = getattr(item, "role", None)
+        content = getattr(item, "content", None)
+        if role and isinstance(content, Mapping):
+            outputs[str(role)] = dict(content)
+    return outputs

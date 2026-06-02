@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 from framework.agent.session import AgentSessionItem, AgentSessionRef, SessionVisibility
+
+PaperAnalysisMode = Literal["fresh", "resume", "replay", "audit"]
 
 
 @dataclass(frozen=True)
@@ -27,6 +29,11 @@ class PaperAnalysisRequest:
     authors: tuple[str, ...] = ()
     tags: tuple[str, ...] = ()
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    analysis_mode: PaperAnalysisMode = "fresh"
+
+    def __post_init__(self) -> None:
+        if self.analysis_mode not in {"fresh", "resume", "replay", "audit"}:
+            raise ValueError("analysis_mode must be one of: fresh, resume, replay, audit")
 
     @property
     def session_id(self) -> str:
@@ -82,3 +89,5 @@ class PaperAnalysisResult:
     low_confidence_items: tuple[Mapping[str, Any], ...] = ()
     review_queue_items: tuple[Mapping[str, Any], ...] = ()
     errors: tuple[str, ...] = ()
+    session_context_text: str | None = None
+    session_events: tuple[Mapping[str, Any], ...] = ()

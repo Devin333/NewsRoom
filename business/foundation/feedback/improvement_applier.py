@@ -5,10 +5,11 @@ from typing import Any
 
 from business.foundation.feedback.approval_state import APPLICABLE_STATUSES
 from business.foundation.feedback.improvement_proposal import ImprovementProposal
-from business.foundation.feedback.override_policy import BoardImprovementContext, is_legacy_policy_experiment_change_type
 from business.foundation.feedback.policy_experiment import (
     AppliedPolicyExperiment,
+    PolicyExperimentApplicationContext,
     PolicyExperimentProfile,
+    is_legacy_policy_experiment_change_type,
     policy_experiment_target_type,
 )
 
@@ -20,7 +21,7 @@ class ImprovementApplier:
         *,
         run_id: str,
         board_type: str,
-    ) -> BoardImprovementContext:
+    ) -> PolicyExperimentApplicationContext:
         applied: list[dict[str, Any]] = []
         skipped: list[dict[str, Any]] = []
         for proposal in proposals:
@@ -45,13 +46,11 @@ class ImprovementApplier:
                     parameters=dict(profile.parameters),
                 ).to_dict()
             )
-        return BoardImprovementContext(
+        return PolicyExperimentApplicationContext(
             run_id=run_id,
             board_type=board_type,
-            applied_overrides=applied,
             applied_policy_experiments=applied,
             skipped_policy_experiments=skipped,
-            skipped_overrides=skipped,
             proposal_ids=[proposal.proposal_id for proposal in proposals],
             measurement_plan={
                 "compare_metrics": [

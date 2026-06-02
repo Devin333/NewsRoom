@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Mapping
 
 from framework.agent.session.in_memory_store import InMemoryAgentSessionStore
-from framework.agent.session.models import AgentSessionItem, AgentSessionSnapshot
+from framework.agent.session.models import AgentSessionEvent, AgentSessionItem, AgentSessionSnapshot
 from framework.memory.runtime import MemoryRuntime
 from framework.memory.session import AgentSessionMemoryAdapter
 
@@ -20,6 +20,11 @@ class MemoryRuntimeAgentSessionStore(InMemoryAgentSessionStore):
     def append_item(self, item: AgentSessionItem) -> AgentSessionItem:
         stored = super().append_item(item)
         self.adapter.write_item(stored)
+        return stored
+
+    def append_event(self, event: AgentSessionEvent) -> AgentSessionEvent:
+        stored = super().append_event(event)
+        self.adapter.write_event(stored)
         return stored
 
     def create_snapshot(self, snapshot: AgentSessionSnapshot) -> AgentSessionSnapshot:

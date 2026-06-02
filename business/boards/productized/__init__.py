@@ -21,14 +21,17 @@ from business.boards.productized.preparation import ProductizedSignalPreparation
 from business.boards.productized.quality import ProductizedQualityService, ProductizedQualitySummaryService
 from business.boards.productized.ranking import ProductizedRankingService
 from business.boards.productized.subscription import ProductizedSubscriptionService
+from business.boards.productized.steps import ProductizedBoardSteps
 from business.boards.productized.trends import ProductizedTrendAnalysisService, ProductizedTrendEventService
 from business.boards.productized.usecases import ProductizedBoardUseCases
+from business.boards.productized.workflow import PRODUCTIZED_BOARD_STEPS, build_productized_board_workflow
 
 __all__ = [
     "ProductizedArtifactMetadataService",
     "ProductizedBoardOutputBundle",
     "ProductizedBoardOutputBundleBuilder",
     "ProductizedBoardOutputService",
+    "ProductizedBoardSteps",
     "ProductizedBoardUseCases",
     "ProductizedDeduplicationService",
     "ProductizedEntityExtractionService",
@@ -47,6 +50,8 @@ __all__ = [
     "ProductizedSubscriptionService",
     "ProductizedTrendAnalysisService",
     "ProductizedTrendEventService",
+    "PRODUCTIZED_BOARD_STEPS",
     "analysis_context_from_request",
+    "build_productized_board_workflow",
     "run_id_from_request",
 ]

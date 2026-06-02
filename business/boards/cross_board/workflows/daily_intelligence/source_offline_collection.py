@@ -1,17 +1,22 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone as _tz
+from email.utils import parsedate_to_datetime
+from hashlib import sha256
 from time import perf_counter
 from typing import Any
+from xml.etree import ElementTree
 
-from business.foundation.models.source import SourceError, SourceFetchRequest, SourceFetchResult, SourcePipelineEvent, SourcePipelineMetrics, SourceType
+from business.foundation.models.source import RawSourceItem, SourceDefinition, SourceError, SourceFetchRequest, SourceFetchResult, SourcePipelineEvent, SourcePipelineMetrics, SourceType
 from business.foundation.registry.source_registry import SourceRegistry
-from infrastructure.external.sources import FeedConnector
 from business.layers.signal.source_health import BasicSourceHealthManager
 from business.boards.cross_board.workflows.daily_intelligence.source_collection_output import build_source_collection_output
 from business.boards.cross_board.workflows.daily_intelligence.source_fetch_records import elapsed_ms, source_fetch_request, source_fetch_result
 from business.boards.cross_board.workflows.daily_intelligence.source_fixtures import fixture_feed, fixture_source
 from business.boards.cross_board.workflows.daily_intelligence.source_processing import source_event as _source_event
-from business.boards.cross_board.workflows.daily_intelligence.source_dispatcher import _infra_source
+
+
+UTC = _tz.utc
 
 
 def collect_offline_sources(
@@ -47,7 +52,7 @@ def collect_offline_sources(
             source_type=SourceType(fixture.source_type).value,
         )
     )
-    raw_items = FeedConnector().parse(_infra_source(fixture), fixture_feed(), limit=limit)
+    raw_items = _parse_fixture_feed(fixture, fixture_feed(), limit=limit)
     fetch_latency_ms = elapsed_ms(latency_start)
     request_id = "source-fetch-0001-fixture-ai"
     source_fetch_requests.append(
@@ -126,3 +131,58 @@ def collect_offline_sources(
         source_pipeline_metrics=metrics,
         source_selection_report=source_selection_report,
     )
+
+
+def _parse_fixture_feed(source: SourceDefinition, xml_text: str, *, limit: int) -> list[RawSourceItem]:
+    root = ElementTree.fromstring(xml_text)
+    channel = root.find("channel")
+    if channel is None:
+        raise ValueError("fixture rss feed missing channel")
+    fetched_at = datetime.now(UTC)
+    items: list[RawSourceItem] = []
+    for entry in channel.findall("item"):
+        title = _element_text(entry, "title")
+        url = _element_text(entry, "link")
+        if not title or not url:
+            continue
+        item_hash = sha256(f"{source.source_id}|{url}|{title}".encode("utf-8")).hexdigest()
+        items.append(
+            RawSourceItem(
+                source_item_id=f"raw_{item_hash[:16]}",
+                source_id=source.source_id,
+                source_name=source.name,
+                source_type=source.source_type,
+                title=title,
+                url=url,
+                fetched_at=fetched_at,
+                published_at=_parse_datetime(_element_text(entry, "pubDate")),
+                summary=_element_text(entry, "description"),
+                raw_content=ElementTree.tostring(entry, encoding="unicode"),
+                metadata={
+                    "source_reliability": source.reliability.value,
+                    "source_authority_score": source.authority_score,
+                    "source_kind": source.source_type.value,
+                    "fixture": True,
+                },
+            )
+        )
+        if len(items) >= limit:
+            break
+    return items
+
+
+def _element_text(parent: ElementTree.Element, tag: str) -> str | None:
+    element = parent.find(tag)
+    if element is None or element.text is None:
+        return None
+    text = element.text.strip()
+    return text or None
+
+
+def _parse_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    parsed = parsedate_to_datetime(value)
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)

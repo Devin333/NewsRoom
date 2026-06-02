@@ -7,20 +7,6 @@ from business.foundation.registry.source_registry import SourceRegistry
 from business.layers.signal.source_health import BasicSourceHealthManager
 from business.memory.intelligence_recall import IntelligenceMemoryRecallService
 from framework.llm import LLMClient
-from infrastructure.external.sources import (
-    ArxivConnector,
-    DevToConnector,
-    DomainRateLimiter,
-    FeedConnector,
-    GithubConnector,
-    HackerNewsConnector,
-    HtmlConnector,
-    LobstersConnector,
-    ManualConnector,
-    MediumConnector,
-    RedditConnector,
-    StackOverflowConnector,
-)
 
 from business.boards.cross_board.workflows.daily_intelligence.dependency_bundle import (
     DailyIntelligenceRuntime,
@@ -37,23 +23,37 @@ from business.boards.cross_board.workflows.daily_intelligence.source_connector_b
 from business.boards.cross_board.workflows.daily_intelligence.source_connector_factory import (
     build_daily_source_connector_bundle,
 )
+from business.boards.cross_board.workflows.daily_intelligence.source_connector_ports import (
+    DailyArxivSourceConnector,
+    DailyDevToSourceConnector,
+    DailyFeedSourceConnector,
+    DailyGithubSourceConnector,
+    DailyHackerNewsSourceConnector,
+    DailyHtmlSourceConnector,
+    DailyLobstersSourceConnector,
+    DailyManualSourceConnector,
+    DailyMediumSourceConnector,
+    DailyRedditSourceConnector,
+    DailySourceRateLimiter,
+    DailyStackOverflowSourceConnector,
+)
 from business.boards.cross_board.workflows.daily_intelligence.source_dispatcher import SourceDispatcher
 
 
 @dataclass(frozen=True)
 class DailySourceRuntimeAssembly:
     source_registry: SourceRegistry
-    feed_connector: FeedConnector
-    html_connector: HtmlConnector
-    manual_connector: ManualConnector
-    arxiv_connector: ArxivConnector
-    github_connector: GithubConnector
-    hackernews_connector: HackerNewsConnector
-    reddit_connector: RedditConnector
-    lobsters_connector: LobstersConnector
-    stackoverflow_connector: StackOverflowConnector
-    devto_connector: DevToConnector
-    medium_connector: MediumConnector
+    feed_connector: DailyFeedSourceConnector
+    html_connector: DailyHtmlSourceConnector
+    manual_connector: DailyManualSourceConnector
+    arxiv_connector: DailyArxivSourceConnector
+    github_connector: DailyGithubSourceConnector
+    hackernews_connector: DailyHackerNewsSourceConnector
+    reddit_connector: DailyRedditSourceConnector
+    lobsters_connector: DailyLobstersSourceConnector
+    stackoverflow_connector: DailyStackOverflowSourceConnector
+    devto_connector: DailyDevToSourceConnector
+    medium_connector: DailyMediumSourceConnector
     source_health_manager: BasicSourceHealthManager
     source_dispatcher: SourceDispatcher
     source_collector: DailySourceCollector
@@ -69,23 +69,23 @@ def build_daily_intelligence_runtime(
     *,
     artifact_root: str | Path = ".newsroom/runs",
     source_registry: SourceRegistry | None = None,
-    feed_connector: FeedConnector | None = None,
-    html_connector: HtmlConnector | None = None,
-    manual_connector: ManualConnector | None = None,
-    arxiv_connector: ArxivConnector | None = None,
-    github_connector: GithubConnector | None = None,
-    hackernews_connector: HackerNewsConnector | None = None,
-    reddit_connector: RedditConnector | None = None,
-    lobsters_connector: LobstersConnector | None = None,
-    stackoverflow_connector: StackOverflowConnector | None = None,
-    devto_connector: DevToConnector | None = None,
-    medium_connector: MediumConnector | None = None,
+    feed_connector: DailyFeedSourceConnector | None = None,
+    html_connector: DailyHtmlSourceConnector | None = None,
+    manual_connector: DailyManualSourceConnector | None = None,
+    arxiv_connector: DailyArxivSourceConnector | None = None,
+    github_connector: DailyGithubSourceConnector | None = None,
+    hackernews_connector: DailyHackerNewsSourceConnector | None = None,
+    reddit_connector: DailyRedditSourceConnector | None = None,
+    lobsters_connector: DailyLobstersSourceConnector | None = None,
+    stackoverflow_connector: DailyStackOverflowSourceConnector | None = None,
+    devto_connector: DailyDevToSourceConnector | None = None,
+    medium_connector: DailyMediumSourceConnector | None = None,
     llm_client: LLMClient | None = None,
     recall_service: IntelligenceMemoryRecallService | None = None,
     report_writer: ReportWriter | None = None,
     source_health_manager: BasicSourceHealthManager | None = None,
     source_config_path: str | Path | None = None,
-    source_rate_limiter: DomainRateLimiter | None = None,
+    source_rate_limiter: DailySourceRateLimiter | None = None,
 ) -> DailyIntelligenceRuntime:
     source_assembly = build_daily_source_runtime_assembly(
         source_registry=source_registry,
@@ -123,20 +123,20 @@ def build_daily_intelligence_runtime(
 def build_daily_source_runtime_assembly(
     *,
     source_registry: SourceRegistry | None = None,
-    feed_connector: FeedConnector | None = None,
-    html_connector: HtmlConnector | None = None,
-    manual_connector: ManualConnector | None = None,
-    arxiv_connector: ArxivConnector | None = None,
-    github_connector: GithubConnector | None = None,
-    hackernews_connector: HackerNewsConnector | None = None,
-    reddit_connector: RedditConnector | None = None,
-    lobsters_connector: LobstersConnector | None = None,
-    stackoverflow_connector: StackOverflowConnector | None = None,
-    devto_connector: DevToConnector | None = None,
-    medium_connector: MediumConnector | None = None,
+    feed_connector: DailyFeedSourceConnector | None = None,
+    html_connector: DailyHtmlSourceConnector | None = None,
+    manual_connector: DailyManualSourceConnector | None = None,
+    arxiv_connector: DailyArxivSourceConnector | None = None,
+    github_connector: DailyGithubSourceConnector | None = None,
+    hackernews_connector: DailyHackerNewsSourceConnector | None = None,
+    reddit_connector: DailyRedditSourceConnector | None = None,
+    lobsters_connector: DailyLobstersSourceConnector | None = None,
+    stackoverflow_connector: DailyStackOverflowSourceConnector | None = None,
+    devto_connector: DailyDevToSourceConnector | None = None,
+    medium_connector: DailyMediumSourceConnector | None = None,
     source_health_manager: BasicSourceHealthManager | None = None,
     source_config_path: str | Path | None = None,
-    source_rate_limiter: DomainRateLimiter | None = None,
+    source_rate_limiter: DailySourceRateLimiter | None = None,
 ) -> DailySourceRuntimeAssembly:
     resolved_source_registry = source_registry or build_default_source_registry(
         source_config_path=source_config_path

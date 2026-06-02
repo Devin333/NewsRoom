@@ -17,7 +17,7 @@ from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 
 from business.boards.paper_radar.public_mapper import sanitize_public_payload
-from business.boards.paper_radar.agents import PaperAnalysisOrchestrator, PaperAnalysisRequest
+from business.boards.paper_radar.agents import PaperAnalysisOrchestrator, PaperAnalysisRequest, paper_session_access_policy
 from framework.agent.session import AgentSharedWorkspace, SQLiteAgentSessionStore
 from framework.llm import (
     DEFAULT_MODEL_ROUTE_ID,
@@ -2373,7 +2373,10 @@ def _default_llm_client_factory(route: str) -> Any:
 
 def _default_paper_analysis_orchestrator(config: PaperIngestConfig) -> PaperAnalysisOrchestrator:
     return PaperAnalysisOrchestrator(
-        workspace=AgentSharedWorkspace(SQLiteAgentSessionStore(_agent_session_store_path(config))),
+        workspace=AgentSharedWorkspace(
+            SQLiteAgentSessionStore(_agent_session_store_path(config)),
+            access_policy=paper_session_access_policy(),
+        ),
     )
 
 

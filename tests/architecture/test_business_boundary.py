@@ -177,7 +177,8 @@ def test_business_boards_do_not_import_concrete_storage() -> None:
 def test_productized_workflow_steps_delegate_business_logic_to_productized_services() -> None:
     imported_modules = _imports_for_file(BUSINESS_ROOT / "boards" / "_productized_steps.py")
 
-    assert "business.boards.productized" in imported_modules
+    assert "business.boards.productized.steps" in imported_modules
+    assert "business.boards.productized.workflow" in imported_modules
     assert "business.layers.signal" not in imported_modules
     assert "business.foundation.subscription" not in imported_modules
 

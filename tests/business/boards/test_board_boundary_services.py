@@ -1,6 +1,14 @@
 from __future__ import annotations
 
 from business.boards.ai_news.board_service import AINewsBoardService
+from business.boards.application import BoardServiceRuntime
+from business.boards.domain import (
+    BoardEvidenceAssemblyService,
+    BoardQualityService as DomainBoardQualityService,
+    BoardRunReferenceService as DomainBoardRunReferenceService,
+    BoardSignalRankingService,
+    BoardSignalSelectionService as DomainBoardSignalSelectionService,
+)
 from business.boards.productized import (
     ProductizedBoardOutputBundleBuilder,
     ProductizedBoardOutputService,
@@ -29,10 +37,14 @@ from business.layers.output import BoardOutput, BoardOutputStats
 def test_board_service_base_exposes_decomposed_boundary_services() -> None:
     service = AINewsBoardService()
 
+    assert isinstance(service.runtime, BoardServiceRuntime)
     assert isinstance(service.selection_service, BoardSignalSelectionService)
+    assert isinstance(service.selection_service, DomainBoardSignalSelectionService)
     assert isinstance(service.policy_application_service, BoardPolicyApplicationService)
     assert isinstance(service.pipeline_runner, BoardPipelineRunner)
     assert isinstance(service.reference_service, BoardRunReferenceService)
+    assert isinstance(service.reference_service, DomainBoardRunReferenceService)
+    assert isinstance(service.quality_service, DomainBoardQualityService)
     assert isinstance(service.report_descriptor_service, BoardReportDescriptorService)
     assert isinstance(service.report_service, BoardReportExtractionService)
     assert isinstance(service.result_builder, BoardRunResultBuilder)
@@ -49,9 +61,11 @@ def test_board_run_result_uses_reference_and_pipeline_snapshots() -> None:
 
     result = service.build_board_run_result([sample_signal("ai_news")])
 
+    assert result.board_output["metadata"]["board_type"] == BoardType.AI_NEWS.value
     assert result.artifact_refs
     assert result.evidence_refs
     assert result.metadata["pipeline_snapshot"]["processed_relations"] == result.metadata["processed_relations"]
+    assert result.metadata["board_output"] == result.board_output
 
 
 def test_board_run_build_service_centralizes_context_resolution() -> None:
@@ -206,6 +220,16 @@ def test_productized_board_output_service_exposes_decomposed_services() -> None:
 
     assert isinstance(service.report_writing_service, ProductizedReportWritingService)
     assert isinstance(service.bundle_builder, ProductizedBoardOutputBundleBuilder)
+
+
+def test_productized_domain_services_are_exposed_at_board_domain_boundary() -> None:
+    from business.boards.productized import ProductizedEvidenceService, ProductizedRankingService
+
+    evidence_service = ProductizedEvidenceService()
+    ranking_service = ProductizedRankingService()
+
+    assert isinstance(evidence_service.evidence_service, BoardEvidenceAssemblyService)
+    assert isinstance(ranking_service.ranking_service, BoardSignalRankingService)
 
 
 def test_productized_board_output_bundle_builder_centralizes_metadata_merge() -> None:

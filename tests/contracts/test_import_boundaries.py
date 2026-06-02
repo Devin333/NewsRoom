@@ -133,12 +133,13 @@ def test_source_application_service_uses_infrastructure_source_adapters() -> Non
     assert _matching_forbidden(imports, ("domain.sources", "sources", "infrastructure.storage.postgres", "business.boards.cross_board.workflows.daily_intelligence")) == []
 
 
-def test_cross_board_daily_source_config_uses_infrastructure_source_adapters() -> None:
+def test_cross_board_daily_source_config_uses_business_source_policy_boundary() -> None:
     imports = _imports_for_file(
         BUSINESS_ROOT / "boards" / "cross_board" / "workflows" / "daily_intelligence" / "source_config.py"
     )
 
-    assert "infrastructure.external.sources" in imports
+    assert "infrastructure.external.sources" not in imports
+    assert "business.foundation.models.source" in imports
     assert "business.layers.signal.source_config" in imports
     assert _matching_forbidden(imports, ("domain.sources", "sources")) == []
 

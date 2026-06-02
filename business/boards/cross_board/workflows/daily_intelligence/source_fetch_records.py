@@ -10,14 +10,16 @@ from business.foundation import PrimitiveModel
 from business.foundation.models.source import (
     SourceDefinition,
     SourceError,
+    SourceFetchPolicy,
     SourceFetchRequest,
     SourceFetchResult,
     SourceReliability,
     SourceType,
 )
-from infrastructure.external.sources import SourceFetchPolicy
-from infrastructure.external.sources.diagnostics import response_metadata_from_observations
 from business.boards.cross_board.workflows.daily_intelligence.source_connector_names import source_connector_name
+
+
+FETCH_RESPONSE_METADATA_KEY = "fetch_response"
 
 
 def elapsed_ms(start: float) -> float:
@@ -112,6 +114,24 @@ def _metadata_value(
     if key in legacy:
         return legacy[key]
     return default
+
+
+def response_metadata_from_observations(
+    *,
+    items: list[Any] | None = None,
+    errors: list[Any] | None = None,
+) -> dict[str, Any] | None:
+    for value in list(items or []) + list(errors or []):
+        metadata = _object_metadata(value)
+        response_metadata = metadata.get(FETCH_RESPONSE_METADATA_KEY)
+        if isinstance(response_metadata, dict):
+            return {
+                "status_code": _optional_int(response_metadata.get("status_code")),
+                "content_type": _optional_text(response_metadata.get("content_type")),
+                "url": _optional_text(response_metadata.get("url")),
+                "headers": _string_dict(response_metadata.get("headers")),
+            }
+    return None
 
 
 def source_fetch_request(
@@ -319,3 +339,30 @@ def _raw_content_bytes(items: list[Any]) -> int | None:
         found = True
         total += len(str(raw_content).encode("utf-8"))
     return total if found else None
+
+
+def _object_metadata(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        metadata = value.get("metadata")
+    else:
+        metadata = getattr(value, "metadata", None)
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def _string_dict(value: Any) -> dict[str, str]:
+    if not isinstance(value, dict):
+        return {}
+    return {str(key): str(item) for key, item in value.items()}
+
+
+def _optional_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    return int(value)

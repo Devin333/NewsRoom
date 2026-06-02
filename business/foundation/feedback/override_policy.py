@@ -5,20 +5,13 @@ from datetime import datetime, timezone as _tz
 UTC = _tz.utc
 from typing import Any
 
-
-LEGACY_POLICY_EXPERIMENT_CHANGE_TYPES = {
-    "ranking_weight_override",
-    "policy_threshold_override",
-    "source_reliability_override",
-    "skill_prompt_hint_override",
-    "board_quality_gate_override",
-}
+from business.foundation.feedback.policy_experiment import (
+    LEGACY_POLICY_EXPERIMENT_CHANGE_TYPES,
+    PolicyExperimentApplicationContext,
+    is_legacy_policy_experiment_change_type,
+)
 
 SUPPORTED_OVERRIDE_TYPES = LEGACY_POLICY_EXPERIMENT_CHANGE_TYPES
-
-
-def is_legacy_policy_experiment_change_type(change_type: str) -> bool:
-    return str(change_type) in LEGACY_POLICY_EXPERIMENT_CHANGE_TYPES
 
 
 @dataclass(frozen=True)
@@ -38,19 +31,7 @@ class ImprovementOverride:
 LegacyPolicyExperimentPatch = ImprovementOverride
 
 
-@dataclass(frozen=True)
-class BoardImprovementContext:
-    run_id: str
-    board_type: str
-    applied_overrides: list[dict[str, Any]] = field(default_factory=list)
-    applied_policy_experiments: list[dict[str, Any]] = field(default_factory=list)
-    skipped_policy_experiments: list[dict[str, Any]] = field(default_factory=list)
-    skipped_overrides: list[dict[str, Any]] = field(default_factory=list)
-    proposal_ids: list[str] = field(default_factory=list)
-    measurement_plan: dict[str, Any] = field(default_factory=dict)
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+BoardImprovementContext = PolicyExperimentApplicationContext
 
 
 __all__ = [

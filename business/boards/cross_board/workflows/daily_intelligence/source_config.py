@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from business.foundation.models.source import SourceFetchPolicy
 from business.foundation.registry.source_registry import SourceRegistry
 from business.layers.signal.source_config import (
     SourceConfigError,
     build_default_source_fetch_policy as _build_default_source_fetch_policy,
     build_default_source_registry as _build_default_source_registry,
 )
-from infrastructure.external.sources import SourceFetchPolicy
 
 
 def build_default_source_registry(*, source_config_path: str | Path | None = None) -> SourceRegistry:

@@ -6,7 +6,7 @@ import json
 from collections.abc import Sequence
 from html import escape
 
-from framework.agent.session.models import AgentSessionContext, AgentSessionItem, SessionVisibility
+from framework.agent.session.models import AgentSessionContext, AgentSessionItem, AgentSessionSnapshot, SessionVisibility
 from framework.agent.session.sanitization import sanitize_session_content
 
 
@@ -21,6 +21,7 @@ class SharedSessionContextAssembler:
         *,
         session_id: str,
         items: Sequence[AgentSessionItem],
+        snapshot: AgentSessionSnapshot | None = None,
         max_context_chars: int | None = None,
         include_content: bool = True,
     ) -> AgentSessionContext:
@@ -28,7 +29,7 @@ class SharedSessionContextAssembler:
 
         ordered_items = _prioritized_items(items)
         context_text = _truncate_context(
-            _render_context(session_id=session_id, items=ordered_items, include_content=include_content),
+            _render_context(session_id=session_id, items=ordered_items, snapshot=snapshot, include_content=include_content),
             max_context_chars=max_context_chars,
         )
         return AgentSessionContext(
@@ -36,11 +37,14 @@ class SharedSessionContextAssembler:
             items=tuple(ordered_items),
             context_text=context_text,
             char_count=len(context_text),
+            snapshot=snapshot,
         )
 
 
-def _render_context(*, session_id: str, items: Sequence[AgentSessionItem], include_content: bool) -> str:
+def _render_context(*, session_id: str, items: Sequence[AgentSessionItem], snapshot: AgentSessionSnapshot | None, include_content: bool) -> str:
     lines = [f'<shared_agent_session session_id="{escape(session_id, quote=True)}">']
+    if snapshot is not None:
+        lines.extend(_render_snapshot(snapshot))
     for item in items:
         if item.visibility == SessionVisibility.PRIVATE:
             continue
@@ -64,6 +68,26 @@ def _render_context(*, session_id: str, items: Sequence[AgentSessionItem], inclu
         lines.append("  </item>")
     lines.append("</shared_agent_session>")
     return "\n".join(lines)
+
+
+def _render_snapshot(snapshot: AgentSessionSnapshot) -> list[str]:
+    lines = [
+        f'  <snapshot snapshot_id="{escape(snapshot.snapshot_id, quote=True)}" '
+        f'run_id="{escape(snapshot.run_id, quote=True)}">',
+        f"    <summary>{escape(snapshot.summary)}</summary>",
+    ]
+    role_summaries = json.dumps(
+        sanitize_session_content(snapshot.role_summaries),
+        ensure_ascii=False,
+        sort_keys=True,
+        default=str,
+    )
+    lines.append(f"    <role_summaries>{escape(role_summaries)}</role_summaries>")
+    if snapshot.final_items:
+        final_items = json.dumps(list(snapshot.final_items), ensure_ascii=False)
+        lines.append(f"    <final_items>{escape(final_items)}</final_items>")
+    lines.append("  </snapshot>")
+    return lines
 
 
 def _prioritized_items(items: Sequence[AgentSessionItem]) -> list[AgentSessionItem]:

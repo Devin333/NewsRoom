@@ -23,6 +23,8 @@ LEGACY_OVERRIDE_TARGET_MAP = {
     "board_quality_gate_override": "board_quality_gate",
 }
 
+LEGACY_POLICY_EXPERIMENT_CHANGE_TYPES = frozenset(LEGACY_OVERRIDE_TARGET_MAP)
+
 
 @dataclass(frozen=True)
 class PolicyExperimentProfile:
@@ -81,6 +83,30 @@ class AppliedPolicyExperiment:
         return asdict(self)
 
 
+@dataclass(frozen=True)
+class PolicyExperimentApplicationContext:
+    run_id: str
+    board_type: str
+    applied_policy_experiments: list[dict[str, Any]] = field(default_factory=list)
+    skipped_policy_experiments: list[dict[str, Any]] = field(default_factory=list)
+    proposal_ids: list[str] = field(default_factory=list)
+    measurement_plan: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def applied_overrides(self) -> list[dict[str, Any]]:
+        return self.applied_policy_experiments
+
+    @property
+    def skipped_overrides(self) -> list[dict[str, Any]]:
+        return self.skipped_policy_experiments
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = asdict(self)
+        payload["applied_overrides"] = list(self.applied_policy_experiments)
+        payload["skipped_overrides"] = list(self.skipped_policy_experiments)
+        return payload
+
+
 def policy_experiment_target_type(value: str) -> str:
     normalized = LEGACY_OVERRIDE_TARGET_MAP.get(value, value)
     if normalized not in POLICY_EXPERIMENT_TARGET_TYPES:
@@ -93,11 +119,18 @@ def policy_experiment_profile_id(*parts: Any) -> str:
     return f"policy_exp_{digest}"
 
 
+def is_legacy_policy_experiment_change_type(change_type: str) -> bool:
+    return str(change_type) in LEGACY_POLICY_EXPERIMENT_CHANGE_TYPES
+
+
 __all__ = [
     "AppliedPolicyExperiment",
     "LEGACY_OVERRIDE_TARGET_MAP",
+    "LEGACY_POLICY_EXPERIMENT_CHANGE_TYPES",
     "POLICY_EXPERIMENT_TARGET_TYPES",
+    "PolicyExperimentApplicationContext",
     "PolicyExperimentProfile",
+    "is_legacy_policy_experiment_change_type",
     "policy_experiment_profile_id",
     "policy_experiment_target_type",
 ]

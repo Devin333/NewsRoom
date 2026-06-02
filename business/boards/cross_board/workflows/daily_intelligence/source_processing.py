@@ -4,7 +4,6 @@ from typing import Any
 
 from framework.workflow import StepScopedDataBufferView
 from business.foundation.models.source import SourceError, SourcePipelineEvent
-from infrastructure.external.sources.errors import classify_source_exception
 from business.layers.signal.source_processing import (
     build_source_coverage_report,
     build_source_freshness_report,
@@ -16,6 +15,7 @@ from business.layers.signal.source_processing import (
     normalize_item,
     rank_items,
 )
+from business.layers.signal.source_processing.error_taxonomy import classify_source_exception
 
 
 class AllSourcesFailedError(RuntimeError):

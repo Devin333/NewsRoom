@@ -7,8 +7,8 @@ from typing import Any
 
 from business.foundation.models.source import SourceDefinition, SourceError, SourceFetchRequest, SourceFetchResult
 from business.foundation.registry.source_registry import SourceRegistry
-from infrastructure.external.sources import SourceFetchContext
-from infrastructure.external.sources.errors import classify_source_exception
+from business.layers.signal.source_processing.error_taxonomy import classify_source_exception
+from business.boards.cross_board.workflows.daily_intelligence.source_connector_ports import SourceFetchContext
 
 
 def fetch_with_registered_connector(
