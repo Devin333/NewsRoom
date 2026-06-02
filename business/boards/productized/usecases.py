@@ -63,6 +63,7 @@ class ProductizedBoardUseCases:
         )
         self.improvement_workflow_service = ProductizedImprovementWorkflowService(
             improvement_service=improvement_service,
+            board_type=board_type,
         )
         self.artifact_metadata_service = ProductizedArtifactMetadataService()
         self.output_service = ProductizedBoardOutputService(
@@ -192,9 +193,7 @@ class ProductizedBoardUseCases:
         learning_signals: list[dict[str, Any]],
         subscription_payload: dict[str, Any],
     ) -> dict[str, Any]:
-        return self.improvement_workflow_service.build(
-            run_id=run_id_from_request(request, self.board_type),
-            board_type=self.board_type.value,
+        return self.improvement_workflow_service.build_outputs(
             request=request,
             board_run_result=board_run_result,
             quality_summary=quality_summary,

@@ -73,7 +73,7 @@ Cross-board 当前边界如下：
 - `ProductizedBoardOutputService`：协调 board run result、报告写作和 output bundle，不直接承载 report skill 或 metadata 拼装细节。
 - `ProductizedSubscriptionService`：构建 subscription payload 与 delivery plan，保持 workflow 输出键兼容。
 - `ProductizedFeedbackLearningService`：从 board run result 收集反馈和 learning signals。
-- `ProductizedImprovementWorkflowService`：从质量、反馈、订阅结果生成 recommendation、proposal、applied experiment 和 measurement。
+- `ProductizedImprovementWorkflowService`：从 request、质量、反馈、订阅结果生成 recommendation、proposal、applied experiment 和 measurement，并在服务内解析 run id 与 board type。
 - `ProductizedArtifactMetadataService`：生成 artifact manifest metadata，并返回 workflow artifact step 输出键。
 
 跨 step 的运行态中间结果使用 `ProductizedRunState`；board output 步骤使用 `ProductizedBoardOutputBundle` 显式返回 workflow 输出键。

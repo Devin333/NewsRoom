@@ -3,12 +3,45 @@ from __future__ import annotations
 from typing import Any
 
 from business.boards._improvement import BoardImprovementService
+from business.boards.productized.context import run_id_from_request
+from business.foundation import BoardType
 from business.foundation.models.quality_loop import BusinessFeedbackEvent, BusinessLearningSignal
 
 
 class ProductizedImprovementWorkflowService:
-    def __init__(self, *, improvement_service: BoardImprovementService) -> None:
+    def __init__(
+        self,
+        *,
+        improvement_service: BoardImprovementService,
+        board_type: BoardType | None = None,
+    ) -> None:
         self.improvement_service = improvement_service
+        self.board_type = board_type
+
+    def build_outputs(
+        self,
+        *,
+        request: dict[str, Any],
+        board_run_result: Any,
+        quality_summary: dict[str, Any],
+        cards: list[dict[str, Any]],
+        feedback_events: list[dict[str, Any]],
+        learning_signals: list[dict[str, Any]],
+        subscription_payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        if self.board_type is None:
+            raise ValueError("board_type is required for productized improvement workflow outputs")
+        return self.build(
+            run_id=run_id_from_request(request, self.board_type),
+            board_type=self.board_type.value,
+            request=request,
+            board_run_result=board_run_result,
+            quality_summary=quality_summary,
+            cards=cards,
+            feedback_events=feedback_events,
+            learning_signals=learning_signals,
+            subscription_payload=subscription_payload,
+        )
 
     def build(
         self,
