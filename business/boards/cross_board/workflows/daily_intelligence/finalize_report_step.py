@@ -46,8 +46,6 @@ def finalize_report(buffer: StepScopedDataBufferView) -> dict[str, Any]:
     """Assemble the agentic Daily report outputs without calling an LLM."""
 
     request = buffer.read("request")
-    report_draft = _normalize_report_draft(buffer.read("report_draft"))
-    edited_report_draft = _read_optional_draft(buffer, "edited_report_draft")
     editor_decision = normalize_editor_decision(buffer.read("editor_review"))
     verification_result = _to_plain_dict(buffer.read("verification_result"))
     citation_check_result = _to_plain_dict(buffer.read("citation_check_result"))
@@ -55,6 +53,29 @@ def finalize_report(buffer: StepScopedDataBufferView) -> dict[str, Any]:
     evidence_bundle = buffer.read("evidence_bundle")
     verified_findings = buffer.read("verified_findings")
     quality_events = list(buffer.read("quality_events"))
+    try:
+        report_draft = _normalize_report_draft(buffer.read("report_draft"))
+    except ReportDraftNormalizationError as exc:
+        quality_events.append(
+            quality_event(
+                "finalize_report_invalid_report_draft",
+                reason=str(exc),
+            )
+        )
+        return _blocked_outputs(
+            request=request,
+            report_draft=_invalid_report_draft(request, reason=str(exc)),
+            evidence_bundle=evidence_bundle,
+            editor_decision=_invalid_report_draft_decision(str(exc)),
+            verification_result=verification_result,
+            citation_check_result=citation_check_result,
+            support_matrix=support_matrix,
+            verified_findings=verified_findings,
+            quality_events=quality_events,
+            route=BLOCKED_ROUTE,
+            rewrite_attempts=0,
+            human_review_required=False,
+        )
 
     decision = editor_decision["decision"]
     rewrite_instructions = list(editor_decision["rewrite_instructions"])
@@ -96,6 +117,23 @@ def finalize_report(buffer: StepScopedDataBufferView) -> dict[str, Any]:
         )
 
     if decision == REWRITE_REQUIRED_DECISION:
+        edited_report_draft = None
+        edited_report_draft_invalid = False
+        try:
+            edited_report_draft = _read_optional_draft(buffer, "edited_report_draft")
+        except ReportDraftNormalizationError as exc:
+            edited_report_draft_invalid = True
+            editor_decision = _append_editor_reason(
+                editor_decision,
+                f"edited report draft is invalid: {exc}",
+            )
+            quality_events.append(
+                quality_event(
+                    "finalize_report_invalid_edited_report_draft",
+                    reason=str(exc),
+                    quality_score=quality_score,
+                )
+            )
         if edited_report_draft is not None:
             invalid_sources = _sources_outside_evidence(
                 edited_report_draft,
@@ -135,7 +173,7 @@ def finalize_report(buffer: StepScopedDataBufferView) -> dict[str, Any]:
                     quality_score=quality_score,
                 )
             )
-        else:
+        elif not edited_report_draft_invalid:
             quality_events.append(
                 quality_event(
                     "finalize_report_rewrite_missing_edit",
@@ -195,6 +233,10 @@ def finalize_report(buffer: StepScopedDataBufferView) -> dict[str, Any]:
         rewrite_attempts=1 if decision == REWRITE_REQUIRED_DECISION else 0,
         human_review_required=False,
     )
+
+
+class ReportDraftNormalizationError(ValueError):
+    pass
 
 
 def normalize_editor_decision(editor_review: Any) -> dict[str, Any]:
@@ -572,6 +614,27 @@ def _human_review_reason(editor_decision: dict[str, Any]) -> str:
     return "quality gate rewrite required"
 
 
+def _invalid_report_draft(request: Any, *, reason: str) -> dict[str, Any]:
+    return {
+        "title": _request_title(request),
+        "sections": [],
+        "metadata": {
+            "invalid_report_draft": True,
+            "invalid_report_draft_reason": reason,
+        },
+    }
+
+
+def _invalid_report_draft_decision(reason: str) -> dict[str, Any]:
+    return {
+        "decision": BLOCK_DECISION,
+        "quality_score": 0.0,
+        "reasons": [f"invalid report draft format: {reason}"],
+        "rewrite_instructions": [],
+        "raw": {},
+    }
+
+
 def _read_optional_draft(buffer: StepScopedDataBufferView, key: str) -> dict[str, Any] | None:
     if not buffer.exists(key):
         return None
@@ -585,15 +648,15 @@ def _normalize_report_draft(payload: Any) -> dict[str, Any]:
     if isinstance(payload, Mapping) and "report_draft" in payload and "sections" not in payload:
         payload = payload["report_draft"]
     if not isinstance(payload, Mapping):
-        raise ValueError("report draft must be an object")
+        raise ReportDraftNormalizationError("report draft must be an object")
     draft = dict(payload)
     sections = draft.get("sections")
     if not isinstance(sections, list):
-        raise ValueError("report draft sections must be a list")
+        raise ReportDraftNormalizationError("report draft sections must be a list")
     normalized_sections = []
     for index, section in enumerate(sections):
         if not isinstance(section, Mapping):
-            raise ValueError(f"report draft section {index} must be an object")
+            raise ReportDraftNormalizationError(f"report draft section {index} must be an object")
         section_payload = dict(section)
         section_payload["title"] = str(section_payload.get("title") or f"Section {index + 1}")
         section_payload["content"] = str(section_payload.get("content") or "")

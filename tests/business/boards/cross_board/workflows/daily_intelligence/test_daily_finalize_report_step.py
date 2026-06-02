@@ -75,6 +75,49 @@ def test_finalize_report_rewrite_required_with_invalid_source_blocks() -> None:
     )
 
 
+def test_finalize_report_invalid_report_draft_blocks_without_system_error() -> None:
+    output = finalize_report(
+        _buffer(
+            report_draft={"title": "Broken", "sections": "not-a-list"},
+            editor_review=_editor_review("pass"),
+            social_evidence=True,
+        )
+    )
+
+    assert output["quality_result"]["passed"] is False
+    assert output["quality_result"]["route"] == "blocked"
+    assert output["quality_gate_metrics"]["blocked"] is True
+    assert output["blocked_report"].metadata["quality_route"] == "blocked"
+    assert output["blocked_report"].draft["metadata"]["invalid_report_draft"] is True
+    assert any("invalid report draft format" in reason for reason in output["blocked_report"].reasons)
+    assert output["quality_events"][0].event_type == "finalize_report_invalid_report_draft"
+    assert "final_report" not in output
+
+
+def test_finalize_report_rewrite_required_with_invalid_edited_draft_blocks() -> None:
+    output = finalize_report(
+        _buffer(
+            editor_review=_editor_review(
+                "rewrite_required",
+                reasons=["tighten unsupported wording"],
+                rewrite_instructions=["remove unsupported wording"],
+            ),
+            edited_report_draft={"title": "Broken edit", "sections": "not-a-list"},
+            social_evidence=True,
+        )
+    )
+
+    assert output["quality_result"]["passed"] is False
+    assert output["quality_result"]["route"] == "blocked"
+    assert output["quality_gate_metrics"]["rewrite_required"] is True
+    assert any("edited report draft is invalid" in reason for reason in output["blocked_report"].reasons)
+    assert any(
+        event.event_type == "finalize_report_invalid_edited_report_draft"
+        for event in output["quality_events"]
+    )
+    assert "final_report" not in output
+
+
 def test_finalize_report_rewrite_required_without_edit_blocks() -> None:
     output = finalize_report(
         _buffer(
@@ -164,6 +207,24 @@ def test_finalize_report_non_social_media_bypasses_blocking_decision() -> None:
     assert "blocked_report" not in output
 
 
+def test_finalize_report_non_social_bypass_does_not_parse_unused_edited_draft() -> None:
+    output = finalize_report(
+        _buffer(
+            editor_review=_editor_review(
+                "rewrite_required",
+                reasons=["tighten unsupported wording"],
+                rewrite_instructions=["remove unsupported wording"],
+            ),
+            edited_report_draft={"title": "Unused broken edit", "sections": "not-a-list"},
+        )
+    )
+
+    assert output["quality_result"]["passed"] is True
+    assert output["quality_result"]["route"] == "final"
+    assert output["quality_events"][0].event_type == "finalize_report_bypassed_non_social_media"
+    assert "blocked_report" not in output
+
+
 @dataclass(frozen=True)
 class _EditorReviewObject:
     decision: EditorDecision
@@ -175,12 +236,13 @@ class _EditorReviewObject:
 def _buffer(
     *,
     editor_review: dict | _EditorReviewObject,
+    report_draft: dict | None = None,
     edited_report_draft: dict | None = None,
     social_evidence: bool = False,
 ) -> DataBuffer:
     values = {
         "request": {"topic": "AI policy", "run_id": "run-1"},
-        "report_draft": _report_draft(),
+        "report_draft": report_draft or _report_draft(),
         "editor_review": editor_review,
         "verification_result": {
             "status": "pass",
