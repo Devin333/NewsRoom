@@ -6,8 +6,8 @@ from typing import Any
 from business.foundation.feedback.improvement_recommendation import ImprovementRecommendation
 
 
-class ImprovementRecommendationBuilder:
-    def build_from_learning_signals(
+class LearningSignalRecommendationBuilder:
+    def build(
         self,
         signals: list[Any],
         *,
@@ -43,7 +43,9 @@ class ImprovementRecommendationBuilder:
             )
         return recommendations
 
-    def build_from_quality_summary(
+
+class QualitySummaryRecommendationBuilder:
+    def build(
         self,
         quality_summary: Any,
         *,
@@ -74,6 +76,41 @@ class ImprovementRecommendationBuilder:
                 )
             )
         return recommendations
+
+
+class ImprovementRecommendationBuilder:
+    def __init__(
+        self,
+        *,
+        learning_signal_builder: LearningSignalRecommendationBuilder | None = None,
+        quality_summary_builder: QualitySummaryRecommendationBuilder | None = None,
+    ) -> None:
+        self.learning_signal_builder = learning_signal_builder or LearningSignalRecommendationBuilder()
+        self.quality_summary_builder = quality_summary_builder or QualitySummaryRecommendationBuilder()
+
+    def build_from_learning_signals(
+        self,
+        signals: list[Any],
+        *,
+        board_type: str,
+        source: str = "learning_signal",
+    ) -> list[ImprovementRecommendation]:
+        return self.learning_signal_builder.build(
+            signals,
+            board_type=board_type,
+            source=source,
+        )
+
+    def build_from_quality_summary(
+        self,
+        quality_summary: Any,
+        *,
+        board_type: str,
+    ) -> list[ImprovementRecommendation]:
+        return self.quality_summary_builder.build(
+            quality_summary,
+            board_type=board_type,
+        )
 
 
 def _payload(value: Any) -> dict[str, Any]:
@@ -127,4 +164,8 @@ def _suggested_action(signal_type: str) -> str:
     return "review policy threshold and ranking weights"
 
 
-__all__ = ["ImprovementRecommendationBuilder"]
+__all__ = [
+    "ImprovementRecommendationBuilder",
+    "LearningSignalRecommendationBuilder",
+    "QualitySummaryRecommendationBuilder",
+]
