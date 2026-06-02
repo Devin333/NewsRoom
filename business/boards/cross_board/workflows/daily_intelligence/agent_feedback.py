@@ -23,6 +23,9 @@ from business.boards.cross_board.workflows.daily_intelligence.agents import (
 from business.boards.cross_board.workflows.daily_intelligence.buffer_key_aliases import (
     with_namespaced_aliases,
 )
+from business.boards.cross_board.workflows.daily_intelligence.source_recollection import (
+    DailySourceRecollectionService,
+)
 from business.boards.cross_board.workflows.daily_intelligence.workflow_buffer_access import (
     read_optional_buffer_value,
 )
@@ -47,16 +50,26 @@ def collect_agent_feedback(buffer: StepScopedDataBufferView) -> dict[str, Any]:
         summary,
         agent_reroute_allowed=not bool(editor_review),
     )
-    return with_namespaced_aliases({
+    route = _feedback_route(
+        summary,
+        loop_state,
+        editor_review_available=bool(editor_review),
+    )
+    outputs: dict[str, Any] = {
         "agent_feedback_events": events,
         "agent_feedback_summary": summary,
-        "agent_feedback_route": _feedback_route(
-            summary,
-            loop_state,
-            editor_review_available=bool(editor_review),
-        ),
+        "agent_feedback_route": route,
         "agent_feedback_loop_state": loop_state,
-    })
+    }
+    source_recollection_profile = DailySourceRecollectionService().build_profile(
+        events=events,
+        summary=summary,
+        route=route,
+        loop_state=loop_state,
+    )
+    if source_recollection_profile is not None:
+        outputs["source_recollection_profile"] = source_recollection_profile
+    return with_namespaced_aliases(outputs)
 
 
 class DailyAgentFeedbackCollector:

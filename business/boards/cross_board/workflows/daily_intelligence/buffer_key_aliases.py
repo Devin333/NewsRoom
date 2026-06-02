@@ -30,6 +30,7 @@ SOURCE_BUFFER_ALIASES = {
     "source_fallback_report": "sources.fallback_report",
     "source_selection_report": "sources.selection_report",
     "source_collection_status": "sources.collection_status",
+    "source_recollection_profile": "sources.recollection_profile",
 }
 
 EVIDENCE_BUFFER_ALIASES = {

@@ -23,7 +23,9 @@ def build_planner_agent() -> AgentSpec:
             "Plan the report structure and research focus using only the request "
             "and the provided evidence/source context. You may inspect source "
             "metadata from the provided evidence bundle, but do not fetch sources "
-            "or infer facts. Return JSON only."
+            "or infer facts. If a source_recollection_profile is provided, use it "
+            "only to refine the next research plan within the existing source "
+            "boundary. Return JSON only."
         ),
         input_keys=[
             "request",
@@ -34,6 +36,7 @@ def build_planner_agent() -> AgentSpec:
             "agent_feedback_summary",
             "agent_feedback_route",
             "agent_feedback_loop_state",
+            "source_recollection_profile",
         ],
         output_key="research_plan",
         validation_policy=daily_agent_validation_policy(),

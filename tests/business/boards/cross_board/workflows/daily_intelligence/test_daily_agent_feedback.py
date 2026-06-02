@@ -268,6 +268,27 @@ def test_collect_agent_feedback_routes_analyst_evidence_gap_to_planner() -> None
     assert output["agent_feedback_route"]["policy_target_id"] == "daily.source_recollect"
     assert output["agent_feedback_loop_state"]["source_recollect_rounds"] == 1
     assert output["agent_feedback_loop_state"]["rewrite_rounds"] == 0
+    profile = output["source_recollection_profile"]
+    assert output["sources.recollection_profile"] == profile
+    assert profile.target_id == "daily.source_recollect"
+    assert profile.profile_id == "daily-source-recollect-1"
+    assert profile.reason == "model launch timing official announcement"
+    assert profile.source_recollect_round == 1
+    assert profile.max_source_recollect_rounds == 1
+    assert profile.queries == [
+        "model launch timing official announcement",
+        "Need a second independent source for model launch timing.",
+        "official launch date confirmation",
+    ]
+    assert profile.query_count == 3
+    assert profile.evidence_gap_count == 1
+    assert profile.source_recollection_request_count == 1
+    assert profile.missing_information_count == 1
+    assert profile.source_feedback_ids == ["daily-agent-feedback-1"]
+    assert profile.recommendation_ids == [
+        "daily-agent-feedback-policy-source-recollect:daily.source_recollect"
+    ]
+    assert profile.metadata == {}
 
 
 def test_collect_agent_feedback_exhausts_bounded_source_recollect_loop() -> None:
@@ -310,6 +331,8 @@ def test_collect_agent_feedback_exhausts_bounded_source_recollect_loop() -> None
     )
     assert output["agent_feedback_loop_state"]["source_recollect_rounds"] == 1
     assert output["agent_feedback_loop_state"]["source_recollect_exhausted"] is True
+    assert "source_recollection_profile" not in output
+    assert "sources.recollection_profile" not in output
 
 
 def test_collect_agent_feedback_exhausts_bounded_writer_rewrite_loop() -> None:
