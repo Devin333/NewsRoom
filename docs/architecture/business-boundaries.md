@@ -53,6 +53,7 @@ Cross-board 当前边界如下：
 - `CrossBoardGraphIntelligenceService`：从已处理的 signals、extraction results、relations、analysis 和 board outputs 构建 graph、paths、graph quality 和 graph insights。
 - `CrossBoardRunResultEnricher`：把 cross-board insights/graph result 附加回 `BoardRunResult`，集中处理 cross-board quality merge 和 feedback events；learning signals、policy candidates 和 regression guard results 通过 foundation 的 `build_runtime_quality_closure` 生成。
 - `CrossBoardService`：保留公开入口和旧方法委托，不直接承载 graph/path/quality/feedback/policy candidate 组合逻辑。
+Daily intelligence report writer 使用 `DailyReportContextMetadata` 生成 memory/historian report context metadata；旧的 `memory_context_*` 与 `historian_*` report metadata 键仅作为 artifact 兼容字段保留。
 
 ## Productized 用例边界
 

@@ -15,6 +15,7 @@ from business.memory.report_memory_context import (
     ReportMemoryContextResult,
     ReportMemoryContextService,
 )
+from business.foundation import PrimitiveModel
 from framework.llm import LLMClient, LLMRequest, build_openai_compatible_client_from_config
 from framework.workflow import StepScopedDataBufferView
 from business.foundation.models.source import SourcePipelineMetrics
@@ -47,8 +48,7 @@ class ReportWriter:
         historian_result = self._historian_context(str(request["topic"]))
         if profile == PROFILE_LIVE_OFFLINE:
             report = _deterministic_report(request["topic"], evidence_bundle)
-            report = _with_memory_metadata(report, memory_result)
-            report = _with_historian_metadata(report, historian_result)
+            report = _with_context_metadata(report, memory_result, historian_result)
             return {
                 "report_draft": _with_source_notes(
                     report,
@@ -76,8 +76,7 @@ class ReportWriter:
             if response.structured_output is not None
             else _parse_report_json(response.content or "{}")
         )
-        report_draft = _with_memory_metadata(report_draft, memory_result)
-        report_draft = _with_historian_metadata(report_draft, historian_result)
+        report_draft = _with_context_metadata(report_draft, memory_result, historian_result)
         report_draft = _with_source_notes(report_draft, evidence_bundle, source_errors, source_metrics)
         return {
             "report_draft": report_draft,
@@ -231,34 +230,79 @@ def _validate_report_payload(payload: Any) -> dict[str, Any]:
     return payload
 
 
+class DailyReportContextMetadata(PrimitiveModel):
+    schema_version: str = "business.cross_board.daily_report.context_metadata.v1"
+    memory_context_used: bool = False
+    memory_context: dict[str, Any] | None = None
+    memory_prompt_context: str | None = None
+    historian_context_used: bool = False
+    historian: dict[str, Any] | None = None
+    historian_prompt_context: str | None = None
+
+    @classmethod
+    def from_results(
+        cls,
+        *,
+        memory_result: ReportMemoryContextResult | None,
+        historian_result: HistorianContextResult | None,
+    ) -> "DailyReportContextMetadata":
+        return cls(
+            memory_context_used=memory_result is not None,
+            memory_context=memory_result.context.to_dict() if memory_result is not None else None,
+            memory_prompt_context=memory_result.prompt_context if memory_result is not None else None,
+            historian_context_used=historian_result is not None,
+            historian=historian_result.to_dict() if historian_result is not None else None,
+            historian_prompt_context=historian_result.prompt_context if historian_result is not None else None,
+        )
+
+    def has_context(self) -> bool:
+        return self.memory_context_used or self.historian_context_used
+
+    def to_report_metadata_fields(self) -> dict[str, Any]:
+        if not self.has_context():
+            return {}
+        fields: dict[str, Any] = {"daily_report_context": self.to_dict()}
+        if self.memory_context_used:
+            fields["memory_context_used"] = True
+            fields["memory_context"] = self.memory_context
+            fields["memory_prompt_context"] = self.memory_prompt_context
+        if self.historian_context_used:
+            fields["historian_context_used"] = True
+            fields["historian"] = self.historian
+            fields["historian_prompt_context"] = self.historian_prompt_context
+        return fields
+
+
+def _with_context_metadata(
+    report_draft: dict[str, Any],
+    memory_result: ReportMemoryContextResult | None,
+    historian_result: HistorianContextResult | None,
+) -> dict[str, Any]:
+    context_metadata = DailyReportContextMetadata.from_results(
+        memory_result=memory_result,
+        historian_result=historian_result,
+    )
+    if not context_metadata.has_context():
+        return report_draft
+    updated = dict(report_draft)
+    metadata = dict(updated.get("metadata") or {})
+    metadata.update(context_metadata.to_report_metadata_fields())
+    updated["metadata"] = metadata
+    return updated
+
+
 def _with_memory_metadata(
     report_draft: dict[str, Any],
     memory_result: ReportMemoryContextResult | None,
 ) -> dict[str, Any]:
-    if memory_result is None:
-        return report_draft
-    updated = dict(report_draft)
-    metadata = dict(updated.get("metadata") or {})
-    metadata["memory_context_used"] = True
-    metadata["memory_context"] = memory_result.context.to_dict()
-    metadata["memory_prompt_context"] = memory_result.prompt_context
-    updated["metadata"] = metadata
-    return updated
+    return _with_context_metadata(report_draft, memory_result, None)
 
 
 def _with_historian_metadata(
     report_draft: dict[str, Any],
     historian_result: HistorianContextResult | None,
 ) -> dict[str, Any]:
-    if historian_result is None:
-        return report_draft
-    updated = dict(report_draft)
-    metadata = dict(updated.get("metadata") or {})
-    metadata["historian_context_used"] = True
-    metadata["historian"] = historian_result.to_dict()
-    metadata["historian_prompt_context"] = historian_result.prompt_context
-    updated["metadata"] = metadata
-    return updated
+    return _with_context_metadata(report_draft, None, historian_result)
 
 
 

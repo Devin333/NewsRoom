@@ -25,6 +25,7 @@ def test_report_writer_attaches_memory_context_when_recall_available() -> None:
 
     metadata = output["report_draft"]["metadata"]
     assert output["memory_context"]["topic"] == "AI policy"
+    assert metadata["daily_report_context"]["schema_version"] == "business.cross_board.daily_report.context_metadata.v1"
     assert metadata["memory_context_used"] is True
     assert "Known claims:" in metadata["memory_prompt_context"]
 
@@ -55,6 +56,7 @@ def test_report_writer_attaches_historian_context_when_available() -> None:
 
     metadata = output["report_draft"]["metadata"]
     assert output["historian_context"]["metadata"]["contradiction_count"] == 1
+    assert metadata["daily_report_context"]["schema_version"] == "business.cross_board.daily_report.context_metadata.v1"
     assert metadata["historian_context_used"] is True
     assert "Historical analysis:" in metadata["historian_prompt_context"]
 
