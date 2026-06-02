@@ -38,7 +38,8 @@ Step 不直接执行 signal selection、ranking、evidence、quality、feedback�
 - `BoardOutputAnnotationService`：写入 BoardOutput 的标准 annotation。
 - `BoardQualityService`：构建 board run quality snapshot 和 feedback candidates。
 - `BoardRunReferenceService`：构建 trace、manifest、artifact、evidence、memory refs。
-- `BoardRunResultBuilder`：组装 `BoardRunResult`，生成 pipeline snapshot，并集中维护旧 metadata 兼容字段。
+- `BoardRunMetadataBuilder`：生成正式 board run metadata payload，并集中隔离旧 pipeline metadata 兼容字段。
+- `BoardRunResultBuilder`：组装 `BoardRunResult`，生成 pipeline snapshot，并委托 metadata builder 生成 metadata payload。
 
 `BoardServiceBase` 不再直接承载 pipeline 执行细节或默认 run result metadata 拼装。
 

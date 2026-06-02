@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from business.boards.services.metadata import BoardRunMetadataBuilder, legacy_pipeline_metadata
 from business.boards.services.quality import BoardQualityService
 from business.boards.services.refs import BoardRunReferenceService
 from business.foundation import (
@@ -28,11 +29,13 @@ class BoardRunResultBuilder:
         policy_loader: PolicyLoader,
         quality_service: BoardQualityService | None = None,
         reference_service: BoardRunReferenceService | None = None,
+        metadata_builder: BoardRunMetadataBuilder | None = None,
     ) -> None:
         self.board_type = board_type
         self.policy_loader = policy_loader
         self.quality_service = quality_service or BoardQualityService()
         self.reference_service = reference_service or BoardRunReferenceService()
+        self.metadata_builder = metadata_builder or BoardRunMetadataBuilder()
 
     def build(
         self,
@@ -61,6 +64,11 @@ class BoardRunResultBuilder:
             analysis=analysis,
             extraction_results=extraction_results,
         )
+        metadata_payload = self.metadata_builder.build(
+            output=output,
+            refs=refs,
+            pipeline_snapshot=snapshot,
+        )
         return BoardRunResult(
             board_type=self.board_type,
             run_id=run_id,
@@ -76,14 +84,7 @@ class BoardRunResultBuilder:
             artifact_refs=refs.artifact_refs,
             evidence_refs=refs.evidence_refs,
             memory_refs=refs.memory_refs,
-            metadata={
-                "board_output": output.to_dict(),
-                "artifact_refs": [ref.to_dict() for ref in refs.artifact_refs],
-                "evidence_refs": [ref.to_dict() for ref in refs.evidence_refs],
-                "memory_refs": [ref.to_dict() for ref in refs.memory_refs],
-                "pipeline_snapshot": snapshot,
-                **legacy_pipeline_metadata(snapshot),
-            },
+            metadata=metadata_payload.to_result_metadata(),
         )
 
     def policy_snapshot(self, run_id: str) -> BusinessPolicySnapshot:
@@ -117,14 +118,6 @@ def pipeline_snapshot(
         "processed_relations": [relation.to_dict() for relation in relation_result.relations],
         "rejected_relations": [rejected.to_dict() for rejected in relation_result.rejected_candidates],
         "analysis": analysis.to_dict(),
-    }
-
-
-def legacy_pipeline_metadata(snapshot: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "processed_relations": list(snapshot["processed_relations"]),
-        "rejected_relations": list(snapshot["rejected_relations"]),
-        "analysis": dict(snapshot["analysis"]),
     }
 
 

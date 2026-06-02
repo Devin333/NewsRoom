@@ -8,8 +8,11 @@ from business.boards.productized import (
 )
 from business.boards.productized.models import ProductizedBoardOutputBundle, ProductizedRunState
 from business.boards.services import (
+    BoardRunMetadataBuilder,
+    BoardRunMetadataPayload,
     BoardPipelineRunner,
     BoardRunReferenceService,
+    BoardRunReferences,
     BoardRunResultBuilder,
     BoardSignalSelectionService,
 )
@@ -25,6 +28,7 @@ def test_board_service_base_exposes_decomposed_boundary_services() -> None:
     assert isinstance(service.pipeline_runner, BoardPipelineRunner)
     assert isinstance(service.reference_service, BoardRunReferenceService)
     assert isinstance(service.result_builder, BoardRunResultBuilder)
+    assert isinstance(service.result_builder.metadata_builder, BoardRunMetadataBuilder)
 
 
 def test_board_run_result_uses_reference_and_pipeline_snapshots() -> None:
@@ -35,6 +39,43 @@ def test_board_run_result_uses_reference_and_pipeline_snapshots() -> None:
     assert result.artifact_refs
     assert result.evidence_refs
     assert result.metadata["pipeline_snapshot"]["processed_relations"] == result.metadata["processed_relations"]
+
+
+def test_board_run_metadata_builder_centralizes_legacy_metadata_fields() -> None:
+    class StubOutput:
+        def to_dict(self) -> dict[str, object]:
+            return {"metadata": {"board_type": "ai_news"}}
+
+    class StubRef:
+        def __init__(self, ref_id: str) -> None:
+            self.ref_id = ref_id
+
+        def to_dict(self) -> dict[str, object]:
+            return {"ref_id": self.ref_id}
+
+    payload = BoardRunMetadataBuilder().build(
+        output=StubOutput(),
+        refs=BoardRunReferences(
+            trace_ref=object(),
+            manifest_ref=object(),
+            artifact_refs=[StubRef("artifact-1")],
+            evidence_refs=[StubRef("evidence-1")],
+            memory_refs=[StubRef("memory-1")],
+        ),
+        pipeline_snapshot={
+            "processed_relations": [{"relation_id": "rel-1"}],
+            "rejected_relations": [],
+            "analysis": {"summary": "analysis"},
+        },
+    )
+
+    metadata = payload.to_result_metadata()
+
+    assert isinstance(payload, BoardRunMetadataPayload)
+    assert payload.schema_version == "business.board.run.metadata.v1"
+    assert metadata["pipeline_snapshot"] == payload.pipeline_snapshot
+    assert metadata["processed_relations"] == [{"relation_id": "rel-1"}]
+    assert metadata["analysis"] == {"summary": "analysis"}
 
 
 def test_pipeline_runner_preserves_annotation_and_board_output_postprocess_hook() -> None:

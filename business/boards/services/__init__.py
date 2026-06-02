@@ -1,4 +1,5 @@
 from business.boards.services.annotation import BoardOutputAnnotationService
+from business.boards.services.metadata import BoardRunMetadataBuilder, BoardRunMetadataPayload
 from business.boards.services.pipeline import BoardPipelineRun, BoardPipelineRunner
 from business.boards.services.quality import BoardQualityService
 from business.boards.services.refs import BoardRunReferenceService, BoardRunReferences
@@ -7,6 +8,8 @@ from business.boards.services.selection import BoardSignalSelectionService
 
 __all__ = [
     "BoardOutputAnnotationService",
+    "BoardRunMetadataBuilder",
+    "BoardRunMetadataPayload",
     "BoardPipelineRun",
     "BoardPipelineRunner",
     "BoardQualityService",
