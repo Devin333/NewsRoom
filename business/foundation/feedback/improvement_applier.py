@@ -69,14 +69,15 @@ class ImprovementApplier:
 def _legacy_profile(proposal: ImprovementProposal) -> PolicyExperimentProfile | None:
     if not is_legacy_policy_experiment_change_type(proposal.change_type):
         return None
+    parameters = proposal.policy_experiment_parameters
     return PolicyExperimentProfile(
         profile_id=f"legacy_{proposal.change_type}_{proposal.target_id}",
         board_type=proposal.board_type,
         target_type=policy_experiment_target_type(proposal.change_type),
         target_id=proposal.target_id,
-        parameters=dict(proposal.proposed_patch),
-        rationale=str(proposal.proposed_patch.get("reason") or "legacy approved improvement proposal"),
-        suggested_action=str(proposal.proposed_patch.get("suggested_action") or "run as policy experiment"),
+        parameters=parameters,
+        rationale=str(parameters.get("reason") or "legacy approved improvement proposal"),
+        suggested_action=str(parameters.get("suggested_action") or "run as policy experiment"),
     )
 
 

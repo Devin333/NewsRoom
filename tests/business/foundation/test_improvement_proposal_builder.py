@@ -29,6 +29,11 @@ def test_proposal_builder_converts_recommendation_to_policy_experiment_profile()
         "severity": "error",
         "evidence_count": 1,
     }
+    assert proposal.policy_experiment_parameters == {
+        "severity": "error",
+        "evidence_count": 1,
+    }
+    assert proposal.to_dict()["policy_experiment_parameters"] == proposal.policy_experiment_parameters
 
 
 def test_risk_level_for_severity_maps_review_priority() -> None:

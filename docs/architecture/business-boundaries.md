@@ -94,6 +94,7 @@ improvement 流程方向是：
 
 新 proposal 不再生成 patch payload；它携带 `PolicyExperimentProfile`，用于描述目标、参数、理由、建议动作和度量指标。Productized workflow 与 self improvement report 正式输出 `applied_policy_experiments`，skipped 结果使用 `skipped_policy_experiments`；`applied_overrides`/`skipped_overrides` 作为历史 artifact/output 键暂时保留，但其内容是 policy experiment。旧手工 proposal 的 patch 数据只在读取历史记录时转换为实验参数。
 旧 `SUPPORTED_OVERRIDE_TYPES` 仅作为 `LEGACY_POLICY_EXPERIMENT_CHANGE_TYPES` 的兼容别名保留；新的业务逻辑应使用 `is_legacy_policy_experiment_change_type()` 或正式 `PolicyExperimentProfile`。
+`ImprovementProposal.proposed_patch` 仅作为旧持久化字段保留；新的业务逻辑读取 `policy_experiment_parameters` 或 `experiment_profile.parameters`。
 
 ## Metadata 使用规则
 

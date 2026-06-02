@@ -33,11 +33,20 @@ class ImprovementProposal:
     def with_status(self, status: str) -> "ImprovementProposal":
         return replace(self, status=status)
 
+    @property
+    def policy_experiment_parameters(self) -> dict[str, Any]:
+        if self.experiment_profile is not None:
+            return dict(self.experiment_profile.parameters)
+        return dict(self.proposed_patch)
+
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        payload = asdict(self)
+        payload["policy_experiment_parameters"] = self.policy_experiment_parameters
+        return payload
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "ImprovementProposal":
+        proposed_patch = dict(payload.get("proposed_patch") or payload.get("policy_experiment_parameters") or {})
         return cls(
             proposal_id=str(payload["proposal_id"]),
             recommendation_id=str(payload["recommendation_id"]),
@@ -45,7 +54,7 @@ class ImprovementProposal:
             change_type=str(payload["change_type"]),
             target_type=str(payload["target_type"]),
             target_id=str(payload["target_id"]),
-            proposed_patch=dict(payload.get("proposed_patch") or {}),
+            proposed_patch=proposed_patch,
             risk_level=str(payload.get("risk_level") or "medium"),
             requires_approval=bool(payload.get("requires_approval", True)),
             status=str(payload.get("status") or "proposed"),

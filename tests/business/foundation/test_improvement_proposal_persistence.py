@@ -8,7 +8,9 @@ def test_local_json_proposal_store_persists_save_round_trip(tmp_path) -> None:
     store.save(_proposal("proposal-save"))
 
     loaded = LocalJsonImprovementProposalStore(tmp_path / "proposals.json")
-    assert loaded.get("proposal-save").status == "proposed"
+    proposal = loaded.get("proposal-save")
+    assert proposal.status == "proposed"
+    assert proposal.policy_experiment_parameters == {"weight": 1.2}
 
 
 def test_local_json_proposal_store_persists_approved_status(tmp_path) -> None:
@@ -33,6 +35,26 @@ def test_local_json_proposal_store_persists_applied_status(tmp_path) -> None:
     loaded = LocalJsonImprovementProposalStore(path)
     assert loaded.get("proposal-applied").status == "applied"
     assert loaded.list(status="approved") == []
+
+
+def test_proposal_restores_legacy_parameters_from_formal_field() -> None:
+    proposal = ImprovementProposal.from_dict(
+        {
+            "proposal_id": "proposal-formal",
+            "recommendation_id": "rec-formal",
+            "board_type": "ai_news",
+            "change_type": "ranking_weight_override",
+            "target_type": "ranking_weight_override",
+            "target_id": "freshness",
+            "policy_experiment_parameters": {"weight": 1.4},
+            "risk_level": "medium",
+            "requires_approval": True,
+            "status": "proposed",
+        }
+    )
+
+    assert proposal.proposed_patch == {"weight": 1.4}
+    assert proposal.policy_experiment_parameters == {"weight": 1.4}
 
 
 def _proposal(proposal_id: str) -> ImprovementProposal:
