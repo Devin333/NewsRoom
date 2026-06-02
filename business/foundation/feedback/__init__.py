@@ -8,6 +8,7 @@ from business.foundation.feedback.learning_signal_store import InMemoryLearningS
 from business.foundation.feedback.measurement import ImprovementMeasurement, ImprovementMeasurementBuilder
 from business.foundation.feedback.override_policy import BoardImprovementContext, ImprovementOverride
 from business.foundation.feedback.policy_experiment import AppliedPolicyExperiment, PolicyExperimentProfile
+from business.foundation.feedback.proposal_builder import ImprovementProposalBuilder
 from business.foundation.feedback.proposal_store import InMemoryImprovementProposalStore, LocalJsonImprovementProposalStore
 from business.foundation.feedback.recommendation_builder import ImprovementRecommendationBuilder
 from business.foundation.feedback.runtime_closure import (
@@ -27,6 +28,7 @@ __all__ = [
     "ImprovementMeasurementBuilder",
     "ImprovementOverride",
     "ImprovementProposal",
+    "ImprovementProposalBuilder",
     "ImprovementRecommendation",
     "ImprovementRecommendationBuilder",
     "InMemoryLearningSignalStore",

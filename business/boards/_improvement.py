@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from hashlib import sha1
 from typing import Any
 
 from business.foundation import BusinessFeedbackEvent, BusinessLearningSignal
@@ -8,15 +7,11 @@ from business.foundation.feedback import (
     ImprovementApplier,
     ImprovementMeasurementBuilder,
     ImprovementProposal,
+    ImprovementProposalBuilder,
     ImprovementRecommendation,
     ImprovementRecommendationBuilder,
     InMemoryImprovementProposalStore,
-    PolicyExperimentProfile,
     SelfImprovementReport,
-)
-from business.foundation.feedback.policy_experiment import (
-    policy_experiment_profile_id,
-    policy_experiment_target_type,
 )
 from business.foundation.feedback.feedback_aggregator import FeedbackAggregator
 from business.foundation.feedback.learning_signal_builder import LearningSignalBuilder
@@ -26,6 +21,7 @@ class BoardImprovementService:
     def __init__(self, *, proposal_store: Any | None = None) -> None:
         self.proposal_store = proposal_store or InMemoryImprovementProposalStore()
         self.recommendation_builder = ImprovementRecommendationBuilder()
+        self.proposal_builder = ImprovementProposalBuilder()
         self.applier = ImprovementApplier()
         self.measurement_builder = ImprovementMeasurementBuilder()
 
@@ -70,20 +66,7 @@ class BoardImprovementService:
         recommendations: list[ImprovementRecommendation],
     ) -> list[ImprovementProposal]:
         proposals: list[ImprovementProposal] = []
-        for recommendation in recommendations:
-            proposal = ImprovementProposal(
-                proposal_id=_stable_id("proposal", recommendation.recommendation_id, recommendation.target_type, recommendation.target_id),
-                recommendation_id=recommendation.recommendation_id,
-                board_type=recommendation.board_type,
-                change_type="policy_experiment",
-                target_type=policy_experiment_target_type(recommendation.target_type),
-                target_id=recommendation.target_id,
-                proposed_patch={},
-                risk_level=_risk_level(recommendation.severity),
-                requires_approval=True,
-                status="proposed",
-                experiment_profile=_experiment_profile_for_recommendation(recommendation),
-            )
+        for proposal in self.proposal_builder.build_from_recommendations(recommendations):
             existing = self.proposal_store.get(proposal.proposal_id)
             proposals.append(existing or self.proposal_store.save(proposal))
         return proposals
@@ -136,40 +119,6 @@ def _dedupe_recommendations(recommendations: list[ImprovementRecommendation]) ->
         seen.add(recommendation.recommendation_id)
         result.append(recommendation)
     return result
-
-
-def _change_type(target_type: str) -> str:
-    return policy_experiment_target_type(target_type)
-
-
-def _experiment_profile_for_recommendation(recommendation: ImprovementRecommendation) -> PolicyExperimentProfile:
-    target_type = _change_type(recommendation.target_type)
-    return PolicyExperimentProfile(
-        profile_id=policy_experiment_profile_id(
-            recommendation.board_type,
-            recommendation.recommendation_id,
-            target_type,
-            recommendation.target_id,
-        ),
-        board_type=recommendation.board_type,
-        target_type=target_type,
-        target_id=recommendation.target_id,
-        parameters={
-            "severity": recommendation.severity,
-            "evidence_count": len(recommendation.evidence),
-        },
-        rationale=recommendation.reason,
-        suggested_action=recommendation.suggested_action,
-    )
-
-
-def _risk_level(severity: str) -> str:
-    return {"block": "critical", "error": "high", "warning": "medium"}.get(severity, "low")
-
-
-def _stable_id(prefix: str, *parts: Any) -> str:
-    digest = sha1("|".join(str(part) for part in parts).encode("utf-8")).hexdigest()[:12]
-    return f"{prefix}_{digest}"
 
 
 __all__ = ["BoardImprovementService"]
