@@ -56,6 +56,14 @@ daily intelligence workflow 进入兼容迁移期：业务函数继续写旧 key
 
 旧 key 仍是现有公开兼容面；新代码应优先声明并消费命名空间 key。后续迁移完成前，禁止在单个 step 中临时发明未登记的 dotted key。
 
+## Quality Gate 边界
+
+daily intelligence 的 `quality_gate_step.py` 是 workflow adapter，只负责读取 report draft、evidence、verified findings、quality events、memory/historian context 和 injected memory repository，然后组装 `DailyQualityGateInput`。
+
+质量评估、rewrite 尝试、non-social-media bypass、human review request、memory quality metadata 投影、final/blocked report 输出构建由 `quality_gate_usecase.py` 的 `evaluate_daily_quality_gate()` 承载。该 usecase 不依赖 `framework.workflow`，可脱离 `DataBuffer` 单独测试。
+
+新增 quality gate 规则时，应优先扩展 usecase 输入模型或拆分 quality routing/output 子服务，不要把业务分支重新写回 workflow step。
+
 ## Report Finalization 边界
 
 agentic daily workflow 的 `finalize_report_step.py` 是 workflow adapter，只负责读取 `request`、draft、quality、evidence 和 agent feedback buffer key，并组装 `DailyReportFinalizationInput`。

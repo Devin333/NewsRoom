@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from business.boards.cross_board.workflows.daily_intelligence.profiles import PROFILE_LIVE_OFFLINE
 from business.boards.cross_board.workflows.daily_intelligence.quality_gate_step import quality_gate
+from business.boards.cross_board.workflows.daily_intelligence.quality_gate_usecase import (
+    DailyQualityGateInput,
+    evaluate_daily_quality_gate,
+)
 from business.boards.cross_board.workflows.daily_intelligence.registry import build_daily_intelligence_registry
 from business.boards.cross_board.workflows.daily_intelligence.report_writer import ReportWriter
 from business.foundation.models.source import Lineage, SourcePipelineMetrics
@@ -100,6 +104,24 @@ def test_quality_gate_records_memory_quality_metadata_without_blocking() -> None
     assert output["quality_result"].metadata["memory_quality_result"]["metadata"]["conflict_count"] == 1
     assert output["final_report"].metadata["memory_quality_result"]["memory_available"] is True
     assert any(event.event_type == "memory_quality_checked" for event in output["quality_events"])
+
+
+def test_quality_gate_usecase_runs_without_workflow_buffer() -> None:
+    quality_events = []
+
+    output = evaluate_daily_quality_gate(
+        DailyQualityGateInput(
+            report_draft=_report_draft(),
+            evidence_bundle=_evidence_bundle(),
+            verified_findings=VerifiedFindings(),
+            quality_events=quality_events,
+        )
+    )
+
+    assert output["quality_result"].decision == "pass"
+    assert output["final_report"].title == "Daily Intelligence: AI policy"
+    assert output["quality.result"] == output["quality_result"]
+    assert quality_events == []
 
 
 def test_quality_gate_uses_injected_memory_repository_for_claim_evidence() -> None:
