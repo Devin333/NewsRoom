@@ -13,6 +13,7 @@ from business.foundation.feedback import (
     InMemoryImprovementProposalStore,
     SelfImprovementReport,
     FeedbackLearningService,
+    SelfImprovementReportBuilder,
 )
 
 
@@ -24,6 +25,7 @@ class BoardImprovementService:
         self.feedback_learning_service = FeedbackLearningService()
         self.applier = ImprovementApplier()
         self.measurement_builder = ImprovementMeasurementBuilder()
+        self.report_builder = SelfImprovementReportBuilder()
 
     def collect_feedback(self, feedback_events: list[BusinessFeedbackEvent]) -> list[BusinessFeedbackEvent]:
         return self.feedback_learning_service.collect(feedback_events)
@@ -81,21 +83,13 @@ class BoardImprovementService:
         applied_overrides: list[dict[str, Any]],
         measurement: Any,
     ) -> SelfImprovementReport:
-        risks = [
-            f"{proposal.proposal_id}:{proposal.risk_level}"
-            for proposal in proposals
-            if proposal.risk_level in {"high", "critical"}
-        ]
-        next_actions = ["review proposed improvements"] if proposals else ["continue monitoring"]
-        return SelfImprovementReport(
-            feedback_events=[event.to_dict() for event in feedback_events],
-            learning_signals=[signal.to_dict() for signal in learning_signals],
-            recommendations=[recommendation.to_dict() for recommendation in recommendations],
-            proposals=[proposal.to_dict() for proposal in proposals],
-            applied_overrides=list(applied_overrides),
-            measurement=measurement.to_dict() if hasattr(measurement, "to_dict") else dict(measurement or {}),
-            risks=risks,
-            next_actions=next_actions,
+        return self.report_builder.build(
+            feedback_events=feedback_events,
+            learning_signals=learning_signals,
+            recommendations=recommendations,
+            proposals=proposals,
+            applied_overrides=applied_overrides,
+            measurement=measurement,
         )
 
 
