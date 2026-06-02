@@ -50,6 +50,34 @@ def test_report_writer_without_recall_keeps_memory_metadata_absent(caplog) -> No
     assert "Memory recall service is not configured" in caplog.text
 
 
+def test_report_writer_normalizes_source_errors_before_source_notes() -> None:
+    output = ReportWriter().draft_report(
+        _writer_buffer(
+            source_errors=[
+                {
+                    "source_id": "feed-1",
+                    "error_type": "fetch_timeout",
+                    "error_message": "timeout",
+                }
+            ],
+            source_pipeline_metrics=SourcePipelineMetrics(
+                sources_total=2,
+                sources_fetched=1,
+                sources_failed=1,
+            ),
+        ).scope(
+            read_keys=["request", "evidence_bundle", "source_errors", "source_pipeline_metrics"],
+            write_keys=[],
+        ),
+        PROFILE_LIVE_OFFLINE,
+    )
+
+    source_notes = next(
+        section for section in output["report_draft"]["sections"] if section["title"] == "Source Notes"
+    )
+    assert "Observed source error types: fetch_timeout." in source_notes["content"]
+
+
 def test_report_writer_attaches_historian_context_when_available() -> None:
     writer = ReportWriter(historian_context_adapter=HistorianContextAdapter(HistorianAgent(_HistorianContextService())))
 
@@ -358,13 +386,18 @@ class _QualityMemoryRepository:
         return []
 
 
-def _writer_buffer() -> DataBuffer:
+def _writer_buffer(
+    *,
+    source_errors: list | None = None,
+    source_pipeline_metrics: SourcePipelineMetrics | None = None,
+) -> DataBuffer:
     return DataBuffer(
         {
             "request": {"topic": "AI policy"},
             "evidence_bundle": _evidence_bundle(),
-            "source_errors": [],
-            "source_pipeline_metrics": SourcePipelineMetrics(sources_total=1, sources_fetched=1),
+            "source_errors": source_errors or [],
+            "source_pipeline_metrics": source_pipeline_metrics
+            or SourcePipelineMetrics(sources_total=1, sources_fetched=1),
         }
     )
 

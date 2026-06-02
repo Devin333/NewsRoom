@@ -19,12 +19,15 @@ from business.memory.report_memory_context import (
 from business.foundation import PrimitiveModel
 from framework.llm import LLMClient, LLMRequest, build_openai_compatible_client_from_config
 from framework.workflow import StepScopedDataBufferView
-from business.foundation.models.source import SourcePipelineMetrics
+from business.foundation.models.source import SourceError, SourcePipelineMetrics
 from business.layers.relation.evidence import EvidenceBundle
 from business.boards.cross_board.workflows.daily_intelligence.buffer_key_aliases import (
     with_namespaced_aliases,
 )
 from business.boards.cross_board.workflows.daily_intelligence.profiles import PROFILE_LIVE, PROFILE_LIVE_OFFLINE
+from business.boards.cross_board.workflows.daily_intelligence.source_error_normalization import (
+    normalize_source_errors,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -48,7 +51,7 @@ class ReportWriter:
     def draft_report(self, buffer: StepScopedDataBufferView, profile: str) -> dict[str, Any]:
         request = buffer.read("request")
         evidence_bundle = buffer.read("evidence_bundle")
-        source_errors = buffer.read("source_errors")
+        source_errors = normalize_source_errors(buffer.read("source_errors"))
         source_metrics = buffer.read("source_pipeline_metrics")
         memory_result = self._memory_context(str(request["topic"]))
         memory_context = memory_result.context if memory_result is not None else None
@@ -135,20 +138,18 @@ def _deterministic_report(topic: str, evidence_bundle: EvidenceBundle) -> dict[s
 def _with_source_notes(
     report_draft: dict[str, Any],
     evidence_bundle: EvidenceBundle,
-    source_errors: list[Any],
+    source_errors: list[SourceError],
     source_metrics: SourcePipelineMetrics,
 ) -> dict[str, Any]:
     if not _needs_source_notes(source_errors, source_metrics):
         return report_draft
     sections = [dict(section) for section in report_draft.get("sections", [])]
-    if any(str(section.get("title") or "").strip().casefold() == "source notes" for section in sections):
-        return report_draft
     source_urls = sorted(evidence_bundle.source_urls)
     if not source_urls:
         return report_draft
     error_types = sorted(
         {
-            error.error_type if hasattr(error, "error_type") else str(error.get("error_type", "unknown"))
+            error.error_type
             for error in source_errors
         }
     )
@@ -160,19 +161,27 @@ def _with_source_notes(
     ]
     if error_types:
         content_parts.append(f"Observed source error types: {', '.join(error_types)}.")
-    sections.append(
-        {
-            "title": "Source Notes",
-            "content": " ".join(content_parts),
-            "sources": source_urls,
-        }
-    )
+    source_note_content = " ".join(content_parts)
+    for section in sections:
+        if str(section.get("title") or "").strip().casefold() != "source notes":
+            continue
+        existing_content = str(section.get("content") or "").strip()
+        section["content"] = (
+            f"{existing_content} {source_note_content}".strip()
+            if source_note_content not in existing_content
+            else existing_content
+        )
+        section["sources"] = sorted({*source_urls, *list(section.get("sources") or [])})
+        updated = dict(report_draft)
+        updated["sections"] = sections
+        return updated
+    sections.append({"title": "Source Notes", "content": source_note_content, "sources": source_urls})
     updated = dict(report_draft)
     updated["sections"] = sections
     return updated
 
 
-def _needs_source_notes(source_errors: list[Any], source_metrics: SourcePipelineMetrics) -> bool:
+def _needs_source_notes(source_errors: list[SourceError], source_metrics: SourcePipelineMetrics) -> bool:
     if source_metrics.sources_failed > 0 or source_metrics.sources_skipped > 0:
         return True
     return bool(source_errors)
