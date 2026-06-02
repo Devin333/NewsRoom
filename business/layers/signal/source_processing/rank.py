@@ -53,9 +53,10 @@ def _rank_item(
     relevance = _relevance(item, topic)
     recency = _recency(item, now)
     reliability = RELIABILITY_SCORE[item.source_reliability]
-    authority = _authority(item)
+    ranking_signals = item.ranking_signals
+    authority = ranking_signals.authority_score
     duplicate_cluster = _duplicate_cluster_score(item)
-    historical_importance = _historical_importance(item)
+    historical_importance = ranking_signals.historical_importance_score
     subscription_match = _subscription_match(item, subscription_topics)
     novelty = max(0.5, 1.0 - index * 0.05)
     final_score = round(
@@ -129,41 +130,16 @@ def _recency(item: NormalizedSourceItem, now: datetime) -> float:
     return 1.0 - (age_days - 1) * (0.8 / 13)
 
 
-def _authority(item: NormalizedSourceItem) -> float:
-    try:
-        authority = float(item.metadata.get("source_authority_score", 0.5))
-    except (TypeError, ValueError):
-        authority = 0.5
-    return min(1.0, max(0.0, authority))
-
-
 def _duplicate_cluster_score(item: NormalizedSourceItem) -> float:
-    cluster = item.metadata.get("duplicate_cluster")
-    if not isinstance(cluster, dict):
+    cluster = item.ranking_signals.duplicate_cluster
+    if cluster is None:
         return 0.5
-    try:
-        cluster_size = int(cluster.get("cluster_size") or 1)
-    except (TypeError, ValueError):
-        cluster_size = 1
+    cluster_size = cluster.cluster_size
     if cluster_size <= 1:
         return 0.5
-    if bool(cluster.get("same_event_cluster")):
+    if cluster.same_event_cluster:
         return min(1.0, 0.55 + min(cluster_size, 6) * 0.075)
     return min(1.0, 0.5 + min(cluster_size, 5) * 0.08)
-
-
-def _historical_importance(item: NormalizedSourceItem) -> float:
-    for key in (
-        "historical_importance_score",
-        "historical_accuracy_score",
-        "source_historical_importance",
-    ):
-        if key in item.metadata:
-            try:
-                return min(1.0, max(0.0, float(item.metadata[key])))
-            except (TypeError, ValueError):
-                return 0.5
-    return 0.5
 
 
 def _subscription_match(item: NormalizedSourceItem, subscription_topics: list[str]) -> float:
@@ -181,10 +157,7 @@ def _subscription_match(item: NormalizedSourceItem, subscription_topics: list[st
 
 
 def _item_tags(item: NormalizedSourceItem) -> list[str]:
-    tags = item.metadata.get("tags") or item.metadata.get("source_tags") or []
-    if not isinstance(tags, list):
-        return []
-    return [str(tag).casefold() for tag in tags]
+    return list(item.ranking_signals.tags)
 
 
 def lineage_from_item(item: NormalizedSourceItem, *, ranked_item_id: str) -> Lineage:

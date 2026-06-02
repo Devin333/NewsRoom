@@ -62,11 +62,12 @@ daily intelligence runtime 直接从 `business.layers.signal.source_config` 加�
 source 处理链路的正式中间模型是：
 
 - `NormalizedSourceItem.lineage`：承载 raw -> normalized 的来源链路。
+- `NormalizedSourceItem.ranking_signals` / `SourceRankingSignals`：承载 authority、duplicate cluster、historical importance 和 subscription tag 等 ranking 输入信号。
 - `RankedSourceItem.lineage`：承载 normalized -> ranked 的来源链路。
 - `RankedSourceItem.ranking_trace` / `SourceRankingTrace`：承载 ranking 组件分数、最终分数和 fallback 标记。
 - `RankedSourceItem.source_quality` / `SourceItemQualityScore`：承载 source quality 评分结果。
 
-`metadata["lineage"]` 和 `metadata["source_quality"]` 只作为 artifact-facing / legacy 输出投影保留。质量评分、ranking report 和 traceability report 必须消费正式字段；旧 payload 可以在模型构造时被投影成正式字段，但业务逻辑不得通过修改 metadata 来影响 traceability 或 quality 判断。
+`metadata["lineage"]`、`metadata["source_quality"]`、`metadata["source_authority_score"]` 和 `metadata["duplicate_cluster"]` 只作为 artifact-facing / legacy 输出投影保留。质量评分、ranking report 和 traceability report 必须消费正式字段；旧 payload 可以在模型构造时被投影成正式字段，但业务逻辑不得通过修改 metadata 来影响 ranking、traceability 或 quality 判断。
 
 ## Workflow Buffer Collection 规则
 

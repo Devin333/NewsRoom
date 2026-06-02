@@ -908,8 +908,11 @@ def test_deduplicate_marks_same_event_cluster_for_ranking() -> None:
     cluster = dedup_result.kept_items[0].metadata["duplicate_cluster"]
     assert cluster["cluster_size"] == 2
     assert cluster["same_event_cluster"] is True
+    assert dedup_result.kept_items[0].ranking_signals.duplicate_cluster.cluster_size == 2
+    assert dedup_result.kept_items[0].ranking_signals.duplicate_cluster.same_event_cluster is True
+    kept_item_without_cluster_metadata = replace(dedup_result.kept_items[0], metadata={})
     ranked = rank_items(
-        dedup_result.kept_items,
+        [kept_item_without_cluster_metadata],
         topic="AI runtime",
         subscription_topics=["runtime update"],
         now=datetime(2026, 5, 11, tzinfo=UTC),
@@ -1015,8 +1018,17 @@ def test_rank_items_uses_source_authority_score() -> None:
         ]
     )
 
+    normalized = [
+        replace(
+            item,
+            metadata={key: value for key, value in item.metadata.items() if key != "source_authority_score"},
+        )
+        for item in normalized
+    ]
+
     ranked = rank_items(normalized, topic="AI chip", now=datetime(2026, 5, 11, tzinfo=UTC))
 
     assert ranked[0].item.url == "https://example.com/high-authority"
     assert ranked[0].final_score > ranked[1].final_score
+    assert ranked[0].source_quality.authority_score == 1.0
     assert ranked[0].metadata["lineage"]["authority_score"] == 1.0

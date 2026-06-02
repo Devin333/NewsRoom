@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import datetime, timezone as _tz
 UTC = _tz.utc
-from typing import Any
 
 from business.foundation.models.source import NormalizedSourceItem, SourceItemQualityScore, SourceReliability
 
@@ -70,11 +69,7 @@ def score_source_item(
 
 
 def _authority_score(item: NormalizedSourceItem) -> float:
-    try:
-        value = float(item.metadata.get("source_authority_score", 0.5))
-    except (TypeError, ValueError):
-        value = 0.5
-    return _clamp(value)
+    return item.ranking_signals.authority_score
 
 
 def _traceability_score(item: NormalizedSourceItem) -> float:
@@ -149,7 +144,3 @@ def _as_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC)
     return value.astimezone(UTC)
-
-
-def _clamp(value: Any) -> float:
-    return min(1.0, max(0.0, float(value)))

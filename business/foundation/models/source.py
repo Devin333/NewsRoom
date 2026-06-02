@@ -345,6 +345,129 @@ class RawSourceItem:
 
 
 @dataclass(frozen=True)
+class SourceDuplicateCluster:
+    cluster_id: str | None = None
+    cluster_size: int = 1
+    duplicate_item_ids: list[str] = field(default_factory=list)
+    reasons: list[str] = field(default_factory=list)
+    canonical_urls: list[str] = field(default_factory=list)
+    same_event_cluster: bool = False
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "cluster_size", max(1, int(self.cluster_size or 1)))
+        object.__setattr__(
+            self,
+            "duplicate_item_ids",
+            [str(item_id) for item_id in self.duplicate_item_ids],
+        )
+        object.__setattr__(self, "reasons", [str(reason) for reason in self.reasons])
+        object.__setattr__(self, "canonical_urls", [str(url) for url in self.canonical_urls])
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "cluster_id": self.cluster_id,
+            "cluster_size": self.cluster_size,
+            "duplicate_item_ids": list(self.duplicate_item_ids),
+            "reasons": list(self.reasons),
+            "canonical_urls": list(self.canonical_urls),
+            "same_event_cluster": self.same_event_cluster,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any] | None) -> SourceDuplicateCluster:
+        if not isinstance(payload, dict):
+            return cls()
+        return cls(
+            cluster_id=_optional_str(payload.get("cluster_id")),
+            cluster_size=int(_float_or_default(payload.get("cluster_size"), 1)),
+            duplicate_item_ids=list(payload.get("duplicate_item_ids") or []),
+            reasons=list(payload.get("reasons") or []),
+            canonical_urls=list(payload.get("canonical_urls") or []),
+            same_event_cluster=_metadata_bool(payload.get("same_event_cluster"), default=False),
+        )
+
+
+@dataclass(frozen=True)
+class SourceRankingSignals:
+    authority_score: float = 0.5
+    duplicate_cluster: SourceDuplicateCluster = field(default_factory=SourceDuplicateCluster)
+    historical_importance_score: float = 0.5
+    tags: list[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "authority_score", _clamp_float(self.authority_score))
+        object.__setattr__(
+            self,
+            "historical_importance_score",
+            _clamp_float(self.historical_importance_score),
+        )
+        duplicate_cluster = self.duplicate_cluster
+        if isinstance(duplicate_cluster, dict):
+            duplicate_cluster = SourceDuplicateCluster.from_dict(duplicate_cluster)
+        object.__setattr__(self, "duplicate_cluster", duplicate_cluster)
+        object.__setattr__(
+            self,
+            "tags",
+            [str(tag).casefold() for tag in self.tags if str(tag).strip()],
+        )
+
+    def with_duplicate_cluster(self, duplicate_cluster: SourceDuplicateCluster) -> SourceRankingSignals:
+        return SourceRankingSignals(
+            authority_score=self.authority_score,
+            duplicate_cluster=duplicate_cluster,
+            historical_importance_score=self.historical_importance_score,
+            tags=list(self.tags),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "authority_score": self.authority_score,
+            "duplicate_cluster": self.duplicate_cluster.to_dict(),
+            "historical_importance_score": self.historical_importance_score,
+            "tags": list(self.tags),
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> SourceRankingSignals:
+        return cls(
+            authority_score=_float_or_default(payload.get("authority_score"), 0.5),
+            duplicate_cluster=SourceDuplicateCluster.from_dict(payload.get("duplicate_cluster")),
+            historical_importance_score=_float_or_default(
+                payload.get("historical_importance_score"),
+                0.5,
+            ),
+            tags=list(payload.get("tags") or []),
+        )
+
+    @classmethod
+    def from_metadata(
+        cls,
+        metadata: dict[str, Any],
+        *,
+        tags: list[str] | tuple[str, ...] | None = None,
+    ) -> SourceRankingSignals:
+        historical_importance = 0.5
+        for key in (
+            "historical_importance_score",
+            "historical_accuracy_score",
+            "source_historical_importance",
+        ):
+            if key in metadata:
+                historical_importance = _float_or_default(metadata.get(key), 0.5)
+                break
+        raw_tags = list(tags or [])
+        if not raw_tags:
+            metadata_tags = metadata.get("tags") or metadata.get("source_tags") or []
+            raw_tags = list(metadata_tags) if isinstance(metadata_tags, list) else []
+        return cls(
+            authority_score=_float_or_default(metadata.get("source_authority_score"), 0.5),
+            duplicate_cluster=SourceDuplicateCluster.from_dict(metadata.get("duplicate_cluster")),
+            historical_importance_score=historical_importance,
+            tags=raw_tags,
+        )
+
+
+@dataclass(frozen=True)
 class NormalizedSourceItem:
     normalized_item_id: str
     source_item_id: str
@@ -362,11 +485,28 @@ class NormalizedSourceItem:
     summary: str | None = None
     normalized_summary: str | None = None
     language: str | None = None
+    ranking_signals: SourceRankingSignals | None = None
     lineage: Lineage | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "source_reliability", SourceReliability(self.source_reliability))
+        if self.ranking_signals is None:
+            raw_signals = self.metadata.get("ranking_signals")
+            if isinstance(raw_signals, dict):
+                object.__setattr__(self, "ranking_signals", SourceRankingSignals.from_dict(raw_signals))
+            else:
+                object.__setattr__(
+                    self,
+                    "ranking_signals",
+                    SourceRankingSignals.from_metadata(self.metadata),
+                )
+        elif isinstance(self.ranking_signals, dict):
+            object.__setattr__(
+                self,
+                "ranking_signals",
+                SourceRankingSignals.from_dict(self.ranking_signals),
+            )
         if self.lineage is None:
             metadata_lineage = self.metadata.get("lineage") if isinstance(self.metadata.get("lineage"), dict) else None
             if metadata_lineage is not None:
@@ -1186,6 +1326,10 @@ def _float_or_default(value: Any, default: float) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _clamp_float(value: Any, *, default: float = 0.5) -> float:
+    return min(1.0, max(0.0, _float_or_default(value, default)))
 
 
 def _optional_float(value: Any) -> float | None:

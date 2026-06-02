@@ -6,7 +6,14 @@ from datetime import datetime, timezone as _tz
 UTC = _tz.utc
 from hashlib import sha256
 
-from business.foundation.models.source import DedupResult, DuplicateGroup, NormalizedSourceItem, SourceReliability
+from business.foundation.models.source import (
+    DedupResult,
+    DuplicateGroup,
+    NormalizedSourceItem,
+    SourceDuplicateCluster,
+    SourceRankingSignals,
+    SourceReliability,
+)
 
 
 RELIABILITY_PRIORITY = {
@@ -129,28 +136,39 @@ def _with_duplicate_cluster_metadata(
     dropped_items: list[NormalizedSourceItem],
 ) -> NormalizedSourceItem:
     if len(group) <= 1:
-        metadata = dict(kept_item.metadata)
-        metadata.setdefault(
-            "duplicate_cluster",
-            {
-                "cluster_id": None,
-                "cluster_size": 1,
-                "duplicate_item_ids": [],
-                "same_event_cluster": False,
-            },
+        duplicate_cluster = SourceDuplicateCluster(
+            cluster_id=None,
+            cluster_size=1,
+            duplicate_item_ids=[],
+            same_event_cluster=False,
         )
-        return replace(kept_item, metadata=metadata)
+        metadata = dict(kept_item.metadata)
+        metadata["duplicate_cluster"] = duplicate_cluster.to_dict()
+        return replace(
+            kept_item,
+            ranking_signals=_ranking_signals(kept_item).with_duplicate_cluster(duplicate_cluster),
+            metadata=metadata,
+        )
     duplicate_group = _duplicate_group(group, kept_item, dropped_items)
+    duplicate_cluster = SourceDuplicateCluster(
+        cluster_id=duplicate_group.group_id,
+        cluster_size=len(group),
+        duplicate_item_ids=list(duplicate_group.duplicate_item_ids),
+        reasons=list(duplicate_group.reasons),
+        canonical_urls=list(duplicate_group.canonical_urls),
+        same_event_cluster=_is_same_event_cluster(duplicate_group),
+    )
     metadata = dict(kept_item.metadata)
-    metadata["duplicate_cluster"] = {
-        "cluster_id": duplicate_group.group_id,
-        "cluster_size": len(group),
-        "duplicate_item_ids": list(duplicate_group.duplicate_item_ids),
-        "reasons": list(duplicate_group.reasons),
-        "canonical_urls": list(duplicate_group.canonical_urls),
-        "same_event_cluster": _is_same_event_cluster(duplicate_group),
-    }
-    return replace(kept_item, metadata=metadata)
+    metadata["duplicate_cluster"] = duplicate_cluster.to_dict()
+    return replace(
+        kept_item,
+        ranking_signals=_ranking_signals(kept_item).with_duplicate_cluster(duplicate_cluster),
+        metadata=metadata,
+    )
+
+
+def _ranking_signals(item: NormalizedSourceItem) -> SourceRankingSignals:
+    return item.ranking_signals or SourceRankingSignals.from_metadata(item.metadata)
 
 
 def _is_same_event_cluster(group: DuplicateGroup) -> bool:

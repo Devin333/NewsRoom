@@ -6,13 +6,16 @@ from business.foundation.models.source import (
     DedupResult,
     DuplicateGroup,
     Lineage,
+    NormalizedSourceItem,
     SourceDefinition,
+    SourceDuplicateCluster,
     SourceError,
     SourceFetchRequest,
     SourceFetchPolicy,
     SourceFetchResult,
     SourcePipelineEvent,
     SourcePipelineMetrics,
+    SourceRankingSignals,
     RawSourceItem,
     SourceReliability,
     SourceHealth,
@@ -145,6 +148,57 @@ def test_lineage_round_trips_target_state_payload() -> None:
     assert payload["fetched_at"] == "2026-05-11T00:00:00Z"
     assert restored.source_id == "source-1"
     assert restored.raw_artifact_ref == {"artifact_id": "raw"}
+
+
+def test_normalized_source_item_projects_legacy_metadata_into_ranking_signals() -> None:
+    item = NormalizedSourceItem(
+        normalized_item_id="norm-1",
+        source_item_id="raw-1",
+        source_id="source-1",
+        title="AI Chips",
+        normalized_title="ai chips",
+        url="https://example.com/chips",
+        canonical_url="https://example.com/chips",
+        canonical_url_hash="hash-url",
+        title_hash="hash-title",
+        content_hash="hash-content",
+        source_reliability="high",
+        fetched_at=datetime(2026, 5, 11, tzinfo=UTC),
+        metadata={
+            "source_authority_score": 1.2,
+            "duplicate_cluster": {
+                "cluster_id": "dup-1",
+                "cluster_size": 3,
+                "duplicate_item_ids": ["norm-2", "norm-3"],
+                "same_event_cluster": True,
+            },
+            "historical_accuracy_score": 0.7,
+            "source_tags": ["AI", "Chips"],
+        },
+    )
+
+    assert item.ranking_signals.authority_score == 1.0
+    assert item.ranking_signals.duplicate_cluster.cluster_size == 3
+    assert item.ranking_signals.duplicate_cluster.same_event_cluster is True
+    assert item.ranking_signals.historical_importance_score == 0.7
+    assert item.ranking_signals.tags == ["ai", "chips"]
+
+
+def test_source_ranking_signals_updates_duplicate_cluster_without_losing_inputs() -> None:
+    signals = SourceRankingSignals(authority_score=0.8, historical_importance_score=0.6, tags=["Policy"])
+    updated = signals.with_duplicate_cluster(
+        SourceDuplicateCluster(
+            cluster_id="dup-policy",
+            cluster_size=2,
+            duplicate_item_ids=["norm-2"],
+            same_event_cluster=True,
+        )
+    )
+
+    assert updated.authority_score == 0.8
+    assert updated.historical_importance_score == 0.6
+    assert updated.tags == ["policy"]
+    assert updated.duplicate_cluster.to_dict()["cluster_size"] == 2
 
 
 def test_source_error_exposes_top_level_policy_fields_from_legacy_metadata() -> None:

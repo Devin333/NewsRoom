@@ -5,7 +5,14 @@ import re
 from datetime import datetime, timedelta, timezone as _tz
 UTC = _tz.utc
 
-from business.foundation.models.source import Lineage, NormalizedSourceItem, RawSourceItem, SourceReliability, SourceType
+from business.foundation.models.source import (
+    Lineage,
+    NormalizedSourceItem,
+    RawSourceItem,
+    SourceRankingSignals,
+    SourceReliability,
+    SourceType,
+)
 from business.layers.signal.source_processing.language import detect_language
 from business.layers.signal.source_processing.url_normalization import canonicalize_url
 
@@ -30,6 +37,7 @@ def normalize_item(item: RawSourceItem) -> NormalizedSourceItem:
     metadata.setdefault("tags", list(item.tags))
     if item.tags:
         metadata["tags"] = list(item.tags)
+    ranking_signals = SourceRankingSignals.from_metadata(metadata, tags=item.tags)
     detected_language = None if item.language else detect_language(_language_detection_text(item))
     language = item.language or detected_language or "unknown"
     if item.language is None:
@@ -80,6 +88,7 @@ def normalize_item(item: RawSourceItem) -> NormalizedSourceItem:
         summary=item.summary,
         normalized_summary=normalized_summary,
         language=language,
+        ranking_signals=ranking_signals,
         lineage=lineage_obj,
         metadata=metadata,
     )
