@@ -5,7 +5,7 @@ from typing import Any
 
 from business.foundation.feedback.approval_state import APPLICABLE_STATUSES
 from business.foundation.feedback.improvement_proposal import ImprovementProposal
-from business.foundation.feedback.override_policy import BoardImprovementContext, SUPPORTED_OVERRIDE_TYPES
+from business.foundation.feedback.override_policy import BoardImprovementContext, is_legacy_policy_experiment_change_type
 from business.foundation.feedback.policy_experiment import (
     AppliedPolicyExperiment,
     PolicyExperimentProfile,
@@ -67,7 +67,7 @@ class ImprovementApplier:
 
 
 def _legacy_profile(proposal: ImprovementProposal) -> PolicyExperimentProfile | None:
-    if proposal.change_type not in SUPPORTED_OVERRIDE_TYPES:
+    if not is_legacy_policy_experiment_change_type(proposal.change_type):
         return None
     return PolicyExperimentProfile(
         profile_id=f"legacy_{proposal.change_type}_{proposal.target_id}",

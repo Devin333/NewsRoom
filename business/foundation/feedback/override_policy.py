@@ -6,13 +6,19 @@ UTC = _tz.utc
 from typing import Any
 
 
-SUPPORTED_OVERRIDE_TYPES = {
+LEGACY_POLICY_EXPERIMENT_CHANGE_TYPES = {
     "ranking_weight_override",
     "policy_threshold_override",
     "source_reliability_override",
     "skill_prompt_hint_override",
     "board_quality_gate_override",
 }
+
+SUPPORTED_OVERRIDE_TYPES = LEGACY_POLICY_EXPERIMENT_CHANGE_TYPES
+
+
+def is_legacy_policy_experiment_change_type(change_type: str) -> bool:
+    return str(change_type) in LEGACY_POLICY_EXPERIMENT_CHANGE_TYPES
 
 
 @dataclass(frozen=True)
@@ -27,6 +33,9 @@ class ImprovementOverride:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+LegacyPolicyExperimentPatch = ImprovementOverride
 
 
 @dataclass(frozen=True)
@@ -44,4 +53,11 @@ class BoardImprovementContext:
         return asdict(self)
 
 
-__all__ = ["BoardImprovementContext", "ImprovementOverride", "SUPPORTED_OVERRIDE_TYPES"]
+__all__ = [
+    "BoardImprovementContext",
+    "ImprovementOverride",
+    "LEGACY_POLICY_EXPERIMENT_CHANGE_TYPES",
+    "LegacyPolicyExperimentPatch",
+    "SUPPORTED_OVERRIDE_TYPES",
+    "is_legacy_policy_experiment_change_type",
+]

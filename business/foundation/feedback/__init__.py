@@ -8,7 +8,14 @@ from business.foundation.feedback.improvement_recommendation import ImprovementR
 from business.foundation.feedback.learning_signal_builder import LearningSignalBuilder
 from business.foundation.feedback.learning_signal_store import InMemoryLearningSignalStore
 from business.foundation.feedback.measurement import ImprovementMeasurement, ImprovementMeasurementBuilder
-from business.foundation.feedback.override_policy import BoardImprovementContext, ImprovementOverride
+from business.foundation.feedback.override_policy import (
+    BoardImprovementContext,
+    ImprovementOverride,
+    LEGACY_POLICY_EXPERIMENT_CHANGE_TYPES,
+    LegacyPolicyExperimentPatch,
+    SUPPORTED_OVERRIDE_TYPES,
+    is_legacy_policy_experiment_change_type,
+)
 from business.foundation.feedback.policy_experiment import AppliedPolicyExperiment, PolicyExperimentProfile
 from business.foundation.feedback.proposal_builder import ImprovementProposalBuilder
 from business.foundation.feedback.proposal_store import InMemoryImprovementProposalStore, LocalJsonImprovementProposalStore
@@ -38,6 +45,8 @@ __all__ = [
     "ImprovementMeasurement",
     "ImprovementMeasurementBuilder",
     "ImprovementOverride",
+    "LEGACY_POLICY_EXPERIMENT_CHANGE_TYPES",
+    "LegacyPolicyExperimentPatch",
     "ImprovementProposal",
     "ImprovementProposalBuilder",
     "ImprovementRecommendation",
@@ -52,8 +61,10 @@ __all__ = [
     "RuntimeQualityClosure",
     "SelfImprovementReport",
     "SelfImprovementReportBuilder",
+    "SUPPORTED_OVERRIDE_TYPES",
     "build_feedback_events_from_quality",
     "build_runtime_quality_closure",
     "dedupe_feedback_events",
     "dedupe_recommendations",
+    "is_legacy_policy_experiment_change_type",
 ]

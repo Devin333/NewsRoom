@@ -1,6 +1,13 @@
 from __future__ import annotations
 
-from business.foundation.feedback import ImprovementApplier, ImprovementProposal, PolicyExperimentProfile
+from business.foundation.feedback import (
+    ImprovementApplier,
+    ImprovementProposal,
+    LEGACY_POLICY_EXPERIMENT_CHANGE_TYPES,
+    SUPPORTED_OVERRIDE_TYPES,
+    PolicyExperimentProfile,
+    is_legacy_policy_experiment_change_type,
+)
 
 
 def test_improvement_applier_only_applies_approved_supported_proposals() -> None:
@@ -71,3 +78,9 @@ def test_improvement_applier_applies_policy_experiment_profiles() -> None:
     assert applied["parameters"] == {"severity": "warning"}
     assert "patch" not in applied
     assert context.applied_policy_experiments == context.applied_overrides
+
+
+def test_legacy_override_type_name_is_compatibility_alias() -> None:
+    assert SUPPORTED_OVERRIDE_TYPES is LEGACY_POLICY_EXPERIMENT_CHANGE_TYPES
+    assert is_legacy_policy_experiment_change_type("ranking_weight_override") is True
+    assert is_legacy_policy_experiment_change_type("policy_experiment") is False
