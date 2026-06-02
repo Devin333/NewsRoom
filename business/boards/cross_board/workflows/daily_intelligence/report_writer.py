@@ -21,6 +21,9 @@ from framework.llm import LLMClient, LLMRequest, build_openai_compatible_client_
 from framework.workflow import StepScopedDataBufferView
 from business.foundation.models.source import SourcePipelineMetrics
 from business.layers.relation.evidence import EvidenceBundle
+from business.boards.cross_board.workflows.daily_intelligence.buffer_key_aliases import (
+    with_namespaced_aliases,
+)
 from business.boards.cross_board.workflows.daily_intelligence.profiles import PROFILE_LIVE, PROFILE_LIVE_OFFLINE
 
 
@@ -53,7 +56,7 @@ class ReportWriter:
         if profile == PROFILE_LIVE_OFFLINE:
             report = _deterministic_report(request["topic"], evidence_bundle)
             report = _with_context_metadata(report, memory_result, historian_result)
-            return {
+            return with_namespaced_aliases({
                 "report_draft": _with_source_notes(
                     report,
                     evidence_bundle,
@@ -62,7 +65,7 @@ class ReportWriter:
                 ),
                 "memory_context": memory_context.to_dict() if memory_context is not None else None,
                 "historian_context": historian_result.to_dict() if historian_result is not None else None,
-            }
+            })
 
         llm_client = self.llm_client or build_openai_compatible_client_from_config(
             route_id="daily-intelligence-writer"
@@ -82,11 +85,11 @@ class ReportWriter:
         )
         report_draft = _with_context_metadata(report_draft, memory_result, historian_result)
         report_draft = _with_source_notes(report_draft, evidence_bundle, source_errors, source_metrics)
-        return {
+        return with_namespaced_aliases({
             "report_draft": report_draft,
             "memory_context": memory_context.to_dict() if memory_context is not None else None,
             "historian_context": historian_result.to_dict() if historian_result is not None else None,
-        }
+        })
 
     def _memory_context(self, topic: str) -> ReportMemoryContextResult | None:
         if self.memory_context_service is None:

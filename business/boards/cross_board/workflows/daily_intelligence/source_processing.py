@@ -16,6 +16,9 @@ from business.layers.signal.source_processing import (
     rank_items,
 )
 from business.layers.signal.source_processing.error_taxonomy import classify_source_exception
+from business.boards.cross_board.workflows.daily_intelligence.buffer_key_aliases import (
+    with_namespaced_aliases,
+)
 from business.boards.cross_board.workflows.daily_intelligence.source_error_normalization import (
     normalize_source_errors,
 )
@@ -39,7 +42,7 @@ def source_event(event_type: str, source_id: str | None = None, **metadata: Any)
 def require_sources(buffer: StepScopedDataBufferView) -> dict[str, Any]:
     raw_items = buffer.read("raw_items")
     if raw_items:
-        return {"source_collection_status": "ready"}
+        return with_namespaced_aliases({"source_collection_status": "ready"})
 
     source_errors = normalize_source_errors(buffer.read("source_errors"))
     error_types = [error.error_type for error in source_errors]
@@ -79,12 +82,12 @@ def normalize_sources(buffer: StepScopedDataBufferView) -> dict[str, Any]:
     metrics.normalized_items_count = len(normalized_items)
     for error in normalization_errors:
         metrics.record_error(error)
-    return {
+    return with_namespaced_aliases({
         "normalized_items": normalized_items,
         "source_errors": source_errors,
         "source_events": source_events,
         "source_pipeline_metrics": metrics,
-    }
+    })
 
 
 def deduplicate_sources(buffer: StepScopedDataBufferView) -> dict[str, Any]:
@@ -123,13 +126,13 @@ def deduplicate_sources(buffer: StepScopedDataBufferView) -> dict[str, Any]:
     metrics.duplicate_count = duplicate_count
     for error in dedup_errors:
         metrics.record_error(error)
-    return {
+    return with_namespaced_aliases({
         "deduplicated_items": deduplicated_items,
         "source_errors": source_errors,
         "source_duplicate_groups": source_duplicate_groups,
         "source_events": source_events,
         "source_pipeline_metrics": metrics,
-    }
+    })
 
 
 def rank_sources(buffer: StepScopedDataBufferView) -> dict[str, Any]:
@@ -171,7 +174,7 @@ def rank_sources(buffer: StepScopedDataBufferView) -> dict[str, Any]:
     source_freshness_report = build_source_freshness_report(ranked_items)
     source_traceability_report = build_source_traceability_report(ranked_items)
     source_quality_summary_report = build_source_quality_summary_report(source_quality_scores)
-    return {
+    return with_namespaced_aliases({
         "ranked_items": ranked_items,
         "source_errors": source_errors,
         "source_events": source_events,
@@ -191,7 +194,7 @@ def rank_sources(buffer: StepScopedDataBufferView) -> dict[str, Any]:
             source_quality_scores=source_quality_scores,
             source_selection_report=buffer.read("source_selection_report"),
         ),
-    }
+    })
 
 
 def _processing_source_error(raw_item: Any, exc: Exception, *, phase: str) -> SourceError:

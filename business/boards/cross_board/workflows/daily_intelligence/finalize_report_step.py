@@ -18,6 +18,9 @@ from business.boards.cross_board.workflows.daily_intelligence.quality_gate_polic
     build_non_social_media_pass_decision,
     should_bypass_strict_quality_gate,
 )
+from business.boards.cross_board.workflows.daily_intelligence.buffer_key_aliases import (
+    with_namespaced_aliases,
+)
 from business.boards.cross_board.workflows.daily_intelligence.workflow_buffer_access import (
     read_buffer_list,
 )
@@ -330,7 +333,7 @@ def _publish_outputs(
         citation_check_result=citation_check_result,
         agent_feedback=agent_feedback,
     )
-    return {
+    return with_namespaced_aliases({
         "report_quality_summary": report_quality_summary,
         "quality_events": quality_events,
         "quality_gate_metrics": quality_gate_metrics,
@@ -339,7 +342,7 @@ def _publish_outputs(
         "rewrite_instructions": rewrite_instructions,
         "final_report": final_report,
         "report_markdown": render_markdown(final_report),
-    }
+    })
 
 
 def _blocked_outputs(
@@ -418,7 +421,7 @@ def _blocked_outputs(
     }
     if human_review_request is not None:
         outputs["human_review_request"] = human_review_request
-    return outputs
+    return with_namespaced_aliases(outputs)
 
 
 def _final_report(

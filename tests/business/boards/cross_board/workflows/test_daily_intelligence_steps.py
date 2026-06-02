@@ -68,6 +68,20 @@ def test_daily_intelligence_workflow_spec_is_valid_and_profile_aware() -> None:
     assert "memory_query_repository" in quality_step.metadata["optional_read_keys"]
 
 
+def test_daily_source_and_quality_steps_declare_namespaced_alias_write_keys() -> None:
+    workflow = build_daily_intelligence_workflow(PROFILE_LIVE)
+    steps = {step.step_id: step for step in workflow.steps}
+
+    assert "sources.errors" in steps["collect_sources"].write_keys
+    assert "sources.normalized_items" in steps["normalize_sources"].write_keys
+    assert "sources.deduplicated_items" in steps["deduplicate_sources"].write_keys
+    assert "sources.ranked_items" in steps["rank_sources"].write_keys
+    assert "evidence.bundle" in steps["build_evidence"].write_keys
+    assert "report.draft" in steps["draft_report"].write_keys
+    assert "quality.result" in steps["quality_gate"].write_keys
+    assert "report.final" in steps["quality_gate"].write_keys
+
+
 def test_require_sources_fails_with_source_error_summary() -> None:
     buffer = DataBuffer(
         {
@@ -161,9 +175,13 @@ def test_daily_source_steps_build_ranked_items_and_reports() -> None:
     )
 
     assert buffer.read("source_collection_status") == "ready"
+    assert buffer.read("sources.collection_status") == "ready"
     assert len(buffer.read("normalized_items")) == 1
     assert len(buffer.read("deduplicated_items")) == 1
     assert len(buffer.read("ranked_items")) == 1
+    assert buffer.read("sources.errors") == buffer.read("source_errors")
+    assert buffer.read("sources.events") == buffer.read("source_events")
+    assert buffer.read("sources.ranked_items") == buffer.read("ranked_items")
     assert buffer.read("source_coverage_report").coverage_status == "covered"
     assert buffer.read("source_quality_summary_report").item_count == 1
     assert buffer.read("source_traceability_report").traceability_status == "complete"
@@ -266,8 +284,11 @@ def test_daily_evidence_and_quality_gate_steps_produce_final_report() -> None:
     )
 
     assert evidence_bundle.bundle_id == "daily"
+    assert buffer.read("evidence.bundle") == evidence_bundle
     assert buffer.read("quality_gate_metrics").decision == "pass"
     assert buffer.read("quality_result").decision == "pass"
+    assert buffer.read("quality.result") == buffer.read("quality_result")
+    assert buffer.read("report.final") == buffer.read("final_report")
     assert buffer.read("quality_result").route == "final"
     assert buffer.read("final_report").title == "Daily Intelligence: AI policy"
     assert "https://example.com/ai-policy" in buffer.read("report_markdown")
@@ -280,6 +301,7 @@ def test_daily_evidence_and_quality_gate_steps_produce_final_report() -> None:
         "editor_gate_passed",
         "quality_gate_bypassed_non_social_media",
     ]
+    assert buffer.read("quality.events") == buffer.read("quality_events")
 
 
 def test_daily_steps_run_through_workflow_executor_smoke(tmp_path) -> None:

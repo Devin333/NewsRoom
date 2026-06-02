@@ -6,6 +6,9 @@ from typing import Any
 from framework.workflow import DataBufferReadPermissionError, StepScopedDataBufferView
 from business.foundation.models.report_output import BlockedReport, FinalReport, render_markdown
 from business.layers.analysis.quality import EditorDecision, EditorReview, RewritePolicy
+from business.boards.cross_board.workflows.daily_intelligence.buffer_key_aliases import (
+    with_namespaced_aliases,
+)
 from business.boards.cross_board.workflows.daily_intelligence.evidence_step import quality_event
 from business.boards.cross_board.workflows.daily_intelligence.memory_quality import (
     DailyMemoryQualityService,
@@ -323,7 +326,7 @@ def _build_quality_outputs(
                 "memory_quality_result": context.memory_quality_result,
             },
         )
-    return outputs
+    return with_namespaced_aliases(outputs)
 
 
 def _read_memory_context(buffer: StepScopedDataBufferView) -> dict[str, Any] | None:

@@ -59,6 +59,10 @@ def test_agentic_daily_workflow_declares_agent_steps() -> None:
     assert steps["collect_agent_feedback"].step_type == StepType.FUNCTION
     assert steps["collect_agent_feedback"].implementation == "daily.collect_agent_feedback"
     assert steps["collect_agent_feedback"].required_output_keys == ["agent_feedback_summary"]
+    assert "agent.feedback.summary" in steps["collect_agent_feedback"].write_keys
+    assert "agent.feedback.events" in steps["collect_agent_feedback"].write_keys
+    assert "agent_feedback_events" in steps["finalize_report"].read_keys
+    assert "quality.result" in steps["finalize_report"].write_keys
 
 
 def test_agentic_daily_workflow_reuses_source_evidence_steps() -> None:

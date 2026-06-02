@@ -45,6 +45,8 @@ def test_finalize_report_projects_agent_feedback_metadata() -> None:
     assert output["final_report"].metadata["agent_feedback_event_count"] == 1
     assert output["final_report"].metadata["agent_feedback_summary"]["rewrite_request_count"] == 1
     assert output["quality_result"]["metadata"]["agent_feedback_summary"]["highest_severity"] == "warning"
+    assert output["quality.result"] == output["quality_result"]
+    assert output["report.final"] == output["final_report"]
 
 
 def test_finalize_report_rewrite_required_with_edited_draft_publishes_edit() -> None:

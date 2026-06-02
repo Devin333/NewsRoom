@@ -12,6 +12,9 @@ from business.boards.cross_board.workflows.daily_intelligence.agents import (
 from business.boards.cross_board.workflows.daily_intelligence.source_evidence_steps import (
     build_source_and_evidence_steps,
 )
+from business.boards.cross_board.workflows.daily_intelligence.buffer_key_aliases import (
+    with_namespaced_write_keys,
+)
 
 
 AGENTIC_WORKFLOW_ID = "daily-intelligence-agentic"
@@ -226,7 +229,7 @@ def _finalize_report_step() -> StepSpec:
             "agent_feedback_events",
             "agent_feedback_summary",
         ],
-        write_keys=[
+        write_keys=with_namespaced_write_keys([
             "report_quality_summary",
             "quality_events",
             "quality_gate_metrics",
@@ -237,7 +240,7 @@ def _finalize_report_step() -> StepSpec:
             "final_report",
             "report_markdown",
             "blocked_report",
-        ],
+        ]),
         required_output_keys=["quality_result", "quality_gate_metrics"],
         metadata={"optional_read_keys": ["edited_report_draft"]},
     )
@@ -254,10 +257,10 @@ def _collect_agent_feedback_step() -> StepSpec:
             "support_matrix",
             "editor_review",
         ],
-        write_keys=[
+        write_keys=with_namespaced_write_keys([
             "agent_feedback_events",
             "agent_feedback_summary",
-        ],
+        ]),
         required_output_keys=["agent_feedback_summary"],
     )
 

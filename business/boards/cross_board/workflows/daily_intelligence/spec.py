@@ -9,6 +9,9 @@ from business.boards.cross_board.workflows.daily_intelligence.profiles import (
 from business.boards.cross_board.workflows.daily_intelligence.source_evidence_steps import (
     build_source_and_evidence_steps,
 )
+from business.boards.cross_board.workflows.daily_intelligence.buffer_key_aliases import (
+    with_namespaced_write_keys,
+)
 WORKFLOW_ID = LEGACY_DAILY_WORKFLOW_ID
 WORKFLOW_VERSION = "0.1.0"
 
@@ -27,14 +30,14 @@ def build_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
                 step_id="draft_report",
                 implementation="daily.draft_report",
                 read_keys=["request", "evidence_bundle", "source_errors", "source_pipeline_metrics"],
-                write_keys=["report_draft", "memory_context", "historian_context"],
+                write_keys=with_namespaced_write_keys(["report_draft", "memory_context", "historian_context"]),
                 required_output_keys=["report_draft"],
             ),
             StepSpec(
                 step_id="quality_gate",
                 implementation="daily.quality_gate",
                 read_keys=["report_draft", "evidence_bundle", "verified_findings", "quality_events"],
-                write_keys=[
+                write_keys=with_namespaced_write_keys([
                     "citation_check_result",
                     "editor_review",
                     "support_matrix",
@@ -51,7 +54,7 @@ def build_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
                     "final_report",
                     "report_markdown",
                     "blocked_report",
-                ],
+                ]),
                 required_output_keys=[
                     "citation_check_result",
                     "editor_review",

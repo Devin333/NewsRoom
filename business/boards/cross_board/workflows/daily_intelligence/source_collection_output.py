@@ -16,6 +16,9 @@ from business.layers.signal.source_processing import (
     build_source_fallback_report,
     build_source_health_report,
 )
+from business.boards.cross_board.workflows.daily_intelligence.buffer_key_aliases import (
+    with_namespaced_aliases,
+)
 
 
 def build_source_collection_output(
@@ -31,7 +34,7 @@ def build_source_collection_output(
     source_pipeline_metrics: SourcePipelineMetrics,
     source_selection_report: Any,
 ) -> dict[str, Any]:
-    return {
+    return with_namespaced_aliases({
         "raw_items": raw_items,
         "source_errors": source_errors,
         "skipped_sources": skipped_sources,
@@ -59,7 +62,7 @@ def build_source_collection_output(
             skipped_sources=skipped_sources,
             failed_sources=failed_sources,
         ),
-    }
+    })
 
 
 def record_all_sources_failed(

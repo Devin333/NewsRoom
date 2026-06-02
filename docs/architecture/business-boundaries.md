@@ -38,6 +38,18 @@ workflow step 从 buffer 读取 list/tuple 类型集合时，应把读取值视�
 
 当前 daily intelligence workflow 的 `source_events` 和 `quality_events` 已使用该 helper 收敛 read-copy-write 约定。
 
+## Workflow Buffer Key 命名空间
+
+daily intelligence workflow 进入兼容迁移期：业务函数继续写旧 key，同时通过 `buffer_key_aliases.with_namespaced_aliases()` 双写命名空间 key。
+
+- source 相关输出使用 `sources.*`，例如 `sources.errors`、`sources.events`、`sources.ranked_items`。
+- evidence 相关输出使用 `evidence.*`，例如 `evidence.bundle`、`evidence.verified_findings`。
+- quality 相关输出使用 `quality.*`，例如 `quality.events`、`quality.result`。
+- report 相关输出使用 `report.*`，例如 `report.draft`、`report.final`。
+- agent feedback 输出使用 `agent.feedback.*`。
+
+旧 key 仍是现有公开兼容面；新代码应优先声明并消费命名空间 key。后续迁移完成前，禁止在单个 step 中临时发明未登记的 dotted key。
+
 ## Agent Feedback 边界
 
 Agent 间反馈不应隐藏在各 agent output 的自由形态字段里，也不应由 `finalize_report` 反向猜测。

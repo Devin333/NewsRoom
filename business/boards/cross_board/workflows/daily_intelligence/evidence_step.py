@@ -5,6 +5,9 @@ from typing import Any
 from framework.workflow import StepScopedDataBufferView
 from business.layers.relation.evidence import EvidenceBuilder
 from business.layers.analysis.quality import QualityEvent
+from business.boards.cross_board.workflows.daily_intelligence.buffer_key_aliases import (
+    with_namespaced_aliases,
+)
 
 
 def build_evidence(buffer: StepScopedDataBufferView) -> dict[str, Any]:
@@ -12,7 +15,7 @@ def build_evidence(buffer: StepScopedDataBufferView) -> dict[str, Any]:
     bundle = build_result.bundle
     if not bundle.items:
         raise RuntimeError("no valid evidence built from ranked sources")
-    return {
+    return with_namespaced_aliases({
         "evidence_bundle": bundle,
         "evidence_scores": build_result.evidence_scores,
         "candidate_claims": build_result.candidate_claims,
@@ -43,7 +46,7 @@ def build_evidence(buffer: StepScopedDataBufferView) -> dict[str, Any]:
                 ),
             ),
         ],
-    }
+    })
 
 
 def quality_event(event_type: str, **metadata: Any) -> QualityEvent:

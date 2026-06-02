@@ -31,6 +31,8 @@ def test_collect_agent_feedback_records_verifier_and_editor_rewrite_requests() -
     events = output["agent_feedback_events"]
     summary = output["agent_feedback_summary"]
 
+    assert output["agent.feedback.events"] == events
+    assert output["agent.feedback.summary"] == summary
     assert [event.feedback_type for event in events] == [
         "verification_rewrite_request",
         "missing_citation_feedback",

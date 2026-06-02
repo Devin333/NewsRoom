@@ -11,6 +11,9 @@ from business.boards.cross_board.workflows.daily_intelligence.agents import (
     VERIFIER_AGENT_ID,
     WRITER_AGENT_ID,
 )
+from business.boards.cross_board.workflows.daily_intelligence.buffer_key_aliases import (
+    with_namespaced_aliases,
+)
 
 
 HUMAN_REVIEW_TARGET = "daily.human_review"
@@ -45,10 +48,10 @@ def collect_agent_feedback(buffer: StepScopedDataBufferView) -> dict[str, Any]:
         support_matrix=_dict_value(buffer.read("support_matrix")),
         editor_review=_dict_value(buffer.read("editor_review")),
     )
-    return {
+    return with_namespaced_aliases({
         "agent_feedback_events": events,
         "agent_feedback_summary": summarize_agent_feedback(events),
-    }
+    })
 
 
 class DailyAgentFeedbackCollector:
