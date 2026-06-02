@@ -23,6 +23,7 @@ from business.layers.signal.source_health import (
     SourceHealthCheckResult,
     SourceHealthStore,
 )
+from interfaces.services.source_health_probe import default_source_health_probe
 from business.layers.signal.source_router import SourceConnectorRouter
 from business.layers.signal.source_catalog import SOURCE_CATEGORIES, SOURCE_PRIORITIES
 from business.foundation.models.source import SourceHealth
@@ -191,7 +192,7 @@ class SourceApplicationService:
         self.health_manager = health_manager or BasicSourceHealthManager(
             health_store=self.source_health_store
         )
-        self.health_probe_fetcher = health_probe_fetcher
+        self.health_probe_fetcher = health_probe_fetcher or default_source_health_probe
         self.arxiv_connector = arxiv_connector or default_arxiv_connector(
             fetch_policy=self.fetch_policy,
             rate_limiter=self.rate_limiter,

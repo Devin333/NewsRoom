@@ -1,8 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
-from business.foundation.models.source import SourceDefinition, SourceError, SourceHealthStatus
+from business.foundation.models.source import SourceDefinition, SourceError, SourceFetchPolicy, SourceHealthStatus
 from business.foundation.registry.source_registry import SourceRegistry
-from infrastructure.external.sources import SourceFetchPolicy
 from business.layers.signal.source_health import BasicSourceHealthManager, ProbeObservation, SourceHealthChecker
 
 
